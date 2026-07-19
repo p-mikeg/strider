@@ -7,27 +7,27 @@ This module adds the three-line convenience workflow:
 
 ```python
 import strider
-lift = strider.load_elf("path/to/file.elf")        # → ElfLifter
+lift = strider.lift.load_elf("path/to/file.elf")        # → ElfLifter
 cfg, function, unresolved = lift.analyze("function_name")
 matches = function.find_all(strider.pattern.call())  # → list[Match]
 ```
 
-`strider.load_elf(path)` returns an `ElfLifter` — an `ElfLifter` IS a
-`Lifter` (`isinstance(lift, strider.Lifter)` is true): it holds the ELF
+`strider.lift.load_elf(path)` returns an `ElfLifter` — an `ElfLifter` IS a
+`Lifter` (`isinstance(lift, strider.lift.Lifter)` is true): it holds the ELF
 symbol backend AND the persistent lift+optimise+resolve state (the same
-Rust handle `strider.lifter(...)` builds), wired with the ELF's memory
+Rust handle `strider.lift.lifter(...)` builds), wired with the ELF's memory
 as both the code reader and the read-only-memory image for
 `LoadReadOnly` constant folding.  It exposes symbols, sizes, the entry
 point, raw reads, and a name-aware `analyze(target)` that resolves a
 `str` symbol name (or accepts an address) and returns the same
 `(Cfg, Function, unresolved_addrs)` tuple as the base `Lifter.analyze`.
 
-`strider.load_elf(path, from_segments=True)` picks the ELF
+`strider.lift.load_elf(path, from_segments=True)` picks the ELF
 region-collection strategy explicitly (PT_LOAD program headers when
 `from_segments=True`, the default; section headers when `False`).
 
 For non-ELF / firmware / custom-source cases, build a `Lifter`
-directly with `strider.lifter(arch, mem, rom=None)` (the native
+directly with `strider.lift.lifter(arch, mem, rom=None)` (the native
 Rust handle) and call its `analyze(addr, cc, ...)`.  Pattern queries
 (`find_all` / `find_unique`) and the addr-only
 `fingerprint`/`asm_fingerprint` live directly on the returned
@@ -121,7 +121,7 @@ def _arch_and_cc_for_elf(
     For ARM the choice between `arm` and `arm_thumb` is driven by
     the low bit of the entry-point address (Thumb interworking
     convention).  Callers that want a different default can pass an
-    explicit `arch=` / `cc=` to `strider.load_elf(...)`.
+    explicit `arch=` / `cc=` to `strider.lift.load_elf(...)`.
     """
     em = header.e_machine
     le = header.is_little_endian
@@ -164,7 +164,7 @@ def _arch_and_cc_for_elf(
         return arch, CallingConvention.powerpc64_elf_v2()
     raise ValueError(
         f"unsupported ELF e_machine={em}; pass an explicit SleighArch + "
-        f"CallingConvention via strider.load_elf(path, arch=..., cc=...) instead"
+        f"CallingConvention via strider.lift.load_elf(path, arch=..., cc=...) instead"
     )
 
 
@@ -244,7 +244,7 @@ def load_elf(
     cc: Optional[CallingConvention] = None,
 ) -> "ElfLifter":
     """Load an ELF binary and return an `ElfLifter` — an `ElfLifter` IS a
-    `Lifter` (`isinstance(lift, strider.Lifter)` is true), with the arch
+    `Lifter` (`isinstance(lift, strider.lift.Lifter)` is true), with the arch
     and userland calling convention auto-picked from the ELF header.
 
     `from_segments=True` (the default) walks **PT_LOAD program headers**
@@ -262,10 +262,10 @@ def load_elf(
     firmware with a custom CC) pass an explicit `arch=` / `cc=`, e.g.:
 
     ```python
-    lift = strider.load_elf(
+    lift = strider.lift.load_elf(
         "vmlinux-i386",
-        arch=strider.SleighArch.x86(),
-        cc=strider.CallingConvention.x86_linux_kernel(),
+        arch=strider.sleigh.SleighArch.x86(),
+        cc=strider.sleigh.CallingConvention.x86_linux_kernel(),
     )
     ```
 
@@ -288,8 +288,8 @@ def load_elf(
 
 class ElfLifter(Lifter):
     """The loaded ELF binary as a `Lifter`: `ElfLifter` IS a `Lifter`
-    (`isinstance(lift, strider.Lifter)` is true) — it carries the same
-    persistent lift+optimise+resolve state as a plain `strider.lifter(...)`
+    (`isinstance(lift, strider.lift.Lifter)` is true) — it carries the same
+    persistent lift+optimise+resolve state as a plain `strider.lift.lifter(...)`
     handle, wired with the ELF's memory — the writable-inclusive reader
     as the code reader, and the runtime-immutable reader (code +
     read-only only) as the rom for `LoadReadOnly` constant folding — PLUS
@@ -298,15 +298,18 @@ class ElfLifter(Lifter):
     override that resolves a `str` symbol to an address before delegating
     to the base `Lifter.analyze`.
 
-    Constructed via `strider.load_elf(path)` / `load_elf(path,
+    Constructed via `strider.lift.load_elf(path)` / `load_elf(path,
     from_segments=False)` — for the auto-detected common case, or
     with explicit `arch=` / `cc=` for kernel / syscall / custom-ABI
     workflows.  Never construct `ElfLifter(...)` directly.  Analyse many
     functions by calling `analyze` repeatedly:
 
     ```python
-    lift = strider.load_elf("vmlinux-i386", arch=strider.SleighArch.x86(),
-                            cc=strider.CallingConvention.x86_linux_kernel())
+    lift = strider.lift.load_elf(
+        "vmlinux-i386",
+        arch=strider.sleigh.SleighArch.x86(),
+        cc=strider.sleigh.CallingConvention.x86_linux_kernel(),
+    )
     for fn in lift.functions():
         cfg, function, unresolved = lift.analyze(fn)
     ```
@@ -407,7 +410,7 @@ class ElfLifter(Lifter):
     def reader(self) -> object:
         """The raw multi-region `BufferReader` assembled from the ELF's
         loaded sections — the low-level code reader you can hand to
-        `strider.lifter` or `strider.Sleigh` when dropping below the
+        `strider.lift.lifter` or `strider.sleigh.Sleigh` when dropping below the
         high-level `analyze` facade."""
         return self._elf.reader()
 

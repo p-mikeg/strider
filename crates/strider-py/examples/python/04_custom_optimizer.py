@@ -27,17 +27,17 @@ from strider.pattern import Capture, add, anything, load, store, var
 WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
-elf = strider.load_elf(str(FIXTURE))
+elf = strider.lift.load_elf(str(FIXTURE))
 addr = elf.symbol("array_sum")
 
 # `ElfLifter.analyze` drives the full default pipeline already — this
 # is the baseline every further clone below starts from.
 _cfg, baseline, _unresolved = elf.analyze(
-    addr, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+    addr, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
 )
 
 
-def shape(g: strider.Function) -> dict[str, int]:
+def shape(g: strider.ir.Function) -> dict[str, int]:
     """A small grab-bag summary so we can compare graphs cheaply.
 
     `nodes` counts reachable-from-entry nodes via `anything()` rather
@@ -65,7 +65,7 @@ print(f"\nreintroduced {n} redundant `y + 0` sub-expression(s)")
 print(f"no further optimization applied                 : {shape(no_opt)}")
 
 # A hand-built PARTIAL pipeline: just enough to fold the identity back.
-partial_pipe = strider.OptimizerPipeline.empty()
+partial_pipe = strider.opt.OptimizerPipeline.empty()
 partial_pipe.add(strider.opt.ConstantFold())
 partial = no_opt.clone()
 elf.optimize(partial, partial_pipe)
@@ -75,7 +75,7 @@ print(f"ConstantFold-only pipeline                      : {shape(partial)}")
 # would additionally clean up phi/branch redundancy this fixture
 # doesn't happen to exercise).
 full = no_opt.clone()
-elf.optimize(full, strider.OptimizerPipeline.default())
+elf.optimize(full, strider.opt.OptimizerPipeline.default())
 print(f"default pipeline                                : {shape(full)}")
 
 print(

@@ -68,7 +68,7 @@ pub struct PyCapture {
 impl PyCapture {
     /// Create a fresh, globally-unique capture variable for binding a
     /// matched node.  Retrieve the binding after a match via
-    /// `Match[c]` / `Match.uint(c)` / etc.
+    /// `Match[c]` / `Match.const_uint(c)` / etc.
     #[new]
     fn new() -> Self {
         Self {
@@ -1625,11 +1625,12 @@ pub fn initial_var_for(vn: crate::sleigh::PyVn) -> PyPat {
 /// ```
 ///
 /// Captures under an alternative that did not fire are left UNBOUND (not
-/// defaulted), so `Match.has(c)` / a `None` from `Match.uint(c)` tells you
-/// which arm matched — and lets you supply your own default for the other:
+/// defaulted), so `Match.has(c)` / a `None` from `Match.const_uint(c)` tells
+/// you which arm matched — and lets you supply your own default for the
+/// other:
 ///
 /// ```python
-/// offset = h.uint(off) if h.has(off) else 0
+/// offset = h.const_uint(off) if h.has(off) else 0
 /// ```
 #[pyfunction]
 pub fn one_of(patterns: Vec<Py<PyAny>>) -> PyResult<PyPat> {

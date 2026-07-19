@@ -70,55 +70,70 @@ The wheel is `abi3` (Python 3.9+). A pip-based legacy install path is documented
 import strider
 from strider.pattern import Capture, var, add, load
 
-# 1. Load an ELF.  `strider.load` returns a `Program`: one object that
-#    is the loaded binary — arch + calling convention auto-detected,
-#    code + ROM readers wired internally, symbols/entry-point ready.
-prog = strider.load("fixtures/out/x86/memory.elf")
+# 1. Load an ELF.  `strider.lift.load_elf` returns an `ElfLifter`: one
+#    object that IS the loaded binary (`isinstance(prog, strider.lift.Lifter)`
+#    is true) — arch + calling convention auto-detected, code + ROM
+#    readers wired internally, symbols/entry-point ready.
+prog = strider.lift.load_elf("fixtures/out/x86/memory.elf")
 #    (kernel / syscall / custom-ABI: pass arch=… / cc=… / apply_relocations=True)
 
-# 2. Lift + optimize one function (symbol name or address) → an `Analysis`.
-#    Pass `function_max_size=N` to bound the lift to [entry, entry+N) on
-#    stripped binaries; the symbol's recorded size is used by default.
-a = prog.analyze("array_sum", allow_code_before_start_addr=True)
+# 2. Lift + optimize one function (symbol name or address).  Pass
+#    opts.cfg.function_max_size=N to bound the lift to [entry, entry+N)
+#    on stripped binaries; the symbol's recorded size is used by default.
+#    Returns (Cfg, Function, unresolved_addrs) — `cfg` is the FINAL
+#    resolved CFG `function` was actually lifted from, so no rebuild is
+#    needed to render it (see step 4).
+cfg, function, unresolved = prog.analyze(
+    "array_sum",
+    opts=strider.lift.LifterOptions(
+        cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
+    ),
+)
 
-# 3. Query the optimized IR.
+# 3. Query the optimized IR.  Pattern queries live directly on `Function`.
 ptr, off = Capture(), Capture()
-for hit in a.find(load(addr=add(var(ptr), var(off))), ignore_casts=True):
-    print(f"load at {hit.uint(ptr)} + {hit.uint(off):#x}")
+for hit in function.find_all(load(addr=add(var(ptr), var(off))), ignore_casts=True):
+    off_val = hit.const_uint(off)
+    print(f"load at {hit.const_uint(ptr)} + {off_val if off_val is not None else '<symbolic>'}")
 
-# 4. Visualise.
-a.dump_html("graph.html")   # the IR graph
-a.cfg.to_html("cfg.html")   # the control-flow graph
+# 4. Visualise.  The pretty renderer needs a Sleigh (for register names),
+#    which only the `Lifter` (`prog`, here an `ElfLifter`) owns.
+prog.to_html(function, "graph.html")   # the IR graph
+cfg.to_html("cfg.html")                # the control-flow graph (already
+                                        # the final resolved CFG from step 2)
 ```
 
 `prog` also exposes `prog.symbol(name)`, `prog.symbol_size(name)`,
 `prog.symbols()`, `prog.entry_point()`, `prog.read(addr, size)`, and
 `prog.functions()`.  For non-ELF / firmware / custom data sources, build a
-low-level `strider.MemoryMap` (raw byte regions) and use `strider.run(...)`
-directly.
+low-level `strider.reader.BufferReader` (raw byte regions) and drive
+`strider.lift.lifter(arch, mem, rom=None)` directly — its
+`.analyze(addr, cc, opts=...)` returns the same
+`(Cfg, Function, unresolved_addrs)` tuple.
 
 ### Analyze many functions with one setup
 
-To analyse many functions sharing one configuration (arch + cc + memory
-+ options), build a frozen `Analyzer` once and pass only the target per
-call — any frozen option can be overridden for a single call:
+The `Lifter` / `ElfLifter` handle itself is the frozen setup — arch,
+Sleigh, and the code/ROM readers are all built once at construction.
+Analyse as many functions as you want by calling `.analyze(...)`
+repeatedly; `cc` is a required argument of every call, so one handle
+can even mix calling conventions across functions:
 
 ```python
-azr = prog.analyzer()                  # configure once
 for fn in prog.functions():
-    a = azr.analyze(fn)                # only the target per call
+    cfg, function, unresolved = prog.analyze(fn)
 
-# Standalone (non-ELF / firmware) form over a raw MemoryMap
+# Standalone (non-ELF / firmware) form over a raw BufferReader
 # (address targets only — no ELF symbol table):
-azr = strider.analyzer(arch, cc, mem)
-a = azr.analyze(0x8000)
+lft = strider.lift.lifter(arch, mem)
+cfg, function, unresolved = lft.analyze(0x8000, cc)
 ```
 
 ---
 
 ## Pattern features
 
-The pattern crate covers every IR node kind the lifter emits.  Below are the highest-leverage features when querying a real graph.  In the snippets below `g` is the lifted IR queried — i.e. `g = a.function` from the quickstart's `Analysis`.
+The pattern crate covers every IR node kind the lifter emits.  Below are the highest-leverage features when querying a real graph.  In the snippets below `g` is the lifted IR queried — i.e. `g = function` from the quickstart's step 2.
 
 ### Set-membership target queries
 
@@ -134,7 +149,12 @@ hits = g.find_all(call().target(int_const_any_of([0x1000, 0x2000, 0x3000])))
 
 ### Multi-pattern joins on shared captures
 
-Find the `K` such that two patterns simultaneously match with the same binding for a shared capture:
+Find the `K` such that two patterns simultaneously match with the same
+binding for a shared capture.  Passing a `list` of patterns to `find_all`
+(instead of one) joins them on shared captures — there is no separate
+`find_joined` method.  Each result is a single merged `Match` (not a
+per-pattern tuple), so every capture from every pattern in the list is
+readable straight off it:
 
 ```python
 from strider.pattern import (
@@ -142,14 +162,14 @@ from strider.pattern import (
 )
 
 # Field-offset recovery: vn_open(&nd, ...); script_vp = nd.ni_vp;
-rbp = sleigh.reg("RBP")
+rbp = prog.reg("RBP")   # `Lifter.reg` looks up a register by Sleigh name
 k_call, k_load = Capture(), Capture()
-for tup in g.find_joined([
+for m in g.find_all([
     call().target(int_const(VN_OPEN))
         .arg(0, add(initial_var_for(rbp), any_int_const(k_call))),
     load().addr(add(initial_var_for(rbp), any_int_const(k_load))),
 ]):
-    field_offset = (tup[1].uint(k_load) - tup[0].uint(k_call)) & 0xFFFFFFFFFFFFFFFF
+    field_offset = (m.const_uint(k_load) - m.const_uint(k_call)) & 0xFFFFFFFFFFFFFFFF
     print(f"field offset = {field_offset:#x}")
 ```
 
@@ -175,7 +195,7 @@ Every IR node carries the sorted, deduped list of machine-instruction addresses 
 c = Capture()
 for hit in g.find_all(call().capture(c)):
     addrs = hit.asm_fingerprint(c)
-    print(f"call {hit.uint(c):#x} contributed by asm at: "
+    print(f"call {hit.const_uint(c):#x} contributed by asm at: "
           + ", ".join(f"{a:#x}" for a in addrs))
 ```
 
@@ -184,11 +204,12 @@ for hit in g.find_all(call().capture(c)):
 ### Predicate guards
 
 ```python
-from strider.pattern import any_, var
+from strider.pattern import var
 
 # Match any int that is divisible by 16.
 def is_aligned(m):
-    return m.uint(c) % 16 == 0
+    v = m.const_uint(c)
+    return v is not None and v % 16 == 0
 
 c = Capture()
 hits = g.find_all(var(c).when(is_aligned))
@@ -199,21 +220,24 @@ The predicate proxy is short-lived: it's only valid during the predicate call.  
 ### Per-node introspection (no pattern needed)
 
 ```python
-g.node_kind(node_id)          # "IntConst", "Call", "Phi", ...
 g.node_ids()                  # [0, 1, 2, ...] every reachable node
-g.asm_fingerprint(node_id)    # [0x1000, 0x1004, ...]
-g.call_other_name(node_id)    # "cpuid" or None
+n = g.node(node_id)           # a `Node` handle on that node
+n.kind()                      # "IntConst", "Call", "Phi", ...
+n.asm_fingerprint()           # [0x1000, 0x1004, ...]
+n.call_other_name()           # "cpuid" or None
 g.validate()                  # None on success, error string on failure
 g.compact()                   # drop unreachable nodes
 ```
 
 ### Raw graph dump (debugging the real shape)
 
-`to_html`/`html_str` render a *pretty* view (constants inlined, virtual
-nodes for Call clobbers / If branches). To see the graph **exactly as
-stored** — one node per `NodeId` reachable from entry, one edge per input
-edge, side-tables (stack offset, phi tag, asm fingerprints, …) shown
-inline, no inlining or virtual nodes — use the raw renderer:
+`Lifter.to_html`/`Lifter.to_dot` (used in step 4 of the quickstart) render
+a *pretty* view (constants inlined, virtual nodes for Call clobbers / If
+branches) and need a Sleigh, which only the `Lifter` owns. To see the
+graph **exactly as stored** — one node per `NodeId` reachable from entry,
+one edge per input edge, side-tables (stack offset, phi tag, asm
+fingerprints, …) shown inline, no inlining or virtual nodes — call the
+same-named methods directly on `Function` instead (no Sleigh needed):
 
 ```python
 g.to_dot()                    # Graphviz DOT, 1:1 with the stored graph
@@ -268,13 +292,13 @@ A few common surprises when a pattern that "should obviously match" returns no h
 
 3. **Commutativity.**  `add` / `mul` / `and` / `or` / `xor` (and the boolean equivalents) and `IntCmpOp::{Equal,Carry,Scarry}` plus `FloatCmpOp::Equal` automatically try both operand orderings.  Non-commutative ops (`sub`, `div`, `shl`, `int_lt`, …) keep stated order.  Use `int_binary("Add", l, r).ordered()` to force left-to-right matching on a typed binary builder.  `.ordered()` on a finalised `Pat` (returned by free constructors like `add(x, y)`) raises `PatternError` because commutativity is baked in at construction.
 
-4. **`phi()` matches a tagged `Phi` only** (one whose `Function::get_vn_for_value` on its output is `Some`, i.e. the lifter-emitted SSA φ for a register-aliased read).  Use `mem_phi()` for the memory-token phi at join points; `value_phi()` for an anonymous value phi (one with no `value_vn` tag).
+4. **`phi()` matches a tagged `Phi` only** (one whose `Function::get_vn_for_value` on its output is `Some`, i.e. the lifter-emitted SSA φ for a register-aliased read).  Use `mem_phi()` for the memory-token phi at join points.  There is currently no pattern builder for an anonymous value phi (one with no `value_vn` tag).
 
 5. **Optimisation level.**  Patterns generally run on the post-`default_pipeline` graph.  Pre-optimisation IR may contain shapes (multi-input `MemPhi`, single-pred `Region`, `Or(IntConst(0):I1, x)`, etc.) that `RedundantPhis` / `ConstantFold` would have collapsed.
 
 6. **Width mismatch / signedness.**  `int_const(42)` matches a constant whose value equals 42 at the node's own width, so a `42` lifted as `IntConst(42 : U32)` and one lifted as `IntConst(42 : U64)` both match.  The subtlety is *signed* values: a negative constant narrowed to U32 (e.g. `-50` as `0xFFFFFFCE`) is a different bit pattern from its 64-bit sign-extension, so `int_const(-50)` won't match the narrowed form.  Use `signed_int_const(-50)`, which matches the value sign-correctly at whatever width the node carries.
 
-When stuck, dump the IR (`a.dump_html("graph.html")` and open in a browser) and walk forward from `entry` looking for the shape you expected.
+When stuck, dump the IR (`prog.to_html(function, "graph.html")` and open in a browser) and walk forward from `entry` looking for the shape you expected.
 
 ---
 

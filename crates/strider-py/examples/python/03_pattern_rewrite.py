@@ -26,10 +26,10 @@ from strider.pattern import Capture, add, int_const, load, var
 WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
-elf = strider.load_elf(str(FIXTURE))
+elf = strider.lift.load_elf(str(FIXTURE))
 addr = elf.symbol("array_sum")
 _cfg, function, _unresolved = elf.analyze(
-    addr, opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+    addr, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
 )
 
 # Snapshot the load count before rewriting.

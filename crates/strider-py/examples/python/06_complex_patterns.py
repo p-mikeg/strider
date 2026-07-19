@@ -34,9 +34,9 @@ from strider.pattern import (
 WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
-prog = strider.load_elf(str(FIXTURE))
+prog = strider.lift.load_elf(str(FIXTURE))
 _cfg, function, unresolved = prog.analyze(
-    "array_sum", opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+    "array_sum", opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
 )
 
 
@@ -57,8 +57,8 @@ hits = function.find_all(pat1, ignore_casts=True)
 print(f"found {len(hits)} indexed-array-load shapes")
 for h in hits[:3]:
     print(
-        f"  base={h.uint('base')!r:>12}  idx={h.uint('idx')!r:>10}  "
-        f"stride={h.uint('stride')!r:>4}"
+        f"  base={h.const_uint('base')!r:>12}  idx={h.const_uint('idx')!r:>10}  "
+        f"stride={h.const_uint('stride')!r:>4}"
     )
 
 
@@ -89,7 +89,7 @@ print("\n=== 3. .when predicate guard ===")
 unfiltered = function.find_all(load(), ignore_casts=True)
 small_addr = function.find_all(
     load(addr=add("b", "o")).when(
-        lambda m: (m.uint("o") or 0) < 16
+        lambda m: (m.const_uint("o") or 0) < 16
     ),
     ignore_casts=True,
 )

@@ -3,9 +3,9 @@
 Combines the two callback ABCs (see examples 02 and 07) into one lift,
 then shows two things you do with the resulting IR:
 
-  - `DictMem(strider.MemReader)` serves the *code* bytes sleigh
+  - `DictMem(strider.reader.MemReader)` serves the *code* bytes sleigh
     disassembles (the instruction-fetch path).
-  - `DictRom(strider.ReadOnlyMemory)` serves the *data* the optimizer's
+  - `DictRom(strider.reader.ReadOnlyMemory)` serves the *data* the optimizer's
     `LoadReadOnly` pass folds constant-address loads against.
 
 The code at 0x0 computes `arg0 + *(uint64*)0x1000` and returns it:
@@ -14,7 +14,7 @@ The code at 0x0 computes `arg0 + *(uint64*)0x1000` and returns it:
     48 89 f8                   mov rax, rdi
     c3                         ret
 
-`Lifter.analyze(...)` (built via `strider.lifter(arch, mem, rom=rom)`)
+`Lifter.analyze(...)` (built via `strider.lift.lifter(arch, mem, rom=rom)`)
 runs the full default optimizer pipeline. `LoadReadOnly` folds the load
 into `IntConst(42)`, leaving `Add(arg0, 42)` in the graph. We then:
 
@@ -46,7 +46,7 @@ CODE = (
 )
 
 
-class DictMem(strider.MemReader):
+class DictMem(strider.reader.MemReader):
     """Serve code bytes from a dict; count callbacks to prove it fired."""
 
     def __init__(self, regions: dict[int, bytes]) -> None:
@@ -63,7 +63,7 @@ class DictMem(strider.MemReader):
         return None
 
 
-class DictRom(strider.ReadOnlyMemory):
+class DictRom(strider.reader.ReadOnlyMemory):
     """Serve a read-only word from Python for LoadReadOnly to fold against."""
 
     def __init__(self, base: int, blob: bytes) -> None:
@@ -85,11 +85,11 @@ class DictRom(strider.ReadOnlyMemory):
 mem = DictMem({CODE_ADDR: CODE})
 rom = DictRom(base=DATA_ADDR, blob=DATA_VALUE.to_bytes(8, "little"))
 
-lft = strider.lifter(strider.SleighArch.x86_64(), mem, rom)
+lft = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem, rom)
 _cfg, fn, _unresolved = lft.analyze(
     CODE_ADDR,
-    strider.CallingConvention.x86_64_systemv(),
-    opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
+    strider.sleigh.CallingConvention.x86_64_systemv(),
+    opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)),
 )
 
 print(f"DictMem.read (code)   fired {mem.calls} time(s)")
@@ -109,8 +109,8 @@ k = Capture()
 matches = fn.find_all(add(function_arg(0), var(k)), ignore_casts=True)
 print(f"matched {len(matches)} `arg0 + <captured>` shape(s)")
 for m in matches:
-    print(f"  captured value k = {m.uint(k)}   (== {DATA_VALUE}? {m.uint(k) == DATA_VALUE})")
-assert any(m.uint(k) == DATA_VALUE for m in matches), "expected to capture 42"
+    print(f"  captured value k = {m.const_uint(k)}   (== {DATA_VALUE}? {m.const_uint(k) == DATA_VALUE})")
+assert any(m.const_uint(k) == DATA_VALUE for m in matches), "expected to capture 42"
 
 
 # --- 2. Template rewrite on a CLONE: arg0 + 42 → arg0 + 0 -----------------

@@ -417,8 +417,8 @@ impl PyFunction {
     /// The handle is a discoverable entry point into the IR graph: from
     /// it you can read the node's `kind()`, walk its `inputs()` (which
     /// return more `Node`s), pull out `const_int()` / `const_bool()`
-    /// values, and recover the `fingerprint()` — instead of juggling raw
-    /// `u32` ids through the typed `node_*` getters.
+    /// values, and recover the `asm_fingerprint()` — instead of juggling
+    /// raw `u32` ids through the typed `node_*` getters.
     ///
     /// Raises `StriderError` for an invalid `node_id`.
     fn node(slf: Py<Self>, py: Python<'_>, node_id: u32) -> PyResult<crate::node::PyNode> {

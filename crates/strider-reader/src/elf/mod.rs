@@ -20,7 +20,7 @@
 //!   something to patch.  [`elf_get_loadable_regions_sections_only`]
 //!   (+ its `_including_writable` sibling) force the section-walk
 //!   strategy even for a linked ET_EXEC/ET_DYN binary — used by
-//!   `strider.load_elf_from_sections`.
+//!   `strider.lift.load_elf(path, from_segments=False)`.
 //! - [`reader`] — [`ElfFileMemReader`], the
 //!   [`rsleigh::MemReader`] + [`crate::ReadOnlyMemory`] impl that owns
 //!   its regions.

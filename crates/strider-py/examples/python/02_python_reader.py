@@ -1,7 +1,7 @@
 """02 — Custom Python `MemReader`: lift bytes the binary reader can't reach.
 
 The fast path is `BufferReader` (data lives entirely in Rust). The flexible
-path is subclassing `strider.MemReader` so your `read(addr, size)` runs
+path is subclassing `strider.reader.MemReader` so your `read(addr, size)` runs
 in Python — useful for lazy formats, paged-from-disk firmware, decrypted
 ROM dumps, or any source the standard ELF reader doesn't cover.
 
@@ -24,7 +24,7 @@ import strider
 from strider.pattern import ret
 
 
-class DictMem(strider.MemReader):
+class DictMem(strider.reader.MemReader):
     """Serve bytes from a Python dict mapping address → bytes object.
 
     Tracks how often Rust called us, so we can prove the callback
@@ -54,8 +54,8 @@ class DictMem(strider.MemReader):
 INSTR = bytes([0x90, 0x90, 0xc3]) + bytes([0x90] * 64)
 mem = DictMem({0x1000: INSTR})
 
-lft = strider.lifter(strider.SleighArch.x86(), mem)
-_cfg, function, _unresolved = lft.analyze(0x1000, strider.CallingConvention.x86_cdecl())
+lft = strider.lift.lifter(strider.sleigh.SleighArch.x86(), mem)
+_cfg, function, _unresolved = lft.analyze(0x1000, strider.sleigh.CallingConvention.x86_cdecl())
 
 # Confirm the IR has at least one return.
 hits = function.find_all(ret())

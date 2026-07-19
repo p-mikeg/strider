@@ -5,7 +5,7 @@ addresses are compile-time constants, by reading the value from a
 caller-supplied ROM. The ROM can be:
 
   - `BufferReader` (fast — Rust-side reads).
-  - Any subclass of `strider.ReadOnlyMemory` (callback — Python `read`
+  - Any subclass of `strider.reader.ReadOnlyMemory` (callback — Python `read`
     fires once per fold candidate, under the GIL).
 
 This example serves a tiny lookup-table ROM from Python and shows that
@@ -29,7 +29,7 @@ WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
 
-class CallbackRom(strider.ReadOnlyMemory):
+class CallbackRom(strider.reader.ReadOnlyMemory):
     """Serve a flat byte blob from Python. Tracks how often Rust called us
     so we can confirm the LoadReadOnly pass actually invoked the callback.
     """
@@ -52,7 +52,7 @@ class CallbackRom(strider.ReadOnlyMemory):
 
 # Use the real ELF for the code (sleigh fetch needs disassembly bytes),
 # but layer a Python-served ROM on top to demonstrate the callback path.
-elf = strider.load_elf(str(FIXTURE))
+elf = strider.lift.load_elf(str(FIXTURE))
 mem = elf.reader()
 addr = elf.symbol("array_sum")
 
@@ -62,17 +62,17 @@ addr = elf.symbol("array_sum")
 # the ELF BufferReader doesn't cover.
 rom = CallbackRom(base=0xCAFE0000, blob=bytes(range(16)))
 
-# The ROM flows in through `strider.lifter(..., rom=...)` — the callback
+# The ROM flows in through `strider.lift.lifter(..., rom=...)` — the callback
 # ABC is wired to LoadReadOnly by the Lifter, so there is no
 # `LoadReadOnly(rom)` pass to construct by hand. `mem` serves both the
 # sleigh instruction fetch (code) and the ELF-backed constant loads;
 # `rom` layers our Python-served blob on top for addresses the ELF
 # doesn't cover.
-lft = strider.lifter(strider.SleighArch.x86(), mem, rom)
+lft = strider.lift.lifter(strider.sleigh.SleighArch.x86(), mem, rom)
 _cfg, function, _unresolved = lft.analyze(
     addr,
-    strider.CallingConvention.x86_cdecl(),
-    opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
+    strider.sleigh.CallingConvention.x86_cdecl(),
+    opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)),
 )
 after = len(function.find_all(load()))
 

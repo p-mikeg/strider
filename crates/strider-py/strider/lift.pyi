@@ -157,7 +157,7 @@ def lifter(
 class ElfLifter(Lifter):
     """The loaded ELF binary as a `Lifter` — `strider.lift.load_elf(path)`
     returns one.  `ElfLifter` IS a `Lifter`
-    (`isinstance(x, strider.Lifter)` is true): it carries the same
+    (`isinstance(x, strider.lift.Lifter)` is true): it carries the same
     persistent lift+optimise+resolve state wired with the ELF's memory
     (as both code reader and ROM), plus the ELF symbol backend
     (symbols, sizes, the entry point, raw reads) and a name-aware

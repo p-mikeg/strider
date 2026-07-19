@@ -18,16 +18,16 @@ import pathlib
 import strider
 from strider.pattern import add, load
 
-# 1. Load the ELF. `strider.load_elf(path)` returns an `ElfLifter` —
+# 1. Load the ELF. `strider.lift.load_elf(path)` returns an `ElfLifter` —
 #    one object that *is* the loaded binary (it IS a `Lifter`:
-#    `isinstance(prog, strider.Lifter)` is true). It auto-detects the
+#    `isinstance(prog, strider.lift.Lifter)` is true). It auto-detects the
 #    arch + calling convention from the ELF header, wires the code +
 #    ROM readers internally, and answers `symbol()` / `symbols()` /
 #    `entry_point()` queries — no pyelftools dance required.
 WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
-prog = strider.load_elf(str(FIXTURE))
+prog = strider.lift.load_elf(str(FIXTURE))
 addr = prog.symbol("array_sum")
 print(f"array_sum @ {addr:#x}")
 
@@ -40,7 +40,7 @@ print(f"array_sum @ {addr:#x}")
 #    queries (`find_all`) live directly on the `Function` — no wrapper
 #    needed.
 cfg, function, unresolved = prog.analyze(
-    "array_sum", opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+    "array_sum", opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
 )
 print(
     f"lifted array_sum: {function.node_count()} nodes, "
@@ -63,7 +63,7 @@ narrow = function.find_all(
 )
 print(f"found {len(narrow)} loads of the form `base + offset`")
 for hit in narrow:
-    off_val = hit.uint("off")
+    off_val = hit.const_uint("off")
     print(f"  offset = {off_val if off_val is not None else '<symbolic>'}")
 
 # 4. Visualize. Open the HTMLs in any browser to see the rendered

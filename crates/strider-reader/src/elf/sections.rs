@@ -136,11 +136,11 @@ pub fn elf_get_loadable_regions_including_writable(
 /// Force the **section-header-walk** strategy (first-wins VMA dedup)
 /// regardless of `obj.kind()` — bypassing [`elf_get_loadable_regions`]'s
 /// kind dispatch even for an ET_EXEC / ET_DYN binary that DOES carry
-/// PT_LOAD segments.  Used by `strider.load_elf_from_sections` (the
-/// Python high-level facade) when the caller explicitly wants
-/// section-granular regions (e.g. `.text` / `.rodata` / `.plt` as
-/// separate mappings) instead of the segment loader's coalesced
-/// PT_LOAD ranges.
+/// PT_LOAD segments.  Used by `strider.lift.load_elf(path,
+/// from_segments=False)` (the Python high-level facade) when the caller
+/// explicitly wants section-granular regions (e.g. `.text` / `.rodata`
+/// / `.plt` as separate mappings) instead of the segment loader's
+/// coalesced PT_LOAD ranges.
 ///
 /// # Errors
 ///

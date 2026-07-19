@@ -4,10 +4,12 @@ version = "0.1.0"
 edition = { workspace = true }
 
 [lib]
-# The rlib is named `strider_py` (Rust-side identifier) so the Python
-# distribution name (`strider`, set by maturin's
-# `[tool.maturin] module-name = "strider.strider"`) is independent of
-# the cargo crate name.  The Python import path stays `import strider`.
+# The rlib is named `strider_py` (Rust-side identifier) so the compiled
+# extension module name (set by maturin's
+# `[tool.maturin] module-name = "strider._strider"`) is independent of
+# the cargo crate name.  The Python import path stays `import strider`
+# (the pure-Python `strider` package wraps the `strider._strider`
+# extension — see `crates/strider-py/strider/__init__.py`).
 name = "strider_py"
 # `rlib` is needed so the `stub_gen` example can link the crate as a
 # regular Rust library and run `pyo3-stub-gen`'s inventory-driven

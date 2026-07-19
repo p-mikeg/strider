@@ -62,8 +62,8 @@ import strider
 from strider.pattern import Capture, var, add, load
 
 # 1. Load — auto-picks arch + calling convention from the ELF header.
-#    `s` IS a `Lifter` (`isinstance(s, strider.Lifter)` is true).
-s = strider.load_elf("fixtures/out/x86/memory.elf")
+#    `s` IS a `Lifter` (`isinstance(s, strider.lift.Lifter)` is true).
+s = strider.lift.load_elf("fixtures/out/x86/memory.elf")
 
 # 2. Analyze a single function by symbol name (or by address int) —
 #    returns the same `(Cfg, Function, unresolved)` tuple as `Lifter.analyze`.
@@ -73,8 +73,8 @@ cfg, function, unresolved = s.analyze("array_sum")
 base, off = Capture(), Capture()
 pat = load(addr=add(var(base), var(off)))
 for hit in function.find_all(pat, ignore_casts=True):
-    print(hit.uint(off))
-    # `function.node(hit.root).fingerprint()` returns the
+    print(hit.const_uint(off))
+    # `function.node(hit.root).asm_fingerprint()` returns the
     # contributing-instruction machine addresses — proof-of-correctness
     # audit trail.
 
@@ -82,7 +82,7 @@ for hit in function.find_all(pat, ignore_casts=True):
 #    `Lifter`/`ElfLifter` that produced `function`, not on `Function`
 #    itself — only the Lifter owns the Sleigh needed to resolve
 #    register names.
-s.dump_html(function, "graph.html")
+s.to_html(function, "graph.html")
 
 # Walk every function in the binary:
 for name in s.functions():
@@ -103,7 +103,8 @@ for name in s.functions():
 # Per-call options — a LifterOptions (mirroring strider_lift::LiftOptions,
 # nested CfgOptions):
 cfg, function, unresolved = s.analyze(
-    "array_sum", opts=strider.LifterOptions(cfg=strider.CfgOptions(function_max_size=64))
+    "array_sum",
+    opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=64)),
 )
 ```
 
@@ -114,10 +115,10 @@ the name → address lookup at the call site if you have one).
 tuple as `ElfLifter.analyze`:
 
 ```python
-mem = strider.BufferReader(0x8000, firmware_bytes)
-lift = strider.lifter(strider.SleighArch.arm_thumb(), mem)
+mem = strider.reader.BufferReader(0x8000, firmware_bytes)
+lift = strider.lift.lifter(strider.sleigh.SleighArch.arm_thumb(), mem)
 cfg, function, unresolved = lift.analyze(
-    0x8000, strider.CallingConvention.arm_aapcs()
+    0x8000, strider.sleigh.CallingConvention.arm_aapcs()
 )
 ```
 
@@ -128,55 +129,55 @@ down to the building blocks documented below.
 
 ## Low-level API — building blocks
 
-`strider.load_elf` is a convenience over the same handle you can build
-by hand: `strider.Lifter` (construct via `strider.lifter(arch, mem,
-rom=None)`).  `Lifter` OWNS the Sleigh (built from `mem`); `cc` is NOT
-bound at construction — it's a required argument of every `analyze`
-call, so one handle can analyze functions under different calling
-conventions.  There is no separate low-level "analyze one CFG, no
-indirect-branch resolution" handle — `build_cfg` is the structural-only
-half, `analyze` is the full lift+optimize+resolve pipeline; both live
-on the one `Lifter`.
+`strider.lift.load_elf` is a convenience over the same handle you can
+build by hand: `strider.lift.Lifter` (construct via
+`strider.lift.lifter(arch, mem, rom=None)`).  `Lifter` OWNS the Sleigh
+(built from `mem`); `cc` is NOT bound at construction — it's a required
+argument of every `analyze` call, so one handle can analyze functions
+under different calling conventions.  There is no separate low-level
+"analyze one CFG, no indirect-branch resolution" handle — `build_cfg` is
+the structural-only half, `analyze` is the full lift+optimize+resolve
+pipeline; both live on the one `Lifter`.
 
 ```python
 import strider
 from strider.pattern import Capture, var, add, load
 
-# 1. Build a raw code reader. For an ELF, `strider.load_elf(path,
+# 1. Build a raw code reader. For an ELF, `strider.lift.load_elf(path,
 #    from_segments=True)` parses sections + symbols + relocations and
 #    answers `.symbol(name)`;
 #    for a firmware blob / custom source, use a `BufferReader` (or
-#    subclass `strider.MemReader` for a Python-served source).
-elf = strider.load_elf("fixtures/out/x86/memory.elf")
+#    subclass `strider.reader.MemReader` for a Python-served source).
+elf = strider.lift.load_elf("fixtures/out/x86/memory.elf")
 mem = elf.reader()                 # the ELF's assembled BufferReader
 
 # 2. Build a `Lifter` over that reader and run the full pipeline
 #    (CFG → IR → optimize, including the indirect-branch fixed-point
 #    loop) in one call — returns `(Cfg, Function, unresolved_addrs)`;
 #    `cfg` is the FINAL resolved CFG that `function` was lifted from.
-lift = strider.lifter(strider.SleighArch.x86(), mem, rom=mem)
+lift = strider.lift.lifter(strider.sleigh.SleighArch.x86(), mem, rom=mem)
 cfg, function, unresolved = lift.analyze(
     elf.symbol("array_sum"),           # or any address int
-    strider.CallingConvention.x86_cdecl(),
-    opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True)),
+    strider.sleigh.CallingConvention.x86_cdecl(),
+    opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)),
 )
 
 # 3. Query the optimized graph with a pattern.
 base, off = Capture(), Capture()
 pat = load(addr=add(var(base), var(off)))
 for hit in function.find_all(pat, ignore_casts=True):
-    print(hit.uint(off))
+    print(hit.const_uint(off))
 
 # 4. Visualize. Both the CFG and the pretty IR render need the Sleigh
 #    only the `Lifter` owns, so both calls go through `lift`/`cfg`, not
 #    `function` directly.  `cfg` is the SAME CFG `analyze` returned above
 #    — no rebuild needed.
 cfg.to_html("cfg.html")
-lift.dump_html(function, "graph.html")
+lift.to_html(function, "graph.html")
 ```
 
-`strider.load_elf` is exactly this shape with steps 1 (reader) and the
-arch/cc detection done for you, plus a name-aware `analyze(target)`.
+`strider.lift.load_elf` is exactly this shape with steps 1 (reader) and
+the arch/cc detection done for you, plus a name-aware `analyze(target)`.
 
 ## Custom optimizer pipeline
 
@@ -185,7 +186,7 @@ read from the function under analysis at run time, not bound into the
 pass):
 
 ```python
-pipe = strider.OptimizerPipeline.empty()
+pipe = strider.opt.OptimizerPipeline.empty()
 pipe.add(strider.opt.ConstantFold())
 pipe.add(strider.opt.KnownBits())
 pipe.add(strider.opt.LoadForward())
@@ -195,18 +196,19 @@ lift.optimize(function, pipe)
 ```
 
 `optimize` lives on `Lifter` (not `Function`) — mutates `function` in
-place, draining `pipe`.  `strider.OptimizerPipeline.default()` builds
+place, draining `pipe`.  `strider.opt.OptimizerPipeline.default()` builds
 the canonical full pipeline in one call; `lift.optimize(function)`
 (no `pipeline` argument) re-runs that default pipeline in place —
 the replacement for the removed `Function.reoptimize()`.
+`pipe.passes` / `pipe.post_passes` list the applied pass names.
 
 `Lifter.analyze`/`ElfLifter.analyze` can also run a custom pipeline for
 one call only, via `LifterOptions.pipeline` (never settable on
-`strider.lifter(...)` itself):
+`strider.lift.lifter(...)` itself):
 
 ```python
 cfg, function, unresolved = lift.analyze(
-    addr, cc, opts=strider.LifterOptions(pipeline=strider.OptimizerPipeline.empty())
+    addr, cc, opts=strider.lift.LifterOptions(pipeline=strider.opt.OptimizerPipeline.empty())
 )
 ```
 
@@ -282,8 +284,8 @@ The `_` and `any_` strings are reserved wildcards (they convert to
   `float_to_float` — see the conversions list above.)
 * **Memory & control:** `load`, `store` (use `.stack_only()` /
   `.stack_offset(k)` for SP-relative accesses), `call`, `call_other`,
-  `ret`, `if_else`, `phi`, `mem_phi`, `value_phi`, `initial_var`,
-  `function_arg`, `function_arg_any`.
+  `ret`, `if_else`, `phi` (tagged only — no anonymous-value-phi builder),
+  `mem_phi`, `initial_var`, `function_arg`, `function_arg_any`.
 * **Typed family dispatchers:** `int_binary(op_str, l, r)`,
   `bool_binary(op_str, l, r)`, `float_binary(op_str, l, r)` —
   return builder objects that chain `.ordered()` / `.capture(c)` /
@@ -308,9 +310,9 @@ IR node is needed.
 print(m["off"])
 
 # Typed accessors.
-m.uint("off")        # Optional[int] — unsigned, masked to width
-m.int("off")         # Optional[int] — signed, sign-extended
-m.bool("flag")       # Optional[bool]
+m.const_uint("off")  # Optional[int] — unsigned, masked to width
+m.const_int("off")   # Optional[int] — signed, sign-extended
+m.const_bool("flag") # Optional[bool]
 m.float_bits("f")    # Optional[int]
 
 # Capture presence.
@@ -326,7 +328,7 @@ from strider.pattern import any_int_const
 c = Capture()
 
 # Restrict to constants smaller than 0x100.
-pat = any_int_const(c).when(lambda m: (m.uint(c) or 0) < 0x100)
+pat = any_int_const(c).when(lambda m: (m.const_uint(c) or 0) < 0x100)
 hits = function.find_all(pat)
 
 # `predicate(f)` is shorthand for `anything().when(f)`.
@@ -335,27 +337,30 @@ function.find_all(predicate(lambda m: True))
 ```
 
 The callback receives a `Match` — the same owned handle `find_all` /
-`find_all` / `find_joined` hand back for a completed match, with the
-same accessor set (`uint` / `int` / `bool` / `float_bits` / `has` /
-`[]` / `in`).  Returning `False` (or raising) fails the match; for
-commutative binary ops this triggers the swapped-operand retry
-automatically.
+`find_unique` hand back for a completed match (passing a `list` of
+patterns to `find_all` joins them on shared captures instead of a
+separate `find_joined` method), with the
+same accessor set (`const_uint` / `const_int` / `const_bool` /
+`float_bits` / `has` / `[]` / `in`).  Returning `False` (or raising)
+fails the match; for commutative binary ops this triggers the
+swapped-operand retry automatically.
 
 Because the predicate can fire mid-walk, before every capture in the
 pattern has bound, a capture that hasn't been reached yet reads as
-`None` (`uint` / `int` / `bool` / `float_bits`) or `False`
-(`has` / `in`) rather than raising.
+`None` (`const_uint` / `const_int` / `const_bool` / `float_bits`) or
+`False` (`has` / `in`) rather than raising.
 
 ## Python-implemented memory readers
 
-`strider.MemReader` and `strider.ReadOnlyMemory` are subclassable
-abstract base classes.  Override `read(addr, size) -> Optional[bytes]`
-and pass an instance anywhere the API accepts a reader — the `mem=` /
-`rom=` arguments of `strider.lifter` / `strider.Sleigh`, or a
-`BufferReader` in the same slot for in-process bulk data.
+`strider.reader.MemReader` and `strider.reader.ReadOnlyMemory` are
+subclassable abstract base classes.  Override
+`read(addr, size) -> Optional[bytes]` and pass an instance anywhere the
+API accepts a reader — the `mem=` / `rom=` arguments of
+`strider.lift.lifter` / `strider.sleigh.Sleigh`, or a `BufferReader` in
+the same slot for in-process bulk data.
 
 ```python
-class MyReader(strider.MemReader):
+class MyReader(strider.reader.MemReader):
     def __init__(self, fobj):
         super().__init__()
         self.fobj = fobj
@@ -366,8 +371,8 @@ class MyReader(strider.MemReader):
         return data if data else None
 
 reader = MyReader(open("binary.elf", "rb"))
-lift = strider.lifter(strider.SleighArch.x86(), reader)
-cfg, function, unresolved = lift.analyze(0x401000, strider.CallingConvention.x86_cdecl())
+lift = strider.lift.lifter(strider.sleigh.SleighArch.x86(), reader)
+cfg, function, unresolved = lift.analyze(0x401000, strider.sleigh.CallingConvention.x86_cdecl())
 ```
 
 `ReadOnlyMemory` follows the same pattern but for the optimizer's
@@ -376,7 +381,7 @@ takes no constructor argument — the rom flows through the `Lifter`, not
 the pass):
 
 ```python
-class MyROM(strider.ReadOnlyMemory):
+class MyROM(strider.reader.ReadOnlyMemory):
     def read(self, addr: int, size: int) -> Optional[bytes]:
         # Return the RAW `size` bytes at `addr` (no endianness swap —
         # the optimizer decodes them per the target's byte order). The
@@ -388,7 +393,7 @@ class MyROM(strider.ReadOnlyMemory):
             return None
         return ROM[addr - ROM_BASE : addr - ROM_BASE + size]
 
-lift = strider.lifter(strider.SleighArch.x86(), reader, rom=MyROM())
+lift = strider.lift.lifter(strider.sleigh.SleighArch.x86(), reader, rom=MyROM())
 ```
 
 Performance note: each callback crosses the Rust↔Python boundary, so
@@ -398,7 +403,7 @@ prefer `BufferReader` for in-process bulk data.
 
 ```python
 try:
-    strider.load_elf("/nonexistent/path.elf")
+    strider.lift.load_elf("/nonexistent/path.elf")
 except strider.StriderError as e:
     print(e)
 ```

@@ -33,9 +33,9 @@ WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 OUT_DIR = pathlib.Path("/tmp")
 
-prog = strider.load_elf(str(FIXTURE))
+prog = strider.lift.load_elf(str(FIXTURE))
 cfg, function, unresolved = prog.analyze(
-    "array_sum", opts=strider.LifterOptions(cfg=strider.CfgOptions(allow_code_before_start_addr=True))
+    "array_sum", opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
 )
 
 # Write the CFG. `dark_cfg` is the recommended style for CFGs — higher
