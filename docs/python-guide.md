@@ -213,9 +213,21 @@ Use `rewrite_all([(find, replace), ...])` to stage several rules at once; they
 apply in order, first match wins per node. `function.clone()` gives you a copy to
 rewrite without touching the original. Example `03` walks through this end to end.
 
-## Drawing the graph
+## Looking at the graph
 
-Render the IR or the CFG to a self-contained HTML file you open in a browser:
+The interactive explorer is the easiest way to look at a function, and the only
+one that stays usable on large graphs: it shows the neighborhood around a node
+and re-centers as you click, instead of drawing everything at once.
+
+```python
+prog.visualize(function)   # prints a local URL; blocks until Ctrl-C
+```
+
+It blocks the calling thread. If you run it on a background thread, you must call
+`strider.explore.shutdown(port)` and join the thread before the interpreter
+exits, or the process aborts.
+
+For a static picture, render the IR or the CFG to a self-contained HTML file:
 
 ```python
 function.to_html("graph.html", pretty=True)   # the IR, register names resolved
@@ -224,25 +236,13 @@ cfg.to_html("cfg.html")                        # the control flow graph
 ```
 
 `pretty=True` inlines constants and resolves register names; omit it to see the
-graph exactly as stored, which is what you want when debugging why a pattern
-did not match.
-
-For a large function, render just the neighborhood around one node:
+graph exactly as stored, which is what you want when debugging why a pattern did
+not match. A full dump gets unwieldy on a big function, so render just the
+neighborhood around one node instead:
 
 ```python
 dot = function.neighborhood_dot(function.entry_node(), depth=2)
 ```
-
-There is also an interactive explorer that opens in a browser and re-centers as
-you click:
-
-```python
-prog.visualize(function)   # prints a URL and blocks until Ctrl-C
-```
-
-It blocks the calling thread. If you run it on a background thread, you must
-call `strider.explore.shutdown(port)` and join the thread before the interpreter
-exits, or the process aborts.
 
 ## When a pattern does not match
 

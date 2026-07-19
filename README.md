@@ -41,8 +41,8 @@ cfg, function, unresolved = prog.analyze("array_sum")
 for hit in function.find_all(load(addr=add("base", "off")), ignore_casts=True):
     print("offset =", hit.const_uint("off"))
 
-# Render the IR to a file you can open in a browser.
-function.to_html("graph.html", pretty=True)
+# Explore the result interactively; the viewer scales to large graphs.
+prog.visualize(function)   # prints a local URL; Ctrl-C to stop
 ```
 
 ## Documentation
