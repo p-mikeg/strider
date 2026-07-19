@@ -5,6 +5,7 @@ default-members = ["crates/*"]
 
 [workspace.package]
 edition = "2024"
+version = "0.1.0"
 
 [workspace.dependencies]
 strider-reader = { path = "crates/strider-reader" }
