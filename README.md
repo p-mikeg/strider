@@ -71,9 +71,10 @@ uv run maturin develop    # build the Rust extension
 uv run pytest             # run the test suite
 ```
 
-The examples and tests read the fixture binaries in `fixtures/`. Build them once
-with `cd fixtures && make`; some are stored via Git LFS (`git lfs install &&
-git lfs pull`).
+The fixture binaries under `fixtures/out/` are committed, so the examples and
+tests run without a cross-compiler. Rebuild them with `cd fixtures && make` after
+changing the sources. The kernel fixtures are larger and stored via Git LFS
+(`git lfs install && git lfs pull`).
 
 ## Architecture
 
