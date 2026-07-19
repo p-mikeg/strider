@@ -1,23 +1,11 @@
-//! Varnode container geometry — the single home for register-aliasing
-//! containment reasoning.
+//! Varnode container geometry: the single home for register-aliasing
+//! containment reasoning, so neither the IR nor the lifter duplicates it.
 //!
 //! Overlapping machine registers (x86 `rax`/`eax`/`ax`/`al`, AArch64
-//! `q0`/`d0`/`s0`, x87 `ST*`, …) are collapsed onto their largest tracked
-//! *container*. Everything that reasons about that containment lives here, so
-//! neither the target-agnostic IR nor the lifter owns (or duplicates) it:
+//! `q0`/`d0`/`s0`, x87 `ST*`, ...) collapse onto their largest tracked container.
 //!
-//! - [`dedup_overlapping_largest`] builds a canonical tracked set (drop every
-//!   varnode strictly enclosed by a wider same-space one) — used when
-//!   constructing a function's tracked-variable universe.
-//! - [`ContainerMap`] precomputes the O(1) `vn → container` lookup the
-//!   register-aliasing hot path reads, with [`largest_container_in`] as the
-//!   linear-scan fallback for ad-hoc varnodes.
-//! - [`vn_contains`] is the pairwise "does A enclose B" test pattern matching
-//!   uses to relate a pinned sub-register to the container the IR stores.
-//!
-//! The crate is a pure-geometry leaf: it depends only on `rsleigh` for the
-//! [`rsleigh::Vn`] varnode type and reasons entirely about `(space, offset,
-//! size)` ranges. It knows nothing about calling conventions or the IR graph.
+//! A pure-geometry leaf: nothing here knows about calling conventions or the IR
+//! graph, only `(space, offset, size)` ranges.
 
 use rustc_hash::FxHashMap;
 
@@ -31,32 +19,26 @@ fn end_of(v: &rsleigh::Vn) -> u64 {
     v.addr_off.saturating_add(u64::from(v.size))
 }
 
-/// True when `outer` fully encloses `inner` within the same aliasable space.
-///
-/// Pure pairwise geometry — no tracked-set / universe needed. Used by pattern
-/// matching to match a pinned sub-register (`eax`) against the largest
-/// container the IR stores (`rax`).
+/// True when `outer` fully encloses `inner` in the same aliasable space.
+/// Pairwise only, so it needs no tracked set.
 pub fn vn_contains(outer: &rsleigh::Vn, inner: &rsleigh::Vn) -> bool {
     outer.addr_space == inner.addr_space
         && outer.addr_off <= inner.addr_off
         && end_of(outer) >= end_of(inner)
 }
 
-/// Filters `all_used_variables` down to the largest enclosing tracked variable
-/// in each fixed-offset (REGISTER/UNIQUE) space (e.g. drop `edi` when `rdi` is
-/// also touched). CONST / code-space varnodes are kept verbatim —
-/// containment-by-offset is meaningless there.
+/// Keeps only the largest enclosing varnode per REGISTER/UNIQUE range (drop
+/// `edi` when `rdi` is also touched); CONST / code-space varnodes pass through
+/// since containment-by-offset is meaningless there.
 ///
-/// Returns survivors in INPUT order; callers that need deterministic id
-/// assignment sort afterwards. A varnode is dropped iff some STRICTLY larger
-/// same-space varnode encloses its byte range.
+/// A varnode is dropped iff some STRICTLY larger same-space varnode encloses
+/// its byte range. Survivors come back in INPUT order, so callers wanting
+/// deterministic id assignment must sort afterwards.
 ///
-/// MIPS-style example: Sleigh's MIPS lifter writes a 64-bit IntMul result to a
-/// unique varnode then Copies a 4-byte slice to a register; without this filter
-/// the 4-byte and 8-byte unique varnodes look like independent SSA variables.
-/// Keeping the wider varnode preserves the data dependency.
+/// Collapsing to the widest varnode is what preserves the data dependency when
+/// a lifter writes a wide unique then copies a narrow slice out of it;
+/// otherwise the two views look like independent SSA variables.
 pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh::Vn> {
-    // Bucket aliasable inputs by space, carrying each entry's original index.
     let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<(usize, rsleigh::Vn)>> = FxHashMap::default();
     for (i, v) in all_used_variables.iter().enumerate() {
         if is_aliasable_space(v.addr_space) {
@@ -66,23 +48,19 @@ pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsle
 
     let mut dropped = vec![false; all_used_variables.len()];
     for (_space, mut bucket) in by_space {
-        // addr_off ascending, then size descending so a wider enclosure is seen
-        // before the narrower slices it contains.
+        // Size descending within an offset so a wider enclosure is seen before
+        // the narrower slices it contains.
         bucket.sort_by_key(|(_, v)| (v.addr_off, std::cmp::Reverse(v.size)));
 
-        // Open enclosures whose range still extends past the current start,
-        // kept as `(end, vn)` and holding only SURVIVORS.
+        // Enclosures still extending past the current start, SURVIVORS only.
         let mut open: Vec<(u64, rsleigh::Vn)> = Vec::new();
         for (idx, v) in bucket {
             let v_end = end_of(&v);
-            // Drop opens whose range ends before this entry STARTS: by the
-            // addr_off-ascending sort every remaining entry starts at or after
-            // `v.addr_off`, so such an open can enclose neither `v` nor any
-            // later entry.
+            // Every remaining entry starts at or after `v.addr_off`, so an open
+            // ending before it can enclose neither `v` nor anything later.
             open.retain(|&(end, _)| end >= v.addr_off);
-            // Strictly-larger enclosing open (`off ≤ v.off` by sort,
-            // `end ≥ v_end`, `size > v.size`): `v` is a subsumed sub-register
-            // view and is dropped; else it is the largest in its chain.
+            // `off <= v.off` already holds by the sort, so a strictly wider
+            // open reaching `v_end` makes `v` a subsumed sub-register view.
             let enclosed = open.iter().any(|&(end, c)| end >= v_end && c.size > v.size);
             if enclosed {
                 dropped[idx] = true;
@@ -99,12 +77,10 @@ pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsle
         .collect()
 }
 
-/// Largest varnode in `vns` (same REGISTER/UNIQUE space, offset-range
-/// inclusion) that fully contains `vn`, or `vn` itself when none does.
+/// Largest same-space varnode in `vns` containing `vn`, else `vn` itself.
+/// A non-aliasable (CONST / RAM / code) varnode always maps to itself.
 ///
-/// The linear-scan fallback behind [`ContainerMap`]. A non-aliasable
-/// (CONST / RAM / code) varnode maps to itself — containment-by-offset is
-/// meaningless there.
+/// The linear-scan fallback behind [`ContainerMap`].
 pub fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::Vn {
     if !is_aliasable_space(vn.addr_space) {
         return *vn;
@@ -117,26 +93,18 @@ pub fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::V
         .unwrap_or(*vn)
 }
 
-/// A precomputed `vn → largest containing tracked vn` map: the O(1) fast path
-/// the register-aliasing hot path reads on every register access.
-///
-/// Built once per function from the tracked set plus every queried varnode.
-/// A lookup miss (an ad-hoc varnode absent from the map, or a non-aliasable
-/// one) falls through to the [`largest_container_in`] linear scan via
-/// [`ContainerMap::container_of`].
+/// The O(1) `vn -> container` lookup register aliasing reads on every access,
+/// built once per function. A miss falls back to a linear scan.
 #[derive(Debug, Clone, Default)]
 pub struct ContainerMap {
     map: FxHashMap<rsleigh::Vn, rsleigh::Vn>,
 }
 
 impl ContainerMap {
-    /// Resolve every REGISTER / UNIQUE `queries` varnode against the `tracked`
-    /// set with an O(n log n) per-space stack sweep (never an O(n²) per-query
-    /// rescan). A query that is its own largest container maps to itself; a
-    /// sub-register slice maps to the largest tracked varnode that encloses it.
-    /// Non-aliasable (CONST / RAM / code) queries are omitted.
+    /// Resolves every REGISTER / UNIQUE query against `tracked` with a
+    /// per-space sweep: O(n log n), never an O(n²) per-query rescan.
+    /// Non-aliasable (CONST / RAM / code) queries are omitted entirely.
     pub fn build(tracked: &[rsleigh::Vn], queries: impl IntoIterator<Item = rsleigh::Vn>) -> Self {
-        // Bucket the tracked set by space, `(off ascending, size descending)`.
         let mut tracked_by_space: FxHashMap<rsleigh::VnSpace, Vec<rsleigh::Vn>> =
             FxHashMap::default();
         for v in tracked {
@@ -150,7 +118,8 @@ impl ContainerMap {
         let mut map: FxHashMap<rsleigh::Vn, rsleigh::Vn> = FxHashMap::default();
         for q in queries {
             if is_aliasable_space(q.addr_space) && !map.contains_key(&q) {
-                // Mark seen (self placeholder); the sweep fills the real value.
+                // Self is a placeholder marking `q` seen; the sweep overwrites
+                // it with the real container.
                 map.insert(q, q);
                 queries_by_space.entry(q.addr_space).or_default().push(q);
             }
@@ -164,8 +133,8 @@ impl ContainerMap {
             opens.sort_by_key(|v| (v.addr_off, std::cmp::Reverse(v.size)));
             qs.sort_by_key(|q| (q.addr_off, std::cmp::Reverse(q.size)));
 
-            // Two-pointer sweep keeping the active enclosure window; opens are
-            // small (a register file), so this is O((t + q) log(t + q)).
+            // Two-pointer sweep over the active enclosure window. `opens` is
+            // register-file sized, so the whole pass is O((t + q) log(t + q)).
             let mut active: Vec<rsleigh::Vn> = Vec::new();
             let mut ti = 0usize;
             for q in qs {
@@ -188,10 +157,8 @@ impl ContainerMap {
         Self { map }
     }
 
-    /// Resolve `vn` to its largest tracked container: the precomputed map hit,
-    /// else an on-the-fly [`largest_container_in`] scan of `tracked` for an
-    /// ad-hoc varnode not in the map. Returns `vn` when nothing tracked
-    /// contains it (or it is non-aliasable).
+    /// Map hit, else an on-the-fly [`largest_container_in`] scan for an ad-hoc
+    /// varnode. Returns `vn` when nothing tracked contains it.
     pub fn container_of(&self, tracked: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::Vn {
         if let Some(c) = self.map.get(vn) {
             return *c;
@@ -222,7 +189,7 @@ mod tests {
     #[test]
     fn vn_contains_encloses_and_rejects_disjoint() {
         let rax = reg(0, 8);
-        assert!(vn_contains(&rax, &reg(0, 4))); // eax ⊆ rax
+        assert!(vn_contains(&rax, &reg(0, 4))); // eax contained in rax
         assert!(vn_contains(&rax, &rax)); // reflexive
         assert!(!vn_contains(&rax, &reg(16, 4))); // disjoint
         assert!(!vn_contains(&reg(0, 4), &rax)); // narrower can't enclose wider
@@ -234,12 +201,12 @@ mod tests {
         let edi = reg(0, 4);
         assert_eq!(dedup_overlapping_largest(&[rdi, edi]), vec![rdi]);
         assert_eq!(dedup_overlapping_largest(&[edi, rdi]), vec![rdi]);
-        // Partial overlap (neither encloses the other): both survive.
+        // Partial overlap: neither encloses the other, so both survive.
         assert_eq!(
             dedup_overlapping_largest(&[reg(0, 8), reg(4, 8)]),
             vec![reg(0, 8), reg(4, 8)]
         );
-        // Equal-size aliases and exact duplicates both survive.
+        // Enclosure must be STRICT: equal-size duplicates both survive.
         assert_eq!(dedup_overlapping_largest(&[reg(0, 4), reg(0, 4)]).len(), 2);
         assert!(dedup_overlapping_largest(&[]).is_empty());
     }
@@ -267,9 +234,8 @@ mod tests {
 
     #[test]
     fn container_map_picks_widest_crossing_encloser() {
-        // Crossing partial-overlap enclosers: two varnodes that each enclose a
-        // third but neither encloses the other. The dropped inner view must map
-        // to the WIDER encloser, not merely the first-seen one.
+        // Two enclosers of `inner` that don't enclose each other: the dropped
+        // inner view must map to the WIDER one, not the first seen.
         let a = uniq(0, 12); // [0,12): encloses [5,9); crosses b; survives.
         let b = uniq(2, 18); // [2,20): encloses [5,9) and is wider; survives.
         let inner = uniq(5, 4); // [5,9): enclosed by BOTH -> dropped.
@@ -286,7 +252,7 @@ mod tests {
     #[test]
     fn container_map_falls_back_to_linear_scan_for_adhoc() {
         let rax = reg(0, 8);
-        // Map built with no queries: an ad-hoc lookup misses and falls back.
+        // No queries, so every lookup misses and falls through to the scan.
         let cm = ContainerMap::build(&[rax], std::iter::empty());
         assert_eq!(cm.container_of(&[rax], &reg(0, 4)), rax);
     }
