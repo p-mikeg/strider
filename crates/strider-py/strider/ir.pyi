@@ -56,6 +56,10 @@ class Node:
     def asm_fingerprint(self) -> List[int]:
         """Sorted, deduped asm-instruction addresses recorded on this node."""
         ...
+    def outputs(self) -> List[Node]:
+        """The nodes that consume this node's outputs, as a list of `Node`s —
+        the forward counterpart to `inputs()`."""
+        ...
     def wide_const_bytes(self) -> Optional[bytes]:
         """Raw LE bytes of an `IntConstWide` node, else `None`."""
         ...
@@ -119,6 +123,24 @@ class Function:
         single source of truth for per-node reads (`kind()`,
         `asm_fingerprint()`, `wide_const_bytes()`,
         `call_other_name()`, …).  Raises `StriderError` for an invalid id."""
+        ...
+    def cfg_walk(self) -> List[Node]:
+        """Control-only reachability (the CFG skeleton) from the entry, as
+        `Node`s."""
+        ...
+    def data_walk(self) -> List[Node]:
+        """Every node reachable from the entry (data-in + control-out),
+        pre-order."""
+        ...
+    def walk(self, node_id: int) -> List[Node]:
+        """Every node reachable from `node_id` (data-in + control-out),
+        pre-order."""
+        ...
+    def mem_walk(self) -> List[Node]:
+        """The memory-touching nodes (Load / Store / Call / CallOther /
+        MemPhi and the InitialMemory root) reachable by following
+        memory-token edges forward from the function's InitialMemory, in
+        pre-order."""
         ...
     def compact(self) -> None:
         """Drop every node unreachable from entry; invalidates node ids."""

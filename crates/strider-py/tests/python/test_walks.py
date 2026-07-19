@@ -23,7 +23,6 @@ def test_cfg_walk_is_control_only_and_subset_of_data_walk():
 def test_walk_from_node_is_subset_of_data_walk():
     fn = _fn()
     data = fn.data_walk()
-    entry = fn.entry_node()
     seeded = fn.walk(data[-1].id)   # from some reachable node
     assert {n.id for n in seeded} <= {n.id for n in data}
 

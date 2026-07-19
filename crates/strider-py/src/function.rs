@@ -448,7 +448,7 @@ impl PyFunction {
 
     /// The memory-touching nodes (Load / Store / Call / CallOther / MemPhi and
     /// the InitialMemory root) reachable by following memory-token edges
-    /// forward from the function's InitialMemory, in BFS order.
+    /// forward from the function's InitialMemory, in pre-order.
     fn mem_walk(slf: Py<Self>, py: Python<'_>) -> PyResult<Vec<crate::node::PyNode>> {
         let ids: Vec<u32> = slf.borrow(py).with_read_value(|function| {
             strider_ir::walk::memory_reachable(function, function.entry())
