@@ -1,15 +1,10 @@
-//! Shared mock-graph builder used by the pattern and orchestrator test suites.
+//! `Tb` ("test builder"), the mock-graph DSL the pattern and orchestrator
+//! suites share. It owns a `FunctionBuilder` with an active entry region and
+//! short helpers so tests read like pseudocode, finalising via `ret_val` /
+//! `ret_nothing`.
 //!
-//! Thin DSL around `strider_ir::FunctionBuilder` for test graphs.
-//!
-//! `Tb` = "test builder".  It owns a `FunctionBuilder` with an active entry
-//! region already set up, exposes short helpers for the common builder calls
-//! (so tests read like pseudocode), and finalises into a `Graph`
-//! via `.ret_val(v)` / `.ret_nothing()`.
-//!
-//! For cases the DSL doesn't cover directly (multi-region graphs, custom
-//! calling-convention slots) tests reach into the underlying `FunctionBuilder`
-//! via `Tb::fb_mut`.
+//! Anything the DSL doesn't cover (multi-region graphs, custom
+//! calling-convention slots) goes through `Tb::fb_mut`.
 
 use crate::{IrBuilderEx, RegisterSet};
 use strider_ir::node::{ValueId, ValueType};
@@ -18,14 +13,9 @@ use strider_ir::{
     IntCmpOp, IntUnaryOp,
 };
 
-// ── Tb ────────────────────────────────────────────────────────────────────────
-
-/// Shared `RegisterSet` populater for [`Tb::raw`] and [`Tb::bare`].  Both
-/// constructors take the same six DTO-style parameters and feed them
-/// into `RegisterSet` field-by-field; the only difference is whether
-/// the resulting builder pre-creates an entry region or not.  Also reused
-/// by the free `crate::builder` fn (which chains `.endianness(..)` before
-/// building), so the slice→`RegisterSet` mapping lives in one place.
+/// One home for the slice-to-`RegisterSet` mapping, shared by [`Tb::raw`],
+/// [`Tb::bare`] and the free `crate::builder`, which differ only in what they
+/// do with the result.
 pub(crate) fn build_rs(
     vars: Vec<rsleigh::Vn>,
     arg_passing: &[rsleigh::Vn],
@@ -49,16 +39,12 @@ pub(crate) fn build_rs(
     rs.ret_stack_pop(ret_stack_pop)
 }
 
-/// Test graph builder.  Wraps a `FunctionBuilder` with a single active entry
-/// region pre-created; provides short-named helpers for common builder calls.
 pub struct Tb {
     fb: FunctionBuilder,
 }
 
 impl Tb {
-    /// Empty function: no tracked variables, no calling convention.  A single
-    /// entry region is pre-created and set active — use [`Tb::bare`] when
-    /// you need to manage regions yourself (e.g. multi-branch graphs).
+    /// No tracked variables, no calling convention, entry region active.
     pub fn empty() -> Self {
         let fb = RegisterSet::new()
             .build_fn_single_region()
@@ -66,24 +52,20 @@ impl Tb {
         Self { fb }
     }
 
-    /// Function with tracked variables but no calling-convention extras.
-    /// An entry region is pre-created and set active.
     pub fn with_vars(vars: &[rsleigh::Vn]) -> Self {
         let rs = vars.iter().fold(RegisterSet::new(), |rs, v| rs.tracked(*v));
         let fb = rs.build_fn_single_region().expect("build_fn_single_region");
         Self { fb }
     }
 
-    /// Build a `Tb` from a fully-configured [`RegisterSet`], with an entry
-    /// region pre-created and set active.  Use when the fixture needs a CC
-    /// knob the positional constructors don't take (e.g. `stack_args`).
+    /// For fixtures needing a CC knob the positional constructors don't take,
+    /// such as `stack_args`.
     pub fn from_rs(rs: RegisterSet) -> Self {
         let fb = rs.build_fn_single_region().expect("build_fn_single_region");
         Self { fb }
     }
 
-    /// Low-level raw constructor matching `FunctionBuilder::new`, with
-    /// an entry region pre-created and set active.
+    /// Entry region pre-created and active.
     pub fn raw(
         vars: Vec<rsleigh::Vn>,
         arg_passing: &[rsleigh::Vn],
@@ -97,9 +79,8 @@ impl Tb {
         Self { fb }
     }
 
-    /// Low-level raw constructor that does *not* pre-create any region.  Use
-    /// when you want to build a multi-region graph (branches, merges) and
-    /// control entry-region selection yourself.
+    /// Creates NO region, for multi-region graphs (branches, merges) where the
+    /// caller picks the entry region.
     pub fn bare(
         vars: Vec<rsleigh::Vn>,
         arg_passing: &[rsleigh::Vn],
@@ -113,20 +94,15 @@ impl Tb {
         Self { fb }
     }
 
-    /// Makes `r` the entry region for the function.
     pub fn set_entry(&mut self, r: strider_ir::RegionId) {
         self.fb.set_entry_region_all(r).expect("set_entry_region");
-        // Mirror the lifter: record register-arg carriers after entry setup.
+        // Mirrors the lifter: arg carriers are recorded after entry setup.
         self.fb.record_register_arg_carriers();
     }
-
-    // ── Raw access ────────────────────────────────────────────────────────────
 
     pub fn fb_mut(&mut self) -> &mut FunctionBuilder {
         &mut self.fb
     }
-
-    // ── Constant builders ─────────────────────────────────────────────────────
 
     pub fn u64(&mut self, v: u64) -> ValueId {
         self.fb.build_int_const(v, ValueType::I64).unwrap()
@@ -150,13 +126,11 @@ impl Tb {
         self.fb.build_float_const(bits, ty)
     }
 
-    // ── Integer ops ───────────────────────────────────────────────────────────
-
     pub fn add(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.int_bin(l, r, IntBinaryOp::Add)
     }
-    /// Builds the canonical lowered shape for `l - r`: `Add(l, Neg(r))`.
-    /// `IntBinaryOp::Sub` is not a primitive; pcode-lift produces this shape.
+    /// `Add(l, Neg(r))`: there is no `IntBinaryOp::Sub`, and this is the shape
+    /// pcode-lift produces.
     pub fn sub(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.fb
             .build_sub_as_add_neg(l, r, ValueType::I64)
@@ -185,9 +159,8 @@ impl Tb {
             .build_int_binary_operation(l, r, op, ty)
             .expect("int_binary_operation")
     }
-    /// Bitwise complement (`~v`) at the given integer width.  Builds
-    /// `Xor(v, IntConst(all_ones)):ty` since the former BitNot unary-op was
-    /// removed in favour of the Xor shape.
+    /// Bitwise complement `~v`, which the IR spells `Xor(v, all_ones)`; there
+    /// is no BitNot unary op.
     pub fn bit_not_at(&mut self, v: ValueId, ty: ValueType) -> ValueId {
         let all_ones = self.fb.build_int_const(u128::MAX, ty).expect("all_ones");
         self.fb
@@ -211,25 +184,18 @@ impl Tb {
         self.fb.build_lzcount(v, ValueType::I64).expect("lzcount")
     }
 
-    // ── Boolean ops ───────────────────────────────────────────────────────────
-
-    // Booleans are 1-bit (`I1`) integers: a boolean binary op is an
-    // `IntBinaryOp` (`And` / `Or` / `Xor`) at `I1`, and a logical NOT is
-    // `Xor(_, IntConst(1)):I1` (since the former BitNot unary-op was removed).
+    // Booleans are 1-bit (`I1`) integers, so a boolean binary op is just an
+    // `IntBinaryOp` (`And` / `Or` / `Xor`) at `I1`.
     pub fn bool_bin(&mut self, l: ValueId, r: ValueId, op: IntBinaryOp) -> ValueId {
         self.fb
             .build_int_binary_operation(l, r, op, ValueType::I1)
             .expect("boolean_operation")
     }
-    /// Logical NOT on the I1 value `v`: builds `Xor(v, IntConst(1)):I1`.
-    /// (`bool_un_with_op` was removed — the former BitNot unary-op no longer
-    /// exists; the only remaining `IntUnaryOp` is `Neg`, which is
-    /// semantically meaningless at I1 and was never legitimately used here.)
+    /// Logical NOT of an I1 value: `Xor(v, IntConst(1)):I1`. `Neg`, the only
+    /// `IntUnaryOp`, is meaningless at I1 and is never the right tool here.
     pub fn bool_not(&mut self, v: ValueId) -> ValueId {
         self.bit_not_at(v, ValueType::I1)
     }
-
-    // ── Float ops ─────────────────────────────────────────────────────────────
 
     pub fn fbin(&mut self, l: ValueId, r: ValueId, op: FloatBinaryOp, ty: ValueType) -> ValueId {
         self.fb
@@ -263,7 +229,6 @@ impl Tb {
             .build_float_bits_to_int(v, ty)
             .expect("float_bits_to_int")
     }
-    // ── Casts / coercions ─────────────────────────────────────────────────────
 
     pub fn zext_to(&mut self, v: ValueId, ty: ValueType) -> ValueId {
         self.fb
@@ -282,8 +247,6 @@ impl Tb {
         self.fb.convert_to_int_if_needed(v, ty).expect("as_int")
     }
 
-    // ── Memory ────────────────────────────────────────────────────────────────
-
     pub fn store_ram(&mut self, addr: ValueId, data: ValueId) {
         self.fb
             .build_store(addr, data, rsleigh::VnSpace::RAM)
@@ -295,16 +258,13 @@ impl Tb {
             .expect("load")
     }
 
-    // ── Control / calls ───────────────────────────────────────────────────────
-
     pub fn call_at(&mut self, addr: u64) {
         let tgt = self.u64(addr);
         self.fb.build_call_cc(tgt, None).expect("call");
     }
-    /// Emits a `CallOther(user_op_id)` node via the modeled API.
-    /// Returns the ret-value output when `output_vn` is `Some`.  The
-    /// builder reads the `implicit_read_vns` registers and emits a clobber
-    /// per `implicit_write_vns` register itself.
+    /// Yields the ret-value output when `output_vn` is `Some`. The builder
+    /// itself reads `implicit_read_vns` and emits one clobber per
+    /// `implicit_write_vns` entry.
     pub fn call_other(
         &mut self,
         name: &str,
@@ -326,16 +286,12 @@ impl Tb {
         result
     }
 
-    // ── Variables ─────────────────────────────────────────────────────────────
-
     pub fn read_var(&mut self, vn: &rsleigh::Vn) -> ValueId {
         self.fb.read_variable(vn).expect("read_variable")
     }
     pub fn write_var(&mut self, vn: &rsleigh::Vn, v: ValueId) {
         self.fb.write_variable(vn, v).expect("write_variable")
     }
-
-    // ── Regions / branches ────────────────────────────────────────────────────
 
     pub fn region(&mut self) -> strider_ir::RegionId {
         self.fb.create_region_all().expect("create_region")
@@ -350,28 +306,23 @@ impl Tb {
         self.fb.build_if(cond, t, f).expect("build_if");
     }
 
-    // ── Finalisation ──────────────────────────────────────────────────────────
-
-    /// Emits `Return(v)` in the current region and finalises the graph.
     pub fn ret_val(mut self, v: ValueId) -> strider_ir::Function {
         self.fb.build_return(Some(v), &[]).expect("build_return");
         self.fb.build().expect("FunctionBuilder::build (validator)")
     }
 
-    /// `return(IntConst(v) : I64)` — convenience for the one-constant graph.
+    /// `return(IntConst(v) : I64)`, for the one-constant graph.
     pub fn ret_const(mut self, v: u64) -> strider_ir::Function {
         let c = self.u64(v);
         self.ret_val(c)
     }
 
-    /// Emits `Return()` with no data value and finalises the graph.
     pub fn ret_nothing(mut self) -> strider_ir::Function {
         self.fb.build_return(None, &[]).expect("build_return");
         self.fb.build().expect("FunctionBuilder::build (validator)")
     }
 
-    /// Finalises the graph without emitting any extra instructions — caller
-    /// has already emitted the terminator(s) themselves.
+    /// Emits nothing extra; the caller has already built its terminators.
     pub fn finish(self) -> strider_ir::Function {
         self.fb.build().expect("FunctionBuilder::build (validator)")
     }
