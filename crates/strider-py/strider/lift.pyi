@@ -125,6 +125,22 @@ class Lifter:
         that pipeline instead, draining it (equivalent to the former
         `Function.optimize(pipeline)`)."""
         ...
+    def neighborhood_dot(
+        self,
+        function: Function,
+        center: int,
+        depth: int = ...,
+        hub_cap: int = ...,
+        max_nodes: int = ...,
+    ) -> str:
+        """PRETTY depth-`depth` neighborhood around IR node `center` as a
+        standalone DOT string — one DOT node per IR node, per-kind styling,
+        `center` highlighted.  Needs this `Lifter`'s Sleigh for register
+        names; `Function.neighborhood_dot` is the raw, Sleigh-free
+        counterpart.  A node whose degree exceeds `hub_cap` is shown but
+        not expanded through, and `max_nodes` caps the total (nearest
+        win), so a dense region cannot blow the render up."""
+        ...
     def reg(self, name: str) -> Optional[Vn]:
         """Look up a register by Sleigh name; `None` when not a
         register.  Mirrors `Sleigh.reg`, using the register table this

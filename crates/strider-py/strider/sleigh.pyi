@@ -87,6 +87,17 @@ class CallingConvention:
         link_register: Optional[str] = ...,
         preserves_memory: bool = ...,
     ) -> CallingConvention: ...
+    def no_return(self) -> CallingConvention:
+        """A copy of this convention marked NO-RETURN — a callee that never
+        returns (`exit` / `abort` / `panic` / `__stack_chk_fail` / ...).
+
+        Use it as a per-address CC override, e.g.
+        `CallingConvention.x86_64_systemv().no_return()`.  The CFG builder
+        terminates the calling region at such a call (lowered to
+        `Call + Unreachable`), so the unreachable fall-through — including
+        a MID-function one, e.g. `if (err) panic();` followed by live code
+        — is not lifted as reachable."""
+        ...
     def name(self) -> str: ...
 
 # ── Varnodes / Sleigh ───────────────────────────────────────────────────

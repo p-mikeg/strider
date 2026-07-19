@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, List, Optional, Tuple
 
-from .cfg import DotStyle
+from .cfg import Cfg, DotStyle
 from .pattern import Match, PatLike as _PatLike
 from .sleigh import Vn
 from .template import Template as _Template
@@ -97,6 +97,15 @@ class Node:
     def __hash__(self) -> int: ...
 
 class Function:
+    @property
+    def cfg(self) -> "Cfg":
+        """The snapshot `Cfg` this function was lifted from, kept alive so
+        the pretty render (`to_dot(pretty=True)`) can reach its Sleigh."""
+        ...
+    def entry_node(self) -> int:
+        """The IR node id of the function's `Entry` node — the natural
+        starting center for a neighborhood view."""
+        ...
     def to_dot(
         self,
         path: Optional[str] = ...,

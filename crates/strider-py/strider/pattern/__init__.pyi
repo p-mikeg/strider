@@ -17,6 +17,12 @@ from typing import Any, Callable, List, Literal, Optional, Union
 from ..ir import Node
 from ..sleigh import Vn
 
+# The join-CONSTRAINT namespace, published as `strider.pattern.constraints`.
+# A pattern describes graph SHAPE; a constraint is a relational predicate
+# over the captures patterns bind. Separate namespaces so the two kinds
+# cannot be mistaken for one another.
+from . import constraints as constraints
+
 #: Value-type names accepted by `Pat.value_ty` and returned by
 #: `Node.value_type` / `Match.value_type`. Matched case-insensitively at
 #: runtime; these are the canonical spellings.
