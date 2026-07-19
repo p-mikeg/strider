@@ -365,4 +365,75 @@ mod tests {
             "any_input must NOT bind a fixed-prefix input (the call target)",
         );
     }
+
+    /// A `MemPhi` with two REAL memory predecessors (a store on each side of
+    /// an if/else, joined) — its variadic tail (past the fixed `[PhiToken]`
+    /// prefix, len 1) is `Memory`, not `PhiToken`. Exercised through the raw
+    /// [`NodePat::input_any`] path because the public `mem_phi()` builder
+    /// doesn't expose `any_input` (there is no value sub-pattern a `Memory`
+    /// tail slot could ever legitimately bind).
+    fn mem_phi_with_two_stores() -> strider_ir::Function {
+        let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
+        let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
+
+        let entry = b.create_region_all().unwrap();
+        let region_t = b.create_region_all().unwrap();
+        let region_f = b.create_region_all().unwrap();
+        let join = b.create_region_all().unwrap();
+
+        b.set_entry_region_all(entry).unwrap();
+        b.set_region(entry);
+        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+        let cond = b.build_boolean_const(true);
+        b.build_if(cond, region_t, region_f).unwrap();
+
+        for (region, val) in [(region_t, 1u64), (region_f, 2u64)] {
+            b.set_region(region);
+            let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
+            let data = b.build_int_const(val, ValueType::I64).unwrap();
+            b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
+            b.build_branch(join).unwrap();
+        }
+
+        b.set_region(join);
+        let addr = b.build_int_const(0x48u64, ValueType::I64).unwrap();
+        let loaded = b
+            .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(loaded), &[]).unwrap();
+        b.set_lift_addr(None);
+        b.build().unwrap()
+    }
+
+    /// A node-rooted `MemPhi` pattern with a single existential
+    /// `any_input(p)`, mirroring the raw shape `call_any_input` uses above.
+    fn mem_phi_any_input<P: MatchPat + 'static>(p: P) -> Pattern {
+        NodePat::node(KindSpec::variant_of(&NodeKind::MemPhi))
+            .with_mem_value(0)
+            .input_any(p)
+            .build()
+    }
+
+    /// `any_input` on `MemPhi` must never offer a `Memory`-token tail slot:
+    /// `ext_slots` has to filter down to real VALUE kinds
+    /// (`ValueKind::Typed(_)`), not merely exclude `PhiToken`. Regression for
+    /// the latent bug in the prefix-aware `ext_slots` cut: filtering only
+    /// `!= PhiToken` would leak `MemPhi`'s (and `Region`'s) non-value variadic
+    /// tail into a value existential. A bare `any()` sub-pattern carries
+    /// `OutputKindSpec::Any`, so it would happily bind a memory token if
+    /// `ext_slots` ever offered one — the empty result here proves it never
+    /// does.
+    #[test]
+    fn mem_phi_any_input_never_offers_a_memory_tail_slot() {
+        let function = mem_phi_with_two_stores();
+        let matcher = Matcher::new(&function);
+        assert_eq!(
+            matcher
+                .find_all(&mem_phi_any_input(crate::any()))
+                .unwrap()
+                .len(),
+            0,
+            "any_input must never bind a MemPhi's Memory-token tail slot",
+        );
+    }
 }

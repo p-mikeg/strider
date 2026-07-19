@@ -361,9 +361,15 @@ fn try_match_at(
     // belongs here, not on them.)
     //
     // For `Phi` the prefix is exactly `[PhiToken]` (length 1), so this reduces
-    // to the historical "skip the slot-0 phi-token" rule. The residual
-    // `PhiToken` filter is redundant once the prefix is excluded (no variadic
-    // tail slot is a phi-token), but kept as a defensive value-kind guard.
+    // to the historical "skip the slot-0 phi-token" rule. But the prefix isn't
+    // the whole story: `Region`'s variadic TAIL is itself `Control` (its
+    // predecessor edges) and `MemPhi`'s is `Memory` (its per-predecessor memory
+    // defs) — neither has a fixed-arity prefix to exclude, so a slot-based
+    // filter alone would leak a Control/Memory token into a value existential.
+    // The correct filter is therefore positive: keep only REAL VALUE kinds
+    // (`ValueKind::Typed(_)` — integers incl. I1, floats), which as a
+    // consequence also excludes `PhiToken` (there is no variadic tail slot
+    // that is a phi-token, so this subsumes the old exclusion-only guard).
     let ext_slots: Vec<usize> = if n_fixed == inputs.len() {
         Vec::new()
     } else {
@@ -373,7 +379,7 @@ fn try_match_at(
             .into_iter()
             .enumerate()
             .filter(|&(slot, _)| slot >= prefix)
-            .filter(|&(_, v)| !matches!(ctx.function().value_kind(v), ValueKind::PhiToken))
+            .filter(|&(_, v)| matches!(ctx.function().value_kind(v), ValueKind::Typed(_)))
             .map(|(slot, _)| slot)
             .collect()
     };
