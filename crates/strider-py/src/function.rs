@@ -440,9 +440,9 @@ impl PyFunction {
 
     /// Every node reachable from the entry (data-in + control-out), pre-order.
     fn data_walk(slf: Py<Self>, py: Python<'_>) -> PyResult<Vec<crate::node::PyNode>> {
-        let ids: Vec<u32> = slf.borrow(py).with_read_value(|function| {
-            function.walk().map(|n| n.as_u32()).collect()
-        })?;
+        let ids: Vec<u32> = slf
+            .borrow(py)
+            .with_read_value(|function| function.walk().map(|n| n.as_u32()).collect())?;
         Self::nodes_from_ids(slf, py, ids)
     }
 
@@ -462,12 +462,9 @@ impl PyFunction {
     /// Every node reachable from `node_id` (data-in + control-out), pre-order.
     fn walk(slf: Py<Self>, py: Python<'_>, node_id: u32) -> PyResult<Vec<crate::node::PyNode>> {
         let ids: Vec<u32> = slf.borrow(py).with_read(|function| {
-            let nid = function
-                .graph()
-                .node_id_from_u32(node_id)
-                .ok_or_else(|| {
-                    crate::errors::into_strider_err(anyhow::anyhow!("no node with id {node_id}"))
-                })?;
+            let nid = function.graph().node_id_from_u32(node_id).ok_or_else(|| {
+                crate::errors::into_strider_err(anyhow::anyhow!("no node with id {node_id}"))
+            })?;
             Ok(function.walk_from(nid).map(|n| n.as_u32()).collect())
         })?;
         Self::nodes_from_ids(slf, py, ids)
