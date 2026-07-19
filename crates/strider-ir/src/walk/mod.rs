@@ -316,6 +316,18 @@ fn is_memory_chain_kind(kind: &NodeKind) -> bool {
 /// [`crate::validate::validate`] uses ([`GraphWalkInfo::compute_full`]), not
 /// the control-only [`cfg_reachable`] skeleton (which would never see it).
 ///
+/// **Complexity: O(V+E) over the whole function, not O(memory nodes +
+/// edges).** Locating the root requires a full data-inclusive reachability
+/// pass — `InitialMemory` is a data root, not control-reachable, so the
+/// cheap `cfg_reachable` walk can't find it — before the memory-chain BFS
+/// even starts. That BFS itself is only O(memory nodes + edges), but it's
+/// dominated by the O(V+E) `compute_full` prefix. This runs once per call,
+/// which is acceptable for a user-facing query — [`crate::validate::validate`]
+/// and `data_walk` pay the identical O(V+E) cost. A future O(memory-chain)
+/// version would need `Function` to cache the `InitialMemory` `NodeId`
+/// directly (the way it already caches `entry`), skipping the root-finding
+/// walk entirely; that's a deferred follow-up, out of scope here.
+///
 /// Returns an empty `Vec` when `entry`'s function performs no memory
 /// operations at all — i.e. has no reachable `InitialMemory` (a validated
 /// function that touches memory always has exactly one reachable
@@ -1220,5 +1232,79 @@ mod tests {
                 "no Store/Load/Call exists yet non-memory node {n:?} appeared: {mem:?}"
             );
         }
+    }
+
+    /// `memory_reachable`'s BFS must terminate — and dedup correctly — on a
+    /// genuinely cyclic memory chain: a loop-header `MemPhi` (`r1`) with a
+    /// memory predecessor (`r2`'s `MemPhi`) that is itself reachable
+    /// FORWARD from `r1`'s own `MemPhi` output (the loop-continue arm `r1 ->
+    /// r2`), which then flows back into `r1` as its back-edge predecessor
+    /// (`r2 -> r1`). This is a real back-edge cycle, not merely a diamond:
+    /// `r1`'s `MemPhi` output reaches `r2`'s `MemPhi`, which feeds back into
+    /// `r1`'s `MemPhi` as an input, closing the loop the `seen` set must
+    /// break.
+    ///
+    /// Shape: `r0` (entry) branches to loop header `r1`; `r1` conditionally
+    /// branches to loop body `r2` (continue) or exit `r3` (`build_if`); `r2`
+    /// branches back to `r1` (the back-edge); `r3` returns. No Store/Load/Call
+    /// is needed — the memory-token plumbing alone (every region's `MemPhi`)
+    /// is enough to construct the cycle from the raw builder API.
+    #[test]
+    fn memory_reachable_terminates_on_a_loop_header_mem_phi_cycle() {
+        use crate::IRBuilderExt;
+        use std::collections::HashSet;
+
+        let mut b = crate::FunctionBuilder::new(
+            vec![],
+            strider_target::BuiltCallingConvention::default(),
+            strider_target::Endianness::Little,
+        )
+        .unwrap();
+
+        let r0 = b.create_region_all().unwrap();
+        b.set_entry_region_all(r0).unwrap();
+        b.set_region(r0);
+
+        // Loop header.
+        let r1 = b.create_region_all().unwrap();
+        b.build_branch(r1).unwrap();
+
+        b.set_region(r1);
+        let r2 = b.create_region_all().unwrap(); // loop body
+        let r3 = b.create_region_all().unwrap(); // exit
+        let cond = b.build_int_const(1u64, ValueType::I1).unwrap();
+        b.build_if(cond, r2, r3).unwrap();
+
+        // Back-edge: loop body branches back to the header, wiring r2's
+        // MemPhi output as r1's MemPhi's second predecessor.
+        b.set_region(r2);
+        b.build_branch(r1).unwrap();
+
+        b.set_region(r3);
+        b.build_return(None, &[]).unwrap();
+
+        let entry = b.entry();
+        let f = b.function();
+
+        // Termination: this call must return rather than hang/overflow the
+        // stack despite the r1 <-> r2 MemPhi back-edge. Reaching the
+        // assertions below IS the termination proof.
+        let mem = memory_reachable(f, entry);
+
+        assert!(
+            mem.iter()
+                .filter(|&&n| matches!(f.node_kind(n), NodeKind::MemPhi))
+                .count()
+                >= 2,
+            "both the loop-header MemPhi (r1) and the loop-body MemPhi (r2) \
+             forming the back-edge must be included: {mem:?}"
+        );
+        // No duplicates despite the back-edge revisiting r1's MemPhi.
+        let unique: HashSet<NodeId> = mem.iter().copied().collect();
+        assert_eq!(
+            mem.len(),
+            unique.len(),
+            "no node visited twice despite the back-edge cycle: {mem:?}"
+        );
     }
 }
