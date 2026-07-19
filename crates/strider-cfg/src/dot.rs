@@ -11,10 +11,8 @@ use anyhow::anyhow;
 use crate::Result;
 
 impl Cfg {
-    /// Returns a [`GraphDotDumper`] that can render this CFG as a DOT/HTML file.
-    ///
-    /// Register names are resolved from `sleigh`; the CFG no longer owns a
-    /// Sleigh handle, so the caller threads the one that built it.
+    /// The CFG owns no Sleigh handle, so the caller threads back the one that
+    /// built it for register-name resolution.
     pub fn dot_dumper<'a, R: rsleigh::MemReader>(
         &'a self,
         sleigh: &'a rsleigh::Sleigh<R>,
@@ -54,15 +52,10 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         let first_insn_index = node.start_addr.insn_index;
         let start_addr = node.start_addr.machine_addr.addr;
 
-        // Build node label once
         let mut label = format!("Instruction(addr={start_addr:#x}, idx={first_insn_index})\n");
 
-        // rsleigh's `Insn::ctx_fmt(sleigh, regs)` produces
-        // `<Opcode> <vn0>, <vn1>, …` with register names resolved via
-        // the sleigh register table — exactly what we want for human
-        // inspection.  Resolving `regs` is not free (FFI walk over the
-        // arch's register table), so we cache it once per `dump_as_dot`
-        // invocation rather than per-instruction.
+        // Resolving `regs` walks the arch's register table over FFI, so hoist
+        // it out of the per-instruction loop.
         let regs = self.sleigh.regs()?;
         for insn in &node.insns {
             let insn_addr = insn.addr.machine_addr.addr;
@@ -71,21 +64,16 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         }
         write!(&mut label, "\\l").map_err(anyhow::Error::from)?;
 
-        // Add node
         out.node(&dot_id, &label, "box", &[]);
 
-        // Incoming edges.  Edges are unweighted; the label + style are
-        // derived from the SOURCE region's terminator.  For a `CondBranch`
-        // source, the taken side is resolved through `Cfg::region_if` — the
-        // single source of truth for which successor is the if-true arm —
-        // so this renderer never re-implements the containment rule itself.
+        // Edges are unweighted, so label and style come from the SOURCE
+        // region's terminator.  A `CondBranch` source defers to `region_if`
+        // rather than re-implementing the containment rule here.
         //
-        // Track which CondBranch sources have already had their (single)
-        // if-true edge labelled.  In the degenerate `if (c) goto L else
-        // goto L` case one source has two parallel edges to this node and
-        // `region_if` reports the same region for both arms — the first
-        // edge is the taken side, the second falls through to if-false.
-        // Without this guard both would render "if-true".
+        // The set tracks which sources already labelled their one if-true
+        // edge.  In the degenerate `if (c) goto L else goto L` case a source
+        // has two parallel edges here and `region_if` names the same region
+        // for both arms; without the guard both would render "if-true".
         let mut cond_true_labelled: std::collections::HashSet<NodeIndex> =
             std::collections::HashSet::new();
         for edge in self
@@ -102,10 +90,6 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
                 .ok_or_else(|| anyhow!("dangling edge source {src:?}"))?;
             let (label, style) = match &src_region.terminator {
                 RegionTerminator::CondBranch { .. } => {
-                    // `region_if` resolves the source's if-true / if-false
-                    // successors; this edge is the taken side when its
-                    // target (this node) is the if-true region and that
-                    // source has not yet labelled its taken edge.
                     let succ = self.cfg.region_if(src)?;
                     if succ.if_true_region == Some(node_id) && cond_true_labelled.insert(src) {
                         ("if-true", "dashed")
@@ -115,9 +99,9 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
                 }
                 RegionTerminator::Switch { .. } => ("switch", "solid"),
                 RegionTerminator::Unconditional => ("unconditional", "solid"),
-                // These terminators have no outgoing edge; an edge from one is
-                // a construction bug, but render it visibly rather than
-                // failing the whole dump.
+                // These have no outgoing edge, so an edge from one is a
+                // construction bug.  Render it visibly rather than failing the
+                // whole dump.
                 RegionTerminator::Return
                 | RegionTerminator::NoReturn
                 | RegionTerminator::TailCall { .. }
@@ -140,9 +124,8 @@ mod tests {
 
     use crate::{Builder, CfgOptions};
 
-    /// Renders a CFG built from `bytes` (starting at `start`) to a raw DOT
-    /// string.  Keeps the `Sleigh` alive for the duration of the render (the
-    /// dumper borrows it for register-name resolution).
+    /// Keeps the `Sleigh` alive across the render; the dumper borrows it for
+    /// register-name resolution.
     fn dot_string(bytes: Vec<u8>, start: u64) -> String {
         let arch = SleighArch::x86_64();
         let reader = BufMemReader::new(bytes, start);
@@ -158,11 +141,9 @@ mod tests {
 
     #[test]
     fn degenerate_same_target_cond_branch_labels_one_true_one_false() {
-        // `je +0` at 0x1000: both the taken and fall-through arms land on
-        // 0x1002, so the CondBranch region has two parallel edges to one
-        // successor region.  The dot renderer must label exactly one
-        // "if-true" and one "if-false" (mirroring `region_if`), not both
-        // edges "if-true".
+        // `je +0` at 0x1000 puts both arms on 0x1002, giving the CondBranch
+        // region two parallel edges to one successor.  Exactly one edge must
+        // read "if-true", mirroring `region_if`.
         let dot = dot_string(vec![0x74, 0x00, 0xc3], 0x1000);
         let true_edges = dot.matches("if-true").count();
         let false_edges = dot.matches("if-false").count();

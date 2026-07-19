@@ -1,17 +1,12 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-//! End-to-end lift test against a toolchain-produced ET_REL object
-//! file (`fixtures/out/x64/tzcount.o`).
+//! End-to-end lift against a toolchain-produced ET_REL object file.
 //!
-//! ET_REL has no PT_LOAD program headers; the loader has to walk
-//! sections.  `.o` files commonly host several sections at VMA 0
-//! pre-link (`.text` with `tzcount`, `.text.startup` with `main`),
-//! so first-wins VMA dedup matters: pre-fix, the loader either left
-//! the memory map empty (program-header walk on a header-less file)
-//! or non-deterministically swapped which section's bytes landed at
-//! VMA 0.  Both cases broke the lift in different ways; this test
-//! pins the post-fix invariant that the lift produces a non-trivial
-//! CFG for the `tzcount` symbol.
+//! ET_REL has no PT_LOAD program headers, so the loader walks sections
+//! instead.  A `.o` commonly hosts several sections at VMA 0 pre-link
+//! (`.text` holding `tzcount`, `.text.startup` holding `main`), which makes
+//! first-wins VMA dedup load-bearing: without it the memory map came out
+//! empty, or which section's bytes landed at VMA 0 varied run to run.
 
 use object::{Object, ObjectSymbol};
 use strider_cfg::{Builder, CfgOptions};
@@ -49,12 +44,10 @@ fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
         .build()
         .expect("Builder::build on tzcount lifted from .o");
 
-    // tzcount has a loop (region count ≥ 2: entry region + the loop
-    // body) terminating in a `Return`.  The exact node count varies
-    // with GCC optimisation level / inlining decisions; the contract
-    // we pin is "the lift succeeded and produced something with the
-    // expected control-flow shape" — without the section-walker
-    // dispatch the CFG would be empty / single-region-trap.
+    // tzcount loops, so entry plus loop body is at least 2 regions, ending
+    // in a `Return`.  Exact counts move with GCC optimisation and inlining,
+    // so only the control-flow shape is pinned; without the section-walker
+    // dispatch the CFG comes out empty or a single-region trap.
     assert!(
         cfg.region_graph().node_count() >= 1,
         "expected at least one region after lifting tzcount; got {} \

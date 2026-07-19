@@ -1,17 +1,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Type-level tests for `MachineInsnAddr`, `PcodeInsnAddr`, `Region`,
-//! and `CfgOptions`.  Ported from the pre-rewrite
-//! `crates/cfg/tests/{addr_types,region,options}.rs`.
-//!
-//! These tests exercise pure data-type behaviour (ordering, conversions,
-//! containment, distinctness of variants) and need no internal CFG state.
+//! Pure data-type behaviour: ordering, conversions, containment, variant
+//! distinctness.  No internal CFG state needed.
 
 use strider_cfg::{
     CfgOptions, MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator,
 };
-
-// ── helpers ──────────────────────────────────────────────────────────────
 
 fn addr(machine: u64, insn: u64) -> PcodeInsnAddr {
     PcodeInsnAddr {
@@ -48,8 +42,6 @@ fn make_region(addrs: &[(u64, u64)]) -> Region {
     }
 }
 
-// ── MachineInsnAddr / PcodeInsnAddr ──────────────────────────────────────
-
 #[test]
 fn machine_insn_addr_from_u64() {
     let a: MachineInsnAddr = 0x1000u64.into();
@@ -67,8 +59,7 @@ fn machine_insn_addr_ordering() {
 
 #[test]
 fn pcode_addr_orders_by_machine_addr_first() {
-    // Machine-addr dominance both directions: a larger insn_index never
-    // outranks a smaller machine address.
+    // A larger insn_index never outranks a smaller machine address.
     assert!(addr(200, 0) > addr(100, 99));
     assert!(addr(100, 99) < addr(200, 0));
 }
@@ -103,8 +94,6 @@ fn pcode_addr_at_machine_start_zero_index() {
     assert_eq!(a.machine_addr.addr, 0x2000);
     assert_eq!(a.insn_index, 0);
 }
-
-// ── Region::contains_addr ────────────────────────────────────────────────
 
 #[test]
 fn contains_addr_at_start() {
@@ -144,10 +133,8 @@ fn contains_addr_after_end_returns_false() {
 
 #[test]
 fn contains_addr_returns_true_for_empty_region_at_start_addr() {
-    // Empty regions arise from a popped trailing branch (Unconditional)
-    // or a synthetic tail-call stub (TailCall) — see `add_region`; they
-    // own exactly their `start_addr`.  Documented contract in
-    // `Region::contains_addr`'s docstring.
+    // An empty region comes from a popped trailing branch or a tail-call
+    // stub, and owns exactly its `start_addr`.
     let r = Region {
         start_addr: addr(0x1000, 0),
         insns: Vec::new(),
@@ -156,8 +143,6 @@ fn contains_addr_returns_true_for_empty_region_at_start_addr() {
     assert!(r.contains_addr(addr(0x1000, 0)));
     assert!(!r.contains_addr(addr(0x1000, 1)));
 }
-
-// ── CfgOptions ─────────────────────────────────────────────────────────
 
 #[test]
 fn cfg_options_default_knobs() {
@@ -195,8 +180,6 @@ fn cfg_options_both_set() {
     assert_eq!(both.fn_max_size, Some(0x1000));
     assert!(both.allow_code_before_start_addr);
 }
-
-// ── RegionTerminator: Switch + UnresolvedIndirectBranch shape ────────────
 
 #[test]
 fn switch_variant_round_trips_target_vn_and_targets() {

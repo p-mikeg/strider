@@ -1,18 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Smoke tests for [`Cfg::dot_dumper`] — the CFG-level DOT renderer
-//! used by the orchestrator's `cfg.html` debug output.  Ported from
-//! the pre-rewrite `crates/cfg/tests/dot_dumper.rs` suite.  Uses
-//! synthetic x86_64 byte sequences (mirroring
-//! `cfg_build_end_to_end.rs`) so no ELF fixture-build dependency.
-//!
-//! Coverage:
-//! - Non-empty output with the per-region label header.
-//! - Conditional-branch edge labelling (`if-true`/`if-false`) + dashed style.
-//! - Solid style on a back-edge (loop) unconditional edge.
-//! - Per-region label count matches `graph.node_count()`.
-//! - Per-insn line uses rsleigh's `InsnCtxFmt` (space-separated opcode
-//!   + operands), not the hand-rolled `<Opcode>, <Reg>` form.
+//! Smoke tests for the CFG-level DOT renderer behind the orchestrator's
+//! `cfg.html` debug output.  Synthetic x86_64 byte sequences, so there is no
+//! ELF fixture-build dependency.
 
 use dot::{DotStyle, GraphDot};
 use rsleigh::Sleigh;
@@ -40,7 +30,7 @@ fn dot_source(cfg: &Cfg, sleigh: &Sleigh<TestReader>) -> String {
 
 #[test]
 fn dot_output_non_empty_for_linear_function() {
-    // `add eax, ebx; ret` — a linear single-region body.
+    // `add eax, ebx; ret`: a linear single-region body.
     let (cfg, sleigh) = build_from_bytes(vec![0x01, 0xd8, 0xc3], 0x1000);
     let s = dot_source(&cfg, &sleigh);
     assert!(!s.is_empty(), "DOT output must not be empty");
@@ -52,9 +42,9 @@ fn dot_output_non_empty_for_linear_function() {
 
 #[test]
 fn dot_output_for_conditional_function_contains_if_case_edges_and_dashed_style() {
-    // `xor eax, eax; je +2; xor eax, eax; ret` — a conditional split:
+    // A conditional split:
     //   0x1000: xor eax, eax   (2 bytes)
-    //   0x1002: je 0x1006      (2 bytes; ZF==1 → taken)
+    //   0x1002: je 0x1006      (2 bytes; taken when ZF==1)
     //   0x1004: xor eax, eax   (2 bytes; fall-through path)
     //   0x1006: ret            (1 byte; taken target)
     let bytes = vec![0x31, 0xc0, 0x74, 0x02, 0x31, 0xc0, 0xc3];
@@ -72,10 +62,8 @@ fn dot_output_for_conditional_function_contains_if_case_edges_and_dashed_style()
 
 #[test]
 fn dot_output_for_loop_contains_solid_unconditional_edges() {
-    // `xor eax, eax; xor eax, eax; jmp -4` — a 2-region body whose
-    // second half branches back to itself (a back-edge loop).  Same
-    // byte sequence as `cfg_build_end_to_end.rs`'s
-    // `split_both_halves_unconditional`.
+    // `xor eax, eax; xor eax, eax; jmp -4`: two regions, the second
+    // branching back to itself as a loop back-edge.
     let bytes = vec![0x31, 0xc0, 0x31, 0xc0, 0xeb, 0xfc];
     let (cfg, sleigh) = build_from_bytes(bytes, 0x1000);
     let s = dot_source(&cfg, &sleigh);
@@ -87,8 +75,7 @@ fn dot_output_for_loop_contains_solid_unconditional_edges() {
 
 #[test]
 fn dot_output_mentions_every_region() {
-    // Use the same conditional shape as the IfCase test.  Every region
-    // must emit exactly one `Instruction(addr=...)` label header.
+    // Every region must emit exactly one `Instruction(addr=...)` header.
     let bytes = vec![0x31, 0xc0, 0x74, 0x02, 0x31, 0xc0, 0xc3];
     let (cfg, sleigh) = build_from_bytes(bytes, 0x1000);
     let s = dot_source(&cfg, &sleigh);
@@ -100,19 +87,14 @@ fn dot_output_mentions_every_region() {
     );
 }
 
-/// Pins that the per-instruction line uses rsleigh's
-/// [`rsleigh::ctx_fmt::InsnCtxFmt`] formatter, not `{:?}` on the
-/// opcode.  The user-visible difference: `InsnCtxFmt` separates the
-/// opcode from its first operand with a *space* (`IntAdd RAX, RBX,
-/// RCX`); the hand-rolled `"{:?}, {}"` form emitted a *comma* after
-/// the opcode.
+/// Pins the per-instruction line to rsleigh's `InsnCtxFmt`, not `{:?}` on the
+/// opcode.  Visible difference: `InsnCtxFmt` puts a SPACE after the opcode
+/// (`IntAdd RAX, RBX, RCX`) where the hand-rolled form put a comma.
 ///
-/// Operand *ordering* isn't pinned (rsleigh 4.0.0 puts the output
-/// varnode first, before the inputs).
+/// Operand ordering is deliberately not pinned.
 #[test]
 fn dot_output_uses_rsleigh_insn_ctx_fmt() {
-    // `add eax, ebx; ret` — `IntAdd` opcode with at least one register
-    // operand.
+    // `add eax, ebx; ret`: an `IntAdd` with a register operand.
     let bytes = vec![0x01, 0xd8, 0xc3];
     let (cfg, sleigh) = build_from_bytes(bytes, 0x1000);
     let s = dot_source(&cfg, &sleigh);

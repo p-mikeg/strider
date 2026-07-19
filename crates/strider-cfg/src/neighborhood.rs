@@ -7,9 +7,8 @@ use std::collections::VecDeque;
 
 use crate::Cfg;
 
-/// BFS the depth-`depth` neighborhood around `center` over **both** edge
-/// directions (predecessor + successor blocks), capped at `max_nodes`. BFS
-/// visits in level order, so the budget keeps the nearest `max_nodes` regions.
+/// Walks BOTH edge directions, so predecessors and successors alike.  BFS
+/// visits in level order, so the `max_nodes` budget keeps the nearest regions.
 pub(crate) fn neighborhood_regions(
     cfg: &Cfg,
     center: NodeIndex,
@@ -40,22 +39,13 @@ pub(crate) fn neighborhood_regions(
 }
 
 impl Cfg {
-    /// Pretty render of the depth-`depth` neighborhood around region
-    /// `center` (BFS over predecessor+successor blocks, `max_nodes`
-    /// budget), reusing the full-CFG block styling (see
-    /// `CfgDotDumper::dump_as_dot` in `dot.rs`, whose per-block label
-    /// logic this mirrors). DOT node ids are region indices; `center`
+    /// Pretty render around `center`, mirroring the per-block label logic of
+    /// `CfgDotDumper::dump_as_dot`.  Node ids are region indices; `center`
     /// gets a gold border.
     ///
-    /// `::dot` (leading `::`) is required here, not a plain `dot::` path:
-    /// this crate also has a private sibling module named `dot`
-    /// (`crate::dot`), so an unqualified `dot::` path would be ambiguous
-    /// between that module and the external `dot` crate.
-    ///
-    /// # Errors
-    /// Returns an error if `center` (or any region reachable within the
-    /// neighborhood) is missing from the graph, or if resolving the
-    /// Sleigh register table fails.
+    /// The leading `::` on `::dot` is required: this crate has a private
+    /// sibling module named `dot`, so a bare `dot::` path is ambiguous
+    /// between it and the external crate.
     pub fn neighborhood_dot<R: rsleigh::MemReader>(
         &self,
         sleigh: &rsleigh::Sleigh<R>,
@@ -87,11 +77,9 @@ impl Cfg {
             };
             out.node(&id, &label, "box", extra);
         }
-        // ponytail: v1 simplification — control edges within the
-        // neighborhood are plain (no if-true/if-false labels like the
-        // full-CFG dumper). Recovering that polarity here means resolving
-        // `region_if` per source, which is a follow-up if the explorer
-        // needs it.
+        // ponytail: edges here are plain, without the full-CFG dumper's
+        // if-true/if-false labels.  Recovering polarity means a `region_if`
+        // per source; do it if the explorer ever needs it.
         for &node in &set {
             for succ in g.neighbors_directed(node, Direction::Outgoing) {
                 if set.contains(&succ) {
@@ -102,12 +90,8 @@ impl Cfg {
         Ok(out.finish())
     }
 
-    /// Structure-faithful render of the neighborhood: one `n<idx>` box per
-    /// region (start addr + instruction count), edges as stored, no Sleigh.
-    ///
-    /// # Errors
-    /// Returns an error if `center` (or any region reachable within the
-    /// neighborhood) is missing from the graph.
+    /// Structure-faithful: one `n<idx>` box per region, edges as stored, no
+    /// Sleigh needed.
     pub fn raw_neighborhood_dot(
         &self,
         center: NodeIndex,
@@ -135,8 +119,7 @@ impl Cfg {
             };
             out.node(&id, &label, "box", extra);
         }
-        // ponytail: v1 simplification — same plain-edge note as
-        // `neighborhood_dot` above.
+        // ponytail: same plain-edge note as `neighborhood_dot`.
         for &node in &set {
             for succ in g.neighbors_directed(node, Direction::Outgoing) {
                 if set.contains(&succ) {
@@ -162,8 +145,7 @@ mod tests {
 
     use crate::{Builder, CfgOptions};
 
-    // Two x86_64 basic blocks: `jz` splits into a taken/fallthrough pair.
-    // 7500 (jz +2), 90 (nop), C3 (ret) -> entry block + two successors.
+    // `jz +2`, `nop`, `ret`: an entry block plus two successors.
     fn two_way_cfg() -> crate::Cfg {
         let bytes = vec![0x75, 0x01, 0x90, 0xc3];
         let start = 0x1000;
@@ -182,9 +164,7 @@ mod tests {
 
         let cfg = two_way_cfg();
         let entry = cfg.entry();
-        // depth 0 = just the center
         assert_eq!(neighborhood_regions(&cfg, entry, 0, 999).len(), 1);
-        // depth 1 from entry reaches its successor block(s)
         let d1 = neighborhood_regions(&cfg, entry, 1, 999);
         assert!(
             d1.len() >= 2,
@@ -192,15 +172,12 @@ mod tests {
             d1.len()
         );
         assert!(d1.contains(&entry));
-        // budget caps the set
         assert!(neighborhood_regions(&cfg, entry, 5, 1).len() <= 1);
 
-        // Observe the Incoming half of the traversal: the `ret` block is a
-        // confluence reached by BOTH the jz-taken edge and the nop
-        // fallthrough, so it has >=2 predecessors.  Centering the depth-1
-        // neighborhood there must pull in each predecessor via `Incoming`
-        // (a regression that dropped `Incoming` would fail here but pass the
-        // entry-centered checks above, since `entry` has no predecessors).
+        // Exercises the Incoming half: the `ret` block is a confluence of the
+        // jz-taken edge and the nop fall-through, so centering there must pull
+        // in both predecessors.  Dropping `Incoming` would still pass every
+        // entry-centered check above, since `entry` has no predecessors.
         let g = cfg.region_graph();
         let confluence = g
             .node_indices()
@@ -224,8 +201,7 @@ mod tests {
         let cfg = two_way_cfg();
         let entry = cfg.entry();
 
-        // Fresh Sleigh for the render call, matching the `dot_string` harness
-        // in `dot.rs` (the CFG doesn't own the Sleigh that built it).
+        // A fresh Sleigh: the CFG does not own the one that built it.
         let bytes = vec![0x75, 0x01, 0x90, 0xc3];
         let start = 0x1000;
         let arch = SleighArch::x86_64();
@@ -236,15 +212,12 @@ mod tests {
         let dot = cfg
             .neighborhood_dot(&sleigh, entry, 1, 999)
             .expect("neighborhood_dot");
-        // real dot node id == region index of the center
         assert!(
             dot.contains(&format!("\"{}\"", entry.index())),
             "dot:\n{dot}"
         );
-        // center carries the gold highlight border
         assert!(dot.contains("#ffcc00"), "dot:\n{dot}");
 
-        // raw: one n<idx> box per region, no Sleigh, edges as stored
         let raw = cfg
             .raw_neighborhood_dot(entry, 1, 999)
             .expect("raw_neighborhood_dot");

@@ -1,10 +1,6 @@
-//! Shared `#[cfg(test)]` fixture helpers for the crate's inline test
-//! modules (`builder/mod.rs`, `builder/region_builder.rs`, `query.rs`).
-//!
-//! These were previously copy-pasted (byte-identically, modulo the
-//! `addr`/`addr_at` rename) into each `mod tests`; consolidated here so
-//! there is one source of truth for the synthetic `PcodeInsnAddr` /
-//! `Insn` / `Region` / `Sleigh` / `Builder` fixtures.
+//! Shared fixtures for the crate's inline test modules, so the synthetic
+//! `PcodeInsnAddr` / `Insn` / `Region` / `Sleigh` / `Builder` builders have
+//! one home instead of a copy per `mod tests`.
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_target::SleighArch;
@@ -13,10 +9,8 @@ use crate::CfgOptions;
 use crate::builder::Builder;
 use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator};
 
-/// The in-memory reader used by every synthetic `Sleigh` fixture.
 pub(crate) type TestReader = BufMemReader<Vec<u8>>;
 
-/// Build a `PcodeInsnAddr` from a machine address + p-code insn index.
 pub(crate) fn addr(machine: u64, insn: u64) -> PcodeInsnAddr {
     PcodeInsnAddr {
         machine_addr: MachineInsnAddr { addr: machine },
@@ -24,7 +18,7 @@ pub(crate) fn addr(machine: u64, insn: u64) -> PcodeInsnAddr {
     }
 }
 
-/// A minimal no-op p-code instruction (`Copy` with no output / inputs).
+/// A no-op p-code instruction: `Copy` with no output or inputs.
 pub(crate) fn fake_insn() -> rsleigh::Insn {
     rsleigh::Insn {
         opcode: rsleigh::Opcode::Copy,
@@ -33,8 +27,7 @@ pub(crate) fn fake_insn() -> rsleigh::Insn {
     }
 }
 
-/// Build an `Unconditional` region spanning the given `(machine, insn)`
-/// addresses.
+/// An `Unconditional` region spanning the given `(machine, insn)` addresses.
 pub(crate) fn make_region(addrs: &[(u64, u64)]) -> Region {
     let start = addr(addrs[0].0, addrs[0].1);
     let insns = addrs
@@ -51,14 +44,12 @@ pub(crate) fn make_region(addrs: &[(u64, u64)]) -> Region {
     }
 }
 
-/// An empty x86-64 `Sleigh` over a zero-length reader.
 pub(crate) fn make_sleigh() -> rsleigh::Sleigh<TestReader> {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(Vec::<u8>::new(), 0x0);
     rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create empty Sleigh")
 }
 
-/// An x86-64 CFG `Builder` at `start_addr` with default `CfgOptions`.
 pub(crate) fn make_builder<'a>(
     start_addr: u64,
     sleigh: &'a mut rsleigh::Sleigh<TestReader>,
@@ -66,7 +57,6 @@ pub(crate) fn make_builder<'a>(
     make_builder_opts(start_addr, sleigh, &CfgOptions::default())
 }
 
-/// An x86-64 CFG `Builder` at `start_addr` with caller-supplied `CfgOptions`.
 pub(crate) fn make_builder_opts<'a>(
     start_addr: u64,
     sleigh: &'a mut rsleigh::Sleigh<TestReader>,

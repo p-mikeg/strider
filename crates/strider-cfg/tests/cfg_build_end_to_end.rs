@@ -1,14 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! End-to-end tests for `Builder::build` driven by small hand-crafted
-//! x86-64 byte sequences.  Covers scenarios that real binaries don't
-//! exercise cleanly: region splitting by back-jump, `fn_max_size`
-//! tail-call classification, `allow_code_before_start_addr`,
-//! `CondBranch`-with-OOB-successor folds, multi-pcode insn past
-//! `fn_max_size`, and Sleigh handle re-use across successive builds.
-//!
-//! Ported from pre-rewrite `crates/cfg/tests/{build_end_to_end,
-//! sleigh_reuse,region_terminates_on_noreturn_callother}.rs`.
+//! `Builder::build` driven by hand-crafted x86-64 byte sequences, covering
+//! what real binaries do not exercise cleanly: back-jump region splits,
+//! `fn_max_size` tail-call classification, `allow_code_before_start_addr`,
+//! `CondBranch` with an out-of-bound successor, a multi-pcode insn past
+//! `fn_max_size`, and Sleigh handle re-use across builds.
 
 use rustc_hash::FxHashMap;
 
@@ -54,7 +50,7 @@ fn build_from_bytes_ccs(
         .expect("Builder::build on synthetic bytes")
 }
 
-/// A per-address CC map flagging each `target` address `no_return`.
+/// Flags each `target` address `no_return`.
 fn no_return_ccs(targets: &[u64]) -> FxHashMap<u64, strider_target::BuiltCallingConvention> {
     targets
         .iter()
@@ -70,22 +66,18 @@ fn no_return_ccs(targets: &[u64]) -> FxHashMap<u64, strider_target::BuiltCalling
         .collect()
 }
 
-/// A direct `call` to a target flagged `no_return` terminates the calling
-/// region `NoReturn` even MID-function (its return address is in-bounds, so the
-/// structural function-end fallback does not fire); the unreachable
-/// fall-through is never explored.  Without the flag the same call falls
-/// through and the region runs to the trailing `ret` (`Return`).
+/// A `no_return` call terminates its region even MID-function, where the
+/// return address is in-bounds and the structural function-end fallback cannot
+/// fire.  Without the flag the same call falls through to the trailing `ret`.
 #[test]
 fn direct_call_to_no_return_target_terminates_region_mid_function() {
-    // 0x1000: call 0x2005 (e8 rel32=0x1000 → target 0x1005 + 0x1000 = 0x2005,
-    //         a distinct far target so it does not coincide with the
-    //         fall-through and seed a split)
+    // 0x1000: call 0x2005, a far target chosen so it cannot coincide with
+    //         the fall-through and seed a split
     // 0x1005: xor eax,eax   (31 c0)
     // 0x1007: ret           (c3)
     let bytes = vec![0xe8, 0x00, 0x10, 0x00, 0x00, 0x31, 0xc0, 0xc3];
 
-    // Baseline: the call is an ordinary mid-function call → falls through to
-    // the `ret`, so the single region terminates `Return`.
+    // Baseline: an ordinary mid-function call falls through to the `ret`.
     let cfg = build_from_bytes(bytes.clone(), 0x1000);
     assert_eq!(
         cfg.region_graph()[cfg.entry()].terminator,
@@ -93,7 +85,7 @@ fn direct_call_to_no_return_target_terminates_region_mid_function() {
         "unmarked mid-function call falls through to the ret"
     );
 
-    // Flag the call target (0x2005) `no_return`: the region ends AT the call.
+    // Flagged `no_return`: the region now ends AT the call.
     let cfg = build_from_bytes_ccs(bytes, 0x1000, &no_return_ccs(&[0x2005]));
     assert_eq!(
         cfg.region_graph()[cfg.entry()].terminator,
@@ -101,8 +93,6 @@ fn direct_call_to_no_return_target_terminates_region_mid_function() {
         "a call to a no_return-flagged target terminates the region"
     );
 }
-
-// ── single-region / smoke tests ──────────────────────────────────────────
 
 #[test]
 fn single_ret_produces_one_region_without_tail_call_flag() {
@@ -114,12 +104,9 @@ fn single_ret_produces_one_region_without_tail_call_flag() {
     );
 }
 
-// ── region-split tests ───────────────────────────────────────────────────
-
 #[test]
 fn back_jump_splits_region() {
-    // xor eax,eax (2 bytes); xor eax,eax (2 bytes); jmp -4 (2 bytes, back
-    // to 0x1002).  Target 0x1002 is mid-region, triggering split_region.
+    // The `jmp -4` targets 0x1002, mid-region, triggering split_region.
     let bytes = vec![0x31, 0xc0, 0x31, 0xc0, 0xeb, 0xfc];
     let cfg = build_from_bytes(bytes, 0x1000);
     assert!(
@@ -127,9 +114,7 @@ fn back_jump_splits_region() {
         "expected at least 2 regions after back-jump split; got {}",
         cfg.region_graph().node_count()
     );
-    // The back-jump produces an edge from the branch region to the split
-    // second half (edges are unweighted; the `Branch` terminator classifies
-    // it).
+    // The back-jump edges from the branch region to the split second half.
     assert!(
         cfg.region_graph().edge_count() >= 1,
         "expected at least one edge from the back-jump"
@@ -138,8 +123,7 @@ fn back_jump_splits_region() {
 
 #[test]
 fn split_both_halves_unconditional() {
-    // Same back-jump fixture, with stricter assertions on per-half
-    // terminators.  Ported from pre-rewrite region_terminator.rs.
+    // Same back-jump fixture, asserting per-half terminators.
     let bytes = vec![0x31, 0xc0, 0x31, 0xc0, 0xeb, 0xfc];
     let cfg = build_from_bytes(bytes, 0x1000);
 
@@ -159,12 +143,9 @@ fn split_both_halves_unconditional() {
     assert_eq!(second_half.terminator, RegionTerminator::Unconditional);
 }
 
-// ── fn_max_size / tail-call classification ───────────────────────────────
-
 #[test]
 fn fn_max_size_forces_forward_jump_to_be_tail_call() {
-    // jmp +0x10 at 0x1000.  With fn_max_size=0x10, target 0x1012 >=
-    // 0x1000+0x10 -> tail call.
+    // With fn_max_size=0x10 the target 0x1012 is past the bound.
     let bytes = vec![0xeb, 0x10];
     let opts = CfgOptions {
         fn_max_size: Some(0x10),
@@ -180,12 +161,9 @@ fn fn_max_size_forces_forward_jump_to_be_tail_call() {
 
 #[test]
 fn forward_jump_landing_exactly_at_fn_max_size_is_tail_call() {
-    // jmp +0x0e at 0x1000 → target 0x1010 == 0x1000 + fn_max_size (0x10).
-    // The in-range check is `target < start + fn_max_size` (half-open
-    // interval), so a target landing EXACTLY on the limit is out-of-bounds
-    // and classifies as a tail call — pin that boundary.  A `ret` is
-    // placed at 0x1010 so the bytes WOULD decode if the builder followed
-    // the edge instead.
+    // Target 0x1010 lands EXACTLY on `start + fn_max_size`.  The window is
+    // half-open, so that is out of bounds and must be a tail call.  A `ret`
+    // sits at 0x1010 so the bytes would decode if the edge were followed.
     let mut bytes = vec![0xeb, 0x0e]; // jmp +0x0e (next insn 0x1002 + 0x0e = 0x1010)
     bytes.extend(std::iter::repeat_n(0x90u8, 14)); // nop filler to 0x1010
     bytes.push(0xc3); // 0x1010: ret
@@ -204,10 +182,9 @@ fn forward_jump_landing_exactly_at_fn_max_size_is_tail_call() {
 
 #[test]
 fn forward_jump_landing_just_inside_fn_max_size_is_followed() {
-    // Companion boundary probe: same shape but target 0x100f =
-    // limit - 1 (strictly inside).  The edge must be followed (no
-    // TailCall) and the target region decoded.
-    let mut bytes = vec![0xeb, 0x0d]; // jmp +0x0d → 0x1002 + 0x0d = 0x100f
+    // Companion probe one byte lower, strictly inside: the edge must be
+    // followed and the target region decoded.
+    let mut bytes = vec![0xeb, 0x0d]; // jmp +0x0d -> 0x1002 + 0x0d = 0x100f
     bytes.extend(std::iter::repeat_n(0x90u8, 13)); // nop filler to 0x100f
     bytes.push(0xc3); // 0x100f: ret
     let opts = CfgOptions {
@@ -236,7 +213,7 @@ fn forward_jump_landing_just_inside_fn_max_size_is_followed() {
 
 #[test]
 fn allow_code_before_start_addr_negates_below_start_tail_call() {
-    // `ret` below the function start; jmp -16 from 0x1000 -> 0x0ff2.
+    // `ret` below the function start; `jmp -16` from 0x1000 reaches 0x0ff2.
     let mut bytes = vec![0u8; 0x14];
     bytes[0x02] = 0xc3; // 0x0ff2: ret
     bytes[0x10] = 0xeb; // 0x1000: jmp
@@ -264,9 +241,8 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
     );
 }
 
-/// Finds the region starting at machine address `addr` and asserts it is a
-/// synthetic tail-call stub: zero instructions, `TailCall` terminator
-/// pointing back at its own start address, and no outgoing edge.
+/// Asserts the region at `addr` is a tail-call stub: zero instructions, a
+/// `TailCall` back to its own start address, and no outgoing edge.
 fn assert_tail_call_stub_at(cfg: &Cfg, addr: u64) {
     let (id, stub) = cfg
         .region_ids()
@@ -293,10 +269,9 @@ fn assert_tail_call_stub_at(cfg: &Cfg, addr: u64) {
 
 #[test]
 fn cond_branch_with_oob_fallthrough_keeps_cond_branch_with_tail_call_stub() {
-    // xor eax,eax (2 bytes, sets ZF); je -4 (2 bytes, taken=0x1000 in-range,
-    // fall-through=0x1004 OOB at fn_max_size=4).  The conditional survives:
-    // the OOB fall-through arm is lowered as a synthetic tail-call stub
-    // region wired as a regular CondBranch successor.
+    // Taken 0x1000 is in range; the fall-through 0x1004 is out of bounds at
+    // fn_max_size=4.  The conditional survives, with the OOB arm lowered to a
+    // stub wired as a regular CondBranch successor.
     let bytes = vec![0x31u8, 0xc0, 0x74, 0xfc];
     let opts = CfgOptions {
         fn_max_size: Some(4),
@@ -312,18 +287,16 @@ fn cond_branch_with_oob_fallthrough_keeps_cond_branch_with_tail_call_stub() {
         "entry region must retain CondBranch when one successor is OOB"
     );
     assert_tail_call_stub_at(&cfg, 0x1004);
-    // Two regions: the entry (whose taken arm self-loops to its own start)
-    // and the stub.  Two edges: the self-loop + the stub edge.
+    // Entry (taken arm self-loops to its own start) plus the stub; edges are
+    // the self-loop and the stub edge.
     assert_eq!(cfg.region_graph().node_count(), 2);
     assert_eq!(cfg.region_graph().edge_count(), 2);
 }
 
 #[test]
 fn cond_branch_with_oob_taken_target_keeps_cond_branch_with_tail_call_stub() {
-    // Symmetric case to the oob-fallthrough test above: here the TAKEN
-    // target is out-of-bounds and the fall-through is in-range.
-    // xor eax,eax (2 bytes); je +0x7a (2 bytes, taken=0x107e OOB at
-    // fn_max_size=0x10, fall-through=0x1004 in-range); ret at 0x1004.
+    // Mirror of the OOB-fall-through test: here the TAKEN target 0x107e is
+    // out of bounds and the fall-through 0x1004 is in range.
     let bytes = vec![0x31u8, 0xc0, 0x74, 0x7a, 0xc3];
     let opts = CfgOptions {
         fn_max_size: Some(0x10),
@@ -339,8 +312,7 @@ fn cond_branch_with_oob_taken_target_keeps_cond_branch_with_tail_call_stub() {
         "entry region must retain CondBranch when the taken successor is OOB"
     );
     assert_tail_call_stub_at(&cfg, 0x107e);
-    // Three regions: entry, the in-range fall-through, the stub.  Two
-    // edges out of the entry (one per CondBranch arm).
+    // Entry, the in-range fall-through, and the stub; one edge per arm.
     assert_eq!(cfg.region_graph().node_count(), 3);
     assert_eq!(cfg.region_graph().edge_count(), 2);
     let fallthrough = cfg
@@ -353,9 +325,8 @@ fn cond_branch_with_oob_taken_target_keeps_cond_branch_with_tail_call_stub() {
 
 #[test]
 fn cond_branch_with_both_targets_oob_keeps_cond_branch_with_two_stubs() {
-    // je +0x7e (2 bytes) at 0x1000 with fn_max_size=2 -> taken 0x1080 OOB,
-    // fall-through 0x1002 also OOB.  The conditional survives with BOTH
-    // arms lowered as tail-call stubs — collapsing to a single TailCall
+    // With fn_max_size=2 both arms are out of bounds.  The conditional
+    // survives with both lowered to stubs; collapsing to a single TailCall
     // would silently drop the fall-through arm.
     let bytes = vec![0x74u8, 0x7e];
     let opts = CfgOptions {
@@ -379,12 +350,9 @@ fn cond_branch_with_both_targets_oob_keeps_cond_branch_with_two_stubs() {
 
 #[test]
 fn cond_branches_to_same_oob_target_share_one_stub() {
-    // Two conditional branches targeting the SAME OOB address:
-    //   0x1000: je  +0x7e -> 0x1080 (OOB at fn_max_size=0x10)
-    //   0x1002: jne +0x7c -> 0x1080 (same OOB target)
-    //   0x1004: ret
-    // The stub region for 0x1080 must be created once and shared — region
-    // keying is by start address, so a second stub would collide.
+    // Two conditional branches to the SAME OOB address 0x1080.  Its stub must
+    // be created once and shared: regions are keyed by start address, so a
+    // second stub would collide.
     let bytes = vec![0x74u8, 0x7e, 0x75, 0x7c, 0xc3];
     let opts = CfgOptions {
         fn_max_size: Some(0x10),
@@ -398,8 +366,8 @@ fn cond_branches_to_same_oob_target_share_one_stub() {
         .count();
     assert_eq!(stub_count, 1, "both branches must share one stub region");
     assert_tail_call_stub_at(&cfg, 0x1080);
-    // Four regions: je region, jne region, ret region, shared stub.
-    // Four edges: je→stub, je→jne, jne→stub, jne→ret.
+    // Regions: je, jne, ret, shared stub.  Edges: je to stub, je to jne, jne
+    // to stub, jne to ret.
     assert_eq!(cfg.region_graph().node_count(), 4);
     assert_eq!(cfg.region_graph().edge_count(), 4);
     let stub_id = cfg
@@ -422,11 +390,9 @@ fn cond_branches_to_same_oob_target_share_one_stub() {
 
 #[test]
 fn fall_through_past_fn_max_size_is_function_boundary_error() {
-    // xor eax,eax (2 bytes); lock cmpxchg %r14, 0x58(%rbx) (6 bytes,
-    // multi-pcode-op with intra-insn CONST branches).  Sequential decoding
-    // running off `fn_max_size=2` without an explicit terminator opcode is
-    // a function-boundary error (the bound is too small / the function is
-    // unterminated), not a tail call.
+    // A `lock cmpxchg` is multi-pcode-op with intra-insn CONST branches.
+    // Running off fn_max_size=2 with no explicit terminator opcode is a
+    // function-boundary error, not a tail call.
     let mut bytes = vec![0x31u8, 0xc0];
     bytes.extend_from_slice(&[0xF0, 0x4C, 0x0F, 0xB1, 0x73, 0x58]);
     let opts = CfgOptions {
@@ -453,13 +419,11 @@ fn fall_through_past_fn_max_size_is_function_boundary_error() {
 
 #[test]
 fn fall_through_single_insn_past_fn_max_size_is_function_boundary_error() {
-    // `mov eax, 5` (5 bytes) at 0x1000 with `fn_max_size=3` — the single
-    // instruction starts inside the bound but its sequential fall-through
-    // lands at 0x1005, past `start + fn_max_size = 0x1003`.  No explicit
-    // terminator opcode — must surface as a function-boundary error, not a
-    // synthetic tail call to 0x1005.  This is the shape the user-reported
-    // `tzcount.o` reproducer hits (a smallish function whose natural body
-    // has no terminator within the recorded bound).
+    // `mov eax, 5` starts inside fn_max_size=3 but falls through to 0x1005,
+    // past the 0x1003 bound, with no terminator opcode.  Must be a
+    // function-boundary error, not a synthetic tail call.  This is the
+    // `tzcount.o` shape: a small function with no terminator inside its
+    // recorded bound.
     let bytes = vec![0xB8, 0x05, 0x00, 0x00, 0x00, 0x90, 0x90, 0x90];
     let opts = CfgOptions {
         fn_max_size: Some(3),
@@ -483,9 +447,9 @@ fn fall_through_single_insn_past_fn_max_size_is_function_boundary_error() {
 
 #[test]
 fn probe_x86_nop_lifts_to_zero_pcode_ops() {
-    // Confirms the precondition for the zero-pcode-prefix boundary test
-    // below: x86 `nop` (0x90) lifts to zero pcode ops in this Sleigh
-    // setup, so a run of them never appends to `RegionBuilder::insns`.
+    // Precondition for the zero-pcode-prefix test below: x86 `nop` lifts to
+    // zero pcode ops here, so a run of them never appends to
+    // `RegionBuilder::insns`.
     let mut sleigh = make_sleigh_x86_64(vec![0x90u8], 0x1000);
     let lift = sleigh.lift_one(0x1000).expect("lift_one nop");
     assert!(
@@ -497,17 +461,14 @@ fn probe_x86_nop_lifts_to_zero_pcode_ops() {
 
 #[test]
 fn zero_pcode_prefix_crossing_fn_max_size_is_function_boundary_error() {
-    // A run of x86 `nop` (0x90, zero pcode ops) extends across
-    // `fn_max_size`, then a real terminator (`ret`) sits past the bound.
-    // Because the nops produce no pcode ops, `RegionBuilder::insns` stays
-    // empty as decode walks machine-by-machine past `start + fn_max_size`.
-    // The boundary check must still fire on the first past-bound machine
-    // instruction rather than silently absorbing the next function's
-    // `ret` into this region.
+    // Zero-pcode nops run across the bound with a real `ret` past it.  Since
+    // they produce no pcode ops, `insns` stays empty while decode walks
+    // machine-by-machine past `start + fn_max_size`, so the boundary check
+    // must fire on the first past-bound instruction rather than absorb the
+    // next function's `ret`.
     //
-    // start=0x1000, fn_max_size=2 → bound is 0x1002.  Three nops carry
-    // decode to 0x1003 (past the bound) while insns is still empty; the
-    // `ret` at 0x1003 belongs to the next function.
+    // The bound is 0x1002; three nops carry decode to 0x1003 with `insns`
+    // still empty, and the `ret` there belongs to the next function.
     let bytes = vec![0x90u8, 0x90, 0x90, 0xc3];
     let opts = CfgOptions {
         fn_max_size: Some(2),
@@ -533,15 +494,12 @@ fn zero_pcode_prefix_crossing_fn_max_size_is_function_boundary_error() {
 
 #[test]
 fn fn_max_size_smaller_than_first_terminator_insn_still_builds_tail_call() {
-    // fn_max_size = 1 with a 2-byte first instruction (`jmp +0x10`).
-    // The instruction starts in-range but its encoding crosses the bound.
-    // Pinned: decoding is NOT length-bounded by fn_max_size — the
-    // terminator instruction decodes fully, its OOB target (0x1012 ≥
-    // 0x1001) classifies as a tail call, and the build succeeds as a
-    // single region.  (Contrast with the non-terminator overflow cases
-    // above, which error: the bound only trips on sequential
-    // fall-through, never mid-instruction.)
-    let bytes = vec![0xebu8, 0x10]; // jmp +0x10 → target 0x1012
+    // A 2-byte `jmp +0x10` under fn_max_size=1 starts in range but its
+    // encoding crosses the bound.  Decoding is NOT length-bounded: the
+    // instruction decodes fully and its OOB target is a tail call.  Contrast
+    // the erroring cases above; the bound trips only on sequential
+    // fall-through, never mid-instruction.
+    let bytes = vec![0xebu8, 0x10]; // jmp +0x10 -> target 0x1012
     let opts = CfgOptions {
         fn_max_size: Some(1),
         ..CfgOptions::default()
@@ -556,11 +514,9 @@ fn fn_max_size_smaller_than_first_terminator_insn_still_builds_tail_call() {
 
 #[test]
 fn jump_to_entry_address_forms_single_region_self_loop() {
-    // `jmp -2` at 0x1000 targets the entry address itself.  Pinned: a
-    // single region (no split — the target IS the region start, not a
-    // mid-region address) with one self-edge and an Unconditional
-    // terminator.
-    let bytes = vec![0xebu8, 0xfe]; // jmp -2 → 0x1000
+    // `jmp -2` targets the entry address itself.  No split, since the target
+    // IS the region start rather than a mid-region address.
+    let bytes = vec![0xebu8, 0xfe]; // jmp -2 -> 0x1000
     let cfg = build_from_bytes(bytes, 0x1000);
     assert_eq!(cfg.region_graph().node_count(), 1);
     assert_eq!(
@@ -578,14 +534,11 @@ fn jump_to_entry_address_forms_single_region_self_loop() {
     );
 }
 
-// ── CallOther NoReturn termination (x86 ud2) ────────────────────────────
-
 #[test]
 fn ud2_region_finishes_as_noreturn() {
-    // x86_64 ud2 = 0x0F 0x0B.  Sleigh emits a CallOther [user_op =
-    // invalidInstructionException] followed by BranchIndirect; the
-    // region builder must terminate at the CallOther (classify =
-    // NoReturn) before the trailing BranchIndirect routes.
+    // Sleigh lifts `ud2` to a CallOther (invalidInstructionException)
+    // followed by a BranchIndirect.  The region must terminate at the
+    // CallOther, before the trailing BranchIndirect can route.
     let bytes = vec![0x0fu8, 0x0b];
     let cfg = build_from_bytes(bytes, 0x1000);
 
@@ -613,8 +566,6 @@ fn ud2_region_finishes_as_noreturn() {
     );
 }
 
-// ── Sleigh handle re-use across builds ───────────────────────────────────
-
 fn build_one(mut sleigh: Sleigh<TestReader>, start: u64) -> (Cfg, Sleigh<TestReader>) {
     let arch = SleighArch::x86_64();
     let cfg = Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
@@ -628,8 +579,8 @@ fn cfg_build_returns_sleigh_for_reuse() {
     let bytes = vec![0xc3u8];
     let sleigh = make_sleigh_x86_64(bytes, 0x1000);
 
-    // `build` hands the Sleigh back so a subsequent rebuild can reuse it
-    // without re-loading the SLA spec (the Cfg itself never owns it).
+    // The Cfg never owns the Sleigh, so a rebuild reuses it without
+    // re-loading the SLA spec.
     let (cfg1, sleigh) = build_one(sleigh, 0x1000);
     assert!(cfg1.region_graph().node_count() >= 1);
 
@@ -651,8 +602,6 @@ fn sleigh_can_be_used_for_multiple_cfg_builds() {
     assert!(cfg3.region_graph().node_count() >= 1);
     let _ = cfg3.entry();
 }
-
-// ── known_targets feedback path ─────────────────────────────────────────
 
 fn build_unresolved_jmp_rax_cfg() -> Cfg {
     let base = 0x1000u64;
@@ -790,14 +739,11 @@ fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
     );
 }
 
-/// `known_targets[addr] = Single(oob_addr)` for a `jmp rax` whose
-/// resolved target lies outside the function range must produce a
-/// `TailCall { target: oob_addr }` terminator (no successor edge,
-/// no `UnresolvedIndirectBranch`).
+/// A `Single` resolution pointing outside the function range must become a
+/// `TailCall`: no successor edge, no `UnresolvedIndirectBranch`.
 #[test]
 fn known_single_oob_target_produces_tail_call() {
-    // `jmp rax` at 0x1000, resolved to 0x9000 (outside the function with
-    // fn_max_size=0x100 → [0x1000, 0x1100)).
+    // `jmp rax` resolved to 0x9000, outside [0x1000, 0x1100).
     let base = 0x1000u64;
     let oob_target = 0x9000u64;
     let mut bytes = vec![0xff, 0xe0u8]; // jmp rax

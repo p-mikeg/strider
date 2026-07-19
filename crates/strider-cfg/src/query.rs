@@ -7,48 +7,35 @@ use anyhow::anyhow;
 
 use crate::Result;
 
-/// Decides whether `target` is a tail call — i.e. lies outside the
-/// half-open function range `[start_addr, start_addr + fn_max_size)`.
+/// True when `target` lies outside the half-open function range
+/// `[start_addr, start_addr + fn_max_size)`.
 ///
-/// Backs `crate::Builder::is_branch_tail_call_nocheck`, the cfg-time
-/// tail-call classification (`pub(crate)` — this crate is its only user).
+/// `allow_code_before_start_addr` relaxes the lower bound ONLY while
+/// `fn_max_size` is `None`, for binaries whose bodies legitimately reach back
+/// into the prelude or unwind area.  With a size set the extent is known
+/// exactly, so any `target < start_addr` is in a different function and is a
+/// tail call whatever the flag says.
 ///
-/// `allow_code_before_start_addr = true` disables the lower-bound check
-/// **only when `fn_max_size` is `None`** (relevant for binaries whose
-/// function bodies legitimately reach back into the prelude / unwind
-/// area, in the unbounded case).  When `fn_max_size` is set, the
-/// function's extent is known exactly as `[start_addr, start_addr +
-/// fn_max_size)`, so any `target < start_addr` lands in a *different*
-/// function and is classified as a tail call regardless of the flag.
-///
-/// The function window is **non-wrapping**: when `start_addr +
-/// fn_max_size` overflows `u64` (a function placed at the very top of the
-/// address space) the window cannot extend past the address space, so it
-/// is clamped to `[start_addr, u64::MAX]` and the upper-bound check is
-/// skipped entirely — every `target >= start_addr` (including `u64::MAX`)
-/// is in-range.  There is no address above the window to misclassify, so
-/// this is exact rather than an approximation.
+/// The window is non-wrapping.  When `start_addr + fn_max_size` overflows it
+/// clamps to `[start_addr, u64::MAX]` and the upper bound is dropped entirely,
+/// which is exact rather than approximate: there is no address above the
+/// window left to misclassify.
 pub(crate) fn is_addr_tail_call(
     target: u64,
     start_addr: u64,
     fn_max_size: Option<u64>,
     allow_code_before_start_addr: bool,
 ) -> bool {
-    // Compute lower / upper bounds once, then test membership in the
-    // half-open `[lower, upper)` window.  `lower == 0` disables the
-    // lower-bound check (caller permits code before start_addr in the
-    // unbounded case); `upper = None` disables the upper-bound check
-    // (caller didn't supply a function size).
+    // `lower == 0` disables the lower-bound check; `upper == None` disables
+    // the upper one.
     let lower_bound_strict = fn_max_size.is_some() || !allow_code_before_start_addr;
     let lower = if lower_bound_strict { start_addr } else { 0 };
     if target < lower {
         return true;
     }
-    // `checked_add` (not `saturating_add`): an overflowing window is
-    // non-wrapping and clamps to the top of the address space, so
-    // `None` correctly disables the upper-bound check rather than
-    // mis-classifying `target == u64::MAX` as out-of-range (which a
-    // saturating bound + `target >= upper` would do).
+    // `checked_add`, NOT `saturating_add`: on overflow the `None` drops the
+    // upper-bound check, whereas a saturating bound with `target >= upper`
+    // would misclassify `target == u64::MAX` as out of range.
     if let Some(sz) = fn_max_size
         && let Some(upper) = start_addr.checked_add(sz)
         && target >= upper
@@ -58,36 +45,22 @@ pub(crate) fn is_addr_tail_call(
     false
 }
 
-/// The two successors of a conditional-branch region.
-///
-/// Returned by [`Cfg::region_if`].
 pub struct IfRegionSuccessors {
-    /// Region reached when the branch condition is *true*, if present.
     pub if_true_region: Option<NodeIndex>,
-    /// Region reached when the branch condition is *false* (fall-through), if present.
+    /// The fall-through side.
     pub if_false_region: Option<NodeIndex>,
 }
 
 impl Cfg {
-    /// Returns both conditional-branch successors of `region_id`.
+    /// The outgoing edge whose target region CONTAINS the terminator's
+    /// `true_target` is the taken side, the other the fall-through.  A
+    /// degenerate `if (c) goto L else goto L` reports that region for both;
+    /// a non-`CondBranch` region reports `None` for both.
     ///
-    /// The region's [`RegionTerminator::CondBranch`] records the taken
-    /// successor's address in `true_target`.  This walks the (unweighted)
-    /// outgoing edges and reports the one whose target region **contains**
-    /// `true_target` as `if_true_region`, the other as `if_false_region`.
-    /// When both arms target the same region (a degenerate `if (c) goto L`
-    /// else `goto L`), both fields hold that region.  For a non-`CondBranch`
-    /// region, both fields are `None`.
-    ///
-    /// Containment (not start-address equality) is the right test: a region's
-    /// `start_addr` can sit *below* its first instruction when a branch target
-    /// lands in a zero-pcode-op hole and `split_region` rounds the start down,
-    /// so the branch's `true_target` may be that region's first instruction
-    /// rather than its `start_addr`.  [`Region::contains_addr`] handles both.
-    ///
-    /// # Errors
-    /// Returns an error when `region_id` or one of its edge targets is missing
-    /// from the graph (a construction bug).
+    /// Containment, not start-address equality, is the correct test: a
+    /// region's `start_addr` can sit BELOW its first instruction once a target
+    /// in a zero-pcode-op hole makes `split_region` round down, so
+    /// `true_target` may be the first instruction instead.
     pub fn region_if(&self, region_id: RegionId) -> Result<IfRegionSuccessors> {
         let region = self
             .region_graph
@@ -114,10 +87,9 @@ impl Cfg {
                     anyhow!("dangling edge target {target:?} from region {region_id:?}")
                 })?
                 .contains_addr(true_target);
-            // The first edge whose target contains `true_target` is the taken
-            // side; the remaining edge is the fall-through.  Guarding on
-            // `if_true_region.is_none()` keeps the degenerate both-arms-same-
-            // region case sane (the second edge falls to `if_false_region`).
+            // Guarding on `if_true_region.is_none()` keeps the degenerate
+            // both-arms-same-region case sane: the second edge falls through
+            // to `if_false_region` instead of overwriting the taken side.
             if contains_taken && if_true_region.is_none() {
                 if_true_region = Some(target);
             } else {
@@ -130,56 +102,45 @@ impl Cfg {
         })
     }
 
-    /// Iterates over all [`Region`]s in the CFG (unordered).
+    /// Unordered.
     pub fn regions(&self) -> impl Iterator<Item = &Region> {
         self.region_graph.node_weights()
     }
 
-    /// Iterates over the regions with an edge into `region_id`
-    /// (unordered; a predecessor with parallel edges is yielded once per
-    /// edge).  Dangling edge sources are skipped.
+    /// Unordered; a predecessor with parallel edges is yielded once per edge,
+    /// and dangling sources are skipped.
     ///
-    /// Used by the IR lifter to attribute a synthetic tail-call stub's
-    /// terminator nodes to the conditional-branch instruction that
-    /// proves them — the stub itself is empty, so the proving insn lives
-    /// at the tail of its predecessor(s).
+    /// The IR lifter uses this to attribute a tail-call stub's terminator
+    /// nodes to the conditional branch proving them: the stub is empty, so the
+    /// proving insn sits at the tail of its predecessors.
     pub fn region_predecessors(&self, region_id: RegionId) -> impl Iterator<Item = &Region> {
         self.region_graph
             .edges_directed(region_id, petgraph::Incoming)
             .filter_map(|edge| self.region_graph.node_weight(edge.source()))
     }
 
-    /// Iterates over the [`RegionId`] of every region in the CFG (unordered).
+    /// Unordered.
     pub fn region_ids(&self) -> impl Iterator<Item = RegionId> {
         self.region_graph.node_indices()
     }
 
-    /// Returns the `RegionId` of the region whose **start machine
-    /// address** equals `addr`, or `None` if no such region exists.
+    /// Content-keyed and therefore stable across CFG rebuilds, unlike a
+    /// `NodeIndex`.
     ///
-    /// Content-keyed lookup that is stable across CFG rebuilds (same
-    /// machine address always produces the same key).  Used by the
-    /// indirect-branch resolver and by `strider`'s switch handler to
-    /// correlate a machine address with the region that owns it.
+    /// A region entry is EITHER the exact `start_addr.machine_addr` OR the
+    /// first materialised instruction's address.  Those differ when the entry
+    /// machine insn lifts to zero pcode ops (alignment `nop` / `pause` /
+    /// `endbr64` / `paciasp`): the builder keys the region at the zero-op
+    /// address, but a branch or switch TARGET lands on the first real
+    /// instruction, which is equally a valid entry.  Same containment
+    /// reasoning as [`Self::region_if`].
     ///
-    /// CORRECTNESS: matches a region whose canonical **entry** is `addr` —
-    /// either its exact `start_addr.machine_addr`, OR its first materialised
-    /// instruction's address.  The two differ when the region's entry machine
-    /// insn lifts to zero pcode ops (an alignment `nop` / `pause` / `endbr64`
-    /// / `paciasp`): the builder keys the region at the zero-op address, but a
-    /// branch/switch **target** lands on the first *real* instruction, which is
-    /// still a valid region entry (its lift populates that address).  This is
-    /// the same containment reasoning [`Self::region_if`] uses to resolve a
-    /// `CondBranch` `true_target`.  Genuine *interior* addresses still return
-    /// `None` (they signal a missing `split_region`).  After a split, the
-    /// second-half region's start is the split point, so this lookup
-    /// transparently distinguishes pre- and post-split halves.
+    /// Genuine interior addresses still return `None`; they signal a missing
+    /// `split_region`.
     pub fn region_id_at_start(&self, addr: super::types::MachineInsnAddr) -> Option<RegionId> {
-        // O(log R) range query instead of an O(R) graph scan: locate the
-        // greatest start_addr ≤ (addr, pcode=u64::MAX) — the unique region that
-        // could own `addr` as its entry — then confirm `addr` is that region's
-        // start or first-instruction address.  The BTreeMap was promoted from
-        // the Builder at construction time.
+        // O(log R) range query rather than an O(R) graph scan: the greatest
+        // start_addr at or below (addr, u64::MAX) is the only region that
+        // could own `addr` as its entry, so confirm against just that one.
         let upper = super::types::PcodeInsnAddr {
             machine_addr: addr,
             insn_index: u64::MAX,
@@ -197,13 +158,8 @@ impl Cfg {
 
 #[cfg(test)]
 mod tests {
-    //! Tests for `Cfg`'s query API: `region_if`, `regions`, `region_ids`,
-    //! `region_id_at_start`, and the DuplicateEdgeKind error path through
-    //! `region_if`.
-    //!
-    //! Ported from pre-rewrite `crates/cfg/tests/cfg_query.rs`.  The
-    //! malformed-CFG tests live inline so they can populate the
-    //! `pub(crate) start_addr_to_region_id` field directly.
+    //! Inline so the malformed-CFG cases can populate the `pub(crate)`
+    //! `start_addr_to_region_id` field directly.
 
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -217,16 +173,12 @@ mod tests {
     use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
     use crate::{Builder, CfgOptions};
 
-    // ── is_addr_tail_call: non-wrapping top-of-address-space window ───────
-
     #[test]
     fn is_addr_tail_call_overflowing_window_top_addr_is_in_range() {
-        // `start + fn_max_size` overflows u64.  The window `[start, start +
-        // sz)` cannot wrap, so it is clamped to `[start, u64::MAX]` — every
-        // target ≥ start (including the very last addressable byte
-        // u64::MAX) is in-range, NOT a tail call.
+        // The window cannot wrap, so it clamps to `[start, u64::MAX]` and
+        // every target at or above start, u64::MAX included, is in range.
         let start = u64::MAX - 0x100;
-        let sz = 0x1000u64; // start + sz overflows
+        let sz = 0x1000u64; // overflows when added to start
         assert!(
             !is_addr_tail_call(u64::MAX, start, Some(sz), false),
             "u64::MAX is the top of the non-wrapping window, must be in-range"
@@ -240,8 +192,6 @@ mod tests {
             "below start is still a tail call"
         );
     }
-
-    // ── real-binary helpers ──────────────────────────────────────────────
 
     fn real_cfg(case: &str, fn_name: &str) -> Cfg {
         use object::{Object, ObjectSymbol};
@@ -270,8 +220,6 @@ mod tests {
             .unwrap_or_else(|e| panic!("Builder::build for {fn_name:?}: {e:?}"))
     }
 
-    // ── regions / region_ids iteration ───────────────────────────────────
-
     #[test]
     fn regions_iterator_count_matches_node_count() {
         let cfg = real_cfg("control", "sum_to_n");
@@ -283,8 +231,6 @@ mod tests {
         let cfg = real_cfg("control", "sum_to_n");
         assert_eq!(cfg.region_ids().count(), cfg.region_graph.node_count());
     }
-
-    // ── region_if ────────────────────────────────────────────────────────
 
     #[test]
     fn region_if_both_successors_present_on_abs_val() {
@@ -307,9 +253,6 @@ mod tests {
         assert!(s.if_false_region.is_none());
     }
 
-    // ── region_if: polarity resolved by true_target ──────────────────────
-
-    /// Helper: a `CondBranch` region whose taken successor is `true_target`.
     fn make_cond_region(start_machine: u64, true_target: PcodeInsnAddr) -> Region {
         let mut r = make_region(&[(start_machine, 0)]);
         r.terminator = RegionTerminator::CondBranch { true_target };
@@ -318,14 +261,12 @@ mod tests {
 
     #[test]
     fn region_if_resolves_polarity_by_true_target() {
-        // Two distinct successors; the one whose region contains the
-        // terminator's true_target is the taken side regardless of edge
-        // insertion order.
+        // The taken side is decided by containment, not edge insertion order.
         let mut graph: StableDiGraph<Region, ()> = StableDiGraph::new();
         let src = graph.add_node(make_cond_region(0x1000, addr(0x3000, 0)));
         let fallthrough = graph.add_node(make_region(&[(0x2000, 0)]));
         let taken = graph.add_node(make_region(&[(0x3000, 0)]));
-        // Insert the fall-through edge FIRST to prove order-independence.
+        // Fall-through edge FIRST, to prove order-independence.
         graph.add_edge(src, fallthrough, ());
         graph.add_edge(src, taken, ());
 
@@ -346,12 +287,10 @@ mod tests {
 
     #[test]
     fn region_if_matches_taken_successor_by_containment_not_start() {
-        // Regression: a region's `start_addr` can sit below its first
-        // instruction (zero-pcode-op hole + rounded `split_region`), so the
-        // branch's `true_target` may be an INTERIOR address of the taken
-        // successor rather than its `start_addr`.  region_if must match by
-        // containment.  Here the taken region spans [0x3000, 0x3010] and the
-        // branch targets the interior address 0x3008.
+        // A region's `start_addr` can sit below its first instruction after a
+        // zero-pcode-op hole rounds `split_region` down, so `true_target` may
+        // be an INTERIOR address of the taken successor.  Here that region
+        // spans [0x3000, 0x3010] and the branch targets 0x3008.
         let mut graph: StableDiGraph<Region, ()> = StableDiGraph::new();
         let src = graph.add_node(make_cond_region(0x1000, addr(0x3008, 0)));
         let fallthrough = graph.add_node(make_region(&[(0x2000, 0)]));
@@ -376,9 +315,8 @@ mod tests {
 
     #[test]
     fn region_if_both_arms_same_region_returns_that_region_for_both() {
-        // Degenerate `if (c) goto L else goto L`: both unweighted edges point
-        // at one region.  region_if must report it for both sides, not drop
-        // the false side.
+        // Degenerate `if (c) goto L else goto L`: both edges point at one
+        // region, which must be reported for both sides.
         let mut graph: StableDiGraph<Region, ()> = StableDiGraph::new();
         let src = graph.add_node(make_cond_region(0x1000, addr(0x2000, 0)));
         let both = graph.add_node(make_region(&[(0x2000, 0)]));
@@ -395,8 +333,6 @@ mod tests {
         assert_eq!(s.if_true_region, Some(both));
         assert_eq!(s.if_false_region, Some(both));
     }
-
-    // ── region_id_at_start ───────────────────────────────────────────────
 
     #[test]
     fn region_id_at_start_returns_some_for_real_function_entry() {
@@ -421,18 +357,15 @@ mod tests {
         assert!(rid.is_none(), "unknown addr must return None, got {rid:?}");
     }
 
-    /// Regression (AcpiDsLoad2EndOp switch target): a region whose `start_addr`
-    /// sits BELOW its first materialised instruction — because the entry
-    /// machine insn lifted to zero pcode ops (an alignment `nop` / `pause`) —
-    /// must resolve BOTH its exact start key AND its first-instruction address
-    /// as region entries.  A jump-table case label lands on that first real
-    /// instruction, so `handle_switch`'s `region_id_at_start` lookup must find
-    /// the owning region there.  An address strictly BETWEEN the start and the
-    /// first instruction is NOT an entry (it would signal a missing split).
+    /// From an AcpiDsLoad2EndOp switch target: when the entry machine insn
+    /// lifts to zero pcode ops, a region's `start_addr` sits below its first
+    /// materialised instruction, and BOTH must resolve as entries since a
+    /// jump-table case label lands on the latter.  An address strictly between
+    /// them is not an entry and would signal a missing split.
     #[test]
     fn region_id_at_start_accepts_first_insn_of_phantom_span_region() {
         let mut graph: StableDiGraph<Region, ()> = StableDiGraph::new();
-        // start_addr 0x1000 (the zero-pcode entry insn); first real insn 0x1004.
+        // 0x1000 is the zero-pcode entry insn; 0x1004 the first real one.
         let region = Region {
             start_addr: addr(0x1000, 0),
             insns: vec![RegionInstruction {
