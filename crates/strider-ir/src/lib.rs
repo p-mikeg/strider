@@ -59,7 +59,6 @@ pub use graph::Graph;
 pub mod node;
 pub use graph::Inputs;
 mod node_signature;
-pub use node_signature::fixed_input_prefix_len;
 mod region;
 pub use ::read_only_memory::ReadOnlyMemory;
 pub mod validate;

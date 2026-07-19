@@ -312,40 +312,11 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
     }
 }
 
-/// Number of fixed input slots preceding the variadic tail for `kind`.
-///
-/// For a variadic kind this is the fixed-arity prefix length (`Phi`'s
-/// `[PhiToken]` prefix → 1, `Call`'s `[ctrl, mem, target, sp]` → 4); for a
-/// fixed-arity kind it is the total input-slot count (no tail follows). A
-/// consumer ranging over a kind's variadic TAIL takes input slots at index
-/// `>= fixed_input_prefix_len(kind)`.
-pub fn fixed_input_prefix_len(kind: &NodeKind) -> usize {
-    expected_signature(kind).inputs.head_len()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::node::NodeKind;
     use cranelift_entity::EntityRef;
-
-    #[test]
-    fn fixed_input_prefix_len_matches_head_len() {
-        // Variadic kinds: prefix is the fixed head, tail excluded.
-        assert_eq!(fixed_input_prefix_len(&NodeKind::Phi), 1); // [PhiToken]
-        assert_eq!(fixed_input_prefix_len(&NodeKind::MemPhi), 1); // [PhiToken]
-        assert_eq!(fixed_input_prefix_len(&NodeKind::Call), 4); // [ctrl, mem, target, sp]
-        assert_eq!(fixed_input_prefix_len(&NodeKind::CallOther { user_op_id: 0 }), 2); // [ctrl, mem]
-        assert_eq!(fixed_input_prefix_len(&NodeKind::Return), 2); // [ctrl, mem]
-        assert_eq!(fixed_input_prefix_len(&NodeKind::Region), 0); // variadic ctrl tail
-        // Fixed-arity kinds: prefix equals the whole input count.
-        use crate::node::IntBinaryOp;
-        assert_eq!(
-            fixed_input_prefix_len(&NodeKind::IntBinaryOp(IntBinaryOp::Add)),
-            2
-        );
-        assert_eq!(fixed_input_prefix_len(&NodeKind::If), 2);
-    }
 
     /// Convenience: projects the head slot kinds of a signature into the
     /// `(Vec<Kind>, Vec<Kind>)` shape used by the pre-refactor assertions.

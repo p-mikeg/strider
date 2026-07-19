@@ -19,7 +19,7 @@
 //! `NodeKind::is_commutative()`, unless it opted out via `force_ordered`) gives
 //! BOTH operands the candidate set `{0, 1}`, so injectivity yields exactly the
 //! natural ordering then the swapped one; an `any_input` existential draws from
-//! the IR kind's variadic-tail value slots (those past its fixed-arity prefix).
+//! every input slot except the `PhiToken` plumbing slot.
 //! Backtracking rolls back via
 //! [`Bindings::mark`] / [`Bindings::restore`] between attempts.
 //!
@@ -343,43 +343,32 @@ fn try_match_at(
             .all(|e| e.consumer_slot < COMM_ORDER.len())
         && ctx.function().node_kind(ir_node).is_commutative();
 
-    // The existential candidate set: `ir_node`'s value input slots. Invariant
-    // across the whole search, so collect it once here (empty in the common
-    // no-`any_input` case) rather than at every recursion level.
+    // The existential candidate set: every input slot of `ir_node` EXCEPT the
+    // `PhiToken` plumbing slot. Invariant across the whole search, so collect it
+    // once here (empty in the common no-`any_input` case) rather than at every
+    // recursion level.
     //
-    // `any_input` ranges over the IR kind's variadic TAIL — the value inputs
-    // past its fixed-arity prefix (per `node_signature::expected_signature`).
-    // The prefix carries a kind's bookkeeping / structural operands (a
-    // `Phi`/`MemPhi`'s slot-0 `PhiToken`; a `Call`'s `[ctrl, mem, target, sp]`),
-    // which are NOT existential-input candidates. This must be dropped here
-    // rather than left to the sub-pattern's own output-kind check, because the
-    // kind-unconstrained wildcards (`any()` / `var(c)`) carry
-    // `OutputKindSpec::Any` and would bind a prefix operand — and being at a low
-    // slot, it would shadow the real tail inputs. (The wildcards' `Any` output
-    // kind is deliberate and load-bearing elsewhere — `with_true(any())` matches
-    // a `Region`; a bare `any()` root matches zero-output nodes — so the guard
-    // belongs here, not on them.)
+    // `any_input(sub)` = "some input edge of this node matches `sub`". The
+    // candidate slots are every input EXCEPT a `PhiToken` (a `Phi`/`MemPhi`'s
+    // slot-0 bookkeeping edge from its owning `Region`, which is never a
+    // predecessor value). The sub-pattern discriminates: a typed sub
+    // (`int_const`, `add`, …) carries a value output-kind, so it only matches a
+    // value edge and naturally skips control/memory inputs; a bare wildcard
+    // (`var(c)` / `any()`, carrying `OutputKindSpec::Any`) binds ANY of these
+    // inputs. This one mechanism covers a phi's value predecessors, a region's
+    // control predecessors, a mem_phi's memory predecessors, and a call's args.
     //
-    // For `Phi` the prefix is exactly `[PhiToken]` (length 1), so this reduces
-    // to the historical "skip the slot-0 phi-token" rule. But the prefix isn't
-    // the whole story: `Region`'s variadic TAIL is itself `Control` (its
-    // predecessor edges) and `MemPhi`'s is `Memory` (its per-predecessor memory
-    // defs) — neither has a fixed-arity prefix to exclude, so a slot-based
-    // filter alone would leak a Control/Memory token into a value existential.
-    // The correct filter is therefore positive: keep only REAL VALUE kinds
-    // (`ValueKind::Typed(_)` — integers incl. I1, floats), which as a
-    // consequence also excludes `PhiToken` (there is no variadic tail slot
-    // that is a phi-token, so this subsumes the old exclusion-only guard).
+    // For `Phi` the only non-value input is the slot-0 `PhiToken`, so excluding
+    // it yields exactly the value predecessors — identical to the historical
+    // "skip the phi-token" behavior (the invariance the phi tests pin).
     let ext_slots: Vec<usize> = if n_fixed == inputs.len() {
         Vec::new()
     } else {
-        let prefix = strider_ir::fixed_input_prefix_len(ctx.function().node_kind(ir_node));
         ctx.function()
             .node_inputs(ir_node)
             .into_iter()
             .enumerate()
-            .filter(|&(slot, _)| slot >= prefix)
-            .filter(|&(_, v)| matches!(ctx.function().value_kind(v), ValueKind::Typed(_)))
+            .filter(|&(_, v)| !matches!(ctx.function().value_kind(v), ValueKind::PhiToken))
             .map(|(slot, _)| slot)
             .collect()
     };
@@ -563,7 +552,7 @@ struct InputEdge {
 /// |---|---|
 /// | fixed, non-commutative | `Only(its own consumer slot)` |
 /// | fixed, commutative pair | `OneOf([own slot, the other])` — injectivity yields exactly the 2 orderings |
-/// | existential (`any_input`) | `OneOf(every non-`PhiToken` value slot)` |
+/// | existential (`any_input`) | `OneOf(every input slot except `PhiToken`)` |
 #[derive(Clone, Copy)]
 enum Candidates<'a> {
     /// Exactly one slot. This is the COMMON case (most patterns are all

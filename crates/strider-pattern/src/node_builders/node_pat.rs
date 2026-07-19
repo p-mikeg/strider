@@ -299,15 +299,17 @@ pub(crate) fn variant_kind(
 
 #[cfg(test)]
 mod tests {
-    //! Engine-level `input_any` (`ANY_INPUT_SLOT`) tests on a kind WITH a
-    //! fixed prefix — exercised through the raw [`NodePat::input_any`] path
-    //! because no public wrapper exposes `any_input` on `Call` yet.
+    //! Engine-level `input_any` (`ANY_INPUT_SLOT`) tests on kinds with
+    //! control/memory inputs (`Call`, `MemPhi`) — exercised through the raw
+    //! [`NodePat::input_any`] path because no public wrapper exposes `any_input`
+    //! on them yet. They pin the general `any_input` model: candidate slots are
+    //! every input except the `PhiToken`, and the sub-pattern discriminates.
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
     use crate::{Matcher, int_const};
-    use strider_ir::IRBuilderExt;
     use strider_ir::node::ValueType;
+    use strider_ir::{IRBuilderExt, IRViewer};
     use strider_ir_test_utils::RegisterSet;
 
     /// A `Call` whose **target** is `IntConst(0xABCD)` (fixed-prefix slot 2)
@@ -336,33 +338,77 @@ mod tests {
             .build()
     }
 
-    /// `any_input` on a prefixed kind ranges over the variadic TAIL only:
-    /// it binds an ARG, never the `ctrl`/`mem`/`target`/`sp` prefix slots.
+    /// `any_input` under the GENERAL model: the candidate slots are every input
+    /// EXCEPT the `PhiToken` plumbing slot (a `Call` has none). A typed value
+    /// sub matches whichever VALUE input carries that value; a wildcard reaches
+    /// ANY input, including the control/memory ones a typed sub can never bind.
     #[test]
-    fn call_any_input_binds_arg_not_prefix() {
+    fn call_any_input_general_model() {
         let function = call_with_arg();
         let matcher = Matcher::new(&function);
 
-        // arg0 = IntConst(42) sits in the variadic tail → matches.
+        // A typed sub binds the arg carrying its value (arg0 = IntConst(42)).
         assert_eq!(
             matcher
                 .find_all(&call_any_input(int_const(42u128)))
                 .unwrap()
                 .len(),
             1,
-            "any_input must bind the variadic ARG",
+            "typed any_input binds the matching arg",
         );
 
-        // target = IntConst(0xABCD) is a fixed-prefix slot (slot 2) → must
-        // NOT be offered to `any_input` (the pre-prefix-aware engine would
-        // have matched it here).
+        // The call TARGET is an ordinary value input; under the general model it
+        // is offered (the tail-only engine hid it), so a typed sub of the
+        // target's value now binds it.
         assert_eq!(
             matcher
                 .find_all(&call_any_input(int_const(0xABCDu128)))
                 .unwrap()
                 .len(),
+            1,
+            "typed any_input reaches the call target under the general model",
+        );
+
+        // Sub-pattern discrimination: a typed VALUE sub matching no value input
+        // binds nothing — control/memory are never reachable by a typed sub.
+        assert_eq!(
+            matcher
+                .find_all(&call_any_input(int_const(0x9999u128)))
+                .unwrap()
+                .len(),
             0,
-            "any_input must NOT bind a fixed-prefix input (the call target)",
+            "typed any_input matching no value input binds nothing",
+        );
+
+        // A WILDCARD reaches every non-`PhiToken` input — the control and memory
+        // edges included, which is the general model's defining behavior. The
+        // exact count is pinned to lock the candidate set (ctrl, mem, target,
+        // sp, arg0).
+        let c = crate::Capture::new();
+        let hits = matcher.find_all(&call_any_input(crate::var(c))).unwrap();
+        assert_eq!(
+            hits.len(),
+            5,
+            "wildcard any_input reaches every non-PhiToken input (ctrl, mem, target, sp, arg0)",
+        );
+        // Among the wildcard's bindings, a control and a memory input DO appear
+        // — proving those slots are reachable only by a wildcard, not the typed
+        // subs above.
+        let bound_kinds: Vec<_> = hits
+            .iter()
+            .map(|h| function.value_kind(h.value(c).unwrap()))
+            .collect();
+        assert!(
+            bound_kinds
+                .iter()
+                .any(|k| matches!(k, strider_ir::node::ValueKind::Control)),
+            "wildcard any_input binds the control input",
+        );
+        assert!(
+            bound_kinds
+                .iter()
+                .any(|k| matches!(k, strider_ir::node::ValueKind::Memory)),
+            "wildcard any_input binds the memory input",
         );
     }
 
@@ -414,26 +460,43 @@ mod tests {
             .build()
     }
 
-    /// `any_input` on `MemPhi` must never offer a `Memory`-token tail slot:
-    /// `ext_slots` has to filter down to real VALUE kinds
-    /// (`ValueKind::Typed(_)`), not merely exclude `PhiToken`. Regression for
-    /// the latent bug in the prefix-aware `ext_slots` cut: filtering only
-    /// `!= PhiToken` would leak `MemPhi`'s (and `Region`'s) non-value variadic
-    /// tail into a value existential. A bare `any()` sub-pattern carries
-    /// `OutputKindSpec::Any`, so it would happily bind a memory token if
-    /// `ext_slots` ever offered one — the empty result here proves it never
-    /// does.
+    /// Under the GENERAL model a `MemPhi`'s memory predecessors ARE offered to
+    /// `any_input` — they are inputs, not the `PhiToken`. A wildcard binds them
+    /// (one per memory predecessor), while a typed value sub binds none of them
+    /// (sub-pattern discrimination: a typed sub can never bind a `Memory` edge).
     #[test]
-    fn mem_phi_any_input_never_offers_a_memory_tail_slot() {
+    fn mem_phi_any_input_binds_a_memory_predecessor() {
         let function = mem_phi_with_two_stores();
         let matcher = Matcher::new(&function);
+
+        // A wildcard reaches the memory predecessors (the if/else stores'
+        // memory outputs) — under the general model they ARE offered. Every
+        // binding is a Memory value (never the excluded slot-0 `PhiToken`).
+        let c = crate::Capture::new();
+        let hits = matcher.find_all(&mem_phi_any_input(crate::var(c))).unwrap();
+        assert!(
+            !hits.is_empty(),
+            "wildcard any_input must bind a MemPhi memory predecessor",
+        );
+        for hit in &hits {
+            assert!(
+                matches!(
+                    function.value_kind(hit.value(c).unwrap()),
+                    strider_ir::node::ValueKind::Memory
+                ),
+                "each wildcard binding is a Memory predecessor, never the PhiToken",
+            );
+        }
+
+        // Sub-pattern discrimination: a typed VALUE sub can never bind a Memory
+        // edge, so it matches nothing.
         assert_eq!(
             matcher
-                .find_all(&mem_phi_any_input(crate::any()))
+                .find_all(&mem_phi_any_input(int_const(1u128)))
                 .unwrap()
                 .len(),
             0,
-            "any_input must never bind a MemPhi's Memory-token tail slot",
+            "a typed value sub must not bind a Memory predecessor",
         );
     }
 }
