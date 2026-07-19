@@ -427,7 +427,9 @@ impl PyFunction {
         crate::node::PyNode::new(py, slf, node_id)
     }
 
-    /// Control-only reachability (the CFG skeleton) from the entry, as `Node`s.
+    /// Control-only reachability (the CFG skeleton) from the entry, as `Node`s,
+    /// in ascending node-id order (unlike `data_walk` / `mem_walk`, which are
+    /// pre-order — control reachability is returned as a set).
     fn cfg_walk(slf: Py<Self>, py: Python<'_>) -> PyResult<Vec<crate::node::PyNode>> {
         let ids: Vec<u32> = slf.borrow(py).with_read_value(|function| {
             strider_ir::walk::cfg_reachable(function.graph(), function.entry())

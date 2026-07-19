@@ -361,10 +361,18 @@ impl graph_algorithms::walk::GraphRef for MemorySuccs<'_> {
 /// directly (the way it already caches `entry`), skipping the root-finding
 /// walk entirely; that's a deferred follow-up, out of scope here.
 ///
-/// Returns an empty `Vec` when `entry`'s function performs no memory
-/// operations at all — i.e. has no reachable `InitialMemory` (a validated
-/// function that touches memory always has exactly one reachable
-/// `InitialMemory` node).
+/// Returns an empty `Vec` only when no `InitialMemory` node is reachable from
+/// `entry` — a partial or unterminated graph where nothing consumes the
+/// initial memory token. A validated function normally keeps `InitialMemory`
+/// live through its `Return`'s memory input, so even a function with no
+/// `Load` / `Store` / `Call` still returns `InitialMemory` (plus any entry
+/// `MemPhi`).
+///
+/// The forward walk follows structural memory use-lists, so on a
+/// non-compacted graph the result can include a memory op that is not itself
+/// reachable from `entry` (a dead `Store` still consumes the live token). On
+/// the normal compacted analysis path such nodes are already gone, so the
+/// result is the entry-reachable memory chain.
 pub fn memory_reachable(function: &Function, entry: NodeId) -> Vec<NodeId> {
     let graph = function.graph();
     let live = GraphWalkInfo::compute_full(graph, entry).live_nodes;
