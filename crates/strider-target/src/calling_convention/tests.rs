@@ -8,10 +8,9 @@ fn regs_for(arch: crate::arch::SleighArch) -> rsleigh::SleighRegs {
         .unwrap()
 }
 
-/// PPC System V (32-bit and both PPC64 ELF variants) returns a scalar
-/// floating-point value in `f1` only.  `f2`–`f13` are volatile
-/// argument/scratch float registers, not return registers — so the
-/// float-return list must be exactly `["f1"]`.
+/// PPC System V (32-bit and both PPC64 ELF variants) returns a scalar float
+/// in `f1` only.  `f2`..`f13` are volatile argument/scratch float registers,
+/// not return registers.
 #[test]
 fn ppc_float_return_is_f1_only() {
     for cc in [
@@ -27,9 +26,8 @@ fn ppc_float_return_is_f1_only() {
     }
 }
 
-/// One row describes a supported calling convention and everything we
-/// expect `build()` to produce for it.  Adding a new convention means
-/// adding one entry here — every invariant test picks it up.
+/// One supported convention plus everything `build()` should produce for it.
+/// Adding a convention means adding one row; every invariant test picks it up.
 struct Case {
     name: &'static str,
     cc: fn() -> CallingConvention,
@@ -200,8 +198,8 @@ fn cases() -> Vec<Case> {
             cc: CallingConvention::powerpc64_elf_v1,
             arch: crate::arch::SleighArch::ppc64be,
             arg_count: 8,
-            // r2 + r14..r31 (18) + LR — added LR per
-            // CLAUDE.md deliberate-tradeoff (consistent with PPC32).
+            // r2 + r14..r31 (18) + LR, the last per the deliberate
+            // link-register tradeoff (consistent with PPC32).
             callee_saved_count: 20,
             ret_count: 2,
             reg_size_bytes: 8,
@@ -273,11 +271,9 @@ fn cases() -> Vec<Case> {
             }),
             ret_stack_pop: 0,
         },
-        // ── Linux kernel-internal preset ──────────────────────────
-        // Only `x86_linux_kernel` (regparm-3) declares a register set
-        // distinct from its userland counterpart, so it is the sole
-        // kernel row here; every other arch's kernel CC is identical to
-        // the userland preset covered above.
+        // `x86_linux_kernel` (regparm-3) is the only kernel CC whose register
+        // set differs from its userland counterpart, so it is the sole kernel
+        // row; every other arch's kernel CC is a userland preset above.
         Case {
             name: "x86 Linux kernel (regparm-3)",
             cc: CallingConvention::x86_linux_kernel,
@@ -332,9 +328,8 @@ fn assert_disjoint(
     }
 }
 
-/// Every preset must resolve to the documented number of registers in
-/// each category, with pairwise distinct varnodes and disjoint arg/
-/// callee-saved sets.
+/// Documented register count per category, pairwise distinct varnodes, and
+/// disjoint arg / callee-saved sets.
 #[test]
 fn presets_resolve_correct_register_sets() {
     for c in cases() {
@@ -377,11 +372,10 @@ fn presets_resolve_correct_register_sets() {
     }
 }
 
-/// Every register resolved by a preset (including the stack pointer) must
-/// have the architecture's natural word size.  SP is included because
-/// `StackOffsetDetect` and the analyzer's stack-arg machinery assume an
-/// SP-sized address — an undersized SP would silently miscompute offsets
-/// downstream and produce no diagnostic from this crate.
+/// Every resolved register, SP included, must be the arch's natural word
+/// size.  SP matters because `StackOffsetDetect` and the stack-arg machinery
+/// assume an SP-sized address: an undersized SP silently miscomputes offsets
+/// downstream with no diagnostic from this crate.
 #[test]
 fn presets_resolved_registers_have_expected_size() {
     for c in cases() {
@@ -402,14 +396,12 @@ fn presets_resolved_registers_have_expected_size() {
     }
 }
 
-/// The stack-pointer varnode must resolve to the architecture's SP
-/// register and must NOT appear in any of the three resolved register
-/// lists (`arg_passing_regs`, `callee_saved_regs`, `ret_val_regs`) —
-/// the callee's `ret` pops the return address on stack-push ISAs so
-/// SP is not preserved across a call, and on link-register ISAs the
-/// call doesn't touch SP but SP is still modeled as not callee-saved
-/// for uniformity (with `ret_stack_pop = 0`).  Stack-arg offsets and
-/// `ret_stack_pop` must round-trip unchanged from the preset.
+/// The SP varnode resolves to the arch's SP register and appears in none of
+/// the resolved register lists: on stack-push ISAs the callee's `ret` pops the
+/// return address so SP is not preserved, and on link-register ISAs the call
+/// leaves SP alone but SP is still modelled not-callee-saved for uniformity
+/// (with `ret_stack_pop = 0`).  Stack-arg offsets and `ret_stack_pop` must
+/// round-trip unchanged from the preset.
 #[test]
 fn presets_stack_pointer_and_arg_offsets() {
     for c in cases() {
@@ -438,8 +430,7 @@ fn presets_stack_pointer_and_arg_offsets() {
     }
 }
 
-/// An unknown register name in any category must return an error,
-/// regardless of architecture.
+/// An unknown register name in any category errors, on any architecture.
 #[test]
 fn build_returns_error_for_unknown_register_name() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
@@ -465,8 +456,8 @@ fn build_returns_error_for_unknown_register_name() {
     }
 }
 
-/// An error on the first unknown name must short-circuit rather than
-/// silently succeeding for the remaining valid names.
+/// The first unknown name short-circuits rather than silently succeeding on
+/// the remaining valid ones.
 #[test]
 fn build_returns_error_even_when_some_names_are_valid() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
@@ -491,11 +482,9 @@ fn build_returns_error_even_when_some_names_are_valid() {
 // `rsleigh::Sleigh` from the arch's `.sla` + `.pspec`, call `regs()`, and probe
 // `name_to_vn(...)` for each candidate name.
 
-/// One row per calling-convention preset, recording the expected
-/// link-register Sleigh name (or `None` for stack-push ISAs that hold
-/// the return address on the stack).  Drives every link-register
-/// invariant test below; adding a new preset means adding one row here
-/// and every test picks it up.
+/// Expected link-register Sleigh name per preset, `None` for stack-push ISAs
+/// that hold the return address on the stack.  Drives every link-register
+/// test below; adding a preset means adding one row.
 struct LinkRegCase {
     name: &'static str,
     cc: fn() -> CallingConvention,
@@ -598,11 +587,9 @@ fn link_reg_cases() -> Vec<LinkRegCase> {
     ]
 }
 
-/// Every link-register ISA preset must resolve `link_register_vn` to
-/// `Some(...)`, and the resolved varnode must match the architecture's
-/// LR register under the documented Sleigh name.  Pinning every preset
-/// here catches a typo or rename in any single convention's
-/// `link_register_reg_name` field.
+/// Every link-register ISA preset resolves `link_register_vn` to the arch's
+/// LR under the documented Sleigh name.  Pinning all of them catches a typo or
+/// rename in any one `link_register_reg_name`.
 #[test]
 fn link_register_vn_set_for_link_register_presets() {
     for c in link_reg_cases() {
@@ -629,9 +616,8 @@ fn link_register_vn_set_for_link_register_presets() {
     }
 }
 
-/// Stack-push ISA presets (x86, x86_64) must have `link_register_vn`
-/// resolve to `None`.  Their return address lives on the stack, not in
-/// a register, so there is no LR to expose.
+/// Stack-push ISAs (x86, x86_64) keep the return address on the stack, so
+/// there is no LR to expose.
 #[test]
 fn link_register_vn_none_for_stack_push_presets() {
     for c in link_reg_cases() {
@@ -651,22 +637,19 @@ fn link_register_vn_none_for_stack_push_presets() {
     }
 }
 
-/// CLAUDE.md "Note (link-register handling)" documents that
-/// `aarch64_aapcs64`, `arm_aapcs`, MIPS o32/n64, and the PowerPC
-/// presets list their LR in `callee_saved_regs` — even though the
-/// official ABI specs mark them caller-saved/volatile — so the
-/// indirect-branch resolver's `LinkRegister` arm fires on functions
-/// returning via the entry LR.  Pin that the two lookup paths (the
-/// `link_register_reg_name` resolution AND the `callee_saved_regs`
-/// list) agree for every link-register preset.  AArch64 / MIPS / PPC
-/// previously could drop their LR from `callee_saved_regs` without
-/// triggering this test; this regression case pins the agreement.
+/// `aarch64_aapcs64`, `arm_aapcs`, MIPS o32/n64, and the PowerPC presets list
+/// their LR in `callee_saved_regs` even though the official ABI specs mark it
+/// caller-saved/volatile, so the indirect-branch resolver's `LinkRegister` arm
+/// fires on functions returning via the entry LR.  Pins that the two lookup
+/// paths agree: `link_register_reg_name` resolution AND the
+/// `callee_saved_regs` list.  Before this, AArch64 / MIPS / PPC could drop
+/// their LR from `callee_saved_regs` undetected.
 #[test]
 fn link_register_vn_resolves_to_callee_saved_lr() {
     for c in link_reg_cases() {
         let Some(_) = c.expected_lr_name else {
-            // Stack-push ISAs (x86 / x86_64) have no LR — already
-            // covered by `link_register_vn_none_for_stack_push_presets`.
+            // No LR; covered by
+            // `link_register_vn_none_for_stack_push_presets`.
             continue;
         };
         let regs = regs_for((c.arch)());
@@ -686,10 +669,9 @@ fn link_register_vn_resolves_to_callee_saved_lr() {
     }
 }
 
-/// An unknown `stack_ptr_reg_name` must surface as `UnknownRegName`, the
-/// same way an unknown entry in any of the three register lists does.
-/// Guards the open-coded `ok_or_else` in `build()` — the SP name has its
-/// own lookup path separate from `regs_to_vns`.
+/// An unknown `stack_ptr_reg_name` errors like any other unknown register.
+/// The SP name has its own lookup path in `build()`, separate from
+/// `regs_to_vns`.
 #[test]
 fn build_returns_error_for_unknown_stack_pointer_name() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
@@ -713,14 +695,12 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
     );
 }
 
-// ── preserves_memory field ──────────────────────────────────────────────────
-
 #[test]
 fn x86_64_all_preserving_has_preserves_memory_true() {
-    // The "all-preserving" CC (used for __fentry__ / mcount-style hooks)
-    // promises zero observable side-effects.  The Call's memory output must
-    // be suppressible at IR-build time so LoadReadOnly / LoadForward
-    // can forward across these calls.
+    // The all-preserving CC (__fentry__ / mcount-style hooks) promises zero
+    // observable side-effects, so the Call's memory output must be
+    // suppressible at IR-build time for LoadReadOnly / LoadForward to forward
+    // across these calls.
     assert!(
         CallingConvention::x86_64_all_preserving().preserves_memory,
         "x86_64_all_preserving must declare preserves_memory = true"
@@ -729,9 +709,8 @@ fn x86_64_all_preserving_has_preserves_memory_true() {
 
 #[test]
 fn standard_presets_have_preserves_memory_false() {
-    // Every standard preset must keep the default preserves_memory = false
-    // so its Call nodes correctly clobber memory.  Only x86_64_all_preserving
-    // opts out.
+    // Standard presets keep the default so their Call nodes correctly clobber
+    // memory.  Only x86_64_all_preserving opts out.
     let presets: &[(&str, CallingConvention)] = &[
         ("x86_64_systemv", CallingConvention::x86_64_systemv()),
         ("x86_cdecl", CallingConvention::x86_cdecl()),
@@ -753,11 +732,8 @@ fn standard_presets_have_preserves_memory_false() {
 
 #[test]
 fn every_preset_factory_resolves() {
-    // Sanity guard for the data-table layout: every named factory's
-    // expected lookup string must be present in `CC_PRESETS`.  If a
-    // future edit appends a wrapper without appending a row (or
-    // misspells the name), this test catches it before the production
-    // panic at `cc_from_table` fires.
+    // Catches a wrapper appended without its `CC_PRESETS` row (or with a
+    // misspelled name) before the production panic in `cc_from_table` fires.
     let factories: &[(&str, fn() -> CallingConvention)] = &[
         ("x86_64_systemv", CallingConvention::x86_64_systemv),
         (
@@ -783,7 +759,7 @@ fn every_preset_factory_resolves() {
             "preset {name:?}: CC_PRESETS row does not match factory output",
         );
     }
-    // And the table itself must contain exactly the factories we list.
+    // And the table holds exactly the listed factories, no more.
     assert_eq!(
         CC_PRESETS.len(),
         factories.len(),
@@ -793,18 +769,16 @@ fn every_preset_factory_resolves() {
     );
 }
 
-/// The convention's positional-argument layout is derived on-demand from
-/// `arg_passing_regs` (register slots) plus `stack_args` (the unbounded
-/// stack-arg formula).  Verify on x86_64 SysV (6 register args + stack args
-/// from +8) and x86 cdecl (stack-only, from +4) — between them they exercise
-/// every layout path.
+/// Positional-argument layout is derived on demand from `arg_passing_regs`
+/// plus the `stack_args` formula.  x86_64 SysV (6 register args, stack from
+/// +8) and x86 cdecl (stack-only, from +4) between them cover every path.
 #[test]
 fn positional_arg_layout_x86_64_systemv() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
     let cc = CallingConvention::x86_64_systemv().build(&regs).unwrap();
     assert_eq!(cc.arg_passing_regs.len(), 6);
     let stack = cc.stack_args.unwrap();
-    // First stack positional sits at ordinal 6 (after the 6 register args).
+    // The first stack positional is ordinal 6, after the 6 register args.
     assert_eq!(stack.offset_of(0), 8);
     assert_eq!(stack.offset_of(2), 24);
     assert_eq!(cc.arg_passing_regs[0], regs.name_to_vn("RDI").unwrap());
@@ -815,17 +789,16 @@ fn positional_arg_layout_x86_cdecl_stack_only() {
     let regs = regs_for(crate::arch::SleighArch::x86());
     let cc = CallingConvention::x86_cdecl().build(&regs).unwrap();
 
-    // No register args; stack slots start at index 0, offset +4 with a
-    // 4-byte stride.
+    // No register args: slots start at index 0, offset +4, 4-byte stride.
     assert!(cc.arg_passing_regs.is_empty());
     let stack = cc.stack_args.unwrap();
     assert_eq!(stack.offset_of(0), 4);
     assert_eq!(stack.offset_of(1), 8);
 }
 
-/// MIPS O32 reserves a 16-byte shadow space, so the first *stack* positional
-/// argument (ordinal 4, after the 4 register args) sits at SP+16 — pins that
-/// the `base_offset: 16` flows through the register-then-stack indexing.
+/// MIPS O32's 16-byte shadow space puts the first stack positional (ordinal
+/// 4, after the 4 register args) at SP+16.  Pins that `base_offset: 16` flows
+/// through the register-then-stack indexing.
 #[test]
 fn positional_arg_layout_mips_o32_first_stack_arg_at_sp_plus_16() {
     let regs = regs_for(crate::arch::SleighArch::mipsbe32());
@@ -836,8 +809,8 @@ fn positional_arg_layout_mips_o32_first_stack_arg_at_sp_plus_16() {
     assert_eq!(stack.offset_of(1), 20);
 }
 
-/// Below-base offsets (a decoded negative SP delta) degrade to `None` rather
-/// than wrapping the unsigned slot arithmetic.
+/// A below-base offset (a decoded negative SP delta) gives `None` rather than
+/// wrapping the unsigned slot arithmetic.
 #[test]
 fn stack_args_below_base_negative_offset_is_none() {
     use crate::calling_convention::StackArgs;
@@ -850,8 +823,6 @@ fn stack_args_below_base_negative_offset_is_none() {
     assert_eq!(s.slot_of(i128::MIN), None);
 }
 
-/// Layout with no positional args at all: empty register list and no stack
-/// formula.
 #[test]
 fn positional_arg_layout_empty_has_no_stack() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
@@ -877,10 +848,9 @@ fn stack_args_offset_and_index() {
     assert_eq!(s.index_of(12, 8), None); // [12,20) straddles the 8|16 boundary
 }
 
-/// `offset_of` is the plain arithmetic series anchored at `base_offset`.
-/// Expected values are hand-computed literals for the two real-world
-/// strides (x86 cdecl 4/4, x86_64 SysV 8/8); the large-N row pins that
-/// the `i64` math has plenty of headroom at any realistic index.
+/// Hand-computed literals for the two real-world strides (x86 cdecl 4/4,
+/// x86_64 SysV 8/8).  The large-N row pins that the math has headroom at any
+/// realistic index.
 #[test]
 fn stack_args_offset_of_literal_series() {
     use crate::calling_convention::StackArgs;
@@ -888,7 +858,7 @@ fn stack_args_offset_of_literal_series() {
         base_offset: 4,
         increment: 4,
     };
-    assert_eq!(x86.offset_of(0), 4); // offset_of(0) == base_offset
+    assert_eq!(x86.offset_of(0), 4);
     assert_eq!(x86.offset_of(1), 8);
     assert_eq!(x86.offset_of(7), 32); // 4 + 7*4
 
@@ -896,17 +866,16 @@ fn stack_args_offset_of_literal_series() {
         base_offset: 8,
         increment: 8,
     };
-    assert_eq!(x64.offset_of(0), 8); // offset_of(0) == base_offset
+    assert_eq!(x64.offset_of(0), 8);
     assert_eq!(x64.offset_of(1), 16);
     assert_eq!(x64.offset_of(7), 64); // 8 + 7*8
 
-    // Large-but-reasonable N (2^40 stack args): 8 + 8*2^40 = 2^43 + 8.
+    // 2^40 stack args: 8 + 8*2^40 = 2^43 + 8.
     assert_eq!(x64.offset_of(1 << 40), 8_796_093_022_216);
 }
 
-/// Boundary semantics of `index_of` (strict within-one-slot) and
-/// `slot_of` (floor, no size bound), parametrized over the x86 (4/4)
-/// and x86_64 (8/8) strides.
+/// Boundary semantics of `index_of` (strict within-one-slot) and `slot_of`
+/// (floor, no size bound), over the x86 (4/4) and x86_64 (8/8) strides.
 #[test]
 fn stack_args_index_and_slot_boundaries_per_increment() {
     use crate::calling_convention::StackArgs;
@@ -928,7 +897,6 @@ fn stack_args_index_and_slot_boundaries_per_increment() {
     ] {
         let (base, inc) = (s.base_offset, s.increment);
 
-        // index_of: strict within-one-slot containment.
         assert_eq!(s.index_of(base, inc), Some(0), "{label}: exact-fit slot 0");
         assert_eq!(
             s.index_of(base - 1, 1),
@@ -955,8 +923,8 @@ fn stack_args_index_and_slot_boundaries_per_increment() {
             None,
             "{label}: 2-byte access straddling the slot boundary → rejected",
         );
-        // Pinned: a zero-size access trivially fits the slot its offset
-        // lands in, so `index_of(_, 0)` is `Some` for any offset >= base.
+        // A zero-size access trivially fits the slot its offset lands in, so
+        // `index_of(_, 0)` is `Some` for any offset >= base.
         assert_eq!(s.index_of(base, 0), Some(0), "{label}: zero-size at base");
         assert_eq!(
             s.index_of(base + inc, 0),
@@ -964,10 +932,9 @@ fn stack_args_index_and_slot_boundaries_per_increment() {
             "{label}: zero-size at slot-1 start"
         );
 
-        // slot_of: floor onto the containing slot.  The method takes no
-        // size argument at all — the doc's "no size bound" claim — so a
-        // wider-than-slot argument anchors at the slot of its first byte
-        // (same answer as the 1-byte probes below).
+        // `slot_of` takes no size argument at all, so a wider-than-slot
+        // argument anchors at the slot of its first byte, giving the same
+        // answer as the 1-byte probes below.
         assert_eq!(s.slot_of(base - 1), None, "{label}: below base");
         assert_eq!(s.slot_of(base), Some(0), "{label}: slot-0 start");
         assert_eq!(
@@ -987,10 +954,9 @@ fn stack_args_index_and_slot_boundaries_per_increment() {
 #[test]
 fn stack_args_slot_of_floors_by_increment() {
     use crate::calling_convention::StackArgs;
-    // 4-byte-stride cdecl-style.  `slot_of` floors the start byte to its
-    // containing slot with no upper size bound: an 8-byte argument (a
-    // `double`) anchored at sp+4 lands in slot 0 even though it spans slots
-    // 0 and 1, and a mid-slot sub-field read lands in the slot it starts in.
+    // 4-byte cdecl stride.  With no upper size bound, an 8-byte `double`
+    // anchored at sp+4 lands in slot 0 despite spanning slots 0 and 1, and a
+    // mid-slot sub-field read lands in the slot it starts in.
     let s = StackArgs {
         base_offset: 4,
         increment: 4,
@@ -1003,9 +969,8 @@ fn stack_args_slot_of_floors_by_increment() {
     assert_eq!(s.slot_of(0), None); // below base
 }
 
-/// `slots_spanned` is the cursor-advance companion to `slot_of`: how many
-/// consecutive slots a `size`-byte argument occupies, `ceil(max(size,1) /
-/// increment)`, never below 1.  Pinned across the 4- and 8-byte strides.
+/// `ceil(max(size,1) / increment)`, never below 1, across the 4- and 8-byte
+/// strides.
 #[test]
 fn stack_args_slots_spanned_ceils_by_increment() {
     use crate::calling_convention::StackArgs;
@@ -1014,18 +979,15 @@ fn stack_args_slots_spanned_ceils_by_increment() {
             base_offset: inc,
             increment: inc,
         };
-        // Zero / one byte → one slot (never zero).
+        // Zero or one byte occupies one slot, never zero.
         assert_eq!(
             s.slots_spanned(0),
             1,
             "{label}: zero-size occupies one slot"
         );
         assert_eq!(s.slots_spanned(1), 1, "{label}: one byte");
-        // Exactly one slot wide.
         assert_eq!(s.slots_spanned(inc), 1, "{label}: exactly one slot");
-        // One byte into the next slot rounds up to two.
         assert_eq!(s.slots_spanned(inc + 1), 2, "{label}: spills into slot 2");
-        // Exactly two slots, then a byte more is three.
         assert_eq!(s.slots_spanned(2 * inc), 2, "{label}: exactly two slots");
         assert_eq!(
             s.slots_spanned(2 * inc + 1),
@@ -1036,8 +998,8 @@ fn stack_args_slots_spanned_ceils_by_increment() {
 }
 
 /// A garbage decoded size near `i128::MAX` must not overflow the
-/// `size + increment - 1` numerator — the span saturates instead of
-/// wrapping (mirroring `offset_of`'s saturation contract).
+/// `size + increment - 1` numerator; the span saturates instead, mirroring
+/// `offset_of`.
 #[test]
 fn stack_args_slots_spanned_saturates_on_overflow() {
     use crate::calling_convention::StackArgs;
@@ -1045,16 +1007,15 @@ fn stack_args_slots_spanned_saturates_on_overflow() {
         base_offset: 8,
         increment: 8,
     };
-    // `i128::MAX + 7` would overflow without the saturating add; the result is
-    // a large-but-finite slot count, computed without panicking.
+    // `i128::MAX + 7` would overflow without the saturating add.
     let span = s.slots_spanned(i128::MAX);
     assert_eq!(span, (i128::MAX / 8) as usize);
 }
 
-/// Adversarial near-`i128::MAX` offsets (decoded from binary content, not a
-/// trusted input) must degrade to `None`/saturation rather than panic in
-/// debug or wrap in release.  `index_of`'s `offset + size` is the overflow
-/// site; `offset_of`'s `base + n*increment` is the other.
+/// Near-`i128::MAX` offsets come from binary content, not trusted input, so
+/// they must degrade to `None` or saturate rather than panic in debug or wrap
+/// in release.  The two overflow sites are `index_of`'s `offset + size` and
+/// `offset_of`'s `base + n*increment`.
 #[test]
 fn stack_args_slot_math_degrades_on_overflow_not_panics() {
     use crate::calling_convention::StackArgs;
@@ -1062,23 +1023,20 @@ fn stack_args_slot_math_degrades_on_overflow_not_panics() {
         base_offset: 8,
         increment: 8,
     };
-    // index_of: `offset + size` would overflow i128 → None, not a panic.
+    // `offset + size` would overflow i128, so `None` rather than a panic.
     assert_eq!(s.index_of(i128::MAX, 8), None);
     assert_eq!(s.index_of(i128::MAX - 1, 8), None);
-    // slot_of with a max offset is well-defined (non-negative base) and must
-    // not panic.
+    // A max offset is well-defined given a non-negative base.
     assert_eq!(s.slot_of(i128::MAX), Some(((i128::MAX - 8) / 8) as usize));
-    // offset_of computes `base + n*increment` saturatingly; with the wider
-    // i128 intermediate (1<<62)*8 no longer overflows, so it scales exactly.
+    // The i128 intermediate is wide enough that (1<<62)*8 does not overflow,
+    // so the saturating add scales exactly here.
     assert_eq!(s.offset_of(1usize << 62), (1i128 << 62) * 8 + 8);
 }
 
-/// A negative `base_offset` is rejected at the construction boundary
-/// (`try_new`), the same way a non-positive `increment` is.  `base_offset`
-/// flows in unvalidated from the Python `CallingConvention.custom`
-/// (`stack_arg_base`); without this guard a negative base lets the
-/// `offset - base_offset` subtraction in `index_of` / `slot_of` overflow
-/// on a garbage offset decoded from a crafted binary.
+/// `base_offset` flows in unvalidated from the Python
+/// `CallingConvention.custom` (`stack_arg_base`).  Without this guard a
+/// negative base lets `index_of` / `slot_of`'s `offset - base_offset`
+/// overflow on a garbage offset decoded from a crafted binary.
 #[test]
 fn try_new_rejects_negative_stack_arg_base_offset() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());

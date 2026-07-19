@@ -7,14 +7,14 @@
     clippy::type_complexity
 )]
 
-//! Smoke tests: every [`strider_target::SleighArch`] preset must successfully feed
-//! into `rsleigh::Sleigh::new` and produce a usable register table.  Without
-//! this, presets that nothing else exercises (e.g. `mipsbe32`, `mipsle32`,
-//! `aarch64be`) could silently rot if an upstream constant were renamed.
+//! Every [`strider_target::SleighArch`] preset must feed into
+//! `rsleigh::Sleigh::new` and yield a usable register table.  Without this,
+//! presets nothing else exercises (`mipsbe32`, `mipsle32`, `aarch64be`) would
+//! silently rot when an upstream constant is renamed.
 //!
-//! Stack-pointer resolution is covered by the `calling_convention` tests in
-//! the crate's unit-test module — this file intentionally does not assert it,
-//! because the SP name lives on `CallingConvention`, not `SleighArch`.
+//! Stack-pointer resolution is deliberately not asserted here: the SP name
+//! lives on `CallingConvention`, so the `calling_convention` unit tests cover
+//! it.
 
 use strider_target::SleighArch;
 
@@ -51,13 +51,10 @@ fn all_presets_resolve() {
     }
 }
 
-/// Pins the [`strider_target::Endianness`] field of every `SleighArch` preset.
-///
-/// `Endianness` is consumed by `strider::register_aliasing` to decide the
-/// shift direction when extracting a sub-register from its container; a
-/// mistyped value on a BE preset (or vice-versa) silently produces wrong
-/// shifts at the analyzer layer, with no signal from this crate.  Pin it
-/// here so a typo in `arch.rs` is caught at unit-test time.
+/// `strider::register_aliasing` reads `Endianness` to pick the shift
+/// direction when extracting a sub-register from its container, so a mistyped
+/// value silently produces wrong shifts at the analyzer layer with no signal
+/// from this crate.  Pinned here so a typo in `arch.rs` fails at test time.
 #[test]
 fn presets_endianness_matches_arch() {
     use strider_target::Endianness;

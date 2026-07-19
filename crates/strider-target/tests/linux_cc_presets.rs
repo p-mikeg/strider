@@ -1,24 +1,19 @@
-//! Test for the one Linux calling-convention preset that diverges from a
-//! userland ABI: `x86_linux_kernel` (`-mregparm=3`).
+//! `x86_linux_kernel` (`-mregparm=3`) is the one Linux calling convention
+//! that diverges from a userland ABI.  Every other arch's kernel-internal CC
+//! is byte-identical to its userland preset, so callers use that directly and
+//! there is no kernel alias to test.  Syscall ABIs are not calling conventions
+//! either: the `syscall` / `int 0x80` / `svc` traps lift to `CallOther`,
+//! classified through `call_other_abi`.
 //!
-//! Every other arch's kernel-internal CC is byte-identical to its userland
-//! preset, so callers select the userland preset directly — there is no
-//! kernel alias to test.  Syscall ABIs are not calling conventions: the
-//! `syscall` / `int 0x80` / `svc` traps lift to `CallOther`, classified
-//! through `call_other_abi`, so they have no preset here either.
-//!
-//! The unit tests in `calling_convention/tests.rs` already pin the
-//! register *counts* for `x86_linux_kernel`; this integration test pins the
-//! distinctive part — the exact `EAX, EDX, ECX` arg registers that set
-//! regparm-3 apart from stack-only `x86_cdecl`.
+//! `calling_convention/tests.rs` already pins the register counts; this pins
+//! the distinctive part, the exact `EAX, EDX, ECX` arg registers that separate
+//! regparm-3 from stack-only `x86_cdecl`.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
 use strider_target::{CallingConvention, SleighArch};
 
-/// Probe the arch's Sleigh against an empty memory reader to extract the
-/// register table.  No real binary is needed — the register table is fixed
-/// by the `.sla` spec.
+/// No real binary needed: the register table is fixed by the `.sla` spec.
 fn regs_for(arch: SleighArch) -> rsleigh::SleighRegs {
     let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");

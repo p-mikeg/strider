@@ -1,8 +1,6 @@
-//! `BuiltCallingConvention::try_new` validates the
-//! cross-list disjointness invariants documented on the function.
-//!
-//! Pin that listing the SP varnode in `arg_passing_regs` produces
-//! a clear validation `Err` rather than a downstream miscompile.
+//! `BuiltCallingConvention::try_new` enforces its documented cross-list
+//! disjointness invariants: listing the SP varnode in `arg_passing_regs` must
+//! give a clear `Err` rather than a downstream miscompile.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -68,10 +66,10 @@ fn try_new_rejects_arg_overlapping_callee_saved() {
 
 #[test]
 fn try_new_rejects_ret_int_overlapping_ret_float() {
-    // An integer return register and a float return register are physically
-    // different register files on every supported arch; the same varnode in
-    // both lists is a CC-author bug and must be rejected.  (arg ∩ ret is left
-    // unchecked on purpose — x86_64 SysV RDX is legitimately both.)
+    // Integer and float returns are physically different register files on
+    // every supported arch, so the same varnode in both is a CC-author bug.
+    // arg-vs-ret overlap is left unchecked on purpose: x86_64 SysV RDX is
+    // legitimately both.
     let shared = vn(0x28);
     let res = BuiltCallingConvention::try_new(BuiltCallingConventionParts {
         arg_passing_regs: vec![vn(0x10)],

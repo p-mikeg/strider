@@ -1,7 +1,5 @@
-// Test code uses idiomatic .unwrap() / .expect() / panic! / unreachable! /
-// assert! macros which the workspace's production-code lints would otherwise
-// reject.  Production code is held to the strict denied set; the cfg_attr
-// below opts test compilation out of those specific lints only.
+// Opts test compilation out of the workspace's strict production-code lints so
+// tests can use unwrap/expect/panic idiomatically.  Production code keeps them.
 #![cfg_attr(
     test,
     allow(
@@ -14,9 +12,8 @@
     )
 )]
 
-//! Target description: architecture descriptors and calling conventions.
-//!
-//! Owns the pure data that describes the machine and ABI being analysed.
+//! Pure data describing the machine and ABI being analysed: architecture
+//! descriptors and calling conventions.
 
 pub mod arch;
 pub mod call_other_abi;
@@ -28,6 +25,4 @@ pub use calling_convention::{
     BuiltCallingConvention, BuiltCallingConventionParts, CallingConvention, StackArgs,
 };
 
-/// Crate-level `Result` alias.  Every fallible function in `strider-target`
-/// returns this type.
 pub type Result<T> = anyhow::Result<T>;
