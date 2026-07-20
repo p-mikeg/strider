@@ -292,8 +292,10 @@ pub(super) fn check_function_invariants_side_indices(
             continue;
         }
         let kind = graph.node_kind(node);
-        let matches =
-            matches!(kind, NodeKind::InitialVar(found) if function.initial_vn(*found) == vn);
+        // `initial_vn_opt` (not `initial_vn`) so a malformed `InitialVar` id
+        // yields a validation error rather than panicking out of the validator.
+        let matches = matches!(kind, NodeKind::InitialVar(found)
+            if function.initial_vn_opt(*found) == Some(vn));
         if !matches {
             errs.push(ValidationError::StaleInitialVarIndex {
                 node,

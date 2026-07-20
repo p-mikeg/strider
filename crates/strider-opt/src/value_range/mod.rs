@@ -20,6 +20,13 @@ use crate::opt::known_bits::{KnownBitsFacts, KnownBitsMap};
 #[cfg(test)]
 mod tests;
 
+fn gcd(mut a: u128, mut b: u128) -> u128 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a.max(1)
+}
+
 /// The inclusive value set `{ lo, lo+stride, lo+2*stride, ... hi }`.
 ///
 /// `lo`/`hi` are unsigned regardless of signedness: guard extraction gates
@@ -70,21 +77,66 @@ impl Interval {
         }
     }
 
+    /// Meet of two arithmetic progressions. The result stride is `lcm(s1, s2)`
+    /// and `lo` is the first element `>= max(lo1, lo2)` congruent to both
+    /// sources; incompatible residues (or an empty range) yield an empty
+    /// interval (`count() == 0`). Sound: the result always contains the real
+    /// value set, which is a subset of both operands.
     fn intersect(self, other: Self) -> Self {
-        // A genuine two-stride meet would need alignment reasoning, so keep a
-        // stride only when one side is dense and otherwise fall back to 1.
-        let stride = if self.stride == 1 {
-            other.stride
-        } else if other.stride == 1 {
-            self.stride
-        } else {
-            1
+        const EMPTY: Interval = Interval {
+            lo: 1,
+            hi: 0,
+            stride: 1,
         };
-        Self {
-            lo: self.lo.max(other.lo),
-            hi: self.hi.min(other.hi),
-            stride,
+        let lo_bound = self.lo.max(other.lo);
+        let hi = self.hi.min(other.hi);
+        if lo_bound > hi {
+            return EMPTY;
         }
+        let s1 = self.stride.max(1);
+        let s2 = other.stride.max(1);
+        if s1 == 1 && s2 == 1 {
+            return Self {
+                lo: lo_bound,
+                hi,
+                stride: 1,
+            };
+        }
+        // stride = lcm(s1, s2); on overflow fall back to the sound dense meet.
+        let Some(lcm) = (s1 / gcd(s1, s2)).checked_mul(s2) else {
+            return Self {
+                lo: lo_bound,
+                hi,
+                stride: 1,
+            };
+        };
+        // First x >= lo_bound with x = self.lo (mod s1); then step by s1 up to
+        // lcm/s1 times to hit the second congruence (exactly one match per lcm
+        // span, or none when the residues are incompatible).
+        let off = (lo_bound - self.lo) % s1;
+        let mut x = if off == 0 {
+            lo_bound
+        } else {
+            lo_bound + (s1 - off)
+        };
+        for _ in 0..(lcm / s1) {
+            if (x - other.lo).is_multiple_of(s2) {
+                return if x <= hi {
+                    Self {
+                        lo: x,
+                        hi,
+                        stride: lcm,
+                    }
+                } else {
+                    EMPTY
+                };
+            }
+            let Some(next) = x.checked_add(s1) else {
+                return EMPTY;
+            };
+            x = next;
+        }
+        EMPTY
     }
 
     fn union(self, other: Self) -> Self {

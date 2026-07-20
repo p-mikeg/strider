@@ -6,6 +6,48 @@ use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
 
 use super::compute_value_ranges;
 use crate::analyze_known_bits;
+use crate::value_range::Interval;
+
+/// The AP-meet must keep the stride phase: intersecting a dense `[5, 40]` with
+/// a multiples-of-8 progression yields `{8, 16, 24, 32, 40}` (lo rounded up to
+/// the stride phase, stride 8), NOT `{5, 13, 21, ...}`.
+#[test]
+fn intersect_preserves_stride_phase() {
+    let dense = Interval::dense(5, 40);
+    let mul8 = Interval {
+        lo: 0,
+        hi: 64,
+        stride: 8,
+    };
+    let m = dense.intersect(mul8);
+    assert_eq!((m.lo, m.hi, m.stride), (8, 40, 8));
+    assert_eq!(m.count(), 5);
+    // Two coprime strides with incompatible phases have no common element.
+    let odd = Interval {
+        lo: 1,
+        hi: 100,
+        stride: 2,
+    };
+    let ev = Interval {
+        lo: 0,
+        hi: 100,
+        stride: 2,
+    };
+    assert_eq!(odd.intersect(ev).count(), 0);
+    // Compatible strides combine to lcm with the shared phase.
+    let a = Interval {
+        lo: 0,
+        hi: 200,
+        stride: 4,
+    };
+    let b = Interval {
+        lo: 0,
+        hi: 200,
+        stride: 6,
+    };
+    let m = a.intersect(b);
+    assert_eq!((m.lo, m.stride), (0, 12));
+}
 
 /// Brings a hand-built fixture to the converged IR shape the range analysis
 /// assumes: no single-input phis, no single-predecessor regions, no
