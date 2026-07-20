@@ -48,8 +48,9 @@ pub(crate) enum AliasVerdict {
 }
 
 /// Memoized: a hit is O(1), a miss walks the SP spine and caches the verdict.
-/// Sound only because the pipeline clears the memo on every graph mutation,
-/// so no memoized verdict outlives its graph.
+/// Sound because the fixed-point loop drains the memo after every changing
+/// pass; the post-passes that skip the drain only mutate the graph in ways that
+/// leave every address value's decomposition unchanged.
 pub(crate) fn decompose(function: &Function, value: ValueId) -> Option<SpExpr> {
     match function.side_tables().stack_slot(value) {
         SpDecomp::Stack(_) => return resolve_slot(function, value),

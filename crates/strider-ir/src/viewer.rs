@@ -376,8 +376,8 @@ pub trait IRWalker: IRViewer {
         info.reverse_postorder(self.function().graph())
     }
 
-    /// [`Self::reverse_postorder`] from entry, filtered by `pred`. Empty when
-    /// no entry is set.
+    /// [`Self::reverse_postorder`] from entry, filtered by `pred`. Empty only
+    /// when `pred` matches nothing reachable from entry.
     fn reverse_postorder_filter<'a>(
         &'a self,
         pred: impl Fn(&NodeKind) -> bool + 'a,

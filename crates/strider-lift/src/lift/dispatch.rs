@@ -104,7 +104,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 );
             }
             // User-defined CPU intrinsic (cpuid, rdtsc, syscall).  inputs[0] is
-            // a CONST user-op id, the rest are arguments.  Clobbers memory.
+            // a CONST user-op id, the rest are arguments.  May clobber memory,
+            // per the target ABI table's `clobbers_memory` flag.
             Opcode::CallOther => self.handle_call_other(insn)?,
 
             Opcode::IntAdd => self.process_int_binary_op(insn, IntBinaryOp::Add)?,

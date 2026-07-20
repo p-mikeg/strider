@@ -278,8 +278,10 @@ impl<'g> EditFunction<'g> {
     fn canonicalize_node(&mut self, node: NodeId) {
         self.state.flags[node].remove(NodeFlags::NEEDS_RECANON);
         if let Some(twin) = self.function.graph_mut().canonicalize_node(node) {
-            // Every cacheable kind is single-value-output per the validated
-            // node signature; a non-single output is structural corruption.
+            // `canonicalize_node` returns `Some` only on a structural dedup.
+            // Among cacheable kinds only `If` is multi-output, and two `If`s
+            // never share a control edge (control is single-consumer), so an
+            // `If` never dedups; every node reaching here is single-value-output.
             let [node_out] = self
                 .function
                 .node_outputs_exact::<1>(node)

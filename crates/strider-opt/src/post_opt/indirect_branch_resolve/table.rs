@@ -76,10 +76,13 @@ pub fn classify_table_dispatch(
 /// Requiring dominance excludes a bypassed sub-branch: in a rotate
 /// `(x<<2) | (x>>30)`, `x>>30` has the tightest interval but does not dominate.
 ///
-/// SHALLOWEST, not deepest, is load-bearing: it sits just below the address
-/// arithmetic with every guard/mask/shift applied, so enumerating it visits
-/// exactly the reachable slots.  A deeper node's bound can be looser, and
-/// enumerating out-of-bounds slots defers a branch that should have resolved.
+/// SHALLOWEST here is target-rooted (nearest the dispatch value), the opposite
+/// of the entry-rooted "deepest-dominator" wording elsewhere. It, not the
+/// deepest, is load-bearing: it sits just below the address arithmetic with
+/// every guard/mask/shift applied, so enumerating it visits exactly the
+/// reachable slots.  A deeper (further-from-dispatch) node's bound can be
+/// looser, and enumerating out-of-bounds slots defers a branch that should have
+/// resolved.
 ///
 /// The cone traverses THROUGH a load the evaluator can fold (const-base rodata,
 /// SP-rooted stack) into its address, and stops at reg/GOT-based loads (vtable,

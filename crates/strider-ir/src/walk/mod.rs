@@ -103,8 +103,8 @@ impl graph_algorithms::walk::GraphRef for CfgSuccs<'_> {
 
 pub type GraphWalk<'a> = PreOrder<GraphWalkSuccs<'a>>;
 
-/// Unspecified order, and "reachable" includes dead CFG inputs. `entry` comes
-/// last whenever it has no inputs, as it does in a well-formed graph.
+/// Pre-order from `entry`, so `entry` is yielded FIRST. Order is otherwise
+/// unspecified, and "reachable" includes dead CFG inputs.
 pub(crate) fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
     PreOrder::new(GraphWalkSuccs::new(graph), iter::once(entry))
 }

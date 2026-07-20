@@ -14,7 +14,8 @@ class BufferReader:
         """Serve `data` as the bytes mapped starting at `base_addr`."""
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
-        """The `size` bytes at `addr`, or `None` when the range is unmapped."""
+        """Up to `size` bytes at `addr` (fewer near a region edge), or `None`
+        when `addr` itself is unmapped."""
         ...
 
 class MemReader:
@@ -28,7 +29,8 @@ class MemReader:
         """Base initialiser; subclasses may take whatever arguments they like."""
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
-        """Return the `size` bytes at `addr`, or `None` when unmapped."""
+        """Return up to `size` bytes at `addr` (a short read near a region edge
+        is allowed), or `None` when `addr` is unmapped."""
         ...
 
 class ReadOnlyMemory:

@@ -51,8 +51,8 @@ impl Optimizer for CfgDetach {
             return Ok(OptimizationResult::NoChange);
         }
 
-        // Pass each region all its dead indices at once; the removal orders them
-        // highest-index-first internally so earlier slots stay index-stable.
+        // Pass each region all its dead indices at once; batch removal is
+        // set-based, so index order does not matter.
         //
         // Severing a Region's LAST predecessor makes its whole control-dominated
         // subgraph unreachable, but the incremental live-set bookkeeping tracks

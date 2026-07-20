@@ -66,8 +66,8 @@ class Node:
         to `inputs()`."""
         ...
     def wide_const_bytes(self) -> Optional[bytes]:
-        """The little-endian bytes of a wider-than-128-bit integer constant,
-        else `None`."""
+        """The little-endian bytes of a wide integer constant (`I80`, `I128`,
+        `I256`, `I512`), else `None`."""
         ...
     def call_other_name(self) -> Optional[str]:
         """The user-op name attached to a `CallOther` node, else `None`."""

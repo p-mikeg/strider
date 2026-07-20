@@ -178,8 +178,8 @@ impl<N, V> RawStore<N, V> {
 
     /// Inserts `input_id` at the head of its value's use-list.
     ///
-    /// Callers guarantee `input_id` is freshly created, so its `prev`/`next`
-    /// are `None` by construction.
+    /// Callers guarantee `input_id`'s `prev`/`next` are `None` -- either freshly
+    /// created or just unlinked from its previous value list.
     pub(crate) fn link_use_to_value_list(&mut self, input_id: UseId) {
         let value_id = self.inputs[input_id].value_id;
         let next_value_use = self.outputs[value_id].first_use;

@@ -70,6 +70,11 @@ impl CallPat {
     /// candidate, and the sub-pattern discriminates: a typed value sub binds
     /// only a value input, while `var` / `anything` also reaches the control
     /// and memory edges. Repeatable, each call adding one constraint.
+    ///
+    /// QUIRK: the existential is NOT excluded from a slot a fixed operand
+    /// already pinned (only other `any_input`s are mutually exclusive), so it
+    /// can bind the same input as a fixed operand -- an extra, surprising
+    /// binding, never a wrong node match. A distinctness option is deferred.
     pub fn any_input<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_any(p))
     }

@@ -488,8 +488,8 @@ fn flatten_or(f: &impl IRViewer, value: ValueId, out: &mut Vec<ValueId>, depth: 
 
 /// Classifies a CR-pack term as `(bit position, comparison at that bit)`,
 /// proving structurally that it sets ONLY that bit; `None` for anything not
-/// provably single-bit.  The comparison is `Some` only for a
-/// `ZeroExtend(IntCmpOp)` leaf.
+/// provably single-bit.  The comparison is `Some` for a bare `IntCmpOp` leaf
+/// or a `ZeroExtend` of one.
 fn single_bit_term(
     f: &impl IRViewer,
     value: ValueId,

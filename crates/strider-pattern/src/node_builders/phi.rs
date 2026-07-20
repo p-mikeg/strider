@@ -116,6 +116,10 @@ impl MemPhiPat {
     /// Candidates are every input: `PhiToken` at slot 0 and each memory
     /// predecessor after it. A typed value sub binds neither; only
     /// `var` / `anything` reaches them. Repeatable.
+    ///
+    /// QUIRK: the existential is not excluded from a fixed operand's slot, so
+    /// `phi().input(0, X).any_input(var(a))` can bind `a` to the same input as
+    /// `X` (same as `CallPat::any_input`). A distinctness option is deferred.
     pub fn any_input<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_any(p))
     }

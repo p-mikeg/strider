@@ -135,9 +135,9 @@ def _effective_arch_and_addr(
 
     A Thumb function pointer has its low bit set; the real instruction
     address is `raw_addr & ~1` and it must be decoded as Thumb. For an
-    ARM-family `arch` with that bit set, this returns
-    `(arm_thumb, raw_addr & ~1)`; otherwise both come back unchanged, since
-    no other architecture interworks.
+    ARM-family `arch` with that bit set, this strips the bit and returns Thumb
+    decoding -- except `arm_be`, which stays `arm_be` (there is no big-endian
+    Thumb preset). Other architectures come back unchanged.
     """
     if raw_addr & 1 and arch.name() in ("arm", "arm_be", "arm_thumb"):
         # There is no big-endian Thumb preset, so a big-endian ARM entry with

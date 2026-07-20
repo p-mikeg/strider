@@ -39,9 +39,11 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
 /// * `Absolute`, `S + A` (`R_X86_64_64`). Symbol-targeted.
 /// * `Relative`, `S + A - P` (`R_X86_64_PC32`, `R_X86_64_PC64`,
 ///   `R_AARCH64_PREL32/PREL64`, `R_386_PC32`). Symbol-targeted.
-/// * `PltRelative` (`R_X86_64_PLT32`, `R_AARCH64_CALL26`, `R_386_PLT32`),
-///   valued the same as `Relative`: no PLT is materialised, so the symbol's own
-///   address is used.
+/// * `PltRelative`, valued the same as `Relative` (no PLT is materialised, so
+///   the symbol's own address is used): the 32-bit `R_X86_64_PLT32` /
+///   `R_386_PLT32` apply. `R_AARCH64_CALL26` also arrives as `PltRelative`, but
+///   its 26-bit field fails the byte-width write gate and is left unpatched
+///   (branch-immediate encodings are not modelled).
 ///
 /// Via raw `r_type`, which `object` reports as `RelocationKind::Unknown`:
 /// * `R_*_RELATIVE` / `R_*_IRELATIVE`: write `image_base + addend`, image base

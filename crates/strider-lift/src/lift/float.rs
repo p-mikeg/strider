@@ -166,9 +166,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let raw_value = self.read_input(insn, 0)?;
         let out_vn = require_output_vn(insn)?;
         let float_ty = out_vn.float_type()?;
-        // Register reads are always int-typed, so this is usually a no-op.  It
-        // bites when the input is a UNIQUE temp left float-typed by a prior
-        // float op, which `build_int_to_float` would reject.
+        // The input is int-typed (register reads always are), so this coerces
+        // its width. A non-int (float-typed UNIQUE temp) input errors here
+        // rather than being silently reinterpreted.
         let in_size: ValueType = nth_input_or_err(insn, 0)?.int_type()?;
         let int_value = self.builder.convert_to_int_if_needed(raw_value, in_size)?;
         let float_result = self.builder.build_int_to_float(int_value, float_ty)?;

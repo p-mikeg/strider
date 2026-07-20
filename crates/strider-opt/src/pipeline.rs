@@ -98,8 +98,7 @@ pub trait Optimizer: OptimizerClone {
 ///
 /// # Errors
 ///
-/// Errors if `function` has no entry node, else the first error from
-/// [`Optimizer::apply`].
+/// Returns the first error from [`Optimizer::apply`].
 #[cfg(any(test, feature = "test-util"))]
 pub fn run_one(
     pass: &dyn Optimizer,
@@ -117,8 +116,7 @@ pub fn run_one(
 ///
 /// # Errors
 ///
-/// Errors if `function` has no entry node, else the first error from
-/// [`PostOptimizer::apply`].
+/// Returns the first error from [`PostOptimizer::apply`].
 #[cfg(any(test, feature = "test-util"))]
 pub fn run_post(
     pass: &dyn PostOptimizer,
@@ -232,8 +230,8 @@ impl OptimizerPipeline {
     ///
     /// # Errors
     ///
-    /// Errors if the function is not built, else the first error from any
-    /// pass. A pass error skips the final validation step and wins.
+    /// Returns the first error from any pass, or from the final validation. A
+    /// pass error skips the final validation step and wins.
     pub fn run(
         &self,
         function: &mut strider_ir::Function,
