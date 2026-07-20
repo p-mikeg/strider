@@ -915,18 +915,61 @@ fn neighborhood_bfs_bounds_depth_and_walks_both_directions() {
     consumers.entry(c2).or_default().push(add);
 
     assert_eq!(
-        neighborhood_nodes(&f, add, 0, 12, usize::MAX, &consumers).len(),
+        neighborhood_nodes(&f, add, 0, 12, usize::MAX, false, &consumers).len(),
         1
     );
-    let d1 = neighborhood_nodes(&f, add, 1, 12, usize::MAX, &consumers);
+    let d1 = neighborhood_nodes(&f, add, 1, 12, usize::MAX, false, &consumers);
     assert!(d1.contains(&c1) && d1.contains(&c2) && d1.contains(&add));
     assert_eq!(d1.len(), 3);
     // Depth 1 from a const reaches Add via the consumer edge: both directions.
-    assert!(neighborhood_nodes(&f, c1, 1, 12, usize::MAX, &consumers).contains(&add));
-    // From c1 with cap 1, Add (degree 2) is reached but not walked past.
-    let capped = neighborhood_nodes(&f, c1, 3, 1, usize::MAX, &consumers);
-    assert!(capped.contains(&c1) && capped.contains(&add) && !capped.contains(&c2));
-    assert_eq!(capped.len(), 2);
+    assert!(neighborhood_nodes(&f, c1, 1, 12, usize::MAX, false, &consumers).contains(&add));
+    // Depth 3 from c1 reaches the whole tiny graph via both directions.
+    let all = neighborhood_nodes(&f, c1, 3, 12, usize::MAX, false, &consumers);
+    assert!(all.contains(&c1) && all.contains(&add) && all.contains(&c2));
+    assert_eq!(all.len(), 3);
+}
+
+#[test]
+fn neighborhood_hub_follows_producers_not_consumers() {
+    use super::neighborhood::neighborhood_nodes;
+    use crate::node::IntBinaryOp;
+    use rustc_hash::FxHashMap;
+
+    // c1, c2 -> add(hub) -> use1.
+    let mut f = test_function();
+    let c1 = int_const_node(&mut f, 5, ValueType::I32);
+    let c2 = int_const_node(&mut f, 8, ValueType::I32);
+    let v1 = f.node_outputs(c1)[0];
+    let v2 = f.node_outputs(c2)[0];
+    let add = f.graph_mut().create_node(
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        [v1, v2],
+        [ValueKind::Typed(ValueType::I32)],
+    );
+    let av = f.node_outputs(add)[0];
+    let c3 = int_const_node(&mut f, 1, ValueType::I32);
+    let v3 = f.node_outputs(c3)[0];
+    let use1 = f.graph_mut().create_node(
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        [av, v3],
+        [ValueKind::Typed(ValueType::I32)],
+    );
+    let mut consumers: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
+    consumers.entry(c1).or_default().push(add);
+    consumers.entry(c2).or_default().push(add);
+    consumers.entry(add).or_default().push(use1);
+    consumers.entry(c3).or_default().push(use1);
+
+    // Add has 2 producers (c1, c2) and 1 consumer (use1). With the default
+    // consumer-only hub count at cap 2, Add is NOT a hub (1 <= 2), so its
+    // consumer use1 is followed.
+    let n = neighborhood_nodes(&f, c1, 4, 2, usize::MAX, false, &consumers);
+    assert!(n.contains(&use1), "consumer-only count keeps Add a non-hub");
+    // count_producers folds in the 2 inputs (degree 3 > 2), so Add becomes a
+    // hub: its producer c2 is still reached but its consumer use1 is suppressed.
+    let n2 = neighborhood_nodes(&f, c1, 4, 2, usize::MAX, true, &consumers);
+    assert!(n2.contains(&c2), "hub producers followed");
+    assert!(!n2.contains(&use1), "hub consumer fan-out suppressed");
 }
 
 #[test]
@@ -948,7 +991,7 @@ fn neighborhood_bfs_bounds_total_node_count() {
     );
     let consumers: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
 
-    let budgeted = neighborhood_nodes(&f, add, 1, 12, 2, &consumers);
+    let budgeted = neighborhood_nodes(&f, add, 1, 12, 2, false, &consumers);
     assert_eq!(
         budgeted.len(),
         2,
@@ -999,7 +1042,7 @@ fn neighborhood_center_is_highlighted_and_navigable_even_when_const() {
         center: None,
     };
 
-    let dot = dumper.neighborhood_dot(add1, 3, 12, 100).unwrap();
+    let dot = dumper.neighborhood_dot(add1, 3, 12, 100, false).unwrap();
     let decl = node_decls(&dot)
         .into_iter()
         .find(|l| {
@@ -1013,7 +1056,7 @@ fn neighborhood_center_is_highlighted_and_navigable_even_when_const() {
     );
 
     // A const centre: the SAME box for both consumers, under its NodeId.
-    let dot = dumper.neighborhood_dot(k, 3, 12, 100).unwrap();
+    let dot = dumper.neighborhood_dot(k, 3, 12, 100, false).unwrap();
     let kid = k.as_u32().to_string();
     let decls: Vec<_> = node_decls(&dot)
         .into_iter()
@@ -1072,7 +1115,7 @@ fn neighborhood_duplicates_shared_const_per_use() {
         nodes: None,
         center: None,
     };
-    let dot = dumper.neighborhood_dot(center, 3, 12, 100).unwrap();
+    let dot = dumper.neighborhood_dot(center, 3, 12, 100, false).unwrap();
 
     let sevens = node_decls(&dot)
         .iter()
@@ -1081,7 +1124,7 @@ fn neighborhood_duplicates_shared_const_per_use() {
     assert_eq!(sevens, 2, "shared const must be duplicated per use:\n{dot}");
 
     // In the raw neighborhood the shared const stays one box.
-    let raw = f.raw_neighborhood_dot(center, 3, 12, 100).unwrap();
+    let raw = f.raw_neighborhood_dot(center, 3, 12, 100, false).unwrap();
     let raw_consts = node_decls(&raw)
         .iter()
         .filter(|l| l.contains("IntConst"))

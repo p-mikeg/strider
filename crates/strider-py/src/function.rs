@@ -197,20 +197,21 @@ impl PyFunction {
 
     /// Render the depth-`depth` neighborhood around node `center` exactly as
     /// stored.
-    #[pyo3(signature = (center, depth=5, hub_cap=12, max_nodes=60))]
+    #[pyo3(signature = (center, depth=5, hub_cap=12, max_nodes=60, count_producers=false))]
     fn neighborhood_dot(
         &self,
         center: u32,
         depth: usize,
         hub_cap: usize,
         max_nodes: usize,
+        count_producers: bool,
     ) -> PyResult<String> {
         self.with_read_value(|function| {
             let nid = function
                 .graph()
                 .node_id_from_u32(center)
                 .ok_or_else(|| anyhow::anyhow!("invalid node id {center}"))?;
-            function.raw_neighborhood_dot(nid, depth, hub_cap, max_nodes)
+            function.raw_neighborhood_dot(nid, depth, hub_cap, max_nodes, count_producers)
         })?
         .map_err(crate::errors::into_strider_err)
     }

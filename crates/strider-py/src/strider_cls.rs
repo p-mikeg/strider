@@ -486,9 +486,10 @@ impl PyLifter {
     }
 
     /// Pretty DOT for the nodes within `depth` hops of node `center`, with
-    /// register names resolved.  A node whose degree exceeds `hub_cap` is
-    /// shown but not expanded through, and `max_nodes` caps the total.
-    #[pyo3(signature = (function, center, depth=5, hub_cap=12, max_nodes=60))]
+    /// register names resolved.  A hub (degree over `hub_cap`) is shown and its
+    /// inputs are followed, but its consumer fan-out is not; `max_nodes` caps
+    /// the total.
+    #[pyo3(signature = (function, center, depth=5, hub_cap=12, max_nodes=60, count_producers=false))]
     fn neighborhood_dot(
         &self,
         function: &PyFunction,
@@ -496,6 +497,7 @@ impl PyLifter {
         depth: usize,
         hub_cap: usize,
         max_nodes: usize,
+        count_producers: bool,
     ) -> PyResult<String> {
         let sleigh = self.sleigh();
         let guard = function.read_inner().map_err(into_strider_err)?;
@@ -505,7 +507,7 @@ impl PyLifter {
             .ok_or_else(|| into_strider_err(anyhow::anyhow!("invalid node id {center}")))?;
         let dumper = guard.dot_dumper(sleigh).map_err(into_strider_err)?;
         dumper
-            .neighborhood_dot(nid, depth, hub_cap, max_nodes)
+            .neighborhood_dot(nid, depth, hub_cap, max_nodes, count_producers)
             .map_err(|e| into_strider_err(anyhow::anyhow!(e)))
     }
 

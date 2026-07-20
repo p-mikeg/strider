@@ -154,11 +154,14 @@ class Function:
         depth: int = ...,
         hub_cap: int = ...,
         max_nodes: int = ...,
+        count_producers: bool = ...,
     ) -> str:
         """DOT for the nodes within `depth` hops of node `center`, rendered
-        exactly as stored. A node whose degree exceeds `hub_cap` is shown but
-        not expanded through, and `max_nodes` caps the total.
-        `Lifter.neighborhood_dot` is the prettier counterpart."""
+        exactly as stored. A hub (degree over `hub_cap`) is shown and its inputs
+        are followed, but its consumer fan-out is not, and `max_nodes` caps the
+        total. The hub degree is the consumer fan-out; `count_producers` folds a
+        node's inputs in too. `Lifter.neighborhood_dot` is the prettier
+        counterpart."""
         ...
     def node_count(self) -> int:
         """Total number of node ids in the graph, whether or not they are

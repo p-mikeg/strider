@@ -98,6 +98,7 @@ impl<'a> RawFunctionDumper<'a> {
         depth: usize,
         hub_cap: usize,
         max_nodes: usize,
+        count_producers: bool,
     ) -> anyhow::Result<String> {
         let consumers = super::neighborhood::build_consumers(self.function);
         let set = super::neighborhood::neighborhood_nodes(
@@ -106,6 +107,7 @@ impl<'a> RawFunctionDumper<'a> {
             depth,
             hub_cap,
             max_nodes,
+            count_producers,
             &consumers,
         );
         let mut out = DotEmitter::new("G", &DotStyle::dark());
@@ -196,7 +198,14 @@ impl Function {
         depth: usize,
         hub_cap: usize,
         max_nodes: usize,
+        count_producers: bool,
     ) -> crate::Result<String> {
-        RawFunctionDumper::new(self).neighborhood_dot(center, depth, hub_cap, max_nodes)
+        RawFunctionDumper::new(self).neighborhood_dot(
+            center,
+            depth,
+            hub_cap,
+            max_nodes,
+            count_producers,
+        )
     }
 }

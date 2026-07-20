@@ -32,14 +32,18 @@ fn producers(f: &Function, node: NodeId) -> Vec<NodeId> {
 }
 
 /// BFS around `center` over **both** input and output edges, capped at
-/// `max_nodes`.  A node whose total degree exceeds `hub_cap` is included but
-/// not expanded *through*; `center` always expands.
+/// `max_nodes`.  A node is a hub when its consumer fan-out (plus its producers
+/// when `count_producers`) exceeds `hub_cap`: it is included and its producers
+/// (inputs) are still followed, but its consumer fan-out is not, so a
+/// widely-used value doesn't drag in most of the function. `center` always
+/// expands both directions.
 pub(super) fn neighborhood_nodes(
     f: &Function,
     center: NodeId,
     depth: usize,
     hub_cap: usize,
     max_nodes: usize,
+    count_producers: bool,
     consumers: &FxHashMap<NodeId, Vec<NodeId>>,
 ) -> FxHashSet<NodeId> {
     let mut seen = FxHashSet::default();
@@ -51,10 +55,16 @@ pub(super) fn neighborhood_nodes(
         }
         let prod = producers(f, node);
         let cons = consumers.get(&node).cloned().unwrap_or_default();
-        if node != center && prod.len() + cons.len() > hub_cap {
-            continue; // hub: include, don't expand through
-        }
-        for nb in prod.into_iter().chain(cons) {
+        // Hub degree is the consumer fan-out (the part that explodes); with
+        // `count_producers` the inputs fold in too. A hub still expands its
+        // producers (its inputs, a small fixed set) but not its consumer
+        // fan-out. The center always expands both directions.
+        let degree = cons.len() + if count_producers { prod.len() } else { 0 };
+        let is_hub = node != center && degree > hub_cap;
+        for nb in prod
+            .into_iter()
+            .chain(if is_hub { Vec::new() } else { cons })
+        {
             if seen.len() >= max_nodes {
                 break 'bfs; // budget spent; the nearest nodes are already in
             }
@@ -78,9 +88,18 @@ impl<R: MemReader> FunctionDotDumper<'_, R> {
         depth: usize,
         hub_cap: usize,
         max_nodes: usize,
+        count_producers: bool,
     ) -> io::Result<String> {
         let consumers = build_consumers(self.function);
-        let set = neighborhood_nodes(self.function, center, depth, hub_cap, max_nodes, &consumers);
+        let set = neighborhood_nodes(
+            self.function,
+            center,
+            depth,
+            hub_cap,
+            max_nodes,
+            count_producers,
+            &consumers,
+        );
         let restricted = FunctionDotDumper {
             entry: self.entry,
             function: self.function,

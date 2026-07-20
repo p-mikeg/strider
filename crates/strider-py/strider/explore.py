@@ -100,6 +100,7 @@ _FRONTEND = r"""<!doctype html>
   <button id="back" class="navbtn" title="Back (Alt+←)">←</button>
   <button id="fwd" class="navbtn" title="Forward (Alt+→)">→</button>
   <span class="stepper">depth <button id="dm">−</button><span id="dval">5</span><button id="dp">+</button></span>
+  <button id="prod" class="navbtn" title="Count a node's inputs (producers) toward the hub threshold; off by default (fan-out only)" style="width:auto;padding:0 8px">+prod</button>
   <button id="raw" class="navbtn" title="Toggle raw (structure-faithful) view" style="width:auto;padding:0 8px">raw</button>
   <div id="qwrap">
     <input id="q" type="text" spellcheck="false"
@@ -123,7 +124,7 @@ _FRONTEND = r"""<!doctype html>
 <script>
 const $=id=>document.getElementById(id);
 const wrap=$("wrap"), graph=$("graph"), hits=$("hits"), msg=$("msg"), qEl=$("q"), acEl=$("ac"), dval=$("dval");
-let viz, center, curSvg, depth=5, scale=1, baseW=0, baseH=0, rawMode=false;
+let viz, center, curSvg, depth=5, scale=1, baseW=0, baseH=0, rawMode=false, countProd=false;
 let matches=new Set(), marked=new Set(), names=[];
 
 const ROLES=[["control","#00cccc"],["memory","#cc88aa"],["lhs","#4488ff"],["rhs","#ff4444"],
@@ -141,7 +142,7 @@ async function render(anchor){
   if(dotCtrl) dotCtrl.abort();               // cancel any in-flight render (single-threaded server)
   dotCtrl=new AbortController();
   let dot;
-  try{ dot=await (await fetch(`/dot?center=${center}&depth=${depth}&raw=${rawMode?1:0}`,{signal:dotCtrl.signal})).text(); }
+  try{ dot=await (await fetch(`/dot?center=${center}&depth=${depth}&raw=${rawMode?1:0}&count_producers=${countProd?1:0}`,{signal:dotCtrl.signal})).text(); }
   catch(e){ if(e.name==="AbortError") return; throw e; }
   curSvg=viz.renderSVGElement(dot);
   curSvg.removeAttribute("width"); curSvg.removeAttribute("height");
@@ -276,13 +277,15 @@ function setDepth(d){ depth=Math.max(1,Math.min(12,d)); dval.textContent=depth;
 $("dp").onclick=()=>setDepth(depth+1); $("dm").onclick=()=>setDepth(depth-1);
 $("raw").onclick=()=>{ rawMode=!rawMode; $("raw").classList.toggle("cur",rawMode);
   render().then(()=>centerNode(String(center))); };
+$("prod").onclick=()=>{ countProd=!countProd; $("prod").classList.toggle("cur",countProd);
+  render().then(()=>centerNode(String(center))); };
 wrap.addEventListener("wheel",e=>{ if(!e.ctrlKey)return; e.preventDefault();
   scale=Math.max(0.2,Math.min(4,scale*(e.deltaY<0?1.12:0.89))); applyScale(); },{passive:false});
 
 Viz.instance().then(async v=>{
   viz=v; names=await (await fetch("/patterns")).json();
   center=String(await (await fetch("/entry")).json());
-  if(!(await (await fetch("/caps")).json()).raw){ $("raw").style.display="none"; }
+  if(!(await (await fetch("/caps")).json()).raw){ $("raw").style.display="none"; $("prod").style.display="none"; }
   await render(); centerNode(center,false); pushHist();
 });
 </script></body></html>"""
@@ -303,12 +306,17 @@ class _IrVisualizer:
         """The node id to center the first view on."""
         return self._fn.entry_node()
 
-    def dot(self, center, depth, raw):
+    def dot(self, center, depth, raw, count_producers=False):
         """DOT for the neighborhood around `center`; `raw` selects the
-        structure-faithful view for when the pretty one cannot be trusted."""
+        structure-faithful view for when the pretty one cannot be trusted.
+        `count_producers` folds a node's inputs into its hub degree."""
         if raw:
-            return self._fn.neighborhood_dot(center, depth=depth)
-        return self._lifter.neighborhood_dot(self._fn, center, depth=depth)
+            return self._fn.neighborhood_dot(
+                center, depth=depth, count_producers=count_producers
+            )
+        return self._lifter.neighborhood_dot(
+            self._fn, center, depth=depth, count_producers=count_producers
+        )
 
     def search(self, query):
         """Node ids matching the pattern expression `query`."""
@@ -335,11 +343,11 @@ class _CfgVisualizer:
         """The region index to center the first view on."""
         return self._cfg.entry()
 
-    def dot(self, center, depth, raw):
+    def dot(self, center, depth, raw, count_producers=False):
         """DOT for the regions around `center`. A `Cfg` has no raw view (that
-        lives on `Function`, over a different id space), so `supports_raw` is
-        false and `raw` is ignored."""
-        del raw
+        lives on `Function`, over a different id space) and no hub concept, so
+        `supports_raw` is false and `raw` / `count_producers` are ignored."""
+        del raw, count_producers
         return self._cfg.neighborhood_dot(center, depth=depth)
 
     def search(self, query):
@@ -455,7 +463,8 @@ def _serve(visualizer, *, host="127.0.0.1", port=0, depth=5):
                     c = int(q.get("center", [entry])[0])
                     d = int(q.get("depth", [depth])[0])
                     raw = q.get("raw", ["0"])[0] == "1"
-                    dot = visualizer.dot(c, d, raw)
+                    count_producers = q.get("count_producers", ["0"])[0] == "1"
+                    dot = visualizer.dot(c, d, raw, count_producers)
                     self._send(dot, "text/plain")
                 elif u.path == "/pattern":
                     result = visualizer.search(q.get("q", [""])[0])

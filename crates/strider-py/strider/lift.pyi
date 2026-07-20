@@ -138,13 +138,16 @@ class Lifter:
         depth: int = ...,
         hub_cap: int = ...,
         max_nodes: int = ...,
+        count_producers: bool = ...,
     ) -> str:
         """Pretty DOT for the nodes within `depth` hops of node `center`,
         with register names resolved. `Function.neighborhood_dot` is the
         plain counterpart.
 
-        A node whose degree exceeds `hub_cap` is shown but not expanded
-        through, and `max_nodes` caps the total.
+        A hub (degree over `hub_cap`) is shown and its inputs are followed, but
+        its consumer fan-out is not, and `max_nodes` caps the total. The hub
+        degree is the consumer fan-out; `count_producers` folds a node's inputs
+        in too.
         """
         ...
     def reg(self, name: str) -> Optional[Vn]:
