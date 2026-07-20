@@ -11,8 +11,9 @@ fn expect_call(c: Option<CallOtherClass>) -> CallOtherAbi {
 }
 
 #[test]
-fn arm_swi_reads_r7_and_r0_through_r6() {
-    let abi = expect_call(classify(ArchPreset::Arm, "swi"));
+fn arm_software_interrupt_reads_r7_and_r0_through_r6() {
+    // ARM emits `software_interrupt` (not `swi`) for SVC.
+    let abi = expect_call(classify(ArchPreset::Arm, "software_interrupt"));
     assert_eq!(
         abi.implicit_reads,
         &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"]
@@ -22,10 +23,10 @@ fn arm_swi_reads_r7_and_r0_through_r6() {
 }
 
 #[test]
-fn arm_be_and_thumb_share_swi_with_arm() {
-    let arm = expect_call(classify(ArchPreset::Arm, "swi"));
-    let arm_be = expect_call(classify(ArchPreset::ArmBe, "swi"));
-    let arm_thumb = expect_call(classify(ArchPreset::ArmThumb, "swi"));
+fn arm_be_and_thumb_share_software_interrupt_with_arm() {
+    let arm = expect_call(classify(ArchPreset::Arm, "software_interrupt"));
+    let arm_be = expect_call(classify(ArchPreset::ArmBe, "software_interrupt"));
+    let arm_thumb = expect_call(classify(ArchPreset::ArmThumb, "software_interrupt"));
     assert_eq!(arm.implicit_reads, arm_be.implicit_reads);
     assert_eq!(arm.implicit_reads, arm_thumb.implicit_reads);
     assert_eq!(arm.implicit_writes, arm_be.implicit_writes);
@@ -33,11 +34,11 @@ fn arm_be_and_thumb_share_swi_with_arm() {
 }
 
 #[test]
-fn x86_64_swi_differs_from_arm_swi() {
-    let arm = expect_call(classify(ArchPreset::Arm, "swi"));
+fn x86_swi_differs_from_arm_software_interrupt() {
+    let arm = expect_call(classify(ArchPreset::Arm, "software_interrupt"));
+    // x86's `swi` (INT) is a sound stub: no register reads or writes, just the
+    // memory edge.  Pinned so an attempt to harmonize the two arms surfaces.
     let x86 = expect_call(classify(ArchPreset::X86_64, "swi"));
-    // x86 swi is a sound stub: no register reads or writes, just the memory
-    // edge.  Pinned so an attempt to harmonize the two arms surfaces here.
     assert_ne!(arm.implicit_reads, x86.implicit_reads);
     assert!(x86.implicit_reads.is_empty());
     assert!(x86.implicit_writes.is_empty());

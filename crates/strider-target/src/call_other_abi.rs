@@ -114,14 +114,26 @@ fn classify_ppc(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
         clobbers_memory: true,
         no_return: false,
     });
+    // Linux PowerPC `sc`: r0 = syscall number, r3..r8 = args, return in r3.
+    // Sleigh's `syscall()` has no pcode output, so model r3 here or a later read
+    // forwards the pre-call value.
+    const SYSCALL: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+        implicit_reads: &["r0", "r3", "r4", "r5", "r6", "r7", "r8"],
+        implicit_writes: &["r3"],
+        clobbers_memory: true,
+        no_return: false,
+    });
 
     static TABLE: &[(&str, CallOtherClass)] = &[
-        // `tw`/`td` conditional traps are the kernel's BUG() / bounds checks;
-        // GHIDRA reaches the CallOther only on the trapping path, which does
-        // not return.  `rfi`/`rfid` return from an exception handler.
+        // `rfi`/`rfid` return from an exception handler and end the function.
         ("returnFromInterrupt", CallOtherClass::NO_RETURN),
-        ("trapDoubleWordImmediate", CallOtherClass::NO_RETURN),
-        ("trapWord", CallOtherClass::NO_RETURN),
+        // `tw`/`td` conditional traps: GHIDRA emits the pcodeop unconditionally
+        // with the trap-on condition as a plain operand (NO branch), so control
+        // FALLS THROUGH. They must be RETURNING, not NO_RETURN, or every
+        // function with a compiler bounds/overflow trap loses its tail. A
+        // firing trap may enter a memory-touching handler, so MEM_CLOBBER.
+        ("trapDoubleWordImmediate", MEM_CLOBBER),
+        ("trapWord", MEM_CLOBBER),
         // Store-conditional and byte-reverse stores write RAM; dcbz zeroes a
         // block; dcbf/dcbst/icbi and TLB/SLB management are ordering barriers;
         // icswx/copy-paste and doorbell messages have external memory effects.
@@ -146,7 +158,11 @@ fn classify_ppc(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
         ("slbMoveToEntry", MEM_CLOBBER),
         ("storeDoubleWordConditionalIndexed", MEM_CLOBBER),
         ("storeWordConditionalIndexed", MEM_CLOBBER),
-        ("syscall", MEM_CLOBBER),
+        ("syscall", SYSCALL),
+        // `wait` is a low-power wait like ARM WFI: a remote agent may modify
+        // shared memory while the core is parked, so it must not let a load
+        // forward across it.
+        ("waitT", MEM_CLOBBER),
         // Byte-reverse load, the vector shift-control generator (lvsl/lvsr),
         // SLB reads, and the hardware RNG produce a pcode-explicit output and
         // touch no RAM.  Altivec/VSX/vector compute is covered by the
@@ -158,8 +174,8 @@ fn classify_ppc(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
         ("slbMoveFromEntryVSID", PURE),
         ("slbfeeDotOp", PURE),
         // Cache-touch and stream-stop are prefetch hints;
-        // wait/wrtee/clearHistory/mtfsf change MSR, branch-history, or FPSCR
-        // state strider does not track.  No memory or value effect to model.
+        // wrtee/clearHistory/mtfsf change MSR, branch-history, or FPSCR state
+        // strider does not track.  No memory or value effect to model.
         ("MoveToFPSCRFields", NoOp),
         ("WriteExternalEnable", NoOp),
         ("WriteExternalEnableImmediate", NoOp),
@@ -167,7 +183,6 @@ fn classify_ppc(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
         ("dataCacheBlockTouch", NoOp),
         ("dataCacheBlockTouchForStore", NoOp),
         ("dataStreamStopAll", NoOp),
-        ("waitT", NoOp),
     ];
     if let Some(c) = TABLE.iter().find_map(|(n, c)| (*n == name).then_some(*c)) {
         return Some(c);
@@ -202,13 +217,14 @@ struct CallOtherRow {
 }
 
 static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
-    // ARM Linux SVC / SWI: r7 = syscall number, r0..r6 = args, r0 = return.
-    // See `arch/arm/kernel/entry-common.S` and the EABI variant in
-    // `arch/arm/include/uapi/asm/unistd.h`.  All three 32-bit ARM presets share
-    // it; split the row if Thumb ever diverges.
+    // ARM Linux SVC: r7 = syscall number, r0..r6 = args, r0 = return. ARM's
+    // Sleigh spec emits `software_interrupt` for SVC/SWI (the bare `swi`
+    // pcodeop is x86's INT, handled separately below). Arch-specific so it wins
+    // over the generic `software_interrupt` = MEM_CLOBBER fallback. All four
+    // 32-bit ARM presets share it; split the row if Thumb ever diverges.
     CallOtherRow {
         preset_arches: ARM32_ALL,
-        op_names: &["swi"],
+        op_names: &["software_interrupt"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"],
             implicit_writes: &["r0"],
@@ -261,21 +277,31 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         op_names: &["CallHyperVisor", "CallSecureMonitor"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
-            implicit_writes: &["x0", "x1", "x2", "x3"],
-            // These pass everything through the SMCCC register channel, and
-            // the spec forbids them from mutating the caller's stack frame.
+            // x0..x3 carry the SMCCC result. Under SMCCC 1.0 the callee may
+            // leave x4..x17 in an unpredictable state (1.1+ preserves them);
+            // the version isn't statically known, so clobber them conservatively
+            // rather than forward a stale value across the SMC/HVC.
+            implicit_writes: &[
+                "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12",
+                "x13", "x14", "x15", "x16", "x17",
+            ],
+            // Everything passes through the register channel; the spec forbids
+            // mutating the caller's stack frame, but a firing SMC/HVC may touch
+            // memory, so keep it on the memory chain.
             clobbers_memory: true,
             no_return: false,
         }),
     },
-    // x86 RDPKRU: reads ECX (which must be 0), writes EAX, clears EDX.
+    // x86 RDPKRU: reads ECX (which must be 0), zeroes EDX; EAX is the op's own
+    // pcode output (not declared here — the result-wins-ties dedup would drop
+    // it, but listing it is a latent double-clobber trap).
     // Arch-specific because ECX/EAX/EDX are x86 register names.
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["rdpkru_u32"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["ECX"],
-            implicit_writes: &["EAX", "EDX"],
+            implicit_writes: &["EDX"],
             clobbers_memory: false,
             no_return: false,
         }),
@@ -777,6 +803,7 @@ fn classify_prefix_family(preset: crate::ArchPreset, name: &str) -> Option<CallO
         // Classified by operation, not direction.  `TLB_Type` and friends are
         // pure ID reads; the real TLB ops are all named `Invalidate_*`.
         if name.starts_with("coproc_movefrom_") || name.starts_with("coproc_moveto_") {
+            // Cache/TLB/barrier maintenance clobbers memory in either direction.
             const SIDE_EFFECT_KEYS: &[&str] = &[
                 "Cache",
                 "cache",
@@ -787,11 +814,20 @@ fn classify_prefix_family(preset: crate::ArchPreset, name: &str) -> Option<CallO
                 "Flush",
                 "Wait_for",
             ];
-            return Some(if SIDE_EFFECT_KEYS.iter().any(|k| name.contains(k)) {
-                MEM_CLOBBER
-            } else {
-                PURE
-            });
+            // MMU / translation control: only WRITING TTBR / SCTLR (Control) /
+            // CONTEXTIDR (Context_ID) / DACR (Domain_Access) changes the
+            // memory-translation view, so a load must not forward across it; a
+            // read of the same register is pure.
+            const WRITE_CONTROL_KEYS: &[&str] = &[
+                "Translation_table",
+                "Control",
+                "Context_ID",
+                "Domain_Access",
+            ];
+            let clobbers = SIDE_EFFECT_KEYS.iter().any(|k| name.contains(k))
+                || (name.starts_with("coproc_moveto_")
+                    && WRITE_CONTROL_KEYS.iter().any(|k| name.contains(k)));
+            return Some(if clobbers { MEM_CLOBBER } else { PURE });
         }
         if name.starts_with("coprocessor_movefrom") {
             return Some(PURE);
@@ -1046,7 +1082,7 @@ mod tests {
 
     #[test]
     fn ppc_call_others_classify_by_effect() {
-        use crate::ArchPreset::{Ppc32Be, Ppc64Be, Ppc64Le};
+        use crate::ArchPreset::{Ppc32Be, Ppc64Be};
         let mem =
             |n| matches!(classify(Ppc64Be, n), Some(CallOtherClass::Call(a)) if a.clobbers_memory);
         let pure = |n| matches!(classify(Ppc64Be, n), Some(CallOtherClass::Call(a)) if !a.clobbers_memory && !a.no_return);
@@ -1075,16 +1111,28 @@ mod tests {
         ] {
             assert!(pure(n), "{n} should be pure");
         }
-        // Conditional traps + return-from-interrupt end control flow.
-        for n in ["trapWord", "trapDoubleWordImmediate", "returnFromInterrupt"] {
-            assert_eq!(classify(Ppc64Be, n), Some(CallOtherClass::NO_RETURN), "{n}");
+        // `returnFromInterrupt` ends the function.
+        assert_eq!(
+            classify(Ppc64Be, "returnFromInterrupt"),
+            Some(CallOtherClass::NO_RETURN)
+        );
+        // Conditional traps FALL THROUGH in GHIDRA's model, so they must be
+        // returning (memory-clobbering), never NO_RETURN, or code after a
+        // compiler bounds/overflow trap is dropped from the IR.
+        for n in ["trapWord", "trapDoubleWordImmediate"] {
+            assert!(mem(n), "{n} must clobber memory");
+            assert!(
+                !classify(Ppc64Be, n).unwrap().is_no_return(),
+                "{n} must return (fall-through)"
+            );
         }
-        // Prefetch / system-state hints are no-ops.
+        // Prefetch hints are no-ops; `wait` parks the core so a remote agent
+        // may touch memory, hence memory-clobbering.
         assert_eq!(
             classify(Ppc32Be, "dataCacheBlockTouch"),
             Some(CallOtherClass::NoOp)
         );
-        assert_eq!(classify(Ppc64Le, "waitT"), Some(CallOtherClass::NoOp));
+        assert!(mem("waitT"), "waitT must clobber memory");
 
         // The generic-word ops must not leak to another arch.
         for n in ["random", "message", "trapWord", "vectorConditionalSelect"] {
@@ -1203,8 +1251,8 @@ mod tests {
     }
 
     #[test]
-    fn smccc_ops_share_x0_x7_in_x0_x3_out() {
-        // SMCCC lives in classify_arch_specific because x0..x7 only resolve
+    fn smccc_ops_read_x0_x7_and_clobber_x0_x17() {
+        // SMCCC lives in classify_arch_specific because x0..x17 only resolve
         // on aarch64.
         for preset in [crate::ArchPreset::Aarch64, crate::ArchPreset::Aarch64Be] {
             for n in ["CallHyperVisor", "CallSecureMonitor"] {
@@ -1217,9 +1265,14 @@ mod tests {
                     &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
                     "{preset:?}/{n}",
                 );
+                // x0..x3 are the result; x4..x17 are conservatively clobbered
+                // (unpredictable under SMCCC 1.0).
                 assert_eq!(
                     abi.implicit_writes,
-                    &["x0", "x1", "x2", "x3"],
+                    &[
+                        "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11",
+                        "x12", "x13", "x14", "x15", "x16", "x17",
+                    ],
                     "{preset:?}/{n}"
                 );
                 assert!(abi.clobbers_memory, "{preset:?}/{n}");
@@ -1239,7 +1292,8 @@ mod tests {
                 panic!("expected Call")
             };
             assert_eq!(abi.implicit_reads, &["ECX"]);
-            assert_eq!(abi.implicit_writes, &["EAX", "EDX"]);
+            // EAX is the op's explicit pcode output, not an implicit write.
+            assert_eq!(abi.implicit_writes, &["EDX"]);
             assert!(!abi.clobbers_memory);
         }
         assert_eq!(classify(crate::ArchPreset::Aarch64, "rdpkru_u32"), None);
@@ -1411,15 +1465,19 @@ mod tests {
     }
 
     #[test]
-    fn swi_on_arm_family_returns_linux_arm_abi() {
+    fn software_interrupt_on_arm_family_returns_linux_arm_abi() {
+        // ARM emits `software_interrupt` (not `swi`) for SVC; the arch-specific
+        // row wins over the generic MEM_CLOBBER fallback for all four presets.
         for preset in [
             crate::ArchPreset::Arm,
             crate::ArchPreset::ArmBe,
+            crate::ArchPreset::ArmBeKernel,
             crate::ArchPreset::ArmThumb,
         ] {
-            let class = classify(preset, "swi").unwrap_or_else(|| panic!("{preset:?}/swi"));
+            let class = classify(preset, "software_interrupt")
+                .unwrap_or_else(|| panic!("{preset:?}/software_interrupt"));
             let CallOtherClass::Call(abi) = class else {
-                panic!("{preset:?}/swi: expected Call, got {class:?}")
+                panic!("{preset:?}: expected Call, got {class:?}")
             };
             assert_eq!(
                 abi.implicit_reads,
@@ -1727,23 +1785,28 @@ mod tests {
             "coproc_movefrom_Wait_for_interrupt",
             "coproc_moveto_Clean_Entire_Data_Cache",
             "coproc_moveto_Invalidate_Entire_Instruction",
+            // Writing MMU / translation-control registers changes the memory
+            // view, so a load must not forward across the write.
+            "coproc_moveto_Control",
+            "coproc_moveto_Context_ID",
+            "coproc_moveto_Translation_table_base_0",
+            "coproc_moveto_Domain_Access_Control",
         ] {
             assert!(
                 mem_clobbers(classify(Arm, op)),
-                "{op} is a cache/TLB/barrier op — must MEM_CLOBBER",
+                "{op} is a cache/TLB/barrier or MMU-control write — must MEM_CLOBBER",
             );
         }
         for op in [
             "coproc_movefrom_Main_ID",
             "coproc_movefrom_User_R_Thread_and_Process_ID",
+            // Reading a control register is pure; only the write clobbers.
             "coproc_movefrom_Control",
-            "coproc_moveto_Context_ID",
-            "coproc_moveto_Control",
-            "coproc_moveto_Translation_table_base_0",
+            "coproc_movefrom_Translation_table_base_0",
         ] {
             assert!(
                 is_pure(classify(Arm, op)),
-                "{op} is a plain system-register move — must be PURE",
+                "{op} is a plain system-register read — must be PURE",
             );
         }
     }
