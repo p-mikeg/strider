@@ -1,9 +1,7 @@
-"""Pattern → pattern rewrite tests against a real graph."""
-
 import pytest
 
 import strider
-from strider.pattern import Capture, var, add, int_const
+from strider.pattern import Capture, var, int_add, int_const
 from strider import template as tpl
 
 from .conftest import built_function, built_lifter_and_function
@@ -17,7 +15,7 @@ def test_rewrite_returns_fire_count():
     g = _build_graph()
     x = Capture()
     # May or may not fire; only the return type is pinned.
-    n = g.rewrite(find=add(var(x), int_const(0)), replace=var(x))
+    n = g.rewrite(find=int_add(var(x), int_const(0)), replace=var(x))
     assert isinstance(n, int)
     assert n >= 0
 
@@ -26,8 +24,8 @@ def test_rewrite_all_returns_fire_count():
     g = _build_graph()
     x, y = Capture(), Capture()
     pairs = [
-        (add(var(x), int_const(0)), var(x)),
-        (add(int_const(0), var(y)), var(y)),
+        (int_add(var(x), int_const(0)), var(x)),
+        (int_add(int_const(0), var(y)), var(y)),
     ]
     n = g.rewrite_all(pairs)
     assert isinstance(n, int)
@@ -36,7 +34,7 @@ def test_rewrite_all_returns_fire_count():
 def test_rewrite_then_reoptimize():
     lift, g = built_lifter_and_function("x86", "memory", "array_sum", optimize=False)
     x = Capture()
-    g.rewrite(find=add(var(x), int_const(0)), replace=var(x))
+    g.rewrite(find=int_add(var(x), int_const(0)), replace=var(x))
     lift.optimize(g)
     assert g.node_count() > 0
 
@@ -46,7 +44,7 @@ def test_rewrite_takes_template():
     bare `strider.pattern.Pat`."""
     g = _build_graph()
     c = Capture()
-    n = g.rewrite(find=add(var(c), int_const(0)), replace=tpl.var(c))
+    n = g.rewrite(find=int_add(var(c), int_const(0)), replace=tpl.var(c))
     assert isinstance(n, int)
 
 
@@ -56,11 +54,18 @@ def test_rewrite_with_nested_template_build():
     g = _build_graph()
     x = Capture()
     n = g.rewrite(
-        find=add(var(x), int_const(0)),
-        replace=tpl.add(tpl.var(x), tpl.int_const(0)),
+        find=int_add(var(x), int_const(0)),
+        replace=tpl.int_add(tpl.var(x), tpl.int_const(0)),
     )
     assert isinstance(n, int)
     assert n >= 0
+
+
+def test_template_has_one_int_constant_constructor():
+    """`template.int_const` takes the whole signed range, so the build side
+    needs no second spelling."""
+    assert not hasattr(tpl, "int_const_any_width")
+    assert isinstance(tpl.int_const(-50), strider.template.Template)
 
 
 def test_template_is_a_distinct_type_from_pat():
@@ -81,4 +86,21 @@ def test_match_only_pat_rejected_as_replace():
     g = _build_graph()
     x = Capture()
     with pytest.raises(strider.StriderError):
-        g.rewrite(find=add(var(x), int_const(0)), replace=strider.pattern.anything())
+        g.rewrite(find=int_add(var(x), int_const(0)), replace=strider.pattern.anything())
+
+
+def test_template_takes_the_same_wide_constants_as_the_match_side():
+    """`int_const` interns a u128, so `[2**127, 2**128)` has a carrier; the
+    match side already accepts one."""
+    g = _build_graph()
+    x = Capture()
+    big = 2 ** 127
+    assert int_add(var(x), big) is not None
+    g.rewrite(find=int_add(var(x), int_const(0)), replace=tpl.int_add(tpl.var(x), big))
+
+
+def test_nested_template_string_operand_names_what_was_passed():
+    g = _build_graph()
+    x = Capture()
+    with pytest.raises(strider.StriderError, match="string"):
+        g.rewrite(find=int_add(var(x), int_const(0)), replace=tpl.int_add("x", 1))

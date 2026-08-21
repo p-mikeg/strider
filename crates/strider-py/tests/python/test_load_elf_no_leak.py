@@ -1,9 +1,9 @@
-"""Regression: `strider.lift.load_elf` must not leak its backing bytes.
+"""`strider.lift.load_elf` must not leak its backing bytes.
 
-Each call used to retain one file-sized buffer that `del` +
-`gc.collect()` could never reclaim, so RSS grew without bound (roughly
-file-size per call, glaring on a vmlinux). Loops the loader far past its
-working set and asserts resident memory stays bounded.
+A leak here retains one file-sized buffer per call that `del` +
+`gc.collect()` cannot reclaim, so RSS grows by roughly the file size per
+call, glaring on a vmlinux. Loops the loader far past its working set and
+asserts resident memory stays bounded.
 """
 
 from __future__ import annotations
@@ -47,5 +47,5 @@ def test_load_elf_does_not_leak_backing_bytes():
     budget = max(file_size * 8, 4 * 1024 * 1024)
     assert growth < budget, (
         f"RSS grew {growth} B over {iters} load_elf calls "
-        f"(file {file_size} B, budget {budget} B) — load_elf is leaking"
+        f"(file {file_size} B, budget {budget} B); load_elf is leaking"
     )

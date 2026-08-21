@@ -1,10 +1,10 @@
-"""Regression: a reference cycle through a custom Python reader and its
-`Lifter` must be collectable by the cyclic GC.
+"""A reference cycle through a custom Python reader and its `Lifter` must be
+collectable by the cyclic GC.
 
 A Lifter holds its reader internally, so a reader that points back at the
-Lifter closes a cycle whose second edge is invisible to Python. Until the
-Lifter exposed that edge to the GC, both objects leaked for the process
-lifetime.
+Lifter closes a cycle whose second edge is invisible to Python. The Lifter
+reports that edge through `__traverse__`; unreported, both objects live for
+the process lifetime.
 """
 
 from __future__ import annotations
@@ -58,3 +58,4 @@ def test_custom_rom_lifter_cycle_is_collectable():
 
     assert wl() is None, "lifter leaked: cycle through custom rom not collected"
     assert wr() is None, "rom leaked: cycle through custom rom not collected"
+

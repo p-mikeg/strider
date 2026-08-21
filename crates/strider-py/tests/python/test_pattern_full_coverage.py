@@ -1,25 +1,18 @@
-"""Constructor smoke tests: each pattern constructor accepts its argument
-shape and returns a `Pat`.
-
-End-to-end matching against fixtures lives in `test_pattern_complex.py` and
-`test_pattern_match.py`.
-"""
-
 import pytest
 import strider
 from strider.pattern import (
     Capture,
     Pat,
-    add,
+    int_add,
     anything,
     bool_const,
     bool_not,
-    extend,
+    int_extend,
     float_abs,
     float_add,
-    float_bin_any,
+    any_float_binary,
     float_bits_to_int,
-    float_cmp_any,
+    any_float_cmp,
     float_const,
     float_div,
     float_eq,
@@ -34,24 +27,27 @@ from strider.pattern import (
     float_sub,
     float_to_float,
     float_to_int,
-    float_un_any,
-    int_bin_any,
+    any_float_unary,
+    any_int_binary,
     int_bits_to_float,
-    int_cmp_any,
+    any_int_cmp,
     int_const,
     int_not,
     int_to_float,
-    int_un_any,
-    lzcount,
-    mul,
-    neg,
-    popcount,
+    any_int_unary,
+    int_lzcount,
+    int_mul,
+    int_ne,
+    int_neg,
+    int_popcount,
     predicate,
-    sign_extend,
-    truncate,
+    int_sign_extend,
+    int_truncate,
     var,
-    zero_extend,
+    int_zero_extend,
 )
+
+from .conftest import built_lifter_and_function
 
 
 @pytest.mark.parametrize("ctor", [float_add, float_sub, float_mul, float_div])
@@ -86,28 +82,28 @@ def test_conversion_ops_return_pat(ctor):
 
 
 @pytest.mark.parametrize(
-    "ctor", [truncate, popcount, lzcount]
+    "ctor", [int_truncate, int_popcount, int_lzcount]
 )
 def test_cast_ops_return_pat(ctor):
     assert isinstance(ctor(var(Capture())), Pat)
 
 
 def test_zero_and_sign_extend_return_pat():
-    assert isinstance(zero_extend(var(Capture())), Pat)
-    assert isinstance(sign_extend(var(Capture())), Pat)
+    assert isinstance(int_zero_extend(var(Capture())), Pat)
+    assert isinstance(int_sign_extend(var(Capture())), Pat)
 
 
 def test_extend_with_op_string():
-    assert isinstance(extend("zero", var(Capture())), Pat)
-    assert isinstance(extend("sign", var(Capture())), Pat)
+    assert isinstance(int_extend("zero", var(Capture())), Pat)
+    assert isinstance(int_extend("sign", var(Capture())), Pat)
 
 
 def test_extend_with_invalid_op_raises():
     with pytest.raises(strider.StriderError):
-        extend("nope", var(Capture()))
+        int_extend("nope", var(Capture()))
 
 
-@pytest.mark.parametrize("ctor", [neg, int_not])
+@pytest.mark.parametrize("ctor", [int_neg, int_not])
 def test_int_unary_ops_return_pat(ctor):
     assert isinstance(ctor(var(Capture())), Pat)
 
@@ -118,42 +114,41 @@ def test_bool_not_returns_pat():
 
 def test_int_bin_any_returns_pat():
     op = Capture()
-    assert isinstance(int_bin_any(op, "x", "y"), Pat)
+    assert isinstance(any_int_binary(op, Capture("x"), Capture("y")), Pat)
 
 
 def test_int_unary_any_returns_pat():
     op = Capture()
-    assert isinstance(int_un_any(op, var(Capture())), Pat)
+    assert isinstance(any_int_unary(op, var(Capture())), Pat)
 
 
 def test_int_cmp_any_returns_pat():
     op = Capture()
-    assert isinstance(int_cmp_any(op, "x", "y"), Pat)
+    assert isinstance(any_int_cmp(op, Capture("x"), Capture("y")), Pat)
 
 
 def test_float_bin_any_returns_pat():
     op = Capture()
-    assert isinstance(float_bin_any(op, "x", "y"), Pat)
+    assert isinstance(any_float_binary(op, Capture("x"), Capture("y")), Pat)
 
 
 def test_float_un_any_returns_pat():
     op = Capture()
-    assert isinstance(float_un_any(op, var(Capture())), Pat)
+    assert isinstance(any_float_unary(op, var(Capture())), Pat)
 
 
 def test_float_cmp_any_returns_pat():
     op = Capture()
-    assert isinstance(float_cmp_any(op, "x", "y"), Pat)
+    assert isinstance(any_float_cmp(op, Capture("x"), Capture("y")), Pat)
 
 
 def test_float_const_returns_pat():
     assert isinstance(float_const(0x4008000000000000), Pat)
 
 
-def test_any_float_const_returns_pat():
-    from strider.pattern import any_float_const
+def test_any_float_returns_pat():
     c = Capture()
-    assert isinstance(any_float_const(c), Pat)
+    assert isinstance(float_const(c), Pat)
 
 
 def test_predicate_returns_pat():
@@ -162,13 +157,11 @@ def test_predicate_returns_pat():
 
 
 def test_when_on_pat_returns_pat():
-    p = add("x", "y").when(lambda m: True)
+    p = int_add(Capture("x"), Capture("y")).when(lambda m: True)
     assert isinstance(p, Pat)
 
 
 def test_when_returning_false_filters_out_matches():
-    # Construction only; the behavioural assertion lives in
-    # test_pattern_complex.py.
     p = anything().when(lambda m: False)
     assert isinstance(p, Pat)
 
@@ -178,7 +171,7 @@ def test_add_ordered_chain_returns_builder():
     # terminal: it returns the same lazy builder so it can nest as a value
     # operand, and `.into_pat()` finalises.
     from strider.pattern import int_binary, IntBinaryPat
-    b = int_binary("Add", "x", "y").ordered()
+    b = int_binary("Add", Capture("x"), Capture("y")).ordered()
     assert isinstance(b, IntBinaryPat)
     assert isinstance(b.into_pat(), Pat)
 
@@ -197,10 +190,10 @@ def _binary_builder_params():
         bool_binary, BoolBinaryPat,
     )
     return [
-        pytest.param(lambda: int_binary("Add", "x", "y"), IntBinaryPat, id="int_binary"),
-        pytest.param(lambda: float_binary("Add", "x", "y"), FloatBinaryPat, id="float_binary"),
-        pytest.param(lambda: bool_binary("And", "x", "y"), BoolBinaryPat, id="bool_binary"),
-        pytest.param(lambda: bool_binary("Or", "x", "y"), BoolBinaryPat, id="bool_binary_or"),
+        pytest.param(lambda: int_binary("Add", Capture("x"), Capture("y")), IntBinaryPat, id="int_binary"),
+        pytest.param(lambda: float_binary("Add", Capture("x"), Capture("y")), FloatBinaryPat, id="float_binary"),
+        pytest.param(lambda: bool_binary("And", Capture("x"), Capture("y")), BoolBinaryPat, id="bool_binary"),
+        pytest.param(lambda: bool_binary("Or", Capture("x"), Capture("y")), BoolBinaryPat, id="bool_binary_or"),
     ]
 
 
@@ -228,7 +221,7 @@ def test_binary_builder_when_chains_to_pat(make, builder_cls):
 
 def test_bool_binary_ordered_chain_returns_builder():
     from strider.pattern import bool_binary, BoolBinaryPat
-    b = bool_binary("And", "x", "y").ordered()
+    b = bool_binary("And", Capture("x"), Capture("y")).ordered()
     assert isinstance(b, BoolBinaryPat)
     assert isinstance(b.into_pat(), Pat)
 
@@ -245,28 +238,25 @@ def test_bool_binary_usable_as_subpattern():
     # A bare builder is accepted directly as a sub-pattern, so callers never
     # have to call .into_pat() by hand.
     from strider.pattern import bool_binary, bool_not
-    p = bool_not(bool_binary("And", "x", "y"))
+    p = bool_not(bool_binary("And", Capture("x"), Capture("y")))
     assert isinstance(p, Pat)
 
 
 def test_bool_binary_invalid_op_raises():
     from strider.pattern import bool_binary
     with pytest.raises(strider.StriderError):
-        bool_binary("NopeOp", "x", "y")
+        bool_binary("NopeOp", Capture("x"), Capture("y"))
 
 
 def test_int_binary_invalid_op_raises():
     from strider.pattern import int_binary
     with pytest.raises(strider.StriderError):
-        int_binary("NopeOp", "x", "y")
+        int_binary("NopeOp", Capture("x"), Capture("y"))
 
 
 def test_when_predicate_exception_surfaces_on_stderr(capfd):
-    """A raising predicate must not silently filter matches away.  It counts
-    as "no match" so find_all keeps walking, but the exception text goes to
-    stderr; otherwise a buggy predicate looks exactly like a pattern that
-    doesn't match.
-    """
+    """A `.when()` guard is wired at pattern-construction time, so a raising
+    predicate does not run until a query does."""
     import sys
     from strider.pattern import anything, var, Capture
 
@@ -277,3 +267,16 @@ def test_when_predicate_exception_surfaces_on_stderr(capfd):
     pat = var(c).when(raising_predicate)
     # The guard is wired at pattern-construction time, so no find_all needed.
     assert pat is not None
+
+
+def test_int_ne_builder_compiles():
+    p = int_ne(int_const(1), int_const(2))
+    assert isinstance(p, Pat)
+
+
+def test_int_ne_finds_lowered_shape():
+    # int_ne is the lifter-canonical `Xor(IntEqual(a,b),1):I1` shape; this
+    # only asserts it compiles and queries against a real graph.
+    _lift, fn = built_lifter_and_function("x86", "memory", "array_sum")
+    hits = fn.find_all(int_ne(anything(), anything()))
+    assert isinstance(hits, list)

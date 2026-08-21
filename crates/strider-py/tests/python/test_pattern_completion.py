@@ -41,9 +41,9 @@ def _lift(code: bytes, addr: int = 0x1000):
 def _lift_unoptimized(code: bytes, addr: int = 0x1000):
     """Empty optimizer pipeline, so the raw multi-Region CFG shape survives.
 
-    The default pipeline's `RedundantPhis` collapses every
-    single-predecessor `Region`, which hides the shape the `entry()` /
-    `region()` structural tests need.
+    The default pipeline's `RegionCollapse` folds away every
+    single-predecessor `Region`, hiding the shape the `entry()` / `region()`
+    structural tests need.
     """
     mem = strider.reader.BufferReader(addr, code)
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
@@ -109,7 +109,7 @@ def _diamond_with_memory_join() -> "strider.Function":
 
 def _diamond_returning_eax_unoptimized() -> "strider.Function":
     """Same bytes as `_diamond_returning_eax`, unoptimized so all four
-    Regions (entry, both branches, join) survive `RedundantPhis`."""
+    Regions (entry, both branches, join) survive `RegionCollapse`."""
     code = bytes([
         0x85, 0xFF,                          # test edi, edi
         0x75, 0x07,                          # jne +7
@@ -244,6 +244,9 @@ def test_call_output_slot_binds_sibling_value():
     assert len(hits) == 1
     assert hits[0].has(c)
     assert hits[0].node(c) is not None
+    # A name is the same key, here as everywhere else.
+    named = fn.find_all(call().output(2).capture("out"))
+    assert len(named) == 1 and named[0].node("out") is not None
 
 
 def test_call_output_missing_slot_never_matches():
@@ -274,7 +277,7 @@ def test_entry_matches_exactly_one():
 def test_region_matches_every_region_node():
     """`region()` matches every CFG-merge Region, cross-checked against
     `count_regions`. Unoptimized so the entry/true/false/join shape survives;
-    `RedundantPhis` would otherwise leave only the join."""
+    `RegionCollapse` would otherwise leave only the join."""
     fn = _diamond_returning_eax_unoptimized()
     assert fn.count_regions() == 4, "sanity: entry + true + false + join regions"
     assert len(fn.find_all(region())) == fn.count_regions()

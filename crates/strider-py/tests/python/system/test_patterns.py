@@ -1,6 +1,3 @@
-"""Per-arch pattern tests: realistic queries against the `patterns`
-fixture, asserting each shape survives the optimiser on every arch."""
-
 from __future__ import annotations
 
 from strider import pattern as pat
@@ -19,9 +16,9 @@ def test_mul_then_add(arch_id, fixtures_dir):
     # `ignore_casts` is needed for x64, whose register-merge emits
     # `Add(Extend(Mul), arg)`.
     g = analyze(arch_id, "patterns", "mul_then_add", fixtures_dir=fixtures_dir)
-    p = pat.add(pat.mul(anything(), anything()), anything())
+    p = pat.int_add(pat.int_mul(anything(), anything()), anything())
     hits = g.find_all(p, ignore_casts=True)
-    assert len(hits) >= 1, "expected ≥1 add(mul(_,_), _) match"
+    assert len(hits) >= 1, "expected ≥1 int_add(int_mul(_,_), _) match"
 
 
 def test_chained_xor_mask(arch_id, fixtures_dir):

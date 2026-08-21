@@ -1,18 +1,16 @@
 """Type stubs for strider.template: the build side of a rewrite.
 
-`strider.pattern.Pat` is the match side (the `find`).
-`strider.template.Template` is the build side (the `replace`): the node, op
-and constant constructors plus `var(capture)`, with no `.when()`, no
-commutativity toggle and no `.ordered()`, since those are match-only ideas
-with no build-side meaning. `Function.rewrite(find, replace)` and
-`rewrite_all` type `replace` as `Template`.
+`strider.pattern.Pat` is the match side (the `find`); `Template` is the build
+side (the `replace`): the node, op and constant constructors plus
+`var(capture)`. `Function.rewrite(find, replace)` and `rewrite_all` type
+`replace` as `Template`.
 """
 
 from __future__ import annotations
 
 from typing import Union
 
-from .pattern import Capture, ExtendOpName, IntCmpOpName
+from .pattern import Capture, ExtendOpName, IntCmpOpName, Pat
 
 class Template:
     """A type-checked expression describing what a rewrite builds.
@@ -22,42 +20,40 @@ class Template:
     """
     ...
 
-#: A build-side operand accepts a `Template`, a bare `Capture` (sugar for
-#: `var(c)`), or a string (interned to a `Capture`).
-TemplateLike = Union[Template, Capture, str]
+#: A build-side operand accepts a `Template`, a build-valid `Pat`, a raw `int`
+#: (an `int_const`), or a bare `Capture` (sugar for `var(c)`).
+TemplateLike = Union[Template, Pat, Capture, int]
 
 def var(c: Capture) -> Template:
     """Substitute the node bound to `c` on the matched left-hand side. The
-    only build-side wildcard; there is no build-side `anything()`."""
+    only build-side wildcard."""
 def int_const(value: int) -> Template:
     """Build an integer constant whose stored value, masked to the output
-    width, is `value`."""
-def signed_int_const(value: int) -> Template:
-    """Build a signed integer constant from a signed 64-bit `value`."""
+    width, is `value`. Negatives take the sign-extended form."""
 def bool_const(value: bool) -> Template:
     """Build a 1-bit boolean constant equal to `value`."""
 def float_const(bits: int) -> Template:
     """Build a float constant with raw bit pattern `bits`."""
 
-def add(l: TemplateLike, r: TemplateLike) -> Template:
+def int_add(l: TemplateLike, r: TemplateLike) -> Template:
     """Build integer addition."""
-def sub(l: TemplateLike, r: TemplateLike) -> Template:
-    """Build integer subtraction, which lowers to `add(a, neg(b))`."""
-def mul(l: TemplateLike, r: TemplateLike) -> Template:
+def int_sub(l: TemplateLike, r: TemplateLike) -> Template:
+    """Build integer subtraction."""
+def int_mul(l: TemplateLike, r: TemplateLike) -> Template:
     """Build integer multiplication."""
-def div(l: TemplateLike, r: TemplateLike) -> Template:
+def int_div(l: TemplateLike, r: TemplateLike) -> Template:
     """Build unsigned integer division."""
-def sdiv(l: TemplateLike, r: TemplateLike) -> Template:
+def int_sdiv(l: TemplateLike, r: TemplateLike) -> Template:
     """Build signed integer division."""
-def rem(l: TemplateLike, r: TemplateLike) -> Template:
+def int_rem(l: TemplateLike, r: TemplateLike) -> Template:
     """Build unsigned integer remainder."""
-def srem(l: TemplateLike, r: TemplateLike) -> Template:
+def int_srem(l: TemplateLike, r: TemplateLike) -> Template:
     """Build signed integer remainder."""
-def shl(l: TemplateLike, r: TemplateLike) -> Template:
+def int_shl(l: TemplateLike, r: TemplateLike) -> Template:
     """Build a left shift."""
-def shr(l: TemplateLike, r: TemplateLike) -> Template:
+def int_shr(l: TemplateLike, r: TemplateLike) -> Template:
     """Build a logical (zero-filling) right shift."""
-def sshr(l: TemplateLike, r: TemplateLike) -> Template:
+def int_sshr(l: TemplateLike, r: TemplateLike) -> Template:
     """Build an arithmetic (sign-filling) right shift."""
 def int_and(l: TemplateLike, r: TemplateLike) -> Template:
     """Build a bitwise AND."""
@@ -82,14 +78,13 @@ def int_scarry(l: TemplateLike, r: TemplateLike) -> Template:
 def int_sborrow(l: TemplateLike, r: TemplateLike) -> Template:
     """Build a signed-subtraction overflow test."""
 
-def neg(operand: TemplateLike) -> Template:
+def int_neg(operand: TemplateLike) -> Template:
     """Build arithmetic negation (`-x`)."""
 def int_not(operand: TemplateLike) -> Template:
-    """Build bitwise complement (`~x`), which lowers to an XOR with all
-    ones."""
-def popcount(operand: TemplateLike) -> Template:
+    """Build bitwise complement (`~x`)."""
+def int_popcount(operand: TemplateLike) -> Template:
     """Build a set-bit count."""
-def lzcount(operand: TemplateLike) -> Template:
+def int_lzcount(operand: TemplateLike) -> Template:
     """Build a leading-zero count."""
 
 def bool_and(l: TemplateLike, r: TemplateLike) -> Template:
@@ -104,8 +99,7 @@ def bool_not(operand: TemplateLike) -> Template:
 def float_add(l: TemplateLike, r: TemplateLike) -> Template:
     """Build float addition."""
 def float_sub(l: TemplateLike, r: TemplateLike) -> Template:
-    """Build float subtraction, which lowers to `float_add(a,
-    float_neg(b))`."""
+    """Build float subtraction."""
 def float_mul(l: TemplateLike, r: TemplateLike) -> Template:
     """Build float multiplication."""
 def float_div(l: TemplateLike, r: TemplateLike) -> Template:
@@ -138,11 +132,11 @@ def int_bits_to_float(operand: TemplateLike) -> Template:
 def float_bits_to_int(operand: TemplateLike) -> Template:
     """Build a same-width reinterpretation of float bits as an integer."""
 
-def truncate(operand: TemplateLike) -> Template:
+def int_truncate(operand: TemplateLike) -> Template:
     """Build a narrowing to the output width, keeping the low bits."""
-def zero_extend(operand: TemplateLike) -> Template:
+def int_zero_extend(operand: TemplateLike) -> Template:
     """Build a widening that fills the new high bits with zero."""
-def sign_extend(operand: TemplateLike) -> Template:
+def int_sign_extend(operand: TemplateLike) -> Template:
     """Build a widening that replicates the sign bit."""
-def extend(op: ExtendOpName, operand: TemplateLike) -> Template:
+def int_extend(op: ExtendOpName, operand: TemplateLike) -> Template:
     """Build a widening of the kind named by `op`."""

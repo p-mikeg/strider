@@ -1,6 +1,6 @@
-//! The free functions here construct only the build-valid subset of pattern
-//! variants: no `.when()`, no commutativity toggle, no `.ordered()`, which are
-//! match-only concepts with no build-side meaning.
+//! The free functions here construct the build-valid subset of pattern
+//! variants; `.when()`, the commutativity toggle and `.ordered()` are
+//! match-only.
 
 use pyo3::prelude::*;
 #[allow(unused_imports)]
@@ -9,7 +9,7 @@ use pyo3_stub_gen::derive::gen_stub_pyclass;
 use crate::pattern::{CastKind, FloatUnaryKind, IntUnaryKind, PatRepr, PyCapture};
 
 /// A type-checked rewrite-RHS expression. Construct via the free functions in
-/// `strider.template` (`var(c)`, `add(...)`, `int_const`, ...); pass as
+/// `strider.template` (`var(c)`, `int_add(...)`, `int_const`, ...); pass as
 /// `replace` to `Function.rewrite` / `rewrite_all`.
 #[gen_stub_pyclass]
 #[pyclass(name = "Template", module = "strider.template", unsendable)]
@@ -31,37 +31,19 @@ impl PyTemplate {
 
 #[pymethods]
 impl PyTemplate {
+    /// Exposes the operand sub-templates, `Py` handles the collector cannot
+    /// otherwise see.
+    fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        self.repr.traverse(&visit)
+    }
+
     fn __repr__(&self) -> String {
         "Template(...)".to_string()
     }
 }
 
-macro_rules! tpl_fn {
-    (binary $name:ident, $repr:ident, $op:expr, $doc:literal) => {
-        #[doc = $doc]
-        #[pyfunction]
-        pub fn $name(l: Py<PyAny>, r: Py<PyAny>) -> PyTemplate {
-            PyTemplate::from_repr(PatRepr::$repr($op, l, r))
-        }
-    };
-    (binary $name:ident = $py:literal, $repr:ident, $op:expr, $doc:literal) => {
-        #[doc = $doc]
-        #[pyfunction(name = $py)]
-        pub fn $name(l: Py<PyAny>, r: Py<PyAny>) -> PyTemplate {
-            PyTemplate::from_repr(PatRepr::$repr($op, l, r))
-        }
-    };
-    (unary $name:ident, $repr:ident, $op:expr, $doc:literal) => {
-        #[doc = $doc]
-        #[pyfunction]
-        pub fn $name(operand: Py<PyAny>) -> PyTemplate {
-            PyTemplate::from_repr(PatRepr::$repr($op, operand))
-        }
-    };
-}
-
 /// Substituted at rewrite time by the node bound to `c` on the matched LHS.
-/// The one build-valid wildcard; there is no build-side `any()`.
+/// The one build-valid wildcard.
 #[pyfunction]
 pub fn var(c: PyRef<'_, PyCapture>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::Var(c.inner))
@@ -72,14 +54,6 @@ pub fn var(c: PyRef<'_, PyCapture>) -> PyTemplate {
 #[pyfunction]
 pub fn int_const(value: i128) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::IntConst(value as u128))
-}
-
-/// Build a signed `IntConst`. A `value` outside the `i64` range raises
-/// `StriderError`.
-#[pyfunction]
-pub fn signed_int_const(value: i128) -> PyResult<PyTemplate> {
-    let v = crate::pattern::checked_signed_i64(value)?;
-    Ok(PyTemplate::from_repr(PatRepr::SignedIntConst(v)))
 }
 
 /// Build an `I1` boolean constant equal to `value`.
@@ -94,50 +68,49 @@ pub fn float_const(bits: u64) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::FloatConst(bits))
 }
 
-tpl_fn!(binary
-    add, IntBinary, strider_ir::IntBinaryOp::Add,
+repr_fn!(PyTemplate; binary
+    add = "int_add", IntBinary, strider_ir::IntBinaryOp::Add,
     "Build: `IntBinaryOp::Add` (`a + b`)."
 );
-tpl_fn!(binary
-    mul, IntBinary, strider_ir::IntBinaryOp::Mul,
+repr_fn!(PyTemplate; binary
+    mul = "int_mul", IntBinary, strider_ir::IntBinaryOp::Mul,
     "Build: `IntBinaryOp::Mul` (`a * b`)."
 );
-tpl_fn!(binary div, IntBinary, strider_ir::IntBinaryOp::Div,
+repr_fn!(PyTemplate; binary div = "int_div", IntBinary, strider_ir::IntBinaryOp::Div,
     "Build: `IntBinaryOp::Div` (unsigned `a / b`).");
-tpl_fn!(binary sdiv, IntBinary, strider_ir::IntBinaryOp::Sdiv,
+repr_fn!(PyTemplate; binary sdiv = "int_sdiv", IntBinary, strider_ir::IntBinaryOp::Sdiv,
     "Build: `IntBinaryOp::Sdiv` (signed `a / b`).");
-tpl_fn!(binary rem, IntBinary, strider_ir::IntBinaryOp::Rem,
+repr_fn!(PyTemplate; binary rem = "int_rem", IntBinary, strider_ir::IntBinaryOp::Rem,
     "Build: `IntBinaryOp::Rem` (unsigned `a % b`).");
-tpl_fn!(binary srem, IntBinary, strider_ir::IntBinaryOp::Srem,
+repr_fn!(PyTemplate; binary srem = "int_srem", IntBinary, strider_ir::IntBinaryOp::Srem,
     "Build: `IntBinaryOp::Srem` (signed `a % b`).");
-tpl_fn!(binary
-    shl, IntBinary, strider_ir::IntBinaryOp::ShiftLeft,
+repr_fn!(PyTemplate; binary
+    shl = "int_shl", IntBinary, strider_ir::IntBinaryOp::ShiftLeft,
     "Build: `IntBinaryOp::ShiftLeft` (`a << b`)."
 );
-tpl_fn!(binary
-    shr, IntBinary, strider_ir::IntBinaryOp::ShiftRight,
+repr_fn!(PyTemplate; binary
+    shr = "int_shr", IntBinary, strider_ir::IntBinaryOp::ShiftRight,
     "Build: `IntBinaryOp::ShiftRight` (`a >> b`)."
 );
-tpl_fn!(binary
-    sshr, IntBinary, strider_ir::IntBinaryOp::SShiftRight,
+repr_fn!(PyTemplate; binary
+    sshr = "int_sshr", IntBinary, strider_ir::IntBinaryOp::SShiftRight,
     "Build: `IntBinaryOp::SShiftRight` (arithmetic `a >> b`)."
 );
-tpl_fn!(binary
+repr_fn!(PyTemplate; binary
     and_ = "int_and", IntBinary, strider_ir::IntBinaryOp::And,
     "Build: `IntBinaryOp::And` (`a & b`)."
 );
-tpl_fn!(binary
+repr_fn!(PyTemplate; binary
     or_ = "int_or", IntBinary, strider_ir::IntBinaryOp::Or,
     "Build: `IntBinaryOp::Or` (`a | b`)."
 );
-tpl_fn!(binary
+repr_fn!(PyTemplate; binary
     xor = "int_xor", IntBinary, strider_ir::IntBinaryOp::Xor,
     "Build: `IntBinaryOp::Xor` (`a ^ b`)."
 );
 
-/// Build integer subtraction `a - b` (lowers to `Add(a, Neg(b))`, the
-/// lifter-canonical shape).
-#[pyfunction]
+/// Build integer subtraction `a - b`.
+#[pyfunction(name = "int_sub")]
 pub fn sub(l: Py<PyAny>, r: Py<PyAny>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::Sub(l, r))
 }
@@ -150,108 +123,108 @@ pub fn int_cmp(op: &str, l: Py<PyAny>, r: Py<PyAny>) -> PyResult<PyTemplate> {
     Ok(PyTemplate::from_repr(PatRepr::IntCmp(cmp_op, l, r)))
 }
 
-tpl_fn!(binary
+repr_fn!(PyTemplate; binary
     int_eq, IntCmp, strider_ir::IntCmpOp::Equal,
     "Build: `IntCmpOp::Equal` (`a == b`)."
 );
-tpl_fn!(binary
+repr_fn!(PyTemplate; binary
     int_lt, IntCmp, strider_ir::IntCmpOp::Less,
     "Build: `IntCmpOp::Less` (unsigned `a < b`)."
 );
-tpl_fn!(binary
+repr_fn!(PyTemplate; binary
     int_slt, IntCmp, strider_ir::IntCmpOp::Sless,
     "Build: `IntCmpOp::Sless` (signed `a < b`)."
 );
-tpl_fn!(binary
+repr_fn!(PyTemplate; binary
     int_carry, IntCmp, strider_ir::IntCmpOp::Carry,
     "Build: `IntCmpOp::Carry` (unsigned add carry-out)."
 );
-tpl_fn!(binary
+repr_fn!(PyTemplate; binary
     int_scarry, IntCmp, strider_ir::IntCmpOp::Scarry,
     "Build: `IntCmpOp::Scarry` (signed add overflow)."
 );
-tpl_fn!(binary
+repr_fn!(PyTemplate; binary
     int_sborrow, IntCmp, strider_ir::IntCmpOp::Sborrow,
     "Build: `IntCmpOp::Sborrow` (signed subtract overflow)."
 );
 
 /// Build `IntUnaryOp::Neg`, two's-complement negation (`-x`).
-#[pyfunction]
+#[pyfunction(name = "int_neg")]
 pub fn neg(operand: Py<PyAny>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::IntUnary(IntUnaryKind::Neg, operand))
 }
 
-/// Build bitwise complement (`~x`), i.e. `Xor(x, all_ones)`.
+/// Build bitwise complement (`~x`).
 #[pyfunction(name = "int_not")]
 pub fn bit_not(operand: Py<PyAny>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::BitNot(operand))
 }
 
 /// Build `Popcount`, the count of set bits.
-#[pyfunction]
+#[pyfunction(name = "int_popcount")]
 pub fn popcount(operand: Py<PyAny>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::IntUnary(IntUnaryKind::Popcount, operand))
 }
 
 /// Build `Lzcount`, the count of leading zero bits.
-#[pyfunction]
+#[pyfunction(name = "int_lzcount")]
 pub fn lzcount(operand: Py<PyAny>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::IntUnary(IntUnaryKind::Lzcount, operand))
 }
 
-tpl_fn!(binary
+repr_fn!(PyTemplate; binary
     bool_and, BoolBinary, strider_ir::IntBinaryOp::And,
     "Build: boolean `a && b` (`IntBinaryOp::And` at `I1`)."
 );
-tpl_fn!(binary
+repr_fn!(PyTemplate; binary
     bool_or, BoolBinary, strider_ir::IntBinaryOp::Or,
     "Build: boolean `a || b` (`IntBinaryOp::Or` at `I1`)."
 );
-tpl_fn!(binary
+repr_fn!(PyTemplate; binary
     bool_xor, BoolBinary, strider_ir::IntBinaryOp::Xor,
     "Build: boolean `a ^ b` (`IntBinaryOp::Xor` at `I1`)."
 );
 
-/// Build boolean negation (`!x`), i.e. `Xor(x, IntConst(1)):I1`.
+/// Build boolean negation (`!x`).
 #[pyfunction]
 pub fn bool_not(operand: Py<PyAny>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::BoolNot(operand))
 }
 
-tpl_fn!(binary
+repr_fn!(PyTemplate; binary
     float_add, FloatBinary, strider_ir::FloatBinaryOp::Add,
     "Build: `FloatBinaryOp::Add` (`a + b`)."
 );
-tpl_fn!(binary
+repr_fn!(PyTemplate; binary
     float_mul, FloatBinary, strider_ir::FloatBinaryOp::Mul,
     "Build: `FloatBinaryOp::Mul` (`a * b`)."
 );
-tpl_fn!(binary float_div, FloatBinary, strider_ir::FloatBinaryOp::Div,
+repr_fn!(PyTemplate; binary float_div, FloatBinary, strider_ir::FloatBinaryOp::Div,
     "Build: `FloatBinaryOp::Div` (`a / b`).");
 
-/// Build float subtraction `a - b` (lowers to `FloatAdd(a, Neg(b))`).
+/// Build float subtraction `a - b`.
 #[pyfunction]
 pub fn float_sub(l: Py<PyAny>, r: Py<PyAny>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::FloatSub(l, r))
 }
 
-tpl_fn!(unary float_neg, FloatUnary, FloatUnaryKind::Neg,
+repr_fn!(PyTemplate; unary float_neg, FloatUnary, FloatUnaryKind::Neg,
     "Build: `FloatUnaryOp::Neg` (`-x`).");
-tpl_fn!(unary float_abs, FloatUnary, FloatUnaryKind::Abs,
+repr_fn!(PyTemplate; unary float_abs, FloatUnary, FloatUnaryKind::Abs,
     "Build: `FloatUnaryOp::Abs` (`fabs(x)`).");
-tpl_fn!(unary
+repr_fn!(PyTemplate; unary
     float_sqrt, FloatUnary, FloatUnaryKind::Sqrt,
     "Build: `FloatUnaryOp::Sqrt` (`sqrt(x)`)."
 );
-tpl_fn!(unary
+repr_fn!(PyTemplate; unary
     float_ceil, FloatUnary, FloatUnaryKind::Ceil,
     "Build: `FloatUnaryOp::Ceil` (`ceil(x)`)."
 );
-tpl_fn!(unary
+repr_fn!(PyTemplate; unary
     float_floor, FloatUnary, FloatUnaryKind::Floor,
     "Build: `FloatUnaryOp::Floor` (`floor(x)`)."
 );
-tpl_fn!(unary
+repr_fn!(PyTemplate; unary
     float_round, FloatUnary, FloatUnaryKind::Round,
     "Build: `FloatUnaryOp::Round` (round-to-nearest-even)."
 );
@@ -268,36 +241,36 @@ pub fn float_lt(l: Py<PyAny>, r: Py<PyAny>) -> PyTemplate {
     PyTemplate::from_repr(PatRepr::FloatCmp(strider_ir::FloatCmpOp::Less, l, r))
 }
 
-tpl_fn!(unary
+repr_fn!(PyTemplate; unary
     int_to_float, Cast, CastKind::IntToFloat,
-    "Build: `IntToFloat` — int→float conversion."
+    "Build: `IntToFloat` (int to float)."
 );
-tpl_fn!(unary
+repr_fn!(PyTemplate; unary
     float_to_int, Cast, CastKind::FloatToInt,
-    "Build: `FloatToInt` — float→int conversion."
+    "Build: `FloatToInt` (float to int)."
 );
-tpl_fn!(unary
+repr_fn!(PyTemplate; unary
     float_to_float, Cast, CastKind::FloatToFloat,
-    "Build: `FloatToFloat` — float→float re-width."
+    "Build: `FloatToFloat` (float re-width)."
 );
-tpl_fn!(unary
+repr_fn!(PyTemplate; unary
     int_bits_to_float, Cast, CastKind::IntBitsToFloat,
-    "Build: `IntBitsToFloat` — reinterpret int bits."
+    "Build: `IntBitsToFloat` (reinterpret int bits)."
 );
-tpl_fn!(unary
+repr_fn!(PyTemplate; unary
     float_bits_to_int, Cast, CastKind::FloatBitsToInt,
-    "Build: `FloatBitsToInt` — reinterpret float bits."
+    "Build: `FloatBitsToInt` (reinterpret float bits)."
 );
-tpl_fn!(unary
-    truncate, Cast, CastKind::Truncate,
-    "Build: `Truncate` — narrow an integer."
+repr_fn!(PyTemplate; unary
+    truncate = "int_truncate", Cast, CastKind::Truncate,
+    "Build: `Truncate` (narrow an integer)."
 );
-tpl_fn!(unary zero_extend, Cast, CastKind::ZeroExtend, "Build: `Extend(ZeroExtend)`.");
-tpl_fn!(unary sign_extend, Cast, CastKind::SignExtend, "Build: `Extend(SignExtend)`.");
+repr_fn!(PyTemplate; unary zero_extend = "int_zero_extend", Cast, CastKind::ZeroExtend, "Build: `Extend(ZeroExtend)`.");
+repr_fn!(PyTemplate; unary sign_extend = "int_sign_extend", Cast, CastKind::SignExtend, "Build: `Extend(SignExtend)`.");
 
 /// `extend(op, operand)` where `op` is "zero" / "zero_extend" / "sign" /
 /// "sign_extend".
-#[pyfunction]
+#[pyfunction(name = "int_extend")]
 pub fn extend(op: &str, operand: Py<PyAny>) -> PyResult<PyTemplate> {
     let extend_op = crate::pattern::parse_extend_op(op)?;
     Ok(PyTemplate::from_repr(PatRepr::Extend(extend_op, operand)))
@@ -313,7 +286,6 @@ pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     }
     add_fn!(var);
     add_fn!(int_const);
-    add_fn!(signed_int_const);
     add_fn!(bool_const);
     add_fn!(float_const);
     add_fn!(add);

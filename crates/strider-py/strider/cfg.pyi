@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import List, Literal, Optional, Tuple
+from typing import Literal, Optional, Union
 
 from .ir import Node
+from .sleigh import CallOtherAbi
 
 #: Colour themes accepted by every `to_html` / `to_dot` renderer.
 DotStyle = Literal["dark", "dark_cfg", "empty"]
@@ -13,9 +14,12 @@ class Cfg:
     """Control-flow graph of a single function, produced by
     `Lifter.build_cfg` and returned as `AnalyzeResult.cfg`."""
 
-    def to_dot(self, path: Optional[str] = ...) -> Optional[str]:
+    def to_dot(
+        self, path: Optional[str] = ..., style: Optional[DotStyle] = ...
+    ) -> Optional[str]:
         """Render the CFG to DOT. Returns the DOT string when `path` is
-        `None`, otherwise writes it to `path` and returns `None`."""
+        `None`, otherwise writes it to `path` and returns `None`.
+        `style` selects the theme (default `"dark_cfg"`)."""
         ...
     def to_html(
         self, path: Optional[str] = ..., style: Optional[DotStyle] = ...
@@ -38,7 +42,7 @@ class Cfg:
         returns `""` for that case instead.
         """
         ...
-    def fingerprint_pcode(self, node: Node) -> List[Tuple[int, str]]:
+    def fingerprint_pcode(self, node: Node) -> list[tuple[int, str]]:
         """The asm addresses recorded on `node` paired with their p-code
         text, sorted by address.
 
@@ -72,15 +76,24 @@ class CfgOptions:
     `function_max_size` bounds how far past the entry to decode; omit it for
     unbounded (`0` raises `ValueError`). `allow_code_before_start_addr`
     permits blocks below the entry address.
+
+    `call_other_abis` classifies Sleigh user-op names, winning over the
+    built-in table. Each value is a `strider.sleigh.CallOtherAbi`: one of
+    the four footprint-free classes, or `CallOtherAbi.custom(...)` naming
+    implicit registers.
     """
 
     function_max_size: Optional[int]
     allow_code_before_start_addr: bool
+    known_targets: dict[int, Union[list[int], Literal["return"]]]
+    call_other_abis: dict[str, CallOtherAbi]
     def __init__(
         self,
         *,
         function_max_size: Optional[int] = ...,
         allow_code_before_start_addr: bool = ...,
+        known_targets: dict[int, Union[list[int], Literal["return"]]] = ...,
+        call_other_abis: dict[str, CallOtherAbi] = ...,
     ) -> None:
         """Build the options. Raises `ValueError` for
         `function_max_size=0`."""

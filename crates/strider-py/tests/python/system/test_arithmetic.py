@@ -1,6 +1,3 @@
-"""Per-arch arithmetic tests: every IntBinaryOp / IntUnaryOp variant the
-analyser must lower for the `arithmetic` fixture, once per arch."""
-
 from __future__ import annotations
 
 from strider import pattern as pat
@@ -46,7 +43,7 @@ def test_umod(arch_id, fixtures_dir):
 
 
 def test_sdiv(arch_id, fixtures_dir):
-    g = analyze(arch_id, "arithmetic", "sdiv", fixtures_dir=fixtures_dir)
+    g = analyze(arch_id, "arithmetic", "int_sdiv", fixtures_dir=fixtures_dir)
     assert count_int_binop(g, "Sdiv") >= 1 or count_calls(g) >= 1
 
 

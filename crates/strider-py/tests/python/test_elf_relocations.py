@@ -28,18 +28,18 @@ def _read_u64_le(elf, addr):
 
 def test_default_load_applies_relocations():
     elf = strider.lift.load_elf(str(X64_RELOCS()))  # apply_relocations=True (default)
-    table_addr = elf.symbol("dispatch_table")
-    helper_a = elf.symbol("helper_a")
+    table_addr = elf.symbol("dispatch_table").address
+    helper_a = elf.symbol("helper_a").address
     assert _read_u64_le(elf, table_addr) == helper_a
 
 
 def test_apply_relocations_true_populates_dispatch_table():
     elf = strider.lift.load_elf(str(X64_RELOCS()), apply_relocations=True)
-    table_addr = elf.symbol("dispatch_table")
-    helper_a = elf.symbol("helper_a")
-    helper_b = elf.symbol("helper_b")
-    helper_c = elf.symbol("helper_c")
-    helper_d = elf.symbol("helper_d")
+    table_addr = elf.symbol("dispatch_table").address
+    helper_a = elf.symbol("helper_a").address
+    helper_b = elf.symbol("helper_b").address
+    helper_c = elf.symbol("helper_c").address
+    helper_d = elf.symbol("helper_d").address
     assert _read_u64_le(elf, table_addr) == helper_a
     assert _read_u64_le(elf, table_addr + 8) == helper_b
     assert _read_u64_le(elf, table_addr + 16) == helper_c
@@ -47,11 +47,9 @@ def test_apply_relocations_true_populates_dispatch_table():
 
 
 def test_apply_relocations_idempotent():
-    """Relocation application is a deterministic write, so loading the
-    same ELF twice must leave the slots reading the same value."""
     elf = strider.lift.load_elf(str(X64_RELOCS()), apply_relocations=True)
-    helper_a = elf.symbol("helper_a")
-    table_addr = elf.symbol("dispatch_table")
+    helper_a = elf.symbol("helper_a").address
+    table_addr = elf.symbol("dispatch_table").address
     first = _read_u64_le(elf, table_addr)
     # Merging duplicates the regions and the newer copy wins the lookup,
     # so both copies have to be patched identically.
@@ -69,5 +67,5 @@ def test_apply_relocations_default_argument_is_true():
     assert p is not None, "load_elf must accept apply_relocations"
     assert p.default is True, "load_elf default must be apply_relocations=True"
     elf = strider.lift.load_elf(str(X64_RELOCS()))
-    table_addr = elf.symbol("dispatch_table")
-    assert _read_u64_le(elf, table_addr) == elf.symbol("helper_a")
+    table_addr = elf.symbol("dispatch_table").address
+    assert _read_u64_le(elf, table_addr) == elf.symbol("helper_a").address

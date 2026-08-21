@@ -4,7 +4,6 @@
 //! `#[pymethods]` block.
 
 macro_rules! forall_preset {
-    // CC wrapper: stores the inner preset in `CcImpl::Preset(...)`.
     (cc $self_ty:ty, $inner_ty:ty, [$($name:ident),* $(,)?]) => {
         #[pymethods]
         impl $self_ty {
@@ -25,7 +24,6 @@ macro_rules! forall_preset {
             )*
         }
     };
-    // Arch wrapper: stores the inner preset directly.
     ($self_ty:ty, $inner_ty:ty, [$($name:ident),* $(,)?]) => {
         #[pymethods]
         impl $self_ty {
@@ -47,3 +45,38 @@ macro_rules! forall_preset {
 }
 
 pub(crate) use forall_preset;
+
+/// One `#[pyfunction]` per value-op constructor, wrapping its operands in a
+/// single `PatRepr`. `$ty` is the module's wrapper (`PyPat` matching,
+/// `PyTemplate` building); the `= "name"` arms give the Python name when it
+/// differs from the Rust ident (`and_` exposed as `int_and`).
+macro_rules! repr_fn {
+    ($ty:ident; binary $name:ident, $repr:ident, $op:expr, $doc:literal) => {
+        #[doc = $doc]
+        #[pyfunction]
+        pub fn $name(l: Py<PyAny>, r: Py<PyAny>) -> $ty {
+            <$ty>::from_repr(PatRepr::$repr($op, l, r))
+        }
+    };
+    ($ty:ident; binary $name:ident = $py:literal, $repr:ident, $op:expr, $doc:literal) => {
+        #[doc = $doc]
+        #[pyfunction(name = $py)]
+        pub fn $name(l: Py<PyAny>, r: Py<PyAny>) -> $ty {
+            <$ty>::from_repr(PatRepr::$repr($op, l, r))
+        }
+    };
+    ($ty:ident; unary $name:ident, $repr:ident, $op:expr, $doc:literal) => {
+        #[doc = $doc]
+        #[pyfunction]
+        pub fn $name(operand: Py<PyAny>) -> $ty {
+            <$ty>::from_repr(PatRepr::$repr($op, operand))
+        }
+    };
+    ($ty:ident; unary $name:ident = $py:literal, $repr:ident, $op:expr, $doc:literal) => {
+        #[doc = $doc]
+        #[pyfunction(name = $py)]
+        pub fn $name(operand: Py<PyAny>) -> $ty {
+            <$ty>::from_repr(PatRepr::$repr($op, operand))
+        }
+    };
+}

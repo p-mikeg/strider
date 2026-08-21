@@ -1,10 +1,3 @@
-"""Shared pytest fixtures for strider-py integration tests.
-
-Test ELFs live under `fixtures/out/<arch>/<case>.elf`, built by `make` in
-`fixtures/`.  Tests skip cleanly when a fixture is absent so a fresh
-checkout doesn't fail.
-"""
-
 from __future__ import annotations
 
 import pathlib
@@ -73,7 +66,7 @@ def built_lifter_and_function(
     arch, cc = arch_ctor(), cc_ctor()
     loaded = strider.lift.load_elf(str(fixture_path(arch_name, case)))
     mem = loaded.reader()
-    addr = loaded.symbol(symbol)
+    addr = loaded.symbol(symbol).address
     lift = strider.lift.lifter(arch, mem, rom=mem)
     _cfg, function, _unresolved = lift.analyze(
         addr,
@@ -104,6 +97,14 @@ def x86_memory_elf() -> pathlib.Path:
 @pytest.fixture
 def x86_calls_elf() -> pathlib.Path:
     return fixture_path("x86", "calls")
+
+
+@pytest.fixture
+def x86_relocs_elf() -> pathlib.Path:
+    """fixtures/out/x86/elf_relocs.elf: an ET_DYN shared object based at
+    ~0x12b0 (`helper_a`..`helper_d`, `compute_via_helper`), so it does NOT
+    overlap the 0x401000-based executable fixtures."""
+    return fixture_path("x86", "elf_relocs")
 
 
 @pytest.fixture

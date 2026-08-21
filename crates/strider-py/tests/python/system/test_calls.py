@@ -1,5 +1,3 @@
-"""Per-arch call tests: direct, indirect, mutual and recursive calls."""
-
 from __future__ import annotations
 
 from strider import pattern as pat

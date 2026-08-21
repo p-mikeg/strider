@@ -1,6 +1,4 @@
-"""Regression tests for AArch64 instructions that lift to zero pcode ops.
-
-``nop``, ``paciasp``, ``autiasp`` and several hint encodings produce no
+"""``nop``, ``paciasp``, ``autiasp`` and several hint encodings produce no
 pcode at all, leaving address holes in a region's instruction list.  Two
 cfg-builder failures came out of that: a fall-through across such a hole
 finalising a region with no instructions, and a branch target landing on
@@ -22,15 +20,17 @@ from .conftest import fixture_path
 def _lift_aarch64(elf_path: pathlib.Path, symbol: str):
     loaded = strider.lift.load_elf(str(elf_path))
     mem = loaded.reader()
-    entry, size = loaded._elf.symbol_addr_and_size(symbol)
+    sym = loaded.symbol(symbol)
     sleigh_arch = strider.sleigh.SleighArch.aarch64()
     cc = strider.sleigh.CallingConvention.aarch64_aapcs64()
     lift = strider.lift.lifter(sleigh_arch, mem, rom=mem)
     _cfg, function, _unresolved = lift.analyze(
-        entry,
+        sym.address,
         cc,
         opts=strider.lift.LifterOptions(
-            cfg=strider.cfg.CfgOptions(function_max_size=size, allow_code_before_start_addr=True)
+            cfg=strider.cfg.CfgOptions(
+                function_max_size=sym.size, allow_code_before_start_addr=True
+            )
         ),
     )
     return function

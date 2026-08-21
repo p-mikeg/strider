@@ -3,82 +3,129 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Iterator, List, Literal, Optional, Union
+from typing import (
+    Any,
+    Literal,
+    Mapping,
+    NamedTuple,
+    Optional,
+    TypeVar,
+    Union,
+)
 
 import os
 
-from .cfg import Cfg, CfgOptions, DotStyle
-from .ir import Function, Node
+from .cfg import Cfg, CfgOptions
+from .ir import Function
 from .opt import OptimizerPipeline
-from .reader import BufferReader, MemReader, ReadOnlyMemory
-from .sleigh import CallingConvention, SleighArch, Vn
+from .reader import BufferReader, MemLike, RomLike, Symbol, SymbolIter
+from .sleigh import CallingConvention, CallOtherAbi, SleighArch, Vn
 
 #: What the loaders accept as a filesystem path.
 StrPath = Union[str, "os.PathLike[str]"]
-
-#: Source of instruction bytes: a `BufferReader`, or a `MemReader` subclass.
-MemLike = Union[MemReader, BufferReader]
-
-#: Read-only memory image for constant folding: a `ReadOnlyMemory` subclass
-#: or a `BufferReader`.
-RomLike = Union[ReadOnlyMemory, BufferReader]
 
 #: Memory-aliasing model for the optimizer. Validated by the `LifterOptions`
 #: constructor, which raises `ValueError` for anything else.
 AliasMode = Literal["stack_global_disjoint", "strict"]
 
-class AnalyzeResult:
-    """What `Lifter.analyze` returns: the CFG, the lifted function, and any
-    unresolved indirect branches. Unpacks as `(cfg, function, unresolved)`."""
+_L = TypeVar("_L", bound="Lifter")
 
-    @property
-    def cfg(self) -> Cfg:
-        """The CFG `function` was lifted from."""
+class AnalyzeResult(NamedTuple):
+    """What `Lifter.analyze` returns: a named 3-tuple of the CFG, the lifted
+    function, and the unresolved indirect branches. A real
+    `collections.namedtuple`, so `isinstance(result, tuple)` holds and it
+    compares equal to the plain tuple.
+
+    `unresolved` holds the machine addresses of indirect branches that could
+    not be resolved; empty when the function resolved fully, and a non-empty
+    list is not an error.
+    """
+
+    cfg: Cfg
+    function: Function
+    unresolved: list[int]
+
+class AssumptionOptions:
+    """Claims about the code being analysed, for `LifterOptions(assumptions=...)`.
+
+    None of these is checked, and each one turned on can make the answer wrong
+    on valid input. All default `False` (`noalias_allocators` empty), which is
+    the sound setting.
+
+    `distinct_sp_bases_disjoint` treats a store rooted at a different SP base
+    than the entry SP, an alignment-masked frame local say, as disjoint from
+    the probed location.
+
+    `callee_preserves_stack_args` empties the outgoing-argument window, so a
+    value spilled at the stack top forwards across a call. The psABIs let a
+    callee write the argument slots that hold its own parameters; this asserts
+    compiler output does not.
+
+    `noalias_allocators` lists callee addresses of pure `malloc`-like
+    allocators: a size in, a fresh non-overlapping pointer out, no pointer
+    arguments. Distinct allocations are then disjoint and a load steps through
+    such a call. An address that can return an existing or interior pointer
+    (`realloc`, `free`, an aligned-alloc taking a pointer) breaks that.
+
+    `escape_analysis` forwards a spill load across a call and past an opaque
+    store when the frame is provably private, meaning no stack address escapes
+    to a callee. The proof is sound; the claim is that no callee returns a
+    struct by value, an sret hidden pointer being an escape the analysis may
+    not see.
+    """
+
+    distinct_sp_bases_disjoint: bool
+    callee_preserves_stack_args: bool
+    noalias_allocators: list[int]
+    escape_analysis: bool
+    def __init__(
+        self,
+        *,
+        distinct_sp_bases_disjoint: bool = ...,
+        callee_preserves_stack_args: bool = ...,
+        noalias_allocators: list[int] = ...,
+        escape_analysis: bool = ...,
+    ) -> None:
+        """Build the claims; every field defaults to the sound setting."""
         ...
-    @property
-    def function(self) -> Function:
-        """The lifted, optimised, indirect-branch-resolved IR."""
-        ...
-    @property
-    def unresolved(self) -> List[int]:
-        """Machine addresses of indirect branches that could not be
-        resolved. Empty when the function resolved fully; a non-empty list is
-        not an error."""
-        ...
-    def __len__(self) -> int: ...
-    def __getitem__(self, idx: int) -> Union[Cfg, Function, List[int]]: ...
-    def __iter__(self) -> Iterator[Union[Cfg, Function, List[int]]]: ...
-    def __repr__(self) -> str: ...
 
 class LifterOptions:
     """Per-call options for `Lifter.analyze`.
 
-    `cfg` holds the CFG-building options. `compact` drops unreachable nodes
-    at the end. `per_address_ccs` overrides the calling convention at
-    individual call sites. `pipeline`, when set, replaces the default
-    optimizer pipeline for that one `analyze` call. `calls_clobber`,
-    `assume_distinct_sp_bases_disjoint` and `alias_mode` tune what the
-    optimizer may assume about memory.
+    `cfg` holds the CFG-building options. `assumptions` holds the unchecked
+    claims about the analysed code, each of which can make the answer wrong.
+    `compact` drops unreachable nodes at the end. `per_address_ccs` overrides
+    the calling convention at individual call sites. `pipeline`, when set,
+    replaces the default optimizer pipeline for the calls these options drive.
+    `alias_mode` picks the memory model every SP-aware pass walks under.
+
+    `assume_incoming_args_survive_calls` (default `True`) lets a call on an
+    incoming stack-argument slot's memory chain leave the slot alone, so the
+    argument is still detectable afterwards. It reaches incoming-argument
+    detection only, where it holds for any conforming callee: those slots are
+    the caller's memory, above the entry SP.
 
     Raises `ValueError` for an unrecognised `alias_mode` or a nested
     `function_max_size=0`.
     """
 
     cfg: CfgOptions
+    assumptions: AssumptionOptions
     compact: bool
-    per_address_ccs: Optional[dict]
-    calls_clobber: bool
-    assume_distinct_sp_bases_disjoint: bool
+    per_address_ccs: Optional[dict[int, CallingConvention]]
+    assume_incoming_args_survive_calls: bool
+    resolve_indirect_branches: bool
     alias_mode: AliasMode
     pipeline: Optional[OptimizerPipeline]
     def __init__(
         self,
         *,
         cfg: Optional[CfgOptions] = ...,
+        assumptions: Optional[AssumptionOptions] = ...,
         compact: bool = ...,
-        per_address_ccs: Optional[dict] = ...,
-        calls_clobber: bool = ...,
-        assume_distinct_sp_bases_disjoint: bool = ...,
+        per_address_ccs: Optional[dict[int, CallingConvention]] = ...,
+        assume_incoming_args_survive_calls: bool = ...,
+        resolve_indirect_branches: bool = ...,
         alias_mode: AliasMode = ...,
         pipeline: Optional[OptimizerPipeline] = ...,
     ) -> None:
@@ -102,6 +149,40 @@ class Lifter:
         """Build a handle for `arch` reading code from `mem`, with `rom` as
         the optional read-only memory for constant folding."""
         ...
+    # pyo3's `#[new]` fills `tp_new`, so a Python subclass constructs the base
+    # through `__new__`; `ElfLifter` does.
+    def __new__(
+        cls: type[_L],
+        arch: SleighArch,
+        mem: MemLike,
+        rom: Optional[RomLike] = ...,
+    ) -> _L: ...
+    def _rebuild(
+        self, arch: SleighArch, mem: MemLike, rom: Optional[RomLike] = ...
+    ) -> None:
+        """INTERNAL. Rebuild the handle's Sleigh and orchestrator state, so a
+        newly merged-in ELF becomes visible."""
+        ...
+    def reader(self) -> MemLike:
+        """The code source (`BufferReader` or `MemReader`) this handle was
+        built with."""
+        ...
+    def rom(self) -> Optional[RomLike]:
+        """The `rom` (read-only memory for constant folding) this handle was
+        built with, or `None` if none was supplied."""
+        ...
+    def user_op_names(self) -> list[str]:
+        """Every Sleigh user-op name this architecture can emit, indexed by
+        user-op id. These are the names `CfgOptions(call_other_abis=...)`
+        classifies."""
+        ...
+    def call_other_abi(
+        self, name: str, opts: Optional[CfgOptions] = ...
+    ) -> Optional[CallOtherAbi]:
+        """How `name` is classified: the `opts` entry for it when there is
+        one, else the built-in table, else `None` for a name strider has no
+        answer for (which fails the lift of any function containing it)."""
+        ...
     def build_cfg(
         self,
         entry: int,
@@ -112,15 +193,14 @@ class Lifter:
         ...
     def analyze(
         self,
-        entry: Union[int, str],
+        entry: int,
         cc: Optional[CallingConvention] = ...,
         opts: Optional[LifterOptions] = ...,
     ) -> AnalyzeResult:
-        """Lift, optimise and resolve the function at `entry`.
+        """Lift, optimise and resolve the function at address `entry`.
 
-        A plain `Lifter` needs an address and a `cc`; it raises `StriderError`
-        for a symbol name or a missing `cc`. (`ElfLifter` accepts a symbol
-        name and supplies a default `cc`.)
+        `cc` is required here; `ElfLifter.analyze` also takes a symbol name
+        and supplies a default `cc`.
         """
         ...
     def optimize(
@@ -129,26 +209,9 @@ class Lifter:
         pipeline: Optional[OptimizerPipeline] = ...,
     ) -> None:
         """Run an optimizer pipeline over `function` in place. `pipeline=None`
-        runs the default pipeline; a given pipeline is drained."""
-        ...
-    def neighborhood_dot(
-        self,
-        function: Function,
-        center: int,
-        depth: int = ...,
-        hub_cap: int = ...,
-        max_nodes: int = ...,
-        count_producers: bool = ...,
-    ) -> str:
-        """Pretty DOT for the nodes within `depth` hops of node `center`,
-        with register names resolved. `Function.neighborhood_dot` is the
-        plain counterpart.
-
-        A hub (degree over `hub_cap`) is shown and its inputs are followed, but
-        its consumer fan-out is not, and `max_nodes` caps the total. The hub
-        degree is the consumer fan-out; `count_producers` folds a node's inputs
-        in too.
-        """
+        runs the default pipeline; a given pipeline is copied, so it stays
+        usable. Invalidates outstanding `Node` / `Match` handles and every
+        node id for `function`."""
         ...
     def reg(self, name: str) -> Optional[Vn]:
         """The varnode for the register called `name`, or `None` when the
@@ -172,10 +235,13 @@ class Lifter:
         target: Union[Function, Cfg],
         host: str = ...,
         port: int = ...,
-        depth: int = ...,
+        depth: Optional[int] = ...,
     ) -> None:
         """Start the interactive explorer for `target`, a `Function` or a
-        `Cfg`. Prints the local URL and blocks on this thread until Ctrl-C.
+        `Cfg`. It renders the NEIGHBORHOOD around a node you pick (inputs and
+        outputs out to `depth` hops), never the whole graph, so it scales to
+        large functions. Prints the local URL and blocks on this thread until
+        Ctrl-C.
 
         Off the main thread you MUST pair this with
         `strider.explore.shutdown(port)` and a thread join before the
@@ -202,6 +268,11 @@ class ElfLifter(Lifter):
     functions by calling `analyze` repeatedly.
     """
 
+    #: INTERNAL. The loaded-ELF handle: the code and read-only readers, the
+    #: symbol table, and the raw `read`. Its class is not in the module
+    #: namespace, so there is no name to give it here.
+    _elf: Any
+
     def __init__(
         self,
         elf,
@@ -220,19 +291,45 @@ class ElfLifter(Lifter):
     def cc(self) -> CallingConvention:
         """The calling convention `analyze` uses when none is passed."""
         ...
-    def functions(self) -> Iterable[str]:
-        """Every function and data symbol name in the loaded ELFs, sorted."""
+    @property
+    def is_arm_be8(self) -> bool:
+        """Whether the binary sets ARM's `EF_ARM_BE8`: instructions stored
+        little-endian, data big-endian. Chooses `arm_be_kernel` over `arm_be`;
+        `False` off ARM."""
         ...
-    def symbol(self, name: str) -> int:
-        """The address of `name`. Raises `StriderError` when it is not
+    @property
+    def endianness(self) -> str:
+        """Byte order of the loaded binary: `"little"` or `"big"`."""
+        ...
+    def functions(self) -> SymbolIter:
+        """The function symbols in address order, one per address: aliases of
+        an address already listed are excluded, preferring the one whose size
+        the ELF records. A function with no recorded size is still yielded,
+        with `Symbol.size` `None`.
+
+        A cursor, not a container: `len()` reports what is LEFT to pull."""
+        ...
+    def iter_symbols(self) -> SymbolIter:
+        """Every symbol pulled one at a time, so the `Symbol` objects are never
+        all live at once. The Rust table is built up front. `len()` reports
+        what is LEFT to pull, so a consumed cursor shrinks."""
+        ...
+    def symbol(self, name: str) -> Symbol:
+        """The `Symbol` named `name`. Raises `StriderError` when it is not
         defined."""
         ...
-    def symbol_size(self, name: str) -> Optional[int]:
-        """The recorded size of `name` in bytes, or `None` when the size is
-        recorded as zero. Raises `StriderError` when undefined."""
+    def symbol_opt(self, name: str) -> Optional[Symbol]:
+        """`symbol`, but `None` rather than raising when `name` is
+        undefined."""
         ...
-    def symbols(self) -> dict[str, int]:
-        """Every symbol as a name-to-address dict."""
+    def symbol_at(self, address: int) -> Optional[Symbol]:
+        """The symbol covering `address`: the nearest one at or below it whose
+        recorded extent reaches `address`. A symbol with no recorded size
+        covers only its own address, and aliases sharing an address resolve to
+        the code symbol among them. `None` when nothing covers `address`."""
+        ...
+    def symbols(self) -> Mapping[str, Symbol]:
+        """Every symbol, keyed by the name it resolves under."""
         ...
     def entry_point(self) -> int:
         """The entry-point address of the first loaded ELF."""
@@ -245,7 +342,10 @@ class ElfLifter(Lifter):
         ...
     def add_elf(self, path: str, *, apply_relocations: bool = ...) -> None:
         """Merge another ELF, such as a shared library, into this handle.
-        The earlier-loaded ELF wins on name collisions."""
+        The earlier-loaded ELF wins on name collisions.
+
+        Raises `StriderError` if the new ELF maps code over an address already
+        loaded with different bytes (two ELFs at the same base cannot merge)."""
         ...
     def analyze(
         self,
@@ -273,7 +373,7 @@ def load_elf(
     back to sections for relocatable objects; `from_segments=False` forces
     the section walk for section-granular regions. Override the detected
     `arch=` / `cc=` for kernel or custom-ABI workflows. `apply_relocations`
-    (default `True`) patches relocations in place, which shared objects and
-    PIE binaries need.
+    (default `True`) applies relocations, which shared objects and PIE
+    binaries need.
     """
     ...

@@ -1,8 +1,4 @@
-"""The typed pattern builders (`RetPat`, `IfPat`, `CallOtherPat`, `LoadPat`,
-`StorePat`, `PhiPat`, `FunctionArgPat`), the free constructors, the
-op-variant accessors on `Match`, and the `CastMask` matcher option.
-
-Tests run against real fixture graphs so a regression in the builder to Pat
+"""Tests run against real fixture graphs so a regression in the builder to Pat
 plumbing surfaces as a missed match rather than a silent type error.
 """
 
@@ -12,12 +8,11 @@ import pytest
 
 import strider
 from strider.pattern import (
-    Capture, Pat, CastMask, anything, var, add, mul, load, store,
+    Capture, Pat, CastMask, anything, var, int_add, int_mul, load, store,
     call, call_other, ret, if_else, phi, mem_phi,
     phi_for, initial_var, initial_var_for, function_arg,
-    function_arg_any, function_arg_reg, function_arg_stack,
-    int_const, signed_int_const, int_cmp, int_bin_any, int_cmp_any,
-    any_int_const,
+    any_function_arg, function_arg_reg, function_arg_stack,
+    int_const, int_const_any_width, int_cmp, any_int_binary, any_int_cmp,
 )
 
 from .conftest import built_function, fixture_path
@@ -71,16 +66,15 @@ def test_builder_when_chains_and_finalises(ctor):
 
 
 def test_ret_pat_returns_builder_chainable():
-    # `preceded_by` takes a value pattern relaxed onto the Return's ctrl
-    # predecessor.  Passing a node-rooted control builder (`call()`) used to
-    # be accepted under looser typing and no longer is, hence the value
-    # predecessor here.
-    p = ret().preceded_by(anything())
+    # `ctrl` takes a value pattern relaxed onto the Return's ctrl
+    # predecessor, hence the value wildcard here rather than a node-rooted
+    # control builder such as `call()`.
+    p = ret().ctrl(anything())
     assert isinstance(p.into_pat(), Pat)
 
 
 def test_ret_pat_ret_val_constraint_chains():
-    p = ret().ret_val(0, int_const(1)).ret_val(1, "x")
+    p = ret().ret_val(0, int_const(1)).ret_val(1, Capture("x"))
     assert isinstance(p.into_pat(), Pat)
 
 
@@ -92,7 +86,7 @@ def test_ret_pat_finds_returns_in_real_graph():
 
 
 def test_if_pat_chain_sets_branches():
-    p = if_else(cond="x").true_branch(anything()).false_branch(anything())
+    p = if_else(cond=Capture("x")).true_branch(anything()).false_branch(anything())
     assert isinstance(p.into_pat(), Pat)
 
 
@@ -122,7 +116,7 @@ def test_load_pat_space_constraint_compiles():
 
 
 def test_store_pat_full_chain():
-    p = store().addr("p").data(int_const(0)).space(strider.sleigh.VnSpace.RAM)
+    p = store().addr(Capture("p")).data(int_const(0)).space(strider.sleigh.VnSpace.RAM)
     assert isinstance(p.into_pat(), Pat)
 
 
@@ -135,7 +129,7 @@ def test_load_pat_finds_loads_in_real_graph():
 
 def test_load_pat_via_addr_chain():
     g = _switch_graph()
-    hits = g.find_all(load().addr(add(anything(), anything())))
+    hits = g.find_all(load().addr(int_add(anything(), anything())))
     assert isinstance(hits, list)
 
 
@@ -143,6 +137,14 @@ def test_store_stack_only_chain():
     # stack_only() restricts the match to stores whose SP offset is known.
     p = store().stack_only().data(int_const(42))
     assert isinstance(p.into_pat(), Pat)
+
+
+def test_non_stack_chain():
+    # non_stack() keeps only accesses not proven to be a stack slot.
+    p = store().non_stack().data(int_const(42))
+    assert isinstance(p.into_pat(), Pat)
+    q = load().non_stack()
+    assert isinstance(q.into_pat(), Pat)
 
 
 def test_phi_pat_input_chain():
@@ -193,46 +195,54 @@ def _patterns_graph_for(arch_id, fn_name="if_returns_const"):
     return built_function(arch_id, "patterns", fn_name)
 
 
-def test_signed_int_const_matches_neg50_on_x86_u32():
+def test_int_const_any_width_matches_neg50_on_x86_u32():
     # 32-bit x86 stores -50 as `IntConst(0xFFFFFFCE)` at U32, so plain
     # bit-pattern equality at output width already matches.
     g = _patterns_graph_for("x86")
     assert len(g.find_all(int_const(-50))) >= 1
-    assert len(g.find_all(signed_int_const(-50))) >= 1
+    assert len(g.find_all(int_const_any_width(-50))) >= 1
 
 
-def test_signed_int_const_handles_x64_zero_extended_neg50():
+def test_int_const_any_width_handles_x64_zero_extended_neg50():
     # gcc -O2 lowers `return -50;` as `mov eax, 0xffffffce; ret`, leaving
     # RAX's high 32 bits zero.  The IR constant is 0x00000000FFFFFFCE at U64,
     # i.e. +4294967246, so strict bit-pattern `int_const(-50)` misses it and
-    # only `signed_int_const` recognises the narrow signed form.
+    # only `int_const_any_width` recognises the narrower stored width.
     g = _patterns_graph_for("x64")
     assert len(g.find_all(int_const(-50))) == 0, (
-        "int_const should NOT match the zero-extended form — that's the whole point of signed_int_const"
+        "int_const should NOT match the zero-extended form; that is what "
+        "int_const_any_width is for"
     )
-    assert len(g.find_all(signed_int_const(-50))) >= 1
+    assert len(g.find_all(int_const_any_width(-50))) >= 1
 
 
-def test_signed_int_const_neg1_matches_at_every_width():
+def test_int_const_any_width_neg1_matches_at_every_width():
     # -1 is all-ones at every width, and the zero-extension check covers the
-    # narrower-stored variants, so `signed_int_const(-1)` fires on any
+    # narrower-stored variants, so `int_const_any_width(-1)` fires on any
     # function returning a negative literal.  Whether -1 appears in
     # if_returns_const at all is compiler-dependent, so only pin "no raise".
     g64 = _patterns_graph_for("x64")
-    assert isinstance(g64.find_all(signed_int_const(-1)), list)
+    assert isinstance(g64.find_all(int_const_any_width(-1)), list)
 
 
-def test_signed_int_const_round_trips_via_match_int():
+def test_int_const_any_width_takes_a_list():
+    # Set membership, the same shape `int_const` takes.
+    g = _patterns_graph_for("x64")
+    assert len(g.find_all(int_const_any_width([-50, 12345]))) >= 1
+    assert len(g.find_all(int_const_any_width([]))) == 0
+
+
+def test_int_const_any_width_round_trips_via_match_int():
     c = Capture()
     g = _patterns_graph_for("x64")
-    hits = g.find_all(signed_int_const(-50).capture(c))
+    hits = g.find_all(int_const_any_width(-50).capture(c))
     if not hits:
         pytest.skip("no -50 constant in this graph (compiler may have folded it)")
     # For the x64 zero-extended -50 the stored value is +4294967246 at U64
-    # and const_int does no further sign extension, so it recovers
+    # and sint does no further sign extension, so it recovers
     # +4294967246, not -50.  The pattern recognises the source-level value;
-    # recovering the raw bit pattern is const_uint's job.
-    val = hits[0].const_uint(c)
+    # recovering the raw bit pattern is uint's job.
+    val = hits[0].uint(c)
     assert val is not None
 
 
@@ -243,20 +253,20 @@ def test_int_cmp_concrete_op():
 
 def test_int_cmp_unknown_op_raises():
     with pytest.raises(strider.StriderError):
-        int_cmp("NotARealOp", "x", "y")
+        int_cmp("NotARealOp", Capture("x"), Capture("y"))
 
 
 def test_int_cmp_no_not_equal_op():
     # The IR has no NotEqual variant; the lifter lowers `a != b` to a
     # negated IntEqual.  So the name must raise, not be silently accepted.
     with pytest.raises(strider.StriderError):
-        int_cmp("NotEqual", "x", "y")
+        int_cmp("NotEqual", Capture("x"), Capture("y"))
 
 
 def test_int_binary_op_recovery():
     g = _patterns_graph()
     c = Capture()
-    p = int_bin_any(c, anything(), anything())
+    p = any_int_binary(c, anything(), anything())
     hits = g.find_all(p)
     assert len(hits) >= 1
     op_name = hits[0].op(c)
@@ -274,7 +284,7 @@ def test_op_and_value_type_replace_the_seven_family_accessors():
     duplication and must stay gone."""
     g = _patterns_graph()
     c = Capture()
-    hits = g.find_all(int_bin_any(c, anything(), anything()))
+    hits = g.find_all(any_int_binary(c, anything(), anything()))
     assert len(hits) >= 1
     node = hits[0].node(c)
 
@@ -293,27 +303,29 @@ def test_op_and_value_type_replace_the_seven_family_accessors():
 
 
 def test_op_is_none_for_a_node_carrying_no_operation():
-    """A node that is not an operation answers `None` from `op()` rather
-    than raising."""
+    """A node that is not an operation answers `None` from `op_opt`; the
+    plain `op` raises."""
     g = _patterns_graph()
     c = Capture()
-    hits = g.find_all(any_int_const(c))
+    hits = g.find_all(int_const(c))
     assert len(hits) >= 1
-    assert hits[0].node(c).op() is None
-    assert hits[0].op(c) is None
+    assert hits[0].node(c).op() is None  # Node.op() stays optional
+    assert hits[0].op_opt(c) is None
+    with pytest.raises(strider.StriderError):
+        hits[0].op(c)
 
 
 def test_int_cmp_op_recovery():
     g = _control_graph("clamp")
     c = Capture()
-    p = int_cmp_any(c, anything(), anything())
+    p = any_int_cmp(c, anything(), anything())
     hits = g.find_all(p)
     assert len(hits) >= 1
     op_name = hits[0].op(c)
-    # Regression: the allowed set used to also list LessEqual, SlessEqual and
-    # Borrow, which are lift-time-lowered shapes and never exist as primitive
-    # nodes.  That made this a phantom assertion (it passed only because the
-    # real answer is always one of the six below).
+    # The six below are every primitive `IntCmpOp`. LessEqual, SlessEqual and
+    # Borrow are lift-time-lowered shapes that never reach a node, so listing
+    # them here would widen the set to shapes the answer can never take and
+    # make this a phantom assertion.
     assert op_name in {"Equal", "Less", "Sless", "Carry", "Scarry", "Sborrow"}
 
 
@@ -339,25 +351,34 @@ def test_cast_mask_all_vs_none():
     assert CastMask.none().bits() == 0
 
 
-def test_find_all_accepts_ignore_casts_mask():
+def test_ignore_casts_accepts_a_cast_mask():
     g = _patterns_graph()
-    # The mask form is ignore_casts=True narrowed to specific cast kinds.
-    hits_strict = g.find_all(add(mul(anything(), anything()), anything()))
+    # A mask is ignore_casts=True narrowed to specific cast kinds.
+    hits_strict = g.find_all(int_add(int_mul(anything(), anything()), anything()))
     hits_relaxed = g.find_all(
-        add(mul(anything(), anything()), anything()),
-        ignore_casts_mask=CastMask.extend() | CastMask.truncate(),
+        int_add(int_mul(anything(), anything()), anything()),
+        ignore_casts=CastMask.extend() | CastMask.truncate(),
     )
     assert len(hits_relaxed) >= len(hits_strict)
 
 
-def test_find_all_rejects_both_ignore_casts_options():
+def test_ignore_casts_true_is_the_all_mask():
+    """`ignore_casts=True` is defined as `CastMask.all()`, so the two spellings
+    are one parameter rather than a pair to keep consistent."""
     g = _patterns_graph()
-    with pytest.raises(strider.StriderError):
-        g.find_all(
-            add(anything(), anything()),
-            ignore_casts=True,
-            ignore_casts_mask=CastMask.extend(),
-        )
+    pat = int_add(int_mul(anything(), anything()), anything())
+    assert len(g.find_all(pat, ignore_casts=True)) == len(
+        g.find_all(pat, ignore_casts=CastMask.all())
+    )
+    assert len(g.find_all(pat, ignore_casts=False)) == len(
+        g.find_all(pat, ignore_casts=CastMask.none())
+    )
+
+
+def test_ignore_casts_mask_keyword_is_gone():
+    g = _patterns_graph()
+    with pytest.raises(TypeError):
+        g.find_all(int_add(anything(), anything()), ignore_casts_mask=CastMask.extend())
 
 
 def test_vn_space_constants_round_trip():
@@ -391,7 +412,7 @@ def test_sleigh_reg_returns_vn_or_none():
 
 
 def test_load_mem_in_chain_compiles():
-    p = load().addr(int_const(0x100)).mem_in(store().addr(int_const(0x200)))
+    p = load().addr(int_const(0x100)).mem(store().addr(int_const(0x200)))
     assert isinstance(p.into_pat(), Pat)
 
 
@@ -405,26 +426,20 @@ def test_store_mem_in_bit_width_chain_compiles():
     p = (
         store()
         .addr(int_const(0x100))
-        .mem_in(store().addr(int_const(0x200)))
+        .mem(store().addr(int_const(0x200)))
         .bit_width(64)
     )
     assert isinstance(p.into_pat(), Pat)
 
 
-def test_load_addr_with_raw_int_rejected_at_finalise():
-    # Operand slots take a Pat / Capture / str / value builder, never a raw
-    # int (a literal address must be wrapped as `int_const(0x100)`).  Chain
-    # calls are lazy, so the error surfaces at finalisation as a
-    # StriderError, not as a TypeError at the call.
-    b = load().addr(123)
-    with pytest.raises(strider.StriderError, match="expected a value pattern"):
-        b.into_pat()
+def test_load_addr_accepts_raw_int_as_int_const():
+    # A raw int in an operand slot coerces to `int_const(value)`, so a literal
+    # address needs no explicit wrapping.
+    assert isinstance(load().addr(123).into_pat(), Pat)
 
 
-def test_store_data_with_raw_int_rejected_at_finalise():
-    b = store().data(123)
-    with pytest.raises(strider.StriderError, match="expected a value pattern"):
-        b.into_pat()
+def test_store_data_accepts_raw_int_as_int_const():
+    assert isinstance(store().data(123).into_pat(), Pat)
 
 
 def test_mem_in_rejects_value_operand():
@@ -433,6 +448,17 @@ def test_mem_in_rejects_value_operand():
     # match a real memory chain; the builder must reject it rather than
     # silently yield a dead pattern.
     with pytest.raises(strider.StriderError):
-        store().addr(int_const(0x100)).mem_in(load().addr(int_const(0x200))).into_pat()
+        store().addr(int_const(0x100)).mem(load().addr(int_const(0x200))).into_pat()
     with pytest.raises(strider.StriderError):
-        load().addr(int_const(0x100)).mem_in(var(Capture())).into_pat()
+        load().addr(int_const(0x100)).mem(var(Capture())).into_pat()
+
+
+def test_deeply_nested_typed_builder_raises_not_aborts():
+    # A 5000-deep operand nest must hit the depth guard and raise, rather
+    # than overflowing the native stack and aborting the process.
+    g = _patterns_graph()
+    deep = load()
+    for _ in range(5000):
+        deep = load().addr(deep)
+    with pytest.raises(strider.StriderError):
+        g.find_all(deep)
