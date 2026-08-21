@@ -5,29 +5,51 @@
 //! class, base and offset, with stored bytes fully covering the load's
 //! range (a wider store is reshaped via `Truncate` / `ShiftRight`).
 //! Anything else blocks: a non-exact overlapping store, a `MemPhi`
-//! (control merge, arms may disagree), a `Call` / `CallOther`, or
-//! `InitialMemory`.
+//! (control merge, arms may disagree), a `CallOther`, or `InitialMemory`.
+//! A `Call` blocks too unless `escape_analysis` proves the frame private.
 //!
 //! The pass never synthesizes a value-`Phi`; a control merge is opaque.
 //! Requires `PhiCollapse` to have run, so a trivial `MemPhi` is already gone.
+
+use std::cell::RefCell;
 
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
 use strider_ir::{IRBuilderExt, IRViewer};
 use strider_target::Endianness;
 
 use crate::error::Result;
+use crate::mem_analysis::{AliasVerdict, MemAnalyzer, MemOptions};
 use crate::pipeline::OptimizationResult;
-use crate::sp_analysis::{AliasVerdict, SpAnalyzer, SpOptions};
 
-#[derive(Clone)]
-pub struct LoadForward;
+#[derive(Default)]
+pub struct LoadForward {
+    /// Shared by every root in one sweep, for its outgoing-argument-window
+    /// memo.  Valid that long because the pass only rewires `Load` memory
+    /// edges and redirects `Load` outputs: a `Call` keeps its memory input and
+    /// its SP, and a forwarded value can only make an address the window scan
+    /// could not place placeable, which ends a prefix sooner than the memo
+    /// says.
+    analyzer: RefCell<Option<MemAnalyzer>>,
+}
+
+impl Clone for LoadForward {
+    /// The memo belongs to one sweep of one graph, so a clone starts empty.
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
 
 impl crate::peephole::PeepholePass for LoadForward {
     fn matches_kind(&self, kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::Load(_))
     }
 
-    // A `Load` is never another load's operand, so no consumer re-enqueue.
+    fn start_sweep(&self) {
+        *self.analyzer.borrow_mut() = None;
+    }
+
+    // A Load's output never feeds another Load's memory slot, so a rewrite
+    // exposes no new forward.
     fn propagate_to_consumers(&self) -> bool {
         false
     }
@@ -39,10 +61,17 @@ impl crate::peephole::PeepholePass for LoadForward {
         root: NodeId,
     ) -> Result<crate::peephole::PeepholeRewrite> {
         // SP decompositions are recomputed read-only off the live graph: the
-        // `stack_offsets` cache is empty during the fixed point.
-        let alias_mode = opt_ctx.options.alias_mode;
+        // `memory_offsets` cache is empty during the fixed point.
+        // `call_blocking`: a store at another SP base may still alias.
+        let options = MemOptions::call_blocking(opt_ctx.options.alias_mode)
+            .with_escape_analysis(opt_ctx.options.assumptions.escape_analysis)
+            .with_callee_preserves_stack_args(
+                opt_ctx.options.assumptions.callee_preserves_stack_args,
+            );
+        let mut analyzer = self.analyzer.borrow_mut();
+        let alias_cfg = analyzer.get_or_insert_with(|| MemAnalyzer::new(options));
         Ok(crate::peephole::PeepholeRewrite::from_changed(
-            try_forward_load(edit, root, alias_mode)?.changed(),
+            try_forward_load(edit, root, alias_cfg)?.changed(),
         ))
     }
 }
@@ -50,30 +79,23 @@ impl crate::peephole::PeepholePass for LoadForward {
 fn try_forward_load(
     edit: &mut crate::EditFunction<'_>,
     load: NodeId,
-    alias_mode: crate::AliasMode,
+    alias_cfg: &MemAnalyzer,
 ) -> Result<OptimizationResult> {
     let mem = edit
         .memory_input_of(load)
         .expect("a Load has a memory input (slot 0)");
     let (load_value, load_ty) = edit.single_value_output(load)?;
 
-    // Conservative on distinct SP bases (a store at another base may still
-    // alias); `call_blocking` makes any `Call` stop the walk.
-    let alias_cfg = SpAnalyzer::new(SpOptions::call_blocking(alias_mode));
-
     let clobber_node = alias_cfg.nearest_clobber(edit.function(), load, mem);
     // Shorten the load's memory edge onto its nearest clobber so future walks
     // skip the proven-disjoint run.  Harmless if the load then forwards away.
     crate::mem_ssa::narrow_load_to(edit, load, clobber_node);
 
-    // Only a `Store` is forwardable: `MemPhi` (arms may disagree), `Call` /
-    // `CallOther`, `InitialMemory`, and opaque producers all block.
     if !matches!(edit.node_kind(clobber_node), NodeKind::Store(_)) {
         return Ok(OptimizationResult::NoChange);
     }
 
-    // Same location and the stored bytes cover the load's range; an
-    // overlapping-but-shifted store is not forwardable.
+    // Exact match: same location, stored bytes covering the load's range.
     if alias_cfg.verdict(edit.function(), load, clobber_node) != AliasVerdict::Match {
         return Ok(OptimizationResult::NoChange);
     }
@@ -94,7 +116,6 @@ fn try_forward_load(
     {
         narrow(edit, store_data, load)?
     } else {
-        // Narrower store or non-integer reshape: bytes don't back the load.
         return Ok(OptimizationResult::NoChange);
     };
 
@@ -104,11 +125,9 @@ fn try_forward_load(
     Ok(OptimizationResult::from_changed(changed))
 }
 
-/// Reshapes a wider store's value down to the load width.
-///
-/// LE: the load's bytes are the low ones, so a plain `Truncate`.
-/// BE: they are the high ones, so shift right by
-/// `(store_size - load_size) * 8` first.
+/// Reshapes a wider store's value down to the load width.  On BE the load's
+/// bytes are the high ones, so a `(store_size - load_size) * 8` shift precedes
+/// the truncate.
 fn narrow(
     edit: &mut crate::EditFunction<'_>,
     store_data: ValueId,
@@ -121,7 +140,7 @@ fn narrow(
         Endianness::Little => store_data,
         Endianness::Big => {
             let shift_bits =
-                crate::sp_analysis::high_low_shift_bits(store_data_ty, load_ty, endianness);
+                crate::mem_analysis::high_low_shift_bits(store_data_ty, load_ty, endianness);
             let shift_const = edit.build_int_const(u128::from(shift_bits), store_data_ty)?;
             // `build_int_const` carries no contributor stamp, so attribute the
             // const by hand; every reachable node needs a fingerprint.

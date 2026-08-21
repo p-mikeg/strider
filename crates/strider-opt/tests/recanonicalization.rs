@@ -82,7 +82,7 @@ fn clean_does_not_merge_when_output_type_differs() {
         .unwrap();
     let a = b.read_variable(&a_vn).unwrap();
     let bb = b.read_variable(&b_vn).unwrap();
-    // Distinct inputs for now: Truncate(a):I32 and Truncate(bb):I16.
+    // Initially distinct inputs: Truncate(a):I32 and Truncate(bb):I16.
     let t32 = b.truncate_if_needed(a, ValueType::I32).unwrap();
     let t16 = b.truncate_if_needed(bb, ValueType::I16).unwrap();
     let w32 = b

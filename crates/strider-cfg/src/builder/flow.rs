@@ -353,6 +353,7 @@ mod tests {
     /// Two `condit`-group vars in one diff clobber each other's bits, and
     /// nothing repairs the result the way `restore_at` repairs the ISA-mode bit.
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "condit")]
     fn a_diff_touching_two_condit_group_vars_is_rejected() {
         let (mut sleigh, _reads) = counting_arm_sleigh();

@@ -136,7 +136,6 @@ macro_rules! clone_box_shim {
     ($(#[$attr:meta])* $shim:ident for dyn $obj:ident) => {
         $(#[$attr])*
         pub trait $shim {
-            /// Clone the pass behind a `Box<dyn $obj>`.
             fn clone_box(&self) -> Box<dyn $obj>;
         }
 
@@ -153,8 +152,7 @@ clone_box_shim! {
     OptimizerClone for dyn Optimizer
 }
 
-/// A pass that runs ONCE on the converged graph, so unlike [`Optimizer`] it
-/// returns no `Change`/`NoChange`.
+/// A pass that runs ONCE on the converged graph.
 ///
 /// Assumes the optimizer has converged: may rely on any canonical shape the
 /// in-loop passes settle on (e.g. `Add(_, Neg(_))` for subtraction) rather
@@ -238,6 +236,12 @@ impl OptimizerPipeline {
         ctx: &mut OptCtx<'_>,
     ) -> crate::Result<()> {
         const MAX_ITERS: u32 = 1024;
+        // Publish the pure-allocator set onto the function so every `decompose`
+        // sees one consistent set. Config, not a memo, so it persists across the
+        // per-pass memo drains below.
+        function
+            .side_tables_mut()
+            .set_noalias_allocators(ctx.options.assumptions.noalias_allocators.clone());
         {
             // Scoped so the borrow of `function` is released before the
             // validation step below.
@@ -250,11 +254,13 @@ impl OptimizerPipeline {
                     if opt.apply(&mut edit, ctx)?.changed() {
                         changed = true;
                         // Drain after every changing pass so the next pass in
-                        // this iteration sees a culled graph, and invalidate
-                        // the SP-decomposition memo: a rewrite can change or
-                        // cull the value a cached verdict was computed for.
+                        // this iteration sees a culled graph, and invalidate the
+                        // SP-decomposition and frame-escape memos: a rewrite can
+                        // change or cull the value a cached verdict was computed
+                        // for.
                         edit.clean();
-                        edit.function().side_tables().clear_stack_slots();
+                        edit.function().side_tables().clear_memory_slots();
+                        edit.function().side_tables().clear_frame_escape();
                     }
                 }
                 if !changed {
@@ -268,15 +274,13 @@ impl OptimizerPipeline {
                 }
             }
             for opt in &self.post_passes {
-                // `stack_offsets` is deliberately NOT cleared between
-                // post-passes: later mutations (e.g. `CallStackArgCollect`
-                // appending Call inputs) don't change any address value's
-                // decomposition, so the filled slots stay valid and survive
-                // as the user-facing per-node SSoT.
+                // `memory_offsets` survives between post-passes: no post-pass
+                // mutation changes an address value's decomposition, so the
+                // filled slots stay valid as the user-facing per-node SSoT.
                 opt.apply(&mut edit, ctx)?;
                 edit.clean();
             }
-        } // dropping edit releases the borrow of `function`
+        }
         strider_ir::validate::validate(function)?;
         Ok(())
     }
@@ -438,7 +442,7 @@ mod tests {
         p.add(PhiCollapse);
         p.add(RegionCollapse);
         p.add(DeadBranchElimination);
-        p.add(LoadForward);
+        p.add(LoadForward::default());
         p.run(&mut function, &mut OptCtx::new(None))?;
 
         let val = crate::test_support::return_value(function.graph())?;
@@ -501,7 +505,7 @@ mod tests {
         p.add(PhiCollapse);
         p.add(RegionCollapse);
         p.add(DeadBranchElimination);
-        p.add(LoadForward);
+        p.add(LoadForward::default());
         p.add_post_pass(CallStackArgCollect);
         p.run(&mut function, &mut OptCtx::new(None))?;
 

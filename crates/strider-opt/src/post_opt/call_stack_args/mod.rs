@@ -6,8 +6,8 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
+use crate::mem_analysis::{ArgStoreScan, MemAnalyzer, MemExpr, MemOptions, SlotReach};
 use crate::pipeline::PostOptimizer;
-use crate::sp_analysis::{SpAnalyzer, SpExpr, SpOptions};
 
 #[cfg(test)]
 mod tests;
@@ -16,15 +16,18 @@ mod tests;
 /// with no anchored store.  Offsets are relative to the CALL-TIME SP, and a
 /// store wider than one slot is ONE argument spanning several slots.
 ///
-/// Over-collection is intentional: once lowered to memory, argument pushes are
+/// The prefix over-collects: once lowered to memory, argument pushes are
 /// indistinguishable from incidental in-window stack writes, so every plausible
 /// store is collected.  A `Call` on the chain ends collection, since the callee
 /// may overwrite the frame.
+///
+/// The window is open above: `k` is discovered, not given, so the scan probes
+/// every slot from the first one upward.
 fn collect_stack_args(
     function: &strider_ir::Function,
     call_id: NodeId,
     stack_args: strider_target::StackArgs,
-    alias_cfg: &SpAnalyzer,
+    alias_cfg: &MemAnalyzer,
 ) -> Vec<ValueId> {
     // Call inputs are [control, memory, target, sp, ...args].
     let inputs = function.node_inputs(call_id);
@@ -34,29 +37,35 @@ fn collect_stack_args(
     let sp_value = inputs[3];
 
     // A slot's entry-relative probe offset is `call_sp_off + offset_of(slot)`.
-    // A non-decomposable SP input yields no args.
-    let Some(SpExpr {
+    // The probes below are stack-rooted, so a base in any other region is not
+    // a coordinate system they share.
+    let Some(MemExpr {
         base,
         offset: call_sp_off,
+        kind: crate::mem_analysis::MemKind::Stack,
     }) = alias_cfg.decompose(function, sp_value)
     else {
         return Vec::new();
     };
 
+    let mut scan = ArgStoreScan::new(
+        alias_cfg.options(),
+        mem_value,
+        base,
+        call_sp_off + stack_args.offset_of(0),
+        i128::MAX,
+    );
     let mut args = Vec::new();
     let mut cursor = 0usize;
     loop {
         let slot_off = call_sp_off + stack_args.offset_of(cursor);
-        // Probing a single byte lets the store report its own width back, so a
-        // wider-than-slot argument is discovered rather than forced into a range.
-        let Some(store) = alias_cfg.reaching_store(function, mem_value, base, slot_off, 1) else {
+        // A slot reached by anything but a store of its own ends the prefix:
+        // a covering store anchored earlier means the slot was never written
+        // as a slot, and a def the scan cannot see through leaves nothing to
+        // collect.
+        let SlotReach::Anchored(store) = scan.reach_at(function, slot_off) else {
             break;
         };
-        // A covering store anchored EARLIER means this slot was never written
-        // itself, so the prefix ends here.
-        if store.store_offset != slot_off {
-            break;
-        }
         args.push(store.data(function));
         cursor += stack_args.slots_spanned(store.size(function));
     }
@@ -78,9 +87,8 @@ impl PostOptimizer for CallStackArgCollect {
         // The owned `Vec` lets the immutable borrow end before the mutation loop
         // takes `edit` mutably.
         let calls: Vec<NodeId> = edit.live_of_kind(|k| matches!(k, NodeKind::Call)).collect();
-        let alias_cfg = SpAnalyzer::new(SpOptions::call_blocking(alias_mode));
+        let alias_cfg = MemAnalyzer::new(MemOptions::call_blocking(alias_mode));
         for call_id in calls {
-            // `None` means the convention passes no stack args.
             let Some(stack_args) = edit.function().get_cc(call_id).stack_args else {
                 continue;
             };

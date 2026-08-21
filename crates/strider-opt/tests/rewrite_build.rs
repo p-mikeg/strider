@@ -1,5 +1,6 @@
-//! A wildcard RHS is a COMPILE error, not a runtime check: `Any` does not
-//! implement `TemplatePat`.
+//! RHS template construction: computed constants via `int_const_with!`,
+//! nested templates, and the capture-binding checks `rewrite_rule_runtime`
+//! makes at construction time.
 
 #![allow(
     clippy::panic,
@@ -14,14 +15,9 @@ use strider_ir_test_utils::{make_empty_fn, make_fn_with_var, reg_vn};
 
 use strider_opt::{EditFunction, apply_rules_count, rewrite_rule, rewrite_rule_runtime};
 use strider_pattern::{
-    Capture, CaptureExt, MatchPat, Matcher, TemplatePat, add, any_int_const, int_const,
-    int_const_with, template, var,
+    Capture, MatchPat, Matcher, TemplatePat, int_add, int_const, int_const_with, one_of, template,
+    var,
 };
-
-// compile-fail, uncomment to re-confirm the wildcard-RHS rejection:
-//
-//     let rule = rewrite_rule(add(var(x), int_const(0u128)), any());
-//     // error[E0277]: the trait bound `Any: TemplatePat` is not satisfied
 
 /// `add(var(x), int_const(0)) -> var(x)` fires and redirects uses.
 #[test]
@@ -36,11 +32,11 @@ fn add_zero_identity_fires_and_redirects() {
     })
     .unwrap();
 
-    let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
+    let rule = rewrite_rule(int_add(var(x), int_const(0u128)), var(x));
 
     let add_root = {
         let m = Matcher::new(&fx);
-        let pat = add(var(x), int_const(0u128)).into_pattern();
+        let pat = int_add(var(x), int_const(0u128)).into_pattern();
         let hits = m.find_all(&pat).unwrap();
         assert_eq!(hits.len(), 1);
         hits[0].root()
@@ -85,13 +81,13 @@ fn const_fold_rule_via_macro() {
     .unwrap();
 
     let rule = rewrite_rule(
-        add(any_int_const().capture(c1), any_int_const().capture(c2)),
+        int_add(int_const(c1), int_const(c2)),
         int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
     );
 
     let add_root = {
         let m = Matcher::new(&fx);
-        let pat = add(any_int_const().capture(c1), any_int_const().capture(c2)).into_pattern();
+        let pat = int_add(int_const(c1), int_const(c2)).into_pattern();
         let hits = m.find_all(&pat).unwrap();
         assert!(!hits.is_empty());
         hits[0].root()
@@ -127,11 +123,8 @@ fn reassoc_rule_nests_computed_const_in_add() {
     .unwrap();
 
     let rule = rewrite_rule(
-        add(
-            add(var(x), any_int_const().capture(c1)),
-            any_int_const().capture(c2),
-        ),
-        template::add(
+        int_add(int_add(var(x), int_const(c1)), int_const(c2)),
+        template::int_add(
             var(x),
             int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
         ),
@@ -139,11 +132,7 @@ fn reassoc_rule_nests_computed_const_in_add() {
 
     let outer_root = {
         let m = Matcher::new(&fx);
-        let pat = add(
-            add(var(x), any_int_const().capture(c1)),
-            any_int_const().capture(c2),
-        )
-        .into_pattern();
+        let pat = int_add(int_add(var(x), int_const(c1)), int_const(c2)).into_pattern();
         let hits = m.find_all(&pat).unwrap();
         assert!(!hits.is_empty(), "reassoc LHS should match (x + 1) + 2");
         hits[0].root()
@@ -170,7 +159,7 @@ fn rewrite_rule_runtime_rejects_unbound_capture_in_rhs() {
     // Never bound by the LHS.
     let c = Capture::new();
 
-    let lhs = add(var(a), var(b)).into_pattern();
+    let lhs = int_add(var(a), var(b)).into_pattern();
     let rhs = var(c).into_template();
 
     let err = match rewrite_rule_runtime(lhs, rhs) {
@@ -184,11 +173,53 @@ fn rewrite_rule_runtime_rejects_unbound_capture_in_rhs() {
     );
 }
 
-// A wildcard cannot reach `rewrite_rule_runtime` at all: its RHS is a
-// `Template`, and there is no way to seal a wildcard into one. Hence no
-// runtime non-buildable-RHS rejection test.
-//
-// compile-fail:
+/// A capture bound on only SOME `one_of` arms must be rejected at construction.
+///
+/// Exactly one arm fires per match, so a rule whose RHS needs `k` has nothing to
+/// instantiate when the arm that does not bind `k` matches. Accepting it defers
+/// the failure to whichever binary first exercises that arm, where
+/// `instantiate`'s unbound-capture error is not a skip and aborts the pipeline
+/// for the whole function.
+#[test]
+fn rewrite_rule_runtime_rejects_capture_bound_on_only_some_arms() {
+    let x = Capture::new();
+    let k = Capture::new();
+
+    // Arm 1 binds `k`; arm 2 binds only `x`.
+    let lhs = one_of![int_add(var(x), int_const(k)), var(x)].into_pattern();
+    let rhs = template::int_add(var(x), var(k)).into_template();
+
+    let err = match rewrite_rule_runtime(lhs, rhs) {
+        Ok(_) => panic!("expected partial-arm-binding rejection, got Ok"),
+        Err(e) => e,
+    };
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("only on SOME alternation arms"),
+        "expected a partial-arm-binding error, got: {msg}"
+    );
+}
+
+/// The complement: a capture every arm binds is guaranteed, so the rule builds.
+#[test]
+fn rewrite_rule_runtime_accepts_capture_bound_on_every_arm() {
+    let x = Capture::new();
+
+    let lhs = one_of![
+        int_add(var(x), int_const(0u128)),
+        int_add(int_const(0u128), var(x))
+    ]
+    .into_pattern();
+    let rhs = var(x).into_template();
+
+    assert!(
+        rewrite_rule_runtime(lhs, rhs).is_ok(),
+        "a capture bound on every arm must be accepted"
+    );
+}
+
+// A wildcard cannot reach `rewrite_rule_runtime`: its RHS is a `Template`, and
+// a wildcard cannot be sealed into one. Both forms are compile-fail:
 //
 //     let rhs: strider_pattern::Template = any().into_template();
 //     // error[E0277]: the trait bound `Any: TemplatePat` is not satisfied
@@ -209,7 +240,7 @@ fn apply_rules_count_drives_rule_across_function() {
     })
     .unwrap();
 
-    let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
+    let rule = rewrite_rule(int_add(var(x), int_const(0u128)), var(x));
     let mut ctx = EditFunction::new(&mut fx);
     let fired = apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).unwrap() > 0;
     assert!(fired);

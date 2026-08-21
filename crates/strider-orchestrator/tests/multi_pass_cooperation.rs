@@ -163,7 +163,7 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward);
+    pipeline.add(LoadForward::default());
     pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))?;
 
     let ret = fg

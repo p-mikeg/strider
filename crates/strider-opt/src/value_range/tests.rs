@@ -22,7 +22,7 @@ fn intersect_preserves_stride_phase() {
     let m = dense.intersect(mul8);
     assert_eq!((m.lo, m.hi, m.stride), (8, 40, 8));
     assert_eq!(m.count(), 5);
-    // Two coprime strides with incompatible phases have no common element.
+    // Equal strides with opposite phases have no common element.
     let odd = Interval {
         lo: 1,
         hi: 100,
@@ -136,6 +136,297 @@ fn strict_less_guard_bounds_index_on_true_edge() {
     assert_eq!(iv.hi, 7, "upper bound must be 7 for idx < 8");
 }
 
+/// `build_guarded_dispatch` but the dispatch returns `idx <op> c`, the scaled
+/// value a table index feeds into its address arithmetic.  Returns
+/// `(function, scaled_value, dispatch_node)`.
+fn build_guarded_scaled(
+    bound: u64,
+    ty: ValueType,
+    op: IntBinaryOp,
+    c: u64,
+) -> (strider_ir::Function, ValueId, NodeId) {
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let entry = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+
+    b.set_region(entry);
+    let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
+    let idx = b.build_load(dummy_addr, rsleigh::VnSpace::RAM, ty).unwrap();
+    let bound_c = b.build_int_const(bound, ty).unwrap();
+    let cond = b
+        .build_int_cmp_operation(idx, bound_c, IntCmpOp::Less, ty)
+        .unwrap();
+    b.build_if(cond, dispatch, exit).unwrap();
+
+    b.set_region(dispatch);
+    let c_val = b.build_int_const(c, ty).unwrap();
+    let scaled = b.build_int_binary_operation(idx, c_val, op, ty).unwrap();
+    b.build_return(Some(scaled), &[]).unwrap();
+
+    b.set_region(exit);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+    let (dispatch_node, _exit) = if_edge_consumers(&f);
+    (f, scaled, dispatch_node)
+}
+
+fn scaled_range(bound: u64, op: IntBinaryOp, c: u64) -> Interval {
+    let (f, scaled, dispatch) = build_guarded_scaled(bound, ValueType::I32, op, c);
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
+    ranges.range_of(scaled, dispatch)
+}
+
+/// The guard must forward-propagate through `idx << k`, the value a table index
+/// feeds into `table + idx*stride`: `idx < 4` gives `idx << 2 ∈ {0,4,8,12}`.
+#[test]
+fn guard_propagates_through_shift_left() {
+    let iv = scaled_range(4, IntBinaryOp::ShiftLeft, 2);
+    assert_eq!((iv.lo, iv.hi, iv.stride), (0, 12, 4));
+    assert_eq!(iv.count(), 4);
+}
+
+/// Same through a non-power-of-two `idx * c`: `idx < 4` gives `idx*3 ∈
+/// {0,3,6,9}`.
+#[test]
+fn guard_propagates_through_mul_const() {
+    let iv = scaled_range(4, IntBinaryOp::Mul, 3);
+    assert_eq!((iv.lo, iv.hi, iv.stride), (0, 9, 3));
+    assert_eq!(iv.count(), 4);
+}
+
+/// The floor shapes reduce the range: `idx < 8` gives `idx >> 1 ∈ [0,3]` and
+/// `idx / 2 ∈ [0,3]`.
+#[test]
+fn guard_propagates_through_shift_right() {
+    let iv = scaled_range(8, IntBinaryOp::ShiftRight, 1);
+    assert_eq!((iv.lo, iv.hi), (0, 3));
+}
+
+#[test]
+fn guard_propagates_through_udiv_const() {
+    let iv = scaled_range(8, IntBinaryOp::Div, 2);
+    assert_eq!((iv.lo, iv.hi), (0, 3));
+}
+
+/// A scale's operand guard gates the propagation and then bounds the operand,
+/// which is one scan, not two: each is a linear walk of the operand's guard
+/// list with a dominance test per entry.
+#[test]
+fn scaled_range_scans_the_operand_guards_once() {
+    let (f, scaled, dispatch) = build_guarded_scaled(8, ValueType::I32, IntBinaryOp::Div, 2);
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
+    crate::value_range::GUARD_SCANS.with(|c| c.set(0));
+    let iv = ranges.range_of(scaled, dispatch);
+    assert_eq!((iv.lo, iv.hi), (0, 3));
+    assert_eq!(
+        crate::value_range::GUARD_SCANS.with(std::cell::Cell::get),
+        2,
+        "one scan for the scaled value, one for its operand"
+    );
+}
+
+/// A diamond whose two arms, `v < hi_a` and a second guard, each branch to a
+/// merge on their true edge.  `second_arm_bounds_v` picks whether that second
+/// guard bounds `v` or an unrelated load.  Returns `(function, v, merge_region)`.
+fn build_two_arm_merge(
+    hi_a: u64,
+    hi_b: u64,
+    second_arm_bounds_v: bool,
+) -> (strider_ir::Function, ValueId, NodeId) {
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let entry = b.create_region_all().unwrap();
+    let mid = b.create_region_all().unwrap();
+    let merge = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+
+    let ty = ValueType::I32;
+    b.set_region(entry);
+    let va = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
+    let v = b.build_load(va, rsleigh::VnSpace::RAM, ty).unwrap();
+    let other = if second_arm_bounds_v {
+        v
+    } else {
+        let wa = b.build_int_const(0xBEEF_u64, ValueType::I64).unwrap();
+        b.build_load(wa, rsleigh::VnSpace::RAM, ty).unwrap()
+    };
+    let ca = b.build_int_const(hi_a, ty).unwrap();
+    let lt_a = b
+        .build_int_cmp_operation(v, ca, IntCmpOp::Less, ty)
+        .unwrap();
+    b.build_if(lt_a, merge, mid).unwrap();
+
+    b.set_region(mid);
+    let cb = b.build_int_const(hi_b, ty).unwrap();
+    let lt_b = b
+        .build_int_cmp_operation(other, cb, IntCmpOp::Less, ty)
+        .unwrap();
+    b.build_if(lt_b, merge, exit).unwrap();
+
+    b.set_region(merge);
+    b.build_return(Some(v), &[]).unwrap();
+    b.set_region(exit);
+    b.build_return(Some(v), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+
+    let merge_node = f
+        .walk()
+        .find(|&n| {
+            matches!(f.node_kind(n), NodeKind::Region)
+                && f.graph()
+                    .node_inputs(n)
+                    .iter()
+                    .filter(|&x| f.value_kind(x).is_control())
+                    .count()
+                    >= 2
+        })
+        .expect("the merge region");
+    (f, v, merge_node)
+}
+
+/// A value bounded on EVERY predecessor of a merge is bounded at the merge by
+/// the union of the arms, even though no single guard dominates it.  `v < 8` on
+/// one arm and `v < 6` on the other give `v <= 7` at the merge.
+#[test]
+fn guard_survives_a_merge_of_two_bounded_arms() {
+    let (f, v, merge) = build_two_arm_merge(8, 6, true);
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
+    let iv = ranges.range_of(v, merge);
+    assert_eq!(
+        (iv.lo, iv.hi),
+        (0, 7),
+        "v <= 7 at the merge (union of the <8 and <6 arms)",
+    );
+}
+
+/// The soundness guard: if even one predecessor of the merge leaves `v` free
+/// (here the second arm bounds an unrelated value), `v` is NOT bounded at the
+/// merge.
+#[test]
+fn guard_does_not_survive_a_merge_with_an_unbounded_arm() {
+    let (f, v, merge) = build_two_arm_merge(8, 6, false);
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
+    let iv = ranges.range_of(v, merge);
+    assert!(
+        iv.is_top(ValueType::I32.bit_mask_u128()),
+        "v must stay unbounded: one merge arm does not bound it, got [{},{}]",
+        iv.lo,
+        iv.hi,
+    );
+}
+
+/// `shl`/`mul` must WIDEN to top when the scaled top overflows the carrier:
+/// `checked_shl` alone only rejects `k >= 128` and otherwise wraps, which would
+/// under-approximate (unsound) for a `u128::MAX` width mask.
+#[test]
+fn shl_and_mul_widen_to_top_on_carrier_overflow() {
+    let hi = 1u128 << 127;
+    assert!(
+        Interval::dense(0, hi).shl(1, u128::MAX).is_top(u128::MAX),
+        "2^127 << 1 overflows u128 -> must be top, not a wrapped [0,0]",
+    );
+    assert!(
+        Interval::dense(0, hi).mul(4, u128::MAX).is_top(u128::MAX),
+        "2^127 * 4 overflows u128 -> must be top",
+    );
+    // The common in-type case is unaffected by routing shl through mul.
+    let iv = Interval::dense(0, 3).shl(2, 0xFFFF_FFFF);
+    assert_eq!((iv.lo, iv.hi, iv.stride), (0, 12, 4));
+}
+
+/// Floored `shr`/`udiv` recover `stride/divisor` when the divisor divides the
+/// stride (exact), and widen to 1 otherwise (a non-dividing divisor breaks the
+/// progression, so the floored image is not an AP and must over-approximate).
+#[test]
+fn shr_udiv_recover_stride_only_on_clean_division() {
+    // c | stride: x/c walks exactly stride/c.
+    let clean = Interval {
+        lo: 0,
+        hi: 12,
+        stride: 4,
+    };
+    let d = clean.udiv(2);
+    assert_eq!((d.lo, d.hi, d.stride), (0, 6, 2), "4 / 2 -> stride 2");
+    let s = clean.shr(1);
+    assert_eq!((s.lo, s.hi, s.stride), (0, 6, 2), "4 >> 1 -> stride 2");
+
+    // c does NOT divide stride: {0,5,10,15}/2 = {0,2,5,7}, which is not an AP;
+    // widening to stride 1 keeps it sound (stride/c = 2 would drop 5 and 7).
+    let ragged = Interval {
+        lo: 0,
+        hi: 15,
+        stride: 5,
+    };
+    let r = ragged.udiv(2);
+    assert_eq!(
+        (r.lo, r.hi, r.stride),
+        (0, 7, 1),
+        "non-dividing stride widens"
+    );
+    for real in [0u128, 2, 5, 7] {
+        assert!(
+            r.lo <= real && real <= r.hi && (real - r.lo).is_multiple_of(r.stride),
+            "real value {real} dropped from the widened result",
+        );
+    }
+}
+
+/// Exhaustively over small (lo, stride, divisor), every real value of the floored
+/// image lands inside the returned interval at the returned stride: the reported
+/// stride is always a true divisor of the real spacing.
+#[test]
+fn shr_udiv_stride_never_lies() {
+    for stride in 1u128..=8 {
+        for lo in 0u128..=3 {
+            let src = Interval {
+                lo,
+                hi: lo + stride * 6,
+                stride,
+            };
+            let elems: Vec<u128> = (0..=6).map(|i| lo + i * stride).collect();
+            for c in 1u128..=8 {
+                let r = src.udiv(c);
+                for &x in &elems {
+                    let v = x / c;
+                    assert!(
+                        r.lo <= v && v <= r.hi && (v - r.lo).is_multiple_of(r.stride),
+                        "udiv lied: lo={lo} stride={stride} c={c} x={x} -> {v} outside {r:?}",
+                    );
+                }
+                if c.is_power_of_two() {
+                    let k = c.trailing_zeros();
+                    let r = src.shr(k);
+                    for &x in &elems {
+                        let v = x >> k;
+                        assert!(
+                            r.lo <= v && v <= r.hi && (v - r.lo).is_multiple_of(r.stride),
+                            "shr lied: lo={lo} stride={stride} k={k} x={x} -> {v} outside {r:?}",
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 // The masked-Thumb shape: the guard bounds `(kind&7) - 1` while the dispatch
 // indexes `kind&7`, so `kind&7` must inherit `[1, 7]` from `((kind&7)-1) < 7`.
 #[test]
@@ -148,7 +439,6 @@ fn guard_on_add_propagates_bound_back_to_operand() {
     let exit = b.create_region_all().unwrap();
     b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
-    // X = load (no KB info), diff = X + (-1), guard `diff < 7`.
     let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
     let x = b.build_load(dummy_addr, rsleigh::VnSpace::RAM, ty).unwrap();
     let neg1 = b.build_int_const((0u128).wrapping_sub(1), ty).unwrap();
@@ -198,7 +488,6 @@ fn guard_on_add_with_wrapping_backprop_stays_top() {
     let exit = b.create_region_all().unwrap();
     b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
-    // X = load (no KB info), diff = X + 4, guard `diff < 8` -> diff ∈ [0, 7].
     let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
     let x = b.build_load(dummy_addr, rsleigh::VnSpace::RAM, ty).unwrap();
     let four = b.build_int_const(4u64, ty).unwrap();
@@ -265,8 +554,6 @@ fn trivial_phi_of_guarded_index_is_bounded() {
     b.build_if(cond, dispatch, exit).unwrap();
 
     b.set_region(dispatch);
-    // Read idx back through the builder's phi mechanism (a single-input phi
-    // for the tracked variable).
     let phi_idx = b.read_variable(&idx_vn).unwrap();
     b.build_return(Some(phi_idx), &[]).unwrap();
 
@@ -290,11 +577,6 @@ fn trivial_phi_of_guarded_index_is_bounded() {
     assert_eq!(iv.hi, 7, "trivial phi: upper bound must be 7");
 }
 
-// ---------------------------------------------------------------------------
-// Test 3: KnownBits mask -> [0, 7] flow-insensitively
-//
-// idx = arg & 7  -> bits 3..31 known zero -> max = 7 -> range [0, 7] everywhere.
-// ---------------------------------------------------------------------------
 #[test]
 fn known_bits_mask_bounds_index_everywhere() {
     let mut b = RegisterSet::new().build_fn().unwrap();
@@ -316,7 +598,7 @@ fn known_bits_mask_bounds_index_everywhere() {
         .build_int_binary_operation(arg, mask, IntBinaryOp::And, ValueType::I32)
         .unwrap();
 
-    // Build a trivial branch to `other` so we can check the range there too.
+    // A trivial branch to `other`, so the range there is checkable too.
     let one = b.build_boolean_const(true);
     b.build_if(one, other, other).unwrap();
 
@@ -334,12 +616,10 @@ fn known_bits_mask_bounds_index_everywhere() {
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
-    // In entry region: KnownBits should see max_value = 7 -> [0, 7].
     let iv_entry = ranges.range_of(idx, entry_node);
     assert_eq!(iv_entry.hi, 7, "KnownBits bound: hi must be 7 in entry");
     assert_eq!(iv_entry.lo, 0, "KnownBits bound: lo must be 0 in entry");
 
-    // In other region: same flow-insensitive KnownBits bound.
     let iv_other = ranges.range_of(idx, other_node);
     assert_eq!(iv_other.hi, 7, "KnownBits bound: hi must be 7 in other");
 }
@@ -390,12 +670,6 @@ fn known_bits_scaled_index_carries_stride() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Test 4: unguarded predecessor -> top (fail-closed)
-//
-// dispatch has two predecessors: one with idx<8 guard, one without.
-// The union must be top.
-// ---------------------------------------------------------------------------
 #[test]
 fn unguarded_predecessor_makes_range_top() {
     use rsleigh::VnSpace;
@@ -423,13 +697,11 @@ fn unguarded_predecessor_makes_range_top() {
         .unwrap();
     b.build_if(cond, guarded, unguarded).unwrap();
 
-    // guarded_region: idx is known < 8 here, branch to dispatch.
     b.set_region(guarded);
     // Keep the same SSA write for idx_vn so the phi in dispatch has this value.
     b.write_variable(&idx_vn, raw_idx).unwrap();
     b.build_branch(dispatch).unwrap();
 
-    // unguarded_region: no guard, branch to dispatch.
     b.set_region(unguarded);
     // Also write raw_idx so the phi has two inputs with the same SSA value.
     b.write_variable(&idx_vn, raw_idx).unwrap();
@@ -815,7 +1087,6 @@ fn sibling_region_not_dominated_is_top() {
     let dummy = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
     let raw_idx = b.build_load(dummy, VnSpace::RAM, ValueType::I32).unwrap();
     b.write_variable(&idx_vn, raw_idx).unwrap();
-    // A constant flag keeps the structure simple.
     let flag = b.build_boolean_const(true);
     b.build_if(flag, left, right).unwrap();
 
@@ -884,9 +1155,7 @@ fn sibling_region_not_dominated_is_top() {
 
 // A loop-carried `idx_phi = Phi(0, idx_phi + 1)` is top: the back-edge arm is
 // an `Add`, an opaque leaf here, with no guard or KnownBits bound, and no
-// guard on idx_phi dominates the header.  No recursion is involved; for the
-// cycle that does drive the resolver into itself see
-// `phi_of_phi_cycle_terminates_top`.
+// guard on idx_phi dominates the header.
 #[test]
 fn cyclic_phi_is_top() {
     use strider_ir_test_utils::reg_vn;
@@ -949,8 +1218,8 @@ fn cyclic_phi_is_top() {
 // The resolver only recurses through `Phi`, so a phi-of-phi is the one shape
 // that drives it back into itself: two loop variables swapping every
 // iteration, `phi_a = Phi(0, phi_b)` and `phi_b = Phi(1, phi_a)`, referencing
-// each other with no intervening node.  The point is that `range_of` RETURNS,
-// i.e. the cycle is cut rather than chased forever.
+// each other with no intervening node.  `range_of` must RETURN: the cycle is
+// cut rather than chased forever.
 #[test]
 fn phi_of_phi_cycle_terminates_top() {
     use strider_ir_test_utils::reg_vn;
@@ -1058,7 +1327,7 @@ fn nested_guards_intersect_at_inner_region() {
     b.set_region(mid_exit);
     b.build_return(Some(idx), &[]).unwrap();
 
-    // No guard at all.
+    // Outside both guards.
     b.set_region(exit);
     b.build_return(Some(idx), &[]).unwrap();
 
@@ -1123,8 +1392,8 @@ fn strict_less_zero_bound_is_top() {
     let type_mask = ValueType::I32.bit_mask_u128();
     assert!(
         iv.is_top(type_mask),
-        "Less(idx, 0) guard must yield top (impossible guard), got [{}, {}] — \
-         this is the Fix-1 regression: saturating_sub(1) must not produce [0,0]",
+        "Less(idx, 0) guard must yield top (impossible guard), got [{}, {}]: \
+         saturating_sub(1) must not produce [0,0]",
         iv.lo,
         iv.hi
     );
@@ -1146,20 +1415,17 @@ fn strict_less_at_type_mask_narrows_by_one() {
 
     let iv = ranges.range_of(idx, dispatch_region);
     let type_mask = ValueType::I32.bit_mask_u128();
-    // One below the maximum.
     assert_eq!(
         iv.hi,
         type_mask - 1,
         "Less(idx, type_mask) must narrow by 1, got hi={}",
         iv.hi
     );
-    // Points just past hi.
     assert_eq!(
         iv.upper_exclusive(type_mask),
         Some(type_mask_u64),
         "upper_exclusive must be Some(type_mask)"
     );
-    // Must NOT be top.
     assert!(
         !iv.is_top(type_mask),
         "Less(idx, type_mask) must NOT be top (it narrows by 1)"
@@ -1305,7 +1571,6 @@ fn multi_input_phi_unions_two_distinct_finite_arms() {
     b.write_variable(&idx_vn, idx_b).unwrap();
     b.build_branch(join).unwrap();
 
-    // No further guard here.
     b.set_region(join);
     let phi_idx = b.read_variable(&idx_vn).unwrap();
     b.build_return(Some(phi_idx), &[]).unwrap();
@@ -1380,7 +1645,6 @@ fn multi_input_phi_output_guard_bounds_index() {
     b.write_variable(&idx_vn, idx_b).unwrap();
     b.build_branch(join).unwrap();
 
-    // join: read the (multi-input) phi, guard it with `phi_idx < 8`.
     b.set_region(join);
     let phi_idx = b.read_variable(&idx_vn).unwrap();
     let bound_c = b.build_int_const(8u64, ValueType::I32).unwrap();
@@ -1513,13 +1777,12 @@ fn join_fails_closed_when_one_predecessor_unguarded() {
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
-    // One unconstrained arm poisons the union.
     let iv = ranges.range_of(phi_idx, dispatch_node);
     let type_mask = ValueType::I32.bit_mask_u128();
     assert!(
         iv.is_top(type_mask),
         "join with one unguarded predecessor must be top (fail-closed), \
-         got [{}, {}] — soundness bug: guard on one path must not bound the phi",
+         got [{}, {}]; a guard on one path must not bound the phi",
         iv.lo,
         iv.hi
     );
@@ -1610,7 +1873,6 @@ fn guard_into_control_merge_is_not_applied() {
     // True edge: guarded (idx < 8 holds); false edge: other (unconstrained).
     b.build_if(cond, guarded, other).unwrap();
 
-    // guarded branches into the merge.
     b.set_region(guarded);
     b.build_branch(merge).unwrap();
 
@@ -1726,8 +1988,6 @@ fn guard_survives_region_collapse_at_nonregion_consumer() {
         .unwrap();
     b.build_if(cond, dispatch, exit).unwrap();
 
-    // On collapse the Return rewires past this region, so the If's true edge
-    // then feeds it directly.
     b.set_region(dispatch);
     b.build_return(Some(idx), &[]).unwrap();
 
@@ -1766,11 +2026,126 @@ fn guard_survives_region_collapse_at_nonregion_consumer() {
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
-    // The guard keys on the non-Region consumer, so querying there finds it.
     let iv = ranges.range_of(idx, consumer);
     assert_eq!(iv.lo, 0, "collapsed-shape guard: lower bound 0");
     assert_eq!(
         iv.hi, 7,
         "collapsed-shape guard: bound survives RegionCollapse → [0, 7]"
     );
+}
+
+/// The CRT meet must not step one stride at a time: `s1 = 1` against a
+/// KnownBits stride of `2^32` is `lcm/s1`, about four billion iterations.
+#[test]
+fn intersect_with_a_huge_stride_is_not_a_stepping_loop() {
+    let guard = Interval {
+        lo: 3,
+        hi: 102,
+        stride: 1,
+    };
+    let known_bits = Interval {
+        lo: 0,
+        hi: u128::from(u64::MAX),
+        stride: 1u128 << 32,
+    };
+    // Only multiples of 2^32 are in `known_bits`, and none lie in 3..=102.
+    let met = guard.intersect(known_bits);
+    assert_eq!(met.count(), 0, "incompatible residues meet as empty");
+}
+
+/// A stride past `2^127` makes `other.lo % s2 + s2` exceed the `u128` carrier,
+/// so the residue difference has to be taken without ever forming that sum.
+#[test]
+fn intersect_with_a_stride_past_the_carrier_half() {
+    let huge = (1u128 << 127) + 1;
+    let dense = Interval::top(u128::MAX);
+    let strided = Interval {
+        lo: 1u128 << 127,
+        hi: u128::MAX,
+        stride: huge,
+    };
+    let met = dense.intersect(strided);
+    // The only element of `strided` inside the carrier is its own `lo`.
+    assert_eq!((met.lo, met.stride), (1u128 << 127, huge));
+    assert_eq!(met.count(), 1);
+}
+
+/// A meet that DOES have a solution still finds it.
+#[test]
+fn intersect_finds_the_first_common_residue() {
+    let a = Interval {
+        lo: 0,
+        hi: 100,
+        stride: 6,
+    };
+    let b = Interval {
+        lo: 0,
+        hi: 100,
+        stride: 10,
+    };
+    let met = a.intersect(b);
+    // lcm(6,10) = 30, first common element >= 0 is 0.
+    assert_eq!((met.lo, met.stride), (0, 30));
+
+    let c = Interval {
+        lo: 4,
+        hi: 100,
+        stride: 6,
+    };
+    let d = Interval {
+        lo: 0,
+        hi: 100,
+        stride: 10,
+    };
+    // 4,10,16,22,28,34,40 ... vs 0,10,20,...: first common is 10.
+    let met2 = c.intersect(d);
+    assert_eq!((met2.lo, met2.stride), (10, 30));
+}
+
+/// `shr` and `udiv` map both endpoints, so an EMPTY interval must stay empty
+/// rather than collapsing to `{0,0}` ("the value is exactly zero"), which
+/// passes `bounded_index`'s gate and fabricates one switch target out of
+/// provably dead code. `mul`/`shl` already preserve emptiness.
+#[test]
+fn shr_and_udiv_preserve_emptiness() {
+    let empty = Interval {
+        lo: 1,
+        hi: 0,
+        stride: 1,
+    };
+    assert_eq!(empty.count(), 0, "precondition: the interval is empty");
+    assert_eq!(empty.shr(1).count(), 0, "shr must not resurrect EMPTY");
+    assert_eq!(empty.udiv(2).count(), 0, "udiv must not resurrect EMPTY");
+    assert_eq!(
+        empty.shl(1, u128::MAX).count(),
+        0,
+        "shl already preserved it"
+    );
+    assert_eq!(
+        empty.mul(2, u128::MAX).count(),
+        0,
+        "mul already preserved it"
+    );
+}
+
+/// `count()` on a full-width top: `hi - lo == u128::MAX`, so the `+ 1` must
+/// saturate instead of overflowing.
+#[test]
+fn count_of_full_width_top_saturates() {
+    assert_eq!(Interval::top(u128::MAX).count(), u128::MAX);
+}
+
+/// A strided interval spanning the full width is NOT top: it carries the extra
+/// fact "multiple of `stride`", which a consumer treating it as top would
+/// silently adopt.
+#[test]
+fn strided_full_span_is_not_top() {
+    let mask = 0xFFFF_FFFFu128;
+    let strided = Interval {
+        lo: 0,
+        hi: mask,
+        stride: 3,
+    };
+    assert!(!strided.is_top(mask));
+    assert!(Interval::top(mask).is_top(mask));
 }

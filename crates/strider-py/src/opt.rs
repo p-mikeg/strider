@@ -312,7 +312,9 @@ impl PyOptPass {
             PyOptPass::IfCondInversion(_) => {
                 Box::new(strider_orchestrator::opt::IfCondInversion::new())
             }
-            PyOptPass::LoadForward(_) => Box::new(strider_orchestrator::opt::LoadForward),
+            PyOptPass::LoadForward(_) => {
+                Box::new(strider_orchestrator::opt::LoadForward::default())
+            }
             PyOptPass::LoadReadOnly(_) => Box::new(strider_orchestrator::opt::LoadReadOnly),
             PyOptPass::FunctionArgDetect(_)
             | PyOptPass::CallStackArgCollect(_)

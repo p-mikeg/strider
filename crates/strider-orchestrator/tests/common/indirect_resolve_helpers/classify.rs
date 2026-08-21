@@ -172,7 +172,7 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
     pipeline.add(ConstantFold::new());
     pipeline.add(strider_orchestrator::opt::PhiCollapse);
     pipeline.add(strider_orchestrator::opt::RegionCollapse);
-    pipeline.add(LoadForward);
+    pipeline.add(LoadForward::default());
     // PhiCollapse again post-LoadForward to collapse any
     // single-input VarPhi the forward inserts (e.g. wrapping
     // the loaded InitialVar(lr) in a phi at the merge region).
@@ -260,7 +260,7 @@ pub(crate) fn build_push_target_pop_pc_scenario(
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
-    pipeline.add(LoadForward);
+    pipeline.add(LoadForward::default());
     pipeline
         .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
