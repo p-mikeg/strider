@@ -1,7 +1,7 @@
 //! When `CastMask` selects a cast `NodeKind`, the matcher unwraps the cast and
-//! retries the sub-pattern against its value input. Region walk-through is
-//! deliberately not supported: a pattern crossing a region boundary must spell
-//! the `Region` node out.
+//! retries the sub-pattern against its value input. Casts are the only kind
+//! walked through: a pattern crossing a region boundary spells the `Region`
+//! node out.
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueId};

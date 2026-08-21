@@ -1,14 +1,7 @@
-//! `build_call_with_cc` records the override CC on the Call and tags each
-//! clobber output with its register via `value_vn`. Output-slot pattern
-//! queries went away with the output-constraint API, so this exercises the
-//! side-table directly.
-
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
-use strider_target::{
-    BuiltCallingConvention, BuiltCallingConventionParts, CallingConvention, SleighArch,
-};
+use strider_target::{BuiltCallingConvention, CallingConvention, SleighArch};
 
 #[test]
 fn build_call_with_cc_override_records_empty_clobber_list() {
@@ -32,12 +25,15 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     let rdx = regs.name_to_vn("RDX").unwrap();
     let xmm0 = regs.name_to_vn("XMM0").unwrap();
     let xmm1 = regs.name_to_vn("XMM1").unwrap();
-    let mut callee_saved = vec![rax, rdx, xmm0, xmm1];
-    // RDX is both a ret-val and an arg register; try_new rejects duplicates.
+    // ST0/ST1 carry the X87-class (`long double`) and COMPLEX_X87 returns.
+    let st0 = regs.name_to_vn("ST0").unwrap();
+    let st1 = regs.name_to_vn("ST1").unwrap();
+    let mut callee_saved = vec![rax, rdx, xmm0, xmm1, st0, st1];
+    // RDX is both a ret-val and an arg register; validate rejects duplicates.
     for n in ["RDI", "RSI", "RCX", "R8", "R9"] {
         callee_saved.push(regs.name_to_vn(n).unwrap());
     }
-    let override_cc = BuiltCallingConvention::try_new(BuiltCallingConventionParts {
+    let override_cc = BuiltCallingConvention {
         arg_passing_regs: vec![],
         callee_saved_regs: callee_saved,
         ret_val_regs: vec![],
@@ -47,8 +43,11 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
         ret_stack_pop: 0,
         link_register_vn: None,
         preserves_memory: false,
-    })
-    .unwrap();
+        preserves_all_registers: false,
+        no_return: false,
+        ..Default::default()
+    };
+    override_cc.validate().unwrap();
     let addr = b.build_int_const(0xdead_u64, ValueType::I64).unwrap();
     let _call_node = b.build_call_cc(addr, Some(&override_cc)).unwrap();
     b.build_function_return().unwrap();

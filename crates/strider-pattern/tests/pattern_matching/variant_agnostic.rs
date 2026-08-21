@@ -1,7 +1,3 @@
-//! Variant-agnostic `*_any` constructors: match any variant in an op family,
-//! bind the node to a [`Capture`], then recover the variant afterwards via
-//! `Match::get_*_op(c, &graph)`.
-
 use strider_ir::node::ValueType;
 use strider_ir::{
     FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp,
@@ -27,7 +23,7 @@ fn int_binary_any_captures_each_variant() {
         let ov = Capture::new();
         let m = a::unique(
             &function,
-            int_binary_any(int_const(5u128), int_const(3u128))
+            any_int_binary(int_const(5u128), int_const(3u128))
                 .capture(ov)
                 .into_pattern(),
         );
@@ -49,7 +45,7 @@ fn int_binary_any_retries_swap_only_for_commutative() {
     let ov = Capture::new();
     a::matches(
         &function,
-        int_binary_any(int_const(3u128), int_const(5u128))
+        any_int_binary(int_const(3u128), int_const(5u128))
             .capture(ov)
             .into_pattern(),
         1,
@@ -64,7 +60,7 @@ fn int_binary_any_retries_swap_only_for_commutative() {
     let ov = Capture::new();
     a::none(
         &function,
-        int_binary_any(int_const(3u128), int_const(5u128))
+        any_int_binary(int_const(3u128), int_const(5u128))
             .capture(ov)
             .into_pattern(),
     );
@@ -82,7 +78,7 @@ fn int_unary_any_captures_variant() {
     let ov = Capture::new();
     let m = a::unique(
         &function,
-        int_unary_any(int_const(42u128)).capture(ov).into_pattern(),
+        any_int_unary(int_const(42u128)).capture(ov).into_pattern(),
     );
     assert_eq!(
         m.bindings().get_int_unary_op(ov, function.graph()),
@@ -108,7 +104,7 @@ fn int_cmp_any_captures_variant() {
         let ov = Capture::new();
         let m = a::unique(
             &function,
-            int_cmp_any(int_const(5u128), int_const(3u128))
+            any_int_cmp(int_const(5u128), int_const(3u128))
                 .capture(ov)
                 .into_pattern(),
         );
@@ -128,7 +124,7 @@ fn int_cmp_any_retries_swap_only_for_commutative_cmp() {
     let ov = Capture::new();
     a::matches(
         &function,
-        int_cmp_any(int_const(3u128), int_const(5u128))
+        any_int_cmp(int_const(3u128), int_const(5u128))
             .capture(ov)
             .into_pattern(),
         1,
@@ -144,7 +140,7 @@ fn int_cmp_any_retries_swap_only_for_commutative_cmp() {
     let ov = Capture::new();
     a::none(
         &function,
-        int_cmp_any(int_const(3u128), int_const(5u128))
+        any_int_cmp(int_const(3u128), int_const(5u128))
             .capture(ov)
             .into_pattern(),
     );
@@ -163,7 +159,7 @@ fn float_cmp_any_retries_swap_only_for_commutative_cmp() {
     let ov = Capture::new();
     a::matches(
         &function,
-        float_cmp_any(float_const(2.0f64.to_bits()), float_const(1.0f64.to_bits()))
+        any_float_cmp(float_const(2.0f64.to_bits()), float_const(1.0f64.to_bits()))
             .capture(ov)
             .into_pattern(),
         1,
@@ -179,7 +175,7 @@ fn float_cmp_any_retries_swap_only_for_commutative_cmp() {
     let ov2 = Capture::new();
     a::none(
         &g2,
-        float_cmp_any(float_const(2.0f64.to_bits()), float_const(1.0f64.to_bits()))
+        any_float_cmp(float_const(2.0f64.to_bits()), float_const(1.0f64.to_bits()))
             .capture(ov2)
             .into_pattern(),
     );
@@ -199,7 +195,7 @@ fn bool_bin_any_captures_variant() {
         let ov = Capture::new();
         let m = a::unique(
             &function,
-            bool_bin_any(bool_const(true), bool_const(false))
+            any_bool_binary(bool_const(true), bool_const(false))
                 .capture(ov)
                 .into_pattern(),
         );
@@ -210,11 +206,8 @@ fn bool_bin_any_captures_variant() {
     }
 }
 
-// There are no bool-unary tests: with BitNot gone, a "bool unary op" is
-// Xor(_, IntConst(1)):I1, covered by bool_bin_any with an all-ones operand.
-
 /// After the bool-to-I1 collapse a wide 64-bit `And` shares its `NodeKind`
-/// with a boolean one, so `bool_bin_any` must gate on the `I1` output and
+/// with a boolean one, so `any_bool_binary` must gate on the `I1` output and
 /// reject the wide op.
 #[test]
 fn bool_bin_any_rejects_wide_int_op() {
@@ -233,7 +226,9 @@ fn bool_bin_any_rejects_wide_int_op() {
     let ob = Capture::new();
     let hits = a::matches(
         &function,
-        bool_bin_any(any(), any()).capture(ob).into_pattern(),
+        any_bool_binary(anything(), anything())
+            .capture(ob)
+            .into_pattern(),
         1,
     );
     let value = hits[0].value(ob).expect("matched value output");
@@ -243,7 +238,7 @@ fn bool_bin_any_rejects_wide_int_op() {
             .as_value()
             .map(|ty| ty.bit_width()),
         Some(1),
-        "bool_bin_any must match only the I1-output op, not a wide one",
+        "any_bool_binary must match only the I1-output op, not a wide one",
     );
 }
 
@@ -260,7 +255,7 @@ fn float_binary_any_captures_variant() {
         let ov = Capture::new();
         let m = a::unique(
             &function,
-            float_binary_any(float_const(1.0f64.to_bits()), float_const(2.0f64.to_bits()))
+            any_float_binary(float_const(1.0f64.to_bits()), float_const(2.0f64.to_bits()))
                 .capture(ov)
                 .into_pattern(),
         );
@@ -288,7 +283,7 @@ fn float_unary_any_captures_variant() {
         let ov = Capture::new();
         let m = a::unique(
             &function,
-            float_unary_any(float_const(9.0f64.to_bits()))
+            any_float_unary(float_const(9.0f64.to_bits()))
                 .capture(ov)
                 .into_pattern(),
         );
@@ -312,7 +307,7 @@ fn float_cmp_any_captures_variant() {
         let ov = Capture::new();
         let m = a::unique(
             &function,
-            float_cmp_any(float_const(1.0f64.to_bits()), float_const(2.0f64.to_bits()))
+            any_float_cmp(float_const(1.0f64.to_bits()), float_const(2.0f64.to_bits()))
                 .capture(ov)
                 .into_pattern(),
         );
@@ -338,7 +333,7 @@ fn variant_any_composes_with_value_capture() {
     // orderings are two distinct bindings, natural order first.
     let hits = a::matches(
         &function,
-        int_binary_any(any_int_const().capture(lv), any_int_const().capture(rv))
+        any_int_binary(int_const(lv), int_const(rv))
             .capture(ov)
             .into_pattern(),
         2,

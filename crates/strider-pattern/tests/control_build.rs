@@ -9,9 +9,9 @@ use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{ExtendOp, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
-    Capture, CaptureExt, CastMask, MatchPat, Matcher, add, any, any_int_const, call, call_other,
-    entry, if_node, indirect_branch, int_const, load, mem_phi, phi, region, ret, store, switch,
-    unreachable, var,
+    Capture, CaptureExt, CastMask, MatchPat, Matcher, any_int_const, anything, call, call_other,
+    entry, if_else, indirect_branch, int_add, int_const, load, mem_phi, phi, region, ret, store,
+    switch, unreachable, var,
 };
 
 /// `call(addr)` followed by a `Return`.
@@ -51,19 +51,23 @@ fn call_at_addr_matches_and_rejects() {
 }
 
 #[test]
-fn call_at_any() {
+fn call_target_set() {
     let function = call_at(0x1234);
     let matcher = Matcher::new(&function);
     assert_eq!(
         matcher
-            .find_all(&call().at_any([0x1000u64, 0x1234, 0x9999]).build())
+            .find_all(
+                &call()
+                    .target(int_const([0x1000u64, 0x1234, 0x9999]))
+                    .build()
+            )
             .unwrap()
             .len(),
         1
     );
     assert_eq!(
         matcher
-            .find_all(&call().at_any([0x1000u64, 0x9999]).build())
+            .find_all(&call().target(int_const([0x1000u64, 0x9999])).build())
             .unwrap()
             .len(),
         0
@@ -71,7 +75,7 @@ fn call_at_any() {
     // Empty set is vacuously false.
     assert_eq!(
         matcher
-            .find_all(&call().at_any(std::iter::empty::<u64>()).build())
+            .find_all(&call().target(int_const(Vec::<u64>::new())).build())
             .unwrap()
             .len(),
         0
@@ -136,7 +140,7 @@ fn call_arg_by_index() {
     );
     assert_eq!(
         matcher
-            .find_all(&call().arg(99, any()).build())
+            .find_all(&call().arg(99, anything()).build())
             .unwrap()
             .len(),
         0
@@ -304,7 +308,7 @@ fn ret_without_value_rejects_ret_val() {
     assert_eq!(matcher.find_all(&ret().build()).unwrap().len(), 1);
     assert_eq!(
         matcher
-            .find_all(&ret().ret_val(0, any()).build())
+            .find_all(&ret().ret_val(0, anything()).build())
             .unwrap()
             .len(),
         0
@@ -312,12 +316,12 @@ fn ret_without_value_rejects_ret_val() {
 }
 
 #[test]
-fn ret_preceded_by_smoke() {
+fn ret_ctrl_smoke() {
     let function = return_const(7);
-    // The Return's ctrl predecessor is a Region, which `any()` matches.
+    // The Return's ctrl predecessor is a Region, which `anything()` matches.
     assert_eq!(
         Matcher::new(&function)
-            .find_all(&ret().preceded_by(any()).build())
+            .find_all(&ret().ctrl(anything()).build())
             .unwrap()
             .len(),
         1
@@ -454,26 +458,28 @@ fn switch_matches_and_captures() {
 }
 
 #[test]
-fn switch_address_matches_and_captures() {
+fn switch_selector_matches_and_captures() {
     let function = switch_fn(0x1000);
     let matcher = Matcher::new(&function);
     assert_eq!(
         matcher
-            .find_all(&switch().address(int_const(0x1000u128)).build())
+            .find_all(&switch().selector(int_const(0x1000u128)).build())
             .unwrap()
             .len(),
         1
     );
     assert_eq!(
         matcher
-            .find_all(&switch().address(int_const(0u128)).build())
+            .find_all(&switch().selector(int_const(0u128)).build())
             .unwrap()
             .len(),
         0
     );
 
     let c = Capture::new();
-    let hits = matcher.find_all(&switch().address(var(c)).build()).unwrap();
+    let hits = matcher
+        .find_all(&switch().selector(var(c)).build())
+        .unwrap();
     assert_eq!(hits.len(), 1);
     assert!(hits[0].value(c).is_some());
 }
@@ -493,7 +499,7 @@ fn if_unconstrained_matches() {
     let (function, _) = if_then_else();
     assert_eq!(
         Matcher::new(&function)
-            .find_all(&if_node().build())
+            .find_all(&if_else().build())
             .unwrap()
             .len(),
         1
@@ -505,7 +511,7 @@ fn if_cond_captures() {
     let (function, _) = if_then_else();
     let c = Capture::new();
     let hits = Matcher::new(&function)
-        .find_all(&if_node().cond(var(c)).build())
+        .find_all(&if_else().cond(var(c)).build())
         .unwrap();
     assert_eq!(hits.len(), 1);
     assert!(hits[0].value(c).is_some());
@@ -518,9 +524,9 @@ fn if_with_true_and_false_branches() {
     assert_eq!(
         Matcher::new(&function)
             .find_all(
-                &if_node()
-                    .with_true(any().into_pattern())
-                    .with_false(any().into_pattern())
+                &if_else()
+                    .with_true(anything().into_pattern())
+                    .with_false(anything().into_pattern())
                     .build(),
             )
             .unwrap()
@@ -534,7 +540,7 @@ fn if_captures_node() {
     let (function, if_id) = if_then_else();
     let n = Capture::new();
     let hits = Matcher::new(&function)
-        .find_all(&if_node().capture(n).build())
+        .find_all(&if_else().capture(n).build())
         .unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(
@@ -549,7 +555,7 @@ fn if_capture_true_false_bind_distinct_control_outputs() {
     let t = Capture::new();
     let f = Capture::new();
     let hits = Matcher::new(&function)
-        .find_all(&if_node().capture_true(t).capture_false(f).build())
+        .find_all(&if_else().capture_true(t).capture_false(f).build())
         .unwrap();
     assert_eq!(hits.len(), 1);
     let tv = hits[0].value(t).expect("true control output bound");
@@ -562,13 +568,12 @@ fn if_capture_true_false_bind_distinct_control_outputs() {
 #[test]
 fn if_node_capture_and_control_output_captures_coexist() {
     // A node capture and the output-vertex captures on the same If must ALL
-    // bind. The anchor-vs-node capture used to be either/or, silently dropping
-    // the node capture.
+    // bind: an anchor capture never displaces the node capture.
     let (function, if_id) = if_then_else();
     let (g, t, f) = (Capture::new(), Capture::new(), Capture::new());
     let hits = Matcher::new(&function)
         .find_all(
-            &if_node()
+            &if_else()
                 .capture(g)
                 .capture_true(t)
                 .capture_false(f)
@@ -700,15 +705,15 @@ fn phi_feeding_add() -> strider_ir::Function {
     b.build().unwrap()
 }
 
-/// A `Phi` produces a value output, so `phi()` must nest as a value operand.
-/// It used to be node-rooted only, so `add(x, phi())` (and the Python
-/// `store(data=phi())`) errored "cannot be nested as a value operand".
+/// A `Phi` produces a value output, so `phi()` must nest as a value operand:
+/// `int_add(x, phi())`, and the Python `store(data=phi())`, both wire it into a
+/// value slot.
 #[test]
 fn phi_nests_as_a_value_operand() {
     let function = phi_feeding_add();
     let m = Matcher::new(&function);
     assert_eq!(
-        m.find_all(&add(phi(), int_const(10u128)).into_pattern())
+        m.find_all(&int_add(phi(), int_const(10u128)).into_pattern())
             .unwrap()
             .len(),
         1,
@@ -716,7 +721,7 @@ fn phi_nests_as_a_value_operand() {
     );
     let c = Capture::new();
     let hits = m
-        .find_all(&add(phi().capture(c), any()).into_pattern())
+        .find_all(&int_add(phi().capture(c), anything()).into_pattern())
         .unwrap();
     assert_eq!(hits.len(), 1);
     assert!(
@@ -833,9 +838,7 @@ fn phi_any_input_value_sub_binds_a_data_input_not_the_phi_token() {
 
     // Existential: `x` binds either data input, and both are distinct bindings.
     let x = Capture::new();
-    let hits = m
-        .find_all(&phi().any_input(any_int_const().capture(x)).build())
-        .unwrap();
+    let hits = m.find_all(&phi().any_input(int_const(x)).build()).unwrap();
     assert_eq!(hits.len(), 2, "one match per bindable DATA input");
     for hit in &hits {
         let bound = hit.node(x, function.graph()).unwrap();
@@ -970,7 +973,7 @@ fn phi_token_typed_sub_never_matches() {
 }
 
 /// `phi_token` reaches slot 0, the `PhiToken` edge from the owning `Region`.
-/// Distinct from `.input(0, _)`, whose `+1` shift addresses predecessor 0.
+/// Distinct from `.phi_input(0, _)`, at raw slot 1.
 #[test]
 fn phi_token_wildcard_binds_the_phi_token_edge() {
     let function = phi_over_two_consts();
@@ -988,14 +991,15 @@ fn phi_token_wildcard_binds_the_phi_token_edge() {
         function.value_kind(bound)
     );
 
-    // The shifted accessor reaches a different slot: a typed const sub matches.
+    // The predecessor-indexed accessor reaches a different slot: a typed const
+    // sub matches.
     assert_eq!(
         matcher
-            .find_all(&phi().input(0, int_const(1u128)).build())
+            .find_all(&phi().phi_input(0, int_const(1u128)).build())
             .unwrap()
             .len(),
         1,
-        "input(0, _) (shifted) must reach predecessor 0's data value, not the PhiToken"
+        "phi_input(0, _) must reach predecessor 0's data value, not the PhiToken"
     );
 }
 
@@ -1072,8 +1076,8 @@ fn mem_phi_any_input_general_model() {
     );
 }
 
-/// `phi_token` targets slot 0 directly; `.input(0, _)` shifts by `+1` to
-/// address memory predecessor 0. Every region here carries its own `MemPhi`,
+/// `phi_token` targets slot 0 directly; `.phi_input(0, _)` addresses memory
+/// predecessor 0, at raw slot 1. Every region here carries its own `MemPhi`,
 /// so a wildcard `phi_token` matches all four.
 #[test]
 fn mem_phi_phi_token_targets_slot_zero() {
@@ -1112,11 +1116,15 @@ fn mem_phi_phi_token_targets_slot_zero() {
     // other three chain to another MemPhi.
     assert_eq!(
         matcher
-            .find_all(&mem_phi().input(0, store().data(int_const(1u128))).build())
+            .find_all(
+                &mem_phi()
+                    .phi_input(0, store().data(int_const(1u128)))
+                    .build()
+            )
             .unwrap()
             .len(),
         1,
-        "input(0, _) (shifted) must reach memory predecessor 0, not the PhiToken"
+        "phi_input(0, _) must reach memory predecessor 0, not the PhiToken"
     );
 }
 
@@ -1221,6 +1229,118 @@ fn load_any_input_binds_addr() {
 }
 
 #[test]
+fn load_raw_input_slot_is_the_addr_slot() {
+    let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
+    let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
+    let entry = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+    let loaded = b
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .unwrap();
+    b.build_return(Some(loaded), &[]).unwrap();
+    let function = b.build().unwrap();
+    let matcher = Matcher::new(&function);
+    // `Load` is `[mem(0), addr(1)]`.
+    assert_eq!(
+        matcher
+            .find_all(&load().input(1, int_const(0x1000u128)).build())
+            .unwrap()
+            .len(),
+        1
+    );
+    // Slot 0 is the memory edge; no value pattern binds it.
+    assert_eq!(
+        matcher
+            .find_all(&load().input(0, int_const(0x1000u128)).build())
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn load_output_and_any_output_reach_the_loaded_value() {
+    let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
+    let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
+    let entry = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+    let loaded = b
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .unwrap();
+    b.build_return(Some(loaded), &[]).unwrap();
+    let function = b.build().unwrap();
+    let matcher = Matcher::new(&function);
+    let c = Capture::new();
+    let hits = matcher
+        .find_all(&load().output(0).capture(c).build())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].value(c).is_some());
+    assert_eq!(
+        matcher
+            .find_all(&load().any_output().of_width(64).build())
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        matcher
+            .find_all(&load().any_output().of_width(7).build())
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn if_ctrl_matches_the_control_predecessor() {
+    let (function, _) = if_then_else();
+    let matcher = Matcher::new(&function);
+    assert_eq!(
+        matcher
+            .find_all(&if_else().ctrl(anything()).build())
+            .unwrap()
+            .len(),
+        1
+    );
+    // A value pattern can never bind a Control edge.
+    assert_eq!(
+        matcher
+            .find_all(&if_else().ctrl(int_const(1u128)).build())
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn if_raw_input_slot_is_the_cond_slot() {
+    let (function, _) = if_then_else();
+    let matcher = Matcher::new(&function);
+    // `If` is `[ctrl(0), cond(1)]`; the fixture branches on a false constant.
+    assert_eq!(
+        matcher
+            .find_all(&if_else().input(1, anything()).build())
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        matcher
+            .find_all(&if_else().any_input(anything()).build())
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
 fn store_any_input_binds_data() {
     let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
     let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
@@ -1309,12 +1429,87 @@ fn function_arg_index_matches_carrier() {
 
 #[test]
 fn function_arg_any_matches_every_carrier() {
-    use strider_pattern::function_arg_any;
+    use strider_pattern::any_function_arg;
     let (function, _rax) = two_arg_carriers();
     let matcher = Matcher::new(&function);
     assert_eq!(
-        matcher.find_all(&function_arg_any().build()).unwrap().len(),
+        matcher.find_all(&any_function_arg().build()).unwrap().len(),
         2
+    );
+}
+
+/// Integer carrier `InitialVar(rax)` at integer index 0 and float carrier
+/// `InitialVar(fp0)` at float index 0: the two index spaces overlap, so index
+/// 0 alone does not say which register is meant.
+fn int_and_float_carriers() -> (strider_ir::Function, rsleigh::Vn) {
+    let rax = strider_ir_test_utils::reg_vn(0, 8);
+    let fp0 = strider_ir_test_utils::reg_vn(0x100, 8);
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .tracked(rax)
+        .tracked(fp0)
+        .arg(rax)
+        .build_fn_single_region()
+        .unwrap();
+    let a = b.read_variable(&rax).unwrap();
+    let f0 = b.read_variable(&fp0).unwrap();
+    let sum = b
+        .build_int_binary_operation(a, f0, strider_ir::IntBinaryOp::Add, ValueType::I64)
+        .unwrap();
+    b.build_return(Some(sum), &[]).unwrap();
+    let mut function = b.build().unwrap();
+
+    let float_carrier = function
+        .graph()
+        .all_node_ids()
+        .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if function.initial_vn(*vn) == fp0))
+        .expect("InitialVar(fp0) carrier");
+    let value = function.node_outputs(float_carrier)[0];
+    function
+        .side_tables_mut()
+        .register_float_arg_value(0, value);
+    (function, fp0)
+}
+
+#[test]
+fn function_arg_float_matches_only_the_float_carrier() {
+    use strider_pattern::{any_function_arg, function_arg, function_arg_float};
+    let (function, fp0) = int_and_float_carriers();
+    let matcher = Matcher::new(&function);
+
+    let bound_vn = |pat: strider_pattern::FunctionArgPat| -> Vec<rsleigh::Vn> {
+        let c = Capture::new();
+        matcher
+            .find_all(&pat.capture(c).build())
+            .unwrap()
+            .iter()
+            .map(|hit| {
+                let node = function.producer(hit.value(c).expect("carrier capture is bound"));
+                match function.node_kind(node) {
+                    NodeKind::InitialVar(id) => function.initial_vn(*id),
+                    k => panic!("carrier is not an InitialVar: {k:?}"),
+                }
+            })
+            .collect()
+    };
+
+    assert_eq!(bound_vn(function_arg_float(0)), vec![fp0]);
+    assert_eq!(
+        bound_vn(function_arg(0)),
+        vec![strider_ir_test_utils::reg_vn(0, 8)],
+        "integer index 0 must still be the integer carrier",
+    );
+    assert_eq!(
+        matcher
+            .find_all(&function_arg_float(1).build())
+            .unwrap()
+            .len(),
+        0,
+        "only one float carrier is registered",
+    );
+    assert_eq!(
+        bound_vn(any_function_arg()).len(),
+        2,
+        "any_function_arg() spans both classes",
     );
 }
 
@@ -1414,8 +1609,8 @@ fn function_arg_does_not_match_non_carrier() {
 
 /// A `Call` clobbering a tracked 64-bit register puts a value output at a
 /// non-zero slot (`Control@0`, `Memory@1`, clobber value@2). Scaffold for the
-/// slot-coupling regression: a root output-vertex width/type constraint must
-/// apply to whichever output is matched, not always to slot 0.
+/// slot-coupling rule: a root output-vertex width/type constraint applies to
+/// whichever output is matched, not always to slot 0.
 fn call_with_clobber_retval() -> strider_ir::Function {
     let rax = strider_ir_test_utils::reg_vn(0, 8);
     let mut b: FunctionBuilder = RegisterSet::new()
@@ -1431,7 +1626,7 @@ fn call_with_clobber_retval() -> strider_ir::Function {
 #[test]
 fn width_constraint_applies_to_non_slot_zero_value_output() {
     use strider_ir::node::NodeKind;
-    use strider_pattern::{CaptureExt, bool_value};
+    use strider_pattern::{CaptureExt, any_bool};
 
     let function = call_with_clobber_retval();
     let m = Matcher::new(&function);
@@ -1455,8 +1650,7 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
         "the non-slot-0 64-bit clobber output is matched + bound by of_width(64)",
     );
 
-    // The bug let this through by skipping the constraint at a non-slot-0
-    // output.
+    // The constraint must be checked at a non-slot-0 output too.
     let c2 = Capture::new();
     assert_eq!(
         m.find_all(&var(c2).of_width(32).into_pattern())
@@ -1468,9 +1662,9 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
 
     // Only Control / Memory / I64 outputs exist here.
     assert_eq!(
-        m.find_all(&bool_value().into_pattern()).unwrap().len(),
+        m.find_all(&any_bool().into_pattern()).unwrap().len(),
         0,
-        "no I1 value output: bool_value() must not match a value-less or wide node",
+        "no I1 value output: any_bool() must not match a value-less or wide node",
     );
 }
 
@@ -1645,5 +1839,43 @@ fn region_any_input_typed_value_sub_matches_nothing() {
             .unwrap()
             .len(),
         0,
+    );
+}
+
+fn indirect_branch_with_mode(target_addr: u64, mode: u64) -> strider_ir::Function {
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let tgt = b.build_int_const(target_addr, ValueType::I64).unwrap();
+    let m = b.build_int_const(mode, ValueType::I8).unwrap();
+    b.build_indirect_branch_with_mode(tgt, Some(m)).unwrap();
+    b.build().unwrap()
+}
+
+/// The ISA-mode input is slot 3 and is absent on a non-switching branch, so
+/// pinning it rejects one and matches the other.
+#[test]
+fn indirect_branch_isa_mode_matches_only_a_switching_branch() {
+    let switching = indirect_branch_with_mode(0x4000, 1);
+    assert_eq!(
+        Matcher::new(&switching)
+            .find_all(&indirect_branch().isa_mode(int_const(1u128)).build())
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        Matcher::new(&switching)
+            .find_all(&indirect_branch().isa_mode(int_const(0u128)).build())
+            .unwrap()
+            .len(),
+        0
+    );
+
+    let plain = indirect_branch_to(0x4000);
+    assert_eq!(
+        Matcher::new(&plain)
+            .find_all(&indirect_branch().isa_mode(anything()).build())
+            .unwrap()
+            .len(),
+        0
     );
 }

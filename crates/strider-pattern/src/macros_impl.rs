@@ -34,6 +34,7 @@ macro_rules! int_const_with {
             $crate::__const_with_bindings!(__strider_ctx; $($caps)*);
             Ok({ $body })
         })
+        .declaring($crate::__const_with_caps!($($caps)*))
     };
 }
 
@@ -45,6 +46,7 @@ macro_rules! bool_const_with {
             $crate::__const_with_bindings!(__strider_ctx; $($caps)*);
             Ok({ $body })
         })
+        .declaring($crate::__const_with_caps!($($caps)*))
     };
 }
 
@@ -56,6 +58,7 @@ macro_rules! float_const_with {
             $crate::__const_with_bindings!(__strider_ctx; $($caps)*);
             Ok({ $body })
         })
+        .declaring($crate::__const_with_caps!($($caps)*))
     };
 }
 
@@ -77,6 +80,26 @@ macro_rules! __const_with_bindings {
     ($ctx:ident; $cap:ident $(, $($rest:tt)*)?) => {
         $crate::__const_with_bind_one!($ctx, $cap, $cap);
         $( $crate::__const_with_bindings!($ctx; $($rest)*); )?
+    };
+}
+
+/// Collects the `name: kind` entries of a capture list into a `Vec<Capture>`,
+/// skipping the bare graph-derived idents. Source order, so the declaration
+/// reads like the list.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __const_with_caps {
+    () => {
+        ::std::vec::Vec::new()
+    };
+    ($name:ident : $kind:ident $(, $($rest:tt)*)?) => {{
+        let mut caps: ::std::vec::Vec<$crate::Capture> =
+            $crate::__const_with_caps!($($($rest)*)?);
+        caps.insert(0, $name);
+        caps
+    }};
+    ($cap:ident $(, $($rest:tt)*)?) => {
+        $crate::__const_with_caps!($($($rest)*)?)
     };
 }
 

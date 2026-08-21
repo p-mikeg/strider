@@ -1,12 +1,8 @@
-//! `CallOther` / `Call` nested as a value operand, e.g.
-//! `add(x, call_other().name("f"))`. Loose by default: any value output of the
-//! matching call satisfies the operand. `.out(i)` pins a specific one.
-
 use strider_ir::Function;
 use strider_ir_test_utils::{Tb, reg_vn};
-use strider_pattern::{MatchPat, Matcher, add, any, call_other, int_const};
+use strider_pattern::{MatchPat, Matcher, anything, call_other, int_add, int_const};
 
-/// `add(getval(), 5)`, returned so the add stays reachable.
+/// `int_add(getval(), 5)`, returned so the add stays reachable.
 fn call_other_feeds_add() -> Function {
     let out = reg_vn(0x10, 8); // I64 result register
     let mut t = Tb::with_vars(&[out]);
@@ -23,20 +19,20 @@ fn call_other_nests_as_value_operand() {
     let f = call_other_feeds_add();
     let m = Matcher::new(&f);
     assert_eq!(
-        m.find_all(&add(any(), call_other().name("getval")).into_pattern())
+        m.find_all(&int_add(anything(), call_other().name("getval")).into_pattern())
             .unwrap()
             .len(),
         1,
     );
     assert_eq!(
-        m.find_all(&add(any(), call_other().name("nope")).into_pattern())
+        m.find_all(&int_add(anything(), call_other().name("nope")).into_pattern())
             .unwrap()
             .len(),
         0,
     );
     // The other operand stays matchable alongside the call.
     assert_eq!(
-        m.find_all(&add(int_const(5u128), call_other().name("getval")).into_pattern())
+        m.find_all(&int_add(int_const(5u128), call_other().name("getval")).into_pattern())
             .unwrap()
             .len(),
         1,
@@ -44,7 +40,7 @@ fn call_other_nests_as_value_operand() {
 }
 
 /// `getval()` producing a result register plus a clobber register, each
-/// feeding its own `add`. The adds are summed into the return value to keep
+/// feeding its own `int_add`. The adds are summed into the return value to keep
 /// both reachable.
 fn call_other_result_and_clobber_feed_adds() -> Function {
     let res = reg_vn(0x10, 8);
@@ -68,14 +64,14 @@ fn res_pins_the_result_output_excluding_clobbers() {
     let m = Matcher::new(&f);
     // Loose match: two value outputs, so both adds hit.
     assert_eq!(
-        m.find_all(&add(any(), call_other().name("getval")).into_pattern())
+        m.find_all(&int_add(anything(), call_other().name("getval")).into_pattern())
             .unwrap()
             .len(),
         2,
     );
     // .res() pins the declared result at raw slot 2, leaving only one add.
     assert_eq!(
-        m.find_all(&add(any(), call_other().name("getval").res()).into_pattern())
+        m.find_all(&int_add(anything(), call_other().name("getval").res()).into_pattern())
             .unwrap()
             .len(),
         1,

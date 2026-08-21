@@ -1,6 +1,3 @@
-//! The typed template side: a `TemplatePat` RHS instantiated as fresh IR
-//! against a matched LHS.
-
 #![allow(
     clippy::panic,
     clippy::unwrap_used,
@@ -17,7 +14,7 @@ use strider_ir::node::{NodeId, ValueId, ValueType};
 use strider_pattern::matcher::{KindSpec, Pattern};
 use strider_pattern::template::{self, Template, TemplateBuilder, instantiate};
 use strider_pattern::{
-    Bindings, Capture, MatchPat, Matcher, TemplatePat, add, int_const, signed_int_const, var,
+    Bindings, Capture, MatchPat, Matcher, TemplatePat, int_add, int_const, int_const_any_width, var,
 };
 
 /// Matches `lhs` exactly once and returns the root node, its bindings, and the
@@ -48,8 +45,8 @@ fn instantiate_at_root(
     instantiate(rhs, &mut ef, bindings, root, &[root], root_ty).unwrap()
 }
 
-/// Instantiating `add(var(x), int_const(2))` after matching
-/// `add(var(x), int_const(1))` re-uses the captured `x` and mints a fresh const.
+/// Instantiating `int_add(var(x), int_const(2))` after matching
+/// `int_add(var(x), int_const(1))` re-uses the captured `x` and mints a fresh const.
 #[test]
 fn instantiate_add_const_builds_fresh_node() {
     let x = Capture::new();
@@ -61,10 +58,10 @@ fn instantiate_add_const_builds_fresh_node() {
     })
     .unwrap();
 
-    let lhs = add(var(x), int_const(1u128)).into_pattern();
+    let lhs = int_add(var(x), int_const(1u128)).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
 
-    let rhs = template::add(var(x), int_const(2u128)).into_template();
+    let rhs = template::int_add(var(x), int_const(2u128)).into_template();
     let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
 
     let new_node = fx.producer(new_value);
@@ -88,7 +85,7 @@ fn instantiate_add_const_builds_fresh_node() {
 }
 
 /// `instantiate` must attribute the full proof-node set to every node it
-/// creates, not just the root output. The multi-node RHS is built with a
+/// creates, interior nodes included. The multi-node RHS is built with a
 /// two-node proof set carrying distinct addrs; the intermediate IntConst must
 /// carry both, proving attribution reaches non-root nodes.
 #[test]
@@ -108,8 +105,7 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
     })
     .unwrap();
 
-    // Collect the two proof nodes.
-    let lhs = add(var(x), int_const(1u128)).into_pattern();
+    let lhs = int_add(var(x), int_const(1u128)).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
     let proof_a = fx
         .walk()
@@ -134,8 +130,7 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
     assert!(fx.side_tables().asm_fingerprint(proof_a).contains(&PROOF_A));
     assert!(fx.side_tables().asm_fingerprint(proof_b).contains(&PROOF_B));
 
-    // Both proof nodes form the attribution set.
-    let rhs = template::add(var(x), int_const(2u128)).into_template();
+    let rhs = template::int_add(var(x), int_const(2u128)).into_template();
     let proof_nodes = [proof_a, proof_b];
     let new_value = {
         let mut ef = EditFunction::new(&mut fx);
@@ -179,7 +174,7 @@ fn instantiate_bare_var_resolves_to_bound_output() {
     .unwrap();
 
     // `c` binds to the 7-operand.
-    let lhs = add(int_const(5u128), var(c)).into_pattern();
+    let lhs = int_add(int_const(5u128), var(c)).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
     let bound = bindings.get_value(c).unwrap();
 
@@ -281,12 +276,11 @@ fn template_wires_multi_output_interior_memory_node() {
     );
 }
 
-/// `int_const(V)` as a template RHS for V > u64::MAX must produce the full value
-/// on an I128 root. Before the `ConstId` unification the narrow-cast path
-/// truncated the high bits before the interner could preserve them.
+/// `int_const(V)` as a template RHS for V > u64::MAX must produce the full
+/// value on an I128 root: the interner sees all 128 bits, uncast.
 #[test]
 fn int_const_wide_template_rhs_preserves_full_value() {
-    // High 64 bits are non-zero, which is what the truncation bug dropped.
+    // High 64 bits are non-zero, so a truncation to u64 is visible.
     let wide_val: u128 = 1u128 << 100;
 
     let mut fx = make_empty_fn(|b| b.build_int_const(wide_val, T::I128)).unwrap();
@@ -304,7 +298,7 @@ fn int_const_wide_template_rhs_preserves_full_value() {
     assert_eq!(
         stored, wide_val,
         "int_const({wide_val}) RHS on I128 root must produce the full value; \
-         got {stored:#x} — likely truncated to low 64 bits"
+         got {stored:#x}, likely truncated to low 64 bits"
     );
 }
 
@@ -331,10 +325,10 @@ fn int_const_all_ones_i128_template_rhs() {
     );
 }
 
-/// `signed_int_const(-50)` on an I128 root must give the full 128-bit
+/// `int_const_any_width(-50)` on an I128 root must give the full 128-bit
 /// two's-complement pattern, not a zero-extended low-64 value.
 #[test]
-fn signed_int_const_negative_i128_template_rhs() {
+fn int_const_any_width_negative_i128_template_rhs() {
     let v: i64 = -50;
     let expected: u128 = i128::from(v) as u128;
 
@@ -344,7 +338,7 @@ fn signed_int_const_negative_i128_template_rhs() {
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
     assert_eq!(root_ty, T::I128);
 
-    let rhs = signed_int_const(v).into_template();
+    let rhs = int_const_any_width(v).into_template();
     let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
 
     let stored = fx
@@ -352,8 +346,8 @@ fn signed_int_const_negative_i128_template_rhs() {
         .expect("must be a readable integer constant");
     assert_eq!(
         stored, expected,
-        "signed_int_const({v}) on I128 root must give full two's-complement {expected:#x}; \
-         got {stored:#x} — likely zero-extended low-64 bits only"
+        "int_const_any_width({v}) on I128 root must give full two's-complement {expected:#x}; \
+         got {stored:#x}, likely zero-extended low-64 bits only"
     );
 }
 
@@ -385,8 +379,8 @@ fn instantiate_noncontiguous_raw_template_slots_errors() {
     );
 }
 
-/// Wiring two producers into the same input slot silently dropped the earlier
-/// edge; `instantiate` must reject it.
+/// Wiring two producers into the same input slot must fail `instantiate`
+/// rather than silently drop the earlier edge.
 #[test]
 fn instantiate_duplicate_raw_template_slot_errors() {
     let mut b = TemplateBuilder::new();
@@ -424,7 +418,7 @@ fn instantiate_with_unbound_template_capture_errors() {
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
 
     let unbound = Capture::new();
-    let rhs = template::add(var(unbound), int_const(1u128)).into_template();
+    let rhs = template::int_add(var(unbound), int_const(1u128)).into_template();
 
     let mut ef = EditFunction::new(&mut fx);
     let err = instantiate(&rhs, &mut ef, &bindings, root_node, &[root_node], root_ty)
@@ -434,4 +428,37 @@ fn instantiate_with_unbound_template_capture_errors() {
         msg.contains("unbound by LHS"),
         "error names the unbound-capture contract; got: {msg}"
     );
+}
+
+/// A capture read inside a `*_const_with!` closure has no template vertex, but
+/// the construction-time coverage check runs off `referenced_captures`, so the
+/// closure must declare it or an LHS that never binds it hard-errors mid-run.
+#[test]
+fn const_with_closure_captures_are_reported_as_referenced() {
+    let k = Capture::new();
+
+    let vertex_rhs = template::int_add(var(k), int_const(1u128)).into_template();
+    assert_eq!(
+        vertex_rhs.referenced_captures().collect::<Vec<_>>(),
+        vec![k],
+        "a capture vertex is reported"
+    );
+
+    let closure_rhs = strider_pattern::int_const_with!([k: uint] => k + 1).into_template();
+    assert_eq!(
+        closure_rhs.referenced_captures().collect::<Vec<_>>(),
+        vec![k],
+        "a capture read only inside the closure is reported too"
+    );
+
+    let bool_rhs = strider_pattern::bool_const_with!([k: uint] => k == 0).into_template();
+    assert_eq!(bool_rhs.referenced_captures().collect::<Vec<_>>(), vec![k]);
+
+    let float_rhs = strider_pattern::float_const_with!([k: uint] => k as u64).into_template();
+    assert_eq!(float_rhs.referenced_captures().collect::<Vec<_>>(), vec![k]);
+
+    // The graph-derived idents are not captures.
+    let derived =
+        strider_pattern::int_const_with!([ty] => u128::from(ty.bit_width() as u64)).into_template();
+    assert_eq!(derived.referenced_captures().count(), 0);
 }

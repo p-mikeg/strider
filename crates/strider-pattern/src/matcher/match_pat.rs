@@ -4,6 +4,14 @@ pub trait MatchPat: Sized {
     /// Lower into `b`, returning the value-output handle of the root node.
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef;
 
+    /// Lower into a memory slot, returning the memory-token handle. A node
+    /// producing both a token and values (`Call`, `CallOther`) anchors on the
+    /// token here and on a value in [`compile`](Self::compile); for everything
+    /// else the two coincide.
+    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.compile(b)
+    }
+
     fn into_pattern(self) -> Pattern {
         let mut b = MatcherBuilder::new();
         self.compile(&mut b);
@@ -24,6 +32,7 @@ pub struct Captured<P> {
     inner: P,
     pub(crate) cap: crate::capture::Capture,
 }
+
 impl<P: MatchPat> MatchPat for Captured<P> {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = self.inner.compile(b);
@@ -54,6 +63,12 @@ macro_rules! decorator {
         {
             fn compile($me, $b: &mut MatcherBuilder) -> PatValueRef {
                 let $o = $me.inner.compile($b);
+                $body
+                $o
+            }
+
+            fn compile_mem($me, $b: &mut MatcherBuilder) -> PatValueRef {
+                let $o = $me.inner.compile_mem($b);
                 $body
                 $o
             }

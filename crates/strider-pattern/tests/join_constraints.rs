@@ -1,14 +1,13 @@
-//! `find_joined_constrained`: CFG relational constraints (dominance + forward
-//! control reachability) over a joined match tuple. The motivating query is
-//! "this call is on the true branch of the guard, not the false branch and not
-//! after the merge".
-
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
+use std::rc::Rc;
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
-use strider_pattern::{Capture, JoinConstraint, Matcher, bool_const, call, if_node};
+use strider_pattern::{
+    Capture, CaptureExt, JoinConstraint, JoinedMatch, Matcher, anything, bool_const, call, if_else,
+    int_const, one_of,
+};
 
 /// Diamond CFG with a `Call` in the true arm (`0xAAAA`), the false arm
 /// (`0xBBBB`), and after the merge (`0xCCCC`).
@@ -92,17 +91,16 @@ fn empty_true_arm_with_calls() -> strider_ir::Function {
     b.build().unwrap()
 }
 
-/// Past bug: the old proxy asked "does the edge's TARGET dominate the node?".
-/// With an empty true arm the target IS the merge, so the proxy silently
-/// claimed the post-merge `0xCCCC` call sat in the true block. Edge dominance
-/// asks whether every path traverses the EDGE, and answers no: `0xCCCC` is
-/// reachable through the false arm too.
+/// Edge dominance asks whether every path traverses the EDGE, and answers no
+/// for the post-merge `0xCCCC` call: it is reachable through the false arm too.
+/// Asking instead "does the edge's TARGET dominate the node?" claims that call
+/// sits in the true block, the target being the merge itself here.
 #[test]
 fn dominates_edge_rejects_calls_past_a_join_with_an_empty_arm() {
     let function = empty_true_arm_with_calls();
     let m = Matcher::new(&function);
     let (t, c) = (Capture::new(), Capture::new());
-    let guard = if_node().capture_true(t).build();
+    let guard = if_else().capture_true(t).build();
     let callp = call().capture(c).build();
 
     let tuples = m
@@ -188,20 +186,19 @@ fn nested_diamond() -> strider_ir::Function {
     b.build().unwrap()
 }
 
-/// Edge-to-edge dominance, previously reachable only inside
-/// `phi_input_from_edge`: two control-output captures resolve to
-/// `CtrlKey::Edge`, so `dominates` routes through the split tree.
+/// Edge-to-edge dominance stated directly: two control-output captures resolve
+/// to `CtrlKey::Edge`, so `dominates` routes through the split tree.
 #[test]
 fn dominates_edge_over_edge_tracks_nesting() {
     let function = nested_diamond();
     let m = Matcher::new(&function);
     let (t_out, f_out, t_in) = (Capture::new(), Capture::new(), Capture::new());
-    let outer = if_node()
+    let outer = if_else()
         .cond(bool_const(true))
         .capture_true(t_out)
         .capture_false(f_out)
         .build();
-    let inner = if_node().cond(bool_const(false)).capture_true(t_in).build();
+    let inner = if_else().cond(bool_const(false)).capture_true(t_in).build();
 
     let dominates_ok = m
         .find_joined_constrained(
@@ -260,7 +257,7 @@ fn dominates_edge_isolates_the_true_arm_in_one_constraint() {
     let (function, _) = diamond_with_calls();
     let m = Matcher::new(&function);
     let (t, c) = (Capture::new(), Capture::new());
-    let guard = if_node().capture_true(t).build();
+    let guard = if_else().capture_true(t).build();
     let callp = call().capture(c).build();
 
     let tuples = m
@@ -286,7 +283,7 @@ fn dominates_if_selects_all_three_calls() {
     let (function, if_id) = diamond_with_calls();
     let m = Matcher::new(&function);
     let (g, c) = (Capture::new(), Capture::new());
-    let guard = if_node().capture(g).build();
+    let guard = if_else().capture(g).build();
     let callp = call().capture(c).build();
 
     let tuples = m
@@ -308,7 +305,7 @@ fn negate_inverts_dominates_edge() {
     let (function, _) = diamond_with_calls();
     let m = Matcher::new(&function);
     let (t, c) = (Capture::new(), Capture::new());
-    let guard = if_node().capture_true(t).build();
+    let guard = if_else().capture_true(t).build();
     let callp = call().capture(c).build();
 
     let inner = JoinConstraint::Dominates {
@@ -332,7 +329,7 @@ fn double_negation_is_the_identity() {
     let (function, _) = diamond_with_calls();
     let m = Matcher::new(&function);
     let (t, c) = (Capture::new(), Capture::new());
-    let guard = if_node().capture_true(t).build();
+    let guard = if_else().capture_true(t).build();
     let callp = call().capture(c).build();
 
     let inner = JoinConstraint::Dominates {
@@ -359,7 +356,7 @@ fn a_positive_constraint_with_an_unbound_capture_is_rejected_not_silently_empty(
     let (function, _) = diamond_with_calls();
     let m = Matcher::new(&function);
     let (t, c, unbound) = (Capture::new(), Capture::new(), Capture::new());
-    let guard = if_node().capture_true(t).build();
+    let guard = if_else().capture_true(t).build();
     let callp = call().capture(c).build();
 
     let err = m
@@ -384,7 +381,7 @@ fn negating_an_unbound_capture_is_rejected_not_vacuously_true() {
     let (function, _) = diamond_with_calls();
     let m = Matcher::new(&function);
     let (t, c, unbound) = (Capture::new(), Capture::new(), Capture::new());
-    let guard = if_node().capture_true(t).build();
+    let guard = if_else().capture_true(t).build();
     let callp = call().capture(c).build();
 
     // Naive negation-as-failure would make an unbound capture hold vacuously for
@@ -399,4 +396,143 @@ fn negating_an_unbound_capture_is_rejected_not_vacuously_true() {
         .expect("must be rejected, not vacuously true")
         .to_string();
     assert!(err.contains("negate"), "unexpected error: {err}");
+}
+
+/// A user `Where` predicate filters the joined tuple, declares its correlated
+/// captures, and composes under `Not`.
+#[test]
+fn where_predicate_filters_and_composes() {
+    let (function, _) = diamond_with_calls();
+    let m = Matcher::new(&function);
+    let c = Capture::new();
+    let callp = call().capture(c).build();
+
+    // Keep only the call to 0xAAAA. `captures: [c]` correlates on the call.
+    let only_aaaa = || JoinConstraint::Where {
+        captures: vec![c],
+        pred: Rc::new(move |f: &strider_ir::Function, tuple: &JoinedMatch| {
+            let node = tuple[0].node(c, f.graph()).expect("call node");
+            let target = f.node_inputs(node).into_iter().nth(2).expect("target");
+            Some(f.int_const_u128(target).expect("const") as u64 == 0xAAAA)
+        }),
+    };
+
+    let kept: Vec<u64> = m
+        .find_joined_constrained(&[&callp], &[only_aaaa()])
+        .unwrap()
+        .iter()
+        .map(|tp| tp[0].node(c, function.graph()).unwrap())
+        .map(|n| {
+            let t = function.node_inputs(n).into_iter().nth(2).unwrap();
+            function.int_const_u128(t).unwrap() as u64
+        })
+        .collect();
+    assert_eq!(kept, vec![0xAAAA], "bare Where keeps just the 0xAAAA call");
+
+    // Under Not: every call EXCEPT 0xAAAA.
+    let mut rest: Vec<u64> = m
+        .find_joined_constrained(&[&callp], &[JoinConstraint::Not(Box::new(only_aaaa()))])
+        .unwrap()
+        .iter()
+        .map(|tp| tp[0].node(c, function.graph()).unwrap())
+        .map(|n| {
+            let t = function.node_inputs(n).into_iter().nth(2).unwrap();
+            function.int_const_u128(t).unwrap() as u64
+        })
+        .collect();
+    rest.sort_unstable();
+    assert_eq!(rest, vec![0xBBBB, 0xCCCC], "Not(Where) inverts it");
+}
+
+/// A `Where` declaring a capture bound only under one `one_of` arm must not be
+/// handed rows where that capture is unbound: like every built-in constraint,
+/// an unbound declared capture makes the row unanswerable, so it is dropped
+/// before `pred` runs. Without the guard the predicate below panics on the
+/// 0xBBBB / 0xCCCC calls, where `d` never binds.
+#[test]
+fn where_drops_rows_with_an_unbound_declared_capture() {
+    let (function, _) = diamond_with_calls();
+    let m = Matcher::new(&function);
+    let c = Capture::new(); // every call
+    let d = Capture::new(); // binds only when the target is the 0xAAAA const
+
+    let callp = call()
+        .target(one_of![int_const(0xAAAAu128).capture(d), anything()])
+        .capture(c)
+        .build();
+
+    let reads_d = || JoinConstraint::Where {
+        captures: vec![c, d],
+        pred: Rc::new(move |_f: &strider_ir::Function, tuple: &JoinedMatch| {
+            // Panics if ever handed a row where `d` is unbound.
+            tuple[0].value(d).expect("d must be bound");
+            Some(true)
+        }),
+    };
+
+    let kept: Vec<u64> = m
+        .find_joined_constrained(&[&callp], &[reads_d()])
+        .unwrap()
+        .iter()
+        .map(|tp| tp[0].node(c, function.graph()).unwrap())
+        .map(|n| {
+            let t = function.node_inputs(n).into_iter().nth(2).unwrap();
+            function.int_const_u128(t).unwrap() as u64
+        })
+        .collect();
+    assert_eq!(kept, vec![0xAAAA], "only the row where `d` binds survives");
+}
+
+/// A constraint is applied as soon as every pattern that can bind its captures
+/// is in the row, so a selective one prunes the rest of the product instead of
+/// filtering a materialised cross-product.
+///
+/// The work counter is a `Where` predicate over the LAST pattern's capture: it
+/// can only run on a full row, so its call count is exactly the number of rows
+/// the product built.
+#[test]
+fn a_constraint_prunes_before_the_rest_of_the_product_is_built() {
+    let (function, _) = diamond_with_calls();
+    let m = Matcher::new(&function);
+
+    let (t, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
+    let guard = if_else().capture_true(t).build();
+    let in_branch = call().capture(c1).build();
+    let anywhere = call().capture(c2).build();
+
+    assert_eq!(m.find_all(&in_branch).unwrap().len(), 3);
+    assert_eq!(m.find_all(&anywhere).unwrap().len(), 3);
+
+    let rows_seen = Rc::new(std::cell::Cell::new(0usize));
+    let counter = Rc::clone(&rows_seen);
+    let tuples = m
+        .find_joined_constrained(
+            &[&guard, &in_branch, &anywhere],
+            &[
+                JoinConstraint::Where {
+                    captures: vec![c1, c2],
+                    pred: Rc::new(move |_f, _tuple| {
+                        counter.set(counter.get() + 1);
+                        Some(true)
+                    }),
+                },
+                JoinConstraint::Dominates {
+                    dominator: t,
+                    dominated: c1,
+                },
+            ],
+        )
+        .unwrap();
+
+    // Only the true arm's call survives `Dominates`, times the three
+    // unconstrained ones.
+    assert_eq!(tuples.len(), 3);
+    for tuple in &tuples {
+        assert_eq!(call_addr(tuple, c1, &function), 0xAAAA);
+    }
+    assert_eq!(
+        rows_seen.get(),
+        3,
+        "the full 1 x 3 x 3 product must not be built"
+    );
 }
