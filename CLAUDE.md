@@ -46,8 +46,11 @@ uv run pytest
 ## Crates
 
 Sixteen crates: six generic utilities, nine strider-specific, plus the
-`strider-ir-test-utils` dev-dependency. External path dep `rsleigh` at
-`../rsleigh` (GHIDRA's Sleigh p-code lifter) is used by every crate.
+`strider-ir-test-utils` dev-dependency. External dep `rsleigh` (GHIDRA's Sleigh
+p-code lifter), vendored as a git submodule at `externals/rsleigh`, is used by
+every crate that touches machine state, i.e. all but the five payload-agnostic
+leaves (`dot`, `entity-utils`, `graph-algorithms`, `read-only-memory`,
+`strider-graph`).
 
 Generic:
 
@@ -82,8 +85,8 @@ Strider:
   `Matcher` / `Match` / builders) plus its rewrite facade, over `strider-graph`
   with the `NeverCacheable` policy.
 - `strider-opt` -- optimization passes, the `OptimizerPipeline`, and the
-  `indirect_branch_resolve` classifiers. Pure graph->graph; resolution is
-  rebuild-driven (no in-place IR editor, no orchestrator back-edge).
+  `indirect_branch_resolve` classifiers. Pure graph->graph; the classifier
+  reports targets and the orchestrator rebuilds the CFG from them.
 - `strider-orchestrator` -- `Strider::analyze` plus the re-exported lift engine
   (`Lifter` / `LiftOptions` / `LiftOutcome` at the crate root) and `strider-opt`
   re-exported as `opt`.
@@ -103,7 +106,7 @@ strider-lift       -> strider-cfg, strider-ir, strider-target,
                       graph-algorithms, vn-container
 strider-pattern    -> strider-ir, strider-graph, vn-container
 strider-opt        -> strider-cfg, strider-ir, strider-pattern, strider-target,
-                      entity-utils, graph-algorithms
+                      entity-utils, graph-algorithms, vn-container
 strider-orchestrator -> strider-cfg, strider-ir, strider-lift, strider-opt,
                       strider-target
 strider-py         -> orchestrator, opt, cfg, reader, ir, target, pattern, dot
@@ -134,18 +137,19 @@ Notably `strider-cfg` is IR-free, `strider-reader` depends only on
 - Opaque: `SegmentOp { op_id }`, `CPoolRef`, `New`.
 
 Op sub-enums (`node/ops.rs`): `IntUnaryOp{Neg}` (complement `~x` is
-`Xor(x, all_ones)`, no `BitNot`); `IntBinaryOp{Add,And,Or,Xor,Div,Sdiv,Rem,Srem,
-ShiftRight,SShiftRight,ShiftLeft,Mul}` (no `Sub`, lowered to `Add(_, Neg(_))`);
-`IntCmpOp{Equal,Sless,Less,Carry,Scarry,Sborrow}` (output `I1`; no
-`LessEqual`/`SlessEqual`); `FloatBinaryOp{Add,Mul,Div}` (no `Sub`);
+`Xor(x, all_ones)`); `IntBinaryOp{Add,And,Or,Xor,Div,Sdiv,Rem,Srem,ShiftRight,
+SShiftRight,ShiftLeft,Mul}`; `IntCmpOp{Equal,Sless,Less,Carry,Scarry,Sborrow}`
+(output `I1`); `FloatBinaryOp{Add,Mul,Div}`;
 `FloatUnaryOp{Neg,Abs,Sqrt,Ceil,Floor,Round}`; `FloatCmpOp{Equal,Less}`;
-`ExtendOp{ZeroExtend,SignExtend}`.
+`ExtendOp{ZeroExtend,SignExtend}`. Subtraction and the `<=` / `!=` comparisons
+arrive already lowered; see Lift-time canonicalisations.
 
-`ValueType` (`node/value_type.rs`): `I1, I8, I16, I32, I48, I64, I80, I128,
-I256, I512, F32, F64, F80`. Booleans are the 1-bit integer `I1`, so there is no
-`Bool` type or `BoolConst`/`BoolBinaryOp`/`CastToBool`/`CastToInt`/`CastToFloat`.
-`bit_width(I1) == 1` (the one case where width != byte_size*8);
-`int_for_byte_size(1) -> I8`, never `I1`.
+`ValueType` (`node/value_type.rs`): `I1, I8, I16, I24, I32, I40, I48, I56, I64,
+I72, I80, I96, I112, I128, I256, I512, F16, F32, F64, F80, F128`. Booleans are
+the 1-bit integer `I1`. The width set is measured against the sla specs: an
+unmapped width fails the whole function's lift, so every width a Sleigh varnode
+or temporary carries needs a variant. `bit_width(I1) == 1` (the one case where
+width != byte_size*8); `int_for_byte_size(1) -> I8`, never `I1`.
 
 `expected_signature` (`node_signature.rs`) is the SSoT for each kind's slot
 kinds. `Graph` holds only structure; per-function overlay (entry, `default_cc`,
@@ -188,7 +192,9 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
 
 - No `Arc` / `Send` / `Sync` in core types: the workspace is single-threaded.
   Use `Box` / moves / `&`-borrows; opt into `Rc` at a call site only if needed.
-  (`read-only-memory` is the one deliberate exception.)
+  `strider-reader` and `strider-py` are the exceptions: a mapped image is shared
+  by every region cut from it, and a reader handed to Python outlives the call
+  that made it.
 - `Sleigh::lift_one(&mut self)` is NOT stateless: it carries context-register
   state (ARM/Thumb, x86 segment, MIPS16), so per-region decoding must stay
   sequential (`RegionBuilder::build`).
@@ -199,15 +205,31 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
   by `FunctionBuilder::new`.
 - Indirect-branch resolution is a re-lift fixed-point loop in `Strider::analyze`
   that converges on the induced edge set; unresolvable branches are a result
-  (`unresolved_indirect_branches`), not an error.
-- SP-alias precision is tuned by `OptOptions` (`alias_mode`, `calls_clobber`,
-  `assume_distinct_sp_bases_disjoint`), threaded through `OptCtx` into every
-  SP-aware pass.
+  (`unresolved_indirect_branches`), not an error. Exhausting
+  `MAX_RESOLUTION_ITERATIONS` is an `Err` only once some site NARROWED (the edge
+  set oscillates); exhausting it while every site still grows is the discovery
+  depth limit, and those sites come back as unresolved.
+- A converged CFG is never silently incomplete. A site that lost a successor, or
+  whose re-derived widening could not be seated (an interworking `Switch` carries
+  no ISA-mode input, so a re-derived arm has no mode to decode in), is reported
+  in `unresolved_indirect_branches`. The report is sticky across rounds, so a
+  later round cannot launder an earlier loss.
+- SP-alias precision is tuned by `OptOptions` (`alias_mode`,
+  `assume_incoming_args_survive_calls`, `assumptions`), threaded through
+  `OptCtx` into every SP-aware pass. `assumptions` is an `AssumptionOptions`
+  holding `distinct_sp_bases_disjoint`, `callee_preserves_stack_args`,
+  `noalias_allocators` and `escape_analysis`: each is a claim about the code
+  being analysed that the IR cannot prove, so a wrong one miscompiles. Every
+  field's risky value is the positive one, and all default off.
+  `noalias_allocators` (pure `malloc`-like callee addresses) is published onto
+  the `Function` so `decompose` classifies a `Call` return as a heap base;
+  distinct heap objects are disjoint and a load steps through such a call.
 
 ## strider-py
 
 Domain-namespaced submodules (`strider.ir`, `.lift`, `.cfg`, `.sleigh`,
-`.reader`, `.opt`, `.pattern`, `.template`) plus the single top-level
+`.reader`, `.opt`, `.pattern`, `.template`, plus `.explore`, which backs
+`visualize` and is bound but outside `__all__`) plus the single top-level
 `strider.StriderError`. `strider.lift.lifter(arch, mem, rom=None)` builds the
 lift handle; `analyze(entry, cc, opts)` returns an `AnalyzeResult` with
 `.cfg` / `.function` / `.unresolved` (also unpackable as a 3-tuple). Pattern
