@@ -4,9 +4,9 @@
 //!
 //! ET_REL has no PT_LOAD program headers, so the loader walks sections
 //! instead.  A `.o` commonly hosts several sections at VMA 0 pre-link
-//! (`.text` holding `tzcount`, `.text.startup` holding `main`), which makes
-//! first-wins VMA dedup load-bearing: without it the memory map came out
-//! empty, or which section's bytes landed at VMA 0 varied run to run.
+//! (`.text` holding `tzcount`, `.text.startup` holding `main`), which
+//! `strider_reader::elf::ElfSectionLayout` rebases apart; without the section
+//! dispatch the memory map comes out empty.
 
 use object::{Object, ObjectSymbol};
 use strider_cfg::{Builder, CfgOptions};
@@ -44,10 +44,9 @@ fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
         .build()
         .expect("Builder::build on tzcount lifted from .o");
 
-    // tzcount loops, so entry plus loop body is at least 2 regions, ending
-    // in a `Return`.  Exact counts move with GCC optimisation and inlining,
-    // so only the control-flow shape is pinned; without the section-walker
-    // dispatch the CFG comes out empty or a single-region trap.
+    // Exact region counts move with GCC optimisation and inlining, so only
+    // the control-flow shape is pinned; without the section-walker dispatch
+    // the CFG comes out empty or a single-region trap.
     assert!(
         cfg.region_graph().node_count() >= 1,
         "expected at least one region after lifting tzcount; got {} \

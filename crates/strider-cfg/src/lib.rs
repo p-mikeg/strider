@@ -20,8 +20,8 @@ mod types;
 
 pub type Result<T> = anyhow::Result<T>;
 
-pub use builder::Builder;
-pub use indirect_resolver::ResolvedTargets;
+pub use builder::{Builder, FlowContext, FlowVars};
+pub use indirect_resolver::{ResolvedTarget, ResolvedTargets};
 pub use options::CfgOptions;
 
 pub use query::IfRegionSuccessors;
@@ -35,11 +35,8 @@ use petgraph::graph::NodeIndex;
 /// A completed CFG for a single function, produced by [`Builder::build`].
 #[derive(Debug)]
 pub struct Cfg {
-    /// Must not be mutated directly: `start_addr_to_region_id` would desync.
     pub(crate) region_graph: RegionGraph,
     pub(crate) entry: NodeIndex,
-    /// O(log R) start-address index, kept in sync with `region_graph`.
-    start_addr_to_region_id: std::collections::BTreeMap<types::PcodeInsnAddr, NodeIndex>,
 }
 
 impl Cfg {

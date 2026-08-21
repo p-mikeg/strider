@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! `Builder::build` driven by hand-crafted x86-64 byte sequences, covering
-//! what real binaries do not exercise cleanly.
+//! the boundary shapes a real binary rarely reaches.
 
 use rustc_hash::FxHashMap;
 
@@ -152,7 +152,9 @@ fn fn_max_size_forces_forward_jump_to_be_tail_call() {
     assert_eq!(cfg.region_graph().node_count(), 1);
     assert_eq!(
         cfg.region_graph()[cfg.entry()].terminator,
-        RegionTerminator::TailCall { target: 0x1012 }
+        RegionTerminator::TailCall {
+            target: 0x1012.into()
+        }
     );
 }
 
@@ -172,7 +174,9 @@ fn forward_jump_landing_exactly_at_fn_max_size_is_tail_call() {
     assert_eq!(cfg.region_graph().node_count(), 1);
     assert_eq!(
         cfg.region_graph()[cfg.entry()].terminator,
-        RegionTerminator::TailCall { target: 0x1010 },
+        RegionTerminator::TailCall {
+            target: 0x1010.into()
+        },
         "addr == start + fn_max_size must already be out-of-range (half-open bound)"
     );
 }
@@ -229,7 +233,9 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
 
     assert_ne!(
         cfg.region_graph()[cfg.entry()].terminator,
-        RegionTerminator::TailCall { target: 0x0ff2 },
+        RegionTerminator::TailCall {
+            target: 0x0ff2.into()
+        },
         "entry region must NOT be a TailCall when allow_code_before_start_addr is set"
     );
     assert!(
@@ -248,19 +254,21 @@ fn assert_tail_call_stub_at(cfg: &Cfg, addr: u64) {
         .unwrap_or_else(|| panic!("expected a stub region at {addr:#x}"));
     assert_eq!(
         stub.terminator,
-        RegionTerminator::TailCall { target: addr },
+        RegionTerminator::TailCall {
+            target: addr.into()
+        },
         "stub at {addr:#x} must terminate as TailCall to its own address"
     );
     assert!(
         stub.insns.is_empty(),
-        "stub at {addr:#x} is synthetic — the OOB bytes must never be decoded"
+        "stub at {addr:#x} is synthetic, so the OOB bytes must never be decoded"
     );
     assert_eq!(
         cfg.region_graph()
             .edges_directed(id, petgraph::Outgoing)
             .count(),
         0,
-        "stub at {addr:#x} is a sink — TailCall has no successor"
+        "stub at {addr:#x} is a sink: a TailCall has no successor edge"
     );
 }
 
@@ -505,7 +513,9 @@ fn fn_max_size_smaller_than_first_terminator_insn_still_builds_tail_call() {
     assert_eq!(cfg.region_graph().node_count(), 1);
     assert_eq!(
         cfg.region_graph()[cfg.entry()].terminator,
-        RegionTerminator::TailCall { target: 0x1012 }
+        RegionTerminator::TailCall {
+            target: 0x1012.into()
+        }
     );
 }
 
@@ -709,7 +719,7 @@ fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
         unresolved_addr,
-        ResolvedTargets::Multiple(vec![0x1004, 0x9000]),
+        ResolvedTargets::Multiple(vec![0x1004, 0x9000].into_iter().map(Into::into).collect()),
     );
 
     let opts = CfgOptions {
@@ -753,7 +763,7 @@ fn known_single_oob_target_produces_tail_call() {
     let unresolved_addr = locate_unresolved_addr(&cfg_v1);
 
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-    known.insert(unresolved_addr, ResolvedTargets::Single(oob_target));
+    known.insert(unresolved_addr, ResolvedTargets::Single(oob_target.into()));
 
     let opts = CfgOptions {
         fn_max_size: Some(0x100),
@@ -773,9 +783,9 @@ fn known_single_oob_target_produces_tail_call() {
             ),
             "Single(oob) known_target must not leave UnresolvedIndirectBranch"
         );
-        if let RegionTerminator::TailCall { target } = region.terminator {
+        if let RegionTerminator::TailCall { target, .. } = region.terminator {
             assert_eq!(
-                target, oob_target,
+                target.addr, oob_target,
                 "TailCall must point at the resolved oob target"
             );
             had_tail_call = true;
@@ -803,7 +813,7 @@ fn known_multiple_in_range_targets_produces_switch() {
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
         unresolved_addr,
-        ResolvedTargets::Multiple(vec![0x1004, 0x1008]),
+        ResolvedTargets::Multiple(vec![0x1004, 0x1008].into_iter().map(Into::into).collect()),
     );
 
     let opts = CfgOptions {
@@ -822,4 +832,172 @@ fn known_multiple_in_range_targets_produces_switch() {
         had_switch,
         "in-range Multiple must produce a Switch terminator"
     );
+}
+
+/// A jump table over-approximated by one entry can land inside another arm's
+/// instruction. Both arms belong to the SAME switch, so neither has a region
+/// when the site is sealed and the seal-time interior guard cannot fire; only
+/// exploring the real arm first lets the over-read arm be recognised as
+/// interior and dropped.
+///
+/// `jmp rax` at 0x1000, a 10-byte `movabs rax, imm64` at 0x1002, and 0x1005
+/// pointing into the middle of that immediate.
+#[test]
+fn a_switch_arm_interior_to_a_sibling_arm_is_dropped() {
+    let base = 0x1000u64;
+    let mut bytes = vec![0xffu8, 0xe0]; // jmp rax
+    // movabs rax, 0x1122334455667788
+    bytes.extend_from_slice(&[0x48, 0xb8, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]);
+    bytes.push(0xc3); // ret at 0x100c
+    bytes.push(0xc3); // pad so 0x1005's decode has bytes to read
+
+    let cfg_v1 = build_unresolved_jmp_rax_cfg();
+    let site = locate_unresolved_addr(&cfg_v1);
+
+    let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+    known.insert(
+        site,
+        ResolvedTargets::Multiple(vec![0x1002.into(), 0x1005.into()]),
+    );
+    let opts = CfgOptions {
+        known_targets: known,
+        ..CfgOptions::default()
+    };
+    let arch = SleighArch::x86_64();
+    let mut sleigh = make_sleigh_x86_64(bytes, base);
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
+        .build()
+        .expect("build with an over-read switch arm");
+
+    let starts: Vec<u64> = cfg
+        .regions()
+        .map(|r| r.start_addr.machine_addr.addr)
+        .collect();
+    assert!(
+        !starts.contains(&0x1005),
+        "0x1005 is inside the immediate of the instruction at 0x1002, so it must \
+         not decode as its own region; got starts {starts:#x?}",
+    );
+
+    for region in cfg.regions() {
+        if let RegionTerminator::Switch { targets, .. } = &region.terminator {
+            assert!(
+                !targets.iter().any(|t| t.addr == 0x1005),
+                "0x1005 is interior to the instruction at 0x1002 and must be dropped",
+            );
+        }
+    }
+}
+
+/// A region that starts INSIDE another region's last instruction shadows it in
+/// the start-address index: it is the greatest start at or below every address
+/// in that instruction's tail, so a lookup that confirms containment on the
+/// last start alone reports those addresses unowned.
+///
+/// Two `jmp rax` sites. Site A's table over-reads to 0x1005, inside the
+/// immediate of the 10-byte `movabs` at 0x1002, seeding the shadow region.
+/// Site B then over-reads to 0x1008, in the same immediate.
+#[test]
+fn a_switch_arm_shadowed_by_an_overlapping_region_is_dropped() {
+    let base = 0x1000u64;
+    let mut bytes = vec![0xffu8, 0xe0]; // 0x1000: jmp rax (site A)
+    // 0x1002: movabs rax, 0x1122c34455c36677; the immediate bytes at 0x1005
+    // and 0x1008 are 0xc3 (`ret`), so a shadow region can decode there.
+    bytes.extend_from_slice(&[0x48, 0xb8, 0x77, 0x66, 0xc3, 0x55, 0x44, 0xc3, 0x22, 0x11]);
+    bytes.push(0xc3); // 0x100c: ret
+    bytes.resize(0x1000, 0xcc);
+    bytes.extend_from_slice(&[0xff, 0xe0]); // 0x2000: jmp rax (site B)
+    bytes.push(0xc3);
+
+    let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+    known.insert(
+        PcodeInsnAddr::at_machine_start(0x1000),
+        ResolvedTargets::Multiple(vec![0x1005.into(), 0x2000.into()]),
+    );
+    known.insert(
+        PcodeInsnAddr::at_machine_start(0x2000),
+        ResolvedTargets::Multiple(vec![0x1002.into(), 0x1008.into()]),
+    );
+    let opts = CfgOptions {
+        known_targets: known,
+        ..CfgOptions::default()
+    };
+    let arch = SleighArch::x86_64();
+    let mut sleigh = make_sleigh_x86_64(bytes, base);
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
+        .build()
+        .expect("build with an over-read switch arm shadowed by an overlapping region");
+
+    let starts: Vec<u64> = cfg
+        .regions()
+        .map(|r| r.start_addr.machine_addr.addr)
+        .collect();
+    assert!(
+        !starts.contains(&0x1008),
+        "0x1008 is inside the immediate of the instruction at 0x1002, so it must \
+         not decode as its own region; got starts {starts:#x?}",
+    );
+    for region in cfg.regions() {
+        if let RegionTerminator::Switch { targets, .. } = &region.terminator {
+            assert!(
+                !targets.iter().any(|t| t.addr == 0x1008),
+                "0x1008 is interior to the instruction at 0x1002 and must be dropped",
+            );
+        }
+    }
+}
+
+/// An empty region sealed at a zero-pcode-op instruction owns that
+/// instruction's BYTES, so an over-read arm landing in them is interior.
+///
+/// `jmp rax` at 0x1000 and the four-byte `endbr64` at 0x1002, whose own region
+/// carries no instruction; 0x1005 is its last byte.
+#[test]
+fn a_switch_arm_inside_a_zero_pcode_op_instruction_is_dropped() {
+    let base = 0x1000u64;
+    let mut bytes = vec![0xffu8, 0xe0]; // 0x1000: jmp rax
+    bytes.extend_from_slice(&[0xf3, 0x0f, 0x1e, 0xfa]); // 0x1002: endbr64
+    bytes.push(0xc3); // 0x1006: ret
+    bytes.push(0xc3); // pad so 0x1005's decode has bytes to read
+
+    let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+    known.insert(
+        PcodeInsnAddr::at_machine_start(base),
+        ResolvedTargets::Multiple(vec![0x1002.into(), 0x1005.into()]),
+    );
+    let opts = CfgOptions {
+        known_targets: known,
+        ..CfgOptions::default()
+    };
+    let arch = SleighArch::x86_64();
+    let mut sleigh = make_sleigh_x86_64(bytes, base);
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
+        .build()
+        .expect("build with an over-read switch arm inside a zero-pcode-op instruction");
+
+    let starts: Vec<u64> = cfg
+        .regions()
+        .map(|r| r.start_addr.machine_addr.addr)
+        .collect();
+    assert!(
+        !starts.contains(&0x1005),
+        "0x1005 is the last byte of the endbr64 at 0x1002, so it must not decode \
+         as its own region; got starts {starts:#x?}",
+    );
+    for region in cfg.regions() {
+        if let RegionTerminator::Switch { targets, .. } = &region.terminator {
+            assert!(
+                !targets.iter().any(|t| t.addr == 0x1005),
+                "0x1005 is interior to the endbr64 at 0x1002 and must be dropped",
+            );
+        }
+        if region.start_addr.machine_addr.addr == 0x1002 {
+            assert_eq!(
+                (region.insns.len(), region.empty_span_len),
+                (0, 4),
+                "the endbr64 region carries no instruction, so its span is the \
+                 recorded instruction length",
+            );
+        }
+    }
 }
