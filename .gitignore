@@ -23,3 +23,8 @@ __pycache__/
 # Auto-generated .pyi stubs from the stub_gen example; the wheel ships the
 # hand-written stubs instead.
 /crates/strider-py/strider/_generated/
+
+# Tooling state, never part of the project
+/.superpowers
+/.remember
+/.mypy_cache

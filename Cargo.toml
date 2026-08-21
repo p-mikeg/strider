@@ -2,10 +2,13 @@
 resolver = "2"
 members = ["crates/*"]
 default-members = ["crates/*"]
+# A path dependency under the workspace root is a member by default, which puts
+# the vendored rsleigh fork into `--workspace` builds, tests and lints.
+exclude = ["externals/rsleigh"]
 
 [workspace.package]
 edition = "2024"
-version = "0.1.0"
+version = "0.2.0"
 license = "MIT"
 
 [workspace.dependencies]
@@ -24,7 +27,7 @@ strider-opt = { path = "crates/strider-opt" }
 strider-orchestrator = { path = "crates/strider-orchestrator" }
 strider-pattern = { path = "crates/strider-pattern" }
 vn-container = { path = "crates/vn-container" }
-rsleigh = { path = "../rsleigh" }
+rsleigh = { path = "externals/rsleigh" }
 
 cranelift-bitset = "0.112.2"
 cranelift-entity = "0.112.2"
@@ -32,6 +35,7 @@ smallvec = { version = "1.13.2", default-features = false, features = [
     "const_new",
 ] }
 object = "0.38.1"
+memmap2 = "0.9.11"
 
 petgraph = "0.8.3"
 rustc-hash = "2"
