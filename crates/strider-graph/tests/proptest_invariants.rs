@@ -1,9 +1,3 @@
-//! Property, edge-case, and stress suite over concrete test payloads (no
-//! strider-ir dependency).
-//!
-//! The payloads mirror the IR's caching policy in miniature: `Const`/`Add`
-//! dedup, `Region` never does, matching the IR's Region/Phi exclusion.
-
 use std::collections::{HashMap, HashSet};
 
 use proptest::prelude::*;
@@ -23,14 +17,13 @@ enum TestVal {
     Ctrl,
 }
 
-/// Dedups `Const`/`Add` by `(kind, inputs, outputs)` but never `Region`. The
-/// `Hash`/`PartialEq` bounds live HERE, in the `hash`/`eq` bodies, never on
-/// `Graph` or [`NodeCacheable`].
+/// Dedups `Const`/`Add` by `(kind, inputs, outputs)` but never `Region`,
+/// mirroring the IR's Region/Phi exclusion. The `Hash`/`PartialEq` bounds live
+/// HERE, in the `hash`/`eq` bodies, never on `Graph` or [`NodeCacheable`].
 struct TestCacher;
 
 /// Returns a raw `u64` with no sentinel knowledge; sentinel avoidance is the
-/// cache's concern. Generic over the payloads so every policy in this file
-/// shares one body.
+/// cache's concern.
 fn hash_key<K: std::hash::Hash, V: std::hash::Hash>(
     kind: &K,
     inputs: &[ValueId],
@@ -91,8 +84,7 @@ fn add_node(g: &mut TestGraph, a: ValueId, b: ValueId) -> ValueId {
 }
 
 /// Backward-input closure of `roots`, i.e. a valid argument to
-/// `Graph::retain_reachable`. Reachability is the caller's concern, so the
-/// tests compute it themselves.
+/// `Graph::retain_reachable`.
 fn reachable_from<N, V, C: NodeCacheable<N, V>>(
     g: &Graph<N, V, C>,
     roots: impl IntoIterator<Item = NodeId>,
@@ -296,7 +288,6 @@ proptest! {
 
         assert_use_list_consistent(&g);
 
-        // value_uses(v).count() == input edges referencing v.
         for node in g.all_node_ids() {
             for &value in g.node_outputs(node) {
                 let via_use_list = g.value_uses(value).count();
@@ -536,7 +527,7 @@ fn remove_node_inputs_batch_removes_many_in_one_pass() {
     }
     assert_eq!(g.node_inputs(region).len(), 6);
 
-    // Deliberately unsorted.
+    // Unsorted input indices.
     g.remove_node_inputs_batch(region, [3usize, 1, 4]);
 
     let remaining: Vec<ValueId> = g.node_inputs(region).into_iter().collect();
@@ -624,7 +615,6 @@ fn remove_node_inputs_batch_matches_repeated_single_removes() {
 #[test]
 fn stress_10k_nodes_dedup_bounded() {
     let mut g = TestGraph::new();
-    // Only 4 distinct const values, each created 2500 times.
     for _ in 0..2500 {
         for v in 0..4 {
             let _ = const_node(&mut g, v);
@@ -642,7 +632,6 @@ fn stress_10k_nodes_dedup_bounded() {
             g.node_outputs(n)[0]
         })
         .collect();
-    // The same pair repeated must dedup to a single Add node.
     for _ in 0..1000 {
         let _ = add_node(&mut g, base[0], base[1]);
     }
@@ -772,8 +761,7 @@ fn dfs_post_order_runs_on_graph() {
 }
 
 /// Exercises the dedup-cache mechanism through `Graph` over minimal `u8`
-/// payloads, isolating each `NodeCacheable` hook plus the sentinel-avoidance
-/// and `NeverCacheable` paths.
+/// payloads.
 mod node_cache_hooks {
     use super::*;
 
@@ -929,13 +917,13 @@ mod node_cache_hooks {
         assert_ne!(keep, mutate);
 
         // The new shape 8u8,[yv] still collides on hash with `keep` but differs
-        // structurally from both, so there is no twin.
+        // structurally from both, so it stays its own representative.
         let slot0 = g.node_input_id_at(mutate, 0).ok().unwrap();
         g.update_input(slot0, yv);
         assert_eq!(
             g.canonicalize_node(mutate),
             None,
-            "hash collision is not structural equality — no twin"
+            "hash collision is not structural equality; the node stays its own representative"
         );
 
         // The re-insert must be observable.

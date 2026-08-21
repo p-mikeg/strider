@@ -10,8 +10,6 @@ const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html"
 /// generated HTML is self-contained: no CDN fetch, no `.wasm` side-load.
 const VIZ_STANDALONE_JS: &str = include_str!("../assets/vendored/viz-standalone.js");
 
-/// Exposed so a host (e.g. the explorer's local server) can serve the payload
-/// directly and stay offline.
 pub fn viz_standalone_js() -> &'static str {
     VIZ_STANDALONE_JS
 }
@@ -24,8 +22,7 @@ const SVG_PAN_ZOOM_JS: &str = include_str!("../assets/vendored/svg-pan-zoom.min.
 pub trait GraphDotDumper {
     type Node;
     // Bound is Display, not `std::error::Error`, so impls can pick
-    // `type Error = anyhow::Error`. anyhow's `Error` deliberately does not
-    // implement `std::error::Error`.
+    // `type Error = anyhow::Error`, which implements `Display` alone.
     type Error: Debug + std::fmt::Display + Send + Sync + 'static;
     type State;
 
@@ -302,9 +299,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
 
     /// The DOT source plus the state the dumper accumulated while rendering.
     /// For dumpers whose DOT ids are not the node ids, that state is the
-    /// mapping back from an emitted id to the node it stands for. Use this over
-    /// [`as_dot`](Self::as_dot) when ids the render chose must be resolvable
-    /// (an explorer turning a clicked box back into a node).
+    /// mapping back from an emitted id to the node it stands for.
     ///
     /// # Errors
     /// Forwards any error from [`GraphDotDumper::dump_as_dot`].
@@ -322,6 +317,8 @@ impl<G: GraphDotDumper> GraphDot<G> {
 
     /// An interactive HTML page rendering the DOT client-side via Graphviz
     /// WASM. The vendored JS payloads are inlined, so the page works offline.
+    /// The single place every `graph_template_dot.html` placeholder is
+    /// substituted; a template revision adding one wires it up here.
     ///
     /// # Errors
     /// Same as [`Self::as_dot`].

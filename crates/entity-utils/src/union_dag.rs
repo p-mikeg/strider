@@ -1,10 +1,3 @@
-//! Deferred unions over per-key value sets: absorb is on the hot path,
-//! materialise is off it.
-//!
-//! A node absorbs another by linking rather than copying, so
-//! [`union`](UnionDag::union) is one [`EntityList`] push. A key's full set is
-//! walked out on demand by [`for_each`](UnionDag::for_each).
-
 use cranelift_entity::packed_option::PackedOption;
 use cranelift_entity::{EntityList, EntityRef, ListPool, PrimaryMap, SecondaryMap, entity_impl};
 
@@ -62,7 +55,8 @@ impl<N: EntityRef, V: Copy> UnionDag<N, V> {
         }
     }
 
-    /// O(1), and a no-op when `src` is empty.
+    /// O(1): links `src`'s root under `dst` rather than copying. A no-op when
+    /// `src` is empty.
     pub fn union(&mut self, dst: N, src: N) {
         let Some(src_root) = self.roots[src].expand() else {
             return;

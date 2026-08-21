@@ -1,6 +1,3 @@
-//! Depth-first pre-order and post-order walks over any [`GraphRef`], with a
-//! pluggable [`VisitTracker`].
-
 use alloc::vec::Vec;
 use core::ops::ControlFlow;
 
@@ -131,8 +128,7 @@ impl<G: GraphRef, V: VisitTracker<G::NodeId>> PreOrder<G, V> {
         }
     }
 
-    /// Recovers the reached-node set after draining the walk, without
-    /// re-collecting the yielded ids.
+    /// The reached-node set, once the walk is drained.
     pub fn into_visited(self) -> V {
         self.visited
     }
@@ -171,9 +167,7 @@ impl<N: Copy> PostOrderContext<N> {
     /// Roots go on the stack in source order, which (LIFO) visits them
     /// backwards and so preserves source order in any derived RPO: if `u`
     /// precedes `v` in `roots` and no path runs `v -> u`, `u` precedes `v` in
-    /// the RPO. Callers rely on this: a function's live-node RPO must start at
-    /// its entry, and scheduling's topological sort must keep block headers
-    /// and terminators in place.
+    /// the RPO.
     pub fn reset(&mut self, roots: impl IntoIterator<Item = N>) {
         self.stack.clear();
         self.stack
@@ -193,8 +187,8 @@ impl<N: Copy> PostOrderContext<N> {
         }
     }
 
-    /// Exposes both pre- and post-visit events, unlike
-    /// [`next`](Self::next), which filters down to the post-visits.
+    /// Exposes both pre- and post-visit events; [`next`](Self::next) filters
+    /// down to the post-visits.
     pub fn next_event(
         &mut self,
         graph: impl GraphRef<NodeId = N>,
@@ -256,8 +250,7 @@ impl<G: GraphRef, V: VisitTracker<G::NodeId>> PostOrder<G, V> {
         self.ctx.next_event(&self.graph, &mut self.visited)
     }
 
-    /// Recovers the reached-node set after draining the walk, without
-    /// re-collecting the yielded ids.
+    /// The reached-node set, once the walk is drained.
     pub fn into_visited(self) -> V {
         self.visited
     }

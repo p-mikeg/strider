@@ -1,10 +1,3 @@
-//! The graph-theory half of Cytron et al.'s SSA construction: dominance
-//! frontiers, dominator-tree preorder, iterated-DF phi placement.
-//!
-//! The immediate-dominator relation is an INPUT ([`DomTree::immediate_dominator`]);
-//! nothing here computes dominators. Callers supply them from petgraph's
-//! `simple_fast`, a hand-authored tree, or wherever else.
-
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hash};
 
@@ -14,10 +7,13 @@ use rustc_hash::{FxHashMap, FxHashSet};
 /// empty frontier.
 pub type Frontiers<N> = FxHashMap<N, Vec<N>>;
 
+/// The immediate-dominator relation as an INPUT: callers supply it from
+/// petgraph's `simple_fast`, a hand-authored tree, or wherever else.
 pub trait DomTree {
     type Node: Copy + Eq + Hash;
 
-    /// Order is unspecified; determinism is the implementor's to provide.
+    /// Each node exactly once. Order is unspecified; determinism is the
+    /// implementor's to provide.
     fn nodes(&self) -> impl Iterator<Item = Self::Node> + '_;
 
     fn predecessors(&self, n: Self::Node) -> impl Iterator<Item = Self::Node> + '_;
@@ -28,26 +24,44 @@ pub trait DomTree {
 
 /// Cytron dominance frontiers: `DF(x)` is the set of nodes `b` where `x`
 /// dominates a predecessor of `b` but does not strictly dominate `b`.
+///
+/// `root` is required because [`DomTree::immediate_dominator`] returns `None`
+/// for both the root and unreachable nodes. The root's stop condition is the
+/// virtual node ABOVE it, so a climb from one of its predecessors passes
+/// through the root itself: a root with a predecessor is in its own frontier.
 #[must_use]
-pub fn dominance_frontiers<G: DomTree>(g: &G) -> Frontiers<G::Node> {
+pub fn dominance_frontiers<G: DomTree>(g: &G, root: G::Node) -> Frontiers<G::Node> {
     let mut frontiers: Frontiers<G::Node> = FxHashMap::default();
+    // Membership runs beside the `Vec`s, which keep discovery order: a wide
+    // join fans one frontier out to every join, so scanning one for the
+    // duplicate check is quadratic in its own length.
+    let mut recorded: FxHashSet<(G::Node, G::Node)> = FxHashSet::default();
     for b in g.nodes() {
-        let Some(idom_b) = g.immediate_dominator(b) else {
-            // Root, or unreachable from it: contributes nothing.
+        // Every pair recorded below carries this `b`, so an earlier `b`'s
+        // pairs are never probed again; dropping them caps the set at the
+        // pairs of one node's climb.
+        recorded.clear();
+        let idom_b = g.immediate_dominator(b);
+        if idom_b.is_none() && b != root {
+            // Unreachable from the root: contributes nothing.
             continue;
-        };
+        }
         for p in g.predecessors(b) {
             let mut runner = p;
-            while runner != idom_b {
-                let df = frontiers.entry(runner).or_default();
-                if !df.contains(&b) {
-                    df.push(b);
+            while Some(runner) != idom_b {
+                // Already recorded means an earlier predecessor climbed from
+                // here up the same idom chain and stopped where this climb
+                // would: at `idom_b`, or at a node with no idom. Either way
+                // every pair above is in too. Re-walking a chain of joins is
+                // quadratic.
+                if !recorded.insert((runner, b)) {
+                    break;
                 }
+                frontiers.entry(runner).or_default().push(b);
                 match g.immediate_dominator(runner) {
                     Some(next) => runner = next,
-                    // `runner` is unreachable from the root: an edge from a
-                    // dead region into a live join. Dead nodes carry no live
-                    // definition to reconcile, so stop climbing.
+                    // No idom: `runner` is the root (nothing above it), or is
+                    // unreachable and carries no live definition to reconcile.
                     None => break,
                 }
             }
@@ -81,11 +95,9 @@ pub fn dominator_tree_preorder<G: DomTree>(g: &G, root: G::Node) -> Vec<G::Node>
     preorder
 }
 
-/// Maps each SSA variable to the nodes that define it.
-///
-/// Blanket-implemented for `HashMap<Var, C>` under any hasher and any
-/// iterable `C`, so callers pass their native def-site map to
-/// [`phi_placement`] with no adapter.
+/// Maps each SSA variable to the nodes that define it. Blanket-implemented for
+/// `HashMap<Var, C>` over any iterable `C`, so a caller passes its native
+/// def-site map straight in.
 pub trait DefSites {
     type Var: Copy + Eq + Hash;
     type Node: Copy + Eq + Hash;
@@ -123,8 +135,8 @@ pub fn phi_placement<D: DefSites>(
     let mut placement: FxHashMap<D::Node, FxHashSet<D::Var>> = FxHashMap::default();
     for var in def_sites.vars() {
         let sites: FxHashSet<D::Node> = def_sites.def_nodes(var).collect();
-        // `placed` bounds the worklist: each node is queued at most once, which
-        // is what makes the iteration terminate on cyclic graphs.
+        // `placed` queues each node at most once, which is what terminates
+        // the iteration on a cyclic graph.
         let mut worklist: Vec<D::Node> = sites.iter().copied().collect();
         let mut placed: FxHashSet<D::Node> = FxHashSet::default();
         while let Some(x) = worklist.pop() {
@@ -202,7 +214,7 @@ mod tests {
             &[(1, &[0]), (2, &[0]), (3, &[1, 2])],
             &[(1, 0), (2, 0), (3, 0)],
         );
-        let fr = dominance_frontiers(&g);
+        let fr = dominance_frontiers(&g, 0);
         assert_eq!(df_sorted(&fr, 1), vec![3]);
         assert_eq!(df_sorted(&fr, 2), vec![3]);
         assert!(df_sorted(&fr, 3).is_empty());
@@ -223,7 +235,7 @@ mod tests {
             &[(1, &[0, 2]), (2, &[1]), (3, &[1])],
             &[(1, 0), (2, 1), (3, 1)],
         );
-        let fr = dominance_frontiers(&g);
+        let fr = dominance_frontiers(&g, 0);
         assert_eq!(df_sorted(&fr, 2), vec![1]);
         assert_eq!(df_sorted(&fr, 1), vec![1]);
 
@@ -232,6 +244,58 @@ mod tests {
         let place = phi_placement(&fr, &defs(&[('v', &[2])]));
         assert!(place[&1].contains(&'v'));
         assert_eq!(place.len(), 1);
+    }
+
+    /// A self-loop on the root: `DF(root) = {root}` by the definition, since the
+    /// root dominates its own predecessor and does not STRICTLY dominate itself.
+    /// Strider's CFG keeps the entry's predecessors: a branch back to the
+    /// entry address is a self-edge on the entry region.
+    #[test]
+    fn self_loop_at_root_puts_root_in_its_own_frontier() {
+        let g = mock(&[0], &[(0, &[0])], &[]);
+        let fr = dominance_frontiers(&g, 0);
+        assert_eq!(df_sorted(&fr, 0), vec![0]);
+
+        // A variable defined in the loop body needs its phi AT the root.
+        let place = phi_placement(&fr, &defs(&[('v', &[0])]));
+        assert!(place[&0].contains(&'v'));
+    }
+
+    /// The root as a loop header reached from deeper in the loop: every node on
+    /// the back-edge path carries the root in its frontier.
+    #[test]
+    fn back_edge_to_root_frontiers() {
+        let g = mock(
+            &[0, 1, 2],
+            &[(1, &[0]), (2, &[1]), (0, &[2])],
+            &[(1, 0), (2, 1)],
+        );
+        let fr = dominance_frontiers(&g, 0);
+        assert_eq!(df_sorted(&fr, 0), vec![0]);
+        assert_eq!(df_sorted(&fr, 1), vec![0]);
+        assert_eq!(df_sorted(&fr, 2), vec![0]);
+    }
+
+    /// The root and an unreachable node share the `immediate_dominator == None`
+    /// encoding, so the root's frontier must not leak onto dead nodes: a
+    /// predecessor-free root still has an empty frontier, and the climb from a
+    /// dead predecessor still terminates.
+    #[test]
+    fn unreachable_node_is_not_treated_as_the_root() {
+        // 9 is unreachable and edges into the join 3.
+        let g = mock(
+            &[0, 1, 2, 3, 9],
+            &[(1, &[0]), (2, &[0]), (3, &[1, 2, 9])],
+            &[(1, 0), (2, 0), (3, 0)],
+        );
+        let fr = dominance_frontiers(&g, 0);
+        assert!(
+            df_sorted(&fr, 0).is_empty(),
+            "a predecessor-free root has an empty frontier"
+        );
+        // The dead node reaches the join, so it carries it; what matters is that
+        // the climb stops rather than looping or ascending into the root's.
+        assert_eq!(df_sorted(&fr, 9), vec![3]);
     }
 
     #[test]
@@ -250,6 +314,164 @@ mod tests {
         }
     }
 
+    /// Node whose `PartialEq` counts calls, so the frontier build's work is
+    /// measurable without timing.
+    #[derive(Clone, Copy, Debug)]
+    struct Counted(u32);
+
+    thread_local! {
+        static EQ_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+
+    impl PartialEq for Counted {
+        fn eq(&self, other: &Self) -> bool {
+            EQ_CALLS.with(|c| c.set(c.get() + 1));
+            self.0 == other.0
+        }
+    }
+    impl Eq for Counted {}
+    impl Hash for Counted {
+        fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+            self.0.hash(h);
+        }
+    }
+
+    struct WideJoin {
+        joins: u32,
+    }
+
+    /// `0 -> {1, 2} ->` each of `joins` joins: both arms carry every join in
+    /// their frontier, so each arm's frontier grows to `joins` entries.
+    impl DomTree for WideJoin {
+        type Node = Counted;
+        fn nodes(&self) -> impl Iterator<Item = Counted> + '_ {
+            (0..3 + self.joins).map(Counted)
+        }
+        fn predecessors(&self, n: Counted) -> impl Iterator<Item = Counted> + '_ {
+            let preds: &'static [u32] = match n.0 {
+                0 => &[],
+                1 | 2 => &[0],
+                _ => &[1, 2],
+            };
+            preds.iter().copied().map(Counted)
+        }
+        fn immediate_dominator(&self, n: Counted) -> Option<Counted> {
+            (n.0 != 0).then_some(Counted(0))
+        }
+    }
+
+    fn frontier_eq_calls(joins: u32) -> u64 {
+        EQ_CALLS.with(|c| c.set(0));
+        let fr = dominance_frontiers(&WideJoin { joins }, Counted(0));
+        assert_eq!(fr[&Counted(1)].len(), joins as usize);
+        EQ_CALLS.with(std::cell::Cell::get)
+    }
+
+    /// The duplicate check must be a set probe, not a linear scan of the
+    /// frontier built so far. Counting comparisons rather than timing keeps
+    /// this deterministic.
+    #[test]
+    fn wide_join_frontier_build_is_not_quadratic() {
+        let small = frontier_eq_calls(400);
+        let large = frontier_eq_calls(3200);
+        assert!(
+            large < small * 16,
+            "8x the joins cost {large} comparisons vs {small}: \
+             a linear duplicate scan, not an O(1) membership check"
+        );
+    }
+
+    thread_local! {
+        static IDOM_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+
+    /// Chain `0 -> 1 -> .. -> n-1` where every node also edges into the join
+    /// `n`: the `if (a) goto err; if (b) goto err;` ladder. `idom(n) = 0`, so
+    /// each of the n predecessors climbs the whole chain back to 0, while the
+    /// frontier output is only n entries.
+    struct ErrorLadder {
+        n: u32,
+    }
+
+    impl DomTree for ErrorLadder {
+        type Node = u32;
+        fn nodes(&self) -> impl Iterator<Item = u32> + '_ {
+            0..=self.n
+        }
+        fn predecessors(&self, b: u32) -> impl Iterator<Item = u32> + '_ {
+            let preds: Vec<u32> = if b == self.n {
+                (0..self.n).collect()
+            } else if b == 0 {
+                vec![]
+            } else {
+                vec![b - 1]
+            };
+            preds.into_iter()
+        }
+        fn immediate_dominator(&self, n: u32) -> Option<u32> {
+            IDOM_CALLS.with(|c| c.set(c.get() + 1));
+            if n == 0 {
+                None
+            } else if n == self.n {
+                Some(0)
+            } else {
+                Some(n - 1)
+            }
+        }
+    }
+
+    fn ladder_idom_calls(n: u32) -> u64 {
+        IDOM_CALLS.with(|c| c.set(0));
+        let fr = dominance_frontiers(&ErrorLadder { n }, 0);
+        let entries: usize = fr.values().map(Vec::len).sum();
+        assert_eq!(entries, n as usize - 1, "output is linear in n");
+        IDOM_CALLS.with(std::cell::Cell::get)
+    }
+
+    /// The climb must stop as soon as it reaches a pair an earlier predecessor
+    /// already recorded: that predecessor walked the identical idom chain to
+    /// the identical stop, so everything above is already in. Without the cut,
+    /// shared chain segments are re-walked once per predecessor.
+    #[test]
+    fn error_ladder_frontier_climb_is_not_quadratic() {
+        let small = ladder_idom_calls(200);
+        let large = ladder_idom_calls(800);
+        assert!(
+            large < small * 8,
+            "4x the nodes cost {large} idom calls vs {small} against linear output: \
+             the climb re-walks shared chain segments"
+        );
+    }
+
+    /// The frontier `Vec` keeps discovery order; the membership set must not
+    /// reorder or drop entries.
+    #[test]
+    fn frontier_preserves_discovery_order() {
+        let g = mock(
+            &[0, 1, 2, 3, 4],
+            &[(1, &[0]), (2, &[0]), (3, &[1, 2]), (4, &[1, 2])],
+            &[(1, 0), (2, 0), (3, 0), (4, 0)],
+        );
+        let fr = dominance_frontiers(&g, 0);
+        assert_eq!(fr[&1], vec![3, 4]);
+        assert_eq!(fr[&2], vec![3, 4]);
+    }
+
+    /// [`DomTree::nodes`] must yield each node once: the climb's dedup is
+    /// per-`b`, so a repeated `b` is walked again and its frontier entries
+    /// appear twice.
+    #[test]
+    fn duplicate_nodes_duplicate_frontier_entries() {
+        let g = mock(
+            &[0, 1, 2, 3, 3],
+            &[(1, &[0]), (2, &[0]), (3, &[1, 2])],
+            &[(1, 0), (2, 0), (3, 0)],
+        );
+        let fr = dominance_frontiers(&g, 0);
+        assert_eq!(fr[&1], vec![3, 3]);
+        assert_eq!(fr[&2], vec![3, 3]);
+    }
+
     #[test]
     fn multiple_variables_share_a_join() {
         let g = mock(
@@ -257,7 +479,7 @@ mod tests {
             &[(1, &[0]), (2, &[0]), (3, &[1, 2])],
             &[(1, 0), (2, 0), (3, 0)],
         );
-        let fr = dominance_frontiers(&g);
+        let fr = dominance_frontiers(&g, 0);
         let place = phi_placement(&fr, &defs(&[('a', &[1]), ('b', &[2])]));
         assert_eq!(place[&3].len(), 2);
         assert!(place[&3].contains(&'a') && place[&3].contains(&'b'));

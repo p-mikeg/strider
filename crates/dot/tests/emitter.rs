@@ -1,8 +1,5 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-//! Pins the exact DOT string `DotEmitter` produces: digraph-name quoting,
-//! id/label escaping, and the `extra` attribute contract.
-
 use dot::{DotEmitter, DotStyle};
 
 #[test]

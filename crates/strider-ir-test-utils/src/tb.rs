@@ -1,11 +1,3 @@
-//! `Tb` ("test builder"), the mock-graph DSL the pattern and orchestrator
-//! suites share. It owns a `FunctionBuilder` with an active entry region and
-//! short helpers so tests read like pseudocode, finalising via `ret_val` /
-//! `ret_nothing`.
-//!
-//! Anything the DSL doesn't cover (multi-region graphs, custom
-//! calling-convention slots) goes through `Tb::fb_mut`.
-
 use crate::{IrBuilderEx, RegisterSet};
 use strider_ir::node::{ValueId, ValueType};
 use strider_ir::{
@@ -13,9 +5,7 @@ use strider_ir::{
     IntCmpOp, IntUnaryOp,
 };
 
-/// One home for the slice-to-`RegisterSet` mapping, shared by [`Tb::raw`],
-/// [`Tb::bare`] and the free `crate::builder`, which differ only in what they
-/// do with the result.
+/// Slice-to-[`RegisterSet`] mapping shared by the positional constructors.
 pub(crate) fn build_rs(
     vars: Vec<rsleigh::Vn>,
     arg_passing: &[rsleigh::Vn],
@@ -39,6 +29,9 @@ pub(crate) fn build_rs(
     rs.ret_stack_pop(ret_stack_pop)
 }
 
+/// Mock-graph DSL over a `FunctionBuilder`, finalised by `ret_val` /
+/// `ret_nothing` / `finish`. Anything it doesn't cover goes through
+/// [`Tb::fb_mut`].
 pub struct Tb {
     fb: FunctionBuilder,
 }
@@ -129,8 +122,7 @@ impl Tb {
     pub fn add(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.int_bin(l, r, IntBinaryOp::Add)
     }
-    /// `Add(l, Neg(r))`: there is no `IntBinaryOp::Sub`, and this is the shape
-    /// pcode-lift produces.
+    /// `Add(l, Neg(r))`, the shape pcode-lift produces.
     pub fn sub(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.fb
             .build_sub_as_add_neg(l, r, ValueType::I64)
@@ -159,8 +151,7 @@ impl Tb {
             .build_int_binary_operation(l, r, op, ty)
             .expect("int_binary_operation")
     }
-    /// Bitwise complement `~v`, which the IR spells `Xor(v, all_ones)`; there
-    /// is no BitNot unary op.
+    /// Bitwise complement `~v`, which the IR spells `Xor(v, all_ones)`.
     pub fn bit_not_at(&mut self, v: ValueId, ty: ValueType) -> ValueId {
         let all_ones = self.fb.build_int_const(u128::MAX, ty).expect("all_ones");
         self.fb
@@ -191,8 +182,7 @@ impl Tb {
             .build_int_binary_operation(l, r, op, ValueType::I1)
             .expect("boolean_operation")
     }
-    /// Logical NOT of an I1 value: `Xor(v, IntConst(1)):I1`. `Neg`, the only
-    /// `IntUnaryOp`, is meaningless at I1 and is never the right tool here.
+    /// Logical NOT of an I1 value: `Xor(v, IntConst(1)):I1`.
     pub fn bool_not(&mut self, v: ValueId) -> ValueId {
         self.bit_not_at(v, ValueType::I1)
     }

@@ -73,10 +73,10 @@
     /* Override the dim CSS by re-asserting full opacity for everything
        inside the minimap (the parent `svg.gv-has-sel g.node:not(...)`
        rule above would otherwise fade out non-highlighted nodes in the
-       cloned SVG too — but the minimap should always show the full
+       cloned SVG too, but the minimap should always show the full
        graph). */
     #minimap svg g.node,#minimap svg g.edge{opacity:1!important;transition:none!important}
-    /* Strip highlight rings from the cloned minimap SVG — the cloned
+    /* Strip highlight rings from the cloned minimap SVG: the cloned
        nodes carry whatever highlight classes were active on the main
        graph at clone time, but the minimap should render uniformly. */
     #minimap svg .gv-sn ellipse,#minimap svg .gv-sn polygon,#minimap svg .gv-sn path,#minimap svg .gv-sn rect,
@@ -116,7 +116,7 @@
     /* neighbor edges */
     .gv-ne path{stroke:var(--hl-neighbor)!important;stroke-width:2px!important}
     .gv-ne polygon{stroke:var(--hl-neighbor)!important;fill:var(--hl-neighbor)!important}
-    /* dimmed: CSS-driven — avoids per-element classList mutations at scale.
+    /* dimmed: CSS-driven, avoiding per-element classList mutations at scale.
        When the root <svg> has .gv-has-sel, every node/edge that isn't part
        of the highlighted subset (.gv-sn/.gv-nn for nodes, .gv-se/.gv-ne for
        edges) is faded out. */
@@ -125,10 +125,8 @@
     /* search hit */
     .gv-sh ellipse,.gv-sh polygon,.gv-sh rect,.gv-sh path{stroke:var(--hl-search)!important;stroke-width:2.5px!important;filter:drop-shadow(0 0 8px rgba(250,204,21,.4))}
 
-    /* Cursor: pointer on every node/edge — replaces an O(N+E) per-render
-       sweep that set `g.style.cursor="pointer"` on each <g.node>/<g.edge>
-       individually.  CSS scopes the rule uniformly for constant-cost
-       application regardless of node count, mirroring the v11 I4 minimap
+    /* Cursor: pointer on every node/edge. CSS scopes the rule uniformly for
+       constant-cost application regardless of node count, mirroring the minimap
        fix.  The drag-mode `grab` / `grabbing` cursors still set
        `svg.style.cursor` on the root, but that's a single-element write
        and unaffected. */
@@ -328,7 +326,7 @@ let viz=null,pz=null;
 // nIdx: nodeId -> <g.node>. eIdx: edgeKey "a->b" -> one representative <g.edge>
 // (multi-edges share a key so eIdx stores only the first).
 // eEp: <g.edge> -> {tail, head, key}. nE: nodeId -> {out, in, nb} adjacency.
-// allNodes / allEdges: complete sets of every <g.node>/<g.edge> in the SVG —
+// allNodes / allEdges: complete sets of every <g.node>/<g.edge> in the SVG,
 // needed for correct dim/highlight iteration even when multi-edges collapse
 // keys in eIdx. nLabel: cached text label per nodeId (avoid re-walking <text>).
 const nIdx=new Map(),eIdx=new Map(),eEp=new Map(),nE=new Map();
@@ -381,7 +379,7 @@ function updHist(){
   document.getElementById("bHistFwd").disabled=!(hIdx>=0&&hIdx<hist.length-1);
 }
 function updZoomDisplay(){if(pz)document.getElementById("zv").textContent=(pz.getZoom()*100|0)+"%";}
-// True when the user is typing into a form field — used to suppress global
+// True when the user is typing into a form field, which suppresses global
 // keybindings (Space, arrow keys) while editing the search box / DOT source.
 function isEditingText(){
   const a=document.activeElement;if(!a)return false;
@@ -408,7 +406,7 @@ function indexSvg(svg){
     allEdges.add(g);
     const t=g.querySelector("title");if(!t)continue;
     const key=t.textContent.trim();
-    // Keep only one representative per key — multi-edges share "tail->head"
+    // Keep only one representative per key: multi-edges share "tail->head"
     // titles; the full set lives in allEdges / nE for correct iteration.
     if(!eIdx.has(key))eIdx.set(key,g);
     const i=key.indexOf("->");
@@ -429,7 +427,7 @@ function applyKinds(){for(const[n,g]of nIdx.entries()){const c=classify(nLabel.g
 // ── dimming ────────────────────────────────────────────────────────────────────
 // CSS handles the actual fade-out (see .gv-has-sel rule). JS only needs to
 // tag the highlighted subset and toggle the root class. Constant work per
-// selection change — no N+E DOM iteration.
+// selection change, with no N+E DOM iteration.
 function clearDim(svg){
   if(!svg)return;
   svg.classList.remove("gv-has-sel");
@@ -502,20 +500,20 @@ function encodeHashId(id){return encodeURIComponent(id);}
 function decodeHashId(s){try{return decodeURIComponent(s);}catch{return s;}}
 // Write the current selection into window.location.hash.  Uses
 // history.replaceState so we don't pollute the browser back-stack with one
-// entry per click — our own `pushH` is the canonical history.
+// entry per click; our own `pushH` is the canonical history.
 function syncHash(){
   if(applyingHash)return;
   let h="";
   if(sel.type==="node"&&sel.name)h="#n="+encodeHashId(sel.name);
   else if(sel.type==="edge"&&sel.ekey)h="#e="+encodeHashId(sel.ekey);
-  // Only write when changed — avoids redundant replaceState calls during
+  // Only write when changed, avoiding redundant replaceState calls during
   // history replay (applyHAt → selN → syncHash with the same hash).
   if((window.location.hash||"")===h)return;
   try{history.replaceState(null,"",h||window.location.pathname+window.location.search);}
   catch{window.location.hash=h;}
 }
 // Parse window.location.hash and apply it to the current graph selection.
-// Tolerates missing prefix (`#`) and unknown ids — returns false in either
+// Tolerates missing prefix (`#`) and unknown ids, returning false in either
 // case so callers can short-circuit.
 function applyHashFromUrl(){
   const raw=window.location.hash||"";
@@ -666,14 +664,14 @@ function getVisibleSvgRect(svg){
   const vp=svg.querySelector(".svg-pan-zoom_viewport");
   if(!vp)return null;
   // Map the container's SCREEN-space corners into the viewport group's local
-  // coordinate space — which is the same frame the minimap clone renders in
+  // coordinate space, the same frame the minimap clone renders in
   // (the clone keeps the graphviz g#graph0 transform but drops the
   // svg-pan-zoom viewport transform, so its content lives in vp-local =
   // original-viewBox coords, and the mini-vp rect is in those units).
   // `getScreenCTM()` is vp-local→screen; its inverse is screen→vp-local.
-  // (The old code used `getCTM()` — vp-local→svg-user, *not* screen — and
-  // fed it screen-pixel corners, so the rect drifted/scaled whenever
-  // svg-pan-zoom sized the SVG to the container.)
+  // (`getCTM()` is vp-local to svg-user, *not* screen; fed screen-pixel
+  // corners it drifts and scales whenever svg-pan-zoom sizes the SVG to the
+  // container.)
   const m=vp.getScreenCTM();
   if(!m||m.a===0)return null;
   const r=gw.getBoundingClientRect();
@@ -688,7 +686,7 @@ function getVisibleSvgRect(svg){
 
 // panToSvgPoint is defined in the pan/zoom section above; reused here.
 
-// Single persistent minimap click handler — uses mainSvgRef/mm at call time
+// Single persistent minimap click handler, reading mainSvgRef/mm at call time
 // so it never accumulates across re-renders.
 mm.addEventListener("click",ev=>{
   if(!pz||!mainSvgRef)return;
@@ -708,13 +706,11 @@ function buildMM(mainSvg,vbStr){
   // Clone the full SVG; reset the svg-pan-zoom viewport transform so the
   // whole graph is visible at the minimap scale.
   //
-  // The clone-time per-element walk (`querySelectorAll("*").forEach(...)`
-  // setting `pointer-events:none` and stripping highlight classes) used
-  // to be O(N+E) per render — visibly slow on multi-thousand-node graphs.
-  // The CSS now scopes both behaviours to `#minimap svg *` and
-  // `#minimap svg .gv-sn/...` (see <style> above), so this function only
-  // does the constant-cost work: clone, drop the viewport transform,
-  // and resize via the wrapping <svg>'s attributes.
+  // The CSS scopes `pointer-events:none` and the highlight stripping to
+  // `#minimap svg *` and `#minimap svg .gv-sn/...` (see <style> above), so
+  // this function does constant-cost work only: clone, drop the viewport
+  // transform, and resize via the wrapping <svg>'s attributes. A clone-time
+  // per-element walk would be O(N+E) per render.
   const clone=mainSvg.cloneNode(true);
   const vpClone=clone.querySelector(".svg-pan-zoom_viewport");
   if(vpClone)vpClone.removeAttribute("transform");
@@ -903,7 +899,7 @@ function neighborInDirection(nodeId,dx,dy){
 window.addEventListener("keydown",e=>{
   const sq=document.getElementById("sq");
   const inSearch=document.activeElement===sq;
-  // Global Space toggles drag — but not while editing any text field.
+  // Global Space toggles drag, except while editing any text field.
   if(e.key===" "&&!isEditingText()){e.preventDefault();setDrag(!drag);return;}
   if(e.key==="Escape"){clrSel();return;}
   if(e.key==="Enter"&&inSearch){
@@ -917,7 +913,7 @@ window.addEventListener("keydown",e=>{
   if(e.key==="]"&&sel.type==="edge"&&sel.head){const g=nIdx.get(sel.head);if(g)selN(sel.head,g,true);return;}
   if(e.altKey&&e.key==="ArrowLeft"){e.preventDefault();applyHAt(hIdx-1);return;}
   if(e.altKey&&e.key==="ArrowRight"){e.preventDefault();applyHAt(hIdx+1);return;}
-  // Arrow keys — pan the view, or (with Shift) walk to a neighbouring node.
+  // Arrow keys pan the view, or (with Shift) walk to a neighbouring node.
   if(e.key==="ArrowUp"||e.key==="ArrowDown"||e.key==="ArrowLeft"||e.key==="ArrowRight"){
     if(isEditingText())return;
     e.preventDefault();
@@ -1009,7 +1005,7 @@ document.getElementById("bZoomSel").addEventListener("click",()=>{
 document.getElementById("bTail").addEventListener("click",()=>{if(sel.tail){const g=nIdx.get(sel.tail);if(g)selN(sel.tail,g,true);}});
 document.getElementById("bHead").addEventListener("click",()=>{if(sel.head){const g=nIdx.get(sel.head);if(g)selN(sel.head,g,true);}});
 document.getElementById("bDrag").addEventListener("click",()=>setDrag(!drag));
-// Fit/Center/Reset imply "show me everything again" — drop the current
+// Fit/Center/Reset imply "show me everything again", so they drop the current
 // selection so the dim-everything-but-highlight CSS doesn't fight the reset.
 document.getElementById("bFit").addEventListener("click",()=>{clrSel();if(pz){pz.fit();pz.center();}});
 document.getElementById("bCenter").addEventListener("click",()=>{clrSel();if(pz)pz.center();});

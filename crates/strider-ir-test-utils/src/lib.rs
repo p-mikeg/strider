@@ -8,8 +8,7 @@ use strider_ir::{
     ReadOnlyMemory, Result, Value, ValueType,
 };
 
-/// Node-kind assertion vocabulary over entry-reachable nodes. Test-only, so it
-/// lives here rather than on the production [`IRWalker`].
+/// Node-kind assertion vocabulary over entry-reachable nodes.
 pub trait IrWalkerEx: IRWalker {
     fn count_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> usize {
         self.walk_kind(pred).count()
@@ -24,8 +23,7 @@ impl<T: IRWalker + ?Sized> IrWalkerEx for T {}
 
 /// Builder shorthands for shapes that aren't primitive in the IR. Test-only.
 pub trait IrBuilderEx: IRBuilderExt {
-    /// `Add(lhs, Neg(rhs))`. There is no `IntBinaryOp::Sub`; the lifter lowers
-    /// `IntSub` to this, and so does this helper.
+    /// `Add(lhs, Neg(rhs))`, the shape the lifter lowers `IntSub` to.
     ///
     /// # Errors
     ///
@@ -56,12 +54,8 @@ const DEFAULT_TEST_SP: rsleigh::Vn = rsleigh::Vn {
     size: 8,
 };
 
-/// Fluent description of a mock function's register convention.
-///
-/// [`build_fn`](RegisterSet::build_fn) synthesises a
-/// [`strider_target::BuiltCallingConvention`] from the declared lists and
-/// stamps the sentinel lift address, but creates NO region; use
-/// [`build_fn_single_region`](RegisterSet::build_fn_single_region) for that.
+/// Fluent description of a mock function's register convention, synthesising a
+/// [`strider_target::BuiltCallingConvention`] from the declared lists.
 #[derive(Default, Clone)]
 pub struct RegisterSet {
     tracked: Vec<rsleigh::Vn>,
@@ -70,13 +64,10 @@ pub struct RegisterSet {
     ret_val: Vec<rsleigh::Vn>,
     sp: Option<rsleigh::Vn>,
     ret_stack_pop: i64,
-    /// Baked into the built function's `default_cc`, which is what the
-    /// SP-aware arg passes read.
     stack_args: Option<strider_target::StackArgs>,
     /// `None` defaults to little-endian.
     endianness: Option<strider_target::Endianness>,
-    /// `None` (the default) means no architectural link register, i.e. the
-    /// x86 / x86_64 case. Set it for link-register ISAs (ARM, AArch64, ...).
+    /// `None` for an ISA with no architectural link register (x86).
     link_register: Option<rsleigh::Vn>,
 }
 
@@ -144,11 +135,13 @@ impl RegisterSet {
         if !tracked.contains(&stack_vn) {
             tracked.push(stack_vn);
         }
-        // Struct-literal construction rather than `try_new` deliberately skips
-        // ABI-disjointness validation, so fixtures may declare overlapping or
-        // otherwise degenerate register sets.
+        // Deliberately skips `validate`, so fixtures may declare overlapping
+        // or otherwise degenerate register sets.
+        // Exhaustive: a new ABI field must be routed here rather than
+        // silently defaulting.
         let cc = strider_target::BuiltCallingConvention {
             arg_passing_regs: self.arg_passing,
+            arg_passing_regs_float: Vec::new(),
             callee_saved_regs: self.callee_saved,
             ret_val_regs: self.ret_val,
             ret_val_regs_float: Vec::new(),
@@ -157,6 +150,7 @@ impl RegisterSet {
             ret_stack_pop: self.ret_stack_pop,
             link_register_vn: self.link_register,
             preserves_memory: false,
+            preserves_all_registers: false,
             no_return: false,
         };
         let endianness = self
@@ -360,9 +354,7 @@ pub fn sentinel_node(
     n
 }
 
-/// Test `ReadOnlyMemory` covering the mock-rom shapes the opt-pass suite
-/// needs. `RecordingRom` stays separate: it logs reads to the side and is not
-/// shape-compatible with this.
+/// Test `ReadOnlyMemory` covering the mock-rom shapes the opt-pass suite needs.
 pub struct MockRom {
     shape: MockRomShape,
 }

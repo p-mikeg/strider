@@ -70,8 +70,6 @@ pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsle
 
 /// Largest same-space varnode in `vns` containing `vn`, else `vn` itself.
 /// A non-aliasable (CONST / RAM / code) varnode always maps to itself.
-///
-/// The linear-scan fallback behind [`ContainerMap`].
 pub fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::Vn {
     if !is_aliasable_space(vn.addr_space) {
         return *vn;

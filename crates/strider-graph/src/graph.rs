@@ -399,8 +399,8 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     }
 
     /// Clears `value`'s use-list head, severing the producer's forward link to
-    /// its consumers WITHOUT touching the consumers' input edges. Deliberately
-    /// leaves the graph inconsistent, for tests that need a broken graph.
+    /// its consumers WITHOUT touching the consumers' input edges. Leaves the
+    /// graph inconsistent, for tests that need a broken graph.
     #[doc(hidden)]
     #[cfg(any(test, feature = "test-injectors"))]
     pub fn corrupt_clear_first_use(&mut self, value: ValueId) {
@@ -493,7 +493,6 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
             self.store.link_use_to_value_list(use_id);
         }
 
-        // Re-key the cache over the renumbered survivors.
         self.cache.rebuild::<N, V, C>(&self.store);
 
         remap

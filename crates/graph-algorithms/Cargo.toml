@@ -10,7 +10,6 @@ entity-utils.workspace = true
 rustc-hash = "2"
 
 [dev-dependencies]
-cranelift-entity.workspace = true
 expect-test.workspace = true
 itertools.workspace = true
 
