@@ -10,42 +10,76 @@
 use object::write::elf::{FileHeader, ProgramHeader, SectionHeader, Writer};
 use object::{Endianness, elf};
 
-/// A big-endian MIPS32 ELF whose `.data.rel.ro` slot at `slot_addr` carries a
-/// `REL` relocation of type `R_MIPS_REL32` against a defined symbol at
-/// `sym_addr`.
-pub(crate) struct Mips32Rel32Fixture {
+/// An ELF whose `.data.rel.ro` slot at `slot_addr` carries one `SHT_REL`
+/// relocation against a symbol defined at `sym_addr`.
+pub(crate) struct RelFixture {
     pub bytes: Vec<u8>,
-    /// Virtual address of the 4-byte relocation site (in `.data.rel.ro`).
+    /// Virtual address of the relocation site (in `.data.rel.ro`).
     pub slot_addr: u64,
     /// Virtual address (`st_value`) of the defined target symbol.
     pub sym_addr: u64,
 }
 
-pub(crate) fn build_mips32be_rel32_elf() -> Mips32Rel32Fixture {
+pub(crate) struct RelOpts {
+    pub endian: Endianness,
+    pub is_64: bool,
+    pub e_machine: u16,
+    /// Whole type half of `r_info`: the 8-bit type on ELF32, MIPS64's packed
+    /// `r_ssym | r_type3 | r_type2 | r_type` on ELF64.
+    pub r_type: u32,
+    /// `r_sym` 1 (a `RelocationTarget::Symbol`) vs 0 / STN_UNDEF (a
+    /// `RelocationTarget::Absolute`, the addend-only path).
+    pub defined_symbol: bool,
+    /// The site's initial bytes, i.e. the implicit addend `SHT_REL` stores in
+    /// the field. Its length is the slot length.
+    pub slot_init: Vec<u8>,
+}
+
+pub(crate) fn build_mips32be_rel32_elf() -> RelFixture {
     build_mips32be_rel32_elf_with(/* defined_symbol */ true)
+}
+
+pub(crate) fn build_mips32be_rel32_elf_with(defined_symbol: bool) -> RelFixture {
+    build_rel_elf(RelOpts {
+        endian: Endianness::Big,
+        is_64: false,
+        e_machine: elf::EM_MIPS,
+        r_type: elf::R_MIPS_REL32,
+        defined_symbol,
+        slot_init: vec![0u8; 4],
+    })
 }
 
 /// Layout:
 /// - `.text`: one dummy instruction word at `0x1000`, where `func` is defined.
-/// - `.data.rel.ro`: one 4-byte slot at `slot_addr`, initially 0.
+/// - `.data.rel.ro`: the relocation site at `slot_addr`.
 /// - `.dynsym`: null symbol plus the defined `func`.
 /// - `.dynstr`: string table for `.dynsym`.
-/// - `.rel.dyn`: one `Elf32_Rel { r_offset = slot_addr,
-///   r_info = (sym_index << 8) | R_MIPS_REL32 }`, `sh_link = .dynsym`.
-///
-/// `defined_symbol` picks `r_sym` 1 (a `RelocationTarget::Symbol`) or 0 /
-/// STN_UNDEF (a `RelocationTarget::Absolute`, the addend-only path).
+/// - `.rel.dyn`: one `Elf32_Rel` / `Elf64_Rel` at `slot_addr`,
+///   `sh_link = .dynsym`.
 ///
 /// `object::dynamic_relocations()` only iterates `SHT_REL` sections whose
 /// `sh_link` is the `SHT_DYNSYM` section, so that wiring is what makes the
 /// reloc visible at all.
-pub(crate) fn build_mips32be_rel32_elf_with(defined_symbol: bool) -> Mips32Rel32Fixture {
-    let endian = Endianness::Big;
+pub(crate) fn build_rel_elf(opts: RelOpts) -> RelFixture {
+    let RelOpts {
+        endian,
+        is_64,
+        e_machine,
+        r_type,
+        defined_symbol,
+        slot_init,
+    } = opts;
+    let be = matches!(endian, Endianness::Big);
+    let u16b = |v: u16| if be { v.to_be_bytes() } else { v.to_le_bytes() };
+    let u32b = |v: u32| if be { v.to_be_bytes() } else { v.to_le_bytes() };
+    let u64b = |v: u64| if be { v.to_be_bytes() } else { v.to_le_bytes() };
+
     let sym_addr: u64 = 0x1000; // `.text` / `func`
     let slot_addr: u64 = 0x2000; // `.data.rel.ro` slot
 
-    let text = vec![0u8, 0, 0, 0]; // one dummy MIPS word
-    let slot = vec![0u8, 0, 0, 0]; // REL site, starts zeroed
+    let text = vec![0u8, 0, 0, 0]; // one dummy instruction word
+    let slot = slot_init;
 
     // `.dynstr`: index 0 is the empty string; "func" follows.
     let mut dynstr = vec![0u8];
@@ -53,31 +87,55 @@ pub(crate) fn build_mips32be_rel32_elf_with(defined_symbol: bool) -> Mips32Rel32
     dynstr.extend_from_slice(b"func\0");
 
     // Symbol 0 is the reserved null entry, symbol 1 the defined `func`.
-    // Elf32_Sym is 16 bytes: name(4) value(4) size(4) info(1) other(1) shndx(2).
+    // Elf32_Sym is 16 bytes: name(4) value(4) size(4) info(1) other(1)
+    // shndx(2); Elf64_Sym is 24: name(4) info(1) other(1) shndx(2) value(8)
+    // size(8).
     let sym_index: u32 = 1;
     let text_shndx: u16 = 1; // `.text` is section index 1 (see below)
-    let mut dynsym = vec![0u8; 16]; // null symbol
-    let mut func_sym = Vec::with_capacity(16);
-    func_sym.extend_from_slice(&func_name_off.to_be_bytes()); // st_name
-    func_sym.extend_from_slice(&(sym_addr as u32).to_be_bytes()); // st_value
-    func_sym.extend_from_slice(&0u32.to_be_bytes()); // st_size
-    // st_info: STB_GLOBAL << 4 | STT_FUNC
-    func_sym.push((elf::STB_GLOBAL << 4) | elf::STT_FUNC);
-    func_sym.push(0); // st_other
-    func_sym.extend_from_slice(&text_shndx.to_be_bytes()); // st_shndx
-    dynsym.extend_from_slice(&func_sym);
+    let sym_entsize = if is_64 { 24 } else { 16 };
+    let st_info = (elf::STB_GLOBAL << 4) | elf::STT_FUNC;
+    let mut dynsym = vec![0u8; sym_entsize]; // null symbol
+    dynsym.extend_from_slice(&u32b(func_name_off));
+    if is_64 {
+        dynsym.push(st_info);
+        dynsym.push(0); // st_other
+        dynsym.extend_from_slice(&u16b(text_shndx));
+        dynsym.extend_from_slice(&u64b(sym_addr));
+        dynsym.extend_from_slice(&u64b(0)); // st_size
+    } else {
+        dynsym.extend_from_slice(&u32b(sym_addr as u32));
+        dynsym.extend_from_slice(&u32b(0)); // st_size
+        dynsym.push(st_info);
+        dynsym.push(0); // st_other
+        dynsym.extend_from_slice(&u16b(text_shndx));
+    }
 
-    // One Elf32_Rel, 8 bytes: r_offset(4) r_info(4), where
-    // r_info = (sym << 8) | type for ELF32.
+    // One Elf32_Rel (8 bytes) or Elf64_Rel (16), where r_info is
+    // `(sym << 8) | type` for ELF32 and `(sym << 32) | type` for ELF64.
     let r_sym = if defined_symbol { sym_index } else { 0 };
-    let r_info: u32 = (r_sym << 8) | u32::from(elf::R_MIPS_REL32 as u8);
-    let mut reldyn = Vec::with_capacity(8);
-    reldyn.extend_from_slice(&(slot_addr as u32).to_be_bytes());
-    reldyn.extend_from_slice(&r_info.to_be_bytes());
+    let rel_entsize = if is_64 { 16 } else { 8 };
+    let mut reldyn = Vec::with_capacity(rel_entsize);
+    if is_64 && e_machine == elf::EM_MIPS {
+        // MIPS64 lays `r_info` out as an `r_sym` word in target endianness
+        // followed by four single bytes, so the type half is NOT byte-swapped
+        // on a little-endian target.
+        reldyn.extend_from_slice(&u64b(slot_addr));
+        reldyn.extend_from_slice(&u32b(r_sym));
+        reldyn.push(((r_type >> 24) & 0xff) as u8); // r_ssym
+        reldyn.push(((r_type >> 16) & 0xff) as u8); // r_type3
+        reldyn.push(((r_type >> 8) & 0xff) as u8); // r_type2
+        reldyn.push((r_type & 0xff) as u8); // r_type
+    } else if is_64 {
+        reldyn.extend_from_slice(&u64b(slot_addr));
+        reldyn.extend_from_slice(&u64b((u64::from(r_sym) << 32) | u64::from(r_type)));
+    } else {
+        reldyn.extend_from_slice(&u32b(slot_addr as u32));
+        reldyn.extend_from_slice(&u32b((r_sym << 8) | (r_type & 0xff)));
+    }
 
     let mut buf = Vec::new();
     {
-        let mut w = Writer::new(endian, /* is_64 */ false, &mut buf);
+        let mut w = Writer::new(endian, is_64, &mut buf);
 
         // Must match `text_shndx` and the dynsym link: 0 = null, 1 = .text,
         // 2 = .data.rel.ro, 3 = .dynsym, 4 = .dynstr, 5 = .rel.dyn,
@@ -120,7 +178,7 @@ pub(crate) fn build_mips32be_rel32_elf_with(defined_symbol: bool) -> Mips32Rel32
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
             e_type: elf::ET_DYN,
-            e_machine: elf::EM_MIPS,
+            e_machine,
             e_entry: sym_addr,
             e_flags: 0,
         })
@@ -196,7 +254,7 @@ pub(crate) fn build_mips32be_rel32_elf_with(defined_symbol: bool) -> Mips32Rel32
             sh_link: dynstr_idx.0,
             sh_info: 1,
             sh_addralign: 4,
-            sh_entsize: 16,
+            sh_entsize: sym_entsize as u64,
         });
         w.write_section_header(&SectionHeader {
             name: Some(dynstr_name),
@@ -221,15 +279,199 @@ pub(crate) fn build_mips32be_rel32_elf_with(defined_symbol: bool) -> Mips32Rel32
             sh_link: dynsym_idx.0,
             sh_info: 0,
             sh_addralign: 4,
-            sh_entsize: 8,
+            sh_entsize: rel_entsize as u64,
         });
         w.write_shstrtab_section_header();
     }
 
-    Mips32Rel32Fixture {
+    RelFixture {
         bytes: buf,
         slot_addr,
         sym_addr,
+    }
+}
+
+/// An x86-64 ET_REL whose `.data` and `.text.f` both sit at VMA 0, with a
+/// `.rela.data` entry writing an absolute symbol into `.data + 0`.
+///
+/// `.data` comes first in section order, so the code-and-readonly load
+/// materialises `.text.f` at VMA 0 while an all-allocatable dedup picks
+/// `.data`: siting the `.rela.data` entry through the wrong winner overwrites
+/// the function body. Both are eight bytes, as `gcc -c -ffunction-sections`
+/// emits them.
+pub(crate) struct EtRelCollisionFixture {
+    pub bytes: Vec<u8>,
+    /// The initialised contents of `.data`, at VMA 0.
+    pub data_bytes: Vec<u8>,
+    /// The body of `.text.f`, also at VMA 0.
+    pub text_bytes: Vec<u8>,
+    /// `st_value` of the `SHN_ABS` symbol the relocation targets.
+    pub sym_value: u64,
+}
+
+pub(crate) fn build_et_rel_vma_collision_elf() -> EtRelCollisionFixture {
+    build_et_rel_vma_collision_elf_with(vec![0x90u8; 8])
+}
+
+/// As [`build_et_rel_vma_collision_elf`], with `.text.f`'s body chosen by the
+/// caller. Passing eight zero bytes makes it byte-identical to `.data`, which
+/// is what a zero-initialised or same-length pair looks like and what no
+/// content comparison can tell apart.
+pub(crate) fn build_et_rel_vma_collision_elf_with(text_bytes: Vec<u8>) -> EtRelCollisionFixture {
+    build_et_rel_vma_collision_elf_full(text_bytes, elf::SHN_ABS, 0xdead_beef)
+}
+
+/// As [`build_et_rel_vma_collision_elf_with`], with the relocation's target
+/// symbol placed in `sym_shndx` carrying `sym_value`. `SHN_COMMON` stores the
+/// symbol's ALIGNMENT in `st_value`, not an address.
+pub(crate) fn build_et_rel_vma_collision_elf_full(
+    text_bytes: Vec<u8>,
+    sym_shndx: u16,
+    sym_value: u64,
+) -> EtRelCollisionFixture {
+    let endian = Endianness::Little;
+    let data_bytes = vec![0u8; 8];
+
+    let mut strtab = vec![0u8];
+    let target_name_off = strtab.len() as u32;
+    strtab.extend_from_slice(b"target\0");
+
+    // Elf64_Sym: name(4) info(1) other(1) shndx(2) value(8) size(8). Symbol 0
+    // is the null entry; symbol 1 is `target`, SHN_ABS so its address is
+    // `st_value` regardless of section placement.
+    let mut symtab = vec![0u8; 24];
+    symtab.extend_from_slice(&target_name_off.to_le_bytes());
+    symtab.push((elf::STB_GLOBAL << 4) | elf::STT_OBJECT);
+    symtab.push(0);
+    symtab.extend_from_slice(&sym_shndx.to_le_bytes());
+    symtab.extend_from_slice(&sym_value.to_le_bytes());
+    symtab.extend_from_slice(&0u64.to_le_bytes());
+
+    // One Elf64_Rela at `.data + 0`: r_offset(8) r_info(8) r_addend(8).
+    let mut rela = Vec::with_capacity(24);
+    rela.extend_from_slice(&0u64.to_le_bytes());
+    rela.extend_from_slice(&((1u64 << 32) | u64::from(elf::R_X86_64_64)).to_le_bytes());
+    rela.extend_from_slice(&0i64.to_le_bytes());
+
+    let mut buf = Vec::new();
+    {
+        let mut w = Writer::new(endian, /* is_64 */ true, &mut buf);
+
+        // 0 = null, 1 = .data, 2 = .text.f, 3 = .rela.data, 4 = .symtab,
+        // 5 = .strtab, 6 = .shstrtab.
+        let _null = w.reserve_null_section_index();
+        let data_name = w.add_section_name(b".data");
+        let data_idx = w.reserve_section_index();
+        let text_name = w.add_section_name(b".text.f");
+        let _text_idx = w.reserve_section_index();
+        let rela_name = w.add_section_name(b".rela.data");
+        let _rela_idx = w.reserve_section_index();
+        let symtab_name = w.add_section_name(b".symtab");
+        let symtab_idx = w.reserve_section_index();
+        let strtab_name = w.add_section_name(b".strtab");
+        let strtab_idx = w.reserve_section_index();
+        let _shstr = w.reserve_shstrtab_section_index();
+
+        assert_eq!(data_idx.0, 1);
+        assert_eq!(symtab_idx.0, 4);
+
+        w.reserve_file_header();
+        let data_off = w.reserve(data_bytes.len(), 1);
+        let text_off = w.reserve(text_bytes.len(), 1);
+        let rela_off = w.reserve(rela.len(), 1);
+        let symtab_off = w.reserve(symtab.len(), 1);
+        let strtab_off = w.reserve(strtab.len(), 1);
+        w.reserve_shstrtab();
+        w.reserve_section_headers();
+
+        w.write_file_header(&FileHeader {
+            os_abi: elf::ELFOSABI_SYSV,
+            abi_version: 0,
+            e_type: elf::ET_REL,
+            e_machine: elf::EM_X86_64,
+            e_entry: 0,
+            e_flags: 0,
+        })
+        .expect("write file header");
+
+        w.write(&data_bytes);
+        w.write(&text_bytes);
+        w.write(&rela);
+        w.write(&symtab);
+        w.write(&strtab);
+        w.write_shstrtab();
+
+        w.write_null_section_header();
+        w.write_section_header(&SectionHeader {
+            name: Some(data_name),
+            sh_type: elf::SHT_PROGBITS,
+            sh_flags: u64::from(elf::SHF_ALLOC | elf::SHF_WRITE),
+            sh_addr: 0,
+            sh_offset: data_off as u64,
+            sh_size: data_bytes.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        });
+        w.write_section_header(&SectionHeader {
+            name: Some(text_name),
+            sh_type: elf::SHT_PROGBITS,
+            sh_flags: u64::from(elf::SHF_ALLOC | elf::SHF_EXECINSTR),
+            sh_addr: 0,
+            sh_offset: text_off as u64,
+            sh_size: text_bytes.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        });
+        // `sh_info` names the section the entries apply to, which is how
+        // `ObjectSection::relocations()` attaches them to `.data`.
+        w.write_section_header(&SectionHeader {
+            name: Some(rela_name),
+            sh_type: elf::SHT_RELA,
+            sh_flags: 0,
+            sh_addr: 0,
+            sh_offset: rela_off as u64,
+            sh_size: rela.len() as u64,
+            sh_link: symtab_idx.0,
+            sh_info: data_idx.0,
+            sh_addralign: 8,
+            sh_entsize: 24,
+        });
+        w.write_section_header(&SectionHeader {
+            name: Some(symtab_name),
+            sh_type: elf::SHT_SYMTAB,
+            sh_flags: 0,
+            sh_addr: 0,
+            sh_offset: symtab_off as u64,
+            sh_size: symtab.len() as u64,
+            sh_link: strtab_idx.0,
+            sh_info: 1,
+            sh_addralign: 8,
+            sh_entsize: 24,
+        });
+        w.write_section_header(&SectionHeader {
+            name: Some(strtab_name),
+            sh_type: elf::SHT_STRTAB,
+            sh_flags: 0,
+            sh_addr: 0,
+            sh_offset: strtab_off as u64,
+            sh_size: strtab.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        });
+        w.write_shstrtab_section_header();
+    }
+
+    EtRelCollisionFixture {
+        bytes: buf,
+        data_bytes,
+        text_bytes,
+        sym_value,
     }
 }
 
@@ -594,6 +836,17 @@ impl SectionSpec {
             nobits: false,
         }
     }
+    /// The firmware / `ld -N` shape: allocatable, executable AND writable.
+    pub(crate) fn rwx(addr: u64, data: Vec<u8>) -> Self {
+        Self {
+            name: b".text",
+            addr,
+            data,
+            exec: true,
+            writable: true,
+            nobits: false,
+        }
+    }
     pub(crate) fn data(addr: u64, data: Vec<u8>) -> Self {
         Self {
             name: b".data",
@@ -619,22 +872,60 @@ impl SectionSpec {
 /// An x86-64 ET_REL with the given sections, in order, each at its `addr`.
 ///
 /// ET_REL is the right `e_type` for a section-only fixture: ET_EXEC / ET_DYN
-/// dispatch to PT_LOAD program headers, which a section-only ELF doesn't have,
-/// so it would present no runtime layout to walk. ET_REL has no program headers
-/// by definition, so the section walk under test is what runs.
+/// dispatch to PT_LOAD program headers, so only ET_REL routes the loader down
+/// the section walk under test.
 ///
 /// A `nobits` section contributes no file bytes but still gets a header with
 /// the right `sh_size` and `sh_type`, which is how `object` models `.bss`.
 pub(crate) fn build_elf_with_sections(sections: &[SectionSpec]) -> Vec<u8> {
-    build_sections_elf(sections, Endianness::Little, true, elf::EM_X86_64)
+    build_sections_elf(sections, &[], Endianness::Little, true, elf::EM_X86_64)
+}
+
+/// [`build_elf_with_sections`] plus a `.symtab` / `.strtab` pair defining
+/// `symbols`. ET_REL, so each `st_value` is an offset into its section.
+pub(crate) fn build_elf_with_sections_and_symbols(
+    sections: &[SectionSpec],
+    symbols: &[SymbolSpec],
+) -> Vec<u8> {
+    build_sections_elf(sections, symbols, Endianness::Little, true, elf::EM_X86_64)
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SymbolSpec {
+    pub name: &'static [u8],
+    /// Index into the section list, i.e. `st_shndx - 1`.
+    pub section: usize,
+    /// `st_value`.
+    pub value: u64,
+    pub size: u64,
 }
 
 fn build_sections_elf(
     sections: &[SectionSpec],
+    symbols: &[SymbolSpec],
     endian: Endianness,
     is_64: bool,
     e_machine: u16,
 ) -> Vec<u8> {
+    // Elf64_Sym little-endian is the only symbol encoding written here.
+    assert!(
+        symbols.is_empty() || (is_64 && endian == Endianness::Little),
+        "symbol emission is 64-bit little-endian only"
+    );
+    let mut strtab = vec![0u8];
+    let mut symtab = vec![0u8; 24];
+    for sym in symbols {
+        let name_off = strtab.len() as u32;
+        strtab.extend_from_slice(sym.name);
+        strtab.push(0);
+        symtab.extend_from_slice(&name_off.to_le_bytes());
+        symtab.push((elf::STB_GLOBAL << 4) | elf::STT_OBJECT);
+        symtab.push(0);
+        symtab.extend_from_slice(&((sym.section as u16 + 1).to_le_bytes()));
+        symtab.extend_from_slice(&sym.value.to_le_bytes());
+        symtab.extend_from_slice(&sym.size.to_le_bytes());
+    }
+
     let mut buf = Vec::new();
     {
         let mut w = Writer::new(endian, is_64, &mut buf);
@@ -646,6 +937,13 @@ fn build_sections_elf(
             name_ids.push(w.add_section_name(spec.name));
             w.reserve_section_index();
         }
+        let symtab_ids = (!symbols.is_empty()).then(|| {
+            let symtab_name = w.add_section_name(b".symtab");
+            let symtab_idx = w.reserve_section_index();
+            let strtab_name = w.add_section_name(b".strtab");
+            let strtab_idx = w.reserve_section_index();
+            (symtab_name, symtab_idx, strtab_name, strtab_idx)
+        });
         let _shstrtab_idx = w.reserve_shstrtab_section_index();
 
         w.reserve_file_header();
@@ -658,6 +956,12 @@ fn build_sections_elf(
                 sec_offsets.push(w.reserve(spec.data.len(), 1) as u64);
             }
         }
+        let symtab_offsets = symtab_ids.map(|_| {
+            (
+                w.reserve(symtab.len(), 8) as u64,
+                w.reserve(strtab.len(), 1) as u64,
+            )
+        });
         w.reserve_shstrtab();
         w.reserve_section_headers();
 
@@ -677,6 +981,11 @@ fn build_sections_elf(
             if !spec.nobits {
                 w.write(&spec.data);
             }
+        }
+        if symtab_offsets.is_some() {
+            w.write_align(8);
+            w.write(&symtab);
+            w.write(&strtab);
         }
 
         w.write_shstrtab();
@@ -704,6 +1013,37 @@ fn build_sections_elf(
                 sh_addr: spec.addr,
                 sh_offset: sec_offsets[i],
                 sh_size,
+                sh_link: 0,
+                sh_info: 0,
+                sh_addralign: 1,
+                sh_entsize: 0,
+            });
+        }
+
+        if let (Some((symtab_name, _, strtab_name, strtab_idx)), Some((symtab_off, strtab_off))) =
+            (symtab_ids, symtab_offsets)
+        {
+            // `sh_info` is the first non-local symbol index; every symbol here
+            // is STB_GLOBAL, so only the null entry precedes them.
+            w.write_section_header(&SectionHeader {
+                name: Some(symtab_name),
+                sh_type: elf::SHT_SYMTAB,
+                sh_flags: 0,
+                sh_addr: 0,
+                sh_offset: symtab_off,
+                sh_size: symtab.len() as u64,
+                sh_link: strtab_idx.0,
+                sh_info: 1,
+                sh_addralign: 8,
+                sh_entsize: 24,
+            });
+            w.write_section_header(&SectionHeader {
+                name: Some(strtab_name),
+                sh_type: elf::SHT_STRTAB,
+                sh_flags: 0,
+                sh_addr: 0,
+                sh_offset: strtab_off,
+                sh_size: strtab.len() as u64,
                 sh_link: 0,
                 sh_info: 0,
                 sh_addralign: 1,
@@ -818,4 +1158,36 @@ pub(crate) fn build_elf_with_segments(segments: &[SegmentSpec]) -> Vec<u8> {
         w.write_shstrtab_section_header();
     }
     buf
+}
+
+/// A mips64 ET_DYN with one `SHT_REL` `R_MIPS_REL32 | R_MIPS_64` slot, in the
+/// caller's endianness. mips64el's `.rel.dyn` is the transposed-`r_info` case.
+pub(crate) fn build_mips64_rel32_elf(endian: Endianness) -> RelFixture {
+    build_rel_elf(RelOpts {
+        endian,
+        is_64: true,
+        e_machine: elf::EM_MIPS,
+        // r_ssym=0 | r_type3=0 | r_type2=R_MIPS_64 | r_type=R_MIPS_REL32
+        r_type: (elf::R_MIPS_64 << 8) | elf::R_MIPS_REL32,
+        defined_symbol: true,
+        slot_init: vec![0u8; 8],
+    })
+}
+
+/// A mips64el ET_DYN whose one `SHT_REL` entry carries a relocation type
+/// nothing here handles (`R_MIPS_COPY`) and a symbol index that collides with
+/// `R_MIPS_16`.
+///
+/// `object` reads `Elf64_Rel::r_info` as a single little-endian `u64`, so the
+/// `r_type` it reports is the real `r_sym`, and the `kind` / `size` it derived
+/// from that describe a 16-bit absolute relocation.
+pub(crate) fn build_mips64el_transposed_kind_elf() -> RelFixture {
+    build_rel_elf(RelOpts {
+        endian: Endianness::Little,
+        is_64: true,
+        e_machine: elf::EM_MIPS,
+        r_type: elf::R_MIPS_COPY,
+        defined_symbol: true,
+        slot_init: vec![0u8; 8],
+    })
 }

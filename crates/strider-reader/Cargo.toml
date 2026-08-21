@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 object.workspace = true
+memmap2.workspace = true
 read-only-memory.workspace = true
 rsleigh.workspace = true
 anyhow.workspace = true

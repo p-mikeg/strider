@@ -1,57 +1,18 @@
 use anyhow::Context as _;
 
-use crate::{MemRegion, Result};
+use crate::{FileBytes, MemRegion, Result};
 
-use super::relocations::{apply_elf_relocations, apply_elf_relocations_autoload};
-use super::sections::{elf_get_loadable_regions, elf_get_loadable_regions_including_writable};
+use super::relocations::apply_elf_relocations;
+use super::sections::{LoadFilter, RegionSource};
 
-/// Loads code, rodata and writable-allocatable mappings, then relocates them in
-/// place. Analysis-grade fidelity for an ET_DYN binary: `.data.rel.ro` / `.got`
-/// land in the result with every applicable relocation patched in.
+/// Maps the file: it must not change on disk while the returned `OwnedElf`
+/// lives, or a read can observe torn bytes or SIGBUS past a shorter end.
 ///
-/// # Errors
-///
-/// Propagates the inner helpers' errors; relocation resolution itself only
-/// fails on a malformed ELF.
-pub fn elf_load_with_relocations(obj: &object::File<'_>) -> Result<Vec<MemRegion>> {
-    let mut regions = elf_get_loadable_regions_including_writable(obj)?;
-    // The upfront include-writable load already covers every
-    // relocation-targeted section, so autoload is a no-op here. Using it anyway
-    // keeps this bundled path identical to the standalone load-then-relocate
-    // sequence, and covers future ELF shapes with sites the loader misses.
-    apply_elf_relocations_autoload(&mut regions, obj)?;
-    Ok(regions)
-}
-
-/// Loads only the runtime-immutable image (`.text` / `.rodata` / `.plt` /
-/// `.eh_frame`; writable sections excluded) and relocates it.
-///
-/// Writable sections are absent on purpose: a store-then-reload of such a
-/// global must not fold to its file-initial value.
-///
-/// Uses the non-autoload applier so writable sections are not pulled back in;
-/// relocations whose site lands in an absent region go unapplied, while
-/// relocations into `.rodata` (PC-relative jump tables) do apply.
-///
-/// RELRO sections (`.data.rel.ro`, `.got`) carry SHF_WRITE statically even
-/// though they are immutable post-RELRO, so they are excluded too.
-///
-/// # Errors
-///
-/// Propagates the inner helpers' errors; relocation resolution itself only
-/// fails on a malformed ELF.
-pub fn elf_load_readonly_with_relocations(obj: &object::File<'_>) -> Result<Vec<MemRegion>> {
-    let mut regions = elf_get_loadable_regions(obj)?;
-    apply_elf_relocations(&mut regions, obj)?;
-    Ok(regions)
-}
-
 /// # Errors
 ///
 /// When the file cannot be read from disk, or its bytes do not parse as ELF.
 pub fn load_elf<P: AsRef<std::path::Path>>(path: P) -> Result<OwnedElf> {
-    let data = std::fs::read(path).context("failed to read file")?;
-    OwnedElf::parse(data)
+    OwnedElf::open(path)
 }
 
 /// An owned ELF: the backing file bytes, freed on drop.
@@ -60,7 +21,7 @@ pub fn load_elf<P: AsRef<std::path::Path>>(path: P) -> Result<OwnedElf> {
 /// owned variant, so holding one alongside its bytes would make this
 /// self-referential; [`file`](Self::file) re-parses instead.
 pub struct OwnedElf {
-    backing: Box<[u8]>,
+    backing: FileBytes,
 }
 
 impl std::fmt::Debug for OwnedElf {
@@ -77,17 +38,77 @@ impl OwnedElf {
     ///
     /// When `bytes` do not parse as a valid ELF.
     pub fn parse(bytes: Vec<u8>) -> Result<Self> {
+        Self::validated(FileBytes::from_vec(bytes))
+    }
+
+    /// Maps the file rather than reading it, so only the pages an analysis
+    /// touches are ever faulted in.
+    ///
+    /// # Errors
+    ///
+    /// When the file cannot be read from disk, or does not parse as ELF.
+    pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
+        Self::validated(FileBytes::map_path(path)?)
+    }
+
+    fn validated(backing: FileBytes) -> Result<Self> {
         // Validate now so `file()` can re-parse the identical bytes infallibly.
-        object::File::parse(&bytes[..]).context("failed to parse ELF")?;
-        Ok(Self {
-            backing: bytes.into_boxed_slice(),
-        })
+        object::File::parse(backing.as_slice()).context("failed to parse ELF")?;
+        Ok(Self { backing })
     }
 
     /// Re-parses each call; see the type docs. Infallible because
     /// [`parse`](Self::parse) validated these exact immutable bytes.
     #[inline]
     pub fn file(&self) -> object::File<'_> {
-        object::File::parse(&self.backing[..]).expect("bytes were validated as ELF at construction")
+        object::File::parse(self.backing.as_slice())
+            .expect("bytes were validated as ELF at construction")
+    }
+
+    /// Whether the ARM `EF_ARM_BE8` flag is set: instructions are stored
+    /// little-endian while data stays big-endian.
+    ///
+    /// `EI_DATA` cannot answer this. A BE8 image and a traditional BE32 one are
+    /// both `ELFDATA2MSB`, and decoding either as the other yields byte-swapped
+    /// instructions, so the flag is the only thing that separates them. Always
+    /// `false` off ARM, where the bit is not defined.
+    #[must_use]
+    pub fn is_arm_be8(&self) -> bool {
+        /// `EF_ARM_BE8`, from the ARM ELF ABI.
+        const EF_ARM_BE8: u32 = 0x0080_0000;
+        let file = self.file();
+        if object::read::Object::architecture(&file) != object::Architecture::Arm {
+            return false;
+        }
+        matches!(
+            object::read::Object::flags(&file),
+            object::FileFlags::Elf { e_flags, .. } if e_flags & EF_ARM_BE8 != 0
+        )
+    }
+
+    /// The mappings `source` and `filter` select, as windows into this ELF's
+    /// bytes: no copy, and with `relocate` the relocations land as a patch list
+    /// rather than as writes into a materialised image.
+    ///
+    /// Two region sets built from one [`OwnedElf`] (a fetch image and its ROM
+    /// subset) share the single backing buffer.
+    ///
+    /// # Errors
+    ///
+    /// When a mapping's data can't be read, or its `address + length` would
+    /// exceed `u64::MAX`.
+    pub fn regions(
+        &self,
+        source: RegionSource,
+        filter: LoadFilter,
+        relocate: bool,
+    ) -> Result<Vec<MemRegion>> {
+        let obj = self.file();
+        let mut regions =
+            super::sections::collect_regions(&obj, Some(&self.backing), source, filter)?;
+        if relocate {
+            apply_elf_relocations(&mut regions, &obj, filter)?;
+        }
+        Ok(regions)
     }
 }

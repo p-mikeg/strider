@@ -23,7 +23,7 @@ fn assert_smoke(arch: &str) {
     let path = binary_path(arch);
     assert!(
         path.exists(),
-        "missing test binary at {} — run `make -C fixtures`",
+        "missing test binary at {}; run `make -C fixtures`",
         path.display(),
     );
 
