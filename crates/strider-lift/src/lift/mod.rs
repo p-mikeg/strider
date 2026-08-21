@@ -8,6 +8,7 @@ mod cc_projection;
 mod control;
 mod dispatch;
 mod dominance;
+mod exit_free_sink;
 mod float;
 mod function_lifter;
 mod integer;
@@ -24,6 +25,9 @@ mod handler_tests;
 mod aliasing_tests;
 
 #[cfg(test)]
+mod exit_free_sink_tests;
+
+#[cfg(test)]
 mod cc_projection_tests;
 
 pub(crate) use function_lifter::FunctionLifter;
@@ -34,17 +38,18 @@ pub struct LiftOutcome {
     /// mapping the `BranchIndirect`'s pcode address to the `IndirectBranch`
     /// placeholder anchoring its dispatch varnode.
     pub unresolved_branches: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
+
+    /// Seated `Switch` sites, keyed like `unresolved_branches`.  A seated site
+    /// keeps its selector, so the resolver re-derives it each round and can
+    /// WIDEN a table that resolved before the CFG finished growing.
+    pub switch_anchors: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
 }
 
 pub use crate::lift_options::LiftOptions;
 
 /// The CFG-to-IR lift engine, built once and reused across every function and
-/// rebuild iteration.
-///
-/// The calling convention is deliberately not stored: it is per-function, so
-/// it is a per-call argument.
-///
-/// Not `Clone`, since the owned `Sleigh` is not cheaply cloneable.
+/// rebuild iteration.  The calling convention is per-function, hence a per-call
+/// argument.
 pub struct Lifter<R: rsleigh::MemReader> {
     arch: strider_target::SleighArch,
     /// Borrowed `&mut` to build the CFG, then `&` to lift it.
@@ -52,18 +57,37 @@ pub struct Lifter<R: rsleigh::MemReader> {
     /// Cached at construction: `Sleigh::regs()` is expensive.
     sleigh_regs: rsleigh::SleighRegs,
     user_op_names: Vec<String>,
+    /// Flowing context vars, discovered once (constant per sla) and lent to
+    /// every `build_cfg` so decode mode propagates along CFG edges.
+    flow_vars: strider_cfg::FlowVars,
+    /// The flow context of a cold entry on a fresh engine (the pspec defaults),
+    /// captured before any decode.  Each function's entry is reset to this to
+    /// undo a prior function's leaked commit on the reused engine.
+    entry_defaults: strider_cfg::FlowContext,
 }
 
 impl<R: rsleigh::MemReader> Lifter<R> {
     pub fn new(arch: strider_target::SleighArch, sleigh: rsleigh::Sleigh<R>) -> Result<Self> {
         let sleigh_regs = sleigh.regs()?;
         let user_op_names = sleigh.user_op_names().unwrap_or_default();
+        let flow_vars = strider_cfg::FlowVars::discover(&sleigh)?;
+        // Read on the still-fresh engine, so this is the pspec default, not a
+        // leak.  The address is immaterial: a flowing var's default is committed
+        // globally, so any address reads the same value.
+        let entry_defaults = flow_vars.snapshot(&sleigh, 0);
         Ok(Self {
             arch,
             sleigh,
             sleigh_regs,
             user_op_names,
+            flow_vars,
+            entry_defaults,
         })
+    }
+
+    #[must_use]
+    pub fn arch(&self) -> strider_target::SleighArch {
+        self.arch
     }
 
     /// Indexed by `user_op_id`.
@@ -90,26 +114,106 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         cfg_opts: &strider_cfg::CfgOptions,
         per_address_ccs: &rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Result<strider_cfg::Cfg> {
-        // `Sleigh::lift_one` carries context-register state across calls, so on
-        // a reused `Lifter` a prior function's `globalset` (an ARM `bx`/`blx`
-        // switching Thumb `TMode`) leaks in and mis-decodes this one.  Each
-        // function is an independent entry point and must start from the
-        // processor-spec defaults.  Cheap, and a no-op on arches that never
-        // commit context.
-        self.sleigh.reset_context()?;
-        strider_cfg::Builder::for_arch(&self.arch, &mut self.sleigh, entry.addr, cfg_opts)
+        // A prior function's `globalset` holds forward until the next change
+        // point and leaks into this cold entry on a reused engine.
+        let entry_mode = self.arch.entry_mode_context(entry.addr);
+        let decode_addr = if entry_mode.is_some() {
+            entry.addr & !1
+        } else {
+            entry.addr
+        };
+        self.flow_vars
+            .reset_at(&mut self.sleigh, decode_addr, &self.entry_defaults)?;
+        // Take the entry mode from the address low bit (ARM Thumb via `TMode`,
+        // MIPS16 via `ISA_MODE`), overriding the default reset above.
+        if let Some((var, value)) = entry_mode {
+            self.sleigh.set_context_at(decode_addr, var, value)?;
+        }
+        // The function's now-committed ISA mode, the base context the builder
+        // decodes a strider-resolved target in.
+        let function_mode = self.flow_vars.snapshot(&self.sleigh, decode_addr);
+        strider_cfg::Builder::for_arch(&self.arch, &mut self.sleigh, decode_addr, cfg_opts)
+            .with_flow_vars(&self.flow_vars)
+            .with_function_mode(function_mode)
             .with_per_address_ccs(per_address_ccs.clone())
             .build()
     }
 
     /// Returns the unique set only; ordering is applied by
     /// `FunctionBuilder::new`.
+    ///
+    /// Only REGISTER and UNIQUE are tracked, the two spaces `read_vn` /
+    /// `write_vn` route through the aliasing path that consults this set; CONST
+    /// becomes a literal and RAM a Load/Store.  On x86-64 every `call`
+    /// contributes an `inst_next` CONST and every rip-relative operand a RAM
+    /// address, so tracking those grows the set, and the per-region variable map
+    /// `inherit_variables` clones, with the function.
     pub(crate) fn find_all_unique_vns(&self, cfg: &strider_cfg::Cfg) -> Vec<rsleigh::Vn> {
         cfg.regions()
             .flat_map(|region| region.insns.iter())
             .flat_map(|wrapped| wrapped.insn.all_vns())
+            .filter(|vn| {
+                matches!(
+                    vn.addr_space,
+                    rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE
+                )
+            })
             .collect::<rustc_hash::FxHashSet<rsleigh::Vn>>()
             .into_iter()
+            .collect()
+    }
+
+    /// Every register a `CallOther` in `cfg` touches through its ABI footprint
+    /// instead of its pcode operands: the third source of tracked varnodes,
+    /// beside the decoded instructions and the calling convention. x86-64
+    /// `syscall` reads `R10` and writes `R11`, and SysV gives neither a role.
+    ///
+    /// Silent about what it cannot resolve: an unclassified user-op and an ABI
+    /// name outside this arch's register table are both errors of lifting the
+    /// op, raised there against the op's own name.
+    fn call_other_footprint_vns(
+        &self,
+        cfg: &strider_cfg::Cfg,
+        overrides: &strider_target::call_other_abi::CallOtherOverrides,
+    ) -> Vec<rsleigh::Vn> {
+        use strider_target::call_other_abi::{CallOtherClass, CallOtherLookup, classify_with};
+
+        let mut found: rustc_hash::FxHashSet<rsleigh::Vn> = rustc_hash::FxHashSet::default();
+        for insn in cfg
+            .regions()
+            .flat_map(|region| region.insns.iter())
+            .map(|wrapped| &wrapped.insn)
+            .filter(|insn| insn.opcode == rsleigh::Opcode::CallOther)
+        {
+            let Ok((_, name)) = call::decode_user_op(insn, self.user_op_names()) else {
+                continue;
+            };
+            match classify_with(overrides, self.arch.preset(), name) {
+                None | Some(CallOtherLookup::Class(CallOtherClass::NoOp)) => {}
+                Some(CallOtherLookup::Class(CallOtherClass::Call(abi))) => found.extend(
+                    abi.implicit_reads
+                        .iter()
+                        .chain(abi.implicit_writes)
+                        .filter_map(|reg| self.sleigh_regs.name_to_vn(reg)),
+                ),
+                Some(CallOtherLookup::Built(abi)) => found.extend(
+                    abi.implicit_reads
+                        .iter()
+                        .chain(&abi.implicit_writes)
+                        .copied(),
+                ),
+            }
+        }
+        // Same universe rule as `find_all_unique_vns`: a footprint a Rust
+        // caller built by hand can name any space.
+        found
+            .into_iter()
+            .filter(|vn| {
+                matches!(
+                    vn.addr_space,
+                    rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE
+                )
+            })
             .collect()
     }
 
@@ -130,17 +234,43 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         cc: strider_target::BuiltCallingConvention,
         opts: &LiftOptions,
     ) -> Result<LiftOutcome> {
+        self.build_ir_counting_sink_visits(cfg, cc, opts)
+            .map(|(outcome, _)| outcome)
+    }
+
+    /// Also reports the node visits exit-free-sink seating performed, which
+    /// the scaling test pins against the number of cycles.
+    pub(crate) fn build_ir_counting_sink_visits(
+        &self,
+        cfg: &strider_cfg::Cfg,
+        cc: strider_target::BuiltCallingConvention,
+        opts: &LiftOptions,
+    ) -> Result<(LiftOutcome, usize)> {
         // The CFG is rebuilt from scratch each lift, so the tracked set is
         // always scanned fresh.  `FunctionLifter::new` adds the stack vn; the
         // lifter is the SSoT for that.
-        let all_vns = self.find_all_unique_vns(cfg);
-        let mut driver = FunctionLifter::new(self, cc, cfg, all_vns, &opts.per_address_ccs)?;
+        let mut all_vns = self.find_all_unique_vns(cfg);
+        // A user-op's implicit footprint is named by neither the pcode nor the
+        // convention, so it must be seeded before the universe is frozen.
+        for vn in self.call_other_footprint_vns(cfg, &opts.cfg.call_other_overrides) {
+            if !all_vns.contains(&vn) {
+                all_vns.push(vn);
+            }
+        }
+        let mut driver = FunctionLifter::new(
+            self,
+            cc,
+            cfg,
+            all_vns,
+            &opts.per_address_ccs,
+            &opts.cfg.call_other_overrides,
+        )?;
 
         // Cytron pruned-SSA phi placement: iterated dominance frontier of each
         // variable's definition sites.  This is what stops the lifter minting a
-        // value `Phi` for every varnode at every region (millions of dead phis).
+        // value `Phi` for every varnode at every region.
         let dom = dominance::DomInfo::compute(cfg);
-        let def_sites = driver.collect_def_sites();
+        let def_sites = driver.collect_def_sites()?;
         let placement = dom.iterated_frontier(&def_sites);
 
         let region_map = driver.build_region_map(&placement)?;
@@ -150,13 +280,19 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // fallthrough edges the per-insn loop didn't reach.
         driver.translate_regions(&region_map, &dom)?;
         driver.link_region_edges(&region_map)?;
+        let sink_visits = driver.seat_exit_free_sinks()?;
 
         let unresolved_branches = std::mem::take(&mut driver.unresolved_branches);
+        let switch_anchors = std::mem::take(&mut driver.switch_anchors);
         let function = driver.builder.build()?;
-        Ok(LiftOutcome {
-            function,
-            unresolved_branches,
-        })
+        Ok((
+            LiftOutcome {
+                function,
+                unresolved_branches,
+                switch_anchors,
+            },
+            sink_visits,
+        ))
     }
 }
 
@@ -174,30 +310,56 @@ pub(crate) fn ir_region_of(
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Allocates one IR region per CFG region, keyed by CFG `RegionId`; every
-    /// CFG region is present, hence no `Option` value.
+    /// CFG region is present.
     fn build_region_map(&mut self, placement: &pruned_ssa::PhiPlacement) -> Result<RegionMap> {
-        self.builder.build_entry()?;
         let cfg = self.cfg;
         let mut region_map: RegionMap = RegionMap::default();
         for cfg_rid in cfg.region_ids() {
-            let placed: Vec<strider_ir::node::InitialVnId> = placement
+            // Sorted, so `Phi` creation order (hence node-id assignment)
+            // follows `InitialVnId` rather than the placement set's hash
+            // layout.
+            let mut placed: Vec<strider_ir::node::InitialVnId> = placement
                 .get(&cfg_rid)
                 .map(|s| s.iter().copied().collect())
                 .unwrap_or_default();
-            region_map.insert(cfg_rid, self.builder.create_region(&placed)?);
+            placed.sort_unstable();
+            let ir_rid = self.builder.create_region(&placed)?;
+            region_map.insert(cfg_rid, ir_rid);
+            let region = cfg
+                .region_graph()
+                .node_weight(cfg_rid)
+                .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
+            let last_addr = region
+                .insns
+                .last()
+                .map_or(region.start_addr.machine_addr.addr, |wrapped| {
+                    wrapped.addr.machine_addr.addr
+                });
+            let ctrl = self.builder.region_cur_ctrl(ir_rid);
+            let node = self.builder.function().graph().value_definition(ctrl).0;
+            self.region_last_addrs.insert(node, last_addr);
         }
         let entry_ir = *region_map
             .get(&cfg.entry())
             .ok_or_else(|| anyhow!("entry region {:?} missing from region_map", cfg.entry()))?;
         self.builder.set_entry_region(entry_ir)?;
-        self.record_register_arg_carriers();
+        // Carriers for float arguments sharing a container are read out of it,
+        // which needs a current region.
+        self.builder.set_region(entry_ir);
+        self.record_register_arg_carriers()?;
         Ok(region_map)
     }
 
     /// Each arg-passing register's largest-container `InitialVar` output is the
     /// carrier for its positional index: a narrow ABI alias (`edi`) routes
     /// through its tracked container (`rdi`).
-    fn record_register_arg_carriers(&mut self) {
+    ///
+    /// Integer and float registers are numbered in separate index spaces, so
+    /// the j-th float parameter is float carrier `j`, indexed by ABI position:
+    /// a register the function never names leaves a gap instead of shifting
+    /// the ones after it down. Float argument registers sharing a container
+    /// (AAPCS-VFP `d0`/`d1` inside `q0`) each carry their own slice of it.
+    fn record_register_arg_carriers(&mut self) -> Result<()> {
         let arg_regs = self
             .builder
             .function()
@@ -213,6 +375,33 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                     .register_arg_value(i as u32, value);
             }
         }
+        let float_slots = {
+            let function = self.builder.function();
+            function
+                .default_cc()
+                .float_arg_slots(function.all_vns(), |v| self.container_of(v))
+        };
+        // The entry machine address, so a materialised slice carries a
+        // fingerprint like every other non-exempt node.
+        let entry_addr = self.entry_machine_addr();
+        for (j, carrier) in float_slots.into_iter().enumerate() {
+            let Some(carrier) = carrier else { continue };
+            let value = if self.container_of(&carrier) == carrier {
+                self.builder.function().initial_var_value(&carrier)
+            } else {
+                // A slice out of a shared container dedups with the function's
+                // own first read of the register while the container still
+                // holds its incoming value.
+                Some(self.with_lift_addr(entry_addr, |s| s.read_reg_vn(&carrier))?)
+            };
+            if let Some(value) = value {
+                self.builder
+                    .function_mut()
+                    .side_tables_mut()
+                    .register_float_arg_value(j as u32, value);
+            }
+        }
+        Ok(())
     }
 
     /// Translates every region's instructions and, when present, its special
@@ -249,15 +438,13 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 }
                 self.process_insn(cfg_rid, &wrapped_insn.insn, wrapped_insn.addr, region_map)?;
             }
-            // Fingerprint contributor for the terminator handlers: the
-            // region's last pcode insn.  A region with zero pcode insns is a
-            // synthetic tail-call stub (the cfg builder's lowering of a
-            // CondBranch arm whose target is out of bounds); the insn that
-            // proves its `Call + Return` is the predecessor's conditional
-            // branch, so fall back to that (`max` picks one deterministic
-            // contributor when several branches share a deduped stub).
-            // Without the fallback the stub's nodes carry no fingerprint and
-            // fail the validator's always-on non-empty check.
+            // Fingerprint contributor for the terminator handlers: the region's
+            // last pcode insn.  A region with zero pcode insns is a synthetic
+            // tail-call stub, whose `Call + Return` is proven by the
+            // predecessor's conditional branch, so fall back to that or its
+            // nodes carry no fingerprint and fail the validator's non-empty
+            // check.  `max` picks one deterministic contributor when several
+            // branches share a deduped stub.
             let term_addr = region
                 .insns
                 .last()
@@ -284,8 +471,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                     Some(SpecialTerm::UnresolvedIndirect { target_vn, addr }) => {
                         s.handle_unresolved_indirect_branch(&target_vn, addr)?;
                     }
-                    Some(SpecialTerm::Switch(target_vn, targets)) => {
-                        s.handle_switch(cfg_rid, &target_vn, &targets, region_map)?;
+                    Some(SpecialTerm::Switch(target_vn, targets, switch_addr)) => {
+                        s.handle_switch(cfg_rid, &target_vn, &targets, region_map, switch_addr)?;
                     }
                     Some(SpecialTerm::TailCall(target)) => {
                         s.handle_tail_call(target)?;
@@ -336,8 +523,9 @@ enum SpecialTerm {
         addr: strider_cfg::PcodeInsnAddr,
     },
     /// Resolved jump table; lifts to a single `Switch` node with one control
-    /// output per target (a single-target table degenerates to a plain branch).
-    Switch(rsleigh::Vn, Vec<u64>),
+    /// output per target.  Carries the dispatch address so the resolver can
+    /// re-derive and widen an already-seated site.
+    Switch(rsleigh::Vn, Vec<u64>, strider_cfg::PcodeInsnAddr),
     /// Branch out of the function (`fn_max_size` exceeded, or below
     /// `start_addr` with `allow_code_before_start_addr=false`).  Lifts to
     /// `Call(IntConst(target)) + Return`.  The synthetic conditional-tail-call
@@ -354,22 +542,29 @@ impl SpecialTerm {
                     addr: *addr,
                 })
             }
-            strider_cfg::RegionTerminator::Switch { target_vn, targets } => {
-                Some(SpecialTerm::Switch(*target_vn, targets.clone()))
-            }
+            strider_cfg::RegionTerminator::Switch {
+                target_vn,
+                targets,
+                addr,
+            } => Some(SpecialTerm::Switch(
+                *target_vn,
+                targets.iter().map(|t| t.addr).collect(),
+                *addr,
+            )),
+            // A target's `isa_bit` (the callee's ISA mode on an interworking
+            // tail call) is the callee function's own concern, applied when it
+            // is analyzed at its entry, not while lifting this caller.
             strider_cfg::RegionTerminator::TailCall { target } => {
-                Some(SpecialTerm::TailCall(*target))
+                Some(SpecialTerm::TailCall(target.addr))
             }
             _ => None,
         }
     }
 
-    /// `TailCall` skips `BranchIndirect` as well as `Branch`: when the
-    /// orchestrator hints a `known_targets` resolution for an indirect jump
-    /// whose target is out of the function, the cfg builder marks the `jmp reg`
-    /// a tail call.  Processing the `BranchIndirect` would emit an
-    /// `IndirectBranch` and terminate the region, so `handle_tail_call`'s
-    /// `build_call` would then fail on an already-terminated region.  A
+    /// `TailCall` skips `BranchIndirect` as well as `Branch`: a `known_targets`
+    /// resolution pointing out of the function marks the `jmp reg` a tail call,
+    /// and processing the `BranchIndirect` would emit an `IndirectBranch` and
+    /// terminate the region, failing `handle_tail_call`'s `build_call`.  A
     /// `CondBranch` never lives in a TailCall region: it keeps its own
     /// terminator, and the stub regions on its out-of-bounds arms have no insns.
     ///
@@ -441,14 +636,15 @@ mod tests {
         );
     }
 
-    /// A reused `Lifter` must decode each function from a clean context.  A
-    /// Thumb `BLX <imm>` that switches to ARM `globalset`s the `TMode` for its
-    /// target, and that commit persists across `lift_one` calls.  Without the
-    /// per-function reset in `build_cfg`, lifting Thumb function A (ending in
-    /// such a `BLX`) then Thumb function B at the BLX target on the same lifter
-    /// decodes B as ARM: it mis-parses and walks off into unmapped memory.
+    /// A reused `Lifter` must decode each function in its own mode.  A Thumb
+    /// `BLX <imm>` that switches to ARM `globalset`s `TMode` for its target,
+    /// and that commit persists across `lift_one` calls.  `build_cfg` pins each
+    /// entry's mode (here Thumb, the `arm_thumb` default) at the entry address,
+    /// overriding the leaked commit; without it, lifting Thumb function A
+    /// (ending in such a `BLX`) then Thumb function B at the BLX target on the
+    /// same lifter decodes B as ARM and walks off into unmapped memory.
     #[test]
-    fn reused_lifter_resets_thumb_context_between_functions() {
+    fn reused_lifter_pins_thumb_mode_between_functions() {
         use strider_ir::node::NodeKind;
         use strider_ir_test_utils::IrWalkerEx;
 
@@ -459,7 +655,8 @@ mod tests {
         let cc = strider_target::CallingConvention::arm_aapcs()
             .build(&regs)
             .expect("cc");
-        // Buffer at 0x1000:
+        // Buffer at 0x1000; both entries are passed with the Thumb bit set
+        // (0x1001 / 0x1011), which is what selects Thumb state.
         //   0x1000: BLX 0x1010  (Thumb T2, switches to ARM at 0x1010)
         //   0x1004: bx lr       ends function A
         //   0x1006: nop x3      padding up to 0x1010
@@ -482,11 +679,11 @@ mod tests {
         // Lift A (the polluter) first, then B on the same engine.
         let mut lifter = new_lifter();
         let cfg_a = lifter
-            .build_cfg(0x1000u64.into(), &opts, &empty)
+            .build_cfg(0x1001u64.into(), &opts, &empty)
             .expect("A cfg");
         lifter.build_ir(&cfg_a, cc.clone()).expect("A ir");
-        let cfg_b = lifter.build_cfg(0x1010u64.into(), &opts, &empty).expect(
-            "reused lifter must reset context so B's Thumb decode does not inherit A's ARM mode",
+        let cfg_b = lifter.build_cfg(0x1011u64.into(), &opts, &empty).expect(
+            "reused lifter must pin B's Thumb mode so its decode does not inherit A's ARM mode",
         );
         let reused_b = lifter.build_ir(&cfg_b, cc.clone()).expect("B ir");
         assert!(
@@ -499,13 +696,191 @@ mod tests {
         // Same B on a fresh lifter: the ground-truth decode.
         let mut fresh = new_lifter();
         let cfg_fresh = fresh
-            .build_cfg(0x1010u64.into(), &opts, &empty)
+            .build_cfg(0x1011u64.into(), &opts, &empty)
             .expect("fresh B cfg");
         let fresh_b = fresh.build_ir(&cfg_fresh, cc).expect("fresh B ir");
         assert_eq!(
             reused_b.function.count_kind(|_| true),
             fresh_b.function.count_kind(|_| true),
             "B lifted after A must have the same node count as a fresh Thumb lift"
+        );
+    }
+
+    /// Under the plain `arm` arch (ARM by default), a function whose entry
+    /// carries the Thumb bit (odd address) decodes as Thumb at `addr & !1`, and
+    /// the pinned mode holds forward past the entry: the second instruction (at
+    /// `addr + 2`) must also decode Thumb, not fall back to the ARM default.
+    #[test]
+    fn arm_arch_uses_the_thumb_bit_to_decode_a_thumb_function() {
+        use strider_ir::node::NodeKind;
+        use strider_ir_test_utils::IrWalkerEx;
+
+        let arch = strider_target::SleighArch::arm();
+        let regs = strider_target::SleighArch::arm()
+            .probe_regs()
+            .expect("regs");
+        let cc = strider_target::CallingConvention::arm_aapcs()
+            .build(&regs)
+            .expect("cc");
+        // Two Thumb instructions at 0x1000: `movs r0, #1` (0x1000) then `bx lr`
+        // (0x1002). The `bx lr` is only reachable if 0x1002 also decodes Thumb;
+        // as a 4-byte ARM insn it would run past the 4-byte buffer and fail.
+        let code = vec![0x01, 0x20, 0x70, 0x47];
+        let reader = rsleigh::mem_readers::BufMemReader::new(code, 0x1000);
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+        let mut lifter = super::Lifter::new(arch, sleigh).expect("lifter");
+        let opts = strider_cfg::CfgOptions::default();
+        let empty = rustc_hash::FxHashMap::default();
+
+        // Entry passed with the Thumb bit set (0x1001). Under the ARM default
+        // this would try to decode the misaligned 0x1001 as ARM; the bit must
+        // select Thumb and decode at 0x1000.
+        let cfg = lifter
+            .build_cfg(0x1001u64.into(), &opts, &empty)
+            .expect("the Thumb bit must select Thumb mode and decode at addr & !1");
+        let ir = lifter.build_ir(&cfg, cc).expect("ir");
+        assert!(
+            ir.function.has_kind(|k| matches!(k, NodeKind::Return)),
+            "the `bx lr` at 0x1002 must lift to a Return, proving the pin held forward"
+        );
+    }
+
+    /// Every register the arch DECLARES must have a `ValueType`, whether or
+    /// not the current sla references it: the tracked-varnode set is mapped
+    /// wholesale, so one unmappable width fails the whole function.  x86-64
+    /// declares `GDTR`/`IDTR` at 12 bytes and `LDTR`/`TR` at 14.
+    #[test]
+    fn every_declared_register_width_maps_to_a_value_type() {
+        for arch in [
+            strider_target::SleighArch::x86_64(),
+            strider_target::SleighArch::x86(),
+            strider_target::SleighArch::aarch64(),
+            strider_target::SleighArch::arm(),
+            strider_target::SleighArch::mipsle64(),
+            strider_target::SleighArch::ppc64be(),
+        ] {
+            let preset = arch.preset();
+            let regs = arch.probe_regs().expect("probe regs");
+            let unmappable: Vec<(&str, u32)> = regs
+                .iter()
+                .filter(|r| strider_ir::ValueType::int_for_byte_size(r.vn.size).is_err())
+                .map(|r| (r.name, r.vn.size))
+                .collect();
+            assert!(
+                unmappable.is_empty(),
+                "{preset:?}: registers with no ValueType: {unmappable:?}"
+            );
+        }
+    }
+
+    /// `Phi` creation order comes from the placement set, so it must be sorted
+    /// by `InitialVnId` rather than left to hash layout: node-id assignment,
+    /// and every IR dump with it, otherwise moves with the hasher.
+    #[test]
+    fn placed_phis_are_ordered_by_initial_vn_id() {
+        use strider_ir::node::NodeKind;
+        use strider_ir::{IRViewer, IRWalker};
+
+        let arch = strider_target::SleighArch::x86_64();
+        let regs = strider_target::SleighArch::x86_64()
+            .probe_regs()
+            .expect("regs");
+        let cc = strider_target::CallingConvention::x86_64_systemv()
+            .build(&regs)
+            .expect("cc");
+        // test edi,edi ; je +0x14 ; mov eax,1 ; mov ecx,2 ; mov edx,3 ;
+        // mov esi,4 ; ret
+        // Four registers live into one join region.
+        let code = vec![
+            0x85, 0xff, 0x74, 0x14, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xb9, 0x02, 0x00, 0x00, 0x00,
+            0xba, 0x03, 0x00, 0x00, 0x00, 0xbe, 0x04, 0x00, 0x00, 0x00, 0xc3,
+        ];
+        let reader = rsleigh::mem_readers::BufMemReader::new(code, 0x1000);
+        let mut sleigh =
+            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+        let cfg = strider_cfg::Builder::for_arch(
+            &arch,
+            &mut sleigh,
+            0x1000,
+            &strider_cfg::CfgOptions::default(),
+        )
+        .build()
+        .expect("cfg");
+        let lifter = super::Lifter::new(arch, sleigh).expect("lifter");
+        let f = lifter.build_ir(&cfg, cc).expect("ir").function;
+
+        // Ascending node id, so the group order below is creation order.
+        let mut walk = f.walk();
+        walk.by_ref().for_each(|_| {});
+        let reachable = walk.into_visited();
+
+        // Grouped by the region's phi token (a `Phi`'s input 0), so phis from
+        // different regions do not interleave.
+        let mut per_region: rustc_hash::FxHashMap<
+            strider_ir::node::ValueId,
+            Vec<strider_ir::node::InitialVnId>,
+        > = rustc_hash::FxHashMap::default();
+        for (node, _) in f
+            .reachable_kind_iter(&reachable)
+            .filter(|(_, k)| matches!(k, NodeKind::Phi))
+        {
+            let token = f.node_inputs(node)[0];
+            let [out] = f.node_outputs_exact::<1>(node).expect("phi output");
+            let vn = f.get_vn_for_value(out).expect("phi carries a vn tag");
+            let id = f.vn_id_of(&vn).expect("tagged vn is tracked");
+            per_region.entry(token).or_default().push(id);
+        }
+        let widest = per_region
+            .into_values()
+            .max_by_key(Vec::len)
+            .expect("at least one region with phis");
+        assert!(widest.len() >= 2, "need a multi-phi join, got {widest:?}");
+        assert!(
+            widest.windows(2).all(|w| w[0] < w[1]),
+            "ascending node ids must carry ascending InitialVnIds, got {widest:?}"
+        );
+    }
+
+    /// The tracked set exists to serve `read_vn` / `write_vn`'s aliasing path,
+    /// which only REGISTER and UNIQUE take; CONST becomes a literal and RAM a
+    /// Load/Store against a constant address. Tracking either of the latter
+    /// mints an `InitialVar` for something that is not a variable, and widens
+    /// the per-region variable map `inherit_variables` clones.
+    #[test]
+    fn only_aliasable_space_varnodes_are_tracked() {
+        let arch = strider_target::SleighArch::x86_64();
+        // 1000: e8 00 00 00 00          call 0x1005      ; CONST inst_next
+        // 1005: 48 8b 05 00 00 00 00    mov rax,[rip+0x0] ; RAM 0x100c
+        // 100c: eb 00                   jmp 0x100e        ; RAM 0x100e
+        // 100e: c3                      ret
+        let code = vec![
+            0xe8, 0x00, 0x00, 0x00, 0x00, 0x48, 0x8b, 0x05, 0x00, 0x00, 0x00, 0x00, 0xeb, 0x00,
+            0xc3,
+        ];
+        let reader = rsleigh::mem_readers::BufMemReader::new(code, 0x1000);
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+        let mut lifter = super::Lifter::new(arch, sleigh).expect("lifter");
+        let opts = strider_cfg::CfgOptions::default();
+        let empty = rustc_hash::FxHashMap::default();
+        let cfg = lifter
+            .build_cfg(0x1000u64.into(), &opts, &empty)
+            .expect("cfg");
+
+        let tracked = lifter.find_all_unique_vns(&cfg);
+        assert!(!tracked.is_empty(), "the lift tracks something");
+        let stray: Vec<_> = tracked
+            .iter()
+            .filter(|vn| {
+                !matches!(
+                    vn.addr_space,
+                    rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE
+                )
+            })
+            .map(|vn| (vn.addr_space.shortcut(), vn.addr_off, vn.size))
+            .collect();
+        assert!(
+            stray.is_empty(),
+            "only REGISTER/UNIQUE may be tracked; got {stray:?}"
         );
     }
 }

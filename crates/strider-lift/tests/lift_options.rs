@@ -28,8 +28,8 @@ fn lift_options_embeds_cfg_knobs() {
 
 #[test]
 fn lift_options_embeds_known_targets_seed() {
-    // The orchestrator's analyze loop owns its own map, but the raw lift path
-    // passes this one to the CFG builder verbatim.
+    // `Strider::analyze` clones this map to seed its resolution loop; the raw
+    // lift path passes it to the CFG builder verbatim.
     use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 
     let site = PcodeInsnAddr {
@@ -37,7 +37,7 @@ fn lift_options_embeds_known_targets_seed() {
         insn_index: 0,
     };
     let mut known = rustc_hash::FxHashMap::default();
-    known.insert(site, ResolvedTargets::Single(0x2000));
+    known.insert(site, ResolvedTargets::Single(0x2000.into()));
     let opts = LiftOptions {
         cfg: strider_cfg::CfgOptions {
             known_targets: known,
@@ -48,6 +48,6 @@ fn lift_options_embeds_known_targets_seed() {
     assert_eq!(opts.cfg.known_targets.len(), 1);
     assert_eq!(
         opts.cfg.known_targets.get(&site),
-        Some(&ResolvedTargets::Single(0x2000))
+        Some(&ResolvedTargets::Single(0x2000.into()))
     );
 }

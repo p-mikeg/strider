@@ -5,8 +5,8 @@
 //! - `IntLessEqual(a, b)` -> `Xor(IntLess(b, a), IntConst(1)):I1`
 //! - `IntSlessEqual(a, b)` -> `Xor(IntSless(b, a), IntConst(1)):I1`
 //!
-//! Logical negation of an `I1` is `Xor(_, IntConst(1))`: there is no BitNot
-//! unary op, bitwise complement is `Xor(_, all_ones)` everywhere.
+//! Logical negation of an `I1` is `Xor(_, IntConst(1))`; bitwise complement is
+//! `Xor(_, all_ones)` everywhere.
 
 use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType, VnTypeExt};
 
@@ -91,11 +91,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         })
     }
 
-    /// Deliberately permissive about mixed input widths: real Sleigh on 64-bit
-    /// arches legitimately mixes an 8-byte register with a 4-byte spill or
-    /// immediate around integer-promotion boundaries, so each operand is
-    /// coerced to the output width below.  Equal-width lift-time checks are
-    /// reserved for the lowered forms, whose arithmetic genuinely needs them.
+    /// Permissive about mixed input widths: real Sleigh on 64-bit arches
+    /// legitimately mixes an 8-byte register with a 4-byte spill or immediate
+    /// around integer-promotion boundaries, so each operand is coerced to the
+    /// output width below.  Equal-width lift-time checks are reserved for the
+    /// lowered forms, whose arithmetic requires them.
     pub(super) fn process_int_binary_op(
         &mut self,
         insn: &rsleigh::Insn,
@@ -229,9 +229,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.lower_cmp_negated(insn, IntCmpOp::Sless, true)
     }
 
-    /// Lowers `IntSub(a, b)` to `Add(a, Neg(b))`.  Exact: `a - b` equals
-    /// `a + (-b)` mod 2^W, and `Add` wraps identically.  There is no
-    /// `IntBinaryOp::Sub`, so patterns see one canonical shape.
+    /// Lowers `IntSub(a, b)` to `Add(a, Neg(b))`, the one canonical shape
+    /// patterns see.  Exact: `a - b` equals `a + (-b)` mod 2^W, and `Add`
+    /// wraps identically.
     pub(super) fn handle_int_sub(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         // Sleigh requires all three widths to agree here, unlike the
         // comparison lowerings, whose I1 output makes only the input check

@@ -19,8 +19,6 @@ rustc-hash = "2"
 # Test-only IR helpers (count_kind, has_kind) used in lift unit tests.
 strider-ir = { workspace = true, features = ["test-util"] }
 strider-ir-test-utils.workspace = true
-strider-reader.workspace = true
-object.workspace = true
 
 [lints]
 workspace = true
