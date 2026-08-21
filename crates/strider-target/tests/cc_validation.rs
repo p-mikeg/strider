@@ -1,9 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use rsleigh::{Vn, VnSpace};
-use strider_target::{
-    BuiltCallingConvention, BuiltCallingConventionParts, CallingConvention, SleighArch,
-};
+use strider_target::{BuiltCallingConvention, CallingConvention, SleighArch};
 
 fn vn(off: u64) -> Vn {
     Vn {
@@ -14,9 +12,9 @@ fn vn(off: u64) -> Vn {
 }
 
 #[test]
-fn try_new_rejects_sp_in_arg_passing_regs() {
+fn validate_rejects_sp_in_arg_passing_regs() {
     let sp = vn(0x40);
-    let res = BuiltCallingConvention::try_new(BuiltCallingConventionParts {
+    let cc = BuiltCallingConvention {
         arg_passing_regs: vec![vn(0x10), sp, vn(0x20)],
         callee_saved_regs: vec![],
         ret_val_regs: vec![vn(0x18)],
@@ -26,7 +24,11 @@ fn try_new_rejects_sp_in_arg_passing_regs() {
         ret_stack_pop: 0,
         link_register_vn: None,
         preserves_memory: false,
-    });
+        preserves_all_registers: false,
+        no_return: false,
+        ..Default::default()
+    };
+    let res = cc.validate();
     assert!(
         res.is_err(),
         "SP listed in arg_passing_regs must be rejected"
@@ -39,9 +41,9 @@ fn try_new_rejects_sp_in_arg_passing_regs() {
 }
 
 #[test]
-fn try_new_rejects_arg_overlapping_callee_saved() {
+fn validate_rejects_arg_overlapping_callee_saved() {
     let shared = vn(0x10);
-    let res = BuiltCallingConvention::try_new(BuiltCallingConventionParts {
+    let cc = BuiltCallingConvention {
         arg_passing_regs: vec![shared],
         callee_saved_regs: vec![shared],
         ret_val_regs: vec![],
@@ -51,7 +53,11 @@ fn try_new_rejects_arg_overlapping_callee_saved() {
         ret_stack_pop: 0,
         link_register_vn: None,
         preserves_memory: false,
-    });
+        preserves_all_registers: false,
+        no_return: false,
+        ..Default::default()
+    };
+    let res = cc.validate();
     assert!(res.is_err());
     let msg = res.unwrap_err().to_string();
     assert!(
@@ -61,13 +67,12 @@ fn try_new_rejects_arg_overlapping_callee_saved() {
 }
 
 #[test]
-fn try_new_rejects_ret_int_overlapping_ret_float() {
+fn validate_rejects_ret_int_overlapping_ret_float() {
     // Integer and float returns are physically different register files on
     // every supported arch, so the same varnode in both is a CC-author bug.
-    // arg-vs-ret overlap is left unchecked on purpose: x86_64 SysV RDX is
-    // legitimately both.
+    // Argument-vs-return overlap stays legal: x86_64 SysV RDX is both.
     let shared = vn(0x28);
-    let res = BuiltCallingConvention::try_new(BuiltCallingConventionParts {
+    let cc = BuiltCallingConvention {
         arg_passing_regs: vec![vn(0x10)],
         callee_saved_regs: vec![vn(0x20)],
         ret_val_regs: vec![shared],
@@ -77,7 +82,11 @@ fn try_new_rejects_ret_int_overlapping_ret_float() {
         ret_stack_pop: 0,
         link_register_vn: None,
         preserves_memory: false,
-    });
+        preserves_all_registers: false,
+        no_return: false,
+        ..Default::default()
+    };
+    let res = cc.validate();
     assert!(res.is_err());
     let msg = res.unwrap_err().to_string();
     assert!(
@@ -87,8 +96,8 @@ fn try_new_rejects_ret_int_overlapping_ret_float() {
 }
 
 #[test]
-fn try_new_accepts_clean_layout() {
-    BuiltCallingConvention::try_new(BuiltCallingConventionParts {
+fn validate_accepts_clean_layout() {
+    BuiltCallingConvention {
         arg_passing_regs: vec![vn(0x10), vn(0x18)],
         callee_saved_regs: vec![vn(0x20)],
         ret_val_regs: vec![vn(0x28)],
@@ -98,7 +107,11 @@ fn try_new_accepts_clean_layout() {
         ret_stack_pop: 0,
         link_register_vn: None,
         preserves_memory: false,
-    })
+        preserves_all_registers: false,
+        no_return: false,
+        ..Default::default()
+    }
+    .validate()
     .expect("clean layout must validate");
 }
 
@@ -107,5 +120,5 @@ fn build_routes_through_validator_no_false_positives() {
     let regs = SleighArch::x86_64().probe_regs().expect("probe regs");
     CallingConvention::x86_64_systemv()
         .build(&regs)
-        .expect("x86_64_systemv must build cleanly (build routes through try_new)");
+        .expect("x86_64_systemv must build cleanly (build routes through validate)");
 }

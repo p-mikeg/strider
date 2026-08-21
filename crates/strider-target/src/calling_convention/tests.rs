@@ -1,5 +1,33 @@
 use super::*;
 
+impl StackArgs {
+    /// The stack-arg index whose slot fully contains a `size`-byte access at
+    /// `offset` from call-time SP; `None` below `base_offset` or when the
+    /// access straddles a slot boundary.  A zero-size access trivially fits.
+    ///
+    /// Offsets come from binary content, so `offset + size` is a checked add:
+    /// a garbage offset degrades to `None` instead of wrapping.
+    fn index_of(&self, offset: i128, size: i128) -> Option<usize> {
+        // `validate` rejects `increment <= 0`, but an unvalidated zero should
+        // surface as an assertion, not a divide-by-zero.
+        debug_assert!(
+            self.increment > 0,
+            "StackArgs::index_of requires increment > 0"
+        );
+        if offset < self.base_offset {
+            return None;
+        }
+        let rel = offset - self.base_offset;
+        let idx = (rel / self.increment) as usize;
+        // `idx * increment <= rel`, so `slot_start <= offset` and cannot
+        // overflow; the slot end and access end can, so both are checked.
+        let slot_start = self.base_offset + (idx as i128) * self.increment;
+        let slot_end = slot_start.checked_add(self.increment)?;
+        let access_end = offset.checked_add(size)?;
+        (access_end <= slot_end).then_some(idx)
+    }
+}
+
 fn regs_for(arch: crate::arch::SleighArch) -> rsleigh::SleighRegs {
     let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
     rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
@@ -8,11 +36,12 @@ fn regs_for(arch: crate::arch::SleighArch) -> rsleigh::SleighRegs {
         .unwrap()
 }
 
-/// PPC System V (32-bit and both PPC64 ELF variants) returns a scalar float
-/// in `f1` only.  `f2`..`f13` are volatile argument/scratch float registers,
-/// not return registers.
+/// PPC System V (32-bit and both PPC64 ELF variants) returns `long double`
+/// (IBM double-double, the gcc default) and `_Complex double` in the f1:f2
+/// pair.  With `f2` unlisted nothing roots the low half's cone and DCE drops
+/// it, the same way an unlisted `ST1` dropped the x87 imaginary half.
 #[test]
-fn ppc_float_return_is_f1_only() {
+fn ppc_float_return_covers_the_double_double_pair() {
     for cc in [
         CallingConvention::powerpc_sysv32(),
         CallingConvention::powerpc64_elf_v1(),
@@ -20,10 +49,44 @@ fn ppc_float_return_is_f1_only() {
     ] {
         assert_eq!(
             cc.ret_val_regs_float,
-            &["f1"],
-            "PPC SysV returns floats only in f1, not f2",
+            &["f1", "f2"],
+            "PPC returns long double / _Complex double in f1:f2",
         );
     }
+}
+
+/// AAPCS64 6.4.2 returns a homogeneous floating-point aggregate of up to four
+/// members in v0..v3, and AAPCS-VFP does the same in d0..d3.  Listing only the
+/// first two leaves the rest unrooted at `Return`, so DCE deletes them.
+#[test]
+fn hfa_float_return_covers_all_four_members() {
+    assert_eq!(
+        CallingConvention::aarch64_aapcs64().ret_val_regs_float,
+        &["q0", "q1", "q2", "q3"],
+        "AAPCS64 returns a 4-member HFA in v0..v3",
+    );
+    assert_eq!(
+        CallingConvention::arm_aapcs().ret_val_regs_float,
+        &["d0", "d1", "d2", "d3"],
+        "AAPCS-VFP returns a 4-member HFA in d0..d3",
+    );
+}
+
+/// SysV AMD64 psABI 3.2.3 returns an X87-class value in `%st0`.  Without it in
+/// the list nothing roots the x87 cone, so every `long double` return is
+/// dropped.
+#[test]
+fn x86_64_float_return_includes_st0() {
+    let cc = CallingConvention::x86_64_systemv();
+    assert!(
+        cc.ret_val_regs_float.contains(&"ST0"),
+        "x86-64 long double returns in ST0, got {:?}",
+        cc.ret_val_regs_float,
+    );
+    let built = cc
+        .build(&regs_for(crate::arch::SleighArch::x86_64()))
+        .expect("x86-64 SysV must build");
+    assert_eq!(built.ret_val_regs_float.len(), cc.ret_val_regs_float.len());
 }
 
 /// One supported convention plus everything `build()` should produce for it.
@@ -33,7 +96,10 @@ struct Case {
     cc: fn() -> CallingConvention,
     arch: fn() -> crate::arch::SleighArch,
     arg_count: usize,
+    /// General-purpose only; the float file is `callee_saved_float_count`.
+    /// `callee_saved_regs` is built GPRs first, floats second.
     callee_saved_count: usize,
+    callee_saved_float_count: usize,
     ret_count: usize,
     reg_size_bytes: u32,
     stack_ptr_name: &'static str,
@@ -49,6 +115,7 @@ fn cases() -> Vec<Case> {
             arch: crate::arch::SleighArch::x86_64,
             arg_count: 6,
             callee_saved_count: 6,
+            callee_saved_float_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "RSP",
@@ -64,6 +131,7 @@ fn cases() -> Vec<Case> {
             arch: crate::arch::SleighArch::x86,
             arg_count: 0,
             callee_saved_count: 4,
+            callee_saved_float_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "ESP",
@@ -79,6 +147,7 @@ fn cases() -> Vec<Case> {
             arch: crate::arch::SleighArch::arm,
             arg_count: 4,
             callee_saved_count: 9,
+            callee_saved_float_count: 8,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
@@ -94,6 +163,7 @@ fn cases() -> Vec<Case> {
             arch: crate::arch::SleighArch::aarch64,
             arg_count: 8,
             callee_saved_count: 12,
+            callee_saved_float_count: 8,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
@@ -109,6 +179,7 @@ fn cases() -> Vec<Case> {
             arch: crate::arch::SleighArch::mipsle32,
             arg_count: 4,
             callee_saved_count: 11,
+            callee_saved_float_count: 12,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
@@ -124,6 +195,7 @@ fn cases() -> Vec<Case> {
             arch: crate::arch::SleighArch::mipsbe32,
             arg_count: 4,
             callee_saved_count: 11,
+            callee_saved_float_count: 12,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
@@ -139,6 +211,7 @@ fn cases() -> Vec<Case> {
             arch: crate::arch::SleighArch::mipsle64,
             arg_count: 8,
             callee_saved_count: 11,
+            callee_saved_float_count: 8,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
@@ -154,6 +227,7 @@ fn cases() -> Vec<Case> {
             arch: crate::arch::SleighArch::mipsbe64,
             arg_count: 8,
             callee_saved_count: 11,
+            callee_saved_float_count: 8,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
@@ -168,7 +242,9 @@ fn cases() -> Vec<Case> {
             cc: CallingConvention::powerpc_sysv32,
             arch: crate::arch::SleighArch::ppc32be,
             arg_count: 8,
-            callee_saved_count: 19,
+            // r2 + r13 (reserved TLS/SDA) + r14..r31 (18) + LR.
+            callee_saved_count: 21,
+            callee_saved_float_count: 18,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "r1",
@@ -183,7 +259,8 @@ fn cases() -> Vec<Case> {
             cc: CallingConvention::powerpc_sysv32,
             arch: crate::arch::SleighArch::ppc32le,
             arg_count: 8,
-            callee_saved_count: 19,
+            callee_saved_count: 21,
+            callee_saved_float_count: 18,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "r1",
@@ -198,9 +275,10 @@ fn cases() -> Vec<Case> {
             cc: CallingConvention::powerpc64_elf_v1,
             arch: crate::arch::SleighArch::ppc64be,
             arg_count: 8,
-            // r2 + r14..r31 (18) + LR, the last per the deliberate
-            // link-register tradeoff (consistent with PPC32).
-            callee_saved_count: 20,
+            // r2 (TOC) + r13 (TLS) + r14..r31 (18) + LR, the last per the
+            // deliberate link-register tradeoff (consistent with PPC32).
+            callee_saved_count: 21,
+            callee_saved_float_count: 18,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "r1",
@@ -216,7 +294,8 @@ fn cases() -> Vec<Case> {
             arch: crate::arch::SleighArch::ppc64le,
             arg_count: 8,
             // See PowerPC ELFv1 (BE) above.
-            callee_saved_count: 20,
+            callee_saved_count: 21,
+            callee_saved_float_count: 18,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "r1",
@@ -232,6 +311,7 @@ fn cases() -> Vec<Case> {
             arch: crate::arch::SleighArch::aarch64be,
             arg_count: 8,
             callee_saved_count: 12,
+            callee_saved_float_count: 8,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
@@ -247,6 +327,7 @@ fn cases() -> Vec<Case> {
             arch: crate::arch::SleighArch::arm_thumb,
             arg_count: 4,
             callee_saved_count: 9,
+            callee_saved_float_count: 8,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
@@ -262,6 +343,7 @@ fn cases() -> Vec<Case> {
             arch: crate::arch::SleighArch::arm_be,
             arg_count: 4,
             callee_saved_count: 9,
+            callee_saved_float_count: 8,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
@@ -280,7 +362,8 @@ fn cases() -> Vec<Case> {
             arch: crate::arch::SleighArch::x86,
             arg_count: 3,          // EAX, EDX, ECX
             callee_saved_count: 4, // EBX, ESI, EDI, EBP
-            ret_count: 2,          // EAX, EDX
+            callee_saved_float_count: 0,
+            ret_count: 2, // EAX, EDX
             reg_size_bytes: 4,
             stack_ptr_name: "ESP",
             stack_args: Some(StackArgs {
@@ -342,7 +425,7 @@ fn presets_resolve_correct_register_sets() {
         );
         assert_eq!(
             built.callee_saved_regs.len(),
-            c.callee_saved_count,
+            c.callee_saved_count + c.callee_saved_float_count,
             "{}: callee-saved",
             c.name
         );
@@ -380,10 +463,13 @@ fn presets_resolve_correct_register_sets() {
 fn presets_resolved_registers_have_expected_size() {
     for c in cases() {
         let (built, _) = build_case(&c);
+        // Callee-saved floats are the FP file's own width, not the integer
+        // word size, so only the leading GPR run is checked here.
+        let (saved_int, saved_float) = built.callee_saved_regs.split_at(c.callee_saved_count);
         for vn in built
             .arg_passing_regs
             .iter()
-            .chain(&built.callee_saved_regs)
+            .chain(saved_int)
             .chain(&built.ret_val_regs)
             .chain(std::iter::once(&built.stack_vn))
         {
@@ -393,6 +479,12 @@ fn presets_resolved_registers_have_expected_size() {
                 c.name, c.reg_size_bytes,
             );
         }
+        assert_eq!(
+            saved_float.len(),
+            c.callee_saved_float_count,
+            "{}: callee-saved float registers follow the GPRs",
+            c.name,
+        );
     }
 }
 
@@ -438,6 +530,7 @@ fn build_returns_error_for_unknown_register_name() {
         let cc = CallingConvention {
             stack_ptr_reg_name: "RSP",
             arg_passing_regs: std::slice::from_ref(bad_name),
+            arg_passing_regs_float: &[],
             callee_saved_regs: &[],
             ret_val_regs: &[],
             ret_val_regs_float: &[],
@@ -445,6 +538,7 @@ fn build_returns_error_for_unknown_register_name() {
             ret_stack_pop: 0,
             link_register_reg_name: None,
             preserves_memory: false,
+            preserves_all_registers: false,
         };
         let result = cc.build(&regs);
         let err = result.expect_err("expected UnknownRegName error");
@@ -464,6 +558,7 @@ fn build_returns_error_even_when_some_names_are_valid() {
     let cc = CallingConvention {
         stack_ptr_reg_name: "RSP",
         arg_passing_regs: &["RDI", "NOT_A_REG", "RSI"],
+        arg_passing_regs_float: &[],
         callee_saved_regs: &[],
         ret_val_regs: &[],
         ret_val_regs_float: &[],
@@ -471,16 +566,13 @@ fn build_returns_error_even_when_some_names_are_valid() {
         ret_stack_pop: 0,
         link_register_reg_name: None,
         preserves_memory: false,
+        preserves_all_registers: false,
     };
     assert!(
         cc.build(&regs).is_err(),
         "a list with one bad name must fail"
     );
 }
-
-// To inspect Sleigh register names for an arch during development, build a
-// `rsleigh::Sleigh` from the arch's `.sla` + `.pspec`, call `regs()`, and probe
-// `name_to_vn(...)` for each candidate name.
 
 /// Expected link-register Sleigh name per preset, `None` for stack-push ISAs
 /// that hold the return address on the stack.  Drives every link-register
@@ -616,8 +708,7 @@ fn link_register_vn_set_for_link_register_presets() {
     }
 }
 
-/// Stack-push ISAs (x86, x86_64) keep the return address on the stack, so
-/// there is no LR to expose.
+/// Stack-push ISAs (x86, x86_64) keep the return address on the stack.
 #[test]
 fn link_register_vn_none_for_stack_push_presets() {
     for c in link_reg_cases() {
@@ -642,14 +733,12 @@ fn link_register_vn_none_for_stack_push_presets() {
 /// caller-saved/volatile, so the indirect-branch resolver's `LinkRegister` arm
 /// fires on functions returning via the entry LR.  Pins that the two lookup
 /// paths agree: `link_register_reg_name` resolution AND the
-/// `callee_saved_regs` list.  Before this, AArch64 / MIPS / PPC could drop
-/// their LR from `callee_saved_regs` undetected.
+/// `callee_saved_regs` list.
 #[test]
 fn link_register_vn_resolves_to_callee_saved_lr() {
     for c in link_reg_cases() {
         let Some(_) = c.expected_lr_name else {
-            // No LR; covered by
-            // `link_register_vn_none_for_stack_push_presets`.
+            // Covered by `link_register_vn_none_for_stack_push_presets`.
             continue;
         };
         let regs = regs_for((c.arch)());
@@ -662,7 +751,7 @@ fn link_register_vn_resolves_to_callee_saved_lr() {
         assert!(
             built.callee_saved_regs.contains(&lr_vn),
             "{}: link-register varnode must be present in callee_saved_regs \
-             (CLAUDE.md deliberate-tradeoff invariant); got callee_saved_regs={:?}",
+             (the deliberate-tradeoff invariant); got callee_saved_regs={:?}",
             c.name,
             built.callee_saved_regs,
         );
@@ -678,6 +767,7 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
     let cc = CallingConvention {
         stack_ptr_reg_name: "NOT_A_SP",
         arg_passing_regs: &[],
+        arg_passing_regs_float: &[],
         callee_saved_regs: &[],
         ret_val_regs: &[],
         ret_val_regs_float: &[],
@@ -685,6 +775,7 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
         ret_stack_pop: 0,
         link_register_reg_name: None,
         preserves_memory: false,
+        preserves_all_registers: false,
     };
     let result = cc.build(&regs);
     let err = result.expect_err("expected UnknownRegName error");
@@ -696,26 +787,32 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
 }
 
 #[test]
-fn x86_64_all_preserving_has_preserves_memory_true() {
-    // The all-preserving CC (__fentry__ / mcount-style hooks) promises zero
-    // observable side-effects, so the Call's memory output must be
-    // suppressible at IR-build time for LoadReadOnly / LoadForward to forward
-    // across these calls.
-    assert!(
-        CallingConvention::x86_64_all_preserving().preserves_memory,
-        "x86_64_all_preserving must declare preserves_memory = true"
+fn preserves_all_sets_both_flags_regs_keeps_memory() {
+    // __fentry__ / mcount-style hooks promise zero observable side-effects, so
+    // the Call's memory output must be suppressible at IR-build time for
+    // LoadReadOnly / LoadForward to forward across these calls.  preserves_regs
+    // suppresses only the register clobbers.
+    let all = CallingConvention::x86_64_systemv().preserves_all();
+    assert!(all.preserves_memory && all.preserves_all_registers);
+    let regs = CallingConvention::x86_64_systemv().preserves_regs();
+    assert!(!regs.preserves_memory && regs.preserves_all_registers);
+    // callee_saved is retained (the link-register invariant must survive).
+    assert_eq!(
+        all.callee_saved_regs,
+        CallingConvention::x86_64_systemv().callee_saved_regs
     );
 }
 
 #[test]
 fn standard_presets_have_preserves_memory_false() {
     // Standard presets keep the default so their Call nodes correctly clobber
-    // memory.  Only x86_64_all_preserving opts out.
+    // memory.  Only preserves_all / preserves_regs opt out.
     let presets: &[(&str, CallingConvention)] = &[
         ("x86_64_systemv", CallingConvention::x86_64_systemv()),
         ("x86_cdecl", CallingConvention::x86_cdecl()),
         ("aarch64_aapcs64", CallingConvention::aarch64_aapcs64()),
         ("arm_aapcs", CallingConvention::arm_aapcs()),
+        ("arm_aapcs_soft", CallingConvention::arm_aapcs_soft()),
         ("mips_o32", CallingConvention::mips_o32()),
         ("mips_n64", CallingConvention::mips_n64()),
         ("powerpc_sysv32", CallingConvention::powerpc_sysv32()),
@@ -736,12 +833,9 @@ fn every_preset_factory_resolves() {
     // misspelled name) before the production panic in `cc_from_table` fires.
     let factories: &[(&str, fn() -> CallingConvention)] = &[
         ("x86_64_systemv", CallingConvention::x86_64_systemv),
-        (
-            "x86_64_all_preserving",
-            CallingConvention::x86_64_all_preserving,
-        ),
         ("aarch64_aapcs64", CallingConvention::aarch64_aapcs64),
         ("arm_aapcs", CallingConvention::arm_aapcs),
+        ("arm_aapcs_soft", CallingConvention::arm_aapcs_soft),
         ("mips_o32", CallingConvention::mips_o32),
         ("mips_n64", CallingConvention::mips_n64),
         ("powerpc_sysv32", CallingConvention::powerpc_sysv32),
@@ -759,7 +853,6 @@ fn every_preset_factory_resolves() {
             "preset {name:?}: CC_PRESETS row does not match factory output",
         );
     }
-    // And the table holds exactly the listed factories, no more.
     assert_eq!(
         CC_PRESETS.len(),
         factories.len(),
@@ -826,7 +919,8 @@ fn stack_args_below_base_negative_offset_is_none() {
 #[test]
 fn positional_arg_layout_empty_has_no_stack() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
-    let cc = CallingConvention::x86_64_all_preserving()
+    let cc = CallingConvention::x86_64_systemv()
+        .preserves_all()
         .build(&regs)
         .unwrap();
     assert!(cc.arg_passing_regs.is_empty());
@@ -932,9 +1026,9 @@ fn stack_args_index_and_slot_boundaries_per_increment() {
             "{label}: zero-size at slot-1 start"
         );
 
-        // `slot_of` takes no size argument at all, so a wider-than-slot
-        // argument anchors at the slot of its first byte, giving the same
-        // answer as the 1-byte probes below.
+        // `slot_of` takes no size argument, so a wider-than-slot argument
+        // anchors at the slot of its first byte, giving the same answer as the
+        // 1-byte probes below.
         assert_eq!(s.slot_of(base - 1), None, "{label}: below base");
         assert_eq!(s.slot_of(base), Some(0), "{label}: slot-0 start");
         assert_eq!(
@@ -979,7 +1073,6 @@ fn stack_args_slots_spanned_ceils_by_increment() {
             base_offset: inc,
             increment: inc,
         };
-        // Zero or one byte occupies one slot, never zero.
         assert_eq!(
             s.slots_spanned(0),
             1,
@@ -1038,10 +1131,10 @@ fn stack_args_slot_math_degrades_on_overflow_not_panics() {
 /// negative base lets `index_of` / `slot_of`'s `offset - base_offset`
 /// overflow on a garbage offset decoded from a crafted binary.
 #[test]
-fn try_new_rejects_negative_stack_arg_base_offset() {
+fn validate_rejects_negative_stack_arg_base_offset() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
     let sp = regs.name_to_vn("RSP").expect("x86_64 has RSP");
-    let result = BuiltCallingConvention::try_new(BuiltCallingConventionParts {
+    let cc = BuiltCallingConvention {
         arg_passing_regs: vec![],
         callee_saved_regs: vec![],
         ret_val_regs: vec![],
@@ -1054,9 +1147,504 @@ fn try_new_rejects_negative_stack_arg_base_offset() {
         ret_stack_pop: 0,
         link_register_vn: None,
         preserves_memory: false,
-    });
+        preserves_all_registers: false,
+        no_return: false,
+        ..Default::default()
+    };
     assert!(
-        result.is_err(),
-        "negative stack-arg base_offset must be rejected by try_new",
+        cc.validate().is_err(),
+        "negative stack-arg base_offset must be rejected by validate",
     );
+}
+
+/// GHIDRA's ARM sla puts `d0`/`d1` and `q0` at the same register offset
+/// (0x300), so a function touching `q0`/`q1` tracks those as the containers
+/// and `d0..d3` collapse onto them.  Mapping the return list through
+/// `container_of` then yields `q0, q0, q1, q1`, which the lifter concatenates
+/// into a `Call`'s output varnodes and `validate_call_output_vns` rejects.
+#[test]
+fn aliased_float_ret_regs_collapse_to_one_container_each() {
+    let regs = regs_for(crate::arch::SleighArch::arm());
+    let built = CallingConvention::arm_aapcs()
+        .build(&regs)
+        .expect("arm_aapcs must build");
+    let q0 = vn_for_name(&regs, "q0").expect("ARM sla defines q0");
+    let q1 = vn_for_name(&regs, "q1").expect("ARM sla defines q1");
+    let r0 = vn_for_name(&regs, "r0").expect("ARM sla defines r0");
+    let r1 = vn_for_name(&regs, "r1").expect("ARM sla defines r1");
+    let tracked = [r0, r1, q0, q1];
+    let (ret_vals, _clobbers) = built.ret_and_clobber_vns(&tracked, |v| container_in(&tracked, v));
+    assert_all_distinct(&ret_vals, "ret_vals with q0/q1 tracked");
+}
+
+/// Float / vector argument registers, per psABI, plus proof each name resolves
+/// on every arch that uses the preset.  A float argument sits in a register
+/// file the integer `arg_passing_regs` never names, so without this list the
+/// whole argument cone is unrooted at the call site and DCE deletes it.
+#[test]
+fn float_arg_registers_match_the_psabi() {
+    type CcFn = fn() -> CallingConvention;
+    type ArchFn = fn() -> crate::arch::SleighArch;
+    const XMM: &[&str] = &[
+        "XMM0", "XMM1", "XMM2", "XMM3", "XMM4", "XMM5", "XMM6", "XMM7",
+    ];
+    const Q: &[&str] = &["q0", "q1", "q2", "q3", "q4", "q5", "q6", "q7"];
+    const D: &[&str] = &["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"];
+    // SysV PPC32 passes eight floats in registers; both PPC64 ABIs pass 13.
+    const F1_F8: &[&str] = &["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"];
+    const F1_F13: &[&str] = &[
+        "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13",
+    ];
+    const O32: &[&str] = &["f12", "f14"];
+    const N64: &[&str] = &["f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19"];
+
+    let cases: &[(&str, CcFn, ArchFn, &[&str])] = &[
+        // SysV AMD64 psABI 3.2.3: SSE-class arguments in %xmm0..%xmm7.
+        (
+            "x86-64 SysV",
+            CallingConvention::x86_64_systemv,
+            crate::arch::SleighArch::x86_64,
+            XMM,
+        ),
+        // Intel386 psABI: every float argument goes on the stack.
+        (
+            "x86 cdecl",
+            CallingConvention::x86_cdecl,
+            crate::arch::SleighArch::x86,
+            &[],
+        ),
+        (
+            "x86 Linux kernel",
+            CallingConvention::x86_linux_kernel,
+            crate::arch::SleighArch::x86,
+            &[],
+        ),
+        // AAPCS64 6.4.1: SIMD/FP arguments in v0..v7.
+        (
+            "AArch64 AAPCS64",
+            CallingConvention::aarch64_aapcs64,
+            crate::arch::SleighArch::aarch64,
+            Q,
+        ),
+        (
+            "AArch64 AAPCS64 (BE)",
+            CallingConvention::aarch64_aapcs64,
+            crate::arch::SleighArch::aarch64be,
+            Q,
+        ),
+        // AAPCS-VFP: d0..d7 (also viewed as s0..s15).
+        (
+            "ARM AAPCS",
+            CallingConvention::arm_aapcs,
+            crate::arch::SleighArch::arm,
+            D,
+        ),
+        (
+            "ARM AAPCS (BE)",
+            CallingConvention::arm_aapcs,
+            crate::arch::SleighArch::arm_be,
+            D,
+        ),
+        (
+            "ARM AAPCS (Thumb)",
+            CallingConvention::arm_aapcs,
+            crate::arch::SleighArch::arm_thumb,
+            D,
+        ),
+        // MIPS O32: the first two float arguments in $f12 / $f14.
+        (
+            "MIPS O32 (LE)",
+            CallingConvention::mips_o32,
+            crate::arch::SleighArch::mipsle32,
+            O32,
+        ),
+        (
+            "MIPS O32 (BE)",
+            CallingConvention::mips_o32,
+            crate::arch::SleighArch::mipsbe32,
+            O32,
+        ),
+        // MIPS N64: eight float argument registers, $f12..$f19.
+        (
+            "MIPS N64 (LE)",
+            CallingConvention::mips_n64,
+            crate::arch::SleighArch::mipsle64,
+            N64,
+        ),
+        (
+            "MIPS N64 (BE)",
+            CallingConvention::mips_n64,
+            crate::arch::SleighArch::mipsbe64,
+            N64,
+        ),
+        // PowerPC SysV 32: f1..f8; ELFv1 / ELFv2: f1..f13.
+        (
+            "PowerPC SysV 32 (BE)",
+            CallingConvention::powerpc_sysv32,
+            crate::arch::SleighArch::ppc32be,
+            F1_F8,
+        ),
+        (
+            "PowerPC SysV 32 (LE)",
+            CallingConvention::powerpc_sysv32,
+            crate::arch::SleighArch::ppc32le,
+            F1_F8,
+        ),
+        (
+            "PowerPC ELFv1 (BE)",
+            CallingConvention::powerpc64_elf_v1,
+            crate::arch::SleighArch::ppc64be,
+            F1_F13,
+        ),
+        (
+            "PowerPC ELFv2 (LE)",
+            CallingConvention::powerpc64_elf_v2,
+            crate::arch::SleighArch::ppc64le,
+            F1_F13,
+        ),
+    ];
+
+    for &(name, cc_fn, arch_fn, expected) in cases {
+        let cc = cc_fn();
+        assert_eq!(
+            cc.arg_passing_regs_float, expected,
+            "{name}: float argument registers",
+        );
+        let built = cc
+            .build(&regs_for(arch_fn()))
+            .unwrap_or_else(|e| panic!("{name}: build failed: {e:?}"));
+        assert_eq!(
+            built.arg_passing_regs_float.len(),
+            expected.len(),
+            "{name}: every float argument register name must resolve",
+        );
+        assert_all_distinct(&built.arg_passing_regs_float, name);
+    }
+}
+
+/// A float argument register is legitimately also a float RETURN register
+/// (`XMM0`, `d0`, `f1`), so `validate` must keep that overlap legal while
+/// still rejecting an argument register the callee is required to preserve.
+#[test]
+fn float_arg_regs_may_overlap_returns_but_not_callee_saved() {
+    for (name, cc_fn, arch_fn) in [
+        (
+            "x86-64 SysV",
+            CallingConvention::x86_64_systemv as fn() -> CallingConvention,
+            crate::arch::SleighArch::x86_64 as fn() -> crate::arch::SleighArch,
+        ),
+        (
+            "ARM AAPCS",
+            CallingConvention::arm_aapcs,
+            crate::arch::SleighArch::arm,
+        ),
+        (
+            "PowerPC SysV 32",
+            CallingConvention::powerpc_sysv32,
+            crate::arch::SleighArch::ppc32be,
+        ),
+    ] {
+        let built = cc_fn()
+            .build(&regs_for(arch_fn()))
+            .unwrap_or_else(|e| panic!("{name}: build failed: {e:?}"));
+        assert!(
+            built
+                .arg_passing_regs_float
+                .iter()
+                .any(|vn| built.ret_val_regs_float.contains(vn)),
+            "{name}: the first float argument register is also a float return \
+             register, and validate must allow it",
+        );
+        for vn in &built.arg_passing_regs_float {
+            assert!(
+                !built.callee_saved_regs.contains(vn),
+                "{name}: float arg reg {vn:?} must not be callee-saved",
+            );
+        }
+    }
+}
+
+/// Every float-capable psABI reserves part of the FP register file, and real
+/// compilers rely on it: `aarch64-gcc -O2` keeps a `double` in `d8` across a
+/// `bl` with no reload.  Without these entries the post-call read of the
+/// register resolves to a `Call` output instead of the incoming value.
+#[test]
+fn callee_saved_float_registers_match_the_psabi() {
+    type CcFn = fn() -> CallingConvention;
+    type ArchFn = fn() -> crate::arch::SleighArch;
+    // AAPCS 5.1.2.1 / AAPCS64 6.1.2: d8-d15 (AAPCS64 preserves the low 64
+    // bits only).
+    const D8_D15: &[&str] = &["d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15"];
+    // MIPS o32: $f20-$f31.
+    const F20_F31: &[&str] = &[
+        "f20", "f21", "f22", "f23", "f24", "f25", "f26", "f27", "f28", "f29", "f30", "f31",
+    ];
+    // MIPS n64: $f24-$f31.
+    const F24_F31: &[&str] = &["f24", "f25", "f26", "f27", "f28", "f29", "f30", "f31"];
+    // PowerPC SysV / ELFv1 / ELFv2: f14-f31.
+    const F14_F31: &[&str] = &[
+        "f14", "f15", "f16", "f17", "f18", "f19", "f20", "f21", "f22", "f23", "f24", "f25", "f26",
+        "f27", "f28", "f29", "f30", "f31",
+    ];
+
+    let cases: &[(&str, CcFn, ArchFn, &[&str])] = &[
+        (
+            "ARM AAPCS",
+            CallingConvention::arm_aapcs,
+            crate::arch::SleighArch::arm,
+            D8_D15,
+        ),
+        // The VFP file is preserved the same way under either float variant.
+        (
+            "ARM AAPCS (soft-float)",
+            CallingConvention::arm_aapcs_soft,
+            crate::arch::SleighArch::arm,
+            D8_D15,
+        ),
+        (
+            "ARM AAPCS (BE32)",
+            CallingConvention::arm_aapcs,
+            crate::arch::SleighArch::arm_be,
+            D8_D15,
+        ),
+        (
+            "ARM AAPCS (BE8)",
+            CallingConvention::arm_aapcs,
+            crate::arch::SleighArch::arm_be_kernel,
+            D8_D15,
+        ),
+        (
+            "ARM AAPCS (Thumb)",
+            CallingConvention::arm_aapcs,
+            crate::arch::SleighArch::arm_thumb,
+            D8_D15,
+        ),
+        (
+            "AArch64 AAPCS64",
+            CallingConvention::aarch64_aapcs64,
+            crate::arch::SleighArch::aarch64,
+            D8_D15,
+        ),
+        (
+            "AArch64 AAPCS64 (BE)",
+            CallingConvention::aarch64_aapcs64,
+            crate::arch::SleighArch::aarch64be,
+            D8_D15,
+        ),
+        (
+            "MIPS O32 (LE)",
+            CallingConvention::mips_o32,
+            crate::arch::SleighArch::mipsle32,
+            F20_F31,
+        ),
+        (
+            "MIPS O32 (BE)",
+            CallingConvention::mips_o32,
+            crate::arch::SleighArch::mipsbe32,
+            F20_F31,
+        ),
+        (
+            "MIPS N64 (LE)",
+            CallingConvention::mips_n64,
+            crate::arch::SleighArch::mipsle64,
+            F24_F31,
+        ),
+        (
+            "MIPS N64 (BE)",
+            CallingConvention::mips_n64,
+            crate::arch::SleighArch::mipsbe64,
+            F24_F31,
+        ),
+        (
+            "PowerPC SysV 32 (BE)",
+            CallingConvention::powerpc_sysv32,
+            crate::arch::SleighArch::ppc32be,
+            F14_F31,
+        ),
+        (
+            "PowerPC ELFv1 (BE)",
+            CallingConvention::powerpc64_elf_v1,
+            crate::arch::SleighArch::ppc64be,
+            F14_F31,
+        ),
+        (
+            "PowerPC ELFv2 (LE)",
+            CallingConvention::powerpc64_elf_v2,
+            crate::arch::SleighArch::ppc64le,
+            F14_F31,
+        ),
+    ];
+
+    for &(name, cc_fn, arch_fn, expected) in cases {
+        let cc = cc_fn();
+        for want in expected {
+            assert!(
+                cc.callee_saved_regs.contains(want),
+                "{name}: {want} is callee-saved by the psABI but absent from \
+                 callee_saved_regs",
+            );
+        }
+        let regs = regs_for(arch_fn());
+        let built = cc
+            .build(&regs)
+            .unwrap_or_else(|e| panic!("{name}: build failed: {e:?}"));
+        for want in expected {
+            let vn = vn_for_name(&regs, want).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+            assert!(
+                built.callee_saved_regs.contains(&vn),
+                "{name}: {want} did not resolve into callee_saved_regs",
+            );
+        }
+        assert_all_distinct(&built.callee_saved_regs, name);
+    }
+}
+
+/// AAPCS64 6.1.2 preserves only the LOW 64 bits of v8-v15, so naming the `q`
+/// views here would claim their upper halves preserved.
+#[test]
+fn aarch64_callee_saved_float_regs_name_the_low_64_bit_views() {
+    let regs = regs_for(crate::arch::SleighArch::aarch64());
+    let built = CallingConvention::aarch64_aapcs64()
+        .build(&regs)
+        .expect("aarch64_aapcs64 must build");
+    for n in 8..16u32 {
+        let d = vn_for_name(&regs, &format!("d{n}")).expect("aarch64 sla defines d8..d15");
+        assert_eq!(d.size, 8, "d{n} is the low 64-bit view");
+        assert!(
+            built.callee_saved_regs.contains(&d),
+            "d{n} must be callee-saved",
+        );
+        let q = vn_for_name(&regs, &format!("q{n}")).expect("aarch64 sla defines q8..q15");
+        assert!(
+            !built.callee_saved_regs.contains(&q),
+            "q{n} covers 128 bits, of which only the low 64 are preserved",
+        );
+    }
+}
+
+/// `FunctionBuilder::new`'s container map, i.e.
+/// `vn_container::largest_container_in`.
+fn container_in(tracked: &[rsleigh::Vn], v: &rsleigh::Vn) -> rsleigh::Vn {
+    let end = v.addr_off + u64::from(v.size);
+    tracked
+        .iter()
+        .copied()
+        .filter(|c| {
+            c.addr_space == v.addr_space
+                && c.addr_off <= v.addr_off
+                && c.addr_off + u64::from(c.size) >= end
+        })
+        .max_by_key(|c| c.size)
+        .unwrap_or(*v)
+}
+
+/// AAPCS64 6.1.2 preserves only the LOW 64 bits of `v8`-`v15`.  A function
+/// touching all of `q8` tracks the 128-bit container, and the callee is free
+/// to trash its upper half, so the container belongs in the clobber set.
+#[test]
+fn aarch64_tracked_q8_is_clobbered() {
+    let regs = regs_for(crate::arch::SleighArch::aarch64());
+    let built = CallingConvention::aarch64_aapcs64()
+        .build(&regs)
+        .expect("aarch64_aapcs64 must build");
+    let q8 = vn_for_name(&regs, "q8").expect("aarch64 sla defines q8");
+    let d8 = vn_for_name(&regs, "d8").expect("aarch64 sla defines d8");
+    let x19 = vn_for_name(&regs, "x19").expect("aarch64 sla defines x19");
+    let tracked = [x19, q8];
+    let (_ret_vals, clobbers) = built.ret_and_clobber_vns(&tracked, |v| container_in(&tracked, v));
+    assert!(
+        clobbers.contains(&q8),
+        "only d8 (the low {} of q8's {} bytes) is preserved, so q8 is clobbered; \
+         got {clobbers:?}",
+        d8.size,
+        q8.size,
+    );
+    assert!(
+        !clobbers.contains(&x19),
+        "x19 is callee-saved in full and must stay out of the clobber set",
+    );
+}
+
+/// AAPCS 5.1.2.1 preserves BOTH halves of ARM `q4` (= `d8`|`d9`), so a
+/// function tracking the 128-bit container keeps it out of the clobber set.
+#[test]
+fn arm_tracked_q4_stays_preserved() {
+    let regs = regs_for(crate::arch::SleighArch::arm());
+    let built = CallingConvention::arm_aapcs()
+        .build(&regs)
+        .expect("arm_aapcs must build");
+    let q4 = vn_for_name(&regs, "q4").expect("ARM sla defines q4");
+    let d8 = vn_for_name(&regs, "d8").expect("ARM sla defines d8");
+    let d9 = vn_for_name(&regs, "d9").expect("ARM sla defines d9");
+    assert_eq!(
+        container_in(&[q4], &d8),
+        q4,
+        "d8 sits in q4 in GHIDRA's ARM register table",
+    );
+    assert_eq!(container_in(&[q4], &d9), q4, "d9 sits in q4");
+    let r4 = vn_for_name(&regs, "r4").expect("ARM sla defines r4");
+    let tracked = [r4, q4];
+    let (_ret_vals, clobbers) = built.ret_and_clobber_vns(&tracked, |v| container_in(&tracked, v));
+    assert!(
+        !clobbers.contains(&q4),
+        "d8 and d9 cover q4 entirely, so q4 is preserved; got {clobbers:?}",
+    );
+}
+
+/// `container_of` is an O(|tracked|) scan under
+/// `strider_ir::cc_ret_and_clobber_vns`, and `ret_and_clobber_vns` runs per
+/// `Call` node built.  Mapping the callee-saved list through it makes that
+/// |callee_saved| * |tracked| per call, 39 * |tracked| on PPC64.
+#[test]
+fn ret_and_clobber_vns_does_not_map_the_callee_saved_list() {
+    let regs = regs_for(crate::arch::SleighArch::ppc64be());
+    let cc = CallingConvention::powerpc64_elf_v1();
+    let built = cc.build(&regs).expect("powerpc64_elf_v1 must build");
+    let tracked: Vec<rsleigh::Vn> = built
+        .callee_saved_regs
+        .iter()
+        .chain(built.ret_val_regs.iter())
+        .chain(built.ret_val_regs_float.iter())
+        .copied()
+        .collect();
+    let calls = std::cell::Cell::new(0usize);
+    let (_ret_vals, _clobbers) = built.ret_and_clobber_vns(&tracked, |v| {
+        calls.set(calls.get() + 1);
+        container_in(&tracked, v)
+    });
+    let ret_regs = built.ret_val_regs.len() + built.ret_val_regs_float.len();
+    assert!(
+        calls.get() <= ret_regs,
+        "container_of ran {} times for {ret_regs} return register(s) and {} \
+         callee-saved one(s)",
+        calls.get(),
+        built.callee_saved_regs.len(),
+    );
+}
+
+/// `-mfloat-abi=soft` / `softfp` passes floats and returns them in the core
+/// registers, so naming the VFP bank would seed `d0`-`d7` on every function
+/// and hang phantom float arguments off every call site.
+#[test]
+fn arm_soft_float_preset_names_no_vfp_registers() {
+    let cc = CallingConvention::arm_aapcs_soft();
+    assert_eq!(cc.arg_passing_regs_float, &[] as &[&str]);
+    assert_eq!(cc.ret_val_regs_float, &[] as &[&str]);
+    assert_eq!(
+        cc.arg_passing_regs,
+        CallingConvention::arm_aapcs().arg_passing_regs,
+        "the core-register geometry is the hard-float preset's",
+    );
+    for arch in [
+        crate::arch::SleighArch::arm,
+        crate::arch::SleighArch::arm_be,
+        crate::arch::SleighArch::arm_be_kernel,
+        crate::arch::SleighArch::arm_thumb,
+    ] {
+        let built = cc
+            .build(&regs_for(arch()))
+            .expect("arm_aapcs_soft must build on every ARM32 preset");
+        assert!(built.arg_passing_regs_float.is_empty());
+        assert!(built.ret_val_regs_float.is_empty());
+    }
 }
