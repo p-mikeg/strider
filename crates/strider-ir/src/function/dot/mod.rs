@@ -110,8 +110,8 @@ pub struct FunctionDotDumper<'a, R: MemReader> {
     pub(crate) entry: NodeId,
     pub(crate) function: &'a Function,
     pub(crate) sleigh: &'a rsleigh::Sleigh<R>,
-    /// Carrier node -> arg indices.
-    pub(crate) node_to_arg_indices: FxHashMap<NodeId, Vec<u32>>,
+    /// Carrier node -> arg tags.
+    pub(crate) node_to_arg_indices: FxHashMap<NodeId, Vec<ArgTag>>,
     /// Restrict the render to the induced subgraph over these nodes; `None`
     /// renders everything reachable from `entry`.
     pub(crate) nodes: Option<FxHashSet<NodeId>>,
@@ -119,12 +119,37 @@ pub struct FunctionDotDumper<'a, R: MemReader> {
     pub(crate) center: Option<NodeId>,
 }
 
-pub(crate) fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<u32>> {
-    let mut map: FxHashMap<NodeId, Vec<u32>> = FxHashMap::default();
-    for idx in function.side_tables().iter_arg_indices() {
-        for &value in function.side_tables().arg_index_to_values(idx) {
+/// A carrier's argument annotation. The integer and float index spaces are
+/// separate, so the class is part of the label.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum ArgTag {
+    Int(u32),
+    Float(u32),
+}
+
+impl std::fmt::Display for ArgTag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Int(index) => write!(f, "[arg {index}]"),
+            Self::Float(index) => write!(f, "[float arg {index}]"),
+        }
+    }
+}
+
+pub(crate) fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<ArgTag>> {
+    let mut map: FxHashMap<NodeId, Vec<ArgTag>> = FxHashMap::default();
+    let side = function.side_tables();
+    let tags = side
+        .iter_arg_indices()
+        .map(|index| (ArgTag::Int(index), side.arg_index_to_values(index)))
+        .chain(
+            side.iter_float_arg_indices()
+                .map(|index| (ArgTag::Float(index), side.float_arg_index_to_values(index))),
+        );
+    for (tag, values) in tags {
+        for &value in values {
             let node = function.producer(value);
-            map.entry(node).or_default().push(idx);
+            map.entry(node).or_default().push(tag);
         }
     }
     // Sort so label output is deterministic.
@@ -147,8 +172,9 @@ pub struct FunctionDotDumperState {
 }
 
 impl FunctionDotDumperState {
-    /// `None` for a virtual (`If` branch / `Call` clobber) box, which has no
-    /// `NodeId`.
+    /// Test-only: `None` for a virtual (`If` branch / `Call` clobber) box,
+    /// which has no `NodeId`.
+    #[cfg(test)]
     pub fn node_of_dot_id(&self, dot_id: &str) -> Option<NodeId> {
         self.dot_to_node.get(dot_id).copied()
     }

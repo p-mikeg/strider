@@ -21,7 +21,7 @@ pub trait IrWalkerEx: IRWalker {
 
 impl<T: IRWalker + ?Sized> IrWalkerEx for T {}
 
-/// Builder shorthands for shapes that aren't primitive in the IR. Test-only.
+/// Builder shorthands for shapes that aren't primitive in the IR.
 pub trait IrBuilderEx: IRBuilderExt {
     /// `Add(lhs, Neg(rhs))`, the shape the lifter lowers `IntSub` to.
     ///
@@ -41,8 +41,8 @@ pub trait IrBuilderEx: IRBuilderExt {
 
 impl<T: IRBuilderExt + ?Sized> IrBuilderEx for T {}
 
-/// Deliberately unlike any real machine address, so a sentinel-stamped node
-/// leaking into a graph dump or IR snapshot is unmistakable.
+/// Unlike any real machine address, so a sentinel-stamped node leaking into a
+/// graph dump or IR snapshot is unmistakable.
 pub const SENTINEL_LIFT_ADDR: u64 = 0xDEAD_BEEF_0000_0001;
 
 /// Fallback SP when a fixture declares no `stack_vn`. `build_call` reads the
@@ -135,10 +135,9 @@ impl RegisterSet {
         if !tracked.contains(&stack_vn) {
             tracked.push(stack_vn);
         }
-        // Deliberately skips `validate`, so fixtures may declare overlapping
-        // or otherwise degenerate register sets.
-        // Exhaustive: a new ABI field must be routed here rather than
-        // silently defaulting.
+        // Skips `validate`, so fixtures may declare overlapping or otherwise
+        // degenerate register sets. Exhaustive: a new ABI field must be routed
+        // here.
         let cc = strider_target::BuiltCallingConvention {
             arg_passing_regs: self.arg_passing,
             arg_passing_regs_float: Vec::new(),
@@ -171,9 +170,8 @@ impl RegisterSet {
         let mut b = self.build_fn()?;
         let region = b.create_region_all()?;
         b.set_entry_region_all(region)?;
-        // Mirrors the lifter: recording arg carriers after entry setup is what
-        // gives arg-query tests the same `arg_index_to_values` a lifted
-        // function would have.
+        // Mirrors the lifter: arg carriers recorded after entry setup, so tests
+        // see the same `arg_index_to_values` a lifted function has.
         b.record_register_arg_carriers();
         b.set_region(region);
         Ok(b)
@@ -370,8 +368,7 @@ enum MockRomShape {
     },
     /// Keyed by exact address; matches any read size.
     FixedTable { entries: BTreeMap<u64, u64> },
-    /// A one-entry `FixedTable` with a size filter, kept distinct because it
-    /// reads better at the call site.
+    /// A one-entry `FixedTable` with a size filter.
     Limited { addr: u64, size: usize, value: u64 },
     /// Serves every `(addr, size)`.
     AlwaysAnswer { value: u64 },

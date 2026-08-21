@@ -175,7 +175,7 @@ impl Tb {
         self.fb.build_lzcount(v, ValueType::I64).expect("lzcount")
     }
 
-    // Booleans are 1-bit (`I1`) integers, so a boolean binary op is just an
+    // Booleans are 1-bit (`I1`) integers, so a boolean binary op is an
     // `IntBinaryOp` (`And` / `Or` / `Xor`) at `I1`.
     pub fn bool_bin(&mut self, l: ValueId, r: ValueId, op: IntBinaryOp) -> ValueId {
         self.fb

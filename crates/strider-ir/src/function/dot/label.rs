@@ -76,7 +76,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     }
 
     /// Appends a `base sp +/- K` line to a Store/Load label when the node has a
-    /// `stack_offsets` entry.  The base may be the entry SP or a masked SP.
+    /// `memory_offsets` entry.  The base may be the entry SP or a masked SP.
     fn with_sp_offset(&self, node: NodeId, label: String) -> String {
         match self.function.stack_offset(node) {
             Some((_, k)) if k < 0 => format!("{label}\nbase sp - {}", -k),
@@ -136,15 +136,13 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                     let v = f32::from_bits(*bits as u32);
                     format!("const {v}:f32")
                 }
-                Some(ValueType::F80) => {
-                    // No native Rust f80, so show raw bits rather than
-                    // mis-rendering as f64.
-                    format!("const {bits:#x}:f80")
-                }
-                _ => {
+                Some(ValueType::F64) => {
                     let v = f64::from_bits(*bits);
                     format!("const {v}:f64")
                 }
+                // No native Rust carrier at these widths, so show raw bits.
+                Some(ty) => format!("const {bits:#x}:{}", ty.as_str()),
+                None => format!("const {bits:#x}"),
             },
 
             NodeKind::Load(space) => {

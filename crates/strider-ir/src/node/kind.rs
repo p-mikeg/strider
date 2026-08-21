@@ -59,7 +59,7 @@ pub enum NodeKind {
     /// Resolved jump table. Inputs: `(control, address)`. Outputs: one
     /// `Control` per target, output `i` taken when `address ==
     /// switch_targets[i]` (case addresses live in the `switch_targets` side-table).
-    /// Exhaustive: no default arm.
+    /// Exhaustive: `address` always equals one of the cases.
     Switch,
 
     /// Clobbers caller-saved registers and the memory token.
@@ -68,7 +68,7 @@ pub enum NodeKind {
     Return,
     /// Placeholder for a branch the CFG could not resolve. Inputs:
     /// `[control, memory, target_value]`. Outputs: `[]`. Surviving the
-    /// pipeline just means classification failed; the IR stays valid.
+    /// pipeline means classification failed; the IR stays valid.
     IndirectBranch,
     /// Control sink for a no-return trap (`ud2`, `int3`, `abort`, `BUG_ON`).
     /// Inputs: `[control]`. Outputs: `[]`.

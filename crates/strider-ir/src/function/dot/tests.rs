@@ -61,6 +61,39 @@ fn edge_lines(dot: &str) -> Vec<&str> {
     dot.lines().filter(|l| l.contains("->")).collect()
 }
 
+/// `f16` and `f128` have no Rust carrier to print through, so the label shows
+/// raw bits, never an `f64::from_bits` reinterpretation.
+#[test]
+fn render_float_const_beyond_f64_shows_raw_bits() {
+    for (ty, suffix) in [(ValueType::F16, ":f16"), (ValueType::F128, ":f128")] {
+        let mut f = test_function();
+        let entry = f
+            .graph_mut()
+            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = f
+            .graph_mut()
+            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+        let c = f
+            .graph_mut()
+            .create_node(NodeKind::FloatConst(0x3c00), [], [ValueKind::Typed(ty)]);
+        let [c_value] = f.node_outputs_exact::<1>(c).unwrap();
+        f.graph_mut()
+            .create_node(NodeKind::Return, [ctrl, mem_value, c_value], []);
+
+        let dot = render(&f, entry);
+        assert!(
+            dot.contains(suffix),
+            "{ty} const must render as {suffix}: {dot}"
+        );
+        assert!(
+            !dot.contains(":f64"),
+            "{ty} const must not render as f64: {dot}"
+        );
+    }
+}
+
 /// A wide `IntConst` must render its value, not the interning id.
 #[test]
 fn render_int_const_wide_shows_value_not_debug() {
@@ -592,7 +625,6 @@ fn call_other_label_falls_back_to_id_when_name_missing() {
         [entry_ctrl, mem],
         [ValueKind::Control, ValueKind::Memory],
     );
-    // Deliberately no `set_call_other_name`.
     let co_ctrl = f.node_outputs(co).iter().copied().next().unwrap();
     let co_mem = f.node_outputs(co).iter().copied().nth(1).unwrap();
     f.graph_mut()
@@ -609,7 +641,7 @@ fn call_other_label_falls_back_to_id_when_name_missing() {
     );
 }
 
-/// A `Store` with a `stack_offsets` entry keeps its address edge AND gains a
+/// A `Store` with a `memory_offsets` entry keeps its address edge AND gains a
 /// `base sp +/- K` line in its label.
 #[test]
 fn store_keeps_addr_edge_and_labels_base_sp_offset() {
@@ -1136,5 +1168,45 @@ fn neighborhood_duplicates_shared_const_per_use() {
     assert!(
         raw.contains(&format!("n{}", center.as_u32())),
         "raw neighborhood ids are IR node ids"
+    );
+}
+
+/// The integer and float index spaces are separate, so a float carrier must
+/// not render as the integer arg of the same index.
+#[test]
+fn function_float_arg_node_label_is_distinct_from_the_integer_index() {
+    let mut f = test_function();
+    let entry = f
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+
+    let carrier = |f: &mut Function, vn_index: usize| {
+        let node = f.graph_mut().create_node(
+            NodeKind::InitialVar(crate::node::InitialVnId::from_index(vn_index)),
+            [],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        f.node_outputs_exact::<1>(node).unwrap()[0]
+    };
+    let int_value = carrier(&mut f, 0);
+    let float_value = carrier(&mut f, 1);
+    f.side_tables_mut().register_arg_value(0, int_value);
+    f.side_tables_mut().register_float_arg_value(0, float_value);
+
+    f.graph_mut()
+        .create_node(NodeKind::Return, [entry_ctrl, int_value, float_value], []);
+
+    let dot = render(&f, entry);
+
+    assert!(
+        dot.contains("[float arg 0]"),
+        "float carrier must be labelled in its own index space:\n{dot}",
+    );
+    assert_eq!(
+        count_lines(&dot, |l| l.contains("[arg 0]")
+            && !l.contains("[float arg 0]")),
+        1,
+        "exactly one node carries the integer arg 0 label:\n{dot}",
     );
 }
