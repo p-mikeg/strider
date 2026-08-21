@@ -20,13 +20,14 @@ use rustc_hash::FxHashMap;
 use anyhow::{Result, anyhow};
 
 use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
-use strider_opt::{OptCtx, OptOptions, ReadOnlyMemory};
+use strider_opt::{OptCtx, OptOptions, PostOptimizer, ReadOnlyMemory};
 
 /// Per-binary analysis handle.
 pub struct Strider<R>
 where
     R: rsleigh::MemReader,
 {
+    arch: strider_target::SleighArch,
     lifter: Lifter<R>,
     /// `LoadReadOnly`'s memory image; `None` disables the pass.
     rom: Option<Box<dyn ReadOnlyMemory>>,
@@ -46,12 +47,24 @@ where
     ) -> Result<Self> {
         let lifter = Lifter::new(arch, sleigh)
             .map_err(|e| anyhow!("Strider::new: Lifter::new failed: {e:?}"))?;
-        Ok(Self { lifter, rom })
+        Ok(Self { arch, lifter, rom })
     }
 
     #[must_use]
     pub fn sleigh_regs(&self) -> &rsleigh::SleighRegs {
         self.lifter.sleigh_regs()
+    }
+
+    #[must_use]
+    pub fn arch(&self) -> strider_target::SleighArch {
+        self.arch
+    }
+
+    /// Every Sleigh user-op name this architecture can emit, indexed by
+    /// `user_op_id`.
+    #[must_use]
+    pub fn user_op_names(&self) -> &[String] {
+        self.lifter.user_op_names()
     }
 
     /// The same `Sleigh` instance `analyze` / `build_cfg` drive.
@@ -85,25 +98,35 @@ where
     /// Resolution is a fixed-point loop: each iteration classifies indirect
     /// branches against the optimised IR and folds resolved targets into
     /// `known_targets` (keys are only added, but a re-classified site's target
-    /// set may be overwritten, even narrowed), then re-lifts. It converges when
-    /// the induced edge set stops changing. `MAX_RESOLUTION_ITERATIONS` is a
-    /// backstop.
+    /// set is overwritten, and may narrow), then re-lifts. It converges when
+    /// the induced edge set stops changing. A site NARROWS when its address
+    /// projection stops being a superset of the previous round's, or when a
+    /// target's proved ISA mode flips; a mode-less target taking a proved mode
+    /// at an unchanged address set is growth.
+    /// `MAX_RESOLUTION_ITERATIONS` caps oscillation and, since one iteration
+    /// seats one level of discovery, chain depth.
     ///
     /// Unresolvable branches are a RESULT, not an error: they come back in
     /// [`AnalyzeResult::unresolved_indirect_branches`] with their
-    /// placeholder nodes still in the function.
+    /// placeholder nodes still in the function. So does a site whose fold
+    /// could not seat every successor a round proved: it is seated on the arms
+    /// it could take, and reported rather than passed off as complete.
     ///
-    /// `lift_opts.cfg.known_targets` is IGNORED: the loop grows its own
-    /// map. `lift_opts.compact` applies once at finalize, after the loop.
+    /// `lift_opts.cfg.known_targets` seeds the loop by plain address union
+    /// every round, so a seed only ever ADDS edges. It also asserts the site is
+    /// complete, suppressing the DERIVED unresolved reports for that address.
+    /// `lift_opts.compact` applies once at finalize, after the loop.
     ///
     /// `pipeline` picks the optimisations ([`strider_opt::default_pipeline`]
     /// when `None`); the [`strider_opt::IndirectBranchClassify`] post-pass is
-    /// always appended.
+    /// appended unless the pipeline already runs it.
     ///
     /// # Errors
     ///
-    /// Only genuine lift / cfg / opt / validation failures. Never an
-    /// unresolvable indirect branch.
+    /// Genuine lift / cfg / opt / validation failures, plus a resolution loop
+    /// that exhausts `MAX_RESOLUTION_ITERATIONS` after some site NARROWED.
+    /// Exhausting it on growth alone is the depth limit and comes back as a
+    /// result. Never an unresolvable indirect branch.
     pub fn analyze(
         &mut self,
         entry: u64,
@@ -113,15 +136,24 @@ where
         pipeline: Option<strider_opt::OptimizerPipeline>,
     ) -> Result<AnalyzeResult> {
         let start_addr = MachineInsnAddr::from(entry);
+        // The function's own ISA mode, which the decode-once cfg imposes on
+        // every region it builds: a target seated with no mode decodes in it.
+        let flowing_isa_bit = self
+            .arch
+            .entry_mode_context(entry)
+            .is_some_and(|(_var, mode)| mode == 1);
         // Built once and reused across re-lifts (`run` takes `&self`).
-        let mut pipeline = pipeline.unwrap_or_else(strider_opt::default_pipeline);
-        pipeline.add_post_pass(strider_opt::IndirectBranchClassify);
-        // Carried across iterations; only `known_targets` mutates.
+        let pipeline = with_classify(pipeline.unwrap_or_else(strider_opt::default_pipeline));
+        // Carried across iterations; only `known_targets` mutates. Seeded from
+        // the caller's answers, which the loop then grows: `apply_resolutions`
+        // re-unions the seed every round, so a seed can only ADD edges to a
+        // site, never suppress what the classifier proves about it.
         let mut working = LiftOptions {
             cfg: strider_cfg::CfgOptions {
                 fn_max_size: lift_opts.cfg.fn_max_size,
                 allow_code_before_start_addr: lift_opts.cfg.allow_code_before_start_addr,
-                known_targets: FxHashMap::default(),
+                known_targets: lift_opts.cfg.known_targets.clone(),
+                call_other_overrides: lift_opts.cfg.call_other_overrides.clone(),
             },
             per_address_ccs: lift_opts.per_address_ccs.clone(),
             // Finalize-only knob; the post-loop step reads
@@ -130,7 +162,7 @@ where
             compact: false,
         };
 
-        let (mut cfg, mut function, mut unresolved, mut resolutions) =
+        let (mut cfg, mut function, mut unresolved, mut switch_anchors, mut resolutions) =
             self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
         // Must be snapshotted in lockstep with `function`, and BEFORE
         // `resolutions` is moved into `apply_resolutions`. The classifier
@@ -138,36 +170,66 @@ where
         // `live_unresolved_branches` a per-iteration reachability walk.
         let mut live_indirect: rustc_hash::FxHashSet<strider_ir::node::NodeId> =
             resolutions.keys().copied().collect();
+        let mut unclassified = unclassified_nodes(&resolutions);
         let mut converged = false;
+        // A round that only ever ADDED successors cannot cycle, so exhausting
+        // the budget on one is the depth limit, not an oscillation.
+        let mut narrowed = false;
+        // Sticky: a site that lost ground in ANY round cannot be claimed
+        // complete by a later one that merely re-derives the smaller set.
+        let mut incomplete: Vec<PcodeInsnAddr> = Vec::new();
+        let mut still_growing: Vec<PcodeInsnAddr> = Vec::new();
         for _ in 0..MAX_RESOLUTION_ITERATIONS {
-            if unresolved.is_empty() {
+            // Seated `Switch` sites are re-derived every round, so the loop
+            // runs on while either anchor set is non-empty: a table that
+            // resolved before its loop closed widens here.
+            if unresolved.is_empty() && switch_anchors.is_empty() {
                 converged = true;
                 break;
             }
-            if !apply_resolutions(&mut working.cfg.known_targets, &unresolved, resolutions)? {
+            let progress = apply_resolutions(
+                &mut working.cfg.known_targets,
+                &lift_opts.cfg.known_targets,
+                &unresolved,
+                &switch_anchors,
+                resolutions,
+                flowing_isa_bit,
+            )?;
+            narrowed |= progress.narrowed;
+            incomplete.extend(progress.incomplete);
+            if !progress.changed {
                 converged = true;
                 break;
             }
-            (cfg, function, unresolved, resolutions) =
+            still_growing = progress.grew;
+            (cfg, function, unresolved, switch_anchors, resolutions) =
                 self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
             live_indirect = resolutions.keys().copied().collect();
+            unclassified = unclassified_nodes(&resolutions);
         }
 
-        // Falling through the cap means the loop never reached a fixed
-        // point: a pathological classifier/cfg oscillation, not an
-        // unresolvable branch. Fail loudly rather than truncate silently.
-        debug_assert!(
-            converged,
-            "indirect-branch resolution did not converge within \
-             MAX_RESOLUTION_ITERATIONS={MAX_RESOLUTION_ITERATIONS}; \
-             returning a possibly-stale result"
-        );
-        let _ = converged;
+        // A site that LOST a successor is a classifier/cfg oscillation, and a
+        // release build would otherwise hand back a `cfg`/`function` from an
+        // arbitrary member of the cycle. Running out of budget while every site
+        // only grew is the depth limit instead: the last CFG stands and the
+        // sites still growing are reported, the same way an unresolvable branch
+        // is.
+        if !converged && narrowed {
+            return Err(resolution_limit_error());
+        }
+        let budget_exhausted: &[PcodeInsnAddr] = if converged { &[] } else { &still_growing };
 
         // MUST run before `compact`: `unresolved`'s `NodeId`s index into the
         // un-renumbered function.
-        let unresolved_indirect_branches =
-            live_unresolved_branches(&live_indirect, &unresolved, &working.cfg.known_targets);
+        let unresolved_indirect_branches = live_unresolved_branches(
+            &live_indirect,
+            &unresolved,
+            &switch_anchors,
+            &unclassified,
+            &lift_opts.cfg.known_targets,
+            budget_exhausted,
+            &incomplete,
+        );
 
         if lift_opts.compact {
             function.compact()?;
@@ -179,11 +241,9 @@ where
         })
     }
 
-    /// One resolve/re-lift iteration. Returns `(cfg, function, unresolved,
-    /// resolutions)`: the CFG `function` was lifted from, the optimised IR,
-    /// the lift-time deferred anchors (pcode address paired with the
-    /// `IndirectBranch` placeholder's `NodeId`), and the classifier
-    /// post-pass's node-keyed classification map.
+    /// One resolve/re-lift iteration: the CFG `function` was lifted from, the
+    /// optimised IR, the lift-time deferred anchors, the seated-`Switch`
+    /// anchors, and the classifier post-pass's node-keyed classification map.
     ///
     /// # Errors
     ///
@@ -200,6 +260,7 @@ where
         strider_cfg::Cfg,
         strider_ir::Function,
         UnresolvedAnchors,
+        UnresolvedAnchors,
         IndirectResolutions,
     )> {
         // Destructured to split the borrow: `lifter` goes out `&mut` while
@@ -207,12 +268,12 @@ where
         let Strider {
             ref mut lifter,
             ref rom,
+            ..
         } = *self;
         let rom_ref: Option<&dyn ReadOnlyMemory> = rom.as_deref();
 
-        // No cfg-time resolver: a `BranchIndirect` not yet in
-        // `known_targets` is deferred and resolved at the full-function IR
-        // level by the classifier post-pass.
+        // A `BranchIndirect` outside `known_targets` is deferred here and
+        // resolved at the full-function IR level by the classifier post-pass.
         let cfg = lifter.build_cfg(start_addr, &working.cfg, &working.per_address_ccs)?;
         // `cc` is moved all the way into `Function::default_cc`, but the
         // resolve loop calls this again on the next re-lift, so the clone is
@@ -220,6 +281,7 @@ where
         let LiftOutcome {
             mut function,
             unresolved_branches: unresolved,
+            switch_anchors,
             ..
         } = lifter.build_ir_with(&cfg, cc.clone(), working)?;
 
@@ -228,7 +290,7 @@ where
         pipeline.run(&mut function, &mut ctx)?;
         let resolutions = std::mem::take(&mut ctx.indirect_resolutions);
 
-        Ok((cfg, function, unresolved, resolutions))
+        Ok((cfg, function, unresolved, switch_anchors, resolutions))
     }
 }
 
@@ -242,13 +304,57 @@ pub struct AnalyzeResult {
     pub unresolved_indirect_branches: Vec<PcodeInsnAddr>,
 }
 
-/// Backstop only; [`apply_resolutions`] reporting no growth is the real
-/// terminator.
+/// Doubles as a DEPTH limit: one iteration seats one LEVEL of indirect-branch
+/// discovery, so a chain of trampolines each jumping to the next needs one
+/// iteration per link. [`apply_resolutions`] reporting no change is the
+/// terminator for everything shallower. Exhausting the cap on depth alone is a
+/// result, not an error; only a site that NARROWED is
+/// [`resolution_limit_error`].
 const MAX_RESOLUTION_ITERATIONS: usize = 256;
 
+/// `pipeline` running [`strider_opt::IndirectBranchClassify`], at most once: a
+/// caller-supplied pipeline that already registers it would otherwise repeat
+/// the pass's known-bits / dominator / value-range setup every re-lift round.
+fn with_classify(mut pipeline: strider_opt::OptimizerPipeline) -> strider_opt::OptimizerPipeline {
+    let classify = strider_opt::IndirectBranchClassify;
+    if !pipeline
+        .post_passes()
+        .iter()
+        .any(|pass| pass.name() == classify.name())
+    {
+        pipeline.add_post_pass(classify);
+    }
+    pipeline
+}
+
+fn resolution_limit_error() -> anyhow::Error {
+    anyhow!(
+        "indirect-branch resolution did not converge within \
+         MAX_RESOLUTION_ITERATIONS={MAX_RESOLUTION_ITERATIONS}: a site LOST a \
+         successor, so the induced edge set oscillates rather than reaching a \
+         fixed point. A chain merely deeper than the iteration count, which \
+         doubles as the discovery depth limit, is reported through \
+         AnalyzeResult::unresolved_indirect_branches instead"
+    )
+}
+
+/// One round's effect on the induced edge set.
+#[derive(Default)]
+struct Progress {
+    /// Some address's successor set differs from the previous round's: the
+    /// loop's progress signal.
+    changed: bool,
+    /// Addresses whose successor set strictly GREW.
+    grew: Vec<PcodeInsnAddr>,
+    /// Some address LOST a successor, so the signal is not monotone.
+    narrowed: bool,
+    /// Addresses whose fold dropped a successor one of the round's inputs
+    /// reported, so the seated set is a proper SUBSET of what was proved.
+    incomplete: Vec<PcodeInsnAddr>,
+}
+
 /// Fold `resolutions` into `known_targets`, keyed back to pcode addresses
-/// via `unresolved`. Returns whether the induced edge set grew: the loop's
-/// progress signal.
+/// via `unresolved`.
 ///
 /// Two distinct placeholders can share one `PcodeInsnAddr`; their target
 /// sets are UNIONED, not last-write-wins.
@@ -259,87 +365,360 @@ const MAX_RESOLUTION_ITERATIONS: usize = 256;
 /// address (internal-consistency violation).
 fn apply_resolutions(
     known_targets: &mut FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    caller_seed: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     unresolved: &UnresolvedAnchors,
+    switch_anchors: &UnresolvedAnchors,
     resolutions: IndirectResolutions,
-) -> Result<bool> {
+    flowing_isa_bit: bool,
+) -> Result<Progress> {
     let node_to_addr: FxHashMap<strider_ir::node::NodeId, PcodeInsnAddr> = unresolved
         .iter()
+        .chain(switch_anchors.iter())
         .map(|(addr, node)| (*node, *addr))
         .collect();
-    let prev_edge_set = edge_set_of(known_targets);
-
     // Staged per-address first so same-address collisions merge before
     // anything touches `known_targets`.
     let mut staged: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+    // Every address the round's classifications name, before any mode filter:
+    // what the fold has to account for.
+    let mut reported: FxHashMap<PcodeInsnAddr, rustc_hash::FxHashSet<u64>> = FxHashMap::default();
     for (node, resolved) in resolutions {
         let Some(targets) = resolved else { continue };
         let addr = node_to_addr.get(&node).copied().ok_or_else(|| {
             anyhow!("classified IndirectBranch node {node:?} has no recorded pcode address")
         })?;
+        reported
+            .entry(addr)
+            .or_default()
+            .extend(concrete_targets(&targets).iter().map(|t| t.addr));
         staged
             .entry(addr)
-            .and_modify(|e| *e = merge_resolved(e, &targets))
+            .and_modify(|e| *e = merge_resolved(e, &targets, flowing_isa_bit))
             .or_insert(targets);
     }
-    // Unconditional overwrite, deliberately. Skipping already-present sites
-    // would strand a target set that narrows from unseatable to seatable
-    // once other branches resolve. Convergence still holds because the
-    // progress signal is the edge-set diff below, not the insert: an
-    // unchanged cone re-inserts an equal value and reads as no growth.
-    known_targets.extend(staged);
-    Ok(edge_set_of(known_targets) != prev_edge_set)
+    // A later classification REPLACES an earlier one for the same address, so a
+    // set that narrows from unseatable to seatable once other branches resolve
+    // is not stranded; convergence rides on the per-address diff, so an
+    // unchanged cone re-inserts an equal value and reads as no growth. Every
+    // successor the round reported yet did not seat comes back in
+    // `Progress::incomplete`.
+    let mut progress = Progress::default();
+    for (addr, targets) in staged {
+        let prev = known_targets.get(&addr);
+        // A seated `Switch` carries no ISA-mode input, so its re-derivation
+        // reports no mode for ANY target, including the ones a mode-bearing
+        // classification already proved. Re-deriving must widen the arm set,
+        // not re-decode the old arms in the mode flowing into the branch.
+        let targets = adopt_known_modes(prev, targets, flowing_isa_bit);
+        // The caller's own seed is unioned in by ADDRESS every round, after
+        // both mode filters and never subject to them: a seed is mode-less by
+        // construction, so filtering it against a mode-bearing classification
+        // would delete the whole caller answer.
+        let targets = match seed_for(caller_seed, addr) {
+            Some(seed) => union_resolved(seed, &targets),
+            None => targets,
+        };
+        let seated: rustc_hash::FxHashSet<u64> =
+            concrete_targets(&targets).iter().map(|t| t.addr).collect();
+        let prev_targets = prev.map_or(&[][..], concrete_targets);
+        let dropped = reported
+            .get(&addr)
+            .into_iter()
+            .flatten()
+            .copied()
+            .chain(prev_targets.iter().map(|t| t.addr))
+            .any(|a| !seated.contains(&a));
+        let prev = prev.map(target_keys).unwrap_or_default();
+        let next = target_keys(&targets);
+        let narrowed = narrows(&prev, &next);
+        if prev != next {
+            progress.changed = true;
+            if narrowed {
+                progress.narrowed = true;
+            } else {
+                progress.grew.push(addr);
+            }
+        }
+        // A mode flip decodes an address two ways, so the seated arm is as
+        // unclaimable as a dropped one.
+        if dropped || narrowed {
+            progress.incomplete.push(addr);
+        }
+        known_targets.insert(addr, targets);
+    }
+    Ok(progress)
 }
 
-/// Successor set of a `ResolvedTargets`, where `None` means "no concrete
-/// address" (`LinkRegister`).
-fn targets_of(r: &ResolvedTargets) -> impl Iterator<Item = Option<u64>> + '_ {
-    // Chaining a 0-or-1 `head` with a slice `tail` unifies the three arms
-    // into one return type without allocating.
-    let (head, tail): (Option<Option<u64>>, &[u64]) = match r {
-        ResolvedTargets::LinkRegister => (Some(None), &[]),
-        ResolvedTargets::Single(k) => (Some(Some(*k)), &[]),
-        ResolvedTargets::Multiple(ks) => (None, ks.as_slice()),
+/// The caller's answer for `addr`. A caller can only spell the machine address,
+/// so a seed keyed at p-code index 0 counts for the whole instruction, matching
+/// `CfgOptions::seated`.
+fn seed_for(
+    caller_seed: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    addr: PcodeInsnAddr,
+) -> Option<&ResolvedTargets> {
+    caller_seed
+        .get(&addr)
+        .or_else(|| caller_seed.get(&PcodeInsnAddr::at_machine_start(addr.machine_addr.addr)))
+}
+
+/// `targets` with each mode-less entry taking the ISA mode `known` already
+/// proved for that address.
+///
+/// At a site `known` proves a mode DIFFERENT from `flowing_isa_bit`, an
+/// address only a mode-less re-derivation reports is dropped rather than
+/// seated: `None` reads to the cfg as the mode flowing into the branch, which
+/// at an interworking dispatch is the mode being switched away from. The
+/// dropped set stays seatable, so the caller reports the site through
+/// [`Progress::incomplete`] rather than relying on the cfg to re-defer it.
+/// Where every proved mode IS the flowing one, seating `None` decodes
+/// identically, so the set still widens.
+fn adopt_known_modes(
+    known: Option<&ResolvedTargets>,
+    targets: ResolvedTargets,
+    flowing_isa_bit: bool,
+) -> ResolvedTargets {
+    let Some(known) = known else { return targets };
+    let known_targets = concrete_targets(known);
+    let modes: FxHashMap<u64, bool> = known_targets
+        .iter()
+        .filter_map(|t| t.isa_bit.map(|bit| (t.addr, bit)))
+        .collect();
+    if modes.is_empty() || matches!(targets, ResolvedTargets::LinkRegister) {
+        return targets;
+    }
+    let interworking = modes.values().any(|&bit| bit != flowing_isa_bit);
+    let known_addrs: rustc_hash::FxHashSet<u64> = known_targets.iter().map(|t| t.addr).collect();
+    let kept: Vec<strider_cfg::ResolvedTarget> = concrete_targets(&targets)
+        .iter()
+        .filter_map(|t| match (t.isa_bit, modes.get(&t.addr)) {
+            (Some(_), _) => Some(*t),
+            (None, Some(&bit)) => Some(strider_cfg::ResolvedTarget::new(t.addr, Some(bit))),
+            (None, None) => (!interworking || known_addrs.contains(&t.addr)).then_some(*t),
+        })
+        .collect();
+    match kept.as_slice() {
+        [single] => ResolvedTargets::Single(*single),
+        _ => ResolvedTargets::Multiple(kept),
+    }
+}
+
+/// A resolved target as the convergence check sees it: `(address, isa_bit)`,
+/// with `None` address for `LinkRegister`.
+type TargetKey = (Option<u64>, Option<bool>);
+
+/// Whether one address's successor set lost ground between two rounds: the
+/// ADDRESS projection is no longer a superset, or a target's proved mode flips
+/// to the other ISA. A mode-less target taking a proved mode at an unchanged
+/// address set is growth, and reading it as a loss turns the discovery depth
+/// limit into [`resolution_limit_error`].
+fn narrows(prev: &BTreeSet<TargetKey>, next: &BTreeSet<TargetKey>) -> bool {
+    let addrs = |keys: &BTreeSet<TargetKey>| -> BTreeSet<Option<u64>> {
+        keys.iter().map(|(addr, _bit)| *addr).collect()
     };
-    head.into_iter().chain(tail.iter().map(|k| Some(*k)))
+    if !addrs(next).is_superset(&addrs(prev)) {
+        return true;
+    }
+    // A bit is a bool, so "next commits the other mode at this address" is a
+    // point lookup.
+    let next_bits: rustc_hash::FxHashSet<(Option<u64>, bool)> = next
+        .iter()
+        .filter_map(|(addr, bit)| bit.map(|b| (*addr, b)))
+        .collect();
+    prev.iter()
+        .any(|(addr, bit)| bit.is_some_and(|prev_bit| next_bits.contains(&(*addr, !prev_bit))))
 }
 
-/// Union two classifications for the same pcode address. Two
-/// `LinkRegister`s stay `LinkRegister`; anything else widens to `Single` or
-/// `Multiple` over the unioned addresses. Order-independent.
-fn merge_resolved(a: &ResolvedTargets, b: &ResolvedTargets) -> ResolvedTargets {
+/// Successor set of a `ResolvedTargets`.
+fn targets_of(r: &ResolvedTargets) -> impl Iterator<Item = TargetKey> + '_ {
+    // `isa_bit` is in the key because it changes the DECODE: a target
+    // reclassified from Thumb to ARM at one address would otherwise read as
+    // converged, leaving regions decoded in the superseded mode.
+    let (head, tail): (Option<TargetKey>, &[strider_cfg::ResolvedTarget]) = match r {
+        ResolvedTargets::LinkRegister => (Some((None, None)), &[]),
+        ResolvedTargets::Single(t) => (Some((Some(t.addr), t.isa_bit)), &[]),
+        ResolvedTargets::Multiple(ts) => (None, ts.as_slice()),
+    };
+    head.into_iter()
+        .chain(tail.iter().map(|t| (Some(t.addr), t.isa_bit)))
+}
+
+/// The concrete targets of a classification (empty for `LinkRegister`).
+fn concrete_targets(r: &ResolvedTargets) -> &[strider_cfg::ResolvedTarget] {
+    match r {
+        ResolvedTargets::LinkRegister => &[],
+        ResolvedTargets::Single(t) => std::slice::from_ref(t),
+        ResolvedTargets::Multiple(ts) => ts.as_slice(),
+    }
+}
+
+/// Union two classifications of one pcode address that BOTH derive from the
+/// IR, dropping a mode-less address only the non-interworking side knows: a
+/// `Switch` re-derivation carries no ISA-mode input, so every address it
+/// discovers reports `None`, which the cfg decodes in `flowing_isa_bit`. That
+/// is a guess only against a side proving a DIFFERENT mode.
+fn merge_resolved(
+    a: &ResolvedTargets,
+    b: &ResolvedTargets,
+    flowing_isa_bit: bool,
+) -> ResolvedTargets {
+    combine_resolved(a, b, Some(flowing_isa_bit))
+}
+
+/// [`merge_resolved`] by plain address union, for a caller's `known_targets`
+/// seed. A seed is mode-less by construction, so the mode filter would delete
+/// it outright whenever the classifier proves a mode.
+fn union_resolved(a: &ResolvedTargets, b: &ResolvedTargets) -> ResolvedTargets {
+    combine_resolved(a, b, None)
+}
+
+/// Two `LinkRegister`s stay `LinkRegister`; anything else widens to `Single` or
+/// `Multiple` over the unioned targets, deduped by address. `flowing_isa_bit`
+/// is the mode flowing into the branch, `None` disabling the interworking
+/// drop. Order-independent: two entries for one address keep the ISA mode only
+/// where they agree, since a bit contradicted by the other classification
+/// cannot be trusted (see [`merge_isa_bit`]).
+fn combine_resolved(
+    a: &ResolvedTargets,
+    b: &ResolvedTargets,
+    flowing_isa_bit: Option<bool>,
+) -> ResolvedTargets {
     if matches!(a, ResolvedTargets::LinkRegister) && matches!(b, ResolvedTargets::LinkRegister) {
         return ResolvedTargets::LinkRegister;
     }
-    // `flatten` drops the `None`s: LinkRegister contributes no address.
-    let mut targets: Vec<u64> = targets_of(a).chain(targets_of(b)).flatten().collect();
-    targets.sort_unstable();
-    targets.dedup();
+    let a_targets = concrete_targets(a);
+    let b_targets = concrete_targets(b);
+    let interworks = |side: &[strider_cfg::ResolvedTarget]| {
+        flowing_isa_bit.is_some_and(|flowing| {
+            side.iter()
+                .any(|t| t.isa_bit.is_some_and(|bit| bit != flowing))
+        })
+    };
+    let a_interworks = interworks(a_targets);
+    let b_interworks = interworks(b_targets);
+    let addrs = |side: &[strider_cfg::ResolvedTarget]| -> rustc_hash::FxHashSet<u64> {
+        side.iter().map(|t| t.addr).collect()
+    };
+    let a_addrs = addrs(a_targets);
+    let b_addrs = addrs(b_targets);
+    let guessed = |t: &strider_cfg::ResolvedTarget,
+                   own_interworks: bool,
+                   other_interworks: bool,
+                   other_addrs: &rustc_hash::FxHashSet<u64>| {
+        other_interworks && !own_interworks && t.isa_bit.is_none() && !other_addrs.contains(&t.addr)
+    };
+    let mut targets: Vec<strider_cfg::ResolvedTarget> = a_targets
+        .iter()
+        .filter(|t| !guessed(t, a_interworks, b_interworks, &b_addrs))
+        .chain(
+            b_targets
+                .iter()
+                .filter(|t| !guessed(t, b_interworks, a_interworks, &a_addrs)),
+        )
+        .copied()
+        .collect();
+    targets.sort_by_key(|t| t.addr);
+    let mut contradicted: rustc_hash::FxHashSet<u64> = rustc_hash::FxHashSet::default();
+    targets.dedup_by(|later, kept| {
+        if later.addr != kept.addr {
+            return false;
+        }
+        match merge_isa_bit(kept.isa_bit, later.isa_bit) {
+            Some(bit) => kept.isa_bit = bit,
+            // Two classifications proved DIFFERENT modes for one address.
+            // Decoding it once in either is a coin flip, and the decode-once
+            // CFG cannot hold both, so drop it; [`apply_resolutions`] reports
+            // the site, which stays seatable on its remaining arms.
+            None => {
+                contradicted.insert(kept.addr);
+            }
+        }
+        true
+    });
+    targets.retain(|t| !contradicted.contains(&t.addr));
     match targets.as_slice() {
         [single] => ResolvedTargets::Single(*single),
         _ => ResolvedTargets::Multiple(targets),
     }
 }
 
-/// Lift-time deferred sites narrowed to the genuinely live-and-unclassified
-/// ones (sorted, deduplicated). A site is excluded when its placeholder is no
-/// longer live, or when its address is already in `known_targets` (classified,
-/// even if the cfg layer could not seat the terminator).
+/// The ISA mode two classifications of one target agree on, or `None` when they
+/// CONTRADICT each other, which is not the same as neither committing one: a
+/// side committing no mode reports nothing rather than denying the other's, so
+/// a mode-less `Switch` re-derivation cannot erase a seated interworking mode.
+/// Commutative, so `merge_resolved` reads the same either way round.
+fn merge_isa_bit(a: Option<bool>, b: Option<bool>) -> Option<Option<bool>> {
+    match (a, b) {
+        (Some(x), Some(y)) if x != y => None,
+        (x, y) => Some(x.or(y)),
+    }
+}
+
+/// Sites the analysis cannot claim a complete successor set for (sorted,
+/// deduplicated):
+///
+/// - a lift-time deferred site whose placeholder is still live. Classification
+///   alone does not exclude one: the cfg layer re-emits the placeholder for a
+///   target set it cannot seat, and `function` then still holds an
+///   `IndirectBranch`.
+/// - a seated `Switch` whose selector no longer derives (`unclassified`). Its
+///   arms are whatever the round that seated them proved, which may be a proper
+///   SUBSET, and seating consumed the placeholder, so this list is its only
+///   report.
+/// - `budget_exhausted`, the sites still growing when the iteration cap ran out.
+/// - `incomplete`, the sites whose fold dropped a successor a classification
+///   reported, so the seated arm set is a proper SUBSET of what was proved.
+///
+/// A caller seed asserts the site is complete and suppresses all but the
+/// first. It does NOT suppress a live placeholder: the cfg re-emits one
+/// exactly when it could not seat the seeded set (empty, or a target out of
+/// range or interior to an instruction), so the seed did not in fact settle
+/// that site.
 fn live_unresolved_branches(
     live_indirect: &rustc_hash::FxHashSet<strider_ir::node::NodeId>,
     unresolved: &UnresolvedAnchors,
-    known_targets: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    switch_anchors: &UnresolvedAnchors,
+    unclassified: &rustc_hash::FxHashSet<strider_ir::node::NodeId>,
+    caller_seed: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    budget_exhausted: &[PcodeInsnAddr],
+    incomplete: &[PcodeInsnAddr],
 ) -> Vec<PcodeInsnAddr> {
-    // `live_indirect` comes from the classifier's own
-    // `walk_kind(IndirectBranch)`, so it is exactly the reachable-placeholder
-    // set, snapshotted from the `build_lift` that produced `function`.
+    // `live_indirect` is the classifier's key set, snapshotted from the
+    // `build_lift` that produced `function`: every reachable placeholder AND
+    // seated `Switch`. Intersecting it with `unresolved`, which anchors only
+    // placeholders, selects the live ones.
     let mut out: Vec<PcodeInsnAddr> = unresolved
         .iter()
-        .filter(|(addr, node)| live_indirect.contains(node) && !known_targets.contains_key(addr))
+        .filter(|(_addr, node)| live_indirect.contains(node))
         .map(|(addr, _node)| *addr)
         .collect();
+    out.extend(
+        switch_anchors
+            .iter()
+            .filter(|(addr, node)| {
+                unclassified.contains(node) && seed_for(caller_seed, *addr).is_none()
+            })
+            .map(|(addr, _node)| *addr),
+    );
+    out.extend(
+        budget_exhausted
+            .iter()
+            .chain(incomplete)
+            .filter(|addr| seed_for(caller_seed, **addr).is_none()),
+    );
     out.sort_unstable();
     out.dedup();
     out
+}
+
+/// The sites the classifier could not derive this round.
+fn unclassified_nodes(
+    resolutions: &IndirectResolutions,
+) -> rustc_hash::FxHashSet<strider_ir::node::NodeId> {
+    resolutions
+        .iter()
+        .filter(|(_node, resolved)| resolved.is_none())
+        .map(|(node, _resolved)| *node)
+        .collect()
 }
 
 /// Each deferred `BranchIndirect`'s pcode address paired with the `NodeId`
@@ -349,24 +728,14 @@ type UnresolvedAnchors = Vec<(PcodeInsnAddr, strider_ir::node::NodeId)>;
 /// `None` = unresolvable this iteration.
 type IndirectResolutions = FxHashMap<strider_ir::node::NodeId, Option<ResolvedTargets>>;
 
-/// Induced edge set of `known_targets`. `target = None` is a `LinkRegister`
-/// resolution.
-fn edge_set_of(
-    map: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
-) -> BTreeSet<(PcodeInsnAddr, Option<u64>)> {
-    let mut edges: BTreeSet<(PcodeInsnAddr, Option<u64>)> = BTreeSet::new();
-    for (addr, resolved) in map {
-        for target in targets_of(resolved) {
-            edges.insert((*addr, target));
-        }
-    }
-    edges
+/// One address's induced successor set, the unit the convergence check
+/// compares. `target = None` is a `LinkRegister` resolution.
+fn target_keys(resolved: &ResolvedTargets) -> BTreeSet<TargetKey> {
+    targets_of(resolved).collect()
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
     use super::*;
     use strider_cfg::MachineInsnAddr;
 
@@ -378,60 +747,50 @@ mod tests {
     }
 
     #[test]
-    fn edge_set_of_empty_map_is_empty() {
-        let map: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        assert!(edge_set_of(&map).is_empty());
+    fn target_keys_of_link_register_is_the_unknown_successor() {
+        let keys = target_keys(&ResolvedTargets::LinkRegister);
+        assert_eq!(keys.len(), 1);
+        assert!(keys.contains(&(None, None)));
     }
 
     #[test]
-    fn edge_set_of_single_link_register_resolution() {
-        let mut map: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        map.insert(pcode_addr(0x1000), ResolvedTargets::LinkRegister);
-        let edges = edge_set_of(&map);
-        assert_eq!(edges.len(), 1);
-        assert!(edges.contains(&(pcode_addr(0x1000), None)));
-    }
-
-    #[test]
-    fn edge_set_of_single_resolution_matches_single_edge() {
-        let mut map: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        map.insert(pcode_addr(0x1000), ResolvedTargets::Single(0x2000));
-        let edges = edge_set_of(&map);
-        let expected: BTreeSet<(PcodeInsnAddr, Option<u64>)> =
-            std::iter::once((pcode_addr(0x1000), Some(0x2000))).collect();
-        assert_eq!(edges, expected);
-    }
-
-    #[test]
-    fn edge_set_of_multiple_resolution_matches_n_edges() {
-        let mut map: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        map.insert(
-            pcode_addr(0x1000),
-            ResolvedTargets::Multiple(vec![0x2000, 0x3000, 0x4000]),
+    fn target_keys_of_single_resolution_is_one_successor() {
+        let expected: BTreeSet<TargetKey> = std::iter::once((Some(0x2000), None)).collect();
+        assert_eq!(
+            target_keys(&ResolvedTargets::Single(0x2000.into())),
+            expected
         );
-        let edges = edge_set_of(&map);
-        assert_eq!(edges.len(), 3);
     }
 
     #[test]
-    fn edge_set_is_order_independent() {
-        let mut a: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        a.insert(pcode_addr(0x1000), ResolvedTargets::Single(0x2000));
-        a.insert(pcode_addr(0x3000), ResolvedTargets::Single(0x4000));
-        let mut b: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        b.insert(pcode_addr(0x3000), ResolvedTargets::Single(0x4000));
-        b.insert(pcode_addr(0x1000), ResolvedTargets::Single(0x2000));
-        assert_eq!(edge_set_of(&a), edge_set_of(&b));
+    fn target_keys_of_multiple_resolution_is_n_successors() {
+        let keys = target_keys(&ResolvedTargets::Multiple(
+            vec![0x2000, 0x3000, 0x4000]
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        ));
+        assert_eq!(keys.len(), 3);
     }
 
+    /// A set, so a repeated target is one successor and the comparison the
+    /// convergence check makes is order-independent.
     #[test]
-    fn edge_set_dedups_duplicate_targets_in_multiple() {
-        let mut map: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        map.insert(
-            pcode_addr(0x1000),
-            ResolvedTargets::Multiple(vec![0x2000, 0x2000, 0x2000]),
-        );
-        assert_eq!(edge_set_of(&map).len(), 1);
+    fn target_keys_dedups_duplicate_targets_in_multiple() {
+        let keys = target_keys(&ResolvedTargets::Multiple(
+            vec![0x2000, 0x2000, 0x2000]
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        ));
+        assert_eq!(keys.len(), 1);
+        let reversed = target_keys(&ResolvedTargets::Multiple(
+            vec![0x3000, 0x2000].into_iter().map(Into::into).collect(),
+        ));
+        let forward = target_keys(&ResolvedTargets::Multiple(
+            vec![0x2000, 0x3000].into_iter().map(Into::into).collect(),
+        ));
+        assert_eq!(forward, reversed);
     }
 
     use strider_ir::node::NodeId;
@@ -455,6 +814,23 @@ mod tests {
         (function, placeholder)
     }
 
+    /// [`live_unresolved_branches`] with no `Switch` anchors and no caller
+    /// seed: the placeholder half on its own.
+    fn live_placeholders(
+        live_indirect: &rustc_hash::FxHashSet<NodeId>,
+        unresolved: &UnresolvedAnchors,
+    ) -> Vec<PcodeInsnAddr> {
+        live_unresolved_branches(
+            live_indirect,
+            unresolved,
+            &Vec::new(),
+            &rustc_hash::FxHashSet::default(),
+            &FxHashMap::default(),
+            &[],
+            &[],
+        )
+    }
+
     /// The reachable `IndirectBranch` set; production snapshots the
     /// equivalent from `resolutions.keys()`.
     fn live_indirect_set(function: &strider_ir::Function) -> rustc_hash::FxHashSet<NodeId> {
@@ -471,12 +847,8 @@ mod tests {
         let (function, node) = fn_with_live_indirect_branch();
         let addr = pcode_addr(0x1000);
         let unresolved: UnresolvedAnchors = vec![(addr, node)];
-        let known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
         let live = live_indirect_set(&function);
-        assert_eq!(
-            live_unresolved_branches(&live, &unresolved, &known),
-            vec![addr]
-        );
+        assert_eq!(live_placeholders(&live, &unresolved), vec![addr]);
     }
 
     #[test]
@@ -492,28 +864,28 @@ mod tests {
             .expect("entry node");
         let addr = pcode_addr(0x1000);
         let unresolved: UnresolvedAnchors = vec![(addr, non_indirect)];
-        let known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
         let live = live_indirect_set(&function);
         assert!(
-            live_unresolved_branches(&live, &unresolved, &known).is_empty(),
+            live_placeholders(&live, &unresolved).is_empty(),
             "a dead / non-live IndirectBranch placeholder must not be reported"
         );
     }
 
     #[test]
-    fn live_unresolved_excludes_already_classified_branch() {
-        // Already in `known_targets` means classified, even though the cfg
-        // layer re-emitted the placeholder: resolved-but-unseatable, not
-        // unresolved.
+    fn live_unresolved_reports_classified_but_unseated_branch() {
+        // Classified with an out-of-range target, so the cfg layer re-emitted
+        // the placeholder instead of seating a `Switch`. The site is in
+        // `known_targets` yet its `IndirectBranch` is still live, and
+        // `unresolved_indirect_branches` is empty ONLY when the function holds
+        // no placeholder.
         let (function, node) = fn_with_live_indirect_branch();
         let addr = pcode_addr(0x1000);
         let unresolved: UnresolvedAnchors = vec![(addr, node)];
-        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        known.insert(addr, ResolvedTargets::Multiple(vec![0x2000, 0x9999_0000]));
         let live = live_indirect_set(&function);
-        assert!(
-            live_unresolved_branches(&live, &unresolved, &known).is_empty(),
-            "a classified (in known_targets) site must not be reported unresolved"
+        assert_eq!(
+            live_placeholders(&live, &unresolved),
+            vec![addr],
+            "a live placeholder must be reported even once its site is classified"
         );
     }
 
@@ -528,23 +900,62 @@ mod tests {
         let unresolved: UnresolvedAnchors = vec![(addr, node)];
 
         let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        known.insert(addr, ResolvedTargets::Multiple(vec![0x2000, 0x3000]));
+        known.insert(
+            addr,
+            ResolvedTargets::Multiple(vec![0x2000, 0x3000].into_iter().map(Into::into).collect()),
+        );
         let mut same: IndirectResolutions = FxHashMap::default();
-        same.insert(node, Some(ResolvedTargets::Multiple(vec![0x2000, 0x3000])));
-        let grew = apply_resolutions(&mut known, &unresolved, same).expect("apply");
-        assert!(!grew, "identical re-classification must not report growth");
+        same.insert(
+            node,
+            Some(ResolvedTargets::Multiple(
+                vec![0x2000, 0x3000].into_iter().map(Into::into).collect(),
+            )),
+        );
+        let progress = apply_resolutions(
+            &mut known,
+            &FxHashMap::default(),
+            &unresolved,
+            &Vec::new(),
+            same,
+            false,
+        )
+        .expect("apply");
+        assert!(
+            !progress.changed,
+            "identical re-classification must not report growth"
+        );
         assert_eq!(
             known[&addr],
-            ResolvedTargets::Multiple(vec![0x2000, 0x3000])
+            ResolvedTargets::Multiple(vec![0x2000, 0x3000].into_iter().map(Into::into).collect())
         );
 
         let mut improved: IndirectResolutions = FxHashMap::default();
-        improved.insert(node, Some(ResolvedTargets::Multiple(vec![0x2000, 0x2004])));
-        let grew = apply_resolutions(&mut known, &unresolved, improved).expect("apply");
-        assert!(grew, "an improved classification must be applied");
+        improved.insert(
+            node,
+            Some(ResolvedTargets::Multiple(
+                vec![0x2000, 0x2004].into_iter().map(Into::into).collect(),
+            )),
+        );
+        let progress = apply_resolutions(
+            &mut known,
+            &FxHashMap::default(),
+            &unresolved,
+            &Vec::new(),
+            improved,
+            false,
+        )
+        .expect("apply");
+        assert!(
+            progress.changed,
+            "an improved classification must be applied"
+        );
+        assert!(
+            progress.narrowed,
+            "dropping 0x3000 for 0x2004 is not monotone discovery"
+        );
         assert_eq!(
             known[&addr],
-            ResolvedTargets::Multiple(vec![0x2000, 0x2004])
+            ResolvedTargets::Multiple(vec![0x2000, 0x2004].into_iter().map(Into::into).collect())
         );
     }
 
@@ -555,21 +966,40 @@ mod tests {
         let unresolved: UnresolvedAnchors = vec![(addr, node)];
         let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
         let mut resolutions: IndirectResolutions = FxHashMap::default();
-        resolutions.insert(node, Some(ResolvedTargets::Single(0x2000)));
-        let grew = apply_resolutions(&mut known, &unresolved, resolutions).expect("apply");
-        assert!(grew, "a first-time classification must register as growth");
-        assert_eq!(known[&addr], ResolvedTargets::Single(0x2000));
+        resolutions.insert(node, Some(ResolvedTargets::Single(0x2000.into())));
+        let progress = apply_resolutions(
+            &mut known,
+            &FxHashMap::default(),
+            &unresolved,
+            &Vec::new(),
+            resolutions,
+            false,
+        )
+        .expect("apply");
+        assert!(
+            progress.changed,
+            "a first-time classification must register as growth"
+        );
+        assert_eq!(progress.grew, vec![addr]);
+        assert!(!progress.narrowed);
+        assert_eq!(known[&addr], ResolvedTargets::Single(0x2000.into()));
     }
 
     #[test]
     fn merge_resolved_unions_multiple_targets() {
         let merged = merge_resolved(
-            &ResolvedTargets::Multiple(vec![0x1000, 0x2000]),
-            &ResolvedTargets::Multiple(vec![0x2000, 0x3000]),
+            &ResolvedTargets::Multiple(vec![0x1000, 0x2000].into_iter().map(Into::into).collect()),
+            &ResolvedTargets::Multiple(vec![0x2000, 0x3000].into_iter().map(Into::into).collect()),
+            false,
         );
         assert_eq!(
             merged,
-            ResolvedTargets::Multiple(vec![0x1000, 0x2000, 0x3000])
+            ResolvedTargets::Multiple(
+                vec![0x1000, 0x2000, 0x3000]
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()
+            )
         );
     }
 
@@ -578,7 +1008,8 @@ mod tests {
         assert_eq!(
             merge_resolved(
                 &ResolvedTargets::LinkRegister,
-                &ResolvedTargets::LinkRegister
+                &ResolvedTargets::LinkRegister,
+                false,
             ),
             ResolvedTargets::LinkRegister
         );
@@ -588,10 +1019,190 @@ mod tests {
     fn merge_resolved_single_plus_single_widens_to_multiple() {
         assert_eq!(
             merge_resolved(
-                &ResolvedTargets::Single(0x1000),
-                &ResolvedTargets::Single(0x2000)
+                &ResolvedTargets::Single(0x1000.into()),
+                &ResolvedTargets::Single(0x2000.into()),
+                false,
             ),
-            ResolvedTargets::Multiple(vec![0x1000, 0x2000])
+            ResolvedTargets::Multiple(vec![0x1000, 0x2000].into_iter().map(Into::into).collect())
+        );
+    }
+
+    /// Two placeholders at one pcode address classifying the SAME target with
+    /// OPPOSITE ISA modes. Each address decodes once, so every mode the merge
+    /// could pick has been disproved by one side, and "no committed
+    /// mode" is not neutral: the cfg reads it as the mode flowing into the
+    /// branch, which on an interworking `bx` is the one being switched away
+    /// from. The address is dropped instead, so the site fails the seatable
+    /// guard and is reported unresolved. Order-independent.
+    #[test]
+    fn merge_resolved_drops_a_target_two_classifications_disagree_on() {
+        let thumb = ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(0x2000, Some(true)));
+        let arm = ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(0x2000, Some(false)));
+        let empty = ResolvedTargets::Multiple(vec![]);
+        assert_eq!(merge_resolved(&thumb, &arm, false), empty);
+        assert_eq!(
+            merge_resolved(&arm, &thumb, false),
+            empty,
+            "order-independent"
+        );
+    }
+
+    /// Two anchors at ONE pcode address in one round, one of them a `Switch`
+    /// re-derivation, which carries no ISA-mode input and so reports `None` for
+    /// every address it discovers. The cfg reads that as "inherit the branch's
+    /// mode", a guess on an interworking dispatch, so the mode-less side does
+    /// not contribute addresses of its own. Across ROUNDS the seated set is not
+    /// merged but re-derived, and widening there is
+    /// [`adopt_known_modes`]'s job.
+    #[test]
+    fn merge_resolved_does_not_widen_a_mode_bearing_set_with_mode_less_arms() {
+        let seated =
+            ResolvedTargets::Multiple(vec![strider_cfg::ResolvedTarget::new(0x2000, Some(true))]);
+        let rederived = ResolvedTargets::Multiple(vec![
+            strider_cfg::ResolvedTarget::new(0x2000, None),
+            strider_cfg::ResolvedTarget::new(0x3000, None),
+        ]);
+        let merged = merge_resolved(&seated, &rederived, false);
+        assert_eq!(
+            concrete_targets(&merged),
+            &[strider_cfg::ResolvedTarget::new(0x2000, Some(true))],
+            "the mode-less 0x3000 must not be seated as an arm",
+        );
+        assert_eq!(
+            concrete_targets(&merge_resolved(&rederived, &seated, false)),
+            concrete_targets(&merged),
+            "order-independent",
+        );
+    }
+
+    /// A classification that commits NO mode does not contradict one that
+    /// does; conflating the two erases a seated interworking mode on the next
+    /// resolution round.
+    #[test]
+    fn merge_resolved_keeps_a_mode_the_other_side_does_not_report() {
+        let thumb = ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(0x2000, Some(true)));
+        let no_mode = ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(0x2000, None));
+        assert_eq!(merge_resolved(&thumb, &no_mode, false), thumb);
+        assert_eq!(
+            merge_resolved(&no_mode, &thumb, false),
+            thumb,
+            "order-independent"
+        );
+    }
+
+    /// Agreeing bits are kept: the collapse above must not throw away a mode
+    /// both classifications assert.
+    #[test]
+    fn merge_resolved_agreeing_isa_bits_are_kept() {
+        let a = ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(0x2000, Some(true)));
+        let b = ResolvedTargets::Multiple(vec![
+            strider_cfg::ResolvedTarget::new(0x2000, Some(true)),
+            strider_cfg::ResolvedTarget::new(0x3000, None),
+        ]);
+        assert_eq!(
+            merge_resolved(&a, &b, false),
+            ResolvedTargets::Multiple(vec![
+                strider_cfg::ResolvedTarget::new(0x2000, Some(true)),
+                strider_cfg::ResolvedTarget::new(0x3000, None),
+            ])
+        );
+    }
+
+    /// A side proving only the FLOWING mode seats a mode-less arm
+    /// identically, so a mode-less classification still widens it: the drop is
+    /// for sides that switch ISA.
+    #[test]
+    fn merge_resolved_widens_a_set_whose_proved_mode_is_the_flowing_one() {
+        use strider_cfg::ResolvedTarget;
+        let seated = ResolvedTargets::Multiple(vec![ResolvedTarget::new(0x2000, Some(false))]);
+        let rederived = ResolvedTargets::Multiple(vec![
+            ResolvedTarget::new(0x2000, None),
+            ResolvedTarget::new(0x3000, None),
+        ]);
+        assert_eq!(
+            concrete_targets(&merge_resolved(&seated, &rederived, false)),
+            &[
+                ResolvedTarget::new(0x2000, Some(false)),
+                ResolvedTarget::new(0x3000, None),
+            ],
+        );
+    }
+
+    /// Two classifications of one address, each proving a mode the other
+    /// contradicts on every arm.
+    #[test]
+    fn merge_resolved_cost_is_independent_of_arm_count() {
+        use strider_cfg::ResolvedTarget;
+        const ARMS: u64 = 20_000;
+        let thumb = ResolvedTargets::Multiple(
+            (0..ARMS)
+                .map(|i| ResolvedTarget::new(0x2_0000 + i * 4, Some(true)))
+                .collect(),
+        );
+        let arm = ResolvedTargets::Multiple(
+            (0..ARMS)
+                .map(|i| ResolvedTarget::new(0x2_0000 + i * 4, Some(false)))
+                .collect(),
+        );
+        let start = std::time::Instant::now();
+        let merged = merge_resolved(&thumb, &arm, false);
+        let elapsed = start.elapsed();
+        assert!(concrete_targets(&merged).is_empty());
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "merging {ARMS} contradicted arms took {elapsed:?}: the drop is \
+             quadratic in arms",
+        );
+    }
+
+    /// Scales ARMS at one site, where
+    /// [`apply_resolutions_cost_is_independent_of_accumulated_targets`] scales
+    /// addresses: a mode-less re-derivation of an interworking table checks
+    /// every new arm against the seated set.
+    #[test]
+    fn apply_resolutions_cost_is_independent_of_arms_at_one_site() {
+        use strider_cfg::ResolvedTarget;
+        const ARMS: u64 = 20_000;
+        let (_function, node) = fn_with_live_indirect_branch();
+        let addr = pcode_addr(0x1000);
+        let anchors: UnresolvedAnchors = vec![(addr, node)];
+        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        known.insert(
+            addr,
+            ResolvedTargets::Multiple(
+                (0..ARMS)
+                    .map(|i| ResolvedTarget::new(0x2_0000 + i * 4, Some(true)))
+                    .collect(),
+            ),
+        );
+        let mut resolutions: IndirectResolutions = FxHashMap::default();
+        resolutions.insert(
+            node,
+            Some(ResolvedTargets::Multiple(
+                (0..ARMS * 2)
+                    .map(|i| ResolvedTarget::new(0x2_0000 + i * 4, None))
+                    .collect(),
+            )),
+        );
+
+        let start = std::time::Instant::now();
+        let progress = apply_resolutions(
+            &mut known,
+            &FxHashMap::default(),
+            &anchors,
+            &Vec::new(),
+            resolutions,
+            false,
+        )
+        .expect("apply");
+        let elapsed = start.elapsed();
+
+        assert_eq!(progress.incomplete, vec![addr]);
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "folding {ARMS} seated arms against {} re-derived ones took \
+             {elapsed:?}: the per-site fold is quadratic in arms",
+            ARMS * 2,
         );
     }
 
@@ -613,13 +1224,475 @@ mod tests {
         let unresolved: UnresolvedAnchors = vec![(addr, indirect), (addr, other)];
         let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
         let mut resolutions: IndirectResolutions = FxHashMap::default();
-        resolutions.insert(indirect, Some(ResolvedTargets::Single(0x2000)));
-        resolutions.insert(other, Some(ResolvedTargets::Single(0x3000)));
-        apply_resolutions(&mut known, &unresolved, resolutions).expect("apply");
+        resolutions.insert(indirect, Some(ResolvedTargets::Single(0x2000.into())));
+        resolutions.insert(other, Some(ResolvedTargets::Single(0x3000.into())));
+        apply_resolutions(
+            &mut known,
+            &FxHashMap::default(),
+            &unresolved,
+            &Vec::new(),
+            resolutions,
+            false,
+        )
+        .expect("apply");
         assert_eq!(
             known[&addr],
-            ResolvedTargets::Multiple(vec![0x2000, 0x3000]),
+            ResolvedTargets::Multiple(vec![0x2000, 0x3000].into_iter().map(Into::into).collect()),
             "two same-addr classifications must be merged, not overwritten"
+        );
+    }
+
+    /// Merging one classification must not touch the targets already
+    /// accumulated for every other address.
+    #[test]
+    fn apply_resolutions_cost_is_independent_of_accumulated_targets() {
+        let (_function, node) = fn_with_live_indirect_branch();
+        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        for i in 0..200_000u64 {
+            known.insert(
+                pcode_addr(0x10_0000 + i * 4),
+                ResolvedTargets::Single((0x20_0000 + i * 4).into()),
+            );
+        }
+        let addr = pcode_addr(0x1000);
+        let unresolved: UnresolvedAnchors = vec![(addr, node)];
+        let mut resolutions: IndirectResolutions = FxHashMap::default();
+        resolutions.insert(node, Some(ResolvedTargets::Single(0x2000.into())));
+
+        let start = std::time::Instant::now();
+        let progress = apply_resolutions(
+            &mut known,
+            &FxHashMap::default(),
+            &unresolved,
+            &Vec::new(),
+            resolutions,
+            false,
+        )
+        .expect("apply");
+        let elapsed = start.elapsed();
+
+        assert!(progress.changed);
+        assert!(
+            elapsed < std::time::Duration::from_millis(100),
+            "merging one resolution into {} accumulated targets took {elapsed:?}: \
+             the whole induced edge set is being rebuilt",
+            known.len(),
+        );
+    }
+
+    /// Round 1 seats an interworking table with a proven per-target mode.
+    /// Round 2 re-derives the now-seated `Switch`, which carries no ISA-mode
+    /// input, so every target comes back mode-less. The seated modes must
+    /// survive the fold, or the arms decode in the superseded ISA, and an
+    /// address only the mode-less side knows must not be seated: the cfg would
+    /// decode it in the mode flowing into the branch, the same guess
+    /// [`merge_resolved`] refuses to make within a round.
+    #[test]
+    fn apply_resolutions_keeps_a_seated_mode_a_rederivation_does_not_report() {
+        use strider_cfg::ResolvedTarget;
+        let (_function, node) = fn_with_live_indirect_branch();
+        let addr = pcode_addr(0x1000);
+        let anchors: UnresolvedAnchors = vec![(addr, node)];
+        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        known.insert(
+            addr,
+            ResolvedTargets::Multiple(vec![
+                ResolvedTarget::new(0x2000, Some(true)),
+                ResolvedTarget::new(0x2004, Some(true)),
+            ]),
+        );
+        let mut rederived: IndirectResolutions = FxHashMap::default();
+        rederived.insert(
+            node,
+            Some(ResolvedTargets::Multiple(vec![
+                ResolvedTarget::new(0x2000, None),
+                ResolvedTarget::new(0x2004, None),
+                ResolvedTarget::new(0x2008, None),
+            ])),
+        );
+        apply_resolutions(
+            &mut known,
+            &FxHashMap::default(),
+            &Vec::new(),
+            &anchors,
+            rederived,
+            false,
+        )
+        .expect("apply");
+        assert_eq!(
+            concrete_targets(&known[&addr]),
+            &[
+                ResolvedTarget::new(0x2000, Some(true)),
+                ResolvedTarget::new(0x2004, Some(true)),
+            ],
+            "a mode-less re-derivation must adopt the modes already seated, and \
+             must not seat 0x2008 with an inherited mode",
+        );
+    }
+
+    /// The drop is scoped to sites with a proved mode: a table nothing ever
+    /// proved a mode for still widens on re-derivation.
+    #[test]
+    fn apply_resolutions_widens_a_mode_less_site_on_rederivation() {
+        let (progress, folded) = round(
+            Some(multiple(&[(0x2000, None)])),
+            multiple(&[(0x2000, None), (0x2004, None)]),
+            None,
+        );
+        assert!(progress.changed);
+        assert_eq!(folded, multiple(&[(0x2000, None), (0x2004, None)]));
+    }
+
+    /// A proved mode EQUAL to the flowing one seats identically to no mode at
+    /// all, so the set still widens: the drop is for sites that switch ISA.
+    #[test]
+    fn apply_resolutions_widens_a_site_whose_proved_mode_is_the_flowing_one() {
+        let (progress, folded) = round(
+            Some(multiple(&[(0x2000, Some(false))])),
+            multiple(&[(0x2000, None), (0x2004, None)]),
+            None,
+        );
+        assert!(progress.changed);
+        assert_eq!(folded, multiple(&[(0x2000, Some(false)), (0x2004, None)]));
+    }
+
+    /// An address the seated set already holds without a proved mode stays;
+    /// only addresses NEW to a mode-bearing site are dropped.
+    #[test]
+    fn apply_resolutions_keeps_a_known_mode_less_arm_but_drops_a_new_one() {
+        let (_progress, folded) = round(
+            Some(multiple(&[(0x2000, Some(true)), (0x3000, None)])),
+            multiple(&[(0x2000, None), (0x3000, None), (0x4000, None)]),
+            None,
+        );
+        assert_eq!(folded, multiple(&[(0x2000, Some(true)), (0x3000, None)]));
+    }
+
+    /// The caller's seed is mode-less by construction, so a classification that
+    /// proves a mode must not delete it.
+    #[test]
+    fn apply_resolutions_keeps_the_caller_seed_against_a_mode_bearing_answer() {
+        use strider_cfg::ResolvedTarget;
+        let (_function, node) = fn_with_live_indirect_branch();
+        let addr = pcode_addr(0x1000);
+        let anchors: UnresolvedAnchors = vec![(addr, node)];
+        let mut seed: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        seed.insert(
+            addr,
+            ResolvedTargets::Multiple(vec![
+                ResolvedTarget::new(0x2000, None),
+                ResolvedTarget::new(0x3000, None),
+            ]),
+        );
+        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        let mut resolutions: IndirectResolutions = FxHashMap::default();
+        resolutions.insert(
+            node,
+            Some(ResolvedTargets::Single(ResolvedTarget::new(
+                0x4000,
+                Some(true),
+            ))),
+        );
+        apply_resolutions(&mut known, &seed, &anchors, &Vec::new(), resolutions, false)
+            .expect("apply");
+        assert_eq!(
+            concrete_targets(&known[&addr]),
+            &[
+                ResolvedTarget::new(0x2000, None),
+                ResolvedTarget::new(0x3000, None),
+                ResolvedTarget::new(0x4000, Some(true)),
+            ],
+            "seeding may only ADD edges, whatever the classifier proves about the mode",
+        );
+    }
+
+    /// A seated `Switch` the classifier can no longer derive keeps its stale,
+    /// possibly PARTIAL arm set. Seating consumed its placeholder, so the site
+    /// must come back through its anchor or the caller reads
+    /// `unresolved == []` next to a table missing arms.
+    #[test]
+    fn unclassifiable_seated_switch_is_reported_unresolved() {
+        let (_function, node) = fn_with_live_indirect_branch();
+        let addr = pcode_addr(0x1000);
+        let switch_anchors: UnresolvedAnchors = vec![(addr, node)];
+        let unclassified: rustc_hash::FxHashSet<NodeId> = std::iter::once(node).collect();
+        assert_eq!(
+            live_unresolved_branches(
+                &rustc_hash::FxHashSet::default(),
+                &Vec::new(),
+                &switch_anchors,
+                &unclassified,
+                &FxHashMap::default(),
+                &[],
+                &[],
+            ),
+            vec![addr],
+            "a seated Switch with no derivable arm set must be reported",
+        );
+    }
+
+    /// A caller seed asserts the site is complete, so the same unclassifiable
+    /// `Switch` is the caller's answer, not a gap.
+    #[test]
+    fn caller_seeded_switch_is_not_reported_unresolved() {
+        let (_function, node) = fn_with_live_indirect_branch();
+        let addr = pcode_addr(0x1000);
+        let switch_anchors: UnresolvedAnchors = vec![(addr, node)];
+        let unclassified: rustc_hash::FxHashSet<NodeId> = std::iter::once(node).collect();
+        let mut seed: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        seed.insert(addr, ResolvedTargets::Single(0x2000.into()));
+        assert!(
+            live_unresolved_branches(
+                &rustc_hash::FxHashSet::default(),
+                &Vec::new(),
+                &switch_anchors,
+                &unclassified,
+                &seed,
+                &[],
+                &[],
+            )
+            .is_empty(),
+        );
+    }
+
+    #[test]
+    fn classify_post_pass_is_registered_exactly_once() {
+        let mut already = strider_opt::OptimizerPipeline::new();
+        already.add_post_pass(strider_opt::IndirectBranchClassify);
+        assert_eq!(with_classify(already).post_passes().len(), 1);
+        assert_eq!(
+            with_classify(strider_opt::OptimizerPipeline::new())
+                .post_passes()
+                .len(),
+            1,
+        );
+    }
+
+    /// The cap bounds discovery DEPTH as well as oscillation, but only the
+    /// oscillation reading is an error, so the message must name both and say
+    /// which one it is.
+    #[test]
+    fn resolution_limit_error_names_the_depth_limit() {
+        let msg = resolution_limit_error().to_string();
+        assert!(msg.contains("depth"), "message must name depth: {msg}");
+        assert!(
+            msg.contains("oscillat"),
+            "message must keep the oscillation reading: {msg}"
+        );
+    }
+
+    /// One [`apply_resolutions`] round at one address: `known` holding `prev`,
+    /// the classifier reporting `next`, no caller seed unless `seed`.
+    fn round(
+        prev: Option<ResolvedTargets>,
+        next: ResolvedTargets,
+        seed: Option<ResolvedTargets>,
+    ) -> (Progress, ResolvedTargets) {
+        let (_function, node) = fn_with_live_indirect_branch();
+        let addr = pcode_addr(0x1000);
+        let anchors: UnresolvedAnchors = vec![(addr, node)];
+        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        if let Some(prev) = prev {
+            known.insert(addr, prev);
+        }
+        let mut seeds: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        if let Some(seed) = seed {
+            seeds.insert(addr, seed);
+        }
+        let mut resolutions: IndirectResolutions = FxHashMap::default();
+        resolutions.insert(node, Some(next));
+        let progress = apply_resolutions(
+            &mut known,
+            &seeds,
+            &anchors,
+            &Vec::new(),
+            resolutions,
+            false,
+        )
+        .expect("apply");
+        (progress, known.remove(&addr).expect("folded"))
+    }
+
+    fn multiple(targets: &[(u64, Option<bool>)]) -> ResolvedTargets {
+        ResolvedTargets::Multiple(
+            targets
+                .iter()
+                .map(|&(addr, bit)| strider_cfg::ResolvedTarget::new(addr, bit))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn apply_resolutions_a_wider_address_set_grows() {
+        let (progress, folded) = round(
+            Some(multiple(&[(0x2000, None)])),
+            multiple(&[(0x2000, None), (0x3000, None)]),
+            None,
+        );
+        assert!(progress.changed);
+        assert!(!progress.narrowed, "adding an address is discovery");
+        assert_eq!(progress.grew, vec![pcode_addr(0x1000)]);
+        assert_eq!(folded, multiple(&[(0x2000, None), (0x3000, None)]));
+    }
+
+    #[test]
+    fn apply_resolutions_a_lost_address_narrows() {
+        let (progress, _folded) = round(
+            Some(multiple(&[(0x2000, None), (0x3000, None)])),
+            multiple(&[(0x2000, None)]),
+            None,
+        );
+        assert!(progress.changed);
+        assert!(progress.narrowed, "losing 0x3000 is not monotone discovery");
+        assert!(progress.grew.is_empty());
+    }
+
+    /// A caller seed is mode-less by construction, so the round that PROVES an
+    /// interworking mode for a seeded target changes its key. Refining one
+    /// successor is not losing one, and reading it as a loss turns the depth
+    /// limit on a seeded trampoline chain into
+    /// [`resolution_limit_error`].
+    #[test]
+    fn apply_resolutions_proving_a_mode_for_a_seeded_target_grows() {
+        let (progress, folded) = round(
+            Some(multiple(&[(0x2000, None)])),
+            ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(0x2000, Some(true))),
+            Some(multiple(&[(0x2000, None)])),
+        );
+        assert!(progress.changed);
+        assert!(
+            !progress.narrowed,
+            "a None -> Some mode upgrade at a fixed address set is growth",
+        );
+        assert_eq!(
+            folded,
+            ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(0x2000, Some(true))),
+        );
+    }
+
+    /// Two rounds proving OPPOSITE modes for one address decode it two
+    /// different ways, so the induced edge set is not converging.
+    #[test]
+    fn apply_resolutions_a_mode_flip_narrows() {
+        let (progress, _folded) = round(
+            Some(multiple(&[(0x2000, Some(true))])),
+            multiple(&[(0x2000, Some(false))]),
+            None,
+        );
+        assert!(progress.changed);
+        assert!(progress.narrowed, "Thumb -> ARM at one address is a flip");
+        assert!(progress.grew.is_empty());
+    }
+
+    #[test]
+    fn apply_resolutions_gaining_and_losing_in_one_round_narrows() {
+        let (progress, _folded) = round(
+            Some(multiple(&[(0x2000, None), (0x3000, None)])),
+            multiple(&[(0x2000, None), (0x4000, None)]),
+            None,
+        );
+        assert!(progress.changed);
+        assert!(progress.narrowed);
+        assert!(progress.grew.is_empty());
+    }
+
+    /// Round 1 seats one interworking arm before the dispatch loop closes.
+    /// Round 2 re-derives the now-seated `Switch`, which carries no ISA-mode
+    /// input and so reports every arm mode-less, and the three NEW arms cannot
+    /// be seated in a mode. The fold then equals the seated set, so the loop
+    /// converges here: the site has to come back through `incomplete` or the
+    /// caller reads a one-arm table alongside an empty `unresolved`.
+    #[test]
+    fn apply_resolutions_reports_a_site_whose_widening_was_dropped() {
+        let (progress, folded) = round(
+            Some(multiple(&[(0x1030, Some(true))])),
+            multiple(&[
+                (0x1030, None),
+                (0x1040, None),
+                (0x1050, None),
+                (0x1060, None),
+            ]),
+            None,
+        );
+        assert!(
+            !progress.changed,
+            "the fold matches the seated set, so this round converges",
+        );
+        assert_eq!(
+            concrete_targets(&folded),
+            &[strider_cfg::ResolvedTarget::new(0x1030, Some(true))],
+        );
+        assert_eq!(
+            progress.incomplete,
+            vec![pcode_addr(0x1000)],
+            "a dropped widening must be reported, not silently seated",
+        );
+    }
+
+    /// A fold that shrinks is applied, so the smaller set is what the next CFG
+    /// is built from and the round after it reads as converged.
+    #[test]
+    fn apply_resolutions_reports_a_site_that_lost_an_address() {
+        let (progress, _folded) = round(
+            Some(multiple(&[(0x2000, None), (0x3000, None)])),
+            multiple(&[(0x2000, None)]),
+            None,
+        );
+        assert!(progress.narrowed);
+        assert_eq!(progress.incomplete, vec![pcode_addr(0x1000)]);
+    }
+
+    /// A site whose fold dropped a proved successor is already seated and may
+    /// still classify, so `incomplete` is its only channel.
+    #[test]
+    fn incomplete_site_is_reported_unresolved() {
+        let addr = pcode_addr(0x1000);
+        assert_eq!(
+            live_unresolved_branches(
+                &rustc_hash::FxHashSet::default(),
+                &Vec::new(),
+                &Vec::new(),
+                &rustc_hash::FxHashSet::default(),
+                &FxHashMap::default(),
+                &[],
+                &[addr],
+            ),
+            vec![addr],
+        );
+    }
+
+    /// A caller seed asserts the site is complete, the same way it suppresses
+    /// an unclassifiable seated `Switch`.
+    #[test]
+    fn caller_seeded_incomplete_site_is_not_reported_unresolved() {
+        let addr = pcode_addr(0x1000);
+        let mut seed: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        seed.insert(addr, ResolvedTargets::Single(0x2000.into()));
+        assert!(
+            live_unresolved_branches(
+                &rustc_hash::FxHashSet::default(),
+                &Vec::new(),
+                &Vec::new(),
+                &rustc_hash::FxHashSet::default(),
+                &seed,
+                &[],
+                &[addr],
+            )
+            .is_empty(),
+        );
+    }
+
+    #[test]
+    fn apply_resolutions_equal_sized_oscillation_narrows() {
+        let (progress, _folded) = round(
+            Some(multiple(&[(0x2000, None)])),
+            multiple(&[(0x3000, None)]),
+            None,
+        );
+        assert!(progress.changed);
+        assert!(
+            progress.narrowed,
+            "swapping one successor for another is an oscillation, not growth",
         );
     }
 }

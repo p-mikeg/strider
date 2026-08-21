@@ -1,6 +1,5 @@
-//! Reusable pre-built graph fixtures.  A shape lives here iff at least two
-//! test modules need it; single-use shapes stay inline in the test for
-//! readability.
+//! A shape lives here iff at least two test modules need it; single-use shapes
+//! stay inline.
 
 use strider_ir::node::ValueType;
 use strider_ir::{FloatBinaryOp, Function, IntBinaryOp, IntCmpOp, IntUnaryOp};
@@ -189,8 +188,8 @@ pub(crate) fn single_initial_var() -> (Function, rsleigh::Vn) {
 }
 
 /// Graph that, after `opt::FunctionArgDetect`, has `reg` registered as the
-/// carrier for arg 0 in `Function::arg_index_to_values`.  The underlying
-/// `InitialVar(reg)` node remains in place; no `FunctionArg` node is created.
+/// carrier for arg 0 in `Function::arg_index_to_values`. The underlying
+/// `InitialVar(reg)` node stays in place.
 pub(crate) fn function_arg_reg() -> (Function, rsleigh::Vn) {
     use strider_orchestrator::opt::{FunctionArgDetect, Optimizer};
     let reg = reg_vn(0x38, 8);

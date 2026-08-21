@@ -1,9 +1,6 @@
-//! Complex pattern queries against rich fixtures.
-//!
-//! Each test issues a `strider_pattern::Matcher` query mirroring a realistic
-//! user-facing query (e.g. "find every (a*b)+c expression"; "find every
-//! recursive call site").  These tests are the canonical contract that
-//! the pattern crate continues to compose with the strider lifter's IR shape.
+//! `strider_pattern::Matcher` queries mirroring realistic user-facing ones
+//! ("find every (a*b)+c expression", "find every recursive call site"), pinning
+//! that the pattern crate composes with the shapes the lifter emits.
 
 #![allow(
     clippy::panic,
@@ -15,7 +12,7 @@
 
 mod common;
 use common::*;
-use strider_pattern::{MatchPat, Matcher, add, any, call, mul};
+use strider_pattern::{MatchPat, Matcher, anything, call, int_add, int_mul};
 
 // mul_then_add covers `add(mul(_,_), _)` across all archs via:
 //   * lifter side: Truncate-narrowing rules in ConstantFold (mips32 hot
@@ -35,10 +32,9 @@ per_arch_test!(
     xor_chain_pattern_finds_match
 );
 // if_returns_const exercises width-aware int_const matching.  ARM's
-// MVN-based -50 lifting (`mvnle r0, #49` -> `~49`) requires constant_fold
-// to fold the canonical `Xor(IntConst(49), IntConst(all_ones))` shape
-// (the former BitNot unary-op was removed in favour of `Xor(_, all_ones)`)
-// while keeping `IntUnaryOp::Neg` (two's complement) distinct.
+// MVN-based -50 lifting (`mvnle r0, #49` -> `~49`) requires constant_fold to
+// fold the canonical `Xor(IntConst(49), IntConst(all_ones))` shape while
+// keeping `IntUnaryOp::Neg` (two's complement) distinct.
 per_arch_test!(
     "patterns",
     "if_returns_const",
@@ -62,7 +58,9 @@ fn mac_pattern_finds_match(function: &strider_ir::Function) {
     // one hop deeper than the matcher's exact walk would see otherwise.
     // Other arches have no intervening casts, so the flag is a no-op there.
     let m = Matcher::new(function);
-    let pat = add(mul(any(), any()), any()).into_pattern().ignore_casts();
+    let pat = int_add(int_mul(anything(), anything()), anything())
+        .into_pattern()
+        .ignore_casts();
     let hits = m.find_all(&pat).unwrap();
     assert!(
         !hits.is_empty(),
@@ -73,10 +71,8 @@ fn mac_pattern_finds_match(function: &strider_ir::Function) {
 
 fn xor_chain_pattern_finds_match(function: &strider_ir::Function) {
     // ConstantFold collapses (x ^ k1) & m1 ^ k2 into (x & m1) ^ (k1^k2)
-    // before matching, so the original three-deep xor(and(xor)) query
-    // never matches; assert only that the post-fold shape retains a Xor
-    // and an And. A query immune to this would need constants the
-    // optimiser can't fold (e.g. volatile-loaded), a bigger fixture redesign.
+    // before matching, so a three-deep xor(and(xor)) query never matches;
+    // assert only that the post-fold shape retains a Xor and an And.
     use strider_ir::IntBinaryOp;
     assert!(
         common::count_int_binop(function, IntBinaryOp::Xor) >= 1,
@@ -99,13 +95,13 @@ fn if_const_pattern_finds_two_consts(function: &strider_ir::Function) {
     // covers both: it compares the raw u128 value regardless of type.
     assert!(
         has_constant(function, 100),
-        "expected IntConst(100) — true-branch return value"
+        "expected IntConst(100), the true-branch return value"
     );
     let neg50_u32 = (-50i32) as u32 as u64;
     let neg50_u64 = (-50i64) as u64;
     assert!(
         has_constant(function, neg50_u32) || has_constant(function, neg50_u64),
-        "expected IntConst(-50) — false-branch return value (any of {neg50_u32}, {neg50_u64})"
+        "expected IntConst(-50), the false-branch return value (any of {neg50_u32}, {neg50_u64})"
     );
 }
 
@@ -124,7 +120,6 @@ fn invariant_load_pattern_finds_load(function: &strider_ir::Function) {
 }
 
 fn recursive_pattern_finds_self_call(function: &strider_ir::Function) {
-    // Pattern: any Call.
     let m = Matcher::new(function);
     let pat = call().build();
     let hits = m.find_all(&pat).unwrap();

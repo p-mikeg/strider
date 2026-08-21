@@ -1,16 +1,12 @@
-//! Integration tests for the jump-table classifier.
-//!
 //! Each test builds a synthetic `Graph` via `common::indirect_resolve_helpers`,
 //! runs the stable optimiser subset (matching what intermediate orchestrator
-//! iterations see), then invokes [`classify_target`] on the placeholder
-//! Return's value-input.
+//! iterations see), then invokes [`classify_target`] on the `IndirectBranch`
+//! placeholder.
 //!
-//! Fixtures are FunctionBuilder-driven rather than going through real arch
-//! bytes + the cfg builder: real jump-table-shaped bytes are arch-specific
-//! and verbose, while the classifier under test is graph-shape-driven, not
-//! CFG-driven (every byte path eventually builds the same IR shapes via
-//! `build_ir`). Real-binary integration tests for jump tables live in
-//! `indirect_branch.rs` and `jump_table_lifting.rs`.
+//! The fixtures are `FunctionBuilder`-driven: the classifier is
+//! graph-shape-driven, not CFG-driven, and every byte path builds the same IR
+//! shapes anyway.  `indirect_branch.rs` and `jump_table_lifting.rs` cover the
+//! real-binary side.
 //!
 //! The rom is a toy `TableRom` that returns successive 4-byte values at
 //! fixed offsets, standing in for the ELF `.rodata` view production callers
@@ -91,8 +87,7 @@ impl strider_orchestrator::opt::ReadOnlyMemory for TableRom {
     }
 }
 
-/// Like `TableRom` but only the first `cutoff` entries are readable; used
-/// by the partial-read soundness test.
+/// Like `TableRom` but only the first `cutoff` entries are readable.
 struct PartialRom {
     inner: TableRom,
     cutoff: usize,
@@ -136,7 +131,8 @@ fn jump_table_known_bits_bound_resolves_to_multiple() {
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(
-                ts, entries,
+                ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
+                entries,
                 "Multiple targets must equal table entries in canonical order",
             );
         }
@@ -162,7 +158,7 @@ fn jump_table_predecessor_if_bound_resolves_to_multiple() {
     let result = classify_target_with_rom(&function, Some(&rom)).expect("classify_target_with_rom");
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
-            assert_eq!(ts, entries);
+            assert_eq!(ts.iter().map(|t| t.addr).collect::<Vec<_>>(), entries);
         }
         other => panic!("expected Multiple([0x100..0x400]); got {other:?}"),
     }
@@ -186,8 +182,8 @@ fn jump_table_unbounded_idx_returns_none() {
     let result = classify_target_with_rom(&function, Some(&rom)).expect("classify_target_with_rom");
     assert_eq!(
         result, None,
-        "unbounded idx must NOT classify to Multiple — the orchestrator \
-         will defer or surface UnresolvedIndirectBranch at fixed point",
+        "unbounded idx must NOT classify to Multiple: the orchestrator \
+         defers or surfaces UnresolvedIndirectBranch at fixed point",
     );
 }
 
@@ -224,7 +220,7 @@ fn jump_table_partial_rom_returns_none() {
     assert_eq!(
         result, None,
         "partial rom read must fail closed (None), NOT produce a partial \
-         Multiple — that would silently omit real runtime targets",
+         Multiple, which would silently omit real runtime targets",
     );
 }
 
@@ -253,7 +249,7 @@ fn jump_table_zero_bound_returns_none() {
     let result = classify_target_with_rom(&function, Some(&rom)).expect("classify_target_with_rom");
     assert_eq!(
         result, None,
-        "bound = 0 must return None — Multiple([]) would wrongly imply \
+        "bound = 0 must return None: Multiple([]) would wrongly imply \
          the branch is dead code",
     );
 }
@@ -286,8 +282,8 @@ fn jump_table_zero_bound_returns_none() {
 //      to `¬Less(N, rdi)` (= `rdi <= N`); `IfCondInversion` then strips the
 //      negation onto the false edge, leaving the bound on the dispatch edge.
 
-/// Analyze an x86-64 snippet at `base` with `rom` wired for the jump-table
-/// classifier, default pipeline + default options.
+/// Default pipeline and options, with `rom` wired for the jump-table
+/// classifier.
 fn analyze_x64_snippet_with_rom(
     bytes: Vec<u8>,
     base: u64,

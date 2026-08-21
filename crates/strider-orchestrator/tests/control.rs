@@ -1,7 +1,3 @@
-//! Branches, loops, and merge points.
-//!
-//! 9 functions × 6 archs = 54 tests.
-
 #![allow(
     clippy::panic,
     clippy::unwrap_used,

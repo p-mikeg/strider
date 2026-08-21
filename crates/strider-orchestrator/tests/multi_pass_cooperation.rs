@@ -1,10 +1,6 @@
-//! Multi-pass optimizer cooperation tests.
-//!
-//! Each test builds a small hand-crafted IR fixture and runs a focused subset
-//! of the optimizer pipeline, asserting the expected post-pipeline graph
-//! shape.  These are easier to diagnose than cross-arch snapshot diffs when
-//! the pipeline regresses: a snapshot failure often prints 200 lines of per-
-//! arch IR while these tests report exactly which shape invariant broke.
+//! A hand-crafted IR fixture per test, run through a focused subset of the
+//! optimizer pipeline: each names the one shape invariant it pins, where a
+//! cross-arch snapshot diff prints 200 lines of per-arch IR.
 
 #![allow(
     clippy::unwrap_used,
@@ -317,7 +313,7 @@ fn mem_chain_collapses_through_constant_fold() -> Result<()> {
 /// node count after the second run must equal the first.
 #[test]
 fn multi_pass_idempotent_after_fixed_point() -> Result<()> {
-    // Build a slightly non-trivial fixture: if(true) { return 1+2 } else { return 3 }
+    // if(true) { return 1+2 } else { return 3 }
     let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region_all()?;
     let t = b.create_region_all()?;

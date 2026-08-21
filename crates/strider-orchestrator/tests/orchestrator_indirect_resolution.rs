@@ -15,9 +15,7 @@ fn make_sleigh_value(bytes: Vec<u8>, base: u64) -> Sleigh<BufMemReader<Vec<u8>>>
     Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh")
 }
 
-/// Lift + optimise the function at `base` in `bytes` via the orchestrator
-/// `Strider` handle with the standard SystemV-x86_64 convention and
-/// default options.
+/// x86_64 SystemV, default options.
 fn run_at(bytes: Vec<u8>, base: u64) -> anyhow::Result<strider_orchestrator::AnalyzeResult> {
     let arch = SleighArch::x86_64();
     let sleigh = make_sleigh_value(bytes, base);
@@ -37,8 +35,8 @@ fn run_at(bytes: Vec<u8>, base: u64) -> anyhow::Result<strider_orchestrator::Ana
 
 #[test]
 fn outer_loop_zero_iter_when_no_branch_indirect_returns_ir() {
-    // No BranchIndirect (just `ret`): the fast path skips the loop
-    // entirely and returns the optimised IR.
+    // No BranchIndirect (just `ret`), so the resolution loop converges on
+    // its first pass without a re-lift.
     let bytes = vec![0xc3u8]; // ret
     let function = run_at(bytes, 0x1000).expect("orchestrator").function;
     let mut had_return = false;
@@ -55,7 +53,7 @@ fn outer_loop_unresolved_branch_is_reported_not_errored() {
     // `jmp rax`: rax is a function-entry value (no constant write), and
     // x86_64 has no link register, so the resolver can't classify it. The
     // orchestrator must reach a fixed point and return the branch listed in
-    // `unresolved_indirect_branches` (never panic, loop forever, or error).
+    // `unresolved_indirect_branches`.
     let mut bytes = vec![0xff, 0xe0u8]; // jmp rax, sole machine insn at 0x1000
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
     let result =
@@ -86,12 +84,12 @@ fn outer_loop_unresolved_branch_is_reported_not_errored() {
 }
 
 #[test]
-fn analyze_ignores_pre_seeded_known_targets_in_lift_options() {
-    // `Strider::analyze`'s documented contract: the caller's
-    // `cfg.known_targets` seed is ignored, the resolution loop grows its
-    // own map from classifier results only. Pre-seeding the unresolvable
-    // `jmp rax` site with a valid Single target must not short-circuit
-    // resolution.
+fn analyze_seats_pre_seeded_known_targets_from_lift_options() {
+    // The caller's `cfg.known_targets` seeds the resolution loop, which then
+    // grows it. `apply_resolutions` unions, so a seed can only ADD edges: it
+    // cannot suppress a classifier answer, only supply one the classifier
+    // could not prove. Here `jmp rax` is unresolvable, so the seed is the
+    // only answer the site has.
     let mut bytes = vec![0xff, 0xe0u8]; // jmp rax at 0x1000
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
 
@@ -101,7 +99,7 @@ fn analyze_ignores_pre_seeded_known_targets_in_lift_options() {
     };
     let mut known = rustc_hash::FxHashMap::default();
     // 0x1004 is in-range padding: a valid (decodable) seed target.
-    known.insert(site, strider_cfg::ResolvedTargets::Single(0x1004));
+    known.insert(site, strider_cfg::ResolvedTargets::Single(0x1004.into()));
     let lift_opts = LiftOptions {
         cfg: strider_cfg::CfgOptions {
             known_targets: known,
@@ -122,8 +120,8 @@ fn analyze_ignores_pre_seeded_known_targets_in_lift_options() {
         .expect("analyze");
     assert_eq!(
         result.unresolved_indirect_branches,
-        vec![site],
-        "the pre-seeded known_targets map must be ignored by analyze (loop owns its own map)"
+        vec![],
+        "the seeded site is answered, so nothing is left unresolved"
     );
     let placeholder_survives = result.function.walk().any(|n| {
         matches!(
@@ -132,8 +130,8 @@ fn analyze_ignores_pre_seeded_known_targets_in_lift_options() {
         )
     });
     assert!(
-        placeholder_survives,
-        "placeholder must survive — seed was ignored"
+        !placeholder_survives,
+        "the caller's answer seats the dispatch, replacing the placeholder"
     );
 }
 
@@ -330,4 +328,46 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
 #[allow(dead_code)]
 fn _ensure_make_sleigh_used() {
     let _ = make_sleigh_value(vec![0xc3], 0);
+}
+
+/// `links` × (`mov eax, next` ; `jmp rax`), then a `ret`, at `base`. Each link
+/// is 7 bytes and its target is a literal, so the resolution loop discovers
+/// EXACTLY one new link per re-lift: chain length is iteration count.
+fn const_jump_chain(links: usize, base: u64) -> Vec<u8> {
+    const LINK_LEN: u64 = 7;
+    let mut bytes = Vec::with_capacity(links * 7 + 17);
+    for i in 0..links {
+        let next = base + (i as u64 + 1) * LINK_LEN;
+        bytes.push(0xb8); // mov eax, imm32
+        bytes.extend_from_slice(&u32::try_from(next).expect("32-bit address").to_le_bytes());
+        bytes.extend_from_slice(&[0xff, 0xe0]); // jmp rax
+    }
+    bytes.push(0xc3); // ret
+    bytes.extend(std::iter::repeat_n(0xccu8, 16));
+    bytes
+}
+
+/// A chain shorter than the iteration cap resolves outright: the control for
+/// the over-cap case below, so a failure there is the cap and not the shape.
+#[test]
+fn short_const_jump_chain_resolves_completely() {
+    let result = run_at(const_jump_chain(32, 0x1000), 0x1000).expect("32-link chain must converge");
+    assert!(
+        result.unresolved_indirect_branches.is_empty(),
+        "a 32-link chain is inside the cap, so nothing may be left unresolved",
+    );
+}
+
+/// The iteration cap doubles as the discovery-depth limit, so a chain longer
+/// than it exhausts the budget while every site is still only GROWING. That is
+/// a depth limit, not an oscillation: the analysis of the whole function must
+/// not be lost.
+#[test]
+fn over_cap_const_jump_chain_degrades_instead_of_erroring() {
+    let result = run_at(const_jump_chain(300, 0x1000), 0x1000)
+        .expect("a chain deeper than the cap must degrade, not fail the whole analyze");
+    assert!(
+        !result.unresolved_indirect_branches.is_empty(),
+        "the sites the budget ran out on must be REPORTED unresolved",
+    );
 }

@@ -5,17 +5,10 @@
     clippy::unreachable
 )]
 
-//! Renders the IR graph of `memory.elf::main` on x86_64, a function rich
-//! in both stack stores (`int buf[4] = {...}`, `int dst[4]`, `int x = 7`,
-//! `struct point p = {1, 2}`, `union tag t`) and calls (`array_copy`,
-//! `array_fill`, `array_sum`, `pointer_chase`, `struct_field_load`,
-//! `struct_field_store`, `tagged_union_read`).
-//!
-//! After the optimizer pipeline runs, the rendered graph exercises the
-//! stack-aware dot-rendering features: Store/Load nodes whose addr-input
-//! edge is suppressed because their `stack_offsets` side-table entry is
-//! present; the offset label (e.g. `[sp+0x10]`) on the node itself
-//! replaces the redundant addr edge.
+//! Renders the IR graph of `memory.elf::main` on x86_64, chosen for its mix of
+//! stack stores and calls.  Post-pipeline it shows the stack-aware dot
+//! rendering: a Store/Load with a `memory_offsets` entry drops its addr-input
+//! edge and carries the offset (`[sp+0x10]`) as a node label instead.
 
 use object::{Object, ObjectSymbol};
 
@@ -30,7 +23,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let arch = strider_target::SleighArch::x86_64();
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem_reader)?;
-    // The driver OWNS the Sleigh and builds the CFG itself.
     let mut strider = strider_orchestrator::Lifter::new(arch, sleigh)?;
     let cc = strider_target::CallingConvention::x86_64_systemv().build(strider.sleigh_regs())?;
 

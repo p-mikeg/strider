@@ -14,7 +14,7 @@ use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
 
-/// Lift + optimise the function at `entry` over `sleigh` with the standard
+/// Lift and optimise the function at `entry` over `sleigh` with the standard
 /// SystemV-x86_64 convention, the given `fn_max_size`, and the per-address
 /// CC overrides (preset CCs, built against `sleigh`'s register table).
 fn run_at(
@@ -66,12 +66,11 @@ fn x86_64_indirect_jmp_to_const_bytes() -> (Vec<u8>, u64, u64) {
     (bs, 0x1000, 0x9000)
 }
 
-/// Regression: `SpecialTerm::TailCall::skips_opcode` only skipped
-/// `Branch`/`CondBranch`, so the `BranchIndirect` insn was lifted by the
-/// per-insn loop (emitting `IndirectBranch` + terminating the region) and
-/// `handle_tail_call` crashed with "attempted to insert into terminated
-/// region 0". Fixed by extending the skip-set to include
-/// `BranchIndirect`.
+/// `SpecialTerm::TailCall::skips_opcode` covers `BranchIndirect` alongside
+/// `Branch`/`CondBranch`: lifting a `BranchIndirect` insn in the per-insn loop
+/// emits an `IndirectBranch` and terminates the region, after which
+/// `handle_tail_call` panics with "attempted to insert into terminated
+/// region 0".
 #[test]
 fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list() {
     let (bytes, entry, call_target) = x86_64_indirect_jmp_to_const_bytes();
@@ -80,7 +79,7 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
     let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
-    overrides.insert(call_target, TargetCC::x86_64_all_preserving());
+    overrides.insert(call_target, TargetCC::x86_64_systemv().preserves_all());
 
     // 9 bytes covers `mov rax, imm` + `jmp rax` exactly.
     let bfg = run_at(sleigh, entry, 9, overrides);
@@ -121,10 +120,9 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
     );
 }
 
-/// The other in-place-edit tests exercise the editor in isolation and
-/// deliberately skip `validate`; this one runs the full validator on the
-/// resolved function, pinning that the spliced Call+Return shape (arity,
-/// vn-tagged outputs, fingerprints) is well-formed end-to-end.
+/// Runs the full validator on the resolved function, pinning that the spliced
+/// Call+Return shape (arity, vn-tagged outputs, fingerprints) is well-formed
+/// end-to-end; the other in-place-edit tests exercise the editor in isolation.
 ///
 /// Also documents the SSoT split `target_calling_context_for` encodes: the
 /// spliced **Return** returns from the *current* function to *its*
@@ -145,7 +143,7 @@ fn resolved_override_tail_call_passes_whole_graph_validate() {
     // all_preserving differs from SystemV in its (empty) clobber set but
     // keeps the same ret-val regs, so the spliced Call's clobber group
     // shrinks while the Return's ret-val arity stays at the function default.
-    overrides.insert(call_target, TargetCC::x86_64_all_preserving());
+    overrides.insert(call_target, TargetCC::x86_64_systemv().preserves_all());
 
     let bfg = run_at(sleigh, entry, 9, overrides);
 
@@ -172,9 +170,8 @@ fn resolved_override_tail_call_passes_whole_graph_validate() {
     );
 }
 
-/// Regression for the **no-override** path: with no per-address CC,
-/// `for_target` derives the effective convention from
-/// `Function::default_cc()` (the SSoT) instead of a threaded `&Lifter`.
+/// The **no-override** path: with no per-address CC, `for_target` derives the
+/// effective convention from `Function::default_cc()`, the SSoT.
 /// Pins that the default-CC spliced Call passes `validate` and does not
 /// double-count its ret regs; the other end-to-end tail-call test
 /// discards the `run` result, so this is the one that checks the default
@@ -265,7 +262,7 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
     let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
-    overrides.insert(call_target, TargetCC::x86_64_all_preserving());
+    overrides.insert(call_target, TargetCC::x86_64_systemv().preserves_all());
 
     let bfg = run_at(sleigh, entry, 10, overrides);
 

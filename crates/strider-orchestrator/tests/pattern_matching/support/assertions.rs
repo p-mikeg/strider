@@ -1,6 +1,3 @@
-//! Assertion DSL for pattern-match tests.  Every test should end in one
-//! of these helpers so failure messages are uniform and informative.
-
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::{Function, IRViewer, IRWalker};
 use strider_pattern::{Match, Matcher, Pattern};

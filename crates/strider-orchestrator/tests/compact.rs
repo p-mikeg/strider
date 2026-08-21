@@ -1,10 +1,3 @@
-//! End-to-end test for `Config::compact`.
-//!
-//! Drives `strider_orchestrator::Strider::analyze` under both compact=true
-//! and compact=false; asserts the compact graph has no more node ids than
-//! the non-compact graph and identical pattern-match counts on a
-//! representative query.
-
 #![allow(clippy::unwrap_used)]
 
 use rsleigh::mem_readers::BufMemReader;

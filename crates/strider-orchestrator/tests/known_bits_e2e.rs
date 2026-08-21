@@ -1,5 +1,3 @@
-//! End-to-end validity test for the `KnownBits` optimizer pass.
-//!
 //! `KnownBits` propagates a bit-level zeros/ones lattice and folds operations
 //! whose result bits are fully determined even though their inputs are
 //! runtime-opaque; `ConstantFold` alone cannot do these folds, having no bit
@@ -29,16 +27,31 @@ use common::*;
 per_arch_test!("known_bits", "kb_or_then_mask", kb_mask_folds_to_const);
 
 fn kb_mask_folds_to_const(function: &strider_ir::Function) {
+    use strider_ir::{IRViewer, IRWalker};
     assert!(
         has_constant(function, 1),
         "KnownBits should fold And(Or(x,1), 1) to the constant 1"
     );
-    // A surviving And means KnownBits did not fire (ConstantFold can't
-    // remove it: its operand Or(x,1) isn't a constant).
+    // Count only the fixture's mask, `And(Or(x,1), mask)`, identified by its
+    // Or operand. The ARM `bx lr` epilogue models `setISAMode` reading a
+    // separate `(lr & 1)` bit extract (no Or operand), which must not count.
+    let fixture_ands = function
+        .walk()
+        .filter(|&n| {
+            matches!(
+                function.node_kind(n),
+                strider_ir::node::NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And)
+            ) && function.node_inputs(n).iter().any(|v| {
+                matches!(
+                    function.node_kind(function.producer(v)),
+                    strider_ir::node::NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Or)
+                )
+            })
+        })
+        .count();
     assert_eq!(
-        count_int_binop(function, strider_ir::IntBinaryOp::And),
-        0,
-        "KnownBits should have folded the (… & 1) mask away; an And node \
-         remains, so the bit-lattice fold did not happen"
+        fixture_ands, 0,
+        "KnownBits should have folded the fixture's And(Or(x,1), mask) away; an \
+         And over an Or remains, so the bit-lattice fold did not happen"
     );
 }
