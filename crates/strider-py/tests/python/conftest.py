@@ -31,11 +31,12 @@ def symbol_addr(elf_path: pathlib.Path, name: str) -> int:
     missing."""
     _ensure_pyelftools()
     import elftools.elf.elffile
+    from elftools.elf.sections import SymbolTableSection
 
     with elf_path.open("rb") as f:
         ef = elftools.elf.elffile.ELFFile(f)
         symtab = ef.get_section_by_name(".symtab")
-        if symtab is None:
+        if not isinstance(symtab, SymbolTableSection):
             pytest.skip(f"{elf_path}: no .symtab section")
         for s in symtab.iter_symbols():
             if s.name == name and s["st_value"]:

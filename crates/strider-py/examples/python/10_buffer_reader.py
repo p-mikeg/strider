@@ -13,7 +13,9 @@ BASE = 0x400000
 CODE = bytes([0x8D, 0x04, 0x37, 0xC3]) + bytes(16)
 
 mem = reader.BufferReader(BASE, CODE)
-assert mem.read(BASE, 3).hex() == "8d0437"
+# read gives None for an unmapped address.
+head = mem.read(BASE, 3)
+assert head is not None and head.hex() == "8d0437"
 assert mem.read(BASE - 1, 4) is None
 
 # analyze(addr, cc) does CFG + lift + optimize; allow_code_before_start_addr

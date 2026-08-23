@@ -325,4 +325,5 @@ def test_output_ty_exact_type():
     # Case-insensitive.
     assert len(g.find_all(anything().value_ty("I1"))) == len(by_type)
     with pytest.raises(strider.StriderError):
-        anything().value_ty("i7")
+        # Deliberate: no such value type.
+        anything().value_ty("i7")  # type: ignore[arg-type]

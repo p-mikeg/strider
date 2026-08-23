@@ -88,7 +88,8 @@ def test_known_targets_rejects_an_unknown_string():
     import pytest
 
     with pytest.raises(ValueError):
-        strider.cfg.CfgOptions(known_targets={0x1000: "nonsense"})
+        # Deliberate: only "return" is a legal string target.
+        strider.cfg.CfgOptions(known_targets={0x1000: "nonsense"})  # type: ignore[dict-item]
 
 
 def test_object_file_symbols_are_enumerated():

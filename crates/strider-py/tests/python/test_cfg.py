@@ -199,8 +199,11 @@ def test_cfg_style_reaches_both_renderers(x86_memory_elf):
 
     # `dark_cfg` paints the graph background; `empty` sets no attributes.
     for render in (cfg.to_dot, cfg.to_html):
-        assert "#1e1e1e" in render()
-        assert "#1e1e1e" in render(style="dark_cfg")
-        assert "#1e1e1e" not in render(style="empty")
+        default, dark, empty = render(), render(style="dark_cfg"), render(style="empty")
+        assert default is not None and dark is not None and empty is not None
+        assert "#1e1e1e" in default
+        assert "#1e1e1e" in dark
+        assert "#1e1e1e" not in empty
         with pytest.raises(strider.StriderError):
-            render(style="not_a_theme")
+            # Deliberate: an unknown theme name is a runtime error.
+            render(style="not_a_theme")  # type: ignore[arg-type]

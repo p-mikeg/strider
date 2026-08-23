@@ -24,6 +24,7 @@ import ast
 import importlib
 import inspect
 import pathlib
+from typing import Optional
 
 import pytest
 
@@ -101,7 +102,11 @@ def _bound_names(tree: ast.Module) -> set[str]:
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             out.add(node.target.id)
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            out.update(a.asname for a in node.names if a.asname == a.name)
+            out.update(
+                a.asname
+                for a in node.names
+                if a.asname is not None and a.asname == a.name
+            )
     return out
 
 
@@ -147,7 +152,7 @@ _MODULE = "<module>"
 #: One declared parameter: its name, whether it is optional, and its default
 #: source when the stub spells one out (`...`, the conventional `.pyi`
 #: placeholder, says "optional" without naming the value).
-Param = tuple[str, bool, str | None]
+Param = tuple[str, bool, Optional[str]]
 
 
 def _stub_params(args: ast.arguments) -> list[Param]:
@@ -166,13 +171,13 @@ def _stub_params(args: ast.arguments) -> list[Param]:
 
 def _stub_method_params(
     tree: ast.Module,
-) -> dict[tuple[str, str], list[tuple[str, str | None]]]:
+) -> dict[tuple[str, str], list[Param]]:
     """`(owner, function) -> declared parameters`, `self` / `cls` dropped.
 
     Module-level functions are keyed under `_MODULE`: they are most of the
     `strider.pattern` surface, and skipping them exempted every builder.
     """
-    out: dict[tuple[str, str], list[tuple[str, str | None]]] = {}
+    out: dict[tuple[str, str], list[Param]] = {}
 
     def collect(owner: str, item: ast.stmt) -> None:
         if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -191,13 +196,13 @@ def _stub_method_params(
     return out
 
 
-def _runtime_default(p: inspect.Parameter) -> str | None:
+def _runtime_default(p: inspect.Parameter) -> Optional[str]:
     if p.default is inspect.Parameter.empty or p.default is Ellipsis:
         return None
     return repr(p.default)
 
 
-def _runtime_params(fn) -> list[Param] | None:
+def _runtime_params(fn) -> Optional[list[Param]]:
     """Parameters pyo3 published, or `None` when it published none.
 
     A pyo3 `#[new]` fills `tp_new`, leaving `__init__` as `object.__init__`

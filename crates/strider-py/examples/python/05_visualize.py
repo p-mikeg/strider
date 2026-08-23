@@ -27,6 +27,7 @@ graph_dot = OUT_DIR / "array_sum-graph.dot"
 function.to_dot(str(graph_dot), pretty=True)
 print(f"wrote {graph_dot} ({graph_dot.stat().st_size} bytes)")
 
-# Omit path to get the render back as a string.
+# Omit path to get the render back as a string; with a path it returns None.
 html_blob = function.to_html(pretty="dark")
+assert html_blob is not None
 print(f"to_html(path=None) returned a {len(html_blob)}-byte string")

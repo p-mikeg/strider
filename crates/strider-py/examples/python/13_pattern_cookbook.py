@@ -51,7 +51,8 @@ print("\n=== var(c).when(predicate) ===")
 c = Capture("c")
 big = fn.find_all(var(c).when(lambda m: (m.uint_opt(c) or 0) >= 8))
 print(f"constant values >= 8: {len(big)}")
-sample = sorted({m.uint_opt(c) for m in big if m.uint_opt(c) is not None})[:8]
+# The guard leaves only int constants, so uint reads them without the _opt.
+sample = sorted({m.uint(c) for m in big})[:8]
 print(f"  distinct values (first 8): {sample}")
 
 

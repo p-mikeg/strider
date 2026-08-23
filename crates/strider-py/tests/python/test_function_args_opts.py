@@ -64,4 +64,5 @@ def test_analyze_rejects_unknown_alias_mode():
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     with pytest.raises(ValueError, match="alias_mode"):
-        strider.lift.LifterOptions(alias_mode="nonsense")
+        # Deliberate: an unknown alias_mode is a runtime error.
+        strider.lift.LifterOptions(alias_mode="nonsense")  # type: ignore[arg-type]

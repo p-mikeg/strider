@@ -9,7 +9,7 @@ from strider.pattern import constraints as cons
 
 
 class OffEquals(cons.JoinPredicate):
-    def __init__(self, cap, value):
+    def __init__(self, cap: p.Capture, value: int):
         super().__init__()
         self.cap, self.value = cap, value
 

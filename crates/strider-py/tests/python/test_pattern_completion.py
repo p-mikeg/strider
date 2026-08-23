@@ -6,7 +6,7 @@ value-kind input, while `var()`/`anything()` also reach the control /
 memory / PhiToken edges a typed sub never can.
 
 `phi_token(p)` targets raw input slot 0 (the PhiToken edge from the owning
-Region); `.input(i, p)` shifts by +1 to skip past it.
+Region); `.phi_input(i, p)` indexes predecessors, at raw slot `i + 1`.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ def _lift_unoptimized(code: bytes, addr: int = 0x1000):
     return fn
 
 
-def _direct_call_and_ret(target: int) -> "strider.Function":
+def _direct_call_and_ret(target: int) -> "strider.ir.Function":
     #   call target      (e8 rel32)
     #   ret
     rel = (target - (0x1000 + 5)) & 0xFFFFFFFF
@@ -63,7 +63,7 @@ def _direct_call_and_ret(target: int) -> "strider.Function":
     return _lift(code)
 
 
-def _diamond_returning_eax() -> "strider.Function":
+def _diamond_returning_eax() -> "strider.ir.Function":
     #   test edi, edi
     #   jne  else
     #   mov  eax, 1
@@ -83,7 +83,7 @@ def _diamond_returning_eax() -> "strider.Function":
     return _lift(code)
 
 
-def _diamond_with_memory_join() -> "strider.Function":
+def _diamond_with_memory_join() -> "strider.ir.Function":
     #   test edi, edi
     #   jne  else
     #   mov  dword [0x3000], 1
@@ -107,7 +107,7 @@ def _diamond_with_memory_join() -> "strider.Function":
     return _lift(code)
 
 
-def _diamond_returning_eax_unoptimized() -> "strider.Function":
+def _diamond_returning_eax_unoptimized() -> "strider.ir.Function":
     """Same bytes as `_diamond_returning_eax`, unoptimized so all four
     Regions (entry, both branches, join) survive `RegionCollapse`."""
     code = bytes([
@@ -202,11 +202,12 @@ def test_phi_token_wildcard_binds_the_phi_token_edge():
 
 
 def test_phi_token_differs_from_shifted_input():
-    """`.phi_token(p)` (raw slot 0) and `.input(0, p)` (raw slot 1) address
-    different edges: a typed const sub matches via `.input(0, _)`, a real
-    data predecessor, but never via `.phi_token(_)`."""
+    """`.phi_token(p)` (raw slot 0) and `.phi_input(0, p)` (raw slot 1)
+    address different edges: a typed const sub matches via
+    `.phi_input(0, _)`, a real data predecessor, but never via
+    `.phi_token(_)`."""
     fn = _diamond_returning_eax()
-    via_input = fn.find_all(phi().input(0, int_const(1)))
+    via_input = fn.find_all(phi().phi_input(0, int_const(1)))
     via_token = fn.find_all(phi().phi_token(int_const(1)))
     assert len(via_input) >= 1
     assert via_token == []
@@ -225,11 +226,11 @@ def test_mem_phi_phi_token_typed_sub_never_matches():
 
 
 def test_mem_phi_phi_token_differs_from_shifted_input():
-    """`.input(0, p)` (raw slot 1) reaches the join's genuine first memory
-    predecessor, a `store(data=1)`; `.phi_token(p)` (raw slot 0) never does,
-    since typed subs can't bind PhiToken."""
+    """`.phi_input(0, p)` (raw slot 1) reaches the join's genuine first
+    memory predecessor, a `store(data=1)`; `.phi_token(p)` (raw slot 0)
+    never does, since typed subs can't bind PhiToken."""
     fn = _diamond_with_memory_join()
-    via_input = fn.find_all(mem_phi().input(0, store().data(int_const(1))))
+    via_input = fn.find_all(mem_phi().phi_input(0, store().data(int_const(1))))
     assert len(via_input) >= 1
     assert fn.find_all(mem_phi().phi_token(int_const(1))) == []
 

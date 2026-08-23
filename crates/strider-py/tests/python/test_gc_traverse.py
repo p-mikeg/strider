@@ -91,7 +91,7 @@ def test_builder_when_cycle_is_collectable():
     holder = []
     call = p.call()
     # holder -> call -> predicate -> holder, with the sentinel along for the ride.
-    call.when(lambda m, _h=holder, _s=sentinel: _h)
+    call.when(lambda m, _h=holder, _s=sentinel: bool(_h))
     holder.append(call)
     del sentinel, call, holder
     gc.collect()
@@ -110,7 +110,7 @@ def test_into_pat_when_cycle_is_collectable():
     ref = weakref.ref(sentinel)
     holder = []
     # holder -> pat -> builder -> predicate -> holder.
-    pat = p.call().when(lambda m, _h=holder, _s=sentinel: _h).into_pat()
+    pat = p.call().when(lambda m, _h=holder, _s=sentinel: bool(_h)).into_pat()
     holder.append(pat)
     del sentinel, pat, holder
     gc.collect()
@@ -127,7 +127,7 @@ def test_into_pat_operand_cycle_is_collectable():
     sentinel = Sentinel()
     ref = weakref.ref(sentinel)
     holder = []
-    operand = p.anything().when(lambda m, _h=holder, _s=sentinel: _h)
+    operand = p.anything().when(lambda m, _h=holder, _s=sentinel: bool(_h))
     pat = p.store().data(operand).into_pat()
     holder.append(pat)
     del sentinel, operand, pat, holder
@@ -160,6 +160,9 @@ def test_join_predicate_cycle_is_collectable():
     handle in `operands` alone does not cover it; both are reported."""
 
     class Pred(p.constraints.JoinPredicate):
+        sentinel: object
+        cycle: object
+
         def constraint(self, m):
             return True
 
@@ -179,6 +182,9 @@ def test_join_predicate_cycle_is_collectable():
 
 def test_any_of_predicate_cycle_is_collectable():
     class Pred(p.constraints.JoinPredicate):
+        sentinel: object
+        cycle: object
+
         def constraint(self, m):
             return True
 
@@ -233,7 +239,9 @@ class _ReentrantIndex:
 
 def _unwind_a_pattern_build():
     builder = p.load()
-    builder.addr(_ReentrantIndex(builder))
+    # Deliberate: pyo3 reads an operand int through `__index__`, which is
+    # where this one re-enters the builder.
+    builder.addr(_ReentrantIndex(builder))  # type: ignore[arg-type]
     with pytest.raises(strider.StriderError):
         builder.into_pat()
 

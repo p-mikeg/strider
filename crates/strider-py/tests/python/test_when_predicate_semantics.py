@@ -1,7 +1,7 @@
 """A `.when()` predicate must run wherever it is attached, and a predicate
 that raises must not be swallowed.
 
-A builder nested in a `mem_in` slot compiles through a different path from a
+A builder nested in a `mem` slot compiles through a different path from a
 value operand, and used to drop its predicate: the query matched every site,
 and `rewrite()`, which refuses a guarded `find` pattern, never saw the guard
 either, so it mutated the graph with the condition discarded.
@@ -27,23 +27,23 @@ def _load_after_store(guard=None):
     return p.load().mem(inner)
 
 
-def test_when_in_a_mem_in_slot_runs():
+def test_when_in_a_mem_slot_runs():
     g = _graph()
     assert g.find_all(_load_after_store()), "the unguarded shape must exist"
 
     seen = []
     hits = g.find_all(_load_after_store(lambda m: seen.append(m) or False))
-    assert seen, "the predicate in a mem_in slot never ran"
-    assert not hits, "a False predicate in a mem_in slot must reject every site"
+    assert seen, "the predicate in a mem slot never ran"
+    assert not hits, "a False predicate in a mem slot must reject every site"
 
 
-def test_when_in_a_mem_in_slot_can_accept():
+def test_when_in_a_mem_slot_can_accept():
     g = _graph()
     baseline = len(g.find_all(_load_after_store()))
     assert len(g.find_all(_load_after_store(lambda m: True))) == baseline
 
 
-def test_guarded_mem_in_rewrite_is_rejected():
+def test_guarded_mem_rewrite_is_rejected():
     """The rewrite-LHS guard must see a predicate nested in a memory slot."""
     g = _graph()
     c = Capture()
@@ -65,7 +65,7 @@ def test_a_raising_predicate_propagates():
         g.find_all(int_add(var(x), var(y)).when(boom))
 
 
-def test_a_raising_predicate_in_a_mem_in_slot_propagates():
+def test_a_raising_predicate_in_a_mem_slot_propagates():
     g = _graph()
 
     def boom(m):
@@ -80,4 +80,5 @@ def test_a_non_bool_return_propagates():
     g = _graph()
     x, y = Capture(), Capture()
     with pytest.raises(Exception):
-        g.find_all(int_add(var(x), var(y)).when(lambda m: object()))
+        # Deliberate: the binding extracts a real bool, nothing looser.
+        g.find_all(int_add(var(x), var(y)).when(lambda m: object()))  # type: ignore[arg-type,return-value]

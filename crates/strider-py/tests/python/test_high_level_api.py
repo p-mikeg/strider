@@ -40,7 +40,8 @@ def test_load_elf_accepts_os_pathlike():
 def test_load_elf_rejects_non_path():
     """A non-path argument still fails loudly rather than being coerced."""
     with pytest.raises(TypeError):
-        strider.lift.load_elf(1234)
+        # Deliberate: an int is not a path.
+        strider.lift.load_elf(1234)  # type: ignore[arg-type]
 
 
 def test_load_x86_32bit():
@@ -150,7 +151,8 @@ def test_analyze_result_unpacks_as_a_triple():
     assert unresolved == result.unresolved
     assert result[0] is result.cfg and result[-1] == result.unresolved
     with pytest.raises(IndexError):
-        result[3]
+        # Deliberate: a 3-tuple has no fourth field.
+        result[3]  # type: ignore[misc]
 
 
 def test_analyze_result_is_a_real_tuple():
@@ -354,7 +356,8 @@ def test_standalone_strider_rejects_name_targets():
     mem = loaded._elf.reader()
     s = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
     with pytest.raises(strider.StriderError, match="ElfLifter"):
-        s.analyze("add", strider.sleigh.CallingConvention.x86_64_systemv())
+        # Deliberate: a plain Lifter takes an address, not a name.
+        s.analyze("add", strider.sleigh.CallingConvention.x86_64_systemv())  # type: ignore[arg-type]
 
 
 def test_standalone_strider_requires_an_explicit_cc():

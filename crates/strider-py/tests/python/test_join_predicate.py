@@ -29,7 +29,7 @@ def _consts(fn):
 
 
 class ConstEquals(cons.JoinPredicate):
-    def __init__(self, cap, value):
+    def __init__(self, cap: p.Capture, value: int):
         super().__init__()
         self.cap, self.value = cap, value
 
@@ -162,4 +162,5 @@ def test_non_constraint_object_rejected():
     fn = _diamond_with_calls()
     x = p.Capture()
     with pytest.raises(TypeError):
-        fn.find_all([p.int_const(x)], constraints=[object()])
+        # Deliberate: not a constraint.
+        fn.find_all([p.int_const(x)], constraints=[object()])  # type: ignore[list-item]

@@ -41,6 +41,7 @@ Python (from the workspace root, never from `crates/strider-py`):
 uv sync --group dev
 uv run maturin develop
 uv run pytest
+uv run pyright     # type-checks strider/, its tests and examples; gate is 0 errors
 ```
 
 ## Crates

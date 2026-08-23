@@ -72,7 +72,7 @@ def test_match_contains_is_stale_after_compact():
     assert c in m
     g.compact()
     with pytest.raises(strider.StriderError, match="stale"):
-        c in m
+        _ = c in m
 
 
 # `optimize` bumps the handle generation BEFORE running the pipeline, so a

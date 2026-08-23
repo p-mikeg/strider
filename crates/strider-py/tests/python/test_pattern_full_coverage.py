@@ -100,7 +100,8 @@ def test_extend_with_op_string():
 
 def test_extend_with_invalid_op_raises():
     with pytest.raises(strider.StriderError):
-        int_extend("nope", var(Capture()))
+        # Deliberate: not an ExtendOp name.
+        int_extend("nope", var(Capture()))  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("ctor", [int_neg, int_not])

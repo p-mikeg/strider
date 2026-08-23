@@ -148,7 +148,7 @@ def test_non_stack_chain():
 
 
 def test_phi_pat_input_chain():
-    p = phi().input(0, int_const(0))
+    p = phi().phi_input(0, int_const(0))
     assert isinstance(p.into_pat(), Pat)
 
 
@@ -167,6 +167,7 @@ def test_initial_var_for_constructs():
     mem = strider.lift.load_elf(str(elf)).reader()
     sleigh = strider.sleigh.Sleigh(strider.sleigh.SleighArch.x86(), mem)
     eax = sleigh.reg("EAX")
+    assert eax is not None
     p = initial_var_for(eax)
     assert isinstance(p, Pat)
 
@@ -247,20 +248,23 @@ def test_int_const_any_width_round_trips_via_match_int():
 
 
 def test_int_cmp_concrete_op():
-    p = int_cmp("Less", "x", int_const(7))
+    # Operands are checked at `into_pat`, not here, so the bare string builds:
+    # `test_bare_string_operand_is_rejected` pins where it is rejected.
+    p = int_cmp("Less", "x", int_const(7))  # type: ignore[arg-type]
     assert isinstance(p, Pat)
 
 
 def test_int_cmp_unknown_op_raises():
     with pytest.raises(strider.StriderError):
-        int_cmp("NotARealOp", Capture("x"), Capture("y"))
+        # Deliberate: not an IntCmpOp name.
+        int_cmp("NotARealOp", Capture("x"), Capture("y"))  # type: ignore[arg-type]
 
 
 def test_int_cmp_no_not_equal_op():
     # The IR has no NotEqual variant; the lifter lowers `a != b` to a
     # negated IntEqual.  So the name must raise, not be silently accepted.
     with pytest.raises(strider.StriderError):
-        int_cmp("NotEqual", Capture("x"), Capture("y"))
+        int_cmp("NotEqual", Capture("x"), Capture("y"))  # type: ignore[arg-type]
 
 
 def test_int_binary_op_recovery():
@@ -291,8 +295,10 @@ def test_op_and_value_type_replace_the_seven_family_accessors():
     # kind() names the family AND the variant; op() is just the variant.
     assert node.kind() == f"IntBinaryOp({node.op()})"
     assert hits[0].op(c) == node.op()
-    assert hits[0].value_type(c) == node.value_type()
-    assert node.value_type().startswith(("I", "F"))
+    value_type = node.value_type()
+    assert value_type is not None
+    assert hits[0].value_type(c) == value_type
+    assert value_type.startswith(("I", "F"))
 
     for gone in (
         "int_binary_op", "int_unary_op", "int_cmp_op", "bool_binary_op",
@@ -378,7 +384,11 @@ def test_ignore_casts_true_is_the_all_mask():
 def test_ignore_casts_mask_keyword_is_gone():
     g = _patterns_graph()
     with pytest.raises(TypeError):
-        g.find_all(int_add(anything(), anything()), ignore_casts_mask=CastMask.extend())
+        # Deliberate: `ignore_casts_mask` is the removed keyword this test pins.
+        g.find_all(
+            int_add(anything(), anything()),
+            ignore_casts_mask=CastMask.extend(),  # type: ignore[call-arg]
+        )
 
 
 def test_vn_space_constants_round_trip():
@@ -411,7 +421,7 @@ def test_sleigh_reg_returns_vn_or_none():
     assert sleigh.reg("DEFINITELY_NOT_A_REG") is None
 
 
-def test_load_mem_in_chain_compiles():
+def test_load_mem_chain_compiles():
     p = load().addr(int_const(0x100)).mem(store().addr(int_const(0x200)))
     assert isinstance(p.into_pat(), Pat)
 
@@ -421,8 +431,8 @@ def test_load_bit_width_compiles():
     assert isinstance(p.into_pat(), Pat)
 
 
-def test_store_mem_in_bit_width_chain_compiles():
-    # `mem_in` requires a real memory producer; chain off another store().
+def test_store_mem_bit_width_chain_compiles():
+    # `mem` requires a real memory producer; chain off another store().
     p = (
         store()
         .addr(int_const(0x100))
@@ -442,7 +452,7 @@ def test_store_data_accepts_raw_int_as_int_const():
     assert isinstance(store().data(123).into_pat(), Pat)
 
 
-def test_mem_in_rejects_value_operand():
+def test_mem_rejects_value_operand():
     # A memory-input slot requires a memory-token producer.  A bare load()
     # produces a value, so accepting it would build a pattern that can never
     # match a real memory chain; the builder must reject it rather than

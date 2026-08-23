@@ -7,7 +7,8 @@ from .conftest import symbol_addr
 
 def test_a_string_class_is_rejected():
     with pytest.raises(ValueError, match="CallOtherAbi"):
-        strider.cfg.CfgOptions(call_other_abis={"trap": "no_return"})
+        # Deliberate: a bare string where a CallOtherAbi belongs.
+        strider.cfg.CfgOptions(call_other_abis={"trap": "no_return"})  # type: ignore[dict-item]
 
 
 def test_classes_round_trip():
@@ -42,7 +43,7 @@ def test_symbol_entry_carries_every_cfg_field(monkeypatch, x86_memory_elf):
     recorded size; a field it forgets is silently dropped."""
     import strider._api as api
 
-    real = api.CfgOptions
+    real = api.CfgOptions  # type: ignore[attr-defined]  # the binding this test patches
     seen = {}
 
     def recording(**kwargs):

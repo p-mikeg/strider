@@ -5,7 +5,7 @@ import pathlib
 import strider
 from strider.pattern import (
     Capture,
-    Pat,
+    PatLike,
     int_add,
     int_and,
     int_const,
@@ -29,7 +29,7 @@ _cfg, fn, _unresolved = prog.analyze(
 )
 
 
-def idioms() -> dict[str, Pat]:
+def idioms() -> dict[str, PatLike]:
     """Fresh captures per call, so each returned pattern is independent."""
     x, k = Capture("x"), Capture("k")
     base, off = Capture("base"), Capture("off")

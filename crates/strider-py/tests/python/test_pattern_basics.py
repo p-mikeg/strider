@@ -32,7 +32,7 @@ def test_bare_string_operand_is_rejected():
     # A bare string is not a capture operand: use Capture("name") for a
     # capture or anything() for a wildcard.
     with pytest.raises(strider.StriderError):
-        load(addr=int_add(Capture("x"), "y")).into_pat()
+        load(addr=int_add(Capture("x"), "y")).into_pat()  # type: ignore[arg-type]
 
 
 def test_load_with_addr():

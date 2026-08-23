@@ -60,7 +60,8 @@ def test_pretty_carries_the_theme():
     assert g.to_html(pretty="dark") != g.to_html()
     assert g.to_html(pretty="empty") != g.to_html(pretty="dark")
     with pytest.raises(strider.StriderError, match="unknown dot style"):
-        g.to_html(pretty="not_a_theme")
+        # Deliberate: an unknown theme name is a runtime error.
+        g.to_html(pretty="not_a_theme")  # type: ignore[arg-type]
 
 
 def test_style_keyword_is_gone():
@@ -68,9 +69,10 @@ def test_style_keyword_is_gone():
 
     g = _build_graph()
     with pytest.raises(TypeError):
-        g.to_html(style="dark")
+        # Deliberate: `style` is the removed keyword this test pins.
+        g.to_html(style="dark")  # type: ignore[call-arg]
     with pytest.raises(TypeError):
-        g.to_dot(style="dark")
+        g.to_dot(style="dark")  # type: ignore[call-arg]
 
 
 def test_lifter_render_methods_removed():

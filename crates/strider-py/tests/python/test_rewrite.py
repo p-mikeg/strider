@@ -103,4 +103,8 @@ def test_nested_template_string_operand_names_what_was_passed():
     g = _build_graph()
     x = Capture()
     with pytest.raises(strider.StriderError, match="string"):
-        g.rewrite(find=int_add(var(x), int_const(0)), replace=tpl.int_add("x", 1))
+        # Deliberate: a bare string is not a template operand.
+        g.rewrite(
+            find=int_add(var(x), int_const(0)),
+            replace=tpl.int_add("x", 1),  # type: ignore[arg-type]
+        )

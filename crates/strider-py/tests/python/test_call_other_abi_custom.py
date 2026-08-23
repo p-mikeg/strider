@@ -79,7 +79,9 @@ def test_implicit_read_reaches_the_lifted_graph():
     plain_node = _call_other(plain, "rdtsc")
     assert plain_node is not None
     assert "RCX" not in {
-        sleigh.reg_name(i.vn()) for i in plain_node.inputs() if i.vn() is not None
+        sleigh.reg_name(vn)
+        for i in plain_node.inputs()
+        if (vn := i.vn()) is not None
     }
 
     abi = CallOtherAbi.custom(sleigh, implicit_reads=["RCX"])
@@ -87,7 +89,7 @@ def test_implicit_read_reaches_the_lifted_graph():
     node = _call_other(overridden, "rdtsc")
     assert node is not None
     assert "RCX" in {
-        sleigh.reg_name(i.vn()) for i in node.inputs() if i.vn() is not None
+        sleigh.reg_name(vn) for i in node.inputs() if (vn := i.vn()) is not None
     }
 
 

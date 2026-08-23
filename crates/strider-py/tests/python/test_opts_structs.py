@@ -46,7 +46,8 @@ def test_cfg_options_rejects_zero_function_max_size():
 
 def test_lifter_options_rejects_bad_alias_mode():
     with pytest.raises(ValueError, match="alias_mode"):
-        strider.lift.LifterOptions(alias_mode="nonsense")
+        # Deliberate: an unknown alias_mode is a runtime error.
+        strider.lift.LifterOptions(alias_mode="nonsense")  # type: ignore[arg-type]
 
 
 def test_lifter_options_defaults_are_not_shared_mutable():

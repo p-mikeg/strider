@@ -25,6 +25,7 @@ def test_symbol_carries_name_address_and_extent():
 def test_symbol_region_is_the_containing_mapped_region():
     lift = _switch()
     sym = lift.symbol("f")
+    assert sym.region is not None
     start, end = sym.region
     assert start <= sym.address < end
 
@@ -54,7 +55,9 @@ def test_symbol_raises_for_undefined():
 def test_symbol_opt_returns_none_for_undefined():
     lift = _switch()
     assert lift.symbol_opt("no_such_symbol_zzz") is None
-    assert lift.symbol_opt("f").address == lift.symbol("f").address
+    f = lift.symbol_opt("f")
+    assert f is not None
+    assert f.address == lift.symbol("f").address
 
 
 def test_functions_keeps_symbols_with_no_recorded_size():
@@ -84,8 +87,11 @@ def test_functions_excludes_undefined_symbols():
 def test_symbol_at_matches_inside_a_sized_symbol():
     lift = _switch()
     f = lift.symbol("f")
-    assert lift.symbol_at(f.address).name == "f"
-    assert lift.symbol_at(f.address + f.size - 1).name == "f"
+    assert f.size is not None and f.end is not None
+    at_start = lift.symbol_at(f.address)
+    at_last = lift.symbol_at(f.address + f.size - 1)
+    assert at_start is not None and at_start.name == "f"
+    assert at_last is not None and at_last.name == "f"
     # `end` is exclusive, and the next function starts further along.
     assert lift.symbol_at(f.end) is None
 
@@ -94,7 +100,8 @@ def test_symbol_at_needs_an_exact_hit_without_a_size():
     lift = _switch()
     sizeless = lift.symbol("frame_dummy")
     assert sizeless.size is None
-    assert lift.symbol_at(sizeless.address).name == "frame_dummy"
+    at_exact = lift.symbol_at(sizeless.address)
+    assert at_exact is not None and at_exact.name == "frame_dummy"
     assert lift.symbol_at(sizeless.address + 1) is None
 
 
