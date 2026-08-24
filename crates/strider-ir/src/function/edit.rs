@@ -344,7 +344,12 @@ impl<'g> EditFunction<'g> {
     }
 
     /// Drain the maybe-dead queue to a fixed point: kill every enqueued node
-    /// that is actually dead, recursively enqueuing its orphaned operands.
+    /// that is actually dead, recursively enqueuing its orphaned operands, and
+    /// merge every mutated node into its structural twin.
+    ///
+    /// Runs at every pass boundary, so the twins a rewrite leaves behind
+    /// (`PhiCollapse` redirecting two SSA phis to one value) are re-merged
+    /// here.
     pub fn clean(&mut self) {
         while let Some(node) = self.dequeue() {
             let flags = self.state.flags[node];
@@ -354,7 +359,6 @@ impl<'g> EditFunction<'g> {
                 self.kill_node(node);
                 continue;
             }
-            // Merge a mutated node into its structural twin.
             if flags.contains(NodeFlags::NEEDS_RECANON) {
                 self.canonicalize_node(node);
             }
@@ -636,7 +640,9 @@ pub(crate) mod test_fixtures {
             ret_stack_pop: 0,
             link_register_vn: None,
             preserves_memory: false,
+            preserves_all_registers: false,
             no_return: false,
+            ..Default::default()
         };
         let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little)
             .expect("FunctionBuilder::new");
@@ -1104,11 +1110,11 @@ mod tests {
         );
         assert!(
             !ctx.is_root(inner_node),
-            "inner Neg has an input — not a root"
+            "inner Neg has an input, so it is not a root"
         );
         assert!(
             !ctx.is_root(outer_node),
-            "outer Neg has an input — not a root"
+            "outer Neg has an input, so it is not a root"
         );
 
         let post = ctx.postorder();
@@ -1405,7 +1411,6 @@ mod tests {
         let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
-        // Force-enqueue both, then drain.
         ctx.enqueue_killed_def_node(store_node);
         ctx.enqueue_killed_def_node(return_node);
         ctx.clean();
@@ -1535,7 +1540,7 @@ mod function_state_tests {
             !state.live_nodes.contains(dangling_node),
             "dangling unreachable const must not be live"
         );
-        // Sanity: a distinct const node, not deduped with k1/k2.
+        // A distinct const node, not deduped with k1/k2.
         assert!(
             matches!(function.node_kind(dangling_node), NodeKind::IntConst(_)),
             "dangling node is an IntConst"

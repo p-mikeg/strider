@@ -89,10 +89,10 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
 
         // Arg carrier nodes get an "[arg N]" prefix and a double border.
         let base_label = self.pretty_label(node)?;
-        let label = if let Some(indices) = self.node_to_arg_indices.get(&node) {
-            let tag: String = indices
+        let label = if let Some(tags) = self.node_to_arg_indices.get(&node) {
+            let tag: String = tags
                 .iter()
-                .map(|i| format!("[arg {i}]"))
+                .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("{tag}\n{base_label}")

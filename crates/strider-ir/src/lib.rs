@@ -15,7 +15,7 @@ pub mod error;
 mod function;
 #[cfg(any(test, feature = "test-util"))]
 pub use function::cc_ret_and_clobber_vns;
-pub use function::{EditFunction, Function, FunctionState, SideTables, SpDecomp, StackId};
+pub use function::{EditFunction, Function, FunctionState, MemDecomp, MemoryId, SideTables};
 pub mod graph;
 pub use graph::Graph;
 pub mod node;

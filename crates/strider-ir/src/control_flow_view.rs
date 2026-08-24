@@ -4,8 +4,7 @@ use rustc_hash::FxHashSet;
 use crate::function::Function;
 use crate::node::{NodeId, ValueId};
 
-/// Only `Control`-kind edges are visible; data, `PhiToken`, and `Memory` edges
-/// are not.
+/// Only `Control`-kind edges are visible.
 #[derive(Clone, Copy)]
 pub(crate) struct ControlFlowView<'a> {
     function: &'a Function,
@@ -113,10 +112,10 @@ impl<'a> IntoNeighbors for &'a ControlSplitView<'a> {
                     succs.len(),
                     1,
                     "control edge {value:?} has {} consumers; every control edge \
-                     has exactly one.  Zero is a dangling control path — the \
+                     has exactly one.  Zero is a dangling control path: the \
                      validator rejects it as `UnusedControlOutput`, since every \
                      control edge must reach a terminator (`Return` / \
-                     `IndirectBranch` / `Unreachable`) — and it would make this \
+                     `IndirectBranch` / `Unreachable`).  It would also make this \
                      edge-split vertex a DEAD END, so `simple_fast` would treat \
                      everything past it as unreachable and every dominance query \
                      beyond it would silently answer `false` instead of failing.",
@@ -599,7 +598,6 @@ mod tests {
         let split = control_edge_dominators(&f);
         let node_doms = control_dominators(&f);
 
-        // The proxy: the true edge's consumer is the join itself.
         let consumer = f
             .graph()
             .value_uses(true_edge)
@@ -612,8 +610,8 @@ mod tests {
         );
         assert!(
             dominates(&node_doms, consumer, region_t),
-            "the join DOES dominate the tail — which is exactly why the old \
-             node-dominance proxy wrongly claimed the tail was in the true block"
+            "the join DOES dominate the tail, so a node-dominance proxy \
+             wrongly claims the tail is inside the true block"
         );
 
         assert!(
@@ -701,14 +699,14 @@ mod tests {
 
         assert!(
             dominates(&split, CtrlKey::Edge(true_edge), CtrlKey::Edge(true_edge)),
-            "an edge dominates itself (zero-length path) — the direct case"
+            "an edge dominates itself over the zero-length path (the direct case)"
         );
         // The trap: an edge does NOT dominate the If that produces it, so
         // testing edge-against-producer instead of edge-against-edge would
         // break exactly the direct case.
         assert!(
             !dominates(&split, CtrlKey::Edge(true_edge), CtrlKey::Node(if_node)),
-            "an edge cannot dominate its own producer — the If precedes it"
+            "an edge cannot dominate its own producer; the If precedes it"
         );
     }
 }

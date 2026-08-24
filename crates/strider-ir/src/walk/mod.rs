@@ -22,6 +22,52 @@ pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> DenseEntitySet<NodeId> {
     walk.into_visited()
 }
 
+/// The kinds that consume control and produce none.
+fn is_terminator(kind: &NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::Return | NodeKind::IndirectBranch | NodeKind::Unreachable
+    )
+}
+
+/// Control-reachable from `entry` and unable to reach a terminator: the body
+/// of an exit-free control cycle, which `validate` rejects and the lifter
+/// seats an `Unreachable` sink on.
+///
+/// A dangling control output counts as an exit, so an already-malformed
+/// function reports that malformation rather than this one.
+pub fn stranded_nodes(graph: &Graph, entry: NodeId) -> NodeIdSet {
+    let cfg = cfg_reachable(graph, entry);
+
+    let mut escapes = NodeIdSet::new();
+    let mut work: Vec<NodeId> = Vec::new();
+    for node in cfg.iter() {
+        let dangling =
+            cfg_outputs(graph, node).any(|value| graph.value_uses(value).next().is_none());
+        if is_terminator(graph.node_kind(node)) || dangling {
+            escapes.insert(node);
+            work.push(node);
+        }
+    }
+    while let Some(node) = work.pop() {
+        for value in graph.node_inputs(node) {
+            if !graph.value_kind(value).is_control() {
+                continue;
+            }
+            let pred = graph.value_definition(value).0;
+            if cfg.contains(pred) && escapes.insert(pred) {
+                work.push(pred);
+            }
+        }
+    }
+
+    let mut stranded = NodeIdSet::new();
+    for node in cfg.iter().filter(|&node| !escapes.contains(node)) {
+        stranded.insert(node);
+    }
+    stranded
+}
+
 pub type PreOrder<G> = graph_algorithms::walk::PreOrder<G, DenseEntitySet<NodeId>>;
 
 pub type PostOrder<G> = graph_algorithms::walk::PostOrder<G, DenseEntitySet<NodeId>>;
@@ -50,7 +96,7 @@ pub(crate) fn graph_walk_succs(graph: &Graph, node: NodeId) -> impl Iterator<Ite
         .chain(cfg_succs(graph, node))
 }
 
-pub(crate) fn cfg_outputs(graph: &Graph, node: NodeId) -> impl Iterator<Item = ValueId> + '_ {
+pub fn cfg_outputs(graph: &Graph, node: NodeId) -> impl Iterator<Item = ValueId> + '_ {
     graph
         .node_outputs(node)
         .iter()
@@ -296,6 +342,40 @@ mod tests {
         let node = graph.create_node(NodeKind::Return, [], []);
         graph.add_node_input(node, ctrl_value);
         node
+    }
+
+    /// A self-looping Region reaches no terminator, and neither does the
+    /// `Entry` feeding it.
+    #[test]
+    fn stranded_nodes_reports_an_exit_free_cycle_and_its_predecessors() {
+        let mut graph = Graph::new();
+        let (entry, ctrl) = make_entry(&mut graph);
+        let (region, region_ctrl) = make_ctrl_node(&mut graph, ctrl);
+        graph.add_node_input(region, region_ctrl);
+
+        let stranded = stranded_nodes(&graph, entry);
+        assert!(stranded.contains(region), "the self-loop reaches no exit");
+        assert!(stranded.contains(entry), "Entry only reaches the self-loop");
+    }
+
+    #[test]
+    fn stranded_nodes_is_empty_when_every_node_reaches_a_terminator() {
+        let mut graph = Graph::new();
+        let (entry, ctrl) = make_entry(&mut graph);
+        let (region, region_ctrl) = make_ctrl_node(&mut graph, ctrl);
+        graph.add_node_input(region, region_ctrl);
+        make_return(&mut graph, region_ctrl);
+
+        assert!(stranded_nodes(&graph, entry).iter().next().is_none());
+    }
+
+    /// A dangling control output is its own validation error; counting it as
+    /// an exit keeps this out of an already-malformed function.
+    #[test]
+    fn stranded_nodes_treats_a_dangling_control_output_as_an_exit() {
+        let mut graph = Graph::new();
+        let (entry, _ctrl) = make_entry(&mut graph);
+        assert!(stranded_nodes(&graph, entry).iter().next().is_none());
     }
 
     /// An entry node with no successors must be visited exactly once.
@@ -925,8 +1005,8 @@ mod tests {
         expected.sort_unstable_by_key(|n| n.index());
         assert_eq!(
             cone, expected,
-            "walk_from(add) covers exactly {{add, k1, k2}} — neither the \
-             Return consumer nor the entry spine"
+            "walk_from(add) covers exactly {{add, k1, k2}}: not the Return \
+             consumer, not the entry spine"
         );
         assert!(!cone.contains(&ret) && !cone.contains(&entry));
     }

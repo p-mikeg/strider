@@ -36,8 +36,7 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::Truncate, [value_id], output_type))
     }
 
-    /// Widens a narrower value; no-ops at equal-or-wider width. Symmetric with
-    /// `truncate_if_needed`, which passes a narrower value through unchanged.
+    /// Widens a narrower value; no-ops at equal-or-wider width.
     fn extend_if_needed(
         &mut self,
         value_id: ValueId,
@@ -57,7 +56,6 @@ pub trait IRBuilderExt: IRBuilder {
                  ({curr_output_type}); a bitcast is required first"
             ));
         }
-        // Already wide enough: extension is not needed, so no-op.
         if curr_output_type.bit_width() > output_type.bit_width() {
             return Ok(value_id);
         }
@@ -97,9 +95,8 @@ pub trait IRBuilderExt: IRBuilder {
         self.extend_if_needed(truncate_id, output_type, ExtendOp::ZeroExtend)
     }
 
-    /// There is no `CastToFloat` node: an integer reinterprets bit-for-bit via
-    /// `IntBitsToFloat`, and a float of another precision goes through
-    /// `FloatToFloat`.
+    /// An integer input reinterprets bit-for-bit; another float precision
+    /// reprecisions.
     fn cast_to_float_if_needed(&mut self, input: ValueId, float_ty: ValueType) -> Result<ValueId> {
         let in_ty = self.value_type(input)?;
         if in_ty == float_ty {
@@ -160,8 +157,7 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::IntBinaryOp(op), [lhs_id, rhs_id], output_type))
     }
 
-    /// Builds `x <op> IntConst(k):ty`. Note the operand order: the constant
-    /// lands on the right.
+    /// Builds `x <op> IntConst(k):ty`; the constant lands on the right.
     fn build_const_binop(
         &mut self,
         k: u128,
@@ -228,8 +224,9 @@ pub trait IRBuilderExt: IRBuilder {
         )
     }
 
-    /// `bits` is the raw IEEE 754 pattern. `output_type` must be `F32` or
-    /// `F64`.
+    /// `bits` is the raw IEEE 754 pattern. `FloatConst`'s payload is a `u64`, so
+    /// `output_type` must be a float type of at most 8 bytes; `F80` and `F128`
+    /// cannot be represented.
     fn build_float_const(&mut self, bits: u64, output_type: ValueType) -> ValueId {
         self.build_single_output_pure(NodeKind::FloatConst(bits), [], output_type)
     }
@@ -311,12 +308,11 @@ pub trait IRBuilderExt: IRBuilder {
                 float_type.byte_size(),
             ));
         }
-        // F80 skips the fold: `FloatConst`'s u64 payload cannot hold an
-        // 80-bit pattern.
+        // `FloatConst`'s payload is a u64, so a wider pattern cannot fold.
         if let Some(bits) = self.int_const_u128(value)
-            && float_type != ValueType::F80
+            && float_type.byte_size() <= 8
         {
-            // Already masked to the type's width, and F32/F64 fit a u64.
+            // Already masked to the type's width.
             #[allow(clippy::cast_possible_truncation)]
             return Ok(self.build_float_const(bits as u64, float_type));
         }
@@ -337,10 +333,9 @@ pub trait IRBuilderExt: IRBuilder {
                 int_type.byte_size(),
             ));
         }
-        // F80 skips the fold: a u64 payload cannot represent the whole 80-bit
-        // pattern.
+        // A u64 payload cannot represent a wider pattern.
         if let NodeKind::FloatConst(bits) = *self.function().kind_of_value(value)
-            && input_ty != ValueType::F80
+            && input_ty.byte_size() <= 8
         {
             return self.build_int_const(bits, int_type);
         }

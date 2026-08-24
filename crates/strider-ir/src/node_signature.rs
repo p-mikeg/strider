@@ -3,8 +3,8 @@
 
 use crate::node::NodeKind;
 
-/// A slot's admissible value kinds, coarser than the concrete [`ValueKind`]
-/// stored on real outputs.
+/// A slot's admissible value kinds, coarser than the concrete
+/// [`ValueKind`](crate::node::ValueKind) stored on real outputs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpectedValueKind {
     Control,
@@ -51,31 +51,53 @@ pub(crate) struct Slot {
 pub(crate) struct SlotList {
     head: &'static [Slot],
     tail: Option<Slot>,
+    /// Inclusive arity bound. `usize::MAX` for a repeating tail.
+    max_len: usize,
 }
 
 impl SlotList {
     pub(crate) const fn fixed(head: &'static [Slot]) -> Self {
-        Self { head, tail: None }
+        Self {
+            head,
+            tail: None,
+            max_len: head.len(),
+        }
     }
 
+    /// `tail` repeats without bound.
     pub(crate) const fn variadic(head: &'static [Slot], tail: Slot) -> Self {
         Self {
             head,
             tail: Some(tail),
+            max_len: usize::MAX,
         }
     }
 
-    pub(crate) fn is_variadic(&self) -> bool {
-        self.tail.is_some()
+    /// `tail` occupies at most one slot past the head.
+    pub(crate) const fn optional(head: &'static [Slot], tail: Slot) -> Self {
+        Self {
+            head,
+            tail: Some(tail),
+            max_len: head.len() + 1,
+        }
     }
 
-    /// Length of the fixed prefix only.
-    pub(crate) fn head_len(&self) -> usize {
-        self.head.len()
+    /// `None` when `len` is admissible, else the bound it violates.
+    pub(crate) fn arity_violation(&self, len: usize) -> Option<usize> {
+        if len < self.head.len() {
+            Some(self.head.len())
+        } else if len > self.max_len {
+            Some(self.max_len)
+        } else {
+            None
+        }
     }
 
-    /// Past the head: `None` when fixed-arity, the tail slot when variadic.
+    /// Past the head: the tail slot while within `max_len`, else `None`.
     pub(crate) fn at(&self, idx: usize) -> Option<Slot> {
+        if idx >= self.max_len {
+            return None;
+        }
         self.head.get(idx).copied().or(self.tail)
     }
 }
@@ -108,9 +130,12 @@ const ANY_VAL: Slot = slot(AnyValue, "val", R::Val);
 const ADDR: Slot = slot(AnyInt, "addr", R::Addr);
 const DATA: Slot = slot(AnyInt, "data", R::Data);
 const TARGET: Slot = slot(AnyInt, "target", R::Target);
+// Optional trailing `IndirectBranch` input: the ISA-mode bit the branch
+// instruction commits. On MIPS that is the value `JXWritePC` stores to the
+// `ISAModeSwitch` register; on ARM, the mode `setISAMode` selects.
+const ISA_MODE: Slot = slot(AnyInt, "isa", R::Cond);
 const SP: Slot = slot(AnyInt, "sp", R::Sp);
-// AnyValue rather than AnyInt: argument, return, and clobbered registers hold
-// floats too.
+// Argument, return, and clobbered registers hold floats as well as integers.
 const ARG: Slot = slot(AnyValue, "arg", R::Arg);
 const RET: Slot = slot(AnyValue, "ret", R::Ret);
 const CALL_OUT: Slot = slot(AnyValue, "val", R::Val);
@@ -131,6 +156,12 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         (inputs: [$($i:expr),* $(,)?]; in_tail: $it:expr, outputs: [$($o:expr),* $(,)?] $(,)?) => {
             Signature {
                 inputs: SlotList::variadic(&[$($i),*], $it),
+                outputs: SlotList::fixed(&[$($o),*]),
+            }
+        };
+        (inputs: [$($i:expr),* $(,)?]; in_opt: $it:expr, outputs: [$($o:expr),* $(,)?] $(,)?) => {
+            Signature {
+                inputs: SlotList::optional(&[$($i),*], $it),
                 outputs: SlotList::fixed(&[$($o),*]),
             }
         };
@@ -160,8 +191,8 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::Phi => sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [ANY_VAL]),
 
         NodeKind::If => sig!(inputs: [CTRL, COND], outputs: [CTRL, CTRL]),
-        // One Control output per target region, in target order. Exhaustive:
-        // there is no default arm.
+        // One Control output per target region, in target order; the arms are
+        // exhaustive over the dispatch value.
         NodeKind::Switch => sig!(inputs: [CTRL, INT_VAL], outputs: [CTRL]; out_tail: CTRL),
 
         // SP is an input-only anchor; the outputs are the clobbered varnodes.
@@ -170,10 +201,16 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
             outputs: [CTRL, MEM]; out_tail: CALL_OUT,
         ),
         NodeKind::Return => sig!(inputs: [CTRL, MEM]; in_tail: RET, outputs: []),
-        // Placeholder for an unresolved branch.
-        NodeKind::IndirectBranch => sig!(inputs: [CTRL, MEM, TARGET], outputs: []),
-        // Control sink for a no-return trap.
-        NodeKind::Unreachable => sig!(inputs: [CTRL], outputs: []),
+        // Placeholder for an unresolved branch. The optional trailing input is
+        // the interworking ISA-mode bit (absent for a non-switching branch); it
+        // is a real input so the optimizer keeps its cone live for the resolver.
+        NodeKind::IndirectBranch => {
+            sig!(inputs: [CTRL, MEM, TARGET]; in_opt: ISA_MODE, outputs: [])
+        }
+        // Control sink for a no-return trap. The optional trailing input is the
+        // memory chain: control alone anchors no liveness, so an exit-free
+        // control cycle would otherwise lose its stores to compaction.
+        NodeKind::Unreachable => sig!(inputs: [CTRL]; in_opt: MEM, outputs: []),
 
         NodeKind::Load(_) => sig!(inputs: [MEM, ADDR], outputs: [INT_VAL]),
         NodeKind::Store(_) => sig!(inputs: [MEM, ADDR, DATA], outputs: [MEM]),
@@ -384,8 +421,8 @@ mod tests {
     #[test]
     fn call_is_variadic_in_args() {
         let sig = expected_signature(&NodeKind::Call);
-        assert!(sig.inputs.is_variadic());
-        assert_eq!(sig.inputs.head_len(), 4);
+        assert!(sig.inputs.tail.is_some());
+        assert_eq!(sig.inputs.head.len(), 4);
         assert_eq!(sig.inputs.at(0).unwrap().name, "ctrl");
         assert_eq!(sig.inputs.at(1).unwrap().name, "mem");
         assert_eq!(sig.inputs.at(2).unwrap().name, "target");
@@ -398,7 +435,7 @@ mod tests {
     #[test]
     fn return_input_tail_is_ret() {
         let sig = expected_signature(&NodeKind::Return);
-        assert_eq!(sig.inputs.head_len(), 2);
+        assert_eq!(sig.inputs.head.len(), 2);
         assert_eq!(sig.inputs.at(0).unwrap().name, "ctrl");
         assert_eq!(sig.inputs.at(1).unwrap().name, "mem");
         assert_eq!(sig.inputs.at(2).unwrap().role, SlotRole::Ret);
@@ -466,18 +503,18 @@ mod tests {
         ];
         for k in &kinds {
             let sig = expected_signature(k);
-            for i in 0..sig.inputs.head_len() {
+            for i in 0..sig.inputs.head.len() {
                 assert!(sig.inputs.at(i).is_some(), "input.at({i}) for {k:?}");
             }
-            for i in 0..sig.outputs.head_len() {
+            for i in 0..sig.outputs.head.len() {
                 assert!(sig.outputs.at(i).is_some(), "output.at({i}) for {k:?}");
             }
-            if sig.inputs.is_variadic() {
-                let tail = sig.inputs.at(sig.inputs.head_len());
+            if sig.inputs.tail.is_some() {
+                let tail = sig.inputs.at(sig.inputs.head.len());
                 assert!(tail.is_some(), "variadic input tail for {k:?}");
             }
-            if sig.outputs.is_variadic() {
-                let tail = sig.outputs.at(sig.outputs.head_len());
+            if sig.outputs.tail.is_some() {
+                let tail = sig.outputs.at(sig.outputs.head.len());
                 assert!(tail.is_some(), "variadic output tail for {k:?}");
             }
         }

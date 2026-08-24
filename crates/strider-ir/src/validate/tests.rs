@@ -56,6 +56,16 @@ fn assert_validation_err(f: &Function, pred: impl Fn(&ValidationError) -> bool) 
     );
 }
 
+#[track_caller]
+fn assert_no_validation_err(f: &Function, pred: impl Fn(&ValidationError) -> bool) {
+    if let Err(errs) = validate(f) {
+        assert!(
+            !errs.0.iter().any(pred),
+            "an excluded validation error was reported; got: {errs:?}"
+        );
+    }
+}
+
 #[test]
 fn local_typing_wrong_input_kind_on_int_unary_op() {
     use crate::node::IntUnaryOp;
@@ -103,7 +113,7 @@ fn local_typing_wrong_output_kind() {
 }
 
 // Entry and InitialMemory are cacheable, so no legal construction path can
-// mint a duplicate.  The two tests below pin that dedup instead.
+// mint a duplicate. The two tests below pin that dedup instead.
 
 #[test]
 fn graph_invariants_entry_dedupes_on_repeated_create() {
@@ -136,7 +146,7 @@ fn graph_invariants_initial_memory_dedupes_on_repeated_create() {
 #[test]
 fn graph_invariants_region_bad_predecessor() {
     // Region with inputs [entry Control, InitialMemory Memory]: input[1] is
-    // the wrong kind.  The Return keeps the Region reachable.
+    // the wrong kind. The Return keeps the Region reachable.
     let mut s = spine();
 
     let bad_cs = s.f.graph_mut().create_node(
@@ -384,7 +394,67 @@ fn local_typing_wrong_input_count() {
     });
 }
 
-/// Variadic input tails are kind-checked, not just the fixed head prefix.
+/// The `IndirectBranch` ISA-mode input is ONE optional trailing slot, not a
+/// repeating tail: the arity bound is four, so a fifth input is rejected.
+#[test]
+fn local_typing_indirect_branch_rejects_a_second_isa_mode_input() {
+    let mut s = spine();
+    let (_t, target) = int_const(&mut s.f, 0x1000, ValueType::I64);
+    let (_m, mode) = int_const(&mut s.f, 1, ValueType::I64);
+
+    let bad = s.f.graph_mut().create_node(
+        NodeKind::IndirectBranch,
+        [s.entry_ctrl, s.mem_value, target, mode, mode],
+        [],
+    );
+    stamp(&mut s.f, bad);
+
+    assert_validation_err(&s.f, |e| {
+        matches!(e, ValidationError::NodeInputCountMismatch { actual: 5, .. })
+    });
+}
+
+/// The companion bound: three or four inputs are both admissible.
+#[test]
+fn local_typing_indirect_branch_accepts_optional_isa_mode_input() {
+    for with_mode in [false, true] {
+        let mut s = spine();
+        let (_t, target) = int_const(&mut s.f, 0x1000, ValueType::I64);
+        let (_m, mode) = int_const(&mut s.f, 1, ValueType::I64);
+        let mut inputs = vec![s.entry_ctrl, s.mem_value, target];
+        if with_mode {
+            inputs.push(mode);
+        }
+        let branch =
+            s.f.graph_mut()
+                .create_node(NodeKind::IndirectBranch, inputs, []);
+        stamp(&mut s.f, branch);
+        assert_no_validation_err(&s.f, |e| {
+            matches!(e, ValidationError::NodeInputCountMismatch { .. })
+        });
+    }
+}
+
+/// A genuinely repeating tail keeps its unbounded semantics.
+#[test]
+fn local_typing_call_accepts_arbitrarily_many_argument_inputs() {
+    let mut s = spine();
+    let (_t, target) = int_const(&mut s.f, 0x1000, ValueType::I64);
+    let (_sp, sp) = int_const(&mut s.f, 0x7000, ValueType::I64);
+    let mut inputs = vec![s.entry_ctrl, s.mem_value, target, sp];
+    inputs.extend(std::iter::repeat_n(sp, 9));
+    let call = s.f.graph_mut().create_node(
+        NodeKind::Call,
+        inputs,
+        [ValueKind::Control, ValueKind::Memory],
+    );
+    stamp(&mut s.f, call);
+    assert_no_validation_err(&s.f, |e| {
+        matches!(e, ValidationError::NodeInputCountMismatch { .. })
+    });
+}
+
+/// Variadic input tails are kind-checked, not only the fixed head prefix.
 #[test]
 fn local_typing_mem_phi_variadic_tail_must_be_memory() {
     let mut s = spine();
@@ -918,7 +988,7 @@ fn memory_chain_preserving_call_unconsumed_memory_output_not_flagged() {
     let (sp_n, sp) = int_const(&mut s.f, 0x7fff_0000, ValueType::I64);
     stamp(&mut s.f, sp_n);
 
-    // The Memory output is deliberately left unconsumed.
+    // The Memory output is left unconsumed.
     let call = s.f.graph_mut().create_node(
         NodeKind::Call,
         [s.entry_ctrl, s.mem_value, target, sp],
@@ -1025,4 +1095,110 @@ fn graph_invariants_equal_width_extend_is_rejected() {
             }
         )
     });
+}
+
+/// `Entry -> Region` whose control output is its own second predecessor. Both
+/// use-count checks pass: the region's control output has exactly one consumer.
+#[test]
+fn graph_invariants_exit_free_control_cycle_is_rejected() {
+    let mut s = spine();
+    let region = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [s.entry_ctrl],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let region_ctrl = s.f.node_outputs(region)[0];
+    s.f.graph_mut().add_node_input(region, region_ctrl);
+
+    assert_no_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::UnusedControlOutput { .. }
+                | ValidationError::ReusedControlOutput { .. }
+        )
+    });
+    assert_validation_err(&s.f, |e| {
+        matches!(e, ValidationError::NoTerminatorReachable { .. })
+    });
+}
+
+/// The same cycle with an `If` arm escaping into a `Return` is well formed.
+#[test]
+fn graph_invariants_control_cycle_with_an_exit_validates() {
+    let mut s = spine();
+    let (cond_node, cond) = int_const(&mut s.f, 1, ValueType::I1);
+    stamp(&mut s.f, cond_node);
+
+    let region = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [s.entry_ctrl],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let region_ctrl = s.f.node_outputs(region)[0];
+    let branch = s.f.graph_mut().create_node(
+        NodeKind::If,
+        [region_ctrl, cond],
+        [ValueKind::Control, ValueKind::Control],
+    );
+    stamp(&mut s.f, branch);
+    let [back, exit] = s.f.node_outputs_exact::<2>(branch).unwrap();
+    s.f.graph_mut().add_node_input(region, back);
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [exit, s.mem_value], []);
+    stamp(&mut s.f, ret);
+
+    validate(&s.f).expect("a control cycle with a Return exit is well formed");
+}
+
+/// An exit-free cycle terminated by an `Unreachable` sink hanging off an `If`.
+#[test]
+fn graph_invariants_control_cycle_with_unreachable_sink_validates() {
+    let mut s = spine();
+    let (cond_node, cond) = int_const(&mut s.f, 1, ValueType::I1);
+    stamp(&mut s.f, cond_node);
+
+    let region = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [s.entry_ctrl],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let region_ctrl = s.f.node_outputs(region)[0];
+    let branch = s.f.graph_mut().create_node(
+        NodeKind::If,
+        [region_ctrl, cond],
+        [ValueKind::Control, ValueKind::Control],
+    );
+    stamp(&mut s.f, branch);
+    let [back, sink_ctrl] = s.f.node_outputs_exact::<2>(branch).unwrap();
+    s.f.graph_mut().add_node_input(region, back);
+    let sink =
+        s.f.graph_mut()
+            .create_node(NodeKind::Unreachable, [sink_ctrl], []);
+    stamp(&mut s.f, sink);
+
+    validate(&s.f).expect("an Unreachable sink terminates the cycle");
+}
+
+/// Control alone cannot anchor a memory chain, so the sink that terminates an
+/// exit-free cycle takes the chain as its optional second input.
+#[test]
+fn unreachable_with_memory_input_keeps_the_store_live() {
+    let mut s = spine();
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::I64);
+    stamp(&mut s.f, addr_n);
+    let (data_n, data) = int_const(&mut s.f, 0x42, ValueType::I64);
+    stamp(&mut s.f, data_n);
+    let (st, st_mem) = store(&mut s.f, s.mem_value, addr, data);
+    let sink =
+        s.f.graph_mut()
+            .create_node(NodeKind::Unreachable, [s.entry_ctrl, st_mem], []);
+    stamp(&mut s.f, sink);
+
+    validate(&s.f).expect("Unreachable accepts the memory chain as an optional input");
+    use crate::IRWalker as _;
+    assert!(
+        s.f.walk().any(|node| node == st),
+        "the memory input must keep the Store on the compaction walk"
+    );
 }

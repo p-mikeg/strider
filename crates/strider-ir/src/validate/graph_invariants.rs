@@ -152,7 +152,7 @@ pub(super) fn check_function_invariants_switch(
     }
 }
 
-/// Every `Phi` / `MemPhi` takes its dispatch token (input[0]) from a
+/// Every `Phi` / `MemPhi` takes its dispatch token (`input[0]`) from a
 /// `Region`'s `PhiToken` output, and has one value input per predecessor of
 /// that owning `Region`.
 pub(super) fn check_function_invariants_phis(
@@ -362,5 +362,23 @@ pub(super) fn check_function_invariants_consts(
         if too_wide {
             errs.push(ValidationError::ConstWidthMismatch { node, id });
         }
+    }
+}
+
+/// Every control-reachable node must reach a terminator. The use-count checks
+/// pass an exit-free control cycle: its back-edge consumes the header's control
+/// output, so nothing there is unused or reused, yet no terminator exists to
+/// anchor liveness and compaction drops the whole body.
+pub(super) fn check_function_invariants_terminator_reachable(
+    function: &Function,
+    errs: &mut Vec<ValidationError>,
+) {
+    let stranded = crate::walk::stranded_nodes(function.graph(), function.entry());
+    let mut stranded = stranded.iter();
+    if let Some(node) = stranded.next() {
+        errs.push(ValidationError::NoTerminatorReachable {
+            node,
+            count: 1 + stranded.count(),
+        });
     }
 }

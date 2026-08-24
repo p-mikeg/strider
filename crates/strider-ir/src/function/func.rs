@@ -241,7 +241,24 @@ impl Function {
             return None;
         }
         let addr = self.node_inputs(node).get(1).copied()?;
-        self.side_tables().stack_slot_resolved(addr)
+        // Stack only: a heap address resolves through the same interner but is a
+        // different region, so it is not an SP offset.
+        match self.side_tables().memory_decomp(addr) {
+            (crate::MemDecomp::Stack(_), slot) => slot,
+            _ => None,
+        }
+    }
+
+    /// The region tag (`Stack` / `Heap`) of a Store/Load's decomposed address,
+    /// or `Unknown` for a non-access or an address not yet decomposed.
+    pub fn access_memory_class(&self, node: NodeId) -> crate::MemDecomp {
+        if !matches!(self.node_kind(node), NodeKind::Store(_) | NodeKind::Load(_)) {
+            return crate::MemDecomp::Unknown;
+        }
+        match self.node_inputs(node).get(1).copied() {
+            Some(addr) => self.side_tables().memory_class(addr),
+            None => crate::MemDecomp::Unknown,
+        }
     }
 
     /// The `initial_var_index` entries with each key resolved to its varnode.
@@ -559,7 +576,6 @@ mod compact_tests {
         let mut f = test_function();
         let entry = f.entry();
         let mem = test_initial_memory(&f);
-        // Referenced only by a zombie, and interned FIRST so it takes id 0.
         let dropped_id = f.intern_int_const_limbs(&[0xAAAA_BBBB, 0, 0, 1], ValueType::I256);
         let _zombie = f.graph_mut().create_node(
             NodeKind::IntConst(dropped_id),
@@ -596,7 +612,7 @@ mod compact_tests {
         );
     }
 
-    /// A surviving `stack_offsets` entry must be remapped on BOTH coordinates:
+    /// A surviving `memory_offsets` entry must be remapped on BOTH coordinates:
     /// its key and its interned base.  The zombie allocated ahead of the live
     /// nodes forces a non-trivial id shift.
     #[test]
@@ -604,7 +620,6 @@ mod compact_tests {
         let mut f = test_function();
         let entry = f.entry();
         let mem = test_initial_memory(&f);
-        // Zombie before the surviving nodes so their ids shift during compaction.
         let zombie = int_const_node(&mut f, 0xdead_u128, crate::node::ValueType::I64);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
@@ -638,9 +653,9 @@ mod compact_tests {
             "the zombie ahead of it must shift the value ids"
         );
         assert_eq!(
-            f.side_tables().stack_slot_resolved(new_key_value),
+            f.side_tables().memory_slot_resolved(new_key_value),
             Some((new_base_value, -16)),
-            "surviving stack_offsets entry must be remapped on key AND base"
+            "surviving memory_offsets entry must be remapped on key AND base"
         );
     }
 
@@ -711,7 +726,7 @@ mod compact_tests {
         );
     }
 
-    /// `value_vn` and `stack_offsets` must hold no entries pointing at dropped
+    /// `value_vn` and `memory_offsets` must hold no entries pointing at dropped
     /// nodes after compaction.
     #[test]
     fn retain_reachable_drops_side_table_entry_for_dropped_node() {
@@ -744,14 +759,14 @@ mod compact_tests {
             "tag must be set before compact"
         );
 
-        // A zombie IntConst carrying a stack_offsets entry, keyed by its value.
+        // A zombie IntConst carrying a memory_offsets entry, keyed by its value.
         let zombie_stack =
             int_const_node(&mut f, (0xBEEF_u64) as u128, crate::node::ValueType::I64);
         let zombie_value = f.node_outputs(zombie_stack).iter().copied().next().unwrap();
         f.side_tables_mut()
             .set_stack_slot(zombie_value, zombie_value, -8);
         assert_eq!(
-            f.side_tables().stack_slot_resolved(zombie_value),
+            f.side_tables().memory_slot_resolved(zombie_value),
             Some((zombie_value, -8)),
             "offset must be set before compact"
         );
@@ -778,7 +793,7 @@ mod compact_tests {
             f.node_outputs(n)
                 .first()
                 .copied()
-                .and_then(|v| f.side_tables().stack_slot_resolved(v))
+                .and_then(|v| f.side_tables().memory_slot_resolved(v))
                 .map(|(_, o)| o)
                 == Some(-8)
         });
@@ -1032,10 +1047,8 @@ mod compact_tests {
             .value_old_to_new(clob)
             .expect("live clobber output value must survive compaction");
 
-        // Override CC survives the NodeId remap.
         assert_ne!(f.get_cc(new_call), f.default_cc());
         assert_eq!(f.get_cc(new_call).stack_args, cc.stack_args,);
-        // Clobber tag survives the ValueId remap.
         assert_eq!(f.get_vn_for_value(new_clob), Some(clob_vn));
     }
 

@@ -2,7 +2,7 @@ pub(crate) mod dot;
 mod edit;
 mod func;
 mod side_tables;
-pub use side_tables::{SideTables, SpDecomp, StackId};
+pub use side_tables::{MemDecomp, MemoryId, SideTables};
 
 pub use edit::EditFunction;
 pub use edit::FunctionState;
@@ -18,7 +18,7 @@ pub(crate) fn test_function() -> Function {
         strider_target::Endianness::Little,
         Vec::new(),
     );
-    // Mint `InitialMemory` directly, mirroring what the builder would do.
+    // Mirrors the `InitialMemory` the builder mints.
     f.graph_mut().create_node(
         crate::node::NodeKind::InitialMemory,
         [],
