@@ -45,11 +45,38 @@ pub(crate) fn build_per_address_ccs(
         .collect::<PyResult<_>>()
 }
 
+/// Borrow the handle, erroring on a re-entrant call instead of panicking.
+///
+/// `Py::borrow` panics when the handle is already borrowed, and the panic
+/// cannot unwind out of rsleigh's `extern "C"` instruction-fetch callback:
+/// a `MemReader.read` re-entering the handle would abort the process.
+fn try_borrow_lifter<'py>(
+    slf: &'py Py<PyLifter>,
+    py: Python<'py>,
+) -> PyResult<pyo3::PyRef<'py, PyLifter>> {
+    slf.try_borrow(py).map_err(|_| reentrant_lifter_err())
+}
+
+fn try_borrow_lifter_mut<'py>(
+    slf: &'py Py<PyLifter>,
+    py: Python<'py>,
+) -> PyResult<pyo3::PyRefMut<'py, PyLifter>> {
+    slf.try_borrow_mut(py).map_err(|_| reentrant_lifter_err())
+}
+
+pub(crate) fn reentrant_lifter_err() -> PyErr {
+    into_strider_err(anyhow::anyhow!(
+        "this Lifter is already in use by an in-progress analyze/build_cfg; \
+         a `read()` callback cannot re-enter the same handle. Build a \
+         separate Lifter for the nested analysis"
+    ))
+}
+
 /// Error on `Some(0)`; zero is not a meaningful bound.
 pub(crate) fn reject_zero_max_size(function_max_size: Option<u64>) -> PyResult<()> {
     if matches!(function_max_size, Some(0)) {
         return Err(pyo3::exceptions::PyValueError::new_err(
-            "function_max_size must be > 0 (zero is meaningless — omit the argument for unbounded)",
+            "function_max_size must be > 0; omit the argument for an unbounded lift",
         ));
     }
     Ok(())
@@ -76,6 +103,30 @@ pub(crate) fn build_orch_sleigh(
         .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))
 }
 
+/// The `OptOptions` an analysis runs under, read off a `LifterOptions`. Shared
+/// so `optimize` and `analyze` agree about alias mode and the assumption knobs.
+fn opt_options_from(
+    py: Python<'_>,
+    opts: &PyLifterOptions,
+) -> PyResult<strider_orchestrator::opt::OptOptions> {
+    let assumptions = {
+        let a = opts.assumptions.borrow(py);
+        strider_orchestrator::opt::AssumptionOptions {
+            distinct_sp_bases_disjoint: a.distinct_sp_bases_disjoint,
+            callee_preserves_stack_args: a.callee_preserves_stack_args,
+            noalias_allocators: a.noalias_allocators.iter().copied().collect(),
+            escape_analysis: a.escape_analysis,
+        }
+    };
+    Ok(strider_orchestrator::opt::OptOptions {
+        // Already validated at `LifterOptions` construction time.
+        alias_mode: parse_alias_mode(&opts.alias_mode)?,
+        assume_incoming_args_survive_calls: opts.assume_incoming_args_survive_calls,
+        assumptions,
+        resolve_indirect_branches: opts.resolve_indirect_branches,
+    })
+}
+
 /// Build the orchestrator handle for `arch` over `mem` and optional `rom`.
 pub(crate) fn build_strider(
     arch: PySleighArch,
@@ -94,12 +145,39 @@ pub(crate) fn orch_lift_opts(
     allow_code_before_start_addr: bool,
     per_address_ccs: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     compact: bool,
+    known_targets: &std::collections::HashMap<u64, crate::options::KnownTarget>,
+    call_other_abis: &std::collections::HashMap<String, crate::call_other_abi::PyCallOtherAbi>,
 ) -> strider_orchestrator::LiftOptions {
+    // A caller-supplied answer seats at the CFG level, so it applies whether or
+    // not the classifier runs.
+    let known = known_targets
+        .iter()
+        .map(|(&addr, answer)| {
+            let seated = match answer {
+                crate::options::KnownTarget::Return => strider_cfg::ResolvedTargets::LinkRegister,
+                crate::options::KnownTarget::Targets(targets) => {
+                    strider_cfg::ResolvedTargets::Multiple(
+                        targets
+                            .iter()
+                            .map(|&t| strider_cfg::ResolvedTarget::new(t, None))
+                            .collect(),
+                    )
+                }
+            };
+            (strider_cfg::PcodeInsnAddr::at_machine_start(addr), seated)
+        })
+        .collect();
     strider_orchestrator::LiftOptions {
         cfg: strider_cfg::CfgOptions {
             fn_max_size: function_max_size,
             allow_code_before_start_addr,
-            ..strider_cfg::CfgOptions::default()
+            known_targets: known,
+            call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(
+                call_other_abis
+                    .iter()
+                    .map(|(name, abi)| (name.clone(), abi.to_override()))
+                    .collect(),
+            ),
         },
         per_address_ccs,
         compact,
@@ -114,7 +192,7 @@ pub(crate) fn unresolved_machine_addrs(branches: &[strider_cfg::PcodeInsnAddr]) 
 /// `SystemExit` a Python callback stashed rather than raised (raising
 /// would have been destroyed by the next callback) is surfaced here.
 pub(crate) fn check_pending_control_flow() -> PyResult<()> {
-    if let Some(err) = crate::pattern::take_pending_control_flow() {
+    if let Some(err) = crate::pattern::take_pending_query_error() {
         return Err(err);
     }
     Ok(())
@@ -133,70 +211,41 @@ pub(crate) fn prefer_pending_control_flow<T>(result: PyResult<T>) -> PyResult<T>
     }
 }
 
-/// What `Lifter.analyze` returns: the CFG, the lifted and optimised IR,
-/// and the addresses of any indirect branch that stayed unresolved.
+/// Run `f` with both drains: a stashed control-flow exception wins over
+/// `f`'s own error, and a stash survived by a successful `f` still surfaces.
 ///
-/// Named fields, but it also unpacks as
-/// `cfg, function, unresolved = lifter.analyze(...)`.
-#[pyclass(name = "AnalyzeResult", module = "strider.lift", unsendable)]
-pub struct PyAnalyzeResult {
-    /// The FINAL resolve/re-lift iteration's CFG, the one `function` was
-    /// actually lifted from.
-    #[pyo3(get)]
-    cfg: Py<PyCfg>,
-    #[pyo3(get)]
-    function: Py<PyFunction>,
-    /// Machine addresses of indirect branches that could not be resolved.
-    /// A non-empty list is NOT an error.
-    #[pyo3(get)]
-    unresolved: Vec<u64>,
+/// Every entry point that can reach a Python callback, a reader's `read` or a
+/// pattern's `.when()`, goes through this (or `analyze`'s open-coded
+/// equivalent), so a later, unrelated call cannot inherit a stashed
+/// exception.
+pub(crate) fn with_pending_control_flow<T>(f: impl FnOnce() -> PyResult<T>) -> PyResult<T> {
+    let out = prefer_pending_control_flow(f())?;
+    check_pending_control_flow()?;
+    Ok(out)
 }
 
-#[pymethods]
-impl PyAnalyzeResult {
-    /// Expose the strong `Py<>` handles to the cyclic GC so a cycle routed
-    /// through a result object stays collectable instead of leaking.
-    fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
-        visit.call(&self.cfg)?;
-        visit.call(&self.function)
-    }
+/// The `collections.namedtuple` type backing `strider.lift.AnalyzeResult`,
+/// created once and cached so its identity (hence `isinstance`) is stable
+/// across calls.
+static ANALYZE_RESULT_TYPE: pyo3::sync::GILOnceCell<PyObject> = pyo3::sync::GILOnceCell::new();
 
-    fn __len__(&self) -> usize {
-        3
-    }
-
-    /// Positional access in field order.  Accepts negative indices.
-    fn __getitem__(&self, py: Python<'_>, idx: isize) -> PyResult<PyObject> {
-        let idx = if idx < 0 { idx + 3 } else { idx };
-        match idx {
-            0 => Ok(self.cfg.to_object(py)),
-            1 => Ok(self.function.to_object(py)),
-            2 => Ok(self.unresolved.to_object(py)),
-            _ => Err(pyo3::exceptions::PyIndexError::new_err(
-                "AnalyzeResult index out of range (expected 0..3)",
-            )),
-        }
-    }
-
-    /// Iterate the three fields in order.
-    fn __iter__(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let items = pyo3::types::PyTuple::new_bound(
-            py,
-            [
-                self.cfg.to_object(py),
-                self.function.to_object(py),
-                self.unresolved.to_object(py),
-            ],
-        );
-        Ok(items.as_any().iter()?.unbind().into())
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "AnalyzeResult(cfg=..., function=..., unresolved={} addr(s))",
-            self.unresolved.len()
-        )
-    }
+fn analyze_result_type(py: Python<'_>) -> PyResult<PyObject> {
+    ANALYZE_RESULT_TYPE
+        .get_or_try_init(py, || {
+            let nt = py
+                .import_bound("collections")?
+                .getattr("namedtuple")?
+                .call1(("AnalyzeResult", ("cfg", "function", "unresolved")))?;
+            nt.setattr("__module__", "strider.lift")?;
+            nt.setattr(
+                "__doc__",
+                "What Lifter.analyze returns: (cfg, function, unresolved). \
+                 `unresolved` holds the machine addresses of indirect branches \
+                 that could not be resolved; a non-empty list is not an error.",
+            )?;
+            PyResult::Ok(nt.unbind())
+        })
+        .map(|obj| obj.clone_ref(py))
 }
 
 /// Lifts, optimises and resolves functions for one architecture.  Build
@@ -210,6 +259,12 @@ pub struct PyLifter {
     /// `__traverse__` can make the otherwise-buried lifter to reader edge
     /// visible to the cyclic GC.  Empty for the owned-data path.
     py_deps: Vec<std::sync::Arc<Py<PyAny>>>,
+    /// The exact `mem` object the handle was built from, returned by
+    /// `reader()`. `None` only after `__clear__` during GC.
+    mem_obj: Option<Py<PyAny>>,
+    /// The exact `rom` object the handle was built from, returned by `rom()`.
+    /// `None` when no rom was supplied, or after `__clear__` during GC.
+    rom_obj: Option<Py<PyAny>>,
 }
 
 fn collect_py_deps(mem: &MemInput, rom: Option<&MemInput>) -> Vec<std::sync::Arc<Py<PyAny>>> {
@@ -226,6 +281,31 @@ fn collect_py_deps(mem: &MemInput, rom: Option<&MemInput>) -> Vec<std::sync::Arc
 impl PyLifter {
     pub(crate) fn sleigh(&self) -> &rsleigh::Sleigh<AnyMemReader> {
         self.inner.sleigh()
+    }
+
+    /// The `Function::neighborhood_dot` `pretty=True` path: same node
+    /// selection, register names resolved against this handle's Sleigh.
+    pub(crate) fn dispatch_neighborhood_dot(
+        &self,
+        function: &PyFunction,
+        center: u32,
+        depth: usize,
+        hub_cap: usize,
+        max_nodes: usize,
+        count_producers: bool,
+    ) -> PyResult<String> {
+        with_pending_control_flow(|| {
+            let sleigh = self.sleigh();
+            let guard = function.read_inner().map_err(into_strider_err)?;
+            let nid = guard
+                .graph()
+                .node_id_from_u32(center)
+                .ok_or_else(|| into_strider_err(anyhow::anyhow!("invalid node id {center}")))?;
+            let dumper = guard.dot_dumper(sleigh).map_err(into_strider_err)?;
+            dumper
+                .neighborhood_dot(nid, depth, hub_cap, max_nodes, count_producers)
+                .map_err(|e| into_strider_err(anyhow::anyhow!(e)))
+        })
     }
 
     /// Pretty-render `function`, resolving register names against this
@@ -271,18 +351,56 @@ pub(crate) enum DotResult {
     Dot(String),
 }
 
+/// Shared construction: extract the code/rom sources, collect their Python
+/// objects for the GC traversal, and build the orchestrator handle.
+fn build_lifter(
+    arch: PySleighArch,
+    mem: Bound<'_, PyAny>,
+    rom: Option<Bound<'_, PyAny>>,
+) -> PyResult<PyLifter> {
+    let mem_input = mem.extract::<MemInput>()?;
+    let rom_input = rom.as_ref().map(|r| r.extract::<MemInput>()).transpose()?;
+    let py_deps = collect_py_deps(&mem_input, rom_input.as_ref());
+    Ok(PyLifter {
+        inner: build_strider(arch, mem_input, rom_input)?,
+        py_deps,
+        mem_obj: Some(mem.unbind()),
+        rom_obj: rom.map(Bound::unbind),
+    })
+}
+
 #[pymethods]
 impl PyLifter {
     /// Build a handle for `arch` reading code from `mem`, with `rom` as the
     /// optional read-only memory for constant folding.
     #[new]
     #[pyo3(signature = (arch, mem, rom = None))]
-    fn new(arch: PySleighArch, mem: MemInput, rom: Option<MemInput>) -> PyResult<Self> {
-        let py_deps = collect_py_deps(&mem, rom.as_ref());
-        Ok(PyLifter {
-            inner: build_strider(arch, mem, rom)?,
-            py_deps,
-        })
+    fn new(
+        arch: PySleighArch,
+        mem: Bound<'_, PyAny>,
+        rom: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Self> {
+        build_lifter(arch, mem, rom)
+    }
+
+    /// The code source (`BufferReader` or `MemReader`) this handle was built
+    /// with.
+    fn reader(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.mem_obj
+            .as_ref()
+            .map(|o| o.clone_ref(py))
+            .ok_or_else(|| into_strider_err(anyhow::anyhow!("reader is unavailable")))
+    }
+
+    /// The `rom` (read-only memory for constant folding) this handle was built
+    /// with, or `None` if none was supplied.
+    fn rom(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.rom_obj.as_ref().map(|o| o.clone_ref(py))
+    }
+
+    fn __repr__(slf: Bound<'_, Self>) -> PyResult<String> {
+        let name: String = slf.get_type().getattr("__name__")?.extract()?;
+        Ok(format!("{name}(...)"))
     }
 
     /// Without this, a cycle from a user's `read()`-callback object back
@@ -292,11 +410,19 @@ impl PyLifter {
         for dep in &self.py_deps {
             visit.call(&**dep)?;
         }
+        if let Some(o) = &self.mem_obj {
+            visit.call(o)?;
+        }
+        if let Some(o) = &self.rom_obj {
+            visit.call(o)?;
+        }
         Ok(())
     }
 
     fn __clear__(&mut self) {
         self.py_deps.clear();
+        self.mem_obj = None;
+        self.rom_obj = None;
     }
 
     /// INTERNAL. Rebuild this handle's Sleigh and orchestrator state from
@@ -305,13 +431,36 @@ impl PyLifter {
     fn rebuild(
         &mut self,
         arch: PySleighArch,
-        mem: MemInput,
-        rom: Option<MemInput>,
+        mem: Bound<'_, PyAny>,
+        rom: Option<Bound<'_, PyAny>>,
     ) -> PyResult<()> {
-        let py_deps = collect_py_deps(&mem, rom.as_ref());
-        self.inner = build_strider(arch, mem, rom)?;
-        self.py_deps = py_deps;
+        *self = build_lifter(arch, mem, rom)?;
         Ok(())
+    }
+
+    /// Every Sleigh user-op name this architecture can emit, indexed by
+    /// user-op id.  These are the names `CfgOptions(call_other_abis=...)`
+    /// classifies.
+    fn user_op_names(&self) -> Vec<String> {
+        self.inner.user_op_names().to_vec()
+    }
+
+    /// How `name` is classified: the `opts` entry for it when there is one,
+    /// else the built-in table, else `None` for a name strider has no answer
+    /// for (which fails the lift of any function containing it).
+    #[pyo3(signature = (name, opts=None))]
+    fn call_other_abi(
+        &self,
+        py: Python<'_>,
+        name: &str,
+        opts: Option<Py<PyCfgOptions>>,
+    ) -> Option<crate::call_other_abi::PyCallOtherAbi> {
+        if let Some(opts) = opts
+            && let Some(abi) = opts.borrow(py).call_other_abis.get(name)
+        {
+            return Some(abi.clone());
+        }
+        crate::call_other_abi::PyCallOtherAbi::builtin(self.inner.arch().preset(), name)
     }
 
     /// Build the control-flow graph of the function at `entry`, without
@@ -323,25 +472,35 @@ impl PyLifter {
         entry: u64,
         opts: Option<Py<PyCfgOptions>>,
     ) -> PyResult<PyCfg> {
-        let (function_max_size, allow_code_before_start_addr) = match opts {
+        let (function_max_size, allow_code_before_start_addr, call_other_abis) = match opts {
             Some(o) => {
                 let o = o.borrow(py);
-                (o.function_max_size, o.allow_code_before_start_addr)
+                (
+                    o.function_max_size,
+                    o.allow_code_before_start_addr,
+                    o.call_other_abis.clone(),
+                )
             }
-            None => (None, false),
+            None => (None, false, std::collections::HashMap::new()),
         };
         let cfg_opts = strider_cfg::CfgOptions {
             allow_code_before_start_addr,
             fn_max_size: function_max_size,
+            call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(
+                call_other_abis
+                    .iter()
+                    .map(|(name, abi)| (name.clone(), abi.to_override()))
+                    .collect(),
+            ),
             ..strider_cfg::CfgOptions::default()
         };
-        let inner = {
-            let mut lifter = slf.borrow_mut(py);
+        let inner = with_pending_control_flow(|| {
+            let mut lifter = try_borrow_lifter_mut(&slf, py)?;
             lifter
                 .inner
                 .build_cfg(entry, &cfg_opts)
-                .map_err(into_strider_err)?
-        };
+                .map_err(into_strider_err)
+        })?;
         Ok(PyCfg::new(inner, slf))
     }
 
@@ -361,11 +520,11 @@ impl PyLifter {
         entry: &Bound<'_, PyAny>,
         cc: Option<PyCallingConvention>,
         opts: Option<Py<PyLifterOptions>>,
-    ) -> PyResult<PyAnalyzeResult> {
+    ) -> PyResult<PyObject> {
         let entry: u64 = entry.extract().map_err(|_| {
             into_strider_err(anyhow::anyhow!(
                 "`entry` must be an address (int); a symbol name (str) needs \
-                 an ElfLifter — build one with strider.lift.load_elf(path)"
+                 an ElfLifter. Build one with strider.lift.load_elf(path)"
             ))
         })?;
         let cc = cc.ok_or_else(|| {
@@ -379,26 +538,27 @@ impl PyLifter {
             None => Py::new(py, PyLifterOptions::new_default(py)?)?,
         };
         let opts_ref = opts.borrow(py);
-        let (function_max_size, allow_code_before_start_addr) = {
+        let (function_max_size, allow_code_before_start_addr, known_targets, call_other_abis) = {
             let cfg = opts_ref.cfg.borrow(py);
-            (cfg.function_max_size, cfg.allow_code_before_start_addr)
+            (
+                cfg.function_max_size,
+                cfg.allow_code_before_start_addr,
+                cfg.known_targets.clone(),
+                cfg.call_other_abis.clone(),
+            )
         };
         let compact = opts_ref.compact;
         let per_address_ccs_py = opts_ref.per_address_ccs.clone().unwrap_or_default();
-        let calls_clobber = opts_ref.calls_clobber;
-        let assume_distinct_sp_bases_disjoint = opts_ref.assume_distinct_sp_bases_disjoint;
-        // Already validated at `LifterOptions` construction time.
-        let alias_mode = parse_alias_mode(&opts_ref.alias_mode)?;
+        let opt_opts = opt_options_from(py, &opts_ref)?;
         // Materialise the pipeline override BEFORE dropping the GIL below.
         let custom_pipeline = opts_ref
             .pipeline
             .as_ref()
-            .map(|p| p.borrow(py).drain_into_pipeline(false))
-            .transpose()?;
+            .map(|p| p.borrow(py).build_pipeline());
         drop(opts_ref);
 
         let (cc_built, per_address_built) = {
-            let lifter = slf.borrow(py);
+            let lifter = try_borrow_lifter(&slf, py)?;
             let regs = lifter.inner.sleigh_regs();
             let cc_built = build_cc(&cc, regs)?;
             let per_address_built = build_per_address_ccs(per_address_ccs_py, regs)?;
@@ -410,24 +570,14 @@ impl PyLifter {
             allow_code_before_start_addr,
             per_address_built,
             compact,
+            &known_targets,
+            &call_other_abis,
         );
-        let opt_opts = strider_orchestrator::opt::OptOptions {
-            alias_mode,
-            arg_alias: strider_orchestrator::opt::MemAliasOptions {
-                calls_clobber,
-                assume_distinct_sp_bases_disjoint,
-            },
-        };
-
-        // The fixed-point loop runs without the GIL, but only on the
-        // default path: `custom_pipeline`'s boxed `dyn Optimizer` trait
-        // objects aren't `Send`, so a closure capturing it fails
-        // `allow_threads`'s `Ungil` bound even though every concrete pass
-        // inside is callback-free and would be sound to move. Holding the
-        // GIL for that uncommon path beats threading a `Send` bound
-        // through strider-opt's dyn traits.
+        // The fixed-point loop runs without the GIL on the default path
+        // only: `custom_pipeline`'s boxed `dyn Optimizer`s aren't `Send`, so
+        // a closure capturing one fails `allow_threads`'s `Ungil` bound.
         let result = {
-            let mut lifter = slf.borrow_mut(py);
+            let mut lifter = try_borrow_lifter_mut(&slf, py)?;
             // Reborrow before the closure so its captured type is a plain
             // `&mut Strider`, not the GIL-bound `PyRefMut`, which embeds a
             // `!Send` `Python<'_>` marker and would fail `Ungil`.
@@ -457,58 +607,40 @@ impl PyLifter {
         let cfg_obj = Py::new(py, PyCfg::new(cfg, slf.clone_ref(py)))?;
 
         let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
-        Ok(PyAnalyzeResult {
-            cfg: cfg_obj,
-            function: py_function,
-            unresolved,
-        })
+        let result = analyze_result_type(py)?
+            .bind(py)
+            .call1((cfg_obj, py_function, unresolved))?;
+        Ok(result.unbind())
     }
 
     /// Run an optimizer pipeline over `function` in place.  `pipeline=None`
-    /// runs the default pipeline; a given `OptimizerPipeline` is drained.
-    /// Invalidates outstanding `Node` / `Match` handles for `function`.
-    #[pyo3(signature = (function, pipeline=None))]
+    /// runs the default pipeline; a given `OptimizerPipeline` is copied, so it
+    /// stays usable.  `opts=None` takes the `LifterOptions` defaults.
+    ///
+    /// Runs against this handle's rom, so `LoadReadOnly` folds here exactly as
+    /// it does inside `analyze`.  Invalidates outstanding `Node` / `Match`
+    /// handles for `function`.
+    #[pyo3(signature = (function, pipeline=None, opts=None))]
     fn optimize(
         &self,
+        py: Python<'_>,
         function: &PyFunction,
         pipeline: Option<&crate::opt::PyOptimizerPipeline>,
+        opts: Option<Py<PyLifterOptions>>,
     ) -> PyResult<()> {
-        match pipeline {
-            Some(p) => {
-                let real_pipeline = p.drain_into_pipeline(false)?;
-                function.run_pipeline_in_place(real_pipeline, "optimize")
-            }
+        let opts = match opts {
+            Some(o) => o,
+            None => Py::new(py, PyLifterOptions::new_default(py)?)?,
+        };
+        let options = opt_options_from(py, &opts.borrow(py))?;
+        let rom = self.inner.rom();
+        with_pending_control_flow(|| match pipeline {
+            Some(p) => function.run_pipeline_in_place(p.build_pipeline(), "optimize", rom, options),
             None => {
                 let pipe = strider_orchestrator::opt::default_pipeline();
-                function.run_pipeline_in_place(pipe, "optimize")
+                function.run_pipeline_in_place(pipe, "optimize", rom, options)
             }
-        }
-    }
-
-    /// Pretty DOT for the nodes within `depth` hops of node `center`, with
-    /// register names resolved.  A hub (degree over `hub_cap`) is shown and its
-    /// inputs are followed, but its consumer fan-out is not; `max_nodes` caps
-    /// the total.
-    #[pyo3(signature = (function, center, depth=5, hub_cap=12, max_nodes=60, count_producers=false))]
-    fn neighborhood_dot(
-        &self,
-        function: &PyFunction,
-        center: u32,
-        depth: usize,
-        hub_cap: usize,
-        max_nodes: usize,
-        count_producers: bool,
-    ) -> PyResult<String> {
-        let sleigh = self.sleigh();
-        let guard = function.read_inner().map_err(into_strider_err)?;
-        let nid = guard
-            .graph()
-            .node_id_from_u32(center)
-            .ok_or_else(|| into_strider_err(anyhow::anyhow!("invalid node id {center}")))?;
-        let dumper = guard.dot_dumper(sleigh).map_err(into_strider_err)?;
-        dumper
-            .neighborhood_dot(nid, depth, hub_cap, max_nodes, count_producers)
-            .map_err(|e| into_strider_err(anyhow::anyhow!(e)))
+        })
     }
 
     /// Look up a register by Sleigh name, or `None` when the name is not
@@ -544,55 +676,61 @@ impl PyLifter {
         // sweeping through the persistent Sleigh would dirty it for a later
         // `analyze`/`build_cfg`. A clone inherits no context state.
         let mut sleigh = self.sleigh().clone();
-        let mut cur = entry;
-        loop {
-            let (text, len) = crate::pcode::lift_one_text(&mut sleigh, cur)?;
-            if cur == addr {
-                return Ok(text);
+        with_pending_control_flow(|| {
+            let mut cur = entry;
+            loop {
+                let (text, len) = crate::pcode::lift_one_text(&mut sleigh, cur)?;
+                if cur == addr {
+                    return Ok(text);
+                }
+                if len == 0 {
+                    return Err(into_strider_err(anyhow::anyhow!(
+                        "pcode_at: lift_one at {cur:#x} reported a zero-length machine \
+                         instruction; cannot advance toward {addr:#x}"
+                    )));
+                }
+                let next = cur.checked_add(len as u64).ok_or_else(|| {
+                    into_strider_err(anyhow::anyhow!(
+                        "machine-address overflow advancing past {cur:#x}"
+                    ))
+                })?;
+                if next > addr {
+                    return Err(into_strider_err(anyhow::anyhow!(
+                        "pcode_at: linear sweep from entry {entry:#x} stepped past target \
+                         {addr:#x} (misaligned: {addr:#x} is not a machine-instruction \
+                         boundary on the linear path from entry)"
+                    )));
+                }
+                cur = next;
             }
-            if len == 0 {
-                return Err(into_strider_err(anyhow::anyhow!(
-                    "pcode_at: lift_one at {cur:#x} reported a zero-length machine \
-                     instruction; cannot advance toward {addr:#x}"
-                )));
-            }
-            let next = cur.checked_add(len as u64).ok_or_else(|| {
-                into_strider_err(anyhow::anyhow!(
-                    "machine-address overflow advancing past {cur:#x}"
-                ))
-            })?;
-            if next > addr {
-                return Err(into_strider_err(anyhow::anyhow!(
-                    "pcode_at: linear sweep from entry {entry:#x} stepped past target \
-                     {addr:#x} (misaligned — {addr:#x} is not a machine-instruction \
-                     boundary on the linear path from entry)"
-                )));
-            }
-            cur = next;
-        }
+        })
     }
 
-    /// Start the interactive explorer for `target`, a `Function` or a
-    /// `Cfg`.  Prints the local URL and blocks on this thread until Ctrl-C.
+    /// Start the interactive explorer for `target`, a `Function` or a `Cfg`.
+    /// It renders the NEIGHBORHOOD around a node you pick (inputs and outputs
+    /// out to `depth` hops), never the whole graph, so it scales to large
+    /// functions. Prints the local URL and blocks on this thread until Ctrl-C.
     ///
     /// Off the main thread you MUST pair this with
     /// `strider.explore.shutdown(port)` and a thread join before the
     /// interpreter exits, or the process aborts.
-    #[pyo3(signature = (target, host="127.0.0.1".to_string(), port=0, depth=5))]
+    #[pyo3(signature = (target, host="127.0.0.1".to_string(), port=0, depth=None))]
     fn visualize(
-        slf: Py<Self>,
+        &self,
         py: Python<'_>,
         target: Py<PyAny>,
         host: String,
         port: u16,
-        depth: usize,
+        depth: Option<usize>,
     ) -> PyResult<()> {
         let explore = py.import_bound("strider.explore")?;
         let kwargs = pyo3::types::PyDict::new_bound(py);
         kwargs.set_item("host", host)?;
         kwargs.set_item("port", port)?;
+        // `None` leaves the renderer's own default, which the explorer reads
+        // off the binding signature and shows as the control's default.
         kwargs.set_item("depth", depth)?;
-        explore.call_method("visualize", (slf, target), Some(&kwargs))?;
+        explore.call_method("visualize", (target,), Some(&kwargs))?;
         Ok(())
     }
 }
@@ -602,17 +740,17 @@ impl PyLifter {
 /// constant folding.
 #[pyfunction]
 #[pyo3(name = "lifter", signature = (arch, mem, rom = None))]
-pub fn lifter(arch: PySleighArch, mem: MemInput, rom: Option<MemInput>) -> PyResult<PyLifter> {
-    let py_deps = collect_py_deps(&mem, rom.as_ref());
-    Ok(PyLifter {
-        inner: build_strider(arch, mem, rom)?,
-        py_deps,
-    })
+pub fn lifter(
+    arch: PySleighArch,
+    mem: Bound<'_, PyAny>,
+    rom: Option<Bound<'_, PyAny>>,
+) -> PyResult<PyLifter> {
+    build_lifter(arch, mem, rom)
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLifter>()?;
-    m.add_class::<PyAnalyzeResult>()?;
+    m.add("AnalyzeResult", analyze_result_type(m.py())?)?;
     m.add_function(wrap_pyfunction!(lifter, m)?)?;
     Ok(())
 }

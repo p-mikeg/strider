@@ -6,7 +6,9 @@ their own methods / properties / field getters, plus module-level
 functions.  Dunders and inherited members are skipped.
 """
 
+import ast
 import inspect
+import pathlib
 import types
 
 import strider
@@ -81,3 +83,32 @@ def test_every_public_binding_has_a_docstring():
         "public bindings missing a non-empty __doc__:\n  "
         + "\n  ".join(sorted(missing))
     )
+
+
+def _stub_files():
+    root = pathlib.Path(strider.__file__).parent
+    return sorted(root.rglob("*.pyi")) + sorted(root.rglob("*.py"))
+
+
+def test_capture_stub_states_the_current_bare_string_rule():
+    """0.2.0 dropped bare strings as pattern operands; the stub is what
+    editors show, so it must not still teach the old rule."""
+    src = (pathlib.Path(strider.__file__).parent / "pattern" / "__init__.pyi").read_text()
+    tree = ast.parse(src)
+    cls = next(
+        n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Capture"
+    )
+    init = next(
+        n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "__init__"
+    )
+    doc = ast.get_docstring(init) or ""
+    assert "bare string is not a match-pattern operand" in " ".join(doc.split())
+
+
+def test_no_stub_teaches_bare_strings_as_pattern_operands():
+    offenders = []
+    for path in _stub_files():
+        text = " ".join(path.read_text().split())
+        if "used inline in a pattern" in text:
+            offenders.append(str(path))
+    assert not offenders, f"pre-0.2.0 bare-string rule survives in: {offenders}"

@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 
 use pyo3::prelude::*;
 
-use crate::dot::dot_style_for;
+use crate::dot::{DEFAULT_CFG_STYLE, dot_style_for};
 use crate::errors::into_strider_err;
 use crate::node::PyNode;
 use crate::reader::AnyMemReader;
@@ -25,6 +25,30 @@ pub struct PyCfg {
     pub(crate) lifter: Py<PyLifter>,
     /// `machine_addr -> joined p-code text`.
     pcode_map: OnceLock<HashMap<u64, String>>,
+    region_index: OnceLock<RegionIndex>,
+}
+
+/// Region starts in address order, plus the longest span any region covers:
+/// a region containing `addr` starts no lower than `addr - max_span`, which
+/// bounds `region_at`'s reverse walk. `Region::contains_addr` stays the only
+/// authority on containment.
+struct RegionIndex {
+    starts: Vec<(strider_cfg::PcodeInsnAddr, strider_cfg::RegionId)>,
+    max_span: u64,
+}
+
+/// Over-estimating costs probes, never a missed owner.
+fn span_upper_bound(region: &strider_cfg::Region) -> u64 {
+    let start = region.start_addr.machine_addr.addr;
+    match region.insns.last() {
+        Some(last) => last
+            .addr
+            .machine_addr
+            .addr
+            .saturating_add(u64::from(last.len)),
+        None => start.saturating_add(u64::from(region.empty_span_len)),
+    }
+    .saturating_sub(start)
 }
 
 impl PyCfg {
@@ -33,7 +57,33 @@ impl PyCfg {
             inner,
             lifter,
             pcode_map: OnceLock::new(),
+            region_index: OnceLock::new(),
         }
+    }
+
+    /// Sound to cache: `inner` is moved in here and never mutated, the same
+    /// reason `pcode_map` caches.
+    fn region_index(&self) -> &RegionIndex {
+        self.region_index.get_or_init(|| {
+            let g = self.inner.region_graph();
+            let regions = || {
+                g.node_indices().map(|id| {
+                    let region = g
+                        .node_weight(id)
+                        .expect("node_indices() only yields present nodes");
+                    (id, region)
+                })
+            };
+            let mut starts: Vec<_> = regions().map(|(id, r)| (r.start_addr, id)).collect();
+            starts.sort_unstable_by_key(|&(addr, id)| (addr, id.index()));
+            RegionIndex {
+                starts,
+                max_span: regions()
+                    .map(|(_, r)| span_upper_bound(r))
+                    .max()
+                    .unwrap_or(0),
+            }
+        })
     }
 
     fn with_sleigh<R>(
@@ -41,7 +91,13 @@ impl PyCfg {
         py: Python<'_>,
         f: impl FnOnce(&rsleigh::Sleigh<AnyMemReader>) -> PyResult<R>,
     ) -> PyResult<R> {
-        let lifter_borrow = self.lifter.borrow(py);
+        // `borrow` would panic when the owning `Lifter` is mid-`analyze`
+        // (a `read()` callback rendering this Cfg), and that panic aborts:
+        // it cannot unwind out of rsleigh's `extern "C"` fetch callback.
+        let lifter_borrow = self
+            .lifter
+            .try_borrow(py)
+            .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
         f(lifter_borrow.sleigh())
     }
 
@@ -116,23 +172,29 @@ enum CfgDotResult {
 #[pymethods]
 impl PyCfg {
     /// Exposes the strong `lifter` back-reference so the cyclic GC can see a
-    /// cycle routed through a `Cfg` and on to the Lifter's Python reader. No
-    /// `__clear__`: the cycle is broken at the reader's `__dict__` /
-    /// `PyLifter::__clear__`, and `lifter` is load-bearing while the `Cfg`
-    /// lives.
+    /// cycle routed through a `Cfg` and on to the Lifter's Python reader. The
+    /// cycle is broken at the reader's `__dict__` / `PyLifter::__clear__`, and
+    /// `lifter` is load-bearing while the `Cfg` lives.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         visit.call(&self.lifter)
     }
 
     /// Render the CFG to DOT. Returns the DOT string when `path` is
     /// `None`, otherwise writes it to `path` and returns `None`.
-    #[pyo3(signature = (path=None))]
-    fn to_dot(&self, py: Python<'_>, path: Option<&str>) -> PyResult<Option<String>> {
+    /// `style` selects the dot theme (default `"dark_cfg"`).
+    #[pyo3(signature = (path=None, style=None))]
+    fn to_dot(
+        &self,
+        py: Python<'_>,
+        path: Option<&str>,
+        style: Option<&str>,
+    ) -> PyResult<Option<String>> {
+        let style = style.unwrap_or(DEFAULT_CFG_STYLE);
         match path {
             Some(p) => self
-                .dispatch_dot(py, "dark_cfg", CfgDotOp::ToDot(p))
+                .dispatch_dot(py, style, CfgDotOp::ToDot(p))
                 .map(|_| None),
-            None => match self.dispatch_dot(py, "dark_cfg", CfgDotOp::DotStr)? {
+            None => match self.dispatch_dot(py, style, CfgDotOp::DotStr)? {
                 CfgDotResult::Dot(s) => Ok(Some(s)),
                 _ => Ok(None),
             },
@@ -149,7 +211,7 @@ impl PyCfg {
         path: Option<&str>,
         style: Option<&str>,
     ) -> PyResult<Option<String>> {
-        let style = style.unwrap_or("dark_cfg");
+        let style = style.unwrap_or(DEFAULT_CFG_STYLE);
         match path {
             Some(p) => self
                 .dispatch_dot(py, style, CfgDotOp::ToHtml(p))
@@ -197,6 +259,14 @@ impl PyCfg {
         self.inner.entry().index() as u32
     }
 
+    fn __repr__(&self) -> String {
+        format!(
+            "Cfg({} regions, entry=#{})",
+            self.inner.regions().count(),
+            self.inner.entry().index(),
+        )
+    }
+
     /// Pretty neighborhood DOT around region `center`: BFS over predecessor
     /// and successor regions, capped at `max_nodes`.
     #[pyo3(signature = (center, depth=5, max_nodes=60))]
@@ -241,22 +311,29 @@ impl PyCfg {
     }
 
     /// The region index whose instruction range contains `addr`, if any.
+    /// Lowest index when regions overlap, as a full scan reports.
     fn region_at(&self, addr: u64) -> Option<u32> {
+        let target = strider_cfg::PcodeInsnAddr::at_machine_start(addr);
+        let index = self.region_index();
+        let below = &index.starts[..index.starts.partition_point(|&(s, _)| s <= target)];
+        let (greatest, _) = *below.last()?;
+        // The greatest start below `addr` is always probed: it can own `addr`
+        // however short every span is.
+        let floor = addr
+            .saturating_sub(index.max_span)
+            .min(greatest.machine_addr.addr);
         let g = self.inner.region_graph();
-        for idx in g.node_indices() {
-            let region = g
-                .node_weight(idx)
-                .expect("node_indices() only yields present nodes");
-            let start = region.start_addr.machine_addr.addr;
-            let last = region
-                .insns
-                .last()
-                .map_or(start, |i| i.addr.machine_addr.addr);
-            if start <= addr && addr <= last {
-                return Some(idx.index() as u32);
-            }
-        }
-        None
+        below
+            .iter()
+            .rev()
+            .take_while(|(s, _)| s.machine_addr.addr >= floor)
+            .filter(|(_, id)| {
+                g.node_weight(*id)
+                    .expect("node_indices() only yields present nodes")
+                    .contains_addr(target)
+            })
+            .map(|(_, id)| id.index() as u32)
+            .min()
     }
 }
 

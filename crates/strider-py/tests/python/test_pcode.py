@@ -1,6 +1,6 @@
 """Tests for the p-code provenance surface.
 
-p-code has two homes with deliberately different semantics: `Cfg.pcode_at` /
+p-code has two homes with different semantics: `Cfg.pcode_at` /
 `Cfg.fingerprint_pcode` look up an already-built CFG's stored decodes, while
 `Lifter.pcode_at(entry, addr)` re-decodes via a linear sweep from `entry`,
 replaying context-register state, and so reaches addresses outside any
@@ -18,17 +18,15 @@ from .conftest import fixture_path
 
 
 def _load_memory():
-    """The x86_64 `memory.elf` fixture, which carries `array_sum`."""
     elf = fixture_path("x64", "memory")
     return strider.lift.load_elf(str(elf))
 
 
 def test_cfg_pcode_at_matches_decoded_instructions():
-    """Text for an address the CFG decoded to real p-code, `None` otherwise."""
     prog = _load_memory()
     cfg, function, _unresolved = prog.analyze("array_sum")
     matches = function.find_all(
-        strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
+        strider.pattern.int_add(strider.pattern.anything(), strider.pattern.anything())
     )
     assert matches, "expected at least one Add node in array_sum"
     addr = sorted(function.node(matches[0].root).asm_fingerprint())[0]
@@ -50,17 +48,15 @@ def test_cfg_pcode_at_returns_none_for_a_zero_pcode_op_instruction():
     """
     prog = _load_memory()
     cfg, _function, _unresolved = prog.analyze("array_sum")
-    entry = prog.symbol("array_sum")
+    entry = prog.symbol("array_sum").address
     assert cfg.pcode_at(entry) is None
 
 
 def test_fingerprint_pcode_renders_a_matched_node():
-    """`fingerprint_pcode` returns `(addr, text)` pairs drawn from the node's
-    own fingerprint, sorted by address, with non-empty text."""
     prog = _load_memory()
     cfg, function, _unresolved = prog.analyze("array_sum")
     matches = function.find_all(
-        strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
+        strider.pattern.int_add(strider.pattern.anything(), strider.pattern.anything())
     )
     assert matches, "expected at least one Add node in array_sum"
     node = function.node(matches[0].root)
@@ -86,7 +82,7 @@ def test_fingerprint_pcode_stable_across_separately_constructed_nodes():
     prog = _load_memory()
     cfg, function, _unresolved = prog.analyze("array_sum")
     matches = function.find_all(
-        strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
+        strider.pattern.int_add(strider.pattern.anything(), strider.pattern.anything())
     )
     assert matches
     root = matches[0].root
@@ -96,7 +92,6 @@ def test_fingerprint_pcode_stable_across_separately_constructed_nodes():
 
 
 def test_fingerprint_pcode_empty_for_structural_node():
-    """A structural node (no fingerprint, e.g. Entry) yields `[]`."""
     prog = _load_memory()
     cfg, function, _unresolved = prog.analyze("array_sum")
     struct_id = None
@@ -114,7 +109,7 @@ def test_lifter_pcode_at_returns_empty_text_at_entry():
     record of the instruction at all and returns `None`.
     """
     prog = _load_memory()
-    entry = prog.symbol("array_sum")
+    entry = prog.symbol("array_sum").address
     assert prog.pcode_at(entry, entry) == ""
 
 
@@ -125,10 +120,10 @@ def test_lifter_pcode_at_matches_cfg_lookup_for_a_real_pcode_address():
     """
     elf = fixture_path("x64", "arithmetic")
     prog = strider.lift.load_elf(str(elf))
-    entry = prog.symbol("add")
+    entry = prog.symbol("add").address
     cfg, function, _unresolved = prog.analyze("add")
     matches = function.find_all(
-        strider.pattern.add(strider.pattern.anything(), strider.pattern.anything())
+        strider.pattern.int_add(strider.pattern.anything(), strider.pattern.anything())
     )
     assert matches, "expected at least one Add node in add"
     addr = sorted(function.node(matches[0].root).asm_fingerprint())[0]
@@ -141,7 +136,7 @@ def test_lifter_pcode_at_matches_cfg_lookup_for_a_real_pcode_address():
 
 def test_lifter_pcode_at_rejects_addr_before_entry():
     prog = _load_memory()
-    entry = prog.symbol("array_sum")
+    entry = prog.symbol("array_sum").address
     with pytest.raises(strider.StriderError):
         prog.pcode_at(entry, entry - 4)
 
@@ -150,6 +145,6 @@ def test_lifter_pcode_at_rejects_misaligned_target():
     """An addr off the instruction boundaries raises rather than silently
     returning the enclosing instruction's text."""
     prog = _load_memory()
-    entry = prog.symbol("array_sum")
+    entry = prog.symbol("array_sum").address
     with pytest.raises(strider.StriderError):
         prog.pcode_at(entry, entry + 1)

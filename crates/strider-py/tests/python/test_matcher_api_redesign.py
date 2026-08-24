@@ -1,10 +1,4 @@
-"""The binding-centric matcher API.
-
-`find_all` takes a single `Pattern` or a `list[Pattern]` (a list joins on
-shared captures, returning merged bindings) and returns a deduplicated
-`list[Match]`.  `find_unique` errors on 0 and on >1.
-
-Dedup is controlled by `ignore_root`: the default keys on captures plus
+"""Dedup is controlled by `ignore_root`: the default keys on captures plus
 root(s); `ignore_root=True` keys on captures only, collapsing one binding
 reached from several roots.
 """
@@ -14,7 +8,7 @@ from __future__ import annotations
 import pytest
 
 import strider
-from strider.pattern import Capture, any_int_const, call, load, int_const, var
+from strider.pattern import Capture, call, load, int_const, var
 
 from .conftest import built_function, fixture_path
 
@@ -85,16 +79,16 @@ def test_find_all_list_merges_shared_capture():
     # Two patterns share `target`; each merged Match reads the shared
     # capture directly, with no per-pattern tuple.
     elf = fixture_path("x86", "switch")
-    f_addr = strider.lift.load_elf(str(elf)).symbol("f")
+    f_addr = strider.lift.load_elf(str(elf)).symbol("f").address
     g = _switch_graph()
 
     target = Capture()
     pat_call = call().target(var(target))
-    pat_const = any_int_const(target)
+    pat_const = int_const(target)
 
     merged = g.find_all([pat_call, pat_const])
     assert len(merged) >= 1
-    assert any(m.const_uint(target) == f_addr for m in merged)
+    assert any(m.uint(target) == f_addr for m in merged)
 
 
 def test_find_all_list_with_unmatchable_pattern_is_empty():

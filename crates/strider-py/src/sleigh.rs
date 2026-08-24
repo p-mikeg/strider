@@ -196,7 +196,6 @@ impl PyVn {
 
     /// rsleigh's `Display` form, e.g. `%[0x20]:8` for a register varnode.
     fn __repr__(&self) -> String {
-        // Delegate to rsleigh's `Display` so the spelling tracks upstream.
         format!("{}", self.inner)
     }
 

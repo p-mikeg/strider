@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use pyo3::types::PyType;
-use std::sync::{Mutex, MutexGuard};
+use std::cell::{RefCell, RefMut};
 
 use crate::errors::into_strider_err;
 
@@ -75,8 +75,6 @@ impl strider_orchestrator::opt::PostOptimizer for OptAsPostPass {
 struct PipelineState {
     passes: Vec<ErasedPass>,
     post_passes: Vec<ErasedPostPass>,
-    /// Whether the pass lists have already been drained into a real pipeline.
-    drained: bool,
 }
 
 impl PipelineState {
@@ -84,11 +82,9 @@ impl PipelineState {
         Self {
             passes: Vec::new(),
             post_passes: Vec::new(),
-            drained: false,
         }
     }
 
-    /// Clone every pass out of `pipeline`.
     fn snapshot_from(pipeline: &strider_orchestrator::opt::OptimizerPipeline) -> Self {
         let mut s = Self::new();
         for pass in pipeline.passes() {
@@ -103,26 +99,24 @@ impl PipelineState {
 
 /// Builder for an optimizer pipeline.  Construct via `empty()` or
 /// `default()`, then `add(pass)` / `add_post(pass)`; apply it with
-/// `Lifter.optimize(function, pipeline)`.  Applying a pipeline drains it, so
-/// rebuild before reuse.
+/// `Lifter.optimize(function, pipeline)`.  Applying a pipeline copies its
+/// passes, so one pipeline drives any number of calls.
 // `unsendable` pins the wrapper to its creating thread; cross-thread access
 // raises a Python `RuntimeError`.
 #[pyclass(name = "OptimizerPipeline", module = "strider.opt", unsendable)]
 pub struct PyOptimizerPipeline {
-    state: Mutex<PipelineState>,
+    state: RefCell<PipelineState>,
 }
 
 impl PyOptimizerPipeline {
     fn new_with(state: PipelineState) -> Self {
         Self {
-            state: Mutex::new(state),
+            state: RefCell::new(state),
         }
     }
 
-    fn lock_state(&self) -> PyResult<MutexGuard<'_, PipelineState>> {
-        self.state
-            .lock()
-            .map_err(|_| into_strider_err(anyhow::anyhow!("OptimizerPipeline lock poisoned")))
+    fn borrow_state(&self) -> RefMut<'_, PipelineState> {
+        self.state.borrow_mut()
     }
 
     pub(crate) fn new_full_default() -> Self {
@@ -130,36 +124,18 @@ impl PyOptimizerPipeline {
         Self::new_with(PipelineState::snapshot_from(&pipeline))
     }
 
-    /// Drains the wrapper's pass lists into a fresh real pipeline.  Draining
-    /// twice is an error.
-    ///
-    /// `prepend_load_read_only` prepends a `LoadReadOnly` to the materialised
-    /// pipeline.
-    pub(crate) fn drain_into_pipeline(
-        &self,
-        prepend_load_read_only: bool,
-    ) -> PyResult<strider_orchestrator::opt::OptimizerPipeline> {
-        let mut state = self.lock_state()?;
-        if state.drained {
-            return Err(into_strider_err(anyhow::anyhow!(
-                "OptimizerPipeline is empty — already drained by a prior \
-                 Lifter.optimize() call.  Build a fresh pipeline \
-                 (e.g. OptimizerPipeline.default()) or re-add passes before \
-                 calling again."
-            )));
-        }
-        state.drained = true;
+    /// A real pipeline holding a copy of the wrapper's passes, leaving the
+    /// wrapper usable again.
+    pub(crate) fn build_pipeline(&self) -> strider_orchestrator::opt::OptimizerPipeline {
+        let state = self.borrow_state();
         let mut pipe = strider_orchestrator::opt::OptimizerPipeline::new();
-        if prepend_load_read_only {
-            pipe.add(strider_orchestrator::opt::LoadReadOnly);
+        for p in &state.passes {
+            pipe.add(ForwardPass(p.clone_box()));
         }
-        for p in state.passes.drain(..) {
-            pipe.add(ForwardPass(p));
+        for p in &state.post_passes {
+            pipe.add_post_pass(ForwardPostPass(p.clone_box()));
         }
-        for p in state.post_passes.drain(..) {
-            pipe.add_post_pass(ForwardPostPass(p));
-        }
-        Ok(pipe)
+        pipe
     }
 }
 
@@ -182,34 +158,43 @@ impl PyOptimizerPipeline {
     /// here; use `add_post` instead.
     fn add(&self, pass_obj: PyOptPass) -> PyResult<()> {
         let erased = pass_obj.into_erased()?;
-        let mut state = self.lock_state()?;
+        let mut state = self.borrow_state();
         state.passes.push(erased);
         Ok(())
     }
 
     /// Append a post-pass, run once after the main passes finish.
-    fn add_post(&self, pass_obj: PyOptPass) -> PyResult<()> {
-        let mut state = self.lock_state()?;
-        state.post_passes.push(pass_obj.into_erased_post());
-        Ok(())
+    fn add_post(&self, pass_obj: PyOptPass) {
+        self.borrow_state()
+            .post_passes
+            .push(pass_obj.into_erased_post());
     }
 
     /// Names of the main (repeated) passes currently registered, in order.
     #[getter]
-    fn passes(&self) -> PyResult<Vec<String>> {
-        let state = self.lock_state()?;
-        Ok(state.passes.iter().map(|p| p.name().to_string()).collect())
+    fn passes(&self) -> Vec<String> {
+        let state = self.borrow_state();
+        state.passes.iter().map(|p| p.name().to_string()).collect()
+    }
+
+    fn __repr__(&self) -> String {
+        let state = self.borrow_state();
+        format!(
+            "OptimizerPipeline({} passes, {} post)",
+            state.passes.len(),
+            state.post_passes.len()
+        )
     }
 
     /// Names of the post-passes currently registered, in order.
     #[getter]
-    fn post_passes(&self) -> PyResult<Vec<String>> {
-        let state = self.lock_state()?;
-        Ok(state
+    fn post_passes(&self) -> Vec<String> {
+        let state = self.borrow_state();
+        state
             .post_passes
             .iter()
             .map(|p| p.name().to_string())
-            .collect())
+            .collect()
     }
 }
 
@@ -225,6 +210,9 @@ macro_rules! pure_pass_class {
             #[new]
             fn new() -> Self {
                 Self
+            }
+            fn __repr__(&self) -> String {
+                concat!($pyname, "()").to_string()
             }
         }
     };
@@ -258,11 +246,10 @@ pure_pass_class!("IfCondInversion" => PyIfCondInversion,
      a branch on the plain condition with its two arms swapped.");
 
 pure_pass_class!("LoadForward" => PyLoadForward,
-    "`LoadForward()` — forwards values from stack-tagged `Store` nodes to \
-     subsequent same-offset `Load` nodes.");
+    "Forwards values from stack-tagged `Store` nodes to subsequent \
+     same-offset `Load` nodes.");
 pure_pass_class!("StackOffsetDetect" => PyStackOffsetDetect,
-    "`StackOffsetDetect()` — stamps every SP-relative Store/Load with its \
-     concrete offset.");
+    "Stamps every SP-relative Store/Load with its concrete offset.");
 pure_pass_class!("FunctionArgDetect" => PyFunctionArgDetect,
     "Post-pass that canonicalises register / stack argument reads into the \
      function's argument-index table.");
@@ -312,14 +299,16 @@ impl PyOptPass {
             PyOptPass::IfCondInversion(_) => {
                 Box::new(strider_orchestrator::opt::IfCondInversion::new())
             }
-            PyOptPass::LoadForward(_) => Box::new(strider_orchestrator::opt::LoadForward),
+            PyOptPass::LoadForward(_) => {
+                Box::new(strider_orchestrator::opt::LoadForward::default())
+            }
             PyOptPass::LoadReadOnly(_) => Box::new(strider_orchestrator::opt::LoadReadOnly),
             PyOptPass::FunctionArgDetect(_)
             | PyOptPass::CallStackArgCollect(_)
             | PyOptPass::StackOffsetDetect(_) => {
                 return Err(into_strider_err(anyhow::anyhow!(
                     "StackOffsetDetect / FunctionArgDetect / CallStackArgCollect are \
-                     post-passes (they run once after the fixed-point loop converges) — \
+                     post-passes (they run once after the fixed-point loop converges): \
                      register them with OptimizerPipeline.add_post(...), not add(...)."
                 )));
             }

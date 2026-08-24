@@ -14,11 +14,8 @@
 //! the generated `.pyi` is only the test oracle consumed by
 //! `tests/python/test_reference_pyi.py` (mypy --strict).
 //!
-//! This is an `[example]`, not a `[bin]`: examples build only on demand,
-//! so the target doesn't change the default `cargo build` / `cargo test`
-//! flow the snapshot baselines depend on. A `[bin]` would pull in
-//! unconditional dependency reachability, dead-code lints, and binary
-//! linkage on `cargo build --workspace`.
+//! An `[example]`, so it builds only on demand and leaves the default
+//! `cargo build` / `cargo test` flow the snapshot baselines depend on alone.
 
 use std::fs;
 use std::path::PathBuf;

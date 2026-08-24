@@ -1,60 +1,66 @@
 # `strider-py` examples
 
-Self-contained scripts that walk through every major surface of
-`strider-py`. Each script is a runnable file — read top to bottom for
-the explanation, run it to see real output against the fixture ELFs in
-`fixtures/out/x86/`.
+Runnable scripts covering every major surface of `strider-py`. Most run
+against the fixture ELFs in `fixtures/out/x86/`; 02, 08, 10, 11, 12, 15 and 17
+supply bytes from Python and need no ELF.
 
 ## Prerequisites
 
+Everything runs from the workspace root. `maturin develop` MUST run from
+there: from `crates/strider-py` it exits 0 but builds the wrong package and
+leaves a stale `.so`, so the examples then run against old bindings.
+
 ```bash
-# from the workspace root
 cd fixtures && make && cd ..
-cd crates/strider-py
-pip install maturin pyelftools patchelf
-maturin develop
+uv sync --group dev
+uv run maturin develop
 ```
 
-Then run any example. `maturin develop` installs the `strider` package
-into the active Python environment, so the imports just work:
+Then run any example; `uv run` uses the environment `maturin develop`
+installed into:
 
 ```bash
-python crates/strider-py/examples/python/01_quickstart.py
-```
-
-If you skipped `maturin develop` and only built the wheel, point Python
-at the package directory:
-
-```bash
-PYTHONPATH=crates/strider-py python crates/strider-py/examples/python/01_quickstart.py
+uv run python crates/strider-py/examples/python/01_quickstart.py
 ```
 
 ## Index
 
 | # | Script | Demonstrates |
 |---|---|---|
-| 01 | [`01_quickstart.py`](01_quickstart.py) | The five-line "load ELF → lift → query → visualize" flow with `strider.lift.load_elf` + `ElfLifter.analyze`. |
-| 02 | [`02_python_reader.py`](02_python_reader.py) | A custom `MemReader` subclass serving bytes from Python — lift a synthetic instruction stream without touching disk. |
-| 03 | [`03_pattern_rewrite.py`](03_pattern_rewrite.py) | Find a redundant idiom (`x + 0`) and rewrite it to `x`; re-optimize destructively to collapse the dead branch. |
+| 01 | [`01_quickstart.py`](01_quickstart.py) | `strider.lift.load_elf` + `ElfLifter.analyze`: load an ELF, lift a function, query it, dump HTML. |
+| 02 | [`02_python_reader.py`](02_python_reader.py) | A custom `MemReader` subclass serving bytes from Python; lifts a synthetic instruction stream without touching disk. |
+| 03 | [`03_pattern_rewrite.py`](03_pattern_rewrite.py) | `rewrite` an `x + 0` idiom to `x` and re-optimize after the structural change; `rewrite_all` for a rule list. |
 | 04 | [`04_custom_optimizer.py`](04_custom_optimizer.py) | Build an optimizer pipeline pass-by-pass; compare the lifted graph before and after. |
 | 05 | [`05_visualize.py`](05_visualize.py) | Dump the CFG and the lifted IR graph as standalone HTML files for browser viewing. |
 | 06 | [`06_complex_patterns.py`](06_complex_patterns.py) | Multi-level captures, back-references, `.when` predicate guards, commutative matching, the `_any` variant-agnostic constructors. |
-| 07 | [`07_callback_rom.py`](07_callback_rom.py) | A `ReadOnlyMemory` subclass that serves `.rodata` from Python; folds compile-time-constant loads into constants via `LoadReadOnly`. |
+| 07 | [`07_callback_rom.py`](07_callback_rom.py) | A `ReadOnlyMemory` subclass serving bytes from Python as the lifter's rom, which is what `LoadReadOnly` folds constant-address loads against. |
 | 08 | [`08_custom_readers.py`](08_custom_readers.py) | Combine a custom `MemReader` and `ReadOnlyMemory` in one lift; capture a folded constant and template-rewrite it on a clone. |
 | 09 | [`09_neighborhood.py`](09_neighborhood.py) | Render the CFG and IR neighborhood around a center node with `neighborhood_dot`; launch the interactive `visualize` explorer with `--serve`. |
+| 10 | [`10_buffer_reader.py`](10_buffer_reader.py) | Lift hand-assembled bytes with no ELF: a base address and a `bytes` object are the whole setup. |
+| 11 | [`11_firmware_multiarch.py`](11_firmware_multiarch.py) | The same `add` as x86-64, AArch64 and MIPS blobs; one `int_add` pattern finds it in all three. |
+| 12 | [`12_rom_table.py`](12_rom_table.py) | A `BufferReader` as ROM: `LoadReadOnly` folds a constant-address table read into an `IntConst`. |
+| 13 | [`13_pattern_cookbook.py`](13_pattern_cookbook.py) | The combinators beyond node shapes: `one_of` / `first_of`, `int_const([...])`, `var(c).when(...)` guards, `find_unique`, `any_int_binary`. |
+| 14 | [`14_idiom_hunt.py`](14_idiom_hunt.py) | A table of (name, pattern) run over a function to fingerprint its compiler idioms. |
+| 15 | [`15_carve_blob.py`](15_carve_blob.py) | Carve several functions from one flat image with a single `BufferReader`, lifting each at its own entry offset. |
+| 16 | [`16_pattern_joins.py`](16_pattern_joins.py) | Correlate separate patterns via shared captures: a producer -> consumer join, a `JoinPredicate` over two matches, and `negate` / `any_of` constraint algebra. |
+| 17 | [`17_custom_abis.py`](17_custom_abis.py) | Describe a target strider does not know: `user_op_names` / `call_other_abi` discovery, then `CallOtherAbi.custom` for a Sleigh user-op and `CallingConvention.custom` for a register ABI. |
 
-## What each example doesn't show
+### The `BufferReader` group (10, 11, 12, 15, 17)
 
-These are not benchmarks and not stress tests. The fixture binaries
-are intentionally small (a few dozen instructions per function) so the
-output stays readable. For real workloads, see the
-`crates/strider-orchestrator/examples/orchestrator_demo.rs` Rust example for
-the canonical end-to-end run, and the `tests/python/` directory for
-stress-tested end-to-end coverage.
+`strider.reader.BufferReader(base_addr, data)` serves `data` at `base_addr`
+and works as both the `mem` and `rom` argument to `strider.lift.lifter`. Reads
+stay on the Rust side, so use it when you already hold the bytes (shellcode, a
+firmware dump, a carved slice); subclass `MemReader` / `ReadOnlyMemory`
+(examples 02, 07, 08) only for lazily-produced bytes.
 
-## Reading order
+Two requirements common to every raw-bytes lift:
+- **Pad past the instruction stream**: the disassembler prefetches beyond the
+  last instruction and the reader must answer those addresses, so append a
+  handful of bytes. The value is irrelevant; the examples append `bytes(16)`.
+- **`allow_code_before_start_addr=True`**: raw blobs often have code below the
+  entry.
 
-If you're new to the library, read in numbered order — each script
-introduces one or two concepts and reuses what the earlier ones
-covered. If you already know the Rust API, jump to whichever script
-matches your use case.
+The fixtures are small (a few dozen instructions per function) to keep output
+readable. For a full end-to-end run see
+`crates/strider-orchestrator/examples/orchestrator_demo.rs`;
+`crates/strider-py/tests/python/` has the stress coverage.

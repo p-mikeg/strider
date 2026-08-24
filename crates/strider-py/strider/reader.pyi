@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Union
 
 class BufferReader:
     """Raw byte reader for firmware or custom sources.
@@ -46,3 +46,46 @@ class ReadOnlyMemory:
     def read(self, addr: int, size: int) -> Optional[bytes]:
         """Return the `size` raw bytes at `addr`, or `None` when unmapped."""
         ...
+
+class Symbol:
+    """One ELF symbol: where it is, what the ELF says it spans, and which
+    loaded region it falls in."""
+
+    name: str
+    address: int
+    #: `None` for `st_size == 0`, which records no extent rather than an empty
+    #: one: a hand-written `.S` entry point with no `.size` directive is still
+    #: a whole function.
+    size: Optional[int]
+
+    @property
+    def is_function(self) -> bool:
+        """Whether the ELF types this `STT_FUNC` (or `STT_GNU_IFUNC`), rather
+        than inferring it from the section the symbol lives in."""
+        ...
+    @property
+    def end(self) -> Optional[int]:
+        """One past the last byte, or `None` when `size` is."""
+        ...
+    @property
+    def region(self) -> Optional[tuple[int, int]]:
+        """The `(start, end)` bounds (end exclusive) of the loaded region this
+        symbol maps into, such as the `.text` mapping, or `None` when its
+        address falls in no mapped region."""
+        ...
+    def __repr__(self) -> str: ...
+
+class SymbolIter:
+    """Iterator over `Symbol`s."""
+
+    def __iter__(self) -> "SymbolIter": ...
+    def __next__(self) -> Symbol: ...
+    def __len__(self) -> int: ...
+
+
+#: Source of instruction bytes: a `BufferReader`, or a `MemReader` subclass.
+MemLike = Union[MemReader, BufferReader]
+
+#: Read-only memory image for constant folding: a `ReadOnlyMemory` subclass
+#: or a `BufferReader`.
+RomLike = Union[ReadOnlyMemory, BufferReader]

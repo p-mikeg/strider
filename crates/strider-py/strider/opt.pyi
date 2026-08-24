@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import List, Union
+from typing import Union
 
-#: A built-in optimizer pass instance, accepted by `OptimizerPipeline.add`
-#: and `add_post`.
+#: A built-in optimizer pass instance. The three post-passes
+#: (`StackOffsetDetect`, `FunctionArgDetect`, `CallStackArgCollect`) go through
+#: `OptimizerPipeline.add_post`; `add` raises for them.
 OptimizerPass = Union[
     "ConstantFold",
     "KnownBits",
@@ -27,8 +28,8 @@ class OptimizerPipeline:
     after the main passes finish.
 
     Pass one to `Lifter.optimize(function, pipeline)`, or to
-    `LifterOptions(pipeline=...)` to override the default for a single
-    `analyze` call.
+    `LifterOptions(pipeline=...)` to override the default. Applying a pipeline
+    copies its passes, so one object serves any number of calls.
     """
     @classmethod
     def empty(cls) -> OptimizerPipeline:
@@ -39,11 +40,11 @@ class OptimizerPipeline:
         """The canonical pipeline strider uses when none is supplied."""
         ...
     @property
-    def passes(self) -> List[str]:
+    def passes(self) -> list[str]:
         """The registered main (repeated) passes, by name, in order."""
         ...
     @property
-    def post_passes(self) -> List[str]:
+    def post_passes(self) -> list[str]:
         """The registered post-passes (run once at the end), by name."""
         ...
     def add(self, pass_obj: OptimizerPass) -> None:
