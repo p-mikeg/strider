@@ -1,13 +1,9 @@
-//! Regression: bounded lift must not crash on a `RegionTerminator::TailCall`.
-//!
-//! When `fn_max_size` is set, the cfg builder classifies any direct `jmp`
-//! whose target lies outside `[start, start+fn_max_size)` as
-//! `RegionTerminator::TailCall { target }` (no successor edge). The
-//! terminator's doc comment promises the IR layer lowers it as
-//! `Call(IntConst(target)) + Return`, but historically nothing did: the
-//! per-insn loop processed the trailing `Opcode::Branch` through the
-//! generic `handle_branch` path, which errors with "invalid region index
-//! N" because a TailCall region has no Unconditional edge.
+//! With `fn_max_size` set, the cfg builder classifies any direct `jmp` whose
+//! target lies outside `[start, start+fn_max_size)` as
+//! `RegionTerminator::TailCall { target }` (no successor edge), which the IR
+//! layer lowers as `Call(IntConst(target)) + Return`.  Routing the trailing
+//! `Opcode::Branch` through the generic `handle_branch` path instead errors
+//! with "invalid region index N": a TailCall region has no Unconditional edge.
 //!
 //! Synthetic x86_64 function:
 //!
@@ -32,9 +28,7 @@ use strider_target::{CallingConvention, SleighArch};
 const BASE: u64 = 0x1000;
 const TAIL_TARGET: u64 = 0x9000;
 
-/// Lift + optimise the function at `entry` over `sleigh` with the standard
-/// SystemV-x86_64 convention, the caller-supplied `lift_opts`, and default
-/// opt options.
+/// x86_64 SystemV, caller-supplied `lift_opts`, default `OptOptions`.
 fn run_at(
     sleigh: Sleigh<BufMemReader<Vec<u8>>>,
     entry: u64,
@@ -103,8 +97,6 @@ fn bounded_lift_handles_tail_call_terminator() {
     );
 }
 
-/// Mirrors the verifier in `bounded_lift_handles_tail_call_terminator` so
-/// later tests share the same shape assertion.
 fn graph_has_tail_call_to(function: &strider_ir::Function, target: u64) -> bool {
     let mut had_call = false;
     let mut had_return = false;
@@ -125,15 +117,13 @@ fn graph_has_tail_call_to(function: &strider_ir::Function, target: u64) -> bool 
     had_call && had_return
 }
 
-/// Synthetic vmspace_exitfree shape: a small function ending with a
-/// backward `jmp` whose target is a *different* function (below
-/// `start_addr`). Pre-fix, with `allow_code_before_start_addr=true` AND
-/// `fn_max_size` set, the cfg builder followed the backward jmp into
-/// adjacent bytes, ballooning the lifted graph to tens of thousands of
-/// nodes. Post-fix the backward target is classified as a tail call
-/// regardless of the reach-back flag (`fn_max_size` defines the
-/// function's exact extent), and the IR carries
-/// `Call(IntConst(<backward_target>)) + Return`.
+/// Synthetic vmspace_exitfree shape: a small function ending with a backward
+/// `jmp` whose target is a *different* function (below `start_addr`).
+/// `fn_max_size` defines the function's exact extent, so the backward target
+/// is a tail call whatever `allow_code_before_start_addr` says, and the IR
+/// carries `Call(IntConst(<backward_target>)) + Return`. Following the jmp
+/// into the adjacent bytes instead balloons the graph to tens of thousands of
+/// nodes.
 #[test]
 fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
     // 0x1000..0x1080: NOP padding (the "previous function").
@@ -168,8 +158,7 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
         "expected Call(IntConst({:#x})) + Return from the backward-jmp tail call",
         TAIL_TARGET
     );
-    // A 10-byte function tail-calling out should stay tight, not balloon
-    // to the tens-of-thousands-of-nodes pre-fix shape.
+    // A 10-byte function tail-calling out stays tight.
     let node_count = function.walk().count();
     assert!(
         node_count < 200,
@@ -295,11 +284,10 @@ fn bounded_lift_keeps_cond_branch_with_both_targets_oob_as_two_tail_call_arms() 
 }
 
 /// Conditional branch with ONLY the taken target out-of-bounds: the
-/// conditional must survive as an `If` whose taken arm is a synthetic
-/// tail call (`Call(IntConst(<oob>)) + Return`) and whose fall-through
-/// arm is the function's normal in-range `ret`. Pre-fix the cfg builder
-/// silently deleted the conditional, folding the region onto the
-/// in-range arm, so analysis believed the branch was never taken.
+/// conditional must survive as an `If` whose taken arm is a synthetic tail
+/// call (`Call(IntConst(<oob>)) + Return`) and whose fall-through arm is the
+/// function's normal in-range `ret`. Dropping the conditional and folding the
+/// region onto the in-range arm would present the branch as never taken.
 #[test]
 fn bounded_lift_oob_taken_arm_lifts_as_conditional_tail_call() {
     // 0x1000: 85 FF   test edi, edi   (condition depends on the arg reg,

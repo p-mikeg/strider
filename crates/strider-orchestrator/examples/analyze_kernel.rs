@@ -10,11 +10,17 @@
 
 use object::{Object, ObjectSymbol};
 
-const KERNEL: &str = "/mnt/c/Users/mikeg/Documents/trick_resolver/tests/freebsd/resources/kernels/freebsd/amd64/12.4/kernel";
+/// Path to the image to analyze, from `argv[1]` or `$STRIDER_KERNEL`.
+fn kernel_path() -> String {
+    std::env::args()
+        .nth(1)
+        .or_else(|| std::env::var("STRIDER_KERNEL").ok())
+        .unwrap_or_else(|| panic!("pass the image to analyze as argv[1], or set $STRIDER_KERNEL"))
+}
 const SYMBOL: &str = "x86emu_exec";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let obj = strider_reader::load_elf(KERNEL)?;
+    let obj = strider_reader::load_elf(kernel_path())?;
     let obj = obj.file();
     let mem_reader = strider_reader::ElfFileMemReader::from_object(&obj)?;
     let rom = strider_reader::ElfFileMemReader::from_object(&obj)?;

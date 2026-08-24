@@ -1,25 +1,5 @@
-//! Pin every IntBinaryOp / IntUnaryOp variant the analyzer must lower.
-//!
-//! 15 functions × 6 archs = 90 tests.  Each test asserts the function's
-//! optimised IR contains at least one node of the expected kind.
-//!
-//! # Known arch-specific limitations
-//!
-//! * **MIPS `mul`**: the MIPS `MULT` instruction writes into the HI/LO
-//!   register pair; the GHIDRA Sleigh spec represents the result through a
-//!   unique varnode that the analyzer does not translate to `IntBinaryOp::Mul`.
-//!   `test_mul::mips32le` and `test_mul::mips32be` will therefore fail.
-//!
-//! * **MIPS signed/unsigned divide & modulo** (`sdiv`, `smod`, `udiv`,
-//!   `umod`): the CFG builder panics with "invalid branch target variable"
-//!   when lifting the MIPS DIV/DIVU instruction.  All four mips32le and
-//!   mips32be tests for these functions panic at the CFG-build stage.
-//!
-//! * **ARM divide & modulo** (`sdiv`, `smod`, `udiv`, `umod`): soft-float
-//!   ARM targets emit library calls (`__udivsi3`, `__divsi3`, etc.) instead
-//!   of native divide instructions; the IR contains a `Call` node but no
-//!   `Div`/`Rem` node.  The assertions for these four functions accept a
-//!   `Call` node as evidence that the operation was lowered.
+//! Pin every IntBinaryOp / IntUnaryOp variant the analyzer must lower: each
+//! test asserts the optimised IR holds at least one node of the expected kind.
 
 #![allow(
     clippy::panic,
@@ -55,10 +35,8 @@ fn has_add(function: &strider_ir::Function) {
         "expected ≥1 Add"
     );
 }
-// `IntBinaryOp::Sub` is no longer a primitive: pcode-lift lowers `IntSub`
-// to `Add(_, Neg(_))` at lift time. An honest "has subtraction" check
-// looks for the `IntUnaryOp::Neg` produced by the lowering; every real
-// subtraction in the binary contributes at least one Neg.
+// Lift lowers `IntSub` to `Add(_, Neg(_))`, so "has subtraction" is a check
+// for `IntUnaryOp::Neg`: every real subtraction contributes at least one.
 fn has_sub(function: &strider_ir::Function) {
     assert!(
         count_int_unop(function, IntUnaryOp::Neg) >= 1,
@@ -130,13 +108,11 @@ fn has_xor(function: &strider_ir::Function) {
     );
 }
 
-// Bitwise complement (~a).  Sleigh's `IntNeg` opcode lifts to
-// `Xor(a, IntConst(all_ones))` (since the former BitNot unary-op was removed
-// in favour of the Xor shape).  Match the canonical Xor-with-all-ones
-// shape via the pattern matcher.
+// Bitwise complement (~a).  Sleigh's `IntNeg` opcode lifts to the canonical
+// `Xor(a, IntConst(all_ones))`.
 fn has_not(function: &strider_ir::Function) {
-    use strider_pattern::{MatchPat, Matcher, any, bit_not};
-    let pat = bit_not(any()).into_pattern();
+    use strider_pattern::{MatchPat, Matcher, anything, int_not};
+    let pat = int_not(anything()).into_pattern();
     let count = Matcher::new(function).find_all(&pat).unwrap().len();
     assert!(
         count >= 1,
@@ -163,11 +139,10 @@ fn has_ashr(function: &strider_ir::Function) {
     );
 }
 
-// Arithmetic negation (-a).  Sleigh's `Int2Comp` opcode lifts to `IntUnaryOp::Neg`.
-// ARM and MIPS synthesise it as `0 - a`, which lifts via the new lowering
-// to `Add(0, Neg(a))` and collapses to `Neg(a)` via the `x + 0 -> x` identity
-// rule.  Either path produces an `IntUnaryOp::Neg`, so a single check
-// covers both arches.
+// Arithmetic negation (-a).  Sleigh's `Int2Comp` lifts to `IntUnaryOp::Neg`.
+// ARM and MIPS synthesise it as `0 - a`, which lifts to `Add(0, Neg(a))` and
+// collapses to `Neg(a)` under the `x + 0 -> x` identity, so both paths land on
+// `IntUnaryOp::Neg`.
 fn has_neg(function: &strider_ir::Function) {
     assert!(
         count_int_unop(function, IntUnaryOp::Neg) >= 1,

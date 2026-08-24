@@ -1,7 +1,6 @@
-//! Drives `strider_orchestrator::Strider::analyze` end-to-end against real
-//! ELF fixtures, the same path the Python `strider.run(...)` binding takes
-//! (unlike `indirect_branch.rs`, which calls `build_ir` + the classifier
-//! directly, bypassing the orchestrator's resolve/re-lift loop).
+//! Drives `Strider::analyze` against real ELF fixtures. `indirect_branch.rs`
+//! covers the same fixtures through `build_ir` + the classifier directly,
+//! bypassing the resolve/re-lift loop.
 
 #![allow(
     clippy::panic,
@@ -20,45 +19,7 @@ fn run_orchestrator_on(
     case: &str,
     fn_name: &str,
 ) -> anyhow::Result<strider_ir::Function> {
-    let path = common::binary_path(arch, case);
-    if !path.exists() {
-        panic!("missing test binary {path:?}; run `make -C fixtures`");
-    }
-    let obj = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = obj.file();
-    let sleigh_arch = arch.sleigh();
-    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
-    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
-        .expect("real sleigh new");
-    let raw_addr = obj.symbol_by_name(fn_name).expect("symbol").address();
-    let addr = match arch {
-        common::Arch::Arm | common::Arch::ArmThumb => raw_addr & !1u64,
-        _ => raw_addr,
-    };
-
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
-        Box::new(strider_reader::ElfFileMemReader::from_object(&obj).expect("rom"));
-
-    let regs = sleigh.regs().expect("regs");
-    let cc = arch.cc().build(&regs).expect("build cc");
-    let lift_opts = strider_orchestrator::LiftOptions {
-        cfg: strider_cfg::CfgOptions {
-            allow_code_before_start_addr: true,
-            ..Default::default()
-        },
-        ..strider_orchestrator::LiftOptions::default()
-    };
-    let mut strider =
-        strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(rom)).expect("Strider::new");
-    strider
-        .analyze(
-            addr,
-            &cc,
-            &lift_opts,
-            &strider_orchestrator::opt::OptOptions::default(),
-            None,
-        )
-        .map(|r| r.function)
+    run_with_opts(arch, case, fn_name, Default::default(), true)
 }
 
 #[test]
@@ -264,7 +225,7 @@ fn orchestrator_mips64_pic_jump_table_defers_not_errors() {
     .expect("mips64 PIC table must DEFER (converge with a placeholder), not error");
     assert!(
         count_indirect_branch_placeholders(&function) > 0,
-        "mips64 GOT-indirect table is unresolvable (gp unmodelled) — it must defer, \
+        "mips64 GOT-indirect table is unresolvable (gp unmodelled), so it must defer, \
          leaving the IndirectBranch placeholder, not mis-resolve to a bogus target",
     );
 }
@@ -277,5 +238,224 @@ fn orchestrator_mips64_sparse_switch_is_if_chain() {
         count_indirect_branch_placeholders(&function),
         0,
         "a sparse switch has no table (an if-chain) so it resolves on mips64 too",
+    );
+}
+
+fn count_kind(function: &strider_ir::Function, want: strider_ir::node::NodeKind) -> usize {
+    function
+        .walk()
+        .filter(|nid| *function.node_kind(*nid) == want)
+        .count()
+}
+
+/// A switch whose index is loop-carried and whose loop back-edge is reachable
+/// only THROUGH a switch arm.  Resolution iteration 1 sees a CFG where the
+/// header has one predecessor, so the index is the entry constant, the table
+/// load folds to one literal, and the site seats as a single target with
+/// nothing left unresolved.  Every arm but one is then never decoded.
+///
+/// x86/x64/mips lower the loop this way; ARM does not, which is why only these
+/// regress.  `f` is called from exactly one arm, so its absence is the tell,
+/// and `arms` pins the rest: a Call alone still passes with 7 of 8 arms gone.
+///
+/// `switch.c` inlines an 8-case dense switch into `main`, so the dispatch table
+/// has one slot per case.  ARM lowers it to 7 distinct arm addresses (two cases
+/// share a body), the others to 8.
+fn assert_loop_carried_switch_reaches_every_arm(arch: common::Arch, arms: usize) {
+    let result = analyze_with_opts(arch, "switch", "main", Default::default(), true)
+        .unwrap_or_else(|e| panic!("{arch:?}/switch/main must converge: {e:#}"));
+    // `arm/main` also contains a libgcc `mov pc, rN` division table that is
+    // genuinely unresolvable and defers honestly, so the invariant under test
+    // is that every arm is reached, not the placeholder count.
+    assert!(
+        count_kind(&result.function, strider_ir::node::NodeKind::Call) > 0,
+        "{arch:?}/switch/main: `f` is called from one switch arm, so a missing Call \
+         means arms were never decoded: the table resolved to a single target",
+    );
+    // The widest seated table is the inlined dispatch; a narrower one is a
+    // different site (x86 seats a one-target `Switch` of its own).
+    let widest = result
+        .cfg
+        .regions()
+        .filter_map(|r| match &r.terminator {
+            strider_cfg::RegionTerminator::Switch { targets, .. } => {
+                let mut addrs: Vec<u64> = targets.iter().map(|t| t.addr).collect();
+                addrs.sort_unstable();
+                addrs.dedup();
+                Some(addrs)
+            }
+            _ => None,
+        })
+        .max_by_key(Vec::len)
+        .unwrap_or_default();
+    assert_eq!(
+        widest.len(),
+        arms,
+        "{arch:?}/switch/main: the dispatch must seat every arm; got {widest:#x?}",
+    );
+}
+
+#[test]
+fn loop_carried_switch_reaches_every_arm() {
+    for (arch, arms) in [
+        (common::Arch::X64, 8),
+        (common::Arch::X86, 8),
+        (common::Arch::Mips32le, 8),
+        (common::Arch::Mips32be, 8),
+        (common::Arch::Arm, 7),
+    ] {
+        assert_loop_carried_switch_reaches_every_arm(arch, arms);
+    }
+}
+
+/// `run_orchestrator_on` with caller-supplied `LiftOptions`.
+fn run_with_opts(
+    arch: common::Arch,
+    case: &str,
+    fn_name: &str,
+    known: rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets>,
+    resolve: bool,
+) -> anyhow::Result<strider_ir::Function> {
+    analyze_with_opts(arch, case, fn_name, known, resolve).map(|r| r.function)
+}
+
+/// As [`run_with_opts`], keeping the whole [`AnalyzeResult`].
+fn analyze_with_opts(
+    arch: common::Arch,
+    case: &str,
+    fn_name: &str,
+    known: rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets>,
+    resolve: bool,
+) -> anyhow::Result<strider_orchestrator::AnalyzeResult> {
+    let path = common::binary_path(arch, case);
+    if !path.exists() {
+        panic!("missing test binary {path:?}; run `make -C fixtures`");
+    }
+    let obj = strider_reader::load_elf(&path).expect("load_elf");
+    let obj = obj.file();
+    let sa = arch.sleigh();
+    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem");
+    let sleigh = rsleigh::Sleigh::new(sa.sla_spec(), sa.pspec(), mem).expect("sleigh");
+    // The symbol's ARM-Thumb interworking bit IS the entry's ISA mode, and
+    // `Lifter::build_cfg` masks it off for decoding itself, so it is passed
+    // through rather than stripped here.
+    let addr = obj.symbol_by_name(fn_name).expect("symbol").address();
+    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
+        Box::new(strider_reader::ElfFileMemReader::from_object(&obj).expect("rom"));
+    let regs = sleigh.regs().expect("regs");
+    let cc = arch.cc().build(&regs).expect("cc");
+    let lift_opts = strider_orchestrator::LiftOptions {
+        cfg: strider_cfg::CfgOptions {
+            allow_code_before_start_addr: true,
+            known_targets: known,
+            ..Default::default()
+        },
+        ..strider_orchestrator::LiftOptions::default()
+    };
+    let opt_opts = strider_orchestrator::opt::OptOptions {
+        resolve_indirect_branches: resolve,
+        ..Default::default()
+    };
+    let mut strider =
+        strider_orchestrator::Strider::new(sa, sleigh, Some(rom)).expect("Strider::new");
+    strider.analyze(addr, &cc, &lift_opts, &opt_opts, None)
+}
+
+#[test]
+fn resolution_can_be_turned_off() {
+    let on = run_with_opts(
+        common::Arch::X64,
+        "switch",
+        "dispatch_value",
+        Default::default(),
+        true,
+    )
+    .expect("converges");
+    assert_eq!(
+        count_indirect_branch_placeholders(&on),
+        0,
+        "resolves by default"
+    );
+
+    let off = run_with_opts(
+        common::Arch::X64,
+        "switch",
+        "dispatch_value",
+        Default::default(),
+        false,
+    )
+    .expect("converges with resolution off");
+    assert!(
+        count_indirect_branch_placeholders(&off) > 0,
+        "resolution off must leave the dispatch a placeholder",
+    );
+}
+
+#[test]
+fn caller_supplied_targets_seat_with_resolution_off() {
+    // The site the resolver would have found, handed in by the caller instead.
+    let seated = run_with_opts(
+        common::Arch::X64,
+        "switch",
+        "dispatch_value",
+        Default::default(),
+        true,
+    )
+    .expect("converges");
+    assert_eq!(count_indirect_branch_placeholders(&seated), 0);
+
+    // Taken from the report rather than hardcoded, so it cannot drift off the
+    // real dispatch (a wrong address seats nothing and still returns Ok).
+    let off = analyze_with_opts(
+        common::Arch::X64,
+        "switch",
+        "dispatch_value",
+        Default::default(),
+        false,
+    )
+    .expect("converges with resolution off");
+    let [addr] = off.unresolved_indirect_branches[..] else {
+        panic!(
+            "expected exactly one unresolved dispatch, got {:?}",
+            off.unresolved_indirect_branches
+        );
+    };
+
+    // `dispatch_value`'s own entry: an answer the caller invented, and a
+    // mapped address so a seated edge would really decode.
+    let mut known = rustc_hash::FxHashMap::default();
+    known.insert(
+        addr,
+        strider_cfg::ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(0x4011c0, None)),
+    );
+    // Resolution off, so any seating here is the caller's doing.
+    let out = run_with_opts(common::Arch::X64, "switch", "dispatch_value", known, false)
+        .expect("caller-seated target must not error");
+    assert_eq!(
+        count_indirect_branch_placeholders(&out),
+        0,
+        "the caller's answer must seat the dispatch, leaving no placeholder",
+    );
+}
+
+/// A placeholder the knob left in place is still a RESULT: the orchestrator
+/// derives its report from the classifier's map, so skipping the pass entirely
+/// publishes an empty list next to a live `IndirectBranch`.
+#[test]
+fn resolution_off_still_reports_the_surviving_placeholders() {
+    let off = analyze_with_opts(
+        common::Arch::X64,
+        "switch",
+        "dispatch_value",
+        Default::default(),
+        false,
+    )
+    .expect("converges with resolution off");
+    let placeholders = count_indirect_branch_placeholders(&off.function);
+    assert!(placeholders > 0, "resolution off must leave a placeholder");
+    assert_eq!(
+        off.unresolved_indirect_branches.len(),
+        placeholders,
+        "every surviving placeholder must be reported",
     );
 }

@@ -1,10 +1,9 @@
-//! End-to-end scaling benchmark for the strider pipeline.
+//! Full lift + optimizer pipeline over x86 / x86_64 ELF fixtures.
 //!
-//! Runs the full lift + optimizer pipeline against a representative set of
-//! x86 / x86_64 ELF fixtures.
-//!
-//! Run via: `cargo bench --bench scaling -- --save-baseline before`
-//! Compare:  `cargo bench --bench scaling -- --baseline before`
+//! ```text
+//! cargo bench --bench scaling -- --save-baseline before
+//! cargo bench --bench scaling -- --baseline before
+//! ```
 
 #![allow(
     clippy::unwrap_used,
@@ -93,7 +92,6 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh");
-    // The driver OWNS the Sleigh and builds the CFG itself.
     let mut ana = strider_orchestrator::Lifter::new(sleigh_arch, sleigh).expect("Lifter::new");
     let cc = cc.build(ana.sleigh_regs()).expect("build cc");
     let raw_addr = obj
@@ -365,7 +363,7 @@ fn bench_stack_store_chain(c: &mut Criterion) {
             b.iter_batched(
                 || synthetic::build_stack_store_chain(n),
                 |mut fg| {
-                    let pass = LoadForward;
+                    let pass = LoadForward::default();
                     let _ = strider_orchestrator::opt::run_one(
                         &pass,
                         &mut fg,
@@ -407,20 +405,20 @@ fn bench_wide_jump_table(c: &mut Criterion) {
 }
 
 fn bench_find_joined_shared_capture(c: &mut Criterion) {
-    use strider_pattern::{Capture, CaptureExt, MatchPat, Matcher, add, any_int_const, var};
+    use strider_pattern::{Capture, MatchPat, Matcher, int_add, int_const, var};
 
     let mut group = c.benchmark_group("synthetic/find_joined_shared");
     for n in [100usize, 500, 1_000] {
         let fg = synthetic::build_many_int_consts(n);
         // Two patterns that share a capture `x`:
         //   pat1: add(_, x).capture(y)  (x = rhs of every Add)
-        //   pat2: any_int_const(x)      (x = every IntConst)
+        //   pat2: any_int_const()    (x = every IntConst)
         // The cross-product join over shared `x` exercises the
         // matcher's bindings-equality path on every (Add, IntConst)
         // pair where they coincide.
         let x = Capture::new();
-        let pat1 = add(strider_pattern::any(), var(x)).into_pattern();
-        let pat2 = any_int_const().capture(x).into_pattern();
+        let pat1 = int_add(strider_pattern::anything(), var(x)).into_pattern();
+        let pat2 = int_const(x).into_pattern();
         group.bench_function(format!("n_{n}"), |bnch| {
             bnch.iter(|| {
                 let m = Matcher::new(&fg);

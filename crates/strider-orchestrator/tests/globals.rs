@@ -1,9 +1,5 @@
-//! LoadReadOnly fold against .rodata constants.
-//!
-//! After the optimiser pipeline runs (with LoadReadOnly enabled), reads of
-//! `static const` data should fold to IntConst nodes instead of remaining
-//! as Loads.  Tests verify: (a) the constant value materialises in the IR,
-//! (b) the corresponding read no longer appears as a Load.
+//! `LoadReadOnly` folds a read of `static const` data into an `IntConst`, so
+//! the constant materialises in the IR and the read stops being a `Load`.
 
 #![allow(
     clippy::panic,

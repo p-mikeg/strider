@@ -1,16 +1,7 @@
-//! Per-pass propagation tests for the asm-fingerprint side-table.
-//!
-//! Each test builds a synthetic IR with explicit asm-addresses set on
-//! the input nodes, runs a single optimisation pass, and asserts that
-//! every contributing address survives the rewrite (the superset-only
-//! invariant).
-//!
-//! End-to-end fingerprint coverage lives in `tests/asm_fingerprints.rs`
-//! (lift the real fixture, run the full pipeline, then validate); this
-//! file complements that by isolating one pass at a time on a
-//! hand-built IR shape so a regression in a single pass produces a
-//! single, named test failure rather than a downstream validator
-//! panic.
+//! One optimisation pass at a time over a hand-built IR with explicit
+//! asm-addresses, pinning the superset-only invariant: every contributing
+//! address survives the rewrite.  `tests/asm_fingerprints.rs` covers the same
+//! invariant end-to-end, where a regression surfaces only as a validator panic.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 

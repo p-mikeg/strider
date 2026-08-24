@@ -1,19 +1,8 @@
-//! Shared infrastructure for the system-test suite.
-//!
-//! Every `tests/<category>.rs` declares `mod common;` and uses these helpers.
-//! Adding a new test case is mechanical:
-//!
-//! ```ignore
-//! per_arch_test!("arithmetic", "add", graph_must_contain_int_add);
-//! fn graph_must_contain_int_add(g: &strider_ir::Function) {
-//!     assert!(common::count_int_binop(g, strider_ir::IntBinaryOp::Add) >= 1);
-//! }
-//! ```
-//!
-//! The macro expands to one `#[test]` per supported arch (see `ALL_ARCHES`).
-//! Each arch test loads `fixtures/out/<arch>/<case>.elf`, analyses the named
-//! symbol, runs the optimiser pipeline (with `LoadReadOnly` wired to the
-//! binary's `.rodata`), and invokes the assertion closure.
+//! `per_arch_test!("<case>", "<fn_name>", <assertion_fn>)` expands to one
+//! `#[test]` per arch in `ALL_ARCHES`. Each loads
+//! `fixtures/out/<arch>/<case>.elf`, analyses the named symbol, runs the
+//! optimiser pipeline over the ELF's read-only mappings, and hands the
+//! resulting `Function` to the assertion.
 
 #![allow(
     clippy::panic,
@@ -58,11 +47,8 @@ pub(crate) enum Arch {
     Ppc64le,
 }
 
-/// Every supported `Arch` variant in the same order they appear in
-/// `per_arch_test!`.  Use this from any test that wants to iterate
-/// the full arch matrix (e.g. cross-arch shape baselines).  Keeping
-/// a single canonical list here prevents drift between callers and
-/// the `Arch` enum.
+/// Every supported `Arch` variant, in `per_arch_test!` order. The canonical
+/// list for any test iterating the full arch matrix.
 pub(crate) const ALL_ARCHES: &[Arch] = &[
     Arch::X86,
     Arch::X86Kernel,
@@ -151,9 +137,8 @@ impl Arch {
     }
 }
 
-/// Build a `Lifter` (owning a `Sleigh` over `reader`) plus the resolved
-/// calling convention for `arch`.  The `Lifter` owns the `Sleigh`, so it's
-/// bound to this one memory reader for its lifetime.
+/// The `Lifter` owns the `Sleigh`, so it is bound to this one memory reader
+/// for its lifetime.
 pub(crate) fn driver_for_reader<R: rsleigh::MemReader>(
     arch: Arch,
     reader: R,
@@ -172,9 +157,6 @@ pub(crate) fn driver_for_reader<R: rsleigh::MemReader>(
     (driver, cc)
 }
 
-/// Construct an x86_64-SystemV `Lifter` owning a `Sleigh` over
-/// `reader`, plus its resolved CC.  Used by tests that build
-/// hand-assembled byte sequences and don't care about ELF loading.
 pub(crate) fn strider_x86_64<R: rsleigh::MemReader>(
     reader: R,
 ) -> (
@@ -184,9 +166,7 @@ pub(crate) fn strider_x86_64<R: rsleigh::MemReader>(
     driver_for_reader(Arch::X64, reader)
 }
 
-/// AArch64-AAPCS64 sibling of [`strider_x86_64`] for the handful of
-/// synthetic-fixture tests that need an LR-bearing CC (e.g.
-/// `bug_on_lifts_cleanly`'s `bx lr` regression case).
+/// AAPCS64, the CC used by synthetic fixtures that need a link register.
 pub(crate) fn strider_aarch64<R: rsleigh::MemReader>(
     reader: R,
 ) -> (
@@ -194,6 +174,15 @@ pub(crate) fn strider_aarch64<R: rsleigh::MemReader>(
     strider_target::BuiltCallingConvention,
 ) {
     driver_for_reader(Arch::Aarch64, reader)
+}
+
+pub(crate) fn strider_mips32le<R: rsleigh::MemReader>(
+    reader: R,
+) -> (
+    strider_orchestrator::Lifter<R>,
+    strider_target::BuiltCallingConvention,
+) {
+    driver_for_reader(Arch::Mips32le, reader)
 }
 
 /// Build a synthetic x86-64 binary: `jmp rax` (2 bytes at `0x1000`)
@@ -244,7 +233,7 @@ pub(crate) fn analyze_with_known_targets(
             machine_addr: MachineInsnAddr::from(branch_indirect_addr),
             insn_index: 0,
         },
-        ResolvedTargets::Multiple(targets.to_vec()),
+        ResolvedTargets::Multiple(targets.iter().copied().map(Into::into).collect()),
     );
     let cfg_opts = strider_cfg::CfgOptions {
         known_targets,
@@ -270,15 +259,9 @@ pub(crate) fn binary_path(arch: Arch, case: &str) -> PathBuf {
         .join(format!("{case}.elf"))
 }
 
-/// Load the (arch, case) ELF, build a CFG at `fn_name`, and lift it to IR.
-/// Returns the full [`LiftOutcome`] (so callers that need
-/// `unresolved_branches` get it), the strider instance, the sleigh arch
-/// (for endianness), and an owned ROM reader callers can use to drive
-/// their optimizer pipeline.
-///
-/// Shared between [`analyze`] (which discards `unresolved_branches`) and
-/// `indirect_branch.rs`'s `assert_no_unresolved_indirect_branch` (which
-/// needs both halves of the outcome).
+/// Loads the (arch, case) ELF, builds a CFG at `fn_name`, and lifts it. The
+/// trailing `ElfFileMemReader` is a second view of the same image for the
+/// optimiser's ROM: the first is moved into the `Lifter`.
 pub(crate) fn lift_for_pipeline(
     arch: Arch,
     case: &str,
@@ -308,14 +291,11 @@ pub(crate) fn lift_for_pipeline(
         .symbol_by_name(fn_name)
         .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
         .address();
-    // ARM-Thumb interworking: a Thumb function symbol's address has the LSB
-    // set as a "Thumb mode" marker (the actual instructions live at
-    // `addr & !1` and are 2-byte aligned).  Sleigh expects the aligned
-    // address; mask the marker off for ARM-class targets.
-    let addr = match arch {
-        Arch::Arm | Arch::ArmThumb => raw_addr & !1u64,
-        _ => raw_addr,
-    };
+    // The symbol address is passed through with its ARM-Thumb interworking bit
+    // intact: that bit IS the entry's ISA mode, and `Lifter::build_cfg` masks
+    // it off for decoding itself.  Masking here would decode every Thumb
+    // function as ARM.
+    let addr = raw_addr;
     let cfg_opts = strider_cfg::CfgOptions {
         allow_code_before_start_addr: true,
         ..Default::default()
@@ -337,25 +317,17 @@ pub(crate) fn lift_for_pipeline(
     (outcome, ana, cc, sleigh_arch, rom_for_opt)
 }
 
-/// Loads the (arch, case) ELF, builds a CFG starting at `fn_name`, runs the
-/// production optimiser pipeline ([`strider_orchestrator::opt::default_pipeline`]
-/// + `LoadReadOnly`) over the lifted IR, and returns the resulting graph.
+/// [`lift_for_pipeline`] followed by `default_pipeline`.
 ///
-/// Test fixtures are well-behaved compiler-emitted binaries (gcc/clang
-/// at -O0/-O2 from `fixtures/cases/*.c`), so the default alias precision
-/// ([`crate::opt::AliasMode::StackGlobalDisjoint`], carried by the
-/// `OptCtx` below) is appropriate: globals never alias the stack frame
-/// in such binaries, and the relaxed walker recovers the spill/reload
-/// forwarding the assertions depend on.  Tests of the strict mode belong
-/// in unit tests with a directly-configured `OptCtx`.
-///
-/// Panics on any failure; system tests are pass/fail end-to-end checks. If
-/// the binary is missing, the panic names the `make -C fixtures` command
-/// to build it.
+/// The fixtures are compiler-emitted binaries from `fixtures/cases/*.c`, where
+/// globals never alias the stack frame, so the default
+/// `AliasMode::StackGlobalDisjoint` holds and the relaxed walker recovers the
+/// spill/reload forwarding the assertions depend on. Strict-mode coverage
+/// belongs in unit tests with a directly-configured `OptCtx`.
 pub(crate) fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
     let (outcome, _lifter, _cc, _sleigh_arch, rom_for_opt) = lift_for_pipeline(arch, case, fn_name);
     let mut function = outcome.function;
-    // The reader serves raw bytes; LoadReadOnly decodes them with the
+    // The reader serves raw bytes; `LoadReadOnly` decodes them with the
     // function's own endianness, so big-endian fixtures fold correctly.
     let p = strider_orchestrator::opt::default_pipeline();
     let mut ctx = strider_orchestrator::opt::OptCtx::new(Some(&rom_for_opt));
@@ -364,13 +336,8 @@ pub(crate) fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Func
     function
 }
 
-// All counters walk the graph in pre-order and filter on the node kind.
-// Naming convention: `count_<thing>` returns a `usize`; `has_<thing>` returns a `bool`.
-
 use strider_ir::node::NodeKind;
 
-// Re-exported under bare names so existing test call-sites need no
-// qualification.
 pub(crate) fn count_kind<F: Fn(&NodeKind) -> bool>(
     function: &strider_ir::Function,
     pred: F,
@@ -459,13 +426,33 @@ pub(crate) fn count_return_paths(function: &strider_ir::Function) -> usize {
             total += 1;
             continue;
         };
-        let pred = function.producer(ctrl_value);
-        match function.node_kind(pred) {
-            // Region's control inputs form the leading run of its input
-            // list (see node_signature: `inputs: []; in_tail: CTRL`), so the
-            // total input count IS the predecessor count.
-            NodeKind::Region => total += function.node_inputs(pred).len(),
-            _ => total += 1,
+        // Step through control-ordered ops interposed on the epilogue (an ARM
+        // `bx lr` models `setISAMode` as a CallOther just before the `Return`)
+        // to the merging Region, whose immediate fan-in is the path count.
+        let mut pred = function.producer(ctrl_value);
+        loop {
+            match function.node_kind(pred) {
+                // Region's control inputs form the leading run of its input
+                // list (see node_signature: `inputs: []; in_tail: CTRL`), so
+                // the total input count IS the predecessor count.
+                NodeKind::Region => {
+                    total += function.node_inputs(pred).len();
+                    break;
+                }
+                NodeKind::Call | NodeKind::CallOther { .. } => {
+                    match function.node_inputs(pred).get(0).copied() {
+                        Some(ctrl) => pred = function.producer(ctrl),
+                        None => {
+                            total += 1;
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    total += 1;
+                    break;
+                }
+            }
         }
     }
     total
@@ -542,11 +529,11 @@ pub(crate) fn has_kind<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function
     function.has_kind(pred)
 }
 
-/// Counts nodes carrying an SP-relative offset annotation in
-/// `Function::stack_offsets`.  This side-table is populated *only* by the
-/// `StackOffsetDetect` pass; a non-zero count after the pipeline proves the
-/// pass fired on this function.
-pub(crate) fn count_stack_offsets(function: &strider_ir::Function) -> usize {
+/// Counts Store/Load nodes whose address decomposed to an SP-relative slot in
+/// `Function::memory_offsets`. `StackOffsetDetect` is the post-pass that
+/// decomposes every Store/Load address, so a non-zero count after the pipeline
+/// proves it ran; other passes memoize into the same table.
+pub(crate) fn count_memory_offsets(function: &strider_ir::Function) -> usize {
     function
         .graph()
         .all_node_ids()
@@ -563,10 +550,8 @@ pub(crate) fn has_constant(function: &strider_ir::Function, value: u64) -> bool 
     })
 }
 
-/// Locates the unique `If` node in `g`.  Panics if zero or more than one
-/// is present; either case indicates a fixture-construction bug.  Use this
-/// helper when the test asserts on the condition of a known-unique `If` node
-/// rather than counting `If` nodes via [`count_ifs`].
+/// The unique `If` node in `g`. Panics on zero or several, either being a
+/// fixture-construction bug.
 pub(crate) fn find_unique_if(function: &strider_ir::Function) -> strider_ir::node::NodeId {
     let mut iter = function
         .graph()
@@ -608,8 +593,8 @@ macro_rules! per_arch_test {
         paste::paste! {
             mod [<test_ $fn_name>] {
                 use super::*;
-                // Resolve each arch's ignore entry (or lack thereof) and emit
-                // the test function.  The inner `__one_arch_test!` macro
+                // Resolve each arch's ignore entry and emit the test
+                // function.  The inner `__one_arch_test!` macro
                 // receives the ignore list verbatim and scans it for a
                 // matching entry using dedicated per-arch arms.
                 $crate::__one_arch_test!(X86,       x86,        $case, $fn_name, $assert { $($skip_arch: $reason),* });

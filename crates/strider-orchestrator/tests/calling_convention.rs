@@ -8,11 +8,11 @@
 //! (b) at least one call-site arg slot threads back to its carrier
 //! through the `LoadForward` + sub-register-fallback chain.
 //!
-//! Floors are deliberately below the strict "all 0..N" mark: not every
-//! per-arch lowering routes every parameter through a slot the analyzer
-//! can fully reason about (e.g. `forward_16`'s spilled args interleaved
-//! with prologue traffic). The thread-through check (b) is the invariant
-//! that must hold on every arch.
+//! The floors sit below the strict "all 0..N" mark because not every per-arch
+//! lowering routes every parameter through a slot the analyzer can reason
+//! about (e.g. `forward_16`'s spilled args interleaved with prologue
+//! traffic). The thread-through check (b) is the invariant that holds on
+//! every arch.
 
 #![allow(
     clippy::panic,
@@ -22,14 +22,13 @@
 )]
 
 mod common;
-// Required so `per_arch_test!` can resolve `$crate::common::analyze` /
-// `$crate::common::Arch`.
+// `per_arch_test!` resolves `$crate::common::analyze` / `$crate::common::Arch`.
 
 use std::collections::HashSet;
 use strider_ir::{IRViewer, IRWalker};
 
 use strider_pattern::{
-    Capture, CaptureExt, CastMask, Matcher, Pattern, any, call, initial_var_for,
+    Capture, CaptureExt, CastMask, Matcher, Pattern, anything, call, initial_var_for,
 };
 
 use strider_ir::node::NodeKind;
@@ -51,10 +50,9 @@ fn function_arg_indices(function: &strider_ir::Function) -> HashSet<u32> {
     function.side_tables().iter_arg_indices().collect()
 }
 
-/// Regression guard for the builder-entry sub-register fallback: without
-/// it, a first parameter read at sub-register width (universal at -O2 on
-/// every arch tested) would have no arg 0 recorded, and no args at all
-/// in the extreme case.
+/// Pins the builder-entry sub-register fallback: a first parameter read at
+/// sub-register width, which is universal at -O2 on every arch tested, still
+/// records arg 0.
 fn assert_function_args_present(function: &strider_ir::Function, n: u32, min: u32, fn_label: &str) {
     let got = function_arg_indices(function);
     let in_range: HashSet<u32> = got.iter().copied().filter(|&i| i < n).collect();
@@ -86,7 +84,7 @@ fn assert_some_call_arg_threads_through(function: &strider_ir::Function, n: u32,
         // Capture arg i, then walk back through cast/extend/truncate/phi to
         // see if it lands on a registered carrier.
         let arg_cap = Capture::new();
-        let pat = masked(call().arg(i as usize, any().capture(arg_cap)).build());
+        let pat = masked(call().arg(i as usize, anything().capture(arg_cap)).build());
         let call_matches = m.find_all(&pat).unwrap();
         if call_matches.iter().any(|hit| {
             let Some(arg_value) = hit.value(arg_cap) else {
@@ -224,12 +222,9 @@ per_arch_test!(
 fn forward_16_assertions(function: &strider_ir::Function) {
     // Floor at 8, not 16: the lowest-arity register sets (mips o32, arm
     // aapcs) pass 4-8 args in registers and spill the rest, and
-    // `FunctionArgDetect` doesn't canonicalise every high-slot stack-arg
-    // read on every arch; reaching 16/16 needs callee-side stack-arg
-    // recognition beyond `CallStackArgCollect`'s caller-side reach.
-    // (The floor was previously 4, broken by a volatile-global passthrough
-    // bug and a chain-order-monotonicity bug in the memory-chain walk;
-    // both are fixed, so 8/16 now holds on every arch.)
+    // `FunctionArgDetect` does not canonicalise every high-slot stack-arg read
+    // on every arch. Reaching 16/16 needs callee-side stack-arg recognition
+    // beyond `CallStackArgCollect`'s caller-side reach.
     assert_function_args_present(function, 16, 8, "forward_16");
     assert_some_call_arg_threads_through(function, 16, "forward_16");
 }
@@ -312,8 +307,7 @@ fn uses_return_assertions(function: &strider_ir::Function) {
     );
 
     // For each Call, walk every input slot back through any chain of
-    // {Store, Load, Region, ValuePhi}.
-    // If we hit another Call, the test passes.
+    // {Store, Load, Region, ValuePhi}; hitting another Call is the proof.
     let chained = calls.iter().any(|&outer| {
         let outer_inputs: Vec<_> = function.node_inputs(outer).into_iter().collect();
         outer_inputs.iter().any(|&inp| {

@@ -356,7 +356,7 @@ proptest! {
 
         for (id, pre_fp) in &pre {
             if pre_fp.is_empty() {
-                // Exempt structural kinds had no fingerprint to grow.
+                // Exempt structural kinds have no fingerprint to grow.
                 continue;
             }
             let Some(post_fp) = post.get(id) else {

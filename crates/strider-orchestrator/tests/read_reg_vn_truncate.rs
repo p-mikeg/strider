@@ -1,19 +1,15 @@
-//! Regression tests for the `read_reg_vn` truncation fix (commit `d2aa0ac`).
+//! `read_reg_vn` truncates a sub-register read to the sub-register's declared
+//! width even when its offset inside the container is zero (shift == 0), i.e.
+//! it always calls `truncate_if_needed(shifted, reg_ty)`.
 //!
-//! Bug: `read_reg_vn` returned the full container register value whenever
-//! the sub-register's offset inside the container was zero (shift == 0),
-//! even if the sub-register was strictly narrower. E.g. ARM soft-float
-//! ABI `s0` (4-byte float arg/return) lives at offset 0 inside `d0`
-//! (8-byte); before the fix `read_reg_vn(s0)` returned the 8-byte `d0`
-//! value (I64), which then flowed into `IntBitsToFloat(F32)` (whose
-//! signature requires an I32 input) and failed validation.
+//! ARM soft-float ABI `s0` (4-byte float arg/return) lives at offset 0 inside
+//! the 8-byte `d0`. An untruncated read yields the 8-byte `d0` value (I64),
+//! which flows into `IntBitsToFloat(F32)`, whose signature requires an I32
+//! input, and fails validation.
 //!
-//! Fix: always call `truncate_if_needed(shifted, reg_ty)`, even when
-//! shift == 0.
-//!
-//! Regression surface: the `f32_arith` fixture on ARM / MIPS32 soft-float
-//! targets, where the compiler lowers `float` args as raw integer bits in
-//! integer registers and the float-register view (`s0`/`f12`) is a 4-byte
+//! The surface is the `f32_arith` fixture on ARM / MIPS32 soft-float targets,
+//! where the compiler lowers `float` args as raw integer bits in integer
+//! registers and the float-register view (`s0`/`f12`) is a 4-byte
 //! sub-register of an 8-byte container.
 //!
 //! `write_reg_vn` uses positioned reg_mask + container-domain
@@ -56,7 +52,7 @@ fn f32_arith_graph_is_valid(function: &strider_ir::Function) {
     );
 
     // No IntBitsToFloat may have a I64 input: that would mean
-    // read_reg_vn failed to truncate s0/f12 to I32 (the original bug).
+    // read_reg_vn failed to truncate s0/f12 to I32.
     for nid in function.graph().all_node_ids() {
         if matches!(function.node_kind(nid), NodeKind::IntBitsToFloat) {
             let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
@@ -65,7 +61,7 @@ fn f32_arith_graph_is_valid(function: &strider_ir::Function) {
                 assert_ne!(
                     kind,
                     strider_ir::node::ValueKind::Typed(strider_ir::node::ValueType::I64),
-                    "IntBitsToFloat node received a I64 input — \
+                    "IntBitsToFloat node received a I64 input: \
                      read_reg_vn must truncate the sub-register to its declared \
                      width (I32 for s0 / f12) before passing it to this node"
                 );
@@ -74,16 +70,16 @@ fn f32_arith_graph_is_valid(function: &strider_ir::Function) {
     }
 }
 
-// Without the read_reg_vn fix these fail with an IR validation error:
+// An untruncated sub-register read fails IR validation here with
 // "Typed(I64), expected AnyInt(I32)" from IntBitsToFloat's signature.
 
-// PPC FPRs (f0-f31) are natively 8 bytes: there's no 4-byte sub-register
-// view like ARM's s0/d0 split, so the I32-input assertion doesn't apply
-// (PPC correctly produces I64 there, which the assertion would reject).
+// PPC FPRs (f0-f31) are natively 8 bytes, the whole register being the only
+// view of it, so the I32-input assertion doesn't apply: PPC correctly produces
+// I64 there, which the assertion would reject.
 per_arch_test!("floats", "f32_arith", f32_arith_graph_is_valid, ignore = {
     Ppc32be: "PPC FPRs are natively 8-byte; the I32-input assertion doesn't apply",
     Ppc32le: "PPC FPRs are natively 8-byte; the I32-input assertion doesn't apply",
     Ppc64be: "PPC FPRs are natively 8-byte; the I32-input assertion doesn't apply",
     Ppc64le: "PPC FPRs are natively 8-byte; the I32-input assertion doesn't apply",
-    ArmBe:   "ARM8_BE Sleigh's VFP register file uses descending offsets and d0 doesn't overlap s0; analyzer's container aliasing drops the entire VFP read/write chain — IR has 0 FloatBinaryOp / 0 Call nodes for f32_arith",
+    ArmBe:   "ARM8_BE Sleigh's VFP register file uses descending offsets and d0 doesn't overlap s0; the analyzer's container aliasing drops the entire VFP read/write chain, leaving 0 FloatBinaryOp / 0 Call nodes for f32_arith",
 });
