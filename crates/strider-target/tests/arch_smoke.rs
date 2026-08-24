@@ -41,16 +41,18 @@ fn all_presets_resolve() {
         ("ppc64le", SleighArch::ppc64le),
         ("arm_thumb", SleighArch::arm_thumb),
         ("arm_be", SleighArch::arm_be),
+        ("arm_be_kernel", SleighArch::arm_be_kernel),
     ];
     for (label, ctor) in cases {
         assert_preset_resolves(label, ctor());
     }
 }
 
-/// `strider::register_aliasing` reads `Endianness` to pick the shift
+/// The lifter's `vn_io` reads `register_endianness()` to pick the shift
 /// direction when extracting a sub-register from its container, so a mistyped
-/// value silently produces wrong shifts at the analyzer layer with no signal
-/// from this crate.  Pinned here so a typo in `arch.rs` fails at test time.
+/// value silently produces wrong shifts at the lift layer with no signal from
+/// this crate.  `endianness()` is the DATA order and differs on BE8
+/// (`arm_be_kernel`).  Pinned here so a typo in `arch.rs` fails at test time.
 #[test]
 fn presets_endianness_matches_arch() {
     use strider_target::Endianness;

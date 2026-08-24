@@ -149,8 +149,75 @@ impl SleighArch {
         self.endianness
     }
 
+    /// The byte order of the Sleigh REGISTER space, which the sla fixes at
+    /// compile time via `ENDIAN` and which is NOT always the data order.
+    ///
+    /// `arm_be_kernel` is BE8: a little-endian sla (little-endian instruction
+    /// encoding) with big-endian data, mirroring GHIDRA's `ARM:LEBE:32`. Its
+    /// register block therefore took the `@if ENDIAN == "little"` branch of
+    /// `ARM.sinc`, where `d0` is the LOW half of `q0`; the big-endian branch
+    /// reverses the name lists instead. Sub-register slicing must follow this,
+    /// while loads and stores follow [`Self::endianness`].
+    pub fn register_endianness(&self) -> Endianness {
+        match self.preset {
+            ArchPreset::ArmBeKernel => Endianness::Little,
+            _ => self.endianness,
+        }
+    }
+
     pub fn preset(&self) -> ArchPreset {
         self.preset
+    }
+
+    /// The context variable holding the address-low-bit ISA mode, or `None` on
+    /// arches with no such mode (they decode from the pspec default).
+    ///
+    /// `arm_thumb` is included: it is `-mthumb` over the full-ARM-state
+    /// `SLA_SPEC_ARM8_LE`, so ARM-state code (gcc's `call_weak_fn`, veneers)
+    /// still appears at even addresses and a resolved `bx` still interworks.
+    #[must_use]
+    pub fn isa_mode_var(&self) -> Option<&'static str> {
+        match self.preset {
+            ArchPreset::Arm
+            | ArchPreset::ArmBe
+            | ArchPreset::ArmBeKernel
+            | ArchPreset::ArmThumb => Some("TMode"),
+            // The low bit selects the alternate ISA (MIPS16 / microMIPS, fixed
+            // by the pspec `RELP`).
+            ArchPreset::MipsBe32
+            | ArchPreset::MipsLe32
+            | ArchPreset::MipsBe64
+            | ArchPreset::MipsLe64 => Some("ISA_MODE"),
+            _ => None,
+        }
+    }
+
+    /// Context vars the sla declares `noflow` that still change which
+    /// constructor matches, so a value committed by one function is a decode
+    /// change for the next on a reused engine and a cold entry must clear them.
+    ///
+    /// `FlowVars` cannot see these: it takes the sla's FLOWING set, and these
+    /// are excluded from it by definition. ARM's `LRset` picks `call [pc]` over
+    /// `goto [pc]` for `bx` (`ARMinstructions.sinc`), and `REToverride` /
+    /// `CALLoverride` reclassify a return and a call the same way.
+    #[must_use]
+    pub fn transient_decode_vars(&self) -> &'static [&'static str] {
+        match self.preset {
+            ArchPreset::Arm
+            | ArchPreset::ArmBe
+            | ArchPreset::ArmBeKernel
+            | ArchPreset::ArmThumb => &["LRset", "REToverride", "CALLoverride"],
+            _ => &[],
+        }
+    }
+
+    /// The ISA-mode context a cold entry at `entry_addr` decodes in, as
+    /// `(context_var, value)`: the address low bit set means the alternate ISA
+    /// (ARM Thumb, MIPS16 / microMIPS), clear means the base one. The
+    /// instruction itself is at `entry_addr & !1`.
+    pub fn entry_mode_context(&self, entry_addr: u64) -> Option<(&'static str, u32)> {
+        self.isa_mode_var()
+            .map(|var| (var, u32::from(entry_addr & 1 == 1)))
     }
 
     arch_ctor! {
@@ -218,7 +285,8 @@ impl SleighArch {
     }
 
     arch_ctor! {
-        /// ARM Cortex-M, Thumb-2 only (`arm-linux-gnueabihf-gcc -mthumb`).
+        /// ARM 32-bit `-mthumb`: Cortex-M pspec defaults over the full-ARM-state
+        /// sla, so ARM state stays reachable (`arm-linux-gnueabihf-gcc -mthumb`).
         arm_thumb => SLA_SPEC_ARM8_LE, PSPEC_ARMCORTEX, Little, ArmThumb
     }
 
@@ -250,5 +318,95 @@ impl SleighArch {
         let probe = rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0);
         let sleigh = rsleigh::Sleigh::new(self.sla_spec, self.pspec, probe)?;
         Ok(sleigh.regs()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SleighArch;
+
+    /// `arm_thumb` is `arm-linux-gnueabihf-gcc -mthumb` over the full-ARM-state
+    /// `SLA_SPEC_ARM8_LE`, not a Cortex-M: its own fixture
+    /// (`fixtures/out/arm_thumb/arithmetic.elf`) carries `$a` ARM-state mapping
+    /// symbols and an even-addressed `FUNC call_weak_fn` at 0x530. Pinning
+    /// `TMode = 1` decodes those as garbage Thumb with no error, and withholding
+    /// the carry var leaves a resolved interworking branch unable to recover ARM.
+    #[test]
+    fn arm_thumb_honours_the_address_low_bit_and_carries_its_mode() {
+        assert_eq!(
+            SleighArch::arm_thumb().entry_mode_context(0x0530),
+            Some(("TMode", 0)),
+            "an even entry is ARM state, which this sla and preset both have"
+        );
+        assert_eq!(
+            SleighArch::arm_thumb().entry_mode_context(0x05f9),
+            Some(("TMode", 1)),
+            "a Thumb function symbol carries the Thumb bit"
+        );
+        assert_eq!(SleighArch::arm_thumb().isa_mode_var(), Some("TMode"));
+    }
+
+    /// Every ARM/MIPS preset carries its mode, and every non-mode arch carries
+    /// none.
+    #[test]
+    fn isa_mode_var_matches_entry_mode_context_on_every_preset() {
+        for arch in [
+            SleighArch::arm(),
+            SleighArch::arm_be(),
+            SleighArch::arm_be_kernel(),
+            SleighArch::arm_thumb(),
+            SleighArch::mipsbe32(),
+            SleighArch::mipsle32(),
+            SleighArch::mipsbe64(),
+            SleighArch::mipsle64(),
+        ] {
+            assert_eq!(
+                arch.isa_mode_var(),
+                arch.entry_mode_context(0).map(|(v, _)| v),
+                "{:?} must carry the mode it decodes with",
+                arch.preset()
+            );
+        }
+        for arch in [
+            SleighArch::x86_64(),
+            SleighArch::aarch64(),
+            SleighArch::ppc32be(),
+        ] {
+            assert_eq!(
+                arch.isa_mode_var(),
+                None,
+                "{:?} has no ISA mode",
+                arch.preset()
+            );
+        }
+    }
+
+    #[test]
+    fn entry_mode_context_maps_low_bit_per_arch() {
+        // MIPS: the low bit selects the alternate ISA via ISA_MODE.
+        assert_eq!(
+            SleighArch::mipsbe32().entry_mode_context(0x0040_0a90),
+            Some(("ISA_MODE", 0))
+        );
+        assert_eq!(
+            SleighArch::mipsle64().entry_mode_context(0x0040_0a91),
+            Some(("ISA_MODE", 1))
+        );
+        // ARM: the low bit is the Thumb bit via TMode.
+        assert_eq!(
+            SleighArch::arm().entry_mode_context(0x1001),
+            Some(("TMode", 1))
+        );
+        assert_eq!(
+            SleighArch::arm_thumb().entry_mode_context(0x1001),
+            Some(("TMode", 1))
+        );
+        assert_eq!(
+            SleighArch::arm_thumb().entry_mode_context(0x1000),
+            Some(("TMode", 0))
+        );
+        // Arches with no address-encoded entry mode.
+        assert_eq!(SleighArch::x86_64().entry_mode_context(0x1000), None);
+        assert_eq!(SleighArch::ppc32be().entry_mode_context(0x1001), None);
     }
 }
