@@ -84,8 +84,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let out_vn = require_output_vn(insn)?;
         // No overflow: byte_offset < input.size <= u32::MAX.
         let bit_shift = byte_offset * 8;
-        // Guards a future Subpiece-width extension; the check above already
-        // pins bit_shift to at most 120, under the u128 IR width.
+        // Guards a future Subpiece-width extension. The check above bounds
+        // `bit_shift` by the input's own width, which reaches 504 on a `zmm`.
         debug_assert!(
             bit_shift < u64::from(input_vn.size) * 8,
             "Subpiece bit_shift {bit_shift} must be < input bit-width {}",

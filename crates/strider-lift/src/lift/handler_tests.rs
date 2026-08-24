@@ -1,7 +1,3 @@
-//! Value-opcode lifting tests over hand-built `rsleigh::Insn` structs.  The
-//! CFG and calling convention are throwaway scaffolding: value lifting touches
-//! only the IR builder and Sleigh context, never the region id or region map.
-
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use rsleigh::mem_readers::BufMemReader;
@@ -57,7 +53,9 @@ pub(super) fn empty_cc() -> strider_target::BuiltCallingConvention {
         ret_stack_pop: 0,
         link_register_vn: None,
         preserves_memory: false,
+        preserves_all_registers: false,
         no_return: false,
+        ..Default::default()
     }
 }
 
@@ -107,11 +105,17 @@ pub(super) fn with_test_lifter_tracking_arch(
     let cc = empty_cc();
     let lifter = Lifter::new(arch, sleigh).expect("lifter");
     let no_overrides = rustc_hash::FxHashMap::default();
-    let mut driver =
-        FunctionLifter::new(&lifter, cc, &cfg, all_vns, &no_overrides).expect("driver");
-    // Clear the lift address so tests start from `lift_addr = None`.
+    let no_call_other_overrides = strider_target::call_other_abi::CallOtherOverrides::default();
+    let mut driver = FunctionLifter::new(
+        &lifter,
+        cc,
+        &cfg,
+        all_vns,
+        &no_overrides,
+        &no_call_other_overrides,
+    )
+    .expect("driver");
     driver.builder.set_lift_addr(None);
-    driver.builder.build_entry().expect("build_entry");
     let region = driver.builder.create_region_all().expect("create_region");
     driver
         .builder
@@ -148,10 +152,17 @@ pub(super) fn with_test_lifter_cc(
     let region_id = cfg.entry();
     let lifter = Lifter::new(arch, sleigh).expect("lifter");
     let no_overrides = rustc_hash::FxHashMap::default();
-    let mut driver =
-        FunctionLifter::new(&lifter, cc, &cfg, all_vns, &no_overrides).expect("driver");
+    let no_call_other_overrides = strider_target::call_other_abi::CallOtherOverrides::default();
+    let mut driver = FunctionLifter::new(
+        &lifter,
+        cc,
+        &cfg,
+        all_vns,
+        &no_overrides,
+        &no_call_other_overrides,
+    )
+    .expect("driver");
     driver.builder.set_lift_addr(None);
-    driver.builder.build_entry().expect("build_entry");
     let region = driver.builder.create_region_all().expect("create_region");
     driver
         .builder
@@ -161,7 +172,6 @@ pub(super) fn with_test_lifter_cc(
     f(&mut driver, region_id);
 }
 
-/// Lifts one hand-built `Insn` and asserts it succeeds.
 fn assert_lifts_one(opcode: Opcode, output: Option<Vn>, inputs: Vec<Vn>) {
     with_test_lifter(|d, rid| {
         let insn = Insn {
@@ -403,9 +413,9 @@ fn lift_float_neg() {
     assert_lifts_one(Opcode::FloatNeg, Some(reg(0)), vec![const_vn(0, 4)]);
 }
 
-// `Load` is deliberately untested here: `VnSpace::by_id` expects inputs[0] to
-// hold a raw pointer to a Sleigh AddrSpace, which a synthetic test cannot
-// construct safely.  The per-arch tests cover real-decoded Loads.
+// `VnSpace::by_id` expects inputs[0] to hold a raw pointer to a Sleigh
+// AddrSpace, which a synthetic test cannot construct safely; the per-arch
+// tests cover `Load` against real decoded pcode.
 
 #[test]
 fn lift_segment_op_recognised() {
@@ -491,7 +501,7 @@ fn int_signed_cmp_uses_max_width_and_sign_extends_narrower_operand() {
         assert!(
             find_int_const_node(&d.builder, 0xFFFF_FFFF_FFFF_FFFF).is_some(),
             "the 4-byte -1 operand must be SIGN-extended to the 8-byte max width \
-             (0xFFFF_FFFF_FFFF_FFFF) — proving max-width comparison + sign-correct extension"
+             (0xFFFF_FFFF_FFFF_FFFF), proving max-width comparison and sign-correct extension"
         );
     });
 }
@@ -499,8 +509,8 @@ fn int_signed_cmp_uses_max_width_and_sign_extends_narrower_operand() {
 #[test]
 fn lift_with_set_lift_addr_records_asm_fingerprint() {
     with_test_lifter(|d, rid| {
-        // `process_insn` owns the funnel, so drive the fingerprint via its
-        // `addr` argument rather than a manual `set_lift_addr`.
+        // `process_insn` owns the funnel, so the fingerprint comes from its
+        // `addr` argument.
         {
             let insn = Insn {
                 opcode: Opcode::IntAdd,
@@ -743,7 +753,6 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
     });
 }
 
-/// Const-operand companion to the variable-operand cache test.
 #[test]
 fn lift_int_sub_caches_lowered_shape() {
     with_test_lifter(|d, rid| {
@@ -804,7 +813,7 @@ fn lift_int_sless_equal_lowers_to_boolneg_sless() {
                 &d.builder,
                 NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)
             ),
-            "expected IntBinaryOp::Xor in graph (the I1 logical-NOT wrap, post-BitNot removal)"
+            "expected IntBinaryOp::Xor in graph (the I1 logical-NOT wrap of the Sless)"
         );
         assert!(
             graph_has_kind(&d.builder, NodeKind::IntCmpOp(IntCmpOp::Sless)),
@@ -813,9 +822,8 @@ fn lift_int_sless_equal_lowers_to_boolneg_sless() {
     });
 }
 
-/// Lifts an operand-less `Insn` and asserts the dispatch result.  `expect_ok`
-/// is false for handlers that read an operand and so error on an absent one.
-/// `label` appears in the failure message.
+/// `expect_ok` is false for handlers that read an operand and so error on an
+/// absent one.
 fn assert_process_insn(opcode: Opcode, expect_ok: bool, label: &str) {
     with_test_lifter(|d, rid| {
         let insn = Insn {
@@ -924,6 +932,43 @@ fn write_vn_then_read_vn_round_trip() {
             Some(42u128),
             "expected IntConst(42)"
         );
+    });
+}
+
+/// A sub-register write masks the CONTAINER only.  The inserted value is
+/// already narrowed to the register's width and shifted into its slot, so a
+/// second mask over it clears nothing.
+#[test]
+fn sub_register_write_masks_the_container_only() {
+    let container = Vn {
+        size: 8,
+        addr_off: 0,
+        addr_space: VnSpace::REGISTER,
+    };
+    let half = Vn {
+        size: 4,
+        addr_off: 4,
+        addr_space: VnSpace::REGISTER,
+    };
+    with_test_lifter_tracking(vec![container], |d, _rid| {
+        let val = d
+            .builder
+            .build_int_const(0xdead_beefu64, strider_ir::ValueType::I32)
+            .unwrap();
+        d.write_vn(&half, val).expect("sub-register write");
+        let ands = d
+            .builder
+            .function()
+            .graph()
+            .all_node_ids()
+            .filter(|id| {
+                matches!(
+                    d.builder.function().node_kind(*id),
+                    NodeKind::IntBinaryOp(IntBinaryOp::And)
+                )
+            })
+            .count();
+        assert_eq!(ands, 1, "only the container mask is load-bearing");
     });
 }
 
@@ -1046,7 +1091,7 @@ fn lift_float_not_equal_lowers_to_boolneg_float_equal() {
                 &d.builder,
                 NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)
             ),
-            "FloatNotEqual lift must produce an IntBinaryOp::Xor (the I1 logical-NOT wrap, post-BitNot removal)"
+            "FloatNotEqual lift must produce an IntBinaryOp::Xor (the I1 logical-NOT wrap of the FloatEqual)"
         );
         assert!(
             graph_has_kind(
@@ -1119,8 +1164,8 @@ fn lift_float_nan_lowers_to_self_inequality() {
             .expect("FloatEqual has two inputs");
         assert_eq!(
             eq_lhs, eq_rhs,
-            "FloatNan(x) compares x against ITSELF — both FloatEqual operands \
-             must be the identical value"
+            "FloatNan(x) compares x against ITSELF, so both FloatEqual \
+             operands must be the identical value"
         );
 
         let xor = find_first_node(
@@ -1273,28 +1318,28 @@ fn subpiece_ymm_high_lane() {
     });
 }
 
-/// A 7-byte width has no integer `ValueType`, so the lift must fail.  The
+/// An 11-byte width has no integer `ValueType`, so the lift must fail.  The
 /// error has to name the offending machine instruction, otherwise a failed
-/// whole-function lift is just a bare "unsupported node output size".
+/// whole-function lift reports only a bare "unsupported node output size".
 #[test]
 fn load_odd_byte_width_errors_with_asm_context() {
     with_test_lifter(|d, rid| {
-        // Copy from a 7-byte CONST so the size flows through `int_type`.
+        // Copy from an 11-byte CONST so the size flows through `int_type`.
         let insn = Insn {
             opcode: Opcode::Copy,
             output: Some(Vn {
-                size: 7,
+                size: 11,
                 addr_off: 0,
                 addr_space: VnSpace::REGISTER,
             }),
-            inputs: vec![const_vn(0, 7)].into(),
+            inputs: vec![const_vn(0, 11)].into(),
         };
         let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
-        let err = res.expect_err("7-byte output must error (unsupported width)");
+        let err = res.expect_err("11-byte output must error (unsupported width)");
         // `{:#}` renders the outer asm context and the inner width cause.
         let msg = format!("{err:#}");
         assert!(
-            msg.contains("unsupported node output size") || msg.contains("7 bytes"),
+            msg.contains("unsupported node output size") || msg.contains("11 bytes"),
             "error must still describe the unsupported width; got: {msg}"
         );
         assert!(
@@ -1302,4 +1347,25 @@ fn load_odd_byte_width_errors_with_asm_context() {
             "lift error must attach the machine address / opcode for context; got: {msg}"
         );
     });
+}
+
+/// Full lift of `bytes` placed at 0x1000, entered at 0x1000.
+pub(super) fn lift_bytes(
+    arch: strider_target::SleighArch,
+    cc: strider_target::CallingConvention,
+    bytes: Vec<u8>,
+) -> anyhow::Result<strider_ir::Function> {
+    let sleigh = rsleigh::Sleigh::new(
+        arch.sla_spec(),
+        arch.pspec(),
+        rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
+    )?;
+    let mut lifter = Lifter::new(arch, sleigh)?;
+    let cfg = lifter.build_cfg(
+        0x1000u64.into(),
+        &strider_cfg::CfgOptions::default(),
+        &rustc_hash::FxHashMap::default(),
+    )?;
+    let built = cc.build(lifter.sleigh_regs())?;
+    Ok(lifter.build_ir(&cfg, built)?.function)
 }
