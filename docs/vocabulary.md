@@ -1,13 +1,11 @@
 # Vocabulary
 
-The terms Strider uses, each in plain language. Skim it once; come back when a
-word in another guide is unfamiliar.
+The terms Strider uses, each in plain language.
 
 ## Reading the binary
 
 **Binary / ELF.** The compiled program on disk. ELF is the file format Linux
-uses for executables and shared libraries. Strider loads one and reads the raw
-bytes of each function out of it.
+uses for executables, shared libraries, and unlinked object files.
 
 **Sleigh / p-code.** Sleigh is GHIDRA's engine for decoding machine
 instructions. It turns one CPU instruction (say x86 `add rax, rbx`) into
@@ -21,8 +19,8 @@ varnode; so is `[rsp + 8]`.
 
 **Calling convention.** The rules for how arguments are passed to a function
 and how the result comes back (which registers, which stack slots). Strider
-needs it to know where a function's inputs live. `load_elf` picks a sensible
-default from the binary.
+needs it to know where a function's inputs live. `load_elf` picks it from the
+ELF header.
 
 ## Control flow
 
@@ -31,8 +29,7 @@ middle: execution enters at the top and leaves at the bottom. Other tools often
 call this a "basic block"; Strider calls it a region throughout, in both the
 CFG and the IR.
 
-**CFG (control flow graph).** The map of regions and the jumps between them. It
-answers "after this region, where can execution go next?"
+**CFG (control flow graph).** The map of regions and the jumps between them.
 
 **Dominator.** Region A *dominates* region B if every path from the function's
 entry to B goes through A first. It is how the tools reason about "this always
@@ -41,8 +38,7 @@ happens before that", and it is what decides where phi nodes are needed.
 ## The IR
 
 **IR (intermediate representation).** Strider's own representation of the
-function, sitting between the raw CFG and your query. It is where all the
-analysis happens.
+function, sitting between the raw CFG and your query. Every analysis runs on it.
 
 **Sea of nodes.** The shape of that IR: a graph, not a list of instructions.
 Each operation is a **node**, and **edges** carry values from the node that
@@ -65,7 +61,7 @@ computed number. Each edge carries one of four things:
   computes.
 - **Memory token (mem).** One token standing for the whole state of memory. Loads,
   stores, and calls chain through it so their ordering stays explicit, and a
-  MemPhi merges it at a region. There is no separate token per address.
+  MemPhi merges it at a region. One token covers every address.
 - **Phi token.** The token a region hands to each of its phis. It encodes the
   region's predecessor order, so a phi knows which incoming value goes with which
   edge (see the `phi(region, ...)` shape below).
@@ -73,11 +69,13 @@ computed number. Each edge carries one of four things:
   *type*.
 
 **Value type.** The width of a data value and whether it is integer or float.
-Integers are `I1, I8, I16, I32, I48, I64, I80, I128, I256, I512`; floats are
-`F32, F64, F80`. Booleans are just the 1-bit integer `I1`, so there is no separate
-boolean type. The odd sizes come straight from hardware: `I48` is a 6-byte ARM
-varnode, `I80` and `F80` are x87 registers, `I512` is an AVX-512 `zmm`. Read a
-node's type in Python with `node.value_type()`.
+Integers are `I1, I8, I16, I24, I32, I40, I48, I56, I64, I72, I80, I96, I112,
+I128, I256, I512`; floats are `F16, F32, F64, F80, F128`. A boolean is the 1-bit
+integer `I1`. The odd sizes come straight from hardware and from Sleigh's
+intermediate temporaries: `I24` is an x86 segment limit, `I40` and `I72` are the
+`adcx` carry accumulators, `I48` is a 6-byte ARM varnode, `I80` and `F80` are x87
+registers, `I96` and `I112` are x86-64 descriptor-table registers, `I512` is an
+AVX-512 `zmm`. Read a node's type in Python with `node.value_type()`.
 
 **Walks (cfg, data, memory).** Ways to traverse the graph from the entry. A
 **cfg walk** follows control edges only, giving the region skeleton
@@ -134,13 +132,14 @@ exact assembly it came from.
 ## Querying
 
 **Pattern.** The shape you are looking for, built from constructors like
-`load(...)`, `add(...)`, `call(...)`. A pattern describes a piece of the IR
+`load(...)`, `int_add(...)`, `call(...)`. A pattern describes a piece of the IR
 without pinning down the parts you do not care about.
 
 **Capture.** A named hole in a pattern. Where you write a capture, the pattern
-matches anything and remembers what it matched, so you can read it back. You
-can use a `Capture()` object or just a string name.
+matches anything and remembers what it matched, so you can read it back. Write
+it as a `Capture("name")` object; a bare string works only as the *read-back
+key* on a `Match`, not as a pattern operand.
 
-**Match.** One result of a query. It carries every capture's value, readable
-with `hit.const_uint("name")`, `hit.node("name")`, `hit.asm_fingerprint("name")`,
-and friends.
+**Match.** One result of a query. It carries every capture's value: index it
+with the capture and read the aspect you want, `hit[off].uint`,
+`hit[base].node`, `hit[base].asm_fingerprint`.
