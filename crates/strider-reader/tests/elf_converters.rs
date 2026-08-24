@@ -76,9 +76,7 @@ fn code_and_readonly_preset_propagates_data_error() {
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
-            // A section-only fixture has no PT_LOAD segments, so ET_REL is
-            // what routes the loader down the section-walker path. ET_EXEC
-            // would take the segments path with an empty segment list.
+            // ET_REL is what routes the loader down the section walk.
             e_type: elf::ET_REL,
             e_machine: elf::EM_X86_64,
             e_entry: 0,
@@ -140,9 +138,7 @@ fn code_and_readonly_preset_propagates_region_overflow() {
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
-            // A section-only fixture has no PT_LOAD segments, so ET_REL is
-            // what routes the loader down the section-walker path. ET_EXEC
-            // would take the segments path with an empty segment list.
+            // ET_REL is what routes the loader down the section walk.
             e_type: elf::ET_REL,
             e_machine: elf::EM_X86_64,
             e_entry: 0,
@@ -203,9 +199,7 @@ fn code_and_readonly_preset_skips_rejected_malformed_section() {
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
-            // A section-only fixture has no PT_LOAD segments, so ET_REL is
-            // what routes the loader down the section-walker path. ET_EXEC
-            // would take the segments path with an empty segment list.
+            // ET_REL is what routes the loader down the section walk.
             e_type: elf::ET_REL,
             e_machine: elf::EM_X86_64,
             e_entry: 0,
@@ -237,13 +231,14 @@ fn code_and_readonly_preset_skips_rejected_malformed_section() {
     assert!(regions.is_empty(), "nothing was accepted");
 }
 
-/// Two sections sharing a `sh_addr` resolve first-wins.
+/// Two sections sharing a `sh_addr` are rebased apart, not collapsed.
 ///
 /// A `.o` commonly has `.text`, `.text.startup`, `.text.foo` all at VMA 0
-/// pre-link. Last-wins would pick between them by iteration order, which is
-/// non-deterministic; first-wins is stable.
+/// pre-link. Each gets its own base and serves its own data; collapsing them
+/// leaves every one after the first unreachable, its address answering with
+/// the winner's bytes.
 #[test]
-fn et_rel_sections_same_start_first_wins() {
+fn et_rel_sections_sharing_a_start_are_rebased_apart() {
     let bytes = build_elf_with_sections(&[
         SectionSpec {
             name: b".first",
@@ -263,17 +258,29 @@ fn et_rel_sections_same_start_first_wins() {
         },
     ]);
     let obj = parse(&bytes);
+    let layout = strider_reader::elf::ElfSectionLayout::new(&obj);
     let regions = elf_get_loadable_regions(&obj).unwrap();
-    // One region for the shared VMA: dedup happens in the collector, not the
-    // lookup table.
-    assert_eq!(regions.len(), 1);
+    assert_eq!(regions.len(), 2, "both sections stay reachable");
     let table = strider_reader::MemRegionsLookupTable::new(regions);
 
-    let mut buf = [0u8; 1];
-    assert_eq!(table.read(0x1000, &mut buf), Some(1));
+    // `.first` keeps the declared VMA; `.second` follows it, 1-byte aligned.
+    for (name, want) in [(".first", 0xaau8), (".second", 0xbbu8)] {
+        let sec = {
+            use object::Object as _;
+            obj.section_by_name(name).expect(name)
+        };
+        let base = layout.section_base(&sec);
+        let mut buf = [0u8; 1];
+        assert_eq!(table.read(base, &mut buf), Some(1), "{name} at {base:#x}");
+        assert_eq!(buf[0], want, "{name} must serve its own byte");
+    }
     assert_eq!(
-        buf[0], 0xaa,
-        "first section wins on duplicate start_addr (ET_REL)"
+        layout.section_base(&{
+            use object::Object as _;
+            obj.section_by_name(".second").unwrap()
+        }),
+        0x1001,
+        "the loser of the collision is placed just past the winner"
     );
 }
 
@@ -338,9 +345,7 @@ fn allocatable_preset_propagates_data_error() {
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
-            // A section-only fixture has no PT_LOAD segments, so ET_REL is
-            // what routes the loader down the section-walker path. ET_EXEC
-            // would take the segments path with an empty segment list.
+            // ET_REL is what routes the loader down the section walk.
             e_type: elf::ET_REL,
             e_machine: elf::EM_X86_64,
             e_entry: 0,
@@ -397,9 +402,7 @@ fn allocatable_preset_propagates_region_overflow() {
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
-            // A section-only fixture has no PT_LOAD segments, so ET_REL is
-            // what routes the loader down the section-walker path. ET_EXEC
-            // would take the segments path with an empty segment list.
+            // ET_REL is what routes the loader down the section walk.
             e_type: elf::ET_REL,
             e_machine: elf::EM_X86_64,
             e_entry: 0,
@@ -434,4 +437,49 @@ fn allocatable_preset_propagates_region_overflow() {
             && msg.contains("length 4"),
         "got: {err}"
     );
+}
+
+/// An RWX mapping is fetchable but is not runtime-immutable, so it belongs in
+/// the fetch image and not in a `ReadOnlyMemory` view: `LoadReadOnly` folds a
+/// constant-address load without consulting the memory chain, and a store then
+/// reload of a mutable global would fold to the file-initial byte.
+#[test]
+fn read_only_presets_exclude_a_writable_executable_mapping() {
+    let bytes = build_elf_with_sections(&[
+        SectionSpec::rwx(0x1000, vec![0x90; 8]),
+        SectionSpec::rodata(0x2000, vec![1, 2, 3, 4]),
+    ]);
+    let obj = parse(&bytes);
+
+    let fetch: Vec<u64> = elf_get_loadable_regions(&obj)
+        .unwrap()
+        .iter()
+        .map(|r| r.start_addr())
+        .collect();
+    assert_eq!(fetch, vec![0x1000, 0x2000], "RWX stays fetchable");
+
+    for (name, regions) in [
+        (
+            "elf_get_readonly_regions",
+            strider_reader::elf::elf_get_readonly_regions(&obj).unwrap(),
+        ),
+        (
+            "sections-only immutable regions",
+            strider_reader::OwnedElf::parse(bytes.clone())
+                .unwrap()
+                .regions(
+                    strider_reader::elf::RegionSource::Sections,
+                    strider_reader::elf::LoadFilter::ImmutableOnly,
+                    false,
+                )
+                .unwrap(),
+        ),
+        (
+            "relocated immutable regions",
+            common::load_readonly_with_relocations(&obj),
+        ),
+    ] {
+        let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
+        assert_eq!(addrs, vec![0x2000], "{name} must exclude the RWX mapping");
+    }
 }

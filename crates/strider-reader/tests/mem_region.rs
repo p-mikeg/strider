@@ -221,10 +221,9 @@ fn lookup_table_shorter_inner_region_does_not_shadow_outer_tail() {
 /// end is satisfied by the fully-covering outer region, not truncated to the
 /// inner region's tail.
 ///
-/// Regression guard. `read` used to return on the first candidate producing any
-/// `Some`, so the inner region's short read shadowed the outer one; since
-/// `ReadOnlyMemory` rejects partial reads, a fully-mapped address then reported
-/// as unmapped.
+/// Returning on the first candidate producing any `Some` lets the inner
+/// region's short read shadow the outer one, and since `ReadOnlyMemory` rejects
+/// partial reads, a fully-mapped address then reports as unmapped.
 #[test]
 fn lookup_table_multibyte_read_straddling_inner_end_uses_outer() {
     // Outer A: [0x1000..0x1100), byte i == i & 0xff.
@@ -284,7 +283,9 @@ fn mem_region_new_accepts_exact_fit_at_top_of_address_space() {
 fn mem_region_accessors_expose_start_and_data() {
     let r = MemRegion::new(0x1234, vec![0xaa, 0xbb, 0xcc]).expect("valid region");
     assert_eq!(r.start_addr(), 0x1234);
-    assert_eq!(r.data(), &[0xaa, 0xbb, 0xcc]);
+    let mut got = [0u8; 3];
+    assert_eq!(r.read(0x1234, &mut got), Some(3));
+    assert_eq!(got, [0xaa, 0xbb, 0xcc]);
 }
 
 /// Pinned: a zero-length read still discriminates mapped from unmapped. Stops a
@@ -443,5 +444,20 @@ fn lookup_table_overlapping_regions_differing_bytes_partial_read_is_specified() 
     assert_eq!(
         &small, &[0xbb; 4],
         "B wins when it fully covers the request"
+    );
+}
+
+#[test]
+fn same_bytes_in_compares_only_the_overlap() {
+    let a = MemRegion::new(0x100, vec![0xaa; 8]).unwrap();
+    let b = MemRegion::new(0x104, vec![0xaa; 8]).unwrap();
+    assert!(a.same_bytes_in(&b, 0x104, 0x108));
+
+    let c = MemRegion::new(0x104, vec![0xaa, 0xaa, 0xbb, 0xaa]).unwrap();
+    assert!(a.same_bytes_in(&c, 0x104, 0x106), "the equal prefix");
+    assert!(!a.same_bytes_in(&c, 0x104, 0x108), "the differing byte");
+    assert!(
+        !a.same_bytes_in(&c, 0x104, 0x10a),
+        "a range neither fully covers differs"
     );
 }
