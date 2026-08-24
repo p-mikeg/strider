@@ -3,6 +3,9 @@ name = "strider-ir-test-utils"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Function and calling-convention builders shared by strider's test suites."
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 # `test-util` exposes the build_call_cc / build_call_other_abi convenience

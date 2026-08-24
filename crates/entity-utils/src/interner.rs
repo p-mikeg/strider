@@ -9,9 +9,6 @@ use rustc_hash::FxHashMap;
 /// The forward `PrimaryMap` and the reverse index can never drift: [`intern`]
 /// is the only mutator and writes both halves in lockstep.
 ///
-/// `V: Clone` costs one clone per genuinely-new value (free when `Copy`);
-/// `Eq + Hash` keys the reverse map.
-///
 /// [`intern`]: EntityInterner::intern
 #[derive(Clone, Debug)]
 pub struct EntityInterner<K: EntityRef, V: Clone + Eq + Hash> {
@@ -56,7 +53,6 @@ impl<K: EntityRef, V: Clone + Eq + Hash> EntityInterner<K, V> {
     }
 
     /// Allocation order, so a caller can index it by a key's `.index()`.
-    /// Borrows the forward map's element vec: O(1), no allocation.
     pub fn values_as_slice(&self) -> &[V] {
         self.forward.values().as_slice()
     }

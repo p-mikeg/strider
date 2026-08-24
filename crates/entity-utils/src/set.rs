@@ -3,8 +3,7 @@ use core::marker::PhantomData;
 use cranelift_bitset::CompoundBitSet;
 use cranelift_entity::EntityRef;
 
-/// O(1) membership and update, keyed on the entity's integer index. The
-/// visited-set of choice for graph traversal over a dense id space.
+/// O(1) membership and update, keyed on the entity's integer index.
 #[derive(Clone, Debug)]
 pub struct DenseEntitySet<E> {
     bitset: CompoundBitSet,
@@ -42,8 +41,7 @@ impl<E: EntityRef> DenseEntitySet<E> {
         self.bitset.contains(entity.index())
     }
 
-    /// `true` when newly inserted, matching `HashSet::insert` so callers can
-    /// swap implementations. One bitset access, for hot traversal paths.
+    /// `true` when newly inserted, matching `HashSet::insert`.
     pub fn insert(&mut self, entity: E) -> bool {
         self.bitset.insert(entity.index())
     }
@@ -52,8 +50,8 @@ impl<E: EntityRef> DenseEntitySet<E> {
         self.bitset.remove(entity.index());
     }
 
-    /// Ascending entity-index order. A full pass scans the backing words,
-    /// skipping empty ones, so it is O(max_index / 64 + len).
+    /// Ascending entity-index order. A full pass steps through every backing
+    /// word, so it is O(max_index / 64 + len).
     pub fn iter(&self) -> Iter<'_, E> {
         Iter::<E> {
             inner: self.bitset.iter(),
