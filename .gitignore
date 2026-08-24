@@ -1,5 +1,8 @@
 /target
 fixtures/out/**/*.o
+# The x64 object files ARE committed: they are what the ET_REL loader tests run
+# against, and without them those tests skip on a fresh clone.
+!fixtures/out/x64/*.o
 fixtures/vmlinux
 /.worktrees
 /.venv
@@ -23,3 +26,8 @@ __pycache__/
 # Auto-generated .pyi stubs from the stub_gen example; the wheel ships the
 # hand-written stubs instead.
 /crates/strider-py/strider/_generated/
+
+# Tooling state, never part of the project
+/.superpowers
+/.remember
+/.mypy_cache
