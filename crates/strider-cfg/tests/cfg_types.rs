@@ -2,6 +2,7 @@
 
 use strider_cfg::{
     CfgOptions, MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator,
+    ResolvedTarget,
 };
 
 fn addr(machine: u64, insn: u64) -> PcodeInsnAddr {
@@ -30,11 +31,13 @@ fn make_region(addrs: &[(u64, u64)]) -> Region {
         .map(|&(m, i)| RegionInstruction {
             addr: addr(m, i),
             insn: fake_insn(),
+            len: 1,
         })
         .collect();
     Region {
         start_addr: start,
         insns,
+        empty_span_len: 0,
         terminator: RegionTerminator::Unconditional,
     }
 }
@@ -129,16 +132,48 @@ fn contains_addr_after_end_returns_false() {
 }
 
 #[test]
+fn contains_addr_covers_the_last_instructions_bytes_not_just_its_start() {
+    // A region is a hole-free run, so no other region owns the bytes of its
+    // last instruction either.
+    let mut r = make_region(&[(0x1000, 0), (0x1010, 0)]);
+    r.insns.last_mut().unwrap().len = 10;
+    assert!(r.contains_addr(addr(0x1015, 0)));
+    assert!(r.contains_addr(addr(0x1019, 0)));
+    assert!(!r.contains_addr(addr(0x101a, 0)), "the end is exclusive");
+    // At the last instruction's own machine address the pcode index still bounds
+    // the span: a region can end mid-pcode-sequence.
+    assert!(!r.contains_addr(addr(0x1010, 1)));
+}
+
+#[test]
 fn contains_addr_returns_true_for_empty_region_at_start_addr() {
-    // An empty region comes from a popped trailing branch or a tail-call
-    // stub, and owns exactly its `start_addr`.
+    // A tail-call stub owns no bytes at all.
     let r = Region {
         start_addr: addr(0x1000, 0),
         insns: Vec::new(),
+        empty_span_len: 0,
         terminator: RegionTerminator::Unconditional,
     };
     assert!(r.contains_addr(addr(0x1000, 0)));
     assert!(!r.contains_addr(addr(0x1000, 1)));
+    assert!(!r.contains_addr(addr(0x1001, 0)));
+}
+
+#[test]
+fn contains_addr_covers_an_empty_regions_zero_pcode_op_instruction() {
+    // A region sealed at a four-byte `endbr64` owns all four bytes; they carry
+    // no pcode, so only their machine addresses are owned.
+    let r = Region {
+        start_addr: addr(0x1000, 0),
+        insns: Vec::new(),
+        empty_span_len: 4,
+        terminator: RegionTerminator::Unconditional,
+    };
+    assert!(r.contains_addr(addr(0x1000, 0)));
+    assert!(r.contains_addr(addr(0x1003, 0)));
+    assert!(!r.contains_addr(addr(0x1004, 0)));
+    assert!(!r.contains_addr(addr(0x1000, 1)));
+    assert!(!r.contains_addr(addr(0x0fff, 0)));
 }
 
 #[test]
@@ -185,8 +220,12 @@ fn switch_variant_round_trips_target_vn_and_targets() {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    let targets = vec![0x1100u64, 0x1200, 0x1300, 0x1400];
+    let targets: Vec<ResolvedTarget> = vec![0x1100u64, 0x1200, 0x1300, 0x1400]
+        .into_iter()
+        .map(Into::into)
+        .collect();
     let term = RegionTerminator::Switch {
+        addr: strider_cfg::PcodeInsnAddr::at_machine_start(0x1000),
         target_vn,
         targets: targets.clone(),
     };
@@ -196,6 +235,7 @@ fn switch_variant_round_trips_target_vn_and_targets() {
         RegionTerminator::Switch {
             target_vn: tvn,
             targets: tts,
+            ..
         } => {
             assert_eq!(tvn, target_vn);
             assert_eq!(tts, targets);

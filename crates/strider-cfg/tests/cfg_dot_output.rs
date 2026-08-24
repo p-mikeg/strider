@@ -83,11 +83,9 @@ fn dot_output_mentions_every_region() {
     );
 }
 
-/// Pins the per-instruction line to rsleigh's `InsnCtxFmt`, not `{:?}` on the
-/// opcode.  Visible difference: `InsnCtxFmt` puts a SPACE after the opcode
-/// (`IntAdd RAX, RBX, RCX`) where the hand-rolled form put a comma.
-///
-/// Operand ordering is deliberately not pinned.
+/// Pins the per-instruction line to rsleigh's `InsnCtxFmt`, which puts a SPACE
+/// after the opcode (`IntAdd RAX, RBX, RCX`). The assertion covers the opcode
+/// and that spacing, leaving operand order free.
 #[test]
 fn dot_output_uses_rsleigh_insn_ctx_fmt() {
     // `add eax, ebx; ret`: an `IntAdd` with a register operand.
