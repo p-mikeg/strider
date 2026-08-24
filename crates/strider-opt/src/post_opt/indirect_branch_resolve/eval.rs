@@ -5,15 +5,15 @@
 //! An abstract value is either a concrete number or SP-relative, because the SP
 //! is symbolic and a stack address cannot be a pure number.  Three foldings do
 //! the work: ConstFold arithmetic, a constant-address ROM read, and an
-//! SP-relative load resolved via `reaching_store`.  Any unresolved value, a
-//! non-const dispatch result, or a cycle yields `None`.
+//! SP-relative load resolved against the [`SlotMap`] of the stores above it.
+//! Any unresolved value, a non-const dispatch result, or a cycle yields `None`.
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRViewer, ReadOnlyMemory};
 
-use crate::sp_analysis::{SpAnalyzer, SpOptions};
+use crate::mem_analysis::{MemAnalyzer, MemExpr, MemKind, MemOptions, store_value_byte_size};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Abs {
@@ -35,6 +35,10 @@ pub(crate) struct Evaluator<'a> {
     rom: Option<&'a dyn ReadOnlyMemory>,
     alias_mode: crate::AliasMode,
     map: FxHashMap<ValueId, Abs>,
+    /// One [`SlotMap`] per probe point, keyed by `(memory token, stack base)`.
+    /// Survives [`Self::begin_index`]: the memory segment above a load does not
+    /// depend on the index.
+    slot_maps: FxHashMap<(ValueId, ValueId), SlotMap>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -48,23 +52,26 @@ impl<'a> Evaluator<'a> {
             rom,
             alias_mode,
             map: FxHashMap::default(),
+            slot_maps: FxHashMap::default(),
         }
     }
 
-    /// Evaluates `dispatch` over `order` with `idx_value` bound to `idx`.
+    /// Opens an index: drops the previous index's values and pins `idx_value`.
+    ///
+    /// The boundary is the INDEX, not the root.  A branch's target and ISA-mode
+    /// cones overlap almost entirely, so a per-root reset re-folds the shared
+    /// dispatch load and everything under it.
+    pub(crate) fn begin_index(&mut self, idx_value: ValueId, idx: u128) {
+        self.map.clear();
+        self.map.insert(idx_value, Abs::Const(idx));
+    }
+
+    /// Evaluates `dispatch` over `order` against the open index.
     ///
     /// Bailing on the first non-folding node is exact, not just an
     /// optimization: every node in `order` is a value-ancestor of `dispatch`,
     /// so one that fails to fold means `dispatch` cannot be constant either.
-    pub(crate) fn eval_target(
-        &mut self,
-        order: &[ValueId],
-        dispatch: ValueId,
-        idx_value: ValueId,
-        idx: u128,
-    ) -> Option<u64> {
-        self.map.clear();
-        self.map.insert(idx_value, Abs::Const(idx));
+    pub(crate) fn eval_root(&mut self, order: &[ValueId], dispatch: ValueId) -> Option<u64> {
         for &val in order {
             if self.map.contains_key(&val) {
                 continue;
@@ -107,12 +114,12 @@ impl<'a> Evaluator<'a> {
                 let [l, r] = [*ins.first()?, *ins.get(1)?];
                 let sp_operand = if f
                     .int_const_u128(r)
-                    .is_some_and(crate::sp_analysis::is_alignment_mask)
+                    .is_some_and(crate::mem_analysis::is_alignment_mask)
                 {
                     l
                 } else if f
                     .int_const_u128(l)
-                    .is_some_and(crate::sp_analysis::is_alignment_mask)
+                    .is_some_and(crate::mem_analysis::is_alignment_mask)
                 {
                     r
                 } else {
@@ -162,19 +169,43 @@ impl<'a> Evaluator<'a> {
             Abs::SpRel { base, offset } => {
                 let [mem, _addr] = f.node_inputs_exact::<2>(node).ok()?;
                 let load_size = load_ty.byte_size() as i128;
-                let reaching = {
-                    let cfg = SpAnalyzer::new(SpOptions::call_blocking(self.alias_mode));
-                    cfg.reaching_store(f, mem, base, offset, load_size)
-                }?;
-                // The store must be anchored exactly at the probed offset.
-                if reaching.store_offset != offset {
-                    return None;
-                }
+                let data = self.reaching_store_data(mem, base, offset, load_size)?;
                 // Jump targets are constants on the converged graph.
-                let data = reaching.data(f);
                 let data_ty = f.value_type_opt(data)?;
                 let raw = f.int_const_u128(data)?;
                 Some(Abs::Const(self.reshape(raw, data_ty, load_ty)?))
+            }
+        }
+    }
+
+    /// The data of the store anchored exactly at the probed slot, or `None`
+    /// when the reaching store is elsewhere or is not a store at all.
+    ///
+    /// Answered from the probe point's [`SlotMap`] where the segment covers it,
+    /// which is what keeps an n-entry stack table off an O(n) walk per entry;
+    /// past the segment it is the plain [`MemAnalyzer::reaching_store`] query.
+    fn reaching_store_data(
+        &mut self,
+        mem: ValueId,
+        base: ValueId,
+        offset: i128,
+        size: i128,
+    ) -> Option<ValueId> {
+        let f = self.function;
+        let alias_mode = self.alias_mode;
+        let map = self
+            .slot_maps
+            .entry((mem, base))
+            .or_insert_with(|| SlotMap::build(f, mem, base));
+        let reaching = map.reaching(offset, size);
+        match reaching {
+            Reaching::Store(store) => Some(f.store_data(store)),
+            Reaching::Absent => None,
+            Reaching::OffSegment => {
+                let analyzer = MemAnalyzer::new(MemOptions::call_blocking(alias_mode));
+                let hit = analyzer.reaching_store(f, mem, base, offset, size)?;
+                // The store must be anchored exactly at the probed offset.
+                (hit.store_offset == offset).then(|| hit.data(f))
             }
         }
     }
@@ -187,7 +218,7 @@ impl<'a> Evaluator<'a> {
         if data_ty.is_integer() && load_ty.is_integer() && load_ty.byte_size() < data_ty.byte_size()
         {
             // Little-endian gives 0, so the low bytes pass through.
-            let shift_bits = crate::sp_analysis::high_low_shift_bits(
+            let shift_bits = crate::mem_analysis::high_low_shift_bits(
                 data_ty,
                 load_ty,
                 self.function.endianness(),
@@ -210,6 +241,179 @@ impl<'a> Evaluator<'a> {
             }
         }
         agreed
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Memory-chain nodes visited building [`SlotMap`]s, the unit the
+    /// stack-table cost test counts alongside `mem_analysis::WALK_STEPS`.
+    pub(crate) static SLOT_MAP_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// One store on the segment, covering some byte.
+#[derive(Clone, Copy)]
+struct Claim {
+    /// Position along the chain, nearest first.
+    rank: u32,
+    /// The store's own anchor offset, which a probe must match exactly.
+    offset: i128,
+    node: NodeId,
+}
+
+/// Chain steps one [`SlotMap`] build may spend across its whole arm tree, and
+/// how deep the arms may nest: a join under a join multiplies the arms, and a
+/// loop's back-edge arm re-enters the token it came from.  Exhausting either
+/// leaves that arm incomplete, which falls its probes back to a real walk.
+const SLOT_MAP_BUDGET: u32 = 4096;
+const MAX_JOIN_DEPTH: u32 = 8;
+
+/// Which store an SP-relative probe at one memory token reaches, for every
+/// offset, without walking the chain per probe.
+///
+/// Covers the straight-line RAM segment above the probe point whose stores all
+/// root at one stack base.  It ends at the first def whose effect is
+/// probe-dependent (a `Call`, a store rooted at another stack base, a global,
+/// or an opaque pointer), because there the reaching store cannot be read off
+/// an offset; probes landing past the end fall back to a real walk.  A
+/// heap-rooted store is stepped over.
+///
+/// A `MemPhi` is path-dependent, not probe-dependent: the segment ends there
+/// too, but each arm gets its own map and a probe past the segment is answered
+/// by agreement across them.  Without that, a probe below a join falls back to
+/// a per-probe walk of the whole chain, which is what the map exists to avoid.
+struct SlotMap {
+    /// Byte offset from the base -> the nearest store covering that byte.
+    claims: FxHashMap<i128, Claim>,
+    /// The segment bottomed out at `InitialMemory`, so an unclaimed byte has no
+    /// reaching store rather than one beyond the mapped part.
+    complete: bool,
+    /// Per-arm maps of the `MemPhi` the segment ended at, empty otherwise.
+    arms: Vec<SlotMap>,
+}
+
+enum Reaching {
+    /// A store anchored exactly at the probed offset.
+    Store(NodeId),
+    /// No such store, so the probe cannot fold.
+    Absent,
+    /// Past the mapped segment; only a walk can answer.
+    OffSegment,
+}
+
+impl SlotMap {
+    fn build(function: &strider_ir::Function, mem: ValueId, base: ValueId) -> Self {
+        let mut budget = SLOT_MAP_BUDGET;
+        Self::build_within(function, mem, base, &mut budget, 0)
+    }
+
+    fn build_within(
+        function: &strider_ir::Function,
+        mem: ValueId,
+        base: ValueId,
+        budget: &mut u32,
+        depth: u32,
+    ) -> Self {
+        let mut claims: FxHashMap<i128, Claim> = FxHashMap::default();
+        let mut cur = Some(mem);
+        let mut rank = 0u32;
+        let mut complete = false;
+        let mut arms: Vec<SlotMap> = Vec::new();
+        while let Some(v) = cur {
+            let Some(left) = budget.checked_sub(1) else {
+                break;
+            };
+            *budget = left;
+            #[cfg(test)]
+            SLOT_MAP_STEPS.with(|c| c.set(c.get() + 1));
+            let node = function.producer(v);
+            match *function.node_kind(node) {
+                NodeKind::InitialMemory => {
+                    complete = true;
+                    break;
+                }
+                NodeKind::MemPhi if depth < MAX_JOIN_DEPTH => {
+                    arms = function
+                        .phi_data_inputs(node)
+                        .collect::<SmallVec<[ValueId; 4]>>()
+                        .into_iter()
+                        .map(|arm| Self::build_within(function, arm, base, budget, depth + 1))
+                        .collect();
+                    break;
+                }
+                NodeKind::Store(space) if space == rsleigh::VnSpace::RAM => {
+                    match crate::mem_analysis::decompose(function, function.store_addr(node)) {
+                        Some(MemExpr {
+                            base: store_base,
+                            offset,
+                            kind: MemKind::Stack,
+                        }) if store_base == base => {
+                            let size = store_value_byte_size(function, function.store_data(node));
+                            for byte in 0..size {
+                                let Some(at) = offset.checked_add(byte) else {
+                                    break;
+                                };
+                                claims.entry(at).or_insert(Claim { rank, offset, node });
+                            }
+                            rank += 1;
+                        }
+                        // No allocation overlaps the stack.
+                        Some(MemExpr {
+                            kind: MemKind::Heap | MemKind::HeapOpaque,
+                            ..
+                        }) => {}
+                        // Another stack base, a global, or an opaque pointer:
+                        // whether it clobbers is the probe's business.
+                        _ => break,
+                    }
+                }
+                // The probed location is RAM (see `MemAnalyzer::reaching_store`),
+                // so another space cannot alias it.
+                NodeKind::Store(_) => {}
+                _ => break,
+            }
+            cur = function.memory_input_of(node);
+        }
+        Self {
+            claims,
+            complete,
+            arms,
+        }
+    }
+
+    /// A store not anchored at the probe but overlapping it hides everything
+    /// behind it, which is [`Reaching::Absent`] just as a non-matching
+    /// `reaching_store` is `None`.
+    fn reaching(&self, offset: i128, size: i128) -> Reaching {
+        // The nearest store covering any probed byte is the nearest store
+        // overlapping the probe at all.
+        let nearest = (0..size)
+            .filter_map(|byte| self.claims.get(&offset.checked_add(byte)?))
+            .min_by_key(|claim| claim.rank);
+        match nearest {
+            Some(claim) if claim.offset == offset => Reaching::Store(claim.node),
+            Some(_) => Reaching::Absent,
+            None if self.complete => Reaching::Absent,
+            None if self.arms.is_empty() => Reaching::OffSegment,
+            None => self.reaching_through_arms(offset, size),
+        }
+    }
+
+    /// The probe folds only if every incoming path reaches the SAME store, so
+    /// the value the load reads does not depend on the path.  An arm that
+    /// cannot answer leaves the whole probe on the walk.
+    fn reaching_through_arms(&self, offset: i128, size: i128) -> Reaching {
+        let mut agreed: Option<NodeId> = None;
+        for arm in &self.arms {
+            match arm.reaching(offset, size) {
+                Reaching::Store(store) if agreed.is_none_or(|prev| prev == store) => {
+                    agreed = Some(store);
+                }
+                Reaching::Store(_) | Reaching::Absent => return Reaching::Absent,
+                Reaching::OffSegment => return Reaching::OffSegment,
+            }
+        }
+        agreed.map_or(Reaching::Absent, Reaching::Store)
     }
 }
 
@@ -322,8 +526,10 @@ mod tests {
         assert!(pruned.contains(&dispatch), "pruned cone includes the root");
 
         let mut ev = Evaluator::new(&function, None, crate::AliasMode::default());
-        assert_eq!(ev.eval_target(&pruned, dispatch, idx, 7), Some(107));
-        assert_eq!(ev.eval_target(&pruned, dispatch, idx, 8), Some(108));
+        ev.begin_index(idx, 7);
+        assert_eq!(ev.eval_root(&pruned, dispatch), Some(107));
+        ev.begin_index(idx, 8);
+        assert_eq!(ev.eval_root(&pruned, dispatch), Some(108));
     }
 
     // `idx` is a register read, so it is non-const and leaving it unseeded
@@ -359,21 +565,25 @@ mod tests {
         // pruned at the index.
         let order = cone_order_pruned(&function, sum, idx);
         let mut ev = Evaluator::new(&function, None, crate::AliasMode::default());
-        assert_eq!(ev.eval_target(&order, sum, idx, 5), Some(105));
-        assert_eq!(ev.eval_target(&order, sum, idx, 7), Some(107)); // fresh map
+        ev.begin_index(idx, 5);
+        assert_eq!(ev.eval_root(&order, sum), Some(105));
+        ev.begin_index(idx, 7); // fresh map
+        assert_eq!(ev.eval_root(&order, sum), Some(107));
     }
 
     #[test]
     fn unseeded_index_is_none() {
         let (function, _idx, sum) = build_add_idx_100();
         let mut ev = Evaluator::new(&function, None, crate::AliasMode::default());
-        // Pruning at `sum` itself leaves a cone of just `[sum]`.
+        // Pruning at `sum` itself leaves a cone of only `[sum]`.
         let order_sum = cone_order_pruned(&function, sum, sum);
-        assert_eq!(ev.eval_target(&order_sum, sum, sum, 5), Some(5));
+        ev.begin_index(sum, 5);
+        assert_eq!(ev.eval_root(&order_sum, sum), Some(5));
         // Seeding an unrelated leaf leaves the real index unresolved.
         let const_100 = sum_unrelated_leaf(&function, sum);
         let order = cone_order_pruned(&function, sum, const_100);
-        assert_eq!(ev.eval_target(&order, sum, const_100, 5), None);
+        ev.begin_index(const_100, 5);
+        assert_eq!(ev.eval_root(&order, sum), None);
     }
 
     /// The IntConst(100) value: in the cone of `sum` but not the idx leaf, so

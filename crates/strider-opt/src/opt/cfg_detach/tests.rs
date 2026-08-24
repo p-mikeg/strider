@@ -322,7 +322,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     Ok(())
 }
 
-/// A MemPhi-only join, with no variable merged.
+/// A join whose only phi is the MemPhi.
 #[test]
 fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;

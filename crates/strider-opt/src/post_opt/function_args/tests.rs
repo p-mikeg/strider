@@ -29,7 +29,6 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
         .ret(rdi)
         .build_fn_single_region()?;
 
-    // Read rdi and return it.
     let v = b.read_variable(&rdi)?;
     b.build_return(Some(v), &[])?;
     b.set_lift_addr(None);
@@ -54,7 +53,6 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
         "carrier for arg 0 must be InitialVar(rdi)"
     );
 
-    // Still reachable, since the pass rewires no consumers.
     let reachable_initial_rdi =
         fg.count_kind(|k| matches!(k, NodeKind::InitialVar(v) if fg.initial_vn(*v) ==rdi));
     assert_eq!(
@@ -86,7 +84,6 @@ fn rerunning_pass_is_idempotent_no_duplicate_carriers() -> Result<()> {
     let pass = FunctionArgDetect;
     crate::pipeline::run_post(&pass, &mut fg, &mut crate::OptCtx::new(None))?;
     let after_first = fg.side_tables().arg_index_to_values(0).to_vec();
-    // Re-run on the same function.
     crate::pipeline::run_post(&pass, &mut fg, &mut crate::OptCtx::new(None))?;
     let after_second = fg.side_tables().arg_index_to_values(0).to_vec();
 
@@ -266,14 +263,13 @@ fn stack_arg_gap_truncates() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
-    // The gap at arg 1 means arg 2 must not be registered either.
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(!arg0_nodes.is_empty(), "arg 0 (sp+4) should be registered");
 
     let arg1_nodes = fg.side_tables().arg_index_to_values(1);
     assert!(
         arg1_nodes.is_empty(),
-        "arg 1 (sp+8) is absent — nothing at that offset"
+        "arg 1 (sp+8) is absent: nothing at that offset"
     );
 
     let arg2_nodes = fg.side_tables().arg_index_to_values(2);
@@ -282,7 +278,6 @@ fn stack_arg_gap_truncates() -> Result<()> {
         "arg 2 (sp+12) must be truncated by the gap"
     );
 
-    // The pass removes no nodes.
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 2,
@@ -307,7 +302,6 @@ fn stack_arg_load_chain_is_narrowed_without_changing_detection() -> Result<()> {
         }))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
-    // Two disjoint stores, then the stack-arg load.
     for off in [8u64, 12u64] {
         let o = b.build_int_const(off, ValueType::I32)?;
         let addr = b.build_int_binary_operation(sp_val, o, IntBinaryOp::Add, ValueType::I32)?;
@@ -328,7 +322,6 @@ fn stack_arg_load_chain_is_narrowed_without_changing_detection() -> Result<()> {
     let arg0 = fg.side_tables().arg_index_to_values(0).to_vec();
     assert_eq!(arg0.len(), 1, "Load[sp+4] registered as arg 0");
 
-    // The carrier load's memory input skipped both disjoint stores.
     let load = fg.producer(arg0[0]);
     let mem = fg.node_inputs(load)[0];
     assert!(
@@ -396,8 +389,9 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     let join = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
 
-    // A boolean const keeps the MemPhi at two predecessors.
-    // DeadBranchElimination would collapse it, so that pass is skipped here.
+    // A boolean const keeps the MemPhi at two predecessors, and
+    // `cf_rp_pipeline` leaves that branch standing; DeadBranchElimination
+    // would collapse it.
     b.set_region(entry);
     let cond = b.build_boolean_const(true);
     b.build_if(cond, true_br, false_br)?;
@@ -429,7 +423,7 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
-        "Load[sp+4] reaches a MemPhi with a shadowing branch — must not be registered"
+        "Load[sp+4] reaches a MemPhi with a shadowing branch, so it must not be registered"
     );
     Ok(())
 }
@@ -449,7 +443,7 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
         }))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
-    // Read sp+0 as I32 then as I64, combined so neither is dead.
+    // Combined so neither load is dead.
     let narrow = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I32)?;
     let wide = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I64)?;
     let narrow_ext =
@@ -476,7 +470,6 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
         "all registered carriers for stack arg 0 must be Load nodes"
     );
 
-    // The pass removes neither.
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 2,
@@ -529,7 +522,7 @@ fn wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
     assert_eq!(
         arg1.len(),
         1,
-        "narrow arg (int) at sp+12 is ordinal 1 — not lost to the slot-1 gap \
+        "narrow arg (int) at sp+12 is ordinal 1, not lost to the slot-1 gap \
          the wide arg leaves behind"
     );
     assert!(
@@ -595,7 +588,7 @@ fn span_four_wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
     assert_eq!(
         arg1.len(),
         1,
-        "the narrow I32 at sp+16 is ordinal 1 — not lost to the three slots \
+        "the narrow I32 at sp+16 is ordinal 1, not lost to the three slots \
          (1..3) the wide I128 covers"
     );
     assert!(
@@ -625,13 +618,11 @@ fn unused_register_arg_dropped_by_compact() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    // At build time arg 0 is registered regardless of use.
     assert!(
         !fg.side_tables().arg_index_to_values(0).is_empty(),
         "arg 0 registered at build time"
     );
 
-    // Compaction drops the unreachable InitialVar and its arg-table entry.
     fg.compact()?;
     assert!(
         fg.side_tables().arg_index_to_values(0).is_empty(),
@@ -691,9 +682,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
         size: 8,
     };
     let sp = stack_vn();
-    // No ret-val regs on the CC, so the validator's arity check leaves the
-    // Return tail unchecked.  Fine here: the variadic value is scaffolding,
-    // not a CC-mandated slot.
+    // No ret-val regs, so the validator skips the Return tail's arity check.
     let mut b = RegisterSet::new()
         .tracked(rdi)
         .tracked(rsi)
@@ -779,7 +768,7 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
-        "Load[sp+4] overlaps with Store(sp+0, size=8) — must not be registered"
+        "Load[sp+4] overlaps with Store(sp+0, size=8), so it must not be registered"
     );
     Ok(())
 }
@@ -818,7 +807,7 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
         !arg0_nodes.is_empty(),
-        "disjoint Store(sp+0, size=4) must not shadow Load[sp+4] — arg 0 should be registered"
+        "disjoint Store(sp+0, size=4) must not shadow Load[sp+4]: arg 0 should be registered"
     );
     assert!(
         matches!(fg.node_kind(fg.producer(arg0_nodes[0])), NodeKind::Load(_)),
@@ -971,10 +960,6 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     Ok(())
 }
 
-// The `Store(_)` arm of `mem_chain_is_dirty`, in four cases: SP-rooted
-// overlapping (dirty), non-SP (pass-through), SP-rooted disjoint
-// (pass-through), and SP-rooted phi (conservatively dirty).
-
 /// An SP-rooted store whose range matches the load's must mark the chain dirty.
 #[test]
 fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result<()> {
@@ -1008,7 +993,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
-        "plain Store(sp+4, I32) overlaps Load[sp+4]: chain must be dirty — no arg registered"
+        "plain Store(sp+4, I32) overlaps Load[sp+4], so the chain must be dirty and no arg registered"
     );
     Ok(())
 }
@@ -1030,7 +1015,7 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
         }))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
-    // Volatile global write to a fixed `.data` address.
+    // A global write to a fixed `.data` address.
     let global_addr = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32)?;
     let global_data = b.build_int_const(0x1234u64, ValueType::I32)?;
     b.build_store(global_addr, global_data, rsleigh::VnSpace::RAM)?;
@@ -1208,10 +1193,11 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
     Ok(())
 }
 
-/// A `CallOther` on the chain is gated purely by `calls_clobber`: the callee is
+/// A `CallOther` on the chain is gated purely by
+/// `assume_incoming_args_survive_calls`: the callee is
 /// opaque, so nothing can be inferred from its arguments.
 #[test]
-fn callother_on_chain_gated_only_by_calls_clobber() -> Result<()> {
+fn callother_on_chain_gated_only_by_incoming_args_survive_calls() -> Result<()> {
     let sp = sp32_vn();
     let build = |b: &mut strider_ir::FunctionBuilder| -> Result<()> {
         // Slot 0's address is sp itself.
@@ -1252,39 +1238,37 @@ fn callother_on_chain_gated_only_by_calls_clobber() -> Result<()> {
         b.build()
     };
 
-    // By default the CallOther does not block.
     let mut fg_default = new_fn()?;
     let mut p_default = cf_rp_pipeline();
     p_default.add_post_pass(FunctionArgDetect);
     p_default.run(&mut fg_default, &mut crate::OptCtx::new(None))?;
     assert!(
         !fg_default.side_tables().arg_index_to_values(0).is_empty(),
-        "default (calls_clobber=false): a CallOther on the chain does not \
+        "default (incoming args survive calls): a CallOther on the chain does not \
          block stack-arg promotion (the callee is opaque, no arg inspection)",
     );
 
-    // With the toggle on, the CallOther marks the slot dirty.
     let mut fg_conservative = new_fn()?;
     let mut p_conservative = cf_rp_pipeline();
     p_conservative.add_post_pass(FunctionArgDetect);
     let mut octx_conservative = crate::OptCtx::new(None);
-    octx_conservative.options.arg_alias.calls_clobber = true;
+    octx_conservative.options.assume_incoming_args_survive_calls = false;
     p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(
         fg_conservative
             .side_tables()
             .arg_index_to_values(0)
             .is_empty(),
-        "calls_clobber=true: the CallOther on the chain marks the slot dirty",
+        "survival off: the CallOther on the chain marks the slot dirty",
     );
     Ok(())
 }
 
 /// The clobber toggle for a plain `Call`: by default a call does not on its own
-/// shadow a stack-arg slot, so the load is registered; with `calls_clobber` any
+/// shadow a stack-arg slot, so the load is registered; with survival off any
 /// call on the chain marks it dirty.
 #[test]
-fn calls_clobber_toggle_gates_arg_across_call() -> Result<()> {
+fn incoming_args_survive_calls_toggle_gates_arg_across_call() -> Result<()> {
     let sp = sp32_vn();
     // The Call's only value input is its constant target, which is not
     // SP-rooted, so the toggle alone governs the verdict.
@@ -1298,7 +1282,6 @@ fn calls_clobber_toggle_gates_arg_across_call() -> Result<()> {
         Ok(())
     };
 
-    // Default: the arg is detected across the Call.
     let mut fg_default = {
         let mut b = RegisterSet::new()
             .tracked(sp)
@@ -1319,11 +1302,10 @@ fn calls_clobber_toggle_gates_arg_across_call() -> Result<()> {
     p_default.run(&mut fg_default, &mut crate::OptCtx::new(None))?;
     assert!(
         !fg_default.side_tables().arg_index_to_values(0).is_empty(),
-        "default (calls_clobber=false): Load[sp+4] across a plain Call \
+        "default (incoming args survive calls): Load[sp+4] across a plain Call \
          is detected as arg 0",
     );
 
-    // With the toggle on, the Call marks the slot dirty.
     let mut fg_conservative = {
         let mut b = RegisterSet::new()
             .tracked(sp)
@@ -1342,25 +1324,25 @@ fn calls_clobber_toggle_gates_arg_across_call() -> Result<()> {
     let mut p_conservative = cf_rp_pipeline();
     p_conservative.add_post_pass(FunctionArgDetect);
     let mut octx_conservative = crate::OptCtx::new(None);
-    octx_conservative.options.arg_alias.calls_clobber = true;
+    octx_conservative.options.assume_incoming_args_survive_calls = false;
     p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(
         fg_conservative
             .side_tables()
             .arg_index_to_values(0)
             .is_empty(),
-        "calls_clobber=true: the Call on the chain marks the slot dirty, \
+        "survival off: the Call on the chain marks the slot dirty, \
          so Load[sp+4] is NOT registered as an arg",
     );
     Ok(())
 }
 
-/// The production phi join (`join_phi_results`) is dirty if any predecessor is
-/// dirty, which is the safety net letting the `InProgress` cycle sentinel
-/// contribute `None` ("clean for this edge") without losing soundness.
+/// Projected onto dirty/clean, the production phi join (`join_phi_results`) is
+/// dirty whenever any predecessor is: arms that disagree merge to `Clobber`.
+/// That is what lets a back-edge arm resolve to `Cycle` and drop out of the
+/// join without losing soundness.
 #[test]
 fn function_args_combine_phi_or_semantics_pinned() {
-    // Mirrors production `join_phi_results`: any dirty predecessor makes the phi dirty.
     fn combine_phi(preds: Vec<bool>) -> bool {
         preds.into_iter().any(|d| d)
     }
@@ -1380,10 +1362,7 @@ fn function_args_combine_phi_or_semantics_pinned() {
         !combine_phi(vec![]),
         "empty pred set combines to clean (no information => assume clean for this edge)"
     );
-    // The `InProgress` cycle sentinel's clean (`None`) contribution is sound
-    // precisely because the phi join is `any()`: a cycle-broken sibling can
-    // still upgrade the verdict to dirty.  Pinned together so neither can be
-    // swapped alone.
+    // Pinned with the arms above so neither can be swapped alone.
     let cycle_sentinel: bool = false;
     assert!(
         combine_phi(vec![cycle_sentinel, true]),

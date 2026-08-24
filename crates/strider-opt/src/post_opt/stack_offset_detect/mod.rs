@@ -1,4 +1,4 @@
-//! Stamps `Function::stack_offsets` with the slot `(base, K)` for every Store
+//! Stamps `Function::memory_offsets` with the slot `(base, K)` for every Store
 //! / Load whose address decomposes to a single SP-derived `base + K` terminal.
 //!
 //! `K` is only comparable against another access sharing the same `base`.
@@ -7,10 +7,10 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
+use crate::mem_analysis::decompose;
 use crate::pipeline::PostOptimizer;
-use crate::sp_analysis::decompose;
 
-/// Annotates SP-relative `Store` / `Load` offsets in `Function::stack_offsets`.
+/// Annotates SP-relative `Store` / `Load` offsets in `Function::memory_offsets`.
 #[derive(Clone)]
 pub struct StackOffsetDetect;
 

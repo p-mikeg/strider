@@ -17,7 +17,7 @@ use crate::pipeline::OptCtx;
 ///
 /// # Endianness
 ///
-/// [`ReadOnlyMemory::read`][strider_ir::ReadOnlyMemory::read] fills the
+/// [`ReadOnlyMemory::read`] fills the
 /// buffer with RAW bytes and does not decode.  This pass decodes them per
 /// `Function::endianness`, then masks to the load's output type.
 ///
@@ -43,9 +43,9 @@ use crate::pipeline::OptCtx;
 #[derive(Clone, Copy)]
 pub struct LoadReadOnly;
 
+// Each Load folds independently against the rom, so the driver's default RPO
+// `seed_order` is left alone.
 impl crate::peephole::PeepholePass for LoadReadOnly {
-    // Each Load folds independently against the rom, so the driver's RPO seed
-    // order does not affect the outcome.
     fn matches_kind(&self, kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::Load(s) if *s == rsleigh::VnSpace::RAM)
     }

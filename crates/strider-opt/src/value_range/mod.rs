@@ -54,16 +54,19 @@ impl Interval {
         Self { lo, hi, stride: 1 }
     }
 
+    /// A stride is a fact beyond the span, so a strided full-span interval is
+    /// not top.
     pub fn is_top(&self, width_mask: u128) -> bool {
-        self.lo == 0 && self.hi >= width_mask
+        self.lo == 0 && self.hi >= width_mask && self.stride <= 1
     }
 
-    /// Number of values in the set.  `0` if `hi < lo`.
+    /// Number of values in the set.  `0` if `hi < lo`.  Saturates: a full-width
+    /// top spans `u128::MAX + 1` values.
     pub fn count(&self) -> u128 {
         if self.hi < self.lo {
             0
         } else {
-            (self.hi - self.lo) / self.stride.max(1) + 1
+            ((self.hi - self.lo) / self.stride.max(1)).saturating_add(1)
         }
     }
 
@@ -78,7 +81,8 @@ impl Interval {
     }
 
     /// Meet of two arithmetic progressions. The result stride is `lcm(s1, s2)`
-    /// and `lo` is the first element `>= max(lo1, lo2)` congruent to both
+    /// (1 where that overflows or the CRT walk is capped) and `lo` is the first
+    /// element `>= max(lo1, lo2)` congruent to both
     /// sources; incompatible residues (or an empty range) yield an empty
     /// interval (`count() == 0`). Sound: the result always contains the real
     /// value set, which is a subset of both operands.
@@ -110,14 +114,48 @@ impl Interval {
                 stride: 1,
             };
         };
+        // With `s1 == 1` every integer satisfies the first congruence, so the
+        // answer is the first element at or above `lo_bound` satisfying the
+        // second.  Closed form, where the walk below would be `s2/gcd(s1,s2)`
+        // steps: billions against a KnownBits stride of `2^32`.
+        if s1 == 1 {
+            // As a difference of residues, never as `r + s2 - r2`: `s2` may be
+            // past half the `u128` carrier.
+            let (r, r_bound) = (other.lo % s2, lo_bound % s2);
+            let delta = if r >= r_bound {
+                r - r_bound
+            } else {
+                s2 - (r_bound - r)
+            };
+            return match lo_bound.checked_add(delta) {
+                Some(x) if x <= hi => Self {
+                    lo: x,
+                    hi,
+                    stride: s2,
+                },
+                _ => EMPTY,
+            };
+        }
+        // Otherwise cap the walk and fall back to the dense meet: surplus values
+        // become dead CFG edges, never a dropped real one.
+        const MAX_CRT_STEPS: u128 = 64;
+        if lcm / s1 > MAX_CRT_STEPS {
+            return Self {
+                lo: lo_bound,
+                hi,
+                stride: 1,
+            };
+        }
         // First x >= lo_bound with x = self.lo (mod s1); then step by s1 up to
         // lcm/s1 times to hit the second congruence (exactly one match per lcm
         // span, or none when the residues are incompatible).
         let off = (lo_bound - self.lo) % s1;
-        let mut x = if off == 0 {
-            lo_bound
+        let Some(mut x) = (if off == 0 {
+            Some(lo_bound)
         } else {
-            lo_bound + (s1 - off)
+            lo_bound.checked_add(s1 - off)
+        }) else {
+            return EMPTY;
         };
         for _ in 0..(lcm / s1) {
             if (x - other.lo).is_multiple_of(s2) {
@@ -146,10 +184,100 @@ impl Interval {
             stride: 1, // sound over-approximation for a join
         }
     }
+
+    /// `{ x << k : x in self }` = `{ x * 2^k }`.  Routed through `mul` so the
+    /// overflow guard is `checked_mul` on the value; `checked_shl` only rejects
+    /// `k >= 128` and otherwise wraps bits out of the u128 carrier.
+    fn shl(self, k: u32, width_mask: u128) -> Self {
+        match 1u128.checked_shl(k) {
+            Some(factor) => self.mul(factor, width_mask),
+            None => Self::top(width_mask),
+        }
+    }
+
+    /// `{ x * c : x in self }` for `c > 0`.  Exact, or top on overflow / `c == 0`.
+    fn mul(self, c: u128, width_mask: u128) -> Self {
+        match (
+            self.lo.checked_mul(c),
+            self.hi.checked_mul(c),
+            self.stride.checked_mul(c),
+        ) {
+            (Some(lo), Some(hi), Some(stride)) if c != 0 && hi <= width_mask => Self {
+                lo,
+                hi,
+                stride: stride.max(1),
+            },
+            _ => Self::top(width_mask),
+        }
+    }
+
+    /// `{ x >> k : x in self }`.  Floor maps the endpoints directly.  The stride
+    /// survives as `stride >> k` when `2^k` divides it (low `k` bits zero), else
+    /// floor breaks the progression and it widens to 1, never a stride tighter
+    /// than the real spacing.
+    fn shr(self, k: u32) -> Self {
+        // Both endpoints map independently, so an empty interval would come
+        // back as `{0, 0}`, "exactly zero", and pass `bounded_index`'s gate.
+        if self.hi < self.lo {
+            return self;
+        }
+        let stride = if self.stride.trailing_zeros() >= k {
+            self.stride >> k
+        } else {
+            1
+        };
+        Self {
+            lo: self.lo.checked_shr(k).unwrap_or(0),
+            hi: self.hi.checked_shr(k).unwrap_or(0),
+            stride: stride.max(1),
+        }
+    }
+
+    /// `{ x / c : x in self }` (`c == 0` treated as 1).  Floor maps the endpoints
+    /// directly.  The stride survives as `stride / c` when `c` divides it, else
+    /// floor breaks the progression and it widens to 1, never a stride tighter
+    /// than the real spacing.
+    fn udiv(self, c: u128) -> Self {
+        // As in `shr`: floor-mapping both endpoints would resurrect EMPTY.
+        if self.hi < self.lo {
+            return self;
+        }
+        let d = c.max(1);
+        let stride = if self.stride.is_multiple_of(d) {
+            self.stride / d
+        } else {
+            1
+        };
+        Self {
+            lo: self.lo / d,
+            hi: self.hi / d,
+            stride: stride.max(1),
+        }
+    }
 }
 
-/// Three-colour cycle marking for a `(value, region)` query: absent is white,
-/// `InProgress` grey, `Done` black.
+/// A monotone constant scaling of one variable operand: forward-propagating a
+/// bound on the operand through it yields a bound on the result.
+#[derive(Clone, Copy)]
+enum ScaleOp {
+    Shl(u32),
+    Shr(u32),
+    Mul(u128),
+    Udiv(u128),
+}
+
+impl ScaleOp {
+    fn apply(self, iv: Interval, width_mask: u128) -> Interval {
+        match self {
+            ScaleOp::Shl(k) => iv.shl(k, width_mask),
+            ScaleOp::Shr(k) => iv.shr(k),
+            ScaleOp::Mul(c) => iv.mul(c, width_mask),
+            ScaleOp::Udiv(c) => iv.udiv(c),
+        }
+    }
+}
+
+/// Cycle marking for a `(value, region)` query; absent means unvisited.
 #[derive(Clone, Copy)]
 enum MemoSlot {
     /// Re-entry means a dependency cycle; the back-edge resolves to top.
@@ -161,8 +289,9 @@ enum MemoSlot {
 pub struct RangeMap<'f> {
     function: &'f strider_ir::Function,
     doms: &'f Dominators<NodeId>,
-    /// Per guarded value, the `(guard_node, interval)` pairs from `If` guards,
-    /// where `guard_node` is the unique control consumer of the guarded edge.
+    /// Per guarded value, the `(guard_node, interval)` pairs proven AT that
+    /// node: an `If`'s guarded successor edge, or a `Region` every one of whose
+    /// predecessor edges bounds the value (a merge whose arms all constrain it).
     guards: FxHashMap<ValueId, Vec<(NodeId, Interval)>>,
     /// Flow-insensitive `[0, max_value]` bounds from KnownBits.
     kb_bounds: SecondaryMap<ValueId, Option<Interval>>,
@@ -180,8 +309,8 @@ impl<'f> RangeMap<'f> {
     pub fn range_of(&mut self, value: ValueId, region: NodeId) -> Interval {
         let key = (value, region);
 
-        // A grey hit is a resolution cycle, cut by returning top for the
-        // back-edge; the frame that opened it still applies dominating guards.
+        // A cycle, cut by returning top for the back-edge; the frame that
+        // opened it still applies its dominating guards.
         match self.memo.get(&key) {
             Some(MemoSlot::Done(iv)) => return *iv,
             Some(MemoSlot::InProgress) => {
@@ -194,12 +323,26 @@ impl<'f> RangeMap<'f> {
 
         let producer = self.function.producer(value);
 
-        // Bounds are deliberately not propagated UP a `ZeroExtend`/`Truncate`
-        // chain; the inner guarded node has to be queried directly.
+        // A monotone constant scaling (`idx << k`, the value a table index
+        // feeds into its address) propagates only under a dominating GUARD on
+        // the operand: KnownBits scales the stride but loses the upper bound
+        // across the scale, so an unguarded `byte * 4` would resolve as a
+        // 256-case index.
         let result = if matches!(self.function.node_kind(producer), NodeKind::Phi) {
             self.resolve_phi(producer, region)
         } else {
-            self.resolve_leaf(value, region)
+            let leaf = self.resolve_leaf(value, region);
+            match self.const_scale(value) {
+                Some((operand, scale)) => match self.dominating_guard(operand, region) {
+                    Some(guard) => {
+                        let width_mask = type_mask_or_top(self.function.value_type_opt(value));
+                        let inner = self.resolve_leaf_guarded(operand, Some(guard));
+                        scale.apply(inner, width_mask).intersect(leaf)
+                    }
+                    None => leaf,
+                },
+                None => leaf,
+            }
         };
 
         self.memo.insert(key, MemoSlot::Done(result));
@@ -211,7 +354,6 @@ impl<'f> RangeMap<'f> {
     fn resolve_phi(&mut self, phi_node: NodeId, region: NodeId) -> Interval {
         let data_inputs: Vec<ValueId> = self.function.phi_data_inputs(phi_node).collect();
 
-        // Empty outputs means a degenerate phi: top.
         let Some(phi_value) = self
             .function
             .graph()
@@ -246,9 +388,11 @@ impl<'f> RangeMap<'f> {
             if arm_range.is_top(type_mask) {
                 // The union is top, but a guard on the phi's own output still
                 // bounds it at the query point whichever arm the value took.
+                // The fallback is a fresh top: `arm_range` may carry a stride
+                // only this arm obeys.
                 return self
                     .dominating_guard(phi_value, region)
-                    .unwrap_or(arm_range);
+                    .unwrap_or_else(|| Interval::top(type_mask));
             }
             result = Some(result.map_or(arm_range, |acc| acc.union(arm_range)));
         }
@@ -261,9 +405,40 @@ impl<'f> RangeMap<'f> {
         }
     }
 
+    /// If `value` is a monotone constant scaling of one variable operand
+    /// (`x << k`, `x * c`, `x >> k`, `x / c`), the operand and how to transform
+    /// its range.  The constant must be the RHS for the non-commutative shapes.
+    fn const_scale(&self, value: ValueId) -> Option<(ValueId, ScaleOp)> {
+        let NodeKind::IntBinaryOp(op) = *self.function.node_kind(self.function.producer(value))
+        else {
+            return None;
+        };
+        let [lhs, rhs] = self.function.producer_inputs_exact::<2>(value).ok()?;
+        let rc = self.function.int_const_u128(rhs);
+        Some(match op {
+            IntBinaryOp::ShiftLeft => (lhs, ScaleOp::Shl(u32::try_from(rc?).ok()?)),
+            IntBinaryOp::ShiftRight => (lhs, ScaleOp::Shr(u32::try_from(rc?).ok()?)),
+            // A divide by zero traps, and `eval_int_binary` refuses to fold it,
+            // so the node reaches here; `udiv` would read it as a divide by one.
+            IntBinaryOp::Div => match rc? {
+                0 => return None,
+                c => (lhs, ScaleOp::Udiv(c)),
+            },
+            // Mul is commutative, so the variable may sit on either side.
+            IntBinaryOp::Mul => match (self.function.int_const_u128(lhs), rc) {
+                (None, Some(c)) => (lhs, ScaleOp::Mul(c)),
+                (Some(c), None) => (rhs, ScaleOp::Mul(c)),
+                _ => return None,
+            },
+            _ => return None,
+        })
+    }
+
     /// Intersection of every guard on `value` whose `guard_node` dominates
     /// `region`, or `None` when none apply.
     pub(crate) fn dominating_guard(&self, value: ValueId, region: NodeId) -> Option<Interval> {
+        #[cfg(test)]
+        GUARD_SCANS.with(|c| c.set(c.get() + 1));
         self.guards.get(&value).and_then(|guard_list| {
             guard_list
                 .iter()
@@ -293,8 +468,7 @@ impl<'f> RangeMap<'f> {
     /// edge, else the arm's own source Region.
     fn arm_query_regions(&self, joining_region: NodeId) -> Vec<NodeId> {
         let g = self.function.graph();
-        // Every `Region` input is a Control edge per the node signature; the
-        // filter keeps arm positions aligned should that ever change.
+        // Every `Region` input is a Control edge per the node signature.
         g.node_inputs(joining_region)
             .iter()
             .filter(|&v| g.value_kind(v).is_control())
@@ -312,8 +486,8 @@ impl<'f> RangeMap<'f> {
             .collect()
     }
 
-    /// Walks back through branching control consumers to the `Region` or
-    /// `Entry` the control ultimately comes from.
+    /// Walks control producers back past `If` / `Call` / `CallOther` to the
+    /// node the control originates at.
     fn ctrl_source_region(&self, ctrl_val: ValueId) -> NodeId {
         let f = self.function;
         let mut curr = f.producer(ctrl_val);
@@ -334,18 +508,25 @@ impl<'f> RangeMap<'f> {
 
     /// Intersects `value`'s dominating guards with its KnownBits base.
     fn resolve_leaf(&self, value: ValueId, region: NodeId) -> Interval {
-        let ty = self.function.value_type_opt(value);
-        let type_mask = type_mask_or_top(ty);
+        self.resolve_leaf_guarded(value, self.dominating_guard(value, region))
+    }
 
-        let guard = self.dominating_guard(value, region);
-        let kb = self.kb_bounds[value];
-
+    /// [`Self::resolve_leaf`] against an already-computed dominating guard.
+    fn resolve_leaf_guarded(&self, value: ValueId, guard: Option<Interval>) -> Interval {
+        let type_mask = type_mask_or_top(self.function.value_type_opt(value));
         guard
             .into_iter()
-            .chain(kb)
+            .chain(self.kb_bounds[value])
             .reduce(Interval::intersect)
             .unwrap_or_else(|| Interval::top(type_mask))
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// [`RangeMap::dominating_guard`] calls, each a linear scan with a
+    /// dominance test per entry.
+    pub(crate) static GUARD_SCANS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// `u128::MAX` (unconstrained top) when the value carries no typed edge.
@@ -396,8 +577,9 @@ fn is_sign_bit_known_zero(
     known[value].zeros & sign_bit != 0
 }
 
-/// Builds the flow-insensitive KnownBits bases, then scans every `If` to
-/// extract guard facts keyed per value.
+/// Builds the flow-insensitive KnownBits bases, extracts per-`If` guard facts,
+/// then recovers guards at a merge every predecessor of which bounds the same
+/// value.
 pub fn compute_value_ranges<'f>(
     function: &'f strider_ir::Function,
     doms: &'f Dominators<NodeId>,
@@ -407,7 +589,6 @@ pub fn compute_value_ranges<'f>(
     for node in function.walk() {
         for &value_id in function.node_outputs(node) {
             let kb: KnownBitsFacts = known[value_id];
-            // Fully unknown is the default.
             if kb.ones == 0 && kb.zeros == 0 {
                 continue;
             }
@@ -422,7 +603,6 @@ pub fn compute_value_ranges<'f>(
             // the range so the stride stays a valid divisor.
             let tz = kb.zeros.trailing_ones().min(127);
             let stride = (1u128 << tz).min(max_val.max(1));
-            // Record only when strictly tighter than the full range.
             if max_val < type_mask || stride > 1 {
                 kb_bounds[value_id] = Some(Interval {
                     lo: 0,
@@ -436,8 +616,6 @@ pub fn compute_value_ranges<'f>(
     let mut guards: FxHashMap<ValueId, Vec<(NodeId, Interval)>> = FxHashMap::default();
 
     for if_node in function.walk_kind(|k| matches!(k, NodeKind::If)) {
-        // Both edges are modelled: the condition implies an interval on the
-        // true edge, its negation one on the false edge.
         let if_outputs = function.node_outputs(if_node);
         if if_outputs.len() < 2 {
             continue;
@@ -482,6 +660,39 @@ pub fn compute_value_ranges<'f>(
         }
     }
 
+    // A value bounded on EVERY control-predecessor edge of a merge is bounded
+    // at the merge by the union, though no single guard's edge dominates past
+    // it.  One level: a predecessor that is not an `If` bounds nothing and
+    // blocks the join.
+    for region in function.walk_kind(|k| matches!(k, NodeKind::Region)) {
+        let pred_edges: Vec<ValueId> = function
+            .graph()
+            .node_inputs(region)
+            .iter()
+            .filter(|&v| function.value_kind(v).is_control())
+            .collect();
+        if pred_edges.len() < 2 {
+            continue;
+        }
+        let Some(per_edge) = pred_edges
+            .iter()
+            .map(|&e| edge_guard(function, e, known))
+            .collect::<Option<Vec<(ValueId, Interval)>>>()
+        else {
+            continue;
+        };
+        let (v0, _) = per_edge[0];
+        if !per_edge.iter().all(|(v, _)| *v == v0) {
+            continue;
+        }
+        let union = per_edge
+            .iter()
+            .map(|(_, iv)| *iv)
+            .reduce(Interval::union)
+            .expect("pred_edges has >= 2 entries");
+        guards.entry(v0).or_default().push((region, union));
+    }
+
     RangeMap {
         function,
         doms,
@@ -489,6 +700,29 @@ pub fn compute_value_ranges<'f>(
         kb_bounds,
         memo: FxHashMap::default(),
     }
+}
+
+/// The `(value, interval)` an `If`-controlled edge establishes on the value its
+/// condition bounds, or `None` when the edge's producer is not an `If` or its
+/// condition upper-bounds nothing on the taken side.
+fn edge_guard(
+    function: &strider_ir::Function,
+    ctrl_val: ValueId,
+    known: &KnownBitsMap,
+) -> Option<(ValueId, Interval)> {
+    let producer = function.producer(ctrl_val);
+    if !matches!(function.node_kind(producer), NodeKind::If) {
+        return None;
+    }
+    // An `If`'s outputs are `[true_ctrl, false_ctrl]`; without both, "not the
+    // true edge" would not mean the false edge.
+    let outputs = function.node_outputs(producer);
+    if outputs.len() < 2 {
+        return None;
+    }
+    let edge_taken = outputs.first() == Some(&ctrl_val);
+    let cond = function.if_cond(producer);
+    guard_from_compare(function, cond, edge_taken, known)
 }
 
 /// The `(guarded_value, interval)` a bare `Less`/`Sless` condition constrains
@@ -528,11 +762,6 @@ fn guard_from_compare(
     }
     let type_mask = ty.bit_mask_u128();
 
-    //   const_on_rhs  edge_taken  meaning     bound
-    //   true (v<N)    true        v < N       [0, N-1] for N>0
-    //   true (v<N)    false       v >= N      lower-only
-    //   false (N<v)   true        v >= N+1    lower-only
-    //   false (N<v)   false       v <= N      [0, N]
     match (const_on_rhs, edge_taken) {
         (true, true) => {
             // N == 0 is an impossible unsigned guard.
@@ -545,7 +774,6 @@ fn guard_from_compare(
             ))
         }
         (false, false) => Some((guarded, Interval::dense(0, n.min(type_mask)))),
-        // Lower-only constraints carry no useful upper bound.
         (true, false) | (false, true) => None,
     }
 }

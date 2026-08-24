@@ -8,8 +8,8 @@
 //! set: two phi arms can share a subchain, and a visited set would let only
 //! the first arm resolve it and hand the second a spurious "clean", i.e. a
 //! false disagreement.  A node still on the resolution path is marked
-//! `InProgress`, which breaks loop-header cycles by contributing `None` for
-//! that edge.
+//! `InProgress`; re-encountering it is a back-edge, resolved as `Cycle` (⊤).
+//! `Cycle` is kept distinct from a genuine `Clean` bottom-out.
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -26,8 +26,9 @@ pub(crate) trait MemorySSAWalker {
     /// `false` advances past `def` to its own memory input.
     fn def_clobbers(&mut self, function: &Function, def: NodeId) -> bool;
 
-    /// Nearest clobbering definition backward from `mem`'s memory output, or
-    /// the `InitialMemory` node when every path is clean.  Read-only.
+    /// Nearest clobbering definition backward from `mem`'s memory output, the
+    /// `InitialMemory` node when every path is clean, or `mem` itself when
+    /// every path cycles without reaching either.  Read-only.
     fn find_nearest_clobber(&mut self, function: &Function, mem: NodeId) -> NodeId
     where
         Self: Sized,
@@ -64,17 +65,45 @@ pub(crate) fn narrow_load_to(edit: &mut crate::EditFunction<'_>, load: NodeId, c
     }
 }
 
-fn join_phi_results(phi_value: ValueId, preds: &[Option<ValueId>]) -> Option<ValueId> {
-    let Some((&first, rest)) = preds.split_first() else {
-        // A zero-arm MemPhi sits on a control-dead Region, which `CfgDetach`
-        // culls before any consumer walks it, so a well-formed graph never
-        // gets here.  Bottom out cleanly anyway.
-        return None;
+/// The resolution of one memory node for the probed slot.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    /// A def that clobbers the slot reaches here.
+    Clobber(ValueId),
+    /// Every path bottoms out clean at `InitialMemory`: the slot is
+    /// uninitialised here.  A real value in a join.
+    Clean,
+    /// A back-edge to an ancestor still on the resolution path.  The loop found
+    /// no clobber for the slot before cycling, so this arm carries no value and
+    /// is a don't-care (⊤) in a MemPhi join.  Distinct from `Clean`, and it must
+    /// propagate up through intervening non-clobbering nodes so a loop-header
+    /// MemPhi can recognise its own back-edge rather than mistake the cycle for
+    /// a genuine `Clean`.
+    Cycle,
+}
+
+/// Transparent iff every non-`Cycle` arm names the same definition.
+///
+/// Dropping a `Cycle` arm is sound globally, not locally: `Cycle` is
+/// path-dependent, so a node memoises to `Cycle` or to a real value depending on
+/// DFS entry order.  A clobbering def short-circuits to `Clobber` at Enter,
+/// before it can be marked `InProgress`, so no reachable clobber is ever
+/// dropped.  A node wrongly forced to `Cycle` is reached via a route that
+/// carries the preempting ancestor's real value up and re-merges it at or below
+/// the load's start node, so the wrong transparent value either equals it or
+/// collides with it at a join (opaque, the safe direction).
+fn join_phi_results(phi_value: ValueId, preds: &[Reach]) -> Reach {
+    let mut non_cycle = preds.iter().copied().filter(|r| !matches!(r, Reach::Cycle));
+    let Some(first) = non_cycle.next() else {
+        // Every arm cycled (a degenerate all-back-edge merge), or the MemPhi has
+        // zero arms (a control-dead Region `CfgDetach` culls before any consumer
+        // walks it).  No information.
+        return Reach::Cycle;
     };
-    if rest.iter().all(|&p| p == first) {
+    if non_cycle.all(|r| r == first) {
         first
     } else {
-        Some(phi_value)
+        Reach::Clobber(phi_value)
     }
 }
 
@@ -83,7 +112,7 @@ fn join_phi_results(phi_value: ValueId, preds: &[Option<ValueId>]) -> Option<Val
 enum Resolve {
     /// On the current resolution path; re-encountering it is a cycle.
     InProgress,
-    Done(Option<ValueId>),
+    Done(Reach),
 }
 
 enum Frame {
@@ -111,7 +140,9 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
         let mut initial_memory: Option<NodeId> = None;
         match self.walk_from(start_mem, &mut initial_memory) {
             Some(clobber_value) => self.function.producer(clobber_value),
-            None => initial_memory.expect("a clean memory chain bottoms out at InitialMemory"),
+            // No clobber and no clean bottom either: every path cycled, so
+            // nothing is proven and the start is the only def-free answer.
+            None => initial_memory.unwrap_or(mem),
         }
     }
 
@@ -132,7 +163,7 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
                 Frame::Enter(cur) => {
                     // Already seen: `Done` reuses the memoised result (DAG
                     // fan-in); `InProgress` stays as-is so the consuming
-                    // `combine` reads `None`, i.e. the cycle adds no clobber.
+                    // `combine` reads `Cycle`, i.e. the cycle adds no clobber.
                     if memo.contains_key(&cur) {
                         continue;
                     }
@@ -145,7 +176,7 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
                         *initial_memory = Some(node);
                     }
                     if !is_phi && !is_initial && self.walker.def_clobbers(self.function, node) {
-                        memo.insert(cur, Resolve::Done(Some(cur)));
+                        memo.insert(cur, Resolve::Done(Reach::Clobber(cur)));
                         continue;
                     }
                     memo.insert(cur, Resolve::InProgress);
@@ -156,13 +187,13 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
                 }
                 Frame::Exit(cur) => {
                     // A successor still `InProgress` is a back-edge to an
-                    // ancestor on this path; it contributes `None`.
-                    let succ_results: SmallVec<[Option<ValueId>; 4]> = self
+                    // ancestor on this path; it contributes `Cycle`.
+                    let succ_results: SmallVec<[Reach; 4]> = self
                         .successors(cur)
                         .into_iter()
                         .map(|s| match memo.get(&s).copied() {
                             Some(Resolve::Done(r)) => r,
-                            _ => None,
+                            _ => Reach::Cycle,
                         })
                         .collect();
                     let result = self.combine(cur, &succ_results);
@@ -172,7 +203,9 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
         }
 
         match memo.get(&start_mem).copied() {
-            Some(Resolve::Done(r)) => r,
+            Some(Resolve::Done(Reach::Clobber(v))) => Some(v),
+            // Clean or Cycle: no clobber reached, so the caller names
+            // `InitialMemory`.
             _ => None,
         }
     }
@@ -188,11 +221,14 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
 
     /// The alias verdict short-circuits at enter-time, so a non-phi node
     /// only forwards.
-    fn combine(&self, cur: ValueId, succ_results: &[Option<ValueId>]) -> Option<ValueId> {
+    fn combine(&self, cur: ValueId, succ_results: &[Reach]) -> Reach {
         let node = self.function.producer(cur);
         match *self.function.node_kind(node) {
             NodeKind::MemPhi => join_phi_results(cur, succ_results),
-            _ => succ_results.first().copied().flatten(),
+            // A non-phi node forwards its single memory input's result,
+            // propagating `Cycle` up so a loop-header MemPhi above recognises its
+            // back-edge.  No successor means `InitialMemory`: clean.
+            _ => succ_results.first().copied().unwrap_or(Reach::Clean),
         }
     }
 }

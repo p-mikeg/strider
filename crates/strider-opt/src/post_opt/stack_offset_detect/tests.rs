@@ -15,7 +15,6 @@ fn stamped_count(function: &Function) -> usize {
         .count()
 }
 
-/// Canonicalize, then run the post-pass.
 fn run(function: &mut Function) {
     // ConstantFold folds the lowered `Add(_, Neg(K))` to `Add(_, IntConst(-K))`
     // and PhiCollapse drops the read_variable(sp) phi, giving the production
@@ -103,7 +102,6 @@ fn alignment_masked_base_store_is_stamped_with_aligned_base() {
     .unwrap();
 
     run(&mut f);
-    // The base is the `And` output, not the canonical `InitialVar(sp)`.
     let store = f
         .graph()
         .all_node_ids()

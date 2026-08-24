@@ -9,8 +9,9 @@
 //! through data.  Validation runs only once the destructive pipeline converges,
 //! so that transient shape is never observed.
 
+use entity_utils::DenseEntitySet;
 use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
 use crate::peephole::{PeepholePass, PeepholeRewrite};
@@ -50,6 +51,31 @@ impl PeepholePass for DeadBranchElimination {
                     .node_outputs_exact::<2>(root)
                     .expect("If has 2 outputs per node signature");
                 let live_ctrl = if cond_val { ctrl_true } else { ctrl_false };
+                let dead_ctrl = if cond_val { ctrl_false } else { ctrl_true };
+
+                // An `Unreachable` on the dead arm anchors the memory of an
+                // exit-free control cycle. Folding the branch orphans it and the
+                // cycle loses its stores. `live_side_reaches_terminator` below
+                // rejects that shape too, so this is the deliberately
+                // conservative half: it also declines `if (const) .. else
+                // abort();`, where the fold would be sound. Kept because the
+                // cost is one unfolded branch and the failure mode is a lost
+                // store.
+                let dead_consumers: Vec<NodeId> = edit
+                    .graph_ref()
+                    .value_uses(dead_ctrl)
+                    .map(|(node, _)| node)
+                    .collect();
+                if dead_consumers
+                    .iter()
+                    .any(|&node| matches!(edit.node_kind(node), NodeKind::Unreachable))
+                {
+                    return Ok(PeepholeRewrite::NoChange);
+                }
+
+                if !live_side_reaches_terminator(edit, root, live_ctrl) {
+                    return Ok(PeepholeRewrite::NoChange);
+                }
 
                 // The condition is the proof for taking this arm, so its
                 // fingerprint must survive `kill_node` cascade-culling the
@@ -84,6 +110,10 @@ impl PeepholePass for DeadBranchElimination {
                 };
                 let live_ctrl = edit.node_outputs(root)[i];
 
+                if !live_side_reaches_terminator(edit, root, live_ctrl) {
+                    return Ok(PeepholeRewrite::NoChange);
+                }
+
                 // Same proof-completeness rationale as the `If` arm, with the
                 // constant dispatch address in place of the condition.
                 edit.absorb_fingerprint(ctrl_value, addr_value);
@@ -98,4 +128,55 @@ impl PeepholePass for DeadBranchElimination {
     fn propagate_to_consumers(&self) -> bool {
         false
     }
+}
+
+/// Does the surviving successor still reach a terminator once `root` is gone?
+///
+/// A loop whose only exit is the dead arm becomes an exit-free cycle, which
+/// [`strider_ir::validate`] rejects as `NoTerminatorReachable` and whose body
+/// compaction then drops. An `Unreachable` directly on the dead arm is the
+/// narrow case of this the guard above catches before the fold's other
+/// bookkeeping; here the exit can sit any number of `Region`s away.
+///
+/// Mirrors the validator: a dangling control output counts as an escape, so a
+/// half-wired CFG mid-pipeline is not read as a stranded one.
+fn live_side_reaches_terminator(
+    edit: &crate::EditFunction<'_>,
+    root: NodeId,
+    live_ctrl: ValueId,
+) -> bool {
+    let mut seen: DenseEntitySet<NodeId> = DenseEntitySet::new();
+    let mut stack: Vec<NodeId> = edit.value_uses(live_ctrl).map(|(node, _)| node).collect();
+    // The same rule the walk below applies to every other control output: the
+    // surviving arm having no consumer at all is a dangling edge, not a
+    // stranded one.
+    if stack.is_empty() {
+        return true;
+    }
+    while let Some(node) = stack.pop() {
+        // `root` is about to go, and its live successors are already seeded.
+        if node == root || !seen.insert(node) {
+            continue;
+        }
+        if matches!(
+            edit.node_kind(node),
+            NodeKind::Return | NodeKind::IndirectBranch | NodeKind::Unreachable
+        ) {
+            return true;
+        }
+        for &out in edit.node_outputs(node) {
+            if !edit.value_kind(out).is_control() {
+                continue;
+            }
+            let mut consumed = false;
+            for (succ, _) in edit.value_uses(out) {
+                consumed = true;
+                stack.push(succ);
+            }
+            if !consumed {
+                return true;
+            }
+        }
+    }
+    false
 }

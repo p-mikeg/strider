@@ -9,44 +9,49 @@
 //! diff = Add(a, Neg(b))
 //! ZR   = Equal(diff, 0)           // Z
 //! NG   = IntSless(diff, 0)        // N
-//! CY   = BitNot(IntLess(a, b))    // C, at I1
+//! CY   = Xor(IntLess(a, b), 1)    // C, at I1
 //! OV   = IntSborrow(a, b)         // V
 //!
-//! EQ/NE  ZR                          HI/LS  BoolAnd(CY, BitNot(ZR)) / dual
+//! EQ/NE  ZR                          HI/LS  BoolAnd(CY, Xor(ZR, 1)) / dual
 //! CS/CC  CY                          GE/LT  Equal(NG, OV)
-//! VS/VC  OV                          GT/LE  BoolAnd(BitNot(ZR), Equal(NG, OV)) / dual
+//! VS/VC  OV                          GT/LE  BoolAnd(Xor(ZR, 1), Equal(NG, OV)) / dual
 //! ```
 //!
-//! `MI`/`PL` (bare `NG`) is deliberately left alone: `Sless(a-b, 0)` differs
+//! `MI`/`PL` (bare `NG`) stays as lifted: `Sless(a-b, 0)` differs
 //! from `Sless(a, b)` when the subtraction overflows.  `CS`/`CC` and `VS`/`VC`
 //! are already in `(a, b)` form.
 //!
-//! Run after `ConstantFold` (so `BitNot(BitNot(x)) -> x` at `I1` has collapsed)
-//! and before `IfCondInversion` (so the cond carries at most one BitNot layer).
+//! Run after `ConstantFold` (so `Xor(Xor(x, 1), 1) -> x` at `I1` has collapsed)
+//! and before `IfCondInversion` (so the cond carries at most one `Xor(_, 1)`
+//! layer).
 
 use std::rc::Rc;
 
-use crate::{BoxedRule, apply_rules_in_order, rewrite_rule};
+use crate::{BoxedRule, rewrite_rule};
 use strider_ir::IRViewer;
 use strider_ir::node::{ExtendOp, IntBinaryOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_pattern::{
-    Bindings, Capture, CaptureExt, add, any_int_const, bool_and, bool_not, bool_or, capture_typed,
-    int_const, int_const_with, int_eq, int_lt, int_sborrow, int_slt, neg, one_of, shl, template,
-    var, xor, zero_extend,
+    Bindings, Capture, CaptureExt, bool_and, bool_not, bool_or, capture_typed, int_add, int_const,
+    int_const_with, int_eq, int_lt, int_neg, int_sborrow, int_shl, int_slt, int_xor,
+    int_zero_extend, one_of, template, var,
 };
 
 use crate::error::Result;
-use crate::peephole::{PeepholePass, PeepholeRewrite, SeedOrder};
+use crate::peephole::{PeepholePass, PeepholeRewrite, SeedOrder, first_matching_rule};
 
 #[derive(Clone)]
 pub struct FlagCmpCanonicalize {
     rules: Rc<Vec<BoxedRule>>,
 }
 
+thread_local! {
+    static RULES: Rc<Vec<BoxedRule>> = Rc::new(build_rules());
+}
+
 impl FlagCmpCanonicalize {
     pub fn new() -> Self {
         Self {
-            rules: Rc::new(build_rules()),
+            rules: RULES.with(Rc::clone),
         }
     }
 }
@@ -58,8 +63,15 @@ impl Default for FlagCmpCanonicalize {
 }
 
 impl PeepholePass for FlagCmpCanonicalize {
-    fn matches_kind(&self, _kind: &NodeKind) -> bool {
-        true
+    /// Every rule roots at a comparison, at the `And`/`Or`/`Xor` of a boolean
+    /// tree, or at the CR-bit `Truncate`.
+    fn matches_kind(&self, kind: &NodeKind) -> bool {
+        matches!(
+            kind,
+            NodeKind::IntCmpOp(_)
+                | NodeKind::Truncate
+                | NodeKind::IntBinaryOp(IntBinaryOp::And | IntBinaryOp::Or | IntBinaryOp::Xor)
+        )
     }
 
     /// Outermost-first: a bottom-up seed would rewrite an inner sub-pattern and
@@ -80,7 +92,7 @@ impl PeepholePass for FlagCmpCanonicalize {
         if let Some(cmp) = canonicalize_cr_bit_test(edit, root)? {
             return Ok(PeepholeRewrite::from_new_value(edit, Some(cmp)));
         }
-        let opt = apply_rules_in_order(&self.rules)(edit, root)?;
+        let opt = first_matching_rule(&self.rules, edit, root)?;
         Ok(PeepholeRewrite::from_new_value(edit, opt))
     }
 
@@ -89,6 +101,13 @@ impl PeepholePass for FlagCmpCanonicalize {
     fn propagate_to_consumers(&self) -> bool {
         false
     }
+}
+
+/// The width `width_src` binds, or `None` past the `u128` the const arithmetic
+/// here computes in.
+fn carrier_mask(binds: &Bindings, func: &strider_ir::Function, width_src: Capture) -> Option<u128> {
+    let ty = binds.get_type(width_src, func)?;
+    (ty.bit_width() <= 128).then(|| ty.bit_mask_u128())
 }
 
 /// `M == -N` at `width_src`'s width.  `false` unless all bindings resolve.
@@ -102,7 +121,7 @@ fn neg_relation(
     let (Some(m_val), Some(n_val), Some(width)) = (
         binds.get_uint(m, func),
         binds.get_uint(n, func),
-        binds.get_type(width_src, func).map(|t| t.bit_mask_u128()),
+        carrier_mask(binds, func, width_src),
     ) else {
         return false;
     };
@@ -122,7 +141,7 @@ fn sub_relation(
         binds.get_uint(m, func),
         binds.get_uint(n, func),
         binds.get_uint(c1, func),
-        binds.get_type(width_src, func).map(|t| t.bit_mask_u128()),
+        carrier_mask(binds, func, width_src),
     ) else {
         return false;
     };
@@ -142,8 +161,8 @@ fn build_rules() -> Vec<BoxedRule> {
     let x = Capture::new();
 
     // Emits an LS rule and its De-Morgan HI dual:
-    //   LS:  Or(less, eq)                          -> BitNot(cmp)
-    //   HI:  And(BitNot(less), BitNot(eq))         -> cmp
+    //   LS:  Or(less, eq)                  -> Xor(cmp, 1)
+    //   HI:  And(Xor(less, 1), Xor(eq, 1)) -> cmp
     macro_rules! ls_hi_pair {
         ($less:expr, $eq:expr, $guard:expr, $cmp:expr $(,)?) => {
             [
@@ -162,17 +181,17 @@ fn build_rules() -> Vec<BoxedRule> {
     let mut rules: Vec<BoxedRule> = vec![
         // EQ:  Equal(Add(a, Neg(b)), 0) -> Equal(a, b)
         rewrite_rule(
-            int_eq(add(var(a), neg(var(b))), int_const(0u128)),
+            int_eq(int_add(var(a), int_neg(var(b))), int_const(0u128)),
             template::int_eq(var(a), var(b)),
         ),
         // HI -> IntLess(b, a), in either arch shape:
-        //    raw NZCV:    BoolAnd(BitNot(IntLess(a, b)), BitNot(Equal(diff, 0)))
-        //    decomposed:  BoolAnd(BitNot(Equal(a, b)), BitNot(IntLess(a, b)))
+        //    raw NZCV:    BoolAnd(Xor(IntLess(a, b), 1), Xor(Equal(diff, 0), 1))
+        //    decomposed:  BoolAnd(Xor(Equal(a, b), 1), Xor(IntLess(a, b), 1))
         rewrite_rule(
             one_of![
                 bool_and(
                     bool_not(int_lt(var(a), var(b))),
-                    bool_not(int_eq(add(var(a), neg(var(b))), int_const(0u128))),
+                    bool_not(int_eq(int_add(var(a), int_neg(var(b))), int_const(0u128))),
                 ),
                 bool_and(
                     bool_not(int_eq(var(a), var(b))),
@@ -181,48 +200,51 @@ fn build_rules() -> Vec<BoxedRule> {
             ],
             template::int_lt(var(b), var(a)),
         ),
-        // LS -> BitNot(IntLess(b, a)), in either arch shape:
+        // LS -> Xor(IntLess(b, a), 1), in either arch shape:
         //    raw NZCV:    BoolOr(IntLess(a, b), Equal(diff, 0))
         //    decomposed:  BoolOr(Equal(a, b), IntLess(a, b))
         // The raw form requires ConstantFold to have already cancelled the
-        // `BitNot(BitNot(IntLess))` chain that `BitNot(CY)` produces.
+        // `Xor(Xor(IntLess, 1), 1)` chain that `Xor(CY, 1)` produces.
         rewrite_rule(
             one_of![
                 bool_or(
                     int_lt(var(a), var(b)),
-                    int_eq(add(var(a), neg(var(b))), int_const(0u128)),
+                    int_eq(int_add(var(a), int_neg(var(b))), int_const(0u128)),
                 ),
                 bool_or(int_eq(var(a), var(b)), int_lt(var(a), var(b))),
             ],
             template::bool_not(template::int_lt(var(b), var(a))),
         ),
-        // LT:  BitNot(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b)))) -> IntSless(a, b)
+        // LT:  Xor(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))), 1) -> IntSless(a, b)
         rewrite_rule(
             bool_not(int_eq(
-                zero_extend(int_slt(add(var(a), neg(var(b))), int_const(0u128))),
-                zero_extend(int_sborrow(var(a), var(b))),
+                int_zero_extend(int_slt(int_add(var(a), int_neg(var(b))), int_const(0u128))),
+                int_zero_extend(int_sborrow(var(a), var(b))),
             )),
             template::int_slt(var(a), var(b)),
         ),
-        // GE:  Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))) -> BitNot(IntSless(a, b))
+        // GE:  Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))) -> Xor(IntSless(a, b), 1)
         rewrite_rule(
             int_eq(
-                zero_extend(int_slt(add(var(a), neg(var(b))), int_const(0u128))),
-                zero_extend(int_sborrow(var(a), var(b))),
+                int_zero_extend(int_slt(int_add(var(a), int_neg(var(b))), int_const(0u128))),
+                int_zero_extend(int_sborrow(var(a), var(b))),
             ),
             template::bool_not(template::int_slt(var(a), var(b))),
         ),
         // GT -> IntSless(b, a), in either arch shape:
-        //    raw NZCV:    BoolAnd(BitNot(Equal(diff, 0)),
+        //    raw NZCV:    BoolAnd(Xor(Equal(diff, 0), 1),
         //                    Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))))
-        //    decomposed:  BoolAnd(BitNot(Equal(a, b)), BitNot(IntSless(a, b)))
+        //    decomposed:  BoolAnd(Xor(Equal(a, b), 1), Xor(IntSless(a, b), 1))
         rewrite_rule(
             one_of![
                 bool_and(
-                    bool_not(int_eq(add(var(a), neg(var(b))), int_const(0u128))),
+                    bool_not(int_eq(int_add(var(a), int_neg(var(b))), int_const(0u128))),
                     int_eq(
-                        zero_extend(int_slt(add(var(a), neg(var(b))), int_const(0u128))),
-                        zero_extend(int_sborrow(var(a), var(b))),
+                        int_zero_extend(int_slt(
+                            int_add(var(a), int_neg(var(b))),
+                            int_const(0u128)
+                        )),
+                        int_zero_extend(int_sborrow(var(a), var(b))),
                     ),
                 ),
                 bool_and(
@@ -232,17 +254,20 @@ fn build_rules() -> Vec<BoxedRule> {
             ],
             template::int_slt(var(b), var(a)),
         ),
-        // LE -> BitNot(IntSless(b, a)), in either arch shape:
+        // LE -> Xor(IntSless(b, a), 1), in either arch shape:
         //    raw NZCV:    BoolOr(Equal(diff, 0),
-        //                    BitNot(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b)))))
+        //                    Xor(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))), 1))
         //    decomposed:  BoolOr(Equal(a, b), IntSless(a, b))
         rewrite_rule(
             one_of![
                 bool_or(
-                    int_eq(add(var(a), neg(var(b))), int_const(0u128)),
+                    int_eq(int_add(var(a), int_neg(var(b))), int_const(0u128)),
                     bool_not(int_eq(
-                        zero_extend(int_slt(add(var(a), neg(var(b))), int_const(0u128))),
-                        zero_extend(int_sborrow(var(a), var(b))),
+                        int_zero_extend(int_slt(
+                            int_add(var(a), int_neg(var(b))),
+                            int_const(0u128)
+                        )),
+                        int_zero_extend(int_sborrow(var(a), var(b))),
                     )),
                 ),
                 bool_or(int_eq(var(a), var(b)), int_slt(var(a), var(b))),
@@ -250,46 +275,46 @@ fn build_rules() -> Vec<BoxedRule> {
             template::bool_not(template::int_slt(var(b), var(a))),
         ),
         // Thumb "false" flag test (BNE / BCC / BPL / BVC):
-        //    IntEqual(ZeroExtend(b), 0) -> BitNot(b)
+        //    IntEqual(ZeroExtend(b), 0) -> Xor(b, 1)
         // `of_width(1)` is load-bearing: `zext(b) == 0` equals `!b` only for an
         // `I1` `b`.  Unguarded, a chained zero-extend (I1->I8->I32) binds `b` to
-        // the wider intermediate and yields a malformed BitNot.
+        // the wider intermediate and yields a malformed complement.
         rewrite_rule(
-            int_eq(zero_extend(var(b).of_width(1)), int_const(0u128)),
+            int_eq(int_zero_extend(var(b).of_width(1)), int_const(0u128)),
             template::bool_not(var(b)),
         ),
         // Thumb "true" flag test (BEQ / BCS / BMI / BVS):
-        //    BitNot(IntEqual(ZeroExtend(b), 0)) -> b
+        //    Xor(IntEqual(ZeroExtend(b), 0), 1) -> b
         // Same `I1` guard as above.
         rewrite_rule(
-            bool_not(int_eq(zero_extend(var(b).of_width(1)), int_const(0u128))),
+            bool_not(int_eq(
+                int_zero_extend(var(b).of_width(1)),
+                int_const(0u128),
+            )),
             var(b),
         ),
     ];
 
     // Constant compare operand (`cmp a, N; ja`/`jbe`), after ConstantFold
     // collapsed `Equal(Add(a, Neg(N)), 0)` to `Equal(Add(a, M), 0)`, `M = -N`:
-    //   LS:  Or(Less(a, N), Equal(Add(a, M), 0))                  -> BitNot(Less(N, a))
-    //   HI:  And(BitNot(Less(a, N)), BitNot(Equal(Add(a, M), 0)))  -> Less(N, a)
+    //   LS:  Or(Less(a, N), Equal(Add(a, M), 0))                 -> Xor(Less(N, a), 1)
+    //   HI:  And(Xor(Less(a, N), 1), Xor(Equal(Add(a, M), 0), 1)) -> Less(N, a)
     // The guard pins `M == -N` mod width.
     rules.extend(ls_hi_pair!(
-        int_lt(var(a), any_int_const().capture(n)),
-        int_eq(add(var(a), any_int_const().capture(m)), int_const(0u128)),
+        int_lt(var(a), int_const(n)),
+        int_eq(int_add(var(a), int_const(m)), int_const(0u128)),
         move |edit, _ty, binds| neg_relation(binds, edit.function(), m, n, a),
         template::int_lt(var(n), var(a)),
     ));
     // Offset-base siblings, for a switch whose cases start at a nonzero base.
     // The Less operand `X = Add(b, C1)` and the Equal base `Add(b, C2)` are
     // DISTINCT nodes, so these key on the shared base `b`:
-    //   LS:  Or(Less(X, N), Equal(Add(b, C2), 0))                  -> BitNot(Less(N, X))
-    //   HI:  And(BitNot(Less(X, N)), BitNot(Equal(Add(b, C2), 0)))  -> Less(N, X)
+    //   LS:  Or(Less(X, N), Equal(Add(b, C2), 0))                 -> Xor(Less(N, X), 1)
+    //   HI:  And(Xor(Less(X, N), 1), Xor(Equal(Add(b, C2), 0), 1)) -> Less(N, X)
     // The guard pins `C2 == C1 - N`.
     rules.extend(ls_hi_pair!(
-        int_lt(
-            add(var(b), any_int_const().capture(c1)).capture(x),
-            any_int_const().capture(n),
-        ),
-        int_eq(add(var(b), any_int_const().capture(m)), int_const(0u128)),
+        int_lt(int_add(var(b), int_const(c1)).capture(x), int_const(n),),
+        int_eq(int_add(var(b), int_const(m)), int_const(0u128)),
         move |edit, _ty, binds| sub_relation(binds, edit.function(), m, n, c1, b),
         template::int_lt(var(n), var(x)),
     ));
@@ -302,10 +327,8 @@ fn build_rules() -> Vec<BoxedRule> {
     // term it would consume.  Outermost-first seeding gives that: the `Or` root
     // folds before this rule can reach the inner `Equal`.
     rules.push(rewrite_rule(
-        int_eq(
-            add(var(a), any_int_const().capture(n)),
-            any_int_const().capture(m),
-        ),
+        int_eq(int_add(var(a), int_const(n)), int_const(m))
+            .when_match(move |edit, _ty, binds| carrier_mask(binds, edit.function(), a).is_some()),
         template::int_eq(
             var(a),
             // The fresh const takes `a`'s width, not the `Equal` root's `I1`.
@@ -316,10 +339,7 @@ fn build_rules() -> Vec<BoxedRule> {
     // `Equal(Xor(x, C1), C2) -> Equal(x, C1 ^ C2)`: xor-with-C1 is a bijection,
     // so applying it to both sides is value-preserving.
     rules.push(rewrite_rule(
-        int_eq(
-            xor(var(a), any_int_const().capture(n)),
-            any_int_const().capture(m),
-        ),
+        int_eq(int_xor(var(a), int_const(n)), int_const(m)),
         template::int_eq(
             var(a),
             capture_typed(a, int_const_with!([n: uint, m: uint] => n ^ m)),
@@ -329,7 +349,8 @@ fn build_rules() -> Vec<BoxedRule> {
     // `Equal(Neg(x), C) -> Equal(x, -C)`: two's-complement negation is a
     // bijection, so it moves across `Equal` value-preservingly.
     rules.push(rewrite_rule(
-        int_eq(neg(var(a)), any_int_const().capture(m)),
+        int_eq(int_neg(var(a)), int_const(m))
+            .when_match(move |edit, _ty, binds| carrier_mask(binds, edit.function(), a).is_some()),
         template::int_eq(
             var(a),
             capture_typed(a, int_const_with!([m: uint] => m.wrapping_neg())),
@@ -342,21 +363,19 @@ fn build_rules() -> Vec<BoxedRule> {
     // ..)`; the `Xor`/`1` are `I1`.  Guarded to `C < W`: at or above the width
     // `x << C` is 0 and the test is const-false, a different rewrite.
     rules.push(rewrite_rule(
-        int_slt(shl(var(x), any_int_const().capture(n)), int_const(0u128)).when_match(
-            move |edit, _ty, b| {
-                let (Some(c), Some(ty)) = (
-                    b.get_uint(n, edit.function()),
-                    b.get_type(x, edit.function()),
-                ) else {
-                    return false;
-                };
-                c < ty.bit_width() as u128
-            },
-        ),
+        int_slt(int_shl(var(x), int_const(n)), int_const(0u128)).when_match(move |edit, _ty, b| {
+            let (Some(c), Some(ty)) = (
+                b.get_uint(n, edit.function()),
+                b.get_type(x, edit.function()),
+            ) else {
+                return false;
+            };
+            ty.bit_width() <= 128 && c < ty.bit_width() as u128
+        }),
         template::bool_not(template::int_eq(
             capture_typed(
                 x,
-                template::and(
+                template::int_and(
                     var(x),
                     capture_typed(
                         x,
@@ -444,6 +463,11 @@ fn cr_bit_comparison(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, ValueI
         NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight) => {
             let [x, amt] = f.producer_inputs_exact::<2>(inner).ok()?;
             let k = u32::try_from(f.int_const_u128(amt)?).ok()?;
+            // At or past the width the shift is 0, so no bit is under test.
+            let width = u32::try_from(f.value_type_opt(inner)?.bit_width()).ok()?;
+            if k >= width {
+                return None;
+            }
             (x, k)
         }
         _ => (inner, 0),
@@ -503,8 +527,12 @@ fn single_bit_term(
         NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => {
             let [v, amt] = f.producer_inputs_exact::<2>(value).ok()?;
             let pos = u32::try_from(f.int_const_u128(amt)?).ok()?;
+            // p-code yields 0 once the shift reaches the output width, so a
+            // term shifted that far carries no bit to name.
+            let width = u32::try_from(f.value_type_opt(value)?.bit_width()).ok()?;
             let (q, cmp) = single_bit_term(f, v, depth + 1)?;
-            Some((q.checked_add(pos)?, cmp))
+            let bit = q.checked_add(pos)?;
+            (bit < width).then_some((bit, cmp))
         }
         // Zero-fill above the source leaves the set-bit position unchanged.
         NodeKind::Extend(ExtendOp::ZeroExtend) => {

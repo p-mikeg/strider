@@ -3,6 +3,9 @@ name = "strider-opt"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Strider's optimization passes and indirect-branch classifiers."
+repository.workspace = true
+rust-version.workspace = true
 
 [features]
 # Exposes the single-pass test runners (`run_one` / `run_post`) to downstream
@@ -22,6 +25,7 @@ graph-algorithms = { workspace = true }
 # strider-orchestrator).
 strider-cfg = { workspace = true }
 rsleigh.workspace = true
+vn-container.workspace = true
 petgraph.workspace = true
 anyhow.workspace = true
 cranelift-entity.workspace = true
@@ -33,8 +37,6 @@ smallvec.workspace = true
 strider-ir = { workspace = true, features = ["test-util"] }
 strider-ir-test-utils = { workspace = true }
 object.workspace = true
-# Property-based testing for value-only IR invariants under the optimizer.
-proptest = "1"
 criterion.workspace = true
 
 [[bench]]

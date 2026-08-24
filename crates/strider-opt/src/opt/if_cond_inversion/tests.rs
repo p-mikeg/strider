@@ -100,10 +100,10 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
     )?;
     assert!(r.changed());
 
-    // Cond is now the inner producer (the read variable's I1 cast).
+    // The cond is now the Xor's inner operand.
     let cond_node_post = fg.producer(fg.graph().node_inputs_exact::<2>(if_node)?[1]);
     assert!(!is_i1_xor_with_one(&fg, cond_node_post));
-    let _ = if_cond_kind; // keep helper alive for other tests
+    let _ = if_cond_kind; // the helper's only reference
     Ok(())
 }
 
@@ -148,7 +148,7 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
     )?;
     assert!(
         !r.changed(),
-        "IfCondInversion must be a no-op after !!x simplification — even parity preserves direct layout"
+        "IfCondInversion must be a no-op after !!x simplification: even parity preserves direct layout"
     );
     Ok(())
 }
@@ -246,8 +246,8 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
 #[test]
 fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     let cond_vn = strider_ir_test_utils::reg_vn(0x3000, 1);
-    // Cond producer 0x800, Xor 0x804, If 0x808: distinct so we can prove where
-    // 0x804 lands.
+    // Cond producer 0x800, Xor 0x804, If 0x808: distinct, pinning where 0x804
+    // lands.
     let (mut fg, _if_node, ()) = RegisterSet::new()
         .tracked(cond_vn)
         .build_if_then_else_returns(|b| {
@@ -386,7 +386,7 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
     )?;
     assert!(
         r.changed(),
-        "pass must still fire — the If's cond is Xor(_, 1)(…)"
+        "pass must still fire: the If's cond is Xor(_, 1)(…)"
     );
 
     assert!(

@@ -63,9 +63,12 @@ pub(crate) fn eval_node_const(
         }
         NodeKind::IntCmpOp(op) => {
             let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
-            Some(u128::from(
-                eval_int_cmp(op, resolve(ins[0])?, resolve(ins.get(1).copied()?)?, in_ty).ok()?,
-            ))
+            Some(u128::from(eval_int_cmp(
+                op,
+                resolve(ins[0])?,
+                resolve(ins.get(1).copied()?)?,
+                in_ty,
+            )?))
         }
         NodeKind::Load(_) => {
             let rom = rom?;

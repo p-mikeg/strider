@@ -68,7 +68,7 @@ pub(crate) fn eval_float_binary(
         ValueType::F64 => eval_binary!(f64, op, bits_l, bits_r),
         // Rust has no native 80-bit float, so F80 never folds; the rule skips
         // and the node survives for pattern queries, which care about graph
-        // shape rather than values. Bit-exact F80 emulation is out of scope.
+        // shape rather than values.
         _ => None,
     }
 }
