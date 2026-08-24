@@ -21,10 +21,14 @@
 //! `k` per configuration rather than returning the first hit. A guard anywhere
 //! above that rejects a configuration therefore re-drives a commutative node
 //! below it, so e.g. a `when_match` on a unary parent picks which operand of a
-//! commutative child binds. The caller supplies the root continuation: a
-//! first-hit collector returns `true` to stop at the first guard-satisfying
-//! configuration in DFS order, while `find_all`'s returns `false` to enumerate
-//! the rest, reporting several distinct bindings per root.
+//! commutative child binds. A node's binding walk
+//! ([`BindingWalkFn`](crate::matcher::BindingWalkFn), which is how `IfPat`
+//! matches its branches) is another axis of the same enumeration: it offers
+//! each of its own configurations in turn. The caller supplies the root
+//! continuation: a first-hit collector returns `true` to stop at the first
+//! guard-satisfying configuration in DFS order, while `find_all`'s returns
+//! `false` to enumerate the rest, reporting several distinct bindings per
+//! root.
 //!
 //! On a sub-pattern mismatch at a producer output, a non-empty
 //! [`CastMask`](crate::matcher::CastMask) makes the matcher unwrap a masked
@@ -33,17 +37,24 @@
 //! [`PatValue`]: crate::matcher::PatValue
 //! [`PatNode`]: crate::matcher::PatNode
 
+use std::cell::Cell;
+
 use strider_graph::{NodeId as PatNodeId, ValueId as PatValueId};
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueId, ValueKind, ValueType};
 
 use crate::bindings::{Binding, Bindings};
 use crate::graph_ext::PatGraphRead;
-use crate::matcher::{Matcher, OutputKindSpec, PatValue, Pattern, skip_casts};
+use crate::matcher::{Matcher, OutputKindSpec, PatNode, PatValue, Pattern, skip_casts};
 
 struct Ctx<'a> {
     matcher: &'a Matcher<'a>,
     pat: &'a Pattern,
+    /// Times the root continuation was reached, i.e. fully guard-satisfying
+    /// configurations produced so far. `first_of` cuts on it: under `find_all`
+    /// the continuation always returns `false`, so its return value cannot tell
+    /// "no configuration satisfied the guards above" from "one did".
+    satisfied: &'a Cell<u64>,
 }
 
 impl Ctx<'_> {
@@ -67,9 +78,54 @@ pub(crate) fn try_match(
     bindings: &mut Bindings,
     k: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
+    try_match_rooted(matcher, pat, root, root_value, bindings, k, true)
+}
+
+/// [`try_match`] for a sub-pattern matched INSIDE another walk, such as an
+/// `IfPat` branch. `k` is the enclosing continuation, not a root, so reaching
+/// it produces no match of its own and must not bump `satisfied`; counting it
+/// would make a `first_of` in the sub-pattern cut on the hand-off and discard
+/// the arms a later rejection needs.
+pub(crate) fn try_match_nested(
+    matcher: &Matcher,
+    pat: &Pattern,
+    root: PatNodeId,
+    root_value: ValueId,
+    bindings: &mut Bindings,
+    k: &mut dyn FnMut(&mut Bindings) -> bool,
+) -> bool {
+    try_match_rooted(matcher, pat, root, root_value, bindings, k, false)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_match_rooted(
+    matcher: &Matcher,
+    pat: &Pattern,
+    root: PatNodeId,
+    root_value: ValueId,
+    bindings: &mut Bindings,
+    k: &mut dyn FnMut(&mut Bindings) -> bool,
+    count_root: bool,
+) -> bool {
     let root_out_vertex = root_output_vertex_for(pat, root, matcher, root_value);
     let root_node = matcher.function().producer(root_value);
-    let ctx = Ctx { matcher, pat };
+    let ctx = Ctx {
+        matcher,
+        pat,
+        satisfied: &matcher.satisfied,
+    };
+    if !count_root {
+        return try_match_at(
+            &ctx,
+            root,
+            root_node,
+            Some(root_value),
+            root_out_vertex,
+            bindings,
+            k,
+        );
+    }
+    let mut counted = counting(&matcher.satisfied, k);
     try_match_at(
         &ctx,
         root,
@@ -77,18 +133,31 @@ pub(crate) fn try_match(
         Some(root_value),
         root_out_vertex,
         bindings,
-        k,
+        &mut counted,
     )
+}
+
+/// Wraps the root continuation so every configuration reaching it bumps
+/// `satisfied`.
+fn counting<'a>(
+    satisfied: &'a Cell<u64>,
+    k: &'a mut dyn FnMut(&mut Bindings) -> bool,
+) -> impl FnMut(&mut Bindings) -> bool + 'a {
+    move |b| {
+        satisfied.set(satisfied.get() + 1);
+        k(b)
+    }
 }
 
 /// Zero-value-output attempt (`Return` and friends): `pat`'s root against
 /// `node`, with no associated output.
 ///
 /// Such a node can only satisfy a root whose output vertex imposes no value
-/// requirement (a bare `any()` / `var()`, or a control builder); a root
+/// requirement (a bare `anything()` / `var()`, or a control builder); a root
 /// demanding a value output is rejected.
 ///
-/// `k` is the root continuation; see [`try_match`].
+/// `k` is the root continuation; see [`try_match`]. `count_root` is `false`
+/// for a sub-pattern matched inside another walk; see [`try_match_nested`].
 pub(crate) fn try_match_node(
     matcher: &Matcher,
     pat: &Pattern,
@@ -96,12 +165,21 @@ pub(crate) fn try_match_node(
     node: NodeId,
     bindings: &mut Bindings,
     k: &mut dyn FnMut(&mut Bindings) -> bool,
+    count_root: bool,
 ) -> bool {
     if root_requires_value_output(pat, root) {
         return false;
     }
-    let ctx = Ctx { matcher, pat };
-    try_match_at(&ctx, root, node, None, None, bindings, k)
+    let ctx = Ctx {
+        matcher,
+        pat,
+        satisfied: &matcher.satisfied,
+    };
+    if !count_root {
+        return try_match_at(&ctx, root, node, None, None, bindings, k);
+    }
+    let mut counted = counting(&matcher.satisfied, k);
+    try_match_at(&ctx, root, node, None, None, bindings, &mut counted)
 }
 
 /// A root demanding a value output cannot match a zero-output IR node.
@@ -125,7 +203,6 @@ fn root_output_vertex_for(
     matcher: &Matcher,
     root_value: ValueId,
 ) -> Option<PatValueId> {
-    // Single output vertex: applies regardless of slot.
     let outs = pat.graph.produced_outputs(root);
     let mut iter = outs.iter().copied();
     let first = iter.next()?;
@@ -133,8 +210,6 @@ fn root_output_vertex_for(
         return Some(first);
     }
 
-    // The `If` control root: per-slot lookup, so each control output's
-    // constraints land on the right slot.
     let (_node, ir_slot) = matcher.function().value_definition(root_value);
     outs.iter()
         .copied()
@@ -166,13 +241,17 @@ fn try_match_at(
     }
 
     // Root-output kind / width constraints (`bool_*` pins `Value(I1)`,
-    // `value_of_width` pins width).
-    if let Some(ov_idx) = out_vertex
-        && let Some(value) = root_value
-    {
+    // `value_of_width` pins width). With no value to check against (a
+    // node-rooted match at a zero-output kind, reached through an alternation
+    // whose own synthesized vertex imposes nothing), a vertex that demands
+    // anything cannot be satisfied, mirroring `finalize`'s secondary-output
+    // arm. A bare `anything()` demands nothing and still matches a `Return`.
+    if let Some(ov_idx) = out_vertex {
         let ov = ctx.pat.graph.output_weight(ov_idx);
-        if !output_ok(ov, ctx.function(), value) {
-            return false;
+        match root_value {
+            Some(value) if !output_ok(ov, ctx.function(), value) => return false,
+            None if vertex_imposes_requirement(ov) => return false,
+            _ => {}
         }
     }
 
@@ -184,20 +263,12 @@ fn try_match_at(
         return false;
     }
 
-    let mut inputs: Vec<InputEdge> = ctx
-        .pat
-        .graph
-        .consumed_inputs(pat_node)
-        .into_iter()
-        .map(|(slot, out_vertex)| {
-            let producer = ctx.pat.graph.producer_of(out_vertex);
-            InputEdge {
-                consumer_slot: slot,
-                out_vertex,
-                producer,
-            }
-        })
-        .collect();
+    // Resolved once at seal: neither the edge list, its ordering nor the fixed
+    // count depends on the IR node, and a match attempt re-enters this function
+    // once per operand ordering.
+    let node_inputs = ctx.pat.inputs_of(pat_node);
+    let inputs = &node_inputs.edges;
+    let n_fixed = node_inputs.fixed;
 
     // Captures for THIS node, independent of operand ordering. An
     // output-vertex capture binds the matched VALUE; a node-declared capture
@@ -209,59 +280,51 @@ fn try_match_at(
         nd.capture.map(|cap| (cap, Binding::Node(ir_node))),
     ];
 
-    // Alternation (`one_of`): `inputs` are independent alternative
-    // sub-patterns, not operands, all tried against the SAME `ir_node`. Each
-    // alternative's own `try_match_at` handles its captures / guard / footprint,
-    // so the alternation node records nothing itself.
-    //
-    // This is an ordered choice, not a union: once an arm matches, later arms
-    // are shadowed by design. So enumeration runs WITHIN the winning arm, never
-    // across arms; otherwise a trailing wildcard arm would add a spurious
-    // second binding to every hit of a specific earlier arm. An enumerating `k`
-    // makes the return value useless for "did this arm match", hence `reached`.
+    // Alternation (`one_of` / `first_of`): `inputs` are independent alternative
+    // sub-patterns, not operands, all tried against the SAME `ir_node`. `one_of`
+    // enumerates every matching arm; `first_of` cuts to the first.
     if nd.alternation {
         let mark = bindings.mark();
         if !bind_all_captures(bindings, &cap_bindings) {
             return false;
         }
-        for alt in &inputs {
-            let inner = bindings.mark();
-            let mut reached = false;
-            {
-                let mut k_alt = |b: &mut Bindings| -> bool {
-                    reached = true;
-                    k(b)
-                };
-                if try_match_at(
-                    ctx,
-                    alt.producer,
-                    ir_node,
-                    root_value,
-                    Some(alt.out_vertex),
-                    bindings,
-                    &mut k_alt,
-                ) {
-                    return true;
-                }
+        for alt in inputs {
+            let before = ctx.satisfied.get();
+            let accepted = try_match_at(
+                ctx,
+                alt.producer,
+                ir_node,
+                root_value,
+                Some(alt.out_vertex),
+                bindings,
+                // The arm's own `try_match_at` restores on every `false`
+                // return, so a rejected configuration needs no cleanup here.
+                &mut |b| {
+                    finish_node(
+                        ctx,
+                        nd,
+                        pat_node,
+                        ir_node,
+                        root_value,
+                        out_vertex,
+                        b,
+                        &mut |b| continue_node(ctx, nd, ir_node, b, k),
+                    )
+                },
+            );
+            if accepted {
+                return true;
             }
-            bindings.restore(inner);
-            if reached {
-                // This arm matched and was fully enumerated; the rest are
-                // shadowed.
+            // The cut is on a produced match, not on structural arm shape: an
+            // arm reaching `k` but rejected by a guard above falls through to
+            // the next arm.
+            if nd.first_match && ctx.satisfied.get() > before {
                 break;
             }
         }
         bindings.restore(mark);
         return false;
     }
-
-    // Fixed-slot operands are assigned before the existential (`any_input`)
-    // ones. Stable, so each group keeps its relative order.
-    inputs.sort_by_key(|e| e.consumer_slot == crate::matcher::ANY_INPUT_SLOT);
-    let n_fixed = inputs
-        .iter()
-        .filter(|e| e.consumer_slot != crate::matcher::ANY_INPUT_SLOT)
-        .count();
 
     // Commutativity needs exactly two fixed operands at slots {0,1} (the shape
     // of every commutative IR kind's signature), a commutative IR kind, and no
@@ -274,33 +337,35 @@ fn try_match_at(
             .all(|e| e.consumer_slot < COMM_ORDER.len())
         && ctx.function().node_kind(ir_node).is_commutative();
 
-    // The existential candidate set: every input slot of `ir_node`. Invariant
-    // across the search, so collected once here rather than per recursion level
-    // (and empty in the common no-`any_input` case).
+    // The existential candidate set: every input slot of `ir_node` a fixed
+    // operand has not pinned. Invariant across the search, so collected once
+    // here rather than per recursion level (and empty in the common
+    // no-`any_input` case). `Candidates::Only` never extends the `Claimed`
+    // chain, so a pinned slot is excluded here or it is offered twice; the
+    // commutative pair is `OneOf` and `Claimed` handles it.
     //
-    // No value-kind filter: the sub-pattern discriminates. A typed sub carries
-    // a value output-kind and so skips control/memory/PhiToken inputs, while a
-    // bare wildcard (`OutputKindSpec::Any`) binds any input including a
-    // `PhiToken`.
+    // No kind filter here: the sub-pattern discriminates. A sub carries an
+    // output-kind and reaches only inputs of that kind (a value sub skips
+    // control/memory/PhiToken, a memory sub binds a memory input), while a bare
+    // wildcard (`OutputKindSpec::Any`) binds any input including a `PhiToken`.
     let ext_slots: Vec<usize> = if n_fixed == inputs.len() {
         Vec::new()
     } else {
-        (0..ctx.function().node_inputs(ir_node).len()).collect()
+        let pinned: Vec<usize> = if commutative {
+            Vec::new()
+        } else {
+            inputs[..n_fixed].iter().map(|e| e.consumer_slot).collect()
+        };
+        (0..ctx.function().node_inputs(ir_node).len())
+            .filter(|s| !pinned.contains(s))
+            .collect()
     };
 
-    let assigns: Vec<Assign> = inputs
-        .into_iter()
-        .map(|edge| {
-            let cands = if edge.consumer_slot == crate::matcher::ANY_INPUT_SLOT {
-                Candidates::OneOf(&ext_slots)
-            } else if commutative {
-                Candidates::OneOf(&COMM_ORDER[edge.consumer_slot])
-            } else {
-                Candidates::Only(edge.consumer_slot)
-            };
-            Assign { edge, cands }
-        })
-        .collect();
+    let assignment = Assignment {
+        edges: inputs,
+        commutative,
+        ext_slots: &ext_slots,
+    };
 
     let mark = bindings.mark();
     {
@@ -315,58 +380,163 @@ fn try_match_at(
             if !bind_all_captures(b, &cap_bindings) {
                 return false;
             }
-            // Secondary (non-anchor) output vertices, checked and bound at
-            // each vertex's slot: the only way a pattern reaches a sibling
-            // output. The anchor output and node captures are handled above.
-            for &ov_idx in ctx.pat.graph.produced_outputs(pat_node).iter() {
-                if Some(ov_idx) == out_vertex {
-                    continue;
-                }
-                let ov = ctx.pat.graph.output_weight(ov_idx);
-                let Some(&val) = ctx.function().node_outputs(ir_node).get(ov.slot) else {
-                    // No IR output at this slot. A vertex imposing nothing (a
-                    // bare node-rooted `any()`) is vacuously satisfied, which
-                    // is what lets `any()` match a value-less `Return`. One
-                    // carrying a capture or any constraint cannot be.
-                    if vertex_imposes_requirement(ov) {
-                        b.restore(inner);
-                        return false;
-                    }
-                    continue;
-                };
-                if !output_ok(ov, ctx.function(), val) {
-                    b.restore(inner);
-                    return false;
-                }
-                if let Some(cap) = ov.capture
-                    && !b.bind_capture(cap, Binding::Value(val))
-                {
-                    b.restore(inner);
-                    return false;
-                }
-            }
-            if let Some(pm) = &nd.post_match {
-                let ty = root_value
-                    .and_then(|value| ctx.function().value_kind(value).as_value())
-                    .unwrap_or(ValueType::I1);
-                if !pm(ctx.matcher, ir_node, ty, b) {
-                    b.restore(inner);
-                    return false;
-                }
-            }
-            b.record_matched(ir_node);
-            if k(b) {
+            if finish_node(
+                ctx,
+                nd,
+                pat_node,
+                ir_node,
+                root_value,
+                out_vertex,
+                b,
+                &mut |b| continue_node(ctx, nd, ir_node, b, k),
+            ) {
                 return true;
             }
             b.restore(inner);
             false
         };
-        if match_assignments(ctx, &assigns, 0, ir_node, None, bindings, &mut finalize) {
+        if match_assignments(ctx, &assignment, 0, ir_node, None, bindings, &mut finalize) {
             return true;
         }
     }
     bindings.restore(mark);
     false
+}
+
+/// The constraints a pat node owes once its operands, or its alternation arm,
+/// have matched: its sibling output vertices and its guard. Restores `b` to
+/// entry on rejection; [`continue_node`] carries on from here.
+///
+/// A sibling vertex with no IR output at its slot is vacuously satisfied only
+/// while it constrains nothing, which is what lets a bare `anything()` match a
+/// value-less `Return`; one carrying a capture or a filter rejects instead of
+/// leaving that capture unbound.
+#[allow(clippy::too_many_arguments)]
+fn finish_node(
+    ctx: &Ctx,
+    nd: &PatNode,
+    pat_node: PatNodeId,
+    ir_node: NodeId,
+    root_value: Option<ValueId>,
+    out_vertex: Option<PatValueId>,
+    b: &mut Bindings,
+    k: &mut dyn FnMut(&mut Bindings) -> bool,
+) -> bool {
+    let sibs: Vec<PatValueId> = ctx
+        .pat
+        .graph
+        .produced_outputs(pat_node)
+        .iter()
+        .copied()
+        .filter(|&ov| Some(ov) != out_vertex)
+        .collect();
+    let inner = b.mark();
+    if bind_sibling_outputs(ctx, nd, &sibs, 0, ir_node, root_value, b, k) {
+        return true;
+    }
+    b.restore(inner);
+    false
+}
+
+/// The sibling vertices from `idx` on, then `nd`'s post-match predicate, then
+/// `k`. An `any_slot` vertex enumerates the node's outputs, so a capture on it
+/// binds each in turn and a rejection anywhere above re-drives it; every other
+/// vertex is checked at its own slot.
+#[allow(clippy::too_many_arguments)]
+fn bind_sibling_outputs(
+    ctx: &Ctx,
+    nd: &PatNode,
+    sibs: &[PatValueId],
+    idx: usize,
+    ir_node: NodeId,
+    root_value: Option<ValueId>,
+    b: &mut Bindings,
+    k: &mut dyn FnMut(&mut Bindings) -> bool,
+) -> bool {
+    let Some(&ov_idx) = sibs.get(idx) else {
+        if let Some(pm) = &nd.post_match {
+            let ty = root_value
+                .and_then(|value| ctx.function().value_kind(value).as_value())
+                .unwrap_or(ValueType::I1);
+            if !pm(ctx.matcher, ir_node, ty, b) {
+                return false;
+            }
+        }
+        return k(b);
+    };
+    let ov = ctx.pat.graph.output_weight(ov_idx);
+    let outs = ctx.function().node_outputs(ir_node);
+    let pinned = [ov.slot];
+    let enumerated: Vec<usize>;
+    let slots: &[usize] = if ov.any_slot {
+        enumerated = (0..outs.len()).collect();
+        &enumerated
+    } else {
+        &pinned
+    };
+    let mut any_slot_present = false;
+    for &slot in slots {
+        let Some(&val) = outs.get(slot) else { continue };
+        any_slot_present = true;
+        if !output_ok(ov, ctx.function(), val) {
+            continue;
+        }
+        let here = b.mark();
+        if let Some(cap) = ov.capture
+            && !b.bind_capture(cap, Binding::Value(val))
+        {
+            b.restore(here);
+            continue;
+        }
+        if bind_sibling_outputs(ctx, nd, sibs, idx + 1, ir_node, root_value, b, k) {
+            return true;
+        }
+        b.restore(here);
+    }
+    // No output at the slot at all is vacuously satisfied only while the vertex
+    // constrains nothing, which is what lets a bare `anything()` match a
+    // value-less `Return`; one carrying a capture or a filter rejects instead of
+    // leaving that capture unbound.
+    if !any_slot_present && !vertex_imposes_requirement(ov) {
+        return bind_sibling_outputs(ctx, nd, sibs, idx + 1, ir_node, root_value, b, k);
+    }
+    false
+}
+
+/// A matched pat node's footprint entry and hand-off to `k`, through its
+/// binding walk where it has one. A walk is an enumeration like any operand's,
+/// so `k` runs once per configuration it reaches rather than once per node,
+/// and a rejection above re-drives it.
+///
+/// A declined `k` leaves `b` for the caller to roll back, which every call site
+/// does to a mark taken earlier.
+///
+/// Inlined on measured grounds: this runs once per matched node per
+/// configuration, and left to the compiler's judgement the extra call shows up
+/// in `benches/matcher.rs`'s `matcher_find_all_add_const`.
+#[inline(always)]
+fn continue_node(
+    ctx: &Ctx,
+    nd: &PatNode,
+    ir_node: NodeId,
+    b: &mut Bindings,
+    k: &mut dyn FnMut(&mut Bindings) -> bool,
+) -> bool {
+    let Some(bw) = &nd.binding_walk else {
+        b.record_matched(ir_node);
+        return k(b);
+    };
+    // The footprint entry is scoped to one continuation call, not to this
+    // frame, so the walk's next configuration starts from a clean footprint.
+    bw(ctx.matcher, ir_node, b, &mut |b| {
+        let per_config = b.mark();
+        b.record_matched(ir_node);
+        if k(b) {
+            return true;
+        }
+        b.restore(per_config);
+        false
+    })
 }
 
 /// Try `edge`'s sub-pattern against the operand `value`, then, if the cast mask
@@ -414,12 +584,9 @@ fn try_operand(
     }
     bindings.restore(mark);
     if reached {
-        // Direct producer matched and was fully enumerated; the fallback is
-        // only for a mismatch.
         return false;
     }
 
-    // Cast walk-through fallback.
     if ctx.pat.cast_mask.is_empty() {
         return false;
     }
@@ -447,20 +614,46 @@ fn try_operand(
     false
 }
 
-struct InputEdge {
+pub(crate) struct InputEdge {
     consumer_slot: usize,
     out_vertex: PatValueId,
     producer: PatNodeId,
 }
 
-/// The IR input slots one pattern input may occupy. The matcher's three
-/// disciplines differ only in this set:
-///
-/// | pattern input | candidate set |
-/// |---|---|
-/// | fixed, non-commutative | `Only(its own consumer slot)` |
-/// | fixed, commutative pair | `OneOf([own slot, the other])`, injectivity yielding exactly the 2 orderings |
-/// | existential (`any_input`) | `OneOf(every input slot)` |
+/// A pat node's consumed inputs, with the existential (`any_input`) ones sorted
+/// last and the fixed ones counted.
+pub(crate) struct NodeInputs {
+    pub(crate) edges: Vec<InputEdge>,
+    pub(crate) fixed: usize,
+}
+
+/// One entry per pat node, indexed by [`PatNodeId::as_u32`].
+pub(crate) fn collect_node_inputs(graph: &crate::matcher::graph::PatGraph) -> Vec<NodeInputs> {
+    graph
+        .all_node_ids()
+        .map(|node| {
+            let mut edges: Vec<InputEdge> = graph
+                .consumed_inputs(node)
+                .into_iter()
+                .map(|(slot, out_vertex)| InputEdge {
+                    consumer_slot: slot,
+                    out_vertex,
+                    producer: graph.producer_of(out_vertex),
+                })
+                .collect();
+            // Stable, so each group keeps its relative order.
+            edges.sort_by_key(|e| e.consumer_slot == crate::matcher::ANY_INPUT_SLOT);
+            let fixed = edges
+                .iter()
+                .filter(|e| e.consumer_slot != crate::matcher::ANY_INPUT_SLOT)
+                .count();
+            NodeInputs { edges, fixed }
+        })
+        .collect()
+}
+
+/// The IR input slots one pattern input may occupy: the whole difference
+/// between a fixed operand, a commutative pair and an existential.
 #[derive(Clone, Copy)]
 enum Candidates<'a> {
     /// A pinned slot: exactly one candidate.
@@ -476,9 +669,24 @@ enum Candidates<'a> {
 /// operand the assignment visits first.
 const COMM_ORDER: [[usize; 2]; 2] = [[0, 1], [1, 0]];
 
-struct Assign<'a> {
-    edge: InputEdge,
-    cands: Candidates<'a>,
+/// One node's assignment problem: which IR input slots each pattern input may
+/// occupy. Everything here is invariant across the search below it.
+struct Assignment<'a> {
+    edges: &'a [InputEdge],
+    commutative: bool,
+    ext_slots: &'a [usize],
+}
+
+impl Assignment<'_> {
+    fn candidates(&self, edge: &InputEdge) -> Candidates<'_> {
+        if edge.consumer_slot == crate::matcher::ANY_INPUT_SLOT {
+            Candidates::OneOf(self.ext_slots)
+        } else if self.commutative {
+            Candidates::OneOf(&COMM_ORDER[edge.consumer_slot])
+        } else {
+            Candidates::Only(edge.consumer_slot)
+        }
+    }
 }
 
 /// Slots already claimed by enclosing [`Candidates::OneOf`] assignments.
@@ -504,8 +712,9 @@ impl Claimed<'_> {
     }
 }
 
-/// Continuation-passing injective assignment of `assigns[i..]` to `ir_node`'s
-/// input slots, invoking `done` once every input is placed and matched.
+/// Continuation-passing injective assignment of `assignment.edges[i..]` to
+/// `ir_node`'s input slots, invoking `done` once every input is placed and
+/// matched.
 ///
 /// Each input's sub-match recurses with a continuation assigning the remaining
 /// inputs, so a later rejection asks an earlier input for its next candidate
@@ -514,25 +723,25 @@ impl Claimed<'_> {
 /// [`try_operand`], so an existential honours `ignore_casts` like a fixed slot.
 fn match_assignments(
     ctx: &Ctx,
-    assigns: &[Assign],
+    assignment: &Assignment,
     i: usize,
     ir_node: NodeId,
     claimed: Option<&Claimed>,
     bindings: &mut Bindings,
     done: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
-    let Some(a) = assigns.get(i) else {
+    let Some(edge) = assignment.edges.get(i) else {
         return done(bindings);
     };
-    match a.cands {
+    match assignment.candidates(edge) {
         // Direct index, no search and no injectivity bookkeeping. The slot is
         // pinned, so a failed operand fails it outright.
         Candidates::Only(slot) => {
             let Some(value) = input_at(ctx, ir_node, slot) else {
                 return false;
             };
-            try_operand(ctx, &a.edge, value, bindings, &mut |b| {
-                match_assignments(ctx, assigns, i + 1, ir_node, claimed, b, done)
+            try_operand(ctx, edge, value, bindings, &mut |b| {
+                match_assignments(ctx, assignment, i + 1, ir_node, claimed, b, done)
             })
         }
         Candidates::OneOf(slots) => {
@@ -547,8 +756,8 @@ fn match_assignments(
                     slot,
                     prev: claimed,
                 };
-                if try_operand(ctx, &a.edge, value, bindings, &mut |b| {
-                    match_assignments(ctx, assigns, i + 1, ir_node, Some(&next), b, done)
+                if try_operand(ctx, edge, value, bindings, &mut |b| {
+                    match_assignments(ctx, assignment, i + 1, ir_node, Some(&next), b, done)
                 }) {
                     return true;
                 }

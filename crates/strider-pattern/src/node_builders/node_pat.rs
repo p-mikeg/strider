@@ -1,15 +1,10 @@
-//! The shared lowering core behind the slot-convention control / memory /
-//! phi builders: pick a kind, declare an anchor output, wire sparse positional
-//! sub-patterns into input slots, optionally pin a node predicate and capture,
-//! then seal.
-
 use std::mem::Discriminant;
 
 use strider_ir::node::{NodeKind, ValueType};
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, MatcherBuilder, NodePredicate, PatValueRef, Pattern};
+use crate::matcher::{KindSpec, MatcherBuilder, NodePredicate, PatNodeRef, PatValueRef, Pattern};
 
 use super::{MemPat, SubCompiler};
 
@@ -28,20 +23,20 @@ pub(crate) enum AnchorKind {
 
 type NodePredicateFactory = Box<dyn FnOnce() -> NodePredicate>;
 
-/// Binds and/or kind-constrains the value produced at output `slot`. Defaults
-/// to the wildcard kind
+/// Binds and/or kind-constrains the value produced at output `slot`, or at
+/// some output when `slot` is `None`. Defaults to the wildcard kind
 /// ([`OutputKindSpec::Any`](crate::matcher::OutputKindSpec::Any)); `ty`
 /// narrows to an exact value type, `width` to a bit width.
 #[derive(Clone, Copy)]
 pub(crate) struct OutputSpec {
-    slot: usize,
+    slot: Option<usize>,
     capture: Option<Capture>,
     ty: Option<ValueType>,
     width: Option<u32>,
 }
 
 impl OutputSpec {
-    fn at(slot: usize) -> Self {
+    fn at(slot: Option<usize>) -> Self {
         Self {
             slot,
             capture: None,
@@ -62,7 +57,7 @@ pub(crate) struct NodePat {
     /// `(slot, bits)`.
     input_widths: Vec<(usize, u32)>,
     /// Requires the matched value to be produced at exactly the anchor slot
-    /// (see [`PatValue::match_slot`]).
+    /// (see [`crate::matcher::PatValue::match_slot`]).
     pin_anchor_slot: bool,
     outputs: Vec<OutputSpec>,
 }
@@ -109,7 +104,7 @@ impl NodePat {
     }
 
     /// Anchors on the value output at `slot`, so a normally memory-rooted node
-    /// can nest as a value operand, as in `add(x, call_other().name("f"))`.
+    /// can nest as a value operand, as in `int_add(x, call_other().name("f"))`.
     pub(crate) fn with_value_anchor(mut self, slot: usize) -> Self {
         self.anchor = AnchorKind::Value(slot);
         self
@@ -150,12 +145,20 @@ impl NodePat {
         self
     }
 
-    /// The predicate short-circuits before child recursion.
+    /// The predicate short-circuits before child recursion. Composes with one
+    /// already staged, like
+    /// [`MatcherBuilder::set_node_predicate_at`](crate::matcher::MatcherBuilder::set_node_predicate_at).
     pub(crate) fn with_node_predicate<F>(mut self, f: F) -> Self
     where
         F: FnOnce() -> NodePredicate + 'static,
     {
-        self.node_predicate = Some(Box::new(f));
+        self.node_predicate = Some(match self.node_predicate.take() {
+            Some(prev) => Box::new(move || {
+                let (prev, next) = (prev(), f());
+                Box::new(move |m, n| prev(m, n) && next(m, n))
+            }),
+            None => Box::new(f),
+        });
         self
     }
 
@@ -179,7 +182,7 @@ impl NodePat {
 
     /// Binds a *sibling* output of the anchor. A leaf: it captures the output
     /// value itself and does not recurse into what that output feeds.
-    pub(crate) fn capture_output(mut self, slot: usize, c: Capture) -> Self {
+    pub(crate) fn capture_output(mut self, slot: Option<usize>, c: Capture) -> Self {
         self.outputs.push(OutputSpec {
             capture: Some(c),
             ..OutputSpec::at(slot)
@@ -188,7 +191,7 @@ impl NodePat {
     }
 
     /// Implies a value output of that width.
-    pub(crate) fn output_width(mut self, slot: usize, bits: u32) -> Self {
+    pub(crate) fn output_width(mut self, slot: Option<usize>, bits: u32) -> Self {
         self.outputs.push(OutputSpec {
             width: Some(bits),
             ..OutputSpec::at(slot)
@@ -196,7 +199,7 @@ impl NodePat {
         self
     }
 
-    pub(crate) fn output_ty(mut self, slot: usize, ty: ValueType) -> Self {
+    pub(crate) fn output_ty(mut self, slot: Option<usize>, ty: ValueType) -> Self {
         self.outputs.push(OutputSpec {
             ty: Some(ty),
             ..OutputSpec::at(slot)
@@ -204,7 +207,10 @@ impl NodePat {
         self
     }
 
-    pub(crate) fn lower(self, b: &mut MatcherBuilder) -> Option<PatValueRef> {
+    /// Lowers into `b`, returning the staged node and its anchor output (the
+    /// value/memory/control output this pattern nests through, or `None` for a
+    /// node-rooted kind like `Return` / `If`).
+    pub(crate) fn lower(self, b: &mut MatcherBuilder) -> (PatNodeRef, Option<PatValueRef>) {
         let NodePat {
             kind,
             inputs,
@@ -241,9 +247,13 @@ impl NodePat {
             }
             b.input(node, slot, o);
         }
-        // Sibling-output vertices, each checked at its own slot.
+        // Sibling-output vertices: at a pinned slot, or enumerated over every
+        // slot for `any_output()`.
         for spec in outputs {
-            let out = b.value_output(node, spec.slot);
+            let out = match spec.slot {
+                Some(slot) => b.value_output(node, slot),
+                None => b.any_slot_value_output(node),
+            };
             match (spec.ty, spec.width) {
                 (Some(ty), _) => b.set_value_ty(out, ty),
                 // Without a type pin, relax to the wildcard so a control or
@@ -258,10 +268,8 @@ impl NodePat {
                 b.capture_output(out, c);
             }
         }
-        if let Some(factory) = node_predicate
-            && let Some(out) = anchor_out
-        {
-            b.set_node_predicate(out, factory());
+        if let Some(factory) = node_predicate {
+            b.set_node_predicate_at(node, factory());
         }
         if let Some(c) = capture {
             match anchor_out {
@@ -269,29 +277,38 @@ impl NodePat {
                 None => b.capture_node(node, c),
             }
         }
-        anchor_out
+        (node, anchor_out)
     }
 
     pub(crate) fn build(self) -> Pattern {
         let mut b = MatcherBuilder::new();
-        let _ = self.lower(&mut b);
+        self.lower(&mut b);
         b.finish()
     }
 
-    /// For the [`MatchPat`] / [`MemPat`] impls of anchored wrappers nesting as
-    /// a value or memory operand. Those always carry an anchor by
-    /// construction; only a node-rooted builder, which never nests, could
-    /// yield `None`.
+    /// For the [`MatchPat`] impls of anchored wrappers nesting as a value or
+    /// memory operand. Those always carry an anchor by construction; only a
+    /// node-rooted builder, which never nests, could yield `None`.
     #[allow(clippy::expect_used)]
     pub(crate) fn compile_anchored(self, b: &mut MatcherBuilder) -> PatValueRef {
         self.lower(b)
+            .1
             .expect("anchored NodePat has an anchor output")
+    }
+
+    /// Compiles a node-rooted kind (`Return` / `Switch` / ...) for a slot that
+    /// wires an edge, an alternation arm or an existential input. There is no
+    /// anchor output, so synthesize an `Any` one: it binds against any edge and
+    /// the match stays node-rooted.
+    pub(crate) fn compile_alt_arm(self, b: &mut MatcherBuilder) -> PatValueRef {
+        let (node, anchor) = self.lower(b);
+        anchor.unwrap_or_else(|| b.any_value_output(node))
     }
 }
 
-/// For control-predecessor slots (`ctrl`, `preceded_by`), where the producer
-/// output is `Control` rather than a value.
-fn control_compiler<P: MatchPat + 'static>(p: P) -> SubCompiler {
+/// For control-predecessor slots (`ctrl`), where the producer output is
+/// `Control` rather than a value.
+pub(crate) fn control_compiler<P: MatchPat + 'static>(p: P) -> SubCompiler {
     Box::new(move |b| {
         let o = p.compile(b);
         b.set_output_control(o);
@@ -404,7 +421,6 @@ mod tests {
             5,
             "wildcard any_input reaches every input (ctrl, mem, target, sp, arg0)",
         );
-        // Control and memory appear, reachable only by a wildcard.
         let bound_kinds: Vec<_> = hits
             .iter()
             .map(|h| function.value_kind(h.value(c).unwrap()))
@@ -495,7 +511,6 @@ mod tests {
             "wildcard any_input can now also reach the PhiToken slot, kinds: {kinds:?}",
         );
 
-        // A typed value sub can bind neither, so it matches nothing.
         assert_eq!(
             matcher
                 .find_all(&mem_phi_any_input(int_const(1u128)))
@@ -503,6 +518,44 @@ mod tests {
                 .len(),
             0,
             "a typed value sub must not bind a Memory or PhiToken predecessor",
+        );
+    }
+
+    /// A second predicate narrows the first, mirroring
+    /// [`MatcherBuilder::set_node_predicate_at`], so a `.filter()` layered on a
+    /// builder cannot delete that builder's core constraint.
+    #[test]
+    fn node_predicates_compose_rather_than_replace() {
+        let function = call_with_arg();
+        let matcher = Matcher::new(&function);
+        let composed = NodePat::node(KindSpec::Exact(NodeKind::Return))
+            .with_node_predicate(|| Box::new(|_m, _n| false))
+            .with_node_predicate(|| Box::new(|_m, _n| true))
+            .build();
+        assert!(
+            matcher.find_all(&composed).unwrap().is_empty(),
+            "the first predicate must survive the second"
+        );
+    }
+
+    /// A node-rooted kind has no anchor output, which must not lose the
+    /// predicate.
+    #[test]
+    fn node_rooted_pattern_keeps_its_node_predicate() {
+        let function = call_with_arg();
+        let matcher = Matcher::new(&function);
+        let rooted = || NodePat::node(KindSpec::Exact(NodeKind::Return));
+        assert_eq!(
+            matcher.find_all(&rooted().build()).unwrap().len(),
+            1,
+            "the unguarded node-rooted pattern matches the Return"
+        );
+        let guarded = rooted()
+            .with_node_predicate(|| Box::new(|_m, _n| false))
+            .build();
+        assert!(
+            matcher.find_all(&guarded).unwrap().is_empty(),
+            "a rejecting node predicate must still run on a node-rooted pattern"
         );
     }
 

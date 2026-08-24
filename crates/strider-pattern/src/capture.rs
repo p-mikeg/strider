@@ -18,8 +18,8 @@ fn next_id() -> u32 {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Capture(u32);
 
-// No `Default`: minting a fresh global id from `.default()` means a
-// `#[derive(Default)]` on any containing struct silently allocates ids.
+// Every `Capture` is minted explicitly: a `.default()` would let a
+// `#[derive(Default)]` on any containing struct silently allocate ids.
 #[allow(clippy::new_without_default)]
 impl Capture {
     pub fn new() -> Self {

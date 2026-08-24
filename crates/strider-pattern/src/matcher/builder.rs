@@ -1,10 +1,8 @@
-//! # Why staging
-//!
 //! [`strider_graph::Graph`] creates a node with all its outputs and resolves
-//! its inputs at creation time. The builder API is incremental: a bare `node()`
-//! comes first, outputs are added later, and inputs are wired once producers
-//! are compiled. So both builders stage into a [`StagedGraph`] and materialise
-//! the whole DAG at [`finish`](MatcherBuilder::finish) in
+//! its inputs at creation time, while the builder API is incremental: a bare
+//! `node()` comes first, outputs are added later, and inputs are wired once
+//! producers are compiled. So both builders stage into a [`StagedGraph`] and
+//! materialise the whole DAG at [`finish`](MatcherBuilder::finish) in
 //! producer-before-consumer order. Each input's sparse consumer slot is
 //! recorded on the materialised [`PatNode`]'s `input_slots` via [`SealNode`].
 
@@ -81,18 +79,37 @@ impl MatcherBuilder {
         self.stage(PatNode::from_kind(kind))
     }
 
-    /// Matches a value if any alternative does. The alternatives wire as this
-    /// node's inputs, but the matcher tries each against the *same* IR node
-    /// rather than as operands, first match winning. Empty `alts` matches
-    /// nothing.
+    /// Matches if any alternative matches the node. The alternatives wire as
+    /// this node's inputs, but the matcher tries each against the *same* IR
+    /// node rather than as operands, enumerating every arm that matches (a
+    /// union). Empty `alts` matches nothing.
+    ///
+    /// The alternation output is [`OutputKindSpec::Any`], so it nests in a
+    /// value, control, or memory slot alike; the arms discriminate.
+    ///
+    /// Enumeration is multiplicative under
+    /// [`find_all`](crate::Matcher::find_all); see [`crate::OneOf::new`].
     pub fn one_of(&mut self, alts: &[PatValueRef]) -> PatValueRef {
+        self.alternation(alts, false)
+    }
+
+    /// Like [`Self::one_of`] but cuts to the first arm that yields a match
+    /// instead of enumerating every match: an ordered choice, not a union.
+    /// An arm rejected by a guard above the alternation produces no match, so
+    /// the choice falls through to the next arm.
+    pub fn first_of(&mut self, alts: &[PatValueRef]) -> PatValueRef {
+        self.alternation(alts, true)
+    }
+
+    fn alternation(&mut self, alts: &[PatValueRef], first_match: bool) -> PatValueRef {
         let mut alt_node = PatNode::from_kind(KindSpec::Any);
         alt_node.alternation = true;
+        alt_node.first_match = first_match;
         let n = self.stage(alt_node);
         for (slot, alt) in alts.iter().enumerate() {
             self.input(n, slot, *alt);
         }
-        self.value_output(n, 0)
+        self.any_value_output(n)
     }
 
     pub fn input(&mut self, node: PatNodeRef, slot: usize, prod: PatValueRef) {
@@ -101,6 +118,14 @@ impl MatcherBuilder {
 
     pub fn value_output(&mut self, node: PatNodeRef, slot: usize) -> PatValueRef {
         self.add_output(node, PatValue::value(slot))
+    }
+
+    /// A slot-0 value output relaxed to [`OutputKindSpec::Any`]: the output an
+    /// alternation node or a value-less kind synthesises.
+    pub fn any_value_output(&mut self, node: PatNodeRef) -> PatValueRef {
+        let out = self.value_output(node, 0);
+        self.set_output_any(out);
+        out
     }
 
     pub fn control_output(&mut self, node: PatNodeRef, slot: usize) -> PatValueRef {
@@ -115,14 +140,39 @@ impl MatcherBuilder {
         self.out_of(out).kind = OutputKindSpec::Value(ty);
     }
 
+    /// An alternation's arms are matched against the same edge as the
+    /// alternation itself, so retyping it to `Control` retypes the arms with
+    /// it; a value-anchored arm would otherwise reject the control edge its own
+    /// alternation just bound.
+    ///
+    /// Alone among the output-kind setters in recursing: the value-kind ones
+    /// narrow what an arm's `AnyValue` vertex already accepts, while `Control`
+    /// contradicts it. Recursion rewrites the arm vertices in place, so an
+    /// operand pre-compiled once and fed to both a control and a value slot
+    /// (`match_pat::Pre`) is retyped for both uses.
     pub fn set_output_control(&mut self, out: PatValueRef) {
         self.out_of(out).kind = OutputKindSpec::Control;
+        if !self.core.kind_mut(out.node).alternation {
+            return;
+        }
+        for (node, output) in self.core.input_producers(out.node) {
+            self.set_output_control(PatValueRef { node, output });
+        }
     }
 
-    /// Relaxes `out` to [`OutputKindSpec::Any`], so `any()` / `var()` match
+    /// Relaxes `out` to [`OutputKindSpec::Any`], so `anything()` / `var()` match
     /// value-less kinds (`Region`, `MemPhi`, ...) too.
     pub fn set_output_any(&mut self, out: PatValueRef) {
         self.out_of(out).kind = OutputKindSpec::Any;
+    }
+
+    /// `any_output()`: an output vertex satisfied by any of the node's outputs.
+    /// Unlike [`Self::any_value_output`], which relaxes the KIND of slot 0, this
+    /// enumerates the slots, so a capture on it binds each in turn.
+    pub fn any_slot_value_output(&mut self, node: PatNodeRef) -> PatValueRef {
+        let out = self.any_value_output(node);
+        self.out_of(out).any_slot = true;
+        out
     }
 
     pub fn set_value_width(&mut self, out: PatValueRef, bits: u32) {
@@ -136,7 +186,7 @@ impl MatcherBuilder {
     }
 
     /// Binds the matched output's value (`Binding::Value`), e.g.
-    /// `add(var(x), ..)` captures `x`'s value, not its node.
+    /// `int_add(var(x), ..)` captures `x`'s value, not its node.
     pub fn capture_output(&mut self, out: PatValueRef, c: crate::capture::Capture) {
         self.out_of(out).capture = Some(c);
     }
@@ -147,12 +197,45 @@ impl MatcherBuilder {
         self.core.kind_mut(node.0).capture = Some(c);
     }
 
+    /// Composes with any predicate already on `out`'s producer rather than
+    /// replacing it: a builder installs its own core constraint through this
+    /// slot (`stack_only`, `int_const(v)`, `phi_for(vn)`, ...), and a `.filter()`
+    /// layered on top must narrow that, never delete it. Both are node-only, so
+    /// evaluation order is immaterial.
     pub fn set_node_predicate(&mut self, out: PatValueRef, f: crate::matcher::NodePredicate) {
-        self.core.kind_mut(out.node).node_predicate = Some(f);
+        self.set_node_predicate_at(PatNodeRef(out.node), f);
+    }
+
+    /// Node-keyed form of [`Self::set_node_predicate`], for a node-rooted
+    /// pattern with no anchor output to address it through.
+    pub fn set_node_predicate_at(&mut self, node: PatNodeRef, f: crate::matcher::NodePredicate) {
+        let slot = &mut self.core.kind_mut(node.0).node_predicate;
+        *slot = Some(match slot.take() {
+            Some(prev) => Box::new(move |m, n| prev(m, n) && f(m, n)),
+            None => f,
+        });
+    }
+
+    /// `captures` declares what `f` binds; the sub-pattern it walks is not part
+    /// of this graph, so the capture metadata has no other way to see it.
+    /// See [`BindingWalkFn`](crate::matcher::BindingWalkFn).
+    pub fn set_binding_walk(
+        &mut self,
+        out: PatValueRef,
+        f: crate::matcher::BindingWalkFn,
+        captures: crate::matcher::WalkCaptures,
+    ) {
+        let nd = self.core.kind_mut(out.node);
+        nd.binding_walk = Some(f);
+        nd.walk_captures = captures;
     }
 
     pub fn set_post_match(&mut self, out: PatValueRef, f: crate::matcher::PostMatchFn) {
-        self.core.kind_mut(out.node).post_match = Some(f);
+        let slot = &mut self.core.kind_mut(out.node).post_match;
+        *slot = Some(match slot.take() {
+            Some(prev) => Box::new(move |m, n, ty, b| prev(m, n, ty, b) && f(m, n, ty, b)),
+            None => f,
+        });
     }
 
     /// Disables commutative operand reordering on `out`'s producer.
@@ -168,8 +251,7 @@ impl MatcherBuilder {
     }
 
     /// Materialises every staged node in producer-before-consumer order.
-    /// Performs no structural validation: single-rootedness and acyclicity are
-    /// reported at match time, not here.
+    /// Single-rootedness and acyclicity are reported at match time.
     ///
     /// # Panics
     /// On a cyclic staged graph (a builder bug).

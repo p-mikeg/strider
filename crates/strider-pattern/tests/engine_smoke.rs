@@ -1,6 +1,3 @@
-//! Integration smoke tests for the bipartite match engine, driven directly
-//! through [`MatcherBuilder`] rather than the typed builders.
-
 #![allow(
     clippy::panic,
     clippy::unwrap_used,
@@ -57,12 +54,10 @@ fn multi_sink_pattern_is_buildable_but_match_returns_err() {
 
 #[test]
 fn commutative_swap_matches_add_const_other_order() {
-    // IR is `Add(const, var)` and the pattern is `add(any, const)`, so it can
-    // only match via a commutative operand swap.
+    // IR `Add(IntConst(1), IntConst(5))` against pattern `int_add(anything, const(5))`.
     let f = make_empty_fn(|b| {
         let k = b.build_int_const(1u64, ValueType::I64)?;
         let x = b.build_int_const(5u64, ValueType::I64)?;
-        // const in slot 0, var in slot 1
         b.build_int_binary_operation(k, x, IntBinaryOp::Add, ValueType::I64)
     })
     .unwrap();
@@ -79,7 +74,7 @@ fn commutative_swap_matches_add_const_other_order() {
 
 #[test]
 fn force_ordered_disables_commutative_swap() {
-    // `add(const(5), const(1))` against IR `Add(const(1), const(5))` would only
+    // `int_add(const(5), const(1))` against IR `Add(const(1), const(5))` would only
     // match via a swap, which force_ordered disables.
     let f = make_empty_fn(|b| {
         let a = b.build_int_const(1u64, ValueType::I64)?;
@@ -103,7 +98,7 @@ fn force_ordered_disables_commutative_swap() {
 fn cast_walk_through_matches_under_extend() {
     // IR is `Add(ZeroExtend(var:I32):I64, const:I64)`; the operand is a var read
     // rather than a const because a const would fold instead of producing an
-    // `Extend`. Pinning the `any` leaf to the var's I32 width makes the cast
+    // `Extend`. Pinning the `anything` leaf to the var's I32 width makes the cast
     // load-bearing: without walk-through the matcher sees the I64 ZeroExtend
     // output, with EXTEND walk-through it unwraps to the I32 inner value.
     use strider_ir::ExtendOp;

@@ -1,12 +1,10 @@
-//! Reusable graph fixtures. A shape lives here iff two or more test modules
-//! need it; single-use shapes stay inline in the test.
+//! A shape lives here iff two or more test modules need it; single-use shapes
+//! stay inline in the test.
 
 use strider_ir::node::ValueType;
 use strider_ir::{FloatBinaryOp, Function, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use strider_ir_test_utils::{Tb, reg_vn, stack_vn_x86_64 as stack_vn};
-
-// Op-rooted graphs, parameterised so a test can drive the whole op enum.
 
 pub(crate) fn int_bin_5_3(op: IntBinaryOp) -> Function {
     let mut t = Tb::empty();

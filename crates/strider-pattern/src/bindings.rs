@@ -15,7 +15,7 @@ pub(crate) enum Binding {
     /// do NOT land here: they anchor on their memory-token output and bind a
     /// `Value`.
     Node(NodeId),
-    /// Value-producing capture (`add`, `int_const`, the `*_any`
+    /// Value-producing capture (`int_add`, `int_const`, the `any_*`
     /// constructors). The owning node comes back via
     /// [`strider_ir::Graph::producer`].
     Value(ValueId),
@@ -113,7 +113,7 @@ impl Bindings {
 
     /// A match's identity, keying [`crate::Matcher::find_all`]'s dedup: two
     /// configurations binding the same captures to the same things are one
-    /// match (`add(x, x)` swapped is one, not two). Keyed on the bindings
+    /// match (`int_add(x, x)` swapped is one, not two). Keyed on the bindings
     /// alone, not the root, so a capture-free pattern collapses to the empty
     /// key and can never duplicate.
     ///
@@ -206,9 +206,8 @@ impl Bindings {
         Some(*op)
     }
 
-    // No `get_bool_unary_op`: boolean NOT is `Xor(x, IntConst(1)):I1`, so a
-    // bool unary op comes back from `get_bool_binary_op` as
-    // `IntBinaryOp::Xor`.
+    // Boolean NOT is `Xor(x, IntConst(1)):I1`, so a bool unary op comes back
+    // from `get_bool_binary_op` as `IntBinaryOp::Xor`.
 
     op_extractor! {
         get_float_binary_op => FloatBinaryOp
@@ -223,8 +222,8 @@ impl Bindings {
     }
 }
 
-// Inline rather than under `tests/` because `Binding` and `bind_capture` are
-// `pub(crate)`, out of reach of an integration test.
+// `Binding` and `bind_capture` are `pub(crate)`, out of reach of an
+// integration test.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -373,7 +372,6 @@ mod tests {
         assert_eq!(bindings.get_int_unary_op(v, function.graph()), None);
         assert_eq!(bindings.get_int_cmp_op(v, function.graph()), None);
         assert_eq!(bindings.get_bool_binary_op(v, function.graph()), None);
-        // No `get_bool_unary_op`: bool NOT is `Xor(_, 1):I1`.
         assert_eq!(bindings.get_float_binary_op(v, function.graph()), None);
         assert_eq!(bindings.get_float_unary_op(v, function.graph()), None);
         assert_eq!(bindings.get_float_cmp_op(v, function.graph()), None);
@@ -400,14 +398,12 @@ mod tests {
         assert!(bindings.bind_capture(dropped_a, Binding::Node(n)));
         assert!(bindings.bind_capture(dropped_b, Binding::Node(n)));
 
-        // Pre-restore: all three visible.
         assert!(bindings.get_binding(kept).is_some());
         assert!(bindings.get_binding(dropped_a).is_some());
         assert!(bindings.get_binding(dropped_b).is_some());
 
         bindings.restore(mark);
 
-        // Post-restore: only `kept` remains.
         assert!(bindings.get_binding(kept).is_some());
         assert!(bindings.get_binding(dropped_a).is_none());
         assert!(bindings.get_binding(dropped_b).is_none());
@@ -444,7 +440,6 @@ mod tests {
 
         bindings.restore(mark);
 
-        // Survivors keep their original bindings.
         assert_eq!(bindings.get_binding(a), Some(Binding::Node(n1)));
         assert_eq!(bindings.get_binding(b), Some(Binding::Node(n2)));
         assert!(bindings.get_binding(dropped).is_none());
@@ -497,7 +492,6 @@ mod tests {
             !bindings.bind_capture(v, Binding::Value(value)),
             "Value rebind must conflict with an existing Node binding",
         );
-        // The Node binding survives; the value view stays empty.
         assert_eq!(bindings.get_node(v, function.graph()), Some(node));
         assert_eq!(bindings.get_value(v), None);
 

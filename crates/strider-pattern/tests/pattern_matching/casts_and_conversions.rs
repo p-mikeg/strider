@@ -1,9 +1,3 @@
-//! Width-changing and type-converting cast patterns.
-//!
-//! Most cast producers are introduced implicitly by coercion helpers on
-//! `FunctionBuilder`, so tests build nodes through those helpers and match
-//! them with the corresponding pattern constructor.
-
 use strider_ir::node::ValueType;
 use strider_ir::{ExtendOp, IRViewer};
 use strider_pattern::matcher::CastMask;
@@ -33,7 +27,7 @@ fn zero_extend_matches() {
     let s = non_const_u32(&mut t, 1, 2);
     let x = t.zext_to(s, ValueType::I64);
     let function = t.ret_val(x);
-    a::matches(&function, zero_extend(any()).into_pattern(), 1);
+    a::matches(&function, int_zero_extend(anything()).into_pattern(), 1);
 }
 
 #[test]
@@ -42,7 +36,7 @@ fn sign_extend_matches() {
     let s = non_const_u32(&mut t, 1, 2);
     let x = t.sext_to(s, ValueType::I64);
     let function = t.ret_val(x);
-    a::matches(&function, sign_extend(any()).into_pattern(), 1);
+    a::matches(&function, int_sign_extend(anything()).into_pattern(), 1);
 }
 
 #[test]
@@ -53,12 +47,12 @@ fn extend_op_variant_matches_zero_and_sign() {
     let function = t.ret_val(x);
     a::matches(
         &function,
-        extend(ExtendOp::ZeroExtend, any()).into_pattern(),
+        int_extend(ExtendOp::ZeroExtend, anything()).into_pattern(),
         1,
     );
     a::none(
         &function,
-        extend(ExtendOp::SignExtend, any()).into_pattern(),
+        int_extend(ExtendOp::SignExtend, anything()).into_pattern(),
     );
 
     let mut t = Tb::empty();
@@ -67,12 +61,12 @@ fn extend_op_variant_matches_zero_and_sign() {
     let function = t.ret_val(x);
     a::matches(
         &function,
-        extend(ExtendOp::SignExtend, any()).into_pattern(),
+        int_extend(ExtendOp::SignExtend, anything()).into_pattern(),
         1,
     );
     a::none(
         &function,
-        extend(ExtendOp::ZeroExtend, any()).into_pattern(),
+        int_extend(ExtendOp::ZeroExtend, anything()).into_pattern(),
     );
 }
 
@@ -82,7 +76,7 @@ fn truncate_matches() {
     let s = non_const_u64(&mut t, 0xAABBCCDD, 1);
     let x = t.trunc_to(s, ValueType::I8);
     let function = t.ret_val(x);
-    a::matches(&function, truncate(any()).into_pattern(), 1);
+    a::matches(&function, int_truncate(anything()).into_pattern(), 1);
 }
 
 #[test]
@@ -93,8 +87,12 @@ fn extend_then_truncate_chain_matches() {
     let tr = t.trunc_to(ext, ValueType::I8);
     let function = t.ret_val(tr);
 
-    a::matches(&function, truncate(any()).into_pattern(), 1);
-    a::matches(&function, truncate(zero_extend(any())).into_pattern(), 1);
+    a::matches(&function, int_truncate(anything()).into_pattern(), 1);
+    a::matches(
+        &function,
+        int_truncate(int_zero_extend(anything())).into_pattern(),
+        1,
+    );
 }
 
 #[test]
@@ -104,7 +102,7 @@ fn int_to_float_matches() {
     let f = t.int_to_float(v, ValueType::F64);
     let as_int = t.float_to_int(f, ValueType::I64);
     let function = t.ret_val(as_int);
-    a::matches(&function, int_to_float(any()).into_pattern(), 1);
+    a::matches(&function, int_to_float(anything()).into_pattern(), 1);
 }
 
 #[test]
@@ -113,7 +111,7 @@ fn float_to_int_matches() {
     let v = t.f64(1.5);
     let i = t.float_to_int(v, ValueType::I64);
     let function = t.ret_val(i);
-    a::matches(&function, float_to_int(any()).into_pattern(), 1);
+    a::matches(&function, float_to_int(anything()).into_pattern(), 1);
 }
 
 #[test]
@@ -125,7 +123,7 @@ fn float_to_float_matches() {
     let as_int = t.float_to_int(ff, ValueType::I64);
     let function = t.ret_val(as_int);
     // Two FloatToFloat nodes in the graph.
-    a::matches(&function, float_to_float(any()).into_pattern(), 2);
+    a::matches(&function, float_to_float(anything()).into_pattern(), 2);
 }
 
 #[test]
@@ -138,7 +136,7 @@ fn int_bits_to_float_matches() {
     let f = t.int_bits_to_float(s, ValueType::F64);
     let as_int = t.float_to_int(f, ValueType::I64);
     let function = t.ret_val(as_int);
-    a::matches(&function, int_bits_to_float(any()).into_pattern(), 1);
+    a::matches(&function, int_bits_to_float(anything()).into_pattern(), 1);
 }
 
 #[test]
@@ -149,7 +147,7 @@ fn float_bits_to_int_matches() {
     let s = t.fbin(fa, fb, strider_ir::FloatBinaryOp::Add, ValueType::F64);
     let i = t.float_bits_to_int(s, ValueType::I64);
     let function = t.ret_val(i);
-    a::matches(&function, float_bits_to_int(any()).into_pattern(), 1);
+    a::matches(&function, float_bits_to_int(anything()).into_pattern(), 1);
 }
 
 #[test]
@@ -159,9 +157,9 @@ fn cast_patterns_are_kind_sensitive() {
     let x = t.zext_to(v, ValueType::I64);
     let function = t.ret_val(x);
 
-    a::none(&function, truncate(any()).into_pattern());
-    a::none(&function, int_to_float(any()).into_pattern());
-    a::none(&function, int_bits_to_float(any()).into_pattern());
+    a::none(&function, int_truncate(anything()).into_pattern());
+    a::none(&function, int_to_float(anything()).into_pattern());
+    a::none(&function, int_bits_to_float(anything()).into_pattern());
 }
 
 /// `Add(IntConst(5), ZeroExtend(reg))` at I64 where the extend's input is a
@@ -182,13 +180,13 @@ fn add_with_zext_reg_operand() -> strider_ir::Function {
 #[test]
 fn ignore_casts_mask_does_not_spuriously_match_strict_const() {
     let function = add_with_zext_reg_operand();
-    let pat_strict = add(int_const(5u128), any_int_const()).into_pattern();
+    let pat_strict = int_add(int_const(5u128), any_int_const()).into_pattern();
     // No mask: the IntConst sub-pattern kind-mismatches the ZeroExtend.
     a::none(&function, pat_strict);
 
     // With ZERO_EXTEND the matcher unwraps the cast and retries against the
     // register read, still not an IntConst.
-    let pat_walk = add(int_const(5u128), any_int_const())
+    let pat_walk = int_add(int_const(5u128), any_int_const())
         .into_pattern()
         .ignore_casts_mask(CastMask::ZERO_EXTEND);
     a::none(&function, pat_walk);
@@ -200,7 +198,7 @@ fn ignore_casts_mask_does_not_spuriously_match_strict_const() {
 fn ignore_casts_mask_zero_extend_matches_var_capture() {
     let function = add_with_zext_reg_operand();
     let c = Capture::new();
-    let pat = add(int_const(5u128), var(c))
+    let pat = int_add(int_const(5u128), var(c))
         .into_pattern()
         .ignore_casts_mask(CastMask::ZERO_EXTEND);
     let m = a::unique(&function, pat);
@@ -240,15 +238,18 @@ fn deep_alternating_cast_chain_walked_through() {
     // Without a cast mask the chain is opaque.
     a::none(
         &function,
-        add(mul(any(), any()), int_const(4u128)).into_pattern(),
+        int_add(int_mul(anything(), anything()), int_const(4u128)).into_pattern(),
     );
 
     // With ignore_casts the matcher reaches the Mul through all 32 casts.
     a::matches(
         &function,
-        add(mul(int_const(2u128), int_const(3u128)), int_const(4u128))
-            .into_pattern()
-            .ignore_casts(),
+        int_add(
+            int_mul(int_const(2u128), int_const(3u128)),
+            int_const(4u128),
+        )
+        .into_pattern()
+        .ignore_casts(),
         1,
     );
 }

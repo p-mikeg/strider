@@ -1,7 +1,3 @@
-//! Shared test helpers: graph construction, pre-built shapes, assertion DSL.
-//! Test files go through these rather than reaching into `strider_ir` /
-//! `strider_pattern` internals directly.
-
 #![allow(dead_code, unused_imports)]
 
 pub(crate) mod assertions;

@@ -1,12 +1,8 @@
-//! # Memory tokens are first-class
-//!
 //! The IR's memory side-channel (`InitialMemory -> Store -> MemPhi -> Call ->
-//! Load`) is matched the same way as the value and control chains: a
-//! producer's memory token is a real [`PatValue`](crate::matcher::PatValue)
-//! carrying [`OutputKindSpec::Memory`](crate::matcher::OutputKindSpec::Memory),
-//! and the memory-side builders model both their memory input and their
-//! produced token as genuine vertices. A `load` chaining off a prior `store`
-//! wires that store's memory output into the load's memory input slot.
+//! Load`) is matched like the value and control chains: a memory token is a
+//! real [`PatValue`](crate::matcher::PatValue) carrying
+//! [`OutputKindSpec::Memory`](crate::matcher::OutputKindSpec::Memory), so a
+//! memory-side builder's input and produced token are both genuine vertices.
 
 pub mod flow;
 pub mod function_arg;
@@ -16,11 +12,12 @@ pub mod phi;
 
 pub use flow::{
     CallOtherPat, CallPat, EntryPat, IfPat, IndirectBranchPat, OutputPat, RegionPat, RetPat,
-    SwitchPat, UnreachablePat, WithOutput, call, call_other, entry, if_node, indirect_branch,
+    SwitchPat, UnreachablePat, WithOutput, call, call_other, entry, if_else, indirect_branch,
     region, ret, switch, unreachable,
 };
 pub use function_arg::{
-    FunctionArgPat, function_arg, function_arg_any, function_arg_reg, function_arg_stack,
+    FunctionArgClass, FunctionArgPat, any_function_arg, function_arg, function_arg_float,
+    function_arg_reg, function_arg_stack,
 };
 pub use memory::{LoadPat, StorePat, load, store};
 pub use phi::{MemPhiPat, PhiPat, mem_phi, phi, phi_for};
@@ -31,9 +28,8 @@ use crate::matcher::{MatcherBuilder, PatValueRef};
 /// [`MatcherBuilder`] exists.
 pub(crate) type SubCompiler = Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef>;
 
-/// A memory-producing sub-pattern chainable into a consumer's memory input
-/// slot.
-pub trait MemPat {
-    /// Returns the handle of the produced memory-token output.
-    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef;
-}
+/// A sub-pattern that produces a memory token, so it can be chained into a
+/// consumer's memory input slot. The lowering itself is
+/// [`crate::matcher::match_pat::MatchPat::compile_mem`]; this bound is what
+/// keeps a value-only pattern out of a memory slot.
+pub trait MemPat: crate::matcher::match_pat::MatchPat {}

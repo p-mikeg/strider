@@ -1,3 +1,4 @@
+use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::{Graph, NeverCacheable, NodeId};
 
 use super::CastMask;
@@ -11,18 +12,28 @@ pub struct Pattern {
     pub(crate) cast_mask: CastMask,
     /// Resolved once at seal and memoized, verdict included.
     root: Result<NodeId, String>,
+    /// Per pat node, indexed by `NodeId::as_u32`.
+    inputs: Vec<super::walk::NodeInputs>,
 }
 
 impl Pattern {
-    /// Seal point of [`MatcherBuilder`]: resolves and memoizes the match
-    /// root.
+    /// Seal point of [`MatcherBuilder`](crate::matcher::MatcherBuilder):
+    /// resolves and memoizes the match root.
     pub(crate) fn from_graph(graph: PatGraph) -> Self {
         let root = Self::resolve_root(&graph).map_err(|e| e.to_string());
+        let inputs = super::walk::collect_node_inputs(&graph);
         Self {
             graph,
             cast_mask: CastMask::empty(),
             root,
+            inputs,
         }
+    }
+
+    /// The structure is frozen at seal, so a match attempt reads this instead
+    /// of rebuilding the edge list per operand ordering.
+    pub(crate) fn inputs_of(&self, node: NodeId) -> &super::walk::NodeInputs {
+        &self.inputs[node.as_u32() as usize]
     }
 
     /// The unique sink, after confirming its input cone is acyclic.
@@ -44,6 +55,8 @@ impl Pattern {
         self.root.clone().map_err(anyhow::Error::msg)
     }
 
+    /// Includes what a node's binding walk declares: that sub-pattern's graph
+    /// lives inside the walk closure, not here.
     pub fn bound_captures(&self) -> impl Iterator<Item = crate::capture::Capture> + '_ {
         self.graph
             .all_node_ids()
@@ -53,10 +66,93 @@ impl Pattern {
                     .all_value_ids()
                     .filter_map(|v| self.graph.value_kind_ref(v).capture),
             )
+            .chain(
+                self.graph
+                    .all_node_ids()
+                    .flat_map(|n| self.graph.node_kind(n).walk_captures.bound.iter().copied()),
+            )
+    }
+
+    /// The captures bound on EVERY successful match, as opposed to
+    /// [`Self::bound_captures`], which reports every capture appearing anywhere
+    /// in the graph.
+    ///
+    /// The two differ only under an alternation: `one_of` binds whichever arm
+    /// fires, so a capture present in some arms but not all is not guaranteed.
+    ///
+    /// # Errors
+    /// If the pattern is rootless, cyclic, or multi-sink.
+    pub fn guaranteed_captures(&self) -> anyhow::Result<FxHashSet<crate::capture::Capture>> {
+        let mut memo: FxHashMap<NodeId, FxHashSet<crate::capture::Capture>> = FxHashMap::default();
+        Ok(self.guaranteed_from(self.root()?, &mut memo))
+    }
+
+    /// The pattern graph is acyclic (`resolve_root` proves it), so the memo
+    /// makes this linear and the recursion terminates.
+    fn guaranteed_from(
+        &self,
+        node: NodeId,
+        memo: &mut FxHashMap<NodeId, FxHashSet<crate::capture::Capture>>,
+    ) -> FxHashSet<crate::capture::Capture> {
+        if let Some(hit) = memo.get(&node) {
+            return hit.clone();
+        }
+        let mut out: FxHashSet<crate::capture::Capture> = FxHashSet::default();
+        // This node's own capture, and any on the values it produces, bind
+        // whenever the node matches at all. A binding walk has to succeed for
+        // the node to match, so what it guarantees is guaranteed here.
+        if let Some(c) = self.graph.node_kind(node).capture {
+            out.insert(c);
+        }
+        out.extend(
+            self.graph
+                .node_kind(node)
+                .walk_captures
+                .guaranteed
+                .iter()
+                .copied(),
+        );
+        for &vertex in self.graph.node_outputs(node) {
+            if let Some(c) = self.graph.value_kind_ref(vertex).capture {
+                out.insert(c);
+            }
+        }
+        // Each input contributes its own vertex capture plus everything its
+        // producer guarantees. For an alternation those are ARMS, so the vertex
+        // capture belongs to that arm and must not be hoisted out of the
+        // intersection.
+        let per_input: Vec<FxHashSet<crate::capture::Capture>> = self
+            .graph
+            .consumed_inputs(node)
+            .into_iter()
+            .map(|(_, vertex)| {
+                let mut caps = self.guaranteed_from(self.graph.producer_of(vertex), memo);
+                if let Some(c) = self.graph.value_kind_ref(vertex).capture {
+                    caps.insert(c);
+                }
+                caps
+            })
+            .collect();
+        if self.graph.node_kind(node).alternation {
+            // Exactly one arm fires, so only what EVERY arm binds is guaranteed.
+            let mut arms = per_input.into_iter();
+            if let Some(first) = arms.next() {
+                let common = arms.fold(first, |acc, arm| acc.intersection(&arm).copied().collect());
+                out.extend(common);
+            }
+        } else {
+            // Every operand must match, so all of their captures bind.
+            for caps in per_input {
+                out.extend(caps);
+            }
+        }
+        memo.insert(node, out.clone());
+        out
     }
 
     /// Runs after root and all inputs have matched; returning `false` rejects
-    /// the match.
+    /// the match. Composes with a guard already on the root, like
+    /// [`MatcherBuilder::set_post_match`](crate::matcher::MatcherBuilder::set_post_match).
     ///
     /// # Panics
     ///
@@ -67,7 +163,11 @@ impl Pattern {
             .graph
             .derive_root()
             .expect("pattern has a unique sink root");
-        self.graph.node_kind_mut(root).post_match = Some(f);
+        let slot = &mut self.graph.node_kind_mut(root).post_match;
+        *slot = Some(match slot.take() {
+            Some(prev) => Box::new(move |m, n, ty, b| prev(m, n, ty, b) && f(m, n, ty, b)),
+            None => f,
+        });
     }
 
     /// Builder form of `set_root_post_match`.
@@ -119,7 +219,7 @@ mod tests {
         let p = b.finish();
         assert_eq!(p.graph.all_node_ids().count(), 3);
         assert_eq!(p.graph.all_value_ids().count(), 3);
-        // Root is the unique sink (`add`).
+        // Root is the unique sink (`int_add`).
         assert!(p.root().is_ok());
     }
 

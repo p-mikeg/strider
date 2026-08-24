@@ -1,6 +1,7 @@
 //! Raw input slot 0 is the phi-token edge from the owning `Region`, so
-//! predecessor 0's value sits at slot 1. `.input(i, p)` shifts by +1 to let
-//! callers address predecessor slots directly.
+//! predecessor 0's value sits at slot 1. `.phi_input(i, p)` addresses
+//! predecessors directly; `.input(i, p)` is the raw slot every other builder's
+//! `input` is.
 //!
 //! `Phi` produces a value output at slot 0; `MemPhi` produces a memory token
 //! there and implements [`MemPat`] so a `load` / `store` can chain off it.
@@ -13,6 +14,7 @@ use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{KindSpec, MatcherBuilder, NodePredicate, PatValueRef, Pattern};
 
 use super::MemPat;
+use super::flow::{OutputPat, WithOutput};
 use super::node_pat::NodePat;
 
 /// Pins the matched `Phi`'s `value_vn` entry to `Some(vn)`.
@@ -34,9 +36,16 @@ pub struct PhiPat {
 }
 
 impl PhiPat {
-    /// Shifted to raw input slot `idx + 1`, past the phi-token input.
-    pub fn input<P: MatchPat + 'static>(mut self, idx: usize, p: P) -> Self {
+    /// Predecessor `idx`'s incoming value, at raw input slot `idx + 1`.
+    pub fn phi_input<P: MatchPat + 'static>(mut self, idx: usize, p: P) -> Self {
         self.inner = self.inner.input(idx + 1, p);
+        self
+    }
+
+    /// Raw input slot `slot`, unshifted: slot 0 is the phi token,
+    /// predecessor `i`'s value is slot `i + 1`.
+    pub fn input<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
+        self.inner = self.inner.input(slot, p);
         self
     }
 
@@ -62,6 +71,18 @@ impl PhiPat {
         self
     }
 
+    /// The one output, at slot 0. Returns a terminal taking one of
+    /// `.capture(c)`, `.of_width(w)`, `.of_type(ty)`.
+    pub fn output(self, slot: usize) -> OutputPat<Self> {
+        OutputPat::at(self, Some(slot))
+    }
+
+    /// Some output rather than a fixed slot; otherwise
+    /// [`output`](Self::output).
+    pub fn any_output(self) -> OutputPat<Self> {
+        OutputPat::at(self, None)
+    }
+
     /// Binds the value output.
     pub fn capture(mut self, c: Capture) -> Self {
         self.inner = self.inner.capture(c);
@@ -83,7 +104,7 @@ impl PhiPat {
 
 impl MatchPat for PhiPat {
     /// Nests as a value operand anchored on the value output, as in
-    /// `store(data=phi())` or `add(x, phi())`.
+    /// `store(data=phi())` or `int_add(x, phi())`.
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         self.configured().compile_anchored(b)
     }
@@ -97,29 +118,46 @@ pub fn phi() -> PhiPat {
     }
 }
 
+impl WithOutput for PhiPat {
+    fn capture_output(mut self, slot: Option<usize>, c: Capture) -> Self {
+        self.inner = self.inner.capture_output(slot, c);
+        self
+    }
+    fn output_width(mut self, slot: Option<usize>, bits: u32) -> Self {
+        self.inner = self.inner.output_width(slot, bits);
+        self
+    }
+    fn output_ty(mut self, slot: Option<usize>, ty: strider_ir::node::ValueType) -> Self {
+        self.inner = self.inner.output_ty(slot, ty);
+        self
+    }
+}
+
 /// A [`phi`] pre-narrowed by [`PhiPat::for_vn`].
 pub fn phi_for(vn: rsleigh::Vn) -> PhiPat {
     phi().for_vn(vn)
 }
 
 /// The memory-token phi at join points, producing its token at output slot 0.
-/// Same +1 input shift as [`PhiPat`].
+/// Same slot layout as [`PhiPat`], with a memory token per predecessor.
 pub struct MemPhiPat(NodePat);
 
 impl MemPhiPat {
-    /// Shifted to raw input slot `idx + 1`. The sub-pattern must be a memory
-    /// producer.
-    pub fn input<M: MemPat + 'static>(self, idx: usize, p: M) -> Self {
+    /// Predecessor `idx`'s incoming memory token, at raw input slot `idx + 1`.
+    /// The sub-pattern must be a memory producer.
+    pub fn phi_input<M: MemPat + 'static>(self, idx: usize, p: M) -> Self {
         Self(self.0.input_mem(idx + 1, p))
     }
 
-    /// Candidates are every input: `PhiToken` at slot 0 and each memory
-    /// predecessor after it. A typed value sub binds neither; only
-    /// `var` / `anything` reaches them. Repeatable.
-    ///
-    /// QUIRK: the existential is not excluded from a fixed operand's slot, so
-    /// `phi().input(0, X).any_input(var(a))` can bind `a` to the same input as
-    /// `X` (same as `CallPat::any_input`). A distinctness option is deferred.
+    /// Raw input slot `slot`, unshifted: slot 0 is the phi token,
+    /// predecessor `i`'s memory token is slot `i + 1`.
+    pub fn input<P: MatchPat + 'static>(self, slot: usize, p: P) -> Self {
+        Self(self.0.input(slot, p))
+    }
+
+    /// Candidates are every input a fixed operand has not pinned: `PhiToken`
+    /// at slot 0 and each memory predecessor after it. A typed value sub binds
+    /// neither; only `var` / `anything` reaches them. Repeatable.
     pub fn any_input<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_any(p))
     }
@@ -127,6 +165,18 @@ impl MemPhiPat {
     /// See [`PhiPat::phi_token`].
     pub fn phi_token<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input(0, p))
+    }
+
+    /// The one output, at slot 0. Returns a terminal taking one of
+    /// `.capture(c)`, `.of_width(w)`, `.of_type(ty)`.
+    pub fn output(self, slot: usize) -> OutputPat<Self> {
+        OutputPat::at(self, Some(slot))
+    }
+
+    /// Some output rather than a fixed slot; otherwise
+    /// [`output`](Self::output).
+    pub fn any_output(self) -> OutputPat<Self> {
+        OutputPat::at(self, None)
     }
 
     /// Binds the memory-token output.
@@ -139,12 +189,27 @@ impl MemPhiPat {
     }
 }
 
-impl MemPat for MemPhiPat {
-    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
+impl MatchPat for MemPhiPat {
+    /// The memory token is the only output, so a value slot never matches.
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         self.0.compile_anchored(b)
     }
 }
 
+impl MemPat for MemPhiPat {}
+
 pub fn mem_phi() -> MemPhiPat {
     MemPhiPat(NodePat::node(KindSpec::variant_of(&NodeKind::MemPhi)).with_mem_value(0))
+}
+
+impl WithOutput for MemPhiPat {
+    fn capture_output(self, slot: Option<usize>, c: Capture) -> Self {
+        Self(self.0.capture_output(slot, c))
+    }
+    fn output_width(self, slot: Option<usize>, bits: u32) -> Self {
+        Self(self.0.output_width(slot, bits))
+    }
+    fn output_ty(self, slot: Option<usize>, ty: strider_ir::node::ValueType) -> Self {
+        Self(self.0.output_ty(slot, ty))
+    }
 }
