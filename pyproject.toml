@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "strider"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python bindings for the Strider binary analysis pipeline"
 requires-python = ">=3.9"
 license = "MIT"
@@ -28,8 +28,23 @@ dev = [
     "patchelf>=0.17 ; sys_platform == 'linux'",
     "pytest>=7",
     "pyelftools>=0.30",
+    "pyright>=1.1.400",
     "ipython",
 ]
+
+# Type-check gate: `uv run pyright` from the workspace root checks the shipped
+# package against its own `.pyi` stubs.  The tests and examples are outside the
+# scope on purpose; widening it is a separate cleanup.
+[tool.pyright]
+include = [
+    "crates/strider-py/strider",
+    "crates/strider-py/tests/python",
+    "crates/strider-py/examples/python",
+]
+pythonVersion = "3.9"
+# Every strider submodule is compiled: the wheel ships a `.pyi` and no `.py`
+# beside it, which is exactly what this rule reports.  Nothing to fix.
+reportMissingModuleSource = "none"
 
 # pytest discovery — `uv run pytest` (or plain `pytest`) finds the
 # strider-py integration suite from the workspace root without arguments.
@@ -56,4 +71,5 @@ include = [
     # own entry or the wheel ships `strider.pattern` untyped.
     { path = "crates/strider-py/strider/pattern/*.pyi", format = "wheel" },
     { path = "crates/strider-py/strider/py.typed", format = "wheel" },
+    { path = "crates/strider-py/strider/explore.html", format = "wheel" },
 ]
