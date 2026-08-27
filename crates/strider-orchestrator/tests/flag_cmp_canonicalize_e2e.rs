@@ -9,8 +9,6 @@
 //! Mirrors `tests/common/indirect_resolve_helpers::run_pipeline_x86_64`
 //! but targets AArch64 and asserts on the post-pipeline cond kind.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{CfgOptions, MachineInsnAddr};
 use strider_ir::node::{NodeId, NodeKind};
@@ -28,12 +26,17 @@ fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
     let sleigh =
         rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create sleigh");
 
-    // The driver OWNS the Sleigh and builds the CFG itself.
     let mut strider = Lifter::new(arch, sleigh).expect("Lifter::new");
     let cc = cc.build(strider.sleigh_regs()).expect("build cc");
+    // The entry address carries the ISA-mode bit; the buffer stays at the even
+    // `base`, which is where `build_cfg` masks the entry back to for decoding.
+    let entry = match arch.preset() {
+        strider_target::ArchPreset::ArmThumb => base | 1,
+        _ => base,
+    };
     let cfg = strider
         .build_cfg(
-            MachineInsnAddr::from(base),
+            MachineInsnAddr::from(entry),
             &CfgOptions::default(),
             &Default::default(),
         )

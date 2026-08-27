@@ -1,14 +1,12 @@
-//! Integration tests for [`strider_opt::apply_rules_count`] driven via
-//! strider-orchestrator's pipeline: rewrite / re-optimize against a
-//! real Sleigh-lifted function or a hand-built one.
-
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+//! [`strider_opt::apply_rules_count`] driven through the orchestrator's
+//! pipeline: rewrite, then re-optimize, against a Sleigh-lifted or hand-built
+//! function.
 
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{Function, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::IrWalkerEx;
 use strider_opt::{EditFunction, apply_rules_count, rewrite_rule};
-use strider_pattern::{Capture, CaptureExt, add, int_const, var};
+use strider_pattern::{Capture, int_add, int_const, var};
 
 mod common;
 
@@ -16,8 +14,6 @@ fn count_switches(function: &Function) -> usize {
     function.count_kind(|k| matches!(k, NodeKind::Switch))
 }
 
-/// Panics if `function` doesn't contain exactly one `Switch` node
-/// (a fixture-construction bug).
 fn find_unique_switch(function: &Function) -> strider_ir::node::NodeId {
     let mut iter = function
         .walk()
@@ -113,13 +109,11 @@ fn replace_switch_address_with_const_collapses_switch_after_reoptimize() -> anyh
     Ok(())
 }
 
-/// Regression guard: rewrite rules written against the old if-ladder shape
-/// must not spuriously match the new `Switch` shape. `handle_switch` used
-/// to lower a jump table into an if-ladder of `IntCmpOp::Equal` + `If`
-/// nodes, so a rule matching any `Eq(_, K)` and replacing it with
-/// `BoolConst` used to fire once per ladder arm and collapse the dispatch
-/// after re-optimizing. Now that `handle_switch` emits a single `Switch`
-/// node (no cmp, no If), the same rule must be a safe no-op.
+/// A rewrite rule shaped for an if-ladder (match any `Eq(_, K)`, replace it
+/// with `bool_const(false)`) is a safe no-op against a `Switch`-lowered
+/// dispatch: `handle_switch` emits a single `Switch` node, so the rule's
+/// `IntCmpOp::Equal` root has nothing to bind to and the dispatch survives
+/// re-optimizing unchanged.
 #[test]
 fn rewrite_rule_targeting_old_if_ladder_shape_is_a_no_op_against_switch_dispatch()
 -> anyhow::Result<()> {
@@ -139,8 +133,8 @@ fn rewrite_rule_targeting_old_if_ladder_shape_is_a_no_op_against_switch_dispatch
     let pipeline = strider_orchestrator::opt::default_pipeline();
     let rule_all_false = rewrite_rule(
         strider_pattern::int_eq(
-            strider_pattern::any(),
-            strider_pattern::any_int_const().capture(strider_pattern::Capture::new()),
+            strider_pattern::anything(),
+            strider_pattern::int_const(strider_pattern::Capture::new()),
         ),
         strider_pattern::bool_const(false),
     );
@@ -191,7 +185,7 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
     assert_eq!(count_adds(&function), 2, "fixture has two Adds");
 
     let x = Capture::new();
-    let rule_x_plus_zero = rewrite_rule(add(var(x), int_const(0u128)), var(x));
+    let rule_x_plus_zero = rewrite_rule(int_add(var(x), int_const(0u128)), var(x));
     let pipeline = strider_orchestrator::opt::default_pipeline();
 
     let n1 = {
@@ -248,7 +242,7 @@ fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
     // use-list would only surface here.
     let mut function = add_k_plus_zero(42);
     let x = Capture::new();
-    let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
+    let rule = rewrite_rule(int_add(var(x), int_const(0u128)), var(x));
 
     {
         let mut ctx = EditFunction::new(&mut function);
@@ -270,7 +264,7 @@ fn apply_rule_using_pattern_var_capture() -> anyhow::Result<()> {
     assert_eq!(count_adds(&function), 1, "fixture has one Add");
 
     let x = Capture::new();
-    let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
+    let rule = rewrite_rule(int_add(var(x), int_const(0u128)), var(x));
     let fired = {
         let mut ctx = EditFunction::new(&mut function);
         apply_rules_count(&mut ctx, std::slice::from_ref(&rule))?
@@ -279,7 +273,7 @@ fn apply_rule_using_pattern_var_capture() -> anyhow::Result<()> {
     assert_eq!(
         count_adds(&function),
         0,
-        "post-rewrite Add is unreachable — Return now feeds off `x` directly",
+        "post-rewrite Add is unreachable: the Return feeds off `x` directly",
     );
     Ok(())
 }

@@ -1,5 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::IRViewer;
 use strider_pattern::{Matcher, call_other};
@@ -62,9 +60,9 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
     let node = found_node.expect("a cpuid* CallOther exists in this fixture");
     let name = found_name.expect("name");
 
-    // Outputs: [ctrl, mem, value(tmpptr)]. Empty implicit_writes, since
-    // Sleigh handles register writes via subsequent Loads from the
-    // returned tmpptr.
+    // Outputs: [ctrl, mem, value(tmpptr)]. Sleigh performs the register
+    // writes as subsequent Loads from the returned tmpptr, so the ABI entry's
+    // implicit_writes is empty.
     let n_outs = outcome.function.node_outputs(node).len();
     assert_eq!(
         n_outs, 3,
@@ -104,7 +102,7 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
     );
     let node = matches[0].root();
 
-    // Outputs: [ctrl, mem, value(x0)]. No implicit clobbers.
+    // Outputs: [ctrl, mem, value(x0)]: the op writes its destination only.
     let n_outs = outcome.function.node_outputs(node).len();
     assert_eq!(
         n_outs, 3,

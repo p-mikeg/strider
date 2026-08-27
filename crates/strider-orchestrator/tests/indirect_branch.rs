@@ -1,5 +1,3 @@
-//! Computed-goto fixture tests for the IR-level indirect-branch resolver.
-//!
 //! `fixtures/cases/indirect_branch.c::indirect_branch_resolved` lowers the
 //! indirect goto to a load from a local stack array of label addresses on
 //! every supported toolchain/optimisation level we target (gcc/clang
@@ -16,183 +14,184 @@
 //! `UnresolvedIndirectBranch`; the IR-level resolver has cross-region
 //! visibility plus `LoadForward` results and resolves the dispatch to
 //! `ResolvedTargets::Multiple`.
-//!
-//! x86, x86_64, AArch64, ARM (LE/BE/Thumb), and MIPS-32 pass end-to-end.
-//! Seven arches stay `#[ignore]` for specific lifter-shape gaps documented
-//! on each test (AArch64-BE `Or(SP,K)` + `Truncate`-wrapped labels, MIPS64
-//! PIC GOT-indirect, PPC32/64). When a gap closes, the ignore can be lifted
-//! and the assertion will start holding with no test rewrite.
-
-#![allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable
-)]
 
 mod common;
 use common::*;
+use object::{Object, ObjectSymbol};
 use strider_ir::{IRViewer, IRWalker};
 
-/// Builds the CFG for `indirect_branch_resolved` and panics if any region
-/// still carries `RegionTerminator::UnresolvedIndirectBranch` at fixed
-/// point.
+/// Drives `Strider::analyze` to its fixed point on
+/// `indirect_branch_resolved` and asserts the site resolved to BOTH of the
+/// fixture's computed-goto labels: no region left carrying
+/// `RegionTerminator::UnresolvedIndirectBranch`, no `IndirectBranch`
+/// placeholder left in the IR, exactly one `Switch` and exactly two distinct
+/// arms, each of which starts a region of the final cfg.
 ///
-/// Reuses `common::lift_for_pipeline` for the load-ELF / Sleigh /
-/// CFG-build / `build_ir` prologue, diverging only to inspect
-/// `unresolved_branches` and classify each one through the IR-level
-/// resolver.
-fn assert_no_unresolved_indirect_branch(arch: Arch) {
-    let (outcome, _ana, _cc, _sleigh_arch, rom_for_opt) =
-        lift_for_pipeline(arch, "indirect_branch", "indirect_branch_resolved");
-    let unresolved = outcome.unresolved_branches.clone();
-    let mut function = outcome.function;
+/// The arm addresses are not spelled out here -- they differ per arch -- but
+/// a one-arm answer, an over-approximated table, and an arm landing off a
+/// region start all fail.
+fn assert_indirect_goto_resolves_to_both_labels(arch: Arch) {
+    let path = binary_path(arch, "indirect_branch");
+    let owned = strider_reader::load_elf(&path)
+        .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
+    let obj = owned.file();
+    let sleigh_arch = arch.sleigh();
+    // The Thumb interworking bit IS the entry's ISA mode; `build_cfg` masks it
+    // off for decoding itself.
+    let entry = obj
+        .symbol_by_name("indirect_branch_resolved")
+        .unwrap_or_else(|| panic!("symbol not found in {path:?}"))
+        .address();
+    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
+    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
+        .expect("Sleigh::new");
+    // A second view of the same image, for the optimiser's rodata loads.
+    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
+        Box::new(strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader"));
+    let regs = sleigh.regs().expect("regs");
+    let cc = arch.cc().build(&regs).expect("build cc");
+    let mut strider =
+        strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(rom)).expect("Strider::new");
+    let result = strider
+        .analyze(
+            entry,
+            &cc,
+            &strider_orchestrator::LiftOptions::default(),
+            &strider_orchestrator::opt::OptOptions::default(),
+            None,
+        )
+        .unwrap_or_else(|e| panic!("analyze on {}: {e:?}", arch.name()));
 
-    let mut ctx = strider_orchestrator::opt::OptCtx::new(Some(&rom_for_opt));
-    if unresolved.is_empty() {
-        // Fixture lifted with nothing to resolve (e.g. an -O? collapse to
-        // straight-line code); the test's promise holds vacuously. Still
-        // run the pipeline to catch a regression on the placeholder path.
-        let p = strider_orchestrator::opt::default_pipeline();
-        p.run(&mut function, &mut ctx).unwrap_or_else(|e| {
-            panic!(
-                "optimizer pipeline (no unresolved) on {}: {e:?}",
-                arch.name()
-            )
-        });
-        return;
-    }
-    // Stable optimizer subset + LoadReadOnly so stack-store detection,
-    // KnownBits, and rodata-load resolution run before classification,
-    // mirroring the orchestrator's per-iteration pre-classify pass.
-    let p = strider_orchestrator::opt::default_pipeline();
-    p.run(&mut function, &mut ctx)
-        .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
-
-    let rom_for_classify: &dyn strider_orchestrator::opt::ReadOnlyMemory = &rom_for_opt;
-    for (target_addr, _placeholder) in &unresolved {
-        // Mirrors the orchestrator's IndirectBranchClassify post-pass: walk
-        // every reachable IndirectBranch and classify it off its current
-        // slot-2 dispatch value.
-        let mut live_branches: Vec<strider_ir::node::NodeId> = Vec::new();
-        for n in function.walk() {
-            if matches!(
-                function.node_kind(n),
+    assert!(
+        result.unresolved_indirect_branches.is_empty(),
+        "{}: unresolved {:#x?}",
+        arch.name(),
+        result
+            .unresolved_indirect_branches
+            .iter()
+            .map(|a| a.machine_addr.addr)
+            .collect::<Vec<_>>(),
+    );
+    let live_placeholders = result
+        .function
+        .walk()
+        .filter(|&n| {
+            matches!(
+                result.function.node_kind(n),
                 strider_ir::node::NodeKind::IndirectBranch
-            ) {
-                live_branches.push(n);
-            }
-        }
-        // No surviving placeholder means the optimizer collapsed the
-        // dispatch entirely (e.g. ConstantFold proved a single target and
-        // the placeholder became an ABI Return); the promise holds
-        // vacuously.
-        if live_branches.is_empty() {
-            continue;
-        }
-        let mut any_resolved = false;
-        let view: &strider_ir::Function = &function;
-        let known =
-            strider_orchestrator::opt::analyze_known_bits(view).expect("analyze_known_bits");
-        let doms = strider_ir::control_dominators(view);
-        let mut ranges =
-            strider_orchestrator::opt::value_range::compute_value_ranges(view, &doms, &known);
-        for &branch in &live_branches {
-            let resolved = strider_orchestrator::opt::classify_target(
-                view,
-                branch,
-                Some(rom_for_classify),
-                &mut ranges,
-                strider_orchestrator::opt::AliasMode::StackGlobalDisjoint,
-            );
-            if resolved.is_some() {
-                any_resolved = true;
-                break;
-            }
-        }
-        if !any_resolved {
-            panic!(
-                "indirect_branch_resolved on {} has unresolved indirect \
-                 branch at {target_addr:?} after optimisation — neither \
-                 cfg-time nor IR-level (incl. stack-array classifier arm) classified \
-                 the dispatch",
+            )
+        })
+        .count();
+    assert_eq!(
+        live_placeholders,
+        0,
+        "{}: IndirectBranch placeholder still live in the IR",
+        arch.name()
+    );
+
+    let mut arms: Vec<Vec<u64>> = Vec::new();
+    let mut region_starts: Vec<u64> = Vec::new();
+    for region in result.cfg.regions() {
+        region_starts.push(region.start_addr.machine_addr.addr);
+        match &region.terminator {
+            strider_cfg::RegionTerminator::UnresolvedIndirectBranch { addr, .. } => panic!(
+                "{}: region still carries UnresolvedIndirectBranch at {:#x}",
                 arch.name(),
-            );
+                addr.machine_addr.addr
+            ),
+            strider_cfg::RegionTerminator::Switch { targets, .. } => {
+                arms.push(targets.iter().map(|t| t.addr).collect());
+            }
+            _ => {}
         }
+    }
+    assert_eq!(
+        arms.len(),
+        1,
+        "{}: expected the one computed goto to be the only Switch, got {arms:#x?}",
+        arch.name()
+    );
+    let mut resolved = arms.remove(0);
+    resolved.sort_unstable();
+    resolved.dedup();
+    assert_eq!(
+        resolved.len(),
+        2,
+        "{}: the fixture has two labels, resolved {resolved:#x?}",
+        arch.name()
+    );
+    for target in &resolved {
+        assert!(
+            region_starts.contains(target),
+            "{}: arm {target:#x} starts no region; arms {resolved:#x?}",
+            arch.name()
+        );
     }
 }
-
-// One #[test] per architecture. The stack-array classifier arm covers
-// x86/x64/aarch64/arm/arm-be/arm-thumb/mips32le/mips32be without
-// #[ignore]. The remaining seven (aarch64be/mips64/ppc32/ppc64, both
-// endiannesses) are ignored with a focused reason naming the lifter quirk
-// blocking the shape match; the assertion body is identical across
-// arches, so closing each gap needs no test rewrite.
 
 #[test]
 fn indirect_branch_resolved_x86() {
-    assert_no_unresolved_indirect_branch(Arch::X86);
+    assert_indirect_goto_resolves_to_both_labels(Arch::X86);
 }
 #[test]
 fn indirect_branch_resolved_x64() {
-    assert_no_unresolved_indirect_branch(Arch::X64);
+    assert_indirect_goto_resolves_to_both_labels(Arch::X64);
 }
 #[test]
 fn indirect_branch_resolved_aarch64() {
-    assert_no_unresolved_indirect_branch(Arch::Aarch64);
+    assert_indirect_goto_resolves_to_both_labels(Arch::Aarch64);
 }
 #[test]
-#[ignore = "aarch64-be: stack-array dispatch unresolved — lifter emits Or(SP,K) instead of Add(SP,K) and wraps stored labels in Truncate; resolver matches Add(SP,K)+raw-IntConst only"]
+#[ignore = "aarch64-be: stack-array dispatch unresolved; the table base comes out of a `bfi` insert against an alignment-masked SP, a shape the SP-decomposition does not spell out, so the classifier never sees a stack base to probe"]
 fn indirect_branch_resolved_aarch64be() {
-    assert_no_unresolved_indirect_branch(Arch::Aarch64Be);
+    assert_indirect_goto_resolves_to_both_labels(Arch::Aarch64Be);
 }
 #[test]
 fn indirect_branch_resolved_arm() {
-    assert_no_unresolved_indirect_branch(Arch::Arm);
+    assert_indirect_goto_resolves_to_both_labels(Arch::Arm);
 }
 #[test]
 fn indirect_branch_resolved_arm_be() {
-    assert_no_unresolved_indirect_branch(Arch::ArmBe);
+    assert_indirect_goto_resolves_to_both_labels(Arch::ArmBe);
 }
 #[test]
 fn indirect_branch_resolved_arm_thumb() {
-    assert_no_unresolved_indirect_branch(Arch::ArmThumb);
+    assert_indirect_goto_resolves_to_both_labels(Arch::ArmThumb);
 }
 #[test]
 fn indirect_branch_resolved_mips32le() {
-    assert_no_unresolved_indirect_branch(Arch::Mips32le);
+    assert_indirect_goto_resolves_to_both_labels(Arch::Mips32le);
 }
 #[test]
 fn indirect_branch_resolved_mips32be() {
-    assert_no_unresolved_indirect_branch(Arch::Mips32be);
+    assert_indirect_goto_resolves_to_both_labels(Arch::Mips32be);
 }
 #[test]
-#[ignore = "mips64-le PIC: GOT-indirect dispatch unresolved — table values lift as Add(Load[gp+off], const), not raw IntConst; resolver has no GOT-indirect arm yet"]
+#[ignore = "mips64-le PIC: GOT-indirect dispatch unresolved; table values lift as Add(Load[gp+off], const), not raw IntConst, and the resolver has no GOT-indirect arm yet"]
 fn indirect_branch_resolved_mips64le() {
-    assert_no_unresolved_indirect_branch(Arch::Mips64le);
+    assert_indirect_goto_resolves_to_both_labels(Arch::Mips64le);
 }
 #[test]
-#[ignore = "mips64-be PIC: GOT-indirect dispatch unresolved — table values lift as Add(Load[gp+off], const), not raw IntConst; resolver has no GOT-indirect arm yet"]
+#[ignore = "mips64-be PIC: GOT-indirect dispatch unresolved; table values lift as Add(Load[gp+off], const), not raw IntConst, and the resolver has no GOT-indirect arm yet"]
 fn indirect_branch_resolved_mips64be() {
-    assert_no_unresolved_indirect_branch(Arch::Mips64be);
+    assert_indirect_goto_resolves_to_both_labels(Arch::Mips64be);
 }
 #[test]
-#[ignore = "ppc32-be: stack-array dispatch unresolved — lifter shape not yet characterised; needs a one-shot pcode trace to identify which classifier arm is missing"]
 fn indirect_branch_resolved_ppc32be() {
-    assert_no_unresolved_indirect_branch(Arch::Ppc32be);
+    assert_indirect_goto_resolves_to_both_labels(Arch::Ppc32be);
 }
 #[test]
-#[ignore = "ppc32-le: stack-array dispatch unresolved — lifter shape not yet characterised; needs a one-shot pcode trace to identify which classifier arm is missing"]
+#[ignore = "ppc32-le: stack-array dispatch unresolved; the lifter shape is uncharacterised and needs a one-shot pcode trace to identify which classifier arm is missing"]
 fn indirect_branch_resolved_ppc32le() {
-    assert_no_unresolved_indirect_branch(Arch::Ppc32le);
+    assert_indirect_goto_resolves_to_both_labels(Arch::Ppc32le);
 }
 #[test]
-#[ignore = "ppc64-be: stack-array dispatch unresolved — lifter shape not yet characterised; needs a one-shot pcode trace to identify which classifier arm is missing"]
+#[ignore = "ppc64-be: stack-array dispatch unresolved; the lifter shape is uncharacterised and needs a one-shot pcode trace to identify which classifier arm is missing"]
 fn indirect_branch_resolved_ppc64be() {
-    assert_no_unresolved_indirect_branch(Arch::Ppc64be);
+    assert_indirect_goto_resolves_to_both_labels(Arch::Ppc64be);
 }
 #[test]
-#[ignore = "ppc64-le: stack-array dispatch unresolved — lifter shape not yet characterised; needs a one-shot pcode trace to identify which classifier arm is missing"]
+#[ignore = "ppc64-le: stack-array dispatch unresolved; the lifter shape is uncharacterised and needs a one-shot pcode trace to identify which classifier arm is missing"]
 fn indirect_branch_resolved_ppc64le() {
-    assert_no_unresolved_indirect_branch(Arch::Ppc64le);
+    assert_indirect_goto_resolves_to_both_labels(Arch::Ppc64le);
 }

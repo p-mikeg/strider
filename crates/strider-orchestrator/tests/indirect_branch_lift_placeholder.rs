@@ -2,19 +2,15 @@
 //! emitting a placeholder `IndirectBranch(target_value)` that targets the
 //! dispatch varnode, for the indirect-branch resolver to consume later.
 //!
-//! Drives a synthetic x86-64 `jmp rax` CFG (RAX is a function-entry
-//! value; the cfg builder does no cfg-time resolution, so the site is
-//! deferred via `UnresolvedIndirectBranch`). Pre-fix, `build_ir` either
-//! errored or emitted an ABI Return that discarded the dispatch value.
-//! Post-fix it produces an IR with exactly one IndirectBranch node whose
-//! single value-input is `target_vn`'s value at the BranchIndirect site.
+//! Drives a synthetic x86-64 `jmp rax` CFG (RAX is a function-entry value,
+//! and the cfg builder defers the site via `UnresolvedIndirectBranch`).
+//! `build_ir` yields an IR with exactly one IndirectBranch node whose single
+//! value-input is `target_vn`'s value at the BranchIndirect site.
 //!
 //! Bypasses the per-arch fixture suite (which runs the full optimizer
 //! pipeline against a real ELF) in favor of a direct `Builder +
 //! Lifter::new + build_ir` call sequence, since this is a per-region
 //! lifting concern only.
-
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::MachineInsnAddr;
@@ -51,12 +47,11 @@ fn make_unresolved_indirect_branch_cfg() -> (
     (driver, cfg, cc)
 }
 
-/// Regression: the lifter used to dispatch `BranchIndirect` to
-/// `handle_return`, producing an ABI Return whose inputs were the
-/// convention's `ret_val_regs`, not the dispatch varnode. Now it inspects
-/// the region's terminator and emits an `IndirectBranch(target_value)`
-/// placeholder wired to `target_vn` at slot 2 (slots 0/1 are
-/// control/memory).
+/// The lifter inspects the region's terminator and emits an
+/// `IndirectBranch(target_value)` placeholder wired to `target_vn` at slot 2
+/// (slots 0/1 are control/memory). Dispatching `BranchIndirect` to
+/// `handle_return` instead yields an ABI Return whose inputs are the
+/// convention's `ret_val_regs`, dropping the dispatch varnode.
 #[test]
 fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
     let (strider, cfg, cc) = make_unresolved_indirect_branch_cfg();
@@ -149,7 +144,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
     // Seed known_targets with Single(oob) so the builder emits
     // TailCall { target: oob_target }.
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-    known.insert(unresolved_addr, ResolvedTargets::Single(oob_target));
+    known.insert(unresolved_addr, ResolvedTargets::Single(oob_target.into()));
 
     let cfg_opts2 = strider_cfg::CfgOptions {
         fn_max_size: Some(0x100),
@@ -162,7 +157,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
 
     let has_tail_call = cfg
         .regions()
-        .any(|r| matches!(r.terminator, strider_cfg::RegionTerminator::TailCall { target } if target == oob_target));
+        .any(|r| matches!(r.terminator, strider_cfg::RegionTerminator::TailCall { target } if target.addr == oob_target));
     assert!(
         has_tail_call,
         "CFG must have TailCall {{ target: {oob_target:#x} }} before lifting"
@@ -203,12 +198,12 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
 /// lift must NOT emit a spurious `Return` for the jump region; the only
 /// `Return` in the lifted IR is the real `ret` at the resolved target.
 ///
-/// Regression: the `Unconditional` branch of `finish_branch_or_tail_call`
-/// used to leave the trailing `BranchIndirect` p-code insn in the region,
-/// which the IR per-region loop then routed through `handle_return`
-/// (Return and BranchIndirect share a dispatch arm), producing a region
-/// that both returned AND had a forward control edge (`return; goto
-/// succ`), a silent mis-lift the validator does not catch.
+/// Sealing the region as `Unconditional` drops the trailing `BranchIndirect`
+/// p-code insn from it. Left in place, the
+/// IR per-region loop routes it through `handle_return` (Return and
+/// BranchIndirect share a dispatch arm) and the region both returns AND
+/// carries a forward control edge (`return; goto succ`), a mis-lift the
+/// validator does not catch.
 #[test]
 fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
     use rustc_hash::FxHashMap;
@@ -250,7 +245,10 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
     };
 
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-    known.insert(unresolved_addr, ResolvedTargets::Single(intra_target));
+    known.insert(
+        unresolved_addr,
+        ResolvedTargets::Single(intra_target.into()),
+    );
 
     let cfg_opts2 = strider_cfg::CfgOptions {
         fn_max_size: Some(0x100),
@@ -261,12 +259,17 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
         .build_cfg(MachineInsnAddr::from(base), &cfg_opts2, &Default::default())
         .expect("cfg with Single(intra) known_target");
 
-    let has_unconditional = cfg
-        .regions()
-        .any(|r| matches!(r.terminator, strider_cfg::RegionTerminator::Unconditional));
+    // An in-function single target seats as a one-arm `Switch`, not a bare
+    // edge: the `Switch` keeps the dispatch selector, so a later resolution
+    // round can widen the site once the CFG has grown.  A bare edge erases the
+    // selector and latches the first answer.
+    let single_arm_switch = cfg.regions().any(|r| {
+        matches!(&r.terminator, strider_cfg::RegionTerminator::Switch { targets, .. }
+            if targets.len() == 1 && targets[0].addr == intra_target)
+    });
     assert!(
-        has_unconditional,
-        "intra-function Single must seat an Unconditional terminator"
+        single_arm_switch,
+        "intra-function Single must seat a one-arm Switch on the resolved target"
     );
     let has_tail_call = cfg
         .regions()

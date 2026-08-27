@@ -16,8 +16,6 @@
 //! 0x00` written back into bits 0-7 of the container while bits 8-63
 //! (all zero) are preserved -> `rax == 0` at `ret`.
 
-#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
-
 mod common;
 
 use rsleigh::mem_readers::BufMemReader;

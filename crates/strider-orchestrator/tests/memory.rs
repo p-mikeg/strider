@@ -1,10 +1,3 @@
-#![allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable
-)]
-
 mod common;
 use common::*;
 
@@ -17,11 +10,14 @@ per_arch_test!("memory", "struct_field_store", struct_store_has_store);
 per_arch_test!("memory", "tagged_union_read", union_read_has_load);
 
 fn array_sum_has_load_and_loop(function: &strider_ir::Function) {
-    assert!(count_loads(function) >= 1, "array_sum must have ≥1 Load");
+    assert!(count_loads(function) >= 1, "array_sum must have >=1 Load");
     assert!(count_loops(function) >= 1, "array_sum loop missing VarPhi");
 }
 fn array_fill_has_store_and_loop(function: &strider_ir::Function) {
-    assert!(count_stores(function) >= 1, "array_fill must have ≥1 Store");
+    assert!(
+        count_stores(function) >= 1,
+        "array_fill must have >=1 Store"
+    );
     assert!(count_loops(function) >= 1);
 }
 fn array_copy_has_load_and_store(function: &strider_ir::Function) {

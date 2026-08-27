@@ -1,12 +1,3 @@
-//! End-to-end test for `Config::compact`.
-//!
-//! Drives `strider_orchestrator::Strider::analyze` under both compact=true
-//! and compact=false; asserts the compact graph has no more node ids than
-//! the non-compact graph and identical pattern-match counts on a
-//! representative query.
-
-#![allow(clippy::unwrap_used)]
-
 use rsleigh::mem_readers::BufMemReader;
 use strider_orchestrator::opt::OptOptions;
 use strider_orchestrator::{LiftOptions, Strider};
@@ -41,15 +32,31 @@ fn run_with(compact: bool) -> strider_ir::Function {
         .function
 }
 
+/// `compact` drops exactly the unreachable arena entries: the compacted node
+/// count equals the reachable count of BOTH functions, and is strictly smaller
+/// than the uncompacted arena, so a no-op `compact` fails here.
 #[test]
-fn compact_yields_no_more_node_ids_than_non_compact() {
+fn compact_drops_exactly_the_unreachable_nodes() {
+    use strider_ir::IRWalker;
+
     let compact_function = run_with(true);
     let noncompact_function = run_with(false);
     let compact_count = compact_function.graph().all_node_ids().count();
     let noncompact_count = noncompact_function.graph().all_node_ids().count();
+    let reachable = noncompact_function.walk().count();
     assert!(
-        compact_count <= noncompact_count,
-        "compact={compact_count} must not exceed non-compact={noncompact_count}"
+        compact_count < noncompact_count,
+        "compact={compact_count} must be strictly smaller than \
+         non-compact={noncompact_count}, or compaction did nothing"
+    );
+    assert_eq!(
+        compact_count, reachable,
+        "compacted arena must hold exactly the reachable nodes"
+    );
+    assert_eq!(
+        compact_function.walk().count(),
+        reachable,
+        "compaction must not change the reachable set"
     );
 }
 

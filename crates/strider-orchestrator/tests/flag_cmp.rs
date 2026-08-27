@@ -6,14 +6,12 @@
 //! (see `fixtures/cases/cmp_branches.c`), wrapped in `memory` asm barriers so
 //! the compiler emits a real branch rather than a conditional select.
 //!
-//! AArch64 emits the canonical flag tree the rules were first written for;
+//! AArch64 emits the canonical flag tree the rules target;
 //! ARM/Thumb lift the branch with inverted sense (an outer `BoolNeg`), so by
 //! the time the pass runs, ConstantFold has decomposed the sub-terms into
 //! direct comparisons, which the "decomposed-form" rules recognise. x86 / x64
 //! (EFLAGS) reach the canonical form directly. This test pins that every
 //! flag-register arch ends at the same single-`IntCmpOp` shape.
-
-#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
 use common::*;
