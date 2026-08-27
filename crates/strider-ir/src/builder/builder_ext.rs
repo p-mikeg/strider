@@ -22,22 +22,25 @@ pub trait IRBuilderExt: IRBuilder {
         self.function().node_outputs(node)[0]
     }
 
+    /// Narrows a wider value; no-ops at equal-or-narrower width, whether or not
+    /// the value is constant.
     fn truncate_if_needed(&mut self, value_id: ValueId, output_type: ValueType) -> Result<ValueId> {
         let curr_output_type = self.value_type(value_id)?;
-
-        if let Some(val) = self.int_const_u128(value_id) {
-            return self.build_int_const(val, output_type);
-        }
 
         if curr_output_type.bit_width() <= output_type.bit_width() {
             return Ok(value_id);
         }
 
+        // A constant narrows by re-interning at the target width, which masks;
+        // `Truncate` would take the same low bits through a node.
+        if let Some(val) = self.int_const_u128(value_id) {
+            return self.build_int_const(val, output_type);
+        }
+
         Ok(self.build_single_output_pure(NodeKind::Truncate, [value_id], output_type))
     }
 
-    /// Widens a narrower value; no-ops at equal-or-wider width. Symmetric with
-    /// `truncate_if_needed`, which passes a narrower value through unchanged.
+    /// Widens a narrower value; no-ops at equal-or-wider width.
     fn extend_if_needed(
         &mut self,
         value_id: ValueId,
@@ -57,12 +60,18 @@ pub trait IRBuilderExt: IRBuilder {
                  ({curr_output_type}); a bitcast is required first"
             ));
         }
-        // Already wide enough: extension is not needed, so no-op.
         if curr_output_type.bit_width() > output_type.bit_width() {
             return Ok(value_id);
         }
 
-        if let Some(unsigned_val) = self.int_const_u128(value_id)
+        // Past the `u128` carrier the fold would have to widen through a type
+        // it cannot represent: `signed_val as u128` carries only 128 sign bits,
+        // and `build_int_const` masks with `bit_mask_u128`, which is
+        // `u128::MAX` for `I256` / `I512` -- so a negative constant would land
+        // with a ZERO upper half. Emit a real `Extend` there instead;
+        // `strider-opt`'s `eval_sign_extend` declines the same fold.
+        if output_type.bit_width() <= 128
+            && let Some(unsigned_val) = self.int_const_u128(value_id)
             && let Some(signed_val) = self.int_const_i128(value_id)
         {
             // `i128 as u128` reinterprets the sign-extended bits, which
@@ -97,9 +106,8 @@ pub trait IRBuilderExt: IRBuilder {
         self.extend_if_needed(truncate_id, output_type, ExtendOp::ZeroExtend)
     }
 
-    /// There is no `CastToFloat` node: an integer reinterprets bit-for-bit via
-    /// `IntBitsToFloat`, and a float of another precision goes through
-    /// `FloatToFloat`.
+    /// An integer input reinterprets bit-for-bit; another float precision
+    /// changes precision.
     fn cast_to_float_if_needed(&mut self, input: ValueId, float_ty: ValueType) -> Result<ValueId> {
         let in_ty = self.value_type(input)?;
         if in_ty == float_ty {
@@ -147,7 +155,9 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], output_type))
     }
 
-    /// Strict: both operands must already carry `output_type`.
+    /// Strict: both operands must already carry `output_type`, a shift's count
+    /// included. p-code leaves that count any width and `validate` exempts it,
+    /// so a caller lowering a shift coerces the count first.
     fn build_int_binary_operation(
         &mut self,
         lhs_id: ValueId,
@@ -160,8 +170,7 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::IntBinaryOp(op), [lhs_id, rhs_id], output_type))
     }
 
-    /// Builds `x <op> IntConst(k):ty`. Note the operand order: the constant
-    /// lands on the right.
+    /// Builds `x <op> IntConst(k):ty`; the constant lands on the right.
     fn build_const_binop(
         &mut self,
         k: u128,
@@ -198,14 +207,20 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::IntUnaryOp(op), [value], output_type))
     }
 
+    /// Counts over the INPUT's width; `output_type` only sizes the result, so
+    /// the two are independent. Coercing the input would shift the count by the
+    /// width difference.
     fn build_popcount(&mut self, input_id: ValueId, output_type: ValueType) -> Result<ValueId> {
-        let value = self.require_value_type(input_id, output_type)?;
-        Ok(self.build_single_output_pure(NodeKind::Popcount, [value], output_type))
+        Self::require_integer_type(self.value_type(input_id)?)?;
+        Self::require_integer_type(output_type)?;
+        Ok(self.build_single_output_pure(NodeKind::Popcount, [input_id], output_type))
     }
 
+    /// Counts leading zeros over the INPUT's width; see [`Self::build_popcount`].
     fn build_lzcount(&mut self, input_id: ValueId, output_type: ValueType) -> Result<ValueId> {
-        let value = self.require_value_type(input_id, output_type)?;
-        Ok(self.build_single_output_pure(NodeKind::Lzcount, [value], output_type))
+        Self::require_integer_type(self.value_type(input_id)?)?;
+        Self::require_integer_type(output_type)?;
+        Ok(self.build_single_output_pure(NodeKind::Lzcount, [input_id], output_type))
     }
 
     /// Outputs `I1`. Strict: both operands must already carry `operand_type`,
@@ -228,9 +243,19 @@ pub trait IRBuilderExt: IRBuilder {
         )
     }
 
-    /// `bits` is the raw IEEE 754 pattern. `output_type` must be `F32` or
-    /// `F64`.
+    /// `bits` is the raw IEEE 754 pattern, masked to `output_type`'s width so
+    /// two patterns differing only above it dedup onto one node.
+    ///
+    /// # Panics
+    ///
+    /// On a non-float `output_type`, or one wider than `FloatConst`'s `u64`
+    /// payload (`F80` / `F128`), which would keep only the low 8 bytes.
     fn build_float_const(&mut self, bits: u64, output_type: ValueType) -> ValueId {
+        assert!(
+            output_type.is_float() && output_type.byte_size() <= 8,
+            "build_float_const needs a float type of at most 8 bytes; got {output_type:?}"
+        );
+        let bits = output_type.mask_float_bits(bits);
         self.build_single_output_pure(NodeKind::FloatConst(bits), [], output_type)
     }
 
@@ -311,12 +336,11 @@ pub trait IRBuilderExt: IRBuilder {
                 float_type.byte_size(),
             ));
         }
-        // F80 skips the fold: `FloatConst`'s u64 payload cannot hold an
-        // 80-bit pattern.
+        // `FloatConst`'s payload is a u64, so a wider pattern cannot fold.
         if let Some(bits) = self.int_const_u128(value)
-            && float_type != ValueType::F80
+            && float_type.byte_size() <= 8
         {
-            // Already masked to the type's width, and F32/F64 fit a u64.
+            // Already masked to the type's width.
             #[allow(clippy::cast_possible_truncation)]
             return Ok(self.build_float_const(bits as u64, float_type));
         }
@@ -337,10 +361,9 @@ pub trait IRBuilderExt: IRBuilder {
                 int_type.byte_size(),
             ));
         }
-        // F80 skips the fold: a u64 payload cannot represent the whole 80-bit
-        // pattern.
+        // A u64 payload cannot represent a wider pattern.
         if let NodeKind::FloatConst(bits) = *self.function().kind_of_value(value)
-            && input_ty != ValueType::F80
+            && input_ty.byte_size() <= 8
         {
             return self.build_int_const(bits, int_type);
         }

@@ -281,15 +281,16 @@ impl<'g> EditFunction<'g> {
             // `canonicalize_node` returns `Some` only on a structural dedup.
             // Among cacheable kinds only `If` is multi-output, and two `If`s
             // never share a control edge (control is single-consumer), so an
-            // `If` never dedups; every node reaching here is single-value-output.
+            // `If` never dedups; every node reaching here has ONE output,
+            // which for `Store` / `Entry` / `InitialMemory` is not a `Val`.
             let [node_out] = self
                 .function
                 .node_outputs_exact::<1>(node)
-                .expect("a cacheable node flagged for re-canon is single-value-output");
+                .expect("a cacheable node flagged for re-canon is single-output");
             let [twin_out] = self
                 .function
                 .node_outputs_exact::<1>(twin)
-                .expect("a cacheable twin is single-value-output");
+                .expect("a cacheable twin is single-output");
             self.replace_value(node_out, twin_out)
                 .expect("merging a re-canonicalized node into its twin cannot fail");
         }
@@ -344,7 +345,12 @@ impl<'g> EditFunction<'g> {
     }
 
     /// Drain the maybe-dead queue to a fixed point: kill every enqueued node
-    /// that is actually dead, recursively enqueuing its orphaned operands.
+    /// that is actually dead, recursively enqueuing its orphaned operands, and
+    /// merge every mutated node into its structural twin.
+    ///
+    /// Runs at every pass boundary, so the twins a rewrite leaves behind
+    /// (`PhiCollapse` redirecting two SSA phis to one value) are re-merged
+    /// here.
     pub fn clean(&mut self) {
         while let Some(node) = self.dequeue() {
             let flags = self.state.flags[node];
@@ -354,7 +360,6 @@ impl<'g> EditFunction<'g> {
                 self.kill_node(node);
                 continue;
             }
-            // Merge a mutated node into its structural twin.
             if flags.contains(NodeFlags::NEEDS_RECANON) {
                 self.canonicalize_node(node);
             }
@@ -624,7 +629,6 @@ pub(crate) mod test_fixtures {
 
     /// Trivial-convention builder with a single entry region, lift-addr
     /// pre-stamped.
-    #[allow(clippy::expect_used)]
     pub(crate) fn single_region_builder() -> FunctionBuilder {
         let cc = strider_target::BuiltCallingConvention {
             arg_passing_regs: Vec::new(),
@@ -636,7 +640,9 @@ pub(crate) mod test_fixtures {
             ret_stack_pop: 0,
             link_register_vn: None,
             preserves_memory: false,
+            preserves_all_registers: false,
             no_return: false,
+            ..Default::default()
         };
         let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little)
             .expect("FunctionBuilder::new");
@@ -649,7 +655,6 @@ pub(crate) mod test_fixtures {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::EditFunction;
     use super::test_fixtures::single_region_builder;
@@ -1104,11 +1109,11 @@ mod tests {
         );
         assert!(
             !ctx.is_root(inner_node),
-            "inner Neg has an input — not a root"
+            "inner Neg has an input, so it is not a root"
         );
         assert!(
             !ctx.is_root(outer_node),
-            "outer Neg has an input — not a root"
+            "outer Neg has an input, so it is not a root"
         );
 
         let post = ctx.postorder();
@@ -1405,7 +1410,6 @@ mod tests {
         let mut ctx = EditFunction::new(&mut function);
         ctx.cull_dead();
 
-        // Force-enqueue both, then drain.
         ctx.enqueue_killed_def_node(store_node);
         ctx.enqueue_killed_def_node(return_node);
         ctx.clean();
@@ -1487,7 +1491,6 @@ mod tests {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod function_state_tests {
     use super::FunctionState;
     use super::test_fixtures::single_region_builder;
@@ -1535,7 +1538,7 @@ mod function_state_tests {
             !state.live_nodes.contains(dangling_node),
             "dangling unreachable const must not be live"
         );
-        // Sanity: a distinct const node, not deduped with k1/k2.
+        // A distinct const node, not deduped with k1/k2.
         assert!(
             matches!(function.node_kind(dangling_node), NodeKind::IntConst(_)),
             "dangling node is an IntConst"

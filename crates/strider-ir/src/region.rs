@@ -174,6 +174,17 @@ impl FunctionBuilder {
         self.regions[region].variables = variables;
     }
 
+    /// Repoints every phi-carrying variable's current value at its own `Phi`
+    /// output, undoing a blanket [`Self::set_region_variables`]: the value that
+    /// seed supplied is one of the phi's operands, not the region's current
+    /// value.
+    pub(crate) fn seed_phi_vars_from_phis(&mut self, region: RegionId) {
+        let r = &mut self.regions[region];
+        for &var_id in &r.phi_vars {
+            r.variables[var_id] = r.initial_variables[var_id];
+        }
+    }
+
     pub fn write_variable_from_id(&mut self, var_id: InitialVnId, value: ValueId) -> Result<()> {
         let region_id = self.require_cur_region()?;
         self.regions[region_id].variables[var_id] = value;
@@ -216,9 +227,10 @@ impl FunctionBuilder {
     ) -> Result<()> {
         self.link_control_regions(region, control)?;
         self.link_memory_regions(region, memory)?;
-        // Take-and-restore instead of cloning. Sound only because every call
-        // site has `cur_region != region`, so the temporarily empty slot is
-        // never observed.
+        // Take-and-restore instead of cloning. `link_region_variables` reads
+        // only `phi_vars` / `initial_variables`, so a self-loop
+        // (`cur_region == region`, an entry that is its own loop header) never
+        // observes the emptied slot.
         let source = std::mem::take(&mut self.regions[cur_region].variables);
         let res = self.link_region_variables(region, &source);
         self.regions[cur_region].variables = source;
@@ -236,7 +248,6 @@ impl FunctionBuilder {
     }
 
     /// The `Control` value the region's terminator consumes.
-    #[cfg(any(test, feature = "test-util"))]
     pub fn region_cur_ctrl(&self, region: RegionId) -> ValueId {
         self.regions[region].cur_ctrl
     }

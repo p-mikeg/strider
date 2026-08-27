@@ -3,8 +3,8 @@
 
 use crate::node::NodeKind;
 
-/// A slot's admissible value kinds, coarser than the concrete [`ValueKind`]
-/// stored on real outputs.
+/// A slot's admissible value kinds, coarser than the concrete
+/// [`ValueKind`](crate::node::ValueKind) stored on real outputs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpectedValueKind {
     Control,
@@ -51,31 +51,53 @@ pub(crate) struct Slot {
 pub(crate) struct SlotList {
     head: &'static [Slot],
     tail: Option<Slot>,
+    /// Inclusive arity bound. `usize::MAX` for a repeating tail.
+    max_len: usize,
 }
 
 impl SlotList {
     pub(crate) const fn fixed(head: &'static [Slot]) -> Self {
-        Self { head, tail: None }
+        Self {
+            head,
+            tail: None,
+            max_len: head.len(),
+        }
     }
 
+    /// `tail` repeats without bound.
     pub(crate) const fn variadic(head: &'static [Slot], tail: Slot) -> Self {
         Self {
             head,
             tail: Some(tail),
+            max_len: usize::MAX,
         }
     }
 
-    pub(crate) fn is_variadic(&self) -> bool {
-        self.tail.is_some()
+    /// `tail` occupies at most one slot past the head.
+    pub(crate) const fn optional(head: &'static [Slot], tail: Slot) -> Self {
+        Self {
+            head,
+            tail: Some(tail),
+            max_len: head.len() + 1,
+        }
     }
 
-    /// Length of the fixed prefix only.
-    pub(crate) fn head_len(&self) -> usize {
-        self.head.len()
+    /// `None` when `len` is admissible, else the bound it violates.
+    pub(crate) fn arity_violation(&self, len: usize) -> Option<usize> {
+        if len < self.head.len() {
+            Some(self.head.len())
+        } else if len > self.max_len {
+            Some(self.max_len)
+        } else {
+            None
+        }
     }
 
-    /// Past the head: `None` when fixed-arity, the tail slot when variadic.
+    /// Past the head: the tail slot while within `max_len`, else `None`.
     pub(crate) fn at(&self, idx: usize) -> Option<Slot> {
+        if idx >= self.max_len {
+            return None;
+        }
         self.head.get(idx).copied().or(self.tail)
     }
 }
@@ -108,12 +130,15 @@ const ANY_VAL: Slot = slot(AnyValue, "val", R::Val);
 const ADDR: Slot = slot(AnyInt, "addr", R::Addr);
 const DATA: Slot = slot(AnyInt, "data", R::Data);
 const TARGET: Slot = slot(AnyInt, "target", R::Target);
+// Optional trailing `IndirectBranch` input: the ISA-mode bit the branch
+// instruction commits, taken from the write to the `ISAModeSwitch` register
+// (ARM `SetThumbMode`, MIPS `JXWritePC`).
+const ISA_MODE: Slot = slot(AnyInt, "isa", R::Cond);
 const SP: Slot = slot(AnyInt, "sp", R::Sp);
-// AnyValue rather than AnyInt: argument, return, and clobbered registers hold
-// floats too.
+// Argument and return registers hold floats as well as integers, as do the
+// clobbered registers a `Call` outputs (`ANY_VAL`).
 const ARG: Slot = slot(AnyValue, "arg", R::Arg);
 const RET: Slot = slot(AnyValue, "ret", R::Ret);
-const CALL_OUT: Slot = slot(AnyValue, "val", R::Val);
 const SEG: Slot = slot(AnyInt, "seg", R::Seg);
 const OFF: Slot = slot(AnyInt, "off", R::Off);
 const REF: Slot = slot(AnyInt, "ref", R::Ref);
@@ -131,6 +156,12 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         (inputs: [$($i:expr),* $(,)?]; in_tail: $it:expr, outputs: [$($o:expr),* $(,)?] $(,)?) => {
             Signature {
                 inputs: SlotList::variadic(&[$($i),*], $it),
+                outputs: SlotList::fixed(&[$($o),*]),
+            }
+        };
+        (inputs: [$($i:expr),* $(,)?]; in_opt: $it:expr, outputs: [$($o:expr),* $(,)?] $(,)?) => {
+            Signature {
+                inputs: SlotList::optional(&[$($i),*], $it),
                 outputs: SlotList::fixed(&[$($o),*]),
             }
         };
@@ -160,20 +191,27 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::Phi => sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [ANY_VAL]),
 
         NodeKind::If => sig!(inputs: [CTRL, COND], outputs: [CTRL, CTRL]),
-        // One Control output per target region, in target order. Exhaustive:
-        // there is no default arm.
+        // One Control output per target region, in target order. No default
+        // arm, and the arms need not cover every dispatch value: a site the
+        // resolver seated early can hold one arm and widen later.
         NodeKind::Switch => sig!(inputs: [CTRL, INT_VAL], outputs: [CTRL]; out_tail: CTRL),
 
         // SP is an input-only anchor; the outputs are the clobbered varnodes.
         NodeKind::Call => sig!(
             inputs: [CTRL, MEM, TARGET, SP]; in_tail: ARG,
-            outputs: [CTRL, MEM]; out_tail: CALL_OUT,
+            outputs: [CTRL, MEM]; out_tail: ANY_VAL,
         ),
         NodeKind::Return => sig!(inputs: [CTRL, MEM]; in_tail: RET, outputs: []),
-        // Placeholder for an unresolved branch.
-        NodeKind::IndirectBranch => sig!(inputs: [CTRL, MEM, TARGET], outputs: []),
-        // Control sink for a no-return trap.
-        NodeKind::Unreachable => sig!(inputs: [CTRL], outputs: []),
+        // Placeholder for an unresolved branch. The optional trailing input is
+        // the interworking ISA-mode bit (absent for a non-switching branch); it
+        // is a real input so the optimizer keeps its cone live for the resolver.
+        NodeKind::IndirectBranch => {
+            sig!(inputs: [CTRL, MEM, TARGET]; in_opt: ISA_MODE, outputs: [])
+        }
+        // Control sink for a no-return trap. The optional trailing input is the
+        // memory chain: control alone anchors no liveness, so an exit-free
+        // control cycle would otherwise lose its stores to compaction.
+        NodeKind::Unreachable => sig!(inputs: [CTRL]; in_opt: MEM, outputs: []),
 
         NodeKind::Load(_) => sig!(inputs: [MEM, ADDR], outputs: [INT_VAL]),
         NodeKind::Store(_) => sig!(inputs: [MEM, ADDR, DATA], outputs: [MEM]),
@@ -384,8 +422,8 @@ mod tests {
     #[test]
     fn call_is_variadic_in_args() {
         let sig = expected_signature(&NodeKind::Call);
-        assert!(sig.inputs.is_variadic());
-        assert_eq!(sig.inputs.head_len(), 4);
+        assert!(sig.inputs.tail.is_some());
+        assert_eq!(sig.inputs.head.len(), 4);
         assert_eq!(sig.inputs.at(0).unwrap().name, "ctrl");
         assert_eq!(sig.inputs.at(1).unwrap().name, "mem");
         assert_eq!(sig.inputs.at(2).unwrap().name, "target");
@@ -398,7 +436,7 @@ mod tests {
     #[test]
     fn return_input_tail_is_ret() {
         let sig = expected_signature(&NodeKind::Return);
-        assert_eq!(sig.inputs.head_len(), 2);
+        assert_eq!(sig.inputs.head.len(), 2);
         assert_eq!(sig.inputs.at(0).unwrap().name, "ctrl");
         assert_eq!(sig.inputs.at(1).unwrap().name, "mem");
         assert_eq!(sig.inputs.at(2).unwrap().role, SlotRole::Ret);
@@ -420,15 +458,13 @@ mod tests {
         assert_eq!(sig.inputs.at(1).unwrap().role, SlotRole::Rhs);
     }
 
-    /// The kind list is hand-maintained: forgetting to append a new variant
-    /// silently shrinks coverage instead of failing.
-    #[test]
-    fn expected_signature_covers_every_node_kind() {
+    /// One representative per [`NodeKind`] variant, in declaration order.
+    fn every_node_kind() -> Vec<NodeKind> {
         use crate::node::{
             ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
         };
         let space = rsleigh::VnSpace::RAM;
-        let kinds: Vec<NodeKind> = vec![
+        vec![
             NodeKind::Entry,
             NodeKind::InitialMemory,
             NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
@@ -440,6 +476,7 @@ mod tests {
             NodeKind::Call,
             NodeKind::Return,
             NodeKind::IndirectBranch,
+            NodeKind::Unreachable,
             NodeKind::Load(space),
             NodeKind::Store(space),
             NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
@@ -447,37 +484,96 @@ mod tests {
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             NodeKind::IntCmpOp(IntCmpOp::Equal),
             NodeKind::Truncate,
-            NodeKind::Extend(ExtendOp::ZeroExtend),
             NodeKind::Popcount,
             NodeKind::Lzcount,
+            NodeKind::Extend(ExtendOp::ZeroExtend),
             NodeKind::FloatConst(0),
             NodeKind::FloatBinaryOp(FloatBinaryOp::Add),
             NodeKind::FloatUnaryOp(FloatUnaryOp::Neg),
             NodeKind::FloatCmpOp(FloatCmpOp::Equal),
             NodeKind::IntToFloat,
-            NodeKind::IntBitsToFloat,
             NodeKind::FloatToInt,
-            NodeKind::FloatBitsToInt,
             NodeKind::FloatToFloat,
+            NodeKind::IntBitsToFloat,
+            NodeKind::FloatBitsToInt,
             NodeKind::CallOther { user_op_id: 0 },
             NodeKind::SegmentOp { op_id: 0 },
             NodeKind::CPoolRef,
             NodeKind::New,
-        ];
-        for k in &kinds {
+        ]
+    }
+
+    /// Position of `kind` in [`every_node_kind`]'s declaration order. The match
+    /// has no `_` arm, so a new [`NodeKind`] variant does not compile until it
+    /// is numbered here, and `every_node_kind_is_exhaustive` then fails until it
+    /// also has a representative.
+    fn declaration_index(kind: &NodeKind) -> usize {
+        match kind {
+            NodeKind::Entry => 0,
+            NodeKind::InitialMemory => 1,
+            NodeKind::InitialVar(_) => 2,
+            NodeKind::Region => 3,
+            NodeKind::MemPhi => 4,
+            NodeKind::Phi => 5,
+            NodeKind::If => 6,
+            NodeKind::Switch => 7,
+            NodeKind::Call => 8,
+            NodeKind::Return => 9,
+            NodeKind::IndirectBranch => 10,
+            NodeKind::Unreachable => 11,
+            NodeKind::Load(_) => 12,
+            NodeKind::Store(_) => 13,
+            NodeKind::IntConst(_) => 14,
+            NodeKind::IntUnaryOp(_) => 15,
+            NodeKind::IntBinaryOp(_) => 16,
+            NodeKind::IntCmpOp(_) => 17,
+            NodeKind::Truncate => 18,
+            NodeKind::Popcount => 19,
+            NodeKind::Lzcount => 20,
+            NodeKind::Extend(_) => 21,
+            NodeKind::FloatConst(_) => 22,
+            NodeKind::FloatBinaryOp(_) => 23,
+            NodeKind::FloatUnaryOp(_) => 24,
+            NodeKind::FloatCmpOp(_) => 25,
+            NodeKind::IntToFloat => 26,
+            NodeKind::FloatToInt => 27,
+            NodeKind::FloatToFloat => 28,
+            NodeKind::IntBitsToFloat => 29,
+            NodeKind::FloatBitsToInt => 30,
+            NodeKind::CallOther { .. } => 31,
+            NodeKind::SegmentOp { .. } => 32,
+            NodeKind::CPoolRef => 33,
+            NodeKind::New => 34,
+        }
+    }
+
+    #[test]
+    fn every_node_kind_is_exhaustive() {
+        let kinds = every_node_kind();
+        let seen: std::collections::BTreeSet<usize> = kinds.iter().map(declaration_index).collect();
+        let expected: std::collections::BTreeSet<usize> = (0..kinds.len()).collect();
+        assert_eq!(
+            seen, expected,
+            "every_node_kind must hold one representative per variant, in declaration order"
+        );
+    }
+
+    #[test]
+    fn expected_signature_covers_every_node_kind() {
+        for k in &every_node_kind() {
             let sig = expected_signature(k);
-            for i in 0..sig.inputs.head_len() {
+            for i in 0..sig.inputs.head.len() {
                 assert!(sig.inputs.at(i).is_some(), "input.at({i}) for {k:?}");
             }
-            for i in 0..sig.outputs.head_len() {
+            for i in 0..sig.outputs.head.len() {
                 assert!(sig.outputs.at(i).is_some(), "output.at({i}) for {k:?}");
             }
-            if sig.inputs.is_variadic() {
-                let tail = sig.inputs.at(sig.inputs.head_len());
+            if sig.inputs.tail.is_some() {
+                let tail = sig.inputs.at(sig.inputs.head.len());
                 assert!(tail.is_some(), "variadic input tail for {k:?}");
             }
-            if sig.outputs.is_variadic() {
-                let tail = sig.outputs.at(sig.outputs.head_len());
+            if sig.outputs.tail.is_some() {
+                let tail = sig.outputs.at(sig.outputs.head.len());
                 assert!(tail.is_some(), "variadic output tail for {k:?}");
             }
         }

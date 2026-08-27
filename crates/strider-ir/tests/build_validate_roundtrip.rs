@@ -1,8 +1,6 @@
 //! `FunctionBuilder::build` must return a graph that passes `validate`, for
 //! every node-kind variant.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
 use strider_ir::node::ValueType;
 use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatUnaryOp, IRBuilderExt, IntBinaryOp, IntCmpOp, IntUnaryOp,
@@ -78,7 +76,7 @@ fn bool_ops_validate() {
 
 #[test]
 fn float_ops_validate() {
-    // Sub is absent: lowered to Add+Neg at lift time.
+    // The lifter lowers `FloatSub` to `FloatAdd(a, Neg(b))`.
     for op in [FloatBinaryOp::Add, FloatBinaryOp::Mul, FloatBinaryOp::Div] {
         make_empty_fn(|fb| {
             let a = fb.build_float_const(0x3FF0_0000_0000_0000u64, ValueType::F64); // 1.0
@@ -199,7 +197,7 @@ fn const_then_return_validates() {
 
 #[test]
 fn every_int_cmp_op_validates() {
-    // LessEqual / SlessEqual / NotEqual are absent: the lifter lowers them.
+    // The lifter lowers LessEqual / SlessEqual / NotEqual into these six.
     for op in [
         IntCmpOp::Equal,
         IntCmpOp::Less,

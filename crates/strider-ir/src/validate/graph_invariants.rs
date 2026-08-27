@@ -1,6 +1,6 @@
 use crate::IRViewer;
 use crate::function::Function;
-use crate::node::{NodeId, NodeKind, ValueKind};
+use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueKind};
 use crate::walk::NodeIdSet;
 
 use super::ValidationError;
@@ -83,6 +83,103 @@ pub(super) fn check_function_invariants_control_single_use(
     }
 }
 
+/// An arithmetic node is evaluated at ONE width, so every value operand must
+/// carry it: for `IntBinaryOp` / `IntUnaryOp` / `FloatBinaryOp` /
+/// `FloatUnaryOp` that width is the output's, and for the comparisons (whose
+/// output is `I1`) it is the first operand's. A shift is the exception p-code
+/// itself makes: `INT_LEFT` pins only input0 to the output size, so the count
+/// may be any width. `Extend` / `Truncate` are how a width change is spelled.
+///
+/// The exemption covers IR from any source; `IRBuilderExt` is stricter than it
+/// and coerces a count to the output width before building, so a
+/// builder-produced shift never uses it.
+pub(super) fn check_function_invariants_arith_widths(
+    function: &Function,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    let graph = function.graph();
+    for (node, kind) in function.reachable_kind_iter(reachable) {
+        // A shift's COUNT is unconstrained in p-code (`INT_LEFT` pins only
+        // input0 to the output size), so only operand 0 carries the width.
+        let checked = match kind {
+            NodeKind::IntBinaryOp(
+                IntBinaryOp::ShiftLeft | IntBinaryOp::ShiftRight | IntBinaryOp::SShiftRight,
+            ) => 1,
+            _ => usize::MAX,
+        };
+        // A bitcast reinterprets the SAME bits, so the two types must be the
+        // same SIZE. Compare bytes, not bits: `I1` and `I8` share a byte.
+        if matches!(kind, NodeKind::IntBitsToFloat | NodeKind::FloatBitsToInt) {
+            let inp = graph
+                .node_inputs(node)
+                .into_iter()
+                .next()
+                .and_then(|v| function.value_type_opt(v));
+            let outp = graph
+                .node_outputs(node)
+                .first()
+                .and_then(|&o| function.value_type_opt(o));
+            if let (Some(i), Some(o)) = (inp, outp)
+                && i.byte_size() != o.byte_size()
+            {
+                errs.push(ValidationError::ArithmeticWidthMismatch {
+                    node,
+                    kind: *kind,
+                    operand_idx: 0,
+                    operand_width: i.bit_width(),
+                    expected_width: o.bit_width(),
+                });
+            }
+            continue;
+        }
+        let width_from_output = match kind {
+            NodeKind::IntBinaryOp(_)
+            | NodeKind::IntUnaryOp(_)
+            | NodeKind::FloatBinaryOp(_)
+            | NodeKind::FloatUnaryOp(_) => true,
+            NodeKind::IntCmpOp(_) | NodeKind::FloatCmpOp(_) => false,
+            _ => continue,
+        };
+        // Carries the real input slot, not a position in the filtered list: a
+        // node with an untyped input would otherwise report an index that
+        // names a different operand, and `checked` below would count from the
+        // wrong one.
+        let operands: Vec<(usize, usize)> = graph
+            .node_inputs(node)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(slot, v)| function.value_type_opt(v).map(|t| (slot, t.bit_width())))
+            .collect();
+        let expected = if width_from_output {
+            match graph
+                .node_outputs(node)
+                .first()
+                .and_then(|&o| function.value_type_opt(o))
+            {
+                Some(t) => t.bit_width(),
+                None => continue,
+            }
+        } else {
+            match operands.first() {
+                Some(&(_, w)) => w,
+                None => continue,
+            }
+        };
+        for &(slot, w) in operands.iter().filter(|&&(slot, _)| slot < checked) {
+            if w != expected {
+                errs.push(ValidationError::ArithmeticWidthMismatch {
+                    node,
+                    kind: *kind,
+                    operand_idx: slot,
+                    operand_width: w,
+                    expected_width: expected,
+                });
+            }
+        }
+    }
+}
+
 /// `Extend` must strictly widen its input; `Truncate` must strictly narrow it.
 /// Non-integer input/output is skipped.
 pub(super) fn check_function_invariants_extend_truncate(
@@ -152,7 +249,7 @@ pub(super) fn check_function_invariants_switch(
     }
 }
 
-/// Every `Phi` / `MemPhi` takes its dispatch token (input[0]) from a
+/// Every `Phi` / `MemPhi` takes its dispatch token (`input[0]`) from a
 /// `Region`'s `PhiToken` output, and has one value input per predecessor of
 /// that owning `Region`.
 pub(super) fn check_function_invariants_phis(
@@ -326,7 +423,8 @@ pub(super) fn check_function_invariants_side_indices(
 }
 
 /// Every reachable `IntConst(id)` references a live const-interner entry whose
-/// value fits the node's declared output width.
+/// value fits the node's declared output width, and every reachable
+/// `FloatConst` carries no bits above its width.
 pub(super) fn check_function_invariants_consts(
     function: &Function,
     reachable: &NodeIdSet,
@@ -334,6 +432,18 @@ pub(super) fn check_function_invariants_consts(
 ) {
     let graph = function.graph();
     for (node, kind) in function.reachable_kind_iter(reachable) {
+        if let NodeKind::FloatConst(bits) = *kind {
+            let Some(&out) = graph.node_outputs(node).first() else {
+                continue; // arity reported elsewhere
+            };
+            let ValueKind::Typed(ty) = graph.value_kind(out) else {
+                continue;
+            };
+            if ty.is_float() && ty.mask_float_bits(bits) != bits {
+                errs.push(ValidationError::FloatConstWidthMismatch { node, bits });
+            }
+            continue;
+        }
         let NodeKind::IntConst(id) = *kind else {
             continue;
         };
@@ -352,15 +462,39 @@ pub(super) fn check_function_invariants_consts(
         let too_wide = match value {
             crate::node::const_value::ConstValue::Bits(v) => v & !ty.bit_mask_u128() != 0,
             crate::node::const_value::ConstValue::Wide(limbs) => {
-                limbs.len() * 64 > ty.bit_width()
-                    && limbs
-                        .iter()
-                        .enumerate()
-                        .any(|(i, &l)| (i + 1) * 64 > ty.bit_width() && l != 0)
+                let bits = ty.bit_width();
+                limbs.iter().enumerate().any(|(i, &l)| {
+                    let low = i * 64;
+                    // The limb the width ends inside keeps its low `bits - low`
+                    // bits; whole limbs above it must be zero.
+                    match bits.checked_sub(low) {
+                        None | Some(0) => l != 0,
+                        Some(spare) if spare < 64 => (l >> spare) != 0,
+                        _ => false,
+                    }
+                })
             }
         };
         if too_wide {
             errs.push(ValidationError::ConstWidthMismatch { node, id });
         }
+    }
+}
+
+/// Every control-reachable node must reach a terminator. The use-count checks
+/// pass an exit-free control cycle: its back-edge consumes the header's control
+/// output, so nothing there is unused or reused, yet no terminator exists to
+/// anchor liveness and compaction drops the whole body.
+pub(super) fn check_function_invariants_terminator_reachable(
+    function: &Function,
+    errs: &mut Vec<ValidationError>,
+) {
+    let stranded = crate::walk::stranded_nodes(function.graph(), function.entry());
+    let mut stranded = stranded.iter();
+    if let Some(node) = stranded.next() {
+        errs.push(ValidationError::NoTerminatorReachable {
+            node,
+            count: 1 + stranded.count(),
+        });
     }
 }

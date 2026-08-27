@@ -1,4 +1,4 @@
-//! Whole-graph IR validator.  Every check aggregates into a
+//! Whole-graph IR validator. Every check aggregates into a
 //! [`ValidationErrors`] bundle rather than failing fast.
 
 use crate::IRViewer;
@@ -13,11 +13,12 @@ mod local_typing;
 mod tests;
 
 use graph_invariants::{
-    check_function_invariants_asm_fingerprints, check_function_invariants_consts,
-    check_function_invariants_control_single_use, check_function_invariants_extend_truncate,
-    check_function_invariants_memory_chain, check_function_invariants_phis,
-    check_function_invariants_region, check_function_invariants_side_indices,
-    check_function_invariants_switch, check_function_invariants_uniqueness,
+    check_function_invariants_arith_widths, check_function_invariants_asm_fingerprints,
+    check_function_invariants_consts, check_function_invariants_control_single_use,
+    check_function_invariants_extend_truncate, check_function_invariants_memory_chain,
+    check_function_invariants_phis, check_function_invariants_region,
+    check_function_invariants_side_indices, check_function_invariants_switch,
+    check_function_invariants_terminator_reachable, check_function_invariants_uniqueness,
 };
 use local_typing::check_local_typing;
 
@@ -45,10 +46,12 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     check_function_invariants_phis(function, &reachable, &mut errs);
     check_function_invariants_consts(function, &reachable, &mut errs);
     check_function_invariants_extend_truncate(function, &reachable, &mut errs);
+    check_function_invariants_arith_widths(function, &reachable, &mut errs);
     check_function_invariants_switch(function, &reachable, &mut errs);
     check_function_invariants_asm_fingerprints(function, &reachable, &mut errs);
     check_function_invariants_memory_chain(function, &reachable, &mut errs);
     check_function_invariants_side_indices(function, &reachable, &mut errs);
+    check_function_invariants_terminator_reachable(function, &mut errs);
 
     if errs.is_empty() {
         Ok(())
@@ -133,6 +136,14 @@ pub enum ValidationError {
     ReusedControlOutput { node: NodeId, value: ValueId },
 
     #[error(
+        "{count} node(s) control-reachable from Entry, the first being {node:?}, \
+         reach no terminator (`Return` / `IndirectBranch` / `Unreachable`); an \
+         exit-free control cycle anchors no liveness, so compaction drops its \
+         whole body"
+    )]
+    NoTerminatorReachable { node: NodeId, count: usize },
+
+    #[error(
         "phi node {phi:?} input[0] token producer {producer:?} has kind \
          {producer_kind:?}; expected PhiToken from a Region"
     )]
@@ -194,6 +205,13 @@ pub enum ValidationError {
     },
 
     #[error(
+        "node {node:?} is `FloatConst({bits:#x})`, which has bits set above its \
+         declared output width; a float constant carries only its own IEEE 754 \
+         pattern, so two otherwise-equal constants would not dedup"
+    )]
+    FloatConstWidthMismatch { node: NodeId, bits: u64 },
+
+    #[error(
         "reachable Store {node:?} (kind {kind:?}) produces a Memory output that no \
          reachable node consumes; a Store must stay anchored in the live memory \
          chain (back to a Return / IndirectBranch terminator) or it is silently \
@@ -206,8 +224,8 @@ pub enum ValidationError {
 
     #[error(
         "initial_var_index entry for varnode {vn:?} points at reachable node \
-         {node:?} (kind {actual_kind:?}); expected an InitialVar({vn:?}) node — \
-         the index has drifted from the live graph"
+         {node:?} (kind {actual_kind:?}); expected an InitialVar({vn:?}) node. \
+         The index has drifted from the live graph"
     )]
     StaleInitialVarIndex {
         node: NodeId,
@@ -238,6 +256,18 @@ pub enum ValidationError {
         kind: crate::node::NodeKind,
         in_width: usize,
         out_width: usize,
+    },
+
+    #[error(
+        "node {node:?} (kind {kind:?}) mixes widths: operand {operand_idx} is \
+         {operand_width} bits against {expected_width}"
+    )]
+    ArithmeticWidthMismatch {
+        node: NodeId,
+        kind: crate::node::NodeKind,
+        operand_idx: usize,
+        operand_width: usize,
+        expected_width: usize,
     },
 
     #[error("Switch {node:?} has no control outputs")]
