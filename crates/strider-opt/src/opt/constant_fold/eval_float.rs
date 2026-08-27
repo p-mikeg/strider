@@ -42,9 +42,8 @@ macro_rules! eval_unary {
             FloatUnaryOp::Sqrt => v.sqrt(),
             FloatUnaryOp::Ceil => v.ceil(),
             FloatUnaryOp::Floor => v.floor(),
-            // IEEE 754 / hardware default is ties-to-even, not Rust's
-            // ties-away-from-zero `round`.
-            FloatUnaryOp::Round => v.round_ties_even(),
+            // `FLOAT_ROUND` is round-half-away-from-zero, not mode-dependent.
+            FloatUnaryOp::Round => v.round(),
         };
         // NaN withheld, as in `eval_binary!`.
         if result.is_nan() {
@@ -68,7 +67,7 @@ pub(crate) fn eval_float_binary(
         ValueType::F64 => eval_binary!(f64, op, bits_l, bits_r),
         // Rust has no native 80-bit float, so F80 never folds; the rule skips
         // and the node survives for pattern queries, which care about graph
-        // shape rather than values. Bit-exact F80 emulation is out of scope.
+        // shape rather than values.
         _ => None,
     }
 }

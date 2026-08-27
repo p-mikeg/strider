@@ -1,5 +1,5 @@
-use cranelift_entity::{EntityRef, SecondaryMap};
-use entity_utils::Worklist;
+use cranelift_entity::SecondaryMap;
+use entity_utils::{DenseEntitySet, Worklist};
 
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{ExtendOp, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
@@ -180,8 +180,6 @@ pub(crate) fn node_known_bits(
                     zeros: l.zeros & r.zeros & type_mask,
                 },
                 IntBinaryOp::Xor => KnownBitsFacts {
-                    // Known 1 iff exactly one input is known 1; known 0 iff
-                    // both inputs are known and agree.
                     ones: ((l.ones & r.zeros) | (l.zeros & r.ones)) & type_mask,
                     zeros: ((l.ones & r.ones) | (l.zeros & r.zeros)) & type_mask,
                 },
@@ -197,8 +195,6 @@ pub(crate) fn node_known_bits(
             }
         }
 
-        // No unary arm: `~x` is `Xor(x, all_ones)` and folds through the Xor
-        // arm, while `Neg` has no closed-form transfer.
         NodeKind::Truncate => {
             let [value] = function
                 .graph()
@@ -273,10 +269,10 @@ pub(crate) fn node_known_bits(
                 .expect("Popcount / Lzcount have 1 input per node signature");
             let input_kind = function.value_kind(value);
             let input_ty = input_kind.as_value_or_err()?;
-            let max_val = input_ty.bit_width() as u64;
-            // `.max(1)` only matters for `max_val == 0`, where the subtraction
-            // yields 0.
-            let bits_needed = u64::from((u64::BITS - max_val.leading_zeros()).max(1));
+            // `8 * byte_size`, the width Sleigh counts over
+            // (`opbehavior.cc:791`); only `I1` differs from `bit_width`.
+            let max_val = (input_ty.byte_size() * 8) as u64;
+            let bits_needed = u64::from(u64::BITS - max_val.leading_zeros());
             let result_mask = if bits_needed >= 128 {
                 u128::MAX
             } else {
@@ -302,11 +298,24 @@ pub(crate) fn node_known_bits(
     Ok(Some((out, kb)))
 }
 
-/// Kinds whose input edges are followed when building a known-bits fold's
-/// fingerprint cone.  For `IntBinaryOp` / `Truncate` / `Extend` the
-/// `node_known_bits` arm reads `known[input]`, so provenance genuinely flows
-/// along those edges; `Popcount` / `Lzcount` are included conservatively even
-/// though their transfer depends only on the input width, not on `known[input]`.
+#[cfg(test)]
+thread_local! {
+    /// Cone members touched while transferring a fold's contributor
+    /// fingerprints.
+    pub(crate) static CONE_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn bump_cone_steps() {
+    CONE_STEPS.with(|c| c.set(c.get() + 1));
+}
+
+#[cfg(not(test))]
+fn bump_cone_steps() {}
+
+/// Kinds whose input edges are followed when building a fold's fingerprint
+/// cone.  `Popcount` / `Lzcount` are included conservatively; their transfer
+/// reads only the input width.
 fn propagates_known_bits(kind: &NodeKind) -> bool {
     matches!(
         kind,
@@ -327,8 +336,8 @@ fn propagates_known_bits(kind: &NodeKind) -> bool {
 /// instead (validated invariant); well-formed graphs always converge.
 pub fn analyze(function: &strider_ir::Function) -> Result<KnownBitsMap> {
     // Reachable nodes only: a detached zombie can have zero inputs, which would
-    // trip `node_inputs_exact` inside `node_known_bits`.  RPO seed order is just
-    // churn reduction; the monotone fixpoint converges from any order.
+    // trip `node_inputs_exact` inside `node_known_bits`.  RPO seed order reduces
+    // churn; the monotone fixpoint converges from any order.
     let mut known: KnownBitsMap = SecondaryMap::new();
     let mut work: Worklist<NodeId> = function.reverse_postorder_filter(|_| true).collect();
     while let Some(node_id) = work.dequeue() {
@@ -382,87 +391,79 @@ impl Optimizer for KnownBits {
             })
             .collect();
 
-        // A fold's contributor cone is about to be cascade-culled, taking its
-        // asm-fingerprints with it.  A one-hop absorb of the direct inputs is
-        // not enough: a contributor that establishes bits without being fully
-        // known itself (the `x & 1` in `((x & 1) | 2) & 0`) never folds, so the
-        // fixpoint can never carry its fingerprint upward.  Absorb the whole
-        // cone, memoized once over the pre-fold graph since folds share cones.
-        let cone_nodes = build_cone_node_memo(edit, &to_fold);
+        // The cone is about to be cascade-culled with its asm-fingerprints.  A
+        // contributor that establishes bits without being fully known itself
+        // (the `x & 1` in `((x & 1) | 2) & 0`) never folds, so a one-hop absorb
+        // of the direct inputs loses it.
+        //
+        // Constants first, absorb second, rewire last: the cone walk reads
+        // input edges and `replace_value` rewires them, so every walk must run
+        // over the pre-fold edges.  Creating a constant only adds a node (or
+        // dedups onto an existing one) and rewires nothing.  No `IntConst` is
+        // ever a fold's old producer, so the dedup pool is stable across the
+        // rewire pass either way.
+        let mut folds: Vec<(ValueId, ValueId)> = Vec::with_capacity(to_fold.len());
+        for &(value, ty, ones) in &to_fold {
+            folds.push((value, edit.build_int_const(ones, ty)?));
+        }
 
-        let mut result = OptimizationResult::NoChange;
-        for (value, ty, ones) in to_fold {
-            let new_value = edit.build_int_const(ones, ty)?;
-            let folded_producer = edit.producer(value);
+        // A fingerprint union LINKS rather than copies, so a node's set already
+        // covers everything unioned into it. Linking each cone node to its own
+        // inputs ONCE therefore makes a fold's whole cone reachable from its
+        // producer, and the fold itself one union.
+        //
+        // A union with a set-less `src` is a no-op, so a node is linked to its
+        // inputs only once each has absorbed its own subtree: the `true` flag
+        // marks that second visit, and the marker sits below everything the
+        // first visit pushes.  The cone kinds cannot form a value cycle (only
+        // a `Phi` closes one, and it does not propagate), so the second visit
+        // always comes after every descendant's.
+        //
+        // `linked` is never cleared, so each edge is walked once across all
+        // folds; nested folds (`t(i) = t(i-1) | C(i)`) would otherwise be
+        // quadratic.
+        let mut linked: DenseEntitySet<NodeId> = DenseEntitySet::new();
+        let mut stack: Vec<(NodeId, bool)> = Vec::new();
+        let mut inputs: Vec<NodeId> = Vec::new();
+        for &(value, new_value) in &folds {
             let new_producer = edit.producer(new_value);
-            // Seed from the producer's input cones; the producer itself is
-            // absorbed by `replace_value` below.
-            for p in crate::peephole::input_producers(edit, folded_producer) {
-                if let Some(cone) = cone_nodes.get(&p) {
-                    for &q in cone {
+            let old_producer = edit.producer(value);
+            stack.clear();
+            stack.push((old_producer, false));
+            while let Some((n, subtrees_absorbed)) = stack.pop() {
+                if subtrees_absorbed {
+                    inputs.clear();
+                    inputs.extend(crate::peephole::input_producers_iter(edit, n));
+                    for &input in &inputs {
                         edit.function_mut()
                             .side_tables_mut()
-                            .extend_asm_fingerprint_from(new_producer, q);
+                            .extend_asm_fingerprint_from(n, input);
                     }
+                    continue;
                 }
+                if !linked.insert(n) {
+                    continue;
+                }
+                bump_cone_steps();
+                if !propagates_known_bits(edit.node_kind(n)) {
+                    continue;
+                }
+                stack.push((n, true));
+                stack.extend(crate::peephole::input_producers_iter(edit, n).map(|i| (i, false)));
             }
+            // The producer is absorbed by `replace_value` below, but its own
+            // fingerprint is not: the cone hangs off it, so link it here.
+            edit.function_mut()
+                .side_tables_mut()
+                .extend_asm_fingerprint_from(new_producer, old_producer);
+        }
+
+        let mut result = OptimizationResult::NoChange;
+        for (value, new_value) in folds {
             if edit.replace_value(value, new_value)? {
                 result = OptimizationResult::Changed;
             }
         }
         Ok(result)
     }
-}
-
-/// Deduplicated contributor node ids in one node's known-bits cone.
-type ConeNodes = smallvec::SmallVec<[NodeId; 8]>;
-
-/// Memoizes `cone(n) = {n} + (propagates(n) ? union of cone(p) : {})` over `p`
-/// in `n`'s input producers, for the cones reachable from the `to_fold`
-/// producers' inputs.
-///
-/// The cone is acyclic (the propagating kinds exclude Phi and Region, the only
-/// sources of data cycles), so the postorder needs no cycle handling.
-fn build_cone_node_memo(
-    edit: &crate::EditFunction<'_>,
-    to_fold: &[(ValueId, ValueType, u128)],
-) -> rustc_hash::FxHashMap<NodeId, ConeNodes> {
-    let mut memo: rustc_hash::FxHashMap<NodeId, ConeNodes> = rustc_hash::FxHashMap::default();
-    // Iterative postorder: the bool is "children already pushed".  On the
-    // second pop every child's set is in `memo`.
-    let mut stack: Vec<(NodeId, bool)> = Vec::new();
-    let seed_inputs = to_fold.iter().flat_map(|&(value, _, _)| {
-        crate::peephole::input_producers_iter(edit, edit.producer(value))
-    });
-    for n in seed_inputs {
-        stack.push((n, false));
-    }
-    while let Some((n, expanded)) = stack.pop() {
-        if expanded {
-            let mut nodes: ConeNodes = smallvec::smallvec![n];
-            if propagates_known_bits(edit.node_kind(n)) {
-                for p in crate::peephole::input_producers_iter(edit, n) {
-                    if let Some(child) = memo.get(&p) {
-                        nodes.extend_from_slice(child);
-                    }
-                }
-            }
-            nodes.sort_unstable_by_key(|id| id.index());
-            nodes.dedup();
-            memo.insert(n, nodes);
-            continue;
-        }
-        if memo.contains_key(&n) {
-            continue;
-        }
-        stack.push((n, true));
-        if propagates_known_bits(edit.node_kind(n)) {
-            for p in crate::peephole::input_producers_iter(edit, n) {
-                if !memo.contains_key(&p) {
-                    stack.push((p, false));
-                }
-            }
-        }
-    }
-    memo
 }

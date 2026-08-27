@@ -3,6 +3,9 @@ name = "strider-opt"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Strider's optimization passes and indirect-branch classifiers."
+repository.workspace = true
+rust-version.workspace = true
 
 [features]
 # Exposes the single-pass test runners (`run_one` / `run_post`) to downstream
@@ -22,6 +25,7 @@ graph-algorithms = { workspace = true }
 # strider-orchestrator).
 strider-cfg = { workspace = true }
 rsleigh.workspace = true
+vn-container.workspace = true
 petgraph.workspace = true
 anyhow.workspace = true
 cranelift-entity.workspace = true
@@ -31,10 +35,10 @@ smallvec.workspace = true
 [dev-dependencies]
 # Test-only IR helpers (build_sub_as_add_neg, count_kind, set_call_cc, …).
 strider-ir = { workspace = true, features = ["test-util"] }
+# `Graph::next_node_id`, used by the peephole's rewrite-bookkeeping test.
+strider-graph = { workspace = true, features = ["test-injectors"] }
 strider-ir-test-utils = { workspace = true }
 object.workspace = true
-# Property-based testing for value-only IR invariants under the optimizer.
-proptest = "1"
 criterion.workspace = true
 
 [[bench]]
