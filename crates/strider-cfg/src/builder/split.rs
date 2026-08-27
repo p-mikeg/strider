@@ -25,49 +25,22 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
             .region_graph
             .node_weight_mut(region_id)
             .ok_or_else(|| anyhow!("invalid region index {region_id:?}"))?;
-        // `addr` need not match a recorded insn: intervening machine
-        // instructions may have lifted to zero pcode ops (AArch64 `paciasp` /
-        // `autiasp`, ARM `bti`), leaving a hole.  Round down and split after
-        // the largest insn at or below `addr`, keeping the requested `addr` as
-        // the second region's `start_addr` so later lookups resolve to it.
-        //
-        // The below-every-insn case IS reachable normally: a hole-rounded
-        // region's `start_addr` can sit below its first surviving insn (0x1008
-        // with insns=[0x100c]), and `contains_addr` reports true across the
-        // phantom span [start_addr, first_insn), so a branch target landing
-        // there routes here.  That address already belongs to this region's
-        // start, so the answer is a no-op split, NOT an error aborting the
-        // whole function's CFG build.  Only a target genuinely below
-        // `start_addr` is an error.
-        let split_index = match second_region
-            .insns
-            .iter()
-            .position(|insn| insn.addr == addr)
-        {
-            Some(idx) => idx,
-            None => match second_region
-                .insns
-                .iter()
-                .rposition(|insn| insn.addr <= addr)
-            {
-                Some(i) => i + 1,
-                None if addr >= second_region.start_addr => 0,
-                None => {
-                    return Err(anyhow!(
-                        "split address {addr:?} not found in region {region_id:?}'s instruction list"
-                    ));
-                }
-            },
-        };
-
+        // Caller-guaranteed: `Builder::explore` routes a target off every
+        // instruction boundary elsewhere, since no split can express it.
+        let split_index = second_region
+            .insn_index_at(addr)
+            .ok_or_else(|| {
+                let a = addr.machine_addr.addr;
+                anyhow!(
+                    "split address {a:#x} (pcode {}) is not an instruction boundary of region {region_id:?}",
+                    addr.insn_index,
+                )
+            })?;
+        // `addr == start_addr` (index 0) is the region's own start, resolved as
+        // an edge before reaching here; guard defensively.  `insn_index_at`
+        // returns an index below the length, so the second half is always
+        // non-empty.
         if split_index == 0 {
-            return Ok(region_id);
-        }
-        // Defensive: `contains_addr` should already preclude a query past the
-        // last insn.  Splitting there would leave the second region empty
-        // while retaining the original non-`Unconditional` terminator, a shape
-        // `add_region` rejects but this in-place path would never show it.
-        if split_index >= second_region.insns.len() {
             return Ok(region_id);
         }
         // `split_off` returns the at-and-after elements, leaving the earlier
@@ -75,28 +48,50 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
         // it the second half of the stream.
         let upper = second_region.insns.split_off(split_index);
         // This mutates in place, bypassing `add_region`'s empty-region guard.
-        // The two early returns above pin `0 < split_index < len`, so the
-        // second half is non-empty and legally keeps its original terminator.
-        // Assert it rather than trust future index arithmetic.
         debug_assert!(
             !upper.is_empty(),
-            "split_region produced an empty second half (split_index={split_index}) — \
+            "split_region produced an empty second half (split_index={split_index}): \
              would bypass add_region's empty-region invariant"
         );
         let first_region_insns = std::mem::replace(&mut second_region.insns, upper);
+        // The second half never reaches `add_region`, which is where the other
+        // regions get this checked.
+        debug_assert!(
+            second_region.insns_are_ascending(),
+            "split_region produced an out-of-order second half"
+        );
         let first_region_start_addr = second_region.start_addr;
         second_region.start_addr = addr;
 
-        // Re-index the now-second region under its new start address.
+        // Re-index the now-second region under its new start address.  The
+        // first half re-takes `first_region_start_addr` via `add_region` below.
         self.start_addr_to_region_id.insert(addr, region_id);
+        // A shadowed region keeps its shadower in whichever half now covers it,
+        // and the halves are only known to `find_region_containing_addr`
+        // through `shadowed_starts`.  The split moved the second half's start,
+        // so record the new one: missing it makes the lookup answer `None` for
+        // bytes that half really owns, which decodes a fresh region INSIDE an
+        // instruction.  The old start stays -- an extra probe costs nothing,
+        // a missing one corrupts the graph.
+        if self.shadowed_starts.contains(&first_region_start_addr) {
+            self.shadowed_starts.insert(addr);
+        }
 
         // The first half always falls through into the second, which keeps
         // `region_id` and therefore the original terminator.
         let first_region = self.add_region(Region {
             start_addr: first_region_start_addr,
             insns: first_region_insns,
+            empty_span_len: 0,
             terminator: RegionTerminator::Unconditional,
         })?;
+        // Both halves decoded in the same mode. Without carrying it, the first
+        // half has no recorded mode and `explore`'s clash check reads `None`,
+        // so a later wrong-mode arrival at this address goes unreported for no
+        // reason other than that some unrelated target split the region.
+        if let Some(&mode) = self.region_isa_mode.get(&region_id) {
+            self.region_isa_mode.insert(first_region, mode);
+        }
 
         let parent_edges: Vec<_> = self
             .region_graph
@@ -107,8 +102,24 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
         // Re-target incoming edges onto the first half.  It keeps the original
         // `start_addr`, so a parent `CondBranch`'s address-valued
         // `true_target` still resolves correctly.
+        //
+        // A `seat_non_boundary_target` edge names an address INSIDE the region
+        // instead of its start, so only that address decides which half owns
+        // it.  Moved to the first half while the second kept those bytes, the
+        // branch is left with no successor containing its target and
+        // `region_if` answers `None` for the taken side.
         for (edge_id, parent_id) in parent_edges {
-            self.region_graph.add_edge(parent_id, first_region, ());
+            if self
+                .non_boundary_seats
+                .get(&edge_id)
+                .is_some_and(|&seated| seated >= addr)
+            {
+                continue;
+            }
+            let moved = self.region_graph.add_edge(parent_id, first_region, ());
+            if let Some(seated) = self.non_boundary_seats.remove(&edge_id) {
+                self.non_boundary_seats.insert(moved, seated);
+            }
             self.region_graph.remove_edge(edge_id);
         }
         self.region_graph.add_edge(first_region, region_id, ());
