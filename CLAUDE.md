@@ -1,8 +1,8 @@
 # CLAUDE.md
 
 Guidance for Claude Code working in this repository. This file orients; the
-per-crate detail lives in each crate's own module and item docs, which are the
-source of truth. When they disagree with this file, trust the code.
+per-crate detail lives in each crate's own module and item docs. When they
+disagree with this file, trust the code. Longer-form docs live in `docs/`.
 
 Strider lifts a native binary function to a sea-of-nodes IR and exposes it for
 pattern queries from Rust or Python:
@@ -11,12 +11,9 @@ pattern queries from Rust or Python:
 
 ## Skill notes
 
-This workspace is Rust-only (plus thin Python bindings via PyO3 in
-`crates/strider-py/`). When the `code-simplifier` skill (or any other
-plugin-provided skill) emits JS/TS guidance ("use ES modules", "prefer function
-over arrow functions", "follow React component patterns"), ignore it: the
-project-relevant guidance is the Rust conventions established by clippy plus the
-workspace lints in `Cargo.toml`.
+This workspace is Rust-only, plus thin PyO3 bindings in `crates/strider-py/`.
+Ignore JS/TS guidance from any plugin-provided skill; the conventions that apply
+are clippy plus the workspace lints in `Cargo.toml`.
 
 ## Build & Run Commands
 
@@ -26,9 +23,16 @@ cargo test --workspace
 cargo test --package <crate-name> <test_name>   # single test
 cargo clippy --workspace
 
-# Main demo: reads fixtures/out/x86/arithmetic.elf::add (build it first from
-# fixtures/Makefile) and dumps cfg.html / graph.html / graph-opt.html at the
-# workspace root. Source: crates/strider-orchestrator/examples/orchestrator_demo.rs
+# The rest of what CI gates on (.github/workflows/ci.yml):
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --release   # a debug_assert hides from the debug run
+cargo doc --workspace --no-deps
+cargo +1.91.0 check --workspace --all-targets   # the declared MSRV
+
+# Main demo: reads the committed fixtures/out/x86/arithmetic.elf::add and dumps
+# cfg / graph / graph-opt as both .html and .dot at the workspace root.
+# Source: crates/strider-orchestrator/examples/orchestrator_demo.rs
 cargo run -p strider-orchestrator --example orchestrator_demo
 
 # Per-arch IR cmp shapes (debug helper for the FlagCmpCanonicalize work).
@@ -41,13 +45,17 @@ Python (from the workspace root, never from `crates/strider-py`):
 uv sync --group dev
 uv run maturin develop
 uv run pytest
+uv run pyright     # type-checks strider/, its tests and examples; gate is 0 errors
 ```
 
 ## Crates
 
 Sixteen crates: six generic utilities, nine strider-specific, plus the
-`strider-ir-test-utils` dev-dependency. External path dep `rsleigh` at
-`../rsleigh` (GHIDRA's Sleigh p-code lifter) is used by every crate.
+`strider-ir-test-utils` dev-dependency. External dep `rsleigh` (GHIDRA's Sleigh
+p-code lifter), vendored as a git submodule at `externals/rsleigh`, is used by
+every crate that touches machine state, i.e. all but the five payload-agnostic
+leaves (`dot`, `entity-utils`, `graph-algorithms`, `read-only-memory`,
+`strider-graph`).
 
 Generic:
 
@@ -66,7 +74,7 @@ Generic:
   optimizer / lifter / reader depend on it one-way without back-edging through
   the ELF reader.
 - `vn-container` -- varnode container geometry (`vn_contains`,
-  `largest_container_in`, ...), depending only on `rsleigh`, so ir / lift /
+  `largest_container_in`, ...) over `rsleigh` alone, so ir / lift / opt /
   pattern share one "which tracked varnode contains this one".
 
 Strider:
@@ -78,17 +86,19 @@ Strider:
 - `strider-cfg` -- bytes -> `Cfg` of basic-block regions via Sleigh. IR-free.
 - `strider-lift` -- CFG -> IR. The `Lifter<R>` engine owns the arch, `Sleigh<R>`
   and cached `SleighRegs`; the calling convention is a per-call argument.
-- `strider-pattern` -- the graph-based pattern DSL (`Pat` / `Capture` /
-  `Matcher` / `Match` / builders) plus its rewrite facade, over `strider-graph`
-  with the `NeverCacheable` policy.
-- `strider-opt` -- optimization passes, the `OptimizerPipeline`, and the
-  `indirect_branch_resolve` classifiers. Pure graph->graph; resolution is
-  rebuild-driven (no in-place IR editor, no orchestrator back-edge).
+- `strider-pattern` -- the graph-based pattern DSL (`Pattern` / `Capture` /
+  `Matcher` / `Match` / builders) over `strider-graph` with the `NeverCacheable`
+  policy. `Pat` is the Python class, not a Rust type.
+- `strider-opt` -- optimization passes, the `OptimizerPipeline`, the
+  `rewrite_rule` facade over `strider-pattern`, and the
+  `indirect_branch_resolve` classifiers. Pure graph->graph; the classifier
+  reports targets and the orchestrator rebuilds the CFG from them.
 - `strider-orchestrator` -- `Strider::analyze` plus the re-exported lift engine
   (`Lifter` / `LiftOptions` / `LiftOutcome` at the crate root) and `strider-opt`
   re-exported as `opt`.
-- `strider-ir-test-utils` -- `make_empty_fn` / `RegisterSet` builders and
-  asm-fingerprint stamping shared by tests.
+- `strider-ir-test-utils` -- `make_empty_fn` / `RegisterSet` builders,
+  `MockRom`, asm-fingerprint stamping, and the `proptest-gen`-gated
+  `proptest_gen` generator, shared by tests.
 - `strider-py` -- PyO3 bindings (`maturin develop` builds a wheel).
 
 ## Dependency graph (X -> Y = X depends on Y)
@@ -100,21 +110,24 @@ strider-ir         -> strider-graph, strider-target, read-only-memory, dot,
                       entity-utils, graph-algorithms, vn-container
 strider-reader     -> read-only-memory
 strider-lift       -> strider-cfg, strider-ir, strider-target,
-                      graph-algorithms, vn-container
+                      graph-algorithms, vn-container, petgraph
 strider-pattern    -> strider-ir, strider-graph, vn-container
 strider-opt        -> strider-cfg, strider-ir, strider-pattern, strider-target,
-                      entity-utils, graph-algorithms
+                      entity-utils, graph-algorithms, vn-container
 strider-orchestrator -> strider-cfg, strider-ir, strider-lift, strider-opt,
                       strider-target
 strider-py         -> orchestrator, opt, cfg, reader, ir, target, pattern, dot
 strider-ir-test-utils (dev) -> strider-ir, strider-target
 ```
 
-Leaves (no workspace deps): `dot`, `entity-utils`, `read-only-memory`,
-`strider-graph`, `strider-target`, `vn-container`. It is a DAG, no back-edges.
-Notably `strider-cfg` is IR-free, `strider-reader` depends only on
-`read-only-memory`, and the orchestrator has no direct `strider-pattern` or
-`dot` dependency.
+Production dependencies only. Leaves (no workspace deps): `dot`,
+`entity-utils`, `read-only-memory`, `strider-graph`, `strider-target`,
+`vn-container`. Notably `strider-cfg` is IR-free, `strider-reader` depends only
+on `read-only-memory`, and the orchestrator reaches `strider-pattern` and `dot`
+only from its tests and examples.
+
+Dev-dependencies are not in that graph, and are not a DAG:
+`strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it.
 
 ## IR node model
 
@@ -134,24 +147,25 @@ Notably `strider-cfg` is IR-free, `strider-reader` depends only on
 - Opaque: `SegmentOp { op_id }`, `CPoolRef`, `New`.
 
 Op sub-enums (`node/ops.rs`): `IntUnaryOp{Neg}` (complement `~x` is
-`Xor(x, all_ones)`, no `BitNot`); `IntBinaryOp{Add,And,Or,Xor,Div,Sdiv,Rem,Srem,
-ShiftRight,SShiftRight,ShiftLeft,Mul}` (no `Sub`, lowered to `Add(_, Neg(_))`);
-`IntCmpOp{Equal,Sless,Less,Carry,Scarry,Sborrow}` (output `I1`; no
-`LessEqual`/`SlessEqual`); `FloatBinaryOp{Add,Mul,Div}` (no `Sub`);
+`Xor(x, all_ones)`); `IntBinaryOp{Add,And,Or,Xor,Div,Sdiv,Rem,Srem,ShiftRight,
+SShiftRight,ShiftLeft,Mul}`; `IntCmpOp{Equal,Sless,Less,Carry,Scarry,Sborrow}`
+(output `I1`); `FloatBinaryOp{Add,Mul,Div}`;
 `FloatUnaryOp{Neg,Abs,Sqrt,Ceil,Floor,Round}`; `FloatCmpOp{Equal,Less}`;
-`ExtendOp{ZeroExtend,SignExtend}`.
+`ExtendOp{ZeroExtend,SignExtend}`. Subtraction and the `<=` / `!=` comparisons
+arrive already lowered; see Lift-time canonicalisations.
 
-`ValueType` (`node/value_type.rs`): `I1, I8, I16, I32, I48, I64, I80, I128,
-I256, I512, F32, F64, F80`. Booleans are the 1-bit integer `I1`, so there is no
-`Bool` type or `BoolConst`/`BoolBinaryOp`/`CastToBool`/`CastToInt`/`CastToFloat`.
-`bit_width(I1) == 1` (the one case where width != byte_size*8);
-`int_for_byte_size(1) -> I8`, never `I1`.
+`ValueType` (`node/value_type.rs`): `I1, I8, I16, I24, I32, I40, I48, I56, I64,
+I72, I80, I96, I112, I128, I256, I512, F16, F32, F64, F80, F128`. Booleans are
+the 1-bit integer `I1`. The width set is measured against the sla specs: an
+unmapped width fails the whole function's lift, so every width a Sleigh varnode
+or temporary carries needs a variant. `bit_width(I1) == 1` (the one case where
+width != byte_size*8); `int_for_byte_size(1) -> I8`, never `I1`.
 
 `expected_signature` (`node_signature.rs`) is the SSoT for each kind's slot
 kinds. `Graph` holds only structure; per-function overlay (entry, `default_cc`,
-tracked varnodes, interners, side-tables) lives on `Function`, which wraps a
-`Graph`. `entry` is a non-optional `NodeId` (a `Function` always has one), so
-`EditFunction::new(&mut Function)` is infallible.
+`endianness`, tracked varnodes, interners, side-tables) lives on `Function`,
+which wraps a `Graph`. `entry` is a non-optional `NodeId` (a `Function` always
+has one), so `EditFunction::new(&mut Function)` is infallible.
 
 Integer constants: `IntConst(ConstId)` interns through
 `Function::const_interner` into `ConstValue { Bits(u128), Wide(Box<[u64]>) }`
@@ -188,26 +202,51 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
 
 - No `Arc` / `Send` / `Sync` in core types: the workspace is single-threaded.
   Use `Box` / moves / `&`-borrows; opt into `Rc` at a call site only if needed.
-  (`read-only-memory` is the one deliberate exception.)
+  `strider-reader` and `strider-py` are the exceptions: a mapped image is shared
+  by every region cut from it, and a reader handed to Python outlives the call
+  that made it.
 - `Sleigh::lift_one(&mut self)` is NOT stateless: it carries context-register
   state (ARM/Thumb, x86 segment, MIPS16), so per-region decoding must stay
   sequential (`RegionBuilder::build`).
 - Register aliasing (x86 rax/eax/ax, AArch64 q/d/s, x87 ST*, ...) is handled in
   the lifter's `read_vn` / `write_vn`: reads and writes go through the largest
-  containing register with shift/mask for sub-register slices. Varnode
-  canonicalisation (dedup into largest containers, deterministic sort) is owned
-  by `FunctionBuilder::new`.
+  containing register with shift/mask for sub-register slices.
+  `FunctionBuilder::new` dedups tracked varnodes into their largest containers;
+  `Function::new` sorts them, which is what fixes `InitialVnId` numbering.
 - Indirect-branch resolution is a re-lift fixed-point loop in `Strider::analyze`
   that converges on the induced edge set; unresolvable branches are a result
-  (`unresolved_indirect_branches`), not an error.
-- SP-alias precision is tuned by `OptOptions` (`alias_mode`, `calls_clobber`,
-  `assume_distinct_sp_bases_disjoint`), threaded through `OptCtx` into every
-  SP-aware pass.
+  (`unresolved_indirect_branches`), not an error. A site that NARROWS twice has
+  an unstable answer: it is abandoned and reported, never an `Err`. Exhausting
+  `MAX_RESOLUTION_ITERATIONS` while every site still grows is the discovery
+  depth limit, and those sites come back as unresolved too.
+- A converged CFG is never silently incomplete, but it reports through FOUR
+  channels on `AnalyzeResult`, and a consumer asking "may this be incomplete?"
+  reads all four. `unresolved_indirect_branches` holds a site that lost a
+  successor or whose re-derived widening could not be seated (an interworking
+  `Switch` carries no ISA-mode input, so a re-derived arm has no mode to decode
+  in); empty means fully resolved. `unverified_seeded_sites` holds a dispatch
+  the CFG consumed as `Return` / `TailCall` -- a complete answer that cannot be
+  verified, not a loss, which is why an ARM `pop {pc}` epilogue lands here and
+  not in the first channel. `isa_mode_conflicts` and `interior_branch_targets`
+  carry the other two. The first, third and fourth accumulate across rounds, so
+  a later round cannot launder an earlier loss; `unverified_seeded_sites` is
+  derived once from the final CFG.
+- SP-alias precision is tuned by `OptOptions` (`alias_mode`,
+  `assume_incoming_args_survive_calls`, `assumptions`), threaded through
+  `OptCtx` into every SP-aware pass. `assumptions` is an `AssumptionOptions`
+  holding `distinct_sp_bases_disjoint`, `callee_preserves_stack_args`,
+  `noalias_allocators` and `escape_analysis`: each is a claim about the code
+  being analysed that the IR cannot prove, so a wrong one miscompiles. Every
+  field's risky value is the positive one, and all default off.
+  `noalias_allocators` (pure `malloc`-like callee addresses) is published onto
+  the `Function` so `decompose` classifies a `Call` return as a heap base;
+  distinct heap objects are disjoint and a load steps through such a call.
 
 ## strider-py
 
 Domain-namespaced submodules (`strider.ir`, `.lift`, `.cfg`, `.sleigh`,
-`.reader`, `.opt`, `.pattern`, `.template`) plus the single top-level
+`.reader`, `.opt`, `.pattern`, `.template`, plus `.explore`, which backs
+`visualize` and is bound but outside `__all__`) plus the single top-level
 `strider.StriderError`. `strider.lift.lifter(arch, mem, rom=None)` builds the
 lift handle; `analyze(entry, cc, opts)` returns an `AnalyzeResult` with
 `.cfg` / `.function` / `.unresolved` (also unpackable as a 3-tuple). Pattern
