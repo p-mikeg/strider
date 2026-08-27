@@ -60,7 +60,7 @@ int NOINLINE recursive_stack_growth(int n) {
 
 /* Make the body opaque so the optimiser can't inline / fold the call away —
  * without this GCC sees the empty body and elides the call site in
- * escape_via_ptr (which is the bug BUG-12 was tracking). */
+ * escape_via_ptr. */
 void __attribute__((noinline)) external_take_ptr(int *p) {
     __asm__ volatile ("" :: "r"(p) : "memory");
 }
