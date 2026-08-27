@@ -1,14 +1,9 @@
-//! Little-endian aliasing tests use the x86 harness, big-endian ones
-//! `ppc32be`.
-
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
 use rsleigh::{Vn, VnSpace};
 
 use strider_ir::node::{ExtendOp, IntBinaryOp, IntCmpOp, NodeKind, ValueKind, ValueType};
 use strider_ir::{IRBuilderExt, IRViewer, Value};
 
-use super::handler_tests::with_test_lifter_tracking_arch;
+use super::handler_tests::{lift_bytes, with_test_lifter_tracking_arch};
 use crate::lift::FunctionLifter;
 
 type TestReader = rsleigh::mem_readers::BufMemReader<Vec<u8>>;
@@ -49,71 +44,38 @@ fn pk(d: &FunctionLifter<'_, TestReader>, v: Value) -> NodeKind {
     *f.node_kind(f.producer(v))
 }
 
-/// Splits a merge `Or`'s two `And` arms into `(preserve, insert)`: the arm
-/// consuming the pre-write container value `initial` is the preserve arm.
+/// Splits a merge `Or`'s operands into `(preserve, insert)`: the preserve arm
+/// is the `And` consuming the pre-write container value `initial`.
 fn classify_preserve_insert_arms(
     d: &FunctionLifter<'_, TestReader>,
     lhs: Value,
     rhs: Value,
     initial: Value,
 ) -> (Value, Value) {
-    let mut preserve_arm = None;
-    let mut insert_arm = None;
-    for and_val in [lhs, rhs] {
-        assert_eq!(
-            pk(d, and_val),
-            NodeKind::IntBinaryOp(IntBinaryOp::And),
-            "each Or operand is an And"
-        );
-        let consumes_container = d
-            .builder
-            .function()
-            .node_inputs(d.builder.function().producer(and_val))
-            .into_iter()
-            .any(|input| input == initial);
+    for (arm, other) in [(lhs, rhs), (rhs, lhs)] {
+        let consumes_container = pk(d, arm) == NodeKind::IntBinaryOp(IntBinaryOp::And)
+            && d.builder
+                .function()
+                .node_inputs(d.builder.function().producer(arm))
+                .into_iter()
+                .any(|input| input == initial);
         if consumes_container {
-            preserve_arm = Some(and_val);
-        } else {
-            insert_arm = Some(and_val);
+            return (arm, other);
         }
     }
-    (
-        preserve_arm.expect("one And arm preserves the container"),
-        insert_arm.expect("one And arm inserts the shifted value"),
-    )
+    panic!("one Or arm must mask the pre-write container value")
 }
 
-/// Sorted constants across both `And` arms, plus whether `initial` appears as
-/// an arm input.
-fn collect_and_arm_consts(
-    d: &FunctionLifter<'_, TestReader>,
-    lhs: Value,
-    rhs: Value,
-    initial: Value,
-) -> (Vec<u128>, bool) {
-    let mut consts: Vec<u128> = Vec::new();
-    let mut saw_initial = false;
-    for and_val in [lhs, rhs] {
-        assert_eq!(
-            pk(d, and_val),
-            NodeKind::IntBinaryOp(IntBinaryOp::And),
-            "each Or operand is an And"
-        );
-        for input in d
-            .builder
-            .function()
-            .node_inputs(d.builder.function().producer(and_val))
-        {
-            if let Some(c) = d.builder.function().int_const_u128(input) {
-                consts.push(c);
-            }
-            if input == initial {
-                saw_initial = true;
-            }
-        }
-    }
+/// The constant inputs of `value`'s producer, sorted.
+fn arm_consts(d: &FunctionLifter<'_, TestReader>, value: Value) -> Vec<u128> {
+    let f = d.builder.function();
+    let mut consts: Vec<u128> = f
+        .node_inputs(f.producer(value))
+        .into_iter()
+        .filter_map(|input| f.int_const_u128(input))
+        .collect();
     consts.sort_unstable();
-    (consts, saw_initial)
+    consts
 }
 
 /// A sub-register read when only the container is tracked must route through
@@ -179,15 +141,16 @@ fn write_subregister_merge_preserves_container_high_bytes() {
             .node_inputs_exact::<2>(d.builder.function().producer(merged))
             .unwrap();
 
-        let (consts, saw_initial_container) = collect_and_arm_consts(d, lhs, rhs, initial_rax);
+        let (preserve_arm, insert_arm) = classify_preserve_insert_arms(d, lhs, rhs, initial_rax);
         assert_eq!(
-            consts,
-            vec![0xAB, 0xFF, 0xFFFF_FFFF_FFFF_FF00],
-            "masks must be positioned in container coordinates"
+            arm_consts(d, preserve_arm),
+            vec![0xFFFF_FFFF_FFFF_FF00],
+            "the keep-mask must be positioned in container coordinates"
         );
-        assert!(
-            saw_initial_container,
-            "the preserve arm must consume the pre-write container value"
+        assert_eq!(
+            d.builder.function().int_const_u128(insert_arm),
+            Some(0xAB),
+            "at shift 0 the zero-extended byte IS the insert arm"
         );
     });
 }
@@ -218,17 +181,18 @@ fn write_subregister_into_x87_80bit_container_preserves_high_bits() {
             .node_inputs_exact::<2>(d.builder.function().producer(merged))
             .unwrap();
 
-        let (consts, saw_initial) = collect_and_arm_consts(d, lhs, rhs, initial);
+        let (preserve_arm, insert_arm) = classify_preserve_insert_arms(d, lhs, rhs, initial);
         let container_mask = (1u128 << 80) - 1;
         let keep_mask = container_mask & !0xFFFF_FFFFu128;
         assert_eq!(
-            consts,
-            vec![0xDEAD_BEEF, 0xFFFF_FFFF, keep_mask],
-            "byte mask 0xFFFFFFFF + 80-bit preserve mask + the written value",
+            arm_consts(d, preserve_arm),
+            vec![keep_mask],
+            "the preserve mask spans the whole 80-bit container",
         );
-        assert!(
-            saw_initial,
-            "the preserve arm must consume the pre-write 80-bit container value"
+        assert_eq!(
+            d.builder.function().int_const_u128(insert_arm),
+            Some(0xDEAD_BEEF),
+            "at shift 0 the zero-extended word IS the insert arm"
         );
     });
 }
@@ -257,44 +221,21 @@ fn write_high_byte_subregister_positions_mask_and_shift() {
 
         let (preserve_arm, insert_arm) = classify_preserve_insert_arms(d, lhs, rhs, initial_rax);
 
-        let preserve_consts: Vec<u128> = d
-            .builder
-            .function()
-            .node_inputs(d.builder.function().producer(preserve_arm))
-            .into_iter()
-            .filter_map(|v| d.builder.function().int_const_u128(v))
-            .collect();
         assert_eq!(
-            preserve_consts,
+            arm_consts(d, preserve_arm),
             vec![0xFFFF_FFFF_FFFF_00FF],
             "keep-mask must clear only bits 8..16, preserving the low byte"
         );
 
-        let [im_a, im_b] = d
-            .builder
-            .function()
-            .node_inputs_exact::<2>(d.builder.function().producer(insert_arm))
-            .unwrap();
-        let (reg_mask_val, shifted_val) = if d.builder.function().int_const_u128(im_a).is_some() {
-            (im_a, im_b)
-        } else {
-            (im_b, im_a)
-        };
         assert_eq!(
-            d.builder.function().int_const_u128(reg_mask_val),
-            Some(0xFF00),
-            "byte mask must be positioned at bits 8..16"
-        );
-        assert_eq!(
-            pk(d, shifted_val),
+            pk(d, insert_arm),
             NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
             "the written value must be shifted into position"
         );
-
         let [shl_value, shl_amount] = d
             .builder
             .function()
-            .node_inputs_exact::<2>(d.builder.function().producer(shifted_val))
+            .node_inputs_exact::<2>(d.builder.function().producer(insert_arm))
             .unwrap();
         assert_eq!(
             d.builder.function().int_const_u128(shl_amount),
@@ -334,43 +275,21 @@ fn write_high_byte_subregister_big_endian_positions_mask_and_shift() {
 
         let (preserve_arm, insert_arm) = classify_preserve_insert_arms(d, lhs, rhs, initial);
 
-        let preserve_consts: Vec<u128> = d
-            .builder
-            .function()
-            .node_inputs(d.builder.function().producer(preserve_arm))
-            .into_iter()
-            .filter_map(|v| d.builder.function().int_const_u128(v))
-            .collect();
         assert_eq!(
-            preserve_consts,
+            arm_consts(d, preserve_arm),
             vec![0x00FF_FFFF],
             "BE keep-mask must clear only the high byte (bits 24..32)"
         );
 
-        let [im_a, im_b] = d
-            .builder
-            .function()
-            .node_inputs_exact::<2>(d.builder.function().producer(insert_arm))
-            .unwrap();
-        let (reg_mask_val, shifted_val) = if d.builder.function().int_const_u128(im_a).is_some() {
-            (im_a, im_b)
-        } else {
-            (im_b, im_a)
-        };
         assert_eq!(
-            d.builder.function().int_const_u128(reg_mask_val),
-            Some(0xFF00_0000),
-            "BE byte mask must be positioned at bits 24..32"
-        );
-        assert_eq!(
-            pk(d, shifted_val),
+            pk(d, insert_arm),
             NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
             "the written value must be shifted into the high-byte position"
         );
         let [_shl_value, shl_amount] = d
             .builder
             .function()
-            .node_inputs_exact::<2>(d.builder.function().producer(shifted_val))
+            .node_inputs_exact::<2>(d.builder.function().producer(insert_arm))
             .unwrap();
         assert_eq!(
             d.builder.function().int_const_u128(shl_amount),
@@ -483,10 +402,9 @@ fn read_unique_subslice_of_tracked_unique_container() {
 }
 
 /// In a >16-byte container the READ slices via shift+truncate with no mask,
-/// which is what unblocks SSE `palignr`-style low-slice Copies, while the
-/// WRITE fails closed since a >16-byte mask has no u128 form.
+/// and the WRITE masks at the container's own `I256` / `I512` width.
 #[test]
-fn wide_container_subregister_read_slices_but_write_fails_closed() {
+fn wide_container_subregister_read_slices_and_write_masks_at_container_width() {
     let ymm = reg_vn(0x1000, 32);
     let mid8 = reg_vn(0x1008, 8); // strict sub-slice at offset 8 -> LE shift 64
     with_test_lifter_tracking_arch(x86(), x86_term(), vec![ymm], |d, _| {
@@ -509,16 +427,105 @@ fn wide_container_subregister_read_slices_but_write_fails_closed() {
             "mid-container wide slice must shift before truncating"
         );
 
-        // `build_masked_insert` would need a 256-bit mask.
+        let initial_ymm = d.builder.read_variable(&ymm).unwrap();
         let val = d.builder.build_int_const(1u64, ValueType::I64).unwrap();
-        let write_err = d
-            .write_reg_vn(&mid8, val)
-            .expect_err("write of a ymm sub-slice must error");
-        assert!(
-            write_err.to_string().contains("wide (32-byte) container"),
-            "write error must name the wide-container limitation; got: {write_err}"
+        d.write_reg_vn(&mid8, val)
+            .expect("write of a ymm sub-slice masks at I256");
+
+        let merged = d.read_reg_vn(&ymm).unwrap();
+        assert_eq!(
+            d.builder.function().value_type(merged).unwrap(),
+            ValueType::I256
+        );
+        assert_eq!(pk(d, merged), NodeKind::IntBinaryOp(IntBinaryOp::Or));
+        let [lhs, rhs] = d
+            .builder
+            .function()
+            .node_inputs_exact::<2>(d.builder.function().producer(merged))
+            .unwrap();
+        let (preserve, insert) = classify_preserve_insert_arms(d, lhs, rhs, initial_ymm);
+        // Bytes 8..16 are the slice, everything else is preserved.
+        let mut want_preserve = vec![0xFFu8; 32];
+        want_preserve[8..16].fill(0);
+        assert_eq!(
+            wide_mask_bytes(d, preserve),
+            Some(want_preserve),
+            "preserve arm masks exactly the container bytes outside the sub-register"
+        );
+        assert_eq!(
+            pk(d, insert),
+            NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
+            "insert arm shifts the slice to byte 8 and needs no mask of its own"
         );
     });
+}
+
+/// The 256-bit mask has no `u128` form, so the wide masks are read back as
+/// little-endian bytes.
+fn wide_mask_bytes(d: &FunctionLifter<'_, TestReader>, and_val: Value) -> Option<Vec<u8>> {
+    let f = d.builder.function();
+    f.node_inputs(f.producer(and_val))
+        .into_iter()
+        .find_map(|input| f.int_const_wide_le_bytes(f.producer(input)))
+}
+
+/// A function mixing a 256-bit and a 128-bit VEX form pulls `ZMM0` into the
+/// tracked set, so the 32-byte `YMM0` write becomes a sub-register write into
+/// a 64-byte container.
+#[test]
+fn mixed_width_avx_function_lifts() {
+    // vmovaps %ymm1,%ymm0 ; vaddss %xmm2,%xmm2,%xmm0 ; ret
+    let bytes = vec![0xc5, 0xfc, 0x28, 0xc1, 0xc5, 0xea, 0x58, 0xc2, 0xc3];
+    let f = lift_bytes(
+        strider_target::SleighArch::x86_64(),
+        strider_target::CallingConvention::x86_64_systemv(),
+        bytes,
+    )
+    .expect("mixed-width AVX function must lift");
+    assert!(f.graph().all_node_ids().count() > 0);
+}
+
+/// AArch64 has the same containment shape as x86-64 AVX: `d0` sits inside
+/// `q0` inside the 32-byte SVE `z0`.
+#[test]
+fn aarch64_wide_container_subregister_write_masks_at_container_width() {
+    let z = reg_vn(0x1000, 32);
+    let d = reg_vn(0x1000, 8); // register-endianness is little on aarch64 -> shift 0
+    with_test_lifter_tracking_arch(
+        strider_target::SleighArch::aarch64(),
+        vec![0xc0, 0x03, 0x5f, 0xd6], // ret
+        vec![z],
+        |d_lifter, _| {
+            let initial_z = d_lifter.builder.read_variable(&z).unwrap();
+            let val = d_lifter
+                .builder
+                .build_int_const(0xABu64, ValueType::I64)
+                .unwrap();
+            d_lifter
+                .write_reg_vn(&d, val)
+                .expect("write of an SVE sub-slice masks at I256");
+
+            let merged = d_lifter.read_reg_vn(&z).unwrap();
+            assert_eq!(
+                d_lifter.builder.function().value_type(merged).unwrap(),
+                ValueType::I256
+            );
+            assert_eq!(pk(d_lifter, merged), NodeKind::IntBinaryOp(IntBinaryOp::Or));
+            let [lhs, rhs] = d_lifter
+                .builder
+                .function()
+                .node_inputs_exact::<2>(d_lifter.builder.function().producer(merged))
+                .unwrap();
+            let (preserve, _insert) = classify_preserve_insert_arms(d_lifter, lhs, rhs, initial_z);
+            let mut want_preserve = vec![0xFFu8; 32];
+            want_preserve[0..8].fill(0);
+            assert_eq!(
+                wide_mask_bytes(d_lifter, preserve),
+                Some(want_preserve),
+                "preserve arm keeps the container bytes outside the sub-register"
+            );
+        },
+    );
 }
 
 /// An `I1` sub-register write must behave like the direct-container arm.
@@ -540,7 +547,7 @@ fn write_reg_vn_subregister_accepts_i1_like_direct_arm() {
 }
 
 /// A float sub-register write must raise the SAME "bitcast required first"
-/// diagnostic as the direct-container arm, not a divergent one.
+/// diagnostic as the direct-container arm.
 #[test]
 fn write_reg_vn_subregister_float_errors_like_direct_arm() {
     let container = reg_vn(0x0, 8);

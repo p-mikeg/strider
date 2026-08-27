@@ -6,7 +6,6 @@ use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// inputs are (CONST op id, segment, offset).
     pub(super) fn handle_segment_op(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        // No arity pre-check: each accessor below errors per-slot.
         let id_vn = nth_input_or_err(insn, 0)?;
         crate::lift::pcode_util::ensure_const_space(id_vn, insn.opcode, "input 0")?;
         let op_id = id_vn.addr_off;

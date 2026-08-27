@@ -52,8 +52,19 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             Opcode::Popcount => self.handle_popcount(insn)?,
             Opcode::Lzcount => self.handle_lzcount(insn)?,
             Opcode::Piece => self.handle_piece(insn)?,
-            Opcode::Extract => self.handle_extract(insn)?,
-            Opcode::Insert => self.handle_insert(insn)?,
+            // Bit-field ops no sla emits: `CPUI_INSERT` / `CPUI_EXTRACT` are
+            // decompiler-internal, registered with the base no-op `OpBehavior`
+            // (GHIDRA calls it "Dummy behavior"), and the SLEIGH translator
+            // never produces them -- a bitrange assignment lowers to
+            // shift-and-mask in `pcodecompile.cc` instead.  Lowering them needs
+            // limb-wise masks to stay exact past 128 bits, so fail closed
+            // rather than carry an untested path.
+            Opcode::Extract | Opcode::Insert => {
+                bail!(
+                    "opcode {:?} is a bit-field op no supported sla emits; rsleigh::lift_one is contracted not to emit it",
+                    insn.opcode
+                );
+            }
             // Decompiler-internal pointer arithmetic; raw SLEIGH lifting uses
             // INT_ADD/INT_MULT instead, so `lift_one` never emits these.  One
             // showing up means rsleigh's contract changed.  Fail closed rather
