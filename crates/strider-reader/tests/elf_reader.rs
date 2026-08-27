@@ -1,5 +1,3 @@
-#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
-
 #[path = "common/mod.rs"]
 mod common;
 
@@ -136,4 +134,42 @@ fn elf_reader_from_path_reads_temp_elf() {
 
     let r = ElfFileMemReader::from_path(f.path()).unwrap();
     assert_eq!(read_raw(&r, 0x1000, 4), &[0xde, 0xad, 0xbe, 0xef]);
+}
+
+/// `from_elf` serves the file-initial bytes and `from_elf_relocated` the
+/// patched ones. Nothing else in the Rust API reaches the relocating path.
+#[test]
+fn from_elf_relocated_applies_what_from_elf_leaves_at_zero() {
+    let fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Big,
+            is_64: false,
+            e_machine: object::elf::EM_MIPS,
+            r_type: object::elf::R_MIPS_REL32,
+            defined_symbol: true,
+            slot_init: vec![0u8; 4],
+        },
+        // The fetch image is code and read-only mappings, so the site has to
+        // sit in one to be visible through this reader at all.
+        common::elf_fixture::RelPlacement {
+            slot_exec: true,
+            ..Default::default()
+        },
+    );
+    let elf = strider_reader::OwnedElf::parse(fx.bytes.clone()).expect("parse");
+
+    assert_eq!(
+        read_raw(&ElfFileMemReader::from_elf(&elf).unwrap(), fx.slot_addr, 4),
+        vec![0u8; 4],
+        "from_elf serves the file-initial bytes"
+    );
+    assert_eq!(
+        read_raw(
+            &ElfFileMemReader::from_elf_relocated(&elf).unwrap(),
+            fx.slot_addr,
+            4
+        ),
+        (fx.sym_addr as u32).to_be_bytes().to_vec(),
+        "from_elf_relocated serves S + A"
+    );
 }
