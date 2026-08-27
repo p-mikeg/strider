@@ -1,13 +1,6 @@
-//! Randomized stress test: checks the dominance code against the set-theoretic
-//! definitions rather than against published pseudocode.
-//!
-//! The oracles here share NO code with the module under test. Dominator sets
+//! The oracles here share NO code with the module under test: dominator sets
 //! come from the textbook iterative fixpoint `Dom(n) = {n} ∪ ⋂ Dom(pred)`, and
 //! DF / IDF from their definitions.
-//!
-//! Graphs come from a deterministic PRNG (reproducible, no `rand` dep): a
-//! random spanning tree rooted at 0 so every node is reachable, plus random
-//! extra edges so both reducible and irreducible shapes appear.
 
 use std::collections::{HashMap, HashSet};
 
@@ -65,10 +58,9 @@ fn random_cfg(rng: &mut Rng, n: u32, extra: u32) -> HashMap<u32, Vec<u32>> {
     for _ in 0..extra {
         let u = rng.below(n);
         let v = rng.below(n);
-        if v != 0 {
-            // Entry stays predecessor-free, as a normalized CFG requires.
-            edges.insert((u, v));
-        }
+        // Strider's CFG builder routes a branch back to the entry address as an
+        // edge into the entry region, so back-edges into node 0 are in scope.
+        edges.insert((u, v));
     }
     let mut preds: HashMap<u32, Vec<u32>> = (0..n).map(|x| (x, Vec::new())).collect();
     for (u, v) in edges {
@@ -179,7 +171,7 @@ fn dominance_frontiers_match_definition_over_random_cfgs() {
             idom: idom.clone(),
         };
 
-        let df_impl = dominance_frontiers(&mock);
+        let df_impl = dominance_frontiers(&mock, 0);
         // Same DF in the oracle's representation, for the IDF fixpoint below.
         let df_std: HashMap<u32, HashSet<u32>> = df_impl
             .iter()
@@ -209,8 +201,8 @@ fn dominance_frontiers_match_definition_over_random_cfgs() {
             );
         }
 
-        // Both sides run over the SAME impl DF map, so a DF bug cannot mask
-        // an IDF bug; this isolates the worklist logic.
+        // Both sides run over the SAME impl DF map, isolating the worklist
+        // logic from any DF bug.
         for _ in 0..4 {
             let defs: HashSet<u32> = (0..n).filter(|_| rng.below(3) == 0).collect();
             let defs: HashSet<u32> = if defs.is_empty() {
@@ -253,7 +245,7 @@ fn unreachable_nodes_are_skipped() {
         idom,
     };
 
-    let df = dominance_frontiers(&mock);
+    let df = dominance_frontiers(&mock, 0);
     // A straight-line chain has empty frontiers everywhere.
     for x in 0..5 {
         assert!(
@@ -267,4 +259,19 @@ fn unreachable_nodes_are_skipped() {
         vec![0, 1, 2],
         "preorder excludes the unreachable island"
     );
+}
+
+/// A malformed idom relation must still terminate with each node once. The
+/// same push-time dedup that drops the repeat here is what stops an idom cycle
+/// spinning forever in a release build, where the root's `debug_assert` is
+/// gone.
+#[test]
+fn a_repeated_node_appears_once_in_the_preorder() {
+    let mock = Mock {
+        // `nodes` promises each node exactly once; this one lies.
+        nodes: vec![0, 1, 1, 2],
+        preds: HashMap::from([(0, vec![]), (1, vec![0]), (2, vec![1])]),
+        idom: HashMap::from([(1, 0), (2, 1)]),
+    };
+    assert_eq!(dominator_tree_preorder(&mock, 0), vec![0, 1, 2]);
 }

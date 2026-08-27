@@ -1,8 +1,3 @@
-#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
-
-//! Pins `DotStyle::{dark, dark_cfg, empty}`, in particular that `dark_cfg`
-//! differs from `dark` only in the fontname.
-
 use dot::DotStyle;
 
 #[test]

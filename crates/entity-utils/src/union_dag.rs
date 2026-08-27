@@ -1,10 +1,3 @@
-//! Deferred unions over per-key value sets: absorb is on the hot path,
-//! materialise is off it.
-//!
-//! A node absorbs another by linking rather than copying, so
-//! [`union`](UnionDag::union) is one [`EntityList`] push. A key's full set is
-//! walked out on demand by [`for_each`](UnionDag::for_each).
-
 use cranelift_entity::packed_option::PackedOption;
 use cranelift_entity::{EntityList, EntityRef, ListPool, PrimaryMap, SecondaryMap, entity_impl};
 
@@ -62,12 +55,30 @@ impl<N: EntityRef, V: Copy> UnionDag<N, V> {
         }
     }
 
-    /// O(1), and a no-op when `src` is empty.
+    /// O(1) amortised: links `src`'s root under `dst` rather than copying. A no-op when
+    /// `src` is empty.
+    ///
+    /// The link is a LIVE ALIAS, not a snapshot: a value added to `src` AFTER
+    /// the union is visible from `dst` too. Not the other way round -- `dst`'s
+    /// own later values stay out of `src`.
     pub fn union(&mut self, dst: N, src: N) {
         let Some(src_root) = self.roots[src].expand() else {
             return;
         };
         let dst_root = self.ensure(dst);
+        // Repeating one `(dst, src)` pair would otherwise grow `dst`'s parents
+        // without bound and turn `for_each` linear in the number of `union`
+        // calls: its `seen` set hides the repetition in the ANSWER, not in the
+        // COST. Checking the last entry catches the repeated pair; an
+        // interleaved re-union costs one redundant link.
+        let last = self.nodes[dst_root]
+            .parents
+            .as_slice(&self.links)
+            .last()
+            .copied();
+        if last == Some(src_root) {
+            return;
+        }
         self.nodes[dst_root].parents.push(src_root, &mut self.links);
     }
 
@@ -99,8 +110,13 @@ impl<N: EntityRef, V: Copy> UnionDag<N, V> {
         }
     }
 
-    /// Relabels keys after the `N` space is compacted; `f` returning `None`
-    /// culls a key and drops its set. Only the key->root map is rebuilt; the
+    /// Relabels keys after the `N` space is compacted. `f` must be INJECTIVE:
+    /// two keys mapping to one keep only whichever the iteration order writes
+    /// last.
+    ///
+    /// `f` returning `None` culls a key's entry point, so a direct lookup of
+    /// it is empty. Its DAG node survives: a surviving key that unioned from
+    /// it still reaches those values. Only the key->root map is rebuilt; the
     /// DAG arena is untouched.
     pub fn remap(&mut self, f: impl Fn(N) -> Option<N>) {
         let mut roots: SecondaryMap<N, PackedOption<UnionId>> = SecondaryMap::new();
@@ -181,6 +197,34 @@ mod tests {
         dag.extend(Key(0), 1);
         dag.extend(Key(1), 2);
         dag.union(Key(0), Key(1));
+        assert_eq!(set_of(&dag, Key(0)), FxHashSet::from_iter([1, 2]));
+    }
+
+    /// The other direction of [`union_leaves_source_untouched`]: the link is a
+    /// live alias, so a value added to `src` after the union shows up in
+    /// `dst`.
+    #[test]
+    fn union_aliases_the_source_set_rather_than_snapshotting_it() {
+        let mut dag: UnionDag<Key, u64> = UnionDag::new();
+        dag.extend(Key(0), 1);
+        dag.extend(Key(1), 2);
+        dag.union(Key(0), Key(1));
+        dag.extend(Key(1), 99);
+        assert_eq!(set_of(&dag, Key(0)), FxHashSet::from_iter([1, 2, 99]));
+    }
+
+    /// Repeating one pair must not grow the parents list: `for_each`'s `seen`
+    /// hides the repetition in the answer, so only the link count shows it.
+    #[test]
+    fn repeating_one_union_pair_adds_one_link() {
+        let mut dag: UnionDag<Key, u64> = UnionDag::new();
+        dag.extend(Key(0), 1);
+        dag.extend(Key(1), 2);
+        for _ in 0..100 {
+            dag.union(Key(0), Key(1));
+        }
+        let root = dag.roots[Key(0)].expand().expect("dst has a root");
+        assert_eq!(dag.nodes[root].parents.as_slice(&dag.links).len(), 1);
         assert_eq!(set_of(&dag, Key(0)), FxHashSet::from_iter([1, 2]));
     }
 

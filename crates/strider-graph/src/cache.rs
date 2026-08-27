@@ -1,11 +1,3 @@
-//! The dedup cache: the stateless node-creation policy ([`NodeCacheable`]) plus
-//! the generic mechanism ([`NodeCache`]) it drives.
-//!
-//! `Graph<N, V, C>` imposes NO `Hash`/`Eq`/`Copy` bound on `N`/`V`, and neither
-//! does [`NodeCacheable`]. A caching impl's `Hash`/`PartialEq` bounds live
-//! inside that impl's own method bodies, so a payload containing e.g.
-//! `Box<dyn Fn>` can be stored as long as it goes through [`NeverCacheable`].
-
 use cranelift_entity::SecondaryMap;
 use hashbrown::HashTable;
 use smallvec::SmallVec;
@@ -14,6 +6,8 @@ use crate::ids::{NodeId, ValueId};
 use crate::storage::RawStore;
 
 /// The node-creation policy: three stateless hooks deciding dedup-or-create.
+/// A caching impl's `Hash`/`PartialEq` bounds live inside its own method
+/// bodies, never on the trait or on `Graph`.
 ///
 /// [`should_cache`](Self::should_cache) defaults to `false`, which gates
 /// [`hash`](Self::hash)/[`eq`](Self::eq) so their `unreachable!` defaults are
@@ -79,7 +73,6 @@ impl NodeCache {
         if h == HASH_NONE { 0 } else { h }
     }
 
-    /// Inserts `node` under `h` and records `h` as its hash.
     #[inline]
     fn insert_hashed(&mut self, node: NodeId, h: u64) {
         self.table
@@ -136,21 +129,16 @@ impl NodeCache {
         let inputs = store.input_values(node);
         let outputs = store.output_kinds(node);
         let h = Self::avoid_sentinel(C::hash(kind, &inputs, &outputs));
-        // Exclude `node` itself.
         if let Some(&twin) = self.table.find(h, |&cand| {
             cand != node && C::eq(store, cand, kind, &inputs, &outputs)
         }) {
             return Some(twin);
         }
         // No twin: `node` becomes its own canonical entry. Changing its inputs
-        // evicted it (hash == HASH_NONE), so re-insert.
-        //
-        // Reaching here with a hash still stored means the structure is
-        // unchanged since it was last cached, because every mutation verb
-        // invalidates first. A future verb that mutates inputs WITHOUT
-        // invalidating would land here with a stale hash != h, mislocate the
-        // node, and only blow up later in `invalidate`'s `expect`; the assert
-        // turns that silent breach into an immediate failure.
+        // evicted it (hash == HASH_NONE), so re-insert. A stored hash instead
+        // means the structure is unchanged since it was last cached, because
+        // every mutation verb invalidates first; one that did not would
+        // mislocate the node here and only blow up later in `invalidate`.
         debug_assert!(
             self.node_hashes[node] == HASH_NONE || self.node_hashes[node] == h,
             "canonicalize: node {node:?} has a stale stored hash \
@@ -185,7 +173,7 @@ impl NodeCache {
         V: Clone,
     {
         self.table.clear();
-        // `clear` preserves the `HASH_NONE` default, so every slot reverts to
+        // `clear` preserves the `HASH_NONE` default: every slot reverts to
         // "absent" until re-inserted below.
         self.node_hashes.clear();
         for node in store.node_ids() {
@@ -199,15 +187,14 @@ impl NodeCache {
                 &store.output_kinds(node),
             ));
             // Inserted unconditionally: "at most one node per structural key"
-            // is NOT an invariant of the table. Two multi-occupancy cases are
-            // both sound:
+            // is NOT an invariant of the table. Both multi-occupancy cases are
+            // sound:
             //   * distinct nodes colliding on one hash. The bucket holds each
-            //     and lookup re-reads structure (an owned-key map using
-            //     `or_insert` would silently drop the colliding distinct key).
-            //   * structurally equal twins. Rewiring a live node's inputs can
-            //     transiently make it a twin of an existing node until the next
-            //     canonicalize. A lookup resolves to whichever the walk hits
-            //     first, which is equivalent since twins compute the same value.
+            //     and lookup re-reads structure.
+            //   * structurally equal twins, which rewiring a live node's inputs
+            //     creates until the next canonicalize. A lookup resolves to
+            //     whichever the walk hits first, and twins compute the same
+            //     value.
             self.insert_hashed(node, hash);
         }
     }
