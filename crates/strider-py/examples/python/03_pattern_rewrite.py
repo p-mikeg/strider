@@ -1,57 +1,52 @@
-"""Pattern-to-pattern rewriting, then re-optimizing.
-
-The rules here are deliberately trivial; constant folding has already eaten
-any real `x + 0` in this fixture. What matters is the call shape: how `find`
-and `replace` share captures, when to re-run the optimizer, and how
-`rewrite_all` stages several rules at once.
-
-Run from the workspace root:
-    python crates/strider-py/examples/python/03_pattern_rewrite.py
-"""
-
 from __future__ import annotations
 
 import pathlib
 
 import strider
-from strider.pattern import Capture, add, int_const, load, var
+from strider import template as tpl
+from strider.pattern import Capture, int_and, int_const, int_mul, int_shl, load, var
 
 WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
 elf = strider.lift.load_elf(str(FIXTURE))
-addr = elf.symbol("array_sum")
+addr = elf.symbol("array_sum").address
 _cfg, function, _unresolved = elf.analyze(
     addr, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
 )
 
-before = len(function.find_all(load()))
-print(f"before rewrite: {before} loads")
-
-# `find` accepts string-shorthand captures, but `replace` needs a real Pat: a
-# bare string on the replace side would be ambiguous (a new wildcard, or a
-# back-reference to a find-side capture?). Share a `Capture` object instead so
-# both sides agree.
 x = Capture()
-rule_find = add(var(x), int_const(0))
-rule_repl = var(x)
-n = function.rewrite(find=rule_find, replace=rule_repl)
-print(f"`x + 0 → x` substitution: {n} site(s) rewritten")
+before = len(function.find_all(int_mul(var(x), int_const(4))))
+print(f"before rewrite: {before} `x * 4` site(s), {len(function.find_all(load()))} loads")
 
-# Re-optimize after any structural change. With no pipeline argument this
-# re-runs the full default pipeline, including the node-removing passes that
-# collapse phi and dead-branch noise the rewrite may have exposed.
+# `replace` takes a strider.template Template; a Pat works only for its
+# build-valid subset. Share a Capture so both sides agree.
+# The pipeline runs before the graph is handed over, so pick an idiom it
+# leaves standing: `x + 0` is already folded by the time analyze() returns.
+n = function.rewrite(
+    find=int_mul(var(x), int_const(4)),
+    replace=tpl.int_shl(tpl.var(x), tpl.int_const(2)),
+)
+print(f"`x * 4 -> x << 2` strength reduction: {n} site(s) rewritten")
+assert n == before > 0
+
+# Re-optimize after any structural change; no pipeline arg re-runs the full
+# default pipeline.
 elf.optimize(function)
 
-after = len(function.find_all(load()))
-print(f"after rewrite + reoptimize: {after} loads")
+print(f"after rewrite + reoptimize: {len(function.find_all(int_mul(var(x), int_const(4))))} `x * 4`, "
+      f"{len(function.find_all(int_shl(var(x), int_const(2))))} `x << 2`")
 
-# `rewrite_all` applies rules in order, first match wins per node. That
-# ordering is the point when you are writing a canonicalization pass.
-y = Capture()
-z = Capture()
-function.rewrite_all([
-    (add(var(y), int_const(0)), var(y)),
-    (add(int_const(0), var(z)), var(z)),   # commutative-twin
+# rewrite_all tries every rule at every reachable node and returns the total.
+_cfg, fresh, _unresolved = elf.analyze(
+    addr, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
+)
+y, z = Capture(), Capture()
+total = fresh.rewrite_all([
+    (int_mul(var(y), int_const(4)), tpl.int_shl(tpl.var(y), tpl.int_const(2))),
+    # Align-down-to-8 respelled as a shift pair.
+    (int_and(var(z), int_const(0xFFFFFFF8)),
+     tpl.int_shl(tpl.int_shr(tpl.var(z), tpl.int_const(3)), tpl.int_const(3))),
 ])
-print("rewrite_all with 2 rules complete")
+print(f"rewrite_all with 2 rules: {total} site(s) rewritten in one pass")
+assert total > n, "both rules must have fired"

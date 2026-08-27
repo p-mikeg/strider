@@ -1,6 +1,3 @@
-"""Per-arch arithmetic tests: every IntBinaryOp / IntUnaryOp variant the
-analyser must lower for the `arithmetic` fixture, once per arch."""
-
 from __future__ import annotations
 
 from strider import pattern as pat

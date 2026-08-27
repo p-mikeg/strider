@@ -11,28 +11,28 @@ from __future__ import annotations
 import pytest
 
 import strider
-from strider.pattern import Capture, add, var
+from strider.pattern import Capture, int_add, var
 
 from .conftest import built_function
 
 
 def _build_graph():
-    # Unoptimized so `add(a, b)` shapes survive for the rewrite to fire.
+    # Unoptimized so `int_add(a, b)` shapes survive for the rewrite to fire.
     return built_function("x86", "memory", "array_sum", optimize=False)
 
 
 def test_match_handle_stale_after_rewrite():
     g = _build_graph()
     x, y = Capture(), Capture()
-    hits = g.find_all(add(var(x), var(y)))
-    assert hits, "fixture must contain at least one add(a, b) to rewrite"
+    hits = g.find_all(int_add(var(x), var(y)))
+    assert hits, "fixture must contain at least one int_add(a, b) to rewrite"
     stale_match = hits[0]
 
-    fired = g.rewrite(find=add(var(x), var(y)), replace=var(x))
+    fired = g.rewrite(find=int_add(var(x), var(y)), replace=var(x))
     assert fired > 0, "the rewrite must actually mutate the graph"
 
     with pytest.raises(strider.StriderError):
-        stale_match.const_uint(x)
+        stale_match.uint(x)
     with pytest.raises(strider.StriderError):
         stale_match.node(x)
 
@@ -40,12 +40,12 @@ def test_match_handle_stale_after_rewrite():
 def test_node_handle_stale_after_rewrite():
     g = _build_graph()
     x, y = Capture(), Capture()
-    hits = g.find_all(add(var(x), var(y)))
+    hits = g.find_all(int_add(var(x), var(y)))
     assert hits
     stale_node = hits[0].node(x)
     assert stale_node is not None
 
-    fired = g.rewrite(find=add(var(x), var(y)), replace=var(x))
+    fired = g.rewrite(find=int_add(var(x), var(y)), replace=var(x))
     assert fired > 0
 
     with pytest.raises(strider.StriderError):
@@ -55,12 +55,12 @@ def test_node_handle_stale_after_rewrite():
 def test_node_handle_stale_after_rewrite_all():
     g = _build_graph()
     x, y = Capture(), Capture()
-    hits = g.find_all(add(var(x), var(y)))
+    hits = g.find_all(int_add(var(x), var(y)))
     assert hits
     stale_node = hits[0].node(x)
     assert stale_node is not None
 
-    fired = g.rewrite_all([(add(var(x), var(y)), var(x))])
+    fired = g.rewrite_all([(int_add(var(x), var(y)), var(x))])
     assert fired > 0
 
     with pytest.raises(strider.StriderError):
@@ -70,7 +70,7 @@ def test_node_handle_stale_after_rewrite_all():
 def test_handle_obtained_after_rewrite_still_works():
     g = _build_graph()
     x, y = Capture(), Capture()
-    g.rewrite(find=add(var(x), var(y)), replace=var(x))
+    g.rewrite(find=int_add(var(x), var(y)), replace=var(x))
 
     # A fresh query samples the post-rewrite generation, so its handles
     # read the mutated graph without tripping the staleness guard.

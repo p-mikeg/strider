@@ -1,9 +1,3 @@
-"""Smoke tests for the Python-callback `MemReader` / `ReadOnlyMemory`
-ABCs: subclassing either and providing `read(...)` makes the analysis
-pipeline fetch bytes through Python instead of the fast BufferReader
-path, with the same results.
-"""
-
 from __future__ import annotations
 
 import threading
@@ -14,7 +8,7 @@ import strider
 from strider.reader import MemReader, BufferReader, ReadOnlyMemory
 from strider.sleigh import SleighArch, CallingConvention
 from strider.opt import LoadReadOnly
-from strider.pattern import any_int_const, Capture, load
+from strider.pattern import any_int, Capture, load
 
 from .conftest import symbol_addr
 
@@ -130,3 +124,16 @@ def test_run_with_callback_rom_doesnt_crash(x86_memory_elf):
         opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)),
     )
     assert function.node_count() > 0
+
+
+class _OverLongReader(strider.reader.MemReader):
+    def read(self, addr, size):  # noqa: ARG002 - mirrors the ABC sig
+        # More bytes than asked for, which the adapter must reject.
+        return b"\x90" * (size + 16)
+
+
+def test_mem_reader_over_long_return_errors():
+    reader = _OverLongReader()
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), reader)
+    with pytest.raises(strider.StriderError):
+        lift.analyze(0x1000, strider.sleigh.CallingConvention.x86_64_systemv())

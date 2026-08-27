@@ -1,10 +1,4 @@
-"""Shared helpers for the per-arch system test suite.
-
-`analyze(arch_id, case, fn_name)` runs the full pipeline against a
-fixture ELF and returns the Function; the `count_*` / `has_*` helpers
-mirror the Rust suite's assertion vocabulary.
-
-Adding a new arch means adding a row to ARCHES; conftest.py parametrises
+"""Adding a new arch means adding a row to ARCHES; conftest.py parametrises
 the `arch_id` fixture over it.
 """
 
@@ -25,7 +19,7 @@ class ArchSpec:
     id: str
     arch_factory: Callable[[], "strider.sleigh.SleighArch"]
     cc_factory: Callable[[], "strider.sleigh.CallingConvention"]
-    thumb_mask: bool = False  # ARM-Thumb symbol address has its LSB set
+
 
 
 ARCHES: list[ArchSpec] = [
@@ -38,7 +32,7 @@ ARCHES: list[ArchSpec] = [
     ArchSpec("aarch64be", strider.sleigh.SleighArch.aarch64be, strider.sleigh.CallingConvention.aarch64_aapcs64),
     ArchSpec("arm", strider.sleigh.SleighArch.arm, strider.sleigh.CallingConvention.arm_aapcs),
     ArchSpec("arm_be", strider.sleigh.SleighArch.arm_be, strider.sleigh.CallingConvention.arm_aapcs),
-    ArchSpec("arm_thumb", strider.sleigh.SleighArch.arm_thumb, strider.sleigh.CallingConvention.arm_aapcs, thumb_mask=True),
+    ArchSpec("arm_thumb", strider.sleigh.SleighArch.arm_thumb, strider.sleigh.CallingConvention.arm_aapcs),
     ArchSpec("mips32le", strider.sleigh.SleighArch.mipsle32, strider.sleigh.CallingConvention.mips_o32),
     ArchSpec("mips32be", strider.sleigh.SleighArch.mipsbe32, strider.sleigh.CallingConvention.mips_o32),
 ]
@@ -74,11 +68,9 @@ def analyze(
     loaded = strider.lift.load_elf(str(elf))
     mem = loaded.reader()
     try:
-        addr = loaded.symbol(fn_name)
+        addr = loaded.symbol(fn_name).address
     except Exception:
         pytest.skip(f"symbol {fn_name!r} not present in {elf}")
-    if spec.thumb_mask:
-        addr &= ~1
     arch = spec.arch_factory()
     cc = spec.cc_factory()
 
@@ -110,19 +102,19 @@ def count_pat(g, p) -> int:
 
 
 _INT_BINOP_BUILDERS = {
-    "Add": pat.add,
-    "Sub": pat.sub,
-    "Mul": pat.mul,
-    "Div": pat.div,
-    "Sdiv": pat.sdiv,
-    "Rem": pat.rem,
-    "Srem": pat.srem,
+    "Add": pat.int_add,
+    "Sub": pat.int_sub,
+    "Mul": pat.int_mul,
+    "Div": pat.int_div,
+    "Sdiv": pat.int_sdiv,
+    "Rem": pat.int_rem,
+    "Srem": pat.int_srem,
     "And": pat.int_and,
     "Or": pat.int_or,
     "Xor": pat.int_xor,
-    "ShiftLeft": pat.shl,
-    "ShiftRight": pat.shr,
-    "SShiftRight": pat.sshr,
+    "ShiftLeft": pat.int_shl,
+    "ShiftRight": pat.int_shr,
+    "SShiftRight": pat.int_sshr,
 }
 
 
@@ -134,11 +126,10 @@ def count_int_binop(g, op: str) -> int:
 
 
 def count_int_unop(g, op: str) -> int:
-    # `Neg` (two's-complement negation) is the only real IntUnaryOp left.
-    # `"BitNot"` is kept for back-compat: `~x` is now
+    # `"BitNot"` is a back-compat spelling: `~x` lifts to
     # `Xor(_, IntConst(all_ones))`, matched via `pat.int_not`.
     if op == "Neg":
-        return count_pat(g, pat.neg(anything()))
+        return count_pat(g, pat.int_neg(anything()))
     if op == "BitNot":
         return count_pat(g, pat.int_not(anything()))
     raise ValueError(f"unknown int unop {op!r}")
@@ -151,9 +142,6 @@ def count_calls(g) -> int:
 def count_returns(g) -> int:
     return count_pat(g, pat.ret())
 
-
-def count_ifs(g) -> int:
-    return count_pat(g, pat.if_else())
 
 
 def count_loads(g) -> int:
@@ -172,25 +160,17 @@ def count_regions(g) -> int:
     return g.count_regions()
 
 
-def count_int_consts(g) -> int:
-    c = Capture()
-    return count_pat(g, pat.any_int_const(c))
-
 
 def has_constant(g, value: int) -> bool:
     """True iff some `IntConst(value)` node exists, compared at 64-bit
     width so a value's storage width doesn't affect the answer."""
     c = Capture()
-    hits = g.find_all(pat.any_int_const(c))
+    hits = g.find_all(pat.int_const(c))
     target = value & 0xFFFF_FFFF_FFFF_FFFF
     for m in hits:
-        u = m.const_uint(c)
+        u = m.uint(c)
         if u is None:
             continue
         if u & 0xFFFF_FFFF_FFFF_FFFF == target:
             return True
     return False
-
-
-def has_kind_match(g, p) -> bool:
-    return count_pat(g, p) > 0

@@ -5,352 +5,270 @@ outputs) around the entry node. Click a node to re-center on it, click an edge
 to walk along it, shift-click to mark it. The search bar runs a strider
 pattern, with autocomplete, and highlights the matching nodes.
 
-The graph is never rendered whole, only a small neighborhood, so rendering
-stays fast. Drawn node ids are IR node ids, so pattern matches line up one to
-one with what you see. Per-use constant boxes (`c*`) and virtual nodes (`v*`:
-if.true, if.false, Post Call) are not navigation targets.
+The graph is rendered a neighborhood at a time, never whole. Drawn node ids
+are IR node ids, so pattern matches line up one to one with what you see.
+Per-use constant boxes (`c*`) and virtual nodes (`v*`: if.true, if.false,
+Post Call) are not navigation targets.
+
+The render controls in the toolbar are built from `/controls`, whose defaults
+are read out of the renderer binding's own signature, so a default changed in
+Rust reaches the page with no edit here.
 """
 
 from __future__ import annotations
 
+import ast
+import atexit
 import http.server
+import inspect
 import json
+import pathlib
 import socketserver
+import threading
 import urllib.parse
+from typing import TYPE_CHECKING, Any, Protocol, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+    from strider.cfg import Cfg
+    from strider.ir import Function
 
 
-def _pattern_names():
+def _pattern_names() -> list[str]:
     """The `strider.pattern` builder names, for the search-bar autocomplete."""
     from strider import pattern as _p
 
     return sorted(k for k in dir(_p) if not k.startswith("_"))
 
 
-def _run_pattern(function, expr: str):
+_CONST_TYPES = (bool, int, float, str, type(None))
+
+
+def _eval_pattern_node(node: ast.expr, names: dict[str, Any]) -> Any:
+    """Evaluate one node of a pattern expression, rejecting anything that
+    could reach an attribute.
+
+    Builder calls on `strider.pattern` names, literals and their lists are the
+    whole language. `eval` with stripped builtins is not a sandbox:
+    `().__class__.__base__.__subclasses__()` walks from any literal to
+    `os.system`.
+    """
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, _CONST_TYPES):
+            return node.value
+        raise ValueError(f"{type(node.value).__name__} literals are not allowed")
+    if isinstance(node, ast.Name):
+        if node.id not in names or node.id.startswith("_"):
+            raise ValueError(f"unknown pattern builder: {node.id!r}")
+        return names[node.id]
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        operand = node.operand
+        if isinstance(operand, ast.Constant) and isinstance(operand.value, (int, float)):
+            return -operand.value
+        raise ValueError("unary minus applies to a numeric literal only")
+    if isinstance(node, (ast.List, ast.Tuple)):
+        elts = [_eval_pattern_node(e, names) for e in node.elts]
+        return elts if isinstance(node, ast.List) else tuple(elts)
+    if isinstance(node, ast.Call):
+        if not isinstance(node.func, ast.Name):
+            raise ValueError("only a plain builder name is callable")
+        func = _eval_pattern_node(node.func, names)
+        args = [_eval_pattern_node(a, names) for a in node.args]
+        kwargs: dict[str, Any] = {}
+        for kw in node.keywords:
+            if kw.arg is None:
+                raise ValueError("** unpacking is not allowed")
+            if kw.arg.startswith("_"):
+                raise ValueError(f"keyword {kw.arg!r} is not allowed")
+            kwargs[kw.arg] = _eval_pattern_node(kw.value, names)
+        return func(*args, **kwargs)
+    raise ValueError(f"{type(node).__name__} is not allowed in a pattern expression")
+
+
+def _run_pattern(function: Function, expr: str) -> list[int]:
     """Evaluate the `strider.pattern` expression `expr` against `function`,
     returning the node ids of the deduplicated matches, e.g.
-    `load(addr=add(initial_var(), any_int_const()))`."""
+    `load(addr=int_add(initial_var(), int_const()))`."""
     from strider import pattern as _p
 
-    names = {k: getattr(_p, k) for k in dir(_p) if not k.startswith("_")}
-    pat = eval(expr, {"__builtins__": {}}, names)  # local dev tool; trusted input
+    names: dict[str, Any] = {
+        k: getattr(_p, k) for k in dir(_p) if not k.startswith("_")
+    }
+    pat = _eval_pattern_node(ast.parse(expr, mode="eval").body, names)
     return sorted({m.root for m in function.find_all(pat)})
 
 
-_FRONTEND = r"""<!doctype html>
-<html><head><meta charset="utf-8"><title>strider explorer</title>
-<style>
-  :root{--bg:#141417;--bg2:#0f0f12;--panel:#1b1b1f;--panel2:#232329;--border:#2e2e34;
-        --text:#d4d4d8;--text2:#8c8c96;--accent:#5b9cf6;--match:#ff5555;--mark:#ffd24a}
-  *{box-sizing:border-box}
-  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
-            font-family:system-ui,-apple-system,sans-serif;font-size:13px}
-  #bar{position:fixed;top:0;left:0;right:0;height:46px;display:flex;align-items:center;gap:10px;
-       padding:0 14px;background:linear-gradient(#1f1f24,#191920);border-bottom:1px solid var(--border);z-index:20}
-  #bar b{font-weight:600;letter-spacing:.3px}
-  .stepper{display:flex;align-items:center;gap:6px;color:var(--text2)}
-  .stepper button{width:24px;height:24px;border-radius:5px;border:1px solid var(--border);
-       background:var(--panel2);color:var(--text);cursor:pointer;font-size:15px;line-height:1}
-  .stepper button:hover{border-color:var(--accent)}
-  .navbtn{width:28px;height:26px;border-radius:5px;border:1px solid var(--border);background:var(--panel2);
-          color:var(--text);cursor:pointer;font-size:15px;line-height:1}
-  .navbtn:hover:not(:disabled){border-color:var(--accent)}
-  .navbtn:disabled{opacity:.35;cursor:default}
-  .navbtn.cur{background:var(--accent);border-color:var(--accent);color:#000}
-  .stepper #dval{min-width:16px;text-align:center;color:var(--text);font-variant-numeric:tabular-nums}
-  #qwrap{position:relative;flex:1}
-  #q{width:100%;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;
-     padding:7px 11px;font-family:ui-monospace,monospace;font-size:13px}
-  #q:focus{outline:none;border-color:var(--accent)}
-  #ac{position:absolute;top:36px;left:0;background:var(--panel2);border:1px solid var(--border);border-radius:6px;
-      min-width:220px;max-height:260px;overflow:auto;box-shadow:0 8px 24px #000a;display:none;z-index:30}
-  #ac div{padding:6px 11px;font-family:ui-monospace,monospace;cursor:pointer}
-  #ac div.sel,#ac div:hover{background:var(--accent);color:#fff}
-  #msg{color:var(--text2);white-space:nowrap;font-variant-numeric:tabular-nums}
-  #msg.err{color:var(--match)}
-  #wrap{position:fixed;top:46px;left:0;bottom:0;right:340px;overflow:auto;background:
-        radial-gradient(circle at 20px 20px,#1a1a1f 1px,transparent 0) 0 0/22px 22px,var(--bg)}
-  #graph{transform-origin:0 0}
-  #side{position:fixed;top:46px;right:0;bottom:0;width:340px;background:var(--panel);
-        border-left:1px solid var(--border);overflow:auto;padding:10px}
-  #side h3{margin:2px 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2)}
-  #nb,#histlist,#hits{max-height:200px;overflow-y:auto}
-  .hit{padding:5px 8px;border-radius:5px;cursor:pointer;font-family:ui-monospace,monospace;font-size:12px;
-       white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .hit:hover{background:var(--panel2)}
-  .hit.cur{background:var(--accent);color:#fff}
-  .hit .dir{color:var(--text2);margin-right:5px}
-  .hit .role{margin-right:6px}
-  .cnt{color:var(--text2);font-weight:400;font-size:10px}
-  .legend div{display:flex;align-items:center;gap:7px;padding:2px 0;color:var(--text2);font-size:11px}
-  .legend i{width:16px;height:3px;border-radius:2px;display:inline-block}
-  /* graph node/edge states */
-  g.node.clickable{cursor:pointer}
-  g.node.clickable:hover>*:not(text){filter:brightness(1.45)}
-  g.node.match>polygon,g.node.match>ellipse,g.node.match>path,g.node.match>rect{
-     stroke:var(--match)!important;stroke-width:3px!important}
-  g.edge{cursor:pointer}
-  g.edge:hover>path{stroke-width:2.4px}
-  g.edge.marked>path{stroke:var(--mark)!important;stroke-width:3px!important}
-  g.edge.marked>polygon{stroke:var(--mark)!important;fill:var(--mark)!important}
-  #hint{position:fixed;bottom:8px;left:12px;color:var(--text2);font-size:11px;pointer-events:none}
-</style></head><body>
-<div id="bar">
-  <b>strider</b>
-  <button id="back" class="navbtn" title="Back (Alt+←)">←</button>
-  <button id="fwd" class="navbtn" title="Forward (Alt+→)">→</button>
-  <span class="stepper">depth <button id="dm">−</button><span id="dval">5</span><button id="dp">+</button></span>
-  <button id="prod" class="navbtn" title="Count a node's inputs (producers) toward the hub threshold; off by default (fan-out only)" style="width:auto;padding:0 8px">+prod</button>
-  <button id="raw" class="navbtn" title="Toggle raw (structure-faithful) view" style="width:auto;padding:0 8px">raw</button>
-  <div id="qwrap">
-    <input id="q" type="text" spellcheck="false"
-      placeholder="strider pattern, e.g.  load(addr=add(initial_var(), any_int_const()))">
-    <div id="ac"></div>
-  </div>
-  <span id="msg"></span>
-</div>
-<div id="wrap"><div id="graph"></div></div>
-<div id="side">
-  <h3>Neighbors <span id="nbc" class="cnt"></span></h3><div id="nb"></div>
-  <h3 style="margin-top:14px">History</h3><div id="histlist"></div>
-  <h3 style="margin-top:14px">Matches <span id="hitc" class="cnt"></span></h3>
-  <div id="hits"><div style="color:var(--text2);font-size:11px">none</div></div>
-  <h3 style="margin-top:14px">Edge roles</h3>
-  <div class="legend" id="legend"></div>
-</div>
-<div id="hint">click node = re-center · click edge near an end = walk there · shift-click edge = mark · alt+←/→ = history · ctrl+wheel = zoom</div>
-
-<script src="viz.js"></script>
-<script>
-const $=id=>document.getElementById(id);
-const wrap=$("wrap"), graph=$("graph"), hits=$("hits"), msg=$("msg"), qEl=$("q"), acEl=$("ac"), dval=$("dval");
-let viz, center, curSvg, depth=5, scale=1, baseW=0, baseH=0, rawMode=false, countProd=false;
-let matches=new Set(), marked=new Set(), names=[];
-
-const ROLES=[["control","#00cccc"],["memory","#cc88aa"],["lhs","#4488ff"],["rhs","#ff4444"],
-  ["addr","#cc88ff"],["data / arg","#ff8800"],["value / ret","#88cc88"],["target / sp","#ffdd44"],["cond","#ff44ff"]];
-$("legend").innerHTML=ROLES.map(([n,c])=>`<div><i style="background:${c}"></i>${n}</div>`).join("");
-
-const title=g=>g.querySelector("title")?.textContent||"";
-const isReal=id=>/^\d+$/.test(id);
-const findNode=id=>[...curSvg.querySelectorAll("g.node")].find(g=>title(g)===id);
-
-function applyScale(){ if(!curSvg)return; curSvg.style.width=(baseW*scale)+"px"; curSvg.style.height=(baseH*scale)+"px"; }
-
-let dotCtrl=null;
-async function render(anchor){
-  if(dotCtrl) dotCtrl.abort();               // cancel any in-flight render (single-threaded server)
-  dotCtrl=new AbortController();
-  let dot;
-  try{ dot=await (await fetch(`/dot?center=${center}&depth=${depth}&raw=${rawMode?1:0}&count_producers=${countProd?1:0}`,{signal:dotCtrl.signal})).text(); }
-  catch(e){ if(e.name==="AbortError") return; throw e; }
-  curSvg=viz.renderSVGElement(dot);
-  curSvg.removeAttribute("width"); curSvg.removeAttribute("height");
-  const vb=(curSvg.getAttribute("viewBox")||"0 0 800 600").split(/\s+/).map(Number);
-  baseW=vb[2]; baseH=vb[3];
-  graph.replaceChildren(curSvg); applyScale(); wire(); updateNeighbors();
-  if(anchor){ const g=findNode(anchor.id); if(g){ const r=g.getBoundingClientRect();
-    wrap.scrollLeft+=(r.left+r.width/2)-anchor.x; wrap.scrollTop+=(r.top+r.height/2)-anchor.y; } }
-}
-function centerNode(id,smooth=true){ const g=findNode(id); if(!g)return; const r=g.getBoundingClientRect(),w=wrap.getBoundingClientRect();
-  wrap.scrollTo({left:wrap.scrollLeft+(r.left+r.width/2)-(w.left+w.width/2),
-                 top:wrap.scrollTop+(r.top+r.height/2)-(w.top+w.height/2), behavior:smooth?"smooth":"auto"}); }
-/* Re-render around `id`, keeping it where it was during the swap, then glide it to the viewport center. */
-function recenter(id,gEl){ let a=null; if(gEl){const r=gEl.getBoundingClientRect(); a={id,x:r.left+r.width/2,y:r.top+r.height/2};} center=id; pushHist(); render(a).then(()=>{ if(String(center)===String(id)) centerNode(id); }); }
-
-/* ── history: back/forward across re-centers AND searches ── */
-let hist=[], hi=-1;
-const HIST_MAX=50;
-function pushHist(){ hist=hist.slice(0,hi+1); hist.push({center,query:qEl.value,matches:new Set(matches)});
-  if(hist.length>HIST_MAX) hist=hist.slice(hist.length-HIST_MAX); hi=hist.length-1; updateNav(); }
-function updateNav(){ $("back").disabled=hi<=0; $("fwd").disabled=hi>=hist.length-1; updateHistUI(); }
-function go(delta){ const n=hi+delta; if(n<0||n>=hist.length)return; hi=n; const s=hist[hi];
-  center=s.center; qEl.value=s.query; matches=new Set(s.matches); render().then(()=>centerNode(center)); updateNav(); }
-$("back").onclick=()=>go(-1); $("fwd").onclick=()=>go(1);
-document.addEventListener("keydown",e=>{ if(!e.altKey)return;
-  if(e.key==="ArrowLeft"){e.preventDefault();go(-1);} else if(e.key==="ArrowRight"){e.preventDefault();go(1);} });
-/* Apply match highlighting to the current SVG without re-rendering (no scroll jump). */
-function highlight(){ if(!curSvg)return; for(const g of curSvg.querySelectorAll("g.node")) g.classList.toggle("match",matches.has(title(g))); }
-
-const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-const nodeLabel=id=>{ const g=findNode(id); const t=g&&(g.querySelector("text tspan")||g.querySelector("text")); return t?t.textContent:("node "+id); };
-/* Follow a virtual (if.true / Post-Call) node to the real node on its far side. */
-function realEnd(vid){ for(const g of curSvg.querySelectorAll("g.edge")){ const [s,d]=title(g).split("->");
-  if(s===vid && d!==String(center) && isReal(d)) return d; if(d===vid && s!==String(center) && isReal(s)) return s; } return null; }
-/* Side panel: the center node's in/out edges, clickable to walk. */
-function updateNeighbors(){
-  const nb=$("nb"), c=String(center); nb.innerHTML=""; let n=0; const seen=new Set();
-  for(const g of curSvg.querySelectorAll("g.edge")){
-    const [s,d]=title(g).split("->"); let dir,o;
-    if(s===c){dir="→";o=isReal(d)?d:realEnd(d);} else if(d===c){dir="←";o=isReal(s)?s:realEnd(s);} else continue;
-    if(!o||seen.has(dir+o))continue; seen.add(dir+o);
-    const t=g.querySelector("text"); const role=t?t.textContent:""; const col=(t&&t.getAttribute("fill"))||"#8c8c96";
-    const el=document.createElement("div"); el.className="hit";
-    el.innerHTML=`<span class="dir">${dir}</span><span class="role" style="color:${col}">${esc(role)||"·"}</span>${esc(nodeLabel(o))}`;
-    el.title=(dir==="→"?"walk forward to ":"walk back to ")+nodeLabel(o);
-    el.onclick=()=>recenter(o, findNode(o)); nb.appendChild(el); n++;
-  }
-  if(!n) nb.innerHTML=NONE; $("nbc").textContent=n||"";
-}
-/* Side panel: the visited trail, clickable to jump anywhere. */
-function updateHistUI(){
-  const hl=$("histlist"); hl.innerHTML=""; let curEl=null;
-  hist.forEach((s,i)=>{ const el=document.createElement("div"); el.className="hit"+(i===hi?" cur":"");
-    el.textContent = s.query ? ("search: "+s.query) : ("node "+s.center);
-    el.onclick=()=>{ if(i!==hi){ hi=i; const st=hist[hi]; center=st.center; qEl.value=st.query; matches=new Set(st.matches);
-      render().then(()=>centerNode(center)); updateNav(); } };
-    hl.appendChild(el); if(i===hi) curEl=el; });
-  if(curEl) curEl.scrollIntoView({block:"nearest"});  // keep the current (latest by default) entry visible
+#: Presentation for each render knob: label, tooltip and the range the UI and
+#: the server clamp to. Defaults live in the renderer binding, never here.
+_KNOB_UI = {
+    "depth": {
+        "kind": "int",
+        "label": "depth",
+        "help": "how many hops out from the centered node to draw",
+        "min": 1,
+        "max": 20,
+        "step": 1,
+    },
+    "hub_cap": {
+        "kind": "int",
+        "label": "hub cap",
+        "help": "a node with more consumers than this is drawn but not "
+        "expanded, so one popular value cannot flood the view",
+        "min": 1,
+        "max": 512,
+        "step": 2,
+    },
+    "max_nodes": {
+        "kind": "int",
+        "label": "max nodes",
+        "help": "hard cap on how many nodes the view may draw",
+        "min": 1,
+        "max": 2000,
+        "step": 10,
+    },
+    "count_producers": {
+        "kind": "bool",
+        "label": "+prod",
+        "help": "count a node's inputs toward the hub cap too, not just its "
+        "consumer fan-out",
+    },
+    "pretty": {
+        "kind": "bool",
+        "label": "pretty",
+        "help": "inline constants, add virtual nodes and resolve register "
+        "names; off draws the graph exactly as stored",
+    },
 }
 
-function wire(){
-  for(const g of curSvg.querySelectorAll("g.node")){
-    const id=title(g);
-    if(matches.has(id)) g.classList.add("match");
-    if(isReal(id)){ g.classList.add("clickable"); g.addEventListener("click",e=>{e.stopPropagation(); recenter(id,g);}); }
-  }
-  for(const g of curSvg.querySelectorAll("g.edge")){
-    const [s,d]=title(g).split("->"); const key=s+"->"+d;
-    if(marked.has(key)) g.classList.add("marked");
-    g.addEventListener("click",e=>{
-      e.stopPropagation();
-      if(e.shiftKey){ marked.has(key)?marked.delete(key):marked.add(key); g.classList.toggle("marked"); return; }
-      // Walk toward the endpoint you clicked nearer to: click the arrow end to
-      // go forward (to the consumer), the tail to go back (to the producer).
-      const near=nid=>{const n=findNode(nid); if(!n)return Infinity; const r=n.getBoundingClientRect(); return Math.hypot(e.clientX-(r.left+r.width/2),e.clientY-(r.top+r.height/2));};
-      let t = near(s)<=near(d)?s:d;
-      if(!isReal(t)) t = isReal(s)?s:d;   // never land on a virtual node
-      if(isReal(t)) recenter(t, findNode(t));
-    });
-  }
-}
 
-const NONE='<div style="color:var(--text2);font-size:11px">none</div>';
-async function search(){
-  const q=qEl.value.trim(); msg.className=""; msg.textContent="";
-  if(!q){ matches=new Set(); highlight(); hits.innerHTML=NONE; pushHist(); return; }
-  const r=await fetch("/pattern?q="+encodeURIComponent(q));
-  if(!r.ok){ msg.className="err"; msg.textContent=await r.text(); return; }
-  const res=await r.json();
-  if(res && typeof res==="object" && !Array.isArray(res) && "center" in res){
-    recenter(String(res.center)); return;
-  }
-  const ids=res.highlight; matches=new Set(ids.map(String));
-  msg.textContent=`${ids.length} match${ids.length===1?"":"es"}`;
-  hits.innerHTML = ids.length ? "" : NONE;
-  for(const id of ids){ const el=document.createElement("div"); el.className="hit"; el.textContent="node "+id;
-    el.onclick=()=>recenter(String(id), findNode(String(id))); hits.appendChild(el); }
-  highlight(); pushHist();     // highlight in the current view; no re-render / no scroll jump
-}
+def _controls(
+    render: Callable[..., str],
+    names: Sequence[str],
+    **literal_defaults: bool | int,
+) -> list[dict[str, Any]]:
+    """Control descriptors for `names`, each default read from `render`'s own
+    signature unless `literal_defaults` states one, which is how the page
+    opens on a different setting from the binding's own default."""
+    params = inspect.signature(render).parameters
+    return [
+        {
+            **_KNOB_UI[n],
+            "name": n,
+            "default": literal_defaults[n]
+            if n in literal_defaults
+            else params[n].default,
+        }
+        for n in names
+    ]
 
-/* ── autocomplete ── */
-let acItems=[], acSel=-1;
-function curToken(){ const p=qEl.selectionStart, s=qEl.value.slice(0,p); const m=s.match(/[A-Za-z_][A-Za-z0-9_]*$/); return m?{t:m[0],start:p-m[0].length,end:p}:null; }
-function showAc(){ const tok=curToken();
-  acItems = tok&&tok.t ? names.filter(n=>n.startsWith(tok.t)).slice(0,12) : [];
-  if(!acItems.length){ acEl.style.display="none"; return; }
-  acSel=0; acEl.innerHTML=acItems.map((n,i)=>`<div class="${i===0?'sel':''}">${n}</div>`).join(""); acEl.style.display="block";
-  [...acEl.children].forEach((el,i)=>el.onclick=()=>pick(i));
-}
-function pick(i){ const tok=curToken(); if(!tok)return; const n=acItems[i];
-  const v=qEl.value; qEl.value=v.slice(0,tok.start)+n+"()"+v.slice(tok.end);
-  const cur=tok.start+n.length+1; qEl.setSelectionRange(cur,cur); acEl.style.display="none"; qEl.focus(); }
-qEl.addEventListener("input",showAc);
-qEl.addEventListener("keydown",e=>{
-  if(acEl.style.display==="block" && acItems.length){
-    if(e.key==="ArrowDown"){e.preventDefault(); acSel=(acSel+1)%acItems.length;}
-    else if(e.key==="ArrowUp"){e.preventDefault(); acSel=(acSel-1+acItems.length)%acItems.length;}
-    else if(e.key==="Tab"){e.preventDefault(); pick(acSel); return;}
-    else if(e.key==="Escape"){acEl.style.display="none"; return;}
-    else if(e.key==="Enter"){ e.preventDefault(); pick(acSel); return; }
-    else return;
-    [...acEl.children].forEach((el,i)=>el.classList.toggle("sel",i===acSel)); return;
-  }
-  if(e.key==="Enter") search();
-});
-document.addEventListener("click",e=>{ if(!qEl.contains(e.target)&&!acEl.contains(e.target)) acEl.style.display="none"; });
 
-/* ── depth + zoom ── */
-function setDepth(d){ depth=Math.max(1,Math.min(12,d)); dval.textContent=depth;
-  const c=findNode(String(center)); const r=c&&c.getBoundingClientRect();
-  render(r?{id:String(center),x:r.left+r.width/2,y:r.top+r.height/2}:null).then(()=>centerNode(String(center))); }
-$("dp").onclick=()=>setDepth(depth+1); $("dm").onclick=()=>setDepth(depth-1);
-$("raw").onclick=()=>{ rawMode=!rawMode; $("raw").classList.toggle("cur",rawMode);
-  render().then(()=>centerNode(String(center))); };
-$("prod").onclick=()=>{ countProd=!countProd; $("prod").classList.toggle("cur",countProd);
-  render().then(()=>centerNode(String(center))); };
-wrap.addEventListener("wheel",e=>{ if(!e.ctrlKey)return; e.preventDefault();
-  scale=Math.max(0.2,Math.min(4,scale*(e.deltaY<0?1.12:0.89))); applyScale(); },{passive:false});
+def _parse_control(ctl: dict[str, Any], text: str) -> bool | int:
+    """One query-string control value, clamped to the control's range. Raises
+    `ValueError` on a value that is not a number / flag at all."""
+    if ctl["kind"] == "bool":
+        low = text.lower()
+        if low in ("1", "true", "yes", "on"):
+            return True
+        if low in ("0", "false", "no", "off"):
+            return False
+        raise ValueError(f"{ctl['name']}: {text!r} is not a flag")
+    try:
+        n = int(text, 0)
+    except ValueError:
+        raise ValueError(f"{ctl['name']}: {text!r} is not an integer") from None
+    return max(ctl["min"], min(ctl["max"], n))
 
-Viz.instance().then(async v=>{
-  viz=v; names=await (await fetch("/patterns")).json();
-  center=String(await (await fetch("/entry")).json());
-  if(!(await (await fetch("/caps")).json()).raw){ $("raw").style.display="none"; $("prod").style.display="none"; }
-  await render(); centerNode(center,false); pushHist();
-});
-</script></body></html>"""
+
+def _dot_params(
+    query: dict[str, list[str]], controls: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """The renderer knobs for one `/dot` request: every declared control,
+    falling back to the control's default when the query omits it."""
+    out: dict[str, Any] = {}
+    for ctl in controls:
+        text = (query.get(ctl["name"]) or [""])[0]
+        out[ctl["name"]] = ctl["default"] if text == "" else _parse_control(ctl, text)
+    return out
+
+
+_FRONTEND = (pathlib.Path(__file__).parent / "explore.html").read_text(
+    encoding="utf-8"
+)
+
+
+class _Visualizer(Protocol):
+    """The visualizer shape `_serve` drives."""
+
+    def entry(self) -> int: ...
+    def controls(self) -> list[dict[str, Any]]: ...
+    def dot(self, center: int, params: dict[str, Any]) -> str: ...
+    def search(self, query: str) -> dict[str, Any]: ...
+    def completions(self) -> list[str]: ...
 
 
 class _IrVisualizer:
-    """Adapts a `(lifter, function)` pair to what `_serve` expects:
-    `entry()`, `dot(center, depth, raw)`, `search(query)`,
-    `completions()`."""
+    """Adapts a `Function` to what `_serve` expects: `entry()`, `controls()`,
+    `dot(center, params)`, `search(query)`, `completions()`."""
 
-    supports_raw = True
+    def __init__(self, function: Function) -> None:
+        """Explore `function`."""
+        self._fn = function
 
-    def __init__(self, lifter, function):
-        """Explore `function`, rendering pretty views through `lifter`."""
-        self._lifter, self._fn = lifter, function
-
-    def entry(self):
+    def entry(self) -> int:
         """The node id to center the first view on."""
         return self._fn.entry_node()
 
-    def dot(self, center, depth, raw, count_producers=False):
-        """DOT for the neighborhood around `center`; `raw` selects the
-        structure-faithful view for when the pretty one cannot be trusted.
-        `count_producers` folds a node's inputs into its hub degree."""
-        if raw:
-            return self._fn.neighborhood_dot(
-                center, depth=depth, count_producers=count_producers
-            )
-        return self._lifter.neighborhood_dot(
-            self._fn, center, depth=depth, count_producers=count_producers
+    def controls(self) -> list[dict[str, Any]]:
+        """The render knobs, defaults taken from the renderer binding. The
+        page opens on the readable view, so `pretty` starts on."""
+        return _controls(
+            self._fn.neighborhood_dot,
+            ["depth", "hub_cap", "max_nodes", "count_producers", "pretty"],
+            pretty=True,
         )
 
-    def search(self, query):
+    def dot(self, center: int, params: dict[str, Any]) -> str:
+        """DOT for the neighborhood around `center`, `params` holding one
+        value per declared control. `pretty=False` falls back to the
+        structure-faithful view for when the readable one cannot be trusted."""
+        return self._fn.neighborhood_dot(center, **params)
+
+    def search(self, query: str) -> dict[str, Any]:
         """Node ids matching the pattern expression `query`."""
         return {"highlight": _run_pattern(self._fn, query)}
 
-    def completions(self):
+    def completions(self) -> list[str]:
         """Autocomplete candidates for the search bar."""
         return _pattern_names()
 
 
 class _CfgVisualizer:
-    """Adapts a `Cfg` to what `_serve` expects: `entry()`,
-    `dot(center, depth, raw)`, `search(query)`, `completions()`."""
+    """Adapts a `Cfg` to what `_serve` expects: `entry()`, `controls()`,
+    `dot(center, params)`, `search(query)`, `completions()`."""
 
-    supports_raw = False
-
-    def __init__(self, cfg):
+    def __init__(self, cfg: Cfg) -> None:
         """Explore `cfg`, building its per-region disassembly text once for
         reuse by every text search."""
         self._cfg = cfg
-        self._texts = cfg._region_texts()
+        self._texts: dict[int, str] = cfg._region_texts()
 
-    def entry(self):
+    def entry(self) -> int:
         """The region index to center the first view on."""
         return self._cfg.entry()
 
-    def dot(self, center, depth, raw, count_producers=False):
-        """DOT for the regions around `center`. A `Cfg` has no raw view (that
-        lives on `Function`, over a different id space) and no hub concept, so
-        `supports_raw` is false and `raw` / `count_producers` are ignored."""
-        del raw, count_producers
-        return self._cfg.neighborhood_dot(center, depth=depth)
+    def controls(self) -> list[dict[str, Any]]:
+        """The render knobs, defaults taken from the renderer binding. The raw
+        view and the hub cap are `Function` concepts (the raw view is keyed by
+        IR node id), so a query naming either knob is ignored."""
+        return _controls(self._cfg.neighborhood_dot, ["depth", "max_nodes"])
 
-    def search(self, query):
+    def dot(self, center: int, params: dict[str, Any]) -> str:
+        """DOT for the regions around `center`, `params` holding one value per
+        declared control."""
+        return self._cfg.neighborhood_dot(center, **params)
+
+    def search(self, query: str) -> dict[str, Any]:
         """Center the region containing `query` when it parses as an address,
         else highlight every region whose disassembly contains it."""
         q = query.strip()
@@ -363,142 +281,229 @@ class _CfgVisualizer:
             hits = sorted(rid for rid, txt in self._texts.items() if ql in txt.lower())
             return {"highlight": hits}
 
-    def completions(self):
-        """No autocomplete candidates for CFG search."""
+    def completions(self) -> list[str]:
+        """Empty: CFG search takes free text, not a pattern expression."""
         return []
 
 
-#: Explorer servers currently serving, keyed by the port they bound.
-#: `visualize` blocks, so a caller running it on another thread holds no
-#: handle on the server; this registry is how `shutdown` reaches it.
-_RUNNING: dict[int, socketserver.TCPServer] = {}
+class _Handler(http.server.BaseHTTPRequestHandler):
+    """The explorer's HTTP surface, served from `self.server`'s visualizer.
+
+    Module level, not nested in `_serve`: a locally defined class is a gc
+    cycle through its own `__mro__`, and a nested one's method closures would
+    own the `unsendable` `Function` / `Cfg`, deferring their drop to whatever
+    thread happens to collect next.
+    """
+
+    def _send(
+        self, body: str | bytes, ctype: str = "text/html", code: int = 200
+    ) -> None:
+        b = body.encode() if isinstance(body, str) else body
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+        except (BrokenPipeError, ConnectionError):
+            pass  # client cancelled the request (e.g. clicked again)
+
+    def do_GET(self) -> None:
+        # Close after each response. This server is single-threaded, so it
+        # must never sit blocked in a keep-alive read on an idle connection:
+        # that would stall every other request until the idle connection
+        # times out.
+        self.close_connection = True
+        srv = cast("_Server", self.server)
+        visualizer = cast("_Visualizer", srv.visualizer)
+        u = urllib.parse.urlparse(self.path)
+        q = urllib.parse.parse_qs(u.query)
+        try:
+            if u.path == "/":
+                self._send(_FRONTEND)
+            elif u.path == "/viz.js":
+                import strider._strider as _ext
+
+                self._send(_ext._viz_standalone_js(), "application/javascript")
+            elif u.path == "/entry":
+                self._send(json.dumps(srv.entry), "application/json")
+            elif u.path == "/controls":
+                self._send(json.dumps(srv.controls), "application/json")
+            elif u.path == "/patterns":
+                self._send(json.dumps(visualizer.completions()), "application/json")
+            elif u.path == "/dot":
+                c = int(q.get("center", [srv.entry])[0])
+                self._send(
+                    visualizer.dot(c, _dot_params(q, srv.controls)), "text/plain"
+                )
+            elif u.path == "/pattern":
+                result = visualizer.search(q.get("q", [""])[0])
+                self._send(json.dumps(result), "application/json")
+            else:
+                self.send_error(404)
+        except (BrokenPipeError, ConnectionError):
+            pass  # client went away mid-request
+        except Exception as e:  # noqa: BLE001 (surface the error to the UI)
+            self._send(f"{type(e).__name__}: {e}", "text/plain", code=400)
+
+    def handle_one_request(self) -> None:
+        # Swallow the client-disconnect races the single-threaded loop hits.
+        try:
+            super().handle_one_request()
+        except (BrokenPipeError, ConnectionError):
+            self.close_connection = True
+
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 (base signature)
+        pass
 
 
-def shutdown(port=None):
+class _Server(socketserver.TCPServer):
+    """Carries the visualizer, its entry node and its render controls for
+    `_Handler` to read.
+
+    Single-threaded: a `Function` may only be touched from the thread that
+    created it, which is the caller's thread blocked in `serve_forever`.
+    """
+
+    allow_reuse_address = True
+
+    def __init__(
+        self,
+        address: tuple[str, int],
+        visualizer: _Visualizer,
+        depth: int | None = None,
+    ) -> None:
+        self.visualizer: _Visualizer | None = visualizer
+        self.entry = visualizer.entry()
+        self.controls = visualizer.controls()
+        #: Set from inside the serve loop. `BaseServer.shutdown` blocks
+        #: forever unless `serve_forever` is already running, so a `shutdown`
+        #: racing the start must wait for this.
+        self.started = threading.Event()
+        if depth is not None:
+            for ctl in self.controls:
+                if ctl["name"] == "depth":
+                    ctl["default"] = _parse_control(ctl, str(depth))
+        super().__init__(address, _Handler)
+
+    def service_actions(self) -> None:
+        # Called once per poll iteration, on the serving thread, with the loop
+        # already entered.
+        self.started.set()
+
+
+#: Explorer servers currently serving, with the thread parked in each, keyed by
+#: the port they bound. `visualize` blocks, so a caller running it on another
+#: thread holds no handle on the server; this registry is how `shutdown` reaches
+#: it, and the thread is what `shutdown` joins.
+_RUNNING: dict[int, tuple[_Server, threading.Thread]] = {}
+
+
+#: Bound so a wedged handler cannot hang interpreter exit; the thread is out of
+#: the Rust frame long before this, and exceeding it only risks the abort that
+#: was the status quo.
+_SHUTDOWN_JOIN_SECONDS = 5.0
+
+#: How long `shutdown` waits for a server registered but not yet inside
+#: `serve_forever`. Exceeding it means the serve loop never started, so there
+#: is nothing to stop.
+_SHUTDOWN_START_SECONDS = 5.0
+
+
+def shutdown(port: int | None = None) -> list[int]:
     """Stop explorer servers started by `visualize`, unblocking whatever
     thread is parked in it. Returns the ports actually stopped.
 
     `port=None` stops every running explorer. Safe to call when nothing is
     running (returns `[]`), and safe to call from a thread other than the one
-    serving, which is the point of it.
+    serving.
 
-    This matters beyond tidiness. A thread still parked in `visualize` when
-    the interpreter shuts down is killed in a way strider cannot recover
-    from, and the process aborts. A server left running on a daemon thread
-    will eventually crash the interpreter on exit, so any caller that started
-    one off the main thread must shut it down.
+    Joins the serving thread as well as stopping the server. Stopping alone is
+    not enough: `_Server.shutdown` returns as soon as the serve loop exits,
+    while the thread is still unwinding out of the Rust frame, and an
+    interpreter that finalizes with a thread in that state aborts the process.
+
+    Registered with `threading._register_atexit`, NOT `atexit`: CPython's
+    `Py_FinalizeEx` joins non-daemon threads BEFORE running `atexit` handlers,
+    and a thread parked in `serve_forever` is exactly such a thread, so an
+    `atexit` hook would never get to run and the process would hang on the join
+    instead.
     """
     targets = list(_RUNNING.items()) if port is None else [
         (p, s) for p, s in _RUNNING.items() if p == port
     ]
-    for _p, srv in targets:
-        srv.shutdown()  # returns once the serve loop has exited
+    current = threading.current_thread()
+    for _p, (srv, _thread) in targets:
+        # `BaseServer.shutdown` waits on an event `serve_forever` clears on
+        # entry and sets on exit, so calling it before the loop starts blocks
+        # forever.
+        if srv.started.wait(_SHUTDOWN_START_SECONDS):
+            srv.shutdown()  # returns once the serve loop has exited
+    for _p, (_srv, thread) in targets:
+        # Joining the thread serving us would deadlock; that caller is already
+        # past the frame this exists to drain.
+        if thread is not current and thread.is_alive():
+            thread.join(timeout=_SHUTDOWN_JOIN_SECONDS)
     return [p for p, _s in targets]
 
 
-def visualize(lifter, target, *, host="127.0.0.1", port=0, depth=5):
+# Runs BEFORE the non-daemon-thread join, which is the only point at which a
+# parked serve loop can still be stopped; `atexit` is too late (see `shutdown`).
+# Falls back to `atexit` on an interpreter without the private hook, where an
+# explorer left running is no worse off than before.
+if hasattr(threading, "_register_atexit"):
+    threading._register_atexit(shutdown)  # pyright: ignore[reportAttributeAccessIssue]
+else:  # pragma: no cover - CPython has had this since 3.9
+    atexit.register(shutdown)
+
+
+def visualize(
+    target: Function | Cfg,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 0,
+    depth: int | None = None,
+) -> None:
     """Start the explorer for `target`, a `Function` from `analyze` or a
     `Cfg` from `build_cfg` / `analyze`. Blocks serving requests until
     interrupted.
 
-    Off the main thread you must pair this with `shutdown(port)` and join
-    the thread before the interpreter exits. A thread still parked here at
-    interpreter shutdown is killed in a way strider cannot recover from, and
-    the process aborts. A `Function` or `Cfg` created inside such a thread
-    is also leaked, with a warning, rather than freed if it outlives the
-    thread."""
+    `depth=None` starts at the renderer's own default depth; a number seeds
+    the toolbar's depth control instead. Every other render knob starts at the
+    renderer default and is set from the page.
+
+    Runs on the thread that created `target`: it reads the unsendable
+    `Function` / `Cfg` at once, and any other thread raises
+    `PanicException: unsendable`. `shutdown(port)` is called from another
+    thread to unblock it, and the serving thread must be joined before the
+    interpreter exits: a thread still parked here at interpreter shutdown
+    aborts the process."""
     tn = type(target).__name__
     if tn == "Function":
-        vis = _IrVisualizer(lifter, target)
+        vis: _Visualizer = _IrVisualizer(cast("Function", target))
     elif tn == "Cfg":
-        vis = _CfgVisualizer(target)
+        vis = _CfgVisualizer(cast("Cfg", target))
     else:
         raise TypeError(f"visualize expects a Function or Cfg, got {tn}")
     return _serve(vis, host=host, port=port, depth=depth)
 
 
-def _serve(visualizer, *, host="127.0.0.1", port=0, depth=5):
+def _serve(
+    visualizer: _Visualizer,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 0,
+    depth: int | None = None,
+) -> None:
     """Serve the explorer over any visualizer-shaped object. Prints the URL
-    to stdout and never opens a browser. Blocks serving requests until
+    to stdout for the caller to open. Blocks serving requests until
     interrupted."""
-    entry = visualizer.entry()
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def _send(self, body, ctype="text/html", code=200):
-            b = body.encode() if isinstance(body, str) else body
-            try:
-                self.send_response(code)
-                self.send_header("Content-Type", ctype)
-                self.send_header("Content-Length", str(len(b)))
-                self.end_headers()
-                self.wfile.write(b)
-            except (BrokenPipeError, ConnectionError):
-                pass  # client cancelled the request (e.g. clicked again); nothing to do
-
-        def do_GET(self):
-            # Close after each response. This server is single-threaded, so
-            # it must never sit blocked in a keep-alive read on an idle
-            # connection: that would stall every other request until the idle
-            # connection times out.
-            self.close_connection = True
-            u = urllib.parse.urlparse(self.path)
-            q = urllib.parse.parse_qs(u.query)
-            try:
-                if u.path == "/":
-                    self._send(_FRONTEND)
-                elif u.path == "/viz.js":
-                    import strider._strider as _ext
-
-                    self._send(_ext._viz_standalone_js(), "application/javascript")
-                elif u.path == "/entry":
-                    self._send(json.dumps(entry), "application/json")
-                elif u.path == "/caps":
-                    self._send(
-                        json.dumps({"raw": getattr(visualizer, "supports_raw", False)}),
-                        "application/json",
-                    )
-                elif u.path == "/patterns":
-                    self._send(json.dumps(visualizer.completions()), "application/json")
-                elif u.path == "/dot":
-                    c = int(q.get("center", [entry])[0])
-                    d = int(q.get("depth", [depth])[0])
-                    raw = q.get("raw", ["0"])[0] == "1"
-                    count_producers = q.get("count_producers", ["0"])[0] == "1"
-                    dot = visualizer.dot(c, d, raw, count_producers)
-                    self._send(dot, "text/plain")
-                elif u.path == "/pattern":
-                    result = visualizer.search(q.get("q", [""])[0])
-                    self._send(json.dumps(result), "application/json")
-                else:
-                    self.send_error(404)
-            except (BrokenPipeError, ConnectionError):
-                pass  # client went away mid-request; not an error
-            except Exception as e:  # noqa: BLE001 (surface the error to the UI)
-                self._send(f"{type(e).__name__}: {e}", "text/plain", code=400)
-
-        def handle_one_request(self):
-            # Swallow the client-disconnect races the single-threaded loop hits
-            # when the browser cancels an in-flight fetch, so serve_forever keeps
-            # running instead of dumping a BrokenPipe traceback.
-            try:
-                super().handle_one_request()
-            except (BrokenPipeError, ConnectionError):
-                self.close_connection = True
-
-        def log_message(self, format, *args):  # noqa: A002 (base signature)
-            pass
-
-    # Single-threaded on purpose: a `Function` may only be touched from the
-    # thread that created it, which is the caller's thread blocking here. A
-    # local single-user explorer serialises its handful of requests fine.
-    class Server(socketserver.TCPServer):
-        allow_reuse_address = True
-
-    srv = Server((host, port), Handler)
-    bound_port = srv.server_address[1]
+    srv = _Server((host, port), visualizer, depth)
+    bound_port: int = srv.server_address[1]
     url = f"http://{host}:{bound_port}/"
-    print(f"strider explorer → {url}  (Ctrl-C to stop)")
-    _RUNNING[bound_port] = srv
+    print(f"strider explorer -> {url}  (Ctrl-C to stop)")
+    print("  renders the neighborhood around a node you pick, never the whole graph")
+    _RUNNING[bound_port] = (srv, threading.current_thread())
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
@@ -506,3 +511,7 @@ def _serve(visualizer, *, host="127.0.0.1", port=0, depth=5):
     finally:
         _RUNNING.pop(bound_port, None)
         srv.server_close()
+        # `shutdown` runs on another thread and outlives this frame holding
+        # `srv`, so drop the unsendable `Function` / `Cfg` here, on the thread
+        # that created them.
+        srv.visualizer = None

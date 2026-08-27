@@ -1,32 +1,20 @@
-"""Quickstart: load an ELF, lift a function, query it, render it.
-
-Run from the workspace root:
-    python crates/strider-py/examples/python/01_quickstart.py
-
-Writes /tmp/quickstart-cfg.html and /tmp/quickstart-graph.html.
-"""
-
 from __future__ import annotations
 
 import pathlib
 
 import strider
-from strider.pattern import add, load
+from strider.pattern import Capture, int_add, load
 
-# `load_elf` returns an `ElfLifter`, which is itself a `Lifter`. It picks the
-# arch and calling convention off the ELF header, wires the code and ROM
-# readers, and answers `symbol()` / `symbols()` / `entry_point()`.
+# load_elf returns an ElfLifter (a Lifter); arch and CC come from the ELF header.
 WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
 prog = strider.lift.load_elf(str(FIXTURE))
-addr = prog.symbol("array_sum")
+addr = prog.symbol("array_sum").address
 print(f"array_sum @ {addr:#x}")
 
-# `analyze(name_or_addr)` does CFG build, IR lift, optimization and the
-# indirect-branch fixed-point loop in one call. The returned `cfg` is the
-# final resolved CFG that `function` was lifted from, so rendering it later
-# needs no rebuild.
+# analyze does CFG build, lift, optimize, and the indirect-branch fixed-point in
+# one call. The returned cfg is the final resolved one.
 cfg, function, unresolved = prog.analyze(
     "array_sum", opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
 )
@@ -35,25 +23,25 @@ print(
     f"{len(unresolved)} unresolved indirect branches"
 )
 
-# Bare `load()` matches every memory-load site. Narrow it by composing inside
-# `addr=...` once you know the shape you are hunting for.
+# Bare load() matches every load site; narrow with addr=...
 hits = function.find_all(load(), ignore_casts=True)
 print(f"found {len(hits)} memory-load sites in array_sum")
 
-# String captures are auto-interned per pattern, so "base" and "off" each
-# become a Capture scoped to this one pattern.
+# int_add is commutative: a base+offset load matches under both operand orders,
+# so find_all counts it twice (example 06 shows .ordered() to opt out).
+base, off = Capture("base"), Capture("off")
 narrow = function.find_all(
-    load(addr=add("base", "off")),
+    load(addr=int_add(base, off)),
     ignore_casts=True,
 )
-print(f"found {len(narrow)} loads of the form `base + offset`")
+print(f"found {len(narrow)} `base + offset` binding rows (both operand orders)")
 for hit in narrow:
-    off_val = hit.const_uint("off")
+    # off may be non-constant; uint_opt returns None rather than raising.
+    off_val = hit.uint_opt(off)
     print(f"  offset = {off_val if off_val is not None else '<symbolic>'}")
 
-# The HTML is self-contained; open it in any browser. `pretty=True` resolves
-# register names, inlines constants and adds virtual nodes; omit it for the
-# raw as-stored graph.
+# pretty=True resolves register names, inlines constants, adds virtual nodes;
+# omit for the raw as-stored graph.
 cfg.to_html("/tmp/quickstart-cfg.html", style="dark_cfg")
-function.to_html("/tmp/quickstart-graph.html", pretty=True, style="dark")
+function.to_html("/tmp/quickstart-graph.html", pretty="dark")
 print("wrote /tmp/quickstart-cfg.html and /tmp/quickstart-graph.html")

@@ -1,8 +1,9 @@
 """The alias tuning knobs must stay reachable from `analyze()`.
 
-`assume_distinct_sp_bases_disjoint` and `calls_clobber` were once
-hardcoded to their defaults at the Python boundary, so no caller could
-set them. These pin them as settable keyword arguments.
+`AssumptionOptions.distinct_sp_bases_disjoint` and
+`assume_incoming_args_survive_calls` were once hardcoded to their defaults
+at the Python boundary, so no caller could set them. These pin them as
+settable keyword arguments.
 """
 
 from __future__ import annotations
@@ -20,8 +21,10 @@ def test_analyze_accepts_function_args_alias_knobs():
     _cfg, function, _unresolved = s.analyze(
         "add",
         opts=strider.lift.LifterOptions(
-            assume_distinct_sp_bases_disjoint=True,
-            calls_clobber=True,
+            assumptions=strider.lift.AssumptionOptions(
+                distinct_sp_bases_disjoint=True,
+            ),
+            assume_incoming_args_survive_calls=False,
         ),
     )
     assert function.node_count() > 0
@@ -61,4 +64,5 @@ def test_analyze_rejects_unknown_alias_mode():
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     with pytest.raises(ValueError, match="alias_mode"):
-        strider.lift.LifterOptions(alias_mode="nonsense")
+        # Deliberate: an unknown alias_mode is a runtime error.
+        strider.lift.LifterOptions(alias_mode="nonsense")  # type: ignore[arg-type]

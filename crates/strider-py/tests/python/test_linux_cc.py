@@ -27,7 +27,7 @@ def test_x86_linux_kernel_constructs_strider(x86_indirect_branch_elf):
     elf = fixture_path("x86", "indirect_branch")
     loaded = strider.lift.load_elf(str(elf))
     mem = loaded.reader()
-    addr = loaded.symbol("indirect_branch_resolved")
+    addr = loaded.symbol("indirect_branch_resolved").address
     s = strider.lift.lifter(strider.sleigh.SleighArch.x86(), mem)
     _cfg, function, _unresolved = s.analyze(
         addr,

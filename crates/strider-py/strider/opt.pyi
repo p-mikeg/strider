@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import List, Union
+from typing import Union
 
-#: A built-in optimizer pass instance, accepted by `OptimizerPipeline.add`
-#: and `add_post`.
-OptimizerPass = Union[
+__all__: list[str]
+
+#: A pass the fixed-point loop can run repeatedly, the only kind
+#: `OptimizerPipeline.add` accepts.
+MainOptimizerPass = Union[
     "ConstantFold",
     "KnownBits",
     "FlagCmpCanonicalize",
@@ -16,19 +18,27 @@ OptimizerPass = Union[
     "DeadBranchElimination",
     "CfgDetach",
     "LoadForward",
+    "LoadReadOnly",
+]
+
+#: A pass that runs once, after the fixed-point loop converges. `add` raises
+#: for these; `add_post` takes them and any `MainOptimizerPass` too.
+PostOptimizerPass = Union[
     "StackOffsetDetect",
     "FunctionArgDetect",
     "CallStackArgCollect",
-    "LoadReadOnly",
 ]
+
+#: Any built-in optimizer pass instance.
+OptimizerPass = Union[MainOptimizerPass, PostOptimizerPass]
 
 class OptimizerPipeline:
     """An ordered list of optimizer passes, plus post-passes that run once
     after the main passes finish.
 
     Pass one to `Lifter.optimize(function, pipeline)`, or to
-    `LifterOptions(pipeline=...)` to override the default for a single
-    `analyze` call.
+    `LifterOptions(pipeline=...)` to override the default. Applying a pipeline
+    copies its passes, so one object serves any number of calls.
     """
     @classmethod
     def empty(cls) -> OptimizerPipeline:
@@ -39,19 +49,20 @@ class OptimizerPipeline:
         """The canonical pipeline strider uses when none is supplied."""
         ...
     @property
-    def passes(self) -> List[str]:
+    def passes(self) -> list[str]:
         """The registered main (repeated) passes, by name, in order."""
         ...
     @property
-    def post_passes(self) -> List[str]:
+    def post_passes(self) -> list[str]:
         """The registered post-passes (run once at the end), by name."""
         ...
-    def add(self, pass_obj: OptimizerPass) -> None:
+    def add(self, pass_obj: MainOptimizerPass) -> None:
         """Append a pass to the main list, which runs repeatedly until the
-        graph stops changing."""
+        graph stops changing. Raises `StriderError` for a post-pass."""
         ...
     def add_post(self, pass_obj: OptimizerPass) -> None:
-        """Append a post-pass, run once after the main passes finish."""
+        """Append a post-pass, run once after the main passes finish. A
+        `MainOptimizerPass` is accepted too, and runs once."""
         ...
 
 class ConstantFold:

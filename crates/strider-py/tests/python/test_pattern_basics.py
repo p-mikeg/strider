@@ -2,7 +2,7 @@ import pytest
 import strider
 from strider.pattern import (
     Capture, Pat, var, anything, int_const, bool_const,
-    add, sub, mul, load, store, call, ret, if_else, phi, initial_var,
+    int_add, int_sub, int_mul, load, store, call, ret, if_else, phi, initial_var,
 )
 
 
@@ -24,56 +24,52 @@ def test_int_const_returns_pat():
 
 def test_add_with_capture_objects():
     a, b = Capture(), Capture()
-    p = add(var(a), var(b))
+    p = int_add(var(a), var(b))
     assert isinstance(p, Pat)
 
 
-def test_add_with_strings():
-    p = add("x", "y")
-    assert isinstance(p, Pat)
+def test_bare_string_operand_is_rejected():
+    # A bare string is not a capture operand: use Capture("name") for a
+    # capture or anything() for a wildcard.
+    with pytest.raises(strider.StriderError):
+        load(addr=int_add(Capture("x"), "y")).into_pat()  # type: ignore[arg-type]
 
 
 def test_load_with_addr():
     # `load()` returns a typed builder, not a Pat; `find_all` accepts either.
-    p = load(addr=add("base", "off"))
+    p = load(addr=int_add(Capture("base"), Capture("off")))
     assert isinstance(p.into_pat(), Pat)
 
 
 def test_store_with_addr_and_data():
-    p = store(addr="ptr", data=int_const(0))
+    p = store(addr=Capture("ptr"), data=int_const(0))
     assert isinstance(p.into_pat(), Pat)
 
 
-def test_underscore_string_means_wildcard():
-    # "_" and "any_" are reserved wildcards: they convert to a wildcard
-    # silently.  Using them as capture NAMES (`.cap("_")`) is an error.
-    p = add("_", "x")
-    assert isinstance(p, Pat)
-    p = add("any_", "x")
-    assert isinstance(p, Pat)
-
-
-def test_reserved_name_via_cap_raises():
+def test_reserved_name_via_capture_string_raises():
     with pytest.raises(strider.StriderError):
-        add("x", "y").cap("_")
+        int_add(Capture("x"), Capture("y")).capture("_")
     with pytest.raises(strider.StriderError):
-        add("x", "y").cap("any_")
+        int_add(Capture("x"), Capture("y")).capture("any_")
 
 
 def test_capture_method_on_pat():
     c = Capture()
-    p = add("x", "y").capture(c)
+    p = int_add(Capture("x"), Capture("y")).capture(c)
     assert isinstance(p, Pat)
 
 
-def test_cap_method_on_pat():
-    p = add("x", "y").cap("sum")
+def test_capture_method_takes_a_string_name():
+    # A string name interns to the same Capture, so the two spellings are
+    # interchangeable and `cap` is gone.
+    p = int_add(Capture("x"), Capture("y")).capture("sum")
     assert isinstance(p, Pat)
+    assert not hasattr(p, "cap")
 
 
 def test_call_constructor():
     assert isinstance(call().into_pat(), Pat)
-    assert isinstance(call(at=0x1000).into_pat(), Pat)
+    assert isinstance(call().target(0x1000).into_pat(), Pat)
 
 
 def test_ret_constructor():
@@ -89,7 +85,7 @@ def test_control_node_patterns_exist():
 
 def test_if_constructor():
     assert isinstance(if_else().into_pat(), Pat)
-    assert isinstance(if_else(cond="cnd").into_pat(), Pat)
+    assert isinstance(if_else(cond=Capture("cnd")).into_pat(), Pat)
 
 
 def test_phi_constructor():
@@ -102,16 +98,15 @@ def test_initial_var_constructor():
 
 def test_pattern_submodule_dir():
     import strider.pattern as p
-    for name in ["add", "sub", "mul", "load", "store", "call", "ret",
+    for name in ["int_add", "int_sub", "int_mul", "load", "store", "call", "ret",
                  "if_else", "phi", "var", "anything", "int_const",
                  "bool_const", "Capture", "Pat"]:
         assert hasattr(p, name), name
 
 
 def test_capture_hash_distinct_for_first_100_ids():
-    """Regression: `hash(Capture())` used to be the repr's length, collapsing
-    every id with the same digit count into one bucket and breaking any
-    dict/set keyed on Capture."""
+    """`hash(Capture())` discriminates by capture id, so a dict or set keyed
+    on Capture keeps distinct captures in distinct buckets."""
     captures = [Capture() for _ in range(100)]
     hashes = {hash(c) for c in captures}
     assert len(hashes) == 100, (
@@ -125,27 +120,11 @@ def test_capture_usable_as_dict_key():
     assert len(d) == 50, f"dict key collision: only {len(d)} entries for 50 captures"
 
 
-def test_float_is_nan_constructs_pattern():
-    """Regression: `float_is_nan(x)` used to raise NotImplementedError. It
-    now builds the IEEE-754 self-inequality (x != x), the same IR shape
-    Sleigh's FLOAT_NAN lowering produces at lift time."""
-    from strider.pattern import float_is_nan, anything
-    p = float_is_nan(anything())
-    assert isinstance(p, Pat)
-
-
-def test_pyat_ordered_on_finalized_pat_raises():
-    """Regression: `Pat.ordered()` on a finalized Pat used to silently return
-    self.  It now raises, pointing at `int_binary(...).ordered()`."""
-    with pytest.raises(strider.StriderError):
-        add(var(Capture()), var(Capture())).ordered()
-
-
 def test_renamed_constructors():
-    """Keyword-colliding and underscore-suffixed constructors were renamed to
-    descriptive ones (`and_` to `int_and`, `not_`/`bit_not` to `int_not`,
-    `if_` to `if_else`, `any_` to `anything`, ...). The old names must not
-    come back as aliases."""
+    """Every constructor carries a descriptive name (`int_and`, `int_not`,
+    `if_else`, `anything`). The keyword-colliding and underscore-suffixed
+    spellings (`and_`, `not_`, `bit_not`, `if_`, `any_`) must not exist as
+    aliases."""
     from strider import pattern as pat
 
     assert hasattr(pat, "int_and")
@@ -156,3 +135,40 @@ def test_renamed_constructors():
     assert hasattr(pat, "anything")
     for gone in ("and_", "or_", "xor", "not_", "bit_not", "if_", "any_"):
         assert not hasattr(pat, gone), gone
+
+
+def test_node_builder_capture_is_chainable():
+    # capture() binds the node but returns the builder (it does NOT finalize
+    # to a Pat), so more constraints can still be chained after it.
+    c = Capture()
+    captured = phi().capture(c)
+    assert type(captured).__name__ == "PhiPat"
+    assert type(captured.any_input(anything())).__name__ == "PhiPat"
+    assert type(call().capture(c)).__name__ == "CallPat"
+    assert type(if_else().capture(c)).__name__ == "IfPat"
+    assert type(store().capture(c)).__name__ == "StorePat"
+    assert type(ret().capture(c)).__name__ == "RetPat"
+
+
+def test_int_const_set_takes_a_negative_like_the_scalar():
+    from strider.pattern import int_const
+
+    assert int_const([-1]) is not None
+
+
+def test_int_const_takes_a_scalar_or_a_set():
+    from strider.pattern import int_const
+
+    assert int_const(5) is not None
+    assert int_const([1, 2, 3]) is not None
+
+
+def test_pat_ordered_names_itself():
+    with pytest.raises(strider.StriderError, match="ordered") as e:
+        anything().ordered()
+    assert "\u2014" not in str(e.value)
+
+
+def test_call_target_takes_an_empty_candidate_list():
+    # No candidate qualifies, which is a pattern, not an error.
+    assert isinstance(call().target([]).into_pat(), Pat)
