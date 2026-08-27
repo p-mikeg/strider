@@ -1,7 +1,3 @@
-//! `Match::asm_fingerprint`: mock graphs with explicit asm addresses set on
-//! the builder, matched with a capture, checking the captured node's
-//! fingerprint is what was set.
-
 use rustc_hash::FxHashSet;
 use strider_pattern::*;
 
@@ -33,7 +29,7 @@ fn asm_fingerprint_unbound_capture_is_empty() {
     let bound = Capture::new();
     let unbound = Capture::new();
     let m = a::first(&function, int_const(7u128).capture(bound).into_pattern());
-    // `unbound` was never declared in the pattern, so there is no binding.
+    // `unbound` was never declared in the pattern, so it stays unbound.
     assert!(m.asm_fingerprint(unbound, &function).is_empty());
 }
 
@@ -55,7 +51,7 @@ fn asm_fingerprint_captures_dedup_unioned_addresses() {
     let v = Capture::new();
     let m = a::first(
         &function,
-        add(int_const(1u128), int_const(2u128))
+        int_add(int_const(1u128), int_const(2u128))
             .capture(v)
             .into_pattern(),
     );

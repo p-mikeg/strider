@@ -5,7 +5,7 @@ use crate::capture::Capture;
 use crate::matcher::match_pat::{CaptureExt, MatchPat};
 use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef};
 
-/// Match-only (no template counterpart).
+/// Match-only.
 pub struct Any;
 
 impl MatchPat for Any {
@@ -18,8 +18,10 @@ impl MatchPat for Any {
     }
 }
 
+impl crate::node_builders::MemPat for Any {}
+
 /// Wildcard; not usable as a rewrite RHS.
-pub fn any() -> Any {
+pub fn anything() -> Any {
     Any
 }
 
@@ -31,7 +33,7 @@ pub struct Var {
 impl MatchPat for Var {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = b.leaf(KindSpec::Any);
-        // Like `any()`: matches regardless of what the node produces.
+        // Like `anything()`: matches regardless of what the node produces.
         b.set_output_any(o);
         b.capture_output(o, self.cap);
         o
@@ -45,28 +47,85 @@ impl crate::template::template_pat::TemplatePat for Var {
     }
 }
 
+impl crate::node_builders::MemPat for Var {}
+
 /// Match any node and bind its output to `c`.
 pub fn var(c: Capture) -> Var {
     Var { cap: c }
 }
 
-/// Match any node for which `f` returns `true`.
+/// Match any node for which `f` returns `true`. `f` is typed, so nodes and
+/// edges carrying no value type never match; see
+/// [`crate::CaptureExt::when_match`].
 pub fn predicate<F>(f: F) -> impl MatchPat
 where
     F: Fn(&crate::Matcher, ValueType) -> bool + 'static,
 {
-    any().when_match(move |m, ty, _b| f(m, ty))
+    anything().when_match(move |m, ty, _b| f(m, ty))
 }
 
 /// Match any value output exactly `n` bits wide. The width is checked both
 /// at the root and when nested inside an op.
 pub fn value_of_width(n: u32) -> crate::matcher::match_pat::OfWidth<Any> {
-    any().of_width(n)
+    anything().of_width(n)
 }
 
-/// Match any 1-bit (`I1`) value output.
-pub fn bool_value() -> crate::matcher::match_pat::OfWidth<Any> {
-    any().bool_valued()
+/// Any node whose matched value output is an integer type (`I1`..`I512`).
+pub struct AnyInt;
+
+impl MatchPat for AnyInt {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        let o = b.leaf(KindSpec::Any);
+        b.set_post_match(
+            o,
+            Box::new(|_m, _node, ty, _bnd| ty.is_some_and(|t| t.is_integer())),
+        );
+        o
+    }
+}
+
+/// Any integer-typed node, constant or not. `I1` is an integer type, so
+/// booleans match; [`any_bool`] is the `I1`-only form.
+pub fn any_int() -> AnyInt {
+    AnyInt
+}
+
+/// Any node whose matched value output is a float type (`F16`..`F128`).
+pub struct AnyFloat;
+
+impl MatchPat for AnyFloat {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        let o = b.leaf(KindSpec::Any);
+        b.set_post_match(
+            o,
+            Box::new(|_m, _node, ty, _bnd| ty.is_some_and(|t| t.is_float())),
+        );
+        o
+    }
+}
+
+/// Any float-typed node, constant or not.
+pub fn any_float() -> AnyFloat {
+    AnyFloat
+}
+
+/// Any node with a 1-bit (`I1`) value output.
+pub struct AnyBool;
+
+impl MatchPat for AnyBool {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        let o = b.leaf(KindSpec::Any);
+        // As `anything().bool_valued()`: the width alone narrows the relaxed
+        // output kind back to a value.
+        b.set_output_any(o);
+        b.set_value_width(o, 1);
+        o
+    }
+}
+
+/// Any `I1`-typed node, constant or not.
+pub fn any_bool() -> AnyBool {
+    AnyBool
 }
 
 /// Match `inner` with every value input `n` bits wide. Also requires at least

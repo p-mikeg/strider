@@ -1,5 +1,3 @@
-//! `CallOtherPat` input-slot patterns.
-//!
 //! Control and memory predecessors are not value edges under the bipartite
 //! model, so they need the typed `ctrl` / `mem` aliases, which relax the
 //! sub-pattern's root to a control / memory edge. `arg(idx, ..)` stays
@@ -8,7 +6,7 @@
 use strider_ir::node::ValueType;
 use strider_ir::{Function, FunctionBuilder, IRBuilderExt};
 use strider_ir_test_utils::RegisterSet;
-use strider_pattern::{Capture, CaptureExt, Matcher, any, call_other, int_const, mem_phi};
+use strider_pattern::{Capture, CaptureExt, Matcher, anything, call_other, int_const, mem_phi};
 
 /// One `cpuid` CallOther with its pcode-explicit inputs/outputs bound through
 /// real Vns, so every slot is pattern-matchable.
@@ -16,7 +14,6 @@ fn build_cpuid_graph() -> Function {
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
         .expect("build_fn_single_region");
-    // CPUID is empty-channel with memory_edge=true per the ABI table.
     let _ = b
         .build_call_other_abi(
             7,
@@ -42,7 +39,10 @@ fn ctrl_alias_binds_control_predecessor() {
     // inputs[0] is the region's control output; ctrl() relaxes the wildcard's
     // root to a control edge so it can bind there.
     let c = Capture::new();
-    let pat = call_other().name("cpuid").ctrl(any().capture(c)).build();
+    let pat = call_other()
+        .name("cpuid")
+        .ctrl(anything().capture(c))
+        .build();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
     assert!(

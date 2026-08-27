@@ -26,46 +26,50 @@ fn call_target_with_pattern() {
 }
 
 #[test]
-fn call_at_any_matches_when_target_is_in_set() {
+fn call_target_set_matches_when_target_is_in_set() {
     let function = shapes::call_at(0x1234);
     a::matches(
         &function,
-        call().at_any([0x1000u64, 0x1234, 0x9999]).build(),
+        call()
+            .target(int_const([0x1000u64, 0x1234, 0x9999]))
+            .build(),
         1,
     );
 }
 
 #[test]
-fn call_at_any_skips_when_target_is_not_in_set() {
+fn call_target_set_skips_when_target_is_not_in_set() {
     let function = shapes::call_at(0x1234);
-    a::none(&function, call().at_any([0x1000u64, 0x9999]).build());
+    a::none(
+        &function,
+        call().target(int_const([0x1000u64, 0x9999])).build(),
+    );
 }
 
 #[test]
-fn call_at_any_empty_set_never_matches() {
+fn call_target_set_empty_never_matches() {
     let function = shapes::call_at(0x1234);
     // An empty set is vacuously false. Pinned so empty-set callers never fall
     // through to "match anything".
-    a::none(&function, call().at_any(std::iter::empty::<u64>()).build());
+    a::none(
+        &function,
+        call().target(int_const(Vec::<u64>::new())).build(),
+    );
 }
 
 #[test]
-fn int_const_any_of_matches_set_membership() {
-    // Exercises the any-of ctor itself, independent of CallPat: the call site
+fn int_const_set_matches_set_membership() {
+    // Exercises the set form itself, independent of CallPat: the call site
     // stores its target as IntConst(0x1234).
     let function = shapes::call_at(0x1234);
     a::matches(
         &function,
-        call()
-            .target(int_const_any_of([0x1234u64, 0xDEADBEEF]))
-            .build(),
+        call().target(int_const([0x1234u64, 0xDEADBEEF])).build(),
         1,
     );
     a::none(
         &function,
-        call()
-            .target(int_const_any_of([0x1000u64, 0xDEADBEEF]))
-            .build(),
+        call().target(int_const([0x1000u64, 0xDEADBEEF])).build(),
     );
 }
 
@@ -97,7 +101,7 @@ fn call_arg_by_index() {
     a::matches(&function, call().arg(0, int_const(42u128)).build(), 1);
     a::none(&function, call().arg(0, int_const(99u128)).build());
     // Out-of-range arg index: the indexed input doesn't exist, so reject.
-    a::none(&function, call().arg(99, any()).build());
+    a::none(&function, call().arg(99, anything()).build());
 }
 
 /// Two argument registers pre-loaded with 11 and 22.
@@ -155,8 +159,18 @@ fn with_root_post_match_filters_control_pattern() {
 }
 
 #[test]
+fn with_root_post_match_composes_with_an_existing_guard() {
+    // A second guard narrows the first rather than replacing it.
+    let function = shapes::call_at(0x1234);
+    let both = call()
+        .build()
+        .with_root_post_match(Box::new(|_m, _node, _ty, _b| false))
+        .with_root_post_match(Box::new(|_m, _node, _ty, _b| true));
+    a::none(&function, both);
+}
+
+#[test]
 fn with_root_post_match_sees_root_node() {
-    // The guard receives the matched root `NodeId` and can inspect it.
     let function = shapes::call_at(0x1234);
     let guarded = call()
         .build()
@@ -181,7 +195,7 @@ fn ret_val_matches_returned_value() {
     a::matches(
         &function,
         ret()
-            .ret_val(0, add(int_const(5u128), int_const(3u128)))
+            .ret_val(0, int_add(int_const(5u128), int_const(3u128)))
             .build(),
         1,
     );
@@ -192,16 +206,16 @@ fn ret_val_matches_returned_value() {
 fn ret_without_value_rejects_ret_val_constraint() {
     let function = shapes::call_at(0x1234); // Return with no value.
     a::matches(&function, ret().build(), 1);
-    a::none(&function, ret().ret_val(0, any()).build());
+    a::none(&function, ret().ret_val(0, anything()).build());
 }
 
 #[test]
-fn ret_preceded_by_call() {
+fn ret_ctrl_call() {
     let function = shapes::call_at(0x1234);
     // The Ret's ctrl predecessor is the join Region, not the Call, so
-    // `preceded_by(call())` would not match. `any()` is a smoke test that
-    // `.preceded_by` doesn't error.
-    a::matches(&function, ret().preceded_by(any()).build(), 1);
+    // `ctrl(call())` would not match. `anything()` is a smoke test that
+    // `.ctrl` doesn't error.
+    a::matches(&function, ret().ctrl(anything()).build(), 1);
 }
 
 #[test]
@@ -217,48 +231,48 @@ fn ret_captures_node() {
 }
 
 #[test]
-fn if_node_unconstrained_matches() {
+fn if_else_unconstrained_matches() {
     let function = shapes::if_cmp_then_return(4);
-    a::matches(&function, if_node().build(), 1);
+    a::matches(&function, if_else().build(), 1);
 }
 
 #[test]
-fn if_node_cond_matches() {
+fn if_else_cond_matches() {
     let function = shapes::if_cmp_then_return(4);
     a::matches(
         &function,
-        if_node()
+        if_else()
             .cond(int_eq(int_const(4u128), int_const(1u128)))
             .build(),
         1,
     );
     a::none(
         &function,
-        if_node()
+        if_else()
             .cond(int_eq(int_const(99u128), int_const(1u128)))
             .build(),
     );
 }
 
 #[test]
-fn if_node_true_and_false_branches() {
+fn if_else_true_and_false_branches() {
     let function = shapes::if_cmp_then_return(4);
-    // The branch consumer is the join Region; `any()` matches it.
+    // The branch consumer is the join Region; `anything()` matches it.
     a::matches(
         &function,
-        if_node()
-            .with_true(any().into_pattern())
-            .with_false(any().into_pattern())
+        if_else()
+            .with_true(anything().into_pattern())
+            .with_false(anything().into_pattern())
             .build(),
         1,
     );
 }
 
 #[test]
-fn if_node_captures() {
+fn if_else_captures() {
     let function = shapes::if_cmp_then_return(4);
     let n = Capture::new();
-    let m = a::unique(&function, if_node().capture(n).build());
+    let m = a::unique(&function, if_else().capture(n).build());
     let node = m.node(n, function.graph()).expect("if node capture");
     assert!(matches!(
         function.node_kind(node),
@@ -302,48 +316,46 @@ fn if_branch_slot_accepts_built_control_pattern() {
     // `with_true` / `with_false` accept a finished control `Pattern`, routed
     // through the node-wise branch-consumer walk. In unoptimised IR that
     // consumer is the join `Region`, so a `call()` pattern does not match it
-    // while `any()` does.
+    // while `anything()` does.
     let function = graph_if_with_call_in_false_branch();
     let m = Matcher::new(&function);
 
     assert_eq!(
-        m.find_all(&if_node().with_false(any().into_pattern()).build())
+        m.find_all(&if_else().with_false(anything().into_pattern()).build())
             .unwrap()
             .len(),
         1
     );
     assert_eq!(
-        m.find_all(&if_node().with_false(call().at(0x9999).build()).build())
+        m.find_all(&if_else().with_false(call().at(0x9999).build()).build())
             .unwrap()
             .len(),
         0
     );
 }
 
-/// A malformed (multi-sink / rootless) branch pattern must be rejected loudly at
-/// `with_true` build time, not silently swallowed into "branch did not match".
-/// A typo in the branch pattern should surface, not vanish.
+/// A malformed (multi-sink / rootless) branch pattern must be rejected loudly
+/// at `with_true` build time, so a typo surfaces instead of reading as "branch
+/// did not match".
 #[test]
-#[should_panic(expected = "branch pattern")]
+#[should_panic(expected = "If branch pattern is not matchable")]
 fn with_true_multi_sink_branch_pattern_panics_not_silently_skips() {
     // Two unconsumed leaf sinks make `root()` error.
     let mut mb = MatcherBuilder::new();
     let _a = mb.leaf(KindSpec::Any);
     let _b = mb.leaf(KindSpec::Any);
     let bad = mb.finish();
-    let _ = if_node().with_true(bad).build();
+    let _ = if_else().with_true(bad).build();
 }
 
-/// A capture bound inside an If branch sub-pattern is matched against an
-/// isolated `Bindings` and does not propagate outward, so the outer read is
-/// `None`. This is documented isolation rather than rejection: a capture used by
-/// the branch's own `when_match` predicate is a supported idiom.
+/// A capture bound inside an If branch sub-pattern binds in the enclosing
+/// match. See `if_branch_captures` for the agreement cases.
 #[test]
-fn with_true_branch_capture_is_isolated_from_outer_match() {
+fn with_true_branch_capture_reaches_the_outer_match() {
     let function = shapes::if_cmp_then_return(4);
     let branch_cap = Capture::new();
-    let pat = if_node()
-        .with_true(any().capture(branch_cap).into_pattern())
+    let pat = if_else()
+        .with_true(anything().capture(branch_cap).into_pattern())
         .build();
     let m = a::unique(&function, pat);
     assert!(matches!(
@@ -351,8 +363,8 @@ fn with_true_branch_capture_is_isolated_from_outer_match() {
         strider_ir::node::NodeKind::If
     ));
     assert!(
-        m.node(branch_cap, function.graph()).is_none(),
-        "branch capture must be isolated from the outer match"
+        m.node(branch_cap, function.graph()).is_some(),
+        "branch capture must reach the outer match"
     );
 }
 
