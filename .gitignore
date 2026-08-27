@@ -1,5 +1,15 @@
 /target
 fixtures/out/**/*.o
+# The object files the tests name ARE committed, through Git LFS: without them
+# the ET_REL loader tests skip and `ppc_rel32_patches_a_rodata_jump_table`
+# panics on a fresh clone.
+!fixtures/out/x64/*.o
+!fixtures/out/x86/*.o
+!fixtures/out/aarch64/*.o
+!fixtures/out/arm/*.o
+!fixtures/out/mips64le/*.o
+!fixtures/out/ppc64le/*.o
+!fixtures/out/ppc32be/switch_masked_loop.o
 fixtures/vmlinux
 /.worktrees
 /.venv
@@ -23,3 +33,8 @@ __pycache__/
 # Auto-generated .pyi stubs from the stub_gen example; the wheel ships the
 # hand-written stubs instead.
 /crates/strider-py/strider/_generated/
+
+# Tooling state, never part of the project
+/.superpowers
+/.remember
+/.mypy_cache

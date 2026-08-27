@@ -25,10 +25,12 @@ CASES  := $(notdir $(basename $(wildcard cases/*.c) $(wildcard cases/*.S)))
 # -fno-optimize-sibling-calls: keep recursive / wrapper calls visible as
 #   real `call` instructions in the lifted p-code.  Without this GCC turns
 #   them into branches and the analyzer's Call-counting pattern queries
-#   fail for reasons that are compiler-specific rather than analyzer bugs
-#   (BUG-6 in analyzer-known-issues).
+#   fail for reasons that are compiler-specific rather than analyzer bugs.
+# -ffile-prefix-map: without it every committed fixture embeds the build
+#   machine's absolute path in DWARF's DW_AT_comp_dir.
 COMMON_CFLAGS := -Wall -Wextra -Werror -Wno-unused-parameter \
-                 -fno-optimize-sibling-calls
+                 -fno-optimize-sibling-calls \
+                 -ffile-prefix-map=$(CURDIR)=/strider/fixtures
 
 .PHONY: all clean $(ARCHES)
 
