@@ -1,0 +1,65 @@
+name: ci
+
+on:
+  push:
+    branches: [master, develop]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # A broken intra-doc link is a wrong doc, and the workspace passes today.
+  RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      # `externals/rsleigh` is a submodule and every crate that touches machine
+      # state depends on it, so a shallow checkout does not build.
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # The fixture object files are LFS-backed; without this they check out
+          # as pointer text and every test that loads one fails.
+          lfs: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      # Release too: a `debug_assert` that fires only in debug, and a test that
+      # depends on one, both hide from the debug run alone.
+      - run: cargo test --workspace --release
+      - run: cargo doc --workspace --no-deps
+
+  # The floor `Cargo.toml` declares. Without a job on it the declaration rots:
+  # a dependency or a syntax feature can raise the real minimum silently.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # The fixture object files are LFS-backed; without this they check out
+          # as pointer text and every test that loads one fails.
+          lfs: true
+      - uses: dtolnay/rust-toolchain@1.91.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-targets
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # The fixture object files are LFS-backed; without this they check out
+          # as pointer text and every test that loads one fails.
+          lfs: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --group dev
+      - run: uv run maturin develop
+      - run: uv run pyright
+      - run: uv run pytest
