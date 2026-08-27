@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "strider"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python bindings for the Strider binary analysis pipeline"
 requires-python = ">=3.9"
 license = "MIT"
@@ -28,10 +28,25 @@ dev = [
     "patchelf>=0.17 ; sys_platform == 'linux'",
     "pytest>=7",
     "pyelftools>=0.30",
+    "pyright>=1.1.400",
     "ipython",
 ]
 
-# pytest discovery — `uv run pytest` (or plain `pytest`) finds the
+# Type-check gate: `uv run pyright` from the workspace root checks the shipped
+# package, its tests and its examples against the `.pyi` stubs.
+[tool.pyright]
+include = [
+    "crates/strider-py/strider",
+    "crates/strider-py/tests/python",
+    "crates/strider-py/examples/python",
+]
+pythonVersion = "3.9"
+# The eight domain submodules live in the compiled extension: each ships a
+# `.pyi` with no `.py` beside it, which is exactly what this rule reports.
+# (`__init__`, `_api` and `explore` are real Python and resolve normally.)
+reportMissingModuleSource = "none"
+
+# pytest discovery -- `uv run pytest` (or plain `pytest`) finds the
 # strider-py integration suite from the workspace root without arguments.
 # Excludes Rust target dirs, worktrees, and the `.venv` from the rootdir scan.
 [tool.pytest.ini_options]
@@ -40,7 +55,7 @@ norecursedirs = [".git", ".venv", ".worktrees", "target", "__pycache__"]
 
 # The Python bindings crate lives under `crates/strider-py`; the uv
 # project is hosted here at the workspace root so the dev workflow
-# (`uv sync --group dev` → `uv run maturin develop` → `uv run pytest`)
+# (`uv sync --group dev` -> `uv run maturin develop` -> `uv run pytest`)
 # runs from one place.  maturin reaches the crate via `manifest-path`
 # and the `strider/` package via `python-source`.
 [tool.maturin]
@@ -56,4 +71,5 @@ include = [
     # own entry or the wheel ships `strider.pattern` untyped.
     { path = "crates/strider-py/strider/pattern/*.pyi", format = "wheel" },
     { path = "crates/strider-py/strider/py.typed", format = "wheel" },
+    { path = "crates/strider-py/strider/explore.html", format = "wheel" },
 ]
