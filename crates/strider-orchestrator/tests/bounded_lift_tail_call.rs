@@ -209,8 +209,8 @@ fn bounded_lift_fall_through_past_fn_max_size_is_function_boundary_error() {
     );
 }
 
-/// Call input slots per `node_signature`: [control, memory, target, args...];
-/// the target sits at slot 2.
+/// Call input slots per `node_signature`: [control, memory, target, sp,
+/// args...]; the target sits at slot 2.
 fn find_call_to(function: &strider_ir::Function, target: u64) -> Option<strider_ir::node::NodeId> {
     function.walk().find(|&nid| {
         matches!(function.node_kind(nid), NodeKind::Call)

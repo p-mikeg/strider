@@ -392,9 +392,9 @@ impl Optimizer for KnownBits {
             .collect();
 
         // The cone is about to be cascade-culled with its asm-fingerprints.  A
-        // contributor that establishes bits without being fully known itself
-        // (the `x & 1` in `((x & 1) | 2) & 0`) never folds, so a one-hop absorb
-        // of the direct inputs loses it.
+        // contributor that never folds itself (the `x & 1` in
+        // `((x & 1) | 2) & 0`) sits below the fold's direct inputs, so a
+        // one-hop absorb loses it.
         //
         // Constants first, absorb second, rewire last: the cone walk reads
         // input edges and `replace_value` rewires them, so every walk must run
@@ -451,8 +451,7 @@ impl Optimizer for KnownBits {
                 stack.push((n, true));
                 stack.extend(crate::peephole::input_producers_iter(edit, n).map(|i| (i, false)));
             }
-            // The producer is absorbed by `replace_value` below, but its own
-            // fingerprint is not: the cone hangs off it, so link it here.
+            // `replace_value` below unions the same pair.
             edit.function_mut()
                 .side_tables_mut()
                 .extend_asm_fingerprint_from(new_producer, old_producer);

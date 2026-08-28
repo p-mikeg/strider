@@ -152,15 +152,15 @@ macro_rules! value_ops {
             [unary float_floor, FloatUnary, FloatUnaryKind::Floor,
                 "`FloatUnaryOp::Floor` (`floor(x)`)."]
             [unary float_round, FloatUnary, FloatUnaryKind::Round,
-                "`FloatUnaryOp::Round` (round-to-nearest-even)."]
+                "`FloatUnaryOp::Round`, round to nearest with ties away from zero."]
             [binary_comm float_eq, FloatCmp, strider_ir::FloatCmpOp::Equal,
                 "`FloatCmpOp::Equal` (`a == b`)."]
             [binary float_lt, FloatCmp, strider_ir::FloatCmpOp::Less,
                 "`FloatCmpOp::Less` (`a < b`)."]
             [unary int_to_float, Cast, CastKind::IntToFloat,
-                "`IntToFloat`, an int to float conversion."]
+                "`IntToFloat`, a signed integer to the nearest representable float."]
             [unary float_to_int, Cast, CastKind::FloatToInt,
-                "`FloatToInt`, a float to int conversion."]
+                "`FloatToInt`, truncating toward zero."]
             [unary float_to_float, Cast, CastKind::FloatToFloat,
                 "`FloatToFloat`, a float to float re-width."]
             [unary int_bits_to_float, Cast, CastKind::IntBitsToFloat,

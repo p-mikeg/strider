@@ -160,8 +160,10 @@ pub struct PatValue {
     /// unchecked, so any output kind-ok against `kind` matches; `Some(s)` pins
     /// the slot.
     pub match_slot: Option<usize>,
-    /// `any_output()`: satisfied by ANY of the node's outputs, enumerated like
-    /// an existential input rather than pinned to `slot`.
+    /// `any_output()`: satisfied by ANY of the node's outputs, enumerated
+    /// rather than pinned to `slot`. Unlike an existential input, sibling
+    /// `any_slot` vertices on one node are NOT injective: each enumerates every
+    /// output independently, so two of them can settle on the same one.
     pub any_slot: bool,
     /// Where value captures live: `int_add(var(x), ..)` binds `x` here.
     pub capture: Option<crate::capture::Capture>,

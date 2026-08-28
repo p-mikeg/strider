@@ -15,7 +15,7 @@ def test_asm_fingerprint_returns_non_empty_for_value_capture():
     c = Capture()
     pat = int_binary("Add", anything(), anything()).capture(c)
     hits = g.find_all(pat)
-    # `int_add(a, b)` is `return a + b;`, so at least one Add survives; the
+    # The `add` fixture is `return a + b;`, so at least one Add survives; the
     # exact count depends on x86 codegen.
     assert hits, "expected at least one Add match"
     for m in hits:

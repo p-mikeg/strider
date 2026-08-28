@@ -1,7 +1,7 @@
 //! Rewrites `If(Xor(C, IntConst(1))) {A} {B}` into `If(C) {B} {A}`.
 //!
 //! Convergence: each application removes one `Xor`-with-1 from the cond, and a
-//! doubly-inverted cond collapses first via `ConstantFold`'s xor-reassoc.
+//! doubly-inverted cond collapses first via `ConstantFold`'s `!!x -> x`.
 
 use std::rc::Rc;
 

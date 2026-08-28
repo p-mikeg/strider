@@ -18,7 +18,7 @@ use super::MemPat;
 use super::flow::OutputPat;
 use super::node_pat::NodePat;
 
-/// Pins the matched `Phi`'s `value_vn` entry to `Some(vn)`.
+/// Requires the matched `Phi`'s `value_vn` tag to contain `vn`.
 fn phi_var_limit(want: rsleigh::Vn) -> NodePredicate {
     Box::new(move |m, n| {
         let v = m.function().node_outputs(n)[0];
@@ -65,8 +65,8 @@ impl PhiPat {
         self
     }
 
-    /// Narrows to the lifter-emitted SSA phi whose `value_vn` entry is
-    /// `Some(vn)`.
+    /// Narrows to the lifter-emitted SSA phi whose `value_vn` tag contains
+    /// `vn`, so a sub-register matches its container's phi.
     pub fn for_vn(mut self, vn: rsleigh::Vn) -> Self {
         self.var_filter = Some(vn);
         self

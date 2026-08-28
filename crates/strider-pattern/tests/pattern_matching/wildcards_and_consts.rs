@@ -120,7 +120,7 @@ fn float_const_nan_bits_match_separately_from_zero() {
 fn duplicate_int_const_is_single_node() {
     let mut t = Tb::empty();
     let c1 = t.u64(5);
-    let c2 = t.u64(5); // same value, deduplicated
+    let c2 = t.u64(5);
     let s = t.add(c1, c2);
     let function = t.ret_val(s);
 

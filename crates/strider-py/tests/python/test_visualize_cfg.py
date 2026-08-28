@@ -340,7 +340,7 @@ def test_a_non_daemon_explorer_thread_does_not_hang_interpreter_exit():
 
     `Py_FinalizeEx` joins non-daemon threads first and only then runs `atexit`
     handlers, so a hook registered with `atexit` never executes when a thread
-    is parked in `serve_forever` -- the join waits on it forever. That failure
+    is parked in `serve_forever`, so the join waits on it forever. That failure
     is a HANG, which a test asserting only "did not abort" cannot see: the
     timeout is the assertion.
     """

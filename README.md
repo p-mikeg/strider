@@ -23,30 +23,31 @@ questions: what offset does this function read off a pointer, what value does it
 pass to `malloc`, what does it return when the input matches a condition.
 
 Indirect branches resolve by re-lifting until the edge set settles. Each address
-decodes once, in the mode the function runs in, and a resolved target carries
-its own ISA mode, so an ARM/Thumb interworking branch or a MIPS16 entry lands in
-the right decoder. Whatever stays unresolved comes back in `unresolved`; you can
-hand in your own answers with
+decodes once, in the ISA mode carried by the edge that reached it, and a
+resolved target carries its own mode, so an ARM/Thumb interworking branch or a
+MIPS16 entry lands in the right decoder. Whatever stays unresolved comes back
+in `unresolved`; you can hand in your own answers with
 `CfgOptions(known_targets={dispatch_addr: [target, ...]})`, or turn the
 classifier off entirely with `LifterOptions(resolve_indirect_branches=False)`.
 Seating an answer changes the CFG the classifier reads, so a wrong seed can stop
 it deriving and take the site's real arms with it. An unresolved branch is a
 result, never an error: `analyze` raises only on a genuine lift, CFG or
 optimizer failure. A converged CFG is never silently incomplete, but it says so
-through four channels rather than one; the reference covers each of them in
+through four channels rather than one, of which `isa_mode_conflicts` can only
+fire on ARM and MIPS; the reference covers each in
 [docs/python-api.md](docs/python-api.md#12-the-cfg-stridercfg).
 
-A loaded image is mapped rather than copied, and its relocations are applied as
+`load_elf` maps the image rather than copying it, and applies its relocations as
 bytes are read, so a large object opens in tens of milliseconds and faults in
 only what you analyse. Set `STRIDER_NO_MMAP=1` to read the file instead, which
 a network or 9p mount needs: a paging error through a mapping is a SIGBUS no
 caller can catch.
 
-Linked images and unlinked object files both load. `load_elf` walks `PT_LOAD`
-program headers, falls back to sections for an `ET_REL` object, and applies the
-file's relocations as it reads. `apply_relocations=False` also narrows what is
-mapped to code and read-only data, so a writable section like `.data` or `.got`
-reads as `None` rather than as its on-disk bytes.
+Linked images and unlinked object files both load: `load_elf` walks `PT_LOAD`
+program headers and falls back to sections for an `ET_REL` object.
+`apply_relocations=False` also narrows what is mapped to code and read-only
+data, so a writable section like `.data` or `.got` reads as `None` rather than
+as its on-disk bytes.
 
 ```python
 import strider
@@ -66,7 +67,8 @@ folded.
 
 A convention can be narrowed for one analysis: `cc.preserves_all()` clobbers
 nothing, and `cc.preserves_regs()` preserves the registers but still clobbers
-memory. Pair either with `LifterOptions(per_address_ccs={addr: cc})` to model a
+memory. Pair either with `LifterOptions(per_address_ccs={callee_addr: cc})`,
+keyed by the direct-call target rather than the call site, to model a
 transparent hook such as `__fentry__`.
 
 ## Quickstart
@@ -143,15 +145,21 @@ which loads count as incoming arguments, nothing else. The four defaulting off:
 to the callee; `noalias_allocators=[malloc_addr]` lets a load step through a
 pure allocator call, whose result is a fresh disjoint object;
 `callee_preserves_stack_args` treats the outgoing argument slots as untouched by
-the callee, which the psABI permits it to write; and `distinct_sp_bases_disjoint`
-says a store off one stack base cannot alias one off another. Pass them as
+the callee, which the psABI permits it to write, and does nothing on its own:
+its only reader sits behind `escape_analysis` or a non-empty
+`noalias_allocators`; and `distinct_sp_bases_disjoint` says a store off one
+stack base cannot alias one off another. Pass them as
 `LifterOptions(assumptions=AssumptionOptions(...))`.
 
 Some indirect-dispatch shapes do not resolve yet, and come back in
 `unresolved` rather than as an error: AArch64 big-endian stack-array dispatch
-built through a `bfi` insert against an alignment-masked SP; MIPS64 PIC
-GOT-indirect dispatch, where the table values lift as `Add(Load[gp+off], const)`
-rather than a raw constant; and PowerPC stack-array dispatch on ppc32 and ppc64.
+built through a `bfi` insert against an alignment-masked SP; MIPS64
+GOT-indirect dispatch, where the table routes through `gp` even under
+`-fno-pic` and the values lift as `Add(Load[gp+off], const)` rather than a raw
+constant; PowerPC stack-array dispatch on ppc32le, ppc64be and ppc64le, whose
+lifted shape is uncharacterised (ppc32be resolves); and, on any arch, a masked
+switch index whose real bound lives on a loop back edge, where the
+over-approximated answer oscillates and the site is abandoned.
 
 A function that never returns still answers queries. A `while (1)`, a spin loop
 or a `panic` helper ending in a self-jump reaches no return instruction, so the
@@ -231,9 +239,14 @@ utility crates (`dot`, `entity-utils`, `graph-algorithms`, `read-only-memory`,
 
 The crates are usable without the bindings.
 `strider_orchestrator::Strider::new(...)` builds a handle and `.analyze(...)`
-runs the whole pipeline. See
-[`crates/strider-orchestrator/examples/orchestrator_demo.rs`](crates/strider-orchestrator/examples/orchestrator_demo.rs)
-for a runnable end-to-end example.
+runs the whole pipeline.
+[`examples/orchestrator_demo.rs`](crates/strider-orchestrator/examples/orchestrator_demo.rs)
+runs against the committed fixtures (`cargo run -p strider-orchestrator
+--example orchestrator_demo`), driving the stages by hand (`Lifter::new`,
+`build_cfg`, `build_ir`, `pipeline.run`) and dumping each one.
+[`examples/analyze_kernel.rs`](crates/strider-orchestrator/examples/analyze_kernel.rs)
+is the one-call form, but it is a profiling harness: it needs an image path and
+a symbol you supply.
 
 ## Build & test
 
