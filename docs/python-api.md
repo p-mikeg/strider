@@ -107,14 +107,14 @@ opts = strider.lift.LifterOptions(
         call_other_abis={"trap": sleigh.CallOtherAbi.no_return()},  # reclassify a user-op
     ),
     assumptions=strider.lift.AssumptionOptions(
+        stack_global_disjoint=True,       # False: the structural floor
+        assume_incoming_args_survive_calls=True,  # False: a call shadows the slot an arg arrived in
         escape_analysis=False,            # True forwards private-frame spills across calls
         noalias_allocators=[],            # callee addresses of malloc-like allocators
         distinct_sp_bases_disjoint=False, # True: a store off another SP base cannot alias
         callee_preserves_stack_args=False,# True: a callee leaves the argument slots alone
     ),
     compact=True,                      # drop unreachable nodes at the end
-    alias_mode="stack_global_disjoint",  # or "strict", the structural floor
-    assume_incoming_args_survive_calls=True,  # False: a call shadows the slot an arg arrived in
     resolve_indirect_branches=True,    # False leaves every site an IndirectBranch placeholder
     per_address_ccs=None,              # {call_addr: CallingConvention} overrides
     pipeline=None,                      # replace the optimizer pipeline for this call
@@ -123,18 +123,19 @@ prog.analyze("dispatch_value", opts=opts)
 ```
 
 Everything in `AssumptionOptions` is a claim about the code being analyzed that
-strider cannot check, so a wrong one can make the answer wrong. `alias_mode` is
-separate: `"strict"` is sound under any input as long as `noalias_allocators` is
-empty, and the default `"stack_global_disjoint"` additionally assumes no
-constant address equals `sp + K` at runtime.
+strider cannot check, so a wrong one can make the answer wrong. Every field's
+risky value is the positive one; clearing all six is the only configuration
+sound under any input. Two default on:
+`stack_global_disjoint` assumes no constant address equals `sp + K` at runtime,
+and `assume_incoming_args_survive_calls` assumes a callee leaves an incoming
+stack-argument slot as it found it.
 
-`assume_incoming_args_survive_calls` and
-`AssumptionOptions(distinct_sp_bases_disjoint=...)` together decide how an
-incoming argument is found: whether a later call shadows the slot it arrived in,
-and whether a store rooted at an SP base other than the entry SP (an
-alignment-masked `sp & -16` frame local, say) counts as disjoint from it. The
-defaults are survival on and disjointness off, so an argument survives a later
-call and a differently-based store is treated as a possible alias.
+`assume_incoming_args_survive_calls` and `distinct_sp_bases_disjoint` together
+decide how an incoming argument is found: whether a later call shadows the slot
+it arrived in, and whether a store rooted at an SP base other than the entry SP
+(an alignment-masked `sp & -16` frame local, say) counts as disjoint from it.
+The defaults are survival on and disjointness off, so an argument survives a
+later call and a differently-based store is treated as a possible alias.
 
 `callee_preserves_stack_args=True` empties the outgoing-argument window,
 so a value spilled at the stack top forwards across a call. The psABIs let a

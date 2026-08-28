@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use pyo3::prelude::*;
-use strider_orchestrator::opt::AliasMode;
 
 use crate::arch::PySleighArch;
 use crate::cc::PyCallingConvention;
@@ -120,19 +119,6 @@ pub(crate) fn reject_zero_max_size(function_max_size: Option<u64>) -> PyResult<(
     Ok(())
 }
 
-/// `"stack_global_disjoint"` (the default) trusts that stack and
-/// global/constant memory never overlap; `"strict"` is the always-sound
-/// floor.
-pub(crate) fn parse_alias_mode(s: &str) -> PyResult<strider_orchestrator::opt::AliasMode> {
-    match s {
-        "stack_global_disjoint" => Ok(AliasMode::StackGlobalDisjoint),
-        "strict" => Ok(AliasMode::Strict),
-        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "alias_mode must be \"stack_global_disjoint\" or \"strict\", got {other:?}"
-        ))),
-    }
-}
-
 pub(crate) fn build_orch_sleigh(
     arch: &PySleighArch,
     reader: AnyMemReader,
@@ -142,7 +128,7 @@ pub(crate) fn build_orch_sleigh(
 }
 
 /// The `OptOptions` an analysis runs under, read off a `LifterOptions`. Shared
-/// so `optimize` and `analyze` agree about alias mode and the assumption knobs.
+/// so `optimize` and `analyze` agree about every assumption knob.
 fn opt_options_from(
     py: Python<'_>,
     opts: &PyLifterOptions,
@@ -150,6 +136,8 @@ fn opt_options_from(
     let assumptions = {
         let a = opts.assumptions.borrow(py);
         strider_orchestrator::opt::AssumptionOptions {
+            stack_global_disjoint: a.stack_global_disjoint,
+            assume_incoming_args_survive_calls: a.assume_incoming_args_survive_calls,
             distinct_sp_bases_disjoint: a.distinct_sp_bases_disjoint,
             callee_preserves_stack_args: a.callee_preserves_stack_args,
             noalias_allocators: a.noalias_allocators.iter().copied().collect(),
@@ -157,9 +145,6 @@ fn opt_options_from(
         }
     };
     Ok(strider_orchestrator::opt::OptOptions {
-        // Already validated at `LifterOptions` construction time.
-        alias_mode: parse_alias_mode(&opts.alias_mode)?,
-        assume_incoming_args_survive_calls: opts.assume_incoming_args_survive_calls,
         assumptions,
         resolve_indirect_branches: opts.resolve_indirect_branches,
     })
@@ -573,8 +558,8 @@ impl PyLifter {
     /// A plain `Lifter` needs an address and a `cc`; it raises
     /// `StriderError` for a symbol name or a missing `cc` (`ElfLifter`
     /// accepts a symbol name and supplies a default `cc`).  Raises
-    /// `ValueError` for a nested `function_max_size == 0` or an
-    /// unrecognised `alias_mode`, and `StriderError` on lift failure.
+    /// `ValueError` for a nested `function_max_size == 0`, and
+    /// `StriderError` on lift failure.
     #[pyo3(signature = (entry, cc=None, opts=None))]
     fn analyze(
         slf: Py<Self>,

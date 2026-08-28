@@ -24,6 +24,29 @@ pub use phi::{MemPhiPat, PhiPat, mem_phi, phi, phi_for};
 
 use crate::matcher::{MatcherBuilder, PatValueRef};
 
+/// [`WithOutput`] for a builder that wraps one [`NodePat`](node_pat::NodePat)
+/// and forwards every output constraint to it unchanged. `$inner` names the
+/// field, `0` for a newtype.
+macro_rules! delegate_with_output {
+    ($ty:ty, $inner:tt) => {
+        impl $crate::node_builders::WithOutput for $ty {
+            fn capture_output(mut self, slot: Option<usize>, c: $crate::capture::Capture) -> Self {
+                self.$inner = self.$inner.capture_output(slot, c);
+                self
+            }
+            fn output_width(mut self, slot: Option<usize>, bits: u32) -> Self {
+                self.$inner = self.$inner.output_width(slot, bits);
+                self
+            }
+            fn output_ty(mut self, slot: Option<usize>, ty: strider_ir::node::ValueType) -> Self {
+                self.$inner = self.$inner.output_ty(slot, ty);
+                self
+            }
+        }
+    };
+}
+pub(crate) use delegate_with_output;
+
 /// Defers a sub-pattern's compilation until `build`, once the shared
 /// [`MatcherBuilder`] exists.
 pub(crate) type SubCompiler = Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef>;

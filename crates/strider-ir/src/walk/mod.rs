@@ -41,7 +41,7 @@ pub fn stranded_nodes(graph: &Graph, entry: NodeId) -> NodeIdSet {
 
     let mut escapes = NodeIdSet::new();
     let mut work: Vec<NodeId> = Vec::new();
-    for node in cfg.iter() {
+    for node in &cfg {
         let dangling =
             cfg_outputs(graph, node).any(|value| graph.value_uses(value).next().is_none());
         if is_terminator(graph.node_kind(node)) || dangling {
@@ -68,9 +68,9 @@ pub fn stranded_nodes(graph: &Graph, entry: NodeId) -> NodeIdSet {
     stranded
 }
 
-pub type PreOrder<G> = graph_algorithms::walk::PreOrder<G, DenseEntitySet<NodeId>>;
+pub type PreOrder<G> = graph_algorithms::walk::PreOrder<G>;
 
-pub type PostOrder<G> = graph_algorithms::walk::PostOrder<G, DenseEntitySet<NodeId>>;
+pub type PostOrder<G> = graph_algorithms::walk::PostOrder<G>;
 
 /// Successors follow data inputs backward and control edges forward.
 #[derive(Clone, Copy)]

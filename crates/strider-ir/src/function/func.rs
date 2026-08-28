@@ -352,8 +352,7 @@ impl Function {
         let remap = self.retain_reachable();
         let new_entry = remap.node_old_to_new(entry).ok_or_else(|| {
             anyhow::anyhow!(
-                "Function::compact: entry {:?} missing from remap (invariant violation)",
-                entry
+                "Function::compact: entry {entry:?} missing from remap (invariant violation)"
             )
         })?;
         self.entry = new_entry;

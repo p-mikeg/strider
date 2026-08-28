@@ -150,29 +150,67 @@ pub(crate) fn elf_writable_fetch_ranges(
             }
         }
         _ => {
-            // Section walk, matching `collect_loadable_sections_dedup`'s layout
-            // and first-wins dedup so a losing section contributes no range.
+            // First-wins dedup on the base, like `collect_loadable_sections_dedup`,
+            // so a losing section contributes no range.
             let mut seen: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
-            for sec in obj.sections() {
-                let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
-                    continue;
-                };
-                if !fetch.section_accepts(sh_flags) {
-                    continue;
-                }
-                let len = sec.data().context("failed to parse ELF")?.len();
-                if len == 0 {
-                    continue;
-                }
-                let base = layout.section_base(&sec);
-                if seen.insert(base) && !rom.section_accepts(sh_flags) {
-                    push(base, len)?;
+            for sec in accepted_sections(obj, fetch, layout)? {
+                if seen.insert(sec.base) && !rom.section_accepts(sec.sh_flags) {
+                    push(sec.base, sec.data.len())?;
                 }
             }
         }
     }
     Ok(out)
 }
+/// One accepted section, carrying everything the three section walks read.
+struct AcceptedSection<'d> {
+    index: usize,
+    sh_flags: u64,
+    base: u64,
+    file_range: Option<(u64, u64)>,
+    data: &'d [u8],
+}
+
+/// Every section the section walk accepts under `filter`, in index order.
+///
+/// Which sections survive decides where regions land, which relocation sites
+/// this crate owns, and which ranges the ROM view subtracts. All three have to
+/// agree, so they read this one walk instead of each spelling the filter,
+/// the empty-section skip and the layout base out again.
+///
+/// `layout` must be the one built for `obj`.
+///
+/// # Errors
+///
+/// When an accepted section's `data()` can't be read.
+fn accepted_sections<'d>(
+    obj: &object::File<'d>,
+    filter: LoadFilter,
+    layout: &ElfSectionLayout,
+) -> Result<Vec<AcceptedSection<'d>>> {
+    let mut out = Vec::new();
+    for sec in obj.sections() {
+        let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
+            continue;
+        };
+        if !filter.section_accepts(sh_flags) {
+            continue;
+        }
+        let data = sec.data().context("failed to parse ELF")?;
+        if data.is_empty() {
+            continue;
+        }
+        out.push(AcceptedSection {
+            index: sec.index().0,
+            sh_flags,
+            base: layout.section_base(&sec),
+            file_range: sec.file_range(),
+            data,
+        });
+    }
+    Ok(out)
+}
+
 /// Where each section is actually loaded.
 ///
 /// An ET_REL object is unlinked, and every toolchain leaves `sh_addr` at 0
@@ -302,20 +340,8 @@ pub(crate) fn loaded_section_indices(
         return Ok(std::collections::BTreeSet::new());
     }
     let mut by_addr: BTreeMap<u64, usize> = BTreeMap::new();
-    for sec in obj.sections() {
-        let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
-            continue;
-        };
-        if !filter.section_accepts(sh_flags) {
-            continue;
-        }
-        let data = sec.data().context("failed to parse ELF")?;
-        if data.is_empty() {
-            continue;
-        }
-        by_addr
-            .entry(layout.section_base(&sec))
-            .or_insert(sec.index().0);
+    for sec in accepted_sections(obj, filter, layout)? {
+        by_addr.entry(sec.base).or_insert(sec.index);
     }
     Ok(by_addr.into_values().collect())
 }
@@ -456,24 +482,13 @@ fn collect_loadable_sections_dedup(
 ) -> Result<Vec<MemRegion>> {
     let mut by_addr: BTreeMap<u64, MemRegion> = BTreeMap::new();
     let mut budget = CopyBudget::default();
-    for sec in obj.sections() {
-        let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
-            continue;
-        };
-        if !filter.section_accepts(sh_flags) {
-            continue;
-        }
-        let data = sec.data().context("failed to parse ELF")?;
-        if data.is_empty() {
-            continue;
-        }
-        let base = layout.section_base(&sec);
-        if let std::collections::btree_map::Entry::Vacant(e) = by_addr.entry(base) {
+    for sec in accepted_sections(obj, filter, layout)? {
+        if let std::collections::btree_map::Entry::Vacant(e) = by_addr.entry(sec.base) {
             e.insert(region_from(
                 bytes,
-                base,
-                sec.file_range(),
-                data,
+                sec.base,
+                sec.file_range,
+                sec.data,
                 &mut budget,
             )?);
         }

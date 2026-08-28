@@ -519,7 +519,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
         })
         .expect("if.true node must be declared in the DOT output");
 
-    let q = format!("\"{}\"", if_true_id);
+    let q = format!("\"{if_true_id}\"");
     let edges_into = edge_lines(&dot)
         .into_iter()
         .filter(|l| l.split("->").nth(1).is_some_and(|rhs| rhs.contains(&q)))
