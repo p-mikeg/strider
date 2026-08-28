@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use anyhow::anyhow;
 use rustc_hash::FxHashMap;
 use strider_graph::ValueId as TmplValueId;
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use strider_ir::node::{ExpectedValueKind, NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_ir::{Function, IRBuilder, IRViewer};
 
 use crate::bindings::Bindings;
@@ -177,6 +177,20 @@ pub fn instantiate<B: IRBuilder>(
         // Usually a single value output; a multi-output node such as a
         // `Store` declares its memory output here too.
         let outputs = output_kinds_for(template, vtx, root_ty, &binding_tys);
+        for (slot, got) in outputs.iter().enumerate() {
+            let want = kind.expected_output_kind(slot).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "template node {kind:?} declares output slot {slot}, past what \
+                     its node signature admits"
+                )
+            })?;
+            if !output_kind_admissible(want, *got) {
+                anyhow::bail!(
+                    "template node {kind:?} declares {got:?} at output slot {slot}, \
+                     where its node signature expects {want:?}"
+                );
+            }
+        }
 
         let node = builder.create_node_attributed(kind, inputs, outputs, proof_nodes);
 
@@ -348,6 +362,25 @@ fn node_value_ty(
             }
         })
         .unwrap_or(root_ty)
+}
+
+/// Whether `got` is admissible where the node signature expects `want`.
+///
+/// `expected_output_kind` is `strider-ir`'s single source of truth; without
+/// this the author's declaration stands unchecked, so a `Store` built with no
+/// explicit output vertex silently takes a value output where `[Memory]` is
+/// required and the malformed node reaches the graph.
+fn output_kind_admissible(want: ExpectedValueKind, got: ValueKind) -> bool {
+    match (want, got) {
+        (ExpectedValueKind::Control, ValueKind::Control)
+        | (ExpectedValueKind::Memory, ValueKind::Memory)
+        | (ExpectedValueKind::PhiToken, ValueKind::PhiToken)
+        | (ExpectedValueKind::AnyValue, ValueKind::Typed(_)) => true,
+        (ExpectedValueKind::Bool, ValueKind::Typed(t)) => t == ValueType::I1,
+        (ExpectedValueKind::AnyInt, ValueKind::Typed(t)) => t.is_integer(),
+        (ExpectedValueKind::AnyFloat, ValueKind::Typed(t)) => t.is_float(),
+        _ => false,
+    }
 }
 
 /// Each value output resolves its own [`TemplateTy`] against `root_ty`. A

@@ -93,6 +93,11 @@ impl SlotList {
         }
     }
 
+    /// Fixed slots before any tail; the index the variadic tail starts at.
+    pub(crate) fn head_len(&self) -> usize {
+        self.head.len()
+    }
+
     /// Past the head: the tail slot while within `max_len`, else `None`.
     pub(crate) fn at(&self, idx: usize) -> Option<Slot> {
         if idx >= self.max_len {

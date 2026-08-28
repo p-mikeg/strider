@@ -9,16 +9,8 @@ use strider_ir::{IRViewer, IRWalker};
 
 #[test]
 fn arithmetic_x86_add_validate_with_asm_fingerprint_check() {
-    // Drives the check through validate()'s opt-in hook rather than the
-    // side-table directly, to exercise the public surface.
     let function = analyze(Arch::X86, "arithmetic", "add");
     validate(&function).expect("every reachable non-exempt node must have a fingerprint");
-}
-
-#[test]
-fn arithmetic_x86_default_validate_remains_unchanged() {
-    let function = analyze(Arch::X86, "arithmetic", "add");
-    validate(&function).expect("default validate still passes");
 }
 
 #[test]

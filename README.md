@@ -29,22 +29,12 @@ the right decoder. Whatever stays unresolved comes back in `unresolved`; you can
 hand in your own answers with
 `CfgOptions(known_targets={dispatch_addr: [target, ...]})`, or turn the
 classifier off entirely with `LifterOptions(resolve_indirect_branches=False)`.
-Seating an answer changes the CFG the classifier reads, so a wrong seed can
-stop it deriving and take the site's real arms with it;
-`cfg.unverified_seeded_sites()` names the dispatch addresses whose answer is
-exactly your seed, plus every site the CFG consumed outright as a return or a
-tail call, seeded or classifier-derived.
-An unresolved branch is a result, never an error. A site whose answer never
-settles is abandoned and reported, as is one still growing when the iteration
-cap runs out, and a resolved target that turns out not to be code is dropped
-with its site reported. `cfg.isa_mode_conflicts()` names any address two paths
-reached in different ISA modes, where one region owns the bytes and the losing
-path's arm is not the stream it believes, and `cfg.interior_branch_targets()`
-names a target interior to a region but off every instruction boundary, whose
-edge is seated on the region that owns the bytes rather than on the stream the
-branch jumps to. Asking whether a result may be incomplete means reading all
-four, which is what `AnalyzeResult::is_complete()` does on the Rust side.
-`analyze` raises only on a genuine lift, CFG or optimizer failure.
+Seating an answer changes the CFG the classifier reads, so a wrong seed can stop
+it deriving and take the site's real arms with it. An unresolved branch is a
+result, never an error: `analyze` raises only on a genuine lift, CFG or
+optimizer failure. A converged CFG is never silently incomplete, but it says so
+through four channels rather than one; the reference covers each of them in
+[docs/python-api.md](docs/python-api.md#12-the-cfg-stridercfg).
 
 A loaded image is mapped rather than copied, and its relocations are applied as
 bytes are read, so a large object opens in tens of milliseconds and faults in
@@ -102,24 +92,11 @@ for hit in function.find_all(load(addr=int_add(base, off)), ignore_casts=True):
 prog.visualize(function)   # prints a local URL; Ctrl-C to stop
 ```
 
-You can also decide matches with your own logic. `.when(f)` filters one pattern
-against a callable, backtracking so other bindings are still tried; to correlate
-captures across several patterns, subclass `JoinPredicate`, declare the captures
-it reads, and return a bool from `constraint`:
-
-```python
-from strider.pattern import call, int_const, Capture
-from strider.pattern.constraints import JoinPredicate
-
-n = Capture("n")
-
-class MultipleOfEight(JoinPredicate):
-    def captures(self):       return [n]           # the captures it correlates
-    def constraint(self, m):  return m.uint(n) % 8 == 0
-
-# Calls whose first argument is a constant multiple of eight.
-function.find_all([call().arg(0, int_const(n))], constraints=[MultipleOfEight()])
-```
+You can also decide matches with your own logic: `.when(f)` filters one pattern
+against a callable, backtracking so other bindings are still tried, and a
+`JoinPredicate` subclass correlates captures across several patterns. Worked
+through in
+[docs/python-guide.md](docs/python-guide.md#constraints-relating-matches-by-control-flow).
 
 `one_of([a, b])` yields a separate match for every arm that matches;
 `first_of` cuts to the first that matches. `int_add(a, b).ordered()` pins
@@ -132,8 +109,8 @@ sites are selected with `call().target(addr)`, or `call().target([a, b])` for a
 set of addresses.
 
 A user-op strider has no ABI for fails the lift of every function containing
-it. `lift.user_op_names()` lists what the architecture can emit,
-`lift.call_other_abi(name)` reads back the classification in force, and
+it. `prog.user_op_names()` lists what the architecture can emit,
+`prog.call_other_abi(name)` reads back the classification in force, and
 `CfgOptions(call_other_abis={"movmskps": strider.sleigh.CallOtherAbi.pure()})`
 supplies the missing one; `CallOtherAbi.custom(sleigh, implicit_reads=[...])`
 states an implicit register footprint.

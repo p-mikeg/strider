@@ -285,7 +285,12 @@ fn analyze_result_type(py: Python<'_>) -> PyResult<PyObject> {
                 "__doc__",
                 "What Lifter.analyze returns: (cfg, function, unresolved). \
                  `unresolved` holds the machine addresses of indirect branches \
-                 that could not be resolved; a non-empty list is not an error.",
+                 that could not be resolved, and a non-empty list is not an \
+                 error. Empty means fully resolved, NOT that the answer is \
+                 complete: it is one of four incompleteness channels, the \
+                 others being cfg.unverified_seeded_sites(), \
+                 cfg.isa_mode_conflicts() and cfg.interior_branch_targets(). \
+                 cfg.is_complete() tests all four.",
             )?;
             PyResult::Ok(nt.unbind())
         })
@@ -555,6 +560,9 @@ impl PyLifter {
     /// `AnalyzeResult` (`cfg`, `function`, `unresolved`; also unpacks as a
     /// 3-tuple).
     ///
+    /// An empty `unresolved` is not a complete answer: see `AnalyzeResult`
+    /// for the four channels, and `Cfg.is_complete` to test them all.
+    ///
     /// A plain `Lifter` needs an address and a `cc`; it raises
     /// `StriderError` for a symbol name or a missing `cc` (`ElfLifter`
     /// accepts a symbol name and supplies a default `cc`).  Raises
@@ -656,6 +664,7 @@ impl PyLifter {
         // From the result, not from `cfg`: these are accumulated over the
         // resolver's rounds, and `cfg` is only the final one.
         let reports = crate::cfg::CfgReports {
+            unresolved: unresolved.clone(),
             unverified_seeded: machine_addrs(&result.unverified_seeded_sites),
             isa_mode_conflicts: machine_addrs(&result.isa_mode_conflicts),
             interior_branch_targets: machine_addrs(&result.interior_branch_targets),

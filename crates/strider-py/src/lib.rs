@@ -28,6 +28,7 @@ mod reader;
 mod sleigh;
 mod strider_cls;
 mod template;
+mod value_ops;
 
 /// Makes anyhow capture a backtrace at every error site.
 fn force_anyhow_backtrace_capture() {
@@ -49,10 +50,6 @@ fn force_anyhow_backtrace_capture() {
         }
     }
 }
-
-// Backs `examples/stub_gen.rs`.  Must live in this crate: the proc-macros'
-// `inventory::submit!` calls are collected per-rlib.
-pyo3_stub_gen::define_stub_info_gatherer!(stub_info);
 
 /// Vendored viz.js (Graphviz-in-Wasm).
 #[pyfunction]

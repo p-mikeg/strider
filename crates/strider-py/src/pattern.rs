@@ -10,9 +10,8 @@ use std::sync::Mutex;
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple};
-#[allow(unused_imports)]
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use strider_ir::node::ValueType as T;
+
 use strider_pattern as sp;
 use strider_pattern::matcher::{MatcherBuilder, PatValueRef};
 use strider_pattern::template::{TemplateBuilder, TmplValueRef};
@@ -22,10 +21,10 @@ use strider_pattern::{
 };
 
 use crate::errors::into_strider_err;
+use crate::value_ops::value_ops;
 
 /// Binds a matched node so its value, op variant or fingerprint can be read
 /// back from the `Match`. Each `Capture()` is globally unique.
-#[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "Capture", module = "strider.pattern", frozen)]
 #[derive(Clone)]
 pub struct PyCapture {
@@ -261,7 +260,6 @@ pub(crate) enum PatRepr {
 /// A finished pattern. Reusable across `find_all` / rewrite calls, except one
 /// built from a control or variadic builder's `into_pat()`, which is consumed
 /// by its first query.
-#[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "Pat", module = "strider.pattern", unsendable)]
 pub struct PyPat {
     pub(crate) repr: Rc<PatRepr>,
@@ -1282,19 +1280,6 @@ impl PatQuery<'_> {
     }
 }
 
-impl pyo3_stub_gen::PyStubType for PatQuery<'_> {
-    fn type_output() -> pyo3_stub_gen::TypeInfo {
-        pyo3_stub_gen::TypeInfo::with_module("strider.pattern.PatLike", "strider.pattern".into())
-    }
-}
-
-// Hand-written so pyo3-stub-gen emits the canonical `PatLike` type alias.
-impl pyo3_stub_gen::PyStubType for PatLike<'_> {
-    fn type_output() -> pyo3_stub_gen::TypeInfo {
-        pyo3_stub_gen::TypeInfo::with_module("strider.pattern.PatLike", "strider.pattern".into())
-    }
-}
-
 impl PatLike<'_> {
     pub(crate) fn to_pattern(&self, py: Python<'_>) -> PyResult<Pattern> {
         match self {
@@ -1333,13 +1318,6 @@ pub enum TemplateLike<'py> {
     Pat(Bound<'py, PyPat>),
     Capture(Bound<'py, PyCapture>),
     Str(Bound<'py, PyString>),
-}
-
-// Hand-written so pyo3-stub-gen emits the canonical `Template` type.
-impl pyo3_stub_gen::PyStubType for TemplateLike<'_> {
-    fn type_output() -> pyo3_stub_gen::TypeInfo {
-        pyo3_stub_gen::TypeInfo::with_module("strider.template.Template", "strider.template".into())
-    }
 }
 
 impl TemplateLike<'_> {
@@ -2125,77 +2103,7 @@ pub(crate) fn checked_signed_i64(value: i128) -> PyResult<i64> {
     })
 }
 
-repr_fn!(PyPat; binary
-    add = "int_add", IntBinary, strider_ir::IntBinaryOp::Add,
-    "Pattern: `IntBinaryOp::Add` (`a + b`). Commutative."
-);
-repr_fn!(PyPat; binary
-    mul = "int_mul", IntBinary, strider_ir::IntBinaryOp::Mul,
-    "Pattern: `IntBinaryOp::Mul` (`a * b`). Commutative."
-);
-repr_fn!(PyPat; binary div = "int_div", IntBinary, strider_ir::IntBinaryOp::Div,
-    "Pattern: `IntBinaryOp::Div` (unsigned `a / b`).");
-repr_fn!(PyPat; binary sdiv = "int_sdiv", IntBinary, strider_ir::IntBinaryOp::Sdiv,
-    "Pattern: `IntBinaryOp::Sdiv` (signed `a / b`).");
-repr_fn!(PyPat; binary rem = "int_rem", IntBinary, strider_ir::IntBinaryOp::Rem,
-    "Pattern: `IntBinaryOp::Rem` (unsigned `a % b`).");
-repr_fn!(PyPat; binary srem = "int_srem", IntBinary, strider_ir::IntBinaryOp::Srem,
-    "Pattern: `IntBinaryOp::Srem` (signed `a % b`).");
-repr_fn!(PyPat; binary
-    shl = "int_shl", IntBinary, strider_ir::IntBinaryOp::ShiftLeft,
-    "Pattern: `IntBinaryOp::ShiftLeft` (`a << b`)."
-);
-repr_fn!(PyPat; binary
-    shr = "int_shr", IntBinary, strider_ir::IntBinaryOp::ShiftRight,
-    "Pattern: `IntBinaryOp::ShiftRight` (`a >> b`)."
-);
-repr_fn!(PyPat; binary
-    sshr = "int_sshr", IntBinary, strider_ir::IntBinaryOp::SShiftRight,
-    "Pattern: `IntBinaryOp::SShiftRight` (arithmetic `a >> b`)."
-);
-repr_fn!(PyPat; binary
-    and_ = "int_and", IntBinary, strider_ir::IntBinaryOp::And,
-    "Pattern: `IntBinaryOp::And` (`a & b`). Commutative."
-);
-repr_fn!(PyPat; binary
-    or_ = "int_or", IntBinary, strider_ir::IntBinaryOp::Or,
-    "Pattern: `IntBinaryOp::Or` (`a | b`). Commutative."
-);
-repr_fn!(PyPat; binary
-    xor = "int_xor", IntBinary, strider_ir::IntBinaryOp::Xor,
-    "Pattern: `IntBinaryOp::Xor` (`a ^ b`). Commutative."
-);
-
-/// Pattern: integer subtraction `a - b`.
-#[pyfunction(name = "int_sub")]
-pub fn sub(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::Sub(l, r))
-}
-
-repr_fn!(PyPat; binary
-    int_eq, IntCmp, strider_ir::IntCmpOp::Equal,
-    "Pattern: `IntCmpOp::Equal` (`a == b`). Commutative."
-);
-repr_fn!(PyPat; binary
-    int_lt, IntCmp, strider_ir::IntCmpOp::Less,
-    "Pattern: `IntCmpOp::Less` (unsigned `a < b`)."
-);
-repr_fn!(PyPat; binary
-    int_slt, IntCmp, strider_ir::IntCmpOp::Sless,
-    "Pattern: `IntCmpOp::Sless` (signed `a < b`)."
-);
-repr_fn!(PyPat; binary
-    int_carry, IntCmp, strider_ir::IntCmpOp::Carry,
-    "Pattern: `IntCmpOp::Carry` (unsigned add carry-out). Commutative."
-);
-repr_fn!(PyPat; binary
-    int_scarry, IntCmp, strider_ir::IntCmpOp::Scarry,
-    "Pattern: `IntCmpOp::Scarry` (signed add overflow). Commutative."
-);
-repr_fn!(PyPat; binary
-    int_sborrow, IntCmp, strider_ir::IntCmpOp::Sborrow,
-    "Pattern: `IntCmpOp::Sborrow` (signed subtract overflow)."
-);
+value_ops!(PyPat, "Pattern", " Commutative.");
 
 /// Pattern: integer `a != b`.
 #[pyfunction]
@@ -2215,110 +2123,10 @@ pub fn int_sle(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
     PyPat::from_repr(PatRepr::IntSle(l, r))
 }
 
-/// Match a specific `IntCmpOp` variant by name.
-#[pyfunction]
-pub fn int_cmp(op: &str, l: Py<PyAny>, r: Py<PyAny>) -> PyResult<PyPat> {
-    let cmp_op = parse_int_cmp_op(op)?;
-    Ok(PyPat::from_repr(PatRepr::IntCmp(cmp_op, l, r)))
-}
-
-/// Pattern: `IntUnaryOp::Neg`, two's-complement negation (`-x`).
-#[pyfunction(name = "int_neg")]
-pub fn neg(operand: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::IntUnary(IntUnaryKind::Neg, operand))
-}
-
-/// Pattern: bitwise complement `~x`.
-#[pyfunction(name = "int_not")]
-pub fn bit_not(operand: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::BitNot(operand))
-}
-
-/// Pattern: `Popcount`, the count of set bits.
-#[pyfunction(name = "int_popcount")]
-pub fn popcount(operand: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::IntUnary(IntUnaryKind::Popcount, operand))
-}
-
-/// Pattern: `Lzcount`, the count of leading zero bits.
-#[pyfunction(name = "int_lzcount")]
-pub fn lzcount(operand: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::IntUnary(IntUnaryKind::Lzcount, operand))
-}
-
-repr_fn!(PyPat; binary
-    bool_and, BoolBinary, strider_ir::IntBinaryOp::And,
-    "Pattern: boolean `a && b` (`IntBinaryOp::And` at `I1`). Commutative."
-);
-repr_fn!(PyPat; binary
-    bool_or, BoolBinary, strider_ir::IntBinaryOp::Or,
-    "Pattern: boolean `a || b` (`IntBinaryOp::Or` at `I1`). Commutative."
-);
-repr_fn!(PyPat; binary
-    bool_xor, BoolBinary, strider_ir::IntBinaryOp::Xor,
-    "Pattern: boolean `a ^ b` (`IntBinaryOp::Xor` at `I1`). Commutative."
-);
-
-/// Pattern: boolean negation `!x`.
-#[pyfunction]
-pub fn bool_not(operand: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::BoolNot(operand))
-}
-
-repr_fn!(PyPat; binary
-    float_add, FloatBinary, strider_ir::FloatBinaryOp::Add,
-    "Pattern: `FloatBinaryOp::Add` (`a + b`). Commutative."
-);
-repr_fn!(PyPat; binary
-    float_mul, FloatBinary, strider_ir::FloatBinaryOp::Mul,
-    "Pattern: `FloatBinaryOp::Mul` (`a * b`). Commutative."
-);
-repr_fn!(PyPat; binary float_div, FloatBinary, strider_ir::FloatBinaryOp::Div,
-    "Pattern: `FloatBinaryOp::Div` (`a / b`).");
-
-/// Pattern: float subtraction `a - b`.
-#[pyfunction]
-pub fn float_sub(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::FloatSub(l, r))
-}
-
-repr_fn!(PyPat; unary float_neg, FloatUnary, FloatUnaryKind::Neg,
-    "Pattern: `FloatUnaryOp::Neg` (`-x`).");
-repr_fn!(PyPat; unary float_abs, FloatUnary, FloatUnaryKind::Abs,
-    "Pattern: `FloatUnaryOp::Abs` (`fabs(x)`).");
-repr_fn!(PyPat; unary
-    float_sqrt, FloatUnary, FloatUnaryKind::Sqrt,
-    "Pattern: `FloatUnaryOp::Sqrt` (`sqrt(x)`)."
-);
-repr_fn!(PyPat; unary
-    float_ceil, FloatUnary, FloatUnaryKind::Ceil,
-    "Pattern: `FloatUnaryOp::Ceil` (`ceil(x)`)."
-);
-repr_fn!(PyPat; unary
-    float_floor, FloatUnary, FloatUnaryKind::Floor,
-    "Pattern: `FloatUnaryOp::Floor` (`floor(x)`)."
-);
-repr_fn!(PyPat; unary
-    float_round, FloatUnary, FloatUnaryKind::Round,
-    "Pattern: `FloatUnaryOp::Round` (round-to-nearest-even)."
-);
-
 /// Pattern: `x` is NaN, the IEEE 754 self-inequality `x != x`.
 #[pyfunction]
 pub fn float_is_nan(operand: Py<PyAny>) -> PyPat {
     PyPat::from_repr(PatRepr::FloatIsNan(operand))
-}
-
-/// Pattern: `FloatCmpOp::Equal` (`a == b`). Commutative.
-#[pyfunction]
-pub fn float_eq(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::FloatCmp(strider_ir::FloatCmpOp::Equal, l, r))
-}
-
-/// Pattern: `FloatCmpOp::Less` (`a < b`).
-#[pyfunction]
-pub fn float_lt(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::FloatCmp(strider_ir::FloatCmpOp::Less, l, r))
 }
 
 /// Pattern: float `a != b`.
@@ -2331,41 +2139,6 @@ pub fn float_ne(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
 #[pyfunction]
 pub fn float_le(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
     PyPat::from_repr(PatRepr::FloatLe(l, r))
-}
-
-repr_fn!(PyPat; unary
-    int_to_float, Cast, CastKind::IntToFloat,
-    "Pattern: `IntToFloat`, an int to float conversion."
-);
-repr_fn!(PyPat; unary
-    float_to_int, Cast, CastKind::FloatToInt,
-    "Pattern: `FloatToInt`, a float to int conversion."
-);
-repr_fn!(PyPat; unary
-    float_to_float, Cast, CastKind::FloatToFloat,
-    "Pattern: `FloatToFloat`, a float to float re-width."
-);
-repr_fn!(PyPat; unary
-    int_bits_to_float, Cast, CastKind::IntBitsToFloat,
-    "Pattern: `IntBitsToFloat`, reinterpreting int bits."
-);
-repr_fn!(PyPat; unary
-    float_bits_to_int, Cast, CastKind::FloatBitsToInt,
-    "Pattern: `FloatBitsToInt`, reinterpreting float bits."
-);
-repr_fn!(PyPat; unary
-    truncate = "int_truncate", Cast, CastKind::Truncate,
-    "Pattern: `Truncate`, narrowing an integer."
-);
-repr_fn!(PyPat; unary zero_extend = "int_zero_extend", Cast, CastKind::ZeroExtend, "Pattern: `Extend(ZeroExtend)`.");
-repr_fn!(PyPat; unary sign_extend = "int_sign_extend", Cast, CastKind::SignExtend, "Pattern: `Extend(SignExtend)`.");
-
-/// `extend(op, operand)` where `op` is "zero" / "zero_extend" / "sign" /
-/// "sign_extend".
-#[pyfunction(name = "int_extend")]
-pub fn extend(op: &str, operand: Py<PyAny>) -> PyResult<PyPat> {
-    let extend_op = parse_extend_op(op)?;
-    Ok(PyPat::from_repr(PatRepr::Extend(extend_op, operand)))
 }
 
 /// Match any `IntBinaryOp` over `(l, r)` and bind the op variant to `c`.
@@ -2449,7 +2222,6 @@ struct OutputSpecPy {
 
 macro_rules! builder_common_methods {
     ($ty:ty) => {
-        #[gen_stub_pymethods]
         #[pymethods]
         impl $ty {
             /// Capture the matched node under `c`, a `Capture` or a name.
@@ -2477,12 +2249,7 @@ macro_rules! builder_common_methods {
                 let name: String = slf.get_type().getattr("__name__")?.extract()?;
                 Ok(format!("{name}(...)"))
             }
-        }
 
-        // Own block: `PyVisit` has no stub type, so this cannot sit under
-        // `#[gen_stub_pymethods]`.
-        #[pymethods]
-        impl $ty {
             /// Exposes the operand slots and the `.when()` predicate to the
             /// cyclic GC. `try_borrow`: a collection can land mid-setter, with
             /// the cell already held for mutation.
@@ -2527,7 +2294,6 @@ macro_rules! builder_common_methods {
 // would collide.
 macro_rules! builder_slot_methods {
     ($ty:ty, any_input) => {
-        #[gen_stub_pymethods]
         #[pymethods]
         impl $ty {
             /// Require SOME input of the node to match `p`, without pinning a
@@ -2541,7 +2307,6 @@ macro_rules! builder_slot_methods {
         }
     };
     ($ty:ty, input) => {
-        #[gen_stub_pymethods]
         #[pymethods]
         impl $ty {
             /// Match `p` against raw input slot `idx`. Slot 0 is not uniform
@@ -2557,7 +2322,6 @@ macro_rules! builder_slot_methods {
         }
     };
     ($ty:ty, output) => {
-        #[gen_stub_pymethods]
         #[pymethods]
         impl $ty {
             /// Bind or constrain the value at raw output `slot`. Slot
@@ -2836,7 +2600,6 @@ macro_rules! node_builder {
     // Instead the field list is munched one head at a time into an
     // accumulator, and the whole impl is emitted once the list empties.
     (@setters $ty:ident [ $($acc:tt)* ] ) => {
-        #[gen_stub_pymethods]
         #[pymethods]
         impl $ty {
             $($acc)*
@@ -3017,7 +2780,6 @@ macro_rules! node_builder {
         node_builder!(@members $inner [] $($field)*);
 
         #[doc = $doc]
-        #[gen_stub_pyclass]
         #[pyclass(name = $py_name, module = "strider.pattern", unsendable)]
         pub struct $ty {
             inner: std::cell::RefCell<$inner>,
@@ -3178,7 +2940,6 @@ struct CallInner {
 
 /// Typed builder for `Call` node patterns. Chain `.target(p)`,
 /// `.arg(idx, p)`, `.mem(m)`, `.ctrl(p)`.
-#[gen_stub_pyclass]
 #[pyclass(name = "CallPat", module = "strider.pattern", unsendable)]
 pub struct PyCallPat {
     inner: std::cell::RefCell<CallInner>,
@@ -3282,7 +3043,6 @@ impl PyCallPat {
     }
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl PyCallPat {
     /// Constrain the call target. `p` is any pattern operand, including a raw
@@ -3327,7 +3087,6 @@ builder_slot_methods!(PyCallPat, output);
 /// Returned by `.output(slot)` / `.any_output()`. Each terminal commits one
 /// constraint onto the parent builder and hands it back so the chain
 /// continues.
-#[gen_stub_pyclass]
 #[pyclass(name = "OutputSlotPat", module = "strider.pattern", unsendable)]
 pub struct PyOutputSlot {
     parent: Py<PyAny>,
@@ -3372,7 +3131,6 @@ output_slot_parents!(
     PyRegionPat,
 );
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl PyOutputSlot {
     fn __repr__(&self) -> String {
@@ -3594,7 +3352,6 @@ pub fn if_(cond: Option<Py<PyAny>>) -> PyIfPat {
 /// A CFG relation between captured entities, passed to
 /// `Function.find_all([...], constraints=[...])` to filter joined tuples.
 /// Construct via `dominates` / `phi_input_from_edge`, and negate with `negate`.
-#[gen_stub_pyclass]
 #[pyclass(
     name = "JoinConstraint",
     module = "strider.pattern.constraints",
@@ -3800,7 +3557,6 @@ pub fn all_of(constraints: Vec<Bound<'_, PyAny>>) -> PyResult<PyJoinConstraint> 
 /// `constraint` to decide whether a joined match survives; optionally override
 /// `captures` to declare the captures it correlates, which lets it connect
 /// otherwise-independent patterns and range-check like a built-in constraint.
-#[gen_stub_pyclass]
 #[pyclass(
     name = "JoinPredicate",
     module = "strider.pattern.constraints",
@@ -3808,7 +3564,6 @@ pub fn all_of(constraints: Vec<Bound<'_, PyAny>>) -> PyResult<PyJoinConstraint> 
 )]
 pub struct PyJoinPredicate;
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl PyJoinPredicate {
     /// Base initialiser; ignores any args so subclasses can call
@@ -4027,7 +3782,6 @@ pub fn region() -> PyRegionPat {
 
 /// Typed builder for `FunctionArg` carrier patterns. Chain `.index(i)`,
 /// `.source_register(vn)`, `.source_stack(space, offset)`.
-#[gen_stub_pyclass]
 #[pyclass(name = "FunctionArgPat", module = "strider.pattern", unsendable)]
 pub struct PyFunctionArgPat {
     source: std::cell::RefCell<Option<strider_ir::node::FunctionArgSource>>,
@@ -4081,7 +3835,6 @@ impl PyFunctionArgPat {
     }
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl PyFunctionArgPat {
     /// Constrain the match to argument at ABI position `i`.
@@ -4168,7 +3921,6 @@ macro_rules! binary_op_builder {
         $doc:literal
     ) => {
         #[doc = $doc]
-        #[gen_stub_pyclass]
         #[pyclass(name = $py_name, module = "strider.pattern", unsendable)]
         pub struct $ty {
             op: $op_ty,
@@ -4229,7 +3981,6 @@ macro_rules! binary_op_builder {
             }
         }
 
-        #[gen_stub_pymethods]
         #[pymethods]
         impl $ty {
             /// Force left-to-right operand matching, disabling commutativity.
@@ -4355,61 +4106,13 @@ pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(entry);
     add_fn!(region);
     add_fn!(predicate);
-    add_fn!(int_cmp);
-    add_fn!(add);
-    add_fn!(sub);
-    add_fn!(mul);
-    add_fn!(div);
-    add_fn!(sdiv);
-    add_fn!(rem);
-    add_fn!(srem);
-    add_fn!(shl);
-    add_fn!(shr);
-    add_fn!(sshr);
-    add_fn!(and_);
-    add_fn!(or_);
-    add_fn!(xor);
-    add_fn!(int_eq);
+    register_value_ops(m)?;
     add_fn!(int_ne);
-    add_fn!(int_lt);
     add_fn!(int_le);
-    add_fn!(int_slt);
     add_fn!(int_sle);
-    add_fn!(int_carry);
-    add_fn!(int_scarry);
-    add_fn!(int_sborrow);
-    add_fn!(neg);
-    add_fn!(bit_not);
-    add_fn!(bool_and);
-    add_fn!(bool_or);
-    add_fn!(bool_xor);
-    add_fn!(bool_not);
-    add_fn!(float_add);
-    add_fn!(float_sub);
-    add_fn!(float_mul);
-    add_fn!(float_div);
-    add_fn!(float_neg);
-    add_fn!(float_abs);
-    add_fn!(float_sqrt);
-    add_fn!(float_ceil);
-    add_fn!(float_floor);
-    add_fn!(float_round);
     add_fn!(float_is_nan);
-    add_fn!(float_eq);
     add_fn!(float_ne);
-    add_fn!(float_lt);
     add_fn!(float_le);
-    add_fn!(int_to_float);
-    add_fn!(float_to_int);
-    add_fn!(float_to_float);
-    add_fn!(int_bits_to_float);
-    add_fn!(float_bits_to_int);
-    add_fn!(truncate);
-    add_fn!(popcount);
-    add_fn!(lzcount);
-    add_fn!(zero_extend);
-    add_fn!(sign_extend);
-    add_fn!(extend);
     add_fn!(load);
     add_fn!(store);
     add_fn!(call);

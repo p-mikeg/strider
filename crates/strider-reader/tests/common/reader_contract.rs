@@ -94,6 +94,6 @@ pub(crate) fn assert_readonly_errors(r: &impl ReadOnlyMemory, addr: u64, len: us
     let mut buf = vec![0u8; len];
     assert!(
         r.read(addr, &mut buf).is_err(),
-        "ReadOnlyMemory::read must error for an unmapped/short range",
+        "ReadOnlyMemory::read must error for the unmapped/short range at {addr:#x}+{len}",
     );
 }

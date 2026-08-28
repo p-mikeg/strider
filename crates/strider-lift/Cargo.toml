@@ -16,7 +16,7 @@ rsleigh.workspace = true
 vn-container.workspace = true
 anyhow.workspace = true
 strider-target.workspace = true
-rustc-hash = "2"
+rustc-hash.workspace = true
 
 [dev-dependencies]
 # Test-only IR helpers (count_kind, has_kind) used in lift unit tests.
