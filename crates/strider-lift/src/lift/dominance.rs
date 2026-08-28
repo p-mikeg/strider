@@ -1,4 +1,4 @@
-use graph_algorithms::dominance::{DefSites, DomTree, Frontiers};
+use graph_algorithms::dominance::{DomTree, Frontiers};
 use petgraph::Direction::Incoming;
 use petgraph::algo::dominators::{Dominators, simple_fast};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -69,12 +69,14 @@ impl DomInfo {
     /// Cytron phi placement: maps `variable -> defining regions` to the
     /// variables needing a value `Phi` at each region.
     #[must_use]
-    pub(crate) fn iterated_frontier<D>(
+    pub(crate) fn iterated_frontier<Var, C, H>(
         &self,
-        def_sites: &D,
-    ) -> FxHashMap<RegionId, FxHashSet<D::Var>>
+        def_sites: &std::collections::HashMap<Var, C, H>,
+    ) -> FxHashMap<RegionId, FxHashSet<Var>>
     where
-        D: DefSites<Node = RegionId>,
+        Var: Copy + Eq + std::hash::Hash,
+        H: std::hash::BuildHasher,
+        for<'a> &'a C: IntoIterator<Item = &'a RegionId>,
     {
         graph_algorithms::dominance::phi_placement(&self.frontiers, def_sites)
     }

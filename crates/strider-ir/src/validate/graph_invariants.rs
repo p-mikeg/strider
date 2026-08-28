@@ -66,7 +66,7 @@ pub(super) fn check_function_invariants_control_single_use(
 ) {
     let graph = function.graph();
     for (node, _kind) in function.reachable_kind_iter(reachable) {
-        for &value in function.node_outputs(node).iter() {
+        for &value in function.node_outputs(node) {
             if function.value_kind(value) != ValueKind::Control {
                 continue;
             }

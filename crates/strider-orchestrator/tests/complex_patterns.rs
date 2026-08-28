@@ -48,7 +48,7 @@ fn single_bit_int_const(iv: Capture) -> impl MatchPat {
         let Some(n) = b.get_uint(iv, ctx.function()) else {
             return false;
         };
-        n != 0 && n.count_ones() == 1
+        n != 0 && n.is_power_of_two()
     })
 }
 
@@ -235,7 +235,7 @@ fn bit_test_zero_assertions(function: &strider_ir::Function) {
     for h in &hits {
         if let Some(n) = h.bindings().get_uint(mask, function) {
             assert!(
-                n.count_ones() == 1 && n != 0,
+                n.is_power_of_two() && n != 0,
                 "captured mask {n:#x} is not a single-bit value"
             );
         }

@@ -15,8 +15,8 @@ use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{Function, IRViewer, IntBinaryOp, MemDecomp};
 use strider_target::Endianness;
 
+use crate::OptOptions;
 use crate::mem_ssa::MemorySSAWalker;
-use crate::{AliasMode, OptOptions};
 use AddrClass::*;
 
 mod frame_escape;
@@ -615,7 +615,6 @@ pub(crate) fn alias_verdict(
     store: SizedAddr,
     options: MemOptions,
 ) -> AliasVerdict {
-    let mode = options.alias_mode;
     let distinct_sp_bases_disjoint = options.distinct_sp_bases_disjoint;
     match (load.class, store.class) {
         // Different SP bases differ by an unknown amount, so their offsets are
@@ -666,12 +665,14 @@ pub(crate) fn alias_verdict(
                 AliasVerdict::MayAlias
             }
         }
-        (StackRooted { .. }, Constant { .. }) | (Constant { .. }, StackRooted { .. }) => match mode
-        {
-            AliasMode::Strict => AliasVerdict::MayAlias,
-            AliasMode::StackGlobalDisjoint => AliasVerdict::Disjoint,
-        },
-        // Anchor against anything bails under both modes.
+        (StackRooted { .. }, Constant { .. }) | (Constant { .. }, StackRooted { .. }) => {
+            if options.stack_global_disjoint {
+                AliasVerdict::Disjoint
+            } else {
+                AliasVerdict::MayAlias
+            }
+        }
+        // Anchor against anything bails either way.
         _ => AliasVerdict::MayAlias,
     }
 }
@@ -1302,7 +1303,7 @@ fn allocator_return_base(function: &Function, call: NodeId) -> Option<ValueId> {
 
 #[derive(Clone, Copy)]
 pub(crate) struct MemOptions {
-    alias_mode: AliasMode,
+    stack_global_disjoint: bool,
     /// Whether a `Call` / `CallOther` on the probed location's memory chain
     /// shadows it.
     calls_block: bool,
@@ -1320,9 +1321,9 @@ pub(crate) struct MemOptions {
 impl MemOptions {
     /// A `Call` on the memory chain clobbers the probed location, and
     /// distinct SP bases stay conservatively non-disjoint.
-    pub(crate) fn call_blocking(alias_mode: AliasMode) -> Self {
+    pub(crate) fn call_blocking(stack_global_disjoint: bool) -> Self {
         Self {
-            alias_mode,
+            stack_global_disjoint,
             calls_block: true,
             distinct_sp_bases_disjoint: false,
             callee_preserves_stack_args: false,
@@ -1333,12 +1334,12 @@ impl MemOptions {
 
     /// The incoming-stack-argument probe: the knobs scoped to argument
     /// detection, and no private-frame relaxation.
-    pub(crate) fn incoming_args(alias_mode: AliasMode, options: &OptOptions) -> Self {
+    pub(crate) fn incoming_args(stack_global_disjoint: bool, options: &OptOptions) -> Self {
         Self {
-            calls_block: !options.assume_incoming_args_survive_calls,
+            calls_block: !options.assumptions.assume_incoming_args_survive_calls,
             distinct_sp_bases_disjoint: options.assumptions.distinct_sp_bases_disjoint,
             callee_preserves_stack_args: options.assumptions.callee_preserves_stack_args,
-            ..Self::call_blocking(alias_mode)
+            ..Self::call_blocking(stack_global_disjoint)
         }
     }
 

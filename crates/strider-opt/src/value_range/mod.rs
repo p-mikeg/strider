@@ -452,7 +452,7 @@ impl<'f> RangeMap<'f> {
                 .iter()
                 .filter(|(guard_region, _)| dominates(self.doms, *guard_region, region))
                 .map(|(_, interval)| *interval)
-                .reduce(|acc, iv| acc.intersect(iv))
+                .reduce(Interval::intersect)
         });
         self.guard_memo
             .borrow_mut()

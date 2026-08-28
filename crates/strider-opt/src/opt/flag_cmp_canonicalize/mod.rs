@@ -548,12 +548,13 @@ fn single_bit_term(
         NodeKind::IntBinaryOp(IntBinaryOp::And) => {
             let [a, b] = f.producer_inputs_exact::<2>(value).ok()?;
             let mask = f.int_const_u128(a).or_else(|| f.int_const_u128(b))?;
-            (mask.count_ones() == 1).then(|| (mask.trailing_zeros(), None))
+            mask.is_power_of_two()
+                .then(|| (mask.trailing_zeros(), None))
         }
         NodeKind::IntCmpOp(_) => Some((0, Some(value))),
         NodeKind::IntConst(_) => {
             let c = f.int_const_u128(value)?;
-            (c.count_ones() == 1).then(|| (c.trailing_zeros(), None))
+            c.is_power_of_two().then(|| (c.trailing_zeros(), None))
         }
         _ => None,
     }

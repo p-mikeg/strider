@@ -234,8 +234,7 @@ _export(template, "TemplateLike")
 cfg.DotStyle = _t.Literal["dark", "dark_cfg", "empty"]  # type: ignore[attr-defined]
 _export(cfg, "DotStyle")
 lift.StrPath = _mod_api.StrPath              # type: ignore[attr-defined]
-lift.AliasMode = _t.Literal["stack_global_disjoint", "strict"]  # type: ignore[attr-defined]
-_export(lift, "StrPath", "AliasMode")
+_export(lift, "StrPath")
 opt.MainOptimizerPass = _t.Union[tuple(  # type: ignore[attr-defined]
     getattr(opt, _n) for _n in (
         "ConstantFold", "KnownBits", "FlagCmpCanonicalize", "IfCondInversion",

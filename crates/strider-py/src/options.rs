@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 use crate::call_other_abi::PyCallOtherAbi;
 use crate::cc::PyCallingConvention;
 use crate::opt::PyOptimizerPipeline;
-use crate::strider_cls::{parse_alias_mode, reject_zero_max_size};
+use crate::strider_cls::reject_zero_max_size;
 
 /// One caller-supplied indirect-branch answer: concrete targets, or a return.
 #[derive(Clone, Debug)]
@@ -139,10 +139,30 @@ pub(crate) fn py_bool(b: bool) -> &'static str {
 }
 
 /// Claims about the code being analysed, keyword-only. None is checked, and
-/// each one turned on can make the answer wrong on valid input.
+/// each one's risky value is the positive one, so any of them can make the
+/// answer wrong on valid input. Clearing all six leaves only what the IR
+/// structurally proves.
+///
+/// Two default `True`: `stack_global_disjoint` and
+/// `assume_incoming_args_survive_calls`, both of which every compiler this
+/// analyses honours and without which the alias oracle answers may-alias
+/// almost everywhere.
 #[pyclass(name = "AssumptionOptions", module = "strider.lift")]
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct PyAssumptionOptions {
+    /// The stack and global/constant memory (`.data`, `.rodata`, `.bss`,
+    /// MMIO) never overlap at runtime, so a memory walk steps through a
+    /// constant-address store when looking back from a stack load and
+    /// vice-versa (default `True`). Wrong only where a constant address
+    /// coincidentally equals `sp + K`.
+    #[pyo3(get)]
+    pub stack_global_disjoint: bool,
+    /// A call on an incoming stack-argument slot's memory chain leaves the
+    /// slot alone (default `True`). Reaches incoming-argument detection only,
+    /// where it holds for any conforming callee: those slots are the caller's
+    /// memory, above the entry SP.
+    #[pyo3(get)]
+    pub assume_incoming_args_survive_calls: bool,
     /// A store rooted at a different SP base than the entry SP (an
     /// alignment-masked frame local, say) is disjoint from the probed
     /// location.
@@ -168,23 +188,43 @@ pub struct PyAssumptionOptions {
     pub escape_analysis: bool,
 }
 
+impl Default for PyAssumptionOptions {
+    fn default() -> Self {
+        Self {
+            stack_global_disjoint: true,
+            assume_incoming_args_survive_calls: true,
+            distinct_sp_bases_disjoint: false,
+            callee_preserves_stack_args: false,
+            noalias_allocators: Vec::new(),
+            escape_analysis: false,
+        }
+    }
+}
+
 #[pymethods]
 impl PyAssumptionOptions {
     #[new]
     #[pyo3(signature = (
         *,
+        stack_global_disjoint = true,
+        assume_incoming_args_survive_calls = true,
         distinct_sp_bases_disjoint = false,
         callee_preserves_stack_args = false,
         noalias_allocators = Vec::new(),
         escape_analysis = false,
     ))]
+    #[allow(clippy::fn_params_excessive_bools)]
     fn new(
+        stack_global_disjoint: bool,
+        assume_incoming_args_survive_calls: bool,
         distinct_sp_bases_disjoint: bool,
         callee_preserves_stack_args: bool,
         noalias_allocators: Vec<u64>,
         escape_analysis: bool,
     ) -> Self {
         Self {
+            stack_global_disjoint,
+            assume_incoming_args_survive_calls,
             distinct_sp_bases_disjoint,
             callee_preserves_stack_args,
             noalias_allocators,
@@ -194,9 +234,13 @@ impl PyAssumptionOptions {
 
     fn __repr__(&self) -> String {
         format!(
-            "AssumptionOptions(distinct_sp_bases_disjoint={}, \
+            "AssumptionOptions(stack_global_disjoint={}, \
+             assume_incoming_args_survive_calls={}, \
+             distinct_sp_bases_disjoint={}, \
              callee_preserves_stack_args={}, noalias_allocators={:?}, \
              escape_analysis={})",
+            py_bool(self.stack_global_disjoint),
+            py_bool(self.assume_incoming_args_survive_calls),
             py_bool(self.distinct_sp_bases_disjoint),
             py_bool(self.callee_preserves_stack_args),
             self.noalias_allocators,
@@ -207,8 +251,7 @@ impl PyAssumptionOptions {
 
 /// Lift, optimize, and CFG knobs for one `analyze` call.
 ///
-/// Raises `ValueError` for an unrecognised `alias_mode`, or for a nested
-/// `function_max_size=0`.
+/// Raises `ValueError` for a nested `function_max_size=0`.
 #[pyclass(name = "LifterOptions", module = "strider.lift")]
 pub struct PyLifterOptions {
     /// Nested CFG-shape knobs.
@@ -224,24 +267,12 @@ pub struct PyLifterOptions {
     /// CCs accepted); `None`/omitted means no overrides.
     #[pyo3(get)]
     pub per_address_ccs: Option<HashMap<u64, PyCallingConvention>>,
-    /// Assume a call on an incoming stack-argument slot's memory chain leaves
-    /// the slot alone (default `True`). Reaches incoming-argument detection
-    /// only, where it holds for any conforming callee: those slots are the
-    /// caller's memory, above the entry SP.
-    #[pyo3(get)]
-    pub assume_incoming_args_survive_calls: bool,
     /// Run the indirect-branch classifier (default `True`). `False` leaves
     /// every site an `IndirectBranch` placeholder, so you can supply your own
     /// answers via `CfgOptions(known_targets=...)`, or inspect the raw
     /// dispatch shape when a resolution looks wrong.
     #[pyo3(get)]
     pub resolve_indirect_branches: bool,
-    /// SP-aware alias precision for every memory pass.
-    /// `"stack_global_disjoint"` (default) trusts that stack and
-    /// global/constant memory never overlap; `"strict"` is the
-    /// always-sound floor.
-    #[pyo3(get)]
-    pub alias_mode: String,
     /// When set, `analyze` runs this pipeline instead of the built-in
     /// default, for this call only.
     #[pyo3(get)]
@@ -251,17 +282,7 @@ pub struct PyLifterOptions {
 impl PyLifterOptions {
     /// All-defaults fallback for `opts=None`.
     pub(crate) fn new_default(py: Python<'_>) -> PyResult<Self> {
-        Self::new(
-            py,
-            None,
-            None,
-            true,
-            None,
-            true,
-            true,
-            "stack_global_disjoint",
-            None,
-        )
+        Self::new(py, None, None, true, None, true, None)
     }
 }
 
@@ -279,16 +300,13 @@ impl PyLifterOptions {
     }
 
     #[new]
-    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         *,
         cfg = None,
         assumptions = None,
         compact = true,
         per_address_ccs = None,
-        assume_incoming_args_survive_calls = true,
         resolve_indirect_branches = true,
-        alias_mode = "stack_global_disjoint",
         pipeline = None,
     ))]
     fn new(
@@ -297,14 +315,9 @@ impl PyLifterOptions {
         assumptions: Option<Py<PyAssumptionOptions>>,
         compact: bool,
         per_address_ccs: Option<HashMap<u64, PyCallingConvention>>,
-        assume_incoming_args_survive_calls: bool,
         resolve_indirect_branches: bool,
-        alias_mode: &str,
         pipeline: Option<Py<PyOptimizerPipeline>>,
     ) -> PyResult<Self> {
-        // Eager, so a bad `alias_mode` fails here rather than deep inside
-        // `analyze`.
-        parse_alias_mode(alias_mode)?;
         // Fresh nested defaults, never a shared instance.
         let cfg = match cfg {
             Some(c) => c,
@@ -319,9 +332,7 @@ impl PyLifterOptions {
             assumptions,
             compact,
             per_address_ccs,
-            assume_incoming_args_survive_calls,
             resolve_indirect_branches,
-            alias_mode: alias_mode.to_string(),
             pipeline,
         })
     }
@@ -335,9 +346,7 @@ impl PyLifterOptions {
             assumptions: self.assumptions.clone_ref(py),
             compact: self.compact,
             per_address_ccs: self.per_address_ccs.clone(),
-            assume_incoming_args_survive_calls: self.assume_incoming_args_survive_calls,
             resolve_indirect_branches: self.resolve_indirect_branches,
-            alias_mode: self.alias_mode.clone(),
             pipeline: self.pipeline.as_ref().map(|p| p.clone_ref(py)),
         }
     }
@@ -347,9 +356,7 @@ impl PyLifterOptions {
         let assumptions_repr = self.assumptions.borrow(py).__repr__();
         Ok(format!(
             "LifterOptions(cfg={}, compact={}, per_address_ccs={}, \
-             resolve_indirect_branches={}, \
-             assume_incoming_args_survive_calls={}, assumptions={}, \
-             alias_mode={:?}, pipeline={})",
+             resolve_indirect_branches={}, assumptions={}, pipeline={})",
             cfg_repr,
             py_bool(self.compact),
             if self.per_address_ccs.is_some() {
@@ -358,9 +365,7 @@ impl PyLifterOptions {
                 "None"
             },
             py_bool(self.resolve_indirect_branches),
-            py_bool(self.assume_incoming_args_survive_calls),
             assumptions_repr,
-            self.alias_mode,
             if self.pipeline.is_some() {
                 "<...>"
             } else {

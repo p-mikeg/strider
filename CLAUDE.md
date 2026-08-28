@@ -231,13 +231,16 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
   carry the other two. The first, third and fourth accumulate across rounds, so
   a later round cannot launder an earlier loss; `unverified_seeded_sites` is
   derived once from the final CFG.
-- SP-alias precision is tuned by `OptOptions` (`alias_mode`,
-  `assume_incoming_args_survive_calls`, `assumptions`), threaded through
-  `OptCtx` into every SP-aware pass. `assumptions` is an `AssumptionOptions`
-  holding `distinct_sp_bases_disjoint`, `callee_preserves_stack_args`,
-  `noalias_allocators` and `escape_analysis`: each is a claim about the code
-  being analysed that the IR cannot prove, so a wrong one miscompiles. Every
-  field's risky value is the positive one, and all default off.
+- SP-alias precision is tuned by `OptOptions` (`resolve_indirect_branches`,
+  `assumptions`), threaded through `OptCtx` into every SP-aware pass.
+  `assumptions` is an `AssumptionOptions` holding `stack_global_disjoint`,
+  `assume_incoming_args_survive_calls`, `distinct_sp_bases_disjoint`,
+  `callee_preserves_stack_args`, `noalias_allocators` and `escape_analysis`:
+  each is a claim about the code being analysed that the IR cannot prove, so a
+  wrong one miscompiles. Every field's risky value is the positive one; the
+  first two default ON (the pipeline is unusably imprecise without them) and
+  the rest off, so `AssumptionOptions::none()`, not `::default()`, is the
+  configuration sound under any input.
   `noalias_allocators` (pure `malloc`-like callee addresses) is published onto
   the `Function` so `decompose` classifies a `Call` return as a heap base;
   distinct heap objects are disjoint and a load steps through such a call.

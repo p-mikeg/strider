@@ -77,12 +77,11 @@ there. [CHANGELOG.md](../CHANGELOG.md) lists every change, breaking ones first.
 - **Float and vector argument registers** are part of every ABI. Float
   parameters are counted in their own sequence, so a float argument reads back
   as `function_arg_float(i)`; `function_arg(i)` stays the integer sequence.
-- **Tunable memory precision.** `LifterOptions(alias_mode=...)` picks how far
-  the alias analysis trusts stack-versus-global disjointness, and
-  `assumptions=AssumptionOptions(...)` holds four claims the IR cannot prove.
-  Each of the four defaults off, and each one turned on can make the answer
-  wrong on valid input. `assume_incoming_args_survive_calls` is a fifth such
-  claim, and it defaults on.
+- **Tunable memory precision.** `LifterOptions(assumptions=AssumptionOptions(...))`
+  holds the six claims the IR cannot prove, each one able to make the answer
+  wrong on valid input. `stack_global_disjoint` and
+  `assume_incoming_args_survive_calls` default on; the other four default off.
+  Clearing all six leaves only what the IR structurally proves.
 - **Every width Sleigh emits is an IR type.** `I24`, `I40`, `I56`, `I72`,
   `I96`, `I112`, `F16` and `F128` join the set, so a function touching one lifts
   instead of failing outright.

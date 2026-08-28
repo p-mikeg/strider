@@ -115,50 +115,31 @@ pub fn dominator_tree_preorder<G: DomTree>(g: &G, root: G::Node) -> Vec<G::Node>
     preorder
 }
 
-/// Maps each SSA variable to the nodes that define it. Blanket-implemented for
-/// `HashMap<Var, C>` over any iterable `C`, so a caller passes its native
-/// def-site map straight in.
-pub trait DefSites {
-    type Var: Copy + Eq + Hash;
-    type Node: Copy + Eq + Hash;
-    fn vars(&self) -> impl Iterator<Item = Self::Var> + '_;
-    /// Empty if `v` is unknown.
-    fn def_nodes(&self, v: Self::Var) -> impl Iterator<Item = Self::Node> + '_;
-}
-
-impl<V, N, C, H> DefSites for HashMap<V, C, H>
-where
-    V: Copy + Eq + Hash,
-    N: Copy + Eq + Hash + 'static,
-    H: BuildHasher,
-    for<'a> &'a C: IntoIterator<Item = &'a N>,
-{
-    type Var = V;
-    type Node = N;
-    fn vars(&self) -> impl Iterator<Item = V> + '_ {
-        self.keys().copied()
-    }
-    fn def_nodes(&self, v: V) -> impl Iterator<Item = N> + '_ {
-        self.get(&v).into_iter().flatten().copied()
-    }
-}
-
 /// Iterated dominance frontier / SSA phi placement (Cytron et al., Fig. 11):
 /// a phi for `V` lands at node `R` iff `R` ∈ `IDF(def-sites(V))`.
 ///
 /// Returns, per node, the set of variables needing a phi there.
+///
+/// `def_sites` maps each variable to the nodes defining it; any collection of
+/// nodes serves as the value.
 #[must_use]
-pub fn phi_placement<D: DefSites>(
-    frontiers: &Frontiers<D::Node>,
-    def_sites: &D,
-) -> FxHashMap<D::Node, FxHashSet<D::Var>> {
-    let mut placement: FxHashMap<D::Node, FxHashSet<D::Var>> = FxHashMap::default();
-    for var in def_sites.vars() {
-        let sites: FxHashSet<D::Node> = def_sites.def_nodes(var).collect();
+pub fn phi_placement<Var, Node, C, H>(
+    frontiers: &Frontiers<Node>,
+    def_sites: &HashMap<Var, C, H>,
+) -> FxHashMap<Node, FxHashSet<Var>>
+where
+    Var: Copy + Eq + Hash,
+    Node: Copy + Eq + Hash,
+    H: BuildHasher,
+    for<'a> &'a C: IntoIterator<Item = &'a Node>,
+{
+    let mut placement: FxHashMap<Node, FxHashSet<Var>> = FxHashMap::default();
+    for (&var, defs) in def_sites {
+        let sites: FxHashSet<Node> = defs.into_iter().copied().collect();
         // `placed` queues each node at most once, which is what terminates
         // the iteration on a cyclic graph.
-        let mut worklist: Vec<D::Node> = sites.iter().copied().collect();
-        let mut placed: FxHashSet<D::Node> = FxHashSet::default();
+        let mut worklist: Vec<Node> = sites.iter().copied().collect();
+        let mut placed: FxHashSet<Node> = FxHashSet::default();
         while let Some(x) = worklist.pop() {
             let Some(df) = frontiers.get(&x) else {
                 continue;

@@ -996,7 +996,7 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
     // Pin Strict explicitly: under the `StackGlobalDisjoint` default the
     // global write is assumed disjoint and the Load would be promoted.
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::test_support::octx_strict())?;
+    pipeline.run(&mut fg, &mut crate::test_support::octx_structural_only())?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
@@ -1217,7 +1217,10 @@ fn call_other_on_the_chain_blocks_under_either_survival_setting() -> Result<()> 
     let mut p_conservative = cf_rp_pipeline();
     p_conservative.add_post_pass(FunctionArgDetect);
     let mut octx_conservative = crate::OptCtx::new(None);
-    octx_conservative.options.assume_incoming_args_survive_calls = false;
+    octx_conservative
+        .options
+        .assumptions
+        .assume_incoming_args_survive_calls = false;
     p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(
         fg_conservative
@@ -1289,7 +1292,10 @@ fn incoming_args_survive_calls_toggle_gates_arg_across_call() -> Result<()> {
     let mut p_conservative = cf_rp_pipeline();
     p_conservative.add_post_pass(FunctionArgDetect);
     let mut octx_conservative = crate::OptCtx::new(None);
-    octx_conservative.options.assume_incoming_args_survive_calls = false;
+    octx_conservative
+        .options
+        .assumptions
+        .assume_incoming_args_survive_calls = false;
     p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(
         fg_conservative

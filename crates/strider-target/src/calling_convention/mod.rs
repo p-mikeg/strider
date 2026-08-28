@@ -304,11 +304,9 @@ impl BuiltCallingConvention {
         ] {
             if let Some(vn) = first_in_both(list, &self.callee_saved_regs) {
                 return Err(anyhow::anyhow!(
-                    "BuiltCallingConvention: varnode {:?} appears in both \
-                     {} and callee_saved_regs (a single varnode cannot be \
+                    "BuiltCallingConvention: varnode {vn:?} appears in both \
+                     {list_name} and callee_saved_regs (a single varnode cannot be \
                      both caller-supplied and callee-preserved)",
-                    vn,
-                    list_name,
                 ));
             }
         }
@@ -321,9 +319,8 @@ impl BuiltCallingConvention {
         {
             if self.callee_saved_regs.contains(vn) {
                 return Err(anyhow::anyhow!(
-                    "BuiltCallingConvention: varnode {:?} appears in both \
+                    "BuiltCallingConvention: varnode {vn:?} appears in both \
                      ret_val_regs/ret_val_regs_float and callee_saved_regs",
-                    vn,
                 ));
             }
         }
@@ -332,10 +329,9 @@ impl BuiltCallingConvention {
         // a return register: x86_64 SysV RDX is 3rd arg and 2nd int return.
         if let Some(vn) = first_in_both(&self.ret_val_regs, &self.ret_val_regs_float) {
             return Err(anyhow::anyhow!(
-                "BuiltCallingConvention: varnode {:?} appears in both \
+                "BuiltCallingConvention: varnode {vn:?} appears in both \
                  ret_val_regs and ret_val_regs_float (integer and float \
                  return registers are physically distinct)",
-                vn,
             ));
         }
         // Float ABI position `j` lands at `arg_passing_regs.len() + j`, which
@@ -343,10 +339,9 @@ impl BuiltCallingConvention {
         // in both would emit the same value as two different arguments.
         if let Some(vn) = first_in_both(&self.arg_passing_regs, &self.arg_passing_regs_float) {
             return Err(anyhow::anyhow!(
-                "BuiltCallingConvention: varnode {:?} appears in both \
+                "BuiltCallingConvention: varnode {vn:?} appears in both \
                  arg_passing_regs and arg_passing_regs_float (integer and float \
                  argument registers are physically distinct)",
-                vn,
             ));
         }
         for (list_name, list) in [
@@ -366,9 +361,7 @@ impl BuiltCallingConvention {
             }
             if let Some(vn) = first_dup(list) {
                 return Err(anyhow::anyhow!(
-                    "BuiltCallingConvention: duplicate varnode {:?} in {}",
-                    vn,
-                    list_name,
+                    "BuiltCallingConvention: duplicate varnode {vn:?} in {list_name}",
                 ));
             }
         }
@@ -376,10 +369,9 @@ impl BuiltCallingConvention {
             && !self.callee_saved_regs.contains(&lr)
         {
             return Err(anyhow::anyhow!(
-                "BuiltCallingConvention: link_register_vn {:?} must also \
+                "BuiltCallingConvention: link_register_vn {lr:?} must also \
                  be present in callee_saved_regs, the deliberate tradeoff \
                  that makes InitialVar(lr) propagate through call sites)",
-                lr,
             ));
         }
         // A negative pop would mean the callee's `ret` grew the stack, which

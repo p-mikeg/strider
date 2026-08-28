@@ -437,7 +437,7 @@ fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
         let a = b.build_int_const(0xAAu64, ValueType::I32)?;
         b.build_store(addr4, a, rsleigh::VnSpace::RAM)?;
         // Cross-class against the SP-rooted load; not provably disjoint
-        // without `AliasMode::StackGlobalDisjoint`.
+        // without `stack_global_disjoint`.
         let heap_addr = b.build_int_const(0x1000u64, ValueType::I32)?;
         let other = b.build_int_const(0xBBu64, ValueType::I32)?;
         b.build_store(heap_addr, other, rsleigh::VnSpace::RAM)?;
@@ -449,7 +449,7 @@ fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
     // Strict is pinned explicitly: the default `StackGlobalDisjoint` assumes
     // the const-addressed store disjoint and forwards instead.
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::test_support::octx_strict())?;
+    pipeline.run(&mut fg, &mut crate::test_support::octx_structural_only())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -479,7 +479,10 @@ fn permissive_forwards_across_const_intervening_store() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::test_support::octx_permissive())?;
+    pipeline.run(
+        &mut fg,
+        &mut crate::test_support::octx_stack_global_disjoint(),
+    )?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -518,7 +521,10 @@ fn permissive_still_bails_on_anchor_intervening_store() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::test_support::octx_permissive())?;
+    pipeline.run(
+        &mut fg,
+        &mut crate::test_support::octx_stack_global_disjoint(),
+    )?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert!(

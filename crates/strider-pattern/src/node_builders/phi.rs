@@ -6,6 +6,7 @@
 //! `Phi` produces a value output at slot 0; `MemPhi` produces a memory token
 //! there and implements [`MemPat`] so a `load` / `store` can chain off it.
 
+use crate::node_builders::delegate_with_output;
 use strider_ir::IRViewer;
 use strider_ir::node::NodeKind;
 
@@ -14,7 +15,7 @@ use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{KindSpec, MatcherBuilder, NodePredicate, PatValueRef, Pattern};
 
 use super::MemPat;
-use super::flow::{OutputPat, WithOutput};
+use super::flow::OutputPat;
 use super::node_pat::NodePat;
 
 /// Pins the matched `Phi`'s `value_vn` entry to `Some(vn)`.
@@ -118,20 +119,7 @@ pub fn phi() -> PhiPat {
     }
 }
 
-impl WithOutput for PhiPat {
-    fn capture_output(mut self, slot: Option<usize>, c: Capture) -> Self {
-        self.inner = self.inner.capture_output(slot, c);
-        self
-    }
-    fn output_width(mut self, slot: Option<usize>, bits: u32) -> Self {
-        self.inner = self.inner.output_width(slot, bits);
-        self
-    }
-    fn output_ty(mut self, slot: Option<usize>, ty: strider_ir::node::ValueType) -> Self {
-        self.inner = self.inner.output_ty(slot, ty);
-        self
-    }
-}
+delegate_with_output!(PhiPat, inner);
 
 /// A [`phi`] pre-narrowed by [`PhiPat::for_vn`].
 pub fn phi_for(vn: rsleigh::Vn) -> PhiPat {
@@ -202,14 +190,4 @@ pub fn mem_phi() -> MemPhiPat {
     MemPhiPat(NodePat::node(KindSpec::variant_of(&NodeKind::MemPhi)).with_mem_value(0))
 }
 
-impl WithOutput for MemPhiPat {
-    fn capture_output(self, slot: Option<usize>, c: Capture) -> Self {
-        Self(self.0.capture_output(slot, c))
-    }
-    fn output_width(self, slot: Option<usize>, bits: u32) -> Self {
-        Self(self.0.output_width(slot, bits))
-    }
-    fn output_ty(self, slot: Option<usize>, ty: strider_ir::node::ValueType) -> Self {
-        Self(self.0.output_ty(slot, ty))
-    }
-}
+delegate_with_output!(MemPhiPat, 0);
