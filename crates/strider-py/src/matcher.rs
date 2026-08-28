@@ -178,8 +178,9 @@ impl PyMatch {
         visit.call(&self.function)
     }
 
-    /// Node id where the top-level pattern matched. The root carries no
-    /// user-visible capture binding.
+    /// Node id where the top-level pattern matched. Stored beside the
+    /// bindings, not as one: a capture ON the top-level pattern binds this
+    /// same node.
     #[getter]
     fn root(&self, py: Python<'_>) -> PyResult<u32> {
         self.checked(py, |m| m.inner[0].root().as_u32())

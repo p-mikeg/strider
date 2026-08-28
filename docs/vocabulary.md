@@ -74,8 +74,8 @@ I128, I256, I512`; floats are `F16, F32, F64, F80, F128`. A boolean is the 1-bit
 integer `I1`. The odd sizes come straight from hardware and from Sleigh's
 intermediate temporaries: `I24` is an x86 segment limit, `I40` and `I72` are the
 `adcx` carry accumulators, `I48` is a 6-byte ARM varnode, `I80` and `F80` are x87
-registers, `I96` and `I112` are x86-64 descriptor-table registers, `I512` is an
-AVX-512 `zmm`. Read a node's type in Python with `node.value_type()`.
+registers, `I96` is x86-64 `GDTR` / `IDTR` and `I112` is `LDTR` / `TR`, `I512` is
+an AVX-512 `zmm`. Read a node's type in Python with `node.value_type()`.
 
 **Walks (cfg, data, memory).** Ways to traverse the graph from the entry. A
 **cfg walk** follows control edges only, giving the region skeleton
@@ -99,8 +99,9 @@ chooses the value belonging to the path actually taken. It is written
 `phi(region, a, b, ...)`: the first input ties it to the merge region, and the
 rest are one candidate value per incoming edge, in the same order as that
 region's predecessors. So `x = cond ? a : b` becomes `phi(region, a, b)`, which
-yields `a` when control arrived on the first edge and `b` on the second. In
-Strider a phi also carries a tag naming the source register it stands for.
+yields `a` when control arrived on the first edge and `b` on the second. A phi
+the lifter emitted for a register-aliased read also carries a tag naming that
+register, which `phi_for(vn)` matches on; a phi with no tag is anonymous.
 
 **MemPhi.** The same idea as a phi, but for memory instead of a register value:
 it merges the state of memory coming from different paths.

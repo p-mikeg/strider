@@ -27,8 +27,7 @@ fn object_path(arch: &str, case: &str) -> PathBuf {
 fn et_rel_object_file_loads_text_at_tzcount_symbol_address() {
     let path = object_path("x64", "tzcount");
     if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass
-        // and this file is the only coverage the ET_REL loader has.
+        // A missing fixture must be VISIBLE: a silent return reports as a pass.
         eprintln!(
             "SKIP {}: {} is not built; run `make -C fixtures`",
             module_path!(),

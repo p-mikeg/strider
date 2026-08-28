@@ -1,5 +1,7 @@
 //! Sinks for control cycles that never leave: a `while (1)` body, a spin
-//! loop, a `panic` helper ending in a self-jump.
+//! loop, a `panic` helper ending in a self-jump. Common, not a corner: the
+//! x86-family and aarch64 CRT entries seat one, x86's sla lifting `hlt` to a
+//! self-loop.
 //!
 //! Such a cycle reaches no `Return` / `IndirectBranch` / `Unreachable`, so it
 //! roots nothing: `Function::retain_reachable` walks data inputs backward from

@@ -1,6 +1,6 @@
 """End-to-end jump-table resolution plus post-resolution pattern rewrites.
 
-`switch.c::dispatch_value` is a 9-arm dense switch that gcc -O2 lowers to a
+`switch.c::dispatch_value` is an 8-arm dense switch that gcc -O2 lowers to a
 real `jmp *.rodata[idx*4]` table on x86, so it drives the whole resolution
 loop: lift with an indirect-branch placeholder, classify it into the case
 targets, rebuild the CFG so each case body is its own block, re-lift, then

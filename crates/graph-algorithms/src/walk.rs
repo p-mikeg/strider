@@ -43,7 +43,7 @@ impl<G: GraphRef> GraphRef for &'_ G {
     }
 }
 
-/// Stack state for a pre-order DFS, split out from [`PreOrder`].
+/// Stack state for a pre-order DFS.
 #[derive(Debug)]
 pub struct PreOrderContext<N> {
     stack: Vec<N>,
@@ -55,9 +55,9 @@ impl<N: Copy> PreOrderContext<N> {
     }
 
     /// Roots are visited in REVERSE iteration order, since the stack pops
-    /// LIFO. That is the opposite of [`PostOrderContext::reset`], shaped to
-    /// preserve source order in a derived RPO. Callers wanting forward order
-    /// here must reverse the iterator themselves.
+    /// LIFO; callers wanting forward order must reverse the iterator
+    /// themselves. [`PostOrderContext::reset`] seeds its stack the same way,
+    /// but reversing its post-order restores source order.
     pub fn reset(&mut self, roots: impl IntoIterator<Item = N>) {
         self.stack.clear();
         self.stack.extend(roots);
@@ -98,10 +98,10 @@ impl<N: Copy> Default for PreOrderContext<N> {
     }
 }
 
-/// Yields each node exactly once, roots first. A DFS preorder, which is NOT a
-/// topological order: successors are explored LIFO, so at a join the node is
-/// emitted from the successor explored first and precedes the earlier sibling
-/// that also reaches it.
+/// Yields each node reachable from the roots exactly once. A DFS preorder,
+/// which is NOT a topological order: successors are explored LIFO, so at a
+/// join the node is emitted from the successor explored first and precedes the
+/// earlier sibling that also reaches it.
 pub struct PreOrder<G: GraphRef> {
     graph: G,
     visited: DenseEntitySet<G::NodeId>,
@@ -149,7 +149,7 @@ where
     PreOrder::new(graph, roots)
 }
 
-/// Stack state for a post-order DFS, split out from [`PostOrder`].
+/// Stack state for a post-order DFS.
 #[derive(Debug)]
 pub struct PostOrderContext<N> {
     stack: Vec<(WalkPhase, N)>,

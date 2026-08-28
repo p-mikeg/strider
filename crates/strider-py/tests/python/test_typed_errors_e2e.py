@@ -91,7 +91,7 @@ def test_rewrite_error_via_multi_output_lhs_root():
 
 def test_unknown_call_other_via_x86_clflushopt_instruction():
     """An unclassified CallOther raises rather than silently lifting to an
-    empty CallOther.  `clflushopt [eax]` (`66 0F AE 38`) is the current
+    empty CallOther.  `clflushopt [rax]` (`66 0F AE 38`) is the current
     uncovered user-op; plain `clflush` used to serve here until it was
     classified as a cache-maintenance memory clobber.  If anyone classifies
     `clflushopt`, port this to another uncovered op (e.g. `clwb`).

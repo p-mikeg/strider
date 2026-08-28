@@ -537,7 +537,7 @@ fn a_constraint_prunes_before_the_rest_of_the_product_is_built() {
 
 /// The join is indexed on the captures both sides always bind, which prunes
 /// pairs that cannot agree. Agreement implies the bindings resolve to the same
-/// node, so the index can only ever remove impossible pairs -- but that is the
+/// node, so the index can only ever remove impossible pairs, but that is the
 /// kind of claim worth checking rather than asserting.
 ///
 /// This compares the real join against a brute-force cartesian reference over
@@ -643,7 +643,7 @@ fn the_indexed_join_returns_exactly_the_cartesian_product() {
 
 /// A pattern that binds no capture is still identified by where it matched, so
 /// a join holding one reports every one of its matches. Keying the dedup on
-/// bindings alone made all of them collapse to an arbitrary survivor -- and
+/// bindings alone made all of them collapse to an arbitrary survivor, and
 /// then adding a capture to ONE side SHRANK the reported cross product, which
 /// is the opposite of what a capture does.
 #[test]

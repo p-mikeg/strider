@@ -191,6 +191,8 @@ FloatSub(a,b)       -> FloatAdd(a, Neg(b))
 FloatNotEqual(a,b)  -> Xor(FloatEqual(a,b), IntConst(1)):I1
 FloatLessEqual(a,b) -> Or(FloatLess(a,b), FloatEqual(a,b)):I1   (NaN-aware)
 FLOAT_NAN(x)        -> Xor(FloatEqual(x,x), IntConst(1)):I1
+BoolNeg(x)          -> Xor(x, IntConst(1)):I1
+IntNeg(x)           -> Xor(x, all_ones)   (Sleigh IntNeg is complement ~x)
 If(Xor(C,IntConst(1)):I1){A}{B} -> If(C){B}{A}   (opt::IfCondInversion)
 ```
 
@@ -204,7 +206,8 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
   Use `Box` / moves / `&`-borrows; opt into `Rc` at a call site only if needed.
   `strider-reader` and `strider-py` are the exceptions: a mapped image is shared
   by every region cut from it, and a reader handed to Python outlives the call
-  that made it.
+  that made it. `ReadOnlyMemory` is bound `Send` so `strider-py` can drop the
+  GIL around `analyze`; the `Sync` half it also carries is unused.
 - `Sleigh::lift_one(&mut self)` is NOT stateless: it carries context-register
   state (ARM/Thumb, x86 segment, MIPS16), so per-region decoding must stay
   sequential (`RegionBuilder::build`).
@@ -230,7 +233,9 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
   not in the first channel. `isa_mode_conflicts` and `interior_branch_targets`
   carry the other two. The first, third and fourth accumulate across rounds, so
   a later round cannot launder an earlier loss; `unverified_seeded_sites` is
-  derived once from the final CFG.
+  derived once from the final CFG. `isa_mode_conflicts` is structurally always
+  empty off ARM and MIPS: both producers gate on `SleighArch::isa_mode_var()`,
+  `Some` only for the four ARM and four MIPS presets.
 - SP-alias precision is tuned by `OptOptions` (`resolve_indirect_branches`,
   `assumptions`), threaded through `OptCtx` into every SP-aware pass.
   `assumptions` is an `AssumptionOptions` holding `stack_global_disjoint`,
@@ -240,7 +245,9 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
   wrong one miscompiles. Every field's risky value is the positive one; the
   first two default ON (the pipeline is unusably imprecise without them) and
   the rest off, so `AssumptionOptions::none()`, not `::default()`, is the
-  configuration sound under any input.
+  configuration sound under any input. `callee_preserves_stack_args` is inert
+  alone: its only reader, `in_outgoing_arg_area` in `mem_analysis`, is reached
+  only under `escape_analysis` or a non-empty `noalias_allocators`.
   `noalias_allocators` (pure `malloc`-like callee addresses) is published onto
   the `Function` so `decompose` classifies a `Call` return as a heap base;
   distinct heap objects are disjoint and a load steps through such a call.

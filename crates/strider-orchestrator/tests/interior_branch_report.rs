@@ -3,8 +3,8 @@
 
 use rsleigh::mem_readers::BufMemReader;
 
-/// x86-64 at 0x1000: `movabs rax, 0` (ten bytes), `je 0x1005` -- five bytes
-/// into that `movabs` -- then `ret`. No region can start at 0x1005, because
+/// x86-64 at 0x1000: `movabs rax, 0` (ten bytes), `je 0x1005` (five bytes
+/// into that `movabs`), then `ret`. No region can start at 0x1005, because
 /// decoding from inside an instruction yields a different stream, so the taken
 /// edge is seated on the region owning the bytes. That region starts at 0x1000,
 /// making the CFG claim a self-loop the branch never takes.

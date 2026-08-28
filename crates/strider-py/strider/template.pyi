@@ -117,16 +117,16 @@ def float_ceil(operand: TemplateLike) -> Template:
 def float_floor(operand: TemplateLike) -> Template:
     """Build a round-toward-negative-infinity."""
 def float_round(operand: TemplateLike) -> Template:
-    """Build a round-to-nearest."""
+    """Build a round to nearest, ties away from zero."""
 def float_eq(l: TemplateLike, r: TemplateLike) -> Template:
     """Build a float equality test."""
 def float_lt(l: TemplateLike, r: TemplateLike) -> Template:
     """Build a float less-than test."""
 
 def int_to_float(operand: TemplateLike) -> Template:
-    """Build an integer-to-float numeric conversion."""
+    """Build a signed-integer conversion to the nearest representable float."""
 def float_to_int(operand: TemplateLike) -> Template:
-    """Build a float-to-integer numeric conversion."""
+    """Build a float-to-integer conversion, truncating toward zero."""
 def float_to_float(operand: TemplateLike) -> Template:
     """Build a float-to-float reprecision."""
 def int_bits_to_float(operand: TemplateLike) -> Template:

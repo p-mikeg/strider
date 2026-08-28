@@ -2,8 +2,8 @@
 //! control input is a no-op, so its control output is replaced by that input
 //! and every phi over it by that phi's single value input.
 //!
-//! The Region is killed at the end: it is side-effecting, so the automatic
-//! dead-cone cull never reaches it.
+//! The Region is killed once nothing live consumes its outputs: it is
+//! side-effecting, so the automatic dead-cone cull never reaches it.
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};

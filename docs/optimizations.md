@@ -80,9 +80,10 @@ With `AssumptionOptions(escape_analysis=True)` it also forwards across a call,
 when no stack address escapes to the callee and the slot is not one the call
 hands it as an argument. With `noalias_allocators=[addr, ...]` naming pure
 allocators, a load also steps through such a call, whose result is a fresh
-object disjoint from everything else. `callee_preserves_stack_args=True` empties
-the outgoing-argument window, so a spill at the stack top, indistinguishable
-from a pushed argument once lowered to memory, forwards too.
+object disjoint from everything else. Under either of those two, and only then,
+`callee_preserves_stack_args=True` empties the outgoing-argument window, so a
+spill at the stack top, indistinguishable from a pushed argument once lowered
+to memory, forwards too. Set on its own it changes nothing.
 
 ## Post-passes
 
@@ -117,8 +118,8 @@ indirect branch against the clean IR, feeds any newly discovered targets back in
 and re-lifts, repeating until the set of edges stops changing. Whatever still
 cannot be resolved comes back as the `unresolved` list from `analyze`, never as
 an exception. That list is one of the four channels a converged CFG reports its
-own incompleteness through; see
-[python-api.md](python-api.md#12-the-cfg-stridercfg).
+own incompleteness through, of which `isa_mode_conflicts` can only fire on ARM
+and MIPS; see [python-api.md](python-api.md#12-the-cfg-stridercfg).
 
 A resolved target carries the ISA mode it decodes in, taken from the mode the
 branch commits or else the one flowing into it, so an ARM/Thumb interworking

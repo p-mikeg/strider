@@ -33,7 +33,7 @@ uv run python crates/strider-py/examples/python/01_quickstart.py
 | 03 | [`03_pattern_rewrite.py`](03_pattern_rewrite.py) | `rewrite` the `x * 4` -> `x << 2` strength reduction and re-optimize after the structural change; `rewrite_all` for a rule list. |
 | 04 | [`04_custom_optimizer.py`](04_custom_optimizer.py) | Build an optimizer pipeline pass-by-pass; compare the lifted graph before and after. |
 | 05 | [`05_visualize.py`](05_visualize.py) | Dump the CFG and the lifted IR graph as standalone HTML files for browser viewing. |
-| 06 | [`06_complex_patterns.py`](06_complex_patterns.py) | Multi-level captures, shared-capture back-references, `.when` predicate guards, commutative matching, the `any_*` variant-agnostic constructors. |
+| 06 | [`06_complex_patterns.py`](06_complex_patterns.py) | Multi-level captures, shared-capture back-references, `.when` predicate guards, commutative matching and `.ordered()`. |
 | 07 | [`07_callback_rom.py`](07_callback_rom.py) | A `ReadOnlyMemory` subclass serving bytes from Python as the lifter's rom, which is what `LoadReadOnly` folds constant-address loads against. |
 | 08 | [`08_custom_readers.py`](08_custom_readers.py) | Combine a custom `MemReader` and `ReadOnlyMemory` in one lift; capture a folded constant and template-rewrite it on a clone. |
 | 09 | [`09_neighborhood.py`](09_neighborhood.py) | Render the CFG and IR neighborhood around a center node with `neighborhood_dot`; launch the interactive `visualize` explorer with `--serve`. |
@@ -54,13 +54,16 @@ stay on the Rust side, so use it when you already hold the bytes (shellcode, a
 firmware dump, a carved slice); subclass `MemReader` / `ReadOnlyMemory`
 (examples 02, 07, 08) only for lazily-produced bytes.
 
-Two requirements common to every raw-bytes lift:
-- **Pad past the instruction stream**: the disassembler prefetches beyond the
-  last instruction and the reader must answer those addresses, so append a
-  handful of bytes. The value is irrelevant: these examples append 16 or 64
-  zero bytes, and the `MemReader` ones (02, 08) 64 `0x90` NOPs.
-- **`allow_code_before_start_addr=True`**: raw blobs often have code below the
-  entry.
+Two settings the raw-bytes examples use:
+- **Padding past the instruction stream**: the disassembler prefetches beyond
+  the last instruction. A `BufferReader` answers those addresses with a short
+  read, so its trailing 16 or 64 zero bytes (15 pads each routine to a `0x20`
+  boundary with NOPs instead) change nothing. A `MemReader` that returns `None`
+  rather than short-reading needs them, and needs more than a handful: the 64
+  `0x90` NOPs of 02 and 08 lift, four do not.
+- **`allow_code_before_start_addr=True`** (every raw-bytes example but 02):
+  without it an unconditional branch below the entry is a tail call rather than
+  an edge to follow. It is insurance for a carve whose entry is not its lowest address.
 
 The fixtures are small (a few dozen instructions per function) to keep output
 readable. For a full end-to-end run see

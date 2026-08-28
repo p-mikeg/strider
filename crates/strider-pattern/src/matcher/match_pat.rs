@@ -137,8 +137,8 @@ pub trait CaptureExt: MatchPat {
         }
     }
     /// Run `f` after the whole sub-pattern matches; `false` fails the match.
-    /// `f` is typed, so a root with no value output -- a control, memory or
-    /// `PhiToken` edge, or a zero-output node -- fails it. Guard those through
+    /// `f` is typed, so a root with no value output (a control, memory or
+    /// `PhiToken` edge, or a zero-output node) fails it. Guard those through
     /// [`Pattern::with_root_post_match`](crate::Pattern::with_root_post_match),
     /// which sees the missing type.
     fn when_match<F>(self, f: F) -> Guarded<Self, F>

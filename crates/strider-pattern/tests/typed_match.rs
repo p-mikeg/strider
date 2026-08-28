@@ -586,7 +586,7 @@ fn float_lowered_shapes() {
 #[test]
 fn float_shared_operand_must_be_the_same_value() {
     let v = reg_vn(0, 8);
-    // int_xor(float_eq(f, c), 1):I1 -- a float_ne, NOT a NaN test.
+    // int_xor(float_eq(f, c), 1):I1, a float_ne, NOT a NaN test.
     let ne = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
         let f = b.build_int_to_float(base, T::F64)?;
         let c = b.build_float_const(0x4000_0000_0000_0000, T::F64);
@@ -599,7 +599,7 @@ fn float_shared_operand_must_be_the_same_value() {
     .0;
     assert_eq!(count(|| float_is_nan(anything()).into_pattern(), &ne), 0);
 
-    // bool_or(float_lt(f, c1), float_eq(f, c2)):I1 with c1 != c2 -- the two
+    // bool_or(float_lt(f, c1), float_eq(f, c2)):I1 with c1 != c2: the two
     // comparisons disagree on the right operand, so it is no float_le.
     let mixed = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
         let f = b.build_int_to_float(base, T::F64)?;

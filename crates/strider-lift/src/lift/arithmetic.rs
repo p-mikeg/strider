@@ -110,7 +110,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// out-of-range after truncation.
     ///
     /// P-code tests the FULL count against `8 * sizeout` (`opbehavior.cc`
-    /// `OpBehaviorIntRight` / `IntSright` / `IntLeft`), so simply truncating
+    /// `OpBehaviorIntRight` / `IntSright` / `IntLeft`), so truncating
     /// `0x1_0000_0000` to `I32` yields 0 and the shift silently does nothing.
     /// x86 SIMD shift-by-register (`psrad xmm, xmm` and friends) is exactly
     /// this shape: a 4-byte lane shifted by the 8-byte count the ISA reads

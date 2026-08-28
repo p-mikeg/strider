@@ -1,9 +1,12 @@
 //! Cytron pruned-SSA value-phi placement: per region, the iterated dominance
 //! frontier of each variable's definition sites.
 //!
-//! Def-sites are collected in the lifter so they reuse the EXACT write-set
-//! logic the lift emits: where a phi is placed must match what actually gets
-//! written.
+//! Def-sites are collected in the lifter, but `record_insn_defs` is a
+//! HAND-WRITTEN mirror of the lift's write paths, not a shared code path with
+//! them: nothing cross-checks the two, so a change to what the lift writes has
+//! to be made here as well. A def recorded that the lift never writes only
+//! costs a dead phi; one the lift writes and this misses loses the phi and
+//! miscompiles.
 
 use anyhow::Result;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -20,13 +23,13 @@ use super::function_lifter::FunctionLifter;
 pub(crate) type PhiPlacement = FxHashMap<RegionId, FxHashSet<InitialVnId>>;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
-    /// Mirrors every write path the lift emits from a region's PCODE, which is
-    /// what phi placement needs.
+    /// Every write the lift emits from a region's PCODE, which is what phi
+    /// placement needs.
     ///
     /// One path is deliberately absent: a `TailCall` region is lifted into a
     /// full CC `Call` writing the return and clobber registers, but its pcode
     /// is only a `Branch`, so nothing is recorded for it. That is sound because
-    /// such a region terminates in `Return` -- it has no successors, so an
+    /// such a region terminates in `Return`: it has no successors, so an
     /// empty dominance frontier, so no phi anywhere depends on those writes.
     pub(crate) fn collect_def_sites(&self) -> Result<FxHashMap<InitialVnId, FxHashSet<RegionId>>> {
         let mut defs: FxHashMap<InitialVnId, FxHashSet<RegionId>> = FxHashMap::default();
@@ -52,7 +55,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         match insn.opcode {
             // A call writes the CC's ret + clobber registers and adjusts SP,
             // none of which appear as pcode outputs, so they come from the CC.
-            // Mirrors `build_cc_call`.
+            // Mirrors `build_cc_call`, over-recording SP: `build_call` reads it
+            // and only writes it back for a nonzero `ret_stack_pop`.
             Opcode::Call | Opcode::CallIndirect => {
                 let override_cc = self.call_cc_override_for(insn);
                 let (rets, clobbers) = self.call_ret_and_clobber_vns(override_cc);
@@ -65,7 +69,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 self.add_def(&stack_vn, r, defs);
             }
             // Mirrors `build_abi_call_other`: pcode output plus the ABI's
-            // implicit writes.
+            // implicit writes. Over-records the output for the NoOp class,
+            // where `handle_call_other` drops it and emits no node at all.
             Opcode::CallOther => {
                 if let Some(out) = insn.output.as_ref() {
                     self.add_def(out, r, defs);

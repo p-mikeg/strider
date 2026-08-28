@@ -40,7 +40,7 @@ n = no_opt.rewrite(find=rule_find, replace=rule_repl)
 print(f"\nreintroduced {n} redundant `y + 0` sub-expression(s)")
 print(f"no further optimization applied                 : {shape(no_opt)}")
 
-# The smallest pipeline that folds the identity back.
+# ConstantFold alone folds the identity back.
 partial_pipe = strider.opt.OptimizerPipeline.empty()
 partial_pipe.add(strider.opt.ConstantFold())
 partial = no_opt.clone()

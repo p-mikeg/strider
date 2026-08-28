@@ -10,13 +10,13 @@ use strider_ir::{Function, IRViewer, IRWalker};
 use strider_orchestrator::Lifter;
 use strider_target::{CallingConvention, SleighArch};
 
-/// Walk every reachable `IndirectBranch` node and return the value-
-/// input (slot 2) of the unique placeholder.  Returns `None` if none
-/// exists; panics if more than one is found (every fixture in this
-/// module has exactly one indirect branch).
+/// The value-input (slot 2) of the unique reachable `IndirectBranch`
+/// placeholder, `None` when there is none. Panics on a second one: every
+/// fixture in this module has exactly one indirect branch.
 ///
-/// The placeholder `IndirectBranch` has exactly 3 inputs:
-/// `[control, memory, target_value]`.
+/// Inputs are `[control, memory, target_value]`. The optional fourth
+/// ISA-mode input only appears on an interworking arch, which none of these
+/// x86_64 fixtures is, so exactly three is asserted.
 pub(crate) fn target_value_input(function: &Function) -> Option<strider_ir::Value> {
     let mut found: Option<strider_ir::Value> = None;
     for nid in function.walk() {

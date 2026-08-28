@@ -32,8 +32,8 @@ prog = strider.lift.load_elf("fixtures/out/x86/switch.elf")
 #   load_elf(path, arch=sleigh.SleighArch.x86_64(), cc=sleigh.CallingConvention.x86_64_systemv())
 # from_segments=True (default) walks PT_LOAD; False forces per-section regions.
 # apply_relocations=True (default) patches relocations in place, and also
-# selects what is mapped: False drops the writable sections entirely rather
-# than serving their on-disk bytes.
+# selects what is mapped: False drops writable mappings rather than serving
+# their on-disk bytes. Exec beats write, so a single RWX PT_LOAD still maps.
 ```
 
 `load_elf` returns an `ElfLifter`: a lifter that also carries the symbol table,
@@ -116,7 +116,8 @@ opts = strider.lift.LifterOptions(
     ),
     compact=True,                      # drop unreachable nodes at the end
     resolve_indirect_branches=True,    # False leaves every site an IndirectBranch placeholder
-    per_address_ccs=None,              # {call_addr: CallingConvention} overrides
+    per_address_ccs=None,              # {callee_addr: CallingConvention}; keyed by
+                                       # the direct-call TARGET, not the call site
     pipeline=None,                      # replace the optimizer pipeline for this call
 )
 prog.analyze("dispatch_value", opts=opts)
@@ -140,7 +141,8 @@ later call and a differently-based store is treated as a possible alias.
 `callee_preserves_stack_args=True` empties the outgoing-argument window,
 so a value spilled at the stack top forwards across a call. The psABIs let a
 callee write the slots holding its own parameters, so this asserts something
-about compiler output rather than proving it.
+about compiler output rather than proving it. It is inert alone: the window is
+consulted only under `escape_analysis` or a non-empty `noalias_allocators`.
 
 `call_other_abis` reclassifies a Sleigh user-op by name ahead of the built-in
 table, for an op strider reads wrongly or an OS convention it cannot know. Each
@@ -469,7 +471,8 @@ p.var(c).value_ty("i64")                # ... or a captured value's type
 
 ```python
 function.find_all(pat)                       # every match, deduplicated
-function.find_all(pat, ignore_casts=True)    # see through width casts (default False)
+function.find_all(pat, ignore_casts=True)    # CastMask.all(); default False. A
+                                             # CastMask picks a subset.
 function.find_all([pat1, pat2], constraints=[...])   # a join (see below)
 function.find_unique(pat)                     # the single match, else StriderError
 function.find_unique_value(pat, off)          # the single captured VALUE, or None
@@ -627,7 +630,8 @@ handles afterward.
 ```python
 pipe = strider.opt.OptimizerPipeline.empty()    # empty
 pipe = strider.opt.OptimizerPipeline.default()  # the standard set
-pipe.passes                                      # names of the passes, in order
+pipe.passes                                      # repeated passes, by name, in order
+pipe.post_passes                                 # the run-once passes
 prog.optimize(function, pipe)                    # optimize lives on the lifter; runs in place
 
 # Individual passes are classes:
@@ -733,8 +737,10 @@ fully resolved. `unverified_seeded_sites()` holds a dispatch the CFG consumed as
 a `Return` or a `TailCall`, which is a complete answer that cannot be verified
 rather than a loss -- an ARM `pop {pc}` epilogue lands here, not in
 `unresolved`. `isa_mode_conflicts()` and `interior_branch_targets()` carry the
-other two. The first, third and fourth accumulate across resolution rounds, so a
-later round cannot launder an earlier loss; `unverified_seeded_sites` is derived
+other two; `isa_mode_conflicts()` is structurally always empty outside the four
+ARM and four MIPS presets, the only ones with an ISA-mode context variable to
+disagree about. The first, third and fourth accumulate across resolution
+rounds, so a later round cannot launder an earlier loss; `unverified_seeded_sites` is derived
 once from the final CFG. The Rust side folds the same four into
 `AnalyzeResult::is_complete()`.
 

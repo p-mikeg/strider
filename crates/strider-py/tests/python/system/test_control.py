@@ -58,7 +58,6 @@ def test_nested_loops(arch_id, fixtures_dir):
 def test_early_return(arch_id, fixtures_dir):
     g = analyze(arch_id, "control", "early_return", fixtures_dir=fixtures_dir)
     assert count_regions(g) >= 1
-    # Can't count return paths by Region fan-in from Python (no
-    # `node_inputs`), and a shared epilogue collapses both source returns
-    # into one node anyway, so only presence is assertable.
+    # A shared epilogue collapses both source returns into one node, so only
+    # presence is assertable.
     assert count_returns(g) >= 1

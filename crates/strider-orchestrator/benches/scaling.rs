@@ -80,8 +80,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     let cc = match c.arch_name {
         "x86" => strider_target::CallingConvention::x86_cdecl(),
         "x64" => strider_target::CallingConvention::x86_64_systemv(),
-        // Already matched above. Uses panic! (not unreachable!) since
-        // only clippy::panic is on this bench's allow list.
+        // Already matched above.
         _ => panic!("unsupported arch {}", c.arch_name),
     };
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
@@ -134,15 +133,13 @@ fn bench_pipeline(c: &mut Criterion) {
 
 // Synthetic benches independent of ELF fixtures; each parameterises over
 // problem size N to plot scaling curves separately from pipeline cost.
-// Helpers stay in a private module and never recurse: recursion would
-// inflate Criterion's per-iteration `iter_batched` cost unpredictably.
 
 mod synthetic {
     use super::*;
 
-    /// Synthetic 8-byte stack-pointer VN. Doesn't have to match a real
-    /// arch: `LoadForward` only cares that it's the SP varnode passed
-    /// into the pass constructor.
+    /// Synthetic 8-byte VN the store chains below are addressed off. Which
+    /// arch it comes from is irrelevant; a function's stack pointer is
+    /// whatever its calling convention names.
     pub fn stack_vn() -> rsleigh::Vn {
         stack_vn_aarch64()
     }
@@ -250,10 +247,10 @@ mod synthetic {
         fg
     }
 
-    /// Builds a stack-array indirect-branch dispatch with `n` targets
-    /// (`n` must be a power of 2): constants at contiguous SP-relative
-    /// offsets, loaded via `arg & (n-1) * stride`. Measures lift +
-    /// stable-subset cost only; the indirect-branch resolver isn't run.
+    /// The jump-table shape with `n` targets (`n` must be a power of 2):
+    /// target constants stored at contiguous stack offsets, one reloaded
+    /// through `(arg & (n - 1)) * stride`. No `IndirectBranch` node is built,
+    /// so this measures construction plus `ConstantFold` only.
     pub fn run_jump_table_scenario(n: usize) -> strider_ir::Function {
         assert!(
             n.is_power_of_two(),
@@ -329,9 +326,8 @@ mod synthetic {
         fg
     }
 
-    /// Build a function with `n` distinct `IntConst` nodes added
-    /// together.  Used to bench pattern-matcher cross-product joins
-    /// (`find_joined`) with shared captures.
+    /// A function with `n` distinct `IntConst` nodes added together, for
+    /// benching pattern-matcher cross-product joins over a shared capture.
     pub fn build_many_int_consts(n: usize) -> strider_ir::Function {
         let mut b = strider_ir_test_utils::empty_builder().unwrap();
         let region = b.create_region_all().unwrap();
@@ -405,12 +401,10 @@ fn bench_find_joined_shared_capture(c: &mut Criterion) {
     let mut group = c.benchmark_group("synthetic/find_joined_shared");
     for n in [100usize, 500, 1_000] {
         let fg = synthetic::build_many_int_consts(n);
-        // Two patterns that share a capture `x`:
-        //   pat1: add(_, x).capture(y)  (x = rhs of every Add)
-        //   pat2: any_int_const()    (x = every IntConst)
-        // The cross-product join over shared `x` exercises the
-        // matcher's bindings-equality path on every (Add, IntConst)
-        // pair where they coincide.
+        // Two patterns sharing capture `x`: `add(_, x)` binds it to the rhs
+        // of every Add, `int_const(x)` to every IntConst. The join over `x`
+        // exercises the matcher's bindings-equality path on every coinciding
+        // (Add, IntConst) pair.
         let x = Capture::new();
         let pat1 = int_add(strider_pattern::anything(), var(x)).into_pattern();
         let pat2 = int_const(x).into_pattern();

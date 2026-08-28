@@ -275,9 +275,9 @@ fn capture_then_read_stack_offset_via_side_table_load() {
 
 /// `.filter()` must COMPOSE with the builder's own constraint, not replace it.
 ///
-/// `set_node_predicate` assigns into a single slot, and `NodePat` installs its
-/// core constraint through that same slot, so a `.filter()` applied on top has
-/// to narrow `stack_only`'s region check rather than take the slot from it.
+/// A node carries one predicate slot, and `NodePat` installs its core
+/// constraint there, so a `.filter()` layered on top has to narrow
+/// `stack_only`'s region check rather than take the slot from it.
 #[test]
 fn filter_composes_with_stack_only_rather_than_replacing_it() {
     let (g, _stack, _heap, _plain) = loads_stack_heap_plain();

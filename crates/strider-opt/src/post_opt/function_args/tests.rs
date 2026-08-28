@@ -963,9 +963,9 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
 }
 
 /// Soundness floor: a cross-class store (a const-encoded global) cannot be
-/// proven disjoint from an SP-rooted load, so under `Strict` it marks the chain
-/// dirty.  Registering the load anyway would substitute a pre-entry value and
-/// mask the global's write.
+/// proven disjoint from an SP-rooted load, so with `stack_global_disjoint`
+/// cleared it marks the chain dirty.  Registering the load anyway would
+/// substitute a pre-entry value and mask the global's write.
 #[test]
 fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
     let sp = sp32_vn();
@@ -993,8 +993,8 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    // Pin Strict explicitly: under the `StackGlobalDisjoint` default the
-    // global write is assumed disjoint and the Load would be promoted.
+    // `octx_structural_only` clears `stack_global_disjoint`; at its default
+    // the global write is assumed disjoint and the Load would be promoted.
     pipeline.add_post_pass(FunctionArgDetect);
     pipeline.run(&mut fg, &mut crate::test_support::octx_structural_only())?;
 

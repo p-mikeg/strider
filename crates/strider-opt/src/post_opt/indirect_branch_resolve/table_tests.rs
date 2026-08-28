@@ -1422,7 +1422,7 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
     let (known, doms) = make_known_and_doms(&fg);
     let mut ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
 
-    // Default mode proves the global store disjoint.
+    // The default assumptions prove the global store disjoint.
     let mut expected = targets.to_vec();
     expected.sort_unstable();
     assert_eq!(

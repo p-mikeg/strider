@@ -54,7 +54,7 @@ macro_rules! eval_unary {
     }};
 }
 
-/// Operates on raw bit patterns. `None` when the type is unsupported (F80) or
+/// Operates on raw bit patterns. `None` for anything but F32 / F64, or when
 /// the result is NaN (see `eval_binary!`).
 pub(crate) fn eval_float_binary(
     op: FloatBinaryOp,
@@ -65,9 +65,9 @@ pub(crate) fn eval_float_binary(
     match ty {
         ValueType::F32 => eval_binary!(f32, op, bits_l as u32, bits_r as u32),
         ValueType::F64 => eval_binary!(f64, op, bits_l, bits_r),
-        // Rust has no native 80-bit float, so F80 never folds; the rule skips
-        // and the node survives for pattern queries, which care about graph
-        // shape rather than values.
+        // Only f32 / f64 have host arithmetic, so F16 / F80 / F128 never fold;
+        // the rule skips and the node survives for pattern queries, which care
+        // about graph shape rather than values.
         _ => None,
     }
 }

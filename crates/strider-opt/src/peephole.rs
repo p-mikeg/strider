@@ -55,7 +55,7 @@ impl PeepholeRewrite {
 /// rewrite would report a value the caller must not re-enqueue.
 ///
 /// # Errors
-/// Propagates the first non-skip error returned by a rule.
+/// Propagates the first error returned by a rule.
 pub(crate) fn first_matching_rule<R>(
     rules: &[R],
     edit: &mut crate::EditFunction<'_>,
