@@ -188,7 +188,8 @@ def load_elf(
     `arch=` / `cc=` for kernel or custom-ABI workflows. `apply_relocations`
     (default `True`) applies relocations, which shared objects and PIE
     binaries need; it also selects what is mapped, so `False` drops writable
-    sections entirely rather than serving their on-disk bytes.
+    non-executable sections rather than serving their on-disk bytes. A
+    writable-and-executable mapping is kept either way.
 
     Raises `FileNotFoundError` when `path` does not exist, and `ValueError`
     when the file is not an ELF or its architecture is unsupported.

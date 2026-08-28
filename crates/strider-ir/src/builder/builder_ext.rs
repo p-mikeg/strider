@@ -67,7 +67,7 @@ pub trait IRBuilderExt: IRBuilder {
         // Past the `u128` carrier the fold would have to widen through a type
         // it cannot represent: `signed_val as u128` carries only 128 sign bits,
         // and `build_int_const` masks with `bit_mask_u128`, which is
-        // `u128::MAX` for `I256` / `I512` -- so a negative constant would land
+        // `u128::MAX` for `I256` / `I512`, so a negative constant would land
         // with a ZERO upper half. Emit a real `Extend` there instead;
         // `strider-opt`'s `eval_sign_extend` declines the same fold.
         if output_type.bit_width() <= 128
@@ -318,8 +318,9 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::FloatToFloat, [value], float_type))
     }
 
-    /// Folds an `IntConst` input straight to a `FloatConst` with the same
-    /// bits, creating no node.
+    /// An `IntConst` input up to 8 bytes folds to a `FloatConst` with the same
+    /// bits. Anything else builds the conversion node, `F80` and `F128`
+    /// included: `FloatConst` carries a `u64`.
     fn build_int_bits_to_float(
         &mut self,
         value: ValueId,
@@ -347,8 +348,8 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::IntBitsToFloat, [value], float_type))
     }
 
-    /// Folds a `FloatConst` input straight to an `IntConst` with the same
-    /// bits, creating no node.
+    /// A `FloatConst` input up to 8 bytes folds to an `IntConst` with the same
+    /// bits. Anything else builds the conversion node.
     fn build_float_bits_to_int(&mut self, value: ValueId, int_type: ValueType) -> Result<ValueId> {
         self.require_float_value(value)?;
         Self::require_integer_type(int_type)?;

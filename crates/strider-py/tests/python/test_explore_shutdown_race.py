@@ -2,8 +2,8 @@
 
 `_serve` publishes into `_RUNNING` before entering `serve_forever`, and
 CPython's `BaseServer.shutdown` waits on an event only the serve loop sets, so
-a `shutdown` landing in that window -- the `threading._register_atexit` hook
-included -- has nothing to wake it.
+a `shutdown` landing in that window, the `threading._register_atexit` hook
+included, has nothing to wake it.
 """
 
 from __future__ import annotations

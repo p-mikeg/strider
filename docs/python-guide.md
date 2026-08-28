@@ -88,9 +88,10 @@ for hit in function.find_all(load(addr=int_add(base, off)), ignore_casts=True):
     print("offset =", hit[off].uint_opt)   # None if it is not constant
 ```
 
-`ignore_casts=True` tells the matcher to see through width casts (zero/sign
-extends and truncations), which the compiler inserts constantly. Leave it on
-unless you specifically care about a cast.
+`ignore_casts=True` is `CastMask.all()`: the matcher walks through zero-extends,
+sign-extends, truncations, and the two bit reinterpretations
+`int_bits_to_float` / `float_bits_to_int`. Pass a `CastMask` instead of a bool
+to pick a subset.
 
 `find_all` returns every match. `find_unique` returns the single match and
 raises if there is not exactly one.
@@ -241,10 +242,13 @@ afterwards to tidy up:
 prog.optimize(function)   # collapse phi / dead-branch noise the rewrite exposed
 ```
 
-Use `rewrite_all([(find, replace), ...])` to stage several rules at once; every
-rule is tried at every node, in order, so a rule that fires leaves the rewritten
-graph for the rules after it. `function.clone()` gives you a copy to rewrite
-without touching the original. Example `03` walks through this end to end.
+Use `rewrite_all([(find, replace), ...])` to stage several rules at once. Every
+rule is tried at every node, in order, and the first to fire at a node is what
+the graph keeps: it redirects the matched root's uses and the rules after it
+find nothing left to redirect. One call walks the graph once over a snapshot of
+the nodes, so a rule whose output its own `find` side matches needs a second
+call. `function.clone()` gives you a copy to rewrite without touching the
+original. Example `03` walks through this end to end.
 
 ## Looking at the graph
 

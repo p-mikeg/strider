@@ -75,7 +75,9 @@ class AssumptionOptions:
     `callee_preserves_stack_args` empties the outgoing-argument window, so a
     value spilled at the stack top forwards across a call. The psABIs let a
     callee write the argument slots that hold its own parameters; this asserts
-    compiler output does not.
+    compiler output does not. It is inert on its own: the window is consulted
+    only under `escape_analysis` or at a call to a `noalias_allocators`
+    address, so set it together with one of those.
 
     `noalias_allocators` lists callee addresses of pure `malloc`-like
     allocators: a size in, a fresh non-overlapping pointer out, no pointer
@@ -123,7 +125,8 @@ class LifterOptions:
     `cfg` holds the CFG-building options. `assumptions` holds the unchecked
     claims about the analysed code, each of which can make the answer wrong.
     `compact` drops unreachable nodes at the end. `per_address_ccs` overrides
-    the calling convention at individual call sites. `pipeline`, when set,
+    the calling convention for a callee, keyed by the direct-call target
+    address rather than the call site. `pipeline`, when set,
     replaces the default optimizer pipeline for the calls these options drive.
 
     Raises `ValueError` for a nested `function_max_size=0`.
@@ -408,6 +411,7 @@ def load_elf(
     `arch=` / `cc=` for kernel or custom-ABI workflows. `apply_relocations`
     (default `True`) applies relocations, which shared objects and PIE
     binaries need; it also selects what is mapped, so `False` drops writable
-    sections entirely rather than serving their on-disk bytes.
+    non-executable sections rather than serving their on-disk bytes. A
+    writable-and-executable mapping is kept either way.
     """
     ...

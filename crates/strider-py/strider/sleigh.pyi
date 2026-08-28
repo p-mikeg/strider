@@ -43,16 +43,20 @@ class SleighArch:
         ...
     @classmethod
     def arm_be(cls) -> SleighArch:
-        """32-bit ARM in ARM mode, big-endian."""
+        """Legacy BE32 32-bit ARM: big-endian instructions AND data, pre-ARMv6.
+        Almost every decode fails on a BE8 image; use `arm_be_kernel` for
+        those."""
         ...
     @classmethod
     def arm_be_kernel(cls) -> SleighArch:
-        """Big-endian 32-bit ARM as built for kernel code."""
+        """BE8 32-bit ARM: little-endian instructions, big-endian data. Every
+        ARMv6+ big-endian Linux target, kernel and userland, is this, and
+        `load_elf` picks it on `EF_ARM_BE8`."""
         ...
     @classmethod
     def arm_thumb(cls) -> SleighArch:
-        """32-bit ARM in Thumb mode. The Thumb presets are little-endian
-        only."""
+        """32-bit ARM built `-mthumb`, little-endian only. ARM-state code
+        (veneers, `call_weak_fn`) still decodes, so interworking holds."""
         ...
     @classmethod
     def aarch64(cls) -> SleighArch:
@@ -167,6 +171,16 @@ class CallingConvention:
         `arg_passing_regs_float` names the float/vector argument registers;
         they are appended after `arg_passing_regs`, so the first one is
         `arg(len(arg_passing_regs))` in a `call()` pattern.
+
+        Names are resolved and the ABI invariants checked here, so a bad one
+        raises `StriderError` at construction: a `link_register` must also
+        appear in `callee_saved_regs`, and `link_register=None` needs
+        `ret_stack_pop` at least the pointer size for the return address
+        `call` pushes.
+
+        The resolved varnodes are frozen against `sleigh`'s architecture, so
+        the result is usable only with a `Lifter` for that same arch; any
+        other raises `StriderError` at `analyze` time.
         """
         ...
     def no_return(self) -> CallingConvention:
@@ -192,7 +206,11 @@ class CallingConvention:
         ...
     def preserves_regs(self) -> CallingConvention:
         """Like `preserves_all` but leaves memory clobberable: every register
-        is preserved, memory is not."""
+        is preserved, memory is not.
+
+        The argument registers and stack arguments survive, unlike under
+        `preserves_all`, so a call still carries its arguments: a callee that
+        writes memory has to be seen taking a frame address."""
         ...
     def name(self) -> str:
         """The preset's short name, e.g. `"x86_64_systemv"`."""
@@ -235,15 +253,17 @@ class Vn:
     def __hash__(self) -> int: ...
 
 class Sleigh:
-    """The instruction decoder for one architecture, over one byte source.
+    """One architecture's register table, independent of any `Lifter`.
 
-    Most workflows never build one directly: `Lifter` owns a `Sleigh` and
-    forwards `reg` / `reg_name`.
+    The handle `CallingConvention.custom` and `CallOtherAbi.custom` resolve
+    register names against. Most workflows never build one: `Lifter` owns a
+    `Sleigh` and forwards `reg` / `reg_name`.
     """
     def __init__(
         self, arch: SleighArch, mem: Union[MemReader, BufferReader]
     ) -> None:
-        """Build a decoder for `arch` reading bytes from `mem`."""
+        """Probe `arch`'s register table, reading bytes from `mem`. Raises
+        `StriderError` when Sleigh initialisation fails."""
         ...
     def arch_name(self) -> str:
         """The architecture's short name."""
@@ -302,6 +322,9 @@ class CallOtherAbi:
         `implicit_reads` are read beyond the p-code-explicit operands and
         lead the lifted call's argument list; `implicit_writes` are written
         beyond the p-code-explicit result.
+
+        The resolved varnodes are frozen against `sleigh`'s architecture, so
+        the result is usable only with a `Lifter` for that same arch.
         """
         ...
     @property

@@ -29,10 +29,14 @@ pub struct PyCfg {
     reports: CfgReports,
 }
 
-/// The incompleteness channels, as `analyze` accumulated them over the
-/// resolver's rounds. Read from here rather than from `inner`, which is the
-/// FINAL round's CFG: a round that raised a report and was then rebuilt
-/// without the edge that raised it leaves nothing behind in `inner`.
+/// The incompleteness channels as `analyze` reported them. Read from here
+/// rather than from `inner`, which is the FINAL round's CFG: a round that
+/// raised a report and was then rebuilt without the edge that raised it
+/// leaves nothing behind in `inner`.
+///
+/// `unresolved`, `isa_mode_conflicts` and `interior_branch_targets`
+/// accumulate over the resolver's rounds, so a later round cannot launder an
+/// earlier loss; `unverified_seeded` is derived once from the final CFG.
 pub(crate) struct CfgReports {
     /// The same list `AnalyzeResult.unresolved` carries, held here so
     /// `is_complete` can test all four channels from one object. Empty for a
@@ -223,8 +227,8 @@ impl PyCfg {
 
     /// Branch targets interior to a region but off every instruction boundary.
     ///
-    /// No region can start there -- decoding from inside an instruction yields
-    /// a different stream -- so the edge is seated on the region owning the
+    /// No region can start there (decoding from inside an instruction yields a
+    /// different stream), so the edge is seated on the region owning the
     /// bytes, whose instructions start earlier. A direct edge can cause this,
     /// not only a resolved indirect branch. Non-empty means this CFG claims a
     /// successor the branch does not actually enter at.
@@ -241,7 +245,7 @@ impl PyCfg {
     /// every site the CFG consumed outright as a return or a tail call,
     /// whether that answer was seeded or derived.
     ///
-    /// Not unresolved -- you asserted the answer -- but nothing checked it.
+    /// Not unresolved (you asserted the answer), but nothing checked it.
     /// Seating a seed changes the CFG the classifier reads, so a stale or wrong
     /// seed can stop it deriving and take the site's real arms with it. These
     /// are the sites where that cannot be ruled out. Always empty for a CFG
@@ -259,6 +263,11 @@ impl PyCfg {
     /// answers that are complete but unverified, so a site consumed as a
     /// return (an ARM `pop {pc}` epilogue) clears it. Read whichever channel
     /// is non-empty to tell the cases apart.
+    ///
+    /// On a `build_cfg` CFG the first two channels are empty by construction,
+    /// so `True` there means only that no ISA mode clashed and no branch
+    /// landed off an instruction boundary. It says nothing about indirect
+    /// branches, which `build_cfg` never resolves.
     fn is_complete(&self) -> bool {
         let r = &self.reports;
         r.unresolved.is_empty()

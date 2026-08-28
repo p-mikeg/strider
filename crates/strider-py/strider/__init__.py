@@ -175,7 +175,7 @@ class _MemAccessPat(_t.Protocol):
         ...
 
     def stack_only(self: _S) -> _S:
-        """Reject matches where the SP-relative offset is unknown."""
+        """Keep only accesses whose address decomposes to a stack base."""
         ...
 
     def non_stack(self: _S) -> _S:
@@ -190,7 +190,7 @@ class _MemAccessPat(_t.Protocol):
 
 @_t.runtime_checkable
 class _OrderedPat(_t.Protocol):
-    """A pattern over a commutative op, which `ordered` can pin."""
+    """A pattern whose root takes an operand pair `ordered` can pin."""
 
     def ordered(self: _S) -> _S:
         """Stop the matcher retrying this op with its operands swapped."""

@@ -126,7 +126,7 @@ fn elf_reader_from_path_reads_temp_elf() {
 }
 
 /// `from_elf` serves the file-initial bytes and `from_elf_relocated` the
-/// patched ones. Nothing else in the Rust API reaches the relocating path.
+/// patched ones. This is `from_elf_relocated`'s only caller in the workspace.
 #[test]
 fn from_elf_relocated_applies_what_from_elf_leaves_at_zero() {
     let fx = common::elf_fixture::build_rel_elf_placed(

@@ -8,8 +8,8 @@ use strider_ir::{Function, FunctionBuilder, IRBuilderExt};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{Capture, CaptureExt, Matcher, anything, call_other, int_const, mem_phi};
 
-/// One `cpuid` CallOther with its pcode-explicit inputs/outputs bound through
-/// real Vns, so every slot is pattern-matchable.
+/// One `cpuid` CallOther with no explicit argument and no result register, so
+/// its only inputs are the control and memory predecessors.
 fn build_cpuid_graph() -> Function {
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()

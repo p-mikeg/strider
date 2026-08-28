@@ -321,7 +321,7 @@ fn phi_input_from_edge_ties_value_to_its_branch() {
     );
 }
 
-/// `if (reg == 0) { do { reg = reg + 1 } while (reg != 0) }`: a guarded loop.
+/// `if (reg == 7) { do { reg = reg + 1 } while (reg != 0) }`: a guarded loop.
 ///
 /// The guarded block's header has two control predecessors: the guard's true
 /// edge and the loop's own back-edge (the latch). At the exit, a phi merges

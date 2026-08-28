@@ -1,5 +1,3 @@
-//! Every p-code opcode hits exactly one arm of this match.
-
 use anyhow::{Result, bail};
 use rsleigh::Opcode;
 use strider_ir::{
@@ -55,7 +53,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // Bit-field ops no sla emits: `CPUI_INSERT` / `CPUI_EXTRACT` are
             // decompiler-internal, registered with the base no-op `OpBehavior`
             // (GHIDRA calls it "Dummy behavior"), and the SLEIGH translator
-            // never produces them -- a bitrange assignment lowers to
+            // never produces them: a bitrange assignment lowers to
             // shift-and-mask in `pcodecompile.cc` instead.  Lowering them needs
             // limb-wise masks to stay exact past 128 bits, so fail closed
             // rather than carry an untested path.

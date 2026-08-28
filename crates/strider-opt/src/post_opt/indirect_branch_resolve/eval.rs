@@ -38,8 +38,8 @@ pub(crate) struct Evaluator<'a> {
     /// Survives [`Self::begin_index`]: the memory segment above a load does not
     /// depend on the index.
     slot_maps: FxHashMap<(ValueId, ValueId), SlotMap>,
-    /// Held for the same reason `slot_maps` is: it carries an arg-window memo,
-    /// and rebuilding it per probe discards that on every table index.
+    /// Held across probes for its arg-window memo, which is populated only when
+    /// `noalias_allocators` names a callee on the chain.
     off_segment: MemAnalyzer,
 }
 

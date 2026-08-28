@@ -575,7 +575,7 @@ fn add_operand_shifted_interval(
     };
     // `bit_mask_u128` saturates to `u128::MAX` past 128 bits, so the shift
     // would wrap mod 2^128 instead of the type's modulus and the `lo <= hi`
-    // test would accept a TIGHTER-than-real interval -- the one thing this
+    // test would accept a TIGHTER-than-real interval, the one thing this
     // module must never return.
     let mask = crate::opt::known_bits::type_mask_u128(function.value_type_opt(operand)?)?;
     let lo = interval.lo.wrapping_sub(c) & mask;

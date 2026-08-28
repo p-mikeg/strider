@@ -52,4 +52,4 @@ def test_node_outputs_are_the_consumers():
         else:
             continue
         break
-    assert not hasattr(entry, "input")  # only inputs/outputs exist
+    assert not hasattr(entry, "input")

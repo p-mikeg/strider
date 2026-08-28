@@ -27,7 +27,8 @@ impl OptimizationResult {
 /// Per-run, cross-pass context threaded through every [`Optimizer::apply`]
 /// call.
 pub struct OptCtx<'mem> {
-    /// `None` disables every rom-gated pass.
+    /// `None` cuts off every read of the image: `LoadReadOnly` bails, and a
+    /// jump table stored in the image does not decode.
     pub rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>,
     pub options: crate::OptOptions,
     /// Each LIVE `IndirectBranch` placeholder visited this run, mapped to

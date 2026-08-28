@@ -9,11 +9,13 @@ __all__: list[str]
 class BufferReader:
     """Raw byte reader for firmware or custom sources.
 
-    Works as both the `mem` (instruction fetch) and `rom` (read-only memory)
-    argument to `strider.lift.lifter` and `strider.sleigh.Sleigh`.
+    Serves both roles: the `mem` (instruction fetch) and `rom` (read-only
+    memory) arguments of `strider.lift.lifter`, and the `mem` argument of
+    `strider.sleigh.Sleigh`. Cheap to copy; copies share one backing state.
     """
     def __init__(self, base_addr: int, data: bytes) -> None:
-        """Serve `data` as the bytes mapped starting at `base_addr`."""
+        """Serve `data` as the bytes mapped starting at `base_addr`. Raises
+        `StriderError` for an invalid region."""
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
         """Up to `size` bytes at `addr` (fewer near a region edge), or `None`
@@ -32,7 +34,9 @@ class MemReader:
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
         """Return up to `size` bytes at `addr` (a short read near a region edge
-        is allowed), or `None` when `addr` is unmapped.
+        is allowed), or `None` when `addr` is unmapped. Returning more than
+        `size` bytes is an error. The base implementation raises
+        `NotImplementedError`.
 
         An exception here fails the lift with `StriderError`, chained as its
         `__cause__`. `ReadOnlyMemory.read` is the opposite: an exception there
@@ -41,7 +45,8 @@ class MemReader:
         ...
 
 class ReadOnlyMemory:
-    """Read-only memory backed by Python, used by the `LoadReadOnly` pass.
+    """Read-only memory backed by Python, read by the constant-load fold
+    (`LoadReadOnly`) and by the indirect-branch classifier's jump-table probes.
 
     Subclass and override `read(addr, size)` to return the raw bytes at
     `addr`. Only RAM loads reach it, so subclasses need not filter on space.
@@ -51,7 +56,10 @@ class ReadOnlyMemory:
         """Base initialiser; subclasses may take whatever arguments they like."""
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
-        """Return the `size` raw bytes at `addr`, or `None` when unmapped.
+        """Return exactly `size` raw bytes at `addr`, or `None` when unmapped.
+        Bytes are not byte-swapped; the optimizer decodes them per the run's
+        endianness. A short return is an error, not a partial read. The base
+        implementation raises `NotImplementedError`.
 
         An exception here is swallowed: the constant-load fold declines,
         indistinguishable from `None`, and the analysis succeeds. `MemReader.read`
@@ -94,7 +102,10 @@ class SymbolIter:
 
     def __iter__(self) -> "SymbolIter": ...
     def __next__(self) -> Symbol: ...
-    def __len__(self) -> int: ...
+    def __len__(self) -> int:
+        """How many symbols are LEFT, not the total: CPython reads this as a
+        length hint, which a partly consumed iterator must not overstate."""
+        ...
 
 
 #: Source of instruction bytes: a `BufferReader`, or a `MemReader` subclass.

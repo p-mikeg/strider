@@ -24,8 +24,7 @@ fn rss_bytes() -> u64 {
 fn load_elf_does_not_leak_backing_bytes() {
     let path = elf_path("x64", "arithmetic");
     if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass
-        // and this file is the only coverage the ET_REL loader has.
+        // A missing fixture must be VISIBLE: a silent return reports as a pass.
         eprintln!(
             "SKIP {}: {} is not built; run `make -C fixtures`",
             module_path!(),

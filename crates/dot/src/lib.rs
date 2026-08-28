@@ -174,7 +174,7 @@ impl DotEmitter {
     }
 
     /// `id` and `label` are escaped and quoted; `shape` is spliced RAW. Of
-    /// `extra`, only a `"label"` key is escaped and quoted -- every other
+    /// `extra`, only a `"label"` key is escaped and quoted; every other
     /// value, `xlabel` and `tooltip` included, is inserted verbatim and the
     /// caller owns quoting it (a hex colour needs its own `"..."`, a bare ident
     /// like `dashed` does not).

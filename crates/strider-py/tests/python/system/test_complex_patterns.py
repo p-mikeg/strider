@@ -42,7 +42,7 @@ def test_bit_test_zero(arch_id, fixtures_dir):
 
 def test_if_bit_clear_call(arch_id, fixtures_dir):
     g = analyze(arch_id, "complex", "if_bit_clear_call", fixtures_dir=fixtures_dir)
-    # Calls helper() iff a single bit is clear.
+    # Calls `cb_zero` iff bit 0 of the argument is clear.
     assert count_pat(g, pat.if_else()) >= 1
     assert count_calls(g) >= 1
 
@@ -55,7 +55,7 @@ def test_call_with_field_arg(arch_id, fixtures_dir):
 
 def test_dispatch_on_flag(arch_id, fixtures_dir):
     g = analyze(arch_id, "complex", "dispatch_on_flag", fixtures_dir=fixtures_dir)
-    # 4-arm dispatch with bit tests + indirect calls.
+    # One bit test guarding a call that takes the struct's handler field.
     assert count_pat(g, pat.if_else()) >= 1
     assert count_calls(g) >= 1
 

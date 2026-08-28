@@ -117,7 +117,7 @@ def test_optimize_on_lifter_mutates(x86_memory_elf):
             pipeline=strider.opt.OptimizerPipeline.empty(),
         ),
     )
-    assert g.node_count() >= 1  # something to optimize
+    assert g.node_count() >= 1
     lift.optimize(g)
     # `node_count` counts every arena slot, reachable or not, and need not
     # shrink before compaction.
@@ -210,7 +210,7 @@ def test_lifter_optimize_folds_against_the_handles_rom():
     from strider.pattern import int_const, load
 
     code_base, table_base = 0x1000, 0x2000
-    # mov eax, dword [0x2000] ; ret  -- an absolute address, so it can fold.
+    # mov eax, dword [0x2000] ; ret : an absolute address, so it can fold.
     code = bytes([0x8B, 0x04, 0x25, 0x00, 0x20, 0x00, 0x00, 0xC3]) + bytes(16)
     table = (0x11111111).to_bytes(4, "little") * 4
     mem = reader.BufferReader(code_base, code)

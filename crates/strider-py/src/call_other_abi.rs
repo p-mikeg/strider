@@ -3,9 +3,9 @@ use pyo3::types::PyType;
 
 use strider_target::call_other_abi::{CallOtherAbi, CallOtherClass, CallOtherOverride};
 
-/// A preset carries the static register names of a table row, resolved
-/// against a Sleigh at lift time.  `Custom` is resolved eagerly instead, so a
-/// name typo surfaces at construction.
+/// `Class` carries the static register names of a table row, resolved against
+/// a Sleigh at lift time.  `Built` is resolved eagerly instead, so a name typo
+/// surfaces at construction.
 #[derive(Clone)]
 pub(crate) enum AbiImpl {
     Class(CallOtherClass),

@@ -37,7 +37,8 @@ pub struct Tb {
 }
 
 impl Tb {
-    /// No tracked variables, no calling convention, entry region active.
+    /// No declared registers beyond the synthetic SP, trivial convention,
+    /// entry region active.
     pub fn empty() -> Self {
         let fb = RegisterSet::new()
             .build_fn_single_region()

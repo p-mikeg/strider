@@ -262,9 +262,8 @@ fn unreachable_nodes_are_skipped() {
 }
 
 /// A malformed idom relation must still terminate with each node once. The
-/// same push-time dedup that drops the repeat here is what stops an idom cycle
-/// spinning forever in a release build, where the root's `debug_assert` is
-/// gone.
+/// push-time dedup that drops the repeat here is also what stops an idom cycle
+/// spinning forever.
 #[test]
 fn a_repeated_node_appears_once_in_the_preorder() {
     let mock = Mock {

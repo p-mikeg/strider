@@ -51,15 +51,12 @@ impl FunctionBuilder {
         &mut self.function
     }
 
-    /// Stable once the first region is registered.
     pub fn entry(&self) -> NodeId {
         self.function.entry()
     }
 
     /// The sole constructor. `all_used_variables` is every varnode appearing
     /// in the function.
-    ///
-    /// Errors when a tracked variable's byte size has no matching `ValueType`.
     pub fn new(
         mut all_used_variables: Vec<rsleigh::Vn>,
         cc: strider_target::BuiltCallingConvention,

@@ -231,6 +231,10 @@ py_options! {
     /// A callee leaves the outgoing-argument slots the caller wrote as it
     /// found them, so a spill at the stack top survives the call. The psABIs
     /// let a callee write those slots; this asserts compiler output does not.
+    ///
+    /// Inert on its own: it only empties an outgoing-argument window that
+    /// something else already consults, which is `escape_analysis` or a call
+    /// to an address listed in `noalias_allocators`. Set with one of those.
     callee_preserves_stack_args: bool = false, bool;
 
     /// Callee addresses of pure `noalias` heap allocators (`malloc`/`calloc`-like:

@@ -19,8 +19,8 @@ use crate::{EditFunction, ReadOnlyMemory};
 mod eval;
 pub(crate) mod table;
 
-/// Cap on enumerated table slots: without one, an all-ones KnownBits mask would
-/// force iteration through 4 GiB of them.
+/// Cap on enumerated table slots: a range narrowed only by a KnownBits stride
+/// still spans billions of them.
 pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 
 pub use table::classify_table_dispatch;
@@ -87,9 +87,9 @@ fn single_const_target(
 /// The value under an interworking mask, else `value` unchanged.
 ///
 /// `BXWritePC` / `JXWritePC` emit `target & ~1`: the cleared bit is the ISA
-/// mode, which the branch carries separately, so the mask hides the shape the
-/// recognisers match.  Only the exact low-bit mask is stripped; any other
-/// constant is real arithmetic on the target.
+/// mode, which the branch carries separately, so the mask hides the
+/// `InitialVar(lr)` shape under it.  Only the exact low-bit mask is stripped;
+/// any other constant is real arithmetic on the target.
 fn strip_isa_mode_mask(function: &strider_ir::Function, value: ValueId) -> ValueId {
     let producer = function.producer(value);
     if !matches!(
@@ -128,7 +128,8 @@ fn link_register_return(
 }
 
 /// Classifies every live `IndirectBranch` placeholder into
-/// [`OptCtx::indirect_resolutions`].  Never mutates the graph.
+/// [`OptCtx::indirect_resolutions`], and re-derives every live `Switch` from
+/// its retained selector.  Never mutates the graph.
 ///
 /// Must run as a post-pass: a dispatch value only becomes classifiable once the
 /// optimizer has folded it into a recognizable shape.

@@ -71,7 +71,7 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
         // through `shadowed_starts`.  The split moved the second half's start,
         // so record the new one: missing it makes the lookup answer `None` for
         // bytes that half really owns, which decodes a fresh region INSIDE an
-        // instruction.  The old start stays -- an extra probe costs nothing,
+        // instruction.  The old start stays: an extra probe costs nothing,
         // a missing one corrupts the graph.
         if self.shadowed_starts.contains(&first_region_start_addr) {
             self.shadowed_starts.insert(addr);

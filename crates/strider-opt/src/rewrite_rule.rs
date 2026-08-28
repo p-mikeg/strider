@@ -155,9 +155,8 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
     Ok(())
 }
 
-/// Applies `rules` round-robin at every reachable node, returning the total
-/// per-`(node, rule)` fire count.  Backs the scripted-rewrite entry points
-/// (`Function.rewrite` / `rewrite_all` in strider-py).
+/// Applies every rule at every reachable node, returning the total
+/// per-`(node, rule)` fire count.
 ///
 /// Rules are tried in order at each node and a fire does not stop the rest.
 /// The first fire is what the graph keeps: it redirects the matched root's
@@ -171,7 +170,7 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
 ///
 /// # Errors
 ///
-/// Propagates the first non-skip error returned by any rule.
+/// Propagates the first error returned by any rule.
 pub fn apply_rules_count<R>(edit: &mut EditFunction<'_>, rules: &[R]) -> Result<usize>
 where
     R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
@@ -188,7 +187,7 @@ where
     // The same drain-and-refill `OptimizerPipeline::run` performs after a
     // changing pass. A rule rewires the inputs of an address value, so a
     // surviving `memory_offsets` entry names the wrong slot and a freshly
-    // built `Load` has none at all -- and `RegionFilter::check` reads that
+    // built `Load` has none at all, and `RegionFilter::check` reads that
     // table directly rather than through `decompose`, so a stale or absent
     // entry silently changes what `stack_only()` / `heap_only()` match.
     edit.clean();
@@ -1244,13 +1243,16 @@ mod tests {
             // input-less, so it becomes a root.
             let init_mem_node = tb.node(KindSpec::Exact(NodeKind::InitialMemory));
             let init_mem = tb.memory_output(init_mem_node, 0);
-            // Store(RAM): inputs [addr, data, mem_in], output [mem_out].
+            // Store(RAM), output [mem_out].  Slots wired addr/data/mem, NOT
+            // `expected_signature`'s [mem, addr, data]; `instantiate` does not
+            // check.
             let store_node = tb.node(KindSpec::Exact(NodeKind::Store(rsleigh::VnSpace::RAM)));
             tb.input(store_node, 0, a);
             tb.input(store_node, 1, data);
             tb.input(store_node, 2, init_mem);
             let store_mem = tb.memory_output(store_node, 0);
-            // Load(RAM): inputs [addr, mem_in], output [value].
+            // Load(RAM), output [value].  Slots wired addr/mem, likewise the
+            // reverse of `expected_signature`'s [mem, addr].
             let load_n = tb.node(KindSpec::Exact(NodeKind::Load(rsleigh::VnSpace::RAM)));
             let a2 = tb.capture(addr_cap);
             tb.input(load_n, 0, a2);

@@ -7,8 +7,8 @@ from strider.pattern import Capture, int_add, ret
 # Hand-assembled x86-64:
 #     lea eax, [rdi + rsi]     8d 04 37      eax = edi + esi
 #     ret                      c3
-# Trailing padding: the disassembler prefetches past ret, and the reader must
-# answer those addresses.
+# Trailing padding for the disassembler's prefetch past ret. Optional here: a
+# BufferReader answers the region edge with a short read.
 BASE = 0x400000
 CODE = bytes([0x8D, 0x04, 0x37, 0xC3]) + bytes(16)
 

@@ -6,8 +6,8 @@ use super::relocations::apply_elf_relocations_with;
 use super::sections::{ElfSectionLayout, LoadFilter, RegionSource};
 
 /// Maps the file: it must not change on disk while the returned `OwnedElf`
-/// lives. A read past a shortened file is filesystem-dependent -- zero-filled
-/// on some, SIGBUS on others -- so a truncation is not reliably an error and
+/// lives. A read past a shortened file is filesystem-dependent (zero-filled
+/// on some, SIGBUS on others), so a truncation is not reliably an error and
 /// the analysis can silently lift zeros.
 ///
 /// # Errors

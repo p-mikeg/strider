@@ -76,8 +76,10 @@ impl PyNode {
         Ok(f(&guard, nid))
     }
 
-    /// Multi-output nodes (e.g. `Load = [Memory, Value]`) carry one value
-    /// slot; control / memory / phi-token-only nodes have none.
+    /// The FIRST value output, skipping control / memory slots. A `Call`
+    /// carries several (return value, then the clobbers), so this is not a
+    /// unique answer for one; control / memory / phi-token-only nodes have
+    /// none at all.
     fn value_output(
         function: &strider_ir::Function,
         nid: strider_ir::node::NodeId,
@@ -212,9 +214,10 @@ impl PyNode {
     }
 
     /// Integer constant value, sign-extended at the declared width. `None`
-    /// when the value output isn't an integer `IntConst` or exceeds 128 bits
-    /// (use `wide_const_bytes()` for I256/I512). Booleans are 1-bit integers,
-    /// so a bool constant surfaces as `0` / `-1`.
+    /// when the value output isn't an integer `IntConst`, or is declared wider
+    /// than 128 bits: an `I256` / `I512` holding a small value still answers
+    /// `None` here, unlike `uint` (use `wide_const_bytes()` for those).
+    /// Booleans are 1-bit integers, so a bool constant surfaces as `0` / `-1`.
     pub(crate) fn sint(&self, py: Python<'_>) -> PyResult<Option<i128>> {
         self.with_node(py, |function, nid| {
             Self::value_output(function, nid).and_then(|value| function.int_const_i128(value))
@@ -222,7 +225,9 @@ impl PyNode {
     }
 
     /// Integer constant value, masked to the declared width. `None` when the
-    /// value output isn't an integer `IntConst` or exceeds 128 bits.
+    /// value output isn't an integer `IntConst`, or holds a value that does
+    /// not fit in 128 bits. An `I256` / `I512` constant small enough to fit
+    /// still reads back here, unlike `sint`.
     pub(crate) fn uint(&self, py: Python<'_>) -> PyResult<Option<u128>> {
         self.with_node(py, |function, nid| {
             Self::value_output(function, nid).and_then(|value| function.int_const_u128(value))
@@ -247,7 +252,7 @@ impl PyNode {
 
     /// The varnode this node names, else `None`: for `InitialVar` the varnode
     /// read at entry, for a `Call` the register it returns in, and for a
-    /// `CallOther` whatever varnode the sla assigns its result to -- a
+    /// `CallOther` whatever varnode the sla assigns its result to: a
     /// `unique` temporary (x86 `cpuid`), a tracked register (AArch64
     /// `popcount32` writes `q0`), or nothing at all (MIPS `udiv`).
     ///
