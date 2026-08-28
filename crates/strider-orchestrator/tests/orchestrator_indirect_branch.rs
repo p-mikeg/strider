@@ -1,6 +1,6 @@
 //! Drives `Strider::analyze` against real ELF fixtures. `indirect_branch.rs`
 //! pins the resolved ARM SET of the computed-goto fixture on every arch; this
-//! file covers the loop's other outcomes -- seating, deferral, oscillation and
+//! file covers the loop's other outcomes: seating, deferral, oscillation and
 //! the resolution knob.
 
 mod common;

@@ -209,7 +209,7 @@ fn post_pass_function_validates() {
 }
 
 /// The decomposition memo is the per-node SSoT `pattern`'s `stack_only` /
-/// `heap_only` / `non_stack` filters read, and `run` clears it on entry. A
+/// `heap_only` / `non_stack` filters read, and every changing pass drains it. A
 /// caller pipeline that registers no post-pass must still leave it filled, or
 /// every region filter silently matches nothing.
 #[test]

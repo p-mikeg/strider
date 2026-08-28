@@ -476,7 +476,7 @@ pub fn stack_vn_x86_64() -> rsleigh::Vn {
     reg_vn(0x20, 8)
 }
 
-/// Offset 0x40 matches the AArch64 Sleigh spec.
+/// Mock 64-bit SP; 0x40 is an arbitrary offset, not AArch64's `sp` (0x8).
 pub fn stack_vn_aarch64() -> rsleigh::Vn {
     reg_vn(0x40, 8)
 }

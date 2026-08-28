@@ -40,7 +40,10 @@ class JoinPredicate:
     def constraint(self, m: Match) -> bool:
         """Override to return whether the joined match `m` survives. `m` spans
         the whole join, so `m.node(c)` / `m.uint(c)` see every pattern's
-        captures. The base raises `NotImplementedError`."""
+        captures. The base raises `NotImplementedError`.
+
+        An exception raised here drops the row and is re-raised at the query
+        boundary."""
         ...
 
 #: A built-in relation or a user `JoinPredicate` instance.
@@ -66,10 +69,18 @@ def phi_input_from_edge(
 ) -> JoinConstraint:
     """The value merged into `phi` from the branch `edge` is `value`. `edge`
     binds an `If`'s `capture_true` / `capture_false` value, and `value` is
-    bound by another pattern in the same `find_all` list."""
+    bound by another pattern in the same `find_all` list.
+
+    Works for a `MemPhi` as well as a value `Phi`, and reaches an arm merged
+    across intervening control (a call, a whole guarded loop), not only the
+    direct predecessor."""
 
 def negate(c: ConstraintLike) -> JoinConstraint:
-    """The negation of `c`: a match survives only if `c` does not hold."""
+    """The negation of `c`: a match survives only if `c` does not hold.
+
+    A tuple `c` cannot answer for (an unbound capture, a capture with no
+    dominator-tree position) drops here too rather than passing vacuously, so
+    negation is not an exact complement."""
 
 def any_of(constraints: Sequence[ConstraintLike]) -> JoinConstraint:
     """A constraint that passes when ANY of the listed constraints passes.

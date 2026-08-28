@@ -123,8 +123,8 @@ fn reloc_addend(
 /// # Errors
 ///
 /// Only when a loaded section's bytes cannot be read. A relocation whose target
-/// symbol or section index does not resolve is NOT an error -- neither a
-/// legitimate `STN_UNDEF` for an external lib nor a corrupt index -- it is
+/// symbol or section index does not resolve is NOT an error (neither a
+/// legitimate `STN_UNDEF` for an external lib nor a corrupt index); it is
 /// skipped, leaving the site at its file-initial bytes.
 pub fn apply_elf_relocations(
     regions: &mut [MemRegion],
@@ -183,9 +183,9 @@ struct RelocSite {
 
 /// Invokes `f(site_addr, avail, reloc)` per relocation site, `site_addr` being
 /// the **absolute** virtual address in the coordinate system the loaded regions
-/// live in and `avail` the bytes left of the section owning the site --
-/// `u64::MAX` for a dynamic site, whose owner is a segment and which therefore
-/// has no section end to overrun.
+/// live in and `avail` the bytes left of the section owning the site
+/// (`u64::MAX` for a dynamic site, whose owner is a segment and which therefore
+/// has no section end to overrun).
 ///
 /// Kind dispatch:
 ///
@@ -194,9 +194,9 @@ struct RelocSite {
 ///   relative to the section the relocations apply *to* (the one `sh_info`
 ///   points at), so the site is that section's `layout` base plus the offset.
 /// * Everything else: the dynamic table, `owners` and `layout` unused.
-///   `dynamic_relocations()` is `None` both for ET_REL and for a
-///   statically-linked ELF shipping no dynamic table; either way this iterates
-///   nothing.
+///   `dynamic_relocations()` is `Some` for every ELF, but its iterator yields
+///   nothing unless an `SHT_REL` / `SHT_RELA` section links to `.dynsym`, so a
+///   statically-linked image walks no sites.
 fn for_each_reloc_site<F>(
     obj: &object::File<'_>,
     owners: &std::collections::BTreeSet<usize>,
@@ -441,8 +441,8 @@ struct IndexEntry {
 }
 
 impl RegionStartIndex {
-    /// Equal-start regions keep their slice order, so the higher-index one wins
-    /// [`covering_index`](Self::covering_index).
+    /// Equal-start regions keep their slice order, so the higher-index one is
+    /// the only one [`covering_indices`](Self::covering_indices) tests.
     fn from_regions(regions: &[MemRegion]) -> Self {
         let mut order: Vec<usize> = (0..regions.len()).collect();
         order.sort_by_key(|&i| regions[i].start_addr());
@@ -790,8 +790,8 @@ fn mips_rel32_field_bytes(r_type2: u32) -> usize {
 /// Where a MIPS relocation's field starts relative to `r_offset`.
 ///
 /// `R_MIPS_16`'s storage unit is the 32-bit word at `r_offset` and its field is
-/// that word's low half, so on a big-endian target the two bytes to patch --
-/// and the implicit addend to read back -- start two bytes in. `R_MIPS_32` and
+/// that word's low half, so on a big-endian target the two bytes to patch,
+/// and the implicit addend to read back, start two bytes in. `R_MIPS_32` and
 /// `R_MIPS_64`, the only other MIPS types `object` gives a width, fill their
 /// storage unit exactly.
 fn mips_half_field_skew(

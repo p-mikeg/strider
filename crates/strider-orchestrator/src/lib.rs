@@ -138,13 +138,13 @@ where
     /// placeholder nodes still in the function. So does a site whose fold
     /// could not seat every successor a round proved: it is seated on the arms
     /// it could take, and reported rather than passed off as complete. So does
-    /// a site whose answer never settles -- resolving it is abandoned rather
-    /// than failing the function -- and one naming a target that will not
-    /// decode, which a misclassified table bound produces.
+    /// a site whose answer never settles (resolving it is abandoned rather than
+    /// failing the function), and one naming a target that will not decode,
+    /// which a misclassified table bound produces.
     ///
-    /// That is not the only incompleteness channel. A site the CFG CONSUMED --
-    /// a `LinkRegister` answer seated as a `Return`, a single out-of-function
-    /// target seated as a `TailCall` -- leaves no placeholder and no anchor, so
+    /// That is not the only incompleteness channel. A site the CFG CONSUMED
+    /// (a `LinkRegister` answer seated as a `Return`, a single out-of-function
+    /// target seated as a `TailCall`) leaves no placeholder and no anchor, so
     /// it cannot appear in `unresolved_indirect_branches` at all; it is named
     /// in [`AnalyzeResult::unverified_seeded_sites`] instead. A CFG-level loss
     /// no indirect site owns comes back in
@@ -156,7 +156,7 @@ where
     /// every round, and the caller's own map is never mutated. The WORKING set
     /// it feeds is not monotone: a site whose answer narrows twice, and one
     /// naming a target the CFG could not decode, are dropped from it. The CFG
-    /// can lose ground for a second reason -- seating changes what the
+    /// can lose ground for a second reason: seating changes what the
     /// classifier reads, so a wrong seed can stop the selector deriving and
     /// take the site's real arms with it, which is what
     /// `unverified_seeded_sites` reports. A seed asserts the site is complete,
@@ -238,8 +238,8 @@ where
         // Sites this loop has given up on: their answer never settled, or it
         // named an address that would not decode. Abandoning one leaves its
         // `IndirectBranch` a live placeholder, which is reported as unresolved
-        // -- a result, the way the contract promises, instead of an error that
-        // loses the whole function.
+        // (a result, the way the contract promises, instead of an error that
+        // loses the whole function).
         let mut abandoned: rustc_hash::FxHashSet<PcodeInsnAddr> = rustc_hash::FxHashSet::default();
         derived_incomplete.extend(abandon_undecodable(
             &cfg,
@@ -297,7 +297,7 @@ where
             (cfg, function, unresolved, switch_anchors, resolutions) =
                 self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
             // BEFORE `abandon_undecodable`, which removes the site from
-            // `known_targets` -- the map `seated_arm_losses` looks the site up
+            // `known_targets`, the map `seated_arm_losses` looks the site up
             // in. Reversed, every site abandoned this round loses its arm-loss
             // report, and for a classifier-derived table that is the only
             // channel that fires.
@@ -446,7 +446,7 @@ pub struct AnalyzeResult {
     /// May still contain `IndirectBranch` placeholders for any site in
     /// `unresolved_indirect_branches`.
     pub function: strider_ir::Function,
-    /// Sorted and deduplicated. Empty means fully resolved -- but not that the
+    /// Sorted and deduplicated. Empty means fully resolved, but not that the
     /// answer is complete: a site the CFG consumed as a `Return` or `TailCall`
     /// can only be reported through `unverified_seeded_sites`.
     pub unresolved_indirect_branches: Vec<PcodeInsnAddr>,
@@ -454,16 +454,16 @@ pub struct AnalyzeResult {
     ///
     /// One region owns the bytes, decoded in whichever mode won the work
     /// queue, so the losing edge's path is not the instruction stream it
-    /// believes. These are not indirect-branch sites -- a direct edge produces
-    /// them too -- so they are reported here rather than in
+    /// believes. These are not indirect-branch sites (a direct edge produces
+    /// them too), so they are reported here rather than in
     /// `unresolved_indirect_branches`. Non-empty means part of some round's
     /// decode was in a mode a path into it disagreed with; the classifier ran
     /// on that decode whether or not the final cfg still carries the edge.
     pub isa_mode_conflicts: Vec<PcodeInsnAddr>,
     /// Branch targets interior to a region but off every instruction boundary.
     ///
-    /// No region can start there -- decoding from inside an instruction yields
-    /// a different stream -- so the edge is seated on the region that owns the
+    /// No region can start there (decoding from inside an instruction yields a
+    /// different stream), so the edge is seated on the region that owns the
     /// bytes, whose instructions start earlier. Like `isa_mode_conflicts` a
     /// direct edge produces these, so they are reported here rather than in
     /// `unresolved_indirect_branches`. Non-empty means `cfg` claims a
@@ -472,8 +472,8 @@ pub struct AnalyzeResult {
     /// Sites whose answer nothing verified.
     ///
     /// Two shapes land here. A seated `Switch` holding exactly the caller's
-    /// `known_targets` and nothing derived: not unresolved -- the caller
-    /// asserted the answer -- but seating changes the CFG the classifier
+    /// `known_targets` and nothing derived: not unresolved (the caller
+    /// asserted the answer), but seating changes the CFG the classifier
     /// reads, so a stale seed can stop the selector deriving and take the
     /// site's real arms with it. And a site CONSUMED at CFG-build time,
     /// whether the answer came from a seed or from the classifier: a
@@ -490,8 +490,8 @@ impl AnalyzeResult {
     /// This is the question "may this result be incomplete?", which needs all
     /// four and which none of them answers alone. `false` is NOT always a
     /// loss: `unverified_seeded_sites` holds answers that are complete but
-    /// that nothing verified, so a site consumed as a `Return` -- an ARM
-    /// `pop {pc}` dispatch, say -- clears it. Read whichever channel is
+    /// that nothing verified, so a site consumed as a `Return` (an ARM
+    /// `pop {pc}` dispatch, say) clears it. Read whichever channel is
     /// non-empty to tell the cases apart.
     #[must_use]
     pub fn is_complete(&self) -> bool {
@@ -872,8 +872,8 @@ fn combine_resolved(
 /// `strider_cfg` documents `Multiple` as non-empty and defends: it seats no
 /// `Switch` for an empty set, re-emitting the placeholder, so the site comes
 /// back as a live unresolved branch. That is the honest answer once every
-/// target has been contradicted -- the enum spells no "nothing trustworthy
-/// here" -- where staging nothing would leave the previous round's answer
+/// target has been contradicted (the enum spells no "nothing trustworthy
+/// here") where staging nothing would leave the previous round's answer
 /// seated as if it had never been contradicted.
 fn resolved_from(targets: Vec<strider_cfg::ResolvedTarget>) -> ResolvedTargets {
     match targets.as_slice() {
@@ -939,8 +939,8 @@ fn abandon_undecodable(
 ///
 /// Seating a seed changes the CFG the classifier reads, so a stale or wrong
 /// seed can stop the selector deriving and then suppress the report of the arms
-/// that cost. Such a site is not "unresolved" -- the caller asserted the
-/// answer -- but nothing verified it, so it is named separately.
+/// that cost. Such a site is not "unresolved" (the caller asserted the
+/// answer), but nothing verified it, so it is named separately.
 fn unverified_seeded_sites(
     cfg: &strider_cfg::Cfg,
     switch_anchors: &UnresolvedAnchors,
@@ -977,9 +977,9 @@ fn unverified_seeded_sites(
 
 /// Sites whose seated `Switch` holds FEWER arms than `known_targets` asked for.
 ///
-/// The cfg drops a target it cannot express as an arm -- one interior to a
+/// The cfg drops a target it cannot express as an arm (one interior to a
 /// region but off every instruction boundary, which it only discovers once the
-/// sibling arm it lands in has been decoded -- and leaves the rest of the table
+/// sibling arm it lands in has been decoded) and leaves the rest of the table
 /// seated. The fold cannot see that: it compares its own result against the
 /// previous round, so the loss reads as convergence. Comparing against the CFG
 /// the round actually built is what keeps a converged answer honest.
@@ -1033,7 +1033,7 @@ struct DerivedChannels<'a> {
 ///   abandoned.
 ///
 /// A caller seed asserts the site is complete, which suppresses the SECOND of
-/// those, the unclassified seated `Switch` -- but only while `settled`, the
+/// those, the unclassified seated `Switch`, but only while `settled`, the
 /// site's final successor set, holds nothing the seed did not name. A site that
 /// OUTGREW its seed disproves the assertion, and the arms past the seed came
 /// from a classifier that has since gone silent, so nothing vouches for them.
@@ -1248,11 +1248,9 @@ mod tests {
 
     #[test]
     fn live_unresolved_reports_classified_but_unseated_branch() {
-        // Classified with an out-of-range target, so the cfg layer re-emitted
-        // the placeholder instead of seating a `Switch`. The site is in
-        // `known_targets` yet its `IndirectBranch` is still live, and
-        // `unresolved_indirect_branches` is empty ONLY when the function holds
-        // no placeholder.
+        // The report key is the LIVE placeholder, not the site's
+        // classification state: the cfg layer re-emits a placeholder for a
+        // target set it could not seat, and that site must still be named.
         let (function, node) = fn_with_live_indirect_branch();
         let addr = pcode_addr(0x1000);
         let unresolved: UnresolvedAnchors = vec![(addr, node)];
@@ -1879,7 +1877,7 @@ mod tests {
     }
 
     /// A caller seed asserts the site is complete, so the same unclassifiable
-    /// `Switch` is the caller's answer, not a gap -- while the settled set is
+    /// `Switch` is the caller's answer, not a gap, while the settled set is
     /// still the seed and nothing else.
     #[test]
     fn caller_seeded_switch_is_not_reported_unresolved() {

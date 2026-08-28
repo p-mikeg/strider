@@ -977,8 +977,8 @@ mod heap_tests {
         Ok(())
     }
 
-    /// Two allocations never overlap.  Run under `Strict` so the verdict rests
-    /// on the noalias guarantee rather than the SP heuristic.
+    /// Two allocations never overlap.  `stack_global_disjoint` is off, so the
+    /// verdict rests on the noalias guarantee alone.
     #[test]
     fn two_heap_objects_are_disjoint() -> crate::Result<()> {
         use strider_ir::IRViewer;
@@ -1255,7 +1255,7 @@ mod heap_tests {
     }
 
     /// SOUNDNESS: an allocator is still a callee, and a callee owns the
-    /// incoming stack-argument area the ABI hands it.  The i386 cdecl idiom
+    /// outgoing stack-argument area the ABI hands it.  The i386 cdecl idiom
     /// `mov [esp], 16 / call malloc` puts the size argument in slot 0; malloc
     /// may scratch it, so a reload of that slot must not forward.
     #[test]
@@ -1332,9 +1332,8 @@ mod heap_tests {
         Ok(())
     }
 
-    /// `preserves_all` = `preserves_regs` + `preserves_memory`.  Pins the
-    /// memory half: a call declared transparent to memory must not stop the
-    /// walk.
+    /// Pins the memory half of `preserves_all`: a call declared transparent to
+    /// memory must not stop the walk.
     #[test]
     fn preserves_memory_call_does_not_clobber() -> crate::Result<()> {
         let load_across_call = |preserves_memory: bool| -> crate::Result<bool> {
@@ -1846,9 +1845,8 @@ mod arg_window_complexity {
             .stack_args(Some(stack_args))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        // The call's SP sits one slot below the arguments' base, so the spill
-        // at `sp - 4` is the last slot of the window rather than the caller's
-        // memory.
+        // The frame is one slot deeper than the arguments need, so the spill at
+        // `sp - 4` is the window's last slot rather than the caller's memory.
         let frame_bytes = 4 * (slots as i64 + 1);
         let spill_off = b.build_int_const((-4i64) as u64, ValueType::I32)?;
         let spill_slot =
@@ -1906,8 +1904,8 @@ mod arg_window_complexity {
 
     /// `slots` argument stores under a lowered SP, a call below them that the
     /// relaxation-free window probe cannot see past, then `loads` distinct
-    /// reloads of slots above the window.  Every reload asks the same call the
-    /// same question, so the whole prefix walk must be paid once.
+    /// reloads of slots above the argument stores.  Every reload asks the same
+    /// call the same question, so the whole prefix walk must be paid once.
     fn walk_steps_for_loads(loads: usize, slots: usize) -> crate::Result<u64> {
         let sp = strider_ir_test_utils::stack_vn_x86();
         let stack_args = strider_target::StackArgs {
@@ -2417,8 +2415,8 @@ mod arg_window_visibility {
     }
 
     /// The counterpart the fail-closed reading must not swallow: a genuine
-    /// local, below both the incoming-argument bound and the call's own SP,
-    /// still forwards across the call.
+    /// local, below the incoming-argument bound and anchoring no
+    /// outgoing-argument slot, still forwards across the call.
     #[test]
     fn a_local_below_the_argument_bound_still_forwards_across_a_call() -> crate::Result<()> {
         let sp = strider_ir_test_utils::stack_vn_x86();

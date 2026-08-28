@@ -170,7 +170,8 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `AssumptionOptions::assume_incoming_args_survive_calls`, both `bool` and both
   defaulting `true`, so `OptOptions` is `{ resolve_indirect_branches,
   assumptions }` and one struct holds every unprovable claim.
-  `AssumptionOptions` no longer derives `Default`; `AssumptionOptions::none()`
+  `AssumptionOptions`'s `Default` is hand-written rather than derived, so
+  `default()` keeps the two claims on and `AssumptionOptions::none()` is what
   clears all six.
 - `graph_algorithms::walk::VisitTracker` and
   `graph_algorithms::dominance::DefSites` are gone, each having had one
@@ -373,12 +374,10 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `STRIDER_BACKTRACE=1` is set; the message format changed with it.
 - `Lifter.optimize` takes `opts=` and threads the handle's `rom`, so a
   hand-built pipeline sees the same read-only image `analyze` does.
-- `OwnedElf::ppc64_abi_level` reports the ABI level an ELFv1/ELFv2 PowerPC
-  object declares in `e_flags`.
 - `CallOtherOverrides::new` rejects a duplicate user-op name rather than
   silently keeping the first, which `get` would have shadowed.
 - Fifteen names join seven modules' `__all__`, among them `ElfLifter`,
-  `load_elf`, `PatLike`, `ValueTy`, `AliasMode`, `DotStyle` and
+  `load_elf`, `PatLike`, `ValueTy`, `DotStyle` and
   `OptimizerPass`; `get_type_hints` no longer raises `NameError` on a published
   pattern protocol method.
 - A mapped file must not change on disk while it is loaded.

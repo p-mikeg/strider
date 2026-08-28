@@ -138,9 +138,8 @@ impl Bindings {
         }
     }
 
-    /// In bind order, which is preorder of the pattern tree. Builder-minted
-    /// identity pins are skipped: a caller holds no handle to one, so
-    /// reporting it would only pollute what it sees.
+    /// In bind order. Builder-minted identity pins are skipped: a caller holds
+    /// no handle to one, so reporting it would only pollute what it sees.
     pub(crate) fn iter(&self) -> impl Iterator<Item = (Capture, Binding)> + '_ {
         self.entries
             .iter()

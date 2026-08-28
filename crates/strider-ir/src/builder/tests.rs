@@ -1599,8 +1599,7 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
         "combined ret-val + clobbers equals the old full clobber list"
     );
 
-    // `build()` populates call_other_clobbered, so the function needs a
-    // terminated region first.
+    // `build()` validates, so the function needs a terminated region first.
     let region = b.create_region_all()?;
     b.set_entry_region_all(region)?;
     b.set_region(region);

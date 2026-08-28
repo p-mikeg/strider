@@ -716,8 +716,8 @@ fn add_self_loop_input_then_canonicalize() {
 
 #[test]
 fn reachable_by_inputs_high_fanin_traversal_unchanged() {
-    // With mark-on-push a high-fan-in producer is enqueued once, but the
-    // reachable set, and so the survivors, must be identical.
+    // A producer reached from many roots is collected once, and the survivor
+    // set must not depend on how the traversal dedups.
     let mut g = TestGraph::new();
     let shared = const_node(&mut g, 7);
     // Add(shared, shared) would dedup, so vary the other operand to keep the
@@ -955,9 +955,10 @@ fn out_of_bounds_remove_node_input_leaves_dedup_intact() {
     assert_use_list_consistent(&g);
 }
 
-/// A repeated id in `reachable` pushes the node twice: the remap keeps the
-/// second copy, and the relink splices the orphaned first into the same
-/// values' use-lists, so `value_uses` reports consumers no live node owns.
+/// A repeated id must be rejected: unchecked it would push the node twice, the
+/// remap would keep the second copy, and the relink would splice the orphaned
+/// first into the same values' use-lists, so `value_uses` reported consumers no
+/// live node owns.
 #[test]
 #[should_panic(expected = "the second copy orphans")]
 fn retain_reachable_rejects_a_duplicate_node_id() {

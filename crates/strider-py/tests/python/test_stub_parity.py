@@ -466,8 +466,8 @@ def _union_aliases(tree: ast.Module) -> dict[str, tuple[str, ...]]:
 
     `typing.Union` flattens nested unions, so the stub side has to as well for
     `OptimizerPass = Union[MainOptimizerPass, PostOptimizerPass]` to compare.
-    A member that is not a plain (possibly quoted) name -- `os.PathLike[str]`
-    -- makes the whole alias unanswerable, and it is dropped.
+    A member that is not a plain (possibly quoted) name, `os.PathLike[str]`
+    say, makes the whole alias unanswerable, and it is dropped.
     """
     raw: dict[str, Optional[list[str]]] = {}
     for node in tree.body:

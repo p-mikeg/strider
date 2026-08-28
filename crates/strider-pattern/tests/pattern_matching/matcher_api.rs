@@ -300,7 +300,7 @@ fn get_vn_on_unbound_var_returns_none() {
     assert_eq!(m.get_vn(never_bound, &function), None);
 }
 
-/// With both walk-through flags off, an ordinary query is unaffected.
+/// A pattern's cast mask starts empty, so no cast is walked through.
 #[test]
 fn existing_pattern_unchanged_with_default_options() {
     let function = shapes::add_consts(5, 3);

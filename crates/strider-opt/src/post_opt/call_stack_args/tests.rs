@@ -636,9 +636,9 @@ fn disjoint_in_window_store_is_collected_not_a_terminator() -> Result<()> {
     Ok(())
 }
 
-/// Soundness floor under `Strict`: a non-SP-rooted Store between the pushes
-/// and the Call terminates the walk, so only the push closest to the Call is
-/// collected.  `StackGlobalDisjoint` recovers the upstream args.
+/// Soundness floor with `stack_global_disjoint` cleared: a non-SP-rooted Store
+/// between the pushes and the Call terminates the walk, so only the push
+/// closest to the Call is collected.  Setting it recovers the upstream args.
 #[test]
 fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
     let sp = stack_vn();
@@ -676,8 +676,8 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    // Pin Strict explicitly: the default is `StackGlobalDisjoint`, which would
-    // step through the global write instead.
+    // `octx_structural_only` clears `stack_global_disjoint`, whose default
+    // would step through the global write instead.
     pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::test_support::octx_structural_only())?;
 
@@ -738,7 +738,7 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    // Pin Strict explicitly; the default is `StackGlobalDisjoint`.
+    // `octx_structural_only` clears the default `stack_global_disjoint`.
     pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::test_support::octx_structural_only())?;
 

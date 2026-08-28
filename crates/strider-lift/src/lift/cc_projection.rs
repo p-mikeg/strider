@@ -68,7 +68,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 /// Float / vector arguments live in a register file the integer list never
 /// names, so without them the callee's float argument cone has no consumer and
 /// DCE deletes it.  Registers sharing a container (AAPCS-VFP `d0`/`d1` inside
-/// `q0`) each pass their own slice of it, so one argument is never two.
+/// `q0`) each pass their own slice of it, so two arguments never collapse into
+/// one.
 ///
 /// Every convention reaching here has its float argument registers seeded into
 /// the tracked set, so a `None` slot means a caller built a convention this

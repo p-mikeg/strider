@@ -165,9 +165,9 @@ impl ValueType {
     }
 
     /// All-ones mask for this integer type. `I256` / `I512` return `u128::MAX`,
-    /// which is NOT their mask -- it is every bit the carrier holds, so a
-    /// consumer that must not truncate has to special-case those two. Floats
-    /// return 0, so masking a float value yields 0.
+    /// every bit the carrier holds rather than their real mask, so a consumer
+    /// that must not truncate has to special-case those two. Floats return 0,
+    /// so masking a float value yields 0.
     pub fn bit_mask_u128(self) -> u128 {
         let bits = self.bit_width();
         if bits == 0 || !self.is_integer() {

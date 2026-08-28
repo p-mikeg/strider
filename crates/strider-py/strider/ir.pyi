@@ -27,15 +27,15 @@ class Node:
 
     Returned by `Function.node(id)` and `Match.node(capture)`.
 
-    A handle is tied to the function's current shape, so a node id that
-    `compact` or `optimize` has invalidated raises rather than silently
-    dereferencing the wrong node.
+    A handle carries the graph generation it was taken at, so once `compact`,
+    `optimize`, `rewrite` or `rewrite_all` has moved that generation every
+    accessor raises rather than dereferencing whatever now sits at the id.
     """
 
     @property
     def id(self) -> int:
-        """This node's raw integer index in the graph. Raises once `compact`
-        / `optimize` has invalidated every outstanding id."""
+        """This node's raw integer index in the graph. Raises once the handle
+        is stale."""
         ...
     def kind(self) -> str:
         """The node's kind as a string, including any payload:
@@ -49,12 +49,16 @@ class Node:
         `call_other_name()`. See `op()` for the operation variant alone."""
         ...
     def inputs(self) -> list[Node]:
-        """The data and control nodes feeding this one."""
+        """The producer behind each input edge, in input-slot order. A producer
+        feeding several slots appears once per slot."""
         ...
     def sint(self) -> Optional[int]:
         """This node's signed constant value, sign-extended at its declared
-        width. `None` when it is not an integer constant or its magnitude
-        exceeds 128 bits (use `wide_const_bytes()` for those)."""
+        width. `None` when it is not an integer constant, and `None` at any
+        declared width over 128 bits (`I256`, `I512`) even for a small value,
+        since there is no signed carrier: read those with `uint()` or
+        `wide_const_bytes()`. A boolean constant is a 1-bit integer, so `True`
+        reads back as `-1`."""
         ...
     def uint(self) -> Optional[int]:
         """This node's unsigned constant value, masked to its declared width.
@@ -70,7 +74,7 @@ class Node:
     def vn(self) -> Optional[Vn]:
         """The varnode this node names, else `None`: for `InitialVar` the
         register read at entry, for a `Call` the register it returns in, and
-        for a `CallOther` whatever varnode the sla assigns its result -- a
+        for a `CallOther` whatever varnode the sla assigns its result: a
         `unique` temporary, a tracked register, or nothing. A node has no bound
         output, so a multi-output call answers for its FIRST value output, never
         for one clobber in particular."""
@@ -80,8 +84,8 @@ class Node:
         and deduplicated."""
         ...
     def outputs(self) -> list[Node]:
-        """The nodes consuming this node's outputs, the forward counterpart
-        to `inputs()`."""
+        """The consumers of this node's outputs, in output-slot then use order.
+        A consumer appears once per edge it draws from this node."""
         ...
     def wide_const_bytes(self) -> Optional[bytes]:
         """The little-endian bytes of a wide integer constant (any width over
@@ -118,7 +122,7 @@ class Node:
     def __hash__(self) -> int: ...
 
 class Function:
-    """A lifted, optimised function as a sea-of-nodes IR graph.
+    """A lifted function as a sea-of-nodes IR graph.
 
     Returned as `AnalyzeResult.function`. Query it with `find_all` /
     `find_unique`, edit it with `rewrite` / `rewrite_all`, walk it with
@@ -143,14 +147,14 @@ class Function:
         `None`, else writes it to `path` and returns `None`.
 
         `pretty=False` (the default) renders the graph exactly as stored: one
-        node per node id, one edge per input edge, side tables inline, no
-        constant inlining or virtual nodes. It never raises.
+        node per node id REACHABLE FROM ENTRY (a detached node is omitted), one
+        edge per input edge, side tables inline, no constant inlining or
+        virtual nodes.
 
         `pretty=True` inlines constants, adds virtual nodes, and resolves
-        register names. That needs a disassembler, which this function
-        reaches through its parent `Cfg`, so it works only for a function
-        obtained from `analyze` and raises `StriderError` if the graph has no
-        entry. A `DotStyle` name in place of `True` picks the theme.
+        register names against the disassembler behind the parent `Cfg`. A
+        `DotStyle` name in place of `True` picks the theme; an unrecognised
+        name raises `StriderError`.
         """
         ...
     def to_html(
@@ -196,13 +200,14 @@ class Function:
         for an invalid id.
 
         A raw id is meaningful only in the graph generation it came from:
-        `compact` and `Lifter.optimize` renumber, and an id held across
-        either names a different node. A `Node` carries its generation and
-        goes stale instead; a bare int cannot."""
+        `compact` renumbers, and `Lifter.optimize` / `rewrite` rewire nodes out
+        from under it, so an id held across either can name something else or
+        nothing. A `Node` carries its generation and goes stale instead; a bare
+        int cannot."""
         ...
     def cfg_walk(self) -> list[Node]:
-        """The nodes reachable from entry following control edges only, the
-        CFG skeleton."""
+        """The nodes reachable from entry following control edges only (the
+        CFG skeleton), in ascending node-id order."""
         ...
     def data_walk(self) -> list[Node]:
         """Every node reachable from entry (data inputs and control
@@ -215,7 +220,9 @@ class Function:
     def mem_walk(self) -> list[Node]:
         """The memory-touching nodes (Load, Store, Call, CallOther, MemPhi,
         and the InitialMemory root) reached by following memory-token edges
-        forward from InitialMemory, in pre-order."""
+        forward from InitialMemory, in pre-order. A node that only reads the
+        final token without touching memory (`Return`, `IndirectBranch`) is
+        excluded, and the list is empty when no InitialMemory is reachable."""
         ...
     def compact(self) -> None:
         """Drop every node unreachable from entry. Invalidates node ids."""
@@ -292,6 +299,9 @@ class Function:
         a bare `strider.pattern.Pat` is accepted for compatibility, but only
         its build-valid subset compiles. A `.when()` guard on `find` raises:
         select the sites with `find_all` instead.
+
+        One walk of the reachable nodes, not a fixed point, so a rule whose
+        output its own `find` matches needs the caller to loop.
 
         Every outstanding `Node` handle goes stale, a return of 0 included: the
         graph generation moves before the rule runs."""

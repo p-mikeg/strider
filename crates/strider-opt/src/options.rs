@@ -1,7 +1,7 @@
 /// Per-run knobs.
 #[derive(Debug, Clone)]
 pub struct OptOptions {
-    /// Run the indirect-branch classifier.  Off leaves every site an
+    /// Run the indirect-branch classifier.  Off leaves every unseeded site an
     /// `IndirectBranch` placeholder, so a caller can hand its own answers in
     /// through `CfgOptions::known_targets` instead, or see the raw dispatch
     /// shape when a resolution looks wrong.  Caller-supplied targets still
@@ -38,8 +38,8 @@ pub struct AssumptionOptions {
     /// `.rodata`, `.bss`, MMIO) never overlap at runtime, so the walker steps
     /// through a constant-address `Store` when looking back from an SP-rooted
     /// `Load` and vice-versa.  Wrong only where a constant address
-    /// coincidentally equals `sp + K` at runtime.  Other cross-class pairs
-    /// (anything `Anchor`) bail either way.  Default ON.
+    /// coincidentally equals `sp + K` at runtime.  No other class pair reads
+    /// it.  Default ON.
     pub stack_global_disjoint: bool,
     /// A `Call` on an incoming stack-argument slot's memory chain leaves the
     /// slot as it found it, so the argument is still detectable after the
@@ -61,6 +61,12 @@ pub struct AssumptionOptions {
     /// found them, so a spill at the stack top survives the call. The psABIs
     /// let a callee write those slots (they are its parameters' storage); this
     /// asserts compiler output does not.
+    ///
+    /// Not standalone: the only reader is the outgoing-argument-window test,
+    /// which is reached only under
+    /// [`escape_analysis`](Self::escape_analysis) or a non-empty
+    /// [`noalias_allocators`](Self::noalias_allocators), both off by default.
+    /// Set alone it changes nothing.
     pub callee_preserves_stack_args: bool,
     /// Callee addresses of pure `noalias` heap allocators (`malloc`/`calloc`-like:
     /// a size in, a fresh non-overlapping pointer out, no pointer arguments).

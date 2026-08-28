@@ -69,7 +69,7 @@ assert mem.calls > 0 and rom.calls > 0, "a reader never fired; wiring bug"
 assert len(fn.find_all(load())) == 0, "load should have folded away"
 
 
-# ignore_casts=True sees through the truncate/extend nodes around rdi.
+# ignore_casts=True matches through Truncate / Extend nodes.
 print("\n=== capture the folded constant ===")
 k = Capture()
 matches = fn.find_all(int_add(function_arg(0), var(k)), ignore_casts=True)

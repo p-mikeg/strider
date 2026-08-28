@@ -95,8 +95,8 @@ fn commutative_match_with_identical_operands_emits_one() {
     );
 }
 /// `find_all` dedups by the capture->binding MAP, not by root, so a capture on
-/// one operand of a commutative node yields one hit per operand it can bind, so
-/// a single hit really does mean the binding is unambiguous.
+/// one operand of a commutative node yields one hit per operand it can bind: a
+/// single hit means the binding is unambiguous.
 #[test]
 fn commutative_capture_reports_both_operand_bindings() {
     let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
@@ -672,7 +672,7 @@ fn unary_parent_guard_redrives_commutative_child() {
     );
 }
 
-/// `a OP b` returned as the boolean result, cast to u64 for typability.
+/// `a OP b`, its `I1` result widened to `I64` for the return.
 fn graph_float_cmp(l: f64, r: f64, op: FloatCmpOp) -> strider_ir::Function {
     let mut t = Tb::empty();
     let a = t.f64(l);

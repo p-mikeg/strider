@@ -37,7 +37,7 @@ def _arm_program() -> bytes:
 
     Seating the table decodes 0x1040 as Thumb and then reaches 0x1042 as ARM,
     which is the clash. That costs the dispatch, so the round after it rebuilds
-    with no arm at 0x1042 at all -- but the Thumb-only `bx r0` it discovered
+    with no arm at 0x1042 at all, but the Thumb-only `bx r0` it discovered
     keeps the loop going for one more round, so the returned CFG is the clean
     one.
     """
@@ -74,8 +74,8 @@ def test_a_mode_clash_is_reported_after_its_round_is_rebuilt_away() -> None:
 
 
 def _x86_interior_program() -> bytes:
-    """x86-64 at 0x1000: `movabs rax, 0` (ten bytes), `je 0x1005` -- five bytes
-    into that `movabs` -- then `ret`."""
+    """x86-64 at 0x1000: `movabs rax, 0` (ten bytes), `je 0x1005` (five bytes
+    into that `movabs`), then `ret`."""
     return bytes([0x48, 0xB8]) + bytes(8) + bytes([0x74, 0xF9, 0xC3])
 
 

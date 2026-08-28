@@ -102,7 +102,7 @@ macro_rules! arch_presets {
         }
 
         impl ArchPreset {
-            /// Every variant. Rosters iterate this instead of re-enumerating.
+            /// Every variant.
             pub const ALL: &'static [ArchPreset] = &[$(ArchPreset::$variant,)+];
         }
     };
@@ -166,7 +166,6 @@ pub struct SleighArch {
     pub(crate) preset: ArchPreset,
 }
 
-/// Emits a `pub fn $name() -> SleighArch` preset constructor.
 macro_rules! arch_ctor {
     ($(#[$doc:meta])* $name:ident => $sla:ident, $pspec:ident, $endian:ident, $preset:ident) => {
         $(#[$doc])*
@@ -363,10 +362,6 @@ impl SleighArch {
 
     /// Extracts this arch's register table by probing Sleigh against an
     /// empty memory reader.
-    ///
-    /// # Errors
-    ///
-    /// Propagates errors from `rsleigh::Sleigh::new` or `Sleigh::regs`.
     pub fn probe_regs(self) -> anyhow::Result<rsleigh::SleighRegs> {
         let probe = rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0);
         let sleigh = rsleigh::Sleigh::new(self.sla_spec, self.pspec, probe)?;

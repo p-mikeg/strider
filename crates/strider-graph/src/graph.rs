@@ -425,10 +425,10 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// every other node. Returns the old-to-new id translation table.
     ///
     /// `reachable` MUST be backward-input-closed, i.e. every input's producing
-    /// node is present, or this panics on a dangling edge. It MUST also be
-    /// duplicate-free: a repeated id pushes two new nodes, the remap keeps the
-    /// second, and the relink then splices the orphaned first into its values'
-    /// use-lists, so `value_uses` reports consumers no node owns.
+    /// node is present, and duplicate-free. Both violations panic; unchecked, a
+    /// repeated id would push two new nodes, the remap would keep the second,
+    /// and the relink would splice the orphaned first into its values'
+    /// use-lists, so `value_uses` reported consumers no node owns.
     ///
     /// Invalidates every pre-compaction `NodeId` / `ValueId` / `UseId`, and
     /// bumps the generation counter.

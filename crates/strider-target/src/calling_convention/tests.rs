@@ -1107,11 +1107,11 @@ fn validate_rejects_negative_stack_arg_base_offset() {
     );
 }
 
-/// GHIDRA's ARM sla puts `d0`/`d1` and `q0` at the same register offset
-/// (0x300), so a function touching `q0`/`q1` tracks those as the containers
-/// and `d0..d3` collapse onto them.  Mapping the return list through
-/// `container_of` then yields `q0, q0, q1, q1`, which the lifter concatenates
-/// into a `Call`'s output varnodes and `validate_call_output_vns` rejects.
+/// GHIDRA's ARM sla lays `d0`-`d3` inside `q0`/`q1` (`q0` and `d0` share
+/// offset 0x300), so a function touching `q0`/`q1` tracks those as the
+/// containers.  Mapping the return list through `container_of` then yields
+/// `q0, q0, q1, q1`, which the lifter concatenates into a `Call`'s output
+/// varnodes and `validate_call_output_vns` rejects.
 #[test]
 fn aliased_float_ret_regs_collapse_to_one_container_each() {
     let regs = regs_for(crate::arch::SleighArch::arm());

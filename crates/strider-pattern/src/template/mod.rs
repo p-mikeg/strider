@@ -31,8 +31,8 @@ use crate::matcher::OutputKindSpec;
 
 pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind>>;
 
-/// The `u128` return caps the expressible range: an I256/I512 output
-/// materialises only the low 128 bits, leaving the high limbs zero.
+/// The `u128` return caps the expressible range: an output wider than `I128`
+/// skips the rewrite rather than interning a truncated constant.
 pub type TemplateKindFnIntConst = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<u128>>;
 
 /// How a template node materialises into fresh IR.
@@ -70,8 +70,8 @@ pub enum TemplateTy {
 /// `proof_nodes` is unioned into the asm-fingerprint of every node created
 /// here.
 ///
-/// Interior nodes may be multi-output; the root always yields a single value
-/// output.
+/// Interior nodes may be multi-output; the returned value is the root node's
+/// first value output.
 ///
 /// # Author-owned output-signature validity
 ///

@@ -101,7 +101,7 @@ impl crate::template::template_pat::TemplatePat for IntConst {
 
 /// Every width a constant could have been widened FROM, ascending. `I1` is
 /// excluded: it is a boolean, not an integer source width, and a one-bit
-/// candidate would make any odd `v` agree with any odd stored value.
+/// candidate would make every odd `v` match the constants `1` and all-ones.
 const INT_WIDTHS: [usize; 15] = [
     8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 96, 112, 128, 256, 512,
 ];
@@ -384,11 +384,12 @@ pub struct IntConstAnyOf {
 impl MatchPat for IntConstAnyOf {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         // The value lives in the Function's interner, not the NodeKind, so this
-        // needs a predicate rather than a KindSpec::Exact.  Masked to the output
-        // width on both sides like the single-value form, or `int_const([-1])`
-        // would miss the `I32` all-ones constant `int_const(-1)` finds.  The
-        // width is only known per candidate, so the masked set is built once per
-        // width met rather than scanning the candidates for each.
+        // needs a predicate rather than a KindSpec::Exact. Masked to the output
+        // width on both sides like the single-value form, or
+        // `int_const([u128::MAX])` would miss the `I32` all-ones constant
+        // `int_const(u128::MAX)` finds. The width is only known per candidate,
+        // so the masked set is built once per width met rather than scanning the
+        // candidates for each.
         let set = self.set;
         let by_width: RefCell<Vec<(usize, FxHashSet<u128>)>> = RefCell::new(Vec::new());
         int_const_leaf(b, None, move |stored, ty| {

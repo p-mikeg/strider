@@ -2170,8 +2170,9 @@ fn contains(iv: Interval, y: u128) -> bool {
     iv.lo <= y && y <= iv.hi && (y - iv.lo).is_multiple_of(iv.stride.max(1))
 }
 
-/// Shift counts at and past the width are the cases the abstract domain has to
-/// saturate rather than wrap, matching `opbehavior.cc`.
+/// Every concrete result of `shl` / `shr` / `mul` / `udiv` lands inside the
+/// abstract one.  The concrete model saturates shift counts at and past the
+/// width rather than wrapping, matching `opbehavior.cc`.
 #[test]
 fn scale_ops_contain_every_concrete_result() {
     const WIDTH: u32 = 5;

@@ -45,8 +45,10 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
 }
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
-    /// `all_vns` is every varnode any instruction in `cfg` references.  Pass
-    /// an empty `per_address_ccs` for no CC overrides.
+    /// `all_vns` seeds the tracked set: every REGISTER / UNIQUE varnode the
+    /// `cfg`'s instructions name, plus every `CallOther` ABI footprint
+    /// register.  The stack vn and each override's argument registers are
+    /// added here.
     pub(crate) fn new(
         lifter: &'a Lifter<R>,
         cc: strider_target::BuiltCallingConvention,
@@ -136,7 +138,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // leave `enqueue_resolved`'s None-arch arm dropping the committed bit
         // and decoding a resolved target in the wrong mode; capture without
         // carry means the name above did not resolve, which `name_to_vn`
-        // reports as `None` rather than as an error -- so a misspelling would
+        // reports as `None` rather than as an error, so a misspelling would
         // otherwise satisfy a one-directional check vacuously while the mode
         // bit is silently never captured. Mirror of the carry-side check in
         // `Builder::with_flow_context`.

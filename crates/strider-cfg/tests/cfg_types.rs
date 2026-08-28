@@ -130,7 +130,7 @@ fn contains_addr_covers_the_last_instructions_bytes_not_just_its_start() {
 
 #[test]
 fn contains_addr_returns_true_for_empty_region_at_start_addr() {
-    // A tail-call stub owns no bytes at all.
+    // A tail-call stub owns its start address and no byte past it.
     let r = Region {
         start_addr: addr(0x1000, 0),
         insns: Vec::new(),

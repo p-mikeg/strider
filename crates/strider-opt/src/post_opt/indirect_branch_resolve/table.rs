@@ -253,8 +253,8 @@ fn bounded_index(
 
 /// Is `iv` a non-empty, enumerable, genuinely-narrowed range at `ty`?
 ///
-/// Past 128 bits the interval's `u128` carrier cannot represent the type's own
-/// top, so every interval there reads as narrowed.
+/// A type past 128 bits is rejected outright: the interval's `u128` carrier
+/// cannot represent its top, so every interval there would read as narrowed.
 fn index_bound_ok(ty: strider_ir::node::ValueType, iv: Interval) -> bool {
     crate::opt::known_bits::type_mask_u128(ty).is_some_and(|mask| {
         iv.hi >= iv.lo && iv.hi < mask && iv.count() <= u128::from(MAX_TABLE_ENTRIES)

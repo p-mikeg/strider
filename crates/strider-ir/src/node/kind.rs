@@ -66,7 +66,7 @@ pub enum NodeKind {
 
     /// Clobbers caller-saved registers and the memory token.
     Call,
-    /// Consumes the outgoing control edge plus any return values.
+    /// Consumes the outgoing control and memory edges plus any return values.
     Return,
     /// Placeholder for a branch the CFG could not resolve. Inputs:
     /// `[control, memory, target_value]`, plus the optional interworking
@@ -106,16 +106,16 @@ pub enum NodeKind {
     /// Outputs `I1`.
     FloatCmpOp(crate::node::FloatCmpOp),
 
-    /// Integer to nearest representable float, like C's `(float)n`.
+    /// Signed integer to the nearest representable float, like C's `(float)n`.
     IntToFloat,
     /// Float to integer, truncating toward zero, like C's `(int)f`.
     FloatToInt,
     /// Reprecision between float types.
     FloatToFloat,
 
-    /// Same-size bitcast, `I32` to `F32` or `I64` to `F64`. Bits unchanged.
+    /// Same-size bitcast, integer to float. Bits unchanged.
     IntBitsToFloat,
-    /// Same-size bitcast, `F32` to `I32` or `F64` to `I64`. Bits unchanged.
+    /// Same-size bitcast, float to integer. Bits unchanged.
     FloatBitsToInt,
 
     /// Sleigh `CallOther`: CPU intrinsics such as `cpuid`, `rdtsc`, `syscall`,
@@ -124,7 +124,8 @@ pub enum NodeKind {
     /// Inputs: `[control, memory, arg0, arg1, ...]`. Outputs:
     /// `[Control, Memory]`, then a `Typed` slot for the result when the
     /// instruction has an output varnode, then one per implicit-write clobber.
-    /// Memory is always clobbered.
+    /// The `Memory` output is always present; only a memory-clobbering op
+    /// advances the region's chain through it.
     CallOther {
         user_op_id: u64,
     },
@@ -157,11 +158,9 @@ impl NodeKind {
     }
 
     /// Fixed input slots before the variadic tail, i.e. the slot a caller's
-    /// `arg(n)` / `ret_val(n)` / `phi_input(n)` shifts by.
-    ///
-    /// Reads `expected_signature`, which is the single source of truth for
-    /// slot shape; a consumer that hardcodes the shift instead silently wires
-    /// the wrong input when a head slot is added.
+    /// `arg(n)` / `ret_val(n)` / `phi_input(n)` shifts by. Read off
+    /// `expected_signature` so a head-slot addition cannot silently mis-wire
+    /// the shift.
     #[must_use]
     pub fn input_head_len(&self) -> usize {
         crate::node_signature::expected_signature(self)
@@ -196,11 +195,9 @@ impl NodeKind {
             .map(|s| s.kind)
     }
 
-    /// Consumes control and produces none.
-    ///
-    /// A fourth terminator kind added without updating every consumer would
-    /// let a control walk conclude a live arm does not escape, so this is the
-    /// one statement of the set.
+    /// Consumes control and produces none. The single statement of the
+    /// terminator set: a control walk that misses one concludes a live arm
+    /// does not escape.
     #[must_use]
     pub fn is_terminator(&self) -> bool {
         matches!(

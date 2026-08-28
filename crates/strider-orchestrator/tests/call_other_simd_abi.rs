@@ -102,7 +102,7 @@ fn aarch64_neon_aese_lifts_and_is_pure() {
 
 #[test]
 fn aarch64_sve_ldr_lifts_and_clobbers_memory() {
-    // ldr z0, [x0] ; ret -- the sla passes the BASE REGISTER, emitting no
+    // ldr z0, [x0] ; ret: the sla passes the BASE REGISTER, emitting no
     // p-code LOAD, so the access is implicit and must stay on the memory chain.
     let f = lift_aarch64(vec![0x00, 0x40, 0x80, 0x85, 0xc0, 0x03, 0x5f, 0xd6])
         .expect("SVE_ldr must lift");

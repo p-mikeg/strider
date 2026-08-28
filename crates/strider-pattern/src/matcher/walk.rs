@@ -153,9 +153,8 @@ fn counting<'a>(
 /// `node`, with no associated output.
 ///
 /// Such a node can only satisfy a root whose output vertex imposes no value
-/// requirement (a bare `anything()`, or a control builder; `var()` is not one
-/// -- it carries a capture); a root
-/// demanding a value output is rejected.
+/// requirement (a bare `anything()`, or a control builder; `var()` is not one,
+/// it carries a capture); a root demanding a value output is rejected.
 ///
 /// `k` is the root continuation; see [`try_match`]. `count_root` is `false`
 /// for a sub-pattern matched inside another walk; see [`try_match_nested`].
@@ -247,8 +246,9 @@ fn try_match_at(
     // `value_of_width` pins width). With no value to check against (a
     // node-rooted match at a zero-output kind, reached through an alternation
     // whose own synthesized vertex imposes nothing), a vertex that demands
-    // anything cannot be satisfied, mirroring `finalize`'s secondary-output
-    // arm. A bare `anything()` demands nothing and still matches a `Return`.
+    // anything cannot be satisfied, mirroring `bind_sibling_outputs`'s
+    // no-output-at-the-slot arm. A bare `anything()` demands nothing and still
+    // matches a `Return`.
     if let Some(ov_idx) = out_vertex {
         let ov = ctx.pat.graph.output_weight(ov_idx);
         match root_value {
@@ -340,7 +340,7 @@ fn try_match_at(
     // one ordering.
     // Both orderings are re-driven under an enumerating continuation, so
     // nested commutative nodes multiply when BOTH operands of each satisfy the
-    // same sub-pattern -- a spine that feeds itself (`v_i = add(v_i-1, v_i-1)`)
+    // same sub-pattern: a spine that feeds itself (`v_i = add(v_i-1, v_i-1)`)
     // is the shape to watch. A spine with distinct operands does not: the
     // swapped ordering puts the sub-pattern against a leaf and fails at once.
     // Dedup collapses the RESULTS, not the enumeration, so the cost is in
@@ -568,8 +568,8 @@ fn continue_node(
 ///
 /// The cast walk-through is a fallback, not an alternative: it engages only
 /// when the level above PRODUCED no match, never to offer a second binding
-/// beside a direct one. Reaching the continuation is not the same test -- a
-/// guard above can reject a configuration, and the ladder must still run --
+/// beside a direct one. Reaching the continuation is not the same test (a
+/// guard above can reject a configuration, and the ladder must still run),
 /// so the cut counts full matches through `ctx.satisfied`, which is also what
 /// `first_of` cuts on. Under an enumerating `k` the return value cannot tell
 /// the two apart: it is always `false`.
@@ -623,7 +623,7 @@ fn try_operand(
         // Cut on a match this level actually PRODUCED, not merely on reaching
         // the continuation: a guard above can reject the configuration, and
         // then a deeper level may still match. `satisfied` counts full matches
-        // for exactly this reason -- it is what `first_of` cuts on.
+        // for exactly this reason; it is what `first_of` cuts on.
         let before = ctx.satisfied.get();
         if try_match_at(
             ctx,

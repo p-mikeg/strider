@@ -1,5 +1,5 @@
 //! `one_of` is a union: every matching arm is enumerated with its own bindings,
-//! so order carries no meaning and two overlapping arms each give a match --
+//! so order carries no meaning and two overlapping arms each give a match,
 //! as long as they BIND differently. Results dedup on the bindings alone, so
 //! two arms that bind identically while covering different nodes collapse to
 //! one, and the first listed arm's `Match::matched_nodes` is the one kept.

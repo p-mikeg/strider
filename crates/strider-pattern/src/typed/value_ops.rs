@@ -22,7 +22,7 @@ use crate::typed::builder_like::{
 use crate::typed::consts::{int_const, int_const_with_fn};
 
 // The `*Fixed` structs and their lowered-shape siblings (`Sub`, `BitNot`,
-// `FloatSub`, `FloatLe`, ...) stay hand-written: their bodies differ per op.
+// `FloatSub`, `FloatLe`, ...) stay hand-written: their lowerings differ.
 
 /// Emit a match-only `*Any` binary struct matching any variant of
 /// `$exemplar`'s kind. Pass a trailing `pin_i1` to pin the output to `I1`

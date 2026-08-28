@@ -62,7 +62,7 @@ mod tests {
 
     use crate::{Builder, CfgOptions};
 
-    // `jz +2`, `nop`, `ret`: an entry block plus two successors.
+    // `jne +1`, `nop`, `ret`: an entry block plus two successors.
     fn two_way_cfg() -> crate::Cfg {
         let bytes = vec![0x75, 0x01, 0x90, 0xc3];
         let start = 0x1000;

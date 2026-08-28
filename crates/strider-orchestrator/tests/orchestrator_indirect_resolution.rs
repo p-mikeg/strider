@@ -85,7 +85,7 @@ fn outer_loop_unresolved_branch_is_reported_not_errored() {
 fn analyze_seats_pre_seeded_known_targets_from_lift_options() {
     // The caller's `cfg.known_targets` seeds the resolution loop, which then
     // grows it. `apply_resolutions` unions, so the FOLD only ever adds edges
-    // to what the classifier proved -- seating one can still cost the site its
+    // to what the classifier proved; seating one can still cost the site its
     // real arms (`known_targets_union.rs`). Here `jmp rax` is unresolvable, so
     // the seed is the only answer the site has.
     let mut bytes = vec![0xff, 0xe0u8]; // jmp rax at 0x1000

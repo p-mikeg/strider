@@ -458,10 +458,10 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // Only a tail call reaches here: an in-function `Single` was
                 // rewritten to a one-arm `Switch` above.
                 //
-                // A `TailCall` consumes the site exactly as `LinkRegister`
-                // does -- no placeholder, no `Switch` anchor -- so a dispatch
-                // that really had more arms leaves no trace. Record it, or the
-                // loss is silent on every channel.
+                // A `TailCall` consumes the site exactly as `LinkRegister` does
+                // (no placeholder, no `Switch` anchor), so a dispatch that
+                // really had more arms leaves no trace. Record it, or the loss
+                // is silent on every channel.
                 self.builder.tail_call_seated.push(addr);
                 self.finish_current_region(RegionTerminator::TailCall {
                     target: crate::ResolvedTarget::new(target.addr, target.isa_bit),

@@ -450,7 +450,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// both arms. That owner's instruction stream starts EARLIER than the
     /// target, though: for a direct branch into overlapping code the arm is not
     /// the stream the branch jumps to. The address is recorded so a caller is
-    /// not left believing the edge is exact -- see
+    /// not left believing the edge is exact; see
     /// [`Cfg::interior_branch_targets`].
     fn seat_non_boundary_target(
         &mut self,
@@ -561,10 +561,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// [`Cfg::undecodable_seeded_targets`] instead.
     ///
     /// Only the site that failed loses the arm. The same address reached from
-    /// another site decodes in that site's own context -- `enqueue_resolved`
-    /// pins the branch's committed ISA mode, `enqueue` carries the parent
-    /// region's -- so on ARM/Thumb or MIPS16 one can fail while the other is
-    /// live, and stripping both would take an arm whose edge is wired.
+    /// another site decodes in that site's own context (`enqueue_resolved` pins
+    /// the branch's committed ISA mode, `enqueue` carries the parent region's),
+    /// so on ARM/Thumb or MIPS16 one can fail while the other is live, and
+    /// stripping both would take an arm whose edge is wired.
     ///
     /// Stripping the LAST arm re-defers the site to an
     /// `UnresolvedIndirectBranch`: a zero-arm `Switch` fails the whole

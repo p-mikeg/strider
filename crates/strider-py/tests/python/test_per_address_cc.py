@@ -12,8 +12,6 @@ def _x86_64_call_then_ret_bytes():
 
 
 def test_call_to_overridden_address_lifts_without_error():
-    """The override path must lift without error and leave exactly one
-    Call in the graph."""
     arch = SleighArch.x86_64()
     cc = CallingConvention.x86_64_systemv()
     mem = BufferReader(0x1000, _x86_64_call_then_ret_bytes())
@@ -30,7 +28,6 @@ def test_call_to_overridden_address_lifts_without_error():
 
 
 def test_per_address_ccs_default_empty_does_not_break_normal_calls():
-    """The default-empty path must behave as if the knob did not exist."""
     arch = SleighArch.x86_64()
     cc = CallingConvention.x86_64_systemv()
     mem = BufferReader(0x1000, _x86_64_call_then_ret_bytes())

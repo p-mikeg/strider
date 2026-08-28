@@ -20,7 +20,7 @@ fn add_zero_identity_fires_and_redirects() {
         let a = b.build_int_const(7u64, T::I64)?;
         let zero = b.build_int_const(0u64, T::I64)?;
         let sum = b.build_int_binary_operation(a, zero, IntBinaryOp::Add, T::I64)?;
-        // A consumer of the Add so replace_all_uses has something to do.
+        // A consumer of the Add, so the rewrite has a use to redirect.
         b.build_int_binary_operation(sum, a, IntBinaryOp::Or, T::I64)
     })
     .unwrap();
@@ -39,8 +39,7 @@ fn add_zero_identity_fires_and_redirects() {
     let fired = rule(&mut ctx, add_root).unwrap().is_some();
     assert!(fired, "add-zero identity should fire");
 
-    // The Or consumer now reads the IntConst(7) twice; no Add(_, 0) is
-    // reachable from any live consumer's first operand.
+    // The Or consumer now reads the IntConst(7) twice.
     let or_reads_const = ctx
         .function()
         .node_inputs(or_node(ctx.function()))

@@ -183,9 +183,9 @@ impl BuiltCallingConvention {
             .chain(self.ret_val_regs_float.iter())
             .map(&container_of)
             .collect();
-        // Aliased ABI return registers share a container (ARM `d0`/`d1` and
-        // `q0` sit at the same offset), and a `Call` output varnode must be
-        // unique, so the group is deduplicated.
+        // Aliased ABI return registers share a container (ARM `d0` and `d1`
+        // both live inside `q0`), and a `Call` output varnode must be unique,
+        // so the group is deduplicated.
         let mut ret_vals: Vec<rsleigh::Vn> = Vec::new();
         for c in ret_containers.iter().copied() {
             if tracked_vns.contains(&c) && is_clobbered(&c) && !ret_vals.contains(&c) {
@@ -509,9 +509,9 @@ const X86_CDECL_BASE: CallingConvention = CallingConvention {
     preserves_all_registers: false,
 };
 
-/// Base for `powerpc64_elf_v1` and `powerpc64_elf_v2`, which differ only in
-/// `stack_args.base_offset` (ELFv1's 48-byte linkage area vs ELFv2's 32,
-/// each plus the 64-byte parameter save area).
+/// Base for `powerpc64_elf_v1` and `powerpc64_elf_v2`, which differ in
+/// `stack_args.base_offset` (ELFv1's 48-byte linkage area vs ELFv2's 32, each
+/// plus the 64-byte parameter save area) and in `ret_val_regs_float`.
 const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
     stack_ptr_reg_name: "r1",
     arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
@@ -588,8 +588,8 @@ const ARM_AAPCS_VFP_BASE: CallingConvention = CallingConvention {
     preserves_all_registers: false,
 };
 
-/// Base for `mips_o32` and `mips_n64`, which differ in `arg_passing_regs`
-/// and `stack_args`.
+/// Base for `mips_o32` and `mips_n64`; n64 widens both argument banks,
+/// narrows the callee-saved float set, and drops the shadow space.
 const MIPS_O32_BASE: CallingConvention = CallingConvention {
     stack_ptr_reg_name: "sp",
     arg_passing_regs: &["a0", "a1", "a2", "a3"],

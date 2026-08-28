@@ -895,8 +895,7 @@ fn validate_branch_pattern(pat: &Pattern) {
 /// kind such as `Return`; the match dispatches through both shapes.
 ///
 /// [`crate::Matcher`]'s node-rooted entry enumerates, so `k` runs once per way
-/// `pat` binds;
-/// see [`IfPat::with_true`].
+/// `pat` binds; see [`IfPat::with_true`].
 fn match_branch_consumer(
     matcher: &crate::Matcher,
     if_node: NodeId,

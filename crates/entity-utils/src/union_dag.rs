@@ -59,7 +59,7 @@ impl<N: EntityRef, V: Copy> UnionDag<N, V> {
     /// `src` is empty.
     ///
     /// The link is a LIVE ALIAS, not a snapshot: a value added to `src` AFTER
-    /// the union is visible from `dst` too. Not the other way round -- `dst`'s
+    /// the union is visible from `dst` too. Not the other way round: `dst`'s
     /// own later values stay out of `src`.
     pub fn union(&mut self, dst: N, src: N) {
         let Some(src_root) = self.roots[src].expand() else {
