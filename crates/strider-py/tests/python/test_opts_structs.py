@@ -44,12 +44,6 @@ def test_cfg_options_rejects_zero_function_max_size():
         strider.cfg.CfgOptions(function_max_size=0)
 
 
-def test_lifter_options_rejects_bad_alias_mode():
-    with pytest.raises(ValueError, match="alias_mode"):
-        # Deliberate: an unknown alias_mode is a runtime error.
-        strider.lift.LifterOptions(alias_mode="nonsense")  # type: ignore[arg-type]
-
-
 def test_lifter_options_defaults_are_not_shared_mutable():
     """Two default `LifterOptions()` must not share one mutable default
     `CfgOptions` object across construction sites."""
@@ -67,10 +61,12 @@ def test_escape_analysis_defaults_false_and_round_trips():
     assert "escape_analysis=True" in repr(opts)
 
 
-def test_assumptions_default_to_a_fresh_all_off_group():
+def test_assumptions_default_to_a_fresh_group_with_the_two_pipeline_claims_on():
     a = strider.lift.LifterOptions()
     b = strider.lift.LifterOptions()
     assert a.assumptions is not b.assumptions
+    for name in ("stack_global_disjoint", "assume_incoming_args_survive_calls"):
+        assert getattr(a.assumptions, name) is True
     for name in (
         "distinct_sp_bases_disjoint",
         "callee_preserves_stack_args",
@@ -81,10 +77,10 @@ def test_assumptions_default_to_a_fresh_all_off_group():
 
 
 def test_incoming_args_survive_calls_defaults_true():
-    assert strider.lift.LifterOptions().assume_incoming_args_survive_calls is True
-    opts = strider.lift.LifterOptions(assume_incoming_args_survive_calls=False)
-    assert opts.assume_incoming_args_survive_calls is False
-    assert "assume_incoming_args_survive_calls=False" in repr(opts)
+    assert strider.lift.AssumptionOptions().assume_incoming_args_survive_calls is True
+    a = strider.lift.AssumptionOptions(assume_incoming_args_survive_calls=False)
+    assert a.assume_incoming_args_survive_calls is False
+    assert "assume_incoming_args_survive_calls=False" in repr(a)
 
 
 def test_analyze_with_escape_analysis():
@@ -126,6 +122,8 @@ def test_with_cfg_carries_over_every_other_field():
     """
     pipeline = strider.opt.OptimizerPipeline.empty()
     assumptions = strider.lift.AssumptionOptions(
+        stack_global_disjoint=False,
+        assume_incoming_args_survive_calls=False,
         distinct_sp_bases_disjoint=True,
         callee_preserves_stack_args=True,
         noalias_allocators=[0x2000],
@@ -135,9 +133,7 @@ def test_with_cfg_carries_over_every_other_field():
         cfg=strider.cfg.CfgOptions(function_max_size=64),
         compact=False,
         per_address_ccs={0x1000: strider.sleigh.CallingConvention.x86_64_systemv()},
-        assume_incoming_args_survive_calls=False,
         assumptions=assumptions,
-        alias_mode="strict",
         pipeline=pipeline,
     )
 
@@ -146,9 +142,7 @@ def test_with_cfg_carries_over_every_other_field():
     assert out.cfg.function_max_size == 128
     assert out.compact is False
     assert out.per_address_ccs is not None and 0x1000 in out.per_address_ccs
-    assert out.assume_incoming_args_survive_calls is False
     assert out.assumptions is assumptions
-    assert out.alias_mode == "strict"
     # Identity, not just presence: the carried-over pipeline must be the
     # SAME object, matching what passing `pipeline=opts.pipeline` did.
     assert out.pipeline is pipeline

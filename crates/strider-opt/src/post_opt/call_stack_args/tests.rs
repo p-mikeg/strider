@@ -679,7 +679,7 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
     // Pin Strict explicitly: the default is `StackGlobalDisjoint`, which would
     // step through the global write instead.
     pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::test_support::octx_strict())?;
+    pipeline.run(&mut fg, &mut crate::test_support::octx_structural_only())?;
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
@@ -740,7 +740,7 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
     let mut pipeline = cf_rp_pipeline();
     // Pin Strict explicitly; the default is `StackGlobalDisjoint`.
     pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::test_support::octx_strict())?;
+    pipeline.run(&mut fg, &mut crate::test_support::octx_structural_only())?;
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
@@ -1282,9 +1282,7 @@ fn collect_walk_steps(slots: usize) -> Result<u64> {
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let call_id = find_call(fg.graph())?;
-    let alias_cfg = MemAnalyzer::new(MemOptions::call_blocking(
-        crate::AliasMode::StackGlobalDisjoint,
-    ));
+    let alias_cfg = MemAnalyzer::new(MemOptions::call_blocking(true));
     crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
     let args = collect_stack_args(&fg, call_id, stack_args, &alias_cfg);
     assert_eq!(args.len(), slots, "every argument slot must be collected");

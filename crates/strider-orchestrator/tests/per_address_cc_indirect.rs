@@ -315,8 +315,6 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     let default_total = default_ret.len() + default_clob.len();
     assert!(
         tagged_outputs < default_total,
-        "override tagged outputs ({}) must be strictly smaller than function-default total ({})",
-        tagged_outputs,
-        default_total,
+        "override tagged outputs ({tagged_outputs}) must be strictly smaller than function-default total ({default_total})",
     );
 }

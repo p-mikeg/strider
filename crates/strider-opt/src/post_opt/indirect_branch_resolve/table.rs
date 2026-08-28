@@ -30,8 +30,8 @@
 #![allow(clippy::module_name_repetitions)]
 
 use super::MAX_TABLE_ENTRIES;
+use crate::ReadOnlyMemory;
 use crate::value_range::Interval;
-use crate::{AliasMode, ReadOnlyMemory};
 use petgraph::graph::{DiGraph, NodeIndex};
 use strider_cfg::{ResolvedTarget, ResolvedTargets};
 use strider_ir::IRViewer;
@@ -46,7 +46,7 @@ pub fn classify_table_dispatch(
     branch: NodeId,
     rom: Option<&dyn ReadOnlyMemory>,
     ranges: &mut crate::value_range::RangeMap<'_>,
-    alias_mode: AliasMode,
+    assumptions: &crate::AssumptionOptions,
     mode_value: Option<ValueId>,
 ) -> Option<ResolvedTargets> {
     let target_value = function.indirect_branch_target(branch);
@@ -56,7 +56,7 @@ pub fn classify_table_dispatch(
         target_value,
         rom,
         ranges,
-        alias_mode,
+        assumptions,
         mode_value,
     )
 }
@@ -73,13 +73,13 @@ pub(crate) fn classify_dispatch_value(
     target_value: ValueId,
     rom: Option<&dyn ReadOnlyMemory>,
     ranges: &mut crate::value_range::RangeMap<'_>,
-    alias_mode: AliasMode,
+    assumptions: &crate::AssumptionOptions,
     mode_value: Option<ValueId>,
 ) -> Option<ResolvedTargets> {
     // A `Load[reg]` function pointer has no bounded dominator and defers here.
     let (idx_value, range) = decompose_index(function, ranges, target_value, site)?;
 
-    let mut ev = super::eval::Evaluator::new(function, rom, alias_mode);
+    let mut ev = super::eval::Evaluator::new(function, rom, assumptions.stack_global_disjoint);
     let pruned = super::eval::cone_order_pruned(function, target_value, idx_value);
     // The branch's committed ISA mode (an interworking `bx`/`jr`-dispatch),
     // `(entry & 1)`, evaluated per index so each arm carries its own mode.

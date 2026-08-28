@@ -8,7 +8,7 @@ use strider_cfg::ResolvedTargets;
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
 use strider_orchestrator::opt::value_range::compute_value_ranges;
-use strider_orchestrator::opt::{AliasMode, analyze_known_bits, classify_target};
+use strider_orchestrator::opt::{analyze_known_bits, classify_target};
 
 /// The fixture's sole `IndirectBranch` placeholder. `classify_target` takes
 /// the branch node itself: it derives the dispatch target from the branch's
@@ -28,7 +28,7 @@ fn classify_target_bare(view: &strider_ir::Function) -> anyhow::Result<Option<Re
         sole_branch(view),
         None,
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &strider_orchestrator::opt::AssumptionOptions::default(),
     ))
 }
 
@@ -136,7 +136,7 @@ fn stack_array_two_targets_resolves_to_multiple() {
         sole_branch(view),
         None,
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &strider_orchestrator::opt::AssumptionOptions::default(),
     );
     let mut expected = targets.to_vec();
     expected.sort_unstable();
@@ -163,7 +163,7 @@ fn stack_array_four_targets_resolves_to_multiple() {
         sole_branch(view),
         None,
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &strider_orchestrator::opt::AssumptionOptions::default(),
     );
     let mut expected = targets.to_vec();
     expected.sort_unstable();

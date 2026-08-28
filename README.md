@@ -43,7 +43,8 @@ path's arm is not the stream it believes, and `cfg.interior_branch_targets()`
 names a target interior to a region but off every instruction boundary, whose
 edge is seated on the region that owns the bytes rather than on the stream the
 branch jumps to. Asking whether a result may be incomplete means reading all
-four. `analyze` raises only on a genuine lift, CFG or optimizer failure.
+four, which is what `AnalyzeResult::is_complete()` does on the Rust side.
+`analyze` raises only on a genuine lift, CFG or optimizer failure.
 
 A loaded image is mapped rather than copied, and its relocations are applied as
 bytes are read, so a large object opens in tens of milliseconds and faults in
@@ -153,23 +154,20 @@ Nothing in an ELF header distinguishes hard-float ARM32 from soft-float, so
 read as empty
 registers.
 
-Memory precision is tunable per analysis. `alias_mode` picks how far a
-disjointness claim may reach: `"strict"` forwards only what the IR structurally
-proves, and is sound under any input with `AssumptionOptions` left at its
-defaults; the default `"stack_global_disjoint"` additionally assumes no constant
-address equals `sp + K` at runtime. Every assumption knob adds Disjoint verdicts
-that `"strict"` does not gate, so `"strict"` alone is not a soundness guarantee.
-`assume_incoming_args_survive_calls` is one of them and defaults to `True`: it
-assumes a callee leaves an incoming stack-argument slot as it found it, and it
-reaches which loads count as incoming arguments, nothing else. The claims the IR
-cannot check at all sit together in `AssumptionOptions`:
-`escape_analysis=True` forwards a spill across a call when no stack address
-escapes to the callee; `noalias_allocators=[malloc_addr]` lets a load step
-through a pure allocator call, whose result is a fresh disjoint object; and
-`callee_preserves_stack_args=True` treats the outgoing argument slots as
-untouched by the callee, which the psABI permits it to write, and
-`distinct_sp_bases_disjoint=True` says a store off one stack base cannot alias
-one off another. Pass them as
+Memory precision is tunable per analysis, and every knob is one claim about the
+code that the IR cannot check, so all six sit in `AssumptionOptions`. Each one's
+risky value is the positive one; clearing all six forwards only what the IR
+structurally proves and is the one configuration sound under any input.
+`stack_global_disjoint` (default `True`) says no constant address equals
+`sp + K` at runtime. `assume_incoming_args_survive_calls` (default `True`) says
+a callee leaves an incoming stack-argument slot as it found it, and reaches
+which loads count as incoming arguments, nothing else. The four defaulting off:
+`escape_analysis` forwards a spill across a call when no stack address escapes
+to the callee; `noalias_allocators=[malloc_addr]` lets a load step through a
+pure allocator call, whose result is a fresh disjoint object;
+`callee_preserves_stack_args` treats the outgoing argument slots as untouched by
+the callee, which the psABI permits it to write; and `distinct_sp_bases_disjoint`
+says a store off one stack base cannot alias one off another. Pass them as
 `LifterOptions(assumptions=AssumptionOptions(...))`.
 
 Some indirect-dispatch shapes do not resolve yet, and come back in

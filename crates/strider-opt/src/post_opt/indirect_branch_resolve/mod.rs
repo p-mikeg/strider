@@ -34,13 +34,18 @@ pub use table::classify_table_dispatch;
 /// fails closed on a partial proof, never under-approximating.  `Load(sp)` for
 /// `pop pc`-style returns stays unclassified: a `push X; pop pc` tail call has
 /// the identical shape and would be misclassified as a return.
+///
+/// Of `assumptions` only `stack_global_disjoint` reaches the table walk. The
+/// call-boundary relaxations are deliberately not honoured here: this walk
+/// decides a decoded branch target, so a relaxation that is wrong produces a
+/// wrong edge rather than a wrong fold.
 #[must_use]
 pub fn classify_target(
     function: &strider_ir::Function,
     branch: NodeId,
     rom: Option<&dyn ReadOnlyMemory>,
     ranges: &mut crate::value_range::RangeMap<'_>,
-    alias_mode: crate::AliasMode,
+    assumptions: &crate::AssumptionOptions,
 ) -> Option<ResolvedTargets> {
     let target_value = function.indirect_branch_target(branch);
     // The ISA mode this branch's instruction committed for its target(s), when
@@ -50,7 +55,7 @@ pub fn classify_target(
     single_const_target(function, target_value, mode_value)
         .or_else(|| link_register_return(function, target_value))
         .or_else(|| {
-            table::classify_table_dispatch(function, branch, rom, ranges, alias_mode, mode_value)
+            table::classify_table_dispatch(function, branch, rom, ranges, assumptions, mode_value)
         })
 }
 
@@ -185,11 +190,17 @@ impl PostOptimizer for IndirectBranchClassify {
                         selector,
                         ctx.rom,
                         &mut ranges,
-                        ctx.options.alias_mode,
+                        &ctx.options.assumptions,
                         None,
                     )
                 } else {
-                    classify_target(function, node, ctx.rom, &mut ranges, ctx.options.alias_mode)
+                    classify_target(
+                        function,
+                        node,
+                        ctx.rom,
+                        &mut ranges,
+                        &ctx.options.assumptions,
+                    )
                 };
                 resolutions.insert(node, resolved);
             }
