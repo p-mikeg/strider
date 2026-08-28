@@ -10,6 +10,25 @@ mod types;
 
 pub type Result<T> = anyhow::Result<T>;
 
+/// The ISA-mode bit flowing into `addr`, falling back to `entry_bit`.
+///
+/// The one derivation of the flowing bit: `Builder::enqueue_resolved` reads it
+/// for a seed the classifier gave no mode, and `Strider`'s fold reads it per
+/// site. A second derivation that agreed by accident would decode a resolved
+/// target in the wrong mode the first time they diverged.
+pub fn flowing_isa_bit_at<R: rsleigh::MemReader>(
+    arch: &strider_target::SleighArch,
+    sleigh: &rsleigh::Sleigh<R>,
+    addr: u64,
+    entry_bit: bool,
+) -> bool {
+    arch.isa_mode_var().map_or(entry_bit, |var| {
+        sleigh
+            .get_context_at(addr, var)
+            .map_or(entry_bit, |mode| mode != 0)
+    })
+}
+
 pub use builder::{Builder, FlowContext, FlowVars};
 pub use indirect_resolver::{ResolvedTarget, ResolvedTargets};
 pub use options::CfgOptions;

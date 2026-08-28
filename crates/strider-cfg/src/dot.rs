@@ -17,13 +17,37 @@ impl Cfg {
         &'a self,
         sleigh: &'a rsleigh::Sleigh<R>,
     ) -> CfgDotDumper<'a, R> {
-        CfgDotDumper { cfg: self, sleigh }
+        CfgDotDumper {
+            cfg: self,
+            sleigh,
+            nodes: None,
+            center: None,
+        }
     }
 }
 
 pub struct CfgDotDumper<'a, R: rsleigh::MemReader> {
     cfg: &'a Cfg,
     sleigh: &'a rsleigh::Sleigh<R>,
+    /// Restricts the dump to these regions; `None` dumps every region.
+    nodes: Option<&'a rustc_hash::FxHashSet<NodeIndex>>,
+    /// Rendered with a gold border.
+    center: Option<NodeIndex>,
+}
+
+impl<'a, R: rsleigh::MemReader> CfgDotDumper<'a, R> {
+    /// Restricts the dump to `nodes` and highlights `center`, so a
+    /// neighborhood renders through the same label and edge rules as a whole
+    /// CFG rather than a second emitter.
+    pub(crate) fn restricted(
+        mut self,
+        nodes: &'a rustc_hash::FxHashSet<NodeIndex>,
+        center: NodeIndex,
+    ) -> Self {
+        self.nodes = Some(nodes);
+        self.center = Some(center);
+        self
+    }
 }
 
 impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
@@ -40,7 +64,11 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
     }
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
-        self.cfg.region_graph.node_indices()
+        self.cfg
+            .region_graph
+            .node_indices()
+            .filter(|n| self.nodes.is_none_or(|keep| keep.contains(n)))
+            .collect::<Vec<_>>()
     }
 
     fn dump_as_dot(
@@ -70,7 +98,12 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         }
         write!(&mut label, "\\l").map_err(anyhow::Error::from)?;
 
-        out.node(&dot_id, &label, "box", &[]);
+        let extra: &[(&str, &str)] = if self.center == Some(node_id) {
+            &[("color", "\"#ffcc00\""), ("penwidth", "2.5")]
+        } else {
+            &[]
+        };
+        out.node(&dot_id, &label, "box", extra);
 
         // Edges are unweighted, so label and style come from the SOURCE
         // region's terminator.  A `CondBranch` source defers to `region_if`
@@ -88,6 +121,9 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
             .edges_directed(node_id, petgraph::Incoming)
         {
             let src = edge.source();
+            if self.nodes.is_some_and(|keep| !keep.contains(&src)) {
+                continue;
+            }
             let src_id = src.index().to_string();
             let src_region = self
                 .cfg

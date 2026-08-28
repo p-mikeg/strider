@@ -152,8 +152,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // decodes a strider-resolved target in.
         let function_mode = self.flow_vars.snapshot(&self.sleigh, decode_addr);
         strider_cfg::Builder::for_arch(&self.arch, &mut self.sleigh, decode_addr, cfg_opts)
-            .with_flow_vars(&self.flow_vars)
-            .with_function_mode(function_mode)
+            .with_flow_context(&self.flow_vars, function_mode)
             .with_per_address_ccs(per_address_ccs.clone())
             .build()
     }

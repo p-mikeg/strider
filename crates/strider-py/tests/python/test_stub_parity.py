@@ -575,6 +575,7 @@ _ZERO_ARG_RETURNS = {
         ("Cfg", "unverified_seeded_sites"): "list[int]",
         ("Cfg", "isa_mode_conflicts"): "list[int]",
         ("Cfg", "interior_branch_targets"): "list[int]",
+        ("Cfg", "is_complete"): "bool",
     },
     "strider.lift": {
         ("Lifter", "reader"): "MemLike",

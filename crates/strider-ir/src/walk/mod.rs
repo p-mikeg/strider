@@ -22,14 +22,6 @@ pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> DenseEntitySet<NodeId> {
     walk.into_visited()
 }
 
-/// The kinds that consume control and produce none.
-fn is_terminator(kind: &NodeKind) -> bool {
-    matches!(
-        kind,
-        NodeKind::Return | NodeKind::IndirectBranch | NodeKind::Unreachable
-    )
-}
-
 /// Control-reachable from `entry` and unable to reach a terminator: an
 /// exit-free control cycle plus everything that only reaches it, which
 /// `validate` rejects and the lifter seats an `Unreachable` sink on.
@@ -44,28 +36,44 @@ pub fn stranded_nodes(graph: &Graph, entry: NodeId) -> NodeIdSet {
     for node in &cfg {
         let dangling =
             cfg_outputs(graph, node).any(|value| graph.value_uses(value).next().is_none());
-        if is_terminator(graph.node_kind(node)) || dangling {
+        if graph.node_kind(node).is_terminator() || dangling {
             escapes.insert(node);
             work.push(node);
         }
     }
-    while let Some(node) = work.pop() {
-        for value in graph.node_inputs(node) {
-            if !graph.value_kind(value).is_control() {
-                continue;
-            }
-            let pred = graph.value_definition(value).0;
-            if cfg.contains(pred) && escapes.insert(pred) {
-                work.push(pred);
-            }
-        }
-    }
+    close_over_control_preds(graph, &mut escapes, work, |_| false, Some(&cfg));
 
     let mut stranded = NodeIdSet::new();
     for node in cfg.iter().filter(|&node| !escapes.contains(node)) {
         stranded.insert(node);
     }
     stranded
+}
+
+/// Grows `reached` backward over control inputs from `work`.
+///
+/// `skip_edge` drops an edge that must not be followed (a branch arm proven
+/// dead); `universe`, when given, bounds membership. Both callers -- the
+/// stranded-node walk here and `DeadBranchElimination`'s escape walk -- are
+/// the same closure over different seed rules, so it is stated once.
+pub fn close_over_control_preds(
+    graph: &Graph,
+    reached: &mut NodeIdSet,
+    mut work: Vec<NodeId>,
+    skip_edge: impl Fn(ValueId) -> bool,
+    universe: Option<&NodeIdSet>,
+) {
+    while let Some(node) = work.pop() {
+        for value in graph.node_inputs(node) {
+            if !graph.value_kind(value).is_control() || skip_edge(value) {
+                continue;
+            }
+            let pred = graph.value_definition(value).0;
+            if universe.is_none_or(|u| u.contains(pred)) && reached.insert(pred) {
+                work.push(pred);
+            }
+        }
+    }
 }
 
 pub type PreOrder<G> = graph_algorithms::walk::PreOrder<G>;

@@ -28,7 +28,7 @@ vn-container.workspace = true
 strider-target.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
-rustc-hash = "2"
+rustc-hash.workspace = true
 
 [dev-dependencies]
 proptest = "1"

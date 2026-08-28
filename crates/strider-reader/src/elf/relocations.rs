@@ -287,73 +287,52 @@ fn apply_one_relocation(
         return;
     }
 
-    // GOT/PLT slots arrive as `RelocationKind::Unknown` with `size = 0`, which
-    // the general `match reloc.kind()` below would mis-bucket as unsupported.
-    // The slot's own field is the PLT push offset, not an addend, so it is
-    // never read back; `reloc.addend()` is the RELA one, zero under REL.
-    if let Some(size_bytes) = got_or_plt_slot_reloc_size(reloc, obj.architecture(), endian_le) {
-        let Some(target_addr) = resolve_symbol_target(obj, layout, reloc, endian_le) else {
-            return;
-        };
-        let value = apply_addend(target_addr, reloc.addend());
-        record_patch(
-            patches,
-            &covering(site_addr, size_bytes),
-            site_addr,
-            value,
-            size_bytes,
-            endian_le,
-        );
-        return;
-    }
-
-    // Defined-symbol `R_MIPS_REL32`, also `Unknown` with `size = 0`, is `S + A`.
-    if let Some(size_bytes) = mips_rel32_symbol_reloc_size(reloc, obj.architecture(), endian_le) {
+    // Symbol-targeted families `object` reports as `Unknown` with `size = 0`,
+    // which the general `match reloc.kind()` below would mis-bucket as
+    // unsupported. Each yields `(size_bytes, pc_relative,
+    // read_implicit_addend)`; first match wins.
+    let word_sized = got_or_plt_slot_reloc_size(reloc, obj.architecture(), endian_le)
+        // GOT/PLT slot, `S`. Its own field is the PLT push offset, not an
+        // addend, so it is never read back; `reloc.addend()` is the RELA one,
+        // zero under REL.
+        .map(|size_bytes| (size_bytes, false, false))
+        // Defined-symbol `R_MIPS_REL32`, `S + A`.
+        .or_else(|| {
+            mips_rel32_symbol_reloc_size(reloc, obj.architecture(), endian_le)
+                .map(|size_bytes| (size_bytes, false, true))
+        })
+        // `R_PPC_REL32` / `R_ARM_REL32` / `R_PPC64_REL64`, `S + A - P`.
+        .or_else(|| {
+            pc_relative_word_reloc(reloc, obj.architecture())
+                .map(|size_bytes| (size_bytes, true, true))
+        });
+    if let Some((size_bytes, pc_relative, read_implicit_addend)) = word_sized {
         let Some(target_addr) = resolve_symbol_target(obj, layout, reloc, endian_le) else {
             return;
         };
         let site_regions = covering(site_addr, size_bytes);
-        let addend = reloc_addend(
-            reloc,
-            regions,
-            site_regions.first().copied(),
-            site_addr,
-            size_bytes,
-            endian_le,
-        );
+        let addend = if read_implicit_addend {
+            reloc_addend(
+                reloc,
+                regions,
+                site_regions.first().copied(),
+                site_addr,
+                size_bytes,
+                endian_le,
+            )
+        } else {
+            reloc.addend()
+        };
         let value = apply_addend(target_addr, addend);
         record_patch(
             patches,
             &site_regions,
             site_addr,
-            value,
-            size_bytes,
-            endian_le,
-        );
-        return;
-    }
-
-    // `R_PPC_REL32` / `R_ARM_REL32`: `S + A - P`, with the addend read from the
-    // file-initial bytes under REL.
-    if let Some(size_bytes) = pc_relative_word_reloc(reloc, obj.architecture()) {
-        let Some(target_addr) = resolve_symbol_target(obj, layout, reloc, endian_le) else {
-            return;
-        };
-        let site_regions = covering(site_addr, size_bytes);
-        let addend = reloc_addend(
-            reloc,
-            regions,
-            site_regions.first().copied(),
-            site_addr,
-            size_bytes,
-            endian_le,
-        );
-        let value = apply_addend(target_addr, addend).wrapping_sub(site_addr);
-        record_patch(
-            patches,
-            &site_regions,
-            site_addr,
-            value,
+            if pc_relative {
+                value.wrapping_sub(site_addr)
+            } else {
+                value
+            },
             size_bytes,
             endian_le,
         );

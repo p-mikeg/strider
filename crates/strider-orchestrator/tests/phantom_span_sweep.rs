@@ -80,4 +80,11 @@ fn build_cfg_phantom_span_asserts_hold_for_every_fixture_function() {
         total > 0,
         "sweep found no functions; run `make -C fixtures`"
     );
+    // 2561/2720 = 94.2% when this floor was set; the rest are legit bails. A
+    // drop past 90% is a segmentation regression, not fixture drift.
+    let built_pct = 100.0 * built as f64 / total as f64;
+    assert!(
+        built_pct >= 90.0,
+        "only {built}/{total} function CFGs built ({built_pct:.1}%), below the 90% floor"
+    );
 }

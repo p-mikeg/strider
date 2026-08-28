@@ -16,39 +16,6 @@ fn run_orchestrator_on(
     run_with_opts(arch, case, fn_name, Default::default(), true)
 }
 
-/// The loop must actually resolve the computed goto, not merely converge.
-/// `indirect_branch.rs` pins the arm addresses across every arch.
-#[test]
-fn orchestrator_resolves_indirect_branch_x86() {
-    let result = analyze_with_opts(
-        common::Arch::X86,
-        "indirect_branch",
-        "indirect_branch_resolved",
-        Default::default(),
-        true,
-    )
-    .expect("orchestrator must converge");
-    assert!(
-        result.unresolved_indirect_branches.is_empty(),
-        "unresolved {:#x?}",
-        result
-            .unresolved_indirect_branches
-            .iter()
-            .map(|a| a.machine_addr.addr)
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(
-        count_indirect_branch_placeholders(&result.function),
-        0,
-        "the computed goto must lower to switch edges"
-    );
-    assert_eq!(
-        switch_arms(&result.cfg).len(),
-        1,
-        "the one computed goto must be the only Switch"
-    );
-}
-
 /// Every `RegionTerminator::Switch` arm set in `cfg`, sorted and deduplicated.
 fn switch_arms(cfg: &strider_cfg::Cfg) -> Vec<Vec<u64>> {
     cfg.regions()
@@ -81,17 +48,6 @@ fn count_if_nodes(function: &strider_ir::Function) -> usize {
         .walk()
         .filter(|nid| matches!(function.node_kind(*nid), strider_ir::node::NodeKind::If))
         .count()
-}
-
-#[test]
-fn orchestrator_resolves_switch_jump_table_x86() {
-    let function = run_orchestrator_on(common::Arch::X86, "switch", "dispatch_value")
-        .expect("orchestrator must converge on switch fixture");
-    assert_eq!(
-        count_indirect_branch_placeholders(&function),
-        0,
-        "switch jump table must lower to switch edges"
-    );
 }
 
 /// `switch_sparse.c`'s labels are far apart, so the compiler emits a
@@ -131,49 +87,14 @@ fn orchestrator_sparse_switch_is_if_chain_x64() {
 // which `value_range` then bounds.
 
 #[test]
-fn orchestrator_resolves_unmasked_switch_via_value_range_x86() {
-    let function =
-        run_orchestrator_on(common::Arch::X86, "switch_value_range", "dispatch_unmasked")
-            .expect("orchestrator must converge on unmasked switch");
-    assert_eq!(
-        count_indirect_branch_placeholders(&function),
-        0,
-        "unmasked jump table must resolve via the value_range If-bound",
-    );
+fn orchestrator_resolves_jump_tables_x86() {
+    assert_all_table_shapes_resolve(common::Arch::X86);
 }
 
 #[test]
-fn orchestrator_resolves_unmasked_switch_via_value_range_x64() {
-    let function =
-        run_orchestrator_on(common::Arch::X64, "switch_value_range", "dispatch_unmasked")
-            .expect("orchestrator must converge on unmasked switch");
-    assert_eq!(
-        count_indirect_branch_placeholders(&function),
-        0,
-        "x64 unmasked table resolves via CSE (dedup Truncate) so the cone walk reaches the inner guarded Truncate(rdi)",
-    );
-}
-
-#[test]
-fn orchestrator_resolves_offset_switch_via_value_range_x86() {
-    let function = run_orchestrator_on(common::Arch::X86, "switch_value_range", "dispatch_offset")
-        .expect("orchestrator must converge on offset switch");
-    assert_eq!(
-        count_indirect_branch_placeholders(&function),
-        0,
-        "offset jump table must resolve via the value_range If-bound",
-    );
-}
-
-#[test]
-fn orchestrator_resolves_offset_switch_via_value_range_x64() {
-    let function = run_orchestrator_on(common::Arch::X64, "switch_value_range", "dispatch_offset")
-        .expect("orchestrator must converge on offset switch");
-    assert_eq!(
-        count_indirect_branch_placeholders(&function),
-        0,
-        "x64 offset jump table must resolve via the value_range If-bound",
-    );
+fn orchestrator_resolves_jump_tables_x64() {
+    assert_table_resolves(common::Arch::X64, "switch_value_range", "dispatch_unmasked");
+    assert_table_resolves(common::Arch::X64, "switch_value_range", "dispatch_offset");
 }
 
 // The general clone+optimise classifier resolves the masked (`switch`),

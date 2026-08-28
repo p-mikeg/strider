@@ -12,24 +12,21 @@ readme = "README.md"
 # Independent of the Python import path, which `[tool.maturin] module-name`
 # sets: `import strider` reaches the pure-Python package, which wraps this.
 name = "strider_py"
-# `cdylib` is what Python loads; `rlib` is what the `stub_gen` example links.
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 # There is no interpreter to link the pyo3 symbols against, and every test of
 # this crate is a pytest under `tests/python/`.
 test = false
 doctest = false
 
 [dependencies]
+# `macros`: `#[pyclass]` / `#[pymethods]` / `wrap_pyfunction!` themselves,
+# off under `default-features = false`.
 # `multiple-pymethods`: several `#[pyclass]`es carry more than one `#[pymethods]`
 # block. `forall_castmask!` / `forall_preset!` / `match_getters!` /
-# `bound_getters!` stamp out one block per generated item, `builder_slot_methods!`
-# one per slot kind, and `builder_common_methods!` splits the GC dunders off the
-# stub-generated methods. Dropping it fails the build with conflicting
-# `PyMethods` impls.
-pyo3 = { version = "0.22", default-features = false, features = ["abi3-py39", "anyhow", "multiple-pymethods"] }
-# Pinned: pyo3-stub-gen's version numbers mirror pyo3's without tracking them,
-# and 0.7 is the release compatible with pyo3 0.22.
-pyo3-stub-gen = { version = "=0.7.0", default-features = false }
+# `bound_getters!` stamp out one block per generated item and
+# `builder_slot_methods!` one per slot kind. Dropping it fails the build with
+# conflicting `PyMethods` impls.
+pyo3 = { version = "0.22", default-features = false, features = ["abi3-py39", "anyhow", "macros", "multiple-pymethods"] }
 anyhow = { workspace = true }
 
 strider-orchestrator = { workspace = true }
@@ -42,22 +39,12 @@ strider-reader = { workspace = true }
 strider-target = { workspace = true }
 rsleigh = { workspace = true }
 object = { workspace = true }
-rustc-hash = "2"
+rustc-hash.workspace = true
 
 [lints]
 workspace = true
 
 # `extension-module` keeps libpython out of the cdylib, which is what `maturin
-# develop` wants. The `stub_gen` example is a real binary and needs libpython
-# linked, so it is built with `--features stub_gen --no-default-features`:
-# cargo features are additive, so only `--no-default-features` drops
-# `extension-module`. `examples/stub_gen.rs` carries the full invocation.
+# develop` wants.
 [features]
 default = ["pyo3/extension-module"]
-stub_gen = ["pyo3/auto-initialize"]
-
-[[example]]
-name = "stub_gen"
-# Without the gate, `cargo build --workspace --examples` links it against a
-# `extension-module` build and the pyo3 symbols go unresolved.
-required-features = ["stub_gen"]

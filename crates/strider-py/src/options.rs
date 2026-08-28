@@ -138,115 +138,113 @@ pub(crate) fn py_bool(b: bool) -> &'static str {
     if b { "True" } else { "False" }
 }
 
-/// Claims about the code being analysed, keyword-only. None is checked, and
-/// each one's risky value is the positive one, so any of them can make the
-/// answer wrong on valid input. Clearing all six leaves only what the IR
-/// structurally proves.
-///
-/// Two default `True`: `stack_global_disjoint` and
-/// `assume_incoming_args_survive_calls`, both of which every compiler this
-/// analyses honours and without which the alias oracle answers may-alias
-/// almost everywhere.
-#[pyclass(name = "AssumptionOptions", module = "strider.lift")]
-#[derive(Clone)]
-pub struct PyAssumptionOptions {
+/// How one field renders inside a `repr`: `bool` as Python's `True`/`False`,
+/// `debug` through `Debug`.
+macro_rules! py_option_repr {
+    (bool, $v:expr) => {
+        py_bool($v)
+    };
+    (debug, $v:expr) => {
+        format!("{:?}", $v)
+    };
+}
+
+/// A frozen options class from one field table: the `#[pyclass]` struct, its
+/// `Default`, the keyword-only `#[new]` whose signature defaults ARE those
+/// `Default` values, and a `repr` that reads back as that constructor call.
+/// A row is `name: Type = default, render`.
+macro_rules! py_options {
+    (
+        $(#[$cls:meta])*
+        $pyname:literal, $module:literal => $ty:ident;
+        $( $(#[$fattr:meta])* $name:ident : $fty:ty = $default:expr, $render:ident; )*
+    ) => {
+        $(#[$cls])*
+        #[pyclass(name = $pyname, module = $module)]
+        #[derive(Clone)]
+        pub struct $ty {
+            $(
+                $(#[$fattr])*
+                #[pyo3(get)]
+                pub $name: $fty,
+            )*
+        }
+
+        impl Default for $ty {
+            fn default() -> Self {
+                Self { $($name: $default,)* }
+            }
+        }
+
+        #[pymethods]
+        impl $ty {
+            #[new]
+            #[pyo3(signature = (*, $($name = $default),*))]
+            #[allow(clippy::fn_params_excessive_bools)]
+            fn new($($name: $fty),*) -> Self {
+                Self { $($name,)* }
+            }
+
+            fn __repr__(&self) -> String {
+                let fields = [$(
+                    format!(
+                        concat!(stringify!($name), "={}"),
+                        py_option_repr!($render, self.$name),
+                    ),
+                )*];
+                format!(concat!($pyname, "({})"), fields.join(", "))
+            }
+        }
+    };
+}
+
+py_options! {
+    /// Claims about the code being analysed, keyword-only. None is checked, and
+    /// each one's risky value is the positive one, so any of them can make the
+    /// answer wrong on valid input. Clearing all six leaves only what the IR
+    /// structurally proves.
+    ///
+    /// Two default `True`: `stack_global_disjoint` and
+    /// `assume_incoming_args_survive_calls`, both of which every compiler this
+    /// analyses honours and without which the alias oracle answers may-alias
+    /// almost everywhere.
+    "AssumptionOptions", "strider.lift" => PyAssumptionOptions;
+
     /// The stack and global/constant memory (`.data`, `.rodata`, `.bss`,
     /// MMIO) never overlap at runtime, so a memory walk steps through a
     /// constant-address store when looking back from a stack load and
     /// vice-versa (default `True`). Wrong only where a constant address
     /// coincidentally equals `sp + K`.
-    #[pyo3(get)]
-    pub stack_global_disjoint: bool,
+    stack_global_disjoint: bool = true, bool;
+
     /// A call on an incoming stack-argument slot's memory chain leaves the
     /// slot alone (default `True`). Reaches incoming-argument detection only,
     /// where it holds for any conforming callee: those slots are the caller's
     /// memory, above the entry SP.
-    #[pyo3(get)]
-    pub assume_incoming_args_survive_calls: bool,
+    assume_incoming_args_survive_calls: bool = true, bool;
+
     /// A store rooted at a different SP base than the entry SP (an
     /// alignment-masked frame local, say) is disjoint from the probed
     /// location.
-    #[pyo3(get)]
-    pub distinct_sp_bases_disjoint: bool,
+    distinct_sp_bases_disjoint: bool = false, bool;
+
     /// A callee leaves the outgoing-argument slots the caller wrote as it
     /// found them, so a spill at the stack top survives the call. The psABIs
     /// let a callee write those slots; this asserts compiler output does not.
-    #[pyo3(get)]
-    pub callee_preserves_stack_args: bool,
+    callee_preserves_stack_args: bool = false, bool;
+
     /// Callee addresses of pure `noalias` heap allocators (`malloc`/`calloc`-like:
     /// a size in, a fresh non-overlapping pointer out, no pointer arguments).
     /// Distinct allocations are treated as disjoint, and a load steps through
     /// such a call.
-    #[pyo3(get)]
-    pub noalias_allocators: Vec<u64>,
+    noalias_allocators: Vec<u64> = Vec::new(), debug;
+
     /// When the frame is provably private (no stack address escapes to a
     /// callee), forward a spill load across a call and past an opaque store.
     /// The proof is sound; the claim is that no callee returns a struct by
     /// value, an sret hidden pointer being a frame-address escape the analysis
     /// may not see.
-    #[pyo3(get)]
-    pub escape_analysis: bool,
-}
-
-impl Default for PyAssumptionOptions {
-    fn default() -> Self {
-        Self {
-            stack_global_disjoint: true,
-            assume_incoming_args_survive_calls: true,
-            distinct_sp_bases_disjoint: false,
-            callee_preserves_stack_args: false,
-            noalias_allocators: Vec::new(),
-            escape_analysis: false,
-        }
-    }
-}
-
-#[pymethods]
-impl PyAssumptionOptions {
-    #[new]
-    #[pyo3(signature = (
-        *,
-        stack_global_disjoint = true,
-        assume_incoming_args_survive_calls = true,
-        distinct_sp_bases_disjoint = false,
-        callee_preserves_stack_args = false,
-        noalias_allocators = Vec::new(),
-        escape_analysis = false,
-    ))]
-    #[allow(clippy::fn_params_excessive_bools)]
-    fn new(
-        stack_global_disjoint: bool,
-        assume_incoming_args_survive_calls: bool,
-        distinct_sp_bases_disjoint: bool,
-        callee_preserves_stack_args: bool,
-        noalias_allocators: Vec<u64>,
-        escape_analysis: bool,
-    ) -> Self {
-        Self {
-            stack_global_disjoint,
-            assume_incoming_args_survive_calls,
-            distinct_sp_bases_disjoint,
-            callee_preserves_stack_args,
-            noalias_allocators,
-            escape_analysis,
-        }
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "AssumptionOptions(stack_global_disjoint={}, \
-             assume_incoming_args_survive_calls={}, \
-             distinct_sp_bases_disjoint={}, \
-             callee_preserves_stack_args={}, noalias_allocators={:?}, \
-             escape_analysis={})",
-            py_bool(self.stack_global_disjoint),
-            py_bool(self.assume_incoming_args_survive_calls),
-            py_bool(self.distinct_sp_bases_disjoint),
-            py_bool(self.callee_preserves_stack_args),
-            self.noalias_allocators,
-            py_bool(self.escape_analysis),
-        )
-    }
+    escape_analysis: bool = false, bool;
 }
 
 /// Lift, optimize, and CFG knobs for one `analyze` call.
