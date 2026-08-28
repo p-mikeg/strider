@@ -487,6 +487,25 @@ pub struct AnalyzeResult {
     pub unverified_seeded_sites: Vec<PcodeInsnAddr>,
 }
 
+impl AnalyzeResult {
+    /// Whether all four report channels are empty, i.e. the CFG carries no
+    /// caveat at all.
+    ///
+    /// This is the question "may this result be incomplete?", which needs all
+    /// four and which none of them answers alone. `false` is NOT always a
+    /// loss: `unverified_seeded_sites` holds answers that are complete but
+    /// that nothing verified, so a site consumed as a `Return` -- an ARM
+    /// `pop {pc}` dispatch, say -- clears it. Read whichever channel is
+    /// non-empty to tell the cases apart.
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        self.unresolved_indirect_branches.is_empty()
+            && self.unverified_seeded_sites.is_empty()
+            && self.isa_mode_conflicts.is_empty()
+            && self.interior_branch_targets.is_empty()
+    }
+}
+
 /// Doubles as a DEPTH limit: one iteration seats one LEVEL of indirect-branch
 /// discovery, so a chain of trampolines each jumping to the next needs one
 /// iteration per link. [`apply_resolutions`] reporting no change is the

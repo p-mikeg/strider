@@ -106,7 +106,7 @@ fn classify_table_dispatch_with_known_bits_bound_returns_multiple() {
         sole_indirect_branch(&g),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     match result {
@@ -147,7 +147,7 @@ fn classify_table_dispatch_duplicate_targets_are_deduped() {
         sole_indirect_branch(&g),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     match result {
@@ -190,7 +190,7 @@ fn classify_table_dispatch_single_entry_bound_returns_multiple_of_one() {
         sole_indirect_branch(&g),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     match result {
@@ -232,7 +232,7 @@ fn classify_table_dispatch_no_rom_returns_none() {
         sole_indirect_branch(&g),
         None,
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     assert_eq!(result, None);
@@ -266,7 +266,7 @@ fn classify_table_dispatch_unbounded_idx_returns_none() {
         sole_indirect_branch(&g),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     assert_eq!(result, None);
@@ -310,7 +310,7 @@ fn classify_table_dispatch_defers_over_cap_resolves_under_cap() {
         sole_indirect_branch(&g),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     assert!(
@@ -327,7 +327,7 @@ fn classify_table_dispatch_defers_over_cap_resolves_under_cap() {
         sole_indirect_branch(&g2),
         Some(&rom),
         &mut ranges2,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     assert_eq!(
@@ -373,7 +373,7 @@ fn classify_table_dispatch_excludes_width_bounded_table_entry_as_index() {
         sole_indirect_branch(&g),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     assert_eq!(
@@ -453,7 +453,7 @@ fn classify_table_dispatch_resolves_guarded_shift_narrowed_loaded_index() {
         sole_indirect_branch(&g),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     match result {
@@ -498,7 +498,7 @@ fn classify_table_dispatch_masked_full_byte_i32_resolves() {
         sole_indirect_branch(&g),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     match result {
@@ -591,7 +591,7 @@ fn classify_table_dispatch_defers_nonloaded_full_byte_index_conservatively() {
         sole_indirect_branch(&function),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     let _ = entries;
@@ -664,7 +664,7 @@ fn classify_table_dispatch_with_if_guard_bound_returns_multiple() {
         sole_indirect_branch(&function),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     match result {
@@ -758,7 +758,7 @@ fn classify_table_dispatch_diamond_both_paths_guarded_defers() {
         sole_indirect_branch(&function),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     assert_eq!(
@@ -843,7 +843,7 @@ fn classify_table_dispatch_one_path_unguarded_does_not_resolve() {
         sole_indirect_branch(&function),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     assert!(
@@ -903,7 +903,7 @@ fn classify_table_dispatch_guarded_direct_load_target() {
         sole_indirect_branch(&function),
         None,
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     assert_eq!(
@@ -989,7 +989,7 @@ fn classify_table_dispatch_decoy_offpath_value_not_enumerated() {
         sole_indirect_branch(&function),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     // Substituting the decoy cannot change the dispatch, so either outcome is
@@ -1181,7 +1181,7 @@ fn classify_table_dispatch_two_stack_targets_resolves() {
         sole_indirect_branch(&fg),
         None,
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     let mut expected = targets.to_vec();
@@ -1271,7 +1271,7 @@ fn classify_table_dispatch_across_mem_phi_resolves() {
         sole_indirect_branch(&fg),
         None,
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     let mut expected = targets.to_vec();
@@ -1311,7 +1311,7 @@ fn classify_table_dispatch_aligned_stack_resolves() {
         sole_indirect_branch(&fg),
         None,
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     let mut expected = targets.to_vec();
@@ -1325,8 +1325,9 @@ fn classify_table_dispatch_aligned_stack_resolves() {
 }
 
 /// A global store between the prologue stores and the dispatch load is exactly
-/// what the [`AliasMode`] knob governs: `StackGlobalDisjoint` proves it
-/// disjoint from the SP-rooted array and resolves, `Strict` cannot and defers.
+/// what [`AssumptionOptions::stack_global_disjoint`](crate::AssumptionOptions)
+/// governs: set, it proves the store disjoint from the SP-rooted array and
+/// resolves; clear, it cannot and defers.
 ///
 /// Both assertions run on the SAME graph.
 #[test]
@@ -1430,7 +1431,7 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
             sole_indirect_branch(&fg),
             None,
             &mut ranges,
-            AliasMode::StackGlobalDisjoint,
+            &crate::AssumptionOptions::default(),
             None,
         ),
         Some(ResolvedTargets::Multiple(
@@ -1440,18 +1441,18 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
          SP-rooted array; the table must resolve",
     );
 
-    // Strict mode cannot, so the store surfaces as a clobber.
+    // Cleared, it cannot, so the store surfaces as a clobber.
     assert_eq!(
         classify_table_dispatch(
             &fg,
             sole_indirect_branch(&fg),
             None,
             &mut ranges,
-            AliasMode::Strict,
+            &crate::AssumptionOptions::none(),
             None,
         ),
         None,
-        "Strict cannot prove the global store disjoint from the SP-rooted \
+        "cleared, it cannot prove the global store disjoint from the SP-rooted \
          array; the intervening store is a clobber and the branch must defer",
     );
 }
@@ -1556,7 +1557,7 @@ fn classify_table_dispatch_returns_none_when_call_clobbers_between_stores_and_lo
             sole_indirect_branch(&fg),
             None,
             &mut ranges,
-            AliasMode::StackGlobalDisjoint,
+            &crate::AssumptionOptions::default(),
             None,
         ),
         None,
@@ -1604,7 +1605,7 @@ fn classify_table_dispatch_returns_none_on_non_indexed_load() {
             sole_indirect_branch(&fg),
             None,
             &mut ranges,
-            AliasMode::StackGlobalDisjoint,
+            &crate::AssumptionOptions::default(),
             None,
         ),
         None
@@ -1671,7 +1672,7 @@ fn classify_table_dispatch_returns_none_on_unbounded_stack_idx() {
             sole_indirect_branch(&fg),
             None,
             &mut ranges,
-            AliasMode::StackGlobalDisjoint,
+            &crate::AssumptionOptions::default(),
             None,
         ),
         None
@@ -1691,7 +1692,7 @@ fn classify_table_dispatch_one_stack_target_resolves() {
         sole_indirect_branch(&fg),
         None,
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     // A 1-element table may defer; a resolution must name the single target.
@@ -1897,7 +1898,7 @@ fn classify_table_dispatch_excludes_right_shifted_table_entry_as_index() {
         sole_indirect_branch(&g),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     assert_eq!(
@@ -1949,7 +1950,7 @@ fn classify_table_dispatch_excludes_widened_then_shifted_table_entry_as_index() 
         sole_indirect_branch(&g),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         None,
     );
     assert_eq!(
@@ -2000,7 +2001,7 @@ fn classify_table_dispatch_conflicting_isa_modes_on_one_addr_defers() {
         sole_indirect_branch(&g),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         mode_value,
     );
     assert_eq!(
@@ -2049,7 +2050,7 @@ fn classify_table_dispatch_carries_each_arms_own_isa_mode() {
         sole_indirect_branch(&g),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         mode_value,
     );
     match result {
@@ -2154,7 +2155,7 @@ fn classify_table_dispatch_evaluates_each_dispatch_load_once_per_index() {
         sole_indirect_branch(&g),
         Some(&rom),
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &crate::AssumptionOptions::default(),
         mode_value,
     );
     assert!(matches!(result, Some(ResolvedTargets::Multiple(ref ts)) if ts.len() == 4));
@@ -2186,7 +2187,7 @@ mod stack_table_cost {
             sole_indirect_branch(&fg),
             None,
             &mut ranges,
-            AliasMode::StackGlobalDisjoint,
+            &crate::AssumptionOptions::default(),
             None,
         );
         let steps = crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get)
@@ -2213,7 +2214,7 @@ mod stack_table_cost {
             sole_indirect_branch(&fg),
             None,
             &mut ranges,
-            AliasMode::StackGlobalDisjoint,
+            &crate::AssumptionOptions::default(),
             None,
         );
         let steps = crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get)

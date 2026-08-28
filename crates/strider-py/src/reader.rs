@@ -356,7 +356,7 @@ impl PyLoadedElf {
         };
         let mut syms: Vec<PySymbol> = Vec::new();
         let mut by_name: HashMap<String, usize> = HashMap::new();
-        for obj in self.elfs.iter() {
+        for obj in &self.elfs {
             let file = obj.file();
             let layout = ElfSectionLayout::new(&file);
             let relocatable = file.kind() == object::ObjectKind::Relocatable;

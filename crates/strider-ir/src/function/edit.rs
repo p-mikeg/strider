@@ -1523,7 +1523,7 @@ mod function_state_tests {
 
         let mut state = FunctionState::populate(&function);
 
-        for r in state.roots.iter() {
+        for r in &state.roots {
             assert!(
                 function.graph().node_inputs(r).is_empty(),
                 "root {r:?} must be input-less"

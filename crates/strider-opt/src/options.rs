@@ -1,51 +1,12 @@
-/// How hard the SP-aware walkers work to prove an intervening Store misses
-/// the query range.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum AliasMode {
-    /// Forward only when disjointness is structurally provable from the IR
-    /// alone (`mem_analysis::decompose` agrees on both addresses, ranges
-    /// disjoint).
-    /// Cross-class pairs are treated as possibly-aliasing.
-    ///
-    /// Sound under any input program with [`AssumptionOptions`] left at its
-    /// default.  Every assumption knob adds Disjoint verdicts this mode does not
-    /// gate: a non-empty `noalias_allocators` adds heap-vs-stack, heap-vs-global
-    /// and heap-vs-heap between distinct allocation bases,
-    /// `distinct_sp_bases_disjoint` adds different-SP-base to incoming-argument
-    /// detection, and `escape_analysis` / `callee_preserves_stack_args` relax
-    /// the call boundary.
-    Strict,
-
-    /// Assume the stack and the global/constant-address (`.data`, `.rodata`,
-    /// `.bss`, MMIO) regions never overlap at runtime, letting the walker
-    /// step through a constant-address Store when looking back from an
-    /// SP-rooted Load and vice-versa. Unsound only if a constant address
-    /// coincidentally equals `sp + K` at runtime. Other cross-class pairs
-    /// (anything Anchor) still bail.
-    #[default]
-    StackGlobalDisjoint,
-}
-
 /// Per-run knobs.
 #[derive(Debug, Clone)]
 pub struct OptOptions {
-    /// Alias precision for every SP-aware pass.
-    pub alias_mode: AliasMode,
     /// Run the indirect-branch classifier.  Off leaves every site an
     /// `IndirectBranch` placeholder, so a caller can hand its own answers in
     /// through `CfgOptions::known_targets` instead, or see the raw dispatch
     /// shape when a resolution looks wrong.  Caller-supplied targets still
     /// seat: they are read by the CFG builder, not the classifier.
     pub resolve_indirect_branches: bool,
-    /// Assume a `Call` on an incoming stack-argument slot's memory chain leaves
-    /// the slot as it found it, so the argument is still detectable after the
-    /// call.  Reaches which loads count as incoming arguments, never the memory
-    /// edges: a narrowed edge outlives the pass, so narrowing uses what a
-    /// call-blocking walk proves.  It holds for a conforming callee that was
-    /// not handed a pointer into the area, since those slots sit above the
-    /// entry SP.  A memory-clobbering `CallOther` is outside it entirely.
-    /// Default on.
-    pub assume_incoming_args_survive_calls: bool,
     /// Claims about the program under analysis.
     pub assumptions: AssumptionOptions,
 }
@@ -53,21 +14,42 @@ pub struct OptOptions {
 impl Default for OptOptions {
     fn default() -> Self {
         Self {
-            alias_mode: AliasMode::default(),
-            // The only non-`Default` fields: resolution and incoming-argument
-            // survival are on unless a caller turns them off.
+            // The only non-`Default` field: resolution is on unless a caller
+            // turns it off.
             resolve_indirect_branches: true,
-            assume_incoming_args_survive_calls: true,
             assumptions: AssumptionOptions::default(),
         }
     }
 }
 
 /// Assertions about the code being analysed, none of which the analysis can
-/// check.  Each one turned on can make the answer wrong on valid input; the
-/// miscompile is then the caller's.  All off by default.
-#[derive(Debug, Clone, Default)]
+/// check.  Every field's risky value is the positive one, and each one turned
+/// on can make the answer wrong on valid input; the miscompile is then the
+/// caller's.  [`AssumptionOptions::none`] is the only configuration sound
+/// under any input program.
+///
+/// Two default ON, both of which every compiler whose output this analyses
+/// honours and without which the alias oracle answers may-alias almost
+/// everywhere: [`stack_global_disjoint`](Self::stack_global_disjoint) and
+/// [`assume_incoming_args_survive_calls`](Self::assume_incoming_args_survive_calls).
+#[derive(Debug, Clone)]
 pub struct AssumptionOptions {
+    /// The stack and the global / constant-address regions (`.data`,
+    /// `.rodata`, `.bss`, MMIO) never overlap at runtime, so the walker steps
+    /// through a constant-address `Store` when looking back from an SP-rooted
+    /// `Load` and vice-versa.  Wrong only where a constant address
+    /// coincidentally equals `sp + K` at runtime.  Other cross-class pairs
+    /// (anything `Anchor`) bail either way.  Default ON.
+    pub stack_global_disjoint: bool,
+    /// A `Call` on an incoming stack-argument slot's memory chain leaves the
+    /// slot as it found it, so the argument is still detectable after the
+    /// call.  Reaches which loads count as incoming arguments, never the
+    /// memory edges: a narrowed edge outlives the pass, so narrowing uses what
+    /// a call-blocking walk proves.  It holds for a conforming callee that was
+    /// not handed a pointer into the area, since those slots sit above the
+    /// entry SP.  A memory-clobbering `CallOther` is outside it entirely.
+    /// Default ON.
+    pub assume_incoming_args_survive_calls: bool,
     /// A `Store` rooted at a *different* SP base than the entry SP (e.g. an
     /// alignment-masked `sp & -16` frame local) addresses a region disjoint
     /// from the probed location.  Off is may-alias, the sound answer.
@@ -100,4 +82,63 @@ pub struct AssumptionOptions {
     /// argument window read as the window's end (see `mem_analysis`'s KNOWN
     /// LIMIT).
     pub escape_analysis: bool,
+}
+
+impl AssumptionOptions {
+    /// Every claim cleared: the only configuration sound under any input
+    /// program, forwarding solely what the IR structurally proves.
+    #[must_use]
+    pub fn none() -> Self {
+        // Spelled out, not `..Self::default()`: a field added default-on
+        // would otherwise survive `none` and break the claim above.
+        Self {
+            stack_global_disjoint: false,
+            assume_incoming_args_survive_calls: false,
+            distinct_sp_bases_disjoint: false,
+            callee_preserves_stack_args: false,
+            noalias_allocators: rustc_hash::FxHashSet::default(),
+            escape_analysis: false,
+        }
+    }
+}
+
+impl Default for AssumptionOptions {
+    fn default() -> Self {
+        Self {
+            stack_global_disjoint: true,
+            assume_incoming_args_survive_calls: true,
+            distinct_sp_bases_disjoint: false,
+            callee_preserves_stack_args: false,
+            noalias_allocators: rustc_hash::FxHashSet::default(),
+            escape_analysis: false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AssumptionOptions, OptOptions};
+
+    /// The two default-on claims are what a caller reaching for the sound
+    /// floor has to clear, so `none` clearing everything is the contract.
+    #[test]
+    fn none_clears_every_claim() {
+        let a = AssumptionOptions::none();
+        assert!(!a.stack_global_disjoint);
+        assert!(!a.assume_incoming_args_survive_calls);
+        assert!(!a.distinct_sp_bases_disjoint);
+        assert!(!a.callee_preserves_stack_args);
+        assert!(!a.escape_analysis);
+        assert!(a.noalias_allocators.is_empty());
+    }
+
+    /// The pipeline's own defaults, which are NOT the sound floor.
+    #[test]
+    fn default_leaves_the_two_pipeline_claims_on() {
+        let o = OptOptions::default();
+        assert!(o.resolve_indirect_branches);
+        assert!(o.assumptions.stack_global_disjoint);
+        assert!(o.assumptions.assume_incoming_args_survive_calls);
+        assert!(!o.assumptions.escape_analysis);
+    }
 }

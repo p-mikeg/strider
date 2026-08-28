@@ -67,7 +67,7 @@ impl crate::peephole::PeepholePass for LoadForward {
         root: NodeId,
     ) -> Result<crate::peephole::PeepholeRewrite> {
         // `call_blocking`: a store at another SP base may still alias.
-        let options = MemOptions::call_blocking(opt_ctx.options.alias_mode)
+        let options = MemOptions::call_blocking(opt_ctx.options.assumptions.stack_global_disjoint)
             .with_escape_analysis(opt_ctx.options.assumptions.escape_analysis)
             .with_callee_preserves_stack_args(
                 opt_ctx.options.assumptions.callee_preserves_stack_args,

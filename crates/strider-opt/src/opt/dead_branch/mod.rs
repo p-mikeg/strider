@@ -203,7 +203,7 @@ fn live_side_reaches_terminator(
         // The stack drained, so every node walked has the same verdict.
         NO_ESCAPE.with(|memo| {
             let mut memo = memo.borrow_mut();
-            for node in seen.iter() {
+            for node in &seen {
                 memo.insert(node);
             }
         });

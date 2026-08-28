@@ -118,8 +118,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 tracked.contains(&sp_container)
                     && vn_container::vn_contains(&sp_container, &stack_vn)
             },
-            "stack vn {:?} did not resolve to a tracked container",
-            stack_vn,
+            "stack vn {stack_vn:?} did not resolve to a tracked container",
         );
         let default_ret_clobber_vns = {
             let f = builder.function();

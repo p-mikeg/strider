@@ -66,7 +66,7 @@ fn default_validate_flags_missing_asm_fingerprint() {
         "default validate must catch missing fingerprint",
     );
     let err = result.unwrap_err();
-    let msg = format!("{:?}", err);
+    let msg = format!("{err:?}");
     assert!(
         msg.contains("MissingAsmFingerprint")
             || msg.contains("asm_fingerprint")

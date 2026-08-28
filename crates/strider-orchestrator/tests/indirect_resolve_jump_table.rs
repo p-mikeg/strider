@@ -18,7 +18,7 @@ use strider_cfg::ResolvedTargets;
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
 use strider_orchestrator::opt::value_range::compute_value_ranges;
-use strider_orchestrator::opt::{AliasMode, analyze_known_bits, classify_target};
+use strider_orchestrator::opt::{analyze_known_bits, classify_target};
 
 fn classify_target_with_rom(
     view: &strider_ir::Function,
@@ -36,7 +36,7 @@ fn classify_target_with_rom(
         branch,
         rom,
         &mut ranges,
-        AliasMode::StackGlobalDisjoint,
+        &strider_orchestrator::opt::AssumptionOptions::default(),
     ))
 }
 

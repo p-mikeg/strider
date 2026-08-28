@@ -105,6 +105,16 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   the raw-slot method every other builder's `input` is, so `.input(0, p)`
   reaches the phi token rather than predecessor 0's value.
 
+- Every claim the analysis cannot check now sits in `AssumptionOptions`.
+  `LifterOptions(alias_mode="stack_global_disjoint" | "strict")` is gone: the
+  mode was one boolean claim wearing an enum, and it is
+  `AssumptionOptions(stack_global_disjoint=...)`, defaulting `True`.
+  `LifterOptions(assume_incoming_args_survive_calls=...)` moves there too,
+  unchanged and still defaulting `True`. `LifterOptions` loses both
+  attributes; `strider.lift.AliasMode` is gone. Clearing all six fields of
+  `AssumptionOptions` is the only configuration sound under any input, which
+  no single knob promised before.
+
 ### Breaking, Rust
 
 - `rsleigh` is a git submodule at `externals/rsleigh`, not a path dependency:
@@ -123,6 +133,18 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `elf_get_readonly_regions` and `elf_get_loadable_regions_including_writable`
   (use `OwnedElf::regions` with a `LoadFilter`). `MemRegion::fully_covers` is
   `pub(crate)`.
+- `AliasMode` is gone. `OptOptions::alias_mode` and
+  `OptOptions::assume_incoming_args_survive_calls` are now
+  `AssumptionOptions::stack_global_disjoint` and
+  `AssumptionOptions::assume_incoming_args_survive_calls`, both `bool` and both
+  defaulting `true`, so `OptOptions` is `{ resolve_indirect_branches,
+  assumptions }` and one struct holds every unprovable claim.
+  `AssumptionOptions` no longer derives `Default`; `AssumptionOptions::none()`
+  clears all six.
+- `graph_algorithms::walk::VisitTracker` and
+  `graph_algorithms::dominance::DefSites` are gone, each having had one
+  implementation. `PreOrder` / `PostOrder` take one type parameter, the graph,
+  and own a `DenseEntitySet`; `phi_placement` takes the `HashMap` directly.
 - `AnalyzeResult` gained `unverified_seeded_sites`, `interior_branch_targets`
   and `isa_mode_conflicts`. The struct has no `#[non_exhaustive]`, so a
   struct-literal construction must name them.
@@ -497,9 +519,11 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   validator rejects the rest.
 - Removing a node input evicted the dedup entry before checking the index, so
   an out-of-range removal left an unchanged node uncached.
-- An out-of-bounds write past the Sleigh parse state, reachable on Thumb-2
-  `0xEC8x`..`0xECFx`. Carried by the vendored submodule bump, which is
-  otherwise unmentioned in the commit that makes it.
+- An out-of-bounds write past the Sleigh parse state: `allocateOperand` checked
+  none of the fixed sizes `ParserContext::initialize` hands out, so an
+  instruction whose parse descended further stored through the next node's
+  `resolve` pointer. Thumb-2 `0xEC8x`..`0xECFx` segfaults a fresh engine on
+  one `lift_one`. In the vendored submodule.
 - `Cfg.isa_mode_conflicts()` and `Cfg.interior_branch_targets()` in Python
   re-read the final CFG, discarding the accumulation `analyze` performs across
   the resolver's rounds, so a conflict raised in an early round and absent from

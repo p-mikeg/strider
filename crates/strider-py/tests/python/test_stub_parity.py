@@ -585,7 +585,6 @@ _ZERO_ARG_RETURNS = {
         ("ElfLifter", "entry_point"): "int",
         ("ElfLifter", "reader"): "BufferReader",
         ("LifterOptions", "pipeline"): "Optional[OptimizerPipeline]",
-        ("LifterOptions", "alias_mode"): "AliasMode",
     },
     "strider.opt": {
         ("OptimizerPipeline", "empty"): "OptimizerPipeline",

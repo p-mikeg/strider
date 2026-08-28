@@ -86,8 +86,7 @@ fn bounded_lift_handles_tail_call_terminator() {
     }
     assert!(
         had_call_with_target,
-        "expected a Call(IntConst({:#x})) node from the lifted tail call",
-        TAIL_TARGET
+        "expected a Call(IntConst({TAIL_TARGET:#x})) node from the lifted tail call"
     );
     assert!(
         had_return,
@@ -153,8 +152,7 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
 
     assert!(
         graph_has_tail_call_to(&function, TAIL_TARGET),
-        "expected Call(IntConst({:#x})) + Return from the backward-jmp tail call",
-        TAIL_TARGET
+        "expected Call(IntConst({TAIL_TARGET:#x})) + Return from the backward-jmp tail call"
     );
     // A 10-byte function tail-calling out stays tight.
     let node_count = function.walk().count();
