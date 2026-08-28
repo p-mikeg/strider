@@ -83,11 +83,11 @@ impl PostOptimizer for CallStackArgCollect {
         edit: &mut crate::EditFunction<'_>,
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<()> {
-        let alias_mode = opt_ctx.options.alias_mode;
+        let stack_global_disjoint = opt_ctx.options.assumptions.stack_global_disjoint;
         // The owned `Vec` lets the immutable borrow end before the mutation loop
         // takes `edit` mutably.
         let calls: Vec<NodeId> = edit.live_of_kind(|k| matches!(k, NodeKind::Call)).collect();
-        let alias_cfg = MemAnalyzer::new(MemOptions::call_blocking(alias_mode));
+        let alias_cfg = MemAnalyzer::new(MemOptions::call_blocking(stack_global_disjoint));
         for call_id in calls {
             let Some(stack_args) = edit.function().get_cc(call_id).stack_args else {
                 continue;

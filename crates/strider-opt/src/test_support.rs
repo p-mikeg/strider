@@ -57,17 +57,18 @@ pub(crate) fn standard_test() -> OptimizerPipeline {
     pipeline
 }
 
-/// An [`crate::OptCtx`] in [`crate::AliasMode::Strict`].
-pub(crate) fn octx_strict() -> crate::OptCtx<'static> {
+/// An [`crate::OptCtx`] with `stack_global_disjoint` cleared, i.e. forwarding
+/// only what the IR structurally proves.
+pub(crate) fn octx_structural_only() -> crate::OptCtx<'static> {
     let mut ctx = crate::OptCtx::new(None);
-    ctx.options.alias_mode = crate::AliasMode::Strict;
+    ctx.options.assumptions.stack_global_disjoint = false;
     ctx
 }
 
-/// An [`crate::OptCtx`] in [`crate::AliasMode::StackGlobalDisjoint`].
-pub(crate) fn octx_permissive() -> crate::OptCtx<'static> {
+/// An [`crate::OptCtx`] at the pipeline default, `stack_global_disjoint` set.
+pub(crate) fn octx_stack_global_disjoint() -> crate::OptCtx<'static> {
     let mut ctx = crate::OptCtx::new(None);
-    ctx.options.alias_mode = crate::AliasMode::StackGlobalDisjoint;
+    ctx.options.assumptions.stack_global_disjoint = true;
     ctx
 }
 

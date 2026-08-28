@@ -317,9 +317,10 @@ pub(crate) fn lift_for_pipeline(
 ///
 /// The fixtures are compiler-emitted binaries from `fixtures/cases/*.c`, where
 /// globals never alias the stack frame, so the default
-/// `AliasMode::StackGlobalDisjoint` holds and the relaxed walker recovers the
-/// spill/reload forwarding the assertions depend on. Strict-mode coverage
-/// belongs in unit tests with a directly-configured `OptCtx`.
+/// `stack_global_disjoint` holds and the relaxed walker recovers the
+/// spill/reload forwarding the assertions depend on. Coverage with the
+/// assumption cleared belongs in unit tests with a directly-configured
+/// `OptCtx`.
 pub(crate) fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
     let (outcome, _lifter, _cc, _sleigh_arch, rom_for_opt) = lift_for_pipeline(arch, case, fn_name);
     let mut function = outcome.function;

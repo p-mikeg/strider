@@ -12,6 +12,7 @@
 //! * `If` inputs `[ctrl(0), cond(1)]`, outputs `[Control(0) true,
 //!   Control(1) false]`.
 
+use crate::node_builders::delegate_with_output;
 use itertools::Itertools;
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueType};
@@ -149,17 +150,7 @@ impl<B: WithOutput> OutputPat<B> {
     }
 }
 
-impl WithOutput for CallPat {
-    fn capture_output(self, slot: Option<usize>, c: Capture) -> Self {
-        Self(self.0.capture_output(slot, c))
-    }
-    fn output_width(self, slot: Option<usize>, bits: u32) -> Self {
-        Self(self.0.output_width(slot, bits))
-    }
-    fn output_ty(self, slot: Option<usize>, ty: ValueType) -> Self {
-        Self(self.0.output_ty(slot, ty))
-    }
-}
+delegate_with_output!(CallPat, 0);
 
 impl MatchPat for CallPat {
     /// Nests as a value operand, anchored on the first value output. Loose:
@@ -286,20 +277,7 @@ impl CallOtherPat {
     }
 }
 
-impl WithOutput for CallOtherPat {
-    fn capture_output(mut self, slot: Option<usize>, c: Capture) -> Self {
-        self.inner = self.inner.capture_output(slot, c);
-        self
-    }
-    fn output_width(mut self, slot: Option<usize>, bits: u32) -> Self {
-        self.inner = self.inner.output_width(slot, bits);
-        self
-    }
-    fn output_ty(mut self, slot: Option<usize>, ty: ValueType) -> Self {
-        self.inner = self.inner.output_ty(slot, ty);
-        self
-    }
-}
+delegate_with_output!(CallOtherPat, inner);
 
 impl MatchPat for CallOtherPat {
     /// See [`CallPat`]'s impl.
@@ -517,17 +495,7 @@ pub fn entry() -> EntryPat {
     EntryPat(NodePat::node(KindSpec::Exact(NodeKind::Entry)).with_control_value(0))
 }
 
-impl WithOutput for EntryPat {
-    fn capture_output(self, slot: Option<usize>, c: Capture) -> Self {
-        Self(self.0.capture_output(slot, c))
-    }
-    fn output_width(self, slot: Option<usize>, bits: u32) -> Self {
-        Self(self.0.output_width(slot, bits))
-    }
-    fn output_ty(self, slot: Option<usize>, ty: ValueType) -> Self {
-        Self(self.0.output_ty(slot, ty))
-    }
-}
+delegate_with_output!(EntryPat, 0);
 
 /// Joins control edges at a CFG merge: one variadic Control input per
 /// predecessor at raw slots `0..N`, no fixed prefix. Anchored on the control
@@ -583,17 +551,7 @@ pub fn region() -> RegionPat {
     RegionPat(NodePat::node(KindSpec::Exact(NodeKind::Region)).with_control_value(0))
 }
 
-impl WithOutput for RegionPat {
-    fn capture_output(self, slot: Option<usize>, c: Capture) -> Self {
-        Self(self.0.capture_output(slot, c))
-    }
-    fn output_width(self, slot: Option<usize>, bits: u32) -> Self {
-        Self(self.0.output_width(slot, bits))
-    }
-    fn output_ty(self, slot: Option<usize>, ty: ValueType) -> Self {
-        Self(self.0.output_ty(slot, ty))
-    }
-}
+delegate_with_output!(RegionPat, 0);
 
 /// Inputs `[ctrl(0), selector(1)]`, one control output per arm. No anchor
 /// output, so the pattern is rooted on the node itself; `output` /
@@ -658,17 +616,7 @@ pub fn switch() -> SwitchPat {
     SwitchPat(NodePat::node(KindSpec::Exact(NodeKind::Switch)))
 }
 
-impl WithOutput for SwitchPat {
-    fn capture_output(self, slot: Option<usize>, c: Capture) -> Self {
-        Self(self.0.capture_output(slot, c))
-    }
-    fn output_width(self, slot: Option<usize>, bits: u32) -> Self {
-        Self(self.0.output_width(slot, bits))
-    }
-    fn output_ty(self, slot: Option<usize>, ty: ValueType) -> Self {
-        Self(self.0.output_ty(slot, ty))
-    }
-}
+delegate_with_output!(SwitchPat, 0);
 
 /// An `If` carries two control-output vertices, true at slot 0 and false at
 /// slot 1.

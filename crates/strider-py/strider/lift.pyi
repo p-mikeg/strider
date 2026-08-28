@@ -26,10 +26,6 @@ __all__: list[str]
 #: What the loaders accept as a filesystem path.
 StrPath = Union[str, "os.PathLike[str]"]
 
-#: Memory-aliasing model for the optimizer. Validated by the `LifterOptions`
-#: constructor, which raises `ValueError` for anything else.
-AliasMode = Literal["stack_global_disjoint", "strict"]
-
 _L = TypeVar("_L", bound="Lifter")
 
 class AnalyzeResult(NamedTuple):
@@ -50,9 +46,22 @@ class AnalyzeResult(NamedTuple):
 class AssumptionOptions:
     """Claims about the code being analysed, for `LifterOptions(assumptions=...)`.
 
-    None of these is checked, and each one turned on can make the answer wrong
-    on valid input. All default `False` (`noalias_allocators` empty), which is
-    the sound setting.
+    None of these is checked, and each one's risky value is the positive one,
+    so any of them can make the answer wrong on valid input. Clearing all six
+    (and leaving `noalias_allocators` empty) is the only configuration sound
+    under any input.
+
+    Two default `True`, both honoured by every compiler this analyses and
+    without which the alias oracle answers may-alias almost everywhere.
+    `stack_global_disjoint` says the stack and global/constant memory
+    (`.data`, `.rodata`, `.bss`, MMIO) never overlap at runtime, so a memory
+    walk steps through a constant-address store when looking back from a stack
+    load and vice-versa; it is wrong only where a constant address
+    coincidentally equals `sp + K`. `assume_incoming_args_survive_calls` lets
+    a call on an incoming stack-argument slot's memory chain leave the slot
+    alone, so the argument is still detectable afterwards; it reaches
+    incoming-argument detection only, where it holds for any conforming
+    callee, those slots being the caller's memory above the entry SP.
 
     `distinct_sp_bases_disjoint` treats a store rooted at a different SP base
     than the entry SP, an alignment-masked frame local say, as disjoint from
@@ -79,6 +88,10 @@ class AssumptionOptions:
     # Read-only: the options types are frozen, so a plain attribute
     # declaration would let a type checker accept `o.x = ...`, which raises at runtime.
     @property
+    def stack_global_disjoint(self) -> bool: ...
+    @property
+    def assume_incoming_args_survive_calls(self) -> bool: ...
+    @property
     def distinct_sp_bases_disjoint(self) -> bool: ...
     @property
     def callee_preserves_stack_args(self) -> bool: ...
@@ -89,12 +102,14 @@ class AssumptionOptions:
     def __init__(
         self,
         *,
+        stack_global_disjoint: bool = ...,
+        assume_incoming_args_survive_calls: bool = ...,
         distinct_sp_bases_disjoint: bool = ...,
         callee_preserves_stack_args: bool = ...,
         noalias_allocators: list[int] = ...,
         escape_analysis: bool = ...,
     ) -> None:
-        """Build the claims; every field defaults to the sound setting."""
+        """Build the claims; every field defaults as documented above."""
         ...
 
 class LifterOptions:
@@ -105,16 +120,8 @@ class LifterOptions:
     `compact` drops unreachable nodes at the end. `per_address_ccs` overrides
     the calling convention at individual call sites. `pipeline`, when set,
     replaces the default optimizer pipeline for the calls these options drive.
-    `alias_mode` picks the memory model every SP-aware pass walks under.
 
-    `assume_incoming_args_survive_calls` (default `True`) lets a call on an
-    incoming stack-argument slot's memory chain leave the slot alone, so the
-    argument is still detectable afterwards. It reaches incoming-argument
-    detection only, where it holds for any conforming callee: those slots are
-    the caller's memory, above the entry SP.
-
-    Raises `ValueError` for an unrecognised `alias_mode` or a nested
-    `function_max_size=0`.
+    Raises `ValueError` for a nested `function_max_size=0`.
     """
 
     # Read-only: the options types are frozen, so a plain attribute
@@ -128,11 +135,7 @@ class LifterOptions:
     @property
     def per_address_ccs(self) -> Optional[dict[int, CallingConvention]]: ...
     @property
-    def assume_incoming_args_survive_calls(self) -> bool: ...
-    @property
     def resolve_indirect_branches(self) -> bool: ...
-    @property
-    def alias_mode(self) -> AliasMode: ...
     @property
     def pipeline(self) -> Optional[OptimizerPipeline]: ...
     def __init__(
@@ -142,9 +145,7 @@ class LifterOptions:
         assumptions: Optional[AssumptionOptions] = ...,
         compact: bool = ...,
         per_address_ccs: Optional[dict[int, CallingConvention]] = ...,
-        assume_incoming_args_survive_calls: bool = ...,
         resolve_indirect_branches: bool = ...,
-        alias_mode: AliasMode = ...,
         pipeline: Optional[OptimizerPipeline] = ...,
     ) -> None:
         """Build the options; every field defaults."""

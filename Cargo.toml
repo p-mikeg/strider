@@ -72,6 +72,12 @@ todo             = "deny"
 redundant_closure = "warn"
 map_unwrap_or    = "warn"
 match_same_arms  = "warn"
+# Mechanical shrinks with no judgement call in them, on so they cannot creep
+# back. The rest of pedantic stays off: it fights the uniform-handler
+# signatures and the deliberate `pub(crate)`-in-private-module layout.
+uninlined_format_args              = "warn"
+explicit_iter_loop                 = "warn"
+manual_is_power_of_two             = "warn"
 # Deliberately off: a `# Errors` section that only restates the return type
 # ("returns an error when the operation fails") is noise. Where a caller can
 # actually act on the failure, say so in the doc body instead.
