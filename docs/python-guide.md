@@ -6,15 +6,8 @@ graph. It assumes the terms from [vocabulary.md](vocabulary.md).
 
 ## Install
 
-The project uses [uv](https://docs.astral.sh/uv/). Run from the repository root:
-
-```bash
-uv sync --group dev       # create the virtualenv and install dependencies
-uv run maturin develop    # build the Rust extension
-uv run pytest             # optional: run the test suite
-```
-
-Then `import strider` works inside `uv run python ...`.
+Follow [Install](../README.md#install) in the README. Then `import strider`
+works inside `uv run python ...`.
 
 ## The handle: one object per binary
 
@@ -270,25 +263,8 @@ defaults except pretty, which the explorer opens on, and depth when
 `visualize(depth=...)` seeds it; `reset` puts them back.
 
 It blocks the calling thread, and it reads the `Function` / `Cfg` on the thread
-that BUILT them. To serve off the main thread, build the handle inside that
-thread -- calling `visualize` on anything built elsewhere raises
-`PanicException: unsendable` -- and call `strider.explore.shutdown(port)` and
-join the thread before the interpreter exits, or the process aborts:
-
-```python
-import threading
-
-def serve():
-    prog = strider.lift.load_elf("fixtures/out/x86/memory.elf")
-    _cfg, fn, _u = prog.analyze("array_sum")
-    prog.visualize(fn, port=8080)
-
-t = threading.Thread(target=serve)
-t.start()
-...
-strider.explore.shutdown(8080)   # unblocks the server; also joins the thread
-t.join()
-```
+that BUILT them. Serving off another thread has rules, worked through in
+[python-api.md](python-api.md#10-visualizing).
 
 For a static picture, render the IR or the CFG to a self-contained HTML file:
 

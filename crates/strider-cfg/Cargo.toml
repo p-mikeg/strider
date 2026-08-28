@@ -13,7 +13,7 @@ dot.workspace = true
 rsleigh.workspace = true
 anyhow.workspace = true
 petgraph.workspace = true
-rustc-hash = "2"
+rustc-hash.workspace = true
 
 [dev-dependencies]
 strider-reader.workspace = true

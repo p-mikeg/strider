@@ -1215,18 +1215,6 @@ pub(crate) fn build_shared_file_range_elf(count: usize, blob_len: usize) -> Vec<
     buf
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct SegmentSpec {
-    pub addr: u64,
-    pub data: Vec<u8>,
-    pub exec: bool,
-}
-
-/// An x86-64 ELF with the given segments, each a PT_LOAD with `p_vaddr = addr`
-/// and `p_flags = PF_R | (PF_X if exec)`.
-///
-/// A `.segN` section is emitted per segment so the file parses through the
-/// section view too, though the intended consumer is the segment-level readers.
 /// A mips64 ET_DYN with one `SHT_REL` `R_MIPS_REL32 | R_MIPS_64` slot, in the
 /// caller's endianness. mips64el's `.rel.dyn` is the transposed-`r_info` case.
 pub(crate) fn build_mips64_rel32_elf(endian: Endianness) -> RelFixture {

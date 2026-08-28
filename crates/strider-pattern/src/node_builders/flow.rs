@@ -52,7 +52,7 @@ impl CallPat {
     /// 0-based past `ctrl` / `mem` / `target` / `sp`, so raw input slot
     /// `idx + 4`.
     pub fn arg<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
-        Self(self.0.input(4 + idx, p))
+        Self(self.0.input(NodeKind::Call.input_head_len() + idx, p))
     }
 
     /// `inputs[0]`. The sub-pattern's root produces a control edge, not a
@@ -315,7 +315,7 @@ impl RetPat {
 
     /// 0-based past ctrl and mem, so raw input slot `idx + 2`.
     pub fn ret_val<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
-        Self(self.0.input(2 + idx, p))
+        Self(self.0.input(NodeKind::Return.input_head_len() + idx, p))
     }
 
     /// See [`CallPat::any_input`].

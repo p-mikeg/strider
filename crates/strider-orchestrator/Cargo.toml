@@ -18,7 +18,7 @@ strider-lift = { workspace = true }
 rsleigh.workspace = true
 strider-target.workspace = true
 anyhow.workspace = true
-rustc-hash = "2"
+rustc-hash.workspace = true
 
 [dev-dependencies]
 strider-reader = { workspace = true }

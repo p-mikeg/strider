@@ -272,50 +272,27 @@ fn template_wires_multi_output_interior_memory_node() {
 /// `int_const(V)` as a template RHS for V > u64::MAX must produce the full
 /// value on an I128 root: the interner sees all 128 bits, uncast.
 #[test]
-fn int_const_wide_template_rhs_preserves_full_value() {
-    // High 64 bits are non-zero, so a truncation to u64 is visible.
-    let wide_val: u128 = 1u128 << 100;
+fn int_const_template_rhs_preserves_the_full_i128_value() {
+    // High 64 bits non-zero in both, so a truncation to u64 is visible.
+    for value in [1u128 << 100, u128::MAX] {
+        let mut fx = make_empty_fn(|b| b.build_int_const(value, T::I128)).unwrap();
 
-    let mut fx = make_empty_fn(|b| b.build_int_const(wide_val, T::I128)).unwrap();
+        let lhs = int_const(value).into_pattern();
+        let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
+        assert_eq!(root_ty, T::I128);
 
-    let lhs = int_const(wide_val).into_pattern();
-    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
-    assert_eq!(root_ty, T::I128);
+        let rhs = int_const(value).into_template();
+        let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
 
-    let rhs = int_const(wide_val).into_template();
-    let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
-
-    let stored = fx
-        .int_const_u128(new_value)
-        .expect("new value must be an integer constant readable via int_const_u128");
-    assert_eq!(
-        stored, wide_val,
-        "int_const({wide_val}) RHS on I128 root must produce the full value; \
-         got {stored:#x}, likely truncated to low 64 bits"
-    );
-}
-
-/// `int_const(u128::MAX)` on an I128 root must give the full 128-bit all-ones
-/// pattern, not a u64-truncated value.
-#[test]
-fn int_const_all_ones_i128_template_rhs() {
-    let all_ones = u128::MAX;
-
-    let mut fx = make_empty_fn(|b| b.build_int_const(all_ones, T::I128)).unwrap();
-
-    let lhs = int_const(all_ones).into_pattern();
-    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
-
-    let rhs = int_const(all_ones).into_template();
-    let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
-
-    let stored = fx
-        .int_const_u128(new_value)
-        .expect("must be a readable integer constant");
-    assert_eq!(
-        stored, all_ones,
-        "int_const(u128::MAX) on I128 root must give all-ones; got {stored:#x}"
-    );
+        let stored = fx
+            .int_const_u128(new_value)
+            .expect("new value must be an integer constant readable via int_const_u128");
+        assert_eq!(
+            stored, value,
+            "int_const({value:#x}) RHS on an I128 root must produce the full value; \
+             got {stored:#x}, likely truncated to the low 64 bits"
+        );
+    }
 }
 
 /// `int_const_any_width(-50)` on an I128 root must give the full 128-bit
@@ -528,4 +505,41 @@ fn float_const_template_result_is_valid_ir_once_spliced_in() {
         .unwrap();
 
     strider_ir::validate::validate(&fx).expect("a rewritten function must be valid IR");
+}
+
+/// A `Store` template that declares a VALUE output where the node signature
+/// requires `[Memory]` is rejected at instantiation.
+///
+/// `output_kinds_for` takes the author's declaration and defaults a node with
+/// no explicit output vertex to one value output of the root's type, so
+/// without this check the malformed node reaches the graph.
+#[test]
+fn instantiate_rejects_an_output_kind_the_node_signature_forbids() {
+    let x = Capture::new();
+
+    let mut fx = make_empty_fn(|b| {
+        let a = b.build_int_const(5u64, T::I64)?;
+        let k = b.build_int_const(1u64, T::I64)?;
+        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::I64)
+    })
+    .unwrap();
+
+    let lhs = int_add(var(x), int_const(1u128)).into_pattern();
+    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
+
+    // A bare `Store` node with no declared output: the fallback hands it a
+    // value output, which its signature does not admit.
+    let mut tb = TemplateBuilder::default();
+    let store = tb.node(KindSpec::Exact(NodeKind::Store(rsleigh::VnSpace::RAM)));
+    let _ = tb.value_output(store, 0);
+    let rhs = tb.finish();
+
+    let mut ef = EditFunction::new(&mut fx);
+    let err = instantiate(&rhs, &mut ef, &bindings, root_node, &[root_node], root_ty)
+        .expect_err("a value output on a Store must be rejected");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("output slot 0") && msg.contains("Memory"),
+        "the error must name the slot and the kind the signature expects, got: {msg}"
+    );
 }

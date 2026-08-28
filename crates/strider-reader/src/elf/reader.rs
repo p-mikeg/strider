@@ -37,14 +37,13 @@ impl ElfFileMemReader {
     /// `address + length` exceeds `u64::MAX`.
     pub fn from_object(obj: &object::File<'_>) -> Result<Self> {
         let layout = ElfSectionLayout::new(obj);
-        let regions = collect_regions(
+        Ok(Self::over(collect_regions(
             obj,
             None,
             RegionSource::Auto,
             LoadFilter::CodeAndReadOnly,
             &layout,
-        )?;
-        Self::over(regions, obj, &layout)
+        )?))
     }
 
     /// [`from_object`](Self::from_object) over an ELF whose bytes are already
@@ -73,24 +72,19 @@ impl ElfFileMemReader {
     fn from_elf_maybe_relocated(elf: &super::OwnedElf, relocate: bool) -> Result<Self> {
         let obj = elf.file();
         let layout = ElfSectionLayout::new(&obj);
-        let regions = elf.regions_with(
+        Ok(Self::over(elf.regions_with(
             &layout,
             RegionSource::Auto,
             LoadFilter::CodeAndReadOnly,
             relocate,
-        )?;
-        Self::over(regions, &obj, &layout)
+        )?))
     }
 
-    fn over(
-        regions: Vec<crate::MemRegion>,
-        obj: &object::File<'_>,
-        layout: &ElfSectionLayout,
-    ) -> Result<Self> {
-        Ok(Self {
-            lookup: MemRegionsLookupTable::new(regions),
-            writable: super::sections::elf_writable_fetch_ranges(obj, layout)?,
-        })
+    fn over(image: super::sections::LoadedImage) -> Self {
+        Self {
+            lookup: MemRegionsLookupTable::new(image.regions),
+            writable: image.writable,
+        }
     }
 
     /// Whether `[addr, addr + len)` touches a writable fetch mapping, i.e. is

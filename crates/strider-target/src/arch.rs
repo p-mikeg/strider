@@ -91,9 +91,24 @@ mod endianness_tests {
     }
 }
 
-/// One variant per [`SleighArch`] preset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ArchPreset {
+/// Emits `ArchPreset` and the [`ArchPreset::ALL`] roster from one variant
+/// list, so a roster cannot omit a variant.
+macro_rules! arch_presets {
+    ($($(#[$doc:meta])* $variant:ident),+ $(,)?) => {
+        /// One variant per [`SleighArch`] preset.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum ArchPreset {
+            $($(#[$doc])* $variant,)+
+        }
+
+        impl ArchPreset {
+            /// Every variant. Rosters iterate this instead of re-enumerating.
+            pub const ALL: &'static [ArchPreset] = &[$(ArchPreset::$variant,)+];
+        }
+    };
+}
+
+arch_presets! {
     X86,
     X86_64,
     Arm,
@@ -112,6 +127,34 @@ pub enum ArchPreset {
     Ppc32Le,
     Ppc64Be,
     Ppc64Le,
+}
+
+impl ArchPreset {
+    /// The arch this preset names, inverse of [`SleighArch::preset`].
+    ///
+    /// Exhaustive, so a new variant fails to compile until it has a
+    /// constructor.
+    #[must_use]
+    pub fn arch(self) -> SleighArch {
+        match self {
+            Self::X86 => SleighArch::x86(),
+            Self::X86_64 => SleighArch::x86_64(),
+            Self::Arm => SleighArch::arm(),
+            Self::ArmBe => SleighArch::arm_be(),
+            Self::ArmBeKernel => SleighArch::arm_be_kernel(),
+            Self::ArmThumb => SleighArch::arm_thumb(),
+            Self::Aarch64 => SleighArch::aarch64(),
+            Self::Aarch64Be => SleighArch::aarch64be(),
+            Self::MipsBe32 => SleighArch::mipsbe32(),
+            Self::MipsLe32 => SleighArch::mipsle32(),
+            Self::MipsBe64 => SleighArch::mipsbe64(),
+            Self::MipsLe64 => SleighArch::mipsle64(),
+            Self::Ppc32Be => SleighArch::ppc32be(),
+            Self::Ppc32Le => SleighArch::ppc32le(),
+            Self::Ppc64Be => SleighArch::ppc64be(),
+            Self::Ppc64Le => SleighArch::ppc64le(),
+        }
+    }
 }
 
 /// The Sleigh configuration describing one target architecture.
@@ -356,38 +399,43 @@ mod tests {
         assert_eq!(SleighArch::arm_thumb().isa_mode_var(), Some("TMode"));
     }
 
-    /// Every ARM/MIPS preset carries its mode, and every non-mode arch carries
-    /// none.
+    /// Every preset carries the mode it decodes with, and only the ARM and
+    /// MIPS ones have a mode at all.
     #[test]
     fn isa_mode_var_matches_entry_mode_context_on_every_preset() {
-        for arch in [
-            SleighArch::arm(),
-            SleighArch::arm_be(),
-            SleighArch::arm_be_kernel(),
-            SleighArch::arm_thumb(),
-            SleighArch::mipsbe32(),
-            SleighArch::mipsle32(),
-            SleighArch::mipsbe64(),
-            SleighArch::mipsle64(),
-        ] {
+        use super::ArchPreset;
+        for preset in ArchPreset::ALL {
+            let arch = preset.arch();
             assert_eq!(
                 arch.isa_mode_var(),
                 arch.entry_mode_context(0).map(|(v, _)| v),
-                "{:?} must carry the mode it decodes with",
-                arch.preset()
+                "{preset:?} must carry the mode it decodes with",
+            );
+            let expected = matches!(
+                preset,
+                ArchPreset::Arm
+                    | ArchPreset::ArmBe
+                    | ArchPreset::ArmBeKernel
+                    | ArchPreset::ArmThumb
+                    | ArchPreset::MipsBe32
+                    | ArchPreset::MipsLe32
+                    | ArchPreset::MipsBe64
+                    | ArchPreset::MipsLe64
+            );
+            assert_eq!(
+                arch.isa_mode_var().is_some(),
+                expected,
+                "{preset:?} ISA-mode presence",
             );
         }
-        for arch in [
-            SleighArch::x86_64(),
-            SleighArch::aarch64(),
-            SleighArch::ppc32be(),
-        ] {
-            assert_eq!(
-                arch.isa_mode_var(),
-                None,
-                "{:?} has no ISA mode",
-                arch.preset()
-            );
+    }
+
+    /// Every constructor stamps its own discriminator, so a copy-paste in
+    /// `arch_ctor!` cannot make two presets indistinguishable.
+    #[test]
+    fn preset_round_trips_through_its_constructor() {
+        for preset in super::ArchPreset::ALL {
+            assert_eq!(preset.arch().preset(), *preset);
         }
     }
 

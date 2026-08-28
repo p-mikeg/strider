@@ -43,8 +43,6 @@ pub type Graph = strider_graph::Graph<NodeKind, ValueKind, IrCacheable>;
 
 pub type Inputs<'a> = strider_graph::Inputs<'a, NodeKind, ValueKind, IrCacheable>;
 
-pub type InputCursor<'a> = strider_graph::InputCursor<'a, NodeKind, ValueKind, IrCacheable>;
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -7,6 +7,7 @@
 //! `Load` is value-producing and nests as a value operand; `Store` is a
 //! memory-token root exposing its token via [`MemPat`].
 
+use crate::node_builders::delegate_with_output;
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
@@ -15,7 +16,7 @@ use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
 
 use super::MemPat;
-use super::flow::{OutputPat, WithOutput};
+use super::flow::OutputPat;
 use super::node_pat::{KindCheck, NodePat, variant_kind};
 
 /// The address-region filter of a `Load`/`Store` pattern: a mutually-exclusive
@@ -118,83 +119,55 @@ fn load_store_kind(exemplar: NodeKind, space: Option<rsleigh::VnSpace>) -> KindS
     variant_kind(discriminant, check)
 }
 
-/// What `LoadPat` and `StorePat` share verbatim, embedded as `common`.
-#[derive(Default)]
-struct MemAccessSpec {
-    space: Option<rsleigh::VnSpace>,
-    mem: Option<Box<dyn FnOnce(NodePat) -> NodePat>>,
-    /// Applied in order; each call adds a separate constraint.
-    any_input: Vec<Box<dyn FnOnce(NodePat) -> NodePat>>,
-    /// Raw input and sibling-output slots, from `input` / `output`.
-    slots: Vec<Box<dyn FnOnce(NodePat) -> NodePat>>,
+/// Inputs `[mem(0), addr(1)]`, single output the loaded value.
+///
+/// Holds its `NodePat` eagerly. `space` re-narrows the kind in place rather
+/// than deferring every setter behind a boxed closure to be replayed once the
+/// space is known.
+pub struct LoadPat {
+    inner: NodePat,
     bit_width: Option<u32>,
     region: RegionFilter,
-    capture: Option<Capture>,
-}
-
-impl MemAccessSpec {
-    fn wire_mem_and_capture(&mut self, mut n: NodePat) -> NodePat {
-        if let Some(m) = self.mem.take() {
-            n = m(n);
-        }
-        for f in self.any_input.drain(..).chain(self.slots.drain(..)) {
-            n = f(n);
-        }
-        if let Some(c) = self.capture {
-            n = n.capture(c);
-        }
-        n
-    }
-
-    fn apply_region(self, n: NodePat) -> NodePat {
-        self.region.apply(n)
-    }
-}
-
-/// Inputs `[mem(0), addr(1)]`, single output the loaded value.
-#[derive(Default)]
-pub struct LoadPat {
-    common: MemAccessSpec,
-    addr: Option<Box<dyn FnOnce(NodePat) -> NodePat>>,
 }
 
 impl LoadPat {
     pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
-        self.common.space = Some(s);
+        self.inner = self.inner.with_kind(load_store_kind(
+            NodeKind::Load(rsleigh::VnSpace::RAM),
+            Some(s),
+        ));
         self
     }
 
     /// `inputs[1]`.
     pub fn addr<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.addr = Some(Box::new(move |n: NodePat| n.input(1, p)));
+        self.inner = self.inner.input(1, p);
         self
     }
 
     /// `inputs[0]`, taking a `store` / `mem_phi` / `call`.
     pub fn mem<M: MemPat + 'static>(mut self, p: M) -> Self {
-        self.common.mem = Some(Box::new(move |n: NodePat| n.input_mem(0, p)));
+        self.inner = self.inner.input_mem(0, p);
         self
     }
 
     /// Candidates are mem and addr. A typed value sub binds only addr;
     /// `var` / `anything` also reaches the memory edge. Repeatable.
     pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.common
-            .any_input
-            .push(Box::new(move |n: NodePat| n.input_any(p)));
+        self.inner = self.inner.input_any(p);
         self
     }
 
     /// Pins the value output's width.
     pub fn bit_width(mut self, n: u32) -> Self {
-        self.common.bit_width = Some(n);
+        self.bit_width = Some(n);
         self
     }
 
     /// Requires the address to decompose to exactly `sp + k`. Replaces any
     /// region filter set before it.
     pub fn stack_offset(mut self, k: i128) -> Self {
-        self.common.region.set_stack_offset(k);
+        self.region.set_stack_offset(k);
         self
     }
 
@@ -202,7 +175,7 @@ impl LoadPat {
     /// offset a preceding [`stack_offset`](Self::stack_offset) pinned. The one
     /// region filter that does not discard what came before.
     pub fn stack_only(mut self) -> Self {
-        self.common.region.set_stack_only();
+        self.region.set_stack_only();
         self
     }
 
@@ -210,14 +183,14 @@ impl LoadPat {
     /// An address with no decomposition verdict is rejected. Replaces any
     /// region filter set before it.
     pub fn non_stack(mut self) -> Self {
-        self.common.region.set_non_stack();
+        self.region.set_non_stack();
         self
     }
 
     /// Keeps only accesses whose address decomposes to a heap base (a pure
     /// allocator's return pointer). Replaces any region filter set before it.
     pub fn heap_only(mut self) -> Self {
-        self.common.region.set_heap_only();
+        self.region.set_heap_only();
         self
     }
 
@@ -225,9 +198,7 @@ impl LoadPat {
     /// IR's `expected_signature`; the named accessors above are the intended
     /// surface and this is the escape hatch beneath them.
     pub fn input<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
-        self.common
-            .slots
-            .push(Box::new(move |n: NodePat| n.input(slot, p)));
+        self.inner = self.inner.input(slot, p);
         self
     }
 
@@ -245,23 +216,21 @@ impl LoadPat {
 
     /// Binds the value output.
     pub fn capture(mut self, c: Capture) -> Self {
-        self.common.capture = Some(c);
+        self.inner = self.inner.capture(c);
         self
     }
 
     fn configured(self) -> NodePat {
-        let LoadPat { mut common, addr } = self;
-        let exemplar = NodeKind::Load(rsleigh::VnSpace::RAM);
-        let mut n = NodePat::value(load_store_kind(exemplar, common.space), 0);
-        n = common.wire_mem_and_capture(n);
-        if let Some(a) = addr {
-            n = a(n);
-        }
-        if let Some(w) = common.bit_width {
+        let LoadPat {
+            mut inner,
+            bit_width,
+            region,
+        } = self;
+        if let Some(w) = bit_width {
             // The loaded value IS the anchor output, so pin it there.
-            n = n.with_output_width(w);
+            inner = inner.with_output_width(w);
         }
-        common.apply_region(n)
+        region.apply(inner)
     }
 
     pub fn build(self) -> Pattern {
@@ -276,81 +245,73 @@ impl MatchPat for LoadPat {
 }
 
 pub fn load() -> LoadPat {
-    LoadPat::default()
+    LoadPat {
+        inner: NodePat::value(
+            load_store_kind(NodeKind::Load(rsleigh::VnSpace::RAM), None),
+            0,
+        ),
+        bit_width: None,
+        region: RegionFilter::default(),
+    }
 }
 
-impl WithOutput for LoadPat {
-    fn capture_output(mut self, slot: Option<usize>, c: Capture) -> Self {
-        self.common
-            .slots
-            .push(Box::new(move |n: NodePat| n.capture_output(slot, c)));
-        self
-    }
-    fn output_width(mut self, slot: Option<usize>, bits: u32) -> Self {
-        self.common
-            .slots
-            .push(Box::new(move |n: NodePat| n.output_width(slot, bits)));
-        self
-    }
-    fn output_ty(mut self, slot: Option<usize>, ty: strider_ir::node::ValueType) -> Self {
-        self.common
-            .slots
-            .push(Box::new(move |n: NodePat| n.output_ty(slot, ty)));
-        self
-    }
-}
+delegate_with_output!(LoadPat, inner);
 
 /// Inputs `[mem(0), addr(1), data(2)]`, single output the new memory token.
-#[derive(Default)]
 pub struct StorePat {
-    common: MemAccessSpec,
-    addr: Option<Box<dyn FnOnce(NodePat) -> NodePat>>,
-    data: Option<Box<dyn FnOnce(NodePat) -> NodePat>>,
+    inner: NodePat,
+    /// A width needs SOME wired producer at the data slot to pin on, so
+    /// `configured` synthesises one when `data` was never called.
+    has_data: bool,
+    bit_width: Option<u32>,
+    region: RegionFilter,
 }
 
 impl StorePat {
     pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
-        self.common.space = Some(s);
+        self.inner = self.inner.with_kind(load_store_kind(
+            NodeKind::Store(rsleigh::VnSpace::RAM),
+            Some(s),
+        ));
         self
     }
 
     /// `inputs[1]`.
     pub fn addr<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.addr = Some(Box::new(move |n: NodePat| n.input(1, p)));
+        self.inner = self.inner.input(1, p);
         self
     }
 
     /// The stored value, `inputs[2]`.
     pub fn data<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.data = Some(Box::new(move |n: NodePat| n.input(2, p)));
+        self.inner = self.inner.input(2, p);
+        self.has_data = true;
         self
     }
 
     /// `inputs[0]`, taking a `store` / `mem_phi` / `call`.
     pub fn mem<M: MemPat + 'static>(mut self, p: M) -> Self {
-        self.common.mem = Some(Box::new(move |n: NodePat| n.input_mem(0, p)));
+        self.inner = self.inner.input_mem(0, p);
         self
     }
 
     /// Candidates are mem, addr and data. A typed value sub binds only addr
     /// or data; `var` / `anything` also reaches the memory edge. Repeatable.
     pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.common
-            .any_input
-            .push(Box::new(move |n: NodePat| n.input_any(p)));
+        self.inner = self.inner.input_any(p);
         self
     }
 
     /// Pins the width of the data input, `inputs[2]`.
     pub fn bit_width(mut self, n: u32) -> Self {
-        self.common.bit_width = Some(n);
+        self.bit_width = Some(n);
         self
     }
 
     /// Requires the address to decompose to exactly `sp + k`. Replaces any
     /// region filter set before it.
     pub fn stack_offset(mut self, k: i128) -> Self {
-        self.common.region.set_stack_offset(k);
+        self.region.set_stack_offset(k);
         self
     }
 
@@ -358,7 +319,7 @@ impl StorePat {
     /// offset a preceding [`stack_offset`](Self::stack_offset) pinned. The one
     /// region filter that does not discard what came before.
     pub fn stack_only(mut self) -> Self {
-        self.common.region.set_stack_only();
+        self.region.set_stack_only();
         self
     }
 
@@ -366,14 +327,14 @@ impl StorePat {
     /// An address with no decomposition verdict is rejected. Replaces any
     /// region filter set before it.
     pub fn non_stack(mut self) -> Self {
-        self.common.region.set_non_stack();
+        self.region.set_non_stack();
         self
     }
 
     /// Keeps only accesses whose address decomposes to a heap base (a pure
     /// allocator's return pointer). Replaces any region filter set before it.
     pub fn heap_only(mut self) -> Self {
-        self.common.region.set_heap_only();
+        self.region.set_heap_only();
         self
     }
 
@@ -381,9 +342,7 @@ impl StorePat {
     /// IR's `expected_signature`; the named accessors above are the intended
     /// surface and this is the escape hatch beneath them.
     pub fn input<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
-        self.common
-            .slots
-            .push(Box::new(move |n: NodePat| n.input(slot, p)));
+        self.inner = self.inner.input(slot, p);
         self
     }
 
@@ -400,35 +359,26 @@ impl StorePat {
     }
 
     pub fn capture(mut self, c: Capture) -> Self {
-        self.common.capture = Some(c);
+        self.inner = self.inner.capture(c);
         self
     }
 
     fn configured(self) -> NodePat {
         let StorePat {
-            mut common,
-            addr,
-            data,
+            mut inner,
+            has_data,
+            bit_width,
+            region,
         } = self;
-        let exemplar = NodeKind::Store(rsleigh::VnSpace::RAM);
-        let mut n = NodePat::node(load_store_kind(exemplar, common.space)).with_mem_value(0);
-        n = common.wire_mem_and_capture(n);
-        if let Some(a) = addr {
-            n = a(n);
-        }
-        if let Some(d) = data {
-            n = d(n);
-        } else if common.bit_width.is_some() {
-            // A width constraint needs SOME wired producer output at the data
-            // slot to pin itself on.
-            n = n.input(2, crate::typed::wildcards::anything());
-        }
-        if let Some(w) = common.bit_width {
+        if let Some(w) = bit_width {
+            if !has_data {
+                inner = inner.input(2, crate::typed::wildcards::anything());
+            }
             // The stored value is an input, not an output, so the width pins
             // on that input's producer output.
-            n = n.with_input_width(2, w);
+            inner = inner.with_input_width(2, w);
         }
-        common.apply_region(n)
+        region.apply(inner)
     }
 
     pub fn build(self) -> Pattern {
@@ -446,26 +396,16 @@ impl MatchPat for StorePat {
 impl MemPat for StorePat {}
 
 pub fn store() -> StorePat {
-    StorePat::default()
+    StorePat {
+        inner: NodePat::node(load_store_kind(
+            NodeKind::Store(rsleigh::VnSpace::RAM),
+            None,
+        ))
+        .with_mem_value(0),
+        has_data: false,
+        bit_width: None,
+        region: RegionFilter::default(),
+    }
 }
 
-impl WithOutput for StorePat {
-    fn capture_output(mut self, slot: Option<usize>, c: Capture) -> Self {
-        self.common
-            .slots
-            .push(Box::new(move |n: NodePat| n.capture_output(slot, c)));
-        self
-    }
-    fn output_width(mut self, slot: Option<usize>, bits: u32) -> Self {
-        self.common
-            .slots
-            .push(Box::new(move |n: NodePat| n.output_width(slot, bits)));
-        self
-    }
-    fn output_ty(mut self, slot: Option<usize>, ty: strider_ir::node::ValueType) -> Self {
-        self.common
-            .slots
-            .push(Box::new(move |n: NodePat| n.output_ty(slot, ty)));
-        self
-    }
-}
+delegate_with_output!(StorePat, inner);

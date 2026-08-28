@@ -132,15 +132,21 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             })
         };
         let isa_mode_switch_vn = lifter.sleigh_regs().name_to_vn("ISAModeSwitch");
-        // Capture and carry must be paired: if this sla writes an ISAModeSwitch
-        // register (so a mode is captured), the arch must also expose an
-        // isa_mode_var to carry it, or `enqueue_resolved`'s None-arch arm would
-        // silently drop the committed bit and decode a resolved target in the
-        // wrong mode. Mirror of the carry-side check in `Builder::with_flow_vars`.
-        debug_assert!(
-            isa_mode_switch_vn.is_none() || lifter.arch.isa_mode_var().is_some(),
-            "sla writes ISAModeSwitch but arch {:?} exposes no isa_mode_var",
+        // Capture and carry are paired BOTH ways. Carry without capture would
+        // leave `enqueue_resolved`'s None-arch arm dropping the committed bit
+        // and decoding a resolved target in the wrong mode; capture without
+        // carry means the name above did not resolve, which `name_to_vn`
+        // reports as `None` rather than as an error -- so a misspelling would
+        // otherwise satisfy a one-directional check vacuously while the mode
+        // bit is silently never captured. Mirror of the carry-side check in
+        // `Builder::with_flow_context`.
+        debug_assert_eq!(
+            isa_mode_switch_vn.is_some(),
+            lifter.arch.isa_mode_var().is_some(),
+            "arch {:?}: ISAModeSwitch resolved={}, isa_mode_var={:?}",
             lifter.arch.preset(),
+            isa_mode_switch_vn.is_some(),
+            lifter.arch.isa_mode_var(),
         );
         Ok(Self {
             lifter,

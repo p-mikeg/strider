@@ -724,6 +724,20 @@ cfg.unverified_seeded_sites()          # sites nothing verified: a seed the clas
                                        # as a Return / TailCall (seeded or derived)
 ```
 
+A converged CFG is never silently incomplete, but it says so through FOUR
+channels, and a consumer asking "may this be incomplete?" reads all four.
+`unresolved`, the third field of `analyze`'s result, holds a site that lost a
+successor, one whose re-derived widening could not be seated, one whose answer
+oscillated, and one still growing when the iteration cap ran out; empty means
+fully resolved. `unverified_seeded_sites()` holds a dispatch the CFG consumed as
+a `Return` or a `TailCall`, which is a complete answer that cannot be verified
+rather than a loss -- an ARM `pop {pc}` epilogue lands here, not in
+`unresolved`. `isa_mode_conflicts()` and `interior_branch_targets()` carry the
+other two. The first, third and fourth accumulate across resolution rounds, so a
+later round cannot launder an earlier loss; `unverified_seeded_sites` is derived
+once from the final CFG. The Rust side folds the same four into
+`AnalyzeResult::is_complete()`.
+
 `CfgOptions` (passed via `LifterOptions.cfg` or `Lifter.build_cfg`) tunes CFG
 construction:
 

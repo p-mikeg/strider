@@ -111,12 +111,14 @@ impl OwnedElf {
         filter: LoadFilter,
         relocate: bool,
     ) -> Result<Vec<MemRegion>> {
-        self.regions_with(
-            &ElfSectionLayout::new(&self.file()),
-            source,
-            filter,
-            relocate,
-        )
+        Ok(self
+            .regions_with(
+                &ElfSectionLayout::new(&self.file()),
+                source,
+                filter,
+                relocate,
+            )?
+            .regions)
     }
 
     /// [`regions`](Self::regions) over a layout the caller already built. It
@@ -132,13 +134,13 @@ impl OwnedElf {
         source: RegionSource,
         filter: LoadFilter,
         relocate: bool,
-    ) -> Result<Vec<MemRegion>> {
+    ) -> Result<super::sections::LoadedImage> {
         let obj = self.file();
-        let mut regions =
+        let mut image =
             super::sections::collect_regions(&obj, Some(&self.backing), source, filter, layout)?;
         if relocate {
-            apply_elf_relocations_with(&mut regions, &obj, filter, layout)?;
+            apply_elf_relocations_with(&mut image.regions, &obj, filter, layout)?;
         }
-        Ok(regions)
+        Ok(image)
     }
 }

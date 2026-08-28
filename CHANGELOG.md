@@ -115,11 +115,25 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `AssumptionOptions` is the only configuration sound under any input, which
   no single knob promised before.
 
+- `LifterOptions(alias_mode=...)` and
+  `LifterOptions(assume_incoming_args_survive_calls=...)` are gone; both are
+  fields of `AssumptionOptions`. See the entry above.
+- `Cfg.is_complete()` answers the four-channel question in one call. The
+  `AnalyzeResult` docstring used to say an empty `unresolved` meant the answer
+  was complete, which contradicted the Rust contract: a site the CFG consumed
+  as a `Return` or `TailCall` is reported only through
+  `unverified_seeded_sites`.
+- `Function.apply_rules` drains and refills the memory-decomposition side
+  table, as the optimizer pipeline already did. A rule that rewires an
+  address left a stale entry, and a rule that built a fresh `Load` left none,
+  so `load().stack_only()` and `store().heap_only()` silently matched the
+  wrong nodes or none at all afterwards.
+
 ### Breaking, Rust
 
 - `rsleigh` is a git submodule at `externals/rsleigh`, not a path dependency:
   clone with `--recursive`, or `git submodule update --init --recursive`.
-- The MSRV is 1.91, which `pyo3-stub-gen`'s generated code needs; edition
+- The MSRV is 1.91; edition
   2024's own floor of 1.85 no longer builds the workspace.
 
 - `float_is_nan` / `float_le` pin the operand they repeat to one value;
@@ -133,6 +147,23 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `elf_get_readonly_regions` and `elf_get_loadable_regions_including_writable`
   (use `OwnedElf::regions` with a `LoadFilter`). `MemRegion::fully_covers` is
   `pub(crate)`.
+- `NodeKind` gains `input_head_len` / `output_head_len` /
+  `expected_input_kind` / `expected_output_kind`, so a consumer outside
+  `strider-ir` can read the slot-layout single source of truth instead of
+  hardcoding the shift. `strider-pattern`'s `call().arg(n)`, `ret_val(n)` and
+  `phi_input(n)` now do. `NodeKind::is_terminator` likewise replaces three
+  hand-written copies of the terminator set.
+- A template whose declared output kinds contradict its node signature is
+  rejected at instantiation rather than building a malformed node.
+- `Builder::with_flow_vars` and `with_function_mode` merge into
+  `with_flow_context`: the two were illegal apart, and a `debug_assert`
+  existed only to catch the case where a caller set one.
+- `ArchPreset::ALL` and `ArchPreset::arch()`. Three hand-written preset
+  rosters, all of which had gone stale on `arm_be_kernel`, derive from them.
+- `pyo3-stub-gen` is gone: it generated into a gitignored directory nothing
+  read, no gate compiled it, and the stubs are hand-written and checked by
+  `test_stub_parity.py`.
+
 - `AliasMode` is gone. `OptOptions::alias_mode` and
   `OptOptions::assume_incoming_args_survive_calls` are now
   `AssumptionOptions::stack_global_disjoint` and

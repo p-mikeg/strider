@@ -115,13 +115,10 @@ Jump tables, computed calls and returns are resolved by their own post-pass,
 After optimizing, Strider classifies each unresolved
 indirect branch against the clean IR, feeds any newly discovered targets back in,
 and re-lifts, repeating until the set of edges stops changing. Whatever still
-cannot be resolved comes back as the `unresolved` list from `analyze`, alongside
-any site whose answer shrank between rounds. Three further channels carry what
-`unresolved` cannot: `unverified_seeded_sites`, `isa_mode_conflicts` and
-`interior_branch_targets`. A converged CFG is never silently incomplete, but
-saying so takes all four. `analyze` never raises for an indirect branch: an
-oscillating site and a chain deeper than the iteration cap both come back
-through `unresolved`.
+cannot be resolved comes back as the `unresolved` list from `analyze`, never as
+an exception. That list is one of the four channels a converged CFG reports its
+own incompleteness through; see
+[python-api.md](python-api.md#12-the-cfg-stridercfg).
 
 A resolved target carries the ISA mode it decodes in, taken from the mode the
 branch commits or else the one flowing into it, so an ARM/Thumb interworking
