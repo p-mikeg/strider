@@ -82,21 +82,17 @@ where
         switch_anchors: &UnresolvedAnchors,
         entry_bit: bool,
     ) -> FxHashMap<PcodeInsnAddr, bool> {
-        let Some(var) = self.arch.isa_mode_var() else {
-            return unresolved
-                .iter()
-                .chain(switch_anchors.iter())
-                .map(|(addr, _)| (*addr, entry_bit))
-                .collect();
-        };
         let sleigh = self.lifter.sleigh();
         unresolved
             .iter()
             .chain(switch_anchors.iter())
             .map(|(addr, _)| {
-                let bit = sleigh
-                    .get_context_at(addr.machine_addr.addr, var)
-                    .map_or(entry_bit, |mode| mode != 0);
+                let bit = strider_cfg::flowing_isa_bit_at(
+                    &self.arch,
+                    sleigh,
+                    addr.machine_addr.addr,
+                    entry_bit,
+                );
                 (*addr, bit)
             })
             .collect()

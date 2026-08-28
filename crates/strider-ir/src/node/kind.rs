@@ -1,4 +1,5 @@
 use crate::node::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
+use crate::node_signature::ExpectedValueKind;
 
 /// Where a function argument is passed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -153,6 +154,59 @@ impl NodeKind {
     #[inline]
     pub fn is_const(self) -> bool {
         matches!(self, Self::IntConst(..) | Self::FloatConst(..))
+    }
+
+    /// Fixed input slots before the variadic tail, i.e. the slot a caller's
+    /// `arg(n)` / `ret_val(n)` / `phi_input(n)` shifts by.
+    ///
+    /// Reads `expected_signature`, which is the single source of truth for
+    /// slot shape; a consumer that hardcodes the shift instead silently wires
+    /// the wrong input when a head slot is added.
+    #[must_use]
+    pub fn input_head_len(&self) -> usize {
+        crate::node_signature::expected_signature(self)
+            .inputs
+            .head_len()
+    }
+
+    /// Fixed output slots before the variadic tail. See
+    /// [`input_head_len`](Self::input_head_len).
+    #[must_use]
+    pub fn output_head_len(&self) -> usize {
+        crate::node_signature::expected_signature(self)
+            .outputs
+            .head_len()
+    }
+
+    /// The value kind input slot `idx` admits, `None` past the arity bound.
+    #[must_use]
+    pub fn expected_input_kind(&self, idx: usize) -> Option<ExpectedValueKind> {
+        crate::node_signature::expected_signature(self)
+            .inputs
+            .at(idx)
+            .map(|s| s.kind)
+    }
+
+    /// The value kind output slot `idx` admits, `None` past the arity bound.
+    #[must_use]
+    pub fn expected_output_kind(&self, idx: usize) -> Option<ExpectedValueKind> {
+        crate::node_signature::expected_signature(self)
+            .outputs
+            .at(idx)
+            .map(|s| s.kind)
+    }
+
+    /// Consumes control and produces none.
+    ///
+    /// A fourth terminator kind added without updating every consumer would
+    /// let a control walk conclude a live arm does not escape, so this is the
+    /// one statement of the set.
+    #[must_use]
+    pub fn is_terminator(&self) -> bool {
+        matches!(
+            self,
+            Self::Return | Self::IndirectBranch | Self::Unreachable
+        )
     }
 
     /// Whether the graph may dedup nodes of this kind.

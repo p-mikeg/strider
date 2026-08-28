@@ -15,7 +15,7 @@ impl<E: EntityRef> DenseEntitySet<E> {
         Self::default()
     }
 
-    pub fn with_capacity(capacity: usize) -> Self {
+    fn with_capacity(capacity: usize) -> Self {
         Self {
             bitset: CompoundBitSet::with_capacity(capacity),
             _marker: PhantomData,

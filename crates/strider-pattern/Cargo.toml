@@ -15,7 +15,7 @@ vn-container = { workspace = true }
 petgraph = { workspace = true }
 anyhow = { workspace = true }
 itertools = { workspace = true, features = ["use_alloc"] }
-rustc-hash = "2"
+rustc-hash.workspace = true
 
 [dev-dependencies]
 # Test-only IR helper (build_sub_as_add_neg) used in typed_match tests.

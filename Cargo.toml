@@ -11,9 +11,10 @@ edition = "2024"
 version = "0.2.0"
 license = "MIT"
 repository = "https://github.com/p-mikeg/strider"
-# Above edition 2024's own 1.85 floor: `u32::is_multiple_of` needs 1.87 and
-# `pyo3-stub-gen`'s generated code needs 1.91. Naming it turns a syntax
-# explosion on an older toolchain into a real error message.
+# Above edition 2024's own 1.85 floor: `u32::is_multiple_of` needs 1.87. Naming
+# it turns a syntax explosion on an older toolchain into a real error message.
+# The 1.91 floor is what `pyo3-stub-gen` needed; with that dependency gone the
+# floor is untested below 1.91 rather than known to be required.
 rust-version = "1.91"
 # Publishing needs every workspace dependency to carry a version, and rsleigh is
 # a path dependency on a fork that is not on crates.io. Lift this per crate if

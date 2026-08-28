@@ -1040,8 +1040,7 @@ fn re_imposing_a_context_over_an_it_block_builds() {
             ..CfgOptions::default()
         };
         Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
-            .with_flow_vars(&flow)
-            .with_function_mode(function_mode)
+            .with_flow_context(&flow, function_mode)
             .build()
             .expect("re-imposing a context over an IT block must build")
             .regions()

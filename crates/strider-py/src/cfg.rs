@@ -34,6 +34,10 @@ pub struct PyCfg {
 /// FINAL round's CFG: a round that raised a report and was then rebuilt
 /// without the edge that raised it leaves nothing behind in `inner`.
 pub(crate) struct CfgReports {
+    /// The same list `AnalyzeResult.unresolved` carries, held here so
+    /// `is_complete` can test all four channels from one object. Empty for a
+    /// `build_cfg` result, which resolves nothing.
+    pub(crate) unresolved: Vec<u64>,
     /// Empty for a `build_cfg` result: only `analyze` runs the resolver that
     /// decides which seeds went unchecked.
     pub(crate) unverified_seeded: Vec<u64>,
@@ -69,6 +73,7 @@ impl PyCfg {
     /// reports are the whole accumulation.
     pub(crate) fn new(inner: strider_cfg::Cfg, lifter: Py<PyLifter>) -> Self {
         let reports = CfgReports {
+            unresolved: Vec::new(),
             unverified_seeded: Vec::new(),
             isa_mode_conflicts: machine_addrs(inner.isa_mode_conflicts()),
             interior_branch_targets: machine_addrs(inner.interior_branch_targets()),
@@ -243,6 +248,23 @@ impl PyCfg {
     /// from `build_cfg`, which runs no resolver.
     fn unverified_seeded_sites(&self) -> Vec<u64> {
         self.reports.unverified_seeded.clone()
+    }
+
+    /// Whether all four incompleteness channels are empty: the `unresolved`
+    /// of the `AnalyzeResult` this CFG came from, `unverified_seeded_sites`,
+    /// `isa_mode_conflicts` and `interior_branch_targets`.
+    ///
+    /// The answer to "may this be incomplete?", which none of the four gives
+    /// alone. `False` is not always a loss: `unverified_seeded_sites` holds
+    /// answers that are complete but unverified, so a site consumed as a
+    /// return (an ARM `pop {pc}` epilogue) clears it. Read whichever channel
+    /// is non-empty to tell the cases apart.
+    fn is_complete(&self) -> bool {
+        let r = &self.reports;
+        r.unresolved.is_empty()
+            && r.unverified_seeded.is_empty()
+            && r.isa_mode_conflicts.is_empty()
+            && r.interior_branch_targets.is_empty()
     }
 
     /// Exposes the strong `lifter` back-reference so the cyclic GC can see a

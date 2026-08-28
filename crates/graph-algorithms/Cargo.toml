@@ -10,7 +10,7 @@ rust-version.workspace = true
 [dependencies]
 cranelift-entity.workspace = true
 entity-utils.workspace = true
-rustc-hash = "2"
+rustc-hash.workspace = true
 
 [dev-dependencies]
 expect-test.workspace = true

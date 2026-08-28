@@ -100,7 +100,7 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     pub(super) flow_vars: &'a FlowVars,
     /// This function's constant ISA mode, the base context a strider-resolved
     /// target decodes in ([`Self::enqueue_resolved`]).  Empty unless
-    /// [`Self::with_function_mode`] supplies it.
+    /// [`Self::with_flow_context`] supplies it.
     pub(super) function_mode: FlowContext,
     /// Seeded targets whose region would not decode, each with the region that
     /// seeded it; see [`Cfg::undecodable_seeded_targets`].  Keyed on the SITE,
@@ -166,20 +166,28 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             user_op_names,
             // A single-shot build on a fresh engine has no cross-function
             // context to leak; a reused engine supplies the vars via
-            // `with_flow_vars`.
+            // `with_flow_context`.
             flow_vars: &NO_FLOW_VARS,
             function_mode: FlowContext::default(),
         }
     }
 
-    /// Supplies the flowing context vars (from [`FlowVars::discover`]), so a
-    /// reused engine's decode mode is re-imposed at each region rather than left
-    /// to the shared, leak-prone context DB.
+    /// Supplies the flowing context vars (from [`FlowVars::discover`]) and
+    /// this function's constant ISA mode, captured at its entry.
+    ///
+    /// One setter because the two are illegal apart: vars without a mode
+    /// leaves `explore`'s `isa_mode` `None`, `region_isa_mode` never written
+    /// and the clash check on its catch-all arm, i.e. ISA-mode handling off
+    /// with nothing said.
     #[must_use]
-    pub fn with_flow_vars(mut self, flow_vars: &'a FlowVars) -> Self {
-        // The ISA-mode var this arch re-imposes at each region (`restore_at`)
-        // must be one the sla actually flows, or the re-impose silently no-ops
-        // and interworking correctness is lost.
+    pub fn with_flow_context(
+        mut self,
+        flow_vars: &'a FlowVars,
+        function_mode: FlowContext,
+    ) -> Self {
+        // The ISA-mode var this arch re-imposes at each region must be one the
+        // sla actually flows, or the re-impose silently no-ops and
+        // interworking correctness is lost.
         debug_assert!(
             self.arch
                 .isa_mode_var()
@@ -188,12 +196,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             self.arch.isa_mode_var(),
         );
         self.flow_vars = flow_vars;
-        self
-    }
-
-    /// Supplies this function's constant ISA mode, captured at its entry.
-    #[must_use]
-    pub fn with_function_mode(mut self, function_mode: FlowContext) -> Self {
         self.function_mode = function_mode;
         self
     }
@@ -257,18 +259,14 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     ) {
         let carried = match self.arch.isa_mode_var() {
             Some(var) => {
+                // Degrading to the function's own mode, not to `false`, which
+                // would decode every resolved same-mode target of a Thumb
+                // function as ARM.
+                let entry_bit = self
+                    .isa_mode_of(&self.function_mode)
+                    .is_some_and(|v| v != 0);
                 let bit = isa_bit.unwrap_or_else(|| {
-                    self.sleigh.get_context_at(branch_addr, var).map_or_else(
-                        |_| {
-                            // Degrade to the function's own mode; `false` would
-                            // decode every resolved same-mode target of a Thumb
-                            // function as ARM.
-                            self.flow_vars
-                                .value_of(&self.function_mode, var)
-                                .is_some_and(|v| v != 0)
-                        },
-                        |mode| mode != 0,
-                    )
+                    crate::flowing_isa_bit_at(&self.arch, self.sleigh, branch_addr, entry_bit)
                 });
                 self.flow_vars.with_mode_bit(&self.function_mode, var, bit)
             }
@@ -345,6 +343,18 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         let region_id = self.region_graph.add_node(region);
         self.start_addr_to_region_id.insert(start_addr, region_id);
         Ok(region_id)
+    }
+
+    /// The ISA mode `ctx` carries, `None` on an arch with no mode var or when
+    /// the context does not name it.
+    ///
+    /// The one projection of `isa_mode_var` onto a `FlowContext`; the region
+    /// mode, the clash check, the entry-mode degrade and `Cfg::function_isa_bit`
+    /// are all this question asked at different contexts.
+    fn isa_mode_of(&self, ctx: &FlowContext) -> Option<u32> {
+        self.arch
+            .isa_mode_var()
+            .and_then(|var| self.flow_vars.value_of(ctx, var))
     }
 
     /// Lowers the out-of-function arm of a conditional branch, creating the
@@ -507,13 +517,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             // so the loser's path would silently decode in the wrong ISA;
             // recording the clash is what keeps the answer honest.
             let mode_clash = match (
-                self.arch.isa_mode_var(),
+                self.isa_mode_of(&carried),
                 self.region_isa_mode.get(&region_id),
             ) {
-                (Some(var), Some(&decoded)) => self
-                    .flow_vars
-                    .value_of(&carried, var)
-                    .is_some_and(|want| want != decoded),
+                (Some(want), Some(&decoded)) => want != decoded,
                 _ => false,
             };
             let is_start = region.start_addr == addr;
@@ -537,17 +544,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         }
         if !self.flow_vars.is_empty() {
             // Undoes a sibling region's forward-hold clobber of this address.
-            self.flow_vars.restore_at(
-                self.sleigh,
-                addr.machine_addr.addr,
-                &carried,
-                self.arch.isa_mode_var(),
-            )?;
+            self.flow_vars
+                .restore_at(self.sleigh, addr.machine_addr.addr, &carried)?;
         }
-        let isa_mode = self
-            .arch
-            .isa_mode_var()
-            .and_then(|var| self.flow_vars.value_of(&carried, var));
+        let isa_mode = self.isa_mode_of(&carried);
         RegionBuilder::new(self, addr, parent_region, isa_mode).build()?;
         Ok(())
     }
@@ -623,18 +623,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     }
 
     pub fn build(mut self) -> Result<Cfg> {
-        // The two are independent setters but not independent features: with
-        // flow vars and no function mode, `with_mode_bit` hands back an empty
-        // context, `explore`'s `isa_mode` stays `None`, `region_isa_mode` is
-        // never written and the clash check falls to its catch-all arm, so
-        // ISA-mode handling is off with nothing said.
-        debug_assert!(
-            self.arch.isa_mode_var().is_none_or(|var| {
-                self.flow_vars.is_empty()
-                    || self.flow_vars.value_of(&self.function_mode, var).is_some()
-            }),
-            "with_flow_vars without with_function_mode silently disables ISA-mode handling",
-        );
         let entry = self.start_pcode_addr();
         self.enqueue(None, entry, entry.machine_addr.addr);
         while let Some(WorkItem {
@@ -664,11 +652,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             },
         )?;
 
-        let function_isa_bit = self
-            .arch
-            .isa_mode_var()
-            .and_then(|var| self.flow_vars.value_of(&self.function_mode, var))
-            .map(|mode| mode != 0);
+        let function_isa_bit = self.isa_mode_of(&self.function_mode).map(|mode| mode != 0);
         Ok(Cfg {
             region_graph: self.region_graph,
             entry: starting_region,
@@ -988,7 +972,7 @@ mod tests {
 
         let mut b =
             super::Builder::for_arch(&arch, &mut sleigh, 0x1000, &crate::CfgOptions::default())
-                .with_flow_vars(&flow);
+                .with_flow_context(&flow, crate::builder::flow::FlowContext::default());
         CONTEXT_READS.with(|n| n.set(0));
         b.enqueue(None, addr(0x1000, 0), 0x1000);
         assert_eq!(

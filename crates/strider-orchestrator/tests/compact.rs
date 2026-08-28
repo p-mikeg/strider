@@ -6,7 +6,7 @@ use strider_target::{CallingConvention, SleighArch};
 mod common;
 
 /// Minimal x86_64 function: `mov rax, 42; ret`.
-fn x86_64_call_then_ret_bytes() -> (Vec<u8>, u64) {
+fn x86_64_mov_then_ret_bytes() -> (Vec<u8>, u64) {
     // 48 c7 c0 2a 00 00 00   mov rax, 42
     // c3                     ret
     let bytes = vec![0x48, 0xc7, 0xc0, 0x2a, 0x00, 0x00, 0x00, 0xc3];
@@ -15,7 +15,7 @@ fn x86_64_call_then_ret_bytes() -> (Vec<u8>, u64) {
 }
 
 fn run_with(compact: bool) -> strider_ir::Function {
-    let (bytes, entry) = x86_64_call_then_ret_bytes();
+    let (bytes, entry) = x86_64_mov_then_ret_bytes();
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();

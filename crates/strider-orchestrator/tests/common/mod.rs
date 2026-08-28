@@ -537,20 +537,6 @@ pub(crate) fn has_constant(function: &strider_ir::Function, value: u64) -> bool 
     })
 }
 
-/// The unique `If` node in `g`. Panics on zero or several, either being a
-/// fixture-construction bug.
-pub(crate) fn find_unique_if(function: &strider_ir::Function) -> strider_ir::node::NodeId {
-    let mut iter = function
-        .graph()
-        .all_node_ids()
-        .filter(|&n| matches!(function.node_kind(n), NodeKind::If));
-    let first = iter
-        .next()
-        .expect("fixture must contain exactly one If node");
-    assert!(iter.next().is_none(), "fixture has more than one If node",);
-    first
-}
-
 /// Generates one `#[test]` per (architecture, function) pair.
 ///
 /// Basic form (every arch in `ALL_ARCHES` runs):

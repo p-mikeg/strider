@@ -47,40 +47,10 @@ impl Cfg {
         max_nodes: usize,
     ) -> crate::Result<String> {
         let set = neighborhood_regions(self, center, depth, max_nodes);
-        let regs = sleigh.regs()?;
-        let g = self.region_graph();
-        let mut out = ::dot::DotEmitter::new("G", &::dot::DotStyle::dark_cfg());
-        for &node in &set {
-            let region = g
-                .node_weight(node)
-                .ok_or_else(|| anyhow::anyhow!("invalid region index {node:?}"))?;
-            let start = region.start_addr.machine_addr.addr;
-            let mut label = format!("Instruction(addr={start:#x})");
-            for insn in &region.insns {
-                let a = insn.addr.machine_addr.addr;
-                let pretty = insn.insn.ctx_fmt(sleigh, &regs);
-                label.push_str(&format!("\\l{a:#x}: {pretty}"));
-            }
-            label.push_str("\\l");
-            let id = node.index().to_string();
-            let extra: &[(&str, &str)] = if node == center {
-                &[("color", "\"#ffcc00\""), ("penwidth", "2.5")]
-            } else {
-                &[]
-            };
-            out.node(&id, &label, "box", extra);
-        }
-        // ponytail: edges here are plain, without the full-CFG dumper's
-        // if-true/if-false labels.  Recovering polarity means a `region_if`
-        // per source; do it if the explorer ever needs it.
-        for &node in &set {
-            for succ in g.neighbors_directed(node, Direction::Outgoing) {
-                if set.contains(&succ) {
-                    out.edge(&node.index().to_string(), &succ.index().to_string(), &[]);
-                }
-            }
-        }
-        Ok(out.finish())
+        // The full-CFG dumper restricted to `set`: same labels, and the
+        // if-true / if-false edge polarity a second emitter here did not carry.
+        let dumper = self.dot_dumper(sleigh).restricted(&set, center);
+        ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark_cfg()).as_dot()
     }
 }
 

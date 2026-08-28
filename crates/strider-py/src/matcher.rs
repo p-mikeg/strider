@@ -32,14 +32,6 @@ pub enum CaptureKey<'py> {
     Str(String),
 }
 
-// Hand-written so pyo3-stub-gen emits the union rather than one arm.
-impl pyo3_stub_gen::PyStubType for CaptureKey<'_> {
-    fn type_output() -> pyo3_stub_gen::TypeInfo {
-        pyo3_stub_gen::TypeInfo::with_module("strider.pattern.Capture", "strider.pattern".into())
-            | <String as pyo3_stub_gen::PyStubType>::type_output()
-    }
-}
-
 impl CaptureKey<'_> {
     pub(crate) fn resolve(self) -> PyResult<strider_pattern::Capture> {
         match self {

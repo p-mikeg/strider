@@ -9,7 +9,6 @@ from strider.pattern import (
     function_arg,
     int_const,
     int_binary,
-    any_int_binary,
     load,
     store,
     int_mul,
@@ -100,12 +99,3 @@ print(
     f"(only the order the graph stores)"
 )
 assert (len(ordered_arg_first) == 0) != (len(ordered_const_first) == 0)
-
-
-# any_int_binary matches any int binary op, binding the node to its first Capture;
-# Match.op reads back which variant fired.
-print("\n=== bonus: any_int_binary binds the op variant ===")
-op, l, r = Capture(), Capture("l"), Capture("r")
-pat = any_int_binary(op, l, r)
-matches = function.find_all(pat)
-print(f"matched {len(matches)} int-binary-op nodes (any variant)")

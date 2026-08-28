@@ -92,77 +92,44 @@ impl LoadFilter {
 /// A writable-but-executable mapping is included, since a firmware image can
 /// ship a single RWX PT_LOAD and there would otherwise be nothing to decode.
 /// That makes this a superset of the runtime-immutable image;
-/// [`super::ElfFileMemReader`] subtracts `elf_writable_fetch_ranges` from it
-/// for its [`crate::ReadOnlyMemory`] view.
+/// [`super::ElfFileMemReader`] subtracts the writable ones from it for its
+/// [`crate::ReadOnlyMemory`] view.
 ///
 /// # Errors
 ///
 /// When an accepted segment or section's `data()` can't be read, or its
 /// `address + length` would exceed `u64::MAX`.
 pub fn elf_get_loadable_regions(obj: &object::File<'_>) -> Result<Vec<MemRegion>> {
-    collect_regions(
+    Ok(collect_regions(
         obj,
         None,
         RegionSource::Auto,
         LoadFilter::CodeAndReadOnly,
         &ElfSectionLayout::new(obj),
-    )
+    )?
+    .regions)
 }
 
-/// `[start, end)` of every mapping [`elf_get_loadable_regions`] accepts that is
-/// NOT immutable, i.e. a writable-but-executable one. Subtracting these from the
-/// fetch image gives the `ReadOnlyMemory` view, without a second copy of the
-/// bytes: only lengths are read here.
-///
-/// `layout` must be the one built for `obj`.
-///
-/// # Errors
-///
-/// Same as [`elf_get_loadable_regions`].
-pub(crate) fn elf_writable_fetch_ranges(
-    obj: &object::File<'_>,
-    layout: &ElfSectionLayout,
-) -> Result<Vec<(u64, u64)>> {
-    let mut out = Vec::new();
-    let mut push = |addr: u64, len: usize| -> Result<()> {
-        // Same overflow rule as `MemRegion::new`, so a range that could not be
-        // built as a region is not silently accepted as one here.
-        let end = addr.checked_add(len as u64).ok_or_else(|| {
-            anyhow::anyhow!("region at {addr:#x} with length {len} would overflow u64")
-        })?;
-        out.push((addr, end));
-        Ok(())
-    };
-    let (fetch, rom) = (LoadFilter::CodeAndReadOnly, LoadFilter::ImmutableOnly);
-    match obj.kind() {
-        ObjectKind::Executable | ObjectKind::Dynamic => {
-            for seg in obj.segments() {
-                let object::SegmentFlags::Elf { p_flags } = seg.flags() else {
-                    continue;
-                };
-                if !fetch.segment_accepts(p_flags) || rom.segment_accepts(p_flags) {
-                    continue;
-                }
-                let len = seg.data().context("failed to parse ELF")?.len();
-                if len > 0 {
-                    push(seg.address(), len)?;
-                }
-            }
-        }
-        _ => {
-            // First-wins dedup on the base, like `collect_loadable_sections_dedup`,
-            // so a losing section contributes no range.
-            let mut seen: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
-            for sec in accepted_sections(obj, fetch, layout)? {
-                if seen.insert(sec.base) && !rom.section_accepts(sec.sh_flags) {
-                    push(sec.base, sec.data.len())?;
-                }
-            }
-        }
-    }
-    Ok(out)
+/// The mappings one walk accepted, and which of them are writable.
+#[derive(Default)]
+pub(crate) struct LoadedImage {
+    pub(crate) regions: Vec<MemRegion>,
+    /// `[start, end)` of every region whose mapping is writable, i.e. the ones
+    /// [`LoadFilter::ImmutableOnly`] would have rejected. Ranges rather than a
+    /// second region set, so the bytes are stored once.
+    pub(crate) writable: Vec<(u64, u64)>,
 }
-/// One accepted section, carrying everything the three section walks read.
+
+impl LoadedImage {
+    fn push(&mut self, region: MemRegion, writable: bool) {
+        if writable {
+            self.writable.push((region.start_addr(), region.end_addr()));
+        }
+        self.regions.push(region);
+    }
+}
+
+/// One accepted section, carrying everything the section walks read.
 struct AcceptedSection<'d> {
     index: usize,
     sh_flags: u64,
@@ -173,10 +140,10 @@ struct AcceptedSection<'d> {
 
 /// Every section the section walk accepts under `filter`, in index order.
 ///
-/// Which sections survive decides where regions land, which relocation sites
-/// this crate owns, and which ranges the ROM view subtracts. All three have to
-/// agree, so they read this one walk instead of each spelling the filter,
-/// the empty-section skip and the layout base out again.
+/// Which sections survive decides where regions land and which relocation sites
+/// this crate owns. Both have to agree, so they read this one walk instead of
+/// each spelling the filter, the empty-section skip and the layout base out
+/// again.
 ///
 /// `layout` must be the one built for `obj`.
 ///
@@ -209,6 +176,24 @@ fn accepted_sections<'d>(
         });
     }
     Ok(out)
+}
+
+/// [`accepted_sections`] under **first-wins dedup** on the loaded base, still in
+/// index order.
+///
+/// # Errors
+///
+/// Same as [`accepted_sections`].
+fn deduped_sections<'d>(
+    obj: &object::File<'d>,
+    filter: LoadFilter,
+    layout: &ElfSectionLayout,
+) -> Result<Vec<AcceptedSection<'d>>> {
+    let mut seen: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
+    Ok(accepted_sections(obj, filter, layout)?
+        .into_iter()
+        .filter(|sec| seen.insert(sec.base))
+        .collect())
 }
 
 /// Where each section is actually loaded.
@@ -316,10 +301,10 @@ fn align_up(value: u64, align: u64) -> u64 {
 /// Which sections the ET_REL relocation walk owns, i.e. exactly those
 /// [`collect_loadable_sections_dedup`] kept.
 ///
-/// Replays that walk rather than inferring it from the loaded bytes: which
-/// sections survive depends on `filter`, and two sections holding equal bytes
-/// are indistinguishable afterwards, so guessing would write `.rela.data`
-/// straight over `.text.f`.
+/// Shares [`deduped_sections`] with it rather than inferring the set from the
+/// loaded bytes: which sections survive depends on `filter`, and two sections
+/// holding equal bytes are indistinguishable afterwards, so guessing would
+/// write `.rela.data` straight over `.text.f`.
 ///
 /// `filter` must be the one the regions were loaded with, and `layout` the one
 /// built for `obj`.
@@ -339,11 +324,10 @@ pub(crate) fn loaded_section_indices(
     if obj.kind() != ObjectKind::Relocatable {
         return Ok(std::collections::BTreeSet::new());
     }
-    let mut by_addr: BTreeMap<u64, usize> = BTreeMap::new();
-    for sec in accepted_sections(obj, filter, layout)? {
-        by_addr.entry(sec.base).or_insert(sec.index);
-    }
-    Ok(by_addr.into_values().collect())
+    Ok(deduped_sections(obj, filter, layout)?
+        .into_iter()
+        .map(|sec| sec.index)
+        .collect())
 }
 
 /// `bytes`, when given, is the whole image the regions are windows into; the
@@ -360,7 +344,7 @@ pub(crate) fn collect_regions(
     source: RegionSource,
     filter: LoadFilter,
     layout: &ElfSectionLayout,
-) -> Result<Vec<MemRegion>> {
+) -> Result<LoadedImage> {
     match (source, obj.kind()) {
         (RegionSource::Auto, ObjectKind::Executable | ObjectKind::Dynamic) => {
             collect_loadable_segments(obj, bytes, filter)
@@ -445,8 +429,8 @@ fn collect_loadable_segments(
     obj: &object::File<'_>,
     bytes: Option<&FileBytes>,
     filter: LoadFilter,
-) -> Result<Vec<MemRegion>> {
-    let mut out = Vec::new();
+) -> Result<LoadedImage> {
+    let mut out = LoadedImage::default();
     let mut budget = CopyBudget::default();
     for seg in obj.segments() {
         // `obj.segments()` already yields PT_LOAD only, so `p_flags` is read
@@ -461,13 +445,16 @@ fn collect_loadable_segments(
         if data.is_empty() {
             continue;
         }
-        out.push(region_from(
-            bytes,
-            seg.address(),
-            Some(seg.file_range()),
-            data,
-            &mut budget,
-        )?);
+        out.push(
+            region_from(
+                bytes,
+                seg.address(),
+                Some(seg.file_range()),
+                data,
+                &mut budget,
+            )?,
+            p_flags & object::elf::PF_W != 0,
+        );
     }
     Ok(out)
 }
@@ -479,21 +466,23 @@ fn collect_loadable_sections_dedup(
     bytes: Option<&FileBytes>,
     filter: LoadFilter,
     layout: &ElfSectionLayout,
-) -> Result<Vec<MemRegion>> {
-    let mut by_addr: BTreeMap<u64, MemRegion> = BTreeMap::new();
+) -> Result<LoadedImage> {
+    let mut by_addr: BTreeMap<u64, (MemRegion, bool)> = BTreeMap::new();
     let mut budget = CopyBudget::default();
-    for sec in accepted_sections(obj, filter, layout)? {
-        if let std::collections::btree_map::Entry::Vacant(e) = by_addr.entry(sec.base) {
-            e.insert(region_from(
-                bytes,
-                sec.base,
-                sec.file_range,
-                sec.data,
-                &mut budget,
-            )?);
-        }
+    for sec in deduped_sections(obj, filter, layout)? {
+        by_addr.insert(
+            sec.base,
+            (
+                region_from(bytes, sec.base, sec.file_range, sec.data, &mut budget)?,
+                sec.sh_flags & u64::from(object::elf::SHF_WRITE) != 0,
+            ),
+        );
     }
-    Ok(by_addr.into_values().collect())
+    let mut out = LoadedImage::default();
+    for (region, writable) in by_addr.into_values() {
+        out.push(region, writable);
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

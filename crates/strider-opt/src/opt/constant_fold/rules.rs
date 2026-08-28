@@ -318,28 +318,19 @@ fn build_identity_rules() -> Vec<crate::BoxedRule> {
     ]
 }
 
-/// `Err(skip)` unless every operand carries exactly `expected`'s bit width.
-///
-/// The const-eval folds mask all operands to one width, which is only correct
-/// when they already carry it. `check_function_invariants_arith_widths` covers
-/// the arithmetic operands; a shift COUNT is exempt there and masked here, so
-/// this stays the only check standing over it.
+/// [`crate::const_eval::widths_carry`] over captures, in the rules' carrier.
 fn require_operand_widths(
     edit: &strider_pattern::TemplateCtx<'_>,
     operands: &[Capture],
     expected: strider_ir::node::ValueType,
 ) -> crate::error::Result<()> {
-    let expected_bits = expected.bit_width();
-    for &c in operands {
-        let ty = edit
-            .bindings
-            .get_type(c, edit.function)
-            .ok_or_else(strider_pattern::skip)?;
-        if ty.bit_width() != expected_bits {
-            return Err(strider_pattern::skip());
-        }
-    }
-    Ok(())
+    let carried = crate::const_eval::widths_carry(
+        operands
+            .iter()
+            .map(|&c| edit.bindings.get_type(c, edit.function)),
+        expected,
+    );
+    carried.then_some(()).ok_or_else(strider_pattern::skip)
 }
 
 fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
