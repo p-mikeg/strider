@@ -109,7 +109,6 @@ pub(crate) fn reentrant_lifter_err() -> PyErr {
     ))
 }
 
-/// Error on `Some(0)`; zero is not a meaningful bound.
 pub(crate) fn reject_zero_max_size(function_max_size: Option<u64>) -> PyResult<()> {
     if matches!(function_max_size, Some(0)) {
         return Err(pyo3::exceptions::PyValueError::new_err(
@@ -127,8 +126,7 @@ pub(crate) fn build_orch_sleigh(
         .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))
 }
 
-/// The `OptOptions` an analysis runs under, read off a `LifterOptions`. Shared
-/// so `optimize` and `analyze` agree about every assumption knob.
+/// Shared so `optimize` and `analyze` agree about every assumption knob.
 fn opt_options_from(
     py: Python<'_>,
     opts: &PyLifterOptions,
@@ -150,7 +148,6 @@ fn opt_options_from(
     })
 }
 
-/// Build the orchestrator handle for `arch` over `mem` and optional `rom`.
 pub(crate) fn build_strider(
     arch: PySleighArch,
     mem: MemInput,
@@ -163,8 +160,6 @@ pub(crate) fn build_strider(
     strider_orchestrator::Strider::new(arch.inner, sleigh, rom_box).map_err(into_strider_err)
 }
 
-/// Caller `call_other_abis` as a `CallOtherOverrides`.
-///
 /// Python dict keys are unique, so the duplicate-name rejection cannot fire
 /// from this surface; it is surfaced rather than unwrapped so a future caller
 /// that is not a dict gets the message instead of a panic.
@@ -232,9 +227,10 @@ pub(crate) fn machine_addrs(addrs: &[strider_cfg::PcodeInsnAddr]) -> Vec<u64> {
     addrs.iter().map(|addr| addr.machine_addr.addr).collect()
 }
 
-/// Drain the pending control-flow cell: a `KeyboardInterrupt` /
-/// `SystemExit` a Python callback stashed rather than raised (raising
-/// would have been destroyed by the next callback) is surfaced here.
+/// Drain the pending-exception cell: an exception a Python callback stashed
+/// rather than raised (a `KeyboardInterrupt` / `SystemExit` from a `read`, or
+/// anything a `.when()` predicate raised) is surfaced here.  Raising it
+/// directly would have been destroyed by the next callback.
 pub(crate) fn check_pending_control_flow() -> PyResult<()> {
     if let Some(err) = crate::pattern::take_pending_query_error() {
         return Err(err);
@@ -403,8 +399,6 @@ pub(crate) enum DotResult {
     Dot(String),
 }
 
-/// Shared construction: extract the code/rom sources, collect their Python
-/// objects for the GC traversal, and build the orchestrator handle.
 fn build_lifter(
     arch: PySleighArch,
     mem: Bound<'_, PyAny>,
@@ -565,9 +559,8 @@ impl PyLifter {
     ///
     /// A plain `Lifter` needs an address and a `cc`; it raises
     /// `StriderError` for a symbol name or a missing `cc` (`ElfLifter`
-    /// accepts a symbol name and supplies a default `cc`).  Raises
-    /// `ValueError` for a nested `function_max_size == 0`, and
-    /// `StriderError` on lift failure.
+    /// accepts a symbol name and supplies a default `cc`), and on lift
+    /// failure.
     #[pyo3(signature = (entry, cc=None, opts=None))]
     fn analyze(
         slf: Py<Self>,
@@ -661,8 +654,10 @@ impl PyLifter {
         // released.
         check_pending_control_flow()?;
 
-        // From the result, not from `cfg`: these are accumulated over the
-        // resolver's rounds, and `cfg` is only the final one.
+        // From the result, not from `cfg`: three of the four accumulate over
+        // the resolver's rounds and `cfg` is only the final one, and
+        // `unverified_seeded` is read against the settled seed set, which
+        // `cfg` does not carry.
         let reports = crate::cfg::CfgReports {
             unresolved: unresolved.clone(),
             unverified_seeded: machine_addrs(&result.unverified_seeded_sites),

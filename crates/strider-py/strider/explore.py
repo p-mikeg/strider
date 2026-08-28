@@ -208,11 +208,9 @@ class _Visualizer(Protocol):
 
 
 class _IrVisualizer:
-    """Adapts a `Function` to what `_serve` expects: `entry()`, `controls()`,
-    `dot(center, params)`, `search(query)`, `completions()`."""
+    """A `Function` as a `_Visualizer`."""
 
     def __init__(self, function: Function) -> None:
-        """Explore `function`."""
         self._fn = function
 
     def entry(self) -> int:
@@ -244,8 +242,7 @@ class _IrVisualizer:
 
 
 class _CfgVisualizer:
-    """Adapts a `Cfg` to what `_serve` expects: `entry()`, `controls()`,
-    `dot(center, params)`, `search(query)`, `completions()`."""
+    """A `Cfg` as a `_Visualizer`."""
 
     def __init__(self, cfg: Cfg) -> None:
         """Explore `cfg`, building its per-region disassembly text once for
@@ -412,7 +409,7 @@ _SHUTDOWN_START_SECONDS = 5.0
 
 def shutdown(port: int | None = None) -> list[int]:
     """Stop explorer servers started by `visualize`, unblocking whatever
-    thread is parked in it. Returns the ports actually stopped.
+    thread is parked in it. Returns the ports it acted on.
 
     `port=None` stops every running explorer. Safe to call when nothing is
     running (returns `[]`), and safe to call from a thread other than the one

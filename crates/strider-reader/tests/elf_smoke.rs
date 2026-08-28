@@ -15,8 +15,8 @@ fn binary_path(arch: &str) -> std::path::PathBuf {
         .join("arithmetic.elf")
 }
 
-/// Every arch in this workspace is little-endian (x86, x64, arm/EABI5,
-/// aarch64), so endianness is asserted uniformly.
+/// Every arch this file covers (x86, x64, arm/EABI5, aarch64) is
+/// little-endian, so endianness is asserted uniformly.
 fn assert_smoke(arch: &str) {
     let path = binary_path(arch);
     assert!(

@@ -414,7 +414,8 @@ fn skip_sentinel_round_trips_through_is_skip() {
     assert!(!is_skip(&e_other));
 }
 
-/// The freshly-built producer absorbs the rewritten root's asm-fingerprint.
+/// A bare-capture RHS keeps the captured producer, which must absorb the
+/// rewritten root's asm-fingerprint.
 #[test]
 fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
     let mut function = graph_add_x_zero();

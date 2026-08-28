@@ -179,7 +179,7 @@ pub fn bool_inputs<I: MatchPat>(inner: I) -> InputsOfWidth<I> {
     inputs_of_width(1, inner)
 }
 
-/// The register-arg carrier kind.
+/// A tracked varnode's entry-time value.
 pub struct InitialVar;
 
 impl MatchPat for InitialVar {
@@ -213,8 +213,6 @@ impl MatchPat for InitialVarFor {
                 matches!(
                     *m.function().node_kind(node),
                     strider_ir::node::NodeKind::InitialVar(id)
-                        // The IR stores only the largest container, so a pinned
-                        // sub-register (`eax`) matches its container (`rax`).
                         if vn_container::vn_contains(&m.function().initial_vn(id), &want)
                 )
             }),
@@ -223,7 +221,9 @@ impl MatchPat for InitialVarFor {
     }
 }
 
-/// Match `InitialVar(vn)` for the exact varnode `vn`.
+/// Match the `InitialVar` whose tracked varnode contains `vn`. The IR keeps
+/// only the largest container, so a pinned sub-register (`eax`) matches its
+/// container (`rax`).
 pub fn initial_var_for(vn: rsleigh::Vn) -> InitialVarFor {
     InitialVarFor { vn }
 }

@@ -8,6 +8,10 @@
 /// `.data.rel.ro`, the stack, ...) makes a store-then-reload fold to the stale
 /// file-initial value. When in doubt resolve fewer addresses: an unresolved
 /// load stays intact and sound.
+///
+/// `Send` is what `strider-py` needs to drop the GIL around `analyze` with
+/// `Python::allow_threads`, which requires everything the closure captures to
+/// be `Send`. Nothing in the workspace needs the `Sync` half.
 pub trait ReadOnlyMemory: Send + Sync {
     /// Fills `buf` with the bytes at `[addr, addr + buf.len())`.
     ///

@@ -525,8 +525,7 @@ fn default_loader_omits_data_rel_ro() {
     // unmapped without an explicit relocation pass.
     let path = fixture_path("x64", "elf_relocs");
     if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass
-        // and this file is the only coverage the ET_REL loader has.
+        // A missing fixture must be VISIBLE: a silent return reports as a pass.
         eprintln!(
             "SKIP {}: {} is not built; run `make -C fixtures`",
             module_path!(),
@@ -546,13 +545,13 @@ fn default_loader_omits_data_rel_ro() {
 
 #[test]
 fn apply_elf_relocations_no_op_on_pre_resolved_binary() {
-    // `control.elf` is ET_EXEC, so `dynamic_relocations()` is empty and the
-    // applier no-ops. Justifies relocation processing being opt-in: a normal
-    // userland binary does not need it.
+    // `control.elf` is a dynamically-linked ET_EXEC whose only two dynamic
+    // relocations (`R_386_GLOB_DAT`, `R_386_JUMP_SLOT`) name undefined externs
+    // and sit in the writable `.got` the fetch image does not map. Nothing to
+    // apply, which is why relocation processing is opt-in.
     let path = fixture_path("x86", "control");
     if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass
-        // and this file is the only coverage the ET_REL loader has.
+        // A missing fixture must be VISIBLE: a silent return reports as a pass.
         eprintln!(
             "SKIP {}: {} is not built; run `make -C fixtures`",
             module_path!(),
@@ -563,8 +562,6 @@ fn apply_elf_relocations_no_op_on_pre_resolved_binary() {
     let obj = strider_reader::load_elf(&path).expect("load_elf");
     let obj = obj.file();
     let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).expect("regions");
-    // Any GLOB_DAT / JUMP_SLOT entries target undefined externs and are
-    // deliberately skipped, so the regions stay byte-for-byte identical.
     let before: Vec<Vec<u8>> = regions.iter().map(common::region_bytes).collect();
     strider_reader::elf::apply_elf_relocations(
         &mut regions,
@@ -584,8 +581,7 @@ fn apply_elf_relocations_idempotent() {
     // the same value.
     let path = fixture_path("x64", "elf_relocs");
     if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass
-        // and this file is the only coverage the ET_REL loader has.
+        // A missing fixture must be VISIBLE: a silent return reports as a pass.
         eprintln!(
             "SKIP {}: {} is not built; run `make -C fixtures`",
             module_path!(),
@@ -777,8 +773,7 @@ fn mips64el_ignores_a_relocation_kind_read_from_the_symbol_index() {
 fn a_read_straddling_a_relocated_site_serves_the_patched_bytes() {
     let path = fixture_path("x64", "elf_relocs");
     if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass
-        // and this file is the only coverage the ET_REL loader has.
+        // A missing fixture must be VISIBLE: a silent return reports as a pass.
         eprintln!(
             "SKIP {}: {} is not built; run `make -C fixtures`",
             module_path!(),
@@ -868,7 +863,7 @@ fn ppc_rel32_patches_a_rodata_jump_table() {
 /// slots, `R_MIPS_REL32`, the PPC `REL32`/`REL64` pair, image-relative), so a
 /// bounds check written against it is inert for exactly those. Here `.data` is
 /// eight bytes and the entry sites an eight-byte `R_X86_64_JUMP_SLOT` at
-/// `.data + 8` -- the rebased start of `.text.f`, whose body would take the
+/// `.data + 8`, the rebased start of `.text.f`, whose body would take the
 /// write.
 #[test]
 fn reloc_field_past_its_own_section_does_not_patch_the_next_one() {

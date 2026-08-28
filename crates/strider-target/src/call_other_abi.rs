@@ -336,16 +336,16 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     // shared memory while the core is parked, so it must not let a load
     // forward across it.
     ("waitT", MEM_CLOBBER),
-    // Byte-reverse load, the vector shift-control generator (lvsl/lvsr),
-    // SLB reads, and the hardware RNG produce a pcode-explicit output and
-    // touch no RAM.  Altivec/VSX/vector compute is covered by the
-    // `altv`/`vsx`/`vector` prefix below.
-    // The sla passes the base registers by value and does the 8-byte read
-    // inside the op, so the access is invisible on the memory chain -- the same
-    // shape as the `vsx*` loads below. `stdbrx` is NOT the same shape (its
-    // store is explicit p-code, so its op is a pure byte swap); it is listed as
-    // a clobber only as an over-approximation.
+    // `ldbrx` is `D = LoadDoublewordByteReverseIndexed(D,A,B)`: base registers
+    // by value, the 8-byte read inside the op, so the access is invisible on
+    // the memory chain, the same shape as the `vsx*` loads above. `stdbrx` is
+    // NOT that shape (`*[ram]:8 EA = StoreDoublewordByteReverseIndexed(...)`,
+    // an explicit p-code store, leaving its op a pure byte swap); its clobber
+    // above is an over-approximation.
     ("LoadDoublewordByteReverseIndexed", MEM_CLOBBER),
+    // The vector shift-control generator (lvsl/lvsr) and the hardware RNG
+    // produce a pcode-explicit output and touch no RAM. Altivec/VSX/vector
+    // compute is covered by the `altv`/`vsx`/`vector` prefix below.
     ("loadVectorForShiftLeft", PURE),
     ("random", PURE),
     // `:slbmfee D,B` invokes `slbMoveFromEntryESID()` with no operands and no
@@ -389,9 +389,11 @@ fn classify_ppc(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
     None
 }
 
-/// Names whose ABI depends on the emitting arch: `swi` (which collides
-/// between ARM's Linux SVC/SWI and x86's INT), Linux syscall ABIs, SMCCC, and
-/// the x86 MSR / MONITOR-MWAIT / SWAPGS family.
+/// Names scoped to the arches that emit them: a footprint of named registers
+/// resolves on one arch's Sleigh table alone (the Linux syscall ABIs, SMCCC,
+/// the x86 MSR / MONITOR-MWAIT / SWAPGS family), and a generic spelling
+/// (`monitor`, `trap`, `vrev`, `swi`) must not reach an arch meaning it
+/// otherwise.
 fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
     ARCH_SPECIFIC_TABLE.iter().find_map(|row| {
         (row.preset_arches.contains(&preset) && row.op_names.contains(&name)).then_some(row.class)
@@ -679,7 +681,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &[
-            // AES-NI (`ia.sinc:10290-10340`), the whole block:
+            // AES-NI (`ia.sinc:10299-10349`), the whole block:
             // `XmmReg1 = <op>(XmmReg1, XmmReg2_m128)`.
             "aesdec",
             "aesdeclast",
@@ -687,15 +689,15 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             "aesenclast",
             "aesimc",
             "aeskeygenassist",
-            // `Reg32 = crc32(Reg32, rm8|rm16|rm32)` (`ia.sinc:10240-10247`).
+            // `Reg32 = crc32(Reg32, rm8|rm16|rm32)` (`ia.sinc:10249-10256`).
             "crc32",
             // `XmmReg1 = pblendvb(XmmReg1, XmmReg2_m128, XMM0)`
-            // (`ia.sinc:9920-9922`): the otherwise-implicit XMM0 is a listed
+            // (`ia.sinc:9929-9931`): the otherwise-implicit XMM0 is a listed
             // operand, like SHA256RNDS2 above.
             "pblendvb",
-            // MMX / SSE `psraw` (`ia.sinc:8907-8935`).
+            // MMX / SSE `psraw` (`ia.sinc:8913-8941`).
             "psraw",
-            // MOVNTDQA (`ia.sinc:10234`) is `XmmReg = movntdqa(XmmReg, m128)`:
+            // MOVNTDQA (`ia.sinc:10243`) is `XmmReg = movntdqa(XmmReg, m128)`:
             // a non-temporal LOAD whose access is the explicit `m128` p-code
             // Load, leaving the user-op itself pure.
             "movntdqa",
@@ -746,7 +748,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // SOURCE read is the explicit `m512` Load, but the 64-byte destination
     // store to the address in `Reg` is modelled nowhere.
     //
-    // VIA PadLock XSHA256 (`ia.sinc:9872`) is `xsha256(ECX,ESI,EDI)`: it
+    // VIA PadLock XSHA256 (`ia.sinc:9881`) is `xsha256(ECX,ESI,EDI)`: it
     // streams ECX blocks from [ESI] and writes the digest at [EDI], with
     // neither access spelled in p-code.  ECX/ESI/EDI are listed operands, so
     // the register channel stays empty.
@@ -1206,18 +1208,21 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
 ///
 /// * `Vector*` (ARM-32 NEON): every member is register-to-register compute,
 ///   with no `VectorLoad`/`VectorStore` (memory NEON is a separate pcode
-///   Load/Store), so the family is `PURE`.  ARM-32's alone: AArch64 declares
-///   no `Vector*` user-op and spells its NEON ops `NEON_*`.
+///   Load/Store), so the family is `PURE`.  AArch64 declares no `Vector*`
+///   user-op and spells its NEON ops `NEON_*`, but PowerPC's `SPE_APU.sinc`
+///   declares dozens of unrelated `Vector*` ops that the arch scoping keeps
+///   out.
 /// * `Float*` (ARM-32 NEON): the float half of the same `ARMneon.sinc` group
 ///   (`FloatVectorAdd`, `FloatCompareGT`, `FloatToSignedRound`, ...), every
 ///   member `Xd = op(Xn, Xm, esize)` over listed registers.  `ARMneon.sinc`
 ///   names no `[ram]` address at all, so the family is `PURE`.  Arch-scoped
-///   because PowerPC and x86 spell unrelated ops `FloatingPoint*`.
-/// * `NEON_*` (AArch64): all 156 of them, across `AARCH64instructions.sinc`
-///   and `AARCH64neon.sinc`, are arithmetic / crypto / permute compute with
-///   listed register operands; not one is a load, store, prefetch, or barrier
-///   (NEON `LD1` / `ST1` lift to real p-code Load / Store), so the family is
-///   `PURE`.
+///   because PowerPC (`FloatingRoundToIntegerTowardZero1`) and x86
+///   (`FloatingReciprocalAprox`) spell unrelated ops with the same stem.
+/// * `NEON_*` (AArch64): all 156 `AARCH64instructions.sinc` declares, used
+///   throughout `AARCH64neon.sinc`, are arithmetic / crypto / permute compute
+///   with listed register operands; not one is a load, store, prefetch, or
+///   barrier (NEON `LD1` / `ST1` lift to real p-code Load / Store), so the
+///   family is `PURE`.
 /// * `TLBI_*` / `DC_*` / `IC_*` (AArch64): every member is a TLB-invalidate or
 ///   cache-maintenance system op, so `MEM_CLOBBER`.
 /// * `SVE_*` (AArch64): NOT homogeneous.  `SVE_ldr` / `SVE_str` take a base
@@ -1277,8 +1282,8 @@ fn classify_prefix_family(preset: crate::ArchPreset, name: &str) -> Option<CallO
             // below 32MB, and the secure-world writes reselect the address
             // space.  `Peripheral` covers both the port remaps that move a
             // peripheral window (the sla spells that one two ways) and
-            // `coproc_moveto_Peripheral_System`, which is `mcr p15,*,*,c15,*`
-            // -- the whole implementation-defined c15 bank, holding the port
+            // `coproc_moveto_Peripheral_System`, which is `mcr p15,*,*,c15,*`:
+            // the whole implementation-defined c15 bank, holding the port
             // remap, cache/TLB debug ops and L2 control on the parts that have
             // them.
             const WRITE_CONTROL_KEYS: &[&str] = &[
@@ -2315,7 +2320,7 @@ mod tests {
         assert_eq!(classify(Aarch64, "FloatVectorMult"), None);
         assert!(is_pure(classify(Aarch64, "NEON_fmul")));
         assert_eq!(classify(X86_64, "VectorMultiply"), None);
-        // PowerPC and x86 spell unrelated ops `FloatingPoint*`, which the
+        // PowerPC and x86 spell unrelated ops with the `Float` stem, which the
         // arch scoping keeps out of the family.
         assert_eq!(classify(X86_64, "FloatingPointAdd"), None);
         // The AArch64 cache/TLB families have no 32-bit ARM or x86 user-op.

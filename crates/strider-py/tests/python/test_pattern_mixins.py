@@ -17,7 +17,7 @@ def _load_store_fn():
 
 
 def _diamond_fn():
-    # if (edi != 0) { eax = 1 } else { eax = 2 }; return eax
+    # if (edi != 0) { eax = 2 } else { eax = 1 }; return eax
     return _fn(bytes([
         0x85, 0xFF,
         0x75, 0x07,

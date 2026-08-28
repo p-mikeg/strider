@@ -427,7 +427,8 @@ fn bail_on_type_mismatch() -> Result<()> {
 
 /// Soundness floor: a non-SP-rooted store cannot be proven disjoint from an
 /// SP-rooted load (its constant address could equal `sp + K`, or it could be
-/// an escaped SP-derived pointer).  Under `Strict` the walker must bail.
+/// an escaped SP-derived pointer).  With `stack_global_disjoint` cleared the
+/// walker must bail.
 #[test]
 fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
     let sp = sp32_vn();
@@ -446,7 +447,7 @@ fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
         Ok(())
     })?;
 
-    // Strict is pinned explicitly: the default `StackGlobalDisjoint` assumes
+    // `stack_global_disjoint` is cleared explicitly: on by default, it assumes
     // the const-addressed store disjoint and forwards instead.
     let pipeline = crate::test_support::standard_test();
     pipeline.run(&mut fg, &mut crate::test_support::octx_structural_only())?;
@@ -460,7 +461,7 @@ fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
     Ok(())
 }
 
-/// Under `StackGlobalDisjoint` the const-addressed store is assumed to live
+/// Under `stack_global_disjoint` the const-addressed store is assumed to live
 /// outside the stack region, so the walker steps through it.
 #[test]
 fn permissive_forwards_across_const_intervening_store() -> Result<()> {
@@ -499,8 +500,8 @@ fn permissive_forwards_across_const_intervening_store() -> Result<()> {
     Ok(())
 }
 
-/// Under `StackGlobalDisjoint` alone, an Anchor address (neither SP-rooted nor
-/// an `IntConst`) still bails; stepping through one takes `escape_analysis`
+/// Under `stack_global_disjoint` alone, an Anchor address (neither SP-rooted
+/// nor an `IntConst`) still bails; stepping through one takes `escape_analysis`
 /// over a private frame.
 #[test]
 fn permissive_still_bails_on_anchor_intervening_store() -> Result<()> {
@@ -537,8 +538,8 @@ fn permissive_still_bails_on_anchor_intervening_store() -> Result<()> {
 }
 
 /// Const-address load: matched by `IntConst` equality, with the intervening
-/// const-address store proven disjoint via `ranges_disjoint`.  Forwards under
-/// both alias modes.
+/// const-address store proven disjoint via `ranges_disjoint`, so the forward
+/// does not rest on `stack_global_disjoint`.
 #[test]
 fn forwards_constant_address_load_across_disjoint_const_store() -> Result<()> {
     let sp = sp32_vn();
@@ -572,8 +573,8 @@ fn forwards_constant_address_load_across_disjoint_const_store() -> Result<()> {
     Ok(())
 }
 
-/// Load and store match by `ValueId` equality on the address slot.  Forwards
-/// under both alias modes.
+/// Load and store match by `ValueId` equality on the address slot, so the
+/// forward does not rest on `stack_global_disjoint`.
 #[test]
 fn forwards_anchor_load_with_same_id_store_no_interferer() -> Result<()> {
     let sp = sp32_vn();

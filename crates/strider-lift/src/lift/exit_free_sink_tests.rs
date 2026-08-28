@@ -81,11 +81,12 @@ fn returning_function_gets_no_sink() {
 /// A loop that DOES exit is left alone: the exit reaches the `Return`.
 #[test]
 fn exiting_loop_gets_no_sink() {
-    // f: add $1,%eax ; cmp $5,%eax ; jne f ; ret
+    // 0x1001 is interior to the `add`, so the back edge lands on the region
+    // that owns those bytes rather than on an instruction boundary.
     let f = x86_64_fn(vec![
         0x83, 0xc0, 0x01, // add $1,%eax
         0x83, 0xf8, 0x05, // cmp $5,%eax
-        0x75, 0xf9, // jne f
+        0x75, 0xf9, // jne 0x1001
         0xc3, // ret
     ]);
     assert_eq!(sinks(&f), 0, "a loop with an exit needs no sink");
