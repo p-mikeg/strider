@@ -272,8 +272,8 @@ fn distinct_count(values: &[strider_ir::node::ValueId]) -> usize {
 /// slot at `arg_passing_regs.len() + j` and the callee-side carrier for float
 /// parameter `j` name the same register.
 ///
-/// `vldr d5,[r0] ; vldr d7,[r0,#8] ; bl g ; bx lr` names d5 and d7 but not
-/// d4 or d6. Every ABI float register is seeded regardless, so d5 and d7 are
+/// `vldr d5,[r0] ; vldr d7,[r0,#8] ; bl ; bx lr` names d5 and d7 but not d4 or
+/// d6. Every ABI float register is seeded regardless, so d5 and d7 are
 /// arguments 5 and 7 rather than being dropped with the positions below them.
 #[test]
 fn float_call_args_keep_their_abi_positions() {
@@ -283,9 +283,10 @@ fn float_call_args_keep_their_abi_positions() {
     let bytes = vec![
         0x00, 0x5b, 0x90, 0xed, // vldr d5,[r0]
         0x02, 0x7b, 0x90, 0xed, // vldr d7,[r0,#8]
-        0x02, 0x00, 0x00, 0xeb, // bl g
+        0x02, 0x00, 0x00, 0xeb, // bl 0x1018, past the buffer: only the Call
+        //                         node's arguments are under test
         0x1e, 0xff, 0x2f, 0xe1, // bx lr
-        0x1e, 0xff, 0x2f, 0xe1, // g: bx lr
+        0x1e, 0xff, 0x2f, 0xe1, // never reached
     ];
     let f = super::handler_tests::lift_bytes(
         strider_target::SleighArch::arm(),

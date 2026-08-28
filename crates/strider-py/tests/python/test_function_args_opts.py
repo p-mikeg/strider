@@ -30,7 +30,6 @@ def test_analyze_accepts_function_args_alias_knobs():
 
 
 def test_function_args_knobs_default_off_still_analyzes():
-    """Omitting the knobs keeps the previous default behaviour."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     _cfg, function, _unresolved = s.analyze("add")
@@ -38,7 +37,7 @@ def test_function_args_knobs_default_off_still_analyzes():
 
 
 def test_analyze_accepts_every_assumption_cleared():
-    """The sound floor -- every claim cleared -- must be reachable from the
+    """The sound floor, every claim cleared, must be reachable from the
     high-level surface."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))

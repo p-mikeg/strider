@@ -18,10 +18,12 @@
 //! Two reserved bare identifiers bind graph-derived values instead of capture
 //! lookups:
 //!
-//!   * `ty`: the rewrite root's output type
-//!     ([`crate::TemplateCtx::root_ty`]).
-//!   * `in_ty`: `Option<ValueType>`, the type of the root's first value input.
-//!     Use `in_ty.ok_or_else(strider_pattern::skip)?` where it is required.
+//!   * `ty`: the output type resolved for the constant's own node
+//!     ([`crate::TemplateCtx::root_ty`]): the rewrite root's type where the
+//!     node inherits it, `I1` under `bool_const_with!`.
+//!   * `in_ty`: `Option<ValueType>`, the type at the LHS root's input slot 0,
+//!     `None` unless that input is a typed value. Use
+//!     `in_ty.ok_or_else(strider_pattern::skip)?` where it is required.
 //!
 //! A missing binding raises [`MissingBinding`](crate::MissingBinding) tagged
 //! with the entry's `kind` token.

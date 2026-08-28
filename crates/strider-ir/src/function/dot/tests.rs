@@ -539,8 +539,8 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
     );
 }
 
-/// A clobbered Call output must render even when the function's
-/// `call_clobbered` list is empty.
+/// A clobbered Call output carrying no `value_vn` tag must still render, under
+/// a synthetic `outN` label.
 #[test]
 fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
     let mut f = test_function();
@@ -554,7 +554,7 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
     let mem = f.node_outputs(init_mem).iter().copied().next().unwrap();
     let target = int_const_node(&mut f, 0x1000_u128, ValueType::I64);
     let target_value = f.node_outputs(target).iter().copied().next().unwrap();
-    // One clobbered output, but the call_clobbered list is empty.
+    // One clobbered output, left untagged.
     let call = f.graph_mut().create_node(
         NodeKind::Call,
         [entry_ctrl, mem, target_value],

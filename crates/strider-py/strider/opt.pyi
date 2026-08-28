@@ -46,7 +46,9 @@ class OptimizerPipeline:
         ...
     @classmethod
     def default(cls) -> OptimizerPipeline:
-        """The canonical pipeline strider uses when none is supplied."""
+        """Every built-in pass exposed here, in the order `analyze` runs them
+        when no pipeline is supplied. `analyze` also appends its own
+        indirect-branch classifier, which is not one of these."""
         ...
     @property
     def passes(self) -> list[str]:
@@ -94,34 +96,42 @@ class IfCondInversion:
         ...
 
 class PhiCollapse:
-    """Removes phi nodes whose inputs all agree or that have a single
-    reachable predecessor."""
+    """Braun trivial-phi elimination: redirects a `Phi` / `MemPhi` whose value
+    inputs resolve to exactly one distinct value, self-references discarded, to
+    that value. A genuine two-way merge is left alone."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
 
 class RegionCollapse:
-    """Removes control-flow regions with a single reachable predecessor."""
+    """Collapses a `Region` that already has exactly one control input,
+    rewiring its control consumers to that predecessor and each phi over it to
+    that phi's lone value input. A multi-predecessor Region is left alone."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
 
 class DeadBranchElimination:
-    """Removes branches on a constant condition and strips the control
-    edges that become dead."""
+    """Folds a branch with a constant selector (an `If` on a constant `I1`,
+    a `Switch` on a constant dispatch address), wiring the live successor past
+    it and killing the branch node."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
 
 class CfgDetach:
-    """Detaches control-flow subgraphs that entry can no longer reach."""
+    """Removes a `Region` predecessor slot whose control producer entry can no
+    longer reach, along with the matching `Phi` / `MemPhi` value slots."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
 
 class LoadForward:
-    """Forwards a store's value to a later load of the same location when
-    no intervening write, call, or control merge can clobber it."""
+    """Forwards a store's value to a later load when the nearest may-aliasing
+    memory definition is an exact-match store: same address class, base and
+    offset, covering the load's whole range. A partial overlap, a `MemPhi`
+    (control merge), `InitialMemory`, or a call the assumptions cannot see
+    through all block it."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
@@ -148,8 +158,11 @@ class CallStackArgCollect:
         ...
 
 class LoadReadOnly:
-    """Folds a load from a constant address into a constant, reading the
-    bytes from the read-only memory image (`rom=`)."""
+    """Folds a load from a constant address into a constant, reading the bytes
+    from the read-only memory image (`rom=`). A no-op when no rom is supplied.
+
+    The fold never consults the load's memory chain, so the rom must map only
+    runtime-immutable memory: code and `.rodata`, never `.data` / `.got`."""
     def __init__(self) -> None:
         """Build the pass."""
         ...

@@ -72,7 +72,7 @@ pub(crate) fn octx_stack_global_disjoint() -> crate::OptCtx<'static> {
     ctx
 }
 
-/// The value the unique Return takes: input[2], after ctrl and mem.
+/// Input[2] of the first `Return`, after ctrl and mem.
 pub(crate) fn return_value(graph: &Graph) -> crate::Result<Value> {
     let ret = graph
         .all_node_ids()

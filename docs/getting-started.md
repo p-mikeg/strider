@@ -18,8 +18,10 @@ binary -> CFG -> IR -> optimizations -> pattern queries
 2. **Lift** each machine instruction into a simpler, CPU-independent form
    (using GHIDRA's Sleigh engine).
 3. Build a **CFG**, the map of which regions (straight runs of instructions)
-   can jump to which. Each address decodes once, in the ISA mode the function
-   runs in, so ARM and Thumb code in one binary each decode correctly.
+   can jump to which. Each address decodes once, in the ISA mode carried by the
+   edge that reached it, so ARM and Thumb code in one binary each decode
+   correctly. Two edges reaching one address in different modes is reported by
+   `cfg.isa_mode_conflicts()`, since only one of them can win.
 4. Build the **IR**, a graph where every value the function computes is a node
    and every dependency is an edge. This is the thing you query.
 5. **Optimize** the IR so equivalent code always looks the same, which makes
@@ -32,9 +34,9 @@ binary -> CFG -> IR -> optimizations -> pattern queries
 7. **Query** it: describe a shape, get back every match with the values you
    asked to capture.
 
-The [quickstart](../README.md#quickstart) in the README is that pipeline in ten
-lines of Python. [CHANGELOG.md](../CHANGELOG.md) lists what 0.2.0 added over
-0.1.0, breaking entries first.
+The [quickstart](../README.md#quickstart) in the README is that pipeline in
+eight statements of Python. [CHANGELOG.md](../CHANGELOG.md) lists what 0.2.0
+added over 0.1.0, breaking entries first.
 
 ## Where to go next
 

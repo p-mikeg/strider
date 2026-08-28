@@ -527,8 +527,8 @@ fn instantiate_rejects_an_output_kind_the_node_signature_forbids() {
     let lhs = int_add(var(x), int_const(1u128)).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
 
-    // A bare `Store` node with no declared output: the fallback hands it a
-    // value output, which its signature does not admit.
+    // A `Store` declaring a value output at slot 0, where its signature
+    // admits only the memory token.
     let mut tb = TemplateBuilder::default();
     let store = tb.node(KindSpec::Exact(NodeKind::Store(rsleigh::VnSpace::RAM)));
     let _ = tb.value_output(store, 0);

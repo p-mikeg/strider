@@ -1575,7 +1575,7 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
     );
 }
 
-/// The Call node and its slot-2 (clobber / result) I64 value output.
+/// The `Call`'s kind and its slot-2 (clobber / result) I64 value output.
 fn call_and_clobber(function: &strider_ir::Function) -> (NodeKind, strider_ir::node::ValueId) {
     let call = function
         .graph()

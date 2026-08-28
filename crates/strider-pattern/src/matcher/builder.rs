@@ -169,6 +169,10 @@ impl MatcherBuilder {
     /// `any_output()`: an output vertex satisfied by any of the node's outputs.
     /// Unlike [`Self::any_value_output`], which relaxes the KIND of slot 0, this
     /// enumerates the slots, so a capture on it binds each in turn.
+    ///
+    /// Sibling `any_output` vertices on one node claim no slot from each other,
+    /// so two of them can bind the same output; the existential `any_input`
+    /// counterpart is injective.
     pub fn any_slot_value_output(&mut self, node: PatNodeRef) -> PatValueRef {
         let out = self.any_value_output(node);
         self.out_of(out).any_slot = true;
@@ -258,7 +262,7 @@ impl MatcherBuilder {
     }
 
     /// Materialises every staged node in producer-before-consumer order.
-    /// Single-rootedness and acyclicity are reported at match time.
+    /// Single-rootedness is resolved here and reported at match time.
     ///
     /// # Panics
     /// On a cyclic staged graph (a builder bug).

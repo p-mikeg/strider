@@ -133,8 +133,6 @@ mod tests {
 
     #[test]
     fn output_vertex_carries_build_type_not_node() {
-        // The type is data about the value, so it rides the output vertex,
-        // mirroring `PatValue` on the match side.
         let o = TmplOutput::value(0);
         assert!(matches!(o.ty, TemplateTy::InheritRoot));
     }

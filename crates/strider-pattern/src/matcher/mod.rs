@@ -963,7 +963,7 @@ enum CaptureKey {
 ///
 /// A pattern that binds NOTHING is identified by its root instead. Its matches
 /// are otherwise indistinguishable, so every tuple differing only in which one
-/// it holds would collapse to an arbitrary survivor -- and adding a capture to
+/// it holds would collapse to an arbitrary survivor, and adding a capture to
 /// one side of a join would then SHRINK the reported cross product.
 ///
 /// KNOWN LIMIT: a pattern whose captures are ALL owned by an earlier slot adds
@@ -1017,7 +1017,7 @@ fn dedup_on_shared_captures(acc: &mut Vec<JoinedMatch>, graph: &Graph) {
 /// Restricted to captures bound on BOTH sides so the key is always computable:
 /// `row_agrees` treats a capture one side leaves unbound as agreeing with
 /// anything, which no single hash bucket can express. Any shared capture that
-/// fails this test is simply not indexed on; the exact check still catches it.
+/// fails this test is not indexed on; the exact check still catches it.
 fn join_key_captures(
     per_pat: &[Vec<Match>],
     acc: &[Vec<usize>],

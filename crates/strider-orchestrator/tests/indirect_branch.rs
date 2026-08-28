@@ -27,8 +27,8 @@ use strider_ir::{IRViewer, IRWalker};
 /// placeholder left in the IR, exactly one `Switch` and exactly two distinct
 /// arms, each of which starts a region of the final cfg.
 ///
-/// The arm addresses are not spelled out here -- they differ per arch -- but
-/// a one-arm answer, an over-approximated table, and an arm landing off a
+/// The arm addresses are not spelled out here (they differ per arch), but a
+/// one-arm answer, an over-approximated table, and an arm landing off a
 /// region start all fail.
 fn assert_indirect_goto_resolves_to_both_labels(arch: Arch) {
     let path = binary_path(arch, "indirect_branch");

@@ -31,8 +31,7 @@ impl<'a, N, V, C: NodeCacheable<N, V>> Inputs<'a, N, V, C> {
         Some(&self.graph.store.inputs[*self.use_list.get(index)?].value_id)
     }
 
-    /// Same yield as `into_iter()`, but borrows `self` so a one-shot read need
-    /// not move the `Inputs`.
+    /// Same yield as `into_iter()`, borrowing instead of consuming.
     pub fn iter(&self) -> impl Iterator<Item = ValueId> + Clone + 'a {
         let graph = self.graph;
         self.use_list

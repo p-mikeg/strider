@@ -101,7 +101,8 @@ pub(crate) fn decompose(function: &Function, value: ValueId) -> Option<MemExpr> 
     result
 }
 
-/// Bit width of an address expression, `None` when it has no integer type.
+/// Bit width of an address expression, `None` when `addr` is not a typed value
+/// edge.
 fn addr_bit_width(function: &Function, addr: ValueId) -> Option<u32> {
     function
         .value_type(addr)
@@ -685,10 +686,10 @@ struct MemWalker<'a> {
     load: SizedAddr,
     /// Distinct spaces never alias, even at the same numeric address.
     load_space: rsleigh::VnSpace,
-    /// [`Self::private_frame_forward`] reads only `load`, which is fixed for
-    /// the whole walk, and falls through to a bounded SP-spine climb.  Every
-    /// visited memory def asks it, so recomputing multiplies the walk by the
-    /// spine depth.
+    /// [`Self::private_frame_forward`] reads only `load` and the options, both
+    /// fixed for the whole walk, and falls through to a bounded SP-spine climb.
+    /// Asked repeatedly along one walk, so recomputing multiplies the walk by
+    /// the spine depth.
     private_frame: std::cell::Cell<Option<bool>>,
 }
 
@@ -984,8 +985,8 @@ fn scan_arg_window(
             // from the hole up, which is indistinguishable from a spill sitting
             // above the arguments and would stop forwarding for every one of
             // those. Only the callee's arity separates the two, and the IR does
-            // not have it. Reachable under `escape_analysis` alone, which is
-            // off by default.
+            // not have it. Reachable only under `escape_analysis` or a
+            // non-empty `noalias_allocators`, both off by default.
             SlotReach::NotAnArgument => {
                 return ArgWindow {
                     ranges,
@@ -1203,7 +1204,7 @@ fn range_covers(set: &BTreeMap<i128, i128>, point: i128) -> bool {
 /// caller's frame still starts at the entry SP.
 ///
 /// The comparison is in the entry SP's coordinates, so the base has to be AT OR
-/// BELOW it. `InitialVar(sp)` is exactly it, and masking only clears bits -- but
+/// BELOW it. `InitialVar(sp)` is exactly it, and masking only clears bits, but
 /// the alignment anchor is a mask of whatever SP-rooted expression the spine was
 /// on, so `(sp + K) & !0xF` sits K bytes ABOVE the entry SP, inside the caller's
 /// frame. The operand is therefore walked down to `InitialVar(sp)` and its
@@ -1227,8 +1228,8 @@ fn in_own_frame(function: &Function, base: ValueId, offset: i128, size: i128) ->
 
 /// Whether `value` is the entry SP displaced by a non-positive amount.
 ///
-/// Follows the spine shapes [`decompose`] does -- `Add(x, const)` and an
-/// alignment `And` -- accumulating the constants an anchor would otherwise
+/// Follows the spine shapes [`decompose`] does (`Add(x, const)` and an
+/// alignment `And`), accumulating the constants an anchor would otherwise
 /// discard, and through a `Phi`, where EVERY arm must qualify because the join
 /// could take any of them. The accumulated displacement is compared at the
 /// address width, so a chain that wraps is judged on the address it really
@@ -1308,13 +1309,17 @@ pub(crate) struct MemOptions {
     /// shadows it.
     calls_block: bool,
     distinct_sp_bases_disjoint: bool,
+    /// Read only where the outgoing-argument window is consulted, so it is
+    /// inert unless [`Self::escape_analysis`] or a non-empty allocator set
+    /// opens that path.
     callee_preserves_stack_args: bool,
     /// Let an SP-rooted `Load` step through a `Call` when the frame is provably
     /// private ([`frame_escape`]).
     escape_analysis: bool,
     /// Whether any `Call` relaxation applies at all.  Cleared for the inner
-    /// walk that computes a call's outgoing-argument window, which is itself
-    /// what every relaxation consults.
+    /// walk that computes a call's outgoing-argument window
+    /// ([`MemWalker::in_outgoing_arg_area`]), which the relaxations would
+    /// otherwise re-enter.
     call_relaxations: bool,
 }
 
@@ -1556,8 +1561,8 @@ impl MemAnalyzer {
                 class: AddrClass::StackRooted { base, offset },
                 size: probe_size,
                 // `offset` came from `decompose`, so it is already reduced at
-                // the base's width. Passing `None` would tell
-                // `offsets_comparable` it was never reduced.
+                // the base's width. Passing `None` would make
+                // `offsets_comparable` reject every pair.
                 addr_bits: addr_bit_width(function, base),
             },
             rsleigh::VnSpace::RAM,

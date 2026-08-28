@@ -162,7 +162,8 @@ impl NodePat {
         self
     }
 
-    /// No-op unless the anchor is [`AnchorKind::Value`].
+    /// The anchor output's width. A node-rooted pattern has no anchor, so it
+    /// is a no-op there.
     pub(crate) fn with_output_width(mut self, bits: u32) -> Self {
         self.output_width = Some(bits);
         self

@@ -4,7 +4,7 @@ from strider import pattern as p
 
 def _diamond_phi():
     # A clean diamond, so eax merges at a two-input phi:
-    # if (edi != 0) { eax = 1 } else { eax = 2 }; return eax
+    # if (edi != 0) { eax = 2 } else { eax = 1 }; return eax
     code = bytes([
         0x85, 0xff,                    # test edi, edi
         0x75, 0x07,                    # jne  +7  -> mov eax,2

@@ -139,14 +139,15 @@ impl PeepholePass for DeadBranchElimination {
 
 #[cfg(test)]
 thread_local! {
-    /// Whole-CFG walks the escape set could not answer.
+    /// Whole-CFG walks neither memo below could answer.  Unlike them it is not
+    /// reset per sweep; a test zeroes it before measuring.
     pub(super) static FULL_WALKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 thread_local! {
     /// [`escaping_nodes`] for the sweep in progress, shared by every root.
-    /// Not a field on the pass: `DeadBranchElimination` is a unit struct three
-    /// other crates name as a value.
+    /// Not a field on the pass: `DeadBranchElimination` is a unit struct other
+    /// crates name as a value.
     static ESCAPES: RefCell<Option<DenseEntitySet<NodeId>>> = const { RefCell::new(None) };
 
     /// Nodes an exact walk found no terminator from, shared by every root of
@@ -161,8 +162,8 @@ thread_local! {
 /// A loop whose only exit is the dead arm becomes an exit-free cycle, which
 /// [`strider_ir::validate`] rejects as `NoTerminatorReachable` and whose body
 /// compaction then drops. An `Unreachable` directly on the dead arm is the
-/// narrow case of this the guard above catches before the fold's other
-/// bookkeeping; here the exit can sit any number of `Region`s away.
+/// narrow case of this the `If` arm's guard above catches before the fold's
+/// other bookkeeping; here the exit can sit any number of `Region`s away.
 ///
 /// Mirrors the validator: a dangling control output counts as an escape, so a
 /// half-wired CFG mid-pipeline is not read as a stranded one.

@@ -102,7 +102,8 @@ impl PipelineState {
 /// `Lifter.optimize(function, pipeline)`.  Applying a pipeline copies its
 /// passes, so one pipeline drives any number of calls.
 // `unsendable` pins the wrapper to its creating thread; cross-thread access
-// raises a Python `RuntimeError`.
+// raises `pyo3_runtime.PanicException`, which derives from `BaseException`,
+// not `Exception`.
 #[pyclass(name = "OptimizerPipeline", module = "strider.opt", unsendable)]
 pub struct PyOptimizerPipeline {
     state: RefCell<PipelineState>,
@@ -163,7 +164,8 @@ impl PyOptimizerPipeline {
         Ok(())
     }
 
-    /// Append a post-pass, run once after the main passes finish.
+    /// Append a post-pass, run once after the main passes finish. A
+    /// fixed-point pass is accepted here too, and runs once.
     fn add_post(&self, pass_obj: PyOptPass) {
         self.borrow_state()
             .post_passes
@@ -310,8 +312,8 @@ opt_passes! {
             "Rewrites a branch on a negated condition (`Xor(C, IntConst(1)):I1`) into \
              a branch on the plain condition with its two arms swapped.";
         "LoadForward" => PyLoadForward = strider_orchestrator::opt::LoadForward::default(),
-            "Forwards values from stack-tagged `Store` nodes to subsequent \
-             same-offset `Load` nodes.";
+            "Forwards a store's value to a later load of the same location when \
+             no intervening write, call or control merge can clobber it.";
         "LoadReadOnly" => PyLoadReadOnly = strider_orchestrator::opt::LoadReadOnly,
             "`LoadReadOnly()` folds constant-address loads against the rom supplied \
              via `strider.lift.lifter(arch, mem, rom=mem)` or \

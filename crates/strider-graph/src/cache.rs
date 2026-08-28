@@ -157,8 +157,9 @@ impl NodeCache {
             return;
         }
         // The stored hash is the SSoT for membership: non-sentinel means `node`
-        // is in `table` under exactly that hash (every insert sets it, and this
-        // is the only place it is cleared), so the bucket walk cannot miss.
+        // is in `table` under exactly that hash (every insert sets it, and the
+        // only other place it is cleared is `rebuild`, which drops the table
+        // with it), so the bucket walk cannot miss.
         self.table
             .find_entry(hash, |&n| n == node)
             .expect("node_hashes records a hash ⇒ the node is in the dedup table")

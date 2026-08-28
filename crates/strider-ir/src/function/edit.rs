@@ -52,7 +52,8 @@ impl FunctionState {
     }
 }
 
-/// Edit context used by the optimizer's rewrite rules and destructive passes.
+/// A [`Function`] plus the live/roots bookkeeping the curated edit verbs keep
+/// current.
 pub struct EditFunction<'g> {
     pub(crate) function: &'g mut Function,
     state: FunctionState,
@@ -158,7 +159,9 @@ impl<'g> EditFunction<'g> {
     }
 
     // Dead-node cleanup: edits that might orphan a producer enqueue it; `clean`
-    // drains the queue.  Side-effecting nodes are never enqueued or culled.
+    // drains the queue.  A side-effecting node is never enqueued AS DEAD, and
+    // `clean` never kills one; only `cull_dead` and an explicit `kill_node`
+    // remove one.
 
     pub fn is_live(&self, node: NodeId) -> bool {
         self.state.live_nodes.contains(node)
@@ -508,7 +511,8 @@ impl<'g> EditFunction<'g> {
 
     /// Single-slot companion to [`Self::replace_value`]: rewires exactly one
     /// input edge, absorbing the displaced producer's asm-fingerprint into
-    /// `new`'s producer **iff** the redirect leaves that producer unused.
+    /// `new`'s producer **iff** the redirect leaves the displaced VALUE
+    /// unused.
     pub fn redirect_input(&mut self, input_id: UseId, new: ValueId) {
         let old_value = self.graph_ref().value_of_use(input_id);
         // `input_id` is itself one use of `old_value`, so "exactly one use"

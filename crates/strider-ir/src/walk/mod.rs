@@ -53,9 +53,7 @@ pub fn stranded_nodes(graph: &Graph, entry: NodeId) -> NodeIdSet {
 /// Grows `reached` backward over control inputs from `work`.
 ///
 /// `skip_edge` drops an edge that must not be followed (a branch arm proven
-/// dead); `universe`, when given, bounds membership. Both callers -- the
-/// stranded-node walk here and `DeadBranchElimination`'s escape walk -- are
-/// the same closure over different seed rules, so it is stated once.
+/// dead); `universe`, when given, bounds membership.
 pub fn close_over_control_preds(
     graph: &Graph,
     reached: &mut NodeIdSet,

@@ -90,7 +90,7 @@ pub(crate) fn intern_str(name: &str) -> PyResult<Capture> {
             "{name:?} is reserved (use anything() / var() / _ explicitly)"
         )));
     }
-    // Hits are every `m["off"]` / `c in m`, so they take one lock and allocate
+    // Hits are every `m["off"]` / `"off" in m`, so they take one lock and allocate
     // nothing; only a first sighting builds the `String` and the reverse entry.
     let mut table = intern_table()
         .lock()
@@ -890,8 +890,6 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
             DynMatch(Box::new(move |b| mc(sp::initial_var_for(vn), b)))
         }
         PatRepr::OneOf(alts, first) => {
-            // Each arm is any pattern kind, compiled node-rooted so it binds any
-            // edge and discriminates by shape.
             let first = *first;
             let boxed: Vec<sp::BoxedAlt> = alts
                 .iter()
@@ -1628,9 +1626,9 @@ macro_rules! forall_castmask {
         #[pymethods]
         impl PyCastMask {
             #[doc = concat!(
-                                        "Mask selecting the `", stringify!($value),
-                                        "` value-passthrough cast for the matcher to walk through."
-                                    )]
+                                                "The `", stringify!($value),
+                                                "` cast mask, for the matcher to walk through."
+                                            )]
             #[classmethod]
             fn $name(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
                 Self {
@@ -1921,7 +1919,8 @@ pub fn initial_var() -> PyPat {
     PyPat::from_repr(PatRepr::InitialVar)
 }
 
-/// Match `InitialVar(vn)` for a specific varnode.
+/// Match `InitialVar(vn)` for `vn` or any register containing it, so `eax`
+/// matches a node tagged `rax`.
 #[pyfunction]
 pub fn initial_var_for(vn: crate::sleigh::PyVn) -> PyPat {
     PyPat::from_repr(PatRepr::InitialVarFor(vn.inner))
@@ -2289,9 +2288,9 @@ macro_rules! builder_common_methods {
 // methods. `any_input` / `input` / `output` are emitted here and applied from
 // `CommonState`, so a builder opts in with one token.
 //
-// A builder that already owns an `input` (Phi / MemPhi / Region, each with its
-// own slot numbering) takes `any_input` and `output` only, or the two methods
-// would collide.
+// A builder declares only the kinds its node shape has: `EntryPat` has outputs
+// and no inputs, the sinks (`RetPat` / `IndirectBranchPat` / `UnreachablePat`)
+// the reverse.
 macro_rules! builder_slot_methods {
     ($ty:ty, any_input) => {
         #[pymethods]
@@ -2422,14 +2421,14 @@ macro_rules! node_builder {
             $b = $b.$m(compile_operand_match(__p.bind($py))?);
         }
     };
-    // A whole nested `Pattern`, not a sub-pattern operand: the core matches it
-    // at the node the slot forward-walks to.
     (@apply $self:ident, $py:ident, $b:ident, { pat_list $name:ident: $m:ident = $doc:literal }) => {
         let __slot = clone_opt($py, &$self.inner.borrow().$name);
         if let Some(__p) = __slot {
             $b = $b.$m(compile_operand_match(__p.bind($py))?);
         }
     };
+    // A whole nested `Pattern`, not a sub-pattern operand: the core matches it
+    // at the node the slot forward-walks to.
     (@apply $self:ident, $py:ident, $b:ident, { pattern $name:ident: $m:ident = $doc:literal }) => {
         let __slot = clone_opt($py, &$self.inner.borrow().$name);
         if let Some(__p) = __slot {
@@ -2862,11 +2861,11 @@ node_builder! {
         { scalar stack_offset(i128 => i128): stack_offset(k)
             = "Match only loads whose address decomposes to exactly `sp + k`." },
         { flag stack_only: stack_only
-            = "Reject matches where the SP-relative offset is unknown." },
+            = "Keep only accesses whose address decomposes to a stack base, an \
+               offset pinned by `stack_offset` included." },
         { flag non_stack: non_stack
             = "Keep only accesses proven heap-rooted or proven not memory-rooted; \
-               an address with no decomposition verdict is rejected. Replaces any \
-               region filter set before it." },
+               an address with no decomposition verdict is rejected." },
         { flag heap_only: heap_only
             = "Keep only accesses whose address decomposes to a heap base \
                (a pure allocator's return pointer)." },
@@ -2903,11 +2902,11 @@ node_builder! {
         { scalar stack_offset(i128 => i128): stack_offset(k)
             = "Match only stores whose address decomposes to exactly `sp + k`." },
         { flag stack_only: stack_only
-            = "Reject matches where the SP-relative offset is unknown." },
+            = "Keep only accesses whose address decomposes to a stack base, an \
+               offset pinned by `stack_offset` included." },
         { flag non_stack: non_stack
             = "Keep only accesses proven heap-rooted or proven not memory-rooted; \
-               an address with no decomposition verdict is rejected. Replaces any \
-               region filter set before it." },
+               an address with no decomposition verdict is rejected." },
         { flag heap_only: heap_only
             = "Keep only accesses whose address decomposes to a heap base \
                (a pure allocator's return pointer)." },
@@ -3156,7 +3155,6 @@ impl PyOutputSlot {
     }
 }
 
-// Own block: `PyVisit` has no stub type (see `builder_common_methods`).
 #[pymethods]
 impl PyOutputSlot {
     /// The parent handle is a `Py`, invisible to the collector without this.
@@ -3216,7 +3214,8 @@ node_builder! {
     fields: [
         { pat ctrl: ctrl
             = "Match `p` against the Return's direct ctrl predecessor (`inputs[0]`)." },
-        { multi_match ret_vals(usize): ret_val = "Constrain return value at position `idx`." },
+        { multi_match ret_vals(usize): ret_val
+            = "Constrain the return value at position `idx`, raw input slot `idx + 2`." },
     ],
 }
 
@@ -3471,7 +3470,7 @@ impl PyJoinConstraint {
 ///
 /// Only a capture with a control edge can be placed. A `load`, `store` or
 /// arithmetic capture has no position in the dominator tree, so the constraint
-/// drops the tuple and so does `~dominates(...)`.
+/// drops the tuple and so does `negate(dominates(...))`.
 #[pyfunction]
 pub fn dominates(a: PyRef<'_, PyCapture>, b: PyRef<'_, PyCapture>) -> PyJoinConstraint {
     PyJoinConstraint::leaf(JoinConstraint::Dominates {
@@ -3681,7 +3680,8 @@ node_builder! {
     slots: [any_input, input, output],
     fields: [
         { scalar_inner for_vn(crate::sleigh::PyVn => rsleigh::Vn): for_vn(vn)
-            = "Restrict the match to phi nodes for varnode `vn`." },
+            = "Restrict the match to phi nodes tagged `vn` or a register containing \
+               it, so `eax` matches a phi tagged `rax`." },
         { multi_match inputs(usize): phi_input
             = "Constrain the value arriving from predecessor `idx`, raw input \
                slot `idx + 1`. `.input(i, p)` addresses the raw slot instead." },
@@ -3700,7 +3700,7 @@ pub fn phi() -> PyPhiPat {
     PyPhiPat::new()
 }
 
-/// Match a tagged `Phi` for a specific varnode.
+/// Match a `Phi` tagged `vn` or a register containing it.
 #[pyfunction]
 pub fn phi_for(vn: crate::sleigh::PyVn) -> PyPhiPat {
     let b = PyPhiPat::new();

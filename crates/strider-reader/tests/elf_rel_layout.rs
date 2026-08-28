@@ -66,8 +66,8 @@ fn all_loader_digests(owned: &strider_reader::OwnedElf) -> Vec<u64> {
 }
 
 /// Golden fingerprints for every entry point over three linked fixtures,
-/// including the two that force the section walk on an image that has PT_LOAD
-/// segments.
+/// including the three that force the section walk on an image that has
+/// PT_LOAD segments.
 #[test]
 fn linked_images_load_identically_to_before_the_et_rel_rebase() {
     let golden: [(&str, &str, [u64; 8]); 3] = [
@@ -117,8 +117,7 @@ fn linked_images_load_identically_to_before_the_et_rel_rebase() {
     for (arch, name, expected) in golden {
         let path = fixture(arch, name);
         if !path.exists() {
-            // A missing fixture must be VISIBLE: a silent return reports as a pass
-            // and this file is the only coverage the ET_REL loader has.
+            // A missing fixture must be VISIBLE: a silent return reports as a pass.
             eprintln!(
                 "SKIP {}: {} is not built; run `make -C fixtures`",
                 module_path!(),
@@ -169,8 +168,7 @@ fn every_allocatable_section_of_an_object_file_serves_its_own_bytes() {
         for case in ["tzcount", "switch", "globals", "elf_relocs"] {
             let path = fixture(arch, &format!("{case}.o"));
             if !path.exists() {
-                // A missing fixture must be VISIBLE: a silent return reports as a pass
-                // and this file is the only coverage the ET_REL loader has.
+                // A missing fixture must be VISIBLE: a silent return reports as a pass.
                 eprintln!(
                     "SKIP {}: {} is not built; run `make -C fixtures`",
                     module_path!(),
@@ -218,8 +216,7 @@ fn every_allocatable_section_of_an_object_file_serves_its_own_bytes() {
 fn object_file_symbols_resolve_into_their_own_section() {
     let path = fixture("x64", "tzcount.o");
     if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass
-        // and this file is the only coverage the ET_REL loader has.
+        // A missing fixture must be VISIBLE: a silent return reports as a pass.
         eprintln!(
             "SKIP {}: {} is not built; run `make -C fixtures`",
             module_path!(),
@@ -264,8 +261,7 @@ fn object_file_symbols_resolve_into_their_own_section() {
 fn object_file_jump_table_is_mapped_and_relocated() {
     let path = fixture("x64", "switch.o");
     if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass
-        // and this file is the only coverage the ET_REL loader has.
+        // A missing fixture must be VISIBLE: a silent return reports as a pass.
         eprintln!(
             "SKIP {}: {} is not built; run `make -C fixtures`",
             module_path!(),
@@ -339,8 +335,7 @@ fn object_file_jump_table_is_mapped_and_relocated() {
 fn a_rebased_writable_section_is_still_not_read_only_memory() {
     let path = fixture("x64", "elf_relocs.o");
     if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass
-        // and this file is the only coverage the ET_REL loader has.
+        // A missing fixture must be VISIBLE: a silent return reports as a pass.
         eprintln!(
             "SKIP {}: {} is not built; run `make -C fixtures`",
             module_path!(),
@@ -435,7 +430,7 @@ fn a_bss_symbol_does_not_resolve_into_text() {
 }
 
 /// A `SHF_TLS` section is addressed as an offset into the per-thread block, so
-/// the layout leaves it at its `sh_addr` -- 0 in a `.o`. Loading it anyway
+/// the layout leaves it at its `sh_addr`, 0 in a `.o`. Loading it anyway
 /// seats `.tdata` at VMA 0 ahead of `.text`, and every read of the code serves
 /// its bytes instead. `gcc -c` emits this shape wherever a TLS section
 /// precedes the code one, e.g. `-ffunction-sections` output.
@@ -538,8 +533,7 @@ fn an_et_rel_symbol_address_includes_its_sections_sh_addr() {
 fn a_linked_image_symbol_address_is_its_st_value() {
     let path = fixture("x64", "switch.elf");
     if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass
-        // and this file is the only coverage the ET_REL loader has.
+        // A missing fixture must be VISIBLE: a silent return reports as a pass.
         eprintln!(
             "SKIP {}: {} is not built; run `make -C fixtures`",
             module_path!(),
