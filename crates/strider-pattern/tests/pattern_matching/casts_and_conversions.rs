@@ -282,7 +282,7 @@ fn a_masked_chain_still_matches_a_cast_the_pattern_names() {
 /// The cast chain is a fallback ladder: the first level that matches wins.
 ///
 /// Otherwise the answer depends on an incidental cast sitting on top of the
-/// operand -- a chain with one extra unnamed cast would report every level,
+/// operand: a chain with one extra unnamed cast would report every level,
 /// while the same chain without it reports only the direct hit.
 #[test]
 fn a_masked_chain_reports_the_outermost_match_only() {

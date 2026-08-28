@@ -368,8 +368,8 @@ fn with_true_branch_capture_reaches_the_outer_match() {
     );
 }
 
-/// `return(call_other(user_op_id, [IntConst(7)]))`, reused across CallOther
-/// tests.
+/// `call_other(user_op_id, [IntConst(7)])` writing its result to a tracked
+/// register, then a value-less `return`. Reused across the CallOther tests.
 fn graph_call_other(user_op_id: u64) -> strider_ir::Function {
     // The builder writes the result back via `write_reg_vn`, so the CallOther
     // output vn must be a tracked register.

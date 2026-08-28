@@ -68,6 +68,10 @@ impl PyCallingConvention {
 
     /// Like `preserves_all` but leaves memory clobberable: registers are all
     /// preserved, memory is not.
+    ///
+    /// The argument registers and stack arguments survive, unlike under
+    /// `preserves_all`, so a call still carries its arguments: a callee that
+    /// writes memory has to be seen taking a frame address.
     fn preserves_regs(&self) -> Self {
         Self {
             inner: match &self.inner {

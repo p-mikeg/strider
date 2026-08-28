@@ -31,7 +31,7 @@ pub fn vn_contains(outer: &rsleigh::Vn, inner: &rsleigh::Vn) -> bool {
 /// otherwise the two views look like independent SSA variables. Only
 /// CONTAINMENT collapses: two PARTIALLY overlapping varnodes both survive and
 /// are modelled as non-aliasing, so a write to one is invisible to a read of
-/// the other. No register file checked has one -- they all nest exactly.
+/// the other. No register file checked has one: they all nest exactly.
 pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh::Vn> {
     let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<(usize, rsleigh::Vn)>> = FxHashMap::default();
     for (i, v) in all_used_variables.iter().enumerate() {
@@ -89,8 +89,8 @@ pub fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::V
         .unwrap_or(*vn)
 }
 
-/// The O(1) `vn -> container` lookup register aliasing reads on every access,
-/// built once per function. A miss falls back to a linear scan.
+/// O(1) `vn -> container` lookup for the register-aliasing reads, built once
+/// per function. A miss falls back to a linear scan.
 #[derive(Debug, Clone, Default)]
 pub struct ContainerMap {
     map: FxHashMap<rsleigh::Vn, rsleigh::Vn>,

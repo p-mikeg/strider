@@ -131,7 +131,7 @@ fn a_seed_the_cfg_declines_is_reported_unresolved_not_partially_seated() {
 
 /// Seating a seed changes the CFG the classifier reads, so a stale or wrong
 /// seed can stop the selector deriving and take the site's real arms with it.
-/// The site is not "unresolved" -- the caller asserted the answer -- but
+/// The site is not "unresolved" (the caller asserted the answer), but
 /// nothing verified it, so it must be named in `unverified_seeded_sites`.
 /// Without that channel the loss is completely silent.
 #[test]

@@ -32,9 +32,9 @@
 //! since a leaked pointer can be stored to a global and reloaded by a later
 //! callee.
 //!
-//! Sound modulo one axiom: a conforming callee does not write the caller's
-//! frame outside the argument area, so an opaque store cannot alias `sp + k`
-//! for a private frame.
+//! Sound modulo two claims the IR cannot check: a conforming callee does not
+//! write the caller's frame outside the argument area, and no pointer is
+//! fabricated numerically equal to a private slot.
 
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::{Function, IRViewer, IRWalker, IntBinaryOp};

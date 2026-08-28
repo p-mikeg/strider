@@ -1,5 +1,5 @@
-//! `Builder::build` driven by hand-crafted x86-64 byte sequences, covering
-//! the boundary shapes a real binary rarely reaches.
+//! `Builder::build` driven by hand-crafted byte sequences, covering the
+//! boundary shapes a real binary rarely reaches.
 
 use rustc_hash::FxHashMap;
 
@@ -899,8 +899,9 @@ fn a_switch_arm_interior_to_a_sibling_arm_is_dropped() {
 fn a_switch_arm_shadowed_by_an_overlapping_region_is_dropped() {
     let base = 0x1000u64;
     let mut bytes = vec![0xffu8, 0xe0]; // 0x1000: jmp rax (site A)
-    // 0x1002: movabs rax, 0x1122c34455c36677; the immediate bytes at 0x1005
-    // and 0x1008 are 0xc3 (`ret`), so a shadow region can decode there.
+    // 0x1002: movabs rax, 0x1122c34455c36677; 0x1005 and 0x1008 each start a
+    // two-byte `ret` inside the immediate (`66 c3`, `44 c3`), so a shadow
+    // region can decode there.
     bytes.extend_from_slice(&[0x48, 0xb8, 0x77, 0x66, 0xc3, 0x55, 0x44, 0xc3, 0x22, 0x11]);
     bytes.push(0xc3); // 0x100c: ret
     bytes.resize(0x1000, 0xcc);

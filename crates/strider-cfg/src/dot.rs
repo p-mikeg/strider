@@ -11,8 +11,8 @@ use anyhow::anyhow;
 use crate::Result;
 
 impl Cfg {
-    /// The `Sleigh` that built the CFG, borrowed for register-name
-    /// resolution.
+    /// `sleigh` is borrowed for register-name resolution and instruction
+    /// formatting.
     pub fn dot_dumper<'a, R: rsleigh::MemReader>(
         &'a self,
         sleigh: &'a rsleigh::Sleigh<R>,

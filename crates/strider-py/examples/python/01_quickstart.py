@@ -5,10 +5,10 @@ import pathlib
 import strider
 from strider.pattern import Capture, int_add, load
 
-# load_elf returns an ElfLifter (a Lifter); arch and CC come from the ELF header.
 WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
+# load_elf returns an ElfLifter (a Lifter); arch and CC come from the ELF header.
 prog = strider.lift.load_elf(str(FIXTURE))
 addr = prog.symbol("array_sum").address
 print(f"array_sum @ {addr:#x}")
@@ -40,8 +40,8 @@ for hit in narrow:
     off_val = hit.uint_opt(off)
     print(f"  offset = {off_val if off_val is not None else '<symbolic>'}")
 
-# pretty=True resolves register names, inlines constants, adds virtual nodes;
-# omit for the raw as-stored graph.
+# pretty resolves register names, inlines constants and adds virtual nodes; a
+# theme name in place of True picks the colours, False is the raw as-stored graph.
 cfg.to_html("/tmp/quickstart-cfg.html", style="dark_cfg")
 function.to_html("/tmp/quickstart-graph.html", pretty="dark")
 print("wrote /tmp/quickstart-cfg.html and /tmp/quickstart-graph.html")

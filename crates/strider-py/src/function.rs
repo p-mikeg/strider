@@ -128,13 +128,12 @@ impl PyFunction {
     /// `None`, else writes it to `path` and returns `None`.
     ///
     /// `pretty=False` (the default) renders the graph exactly as stored: one
-    /// node per node id including detached ones, one edge per input edge,
+    /// node per node id reachable from entry, one edge per input edge,
     /// side-tables inline, no constant inlining or virtual nodes.
     ///
     /// `pretty=True` inlines constants, adds virtual nodes and resolves
-    /// register names. That needs a `Sleigh`, so it only works for a function
-    /// obtained from `analyze`, and raises `StriderError` if the graph has no
-    /// entry. A theme name in place of `True` picks the dot theme.
+    /// register names, which needs the `Sleigh` behind the parent `Cfg`'s
+    /// `Lifter`. A theme name in place of `True` picks the dot theme.
     #[pyo3(signature = (path=None, *, pretty=Pretty::Flag(false)))]
     fn to_dot(
         &self,
@@ -467,7 +466,7 @@ impl PyFunction {
 
     /// Memory-touching nodes (Load / Store / Call / CallOther / MemPhi plus
     /// the InitialMemory root) reached by following memory-token edges forward
-    /// from InitialMemory.  Each node appears once, roots first; the order at
+    /// from InitialMemory.  Each node appears once, that root first; the order at
     /// a `MemPhi` join is unspecified, so a node can precede one of its own
     /// memory predecessors.
     fn mem_walk(slf: Py<Self>, py: Python<'_>) -> PyResult<Vec<crate::node::PyNode>> {

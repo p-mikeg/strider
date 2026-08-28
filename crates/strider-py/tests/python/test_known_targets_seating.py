@@ -106,8 +106,8 @@ def test_an_empty_seed_leaves_the_classifier_free_to_resolve():
 
 
 def test_a_seed_that_displaces_the_classifier_is_reported_unverified():
-    """A seed the classifier never confirmed is not `unresolved` -- the caller
-    asserted the answer -- but nothing checked it, so it is reported.
+    """A seed the classifier never confirmed is not `unresolved` (the caller
+    asserted the answer), but nothing checked it, so it is reported.
 
     Seeding x64 `main`'s dispatch with only itself changes the CFG the
     classifier reads: the selector stops deriving and the site converges

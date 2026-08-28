@@ -1,8 +1,12 @@
-//! Decode-mode handling, GHIDRA-style: the ISA mode is a per-address fact.
+//! Flowing decode context, GHIDRA-style: each flowing var is a per-address
+//! fact.
 //!
 //! A sla marks some context variables as *flowing*: the ISA mode (ARM `TMode`,
 //! ppc `vle`) plus per-instruction decode internals (condition eval, IT-block
-//! state, register-list iteration) Sleigh flows along straight-line code.
+//! state, register-list iteration, x86 operand/address size) Sleigh flows
+//! along straight-line code. x86-64 flows 43 of them, so snapshot / reset /
+//! restore do real work on every arch; only the mode-bit helpers are
+//! ARM/MIPS-specific, and nothing wires them to ppc `vle`.
 //!
 //! Like GHIDRA's `ContextDatabase`, the context is a value committed per
 //! address. Reset every flowing var at a cold entry (undo a prior function's
@@ -75,9 +79,9 @@ impl FlowVars {
         )
     }
 
-    /// Pin every flow var at `addr` back to `defaults`, undoing any commit that
+    /// Pin `addr`'s context back to `defaults`, undoing any commit that
     /// forward-held into this cold entry from a prior function on a reused
-    /// engine.  Only leaked vars are re-pinned, so a clean entry costs no
+    /// engine.  `pin_at` writes only what differs, so a clean entry costs no
     /// parse-cache invalidation.
     pub fn reset_at<R: rsleigh::MemReader>(
         &self,

@@ -5,7 +5,8 @@ match-only affordances `.when()`, commutativity, `.of_width()`,
 `.value_ty()` and the wildcards. For a rewrite right-hand side (`replace=`)
 use `strider.template` and its `Template` type instead. A bare `Pat` is
 still accepted there for compatibility, but only its build-valid subset
-compiles: `.when`, wildcards and commutativity are rejected.
+compiles: a capture reference such as `var(c)`, or a constant, carries over,
+while `.when()`, `.of_width()`, `.value_ty()` and `anything()` are rejected.
 """
 
 from __future__ import annotations
@@ -64,6 +65,9 @@ class Match:
     when `key` is unbound or its node lacks the requested aspect; the `_opt`
     counterpart returns `None` there instead. Guard with `has(key)` (or catch
     the error) when a capture may be unbound.
+
+    Every reader, `_opt` ones included, raises once `compact` / `optimize` has
+    reshuffled the arena the stored ids point into.
     """
 
     @property
@@ -131,10 +135,11 @@ class Match:
         """`value_type`, or `None` instead of raising."""
         ...
     def vn(self, key: CaptureKey) -> Vn:
-        """The varnode the node bound by `key` names: an initial register
-        read, the register a `Call` returns in, or whatever varnode a
-        `CallOther`'s result lands in. Raises when the node names none, which
-        includes most `CallOther`s.
+        """The varnode the node bound by `key` names: an `InitialVar`'s
+        entry-read varnode, the register a `Call` returns in, or whatever
+        varnode the sla gives a `CallOther`'s result (a `unique` temporary, a
+        tracked register, or none). Raises for any other kind, and for a
+        result carrying no varnode.
         A capture binds a node, so a call with several clobber outputs answers
         for its first value output, not for one clobber in particular."""
         ...
@@ -142,8 +147,10 @@ class Match:
         """`vn`, or `None` instead of raising."""
         ...
     def asm_fingerprint(self, key: CaptureKey) -> list[int]:
-        """The machine-instruction addresses recorded on the node bound to
-        `key`; `[]` when `key` is unbound."""
+        """Sorted, deduped machine-instruction addresses whose lift or later
+        rewrite contributed to the node bound to `key`. `[]` when `key` is
+        unbound or binds a structural kind (`Entry`, `InitialMemory`, a phi,
+        `Region`)."""
         ...
     def node(self, key: CaptureKey) -> Node:
         """A `Node` handle on what `key` bound to (`key` is a `Capture` or a
@@ -268,8 +275,8 @@ class Pat(OrderedPat):
         re-raises out of `find_all` / `find_unique`."""
         ...
     def of_width(self, n: int) -> Pat:
-        """Constrain this value's own output to `n` bits. The free-function
-        form is `value_of_width(n)`. For the input side, see
+        """Constrain this value's own output to `n` bits. `value_of_width(n)`
+        is the standalone wildcard form. For the input side, see
         `inputs_of_width(n, inner)`."""
         ...
     def value_ty(self, ty: ValueTy) -> Pat:
@@ -335,13 +342,16 @@ class NodePat(Protocol):
         `find_unique`."""
         ...
     def into_pat(self) -> Pat:
-        """Finalise to a `Pat`."""
+        """Finalise to a `Pat`, consumed by its first query and not nestable
+        as an operand. A builder auto-finalises where a pattern is expected,
+        so this is rarely needed."""
         ...
 
 @runtime_checkable
 class InputPat(Protocol):
-    """A builder whose node kind has input slots. Every builder but
-    `EntryPat`, whose `Entry` is `inputs: []`."""
+    """A builder whose node kind exposes raw input slots. Not `EntryPat`
+    (`Entry` is `inputs: []`), nor `FunctionArgPat` and the three binary-op
+    builders, whose operands are fixed at construction."""
     def input(self: _S, idx: int, p: PatLike) -> _S:
         """Match `p` against raw input slot `idx`.
 
@@ -387,6 +397,11 @@ class MemAccessPat(Protocol):
 
     The memory predecessor itself is `MemPat.mem`; this is the address side
     and the filters over what the address decomposes to.
+
+    `stack_offset`, `stack_only`, `non_stack` and `heap_only` are one
+    mutually-exclusive region filter: set at most one. Setting several does not
+    compose, and which survives is fixed by the builder, not by the order you
+    called them. `stack_only` does keep an offset `stack_offset` pinned.
     """
     def addr(self: _S, p: PatLike) -> _S:
         """Constrain the address operand (`inputs[1]`)."""
@@ -402,7 +417,7 @@ class MemAccessPat(Protocol):
         `sp + k`."""
         ...
     def stack_only(self: _S) -> _S:
-        """Reject matches where the SP-relative offset is unknown."""
+        """Keep only accesses whose address decomposes to a stack base."""
         ...
     def non_stack(self: _S) -> _S:
         """Keep only accesses whose address decomposes to a heap base or is
@@ -416,7 +431,7 @@ class MemAccessPat(Protocol):
 
 @runtime_checkable
 class OrderedPat(Protocol):
-    """A pattern over a commutative op, whose operand order `ordered` pins."""
+    """A pattern whose root takes an operand pair `ordered` can pin."""
     def ordered(self: _P) -> _P:
         """Stop the matcher retrying this op with its operands swapped; a
         no-op where the op's operands are ordered already, as on `int_le` or
@@ -427,9 +442,10 @@ class OrderedPat(Protocol):
 
 @runtime_checkable
 class OutputPat(Protocol):
-    """A builder whose node kind has output slots. Every builder but the
-    three sinks `RetPat`, `IndirectBranchPat` and `UnreachablePat`, all
-    `outputs: []`."""
+    """A builder whose node kind exposes raw output slots. Not the three
+    sinks `RetPat`, `IndirectBranchPat` and `UnreachablePat` (all
+    `outputs: []`), nor `FunctionArgPat` and the three binary-op builders,
+    which name their single value output implicitly."""
     def output(self: _S, slot: int) -> OutputSlotPat[_S]:
         """Bind or constrain the value at raw output `slot`.
 
@@ -448,8 +464,7 @@ class OutputPat(Protocol):
 
 class OutputSlotPat(Generic[_B]):
     """One output slot of a builder, returned by `.output(slot)` /
-    `.any_output()`. Each method records its constraint and returns the
-    parent builder for further chaining."""
+    `.any_output()`."""
     def capture(self, c: CaptureKey) -> _B:
         """Bind this output slot to `c`."""
         ...
@@ -573,7 +588,8 @@ class PhiPat(NodePat, InputPat, OutputPat):
     predecessors, `input` the raw slots.
     """
     def for_vn(self, vn: Vn) -> "PhiPat":
-        """Require the phi to carry varnode `vn`."""
+        """Require the phi to be tagged `vn` or a register containing it, so
+        `eax` matches a phi tagged `rax`."""
         ...
     def phi_input(self, idx: int, p: PatLike) -> "PhiPat":
         """Constrain the value merged from predecessor `idx`, raw input slot
@@ -581,7 +597,8 @@ class PhiPat(NodePat, InputPat, OutputPat):
         ...
     def phi_token(self, p: PatLike) -> "PhiPat":
         """Constrain the region token tying this phi to its merge point
-        (raw `inputs[0]`), which `input(0, p)` also names."""
+        (raw `inputs[0]`), which `input(0, p)` also names. A PhiToken falls
+        outside the value domain, so only `var` / `anything` binds it."""
         ...
 
 class MemPhiPat(NodePat, InputPat, OutputPat):
@@ -686,24 +703,25 @@ def value_of_width(n: int) -> Pat:
     comparison's output is `I1` however wide its operands are. The chained
     form is `Pat.of_width(n)`."""
 def inputs_of_width(n: int, inner: PatLike) -> Pat:
-    """Match `inner` and require all of ITS value inputs to be `n` bits
-    wide. Width 1 means "operates on booleans", which EXCLUDES comparisons,
-    whose operands are typically wider than their `I1` result. The
-    input-side counterpart of `value_of_width`."""
+    """Match `inner` and require all of ITS value inputs to be `n` bits wide.
+    At least one value input and one value output are required, so a constant
+    or a sink never matches vacuously. Width 1 means "operates on booleans",
+    which reaches a comparison only where its OPERANDS are `I1`, not merely
+    its result. The input-side counterpart of `value_of_width`."""
 def bool_inputs(inner: PatLike) -> Pat:
     """Match `inner` whose value inputs are all booleans (1-bit `I1`).
-    Exactly `inputs_of_width(1, inner)`, named for intent. EXCLUDES
-    comparisons; see `inputs_of_width`."""
+    Exactly `inputs_of_width(1, inner)`, named for intent."""
 def int_const(value: int | list[int] | Capture | None = ...) -> Pat:
     """Match an integer constant whose value, masked to its output width,
-    equals `value`, or is one of `value` when given a list. Given a `Capture`,
-    or nothing, match any integer constant, binding it when there is a
-    capture."""
+    equals `value`, or is one of `value` when given a list; an empty list
+    matches nothing. Given a `Capture`, or nothing, match any integer
+    constant, binding it when there is a capture."""
 def int_const_any_width(value: int | list[int]) -> Pat:
     """Match an integer constant holding `value` however it was width-extended
     into the constant's own type: exact, widened by zero extension, or widened
     by sign extension. Given a list, any member of it. More permissive than
-    `int_const`, which is bit-exact at the output width."""
+    `int_const`, which is bit-exact at the output width. A value outside the
+    signed 64-bit range raises."""
 def bool_const(value: bool | Capture | None = ...) -> Pat:
     """Match a 1-bit boolean constant equal to `value`. Given a `Capture`, or
     nothing, match any boolean constant, binding it when there is a capture."""
@@ -727,7 +745,8 @@ def any_float(c: Capture | None = ...) -> Pat:
 def initial_var() -> Pat:
     """Match any initial-state register read."""
 def initial_var_for(vn: Vn) -> Pat:
-    """Match the initial-state read of varnode `vn`."""
+    """Match the initial-state read of `vn` or of any register containing it,
+    so `eax` matches a node tagged `rax`."""
 def one_of(patterns: Sequence[PatLike]) -> Pat:
     """Match if ANY of the listed sub-patterns matches (a logical OR).
 
@@ -780,7 +799,7 @@ def function_arg_stack(space: VnSpace, offset: int) -> FunctionArgPat:
 def phi() -> PhiPat:
     """Start a value-phi pattern builder."""
 def phi_for(vn: Vn) -> PhiPat:
-    """Start a value-phi pattern builder for varnode `vn`."""
+    """Start a value-phi pattern builder for `vn` or a register containing it."""
 def mem_phi() -> MemPhiPat:
     """Start a memory-token phi pattern builder."""
 def entry() -> EntryPat:
@@ -877,7 +896,7 @@ def float_ceil(operand: PatLike) -> Pat:
 def float_floor(operand: PatLike) -> Pat:
     """Match a round-toward-negative-infinity."""
 def float_round(operand: PatLike) -> Pat:
-    """Match a round-to-nearest."""
+    """Match a round to nearest, ties away from zero."""
 def float_is_nan(operand: PatLike) -> Pat:
     """Match a NaN test, the IEEE 754 self-inequality `x != x`."""
 def float_eq(l: PatLike, r: PatLike) -> Pat:
@@ -890,9 +909,9 @@ def float_le(l: PatLike, r: PatLike) -> Pat:
     """Match a float less-or-equal test, NaN-aware."""
 
 def int_to_float(operand: PatLike) -> Pat:
-    """Match an integer-to-float numeric conversion."""
+    """Match a signed-integer conversion to the nearest representable float."""
 def float_to_int(operand: PatLike) -> Pat:
-    """Match a float-to-integer numeric conversion."""
+    """Match a float-to-integer conversion, truncating toward zero."""
 def float_to_float(operand: PatLike) -> Pat:
     """Match a float-to-float reprecision."""
 def int_bits_to_float(operand: PatLike) -> Pat:
@@ -948,14 +967,15 @@ def any_int_binary(c: Capture, l: PatLike, r: PatLike) -> Pat:
     """Match ANY integer binary op with these operands, binding the node to
     `c` so you can read the variant back with `Match.op(c)`."""
 def any_int_unary(c: Capture, operand: PatLike) -> Pat:
-    """Match any integer unary op on `operand`, binding the node to `c`."""
+    """Match any `IntUnaryOp` on `operand`, binding the node to `c`. The enum
+    holds only `Neg`; `Popcount` and `Lzcount` are their own kinds."""
 def any_int_cmp(c: Capture, l: PatLike, r: PatLike) -> Pat:
     """Match any integer comparison with these operands, binding the node to
     `c`."""
 def any_bool_binary(c: Capture, l: PatLike, r: PatLike) -> Pat:
-    """Match any boolean binary op with these operands, binding the node to
-    `c`. A 1-bit logical NOT is an XOR with 1, so match it here with an
-    all-ones 1-bit operand."""
+    """Match any `IntBinaryOp` at `I1` with these operands, binding the node
+    to `c`. A 1-bit logical NOT is `Xor(x, 1)`, so it matches here with a
+    `bool_const(True)` operand."""
 def any_float_binary(c: Capture, l: PatLike, r: PatLike) -> Pat:
     """Match any float binary op with these operands, binding the node to
     `c`."""

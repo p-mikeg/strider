@@ -329,7 +329,7 @@ def test_int_cmp_op_recovery():
     assert len(hits) >= 1
     op_name = hits[0].op(c)
     # The six below are every primitive `IntCmpOp`. LessEqual, SlessEqual and
-    # Borrow are lift-time-lowered shapes that never reach a node, so listing
+    # NotEqual are lift-time-lowered shapes that never reach a node, so listing
     # them here would widen the set to shapes the answer can never take and
     # make this a phantom assertion.
     assert op_name in {"Equal", "Less", "Sless", "Carry", "Scarry", "Sborrow"}

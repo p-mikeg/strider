@@ -30,7 +30,8 @@ class StriderError(Exception):
     invalid shape. Bad scalar arguments and file IO raise the usual builtins
     (`ValueError`, `TypeError`, `OverflowError`, `FileNotFoundError`). The
     message carries the error and its causes; `.backtrace` carries that same
-    message followed by the Rust backtrace."""
+    message followed by the Rust backtrace, and `STRIDER_BACKTRACE=1` folds the
+    backtrace into the message too."""
 
     backtrace: str
     ...

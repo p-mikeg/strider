@@ -54,9 +54,8 @@ impl PyBufferReader {
         PyBufferReaderView { table }
     }
 
-    /// Upper bound on what one `MemRegionsLookupTable::read` can return, from
-    /// the cache built with the table. The table itself publishes no such
-    /// bound, and scanning the regions per call is what this replaces.
+    /// Upper bound on what one `MemRegionsLookupTable::read` can return; the
+    /// table itself publishes no such bound.
     fn read_bound(&self) -> usize {
         if let Some(n) = self.inner.borrow().max_region_len {
             return n;
@@ -211,9 +210,8 @@ fn invalidate_and_extend(reader: &PyBufferReader, regions: Vec<MemRegion>) {
 /// bytes, or `None` if every overlap is byte-identical (a benign re-merge of
 /// the same image). See `add_elf` for why differing overlap is rejected.
 ///
-/// `existing` is start-ordered once and each `new` region probes it, so the
-/// cost is `O(E log E + N log E)` plus one byte comparison per genuinely
-/// overlapping pair.
+/// `existing` is start-ordered once so a `new` region probes only the prefix
+/// whose running maximum end still reaches it, rather than every region.
 fn differing_overlap(existing: &[MemRegion], new: &[MemRegion]) -> Option<(u64, u64)> {
     let mut order: Vec<usize> = (0..existing.len()).collect();
     order.sort_unstable_by_key(|&i| existing[i].start_addr());
@@ -739,7 +737,8 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
                 "MemReader.read",
                 |e| anyhow::anyhow!("PyMemReader.read raised: {e}"),
             )?;
-            // None means unmapped; Err so the matcher falls through.
+            // `MemReader::read` has no unmapped variant, so None becomes an
+            // error.
             if result.is_none(py) {
                 anyhow::bail!(
                     "address {:#x} is not mapped (Python read returned None)",
@@ -778,7 +777,8 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
     }
 }
 
-/// Read-only memory backed by Python, used by the `LoadReadOnly` pass.
+/// Read-only memory backed by Python, read by the constant-load fold
+/// (`LoadReadOnly`) and by the indirect-branch classifier's jump-table probes.
 /// Subclass and override `read(addr, size)` to return the raw bytes at
 /// `addr`.  Only RAM loads reach it, so subclasses need not filter on
 /// space.

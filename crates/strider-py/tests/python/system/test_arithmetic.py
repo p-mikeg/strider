@@ -29,7 +29,8 @@ def test_mul(arch_id, fixtures_dir):
 
 def test_udiv(arch_id, fixtures_dir):
     g = analyze(arch_id, "arithmetic", "udiv", fixtures_dir=fixtures_dir)
-    # ARM soft-float lowers udiv to a library call, so Call also counts.
+    # ARM has no hardware integer divide, so udiv lowers to a library call and
+    # Call also counts.
     assert count_int_binop(g, "Div") >= 1 or count_calls(g) >= 1
 
 

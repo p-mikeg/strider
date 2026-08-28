@@ -21,11 +21,10 @@ pub(crate) fn nth_input_or_err(insn: &rsleigh::Insn, n: usize) -> Result<&rsleig
 }
 
 /// Sleigh encodes a literal as `addr_space == CONST` with the value in
-/// `addr_off`.  Handlers that read `addr_off` directly (Subpiece's byte offset,
-/// Extract/Insert's lsb and bit_count, the LOAD/STORE space id, CallOther's
-/// user-op id, SegmentOp's op id) would silently mis-decode a non-CONST input,
-/// producing structurally valid but semantically wrong IR.  GHIDRA always emits
-/// CONST here; this catches a malformed `.sla` or a hand-built `Insn`.
+/// `addr_off`.  A handler reading `addr_off` directly would silently mis-decode
+/// a non-CONST input, producing structurally valid but semantically wrong IR.
+/// GHIDRA always emits CONST here; this catches a malformed `.sla` or a
+/// hand-built `Insn`.
 pub(crate) fn ensure_const_space(
     vn: &rsleigh::Vn,
     opcode: rsleigh::Opcode,
@@ -50,8 +49,8 @@ pub(crate) fn ensure_const_space(
 ///
 /// `VnSpace::by_id` reinterprets `addr_off` as a raw `AddrSpace` pointer, so
 /// the precondition is that pointer's validity, NOT the CONST tag.
-/// `ensure_const_space` below is a structural gate only and establishes
-/// nothing about the pointer.  This stays `pub(crate)` because every in-crate
+/// The `ensure_const_space` call in the body is a structural gate only and
+/// establishes nothing about the pointer.  This stays `pub(crate)` because every in-crate
 /// caller passes an `Insn` from `Sleigh::lift_one`, which always emits a valid
 /// space-pointer encoding.  Do not widen the visibility, and never call it
 /// with a hand-built `Insn`.

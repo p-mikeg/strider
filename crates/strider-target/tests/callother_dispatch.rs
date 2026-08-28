@@ -396,9 +396,9 @@ fn arm32_float_neon_prefix_family_is_pure() {
         assert_eq!(classify(ArchPreset::Aarch64, name), None, "aarch64/{name}");
         assert_eq!(classify(ArchPreset::X86_64, name), None, "x86/{name}");
     }
-    // PowerPC's `Scalar_SPFP.sinc` and x86's `ia.sinc` spell unrelated ops
-    // `FloatingPoint*`, which share the prefix; the arch scoping is what keeps
-    // them out.
+    // PowerPC's `ppc_isa.sinc` (`FloatingRoundToIntegerTowardZero1`) and
+    // x86's `ia.sinc` (`FloatingReciprocalAprox`) spell unrelated ops with the
+    // same `Float` stem; the arch scoping is what keeps them out.
     assert_eq!(classify(ArchPreset::Ppc32Be, "FloatingPointAdd"), None);
     assert_eq!(
         classify(ArchPreset::X86_64, "FloatingPointAbsoluteValue"),
@@ -447,8 +447,8 @@ fn arm_preload_hints_are_pure() {
     }
 }
 
-/// CLREX is emitted as a bare `ClearExclusiveLocal();` -- no operands, no
-/// output, no `[ram]` -- so it classifies like its exclusive-monitor siblings.
+/// CLREX is emitted as a bare `ClearExclusiveLocal();`: no operands, no
+/// output, no `[ram]`, so it classifies like its exclusive-monitor siblings.
 #[test]
 fn arm_clrex_is_pure_like_its_monitor_siblings() {
     for name in [
