@@ -77,23 +77,34 @@ macro_rules! variant_unary_any {
     };
 }
 
+/// The `MatchPat` and `TemplatePat` impls for a builder whose lowering is the
+/// same expression on both sides, which is what the generic `compile_*`
+/// helpers exist to make true.
+///
+/// `BitNot` is deliberately NOT expressed here: its match side pins
+/// `int_const(u128::MAX)` while its build side derives all-ones from the
+/// root's width, so the two are genuinely different lowerings.
+macro_rules! dual_pat {
+    ($ty:ident<$($g:ident),+ $(,)?>, |$me:ident, $b:ident| $body:block) => {
+        impl<$($g: MatchPat),+> MatchPat for $ty<$($g),+> {
+            fn compile($me, $b: &mut MatcherBuilder) -> PatValueRef $body
+        }
+
+        impl<$($g: TemplatePat),+> TemplatePat for $ty<$($g),+> {
+            fn compile($me, $b: &mut TemplateBuilder) -> TmplValueRef $body
+        }
+    };
+}
+
 pub struct IntBinaryFixed<L, R> {
     op: IntBinaryOp,
     lhs: L,
     rhs: R,
 }
 
-impl<L: MatchPat, R: MatchPat> MatchPat for IntBinaryFixed<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        compile_int_binary(b, self.op, self.lhs, self.rhs)
-    }
-}
-
-impl<L: TemplatePat, R: TemplatePat> TemplatePat for IntBinaryFixed<L, R> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        compile_int_binary(b, self.op, self.lhs, self.rhs)
-    }
-}
+dual_pat!(IntBinaryFixed<L, R>, |self, b| {
+    compile_int_binary(b, self.op, self.lhs, self.rhs)
+});
 
 variant_binary_any!(
     /// Match-only.
@@ -109,17 +120,9 @@ pub struct Sub<L, R> {
     rhs: R,
 }
 
-impl<L: MatchPat, R: MatchPat> MatchPat for Sub<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        compile_sub(b, self.lhs, self.rhs)
-    }
-}
-
-impl<L: TemplatePat, R: TemplatePat> TemplatePat for Sub<L, R> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        compile_sub(b, self.lhs, self.rhs)
-    }
-}
+dual_pat!(Sub<L, R>, |self, b| {
+    compile_sub(b, self.lhs, self.rhs)
+});
 
 fn compile_sub<B, L, R>(b: &mut B, lhs: L, rhs: R) -> B::OutRef
 where
@@ -141,17 +144,9 @@ pub struct IntUnaryFixed<I> {
     inner: I,
 }
 
-impl<I: MatchPat> MatchPat for IntUnaryFixed<I> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        compile_unary_kind(b, KindSpec::Exact(self.kind), self.inner)
-    }
-}
-
-impl<I: TemplatePat> TemplatePat for IntUnaryFixed<I> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        compile_unary_kind(b, KindSpec::Exact(self.kind), self.inner)
-    }
-}
+dual_pat!(IntUnaryFixed<I>, |self, b| {
+    compile_unary_kind(b, KindSpec::Exact(self.kind), self.inner)
+});
 
 variant_unary_any!(
     /// Match-only.
@@ -192,17 +187,9 @@ pub struct Cast<I> {
     inner: I,
 }
 
-impl<I: MatchPat> MatchPat for Cast<I> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        compile_unary_kind(b, KindSpec::Exact(self.kind), self.inner)
-    }
-}
-
-impl<I: TemplatePat> TemplatePat for Cast<I> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        compile_unary_kind(b, KindSpec::Exact(self.kind), self.inner)
-    }
-}
+dual_pat!(Cast<I>, |self, b| {
+    compile_unary_kind(b, KindSpec::Exact(self.kind), self.inner)
+});
 
 /// Output `I1`.
 pub struct IntCmpFixed<L, R> {
@@ -211,19 +198,10 @@ pub struct IntCmpFixed<L, R> {
     rhs: R,
 }
 
-impl<L: MatchPat, R: MatchPat> MatchPat for IntCmpFixed<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let kind = KindSpec::Exact(NodeKind::IntCmpOp(self.op));
-        compile_two_input(b, kind, self.lhs, self.rhs, Some(ValueType::I1))
-    }
-}
-
-impl<L: TemplatePat, R: TemplatePat> TemplatePat for IntCmpFixed<L, R> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        let kind = KindSpec::Exact(NodeKind::IntCmpOp(self.op));
-        compile_two_input(b, kind, self.lhs, self.rhs, Some(ValueType::I1))
-    }
-}
+dual_pat!(IntCmpFixed<L, R>, |self, b| {
+    let kind = KindSpec::Exact(NodeKind::IntCmpOp(self.op));
+    compile_two_input(b, kind, self.lhs, self.rhs, Some(ValueType::I1))
+});
 
 variant_binary_any!(
     /// Output `I1`. Match-only.
@@ -240,19 +218,10 @@ pub struct FloatBinaryFixed<L, R> {
     rhs: R,
 }
 
-impl<L: MatchPat, R: MatchPat> MatchPat for FloatBinaryFixed<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let kind = KindSpec::Exact(NodeKind::FloatBinaryOp(self.op));
-        compile_two_input(b, kind, self.lhs, self.rhs, None)
-    }
-}
-
-impl<L: TemplatePat, R: TemplatePat> TemplatePat for FloatBinaryFixed<L, R> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        let kind = KindSpec::Exact(NodeKind::FloatBinaryOp(self.op));
-        compile_two_input(b, kind, self.lhs, self.rhs, None)
-    }
-}
+dual_pat!(FloatBinaryFixed<L, R>, |self, b| {
+    let kind = KindSpec::Exact(NodeKind::FloatBinaryOp(self.op));
+    compile_two_input(b, kind, self.lhs, self.rhs, None)
+});
 
 variant_binary_any!(
     /// Match-only.
@@ -268,17 +237,9 @@ pub struct FloatSub<L, R> {
     rhs: R,
 }
 
-impl<L: MatchPat, R: MatchPat> MatchPat for FloatSub<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        compile_float_sub(b, self.lhs, self.rhs)
-    }
-}
-
-impl<L: TemplatePat, R: TemplatePat> TemplatePat for FloatSub<L, R> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        compile_float_sub(b, self.lhs, self.rhs)
-    }
-}
+dual_pat!(FloatSub<L, R>, |self, b| {
+    compile_float_sub(b, self.lhs, self.rhs)
+});
 
 fn compile_float_sub<B, L, R>(b: &mut B, lhs: L, rhs: R) -> B::OutRef
 where
@@ -300,19 +261,10 @@ pub struct FloatUnaryFixed<I> {
     inner: I,
 }
 
-impl<I: MatchPat> MatchPat for FloatUnaryFixed<I> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let kind = KindSpec::Exact(NodeKind::FloatUnaryOp(self.op));
-        compile_unary_kind(b, kind, self.inner)
-    }
-}
-
-impl<I: TemplatePat> TemplatePat for FloatUnaryFixed<I> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        let kind = KindSpec::Exact(NodeKind::FloatUnaryOp(self.op));
-        compile_unary_kind(b, kind, self.inner)
-    }
-}
+dual_pat!(FloatUnaryFixed<I>, |self, b| {
+    let kind = KindSpec::Exact(NodeKind::FloatUnaryOp(self.op));
+    compile_unary_kind(b, kind, self.inner)
+});
 
 variant_unary_any!(
     /// Match-only.
@@ -329,19 +281,10 @@ pub struct FloatCmpFixed<L, R> {
     rhs: R,
 }
 
-impl<L: MatchPat, R: MatchPat> MatchPat for FloatCmpFixed<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let kind = KindSpec::Exact(NodeKind::FloatCmpOp(self.op));
-        compile_two_input(b, kind, self.lhs, self.rhs, Some(ValueType::I1))
-    }
-}
-
-impl<L: TemplatePat, R: TemplatePat> TemplatePat for FloatCmpFixed<L, R> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        let kind = KindSpec::Exact(NodeKind::FloatCmpOp(self.op));
-        compile_two_input(b, kind, self.lhs, self.rhs, Some(ValueType::I1))
-    }
-}
+dual_pat!(FloatCmpFixed<L, R>, |self, b| {
+    let kind = KindSpec::Exact(NodeKind::FloatCmpOp(self.op));
+    compile_two_input(b, kind, self.lhs, self.rhs, Some(ValueType::I1))
+});
 
 variant_binary_any!(
     /// Output `I1`. Match-only.
@@ -424,17 +367,9 @@ pub struct BoolBinaryFixed<L, R> {
     rhs: R,
 }
 
-impl<L: MatchPat, R: MatchPat> MatchPat for BoolBinaryFixed<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        compile_bool_binary(b, self.op, self.lhs, self.rhs)
-    }
-}
-
-impl<L: TemplatePat, R: TemplatePat> TemplatePat for BoolBinaryFixed<L, R> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        compile_bool_binary(b, self.op, self.lhs, self.rhs)
-    }
-}
+dual_pat!(BoolBinaryFixed<L, R>, |self, b| {
+    compile_bool_binary(b, self.op, self.lhs, self.rhs)
+});
 
 variant_binary_any!(
     /// Any `IntBinaryOp` at `I1`. Match-only.
@@ -450,17 +385,7 @@ pub struct BoolNot<I> {
     inner: I,
 }
 
-impl<I: MatchPat> MatchPat for BoolNot<I> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        compile_bool_not(b, self.inner)
-    }
-}
-
-impl<I: TemplatePat> TemplatePat for BoolNot<I> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        compile_bool_not(b, self.inner)
-    }
-}
+dual_pat!(BoolNot<I>, |self, b| { compile_bool_not(b, self.inner) });
 
 fn compile_bool_not<B, I>(b: &mut B, inner: I) -> B::OutRef
 where

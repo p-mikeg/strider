@@ -368,8 +368,7 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
 ];
 
 fn classify_ppc(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
-    use crate::ArchPreset::{Ppc32Be, Ppc32Le, Ppc64Be, Ppc64Le};
-    if !matches!(preset, Ppc32Be | Ppc32Le | Ppc64Be | Ppc64Le) {
+    if !PPC_ALL.contains(&preset) {
         return None;
     }
 
@@ -892,6 +891,12 @@ const ARM32_ALL: &[crate::ArchPreset] = &[
 ];
 const AARCH64_BOTH: &[crate::ArchPreset] =
     &[crate::ArchPreset::Aarch64, crate::ArchPreset::Aarch64Be];
+const PPC_ALL: &[crate::ArchPreset] = &[
+    crate::ArchPreset::Ppc32Be,
+    crate::ArchPreset::Ppc32Le,
+    crate::ArchPreset::Ppc64Be,
+    crate::ArchPreset::Ppc64Le,
+];
 
 /// Names meaning the same on every arch that emits them.
 ///
@@ -1946,32 +1951,13 @@ mod tests {
         assert_eq!(classify(crate::ArchPreset::X86_64, "swi"), Some(stub));
     }
 
-    const ALL_PRESETS: &[crate::ArchPreset] = &[
-        crate::ArchPreset::X86,
-        crate::ArchPreset::X86_64,
-        crate::ArchPreset::Arm,
-        crate::ArchPreset::ArmBe,
-        crate::ArchPreset::ArmBeKernel,
-        crate::ArchPreset::ArmThumb,
-        crate::ArchPreset::Aarch64,
-        crate::ArchPreset::Aarch64Be,
-        crate::ArchPreset::MipsBe32,
-        crate::ArchPreset::MipsLe32,
-        crate::ArchPreset::MipsBe64,
-        crate::ArchPreset::MipsLe64,
-        crate::ArchPreset::Ppc32Be,
-        crate::ArchPreset::Ppc32Le,
-        crate::ArchPreset::Ppc64Be,
-        crate::ArchPreset::Ppc64Le,
-    ];
-
     /// Arch-independence read off the table itself: every row answers the same
     /// under every preset, save where an arch-specific row deliberately
     /// shadows the name.
     #[test]
     fn arch_independent_entries_resolve_on_every_arch() {
         for (name, class) in ARCH_INDEPENDENT_TABLE {
-            for preset in ALL_PRESETS {
+            for preset in crate::ArchPreset::ALL {
                 let Some(shadow) = classify_arch_specific(*preset, name) else {
                     assert_eq!(classify(*preset, name), Some(*class), "{preset:?}/{name}");
                     continue;
@@ -1981,26 +1967,46 @@ mod tests {
         }
     }
 
+    /// Every preset a row can name has to reach a register table, and every
+    /// name in the row has to resolve on it.  A typo is otherwise invisible
+    /// until a real binary hits the op.
     #[test]
-    fn sleigh_arch_presets_set_distinct_preset_discriminators() {
-        // One ArchPreset per constructor, so Arm-32 LE / BE / Thumb stay
-        // distinguishable.
-        use crate::SleighArch;
-        assert_eq!(SleighArch::x86_64().preset, crate::ArchPreset::X86_64);
-        assert_eq!(SleighArch::x86().preset, crate::ArchPreset::X86);
-        assert_eq!(SleighArch::arm().preset, crate::ArchPreset::Arm);
-        assert_eq!(SleighArch::arm_be().preset, crate::ArchPreset::ArmBe);
-        assert_eq!(SleighArch::arm_thumb().preset, crate::ArchPreset::ArmThumb);
-        assert_eq!(SleighArch::aarch64().preset, crate::ArchPreset::Aarch64);
-        assert_eq!(SleighArch::aarch64be().preset, crate::ArchPreset::Aarch64Be);
-        assert_eq!(SleighArch::mipsbe32().preset, crate::ArchPreset::MipsBe32);
-        assert_eq!(SleighArch::mipsle32().preset, crate::ArchPreset::MipsLe32);
-        assert_eq!(SleighArch::mipsbe64().preset, crate::ArchPreset::MipsBe64);
-        assert_eq!(SleighArch::mipsle64().preset, crate::ArchPreset::MipsLe64);
-        assert_eq!(SleighArch::ppc32be().preset, crate::ArchPreset::Ppc32Be);
-        assert_eq!(SleighArch::ppc32le().preset, crate::ArchPreset::Ppc32Le);
-        assert_eq!(SleighArch::ppc64be().preset, crate::ArchPreset::Ppc64Be);
-        assert_eq!(SleighArch::ppc64le().preset, crate::ArchPreset::Ppc64Le);
+    fn arch_scoped_footprints_resolve_on_their_own_register_tables() {
+        for preset in crate::ArchPreset::ALL {
+            let regs = preset
+                .arch()
+                .probe_regs()
+                .unwrap_or_else(|e| panic!("{preset:?}: probe_regs: {e}"));
+            let arch_specific = ARCH_SPECIFIC_TABLE
+                .iter()
+                .filter(|row| row.preset_arches.contains(preset))
+                .map(|row| (row.op_names[0], row.class));
+            let ppc = PPC_TABLE
+                .iter()
+                .filter(|_| PPC_ALL.contains(preset))
+                .map(|(name, class)| (*name, *class));
+            for (name, class) in arch_specific.chain(ppc) {
+                let CallOtherClass::Call(abi) = class else {
+                    continue;
+                };
+                abi.build(&regs)
+                    .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e}"));
+            }
+        }
+    }
+
+    /// The family groups partition the presets, so a new one joins a group
+    /// rather than silently missing every arch-scoped row.
+    #[test]
+    fn family_groups_cover_every_preset() {
+        for preset in crate::ArchPreset::ALL {
+            assert!(
+                [MIPS_ALL, X86_BOTH, ARM32_ALL, AARCH64_BOTH, PPC_ALL]
+                    .iter()
+                    .any(|family| family.contains(preset)),
+                "{preset:?} joins no CallOther family group"
+            );
+        }
     }
 
     /// The Vn-resolved override path: a caller with a footprint of its own

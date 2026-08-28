@@ -105,6 +105,19 @@ class Cfg:
         CFG from `build_cfg`, which runs no resolver.
         """
         ...
+    def is_complete(self) -> bool:
+        """Whether all four incompleteness channels are empty: the
+        `unresolved` of the `AnalyzeResult` this CFG came from,
+        `unverified_seeded_sites`, `isa_mode_conflicts` and
+        `interior_branch_targets`.
+
+        The answer to "may this be incomplete?", which none of the four gives
+        alone. `False` is not always a loss: `unverified_seeded_sites` holds
+        answers that are complete but unverified, so a site consumed as a
+        return (an ARM `pop {pc}` epilogue) clears it. Read whichever channel
+        is non-empty to tell the cases apart.
+        """
+        ...
     def region_at(self, addr: int) -> Optional[int]:
         """The index of the region whose instruction range contains `addr`,
         else `None`."""

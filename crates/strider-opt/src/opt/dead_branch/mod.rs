@@ -229,10 +229,7 @@ fn exact_walk(
         if no_escape.contains(node) {
             continue;
         }
-        if matches!(
-            edit.node_kind(node),
-            NodeKind::Return | NodeKind::IndirectBranch | NodeKind::Unreachable
-        ) {
+        if edit.node_kind(node).is_terminator() {
             return true;
         }
         for &out in edit.node_outputs(node) {
@@ -282,27 +279,20 @@ fn escaping_nodes(edit: &crate::EditFunction<'_>) -> DenseEntitySet<NodeId> {
     let mut escapes: DenseEntitySet<NodeId> = DenseEntitySet::new();
     let mut stack: Vec<NodeId> = Vec::new();
     for &node in &nodes {
-        let escapes_here = matches!(
-            edit.node_kind(node),
-            NodeKind::Return | NodeKind::IndirectBranch | NodeKind::Unreachable
-        ) || live_ctrl_outputs(node)
-            .any(|out| edit.value_uses(out).next().is_none());
+        let escapes_here = edit.node_kind(node).is_terminator()
+            || live_ctrl_outputs(node).any(|out| edit.value_uses(out).next().is_none());
         if escapes_here && escapes.insert(node) {
             stack.push(node);
         }
     }
 
-    while let Some(node) = stack.pop() {
-        for input in edit.node_inputs(node) {
-            if !edit.value_kind(input).is_control() || dead_arms.contains(input) {
-                continue;
-            }
-            let pred = edit.producer(input);
-            if escapes.insert(pred) {
-                stack.push(pred);
-            }
-        }
-    }
+    strider_ir::walk::close_over_control_preds(
+        edit.function().graph(),
+        &mut escapes,
+        stack,
+        |v| dead_arms.contains(v),
+        None,
+    );
     escapes
 }
 
@@ -312,21 +302,21 @@ fn dead_arm_values(edit: &crate::EditFunction<'_>, node: NodeId) -> Vec<ValueId>
     let outputs = edit.node_outputs(node);
     match edit.node_kind(node) {
         NodeKind::If => {
-            let Ok([_, cond_value]) = edit.node_inputs_exact::<2>(node) else {
-                return Vec::new();
-            };
-            let Ok([ctrl_true, ctrl_false]) = edit.node_outputs_exact::<2>(node) else {
-                return Vec::new();
-            };
+            let [_, cond_value] = edit
+                .node_inputs_exact::<2>(node)
+                .expect("If has 2 inputs per node signature");
+            let [ctrl_true, ctrl_false] = edit
+                .node_outputs_exact::<2>(node)
+                .expect("If has 2 outputs per node signature");
             let Some(cond) = edit.bool_const_val(cond_value) else {
                 return Vec::new();
             };
             vec![if cond { ctrl_false } else { ctrl_true }]
         }
         NodeKind::Switch => {
-            let Ok([_, addr_value]) = edit.node_inputs_exact::<2>(node) else {
-                return Vec::new();
-            };
+            let [_, addr_value] = edit
+                .node_inputs_exact::<2>(node)
+                .expect("Switch has 2 inputs per node signature");
             let Some(k) = edit.int_const_u128(addr_value) else {
                 return Vec::new();
             };

@@ -39,27 +39,16 @@ fn ro_read_fills_raw_bytes() {
     ReadOnlyMemory::read(&r, 0x1000, &mut empty).unwrap();
 }
 
-/// A region supplying only a prefix must error, not truncate.
+/// All-or-nothing: a range supplying only a prefix, one at an unmapped address
+/// and one that starts mapped but runs past the end must each error, not
+/// truncate.
 #[test]
-fn ro_read_partial_region_errors() {
+fn ro_read_errors_unless_the_whole_range_is_mapped() {
     let elf = simple_text_elf(0x1000, &[1, 2, 3, 4]);
     let r = ElfFileMemReader::from_bytes(&elf).unwrap();
-    // 4 bytes starting 2 before the end, so only 2 are available.
-    assert_readonly_errors(&r, 0x1002, 4);
-}
-
-#[test]
-fn ro_read_unmapped_address_errors() {
-    let elf = simple_text_elf(0x1000, &[1, 2, 3, 4]);
-    let r = ElfFileMemReader::from_bytes(&elf).unwrap();
-    assert_readonly_errors(&r, 0x9000, 4);
-}
-
-#[test]
-fn ro_read_spanning_past_mapped_errors() {
-    let elf = simple_text_elf(0x1000, &[1, 2, 3, 4]);
-    let r = ElfFileMemReader::from_bytes(&elf).unwrap();
-    assert_readonly_errors(&r, 0x1000, 8);
+    for (addr, len) in [(0x1002, 4), (0x9000, 4), (0x1000, 8)] {
+        assert_readonly_errors(&r, addr, len);
+    }
 }
 
 /// The two traits treat short reads differently by design: `MemReader` returns

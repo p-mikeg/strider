@@ -39,7 +39,7 @@ pub struct PhiPat {
 impl PhiPat {
     /// Predecessor `idx`'s incoming value, at raw input slot `idx + 1`.
     pub fn phi_input<P: MatchPat + 'static>(mut self, idx: usize, p: P) -> Self {
-        self.inner = self.inner.input(idx + 1, p);
+        self.inner = self.inner.input(NodeKind::Phi.input_head_len() + idx, p);
         self
     }
 
@@ -134,7 +134,7 @@ impl MemPhiPat {
     /// Predecessor `idx`'s incoming memory token, at raw input slot `idx + 1`.
     /// The sub-pattern must be a memory producer.
     pub fn phi_input<M: MemPat + 'static>(self, idx: usize, p: M) -> Self {
-        Self(self.0.input_mem(idx + 1, p))
+        Self(self.0.input_mem(NodeKind::MemPhi.input_head_len() + idx, p))
     }
 
     /// Raw input slot `slot`, unshifted: slot 0 is the phi token,

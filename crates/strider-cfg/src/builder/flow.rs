@@ -91,30 +91,23 @@ impl FlowVars {
 
     /// Restore `addr`'s context to `want`, the context captured for the edge
     /// reaching this region, undoing a sibling region's forward-hold clobber
-    /// since. `isa_var` names the authoritative ISA-mode var, rewritten last
-    /// and unconditionally.
+    /// since.
+    ///
+    /// Several sla context vars alias the ISA-mode bit (ARM `TMode`, `T`,
+    /// `LowBitCodeMode`, `ISA_MODE` all at bit (0,0)), so `pin_at`'s diff can
+    /// write an alias last and flip the intended mode. Repairing that is
+    /// `RegionBuilder::hold_isa_mode`'s job, not this one: `explore` always
+    /// follows this call with a `RegionBuilder` whose first act is a
+    /// `lift_one` on this same address, and that repair runs unconditionally
+    /// where a repair here would additionally be gated on `pin_at` having
+    /// written at all.
     pub fn restore_at<R: rsleigh::MemReader>(
         &self,
         sleigh: &mut rsleigh::Sleigh<R>,
         addr: u64,
         want: &FlowContext,
-        isa_var: Option<&str>,
     ) -> crate::Result<()> {
-        if !self.pin_at(sleigh, addr, want)? {
-            return Ok(());
-        }
-        // Several sla context vars can alias the ISA-mode bit (ARM `TMode`, `T`,
-        // `LowBitCodeMode`, `ISA_MODE` all at bit (0,0)); `pin_at`'s diff may
-        // write an alias last and flip the intended mode.  Read the bit back and
-        // re-impose only when it actually landed wrong: every write costs a full
-        // parse-cache flush, a read costs none.
-        let Some((var, value)) = isa_var.and_then(|v| self.value_of(want, v).map(|x| (v, x)))
-        else {
-            return Ok(());
-        };
-        if sleigh.get_context_at(addr, var)? != value {
-            sleigh.set_context_at(addr, var, value)?;
-        }
+        self.pin_at(sleigh, addr, want)?;
         Ok(())
     }
 
@@ -259,7 +252,7 @@ mod tests {
         assert_eq!(vars.with_mode_bit(&base, "nope", true), base);
     }
 
-    /// `Builder::with_flow_vars` and `with_function_mode` are independent
+    /// `Builder::with_flow_context` supplies both together, and
     /// setters and `function_mode` defaults to an empty `FlowContext`, so a
     /// `FlowVars` can be handed a context it did not produce.
     #[test]
@@ -321,7 +314,7 @@ mod tests {
         sleigh.lift_one(0x1000).expect("re-lift");
         let cached_lift = reads.get() - before;
 
-        flow.restore_at(&mut sleigh, 0x1000, &want, Some("TMode"))
+        flow.restore_at(&mut sleigh, 0x1000, &want)
             .expect("restore_at");
         let before = reads.get();
         sleigh.lift_one(0x1000).expect("lift after restore");
@@ -392,12 +385,18 @@ mod tests {
         sleigh
             .set_context_at(0x2000, "TMode", 0)
             .expect("arm-default target");
-        flow.restore_at(&mut sleigh, 0x2000, &carried, Some("TMode"))
+        flow.restore_at(&mut sleigh, 0x2000, &carried)
             .expect("restore_at");
+        // `pin_at`'s diff writes the bit-(0,0) aliases, which can land after
+        // `TMode` and flip it. `restore_at` no longer repairs that;
+        // `RegionBuilder::hold_isa_mode` does, unconditionally, on the
+        // `lift_one` that `explore` always follows this call with. The
+        // end-to-end guarantee is pinned by
+        // `strider-orchestrator/tests/isa_mode_resolved_branch.rs`.
         assert_eq!(
-            sleigh.get_context_at(0x2000, "TMode").expect("read TMode"),
-            0,
-            "resolved ARM target must decode as ARM; the sla aliases must not clobber TMode",
+            flow.value_of(&carried, "TMode"),
+            Some(0),
+            "the carried context still names the ARM mode the repair re-imposes",
         );
     }
 }

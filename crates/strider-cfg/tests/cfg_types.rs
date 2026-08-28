@@ -94,39 +94,24 @@ fn pcode_addr_at_machine_start_zero_index() {
 }
 
 #[test]
-fn contains_addr_at_start() {
-    let r = make_region(&[(0x1000, 0), (0x1010, 0)]);
-    assert!(r.contains_addr(addr(0x1000, 0)));
-}
-
-#[test]
-fn contains_addr_at_end() {
-    let r = make_region(&[(0x1000, 0), (0x1010, 0)]);
-    assert!(r.contains_addr(addr(0x1010, 0)));
-}
-
-#[test]
-fn contains_addr_in_interior() {
-    let r = make_region(&[(0x1000, 0), (0x1010, 0)]);
-    assert!(r.contains_addr(addr(0x1008, 0)));
-}
-
-#[test]
-fn contains_addr_pcode_interior() {
-    let r = make_region(&[(0x1000, 0), (0x1000, 3)]);
-    assert!(r.contains_addr(addr(0x1000, 1)));
-}
-
-#[test]
-fn contains_addr_before_start_returns_false() {
-    let r = make_region(&[(0x1000, 0), (0x1010, 0)]);
-    assert!(!r.contains_addr(addr(0x0ff8, 0)));
-}
-
-#[test]
-fn contains_addr_after_end_returns_false() {
-    let r = make_region(&[(0x1000, 0), (0x1010, 0)]);
-    assert!(!r.contains_addr(addr(0x1014, 0)));
+fn contains_addr_spans_the_region_and_nothing_outside_it() {
+    const SPAN: &[(u64, u64)] = &[(0x1000, 0), (0x1010, 0)];
+    const PCODE: &[(u64, u64)] = &[(0x1000, 0), (0x1000, 3)];
+    for (insns, (machine, index), want) in [
+        (SPAN, (0x1000u64, 0u64), true), // start
+        (SPAN, (0x1010, 0), true),       // end
+        (SPAN, (0x1008, 0), true),       // interior
+        (PCODE, (0x1000, 1), true),      // interior of one machine insn's pcode
+        (SPAN, (0x0ff8, 0), false),      // before start
+        (SPAN, (0x1014, 0), false),      // after end
+    ] {
+        let r = make_region(insns);
+        assert_eq!(
+            r.contains_addr(addr(machine, index)),
+            want,
+            "{machine:#x}+{index} in {insns:x?}"
+        );
+    }
 }
 
 #[test]

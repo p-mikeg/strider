@@ -269,6 +269,14 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         if ty.bit_width() > 128 {
             return self.builder.build_int_const_limbs(limbs, ty);
         }
+        // The early return above guards on `ty`; this shift is bounded by
+        // `limbs`. They agree only because every caller derives `limbs` from
+        // `ty` via `shifted_ones_limbs`, so a `ValueType` between I128 and
+        // I256 would overflow the shift rather than take the return.
+        debug_assert!(
+            limbs.len() <= 2,
+            "a >128-bit width must take the early return"
+        );
         let mut bits: u128 = 0;
         for (i, limb) in limbs.iter().enumerate() {
             bits |= u128::from(*limb) << (i * 64);

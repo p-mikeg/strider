@@ -108,16 +108,18 @@ fn known_bits_fold_preserves_fingerprints() {
         Ok(outer)
     })
     .unwrap();
-    let _ = strider_orchestrator::opt::run_one(
+    strider_orchestrator::opt::run_one(
         &ConstantFold::new(),
         &mut fg,
         &mut strider_orchestrator::opt::OptCtx::new(None),
-    );
-    let _ = strider_orchestrator::opt::run_one(
+    )
+    .expect("ConstantFold must succeed");
+    strider_orchestrator::opt::run_one(
         &KnownBits,
         &mut fg,
         &mut strider_orchestrator::opt::OptCtx::new(None),
-    );
+    )
+    .expect("KnownBits must succeed");
     let ret = fg
         .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))

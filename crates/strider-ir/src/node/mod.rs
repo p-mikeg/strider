@@ -7,6 +7,7 @@ mod value_type;
 #[cfg(test)]
 mod tests;
 
+pub use crate::node_signature::ExpectedValueKind;
 pub use kind::{FunctionArgSource, InitialVnId, NodeKind};
 pub use ops::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,

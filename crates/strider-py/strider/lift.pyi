@@ -35,8 +35,13 @@ class AnalyzeResult(NamedTuple):
     compares equal to the plain tuple.
 
     `unresolved` holds the machine addresses of indirect branches that could
-    not be resolved; empty when the function resolved fully, and a non-empty
-    list is not an error.
+    not be resolved, and a non-empty list is not an error.
+
+    Empty means fully resolved, NOT that the answer is complete: it is one of
+    four incompleteness channels, and a dispatch the CFG consumed as a return
+    or a tail call is reported only through `cfg.unverified_seeded_sites()`.
+    The other two are `cfg.isa_mode_conflicts()` and
+    `cfg.interior_branch_targets()`; `cfg.is_complete()` tests all four.
     """
 
     cfg: Cfg
@@ -220,6 +225,9 @@ class Lifter:
 
         `cc` is required here; `ElfLifter.analyze` also takes a symbol name
         and supplies a default `cc`.
+
+        An empty `unresolved` is not a complete answer: see `AnalyzeResult`
+        for the four channels, and `Cfg.is_complete` to test them all.
         """
         ...
     def optimize(

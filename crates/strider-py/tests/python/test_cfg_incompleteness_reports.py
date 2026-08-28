@@ -70,6 +70,7 @@ def test_a_mode_clash_is_reported_after_its_round_is_rebuilt_away() -> None:
     assert result.cfg.isa_mode_conflicts() == [CLASH]
     # The clash costs the dispatch, which comes back as a live placeholder.
     assert result.unresolved == [0x1010]
+    assert not result.cfg.is_complete()
 
 
 def _x86_interior_program() -> bytes:
@@ -107,3 +108,44 @@ def test_a_clean_analysis_reports_nothing() -> None:
     empty: List[int] = []
     assert result.cfg.isa_mode_conflicts() == empty
     assert result.cfg.interior_branch_targets() == empty
+    assert result.cfg.is_complete()
+
+
+def test_is_complete_reads_the_unresolved_channel_too() -> None:
+    """`unresolved` rides on the `AnalyzeResult`, not on any `Cfg` getter, so
+    a `Cfg` reading only its own three would call this complete."""
+    code = bytes([0x48, 0x8B, 0x07, 0xFF, 0xE0])  # mov rax, [rdi] ; jmp rax
+    mem = strider.reader.BufferReader(BASE, code)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    result = lift.analyze(BASE, strider.sleigh.CallingConvention.x86_64_systemv())
+    empty: List[int] = []
+    assert result.unresolved == [0x1003]
+    assert result.cfg.isa_mode_conflicts() == empty
+    assert result.cfg.interior_branch_targets() == empty
+    assert result.cfg.unverified_seeded_sites() == empty
+    assert not result.cfg.is_complete()
+
+
+def test_a_complete_but_unverified_answer_is_not_complete() -> None:
+    """`False` covers the caveat as well as the loss: seating a `Return` here
+    answers the dispatch outright, and `unresolved` stays empty."""
+    code = bytes([0xB8, 0x08, 0x10, 0x00, 0x00, 0xFF, 0xE0, 0x90, 0xC3])
+    dispatch = 0x1005
+    mem = strider.reader.BufferReader(BASE, code)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    result = lift.analyze(
+        BASE,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        strider.lift.LifterOptions(
+            cfg=strider.cfg.CfgOptions(known_targets={dispatch: "return"})
+        ),
+    )
+    assert result.unresolved == []
+    assert result.cfg.unverified_seeded_sites() == [dispatch]
+    assert not result.cfg.is_complete()
+
+
+def test_build_cfg_has_no_unresolved_channel() -> None:
+    """No resolver runs, so the fourth channel is empty by construction and
+    `is_complete` answers on the three the build itself filled."""
+    assert not _x86_lifter().build_cfg(BASE).is_complete()

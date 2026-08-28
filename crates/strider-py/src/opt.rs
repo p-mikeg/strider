@@ -218,139 +218,119 @@ macro_rules! pure_pass_class {
     };
 }
 
-pure_pass_class!("ConstantFold" => PyConstantFold,
-    "Constant-folds the IR: evaluates constant ops and applies algebraic \
-     identities (`x+0->x`, `x^x->0`, AND-mask merging, ...).");
-pure_pass_class!("KnownBits" => PyKnownBits,
-    "Bit-level known-zeros / known-ones lattice propagation, simplifying \
-     ops whose result bits are statically determined.");
-pure_pass_class!("PhiCollapse" => PyPhiCollapse,
-    "Braun trivial-phi elimination: collapses a `Phi` / `MemPhi` whose \
-     non-self-referential value inputs all resolve to a single value \
-     (destructive).");
-pure_pass_class!("RegionCollapse" => PyRegionCollapse,
-    "Collapses a single-control-input `Region` join, rewiring its control \
-     consumers to its lone predecessor (destructive).");
-pure_pass_class!("DeadBranchElimination" => PyDeadBranchElimination,
-    "Folds `If(const)` branches: redirects the live successor past the `If` \
-     and detaches the folded `If` (destructive).");
-pure_pass_class!("CfgDetach" => PyCfgDetach,
-    "Removes dead `Region`-predecessor slots (and the matching `Phi` / \
-     `MemPhi` value slots) once a folded `If` makes a predecessor \
-     control-unreachable (destructive).");
-pure_pass_class!("FlagCmpCanonicalize" => PyFlagCmpCanonicalize,
-    "Rewrites a flag-tree (e.g. AArch64 NZCV-style chains) into a single \
-     `IntCmpOp`.");
-pure_pass_class!("IfCondInversion" => PyIfCondInversion,
-    "Rewrites a branch on a negated condition (`Xor(C, IntConst(1)):I1`) into \
-     a branch on the plain condition with its two arms swapped.");
+/// The pass catalogue in two sections: a `main` row joins the fixed-point
+/// list, a `post` row runs once after that loop converges and is rejected by
+/// `add`. Each row is `"PythonName" => WrapperType = pass constructor, doc`.
+macro_rules! opt_passes {
+    (
+        main { $($mn:literal => $mty:ident = $mctor:expr, $mdoc:literal;)* }
+        post { $($pn:literal => $pty:ident = $pctor:expr, $pdoc:literal;)* }
+    ) => {
+        $( pure_pass_class!($mn => $mty, $mdoc); )*
+        $( pure_pass_class!($pn => $pty, $pdoc); )*
 
-pure_pass_class!("LoadForward" => PyLoadForward,
-    "Forwards values from stack-tagged `Store` nodes to subsequent \
-     same-offset `Load` nodes.");
-pure_pass_class!("StackOffsetDetect" => PyStackOffsetDetect,
-    "Stamps every SP-relative Store/Load with its concrete offset.");
-pure_pass_class!("FunctionArgDetect" => PyFunctionArgDetect,
-    "Post-pass that canonicalises register / stack argument reads into the \
-     function's argument-index table.");
-pure_pass_class!("CallStackArgCollect" => PyCallStackArgCollect,
-    "Post-pass that wires positional stack arguments into `Call` nodes per \
-     the calling convention's stack-arg layout.");
+        /// Aggregates every pass-wrapper class so `add` / `add_post` accept
+        /// any of them via PyO3 enum dispatch.
+        // Variants are named for their wrapper types, which the crate prefixes
+        // `Py`; `annotation` is what a failed extraction reports.
+        #[allow(clippy::enum_variant_names)]
+        #[derive(FromPyObject)]
+        pub enum PyOptPass {
+            $( #[pyo3(annotation = $mn)] $mty($mty), )*
+            $( #[pyo3(annotation = $pn)] $pty($pty), )*
+        }
 
-pure_pass_class!("LoadReadOnly" => PyLoadReadOnly,
-    "`LoadReadOnly()` folds constant-address loads against the rom supplied \
-     via `strider.lift.lifter(arch, mem, rom=mem)` or \
-     `strider.lift.load_elf(...)`. No change when no rom is available.");
+        impl PyOptPass {
+            /// Erase to a fixed-point pass; a post-pass-only kind is an error.
+            fn into_erased(self) -> PyResult<ErasedPass> {
+                Ok(match self {
+                    $( PyOptPass::$mty(_) => Box::new($mctor), )*
+                    $( PyOptPass::$pty(_) )|* => {
+                        return Err(into_strider_err(anyhow::anyhow!(
+                            "{} are post-passes (they run once after the fixed-point \
+                             loop converges): register them with \
+                             OptimizerPipeline.add_post(...), not add(...).",
+                            [$($pn),*].join(" / ")
+                        )));
+                    }
+                })
+            }
 
-/// Aggregates every pass-wrapper class so `add` / `add_post` accept any of
-/// them via PyO3 enum dispatch.
-#[derive(FromPyObject)]
-pub enum PyOptPass {
-    ConstantFold(PyConstantFold),
-    KnownBits(PyKnownBits),
-    PhiCollapse(PyPhiCollapse),
-    RegionCollapse(PyRegionCollapse),
-    DeadBranchElimination(PyDeadBranchElimination),
-    CfgDetach(PyCfgDetach),
-    FlagCmpCanonicalize(PyFlagCmpCanonicalize),
-    IfCondInversion(PyIfCondInversion),
-    LoadForward(PyLoadForward),
-    FunctionArgDetect(PyFunctionArgDetect),
-    CallStackArgCollect(PyCallStackArgCollect),
-    LoadReadOnly(PyLoadReadOnly),
-    StackOffsetDetect(PyStackOffsetDetect),
+            /// Real post-passes erase to their concrete `PostOptimizer`;
+            /// anything else goes through [`OptAsPostPass`] so it runs once
+            /// after convergence.
+            fn into_erased_post(self) -> ErasedPostPass {
+                match self {
+                    $( PyOptPass::$pty(_) => Box::new($pctor), )*
+                    other => Box::new(OptAsPostPass(
+                        other
+                            .into_erased()
+                            .expect("non-post pass always erases to a fixed-point pass"),
+                    )),
+                }
+            }
+        }
+
+        fn register_passes(m: &Bound<'_, PyModule>) -> PyResult<()> {
+            $( m.add_class::<$mty>()?; )*
+            $( m.add_class::<$pty>()?; )*
+            Ok(())
+        }
+    };
 }
 
-impl PyOptPass {
-    /// Erase to a fixed-point pass; a post-pass-only kind is an error.
-    fn into_erased(self) -> PyResult<ErasedPass> {
-        Ok(match self {
-            PyOptPass::ConstantFold(_) => Box::new(strider_orchestrator::opt::ConstantFold::new()),
-            PyOptPass::KnownBits(_) => Box::new(strider_orchestrator::opt::KnownBits),
-            PyOptPass::PhiCollapse(_) => Box::new(strider_orchestrator::opt::PhiCollapse),
-            PyOptPass::RegionCollapse(_) => Box::new(strider_orchestrator::opt::RegionCollapse),
-            PyOptPass::DeadBranchElimination(_) => {
-                Box::new(strider_orchestrator::opt::DeadBranchElimination)
-            }
-            PyOptPass::CfgDetach(_) => Box::new(strider_orchestrator::opt::CfgDetach),
-            PyOptPass::FlagCmpCanonicalize(_) => {
-                Box::new(strider_orchestrator::opt::FlagCmpCanonicalize::new())
-            }
-            PyOptPass::IfCondInversion(_) => {
-                Box::new(strider_orchestrator::opt::IfCondInversion::new())
-            }
-            PyOptPass::LoadForward(_) => {
-                Box::new(strider_orchestrator::opt::LoadForward::default())
-            }
-            PyOptPass::LoadReadOnly(_) => Box::new(strider_orchestrator::opt::LoadReadOnly),
-            PyOptPass::FunctionArgDetect(_)
-            | PyOptPass::CallStackArgCollect(_)
-            | PyOptPass::StackOffsetDetect(_) => {
-                return Err(into_strider_err(anyhow::anyhow!(
-                    "StackOffsetDetect / FunctionArgDetect / CallStackArgCollect are \
-                     post-passes (they run once after the fixed-point loop converges): \
-                     register them with OptimizerPipeline.add_post(...), not add(...)."
-                )));
-            }
-        })
+opt_passes! {
+    main {
+        "ConstantFold" => PyConstantFold = strider_orchestrator::opt::ConstantFold::new(),
+            "Constant-folds the IR: evaluates constant ops and applies algebraic \
+             identities (`x+0->x`, `x^x->0`, AND-mask merging, ...).";
+        "KnownBits" => PyKnownBits = strider_orchestrator::opt::KnownBits,
+            "Bit-level known-zeros / known-ones lattice propagation, simplifying \
+             ops whose result bits are statically determined.";
+        "PhiCollapse" => PyPhiCollapse = strider_orchestrator::opt::PhiCollapse,
+            "Braun trivial-phi elimination: collapses a `Phi` / `MemPhi` whose \
+             non-self-referential value inputs all resolve to a single value \
+             (destructive).";
+        "RegionCollapse" => PyRegionCollapse = strider_orchestrator::opt::RegionCollapse,
+            "Collapses a single-control-input `Region` join, rewiring its control \
+             consumers to its lone predecessor (destructive).";
+        "DeadBranchElimination" => PyDeadBranchElimination =
+            strider_orchestrator::opt::DeadBranchElimination,
+            "Folds `If(const)` branches: redirects the live successor past the `If` \
+             and detaches the folded `If` (destructive).";
+        "CfgDetach" => PyCfgDetach = strider_orchestrator::opt::CfgDetach,
+            "Removes dead `Region`-predecessor slots (and the matching `Phi` / \
+             `MemPhi` value slots) once a folded `If` makes a predecessor \
+             control-unreachable (destructive).";
+        "FlagCmpCanonicalize" => PyFlagCmpCanonicalize =
+            strider_orchestrator::opt::FlagCmpCanonicalize::new(),
+            "Rewrites a flag-tree (e.g. AArch64 NZCV-style chains) into a single \
+             `IntCmpOp`.";
+        "IfCondInversion" => PyIfCondInversion = strider_orchestrator::opt::IfCondInversion::new(),
+            "Rewrites a branch on a negated condition (`Xor(C, IntConst(1)):I1`) into \
+             a branch on the plain condition with its two arms swapped.";
+        "LoadForward" => PyLoadForward = strider_orchestrator::opt::LoadForward::default(),
+            "Forwards values from stack-tagged `Store` nodes to subsequent \
+             same-offset `Load` nodes.";
+        "LoadReadOnly" => PyLoadReadOnly = strider_orchestrator::opt::LoadReadOnly,
+            "`LoadReadOnly()` folds constant-address loads against the rom supplied \
+             via `strider.lift.lifter(arch, mem, rom=mem)` or \
+             `strider.lift.load_elf(...)`. No change when no rom is available.";
     }
-
-    /// Real post-passes erase to their concrete `PostOptimizer`; anything else
-    /// goes through [`OptAsPostPass`] so it runs once after convergence.
-    fn into_erased_post(self) -> ErasedPostPass {
-        match self {
-            PyOptPass::FunctionArgDetect(_) => {
-                Box::new(strider_orchestrator::opt::FunctionArgDetect)
-            }
-            PyOptPass::CallStackArgCollect(_) => {
-                Box::new(strider_orchestrator::opt::CallStackArgCollect)
-            }
-            PyOptPass::StackOffsetDetect(_) => {
-                Box::new(strider_orchestrator::opt::StackOffsetDetect)
-            }
-            other => Box::new(OptAsPostPass(
-                other
-                    .into_erased()
-                    .expect("non-post pass always erases to a fixed-point pass"),
-            )),
-        }
+    post {
+        "StackOffsetDetect" => PyStackOffsetDetect = strider_orchestrator::opt::StackOffsetDetect,
+            "Stamps every SP-relative Store/Load with its concrete offset.";
+        "FunctionArgDetect" => PyFunctionArgDetect = strider_orchestrator::opt::FunctionArgDetect,
+            "Post-pass that canonicalises register / stack argument reads into the \
+             function's argument-index table.";
+        "CallStackArgCollect" => PyCallStackArgCollect =
+            strider_orchestrator::opt::CallStackArgCollect,
+            "Post-pass that wires positional stack arguments into `Call` nodes per \
+             the calling convention's stack-arg layout.";
     }
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyOptimizerPipeline>()?;
-    m.add_class::<PyConstantFold>()?;
-    m.add_class::<PyKnownBits>()?;
-    m.add_class::<PyPhiCollapse>()?;
-    m.add_class::<PyRegionCollapse>()?;
-    m.add_class::<PyDeadBranchElimination>()?;
-    m.add_class::<PyCfgDetach>()?;
-    m.add_class::<PyFlagCmpCanonicalize>()?;
-    m.add_class::<PyIfCondInversion>()?;
-    m.add_class::<PyLoadForward>()?;
-    m.add_class::<PyStackOffsetDetect>()?;
-    m.add_class::<PyFunctionArgDetect>()?;
-    m.add_class::<PyCallStackArgCollect>()?;
-    m.add_class::<PyLoadReadOnly>()?;
-    Ok(())
+    register_passes(m)
 }

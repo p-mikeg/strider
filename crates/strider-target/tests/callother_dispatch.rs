@@ -60,34 +60,13 @@ fn unknown_call_other_returns_none() {
     assert!(classify(ArchPreset::X86_64, "this_op_definitely_does_not_exist").is_none());
 }
 
-fn all_presets() -> [ArchPreset; 16] {
-    [
-        ArchPreset::X86,
-        ArchPreset::X86_64,
-        ArchPreset::Arm,
-        ArchPreset::ArmBe,
-        ArchPreset::ArmBeKernel,
-        ArchPreset::ArmThumb,
-        ArchPreset::Aarch64,
-        ArchPreset::Aarch64Be,
-        ArchPreset::MipsBe32,
-        ArchPreset::MipsLe32,
-        ArchPreset::MipsBe64,
-        ArchPreset::MipsLe64,
-        ArchPreset::Ppc32Be,
-        ArchPreset::Ppc32Le,
-        ArchPreset::Ppc64Be,
-        ArchPreset::Ppc64Le,
-    ]
-}
-
 /// An unknown user-op name classifies as `None` under EVERY preset, never a
 /// silent default ABI.  Missing table entries are intentional, added on demand
 /// when real binaries surface them; the lifter turns `None` into an
 /// "unknown CallOther user-op" lift error downstream.
 #[test]
 fn unknown_name_returns_none_on_every_preset() {
-    for preset in all_presets() {
+    for &preset in ArchPreset::ALL {
         assert_eq!(
             classify(preset, "this_op_definitely_does_not_exist"),
             None,
@@ -100,7 +79,7 @@ fn unknown_name_returns_none_on_every_preset() {
 /// arch-specific row shadows, one memory-clobbering `Call` and one plain one.
 #[test]
 fn arch_independent_rows_resolve_on_every_preset() {
-    for preset in all_presets() {
+    for &preset in ArchPreset::ALL {
         // `setISAMode` is covered by `set_isa_mode_is_noop_on_every_arch`.
         let setend = expect_call(classify(preset, "setEndianState"));
         assert!(
@@ -351,7 +330,7 @@ fn arm_mode_switch_rows_resolve_their_banked_registers() {
 /// instruction never touches.
 #[test]
 fn arm_mode_switch_rows_are_scoped_to_arm32() {
-    for preset in all_presets() {
+    for &preset in ArchPreset::ALL {
         if matches!(
             preset,
             ArchPreset::Arm | ArchPreset::ArmBe | ArchPreset::ArmBeKernel | ArchPreset::ArmThumb
@@ -365,18 +344,7 @@ fn arm_mode_switch_rows_are_scoped_to_arm32() {
 }
 
 fn regs_for(preset: ArchPreset) -> rsleigh::SleighRegs {
-    let arch = match preset {
-        ArchPreset::Arm => strider_target::SleighArch::arm(),
-        ArchPreset::ArmBe => strider_target::SleighArch::arm_be(),
-        ArchPreset::ArmBeKernel => strider_target::SleighArch::arm_be_kernel(),
-        ArchPreset::ArmThumb => strider_target::SleighArch::arm_thumb(),
-        ArchPreset::MipsBe32 => strider_target::SleighArch::mipsbe32(),
-        ArchPreset::MipsLe32 => strider_target::SleighArch::mipsle32(),
-        ArchPreset::MipsBe64 => strider_target::SleighArch::mipsbe64(),
-        ArchPreset::MipsLe64 => strider_target::SleighArch::mipsle64(),
-        other => panic!("no constructor wired for {other:?}"),
-    };
-    arch.probe_regs().expect("probe_regs")
+    preset.arch().probe_regs().expect("probe_regs")
 }
 
 const ARM32_PRESETS: [ArchPreset; 4] = [

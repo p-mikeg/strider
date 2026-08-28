@@ -63,9 +63,6 @@ impl PySleigh {
 
 /// A Sleigh address space, exposed as the `RAM` / `REGISTER` / `CONST` /
 /// `UNIQUE` class constants (instances, not callables).
-// `gen_stub_pyclass` derives `PyStubType` so macro-emitted
-// `.space(s: PyVnSpace)` signatures compile under `gen_stub_pymethods`.
-#[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "VnSpace", module = "strider.sleigh", frozen)]
 #[derive(Clone, Copy)]
 pub struct PyVnSpace {
@@ -147,9 +144,6 @@ impl PyVnSpace {
 /// Construct via:
 /// * `Sleigh.reg("RAX")`, or `None` if the name isn't a register.
 /// * `Vn(space, off, size)`, for stack varnodes and custom spaces.
-// Every PyClass used as a method-argument type from a stub-gen-instrumented
-// impl needs `gen_stub_pyclass`, even though `pattern.pyi` is hand-written.
-#[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "Vn", module = "strider.sleigh", frozen)]
 #[derive(Clone, Copy)]
 pub struct PyVn {
