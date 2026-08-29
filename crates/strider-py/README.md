@@ -74,7 +74,8 @@ _cfg, fn, _ = lft.analyze(
     opts=strider.lift.LifterOptions(
         cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)),
 )
-print(fn.find_all(int_add(Capture(), Capture())))  # the add from the lea
+# The add from the lea, once per operand order: int_add is commutative.
+print(fn.find_all(int_add(Capture(), Capture())))
 ```
 
 See [`examples/python/10_buffer_reader.py`](examples/python/10_buffer_reader.py)

@@ -90,9 +90,10 @@ pub(super) fn check_function_invariants_control_single_use(
 /// itself makes: `INT_LEFT` pins only input0 to the output size, so the count
 /// may be any width. `Extend` / `Truncate` are how a width change is spelled.
 ///
-/// The exemption covers IR from any source; `IRBuilderExt` is stricter than it
-/// and coerces a count to the output width before building, so a
-/// builder-produced shift never uses it.
+/// The exemption covers IR from any source. `IRBuilderExt` is stricter than it
+/// and REJECTS a count of any other width, so a builder-produced shift never
+/// uses it; the lifter coerces first
+/// (`strider_lift::lift::arithmetic::saturate_shift_count`).
 pub(super) fn check_function_invariants_arith_widths(
     function: &Function,
     reachable: &NodeIdSet,

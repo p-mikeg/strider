@@ -4,8 +4,9 @@
 //! The matcher visits the pattern graph in pull order from
 //! [`Pattern::root`](crate::matcher::Pattern), kind-checking each pat node
 //! against its IR node, running the node predicate, then walking inputs. An
-//! input is a `Consumes{slot}` edge from a [`PatValue`] vertex, whose incoming
-//! `Produces` edge names the producer [`PatNode`].
+//! input is a [`PatValue`] vertex the [`PatNode`] consumes; edges carry no
+//! weight, so the consumer slot comes off the consumer's `input_slots` payload
+//! and the producer is the vertex's own producer node.
 //!
 //! Matching a node's inputs is one problem: an injective assignment of pattern
 //! inputs to IR input slots, each input drawing from its own [`Candidates`]

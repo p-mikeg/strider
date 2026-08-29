@@ -42,7 +42,8 @@ impl Capture {
         }
     }
 
-    /// An opaque hash key. The id space is neither dense nor sequential.
+    /// An opaque hash key: nothing outside this module may depend on how
+    /// ids are allocated.
     pub fn id(self) -> u32 {
         self.id
     }

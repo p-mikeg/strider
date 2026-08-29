@@ -82,6 +82,7 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   it says.
 - `any_int` / `any_float` / `any_bool` match any node with an output of that
   type, constant or not, so "any integer constant" is now `int_const()`:
+  `any_int_const` / `any_float_const` / `any_bool_const` are gone, and
   `int_const` / `float_const` / `bool_const` take a `Capture`, or no argument
   at all, in place of a value. `I1` is an integer type, so `any_int` covers
   booleans too. `bool_value` is gone: `any_bool` is it.
@@ -114,28 +115,29 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   attributes; `strider.lift.AliasMode` is gone. Clearing all six fields of
   `AssumptionOptions` is the only configuration sound under any input, which
   no single knob promised before.
-
-- `LifterOptions(alias_mode=...)` and
-  `LifterOptions(assume_incoming_args_survive_calls=...)` are gone; both are
-  fields of `AssumptionOptions`. See the entry above.
 - `Cfg.is_complete()` answers the four-channel question in one call. The
   `AnalyzeResult` docstring used to say an empty `unresolved` meant the answer
   was complete, which contradicted the Rust contract: a site the CFG consumed
   as a `Return` or `TailCall` is reported only through
   `unverified_seeded_sites`.
-- `Function.apply_rules` drains and refills the memory-decomposition side
-  table, as the optimizer pipeline already did. A rule that rewires an
-  address left a stale entry, and a rule that built a fresh `Load` left none,
-  so `load().stack_only()` and `store().heap_only()` silently matched the
-  wrong nodes or none at all afterwards.
+- `Function.rewrite` and `Function.rewrite_all` drain and refill the
+  memory-decomposition side table, as the optimizer pipeline already did. A
+  rule that rewires an address left a stale entry, and a rule that built a
+  fresh `Load` left none, so `load().stack_only()` and `store().heap_only()`
+  silently matched the wrong nodes or none at all afterwards.
 
 ### Breaking, Rust
 
-- `rsleigh` is a git submodule at `externals/rsleigh`, not a path dependency:
-  clone with `--recursive`, or `git submodule update --init --recursive`.
-- The MSRV is 1.91; edition
-  2024's own floor of 1.85 no longer builds the workspace.
+- The `rsleigh` path dependency moved from a sibling `../rsleigh` checkout to
+  the `externals/rsleigh` git submodule: clone with `--recursive`, or
+  `git submodule update --init --recursive`.
+- The MSRV is 1.91; edition 2024's own floor of 1.85 no longer builds the
+  workspace.
 
+- `MatchPat`, `NodePredicate` and `PostMatchFn` carry `+ Send`, so a compiled
+  `Pattern` moves between threads with the value that owns it. A `.filter()` or
+  `.when_match()` closure capturing an `Rc<Cell<_>>` no longer compiles;
+  capture an `Arc<AtomicUsize>`.
 - `float_is_nan` / `float_le` pin the operand they repeat to one value;
   `switch().output(n)` pins the slot; and `PostMatchFn` takes
   `Option<ValueType>`, so a guard on a root with no value output fails rather
@@ -194,8 +196,8 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   which applies relocation patches.
 - `elf_load_with_relocations`, `elf_load_readonly_with_relocations` and the two
   sections-only region loaders are gone; use `OwnedElf::regions`.
-  `apply_elf_relocations` takes the `LoadFilter` its regions were built with, and
-  `apply_elf_relocations_autoload` is gone.
+  `apply_elf_relocations` takes the `LoadFilter` its regions were built with,
+  and `apply_elf_relocations_autoload` is gone.
 - `Cfg::region_id_at_start` is gone.
 - `CallOtherOverrides::new` takes `(String, CallOtherOverride)` entries, where
   `CallOtherOverride` is either a `CallOtherClass` or a caller-resolved
@@ -229,9 +231,9 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `ResolvedTarget::from(addr)`.
 - `strider_ir` renames the stack-specific side tables for the memory classes
   they now cover: `SpDecomp` -> `MemDecomp`, `StackId` -> `MemoryId`,
-  `stack_slot` -> `memory_class`, `stack_slot_resolved` -> `memory_slot_resolved`,
-  `set_stack_slot_not` -> `set_not_memory`, `clear_stack_slots` ->
-  `clear_memory_slots`.
+  `stack_slot` -> `memory_class`, `stack_slot_resolved` ->
+  `memory_slot_resolved`, `set_stack_slot_not` -> `set_not_memory`,
+  `clear_stack_slots` -> `clear_memory_slots`.
 - `strider_opt::apply_rules_in_order` is gone; `LoadForward` holds a per-sweep
   memo and is no longer a unit struct, so it needs `LoadForward::default()`.
 - `CfgOptions` gains a public `call_other_overrides` field, so a struct literal
@@ -248,11 +250,8 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
 - `OptOptions` gains `resolve_indirect_branches` and, in a new
   `AssumptionOptions` group, `escape_analysis` and `noalias_allocators`.
 - `any_int` / `any_float` / `any_bool` match any node with an output of that
-  type, constant or not. `any_int_const` / `any_float_const` / `any_bool_const`
-  are gone: `int_const` / `float_const` / `bool_const` take a `Capture` in place
-  of a value, or no argument at all, and are the constant-only forms. `I1` is an
-  integer type, so `any_int` covers booleans too. `bool_value` is gone:
-  `any_bool` is it.
+  type, constant or not. `I1` is an integer type, so `any_int` covers booleans
+  too. `bool_value` is gone: `any_bool` is it.
 - `signed_int_const` -> `int_const_any_width`, which also takes a collection,
   like `int_const`. The axis is the width the value was extended from, not its
   sign: `int_const` already matches a negative.
@@ -285,10 +284,11 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `AnalyzeResult.unverified_seeded_sites` field): dispatch addresses nothing
   verified, whose answer is exactly the caller's `known_targets` and nothing
   the classifier derived, plus every site the CFG consumed outright as a return
-  or a tail call, seeded or derived. A `"return"` or single-out-of-function seed is consumed at CFG-build
-  time, leaving no placeholder to report, so it is named here too. Seating a
-  seed changes the CFG the classifier reads, so a stale seed can stop the
-  selector deriving and take the site's real arms with it.
+  or a tail call, seeded or derived. A `"return"` or single-out-of-function
+  seed is consumed at CFG-build time, leaving no placeholder to report, so it
+  is named here too. Seating a seed changes the CFG the classifier reads, so a
+  stale seed can stop the selector deriving and take the site's real arms with
+  it.
 - `BuiltCallingConvention::float_arg_slots`, the positional float / vector
   argument registers; v0.1.0 modelled float RETURNS only.
 - `Cfg::interior_branch_targets()` and `AnalyzeResult::interior_branch_targets`
@@ -358,8 +358,9 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   for `inputs[0]` at all.
 - `input(i, p)` and `any_input(p)` reach every node builder carrying the input
   mixin -- not `entry()`, whose `Entry` is `inputs: []`, nor the four operand
-  builders `int_binary` / `float_binary` / `bool_binary` / `function_arg`. `input` addresses raw slots, whose numbering
-  is per kind; the IR's `expected_signature` is the source of truth.
+  builders `int_binary` / `float_binary` / `bool_binary` / `function_arg`.
+  `input` addresses raw slots, whose numbering is per kind; the IR's
+  `expected_signature` is the source of truth.
 - `output(slot)` and `any_output()` reach every node builder carrying the
   output mixin -- not the sinks `ret()`, `indirect_branch()` and
   `unreachable()`, all `outputs: []`, nor the same four operand builders. Both

@@ -31,9 +31,9 @@ pub struct OptCtx<'mem> {
     /// jump table stored in the image does not decode.
     pub rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>,
     pub options: crate::OptOptions,
-    /// Each LIVE `IndirectBranch` placeholder visited this run, mapped to
-    /// `Some` when the dispatch target was recovered and `None` when it
-    /// stays unresolvable.
+    /// Every live `IndirectBranch` placeholder AND seated `Switch` visited
+    /// this run, mapped to `Some` when the dispatch target was recovered and
+    /// `None` when it stays unresolvable.
     pub indirect_resolutions:
         rustc_hash::FxHashMap<strider_ir::node::NodeId, Option<strider_cfg::ResolvedTargets>>,
 }

@@ -4,6 +4,10 @@
 //! successor is wired past it, then the branch node is killed unconditionally
 //! (it is side-effecting, so the automatic dead-cone cull never reaches it).
 //!
+//! The fold is DECLINED where dropping the dead arm would strand memory: an
+//! `Unreachable` consuming the dead control output, or a live side reaching no
+//! terminator.
+//!
 //! A dead subgraph can still escape to live data (a dead `Call`'s `mem_value`
 //! flowing into a live `MemPhi`), leaving it transiently reachable backward
 //! through data.  Validation runs only once the destructive pipeline converges,

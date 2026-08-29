@@ -168,8 +168,10 @@ impl<'f> Matcher<'f> {
         }
     }
 
-    /// Attempt `pat` at `node`, iterating value outputs for value-producing
-    /// nodes and falling back to a node-rooted attempt for zero-output kinds.
+    /// Attempt `pat` at `node`, once per output whatever its kind (a `Store`
+    /// roots through its Memory output, an `If` through either Control one),
+    /// falling back to a node-rooted attempt only when the node has no outputs
+    /// at all.
     ///
     /// `first_only` stops at the first match. Otherwise every distinct match is
     /// enumerated, deduplicated by capture-to-binding map. The dedup set is
