@@ -89,8 +89,9 @@ base, off = Capture("base"), Capture("off")
 for hit in function.find_all(load(addr=int_add(base, off)), ignore_casts=True):
     print("offset =", hit[off].uint_opt)   # None if it is not a constant
 
-# The explorer draws the neighborhood around a node you pick, not the whole
-# graph, so it stays usable on large functions.
+# The explorer draws the neighborhood around a node you pick, so it stays
+# usable on large functions; visualize(whole=True) draws all of it. Drag or
+# arrow-key to pan, ctrl+wheel to zoom, f to fit.
 prog.visualize(function)   # prints a local URL; Ctrl-C to stop
 ```
 
