@@ -171,10 +171,6 @@ impl<I: MatchPat> MatchPat for BitNot<I> {
 
 impl<I: TemplatePat> TemplatePat for BitNot<I> {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        // Unlike the match side, `create_node` stores an `IntConst` verbatim
-        // without masking to the output width, so a plain `int_const(u128::MAX)`
-        // would materialise a raw `u128::MAX`. Derive all-ones from the
-        // rewrite root's resolved width instead.
         let i = self.inner.compile(b);
         let ones_out = int_const_with_fn(|ctx| Ok(ctx.root_ty.bit_mask_u128())).compile(b);
         b.binary(IntBinaryOp::Xor, i, ones_out)

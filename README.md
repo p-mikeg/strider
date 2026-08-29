@@ -131,8 +131,7 @@ the message.
 Nothing in an ELF header distinguishes hard-float ARM32 from soft-float, so
 `load_elf` picks `arm_aapcs`; a soft-float binary needs
 `cc=strider.sleigh.CallingConvention.arm_aapcs_soft()` or its float arguments
-read as empty
-registers.
+read as empty registers.
 
 Memory precision is tunable per analysis, and every knob is one claim about the
 code that the IR cannot check, so all six sit in `AssumptionOptions`. Each one's

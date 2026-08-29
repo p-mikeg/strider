@@ -275,9 +275,9 @@ draws the entire graph, which the neighborhood knobs no longer apply to and
 which a few thousand nodes can keep the layout engine busy on for a long
 time.
 
-It blocks the calling thread, and it reads the `Function` / `Cfg` on the thread
-that BUILT them. Serving off another thread has rules, worked through in
-[python-api.md](python-api.md#10-visualizing).
+It blocks the calling thread, and it reaches back into the lifter, which
+decodes only on the thread that built it. Serving off another thread has rules,
+worked through in [python-api.md](python-api.md#10-visualizing).
 
 For a static picture, render the IR or the CFG to a self-contained HTML file:
 
