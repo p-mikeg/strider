@@ -117,7 +117,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// on the pcode index within the *same* machine instruction, and default
     /// code space is an absolute virtual address (pcode index implicitly 0).
     ///
-    /// Only `lift_res.insns.len()` is read, to bound the CONST-space index.
+    /// `lift_res.insns.len()` bounds the CONST-space index; the fall-through
+    /// idiom (`target == pcode_count`) then reads `machine_insn_len` through
+    /// [`next_pcode_addr`].
     fn decode_branch_target(
         &self,
         branch_target_var: rsleigh::Vn,
@@ -368,8 +370,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     }
 
     /// Resolves the user-op id from the CONST input at position 0 and
-    /// terminates the region when the target ABI table classifies it noreturn,
-    /// or when it is a PowerPC trap whose TO mask covers every relation.  An
+    /// terminates the region when the op does not return.  A caller override
+    /// for the name answers that alone; with none, the target ABI table
+    /// answers, plus the PowerPC traps whose TO mask covers every relation.  An
     /// unexpected input shape falls through to `Continue` rather than erroring.
     fn process_call_other(&mut self, insn: &rsleigh::Insn) -> Result<InsnOutcome> {
         let Some(id_vn) = insn.inputs.first() else {
@@ -386,25 +389,29 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             .user_op_names
             .get(id_u32 as usize)
             .map(String::as_str);
-        let preset = self.builder.arch.preset();
-        let class = name.and_then(|n| {
-            strider_target::call_other_abi::classify_with(
-                &self.builder.options.call_other_overrides,
-                preset,
-                n,
-            )
-        });
-        // A PowerPC trap firing on every relation ends the region: the table
-        // classes the family conservatively because a narrower TO mask is a
-        // conditional check whose fall-through is live.
-        let to_mask = insn
-            .inputs
-            .get(1)
-            .filter(|v| v.addr_space == rsleigh::VnSpace::CONST)
-            .map(|v| u128::from(v.addr_off));
-        let unconditional_trap =
-            name.is_some_and(|n| strider_target::call_other_abi::trap_is_unconditional(n, to_mask));
-        if class.is_some_and(|c| c.is_no_return()) || unconditional_trap {
+        let overridden = name.and_then(|n| self.builder.options.call_other_overrides.get(n));
+        let terminates = match overridden {
+            // A caller override states what this binary's build of the op does,
+            // which includes the trap masks the built-in rule below reads.
+            Some(lookup) => lookup.is_no_return(),
+            None => {
+                let preset = self.builder.arch.preset();
+                let class = name.and_then(|n| strider_target::call_other_abi::classify(preset, n));
+                // A PowerPC trap firing on every relation ends the region: the
+                // table classes the family conservatively because a narrower TO
+                // mask is a conditional check whose fall-through is live.
+                let to_mask = insn
+                    .inputs
+                    .get(1)
+                    .filter(|v| v.addr_space == rsleigh::VnSpace::CONST)
+                    .map(|v| u128::from(v.addr_off));
+                class.is_some_and(|c| c.is_no_return())
+                    || name.is_some_and(|n| {
+                        strider_target::call_other_abi::trap_is_unconditional(n, to_mask)
+                    })
+            }
+        };
+        if terminates {
             // The CallOther is already in `self.insns` from the
             // `process_new_insn` prologue push, so the region carries it.
             // A trailing BranchIndirect is never decoded.
