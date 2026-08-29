@@ -36,14 +36,18 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let output_vn: Option<rsleigh::Vn> = insn.output.as_ref().copied();
 
         // A PowerPC trap whose TO mask names every relation fires
-        // unconditionally, so the fall-through is dead. The mask reaches the op
-        // through a temporary, not as a literal operand, so read it back as a
-        // folded constant rather than off the pcode.
+        // unconditionally, so the fall-through is dead. The mask is the op's
+        // first explicit operand, a CONST varnode this reads back as its
+        // `IntConst`. A caller override for the name states what this binary's
+        // build of the op does, so it answers instead, as it does for the
+        // region terminator.
         let to_mask = explicit_args
             .first()
             .and_then(|&v| self.builder.function().int_const_u128(v));
-        let terminate =
-            abi.no_return || strider_target::call_other_abi::trap_is_unconditional(name, to_mask);
+        let overridden = self.call_other_overrides.get(name).is_some();
+        let terminate = abi.no_return
+            || (!overridden
+                && strider_target::call_other_abi::trap_is_unconditional(name, to_mask));
 
         self.build_abi_call_other(user_op_id, name, &explicit_args, &abi, output_vn, terminate)?;
         Ok(())
@@ -164,6 +168,7 @@ pub(super) fn decode_user_op<'a>(
 
 #[cfg(test)]
 mod tests {
+    use strider_ir::IRViewer as _;
     use strider_target::call_other_abi::{CallOtherAbi, CallOtherClass};
 
     fn x86_64_sleigh_regs() -> rsleigh::SleighRegs {
@@ -280,6 +285,61 @@ mod tests {
             outs,
             vec!["EBX"],
             "the declared write is wired as an output"
+        );
+    }
+
+    /// Lifts `code` at 0x1000 under the PowerPC 32-bit System V convention.
+    fn lift_ppc32be(
+        code: Vec<u8>,
+        opts: &crate::LiftOptions,
+    ) -> anyhow::Result<strider_ir::Function> {
+        let arch = strider_target::SleighArch::ppc32be();
+        let reader = rsleigh::mem_readers::BufMemReader::new(code, 0x1000);
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)?;
+        let mut lifter = crate::lift::Lifter::new(arch, sleigh)?;
+        let cc = strider_target::CallingConvention::powerpc_sysv32().build(lifter.sleigh_regs())?;
+        let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg, &opts.per_address_ccs)?;
+        Ok(lifter.build_ir_with(&cfg, cc, opts)?.function)
+    }
+
+    /// The unconditional-trap rule reads `twi`'s TO mask off the pcode, so a
+    /// caller override for `trapWord` must reach it: the emitted node and the
+    /// region terminator answer to one classification, or the lifter walks
+    /// into a region the CFG kept open.
+    #[test]
+    fn a_call_other_override_outranks_the_unconditional_ppc_trap_rule() {
+        // 1000: 38 60 00 01    li r3,1
+        // 1004: 0f e3 00 00    twi 31,r3,0
+        // 1008: 38 60 00 02    li r3,2
+        // 100c: 4e 80 00 20    blr
+        let bytes = vec![
+            0x38, 0x60, 0x00, 0x01, 0x0f, 0xe3, 0x00, 0x00, 0x38, 0x60, 0x00, 0x02, 0x4e, 0x80,
+            0x00, 0x20,
+        ];
+        let unreachable_count = |opts: &crate::LiftOptions| {
+            let f =
+                lift_ppc32be(bytes.clone(), opts).expect("a function containing `twi` must lift");
+            f.graph()
+                .all_node_ids()
+                .filter(|n| matches!(f.node_kind(*n), strider_ir::node::NodeKind::Unreachable))
+                .count()
+        };
+
+        assert_eq!(
+            unreachable_count(&crate::LiftOptions::default()),
+            1,
+            "TO=31 is unconditional, so control sinks at the trap"
+        );
+
+        let mut opts = crate::LiftOptions::default();
+        opts.cfg.call_other_overrides = strider_target::call_other_abi::CallOtherOverrides::new(
+            vec![("trapWord".to_owned(), CallOtherClass::MEM_CLOBBER.into())],
+        )
+        .expect("unique override names");
+        assert_eq!(
+            unreachable_count(&opts),
+            0,
+            "a returning override for `trapWord` must keep control flowing"
         );
     }
 
