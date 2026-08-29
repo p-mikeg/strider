@@ -368,9 +368,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     }
 
     /// Resolves the user-op id from the CONST input at position 0 and
-    /// terminates the region when the target ABI table classifies it
-    /// noreturn.  An unexpected input shape falls through to `Continue`
-    /// rather than erroring.
+    /// terminates the region when the target ABI table classifies it noreturn,
+    /// or when it is a PowerPC trap whose TO mask covers every relation.  An
+    /// unexpected input shape falls through to `Continue` rather than erroring.
     fn process_call_other(&mut self, insn: &rsleigh::Insn) -> Result<InsnOutcome> {
         let Some(id_vn) = insn.inputs.first() else {
             return Ok(InsnOutcome::Continue);
@@ -394,7 +394,17 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 n,
             )
         });
-        if class.is_some_and(|c| c.is_no_return()) {
+        // A PowerPC trap firing on every relation ends the region: the table
+        // classes the family conservatively because a narrower TO mask is a
+        // conditional check whose fall-through is live.
+        let to_mask = insn
+            .inputs
+            .get(1)
+            .filter(|v| v.addr_space == rsleigh::VnSpace::CONST)
+            .map(|v| u128::from(v.addr_off));
+        let unconditional_trap =
+            name.is_some_and(|n| strider_target::call_other_abi::trap_is_unconditional(n, to_mask));
+        if class.is_some_and(|c| c.is_no_return()) || unconditional_trap {
             // The CallOther is already in `self.insns` from the
             // `process_new_insn` prologue push, so the region carries it.
             // A trailing BranchIndirect is never decoded.
