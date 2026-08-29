@@ -30,8 +30,9 @@
   #ac div.sel,#ac div:hover{background:var(--accent);color:#fff}
   #msg{color:var(--text2);white-space:nowrap;font-variant-numeric:tabular-nums}
   #msg.err{color:var(--match)}
-  #wrap{position:fixed;top:46px;left:0;bottom:0;right:340px;overflow:auto;background:
+  #wrap{position:fixed;top:46px;left:0;bottom:0;right:340px;overflow:auto;cursor:grab;background:
         radial-gradient(circle at 20px 20px,#1a1a1f 1px,transparent 0) 0 0/22px 22px,var(--bg)}
+  #wrap.dragging{cursor:grabbing;user-select:none}
   #graph{transform-origin:0 0}
   #side{position:fixed;top:46px;right:0;bottom:0;width:340px;background:var(--panel);
         border-left:1px solid var(--border);overflow:auto;padding:10px}
@@ -79,7 +80,7 @@
   <h3 style="margin-top:14px">Edge roles</h3>
   <div class="legend" id="legend"></div>
 </div>
-<div id="hint">neighborhood around the centered node (not the whole graph) · click node = re-center · click edge near an end = walk there · shift-click edge = mark · alt+←/→ = history · ctrl+wheel = zoom</div>
+<div id="hint">click node = re-center · click edge near an end = walk there · shift-click edge = mark · drag or arrows = pan · ctrl+wheel or +/- = zoom · f = fit · 0 = 100% · alt+←/→ = history</div>
 
 <script src="viz.js"></script>
 <script>
@@ -262,8 +263,47 @@ function syncControls(){ for(const c of ctrls){
 function resetControls(){ for(const c of ctrls) vals[c.name]=c.default; syncControls(); rerender(); }
 $("reset").onclick=resetControls;
 
+/* ── pan & zoom ── */
+/* Zoom about (mx,my), a point in wrap's own viewport coords, so it stays put. */
+function zoomTo(next,mx,my){
+  next=Math.max(0.1,Math.min(8,next)); if(next===scale)return;
+  const cx=(wrap.scrollLeft+mx)/scale, cy=(wrap.scrollTop+my)/scale;
+  scale=next; applyScale();
+  wrap.scrollLeft=cx*scale-mx; wrap.scrollTop=cy*scale-my;
+}
+function zoomCenter(next){ const r=wrap.getBoundingClientRect(); zoomTo(next,r.width/2,r.height/2); }
+function zoomFit(){ if(!baseW||!baseH)return; const r=wrap.getBoundingClientRect();
+  zoomTo(Math.min(r.width/baseW,r.height/baseH),0,0); wrap.scrollTo(0,0); }
+
 wrap.addEventListener("wheel",e=>{ if(!e.ctrlKey)return; e.preventDefault();
-  scale=Math.max(0.2,Math.min(4,scale*(e.deltaY<0?1.12:0.89))); applyScale(); },{passive:false});
+  const r=wrap.getBoundingClientRect();
+  zoomTo(scale*(e.deltaY<0?1.12:0.89), e.clientX-r.left, e.clientY-r.top); },{passive:false});
+
+/* Drag to pan. Past DRAG_SLOP the drag swallows its own click, so releasing over
+   a node pans instead of re-centering. */
+const DRAG_SLOP=4;
+let drag=null, dragged=false;
+wrap.addEventListener("mousedown",e=>{ if(e.button!==0&&e.button!==1)return; e.preventDefault();
+  drag={x:e.clientX,y:e.clientY,l:wrap.scrollLeft,t:wrap.scrollTop}; dragged=false; wrap.classList.add("dragging"); });
+window.addEventListener("mousemove",e=>{ if(!drag)return;
+  const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
+  if(Math.hypot(dx,dy)>DRAG_SLOP) dragged=true;
+  wrap.scrollLeft=drag.l-dx; wrap.scrollTop=drag.t-dy; });
+window.addEventListener("mouseup",()=>{ if(!drag)return; drag=null; wrap.classList.remove("dragging"); });
+wrap.addEventListener("click",e=>{ if(dragged){ e.stopPropagation(); dragged=false; } },true);
+
+const PAN_STEP=60, PAN={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
+document.addEventListener("keydown",e=>{
+  if(/^(INPUT|TEXTAREA)$/.test(e.target.tagName)||e.altKey||e.ctrlKey||e.metaKey)return;
+  const p=PAN[e.key];
+  if(p){ e.preventDefault(); const k=PAN_STEP*(e.shiftKey?4:1); wrap.scrollBy(p[0]*k,p[1]*k); return; }
+  if(e.key==="+"||e.key==="=") zoomCenter(scale*1.2);
+  else if(e.key==="-"||e.key==="_") zoomCenter(scale/1.2);
+  else if(e.key==="0") zoomCenter(1);
+  else if(e.key==="f") zoomFit();
+  else return;
+  e.preventDefault();
+});
 
 Viz.instance().then(async v=>{
   viz=v; names=await (await fetch("/patterns")).json();
