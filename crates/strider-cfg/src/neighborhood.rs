@@ -92,7 +92,7 @@ mod tests {
         assert!(neighborhood_regions(&cfg, entry, 5, 1).len() <= 1);
 
         // Exercises the Incoming half: the `ret` block is a confluence of the
-        // jz-taken edge and the nop fall-through, so centering there must pull
+        // jne-taken edge and the nop fall-through, so centering there must pull
         // in both predecessors.  Dropping `Incoming` would still pass every
         // entry-centered check above, since `entry` has no predecessors.
         let g = cfg.region_graph();

@@ -27,8 +27,9 @@ pub struct CallingConvention {
     arg_passing_regs: &'static [&'static str],
     /// Float / vector argument registers, in positional order, from a register
     /// file `arg_passing_regs` never names (`XMM0..7` on x86-64 SysV, `q0..7`
-    /// on AAPCS64, `d0..7` on AAPCS-VFP, `$f12`/`$f14` on MIPS O32, `f1..8` on
-    /// PowerPC).  Empty where floats are stack-passed (i386 cdecl).
+    /// on AAPCS64, `d0..7` on AAPCS-VFP, `$f12`/`$f14` on MIPS O32, `f1..13` on
+    /// PowerPC64 ELF and `f1..8` on 32-bit SysV PowerPC).  Empty where floats
+    /// are stack-passed (i386 cdecl).
     arg_passing_regs_float: &'static [&'static str],
     /// Excludes the stack pointer.
     callee_saved_regs: &'static [&'static str],
