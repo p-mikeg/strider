@@ -18,7 +18,7 @@ use crate::strider_cls::{PyLifter, machine_addrs};
 /// Control-flow graph of a single function, from `Lifter.build_cfg` or
 /// `Lifter.analyze`. Renders to Graphviz dot / dark-themed HTML, and serves
 /// the p-code audit trail (`pcode_at` / `fingerprint_pcode`).
-#[pyclass(name = "Cfg", module = "strider.cfg", unsendable)]
+#[pyclass(name = "Cfg", module = "strider.cfg")]
 pub struct PyCfg {
     pub(crate) inner: strider_cfg::Cfg,
     /// The `Lifter` that built `inner`, borrowed for its Sleigh.
