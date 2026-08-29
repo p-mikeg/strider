@@ -39,7 +39,7 @@ impl PostOptimizer for FunctionArgDetect {
         // call-blocking walk proves; `alias_cfg` carries the relaxations and
         // decides detection alone.
         let narrow_cfg = MemAnalyzer::new(MemOptions::call_blocking(stack_global_disjoint));
-        detect_stack_args(edit, &alias_cfg, &narrow_cfg, stack_args, first_stack_arg)?;
+        detect_stack_args(edit, &alias_cfg, &narrow_cfg, stack_args, first_stack_arg);
         Ok(())
     }
 }
@@ -54,16 +54,16 @@ fn detect_stack_args(
     narrow_cfg: &MemAnalyzer,
     stack_args: strider_target::StackArgs,
     first_stack_arg: usize,
-) -> Result<()> {
+) {
     // Incoming stack args sit at fixed offsets from the ENTRY stack pointer, so
     // pinning `InitialVar(sp)` up front rejects a load rooted at a different SP
     // terminal even when its offset coincides with a convention slot.
     let Some(sp_node) = edit.function().initial_sp() else {
-        return Ok(());
+        return;
     };
     // `initial_sp` does not filter liveness; no live load is rooted at a dead SP.
     if !edit.is_live(sp_node) {
-        return Ok(());
+        return;
     }
     let [initial_sp] = edit
         .node_outputs_exact::<1>(sp_node)
@@ -152,7 +152,6 @@ fn detect_stack_args(
         cursor += arg_span;
         ordinal += 1;
     }
-    Ok(())
 }
 
 /// `true` when any path may overwrite bytes in the load's range, i.e. the
