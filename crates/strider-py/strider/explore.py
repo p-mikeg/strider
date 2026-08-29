@@ -524,7 +524,7 @@ def _serve(
     bound_port: int = srv.server_address[1]
     url = f"http://{host}:{bound_port}/"
     print(f"strider explorer -> {url}  (Ctrl-C to stop)")
-    print("  renders the neighborhood around a node you pick, never the whole graph")
+    print("  drag or arrows pan, ctrl+wheel or +/- zooms, f fits, 0 is 100%")
     _RUNNING[bound_port] = (srv, threading.current_thread())
     try:
         srv.serve_forever()

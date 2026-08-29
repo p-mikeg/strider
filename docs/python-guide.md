@@ -257,14 +257,23 @@ one that stays usable on large graphs: it shows the neighborhood around a node
 and re-centers as you click, instead of drawing everything at once.
 
 ```python
-prog.visualize(function)   # prints a local URL; blocks until Ctrl-C
+prog.visualize(function)              # prints a local URL; blocks until Ctrl-C
+prog.visualize(function, whole=True)  # the entire graph instead
 ```
+
+Drag with the mouse or press the arrow keys to pan (hold shift for a longer
+step); ctrl+wheel or `+` / `-` zooms, `f` fits the graph to the window and `0`
+returns to 100%. Clicking a node re-centers on it, so a drag that ends over one
+pans rather than following it.
 
 The toolbar controls the render: depth, hub cap (a node with more consumers than
 this is drawn but not expanded), max nodes, whether a node's inputs count toward
 the hub cap, and whether to render pretty. They start at the `neighborhood_dot`
 defaults except pretty, which the explorer opens on, and depth when
-`visualize(depth=...)` seeds it; `reset` puts them back.
+`visualize(depth=...)` seeds it; `reset` puts them back. The `whole` toggle
+draws the entire graph, which the neighborhood knobs no longer apply to and
+which a few thousand nodes can keep the layout engine busy on for a long
+time.
 
 It blocks the calling thread, and it reads the `Function` / `Cfg` on the thread
 that BUILT them. Serving off another thread has rules, worked through in
