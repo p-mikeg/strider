@@ -307,8 +307,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     Module level, not nested in `_serve`: a locally defined class is a gc
     cycle through its own `__mro__`, and a nested one's method closures would
-    own the `unsendable` `Function` / `Cfg`, deferring their drop to whatever
-    thread happens to collect next.
+    own the `Function` / `Cfg`, deferring their drop to whatever thread
+    happens to collect next.
     """
 
     def _send(
@@ -494,12 +494,13 @@ def visualize(
     neighborhood knobs do not apply while it is on, and a function of a few
     thousand nodes can keep the layout engine busy for a long time.
 
-    Runs on the thread that created `target`: it reads the unsendable
-    `Function` / `Cfg` at once, and any other thread raises
-    `PanicException: unsendable`. `shutdown(port)` is called from another
-    thread to unblock it, and the serving thread must be joined before the
-    interpreter exits: a thread still parked here at interpreter shutdown
-    aborts the process."""
+    Runs on the thread that created `target`: rendering decodes through the
+    `Lifter`, which is pinned to its creating thread, so serving from another
+    raises `StriderError`. A `Cfg` raises before the server binds; a
+    `Function` binds and serves, and only `pretty=True` rendering raises.
+    `shutdown(port)` is called from another thread to unblock it, and the
+    serving thread must be joined before the interpreter exits: a thread still
+    parked here at interpreter shutdown aborts the process."""
     tn = type(target).__name__
     if tn == "Function":
         vis: _Visualizer = _IrVisualizer(cast("Function", target), whole)
@@ -534,6 +535,6 @@ def _serve(
         _RUNNING.pop(bound_port, None)
         srv.server_close()
         # `shutdown` runs on another thread and outlives this frame holding
-        # `srv`, so drop the unsendable `Function` / `Cfg` here, on the thread
-        # that created them.
+        # `srv`, so drop the `Function` / `Cfg` here, on the thread that
+        # created them.
         srv.visualizer = None

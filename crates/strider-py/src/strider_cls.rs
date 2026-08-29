@@ -11,6 +11,61 @@ use crate::function::PyFunction;
 use crate::options::{PyCfgOptions, PyLifterOptions};
 use crate::reader::{AnyMemReader, MemInput};
 
+/// Pins USE to the creating thread while leaving the value free to move and to
+/// be dropped anywhere.
+///
+/// `Sleigh` is `!Send` only for the raw pointers in its FFI handles; the C++
+/// carries no thread-local state, so destroying it off-thread is safe. What is
+/// NOT safe is decoding from two threads: `lift_one` carries context-register
+/// state (ARM/Thumb, x86 segment, MIPS16) across calls, and the GIL serialises
+/// those calls without preventing them from interleaving. `owner` rejects the
+/// second thread instead.
+///
+/// Moving is what matters: without it a `Function` dropped on a worker thread
+/// leaks its whole `Lifter`, because PyO3 refuses to run an `unsendable`
+/// destructor off-thread.
+pub(crate) struct ThreadPinned<T> {
+    owner: std::thread::ThreadId,
+    value: T,
+}
+
+// SAFETY: `T` is only ever read through `get`/`get_mut`, which refuse every
+// thread but `owner`, so the value is never touched from two threads. Drop is
+// the one exception and is sound because nothing reachable from `T` is
+// refcounted non-atomically (the reader is reached as an `Arc`-backed snapshot,
+// never an `Rc`) and Sleigh's destructor touches no thread-local state.
+unsafe impl<T> Send for ThreadPinned<T> {}
+
+impl<T> ThreadPinned<T> {
+    fn new(value: T) -> Self {
+        Self {
+            owner: std::thread::current().id(),
+            value,
+        }
+    }
+
+    fn check(&self) -> PyResult<()> {
+        if std::thread::current().id() == self.owner {
+            return Ok(());
+        }
+        Err(into_strider_err(anyhow::anyhow!(
+            "this Lifter was built on another thread and decodes there only; \
+             build one on this thread, or move the work back to the thread that \
+             created it"
+        )))
+    }
+
+    pub(crate) fn get(&self) -> PyResult<&T> {
+        self.check()?;
+        Ok(&self.value)
+    }
+
+    pub(crate) fn get_mut(&mut self) -> PyResult<&mut T> {
+        self.check()?;
+        Ok(&mut self.value)
+    }
+}
+
 /// A `custom(...)` convention or user-op ABI froze varnodes resolved against
 /// one arch's register table; the same name denotes a different varnode on
 /// another arch (x86-64 `EDI` is `%[0x38]:4`, x86 `EDI` is `%[0x1c]:4`), so
@@ -183,18 +238,12 @@ fn overrides_from(
     .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
-pub(crate) fn orch_lift_opts(
-    function_max_size: Option<u64>,
-    allow_code_before_start_addr: bool,
-    per_address_ccs: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
-    compact: bool,
+/// Seat caller-supplied indirect-branch answers at the CFG level, so they apply
+/// whether or not the classifier runs.
+pub(crate) fn seat_known_targets(
     known_targets: &std::collections::HashMap<u64, crate::options::KnownTarget>,
-    call_other_abis: &std::collections::HashMap<String, crate::call_other_abi::PyCallOtherAbi>,
-    target_arch: &str,
-) -> PyResult<strider_orchestrator::LiftOptions> {
-    // A caller-supplied answer seats at the CFG level, so it applies whether or
-    // not the classifier runs.
-    let known = known_targets
+) -> rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets> {
+    known_targets
         .iter()
         .map(|(&addr, answer)| {
             let seated = match answer {
@@ -210,7 +259,34 @@ pub(crate) fn orch_lift_opts(
             };
             (strider_cfg::PcodeInsnAddr::at_machine_start(addr), seated)
         })
-        .collect();
+        .collect()
+}
+
+/// Every `CfgOptions` field, spelled out. No `..default()` here: a field added
+/// later has to be handled rather than silently dropped, which is how
+/// `build_cfg` came to ignore `known_targets` entirely.
+pub(crate) fn cfg_options_from(
+    opts: &PyCfgOptions,
+    target_arch: &str,
+) -> PyResult<strider_cfg::CfgOptions> {
+    Ok(strider_cfg::CfgOptions {
+        fn_max_size: opts.function_max_size,
+        allow_code_before_start_addr: opts.allow_code_before_start_addr,
+        known_targets: seat_known_targets(&opts.known_targets),
+        call_other_overrides: overrides_from(&opts.call_other_abis, target_arch)?,
+    })
+}
+
+pub(crate) fn orch_lift_opts(
+    function_max_size: Option<u64>,
+    allow_code_before_start_addr: bool,
+    per_address_ccs: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
+    compact: bool,
+    known_targets: &std::collections::HashMap<u64, crate::options::KnownTarget>,
+    call_other_abis: &std::collections::HashMap<String, crate::call_other_abi::PyCallOtherAbi>,
+    target_arch: &str,
+) -> PyResult<strider_orchestrator::LiftOptions> {
+    let known = seat_known_targets(known_targets);
     Ok(strider_orchestrator::LiftOptions {
         cfg: strider_cfg::CfgOptions {
             fn_max_size: function_max_size,
@@ -296,10 +372,11 @@ fn analyze_result_type(py: Python<'_>) -> PyResult<PyObject> {
 /// Lifts, optimises and resolves functions for one architecture.  Build
 /// one with `strider.lift.lifter(arch, mem, rom=None)`; the calling
 /// convention is an argument of every `analyze` call.
-#[pyclass(name = "Lifter", module = "strider.lift", unsendable, subclass)]
+#[pyclass(name = "Lifter", module = "strider.lift", subclass)]
 pub struct PyLifter {
-    /// Owns the Sleigh, cached register table and optional rom.
-    inner: strider_orchestrator::Strider<AnyMemReader>,
+    /// Owns the Sleigh, cached register table and optional rom. Pinned to
+    /// the creating thread for USE; still free to move and to be dropped.
+    inner: ThreadPinned<strider_orchestrator::Strider<AnyMemReader>>,
     /// The `SleighArch` preset this handle was built for, compared against
     /// the arch a `custom(...)` CC / `CallOtherAbi` froze its varnodes on.
     arch_name: &'static str,
@@ -327,8 +404,8 @@ fn collect_py_deps(mem: &MemInput, rom: Option<&MemInput>) -> Vec<std::sync::Arc
 }
 
 impl PyLifter {
-    pub(crate) fn sleigh(&self) -> &rsleigh::Sleigh<AnyMemReader> {
-        self.inner.sleigh()
+    pub(crate) fn sleigh(&self) -> PyResult<&rsleigh::Sleigh<AnyMemReader>> {
+        Ok(self.inner.get()?.sleigh())
     }
 
     /// The `Function::neighborhood_dot` `pretty=True` path: same node
@@ -343,7 +420,7 @@ impl PyLifter {
         count_producers: bool,
     ) -> PyResult<String> {
         with_pending_control_flow(|| {
-            let sleigh = self.sleigh();
+            let sleigh = self.sleigh()?;
             let guard = function.read_inner().map_err(into_strider_err)?;
             let nid = guard
                 .graph()
@@ -364,7 +441,7 @@ impl PyLifter {
         style: Option<&str>,
         op: DotOp<'_>,
     ) -> PyResult<DotResult> {
-        let sleigh = self.sleigh();
+        let sleigh = self.sleigh()?;
         let guard = function.read_inner().map_err(into_strider_err)?;
         let dumper = guard.dot_dumper(sleigh).map_err(into_strider_err)?;
         let d = dot::GraphDot::new(dumper, dot_style_for(style)?);
@@ -409,7 +486,7 @@ fn build_lifter(
     let py_deps = collect_py_deps(&mem_input, rom_input.as_ref());
     let arch_name = arch.preset_name;
     Ok(PyLifter {
-        inner: build_strider(arch, mem_input, rom_input)?,
+        inner: ThreadPinned::new(build_strider(arch, mem_input, rom_input)?),
         arch_name,
         py_deps,
         mem_obj: Some(mem.unbind()),
@@ -489,8 +566,8 @@ impl PyLifter {
     /// Every Sleigh user-op name this architecture can emit, indexed by
     /// user-op id.  These are the names `CfgOptions(call_other_abis=...)`
     /// classifies.
-    fn user_op_names(&self) -> Vec<String> {
-        self.inner.user_op_names().to_vec()
+    fn user_op_names(&self) -> PyResult<Vec<String>> {
+        Ok(self.inner.get()?.user_op_names().to_vec())
     }
 
     /// How `name` is classified: the `opts` entry for it when there is one,
@@ -508,7 +585,7 @@ impl PyLifter {
         {
             return Some(abi.clone());
         }
-        crate::call_other_abi::PyCallOtherAbi::builtin(self.inner.arch().preset(), name)
+        crate::call_other_abi::PyCallOtherAbi::builtin(self.inner.get().ok()?.arch().preset(), name)
     }
 
     /// Build the control-flow graph of the function at `entry`, without
@@ -520,34 +597,28 @@ impl PyLifter {
         entry: u64,
         opts: Option<Py<PyCfgOptions>>,
     ) -> PyResult<PyCfg> {
-        let (function_max_size, allow_code_before_start_addr, call_other_abis) = match opts {
-            Some(o) => {
-                let o = o.borrow(py);
-                (
-                    o.function_max_size,
-                    o.allow_code_before_start_addr,
-                    o.call_other_abis.clone(),
-                )
-            }
-            None => (None, false, std::collections::HashMap::new()),
-        };
-        let cfg_opts = strider_cfg::CfgOptions {
-            allow_code_before_start_addr,
-            fn_max_size: function_max_size,
-            call_other_overrides: overrides_from(
-                &call_other_abis,
-                try_borrow_lifter(&slf, py)?.arch_name,
-            )?,
-            ..strider_cfg::CfgOptions::default()
+        let arch_name = try_borrow_lifter(&slf, py)?.arch_name;
+        let cfg_opts = match &opts {
+            Some(o) => cfg_options_from(&o.borrow(py), arch_name)?,
+            None => strider_cfg::CfgOptions::default(),
         };
         let inner = with_pending_control_flow(|| {
             let mut lifter = try_borrow_lifter_mut(&slf, py)?;
             lifter
                 .inner
+                .get_mut()?
                 .build_cfg(entry, &cfg_opts)
                 .map_err(into_strider_err)
         })?;
-        Ok(PyCfg::new(inner, slf))
+        // No classifier ran, so every seat the caller supplied is an answer
+        // nothing here checked.
+        let mut seeded: Vec<u64> = cfg_opts
+            .known_targets
+            .keys()
+            .map(|addr| addr.machine_addr.addr)
+            .collect();
+        seeded.sort_unstable();
+        Ok(PyCfg::new(inner, slf, seeded))
     }
 
     /// Lift, optimise and resolve the function at `entry`, returning an
@@ -569,11 +640,21 @@ impl PyLifter {
         cc: Option<PyCallingConvention>,
         opts: Option<Py<PyLifterOptions>>,
     ) -> PyResult<PyObject> {
+        // An int that does not fit `u64` is a different mistake from a str, and
+        // saying "you need an ElfLifter" to someone holding one sends them the
+        // wrong way.
         let entry: u64 = entry.extract().map_err(|_| {
-            into_strider_err(anyhow::anyhow!(
-                "`entry` must be an address (int); a symbol name (str) needs \
-                 an ElfLifter. Build one with strider.lift.load_elf(path)"
-            ))
+            if entry.is_instance_of::<pyo3::types::PyInt>() {
+                into_strider_err(anyhow::anyhow!(
+                    "`entry` is out of range for an address: it must fit an \
+                     unsigned 64-bit integer"
+                ))
+            } else {
+                into_strider_err(anyhow::anyhow!(
+                    "`entry` must be an address (int); a symbol name (str) needs \
+                     an ElfLifter. Build one with strider.lift.load_elf(path)"
+                ))
+            }
         })?;
         let cc = cc.ok_or_else(|| {
             into_strider_err(anyhow::anyhow!(
@@ -607,7 +688,7 @@ impl PyLifter {
 
         let (arch_name, cc_built, per_address_built) = {
             let lifter = try_borrow_lifter(&slf, py)?;
-            let regs = lifter.inner.sleigh_regs();
+            let regs = lifter.inner.get()?.sleigh_regs();
             let arch_name = lifter.arch_name;
             let cc_built = build_cc(&cc, regs, arch_name)?;
             let per_address_built = build_per_address_ccs(per_address_ccs_py, regs, arch_name)?;
@@ -631,7 +712,7 @@ impl PyLifter {
             // Reborrow before the closure so its captured type is a plain
             // `&mut Strider`, not the GIL-bound `PyRefMut`, which embeds a
             // `!Send` `Python<'_>` marker and would fail `Ungil`.
-            let inner = &mut lifter.inner;
+            let inner = lifter.inner.get_mut()?;
             match custom_pipeline {
                 Some(pipeline) => prefer_pending_control_flow(
                     inner
@@ -693,7 +774,7 @@ impl PyLifter {
             None => Py::new(py, PyLifterOptions::new_default(py)?)?,
         };
         let options = opt_options_from(py, &opts.borrow(py))?;
-        let rom = self.inner.rom();
+        let rom = self.inner.get()?.rom();
         with_pending_control_flow(|| match pipeline {
             Some(p) => function.run_pipeline_in_place(p.build_pipeline(), "optimize", rom, options),
             None => {
@@ -705,18 +786,20 @@ impl PyLifter {
 
     /// Look up a register by Sleigh name, or `None` when the name is not
     /// in this arch's table.
-    fn reg(&self, name: &str) -> Option<crate::sleigh::PyVn> {
-        self.inner
+    fn reg(&self, name: &str) -> PyResult<Option<crate::sleigh::PyVn>> {
+        Ok(self
+            .inner
+            .get()?
             .sleigh_regs()
             .name_to_vn(name)
-            .map(crate::sleigh::PyVn::from_inner)
+            .map(crate::sleigh::PyVn::from_inner))
     }
 
     /// The reverse of `reg`.  Returns `None` when `vn` names no register
     /// (a non-REGISTER space, or an offset/size not in the table); never
     /// raises.
-    fn reg_name(&self, vn: &crate::sleigh::PyVn) -> Option<&str> {
-        self.inner.sleigh_regs().vn_to_name(vn.inner)
+    fn reg_name(&self, vn: &crate::sleigh::PyVn) -> PyResult<Option<&str>> {
+        Ok(self.inner.get()?.sleigh_regs().vn_to_name(vn.inner))
     }
 
     /// Decode from `entry` one instruction at a time until `addr`, and
@@ -735,7 +818,7 @@ impl PyLifter {
         // `Sleigh::lift_one` carries context-register state across calls, so
         // sweeping through the persistent Sleigh would dirty it for a later
         // `analyze`/`build_cfg`. A clone inherits no context state.
-        let mut sleigh = self.sleigh().clone();
+        let mut sleigh = self.sleigh()?.clone();
         with_pending_control_flow(|| {
             let mut cur = entry;
             loop {
