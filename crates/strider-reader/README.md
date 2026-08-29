@@ -30,8 +30,20 @@ not read a mapping the program can write.
 A region is a window into the mapped file, and relocations are a sorted patch
 list applied to the caller's buffer as a read crosses a site, so loading costs
 headers rather than bytes: querying a few functions of a large shared object
-faults in only the pages they read. The file must not change on disk while it is
-mapped. Bytes handed in from elsewhere (`MemRegion::new`) stay an owned buffer.
+faults in only the pages they read. Bytes handed in from elsewhere
+(`MemRegion::new`) stay an owned buffer.
+
+The file must not change on disk while it is mapped. `load_elf` samples the
+file's `stat` identity (size, mtime, inode), `OwnedElf::check_unchanged`
+re-checks it, and both `OwnedElf::regions` and every `ElfFileMemReader`
+constructor run that check before cutting regions, so a binary rebuilt between
+two operations is an `Err` naming the file rather than bytes from a program
+that is no longer there. A long-lived handle -- a REPL session -- should call
+`check_unchanged` itself at the top of an operation. It is one `stat`; the read
+path is untouched. A change racing a read already in progress is still a torn
+read, or SIGBUS past a shortened end, as is a rewrite in place that preserves
+both size and mtime. `STRIDER_NO_MMAP=1` reads the file instead, which cannot
+tear and skips the check.
 
 ET_EXEC / ET_DYN load from PT_LOAD program headers. Everything else, ET_REL
 above all, loads from sections, whose pre-link `sh_addr` is typically 0 for all
