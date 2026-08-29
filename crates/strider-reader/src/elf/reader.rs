@@ -70,6 +70,10 @@ impl ElfFileMemReader {
     }
 
     fn from_elf_maybe_relocated(elf: &super::OwnedElf, relocate: bool) -> Result<Self> {
+        // Building a reader is where an analysis starts reading the mapping,
+        // so it is where a file rebuilt under a live handle must surface as an
+        // `Err` instead of as bytes from a different program.
+        elf.check_unchanged()?;
         let obj = elf.file();
         let layout = ElfSectionLayout::new(&obj);
         Ok(Self::over(elf.regions_with(
@@ -108,7 +112,9 @@ impl ElfFileMemReader {
     }
 
     /// Maps the file: it must not change on disk while the reader lives, or a
-    /// read can observe torn bytes or SIGBUS past a shorter end.
+    /// read can observe torn bytes or SIGBUS past a shorter end. Construction
+    /// checks the file's `stat` identity, which catches a rebuild between two
+    /// operations but not one racing a read.
     ///
     /// # Errors
     ///
