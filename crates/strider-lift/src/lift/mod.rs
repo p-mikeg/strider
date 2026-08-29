@@ -596,10 +596,11 @@ impl SpecialTerm {
     /// `CondBranch` never lives in a TailCall region: it keeps its own
     /// terminator, and the stub regions on its out-of-bounds arms have no insns.
     ///
-    /// Skipping by opcode alone is safe by region closure:
-    /// `RegionBuilder::process_new_insn` finishes a region the moment any
-    /// control-flow opcode is processed, so at most one appears per region and
-    /// it is always the trailing entry, never an inner pcode op.
+    /// Skipping by opcode alone is safe by region closure: `Branch` and
+    /// `BranchIndirect`, the only opcodes skipped, close the region in
+    /// `RegionBuilder::process_new_insn`, so at most one appears per region and
+    /// it is always the trailing entry, never an inner pcode op.  (`Call` /
+    /// `CallIndirect` / `CallOther` do not close it, and are never skipped.)
     fn skips_opcode(&self, opcode: rsleigh::Opcode) -> bool {
         match self {
             SpecialTerm::UnresolvedIndirect { .. } | SpecialTerm::Switch(..) => {

@@ -19,7 +19,8 @@ where
 {
     arch: strider_target::SleighArch,
     lifter: Lifter<R>,
-    /// `LoadReadOnly`'s memory image; `None` disables the pass.
+    /// The read-only image `LoadReadOnly` folds against and the indirect-branch
+    /// classifier reads jump tables from; `None` disables both.
     rom: Option<Box<dyn ReadOnlyMemory>>,
 }
 
@@ -63,7 +64,8 @@ where
         self.lifter.sleigh()
     }
 
-    /// The read-only image `LoadReadOnly` folds against, so a caller running
+    /// The read-only image `LoadReadOnly` folds against and the
+    /// indirect-branch classifier reads jump tables from, so a caller running
     /// its own pipeline builds the same `OptCtx` `analyze` does.
     #[must_use]
     pub fn rom(&self) -> Option<&dyn ReadOnlyMemory> {
@@ -1037,8 +1039,9 @@ struct DerivedChannels<'a> {
 /// site's final successor set, holds nothing the seed did not name. A site that
 /// OUTGREW its seed disproves the assertion, and the arms past the seed came
 /// from a classifier that has since gone silent, so nothing vouches for them.
-/// [`unverified_seeded_sites`] applies the same test the other way round, so a
-/// seeded unclassifiable site lands in exactly one of the two reports. The seed
+/// [`unverified_seeded_sites`] applies the same test the other way round, so
+/// the `switch_anchors` half of the two reports is complementary. The derived
+/// channels below are appended unconditionally, so a site can still reach both. The seed
 /// does NOT suppress a live placeholder: the cfg re-emits one exactly when it
 /// could not seat the seeded set (empty, or a target out of range or interior
 /// to an instruction), so the seed did not in fact settle that site. It does

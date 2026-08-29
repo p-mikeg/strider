@@ -1,5 +1,8 @@
-//! `FunctionBuilder::build` must return a graph that passes `validate`, for
-//! every node-kind variant.
+//! `FunctionBuilder::build` must return a graph that passes `validate`.
+//!
+//! Covers every kind the builder vocabulary reaches from an empty function.
+//! `Call` / `CallOther` need a calling convention and a tracked register set,
+//! so they are exercised in `strider_ir::builder::tests` instead.
 
 use strider_ir::node::ValueType;
 use strider_ir::{
@@ -276,4 +279,60 @@ fn float_int_conversions_validate() {
         Ok(f64v)
     })
     .expect("float_int_conversions must validate");
+}
+
+#[test]
+fn bit_counts_validate() {
+    make_empty_fn(|b| {
+        let v = b.build_int_const(0xF0F0u64, ValueType::I32)?;
+        let pop = b.build_popcount(v, ValueType::I32)?;
+        let lz = b.build_lzcount(v, ValueType::I32)?;
+        b.build_int_binary_operation(pop, lz, IntBinaryOp::Add, ValueType::I32)
+    })
+    .expect("popcount / lzcount must validate");
+}
+
+#[test]
+fn unreachable_terminator_validates() {
+    use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, empty_builder};
+
+    let mut b = empty_builder().expect("empty_builder");
+    let entry = b.create_region_all().expect("create_region_all");
+    b.set_entry_region_all(entry).expect("set_entry_region_all");
+    b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    b.build_unreachable().expect("build_unreachable");
+    let f = b.build().expect("build");
+    strider_ir::validate::validate(&f).expect("Unreachable-terminated function must validate");
+}
+
+#[test]
+fn indirect_branch_placeholder_validates() {
+    use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, empty_builder};
+
+    let mut b = empty_builder().expect("empty_builder");
+    let entry = b.create_region_all().expect("create_region_all");
+    b.set_entry_region_all(entry).expect("set_entry_region_all");
+    b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let target = b
+        .build_int_const(0x1000u64, ValueType::I64)
+        .expect("build_int_const");
+    b.build_indirect_branch(target)
+        .expect("build_indirect_branch");
+    let f = b.build().expect("build");
+    strider_ir::validate::validate(&f).expect("IndirectBranch placeholder must validate");
+}
+
+#[test]
+fn opaque_ops_validate() {
+    make_empty_fn(|b| {
+        let seg = b.build_int_const(0x10u64, ValueType::I16)?;
+        let off = b.build_int_const(0x20u64, ValueType::I32)?;
+        let addr = b.build_segment_op(0, seg, off, ValueType::I32)?;
+        let pooled = b.build_cpool_ref(&[addr], ValueType::I32)?;
+        let obj = b.build_new(&[pooled], ValueType::I32)?;
+        Ok(obj)
+    })
+    .expect("segment_op / cpool_ref / new must validate");
 }

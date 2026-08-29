@@ -473,7 +473,8 @@ p.var(c).value_ty("i64")                # ... or a captured value's type
 function.find_all(pat)                       # every match, deduplicated
 function.find_all(pat, ignore_casts=True)    # CastMask.all(); default False. A
                                              # CastMask picks a subset.
-function.find_all([pat1, pat2], constraints=[...])   # a join (see below)
+function.find_all([pat1, pat2], constraints=[k.dominates(a, b)])   # a join
+                                                                   # (see below)
 function.find_unique(pat)                     # the single match, else StriderError
 function.find_unique_value(pat, off)          # the single captured VALUE, or None
 ```
@@ -665,15 +666,19 @@ to) and **reset** to go back. Each control starts at the `neighborhood_dot` defa
 except **pretty**, which the explorer opens on, and **depth** when
 `visualize(depth=...)` seeds it.
 
-`visualize` reads the unsendable `Function` / `Cfg` directly, so it runs on the
-thread that BUILT them: the lifter, and the `Function` / `Cfg` derived from it,
-must all be created on the thread that calls it, or the call raises
-`PanicException: unsendable` before the server binds. To serve off the main
-thread, build the handle inside that thread, and pair it with
-`strider.explore.shutdown(port)` and a thread join before exit:
+`visualize` blocks the calling thread. A `Function` / `Cfg` moves between
+threads freely, but both explorers reach back into the lifter, which decodes
+only on the thread that built it. A `Cfg` explorer builds its disassembly text
+up front, so calling it from another thread raises `StriderError: this Lifter
+was built on another thread` before the server binds; a `Function` explorer
+binds, then answers every **pretty** render, which the toolbar opens on, with
+that same error. Build the lifter inside the serving thread, and pair it with
+`strider.explore.shutdown(port)` and a thread join before the interpreter
+exits:
 
 ```python
 import threading
+import time
 
 def serve():
     prog = strider.lift.load_elf("fixtures/out/x86/switch.elf")
@@ -682,9 +687,11 @@ def serve():
 
 t = threading.Thread(target=serve)
 t.start()
-...
-strider.explore.shutdown(8080)   # unblocks the server; also joins the thread
-t.join()
+# shutdown returns the ports it stopped, and [] until the server registers,
+# so this is also how you wait for one that is still starting up.
+while not strider.explore.shutdown(8080):
+    time.sleep(0.05)
+t.join()   # shutdown joins it too, but with a 5s bound; this one has none
 ```
 
 For static output use `function.to_dot(pretty=True)`, `function.to_html(path)`,
@@ -759,7 +766,7 @@ construction:
 strider.cfg.CfgOptions(
     function_max_size=None,
     allow_code_before_start_addr=False,
-    known_targets={dispatch_addr: [target, ...]},   # your own answers, seated
+    known_targets={0x401000: [0x401020, 0x401040]},   # your own answers, seated
     call_other_abis={"syscall": sleigh.CallOtherAbi.mem_clobber()},   # per user-op
 )
 ```
@@ -791,8 +798,9 @@ are invalidated by `optimize`).
 whose answer oscillates or shrank between rounds, and a target chain deeper than
 the iteration cap all come back in `unresolved` instead.
 
-The message is the error and its causes. The Rust backtrace is always captured
-and always reachable on the exception, so a sweep can log it without re-running:
+The message is the error and its causes; the Rust backtrace is captured by
+default and reachable on `.backtrace`, so a sweep can log it without
+re-running:
 
 ```python
 try:
@@ -804,7 +812,8 @@ except strider.StriderError as e:
 
 `STRIDER_BACKTRACE=1` folds the trace into the message instead; it reads from
 `os.environ` and takes effect on the next error. Importing strider sets
-`RUST_LIB_BACKTRACE=1` if neither backtrace variable is set, which is what makes
-the capture unconditional; export either one beforehand to keep strider from
-writing to the environment at all. `RUST_BACKTRACE=0` in the
-environment suppresses the capture itself, leaving `.backtrace` without frames.
+`RUST_LIB_BACKTRACE=1` if neither backtrace variable is set, which is what
+makes capture the default; export either one beforehand to keep strider from
+writing to the environment at all. `RUST_BACKTRACE=0` in the environment
+suppresses the capture, leaving `.backtrace` holding the message and no
+frames.
