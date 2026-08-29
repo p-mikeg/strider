@@ -28,12 +28,6 @@ impl PeepholePass for PhiCollapse {
         _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
-        let inputs = edit.node_inputs(root);
-        // A well-formed phi has at least its token.
-        if inputs.is_empty() {
-            return Ok(PeepholeRewrite::NoChange);
-        }
-
         let phi_value = edit
             .node_outputs_exact::<1>(root)
             .expect("Phi / MemPhi has 1 output per node signature")[0];
