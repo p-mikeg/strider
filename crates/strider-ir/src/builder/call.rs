@@ -112,15 +112,18 @@ impl FunctionBuilder {
         let (node, outputs) =
             self.emit_call_node(NodeKind::CallOther { user_op_id }, inputs, output_vns)?;
 
-        // Sinking control into `Unreachable` leaves the memory edge dangling.
+        // Sinking control into `Unreachable` leaves the memory edge dangling,
+        // so a terminating op advances neither: the region is closed and has no
+        // successor to read either edge. A memory-clobbering op that also never
+        // returns (a PowerPC `BUG()` trap) reaches exactly this.
         if terminate {
             self.create_node(NodeKind::Unreachable, [outputs[0]], []);
             self.terminate_cur_region().map(|_| ())?;
         } else {
             self.advance_cur_region_ctrl(outputs[0])?;
-        }
-        if advance_memory {
-            self.advance_cur_region_memory(outputs[1])?;
+            if advance_memory {
+                self.advance_cur_region_memory(outputs[1])?;
+            }
         }
 
         Ok((node, outputs[2..].to_vec()))

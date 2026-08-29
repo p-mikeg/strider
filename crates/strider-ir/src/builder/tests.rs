@@ -1103,6 +1103,28 @@ fn build_call_other_terminate_true_closes_region() -> Result<()> {
     Ok(())
 }
 
+/// An op that both clobbers memory and never returns (a PowerPC `BUG()` trap)
+/// closes the region, so neither edge may be advanced afterwards. The memory
+/// advance used to run unconditionally and errored on the closed region; the
+/// combination was unreachable while no ABI entry set both flags.
+#[test]
+fn build_call_other_terminating_and_memory_clobbering_closes_region() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let abi = strider_target::BuiltCallOtherAbi {
+        implicit_reads: Vec::new(),
+        implicit_writes: Vec::new(),
+        clobbers_memory: true,
+        no_return: true,
+    };
+    b.build_call_other_abi(0, "trapWord", &[], &abi, None, true)?;
+    let ctrl = b.cur_region_control();
+    assert!(
+        ctrl.is_err(),
+        "a memory-clobbering terminating op must still close the region; got: {ctrl:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn build_call_other_terminate_false_keeps_region_open() -> Result<()> {
     let mut b = builder_with_region()?;
