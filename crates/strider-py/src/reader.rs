@@ -1,7 +1,5 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use object::{Object, ObjectSymbol};
 use pyo3::prelude::*;
@@ -10,6 +8,20 @@ use pyo3::types::PyBytes;
 use crate::errors::into_strider_err;
 use strider_reader::elf::{ElfSectionLayout, LoadFilter, RegionSource};
 use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory};
+
+/// The GIL already serialises every access; `Mutex` is here so a wrapper
+/// holding one is `Send`, which is what lets a `Function` outlive the thread
+/// that built it. Poisoning is recovered from rather than propagated: the
+/// guarded data is plain and no panic can leave it half-written.
+trait LockShared<T> {
+    fn lock_shared(&self) -> MutexGuard<'_, T>;
+}
+
+impl<T> LockShared<T> for Mutex<T> {
+    fn lock_shared(&self) -> MutexGuard<'_, T> {
+        self.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
 
 pub(crate) struct PyBufferReaderInner {
     pub(crate) regions: Vec<MemRegion>,
@@ -22,18 +34,18 @@ pub(crate) struct PyBufferReaderInner {
 /// Raw byte reader for firmware or custom sources.  Works as both the
 /// `mem` (instruction fetch) and `rom` (read-only memory) argument.  Cheap
 /// to clone; clones share state with the original.
-#[pyclass(name = "BufferReader", module = "strider.reader", unsendable)]
+#[pyclass(name = "BufferReader", module = "strider.reader")]
 #[derive(Clone)]
 pub struct PyBufferReader {
-    pub(crate) inner: Rc<RefCell<PyBufferReaderInner>>,
+    pub(crate) inner: Arc<Mutex<PyBufferReaderInner>>,
 }
 
 impl PyBufferReader {
     pub(crate) fn lookup_table(&self) -> Arc<MemRegionsLookupTable> {
-        if let Some(t) = self.inner.borrow().table.as_ref() {
+        if let Some(t) = self.inner.lock_shared().table.as_ref() {
             return Arc::clone(t);
         }
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.inner.lock_shared();
         let t = Arc::new(MemRegionsLookupTable::new(inner.regions.clone()));
         inner.max_region_len = Some(
             inner
@@ -57,16 +69,16 @@ impl PyBufferReader {
     /// Upper bound on what one `MemRegionsLookupTable::read` can return; the
     /// table itself publishes no such bound.
     fn read_bound(&self) -> usize {
-        if let Some(n) = self.inner.borrow().max_region_len {
+        if let Some(n) = self.inner.lock_shared().max_region_len {
             return n;
         }
         drop(self.lookup_table());
-        self.inner.borrow().max_region_len.unwrap_or(0)
+        self.inner.lock_shared().max_region_len.unwrap_or(0)
     }
 
     pub(crate) fn from_regions(regions: Vec<MemRegion>) -> Self {
         Self {
-            inner: Rc::new(RefCell::new(PyBufferReaderInner {
+            inner: Arc::new(Mutex::new(PyBufferReaderInner {
                 regions,
                 table: None,
                 max_region_len: None,
@@ -88,7 +100,7 @@ impl PyBufferReader {
     fn __repr__(&self) -> String {
         format!(
             "BufferReader({} region(s))",
-            self.inner.borrow().regions.len()
+            self.inner.lock_shared().regions.len()
         )
     }
 
@@ -183,7 +195,7 @@ fn elf_to_rom_regions(
 }
 
 /// Parsed ELF binary.  Construct via `strider.lift.load_elf(path)`.
-#[pyclass(name = "_LoadedElf", module = "strider.reader", unsendable)]
+#[pyclass(name = "_LoadedElf", module = "strider.reader")]
 pub struct PyLoadedElf {
     /// Load order; the first wins on symbol-name collisions.
     elfs: Vec<strider_reader::OwnedElf>,
@@ -196,11 +208,11 @@ pub struct PyLoadedElf {
     source: ElfRegionSource,
     /// Every symbol of every loaded ELF, built on the first symbol query and
     /// dropped by `add_elf`.
-    symbol_table: std::cell::RefCell<Option<SymbolTable>>,
+    symbol_table: Mutex<Option<SymbolTable>>,
 }
 
 fn invalidate_and_extend(reader: &PyBufferReader, regions: Vec<MemRegion>) {
-    let mut inner = reader.inner.borrow_mut();
+    let mut inner = reader.inner.lock_shared();
     inner.regions.extend(regions);
     inner.table = None;
     inner.max_region_len = None;
@@ -309,12 +321,12 @@ struct SymbolTable {
 
 impl PyLoadedElf {
     fn with_symbols<T>(&self, f: impl FnOnce(&SymbolTable) -> T) -> T {
-        let stale = self.symbol_table.borrow().is_none();
+        let stale = self.symbol_table.lock_shared().is_none();
         if stale {
             let built = self.build_symbol_table();
-            *self.symbol_table.borrow_mut() = Some(built);
+            *self.symbol_table.lock_shared() = Some(built);
         }
-        let table = self.symbol_table.borrow();
+        let table = self.symbol_table.lock_shared();
         f(table.as_ref().expect("just built"))
     }
 
@@ -322,7 +334,7 @@ impl PyLoadedElf {
     /// STT_FUNC in `.text` and an STT_OBJECT in `.rodata`, so a code symbol
     /// wins within an ELF, and the first ELF in load order wins across them.
     fn build_symbol_table(&self) -> SymbolTable {
-        let mem = self.mem.inner.borrow();
+        let mem = self.mem.inner.lock_shared();
         // Region indices by ascending start, with a prefix maximum of each
         // region's end.  An `ET_REL` object carries one region per SHF_ALLOC
         // section, so scanning them per symbol is quadratic in a
@@ -435,6 +447,16 @@ fn covering<'a>(group: impl Iterator<Item = &'a PySymbol>, address: u64) -> Opti
 
 #[pymethods]
 impl PyLoadedElf {
+    /// Re-stat every mapped file, erroring if one changed since it was mapped.
+    /// A rebuild between two operations is caught here; a change racing a read
+    /// already in progress is still a torn read or a SIGBUS.
+    fn check_unchanged(&self) -> PyResult<()> {
+        for elf in &self.elfs {
+            elf.check_unchanged().map_err(into_strider_err)?;
+        }
+        Ok(())
+    }
+
     /// The instruction-fetch / raw-read `BufferReader` for this ELF.
     fn reader(&self) -> PyBufferReader {
         self.mem.clone()
@@ -581,7 +603,9 @@ impl PyLoadedElf {
         let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
         let mem_regions = elf_to_mem_regions(&obj, self.source, apply_relocations)?;
         let rom_regions = elf_to_rom_regions(&obj, self.source, apply_relocations)?;
-        if let Some((lo, hi)) = differing_overlap(&self.mem.inner.borrow().regions, &mem_regions) {
+        if let Some((lo, hi)) =
+            differing_overlap(&self.mem.inner.lock_shared().regions, &mem_regions)
+        {
             return Err(into_strider_err(anyhow::anyhow!(
                 "add_elf: {path} maps [{lo:#x}, {hi:#x}) with bytes that differ from what is \
                  already loaded there; add_elf merges shared objects at DISTINCT addresses, so \
@@ -591,7 +615,7 @@ impl PyLoadedElf {
         invalidate_and_extend(&self.mem, mem_regions);
         invalidate_and_extend(&self.rom, rom_regions);
         self.elfs.push(obj);
-        self.symbol_table.borrow_mut().take();
+        self.symbol_table.lock_shared().take();
         Ok(())
     }
 }
@@ -609,7 +633,7 @@ fn load_elf_impl(
         mem,
         rom,
         source,
-        symbol_table: std::cell::RefCell::new(None),
+        symbol_table: Mutex::new(None),
     })
 }
 

@@ -343,8 +343,12 @@ class ElfLifter(Lifter):
         recorded size bounds the lift unless `opts.cfg.function_max_size` is
         set. `cc` defaults to this handle's convention.
 
-        Raises `TypeError` when `entry` is neither `str` nor `int`.
+        Raises `TypeError` when `entry` is neither `str` nor `int`, and
+        `StriderError` when the binary changed on disk since it was loaded.
         """
+        # A rebuild between load_elf and this call would otherwise be read
+        # through a stale mapping: silently different bytes, or a SIGBUS.
+        self._elf.check_unchanged()
         target = entry
         if opts is None:
             opts = LifterOptions()
