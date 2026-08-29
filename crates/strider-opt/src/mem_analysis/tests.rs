@@ -831,6 +831,16 @@ mod heap_tests {
         Ok(fg)
     }
 
+    /// A prologue: drops SP by `bytes`, so a slot at `entry_sp - k` for
+    /// `k < bytes` sits in THIS frame and above the SP a callee receives.
+    fn lower_sp(b: &mut FunctionBuilder, entry_sp: ValueId, bytes: i64) -> crate::Result<()> {
+        let frame = b.build_int_const((-bytes) as u64, ValueType::I64)?;
+        let call_sp =
+            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::I64)?;
+        b.write_variable(&sp(), call_sp)?;
+        Ok(())
+    }
+
     fn alloc_call(b: &mut FunctionBuilder, target_addr: u64) -> crate::Result<ValueId> {
         let target = b.build_int_const(target_addr, ValueType::I64)?;
         let (_call, rets) = b.build_call(target, &[], &[ret_reg()], 0)?;
@@ -1115,23 +1125,25 @@ mod heap_tests {
         Ok(())
     }
 
-    /// A pure allocator does not touch the caller's stack, so a stack reload
-    /// steps *through* the allocator call to its store.
+    /// A pure allocator does not touch this function's private frame, so a
+    /// stack reload steps *through* the allocator call to its store.  The slot
+    /// is BELOW the entry SP: the relaxation covers this frame only, the same
+    /// bound `escape_analysis` forwards under.
     #[test]
     fn allocator_call_is_transparent_to_a_stack_slot() -> crate::Result<()> {
         use strider_ir::IRViewer;
         use strider_ir::node::NodeKind;
         let mut b = builder()?;
         let sp_val = b.read_variable(&sp())?;
-        let eight = b.build_int_const(8u64, ValueType::I64)?;
+        let slot_off = b.build_int_const((-8i64) as u64, ValueType::I64)?;
         let store_addr =
-            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I64)?;
+            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
         let x = b.build_int_const(0x11u64, ValueType::I64)?;
         b.build_store(store_addr, x, rsleigh::VnSpace::RAM)?;
+        lower_sp(&mut b, sp_val, 64)?;
         let _p = alloc_call(&mut b, MALLOC)?;
-        let sp_val2 = b.read_variable(&sp())?;
         let load_addr =
-            b.build_int_binary_operation(sp_val2, eight, IntBinaryOp::Add, ValueType::I64)?;
+            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
         let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
         b.build_return(Some(loaded), &[])?;
         let fg = built_collapsed(b, &[MALLOC])?;
@@ -1191,14 +1203,15 @@ mod heap_tests {
         use strider_ir::IRViewer;
         let mut b = builder()?;
         let sp_val = b.read_variable(&sp())?;
-        let eight = b.build_int_const(8u64, ValueType::I64)?;
-        let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I64)?;
+        let slot_off = b.build_int_const((-8i64) as u64, ValueType::I64)?;
+        let addr =
+            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
         let secret = b.build_int_const(0x99u64, ValueType::I64)?;
         b.build_store(addr, secret, rsleigh::VnSpace::RAM)?;
+        lower_sp(&mut b, sp_val, 64)?;
         let _p = alloc_call(&mut b, MALLOC)?;
-        let sp_val2 = b.read_variable(&sp())?;
         let addr2 =
-            b.build_int_binary_operation(sp_val2, eight, IntBinaryOp::Add, ValueType::I64)?;
+            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
         let reload = b.build_load(addr2, rsleigh::VnSpace::RAM, ValueType::I64)?;
         b.build_return(Some(reload), &[])?;
         b.set_lift_addr(None);
@@ -1213,6 +1226,48 @@ mod heap_tests {
             fg.int_const_u128(ret),
             Some(0x99),
             "the reload forwards its spilled value across the transparent malloc"
+        );
+        Ok(())
+    }
+
+    /// SOUNDNESS: listing an allocator must not buy a stack relaxation
+    /// `escape_analysis` refuses.  Once a frame address is in memory the callee
+    /// may hold it, so the spill does NOT forward across the allocator call
+    /// either, even though nothing else changed.
+    #[test]
+    fn escaped_frame_does_not_forward_across_an_allocator() -> crate::Result<()> {
+        use strider_ir::IRViewer;
+        let mut b = builder()?;
+        let sp_val = b.read_variable(&sp())?;
+        let slot_off = b.build_int_const((-8i64) as u64, ValueType::I64)?;
+        let addr =
+            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
+        let secret = b.build_int_const(0x99u64, ValueType::I64)?;
+        b.build_store(addr, secret, rsleigh::VnSpace::RAM)?;
+        // The escape: the slot's own address enters memory, at a disjoint slot
+        // the walk steps through either way.
+        let leak_off = b.build_int_const((-32i64) as u64, ValueType::I64)?;
+        let leak_slot =
+            b.build_int_binary_operation(sp_val, leak_off, IntBinaryOp::Add, ValueType::I64)?;
+        b.build_store(leak_slot, addr, rsleigh::VnSpace::RAM)?;
+        lower_sp(&mut b, sp_val, 64)?;
+        let _p = alloc_call(&mut b, MALLOC)?;
+        let addr2 =
+            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
+        let reload = b.build_load(addr2, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        b.build_return(Some(reload), &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+
+        let mut ctx = crate::OptCtx::new(None);
+        ctx.options.assumptions.noalias_allocators = [MALLOC].into_iter().collect();
+        crate::test_support::standard_test().run(&mut fg, &mut ctx)?;
+
+        let ret = crate::test_support::return_value(fg.graph())?;
+        assert_eq!(
+            fg.int_const_u128(ret),
+            None,
+            "an escaped frame slot must not forward across the allocator call"
         );
         Ok(())
     }

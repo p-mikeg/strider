@@ -686,7 +686,7 @@ struct MemWalker<'a> {
     load: SizedAddr,
     /// Distinct spaces never alias, even at the same numeric address.
     load_space: rsleigh::VnSpace,
-    /// [`Self::private_frame_forward`] reads only `load` and the options, both
+    /// [`Self::frame_is_private`] reads only `load` and the options, both
     /// fixed for the whole walk, and falls through to a bounded SP-spine climb.
     /// Asked repeatedly along one walk, so recomputing multiplies the walk by
     /// the spine depth.
@@ -762,22 +762,20 @@ impl MemorySSAWalker for MemWalker<'_> {
 }
 
 impl MemWalker<'_> {
-    /// The shared gate for the private-frame forwarding relaxations: the knob is
-    /// set, this probe is a slot of THIS function's frame, and no frame address
-    /// escapes.  Under it no callee and no opaque pointer can name the slot, so
-    /// both a `Call` and an `Anchor` store step through.  Assumes valid input (a
+    /// The frame-privacy FACT every stack relaxation rests on: this probe is a
+    /// slot of THIS function's frame and no frame address escapes, so neither a
+    /// callee nor an opaque pointer can name it.  Assumes valid input (a
     /// fabricated pointer numerically equal to the slot is excluded).
     ///
     /// Says nothing about the outgoing-argument window, which the ABI hands to
     /// the callee: pair it with [`Self::in_outgoing_arg_area`] at a `Call`.
-    fn private_frame_forward(&self, function: &Function) -> bool {
+    fn frame_is_private(&self, function: &Function) -> bool {
         if let Some(cached) = self.private_frame.get() {
             return cached;
         }
         let verdict = match self.load.class {
             AddrClass::StackRooted { base, offset } => {
                 self.analyzer.options.call_relaxations
-                    && self.analyzer.options.escape_analysis
                     && in_own_frame(function, base, offset, self.load.size)
                     && !frame_escape::frame_address_escapes_cached(function)
             }
@@ -785,6 +783,15 @@ impl MemWalker<'_> {
         };
         self.private_frame.set(Some(verdict));
         verdict
+    }
+
+    /// The privacy fact under the [`crate::AssumptionOptions::escape_analysis`]
+    /// knob, which is what buys forwarding across an arbitrary `Call` and past
+    /// an `Anchor` store.  A listed allocator earns the same stack forwarding
+    /// from the fact alone ([`Self::allocator_transparent`]), the knob being a
+    /// claim about arbitrary callees that a pure allocator does not need.
+    fn private_frame_forward(&self, function: &Function) -> bool {
+        self.analyzer.options.escape_analysis && self.frame_is_private(function)
     }
 
     /// Does the probed slot fall in the region `call` hands its callee?  A
@@ -883,8 +890,9 @@ impl MemWalker<'_> {
 
     /// A pure allocator writes only its own fresh allocation (plus internal
     /// bookkeeping the caller cannot name), so it is transparent to a probe with
-    /// a known base other than this call's return.  A stack slot and a *different*
-    /// heap object step through; the call's own allocation, a global (the
+    /// a known base other than this call's return.  A slot of this function's
+    /// PRIVATE frame and a *different* heap object step through; the call's own
+    /// allocation, an escaped or foreign stack slot, a global (the
     /// allocator's private state may live there), or an opaque pointer do not.
     fn allocator_transparent(&self, function: &Function, call: NodeId) -> bool {
         if !self.analyzer.options.call_relaxations {
@@ -894,9 +902,15 @@ impl MemWalker<'_> {
             return false;
         };
         match self.load.class {
-            // An allocator is still a callee, and the ABI hands it the
-            // outgoing-argument area, which it may scratch.
-            AddrClass::StackRooted { .. } => !self.in_outgoing_arg_area(function, call),
+            // An allocator is still a callee: the ABI hands it the
+            // outgoing-argument area, which it may scratch, and an escaped
+            // frame address is one it may already hold, so a stack slot needs
+            // the same privacy `escape_analysis` demands.  Purity bounds what a
+            // callee writes THROUGH the pointers it has, not which pointers
+            // those are.
+            AddrClass::StackRooted { .. } => {
+                self.frame_is_private(function) && !self.in_outgoing_arg_area(function, call)
+            }
             AddrClass::HeapRooted { base, .. } => base != ret_base,
             // The unknown allocation may be this call's own.
             AddrClass::HeapOpaque | AddrClass::Constant { .. } | AddrClass::Anchor { .. } => false,
