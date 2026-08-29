@@ -647,13 +647,21 @@ prog.visualize(function)          # interactive explorer; prints a URL, blocks
 prog.visualize(cfg)               # a Cfg works too
 ```
 
-The explorer renders the **neighborhood** around a node you pick (not the whole
-graph), so it stays fast on large functions. The toolbar drives that render:
+The explorer renders the **neighborhood** around a node you pick rather than the
+whole graph, so it stays fast on large functions; `visualize(whole=True)` opens
+on the entire graph instead, and seeds the toolbar's **whole** toggle so the
+page can switch back.
+
+Drag with the mouse or press the arrow keys to pan (shift for a longer step);
+ctrl+wheel or `+` / `-` zooms about the pointer, `f` fits the graph to the
+window, `0` returns to 100%. A drag that ends over a node pans instead of
+re-centering on it. The toolbar drives that render:
 **depth** (hops from the centered node), **hub cap** (a node with more consumers
 than this is drawn but not expanded), **max nodes**, **+prod** (count a node's
 inputs toward the hub cap too) and **pretty** (inlined constants, resolved
 register names), with
-**reset** to go back. Each control starts at the `neighborhood_dot` default
+**whole** (draw the entire graph, which the neighborhood knobs stop applying
+to) and **reset** to go back. Each control starts at the `neighborhood_dot` default
 except **pretty**, which the explorer opens on, and **depth** when
 `visualize(depth=...)` seeds it.
 
