@@ -42,8 +42,9 @@ pub(crate) struct CfgReports {
     /// `is_complete` can test all four channels from one object. Empty for a
     /// `build_cfg` result, which resolves nothing.
     pub(crate) unresolved: Vec<u64>,
-    /// Empty for a `build_cfg` result: only `analyze` runs the resolver that
-    /// decides which seeds went unchecked.
+    /// For a `build_cfg` result this is every site the caller seeded: no
+    /// classifier ran, so nothing checked any of them. `analyze` narrows it to
+    /// the seeds its resolver could not confirm.
     pub(crate) unverified_seeded: Vec<u64>,
     pub(crate) isa_mode_conflicts: Vec<u64>,
     pub(crate) interior_branch_targets: Vec<u64>,
@@ -75,10 +76,10 @@ fn span_upper_bound(region: &strider_cfg::Region) -> u64 {
 impl PyCfg {
     /// The `build_cfg` path: one build, no resolver, so that build's own
     /// reports are the whole accumulation.
-    pub(crate) fn new(inner: strider_cfg::Cfg, lifter: Py<PyLifter>) -> Self {
+    pub(crate) fn new(inner: strider_cfg::Cfg, lifter: Py<PyLifter>, seeded: Vec<u64>) -> Self {
         let reports = CfgReports {
             unresolved: Vec::new(),
-            unverified_seeded: Vec::new(),
+            unverified_seeded: seeded,
             isa_mode_conflicts: machine_addrs(inner.isa_mode_conflicts()),
             interior_branch_targets: machine_addrs(inner.interior_branch_targets()),
         };
@@ -136,7 +137,7 @@ impl PyCfg {
             .lifter
             .try_borrow(py)
             .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
-        f(lifter_borrow.sleigh())
+        f(lifter_borrow.sleigh()?)
     }
 
     fn dispatch_dot(
