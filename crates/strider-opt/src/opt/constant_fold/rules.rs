@@ -6,7 +6,7 @@ use strider_pattern::{
     Capture, CaptureExt, any_float_binary, any_float_cmp, any_float_unary, any_int_binary,
     any_int_cmp, any_int_unary, bool_const_with, bool_not, float_bits_to_int, float_const,
     float_const_with, int_add, int_and, int_bits_to_float, int_const, int_const_with, int_lzcount,
-    int_mul, int_or, int_popcount, int_shl, int_shr, int_sign_extend, int_sshr, int_sub,
+    int_mul, int_neg, int_or, int_popcount, int_shl, int_shr, int_sign_extend, int_sshr, int_sub,
     int_truncate, int_xor, int_zero_extend, template, var,
 };
 
@@ -16,6 +16,7 @@ pub(super) fn build_rules() -> Vec<crate::BoxedRule> {
     rules.extend(build_const_eval_rules());
     rules.extend(build_bool_float_rules());
     rules.extend(build_reassoc_and_mask_rules());
+    rules.extend(build_factor_rules());
     rules.extend(build_bitcast_extend_rules());
     rules
 }
@@ -38,6 +39,112 @@ fn all_same_width(
             .get_type(c, edit.function())
             .is_some_and(|t| t.bit_width() == ty.bit_width())
     })
+}
+
+/// Whether `cap` binds a shift count small enough to build `2^C` from.
+///
+/// A count is an ordinary constant of the shifted type, so an `I64` shift can
+/// name 200 and `1u128 << 200` panics. The coefficient would be right without
+/// this: the lifter saturates an out-of-range count to zero and `2^C` is also
+/// zero once masked to the width, so both give `x`. The guard is about the
+/// shift in this rule, not about the shift in the program.
+fn shift_in_range(
+    edit: &strider_pattern::Matcher,
+    binds: &strider_pattern::Bindings,
+    ty: strider_ir::node::ValueType,
+    cap: Capture,
+) -> bool {
+    let Ok(width) = i128::try_from(ty.bit_width()) else {
+        return false;
+    };
+    width <= 128
+        && binds
+            .get_int(cap, edit.function())
+            .is_some_and(|c| (0..width).contains(&c))
+}
+
+/// Collecting a value against itself: `x + x*C` and friends become one `Mul`.
+///
+/// Subtraction arrives lowered to `Add(a, Neg(b))`, so the difference forms
+/// match that shape rather than an `IntSub`.
+fn build_factor_rules() -> Vec<crate::BoxedRule> {
+    let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
+
+    // x + x*C -> x*(C + 1)
+    let add_self_mul = rewrite_rule(
+        int_add(var(x), int_mul(var(x), int_const(c1)))
+            .when_match(move |edit, ty, binds| all_same_width(edit, binds, ty, &[x, c1])),
+        template::int_mul(var(x), int_const_with!([c1: uint] => c1.wrapping_add(1))),
+    );
+
+    // x*C1 + x*C2 -> x*(C1 + C2)
+    let add_mul_mul = rewrite_rule(
+        int_add(
+            int_mul(var(x), int_const(c1)),
+            int_mul(var(x), int_const(c2)),
+        )
+        .when_match(move |edit, ty, binds| all_same_width(edit, binds, ty, &[x, c1, c2])),
+        template::int_mul(
+            var(x),
+            int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
+        ),
+    );
+
+    // x + (x << C) -> x*(2^C + 1)
+    let add_self_shl = rewrite_rule(
+        int_add(var(x), int_shl(var(x), int_const(c1))).when_match(move |edit, ty, binds| {
+            all_same_width(edit, binds, ty, &[x]) && shift_in_range(edit, binds, ty, c1)
+        }),
+        template::int_mul(
+            var(x),
+            int_const_with!([c1: uint] => (1u128 << c1).wrapping_add(1)),
+        ),
+    );
+
+    // x - x*C -> x*(1 - C)
+    let sub_self_mul = rewrite_rule(
+        int_add(var(x), int_neg(int_mul(var(x), int_const(c1))))
+            .when_match(move |edit, ty, binds| all_same_width(edit, binds, ty, &[x, c1])),
+        template::int_mul(
+            var(x),
+            int_const_with!([c1: uint] => 1u128.wrapping_sub(c1)),
+        ),
+    );
+
+    // x*C1 - x*C2 -> x*(C1 - C2)
+    let sub_mul_mul = rewrite_rule(
+        int_add(
+            int_mul(var(x), int_const(c1)),
+            int_neg(int_mul(var(x), int_const(c2))),
+        )
+        .when_match(move |edit, ty, binds| all_same_width(edit, binds, ty, &[x, c1, c2])),
+        template::int_mul(
+            var(x),
+            int_const_with!([c1: uint, c2: uint] => c1.wrapping_sub(c2)),
+        ),
+    );
+
+    // x - (x << C) -> x*(1 - 2^C)
+    let sub_self_shl = rewrite_rule(
+        int_add(var(x), int_neg(int_shl(var(x), int_const(c1)))).when_match(
+            move |edit, ty, binds| {
+                all_same_width(edit, binds, ty, &[x]) && shift_in_range(edit, binds, ty, c1)
+            },
+        ),
+        template::int_mul(
+            var(x),
+            int_const_with!([c1: uint] => 1u128.wrapping_sub(1u128 << c1)),
+        ),
+    );
+
+    vec![
+        Box::new(add_self_mul),
+        Box::new(add_mul_mul),
+        Box::new(add_self_shl),
+        Box::new(sub_self_mul),
+        Box::new(sub_mul_mul),
+        Box::new(sub_self_shl),
+    ]
 }
 
 /// Reassociation and mask-merging: constant-folding across nested

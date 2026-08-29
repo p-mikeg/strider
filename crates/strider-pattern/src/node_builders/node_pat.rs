@@ -21,7 +21,7 @@ pub(crate) enum AnchorKind {
     None,
 }
 
-type NodePredicateFactory = Box<dyn FnOnce() -> NodePredicate>;
+type NodePredicateFactory = Box<dyn FnOnce() -> NodePredicate + Send>;
 
 /// Binds and/or kind-constrains the value produced at output `slot`, or at
 /// some output when `slot` is `None`. Defaults to the wildcard kind
@@ -150,7 +150,7 @@ impl NodePat {
     /// [`MatcherBuilder::set_node_predicate_at`](crate::matcher::MatcherBuilder::set_node_predicate_at).
     pub(crate) fn with_node_predicate<F>(mut self, f: F) -> Self
     where
-        F: FnOnce() -> NodePredicate + 'static,
+        F: FnOnce() -> NodePredicate + 'static + Send,
     {
         self.node_predicate = Some(match self.node_predicate.take() {
             Some(prev) => Box::new(move || {
@@ -325,7 +325,7 @@ pub(crate) fn control_compiler<P: MatchPat + 'static>(p: P) -> SubCompiler {
 
 /// Narrows a [`KindSpec::VariantWith`] beyond its discriminant: `CallOther`
 /// `user_op_id`, `Load` / `Store` `space`.
-pub(crate) type KindCheck = Box<dyn Fn(&NodeKind) -> bool>;
+pub(crate) type KindCheck = Box<dyn Fn(&NodeKind) -> bool + Send>;
 
 /// Pins a discriminant, plus the exact payload when `check` is `Some`.
 pub(crate) fn variant_kind(

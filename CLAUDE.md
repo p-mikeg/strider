@@ -202,12 +202,24 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
 
 ## Cross-cutting invariants
 
-- No `Arc` / `Send` / `Sync` in core types: the workspace is single-threaded.
-  Use `Box` / moves / `&`-borrows; opt into `Rc` at a call site only if needed.
-  `strider-reader` and `strider-py` are the exceptions: a mapped image is shared
-  by every region cut from it, and a reader handed to Python outlives the call
-  that made it. `ReadOnlyMemory` is bound `Send` so `strider-py` can drop the
-  GIL around `analyze`; the `Sync` half it also carries is unused.
+- The workspace is single-threaded: prefer `Box` / moves / `&`-borrows, and
+  opt into `Rc` at a call site only if needed. Nothing runs in parallel, so a
+  `Send` bound never buys concurrency here; it buys the right to MOVE a value
+  between threads, which is what a Python caller needs.
+  - `strider-reader`: a mapped image is shared by every region cut from it.
+  - `read-only-memory`: `ReadOnlyMemory: Send` so `strider-py` can drop the GIL
+    around `analyze`. The `Sync` half it also carries is unused.
+  - `strider-pattern`: every boxed closure a pattern lowers to is `+ Send`, and
+    `MatchPat` requires it, so a compiled `Pattern` moves with the `Pat` that
+    owns it. A `.when()` predicate must therefore be `Send`: capture an
+    `Arc<AtomicUsize>`, not an `Rc<Cell<_>>`. `JoinPredicateFn` is
+    `Arc<... + Send + Sync>`: `JoinConstraint` is `Clone`, so the predicate is
+    shared rather than duplicated.
+  - `strider-py`: a wrapper is `#[pyclass(unsendable)]` only when it must be.
+    `Lifter` is pinned because `Sleigh` is thread-affine (see below), and
+    `BufferReader` / `_LoadedElf` because their `Rc` is what makes a clone
+    share the region memo. Everything else moves, so a REPL or notebook that
+    introspects off-thread does not abort the interpreter.
 - `Sleigh::lift_one(&mut self)` is NOT stateless: it carries context-register
   state (ARM/Thumb, x86 segment, MIPS16), so per-region decoding must stay
   sequential (`RegionBuilder::build`).

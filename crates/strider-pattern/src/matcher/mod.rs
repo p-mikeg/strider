@@ -23,7 +23,6 @@ pub(crate) const ANY_INPUT_SLOT: usize = usize::MAX;
 
 use std::cell::OnceCell;
 use std::mem::Discriminant;
-use std::rc::Rc;
 
 use itertools::Either;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -737,7 +736,8 @@ impl JoinConstraint {
 pub type JoinedMatch = Vec<Match>;
 
 /// A user join predicate: decides a whole tuple, `None` when unanswerable.
-pub type JoinPredicateFn = Rc<dyn Fn(&Function, &JoinedMatch) -> Option<bool>>;
+pub type JoinPredicateFn =
+    std::sync::Arc<dyn Fn(&Function, &JoinedMatch) -> Option<bool> + Send + Sync>;
 
 /// Kleene OR: `Some(true)` if any input is (truth dominates and
 /// short-circuits), else `None` if any is `None` (unknown poisons a would-be
