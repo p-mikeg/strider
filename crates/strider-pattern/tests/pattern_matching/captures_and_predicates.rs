@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use strider_ir::IRViewer;
 use strider_pattern::*;
 
@@ -221,15 +223,12 @@ fn match_root_is_the_matched_node() {
 /// leave the child's filter unfired.
 #[test]
 fn filter_short_circuits_before_child_recursion() {
-    use std::cell::Cell;
-    use std::rc::Rc;
-
     let function = shapes::add_consts(5, 7);
 
-    let child_invocations: Rc<Cell<usize>> = Rc::new(Cell::new(0));
+    let child_invocations: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
     let counter = child_invocations.clone();
     let child = anything().filter(move |_m, _n| {
-        counter.set(counter.get() + 1);
+        counter.fetch_add(1, Ordering::Relaxed);
         true
     });
     // Root filter always fails, before the child is walked.
@@ -237,7 +236,7 @@ fn filter_short_circuits_before_child_recursion() {
 
     a::none(&function, root.into_pattern());
     assert_eq!(
-        child_invocations.get(),
+        child_invocations.load(Ordering::Relaxed),
         0,
         "child filter must NOT fire when the root filter short-circuits",
     );
@@ -246,23 +245,20 @@ fn filter_short_circuits_before_child_recursion() {
 /// Converse: an accepting root filter lets recursion reach the child filter.
 #[test]
 fn filter_accepts_match_and_visits_child() {
-    use std::cell::Cell;
-    use std::rc::Rc;
-
     let function = shapes::add_consts(5, 7);
 
-    let child_invocations: Rc<Cell<usize>> = Rc::new(Cell::new(0));
+    let child_invocations: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
     let counter = child_invocations.clone();
     let child = anything().filter(move |_m, _n| {
-        counter.set(counter.get() + 1);
+        counter.fetch_add(1, Ordering::Relaxed);
         true
     });
     let root = int_add(int_const(5u128), child).filter(|_m, _n| true);
 
     a::matches(&function, root.into_pattern(), 1);
     assert!(
-        child_invocations.get() >= 1,
+        child_invocations.load(Ordering::Relaxed) >= 1,
         "child filter fires once child recursion proceeds (got {})",
-        child_invocations.get(),
+        child_invocations.load(Ordering::Relaxed),
     );
 }

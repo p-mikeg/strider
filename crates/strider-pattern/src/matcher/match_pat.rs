@@ -1,6 +1,9 @@
 use crate::matcher::{MatcherBuilder, PatValueRef, Pattern};
 
-pub trait MatchPat: Sized {
+/// `Send` so a compiled `Pattern` can move between threads: the boxed
+/// closures a pattern lowers to carry the same bound, and a pattern is built
+/// from plain data, so nothing real is excluded.
+pub trait MatchPat: Sized + Send {
     /// Lower into `b`, returning the value-output handle of the root node.
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef;
 
@@ -87,7 +90,7 @@ macro_rules! decorator {
 decorator! {
     /// Node predicate on the inner pattern's root.
     Limited<P, F>
-    [ where F: Fn(&crate::Matcher, strider_ir::node::NodeId) -> bool + 'static ]
+    [ where F: Fn(&crate::Matcher, strider_ir::node::NodeId) -> bool + 'static + Send ]
     { f: F }
     |b, o, self| { b.set_node_predicate(o, Box::new(self.f)); }
 }
@@ -97,7 +100,7 @@ decorator! {
     /// with no value output fails it: the guard is typed, and there is no type
     /// to hand it.
     Guarded<P, F>
-    [ where F: Fn(&crate::Matcher, strider_ir::node::ValueType, &crate::Bindings) -> bool + 'static ]
+    [ where F: Fn(&crate::Matcher, strider_ir::node::ValueType, &crate::Bindings) -> bool + 'static + Send ]
     { f: F }
     |b, o, self| {
         b.set_post_match(

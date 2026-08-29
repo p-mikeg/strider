@@ -10,15 +10,15 @@ use crate::value_ops::value_ops;
 /// A type-checked rewrite-RHS expression. Construct via the free functions in
 /// `strider.template` (`var(c)`, `int_add(...)`, `int_const`, ...); pass as
 /// `replace` to `Function.rewrite` / `rewrite_all`.
-#[pyclass(name = "Template", module = "strider.template", unsendable)]
+#[pyclass(name = "Template", module = "strider.template")]
 pub struct PyTemplate {
-    pub(crate) repr: std::rc::Rc<PatRepr>,
+    pub(crate) repr: std::sync::Arc<PatRepr>,
 }
 
 impl PyTemplate {
     pub(crate) fn from_repr(repr: PatRepr) -> Self {
         Self {
-            repr: std::rc::Rc::new(repr),
+            repr: std::sync::Arc::new(repr),
         }
     }
 
