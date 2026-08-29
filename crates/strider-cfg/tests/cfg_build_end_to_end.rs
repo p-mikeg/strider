@@ -571,6 +571,77 @@ fn ud2_region_finishes_as_noreturn() {
     );
 }
 
+fn build_ppc32be(words: &[u32], start: u64, opts: &CfgOptions) -> Cfg {
+    let arch = SleighArch::ppc32be();
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_be_bytes()).collect();
+    let reader = BufMemReader::new(bytes, start);
+    let mut sleigh =
+        Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh ppc32be");
+    Builder::for_arch(&arch, &mut sleigh, start, opts)
+        .build()
+        .expect("Builder::build on synthetic ppc words")
+}
+
+/// `li r3,1` / the trap / `li r3,2` / `blr`, as (sealed at the trap, addresses
+/// decoded).
+fn ppc_trap_run(trap_word: u32, opts: &CfgOptions) -> (bool, Vec<u64>) {
+    const LI_R3_1: u32 = 0x3860_0001;
+    const LI_R3_2: u32 = 0x3860_0002;
+    const BLR: u32 = 0x4e80_0020;
+    let cfg = build_ppc32be(&[LI_R3_1, trap_word, LI_R3_2, BLR], 0x1000, opts);
+    let sealed = cfg
+        .region_graph()
+        .node_weights()
+        .any(|r| r.terminator == RegionTerminator::NoReturn);
+    let mut decoded: Vec<u64> = cfg
+        .region_graph()
+        .node_weights()
+        .flat_map(|r| r.insns.iter().map(|i| i.addr.machine_addr.addr))
+        .collect();
+    decoded.sort_unstable();
+    decoded.dedup();
+    (sealed, decoded)
+}
+
+/// A `twi` naming every TO relation is `BUG()`: it seals the region and the
+/// fall-through is never decoded, while a narrower mask is a conditional check
+/// the region continues past.  A caller override for the name answers instead
+/// of both, since it states what this binary's build of the op does.
+#[test]
+fn a_call_other_override_outranks_the_unconditional_ppc_trap_rule() {
+    // 1004: 0f e3 00 00    twi 31,r3,0
+    const TWI_ALL_RELATIONS: u32 = 0x0fe3_0000;
+    // 1004: 0c 83 00 00    twi 4,r3,0
+    const TWI_ONE_RELATION: u32 = 0x0c83_0000;
+
+    let (sealed, decoded) = ppc_trap_run(TWI_ALL_RELATIONS, &CfgOptions::default());
+    assert!(sealed, "TO=31 is unconditional, so the region ends there");
+    assert_eq!(
+        decoded,
+        vec![0x1000, 0x1004],
+        "nothing past an unconditional trap is decoded"
+    );
+
+    let (sealed, decoded) = ppc_trap_run(TWI_ONE_RELATION, &CfgOptions::default());
+    assert!(!sealed, "TO=4 traps on one relation, so control continues");
+    assert_eq!(decoded, vec![0x1000, 0x1004, 0x1008, 0x100c]);
+
+    let opts = CfgOptions {
+        call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+            "trapWord".to_owned(),
+            strider_target::call_other_abi::CallOtherClass::PURE.into(),
+        )])
+        .expect("unique override names"),
+        ..CfgOptions::default()
+    };
+    let (sealed, decoded) = ppc_trap_run(TWI_ALL_RELATIONS, &opts);
+    assert!(
+        !sealed,
+        "a returning override for `trapWord` must keep the region open"
+    );
+    assert_eq!(decoded, vec![0x1000, 0x1004, 0x1008, 0x100c]);
+}
+
 fn build_one(mut sleigh: Sleigh<TestReader>, start: u64) -> (Cfg, Sleigh<TestReader>) {
     let arch = SleighArch::x86_64();
     let cfg = Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
@@ -1052,13 +1123,21 @@ fn re_imposing_a_context_over_an_it_block_builds() {
     assert!(round(0x1004) > 0);
 }
 
-/// Thumb-2 coprocessor encodings whose parse descends past the 75
-/// `ConstructState`s `ParserContext::initialize` hands out.  Unbounded,
-/// `allocateOperand` walked off `state` and wrote through the next node's
-/// `resolve` vector, so these bytes took the process down instead of failing
-/// the decode.
+/// Thumb-2 coprocessor encodings that once wrote past the parse state.
+/// `allocateOperand` was unbounded, so it ran `state[alloc++]` off the end of
+/// `state` and wrote through the next node's `resolve` vector, taking the
+/// process down.  The bound it carries now turns an overrun into a
+/// `SleighError`, so the property is that the lift COMPLETES: p-code out and a
+/// decode error are both acceptable, a crash is not.
+///
+/// These bytes do not descend further than legal code, though the crash they
+/// caused made it look that way.  Measured, `0xdeec3b8a` peaks at 98
+/// `ConstructState`s and breadcrumb depth 30, against 104 and 35 for
+/// `vpush {s0-s31}`, the 32-register architectural maximum.  Both simply
+/// exceeded the 75 states `ParserContext::initialize` used to hand out, which
+/// is why sizing the parse state for legal ARM code lets these decode too.
 #[test]
-fn thumb_coproc_bytes_that_overrun_the_parse_state_are_a_decode_error() {
+fn thumb_coproc_bytes_that_once_overran_the_parse_state_do_not_crash() {
     let arch = SleighArch::arm_thumb();
     for word in [
         0xdeec_3b8au32,
@@ -1072,9 +1151,8 @@ fn thumb_coproc_bytes_that_overrun_the_parse_state_are_a_decode_error() {
         let reader = BufMemReader::new(bytes, 0x1000);
         let mut sleigh =
             Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh arm_thumb");
-        assert!(
-            sleigh.lift_one(0x1000).is_err(),
-            "{word:#010x} must report an error, not decode"
-        );
+        // Returning at all is the assertion; a regression takes the process
+        // down here rather than failing.
+        drop(sleigh.lift_one(0x1000));
     }
 }
