@@ -768,13 +768,18 @@ impl PyLifter {
 
     /// Start the interactive explorer for `target`, a `Function` or a `Cfg`.
     /// It renders the NEIGHBORHOOD around a node you pick (inputs and outputs
-    /// out to `depth` hops), never the whole graph, so it scales to large
-    /// functions. Prints the local URL and blocks on this thread until Ctrl-C.
+    /// out to `depth` hops), which is what scales to large functions. Prints
+    /// the local URL and blocks on this thread until Ctrl-C.
+    ///
+    /// `whole=True` opens on the entire graph instead and seeds the toolbar's
+    /// `whole` toggle. The neighborhood knobs do not apply while it is on, and
+    /// a function of a few thousand nodes can keep the layout engine busy for
+    /// a long time.
     ///
     /// Off the main thread you MUST pair this with
     /// `strider.explore.shutdown(port)` and a thread join before the
     /// interpreter exits, or the process aborts.
-    #[pyo3(signature = (target, host="127.0.0.1".to_string(), port=0, depth=None))]
+    #[pyo3(signature = (target, host="127.0.0.1".to_string(), port=0, depth=None, whole=false))]
     fn visualize(
         &self,
         py: Python<'_>,
@@ -782,6 +787,7 @@ impl PyLifter {
         host: String,
         port: u16,
         depth: Option<usize>,
+        whole: bool,
     ) -> PyResult<()> {
         let explore = py.import_bound("strider.explore")?;
         let kwargs = pyo3::types::PyDict::new_bound(py);
@@ -790,6 +796,7 @@ impl PyLifter {
         // `None` leaves the renderer's own default, which the explorer reads
         // off the binding signature and shows as the control's default.
         kwargs.set_item("depth", depth)?;
+        kwargs.set_item("whole", whole)?;
         explore.call_method("visualize", (target,), Some(&kwargs))?;
         Ok(())
     }

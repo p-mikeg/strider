@@ -13,7 +13,7 @@ pub enum KindSpec {
     Exact(NodeKind),
     VariantWith {
         discriminant: Discriminant<NodeKind>,
-        check: Box<dyn Fn(&NodeKind) -> bool>,
+        check: Box<dyn Fn(&NodeKind) -> bool + Send>,
     },
 }
 
@@ -48,13 +48,13 @@ impl KindSpec {
 
 /// Accept or reject the matched IR node. Takes no output type; a closure that
 /// needs one derives it from the node.
-pub type NodePredicate = Box<dyn Fn(&Matcher, NodeId) -> bool>;
+pub type NodePredicate = Box<dyn Fn(&Matcher, NodeId) -> bool + Send>;
 
 /// Runs once every input has resolved, so it sees the accumulated bindings.
 /// The type is that of the matched output, `None` where there is none: a
 /// control, memory or `PhiToken` edge, or a zero-output node.
 pub type PostMatchFn =
-    Box<dyn Fn(&Matcher, NodeId, Option<ValueType>, &crate::bindings::Bindings) -> bool>;
+    Box<dyn Fn(&Matcher, NodeId, Option<ValueType>, &crate::bindings::Bindings) -> bool + Send>;
 
 /// A sideways sub-walk run after [`PostMatchFn`], matching against the LIVE
 /// journal so what it binds must agree with the enclosing match and survives
@@ -65,11 +65,12 @@ pub type PostMatchFn =
 /// next. Returning `false` overall fails the configuration.
 pub type BindingWalkFn = Box<
     dyn Fn(
-        &Matcher,
-        NodeId,
-        &mut crate::bindings::Bindings,
-        &mut dyn FnMut(&mut crate::bindings::Bindings) -> bool,
-    ) -> bool,
+            &Matcher,
+            NodeId,
+            &mut crate::bindings::Bindings,
+            &mut dyn FnMut(&mut crate::bindings::Bindings) -> bool,
+        ) -> bool
+        + Send,
 >;
 
 /// What a [`BindingWalkFn`]'s sub-pattern binds. The sub-pattern's graph is

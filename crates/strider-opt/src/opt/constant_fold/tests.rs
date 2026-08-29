@@ -2196,3 +2196,116 @@ fn int_const_eval_skips_past_128_bits() -> Result<()> {
     assert!(!outcome.changed(), "I256 Sless must not fold");
     Ok(())
 }
+
+/// The unique `Mul` the factoring rules produce: base and coefficient.
+fn assert_mul_with_const(
+    fg: &strider_ir::Function,
+    expected_base: strider_ir::Value,
+    expected_const: u128,
+    ty: ValueType,
+) -> Result<()> {
+    let val = return_value(fg.graph())?;
+    let node = fg.producer(val);
+    assert!(
+        matches!(fg.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::Mul)),
+        "expected a Mul, got {:?}",
+        fg.node_kind(node)
+    );
+    let inputs = fg.node_inputs(node);
+    assert_eq!(inputs.len(), 2);
+    let (base, k) = if inputs[0] == expected_base {
+        (inputs[0], inputs[1])
+    } else {
+        (inputs[1], inputs[0])
+    };
+    assert_eq!(base, expected_base, "Mul must keep the shared operand");
+    assert_eq!(fg.int_const_u128(k), Some(expected_const));
+    assert_eq!(fg.value_type(k)?, ty);
+    Ok(())
+}
+
+/// x + x*2 -> x*3
+#[test]
+fn factor_add_self_mul() -> Result<()> {
+    let (mut fg, x) = make_fn_with_var(reg_vn(0x1000, 8), |b, x| {
+        let two = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let m = b.build_int_binary_operation(x, two, IntBinaryOp::Mul, ValueType::I64)?;
+        b.build_int_binary_operation(x, m, IntBinaryOp::Add, ValueType::I64)
+    })?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    assert_mul_with_const(&fg, x, 3, ValueType::I64)
+}
+
+/// x*3 + x*5 -> x*8
+#[test]
+fn factor_add_mul_mul() -> Result<()> {
+    let (mut fg, x) = make_fn_with_var(reg_vn(0x1000, 8), |b, x| {
+        let c3 = b.build_int_const(3u64, ValueType::I64).unwrap();
+        let c5 = b.build_int_const(5u64, ValueType::I64).unwrap();
+        let a = b.build_int_binary_operation(x, c3, IntBinaryOp::Mul, ValueType::I64)?;
+        let c = b.build_int_binary_operation(x, c5, IntBinaryOp::Mul, ValueType::I64)?;
+        b.build_int_binary_operation(a, c, IntBinaryOp::Add, ValueType::I64)
+    })?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    assert_mul_with_const(&fg, x, 8, ValueType::I64)
+}
+
+/// x + (x << 3) -> x*9
+#[test]
+fn factor_add_self_shl() -> Result<()> {
+    let (mut fg, x) = make_fn_with_var(reg_vn(0x1000, 8), |b, x| {
+        let three = b.build_int_const(3u64, ValueType::I64).unwrap();
+        let s = b.build_int_binary_operation(x, three, IntBinaryOp::ShiftLeft, ValueType::I64)?;
+        b.build_int_binary_operation(x, s, IntBinaryOp::Add, ValueType::I64)
+    })?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    assert_mul_with_const(&fg, x, 9, ValueType::I64)
+}
+
+/// x - x*3 -> x * (1 - 3), wrapping at the type width.
+#[test]
+fn factor_sub_self_mul_wraps() -> Result<()> {
+    let (mut fg, x) = make_fn_with_var(reg_vn(0x1000, 8), |b, x| {
+        let c3 = b.build_int_const(3u64, ValueType::I64).unwrap();
+        let m = b.build_int_binary_operation(x, c3, IntBinaryOp::Mul, ValueType::I64)?;
+        b.build_sub_as_add_neg(x, m, ValueType::I64)
+    })?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    assert_mul_with_const(&fg, x, u128::from(u64::MAX) - 1, ValueType::I64)
+}
+
+/// x*9 - x*4 -> x*5
+#[test]
+fn factor_sub_mul_mul() -> Result<()> {
+    let (mut fg, x) = make_fn_with_var(reg_vn(0x1000, 8), |b, x| {
+        let c9 = b.build_int_const(9u64, ValueType::I64).unwrap();
+        let c4 = b.build_int_const(4u64, ValueType::I64).unwrap();
+        let a = b.build_int_binary_operation(x, c9, IntBinaryOp::Mul, ValueType::I64)?;
+        let c = b.build_int_binary_operation(x, c4, IntBinaryOp::Mul, ValueType::I64)?;
+        b.build_sub_as_add_neg(a, c, ValueType::I64)
+    })?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    assert_mul_with_const(&fg, x, 5, ValueType::I64)
+}
+
+/// A shift count is an ordinary constant of the shifted type, so it can name a
+/// value no `u128` can shift by. The rule must decline rather than evaluate
+/// `1 << 200` and panic the whole lift.
+#[test]
+fn factor_declines_an_out_of_range_shift() -> Result<()> {
+    let (mut fg, _x) = make_fn_with_var(reg_vn(0x1000, 8), |b, x| {
+        let wide = b.build_int_const(200u64, ValueType::I64).unwrap();
+        let s = b.build_int_binary_operation(x, wide, IntBinaryOp::ShiftLeft, ValueType::I64)?;
+        b.build_int_binary_operation(x, s, IntBinaryOp::Add, ValueType::I64)
+    })?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    let val = return_value(fg.graph())?;
+    assert!(
+        !matches!(
+            fg.node_kind(fg.producer(val)),
+            NodeKind::IntBinaryOp(IntBinaryOp::Mul)
+        ),
+        "a width-or-wider shift count must not fold to a multiply"
+    );
+    Ok(())
+}

@@ -127,6 +127,13 @@ _KNOB_UI = {
         "max": 2000,
         "step": 10,
     },
+    "whole": {
+        "kind": "bool",
+        "label": "whole",
+        "help": "draw the entire graph instead of a neighborhood; the depth, "
+        "hub cap and max-nodes knobs do not apply, and a large function can "
+        "take the layout engine a long time",
+    },
     "count_producers": {
         "kind": "bool",
         "label": "+prod",
@@ -210,8 +217,9 @@ class _Visualizer(Protocol):
 class _IrVisualizer:
     """A `Function` as a `_Visualizer`."""
 
-    def __init__(self, function: Function) -> None:
+    def __init__(self, function: Function, whole: bool = False) -> None:
         self._fn = function
+        self._whole = whole
 
     def entry(self) -> int:
         """The node id to center the first view on."""
@@ -222,14 +230,18 @@ class _IrVisualizer:
         page opens on the readable view, so `pretty` starts on."""
         return _controls(
             self._fn.neighborhood_dot,
-            ["depth", "hub_cap", "max_nodes", "count_producers", "pretty"],
+            ["whole", "depth", "hub_cap", "max_nodes", "count_producers", "pretty"],
             pretty=True,
+            whole=self._whole,
         )
 
     def dot(self, center: int, params: dict[str, Any]) -> str:
         """DOT for the neighborhood around `center`, `params` holding one
         value per declared control. `pretty=False` falls back to the
-        structure-faithful view for when the readable one cannot be trusted."""
+        structure-faithful view for when the readable one cannot be trusted.
+        `whole` renders every node and ignores the neighborhood knobs."""
+        if params.pop("whole", False):
+            return cast("str", self._fn.to_dot(pretty=params.get("pretty", True)))
         return self._fn.neighborhood_dot(center, **params)
 
     def search(self, query: str) -> dict[str, Any]:
@@ -244,10 +256,11 @@ class _IrVisualizer:
 class _CfgVisualizer:
     """A `Cfg` as a `_Visualizer`."""
 
-    def __init__(self, cfg: Cfg) -> None:
+    def __init__(self, cfg: Cfg, whole: bool = False) -> None:
         """Explore `cfg`, building its per-region disassembly text once for
         reuse by every text search."""
         self._cfg = cfg
+        self._whole = whole
         self._texts: dict[int, str] = cfg._region_texts()
 
     def entry(self) -> int:
@@ -258,11 +271,17 @@ class _CfgVisualizer:
         """The render knobs, defaults taken from the renderer binding. The raw
         view and the hub cap are `Function` concepts (the raw view is keyed by
         IR node id), so a query naming either knob is ignored."""
-        return _controls(self._cfg.neighborhood_dot, ["depth", "max_nodes"])
+        return _controls(
+            self._cfg.neighborhood_dot,
+            ["whole", "depth", "max_nodes"],
+            whole=self._whole,
+        )
 
     def dot(self, center: int, params: dict[str, Any]) -> str:
         """DOT for the regions around `center`, `params` holding one value per
-        declared control."""
+        declared control. `whole` renders every region."""
+        if params.pop("whole", False):
+            return cast("str", self._cfg.to_dot())
         return self._cfg.neighborhood_dot(center, **params)
 
     def search(self, query: str) -> dict[str, Any]:
@@ -460,6 +479,7 @@ def visualize(
     host: str = "127.0.0.1",
     port: int = 0,
     depth: int | None = None,
+    whole: bool = False,
 ) -> None:
     """Start the explorer for `target`, a `Function` from `analyze` or a
     `Cfg` from `build_cfg` / `analyze`. Blocks serving requests until
@@ -469,6 +489,11 @@ def visualize(
     the toolbar's depth control instead. Every other render knob starts at the
     renderer default and is set from the page.
 
+    `whole=True` opens on the entire graph rather than a neighborhood, and
+    seeds the toolbar's `whole` toggle so the page can switch back. The
+    neighborhood knobs do not apply while it is on, and a function of a few
+    thousand nodes can keep the layout engine busy for a long time.
+
     Runs on the thread that created `target`: it reads the unsendable
     `Function` / `Cfg` at once, and any other thread raises
     `PanicException: unsendable`. `shutdown(port)` is called from another
@@ -477,9 +502,9 @@ def visualize(
     aborts the process."""
     tn = type(target).__name__
     if tn == "Function":
-        vis: _Visualizer = _IrVisualizer(cast("Function", target))
+        vis: _Visualizer = _IrVisualizer(cast("Function", target), whole)
     elif tn == "Cfg":
-        vis = _CfgVisualizer(cast("Cfg", target))
+        vis = _CfgVisualizer(cast("Cfg", target), whole)
     else:
         raise TypeError(f"visualize expects a Function or Cfg, got {tn}")
     return _serve(vis, host=host, port=port, depth=depth)

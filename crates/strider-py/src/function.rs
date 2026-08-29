@@ -1,5 +1,4 @@
 use std::cell::{Ref, RefCell, RefMut};
-use std::rc::Rc;
 
 use pyo3::prelude::*;
 use strider_ir::IRWalker;
@@ -9,9 +8,9 @@ use crate::cfg::PyCfg;
 use crate::dot::Pretty;
 
 /// A lifted IR function: pattern queries, rewrites, walks and dot rendering.
-#[pyclass(name = "Function", module = "strider.ir", unsendable)]
+#[pyclass(name = "Function", module = "strider.ir")]
 pub struct PyFunction {
-    pub(crate) inner: Rc<RefCell<strider_ir::Function>>,
+    pub(crate) inner: RefCell<strider_ir::Function>,
     /// The `Cfg` this function was lifted from.
     pub(crate) cfg: Py<PyCfg>,
 }
@@ -19,7 +18,7 @@ pub struct PyFunction {
 impl PyFunction {
     pub(crate) fn new(function: strider_ir::Function, cfg: Py<PyCfg>) -> Self {
         Self {
-            inner: Rc::new(RefCell::new(function)),
+            inner: RefCell::new(function),
             cfg,
         }
     }
@@ -289,7 +288,7 @@ impl PyFunction {
             .map_err(crate::errors::into_strider_err)?
             .clone();
         Ok(PyFunction {
-            inner: Rc::new(RefCell::new(cloned)),
+            inner: RefCell::new(cloned),
             cfg: self.cfg.clone_ref(py),
         })
     }

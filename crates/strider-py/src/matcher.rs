@@ -10,7 +10,7 @@ use crate::pattern::{PyCapture, intern_str};
 /// Every capture accessor raises `StriderError` once the function has been
 /// compacted or otherwise reshuffled, rather than dereferencing the stored
 /// `ValueId`s against the new arena.
-#[pyclass(name = "Match", module = "strider.pattern", unsendable)]
+#[pyclass(name = "Match", module = "strider.pattern")]
 pub struct PyMatch {
     /// Per-input-pattern sub-matches, non-empty. Shared captures are already
     /// unified, so the `Match` presents the union of every pattern's captures.
@@ -348,7 +348,7 @@ match_getters! {
 
 /// Capture `cap` bound to a specific `PyMatch`: `m[c]`. Every reader delegates
 /// to the owning match, so the capture is named once.
-#[pyclass(name = "BoundCapture", module = "strider.pattern", unsendable)]
+#[pyclass(name = "BoundCapture", module = "strider.pattern")]
 pub struct PyBoundCapture {
     match_: Py<PyMatch>,
     cap: Py<PyCapture>,

@@ -29,11 +29,12 @@ use super::node_pat::{NodePat, variant_kind};
 /// a sub-pattern there.
 type BranchWalk = Box<
     dyn Fn(
-        &crate::Matcher,
-        NodeId,
-        &mut crate::Bindings,
-        &mut dyn FnMut(&mut crate::Bindings) -> bool,
-    ) -> bool,
+            &crate::Matcher,
+            NodeId,
+            &mut crate::Bindings,
+            &mut dyn FnMut(&mut crate::Bindings) -> bool,
+        ) -> bool
+        + Send,
 >;
 
 /// A `Call` clobbers caller-saved registers and the memory token.

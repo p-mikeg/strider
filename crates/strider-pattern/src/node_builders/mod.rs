@@ -49,7 +49,7 @@ pub(crate) use delegate_with_output;
 
 /// Defers a sub-pattern's compilation until `build`, once the shared
 /// [`MatcherBuilder`] exists.
-pub(crate) type SubCompiler = Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef>;
+pub(crate) type SubCompiler = Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef + Send>;
 
 /// A sub-pattern that produces a memory token, so it can be chained into a
 /// consumer's memory input slot. The lowering itself is
