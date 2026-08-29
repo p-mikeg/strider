@@ -113,13 +113,18 @@ def test_ir_controls_report_the_renderer_defaults():
     t = _serve_bg("ir", port)
     try:
         ctrls = _controls(port)
+        # `whole` leads and is synthetic: it selects between the neighborhood
+        # and the whole-graph renderer, so it has no entry in either binding
+        # signature and takes its default from `visualize(whole=)`.
         assert list(ctrls) == [
+            "whole",
             "depth",
             "hub_cap",
             "max_nodes",
             "count_producers",
             "pretty",
         ]
+        assert ctrls["whole"]["default"] is False
         sig = inspect.signature(strider.ir.Function.neighborhood_dot).parameters
         for name in ("depth", "hub_cap", "max_nodes", "count_producers"):
             assert ctrls[name]["default"] == sig[name].default, name
@@ -138,9 +143,12 @@ def test_cfg_controls_are_the_ones_the_cfg_renderer_takes():
     t = _serve_bg("cfg", port)
     try:
         ctrls = _controls(port)
-        assert list(ctrls) == ["depth", "max_nodes"]
+        assert list(ctrls) == ["whole", "depth", "max_nodes"]
+        assert ctrls["whole"]["default"] is False
         sig = inspect.signature(strider.cfg.Cfg.neighborhood_dot).parameters
         for name in ctrls:
+            if name == "whole":  # synthetic, not a renderer parameter
+                continue
             assert ctrls[name]["default"] == sig[name].default, name
     finally:
         _stop(port, t)
@@ -374,3 +382,42 @@ def test_a_non_daemon_explorer_thread_does_not_hang_interpreter_exit():
         f"interpreter exit failed (rc={proc.returncode}); "
         f"stderr:\n{proc.stderr.decode(errors='replace')[-2000:]}"
     )
+
+
+def _busy_pair():
+    """A `Cfg` and `Function` over `_BUSY`, which has a loop and fan-in, so a
+    depth-1 neighborhood is visibly smaller than the whole graph."""
+    lift = strider.lift.lifter(
+        strider.sleigh.SleighArch.x86_64(),
+        strider.reader.BufferReader(0x1000, _BUSY),
+    )
+    res = lift.analyze(0x1000, strider.sleigh.CallingConvention.x86_64_systemv())
+    return res.cfg, res.function
+
+
+def test_whole_renders_the_entire_graph_not_a_neighborhood():
+    """`whole` switches renderers rather than widening the neighborhood: its
+    output is `to_dot`'s, which a depth-bounded view is not."""
+    from strider.explore import _CfgVisualizer, _IrVisualizer
+
+    cfg, fn = _busy_pair()
+
+    vis = _IrVisualizer(fn, False)
+    base = {c["name"]: c["default"] for c in vis.controls()}
+    tight = {**base, "depth": 1, "whole": False}
+    whole = {**base, "depth": 1, "whole": True}
+    assert vis.dot(fn.entry_node(), dict(tight)) != vis.dot(fn.entry_node(), dict(whole))
+    assert vis.dot(fn.entry_node(), dict(whole)) == fn.to_dot(pretty=base["pretty"])
+
+    cvis = _CfgVisualizer(cfg, False)
+    cbase = {c["name"]: c["default"] for c in cvis.controls()}
+    assert cvis.dot(cfg.entry(), {**cbase, "depth": 1, "whole": True}) == cfg.to_dot()
+
+
+def test_visualize_whole_seeds_the_whole_control():
+    """`visualize(whole=True)` opens the page on the whole-graph view."""
+    from strider.explore import _IrVisualizer
+
+    _, fn = _busy_pair()
+    ctrls = {c["name"]: c for c in _IrVisualizer(fn, True).controls()}
+    assert ctrls["whole"]["default"] is True

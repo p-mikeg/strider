@@ -1,8 +1,8 @@
 //! `first_of` (ordered choice) against `one_of` (union): the cut, and where it
 //! must not fire.
 
-use std::cell::Cell;
-use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use strider_ir::IntUnaryOp;
 use strider_ir_test_utils::Tb;
@@ -102,8 +102,8 @@ fn first_of_reports_only_the_first_matching_arm() {
 /// Counts continuations reaching the root guard: `one_of` is multiplicative in
 /// the number of nested alternations, `first_of` cuts at the first match.
 fn root_continuations(f: &strider_ir::Function, ordered: bool) -> usize {
-    let n = Rc::new(Cell::new(0usize));
-    let seen = Rc::clone(&n);
+    let n = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&n);
     let pat = if ordered {
         int_add(
             first_of![anything(), anything()],
@@ -111,7 +111,7 @@ fn root_continuations(f: &strider_ir::Function, ordered: bool) -> usize {
         )
         .ordered()
         .when_match(move |_m, _ty, _b| {
-            seen.set(seen.get() + 1);
+            seen.fetch_add(1, Ordering::Relaxed);
             true
         })
         .into_pattern()
@@ -122,14 +122,14 @@ fn root_continuations(f: &strider_ir::Function, ordered: bool) -> usize {
         )
         .ordered()
         .when_match(move |_m, _ty, _b| {
-            seen.set(seen.get() + 1);
+            seen.fetch_add(1, Ordering::Relaxed);
             true
         })
         .into_pattern()
     };
     let m = Matcher::new(f);
     let _ = m.find_all(&pat).unwrap();
-    n.get()
+    n.load(Ordering::Relaxed)
 }
 
 #[test]
@@ -183,8 +183,8 @@ fn a_nested_query_in_a_guard_does_not_fire_an_enclosing_cut() {
 
     let hits = |nested: bool| {
         let probe = int_add(anything(), anything()).into_pattern();
-        let seen = Rc::new(Cell::new(0usize));
-        let armed = Rc::clone(&seen);
+        let seen = Arc::new(AtomicUsize::new(0));
+        let armed = Arc::clone(&seen);
         let k = Capture::new();
         let pat = first_of![
             // Structurally matches, then rejects: it produces no match, so the
@@ -193,14 +193,14 @@ fn a_nested_query_in_a_guard_does_not_fire_an_enclosing_cut() {
                 if nested {
                     let _ = mm.find_all(&probe).unwrap();
                 }
-                armed.set(armed.get() + 1);
+                armed.fetch_add(1, Ordering::Relaxed);
                 false
             }),
             int_add(anything(), anything()).capture(k),
         ]
         .into_pattern();
         let n = m.find_all(&pat).unwrap().len();
-        (n, seen.get())
+        (n, seen.load(Ordering::Relaxed))
     };
 
     let (plain, _) = hits(false);

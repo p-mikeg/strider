@@ -1,4 +1,5 @@
-use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
@@ -408,7 +409,7 @@ fn where_predicate_filters_and_composes() {
     // Keep only the call to 0xAAAA. `captures: [c]` correlates on the call.
     let only_aaaa = || JoinConstraint::Where {
         captures: vec![c],
-        pred: Rc::new(move |f: &strider_ir::Function, tuple: &JoinedMatch| {
+        pred: std::sync::Arc::new(move |f: &strider_ir::Function, tuple: &JoinedMatch| {
             let node = tuple[0].node(c, f.graph()).expect("call node");
             let target = f.node_inputs(node).into_iter().nth(2).expect("target");
             Some(f.int_const_u128(target).expect("const") as u64 == 0xAAAA)
@@ -461,7 +462,7 @@ fn where_drops_rows_with_an_unbound_declared_capture() {
 
     let reads_d = || JoinConstraint::Where {
         captures: vec![c, d],
-        pred: Rc::new(move |_f: &strider_ir::Function, tuple: &JoinedMatch| {
+        pred: std::sync::Arc::new(move |_f: &strider_ir::Function, tuple: &JoinedMatch| {
             // Panics if ever handed a row where `d` is unbound.
             tuple[0].value(d).expect("d must be bound");
             Some(true)
@@ -501,16 +502,16 @@ fn a_constraint_prunes_before_the_rest_of_the_product_is_built() {
     assert_eq!(m.find_all(&in_branch).unwrap().len(), 3);
     assert_eq!(m.find_all(&anywhere).unwrap().len(), 3);
 
-    let rows_seen = Rc::new(std::cell::Cell::new(0usize));
-    let counter = Rc::clone(&rows_seen);
+    let rows_seen = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&rows_seen);
     let tuples = m
         .find_joined_constrained(
             &[&guard, &in_branch, &anywhere],
             &[
                 JoinConstraint::Where {
                     captures: vec![c1, c2],
-                    pred: Rc::new(move |_f, _tuple| {
-                        counter.set(counter.get() + 1);
+                    pred: std::sync::Arc::new(move |_f, _tuple| {
+                        counter.fetch_add(1, Ordering::Relaxed);
                         Some(true)
                     }),
                 },
@@ -529,7 +530,7 @@ fn a_constraint_prunes_before_the_rest_of_the_product_is_built() {
         assert_eq!(call_addr(tuple, c1, &function), 0xAAAA);
     }
     assert_eq!(
-        rows_seen.get(),
+        rows_seen.load(Ordering::Relaxed),
         3,
         "the full 1 x 3 x 3 product must not be built"
     );

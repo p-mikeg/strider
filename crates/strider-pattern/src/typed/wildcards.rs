@@ -59,7 +59,7 @@ pub fn var(c: Capture) -> Var {
 /// [`crate::CaptureExt::when_match`].
 pub fn predicate<F>(f: F) -> impl MatchPat
 where
-    F: Fn(&crate::Matcher, ValueType) -> bool + 'static,
+    F: Fn(&crate::Matcher, ValueType) -> bool + 'static + Send,
 {
     anything().when_match(move |m, ty, _b| f(m, ty))
 }
