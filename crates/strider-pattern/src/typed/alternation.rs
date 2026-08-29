@@ -22,7 +22,7 @@ pub enum AltSlot {
 
 /// One type-erased entry of a [`OneOf`], normally built by the `one_of!` macro.
 /// It keeps both lowerings open until the slot is known.
-pub type BoxedAlt = Box<dyn FnOnce(&mut MatcherBuilder, AltSlot) -> PatValueRef>;
+pub type BoxedAlt = Box<dyn FnOnce(&mut MatcherBuilder, AltSlot) -> PatValueRef + Send>;
 
 /// Match-only: a rewrite RHS must build one concrete shape.
 pub struct OneOf {

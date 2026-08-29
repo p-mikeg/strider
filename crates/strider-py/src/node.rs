@@ -13,7 +13,7 @@ use crate::function::PyFunction;
 ///
 /// Every accessor raises `StriderError` once the function has been compacted
 /// or otherwise reshuffled, rather than dereferencing a stale node id.
-#[pyclass(name = "Node", module = "strider.ir", unsendable)]
+#[pyclass(name = "Node", module = "strider.ir")]
 pub struct PyNode {
     pub(crate) function: Py<PyFunction>,
     pub(crate) id: u32,

@@ -270,12 +270,17 @@ class Lifter:
         host: str = ...,
         port: int = ...,
         depth: Optional[int] = ...,
+        whole: bool = ...,
     ) -> None:
         """Start the interactive explorer for `target`, a `Function` or a
         `Cfg`. It renders the NEIGHBORHOOD around a node you pick (inputs and
-        outputs out to `depth` hops), never the whole graph, so it scales to
-        large functions. Prints the local URL and blocks on this thread until
-        Ctrl-C.
+        outputs out to `depth` hops), which is what scales to large functions.
+        Prints the local URL and blocks on this thread until Ctrl-C.
+
+        `whole=True` opens on the entire graph instead and seeds the toolbar's
+        `whole` toggle. The neighborhood knobs do not apply while it is on, and
+        a function of a few thousand nodes can keep the layout engine busy for
+        a long time.
 
         Off the main thread you MUST pair this with
         `strider.explore.shutdown(port)` and a thread join before the
