@@ -56,7 +56,7 @@ fn first_int_const_value(f: &strider_ir::Function, node: NodeId) -> Option<(u128
 fn int_const_leaf(
     b: &mut MatcherBuilder,
     pin: Option<ValueType>,
-    pred: impl Fn(u128, ValueType) -> bool + 'static,
+    pred: impl Fn(u128, ValueType) -> bool + 'static + Send,
 ) -> PatValueRef {
     let o = b.leaf(KindSpec::variant_of(&NodeKind::IntConst(
         ConstId::from_u32(0),
@@ -534,7 +534,7 @@ pub fn capture_typed<P: TemplatePat>(cap: crate::Capture, inner: P) -> CaptureTy
 /// the rewrite root.
 pub fn int_const_with_fn<F>(f: F) -> ConstWith
 where
-    F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<u128> + 'static,
+    F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<u128> + 'static + Send,
 {
     ConstWith {
         // FnIntConst interns the full u128 at the resolved output width, so
@@ -548,7 +548,7 @@ where
 /// An `IntConst` typed `I1` whose value `f` computes at rewrite time.
 pub fn bool_const_with_fn<F>(f: F) -> ConstWith
 where
-    F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<bool> + 'static,
+    F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<bool> + 'static + Send,
 {
     ConstWith {
         kind: TemplateKind::FnIntConst(Box::new(move |ctx| Ok(u128::from(f(ctx)?)))),
@@ -561,7 +561,7 @@ where
 /// Output type inherits the rewrite root.
 pub fn float_const_with_fn<F>(f: F) -> ConstWith
 where
-    F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<u64> + 'static,
+    F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<u64> + 'static + Send,
 {
     ConstWith {
         kind: TemplateKind::Fn(Box::new(move |ctx| Ok(NodeKind::FloatConst(f(ctx)?)))),

@@ -29,11 +29,11 @@ use crate::bindings::Bindings;
 use crate::graph_ext::{PatGraphRead, reachable_topo};
 use crate::matcher::OutputKindSpec;
 
-pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind>>;
+pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind> + Send>;
 
 /// The `u128` return caps the expressible range: an output wider than `I128`
 /// skips the rewrite rather than interning a truncated constant.
-pub type TemplateKindFnIntConst = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<u128>>;
+pub type TemplateKindFnIntConst = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<u128> + Send>;
 
 /// How a template node materialises into fresh IR.
 pub enum TemplateKind {

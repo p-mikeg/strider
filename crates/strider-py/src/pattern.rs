@@ -4,7 +4,7 @@
 //! reserved.
 
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use pyo3::basic::CompareOp;
@@ -120,7 +120,7 @@ pub(crate) fn capture_display(id: u32) -> String {
     }
 }
 
-pub(crate) struct DynMatch(pub(crate) Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef>);
+pub(crate) struct DynMatch(pub(crate) Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef + Send>);
 
 impl MatchPat for DynMatch {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
@@ -128,7 +128,9 @@ impl MatchPat for DynMatch {
     }
 }
 
-pub(crate) struct DynTemplate(pub(crate) Box<dyn FnOnce(&mut TemplateBuilder) -> TmplValueRef>);
+pub(crate) struct DynTemplate(
+    pub(crate) Box<dyn FnOnce(&mut TemplateBuilder) -> TmplValueRef + Send>,
+);
 
 impl TemplatePat for DynTemplate {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
@@ -137,7 +139,7 @@ impl TemplatePat for DynTemplate {
 }
 
 /// Type-erased sub-pattern yielding a memory token.
-pub(crate) struct DynMem(pub(crate) Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef>);
+pub(crate) struct DynMem(pub(crate) Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef + Send>);
 
 impl MatchPat for DynMem {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
@@ -249,7 +251,7 @@ pub(crate) enum PatRepr {
     /// value operand.
     Finished {
         /// Taken on the first query.
-        pattern: Box<std::cell::RefCell<Option<Pattern>>>,
+        pattern: Box<std::sync::Mutex<Option<Pattern>>>,
         /// The `.when()` predicates compiled into `pattern`, shared with its
         /// closures: the only Python objects a `Pattern` holds, and otherwise
         /// invisible to the cyclic collector.
@@ -260,9 +262,9 @@ pub(crate) enum PatRepr {
 /// A finished pattern. Reusable across `find_all` / rewrite calls, except one
 /// built from a control or variadic builder's `into_pat()`, which is consumed
 /// by its first query.
-#[pyclass(name = "Pat", module = "strider.pattern", unsendable)]
+#[pyclass(name = "Pat", module = "strider.pattern")]
 pub struct PyPat {
-    pub(crate) repr: Rc<PatRepr>,
+    pub(crate) repr: Arc<PatRepr>,
     /// Links below this one in the `.capture()` / `.when()` / `.of_width()`
     /// chain. Dropping the chain is native recursion, so it is bounded.
     depth: u32,
@@ -271,7 +273,7 @@ pub struct PyPat {
 impl PyPat {
     pub(crate) fn from_repr(repr: PatRepr) -> Self {
         Self {
-            repr: Rc::new(repr),
+            repr: Arc::new(repr),
             depth: 0,
         }
     }
@@ -286,7 +288,7 @@ fn derive(slf: &Bound<'_, PyPat>, make: impl FnOnce(Py<PyAny>) -> PatRepr) -> Py
         )));
     }
     Ok(PyPat {
-        repr: Rc::new(make(slf.clone().into_any().unbind())),
+        repr: Arc::new(make(slf.clone().into_any().unbind())),
         depth,
     })
 }
@@ -571,9 +573,9 @@ fn orderable(repr: &PatRepr) -> Result<(), &'static str> {
 
 /// The shape below the chainable wrappers, which decorate the same root node
 /// they wrap and so leave what `.ordered()` pins unchanged.
-fn unwrapped_repr(pat: &Bound<'_, PyPat>) -> Rc<PatRepr> {
+fn unwrapped_repr(pat: &Bound<'_, PyPat>) -> Arc<PatRepr> {
     let py = pat.py();
-    let mut cur = Rc::clone(&pat.borrow().repr);
+    let mut cur = Arc::clone(&pat.borrow().repr);
     for _ in 0..MAX_PATTERN_NESTING {
         let next = match &*cur {
             PatRepr::Captured(inner, _)
@@ -581,7 +583,7 @@ fn unwrapped_repr(pat: &Bound<'_, PyPat>) -> Rc<PatRepr> {
             | PatRepr::Ordered(inner)
             | PatRepr::OfWidth(inner, _)
             | PatRepr::ValueTy(inner, _) => match inner.bind(py).downcast::<PyPat>() {
-                Ok(p) => Rc::clone(&p.borrow().repr),
+                Ok(p) => Arc::clone(&p.borrow().repr),
                 Err(_) => return cur,
             },
             _ => return cur,
@@ -994,7 +996,7 @@ fn compile_ordered_match(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch> {
     let Ok(pat) = ob.downcast::<PyPat>() else {
         return Ok(ordered_dyn(compile_operand_match(ob)?));
     };
-    let repr = Rc::clone(&pat.borrow().repr);
+    let repr = Arc::clone(&pat.borrow().repr);
     // `xor(cmp, 1)`, the lowered form's root, with the comparison pinned.
     macro_rules! m_ordered_cmp {
         ($f:path, $l:expr, $r:expr) => {{
@@ -1216,12 +1218,16 @@ impl PatRepr {
             if !when_handles.is_empty() {
                 note_when_attached();
             }
-            return pattern.borrow_mut().take().ok_or_else(|| {
-                into_strider_err(anyhow::anyhow!(
-                    "this control / variadic pattern was already consumed by a \
+            return pattern
+                .lock()
+                .expect("pattern cache poisoned")
+                .take()
+                .ok_or_else(|| {
+                    into_strider_err(anyhow::anyhow!(
+                        "this control / variadic pattern was already consumed by a \
                      prior query; rebuild it for each find/rewrite call"
-                ))
-            });
+                    ))
+                });
         }
         Ok(self.compile_match(py)?.into_pattern())
     }
@@ -1376,7 +1382,7 @@ pub(crate) fn stash_pending_query_error(e: PyErr) {
 //
 // A stack rather than one slot: a predicate may itself issue a nested query,
 // which must not clobber the outer entry. Both entries share the live query's
-// `Rc<RefCell<Function>>`, so a `Match` accessor re-borrowing it under
+// `Arc<RefCell<Function>>`, so a `Match` accessor re-borrowing it under
 // `run_query`'s own read guard is a same-thread recursive READ lock. That is
 // only safe because no write lock is ever taken outside `try_write_inner`.
 thread_local! {
@@ -1482,7 +1488,7 @@ fn note_when_attached() {
 /// A `.when()` predicate baked into a compiled [`Pattern`], shared with the
 /// closure that runs it. One attachment is one strong Python reference, which
 /// the owning `Pat` reports to the cyclic collector exactly once.
-pub(crate) type WhenFn = Rc<PyObject>;
+pub(crate) type WhenFn = Arc<PyObject>;
 
 // Collects the predicates baked into the pattern being finalised, while a
 // `retain_when_handles` scope is open.
@@ -1523,10 +1529,10 @@ fn retain_when_handles<T>(build: impl FnOnce() -> PyResult<T>) -> PyResult<(T, V
 /// Wraps `f` for a compiled closure, registering it with the open scope.
 fn attach_when(f: PyObject) -> WhenFn {
     note_when_attached();
-    let f = Rc::new(f);
+    let f = Arc::new(f);
     RETAINED_WHEN.with(|c| {
         if let Some(handles) = c.borrow_mut().as_mut() {
-            handles.push(Rc::clone(&f));
+            handles.push(Arc::clone(&f));
         }
     });
     f
@@ -2240,7 +2246,7 @@ macro_rules! builder_common_methods {
             fn into_pat(&self, py: Python<'_>) -> PyResult<PyPat> {
                 let (pat, when_handles) = retain_when_handles(|| self.build_pattern_py(py))?;
                 Ok(PyPat::from_repr(PatRepr::Finished {
-                    pattern: Box::new(std::cell::RefCell::new(Some(pat))),
+                    pattern: Box::new(std::sync::Mutex::new(Some(pat))),
                     when_handles,
                 }))
             }
@@ -2779,7 +2785,7 @@ macro_rules! node_builder {
         node_builder!(@members $inner [] $($field)*);
 
         #[doc = $doc]
-        #[pyclass(name = $py_name, module = "strider.pattern", unsendable)]
+        #[pyclass(name = $py_name, module = "strider.pattern")]
         pub struct $ty {
             inner: std::cell::RefCell<$inner>,
             common: std::cell::RefCell<CommonState>,
@@ -2939,7 +2945,7 @@ struct CallInner {
 
 /// Typed builder for `Call` node patterns. Chain `.target(p)`,
 /// `.arg(idx, p)`, `.mem(m)`, `.ctrl(p)`.
-#[pyclass(name = "CallPat", module = "strider.pattern", unsendable)]
+#[pyclass(name = "CallPat", module = "strider.pattern")]
 pub struct PyCallPat {
     inner: std::cell::RefCell<CallInner>,
     common: std::cell::RefCell<CommonState>,
@@ -3086,7 +3092,7 @@ builder_slot_methods!(PyCallPat, output);
 /// Returned by `.output(slot)` / `.any_output()`. Each terminal commits one
 /// constraint onto the parent builder and hands it back so the chain
 /// continues.
-#[pyclass(name = "OutputSlotPat", module = "strider.pattern", unsendable)]
+#[pyclass(name = "OutputSlotPat", module = "strider.pattern")]
 pub struct PyOutputSlot {
     parent: Py<PyAny>,
     slot: Option<usize>,
@@ -3351,13 +3357,9 @@ pub fn if_(cond: Option<Py<PyAny>>) -> PyIfPat {
 /// A CFG relation between captured entities, passed to
 /// `Function.find_all([...], constraints=[...])` to filter joined tuples.
 /// Construct via `dominates` / `phi_input_from_edge`, and negate with `negate`.
-#[pyclass(
-    name = "JoinConstraint",
-    module = "strider.pattern.constraints",
-    unsendable
-)]
+#[pyclass(name = "JoinConstraint", module = "strider.pattern.constraints")]
 pub struct PyJoinConstraint {
-    pub(crate) inner: Rc<ConstraintTree>,
+    pub(crate) inner: Arc<ConstraintTree>,
     /// The constraints this one was built from. `inner` reaches a
     /// `JoinPredicate` only through a Rust closure, so these keep the edge
     /// visible to the cyclic GC.
@@ -3368,7 +3370,7 @@ pub struct PyJoinConstraint {
 }
 
 /// A `JoinPredicate` instance baked into a `Where` closure.
-type PredicateFn = Rc<PyObject>;
+type PredicateFn = Arc<PyObject>;
 
 /// Well above any realistic constraint expression.
 const MAX_CONSTRAINT_NESTING: u32 = 512;
@@ -3389,14 +3391,14 @@ pub(crate) struct ConstraintTree {
 
 enum ConstraintNode {
     Leaf(JoinConstraint),
-    Not(Rc<ConstraintTree>),
-    Any(Vec<Rc<ConstraintTree>>),
-    All(Vec<Rc<ConstraintTree>>),
+    Not(Arc<ConstraintTree>),
+    Any(Vec<Arc<ConstraintTree>>),
+    All(Vec<Arc<ConstraintTree>>),
 }
 
 impl ConstraintTree {
-    fn new(node: ConstraintNode) -> PyResult<Rc<Self>> {
-        let children: &[Rc<Self>] = match &node {
+    fn new(node: ConstraintNode) -> PyResult<Arc<Self>> {
+        let children: &[Arc<Self>] = match &node {
             ConstraintNode::Leaf(_) => &[],
             ConstraintNode::Not(c) => std::slice::from_ref(c),
             ConstraintNode::Any(cs) | ConstraintNode::All(cs) => cs,
@@ -3415,11 +3417,11 @@ impl ConstraintTree {
                 "constraint expands to more than {MAX_CONSTRAINT_NODES} nodes"
             )));
         }
-        Ok(Rc::new(Self { node, depth, size }))
+        Ok(Arc::new(Self { node, depth, size }))
     }
 
     fn materialize(&self) -> JoinConstraint {
-        let all = |cs: &[Rc<Self>]| cs.iter().map(|c| c.materialize()).collect();
+        let all = |cs: &[Arc<Self>]| cs.iter().map(|c| c.materialize()).collect();
         match &self.node {
             ConstraintNode::Leaf(c) => c.clone(),
             ConstraintNode::Not(c) => JoinConstraint::Not(Box::new(c.materialize())),
@@ -3510,7 +3512,7 @@ pub fn negate(c: &Bound<'_, PyAny>) -> PyResult<PyJoinConstraint> {
 
 /// The coerced operands, the constraint objects themselves, and any predicate
 /// handle a `Where` closure captured.
-type CoercedConstraints = (Vec<Rc<ConstraintTree>>, Vec<PyObject>, Vec<PredicateFn>);
+type CoercedConstraints = (Vec<Arc<ConstraintTree>>, Vec<PyObject>, Vec<PredicateFn>);
 
 /// Coerces every listed constraint, collecting the handles the composite ends
 /// up owning.
@@ -3612,17 +3614,17 @@ pub(crate) fn coerce_join_constraint(
 fn coerce_tree(
     obj: &Bound<'_, PyAny>,
     held: &mut Vec<PredicateFn>,
-) -> PyResult<Rc<ConstraintTree>> {
+) -> PyResult<Arc<ConstraintTree>> {
     if let Ok(c) = obj.downcast::<PyJoinConstraint>() {
-        return Ok(Rc::clone(&c.borrow().inner));
+        return Ok(Arc::clone(&c.borrow().inner));
     }
     if obj.is_instance_of::<PyJoinPredicate>() {
         let caps: Vec<PyRef<'_, PyCapture>> = obj.call_method0("captures")?.extract()?;
         let captures = caps.iter().map(|c| c.inner).collect();
-        let handle: PredicateFn = Rc::new(obj.clone().unbind());
-        held.push(Rc::clone(&handle));
+        let handle: PredicateFn = Arc::new(obj.clone().unbind());
+        held.push(Arc::clone(&handle));
         let pred: sp::JoinPredicateFn =
-            Rc::new(move |_f, tuple| run_join_predicate(tuple, &handle));
+            Arc::new(move |_f, tuple| run_join_predicate(tuple, &handle));
         return ConstraintTree::new(ConstraintNode::Leaf(JoinConstraint::Where {
             captures,
             pred,
@@ -3782,7 +3784,7 @@ pub fn region() -> PyRegionPat {
 
 /// Typed builder for `FunctionArg` carrier patterns. Chain `.index(i)`,
 /// `.source_register(vn)`, `.source_stack(space, offset)`.
-#[pyclass(name = "FunctionArgPat", module = "strider.pattern", unsendable)]
+#[pyclass(name = "FunctionArgPat", module = "strider.pattern")]
 pub struct PyFunctionArgPat {
     source: std::cell::RefCell<Option<strider_ir::node::FunctionArgSource>>,
     /// Which index space `index` names; `Any` unless a constructor pinned it.
@@ -3921,7 +3923,7 @@ macro_rules! binary_op_builder {
         $doc:literal
     ) => {
         #[doc = $doc]
-        #[pyclass(name = $py_name, module = "strider.pattern", unsendable)]
+        #[pyclass(name = $py_name, module = "strider.pattern")]
         pub struct $ty {
             op: $op_ty,
             lhs: Py<PyAny>,
