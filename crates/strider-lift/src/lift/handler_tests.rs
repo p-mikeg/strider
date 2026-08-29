@@ -1508,3 +1508,42 @@ fn const_space_load_yields_its_address() {
         "rldimi reads no memory: its const-space mask LOAD must become its address"
     );
 }
+
+/// An intrinsic whose pcode output is a memory operand (x86 `sgdt [mem]` and
+/// its `lidt` / `sldt` / `str` siblings) lifts: the ram output slot is dropped
+/// and the write is carried by the memory clobber the ABI already declares.
+/// Without this the whole function fails, which is how `save_processor_state`
+/// went unliftable on every x86-64 kernel.
+#[test]
+fn call_other_writing_a_memory_operand_drops_the_ram_output() {
+    with_test_lifter(|d, rid| {
+        let names = d.lifter.user_op_names().to_vec();
+        let Some(id) = names
+            .iter()
+            .position(|n| n == "GlobalDescriptorTableRegister")
+        else {
+            return; // sla without the op; nothing to pin here
+        };
+        let ram_out = Vn {
+            addr_space: rsleigh::VnSpace::RAM,
+            addr_off: 0x1_0000,
+            size: 8,
+        };
+        let insn = Insn {
+            opcode: Opcode::CallOther,
+            output: Some(ram_out),
+            inputs: vec![const_vn(id as u64, 4)].into(),
+        };
+        d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
+            .expect("a ram-output CallOther must lift, not fail the function");
+        assert!(
+            graph_has_kind(
+                &d.builder,
+                NodeKind::CallOther {
+                    user_op_id: id as u64
+                }
+            ),
+            "the CallOther node must still be built"
+        );
+    });
+}

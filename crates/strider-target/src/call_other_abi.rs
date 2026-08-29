@@ -210,6 +210,22 @@ pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
         .or_else(|| classify_ppc(preset, name))
 }
 
+/// A PowerPC trap that fires on every relation, i.e. `BUG()`.
+///
+/// `tw` / `twi` / `td` / `tdi` carry a 5-bit TO mask of the comparisons that
+/// trap, and the sla passes it as the op's first operand. All five bits set
+/// traps unconditionally and control does not continue; any narrower mask is a
+/// conditional check whose fall-through is live, which is why the table classes
+/// the whole family as `MEM_CLOBBER` rather than no-return.
+#[must_use]
+pub fn trap_is_unconditional(name: &str, to_mask: Option<u128>) -> bool {
+    const TO_ALL_RELATIONS: u128 = 0x1f;
+    matches!(
+        name,
+        "trapWord" | "trapDoubleWord" | "trapDoubleWordImmediate"
+    ) && to_mask == Some(TO_ALL_RELATIONS)
+}
+
 const PURE: CallOtherClass = CallOtherClass::PURE;
 const MEM_CLOBBER: CallOtherClass = CallOtherClass::MEM_CLOBBER;
 
@@ -2398,5 +2414,26 @@ mod tests {
                 "call_other_abi row {name:?} names no `define pcodeop` in the vendored sla",
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod trap_tests {
+    /// TO names the comparisons that trap; only all five bits set is the
+    /// unconditional `BUG()` form whose fall-through is dead.
+    #[test]
+    fn only_an_all_relations_mask_is_unconditional() {
+        use super::trap_is_unconditional as t;
+        assert!(t("trapWord", Some(0x1f)));
+        assert!(t("trapDoubleWord", Some(0x1f)));
+        assert!(t("trapDoubleWordImmediate", Some(0x1f)));
+        // A narrower mask is a conditional bounds check.
+        assert!(!t("trapWord", Some(0x0c)));
+        assert!(!t("trapWord", Some(0x1e)));
+        // A non-constant operand cannot be proven unconditional.
+        assert!(!t("trapWord", None));
+        // Not every op named like a trap is one of these.
+        assert!(!t("trap", Some(0x1f)));
+        assert!(!t("syscall", Some(0x1f)));
     }
 }
