@@ -78,8 +78,9 @@ def test_cfg_address_search_still_works():
 
 
 def test_visualize_runs_on_the_thread_that_created_the_target():
-    """The documented contract: `visualize` reads the unsendable target at
-    once, so only its creating thread may serve it."""
+    """`visualize` decodes through the Lifter, which is pinned to its
+    creating thread. Off-thread this raises rather than killing the thread:
+    it used to be a `PanicException`, which `except Exception` never caught."""
     import threading
 
     _fn, cfg = _function_and_cfg()
@@ -88,12 +89,12 @@ def test_visualize_runs_on_the_thread_that_created_the_target():
     def run():
         try:
             strider.explore._CfgVisualizer(cfg)
-        except BaseException as e:  # noqa: BLE001 (pyo3 raises PanicException)
+        except Exception as e:
             out["err"] = type(e).__name__
 
     t = threading.Thread(target=run)
     t.start()
     t.join(timeout=30)
     assert not t.is_alive()
-    assert out.get("err") == "PanicException", out
+    assert out.get("err") == "StriderError", out
     assert strider.explore.shutdown() == []
