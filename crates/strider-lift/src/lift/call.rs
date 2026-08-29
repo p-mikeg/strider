@@ -1,5 +1,6 @@
 use anyhow::Context as _;
 use anyhow::{Result, anyhow};
+use strider_ir::IRViewer as _;
 
 use super::FunctionLifter;
 
@@ -34,14 +35,17 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let explicit_args = self.read_vns(insn.inputs.get(1..).unwrap_or(&[]))?;
         let output_vn: Option<rsleigh::Vn> = insn.output.as_ref().copied();
 
-        self.build_abi_call_other(
-            user_op_id,
-            name,
-            &explicit_args,
-            &abi,
-            output_vn,
-            abi.no_return,
-        )?;
+        // A PowerPC trap whose TO mask names every relation fires
+        // unconditionally, so the fall-through is dead. The mask reaches the op
+        // through a temporary, not as a literal operand, so read it back as a
+        // folded constant rather than off the pcode.
+        let to_mask = explicit_args
+            .first()
+            .and_then(|&v| self.builder.function().int_const_u128(v));
+        let terminate =
+            abi.no_return || strider_target::call_other_abi::trap_is_unconditional(name, to_mask);
+
+        self.build_abi_call_other(user_op_id, name, &explicit_args, &abi, output_vn, terminate)?;
         Ok(())
     }
 
@@ -77,7 +81,22 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // to its largest tracked container (the builder validates that) and
         // deduplicated: sub-registers of one container collapse to a single
         // slot, and the result wins ties over a clobber.
-        let result_vn = output.map(|vn| self.container_of(&vn));
+        let result_vn = match output.map(|vn| self.container_of(&vn)) {
+            // An intrinsic that writes a memory operand (x86 `sgdt [mem]`) has
+            // its output in ram, which no output slot can carry. A memory
+            // clobber already advances the chain over the write, so drop the
+            // slot rather than fail the function.
+            Some(vn)
+                if abi.clobbers_memory
+                    && !matches!(
+                        vn.addr_space,
+                        rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE
+                    ) =>
+            {
+                None
+            }
+            other => other,
+        };
         let mut clobber_vns: Vec<rsleigh::Vn> = Vec::new();
         for vn in &abi.implicit_writes {
             let c = self.container_of(vn);
@@ -98,7 +117,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 abi.clobbers_memory,
                 terminate,
             )
-            .with_context(|| format!("CallOther {name:?}: implicit writes"))?;
+            .with_context(|| format!("CallOther {name:?}: output and clobber vns"))?;
         self.builder
             .function_mut()
             .side_tables_mut()
