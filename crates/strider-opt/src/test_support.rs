@@ -57,8 +57,8 @@ pub(crate) fn standard_test() -> OptimizerPipeline {
     pipeline
 }
 
-/// An [`crate::OptCtx`] with `stack_global_disjoint` cleared, i.e. forwarding
-/// only what the IR structurally proves.
+/// An [`crate::OptCtx`] with `stack_global_disjoint` cleared. The other
+/// default-on claim, `assume_incoming_args_survive_calls`, stays set.
 pub(crate) fn octx_structural_only() -> crate::OptCtx<'static> {
     let mut ctx = crate::OptCtx::new(None);
     ctx.options.assumptions.stack_global_disjoint = false;

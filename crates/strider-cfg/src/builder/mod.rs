@@ -108,8 +108,10 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// different contexts by construction, so a failure at one site says
     /// nothing about the same address reached from another.
     pub(super) undecodable_seeded: Vec<(Option<NodeIndex>, PcodeInsnAddr)>,
-    /// The ISA mode each region was decoded in, for the conflict check in
-    /// [`Self::explore`].
+    /// The ISA mode each region was decoded in.  Read by the conflict checks
+    /// in [`Self::explore`] and `RegionBuilder::note_isa_mode_clash` (the
+    /// self-wired edges `explore` never sees), and carried across a region
+    /// split.
     pub(super) region_isa_mode: BTreeMap<NodeIndex, u32>,
     /// Addresses reached in two different ISA modes; see
     /// [`Cfg::isa_mode_conflicts`].

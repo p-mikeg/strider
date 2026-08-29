@@ -92,8 +92,8 @@ impl FunctionBuilder {
     /// and no SP anchor. Outputs are `[Control, Memory]`, then the optional
     /// ret-val, then the clobbers, matching `output_vns` order.
     ///
-    /// `terminate` closes the region here and requires `advance_memory`
-    /// false; otherwise control advances and the region stays open. The
+    /// `terminate` closes the region here and ignores `advance_memory`;
+    /// otherwise control advances and the region stays open. The
     /// caller stamps the user-op name and writes the outputs back.
     pub fn build_call_other(
         &mut self,
