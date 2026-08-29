@@ -6,9 +6,9 @@ use super::relocations::apply_elf_relocations_with;
 use super::sections::{ElfSectionLayout, LoadFilter, RegionSource};
 
 /// Maps the file: it must not change on disk while the returned `OwnedElf`
-/// lives. A read past a shortened file is filesystem-dependent (zero-filled
-/// on some, SIGBUS on others), so a truncation is not reliably an error and
-/// the analysis can silently lift zeros.
+/// lives. [`OwnedElf::check_unchanged`] catches a file rebuilt between two
+/// operations, and every region build runs it; a change racing a read in
+/// progress is still a torn read, or SIGBUS past a shortened end.
 ///
 /// # Errors
 ///
@@ -44,7 +44,8 @@ impl OwnedElf {
     }
 
     /// Maps the file rather than reading it, so only the pages an analysis
-    /// touches are ever faulted in.
+    /// touches are ever faulted in. The file's `stat` identity is sampled here
+    /// for [`check_unchanged`](Self::check_unchanged).
     ///
     /// # Errors
     ///
@@ -71,6 +72,24 @@ impl OwnedElf {
     pub fn file(&self) -> object::File<'_> {
         object::File::parse(self.backing.as_slice())
             .expect("bytes were validated as ELF at construction")
+    }
+
+    /// One `stat` of the mapped file, comparing it against what it was when
+    /// [`open`](Self::open) mapped it. Call it at the top of an operation on a
+    /// long-lived handle -- a REPL session that outlives a rebuild -- to get an
+    /// `Err` rather than bytes from a program that is no longer there.
+    ///
+    /// Always `Ok` for bytes that were read or handed in rather than mapped,
+    /// `STRIDER_NO_MMAP=1` included: a copy cannot change underneath.
+    ///
+    /// # Errors
+    ///
+    /// When the file no longer stats, or no longer looks like the file that
+    /// was mapped: a different size, a different modification time, or a
+    /// different inode. A rewrite in place that preserves both size and mtime
+    /// is not detectable this way.
+    pub fn check_unchanged(&self) -> Result<()> {
+        self.backing.check_unchanged()
     }
 
     /// Whether the ARM `EF_ARM_BE8` flag is set: instructions are stored
@@ -111,6 +130,9 @@ impl OwnedElf {
         filter: LoadFilter,
         relocate: bool,
     ) -> Result<Vec<MemRegion>> {
+        // Guarded here rather than in `regions_with`, whose other caller
+        // (`ElfFileMemReader`) guards its own entry.
+        self.check_unchanged()?;
         Ok(self
             .regions_with(
                 &ElfSectionLayout::new(&self.file()),
