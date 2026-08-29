@@ -344,6 +344,7 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         NodeKind::Call,
         NodeKind::Return,
         NodeKind::IndirectBranch,
+        NodeKind::Unreachable,
         NodeKind::CallOther { user_op_id: 0 },
         NodeKind::Load(space),
         NodeKind::Store(space),
@@ -377,6 +378,7 @@ fn legacy_is_cacheable(kind: &NodeKind) -> bool {
         kind,
         NodeKind::Return
             | NodeKind::IndirectBranch
+            | NodeKind::Unreachable
             | NodeKind::Switch
             | NodeKind::Region
             | NodeKind::MemPhi

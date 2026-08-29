@@ -27,7 +27,7 @@ cargo clippy --workspace
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --release   # a debug_assert hides from the debug run
-cargo doc --workspace --no-deps
+RUSTDOCFLAGS='-D rustdoc::broken_intra_doc_links' cargo doc --workspace --no-deps
 cargo +1.91.0 check --workspace --all-targets   # the declared MSRV
 
 # Main demo: reads the committed fixtures/out/x86/arithmetic.elf::add and dumps
@@ -74,8 +74,9 @@ Generic:
   optimizer / lifter / reader depend on it one-way without back-edging through
   the ELF reader.
 - `vn-container` -- varnode container geometry (`vn_contains`,
-  `largest_container_in`, ...) over `rsleigh` alone, so ir / lift / opt /
-  pattern share one "which tracked varnode contains this one".
+  `largest_container_in`, ...) over `rsleigh` and `rustc-hash`, with no
+  workspace dependency, so ir / lift / opt / pattern share one "which tracked
+  varnode contains this one".
 
 Strider:
 
@@ -110,7 +111,7 @@ strider-ir         -> strider-graph, strider-target, read-only-memory, dot,
                       entity-utils, graph-algorithms, vn-container
 strider-reader     -> read-only-memory
 strider-lift       -> strider-cfg, strider-ir, strider-target,
-                      graph-algorithms, vn-container, petgraph
+                      graph-algorithms, vn-container
 strider-pattern    -> strider-ir, strider-graph, vn-container
 strider-opt        -> strider-cfg, strider-ir, strider-pattern, strider-target,
                       entity-utils, graph-algorithms, vn-container
@@ -120,11 +121,13 @@ strider-py         -> orchestrator, opt, cfg, reader, ir, target, pattern, dot
 strider-ir-test-utils (dev) -> strider-ir, strider-target
 ```
 
-Production dependencies only. Leaves (no workspace deps): `dot`,
+Workspace production dependencies only. Leaves (no workspace deps): `dot`,
 `entity-utils`, `read-only-memory`, `strider-graph`, `strider-target`,
 `vn-container`. Notably `strider-cfg` is IR-free, `strider-reader` depends only
 on `read-only-memory`, and the orchestrator reaches `strider-pattern` and `dot`
-only from its tests and examples.
+only from its tests and examples. External `petgraph` is a production
+dependency of `strider-cfg`, `strider-graph`, `strider-ir`, `strider-lift`,
+`strider-opt` and `strider-pattern`.
 
 Dev-dependencies are not in that graph, and are not a DAG:
 `strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it.
@@ -215,11 +218,14 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
     `Arc<AtomicUsize>`, not an `Rc<Cell<_>>`. `JoinPredicateFn` is
     `Arc<... + Send + Sync>`: `JoinConstraint` is `Clone`, so the predicate is
     shared rather than duplicated.
-  - `strider-py`: a wrapper is `#[pyclass(unsendable)]` only when it must be.
-    `Lifter` is pinned because `Sleigh` is thread-affine (see below), and
-    `BufferReader` / `_LoadedElf` because their `Rc` is what makes a clone
-    share the region memo. Everything else moves, so a REPL or notebook that
-    introspects off-thread does not abort the interpreter.
+  - `strider-py`: `OptimizerPipeline` is the only `#[pyclass(unsendable)]`.
+    `Lifter` moves and drops anywhere but decodes only on its creating thread,
+    which `ThreadPinned` enforces with a catchable `StriderError`, because
+    `Sleigh` is thread-affine (see below). `BufferReader` is an
+    `Arc<Mutex<_>>`, so a clone shares the region memo and the wrapper is
+    still `Send`; `_LoadedElf` holds two of those and a `Mutex` symbol table.
+    Everything else moves, so a REPL or notebook that introspects off-thread
+    does not abort the interpreter.
 - `Sleigh::lift_one(&mut self)` is NOT stateless: it carries context-register
   state (ARM/Thumb, x86 segment, MIPS16), so per-region decoding must stay
   sequential (`RegionBuilder::build`).
