@@ -213,17 +213,23 @@ pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
 /// A PowerPC trap that fires on every relation, i.e. `BUG()`.
 ///
 /// `tw` / `twi` / `td` / `tdi` carry a 5-bit TO mask of the comparisons that
-/// trap, and the sla passes it as the op's first operand. All five bits set
-/// traps unconditionally and control does not continue; any narrower mask is a
-/// conditional check whose fall-through is live, which is why the table classes
-/// the whole family as `MEM_CLOBBER` rather than no-return.
+/// trap, and the sla passes it as the op's first operand. Signed `LT | GT | EQ`
+/// and unsigned `LTU | GTU | EQ` are each a trichotomy, so a mask covering
+/// either one always fires and the fall-through is dead. Seven of the 32 masks
+/// qualify, not just all-bits-set; the rest are conditional checks whose
+/// fall-through is live, which is why the table classes the family as
+/// `MEM_CLOBBER` rather than no-return.
 #[must_use]
 pub fn trap_is_unconditional(name: &str, to_mask: Option<u128>) -> bool {
-    const TO_ALL_RELATIONS: u128 = 0x1f;
+    const SIGNED_TRICHOTOMY: u128 = 0x1c;
+    const UNSIGNED_TRICHOTOMY: u128 = 0x07;
     matches!(
         name,
         "trapWord" | "trapDoubleWord" | "trapDoubleWordImmediate"
-    ) && to_mask == Some(TO_ALL_RELATIONS)
+    ) && to_mask.is_some_and(|to| {
+        to & SIGNED_TRICHOTOMY == SIGNED_TRICHOTOMY
+            || to & UNSIGNED_TRICHOTOMY == UNSIGNED_TRICHOTOMY
+    })
 }
 
 const PURE: CallOtherClass = CallOtherClass::PURE;
@@ -2419,17 +2425,20 @@ mod tests {
 
 #[cfg(test)]
 mod trap_tests {
-    /// TO names the comparisons that trap; only all five bits set is the
-    /// unconditional `BUG()` form whose fall-through is dead.
+    /// TO names the comparisons that trap. Bits are LT|GT|EQ|LTU|GTU from
+    /// 0x10 down, so a mask covering either trichotomy always fires.
     #[test]
-    fn only_an_all_relations_mask_is_unconditional() {
+    fn a_mask_covering_either_trichotomy_is_unconditional() {
         use super::trap_is_unconditional as t;
-        assert!(t("trapWord", Some(0x1f)));
-        assert!(t("trapDoubleWord", Some(0x1f)));
-        assert!(t("trapDoubleWordImmediate", Some(0x1f)));
-        // A narrower mask is a conditional bounds check.
+        let unconditional: Vec<u128> = (0..32).filter(|&to| t("trapWord", Some(to))).collect();
+        assert_eq!(unconditional, [0x07, 0x0f, 0x17, 0x1c, 0x1d, 0x1e, 0x1f]);
+        // 0x0c is `twgei` (GT|EQ), a live bounds check; 0x1c adds LT and
+        // completes signed LT|GT|EQ, which cannot all be false.
         assert!(!t("trapWord", Some(0x0c)));
-        assert!(!t("trapWord", Some(0x1e)));
+        assert!(t("trapWord", Some(0x1c)));
+        for name in ["trapWord", "trapDoubleWord", "trapDoubleWordImmediate"] {
+            assert!(t(name, Some(0x1f)));
+        }
         // A non-constant operand cannot be proven unconditional.
         assert!(!t("trapWord", None));
         // Not every op named like a trap is one of these.
