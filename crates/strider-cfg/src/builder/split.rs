@@ -116,6 +116,9 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
             {
                 continue;
             }
+            // `RegionGraph` is a `StableDiGraph`: `remove_edge` frees the slot
+            // into a free list rather than swap-removing, so `moved` stays valid
+            // across the removal and the seat keeps pointing at the right edge.
             let moved = self.region_graph.add_edge(parent_id, first_region, ());
             if let Some(seated) = self.non_boundary_seats.remove(&edge_id) {
                 self.non_boundary_seats.insert(moved, seated);

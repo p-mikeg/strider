@@ -76,6 +76,11 @@ pub struct AssumptionOptions {
     /// Each address must genuinely satisfy that contract.  Listing one that can
     /// return an existing or interior pointer (`realloc`, `free`, an
     /// aligned-alloc taking a pointer) produces unsound Disjoint verdicts.
+    ///
+    /// A non-empty set also forwards a stack spill across a listed call when the
+    /// frame is provably private, so it carries the same two gaps
+    /// [`escape_analysis`](Self::escape_analysis) documents, without that knob
+    /// being set.
     pub noalias_allocators: rustc_hash::FxHashSet<u64>,
     /// When the function's frame is provably private (no stack address escapes
     /// to any callee), forward a spill `Load` across a `Call` and step it past
