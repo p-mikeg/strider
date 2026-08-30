@@ -112,7 +112,7 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
     let default_total = default_ret.len() + default_clob.len();
     assert!(
         tagged_outputs < default_total,
-        "x86_64_all_preserving override tagged outputs ({}) must be strictly smaller than \
+        "preserves_all override tagged outputs ({}) must be strictly smaller than \
          the function-default total (ret_vals={} + clobbers={} = {})",
         tagged_outputs,
         default_ret.len(),
@@ -141,7 +141,7 @@ fn resolved_override_tail_call_passes_whole_graph_validate() {
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
     let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
-    // all_preserving differs from SystemV in its (empty) clobber set but
+    // `preserves_all` differs from SystemV in its (empty) clobber set but
     // keeps the same ret-val regs, so the spliced Call's clobber group
     // shrinks while the Return's ret-val arity stays at the function default.
     overrides.insert(call_target, TargetCC::x86_64_systemv().preserves_all());

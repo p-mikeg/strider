@@ -150,8 +150,9 @@ value is a `strider.sleigh.CallOtherAbi`: one of the four footprint-free classes
 `CallOtherAbi.noop()` / `.pure()` / `.mem_clobber()` / `.no_return()`, or
 
 ```python
+sl = strider.sleigh.Sleigh(sleigh.SleighArch.x86_64(), mem)
 strider.sleigh.CallOtherAbi.custom(
-    sl,                           # a Sleigh; resolves the register names here and now
+    sl,                              # resolves the register names here and now
     implicit_reads=["RAX", "RDI"],   # read beyond the p-code operands
     implicit_writes=["RAX"],         # written beyond the p-code result
     clobbers_memory=True,
@@ -473,8 +474,7 @@ p.var(c).value_ty("i64")                # ... or a captured value's type
 function.find_all(pat)                       # every match, deduplicated
 function.find_all(pat, ignore_casts=True)    # CastMask.all(); default False. A
                                              # CastMask picks a subset.
-function.find_all([pat1, pat2], constraints=[k.dominates(a, b)])   # a join
-                                                                   # (see below)
+function.find_all([pat1, pat2], constraints=[...])   # a join; constraints in 7
 function.find_unique(pat)                     # the single match, else StriderError
 function.find_unique_value(pat, off)          # the single captured VALUE, or None
 ```
@@ -541,7 +541,8 @@ for hit in function.find_all(p.load(addr=p.int_add(p.anything(), p.int_const(off
 
 Every reader also exists as a `Match` method taking the capture
 (`hit.uint(off)`, `hit.node(base)`), which reads better when the capture is used
-once inline.
+once inline. `pattern.CaptureKey` is the type alias for that argument, a
+`Capture` or its name, and `.capture()` takes it too.
 
 ---
 
@@ -654,9 +655,9 @@ on the entire graph instead, and seeds the toolbar's **whole** toggle so the
 page can switch back.
 
 Drag with the mouse or press the arrow keys to pan (shift for a longer step);
-ctrl+wheel or `+` / `-` zooms about the pointer, `f` fits the graph to the
-window, `0` returns to 100%. A drag that ends over a node pans instead of
-re-centering on it. The toolbar drives that render:
+ctrl+wheel zooms about the pointer and `+` / `-` about the window centre, `f`
+fits the graph to the window, `0` returns to 100%. A drag that ends over a node
+pans instead of re-centering on it. The toolbar drives that render:
 **depth** (hops from the centered node), **hub cap** (a node with more consumers
 than this is drawn but not expanded), **max nodes**, **+prod** (count a node's
 inputs toward the hub cap too) and **pretty** (inlined constants, resolved
@@ -755,9 +756,9 @@ rather than a loss -- an ARM `pop {pc}` epilogue lands here, not in
 other two; `isa_mode_conflicts()` is structurally always empty outside the four
 ARM and four MIPS presets, the only ones with an ISA-mode context variable to
 disagree about. The first, third and fourth accumulate across resolution
-rounds, so a later round cannot launder an earlier loss; `unverified_seeded_sites` is derived
-once from the final CFG. The Rust side folds the same four into
-`AnalyzeResult::is_complete()`.
+rounds, so a later round cannot launder an earlier loss;
+`unverified_seeded_sites` is derived once from the final CFG. `is_complete()`
+folds all four into one answer.
 
 `CfgOptions` (passed via `LifterOptions.cfg` or `Lifter.build_cfg`) tunes CFG
 construction:
@@ -803,8 +804,12 @@ default and reachable on `.backtrace`, so a sweep can log it without
 re-running:
 
 ```python
+import logging
+
+log = logging.getLogger(__name__)
+
 try:
-    prog.analyze("f")
+    prog.analyze("no_such_function")
 except strider.StriderError as e:
     log.error("%s", e)            # the one line you can act on
     log.debug("%s", e.backtrace)  # frames, when you are chasing strider itself
