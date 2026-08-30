@@ -213,7 +213,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // scalar-FP write (AArch64 `fmov s0`, x86 VEX `vmovss`) rather than
         // preserving it (legacy SSE `movss`).  Sleigh models the difference
         // itself, emitting the zeroing as separate explicit pcode ops:
-        //   AArch64 `fmov s0,w0` ->  s0 = Copy(w0), then three zero-writes
+        //   AArch64 `fmov s0,w0` ->  s0 = Copy(w0), then four zero-writes
         //                              tiling the rest of the 32-byte `z0`
         //   x86 VEX  `vmovss`    ->  XMM0_Da = ...; ZMM0 = IntZext(XMM0)
         // Those arrive here as ordinary sub-register writes.

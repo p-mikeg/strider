@@ -182,6 +182,10 @@ call ends the window early and a load from a slot the next callee owns can
 forward across that callee. Both hold for ordinary compiler output; leave the
 knob off for hand-written or obfuscated code.
 
+A non-empty `noalias_allocators` carries the same two gaps without
+`escape_analysis` being set: it forwards a stack spill across a listed call
+whenever the frame is provably private.
+
 ### ElfLifter metadata
 
 ```python
@@ -609,16 +613,21 @@ match but do not build, so spell the canonical shape instead.
 ```python
 from strider import template as t
 
-# Fold `x + 0` to `x`. `count` is how many times it fired.
+# Strength-reduce `x * 4` to `x << 2`. `count` is how many times it fired.
 x = p.Capture("x")
-count = function.rewrite(find=p.int_add(p.var(x), p.int_const(0)), replace=t.var(x))
+count = function.rewrite(find=p.int_mul(p.var(x), p.int_const(4)),
+                         replace=t.int_shl(t.var(x), t.int_const(2)))
 
 # Several rules in one pass, applied round-robin at every node:
 function.rewrite_all([
-    (p.int_add(p.var(x), p.int_const(0)), t.var(x)),
-    (p.int_mul(p.var(x), p.int_const(1)), t.var(x)),
+    (p.int_mul(p.var(x), p.int_const(4)), t.int_shl(t.var(x), t.int_const(2))),
+    (p.int_mul(p.var(x), p.int_const(8)), t.int_shl(t.var(x), t.int_const(3))),
 ])
 ```
+
+An algebraic identity is the wrong thing to test a rule against: `analyze`
+returns an optimized graph, so `x + 0` and `x * 1` are already gone and the
+rule reports 0.
 
 Node ids are invalidated by a rewrite (like `optimize`), so re-fetch `Node`
 handles afterward.

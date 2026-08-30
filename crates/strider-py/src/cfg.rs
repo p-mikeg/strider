@@ -255,8 +255,8 @@ impl PyCfg {
     /// Not unresolved (you asserted the answer), but nothing checked it.
     /// Seating a seed changes the CFG the classifier reads, so a stale or wrong
     /// seed can stop it deriving and take the site's real arms with it. These
-    /// are the sites where that cannot be ruled out. Always empty for a CFG
-    /// from `build_cfg`, which runs no resolver.
+    /// are the sites where that cannot be ruled out. For a `build_cfg` result it
+    /// is every site you seeded, since no classifier ran to check any of them.
     fn unverified_seeded_sites(&self) -> Vec<u64> {
         self.reports.unverified_seeded.clone()
     }

@@ -577,7 +577,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// as `Unconditional` and edges to it.
     ///
     /// A stretch of machine instructions lifting to zero pcode ops (AArch64
-    /// `nop` / `paciasp`, ARM `bti`, x86 `nop` / `pause`, alignment padding)
+    /// `nop` / `paciasp` / `bti`, x86 `nop` / `pause`, alignment padding)
     /// leaves `self.insns` empty when the fall-through fires, and the empty
     /// region owning `self.start_addr` is still materialised: that address can
     /// itself be a branch or switch TARGET, and a target resolves to the region
@@ -694,7 +694,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     ///
     /// Gated on `cur_addr` having advanced past the region start: a run of
     /// zero-pcode-op instructions (x86 `nop`, AArch64 `paciasp` / `autiasp`,
-    /// ARM `bti`) advances `cur_addr` without ever appending to `self.insns`,
+    /// AArch64 `bti`) advances `cur_addr` without ever appending to `self.insns`,
     /// so a gate on `insns.is_empty()` would let such a prefix walk past the
     /// bound and absorb the next function's first real instruction.
     fn detect_fallthrough_oob_tail_call(&mut self, cur_addr: PcodeInsnAddr) -> Result<()> {
