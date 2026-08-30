@@ -41,6 +41,17 @@ fn all_same_width(
     })
 }
 
+/// Whether a coefficient computed in `u128` carries `ty`'s modulus.
+///
+/// `bit_mask_u128` saturates at 128 bits, so `get_uint` still answers `Some` at
+/// I256/I512 and the coefficient arithmetic would run in the `u128` modulus
+/// rather than the type's: an I256 `C = 2^128 - 1` would give `C + 1 == 0`
+/// instead of `2^128`. The shift forms get the same bound from
+/// [`shift_in_range`].
+fn coefficient_fits_carrier(ty: strider_ir::node::ValueType) -> bool {
+    ty.bit_width() <= 128
+}
+
 /// Whether `cap` binds a shift count small enough to build `2^C` from.
 ///
 /// A count is an ordinary constant of the shifted type, so an `I64` shift can
@@ -72,8 +83,9 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
 
     // x + x*C -> x*(C + 1)
     let add_self_mul = rewrite_rule(
-        int_add(var(x), int_mul(var(x), int_const(c1)))
-            .when_match(move |edit, ty, binds| all_same_width(edit, binds, ty, &[x, c1])),
+        int_add(var(x), int_mul(var(x), int_const(c1))).when_match(move |edit, ty, binds| {
+            coefficient_fits_carrier(ty) && all_same_width(edit, binds, ty, &[x, c1])
+        }),
         template::int_mul(var(x), int_const_with!([c1: uint] => c1.wrapping_add(1))),
     );
 
@@ -83,7 +95,9 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             int_mul(var(x), int_const(c1)),
             int_mul(var(x), int_const(c2)),
         )
-        .when_match(move |edit, ty, binds| all_same_width(edit, binds, ty, &[x, c1, c2])),
+        .when_match(move |edit, ty, binds| {
+            coefficient_fits_carrier(ty) && all_same_width(edit, binds, ty, &[x, c1, c2])
+        }),
         template::int_mul(
             var(x),
             int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
@@ -103,8 +117,11 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
 
     // x - x*C -> x*(1 - C)
     let sub_self_mul = rewrite_rule(
-        int_add(var(x), int_neg(int_mul(var(x), int_const(c1))))
-            .when_match(move |edit, ty, binds| all_same_width(edit, binds, ty, &[x, c1])),
+        int_add(var(x), int_neg(int_mul(var(x), int_const(c1)))).when_match(
+            move |edit, ty, binds| {
+                coefficient_fits_carrier(ty) && all_same_width(edit, binds, ty, &[x, c1])
+            },
+        ),
         template::int_mul(
             var(x),
             int_const_with!([c1: uint] => 1u128.wrapping_sub(c1)),
@@ -117,7 +134,9 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             int_mul(var(x), int_const(c1)),
             int_neg(int_mul(var(x), int_const(c2))),
         )
-        .when_match(move |edit, ty, binds| all_same_width(edit, binds, ty, &[x, c1, c2])),
+        .when_match(move |edit, ty, binds| {
+            coefficient_fits_carrier(ty) && all_same_width(edit, binds, ty, &[x, c1, c2])
+        }),
         template::int_mul(
             var(x),
             int_const_with!([c1: uint, c2: uint] => c1.wrapping_sub(c2)),

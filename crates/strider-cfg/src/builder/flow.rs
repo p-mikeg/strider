@@ -4,7 +4,7 @@
 //! A sla marks some context variables as *flowing*: the ISA mode (ARM `TMode`,
 //! ppc `vle`) plus per-instruction decode internals (condition eval, IT-block
 //! state, register-list iteration, x86 operand/address size) Sleigh flows
-//! along straight-line code. x86-64 flows 43 of them, so snapshot / reset /
+//! along straight-line code. x86-64 flows dozens of them, so snapshot / reset /
 //! restore do real work on every arch; only the mode-bit helpers are
 //! ARM/MIPS-specific, and nothing wires them to ppc `vle`.
 //!
