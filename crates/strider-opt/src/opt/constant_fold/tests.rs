@@ -2309,3 +2309,180 @@ fn factor_declines_an_out_of_range_shift() -> Result<()> {
     );
     Ok(())
 }
+
+/// Coefficient of `base` in a value built only from `base`, integer constants,
+/// `Add` / `Mul` / `Neg` / `ShiftLeft`, evaluated in `u128` and left unmasked.
+fn linear_coeff(
+    fg: &strider_ir::Function,
+    val: strider_ir::Value,
+    base: strider_ir::Value,
+) -> Option<u128> {
+    if val == base {
+        return Some(1);
+    }
+    let node = fg.producer(val);
+    let ins = fg.node_inputs(node);
+    match fg.node_kind(node) {
+        NodeKind::IntConst(_) => (fg.int_const_u128(val) == Some(0)).then_some(0),
+        NodeKind::IntUnaryOp(IntUnaryOp::Neg) => {
+            Some(0u128.wrapping_sub(linear_coeff(fg, ins[0], base)?))
+        }
+        NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
+            Some(linear_coeff(fg, ins[0], base)?.wrapping_add(linear_coeff(fg, ins[1], base)?))
+        }
+        NodeKind::IntBinaryOp(IntBinaryOp::Mul) => {
+            let (k, other) = match fg.int_const_u128(ins[0]) {
+                Some(k) => (k, ins[1]),
+                None => (fg.int_const_u128(ins[1])?, ins[0]),
+            };
+            Some(linear_coeff(fg, other, base)?.wrapping_mul(k))
+        }
+        NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => {
+            let n = fg.int_const_u128(ins[1])?;
+            let c = linear_coeff(fg, ins[0], base)?;
+            Some(if n >= 128 { 0 } else { c << n })
+        }
+        _ => None,
+    }
+}
+
+/// The four non-shift factoring forms, as `(c1, c2)` pairs of coefficients on
+/// the shared operand.
+#[derive(Clone, Copy, Debug)]
+enum FactorForm {
+    AddSelf,
+    AddMul,
+    SubSelf,
+    SubMul,
+}
+
+/// Builds one factoring shape over a base of type `ty`, returning the function
+/// and the base value. At `I1` the base is a comparison, the only non-constant
+/// one-bit value a test can produce.
+fn factor_shape(
+    form: FactorForm,
+    ty: ValueType,
+    c1: u128,
+    c2: u128,
+) -> Result<(strider_ir::Function, strider_ir::Value)> {
+    let byte_size = u32::try_from(if ty == ValueType::I1 {
+        8
+    } else {
+        ty.byte_size()
+    })?;
+    let mut captured = None;
+    let (fg, x) = make_fn_with_var(reg_vn(0x1000, byte_size), |b, x| {
+        let base = if ty == ValueType::I1 {
+            let zero = b.build_int_const(0u64, ValueType::I64)?;
+            let cmp = b.build_int_cmp_operation(x, zero, IntCmpOp::Equal, ValueType::I64)?;
+            captured = Some(cmp);
+            cmp
+        } else {
+            x
+        };
+        let k1 = b.build_int_const(c1, ty)?;
+        let m1 = b.build_int_binary_operation(base, k1, IntBinaryOp::Mul, ty)?;
+        match form {
+            FactorForm::AddSelf => b.build_int_binary_operation(base, m1, IntBinaryOp::Add, ty),
+            FactorForm::SubSelf => b.build_sub_as_add_neg(base, m1, ty),
+            FactorForm::AddMul | FactorForm::SubMul => {
+                let k2 = b.build_int_const(c2, ty)?;
+                let m2 = b.build_int_binary_operation(base, k2, IntBinaryOp::Mul, ty)?;
+                match form {
+                    FactorForm::AddMul => {
+                        b.build_int_binary_operation(m1, m2, IntBinaryOp::Add, ty)
+                    }
+                    _ => b.build_sub_as_add_neg(m1, m2, ty),
+                }
+            }
+        }
+    })?;
+    let base = captured.unwrap_or(x);
+    Ok((fg, base))
+}
+
+/// Edge coefficients at `bits`: 0, 1, 2, the width's max and max-1, and its
+/// sign bit.
+fn edge_coefficients(bits: usize) -> Vec<u128> {
+    let mask = if bits >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << bits) - 1
+    };
+    let mut cs = vec![0, 1, 2, mask, mask.wrapping_sub(1), 1u128 << (bits - 1)];
+    cs.iter_mut().for_each(|c| *c &= mask);
+    cs.sort_unstable();
+    cs.dedup();
+    cs
+}
+
+/// The four non-shift factoring rules compute their coefficient in `u128`.
+/// Brute-forced at every width that carrier holds: whatever chain of rules
+/// fires, the folded value must stay the same multiple of the base it started
+/// as, computed independently in the width's modulus.
+#[test]
+fn factor_coefficients_are_exact_at_every_carrier_width() -> Result<()> {
+    use FactorForm::{AddMul, AddSelf, SubMul, SubSelf};
+    let widths = [
+        ValueType::I1,
+        ValueType::I8,
+        ValueType::I16,
+        ValueType::I24,
+        ValueType::I32,
+        ValueType::I64,
+        ValueType::I80,
+        ValueType::I128,
+    ];
+    for ty in widths {
+        let bits = ty.bit_width();
+        let mask = if bits >= 128 {
+            u128::MAX
+        } else {
+            (1u128 << bits) - 1
+        };
+        for &c1 in &edge_coefficients(bits) {
+            for &c2 in &edge_coefficients(bits) {
+                for form in [AddSelf, AddMul, SubSelf, SubMul] {
+                    let expected = match form {
+                        AddSelf => c1.wrapping_add(1),
+                        AddMul => c1.wrapping_add(c2),
+                        SubSelf => 1u128.wrapping_sub(c1),
+                        SubMul => c1.wrapping_sub(c2),
+                    } & mask;
+                    let (mut fg, base) = factor_shape(form, ty, c1, c2)?;
+                    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+                    let got = linear_coeff(&fg, return_value(fg.graph())?, base)
+                        .map(|k| k & mask)
+                        .ok_or_else(|| {
+                            anyhow!("{form:?} at {ty:?} with ({c1:#x}, {c2:#x}) left a shape that is no multiple of the base")
+                        })?;
+                    assert_eq!(got, expected, "{form:?} at {ty:?} with ({c1:#x}, {c2:#x})");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Past the `u128` carrier `get_uint` still answers `Some` (`bit_mask_u128`
+/// saturates), so without a width bound of their own the four non-shift forms
+/// would compute the coefficient in the wrong modulus. They must decline.
+#[test]
+fn factor_declines_past_the_u128_carrier() -> Result<()> {
+    use FactorForm::{AddMul, AddSelf, SubMul, SubSelf};
+    for ty in [ValueType::I256, ValueType::I512] {
+        for form in [AddSelf, AddMul, SubSelf, SubMul] {
+            // 2^128 - 1 is the coefficient that exposes the wrong modulus:
+            // `C + 1` is 2^128 at these widths and 0 in the carrier.
+            let (mut fg, _base) = factor_shape(form, ty, u128::MAX, 3)?;
+            run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+            let root = fg.producer(return_value(fg.graph())?);
+            assert!(
+                matches!(fg.node_kind(root), NodeKind::IntBinaryOp(IntBinaryOp::Add)),
+                "{form:?} at {ty:?} folded to {:?}; the coefficient does not fit the u128 the rule computes in",
+                fg.node_kind(root)
+            );
+        }
+    }
+    Ok(())
+}
