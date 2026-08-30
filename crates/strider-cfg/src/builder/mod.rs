@@ -331,11 +331,17 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             self.max_shadowed_span = self.max_shadowed_span.max(shadowed_span);
             self.shadowed_starts.insert(shadowed_start);
         }
-        let end =
-            PcodeInsnAddr::at_machine_start(start_addr.machine_addr.addr.saturating_add(span));
+        // Saturating here would make `end` compare equal to (or below) `start_addr`
+        // for a region at the top of the address space, and `range` panics on an
+        // empty exclusive pair. Overflow means "to the end of memory", so the
+        // shadow check still runs rather than being skipped.
+        let end = match start_addr.machine_addr.addr.checked_add(span) {
+            Some(end) => Bound::Excluded(PcodeInsnAddr::at_machine_start(end)),
+            None => Bound::Unbounded,
+        };
         if self
             .start_addr_to_region_id
-            .range((Bound::Excluded(start_addr), Bound::Excluded(end)))
+            .range((Bound::Excluded(start_addr), end))
             .next()
             .is_some()
         {
