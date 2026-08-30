@@ -54,6 +54,8 @@ _EM_AARCH64 = 183
 
 # ARM `e_flags` bit for BE8: instructions little-endian, data big-endian.
 _EF_ARM_BE8 = 0x0080_0000
+_EF_ARM_ABI_FLOAT_SOFT = 0x0000_0200
+_EF_ARM_ABI_FLOAT_HARD = 0x0000_0400
 
 
 class _ElfHeader:
@@ -95,7 +97,9 @@ def _arch_and_cc_for_elf(
     this ELF. Raises `ValueError` for an unsupported e_machine.
 
     ARM defaults to little-endian `arm`; a big-endian image is `arm_be_kernel`
-    when it flags BE8 and `arm_be` otherwise. A Thumb image is loaded by
+    when it flags BE8 and `arm_be` otherwise. Its convention follows the
+    `e_flags` float-ABI bit: `arm_aapcs_soft` for a soft/softfp image,
+    `arm_aapcs` otherwise. A Thumb image is loaded by
     passing an explicit `arch=SleighArch.arm_thumb()`, since the ELF header
     does not distinguish a Thumb build from an ARM one.
     """
@@ -116,6 +120,13 @@ def _arch_and_cc_for_elf(
             arch = SleighArch.arm_be_kernel()
         else:
             arch = SleighArch.arm_be()
+        # EABI float ABI, `e_flags` bits 9/10. A soft or softfp image passes
+        # floats in r0-r3, so hard-float's d0-d7 would be phantom carriers.
+        # Neither bit set (pre-EABI5 objects, hand-written asm) falls to
+        # hard-float, matching the toolchain default for every Linux
+        # arm-linux-gnueabihf target and this repo's own fixtures.
+        if header.e_flags & _EF_ARM_ABI_FLOAT_SOFT:
+            return arch, CallingConvention.arm_aapcs_soft()
         return arch, CallingConvention.arm_aapcs()
     if em == _EM_AARCH64:
         arch = SleighArch.aarch64() if le else SleighArch.aarch64be()

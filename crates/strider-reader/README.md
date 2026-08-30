@@ -33,17 +33,35 @@ headers rather than bytes: querying a few functions of a large shared object
 faults in only the pages they read. Bytes handed in from elsewhere
 (`MemRegion::new`) stay an owned buffer.
 
-The file must not change on disk while it is mapped. `load_elf` samples the
-file's `stat` identity (size, mtime, inode), `OwnedElf::check_unchanged`
-re-checks it, and both `OwnedElf::regions` and every `ElfFileMemReader`
-constructor run that check before cutting regions, so a binary rebuilt between
-two operations is an `Err` naming the file rather than bytes from a program
-that is no longer there. A long-lived handle -- a REPL session -- should call
-`check_unchanged` itself at the top of an operation. It is one `stat`; the read
-path is untouched. A change racing a read already in progress is still a torn
-read, or SIGBUS past a shortened end, as is a rewrite in place that preserves
-both size and mtime. `STRIDER_NO_MMAP=1` reads the file instead, which cannot
-tear and skips the check.
+The file must not change on disk while it is mapped. `load_elf` stats the file
+it just mapped and holds the fd, so the check follows that inode rather than the
+path.
+
+Checked at the top of an operation, one `stat` each: `OwnedElf::regions`,
+`OwnedElf::checked_file` and every `ElfFileMemReader` constructor run it
+themselves, and `check_unchanged` on `OwnedElf`, `MemRegion`,
+`MemRegionsLookupTable` and `ElfFileMemReader` runs it on demand, one `stat`
+per mapping rather than per region. A binary rebuilt between two operations is
+then an `Err` naming the file, not bytes from a program that is no longer there.
+A long-lived handle -- a REPL session -- should call `check_unchanged` at the top
+of its own operations.
+
+Not checked, and not checkable:
+
+- Every `read`. They are syscall-free and stay that way, so a change landing
+  after an operation's check and before its reads is still a torn read, or a
+  SIGBUS past a shortened end that kills the process uncatchably.
+- `OwnedElf::file`, which parses the mapping and faults on a shortened one.
+  `checked_file` is the guarded way in.
+- A rewrite in place that preserves the size and lands within the same second:
+  the identity is size plus mtime at whole-second granularity (drvfs truncates
+  mtime, so a finer comparison reports a change on identical bytes).
+- A different file moved onto the path. The mapped inode is untouched, its bytes
+  are what was mapped, and reporting it would break analysing a build-system
+  temp file that gets replaced or unlinked mid-run.
+
+`STRIDER_NO_MMAP=1` reads the file instead: it costs the file's size in memory,
+cannot tear, and needs no check at all.
 
 ET_EXEC / ET_DYN load from PT_LOAD program headers. Everything else, ET_REL
 above all, loads from sections, whose pre-link `sh_addr` is typically 0 for all
