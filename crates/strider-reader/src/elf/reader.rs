@@ -102,6 +102,17 @@ impl ElfFileMemReader {
         self.writable.iter().any(|&(lo, hi)| addr < hi && lo < end)
     }
 
+    /// Re-stat the mapping this reader serves. Call it at the top of an
+    /// operation that will read through it; the `read` impls themselves are
+    /// syscall-free and stay that way.
+    ///
+    /// # Errors
+    ///
+    /// When the mapped file changed since it was mapped.
+    pub fn check_unchanged(&self) -> Result<()> {
+        self.lookup.check_unchanged()
+    }
+
     /// # Errors
     ///
     /// When the bytes do not parse as ELF, plus anything

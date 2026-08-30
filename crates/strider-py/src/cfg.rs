@@ -208,6 +208,12 @@ enum CfgDotResult {
     Dot(String),
 }
 
+fn mismatched_dot_result() -> PyErr {
+    into_strider_err(anyhow::anyhow!(
+        "internal error: the dot renderer returned a result of the wrong kind"
+    ))
+}
+
 #[pymethods]
 impl PyCfg {
     /// Machine addresses this CFG reached carrying two different ISA modes.
@@ -302,7 +308,7 @@ impl PyCfg {
                 .map(|_| None),
             None => match self.dispatch_dot(py, style, CfgDotOp::DotStr)? {
                 CfgDotResult::Dot(s) => Ok(Some(s)),
-                _ => Ok(None),
+                CfgDotResult::Html(_) | CfgDotResult::Unit => Err(mismatched_dot_result()),
             },
         }
     }
@@ -324,7 +330,7 @@ impl PyCfg {
                 .map(|_| None),
             None => match self.dispatch_dot(py, style, CfgDotOp::HtmlStr)? {
                 CfgDotResult::Html(s) => Ok(Some(s)),
-                _ => Ok(None),
+                CfgDotResult::Dot(_) | CfgDotResult::Unit => Err(mismatched_dot_result()),
             },
         }
     }
