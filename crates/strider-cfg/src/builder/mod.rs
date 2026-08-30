@@ -475,12 +475,20 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             self.interior_branch_targets.push(addr);
             return Ok(());
         };
-        let before = targets.len();
-        targets.retain(|t| t.addr != addr.machine_addr.addr);
+        // One arm per seating, not every arm at the address: `known_targets` is
+        // caller-supplied and undeduped, so a repeated address enqueues one work
+        // item per copy, and dropping them all at the first would leave the rest
+        // nothing to consume and read as the no-arm violation below.
+        let seated = targets
+            .iter()
+            .position(|t| t.addr == addr.machine_addr.addr);
         debug_assert!(
-            targets.len() != before,
+            seated.is_some(),
             "seated interior target {addr:?} names no arm of the Switch that routed it",
         );
+        if let Some(i) = seated {
+            targets.remove(i);
+        }
         if targets.is_empty() {
             region.terminator = super::types::RegionTerminator::UnresolvedIndirectBranch {
                 target_vn: *target_vn,
@@ -954,6 +962,73 @@ mod tests {
         let cfg = build_cfg(bytes, base, &opts)
             .expect("a table target off an instruction boundary must not fail the build");
         assert_every_switch_target_has_an_arm(&cfg);
+    }
+
+    /// The same address twice in one caller-supplied table: `known_targets` is
+    /// public API and the Python conversion does not dedup, so both copies
+    /// enqueue and both reach the interior-target seat.
+    #[test]
+    fn duplicated_switch_target_interior_to_a_later_decoded_region_still_builds() {
+        let base = 0x1000u64;
+        let mut bytes = vec![0xff, 0xe0]; // 0x1000: jmp rax
+        bytes.extend_from_slice(&MOVABS_RAX_0); // 0x1002..0x100b
+        bytes.push(0x90); // 0x100c: nop
+        bytes.push(0xc3); // 0x100d: ret
+
+        let branch = PcodeInsnAddr {
+            machine_addr: base.into(),
+            insn_index: branch_indirect_index(&bytes, base, base),
+        };
+        let mut known_targets = rustc_hash::FxHashMap::default();
+        known_targets.insert(
+            branch,
+            crate::ResolvedTargets::Multiple(vec![0x1005.into(), 0x1005.into(), 0x1002.into()]),
+        );
+        let opts = crate::CfgOptions {
+            known_targets,
+            ..crate::CfgOptions::default()
+        };
+
+        let cfg = build_cfg(bytes, base, &opts)
+            .expect("a duplicated off-boundary table target must not fail the build");
+        assert_every_switch_target_has_an_arm(&cfg);
+        let targets = cfg
+            .regions()
+            .find_map(|r| match &r.terminator {
+                RegionTerminator::Switch { targets, .. } => Some(targets.clone()),
+                _ => None,
+            })
+            .expect("switch region");
+        assert_eq!(
+            targets.iter().map(|t| t.addr).collect::<Vec<_>>(),
+            vec![0x1002],
+            "both copies of the off-boundary arm must be dropped from the table",
+        );
+    }
+
+    /// The assert's real purpose: an interior target naming NO arm of the
+    /// `Switch` that routed it is a construction bug, and stays one now that a
+    /// repeated arm is tolerated. Debug-only, since the assert is compiled out
+    /// of a release test run.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "names no arm of the Switch")]
+    fn seating_an_interior_target_naming_no_arm_trips_the_invariant() {
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
+        let owner = b.add_region(make_region(&[(0x2000, 0)])).unwrap();
+        let mut dispatch = make_region(&[(0x1000, 0)]);
+        dispatch.terminator = RegionTerminator::Switch {
+            target_vn: rsleigh::Vn {
+                size: 8,
+                addr_off: 0,
+                addr_space: rsleigh::VnSpace::REGISTER,
+            },
+            targets: vec![0x2000.into()],
+            addr: addr(0x1000, 0),
+        };
+        let parent = b.add_region(dispatch).unwrap();
+        let _ = b.seat_non_boundary_target(parent, owner, addr(0x3000, 0));
     }
 
     /// A direct edge needs exactly one var of the parent's context, so a second
