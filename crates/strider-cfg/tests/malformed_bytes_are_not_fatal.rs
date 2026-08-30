@@ -61,6 +61,33 @@ fn an_unparsed_aarch64_operand_is_an_error() {
     );
 }
 
+/// A constructor that exports no result leaves its handle untouched, so on a
+/// reused `ParserContext` the operand carries whatever the previous instruction
+/// left there. `usdot` / `bfdot` by element hit this: alone they fail, but
+/// after any instruction that dirties the slot they lifted with a register
+/// taken from that instruction. The failure has to be the same either way.
+#[test]
+fn a_by_element_dot_product_does_not_lift_a_stale_operand() {
+    let opts = CfgOptions {
+        fn_max_size: Some(0x40),
+        ..CfgOptions::default()
+    };
+    let arch = SleighArch::aarch64();
+    // ldr q7,[x0] ; ldr q13,[x1] ; usdot v0.4s,v1.16b,v2.4b[0] ; ret
+    let dirtied = hex(b"0700c03d2d00c03d20f0824fc0035fd6");
+    let alone = hex(b"20f0824fc0035fd6");
+    let reader = BufMemReader::new(dirtied, 0);
+    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+    assert!(
+        Builder::for_arch(&arch, &mut sleigh, 0, &opts)
+            .build()
+            .is_err(),
+        "the by-element operand is unresolved, so it must fail here exactly as \
+         it does with no instruction in front of it",
+    );
+    build_is_survivable(&arch, alone, 0, &opts);
+}
+
 #[test]
 fn a_region_at_the_top_of_the_address_space_is_an_error() {
     // A stub region seated at an address whose span overflows `u64` gave
