@@ -57,7 +57,10 @@ impl Cfg {
     /// Containment, not a start compare: a `true_target` off an instruction
     /// boundary is seated as an edge to the region that OWNS it, which starts
     /// elsewhere.  It also covers an intra-machine-instruction target at a
-    /// non-zero pcode index.
+    /// non-zero pcode index.  That seating can also make both arms answer one
+    /// region; such a target is reported on `interior_branch_targets`, so a
+    /// caller that needs to tell it from a real `goto L` / `goto L` reads that
+    /// channel.
     pub fn region_if(&self, region_id: RegionId) -> Result<IfRegionSuccessors> {
         let region = self
             .region_graph
