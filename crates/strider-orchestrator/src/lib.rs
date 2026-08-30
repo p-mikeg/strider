@@ -1026,29 +1026,30 @@ struct DerivedChannels<'a> {
 ///   target set it cannot seat, and `function` then still holds an
 ///   `IndirectBranch`.
 /// - a seated `Switch` whose selector no longer derives (`unclassified`). Its
-///   arms are whatever the round that seated them proved, which may be a proper
-///   SUBSET, and seating consumed the placeholder, so this list is its only
-///   report.
+///   arms are whatever the round that seated them proved, which may be a
+///   proper subset, and seating consumed the placeholder, so this list is its
+///   only report.
 /// - `budget_exhausted`, the sites still growing when the iteration cap ran out.
 /// - `incomplete_derived`, the sites whose fold dropped a successor the
 ///   classifier proved, whose answer stopped being a superset, or that the loop
 ///   abandoned.
 ///
-/// A caller seed asserts the site is complete, which suppresses the SECOND of
+/// A caller seed asserts the site is complete, which suppresses the second of
 /// those, the unclassified seated `Switch`, but only while `settled`, the
 /// site's final successor set, holds nothing the seed did not name. A site that
-/// OUTGREW its seed disproves the assertion, and the arms past the seed came
+/// outgrew its seed disproves the assertion, and the arms past the seed came
 /// from a classifier that has since gone silent, so nothing vouches for them.
 /// [`unverified_seeded_sites`] applies the same test the other way round, so
 /// the `switch_anchors` half of the two reports is complementary. The derived
-/// channels below are appended unconditionally, so a site can still reach both. The seed
-/// does NOT suppress a live placeholder: the cfg re-emits one exactly when it
-/// could not seat the seeded set (empty, or a target out of range or interior
-/// to an instruction), so the seed did not in fact settle that site. It does
-/// NOT suppress `budget_exhausted`: outgrowing the seed is itself evidence the
-/// seed was incomplete. And it does NOT suppress `incomplete_derived`: a seed
-/// is an answer about the site, not a licence to drop what the classifier
-/// proves about it.
+/// channels below are appended unconditionally, so a site can still reach
+/// both.
+///
+/// The seed suppresses nothing else. A live placeholder means the cfg could
+/// not seat the seeded set (empty, or a target out of range or interior to an
+/// instruction), so the seed did not settle the site. Outgrowing the seed is
+/// itself evidence it was incomplete, which leaves `budget_exhausted` standing.
+/// And `incomplete_derived` reports what the classifier proved, which a seed is
+/// no licence to drop.
 fn live_unresolved_branches(
     live_indirect: &rustc_hash::FxHashSet<strider_ir::node::NodeId>,
     unresolved: &UnresolvedAnchors,
