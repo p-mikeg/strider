@@ -85,3 +85,43 @@ def test_work_that_needs_no_sleigh_still_runs_off_thread():
     t.join()
     assert out["dot"] > 0
     assert out["entry"] is not None
+
+
+def _off_thread(thunk):
+    out = {}
+
+    def body():
+        try:
+            out["v"] = thunk()
+        except Exception as e:
+            out["v"] = type(e).__name__
+
+    t = threading.Thread(target=body)
+    t.start()
+    t.join()
+    return out["v"]
+
+
+def test_call_other_abi_raises_off_thread_instead_of_answering_none():
+    """`None` is the answer for a name strider does not classify, which fails
+    the lift. Degrading an off-thread failure to it reported a different,
+    wrong classification."""
+    el = strider.lift.load_elf("fixtures/out/x86/memory.elf")
+    assert el.call_other_abi("in") is not None
+    assert _off_thread(lambda: el.call_other_abi("in")) == "StriderError"
+
+
+def test_add_elf_off_thread_does_not_steal_the_handle():
+    """`add_elf` rebuilds the underlying handle. Rebuilding from a foreign
+    thread used to re-pin it there, so the thread that BUILT it lost the
+    handle permanently, with an error naming the wrong thread as foreign."""
+    el = strider.lift.load_elf("fixtures/out/x86/memory.elf")
+    el.analyze("array_sum")
+    added = _off_thread(
+        lambda: el.add_elf("fixtures/out/x86/elf_relocs.elf") or "ok"
+    )
+    assert added == "StriderError"
+    # Still usable on its own thread, and the merge still works there.
+    el.analyze("array_sum")
+    el.add_elf("fixtures/out/x86/elf_relocs.elf")
+    assert "helper_a" in el.symbols()
