@@ -42,8 +42,7 @@ impl Capture {
         }
     }
 
-    /// An opaque hash key: nothing outside this module may depend on how
-    /// ids are allocated.
+    /// An opaque hash key; the allocation order carries no meaning.
     pub fn id(self) -> u32 {
         self.id
     }

@@ -600,7 +600,7 @@ impl SpecialTerm {
     /// `BranchIndirect`, the only opcodes skipped, close the region in
     /// `RegionBuilder::process_new_insn`, so at most one appears per region and
     /// it is always the trailing entry, never an inner pcode op.  (`Call` /
-    /// `CallIndirect` / `CallOther` do not close it, and are never skipped.)
+    /// `CallIndirect` / `CallOther` can close it too, but are never skipped.)
     fn skips_opcode(&self, opcode: rsleigh::Opcode) -> bool {
         match self {
             SpecialTerm::UnresolvedIndirect { .. } | SpecialTerm::Switch(..) => {

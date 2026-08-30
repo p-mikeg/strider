@@ -63,7 +63,7 @@ cfg, function, unresolved = prog.analyze("array_sum", opts=opts)
 
 ```python
 for sym in prog.functions():
-    cfg, function, unresolved = prog.analyze(sym.address)
+    result = prog.analyze(sym.address)
     ...
 ```
 
