@@ -114,6 +114,7 @@ impl PyBufferReader {
         size: usize,
     ) -> PyResult<Option<Bound<'py, PyBytes>>> {
         let table = self.lookup_table();
+        table.check_unchanged().map_err(into_strider_err)?;
         // `table.read` fills from one region only, so a multi-exabyte `size`
         // would allocate (and OOM) for nothing.
         let mut buf = vec![0u8; size.min(self.read_bound())];
@@ -125,6 +126,19 @@ impl PyBufferReader {
             None => Ok(None),
         }
     }
+}
+
+/// One stat per distinct mapping behind `mem_obj`, before anything decodes
+/// through it. A reader that is not a `BufferReader` maps nothing and cannot
+/// go stale.
+pub(crate) fn check_mem_unchanged(py: Python<'_>, mem_obj: &Option<Py<PyAny>>) -> PyResult<()> {
+    let Some(obj) = mem_obj else { return Ok(()) };
+    let Ok(buf) = obj.extract::<PyBufferReader>(py) else {
+        return Ok(());
+    };
+    buf.lookup_table()
+        .check_unchanged()
+        .map_err(into_strider_err)
 }
 
 /// Whether a symbol carries an address of its own. A linked image uses
@@ -320,14 +334,18 @@ struct SymbolTable {
 }
 
 impl PyLoadedElf {
-    fn with_symbols<T>(&self, f: impl FnOnce(&SymbolTable) -> T) -> T {
+    /// Building parses the mapping, so a file that changed underneath is an
+    /// error here rather than a SIGBUS. A table already built needs no mapping
+    /// and costs no stat.
+    fn with_symbols<T>(&self, f: impl FnOnce(&SymbolTable) -> T) -> PyResult<T> {
         let stale = self.symbol_table.lock_shared().is_none();
         if stale {
+            self.check_unchanged()?;
             let built = self.build_symbol_table();
             *self.symbol_table.lock_shared() = Some(built);
         }
         let table = self.symbol_table.lock_shared();
-        f(table.as_ref().expect("just built"))
+        Ok(f(table.as_ref().expect("just built")))
     }
 
     /// One name can have several symbols: FreeBSD's `model_name` is both an
@@ -472,7 +490,7 @@ impl PyLoadedElf {
     /// defines it and preferring a code symbol over a data one of the same
     /// name.  Raises `StriderError` when no loaded ELF defines it.
     fn symbol(&self, name: &str) -> PyResult<PySymbol> {
-        self.symbol_opt(name).ok_or_else(|| {
+        self.symbol_opt(name)?.ok_or_else(|| {
             into_strider_err(anyhow::anyhow!(
                 "symbol {name:?} not found in any ELF loaded into this Program \
                  ({} loaded)",
@@ -482,7 +500,7 @@ impl PyLoadedElf {
     }
 
     /// `symbol`, but `None` rather than raising when `name` is undefined.
-    fn symbol_opt(&self, name: &str) -> Option<PySymbol> {
+    fn symbol_opt(&self, name: &str) -> PyResult<Option<PySymbol>> {
         self.with_symbols(|t| t.by_name.get(name).map(|&ix| t.syms[ix].clone()))
     }
 
@@ -492,7 +510,7 @@ impl PyLoadedElf {
     /// function (every ARM `$a` / `$d` mapping symbol) does not hide it.
     /// Aliases sharing an address resolve by recorded extent, then by being
     /// code.  `None` when nothing covers `address`.
-    fn symbol_at(&self, address: u64) -> Option<PySymbol> {
+    fn symbol_at(&self, address: u64) -> PyResult<Option<PySymbol>> {
         self.with_symbols(|t| {
             let mut hi = t.by_addr.partition_point(|&i| t.syms[i].address <= address);
             while hi > 0 {
@@ -519,15 +537,18 @@ impl PyLoadedElf {
     /// only thing separating them. Reported, not acted on: nothing here selects
     /// an arch from it. `False` off ARM.
     #[getter]
-    fn is_arm_be8(&self) -> bool {
-        self.elfs
+    fn is_arm_be8(&self) -> PyResult<bool> {
+        // Reads the header out of the mapping.
+        self.check_unchanged()?;
+        Ok(self
+            .elfs
             .first()
-            .is_some_and(strider_reader::OwnedElf::is_arm_be8)
+            .is_some_and(strider_reader::OwnedElf::is_arm_be8))
     }
 
     /// Every symbol across every loaded ELF as `dict[str, Symbol]`, keyed by
     /// the name each one resolves under.
-    fn symbols(&self) -> HashMap<String, PySymbol> {
+    fn symbols(&self) -> PyResult<HashMap<String, PySymbol>> {
         self.with_symbols(|t| {
             t.by_name
                 .iter()
@@ -540,7 +561,7 @@ impl PyLoadedElf {
     /// address already listed are excluded, preferring the one whose size the
     /// ELF records.  A function with no recorded size is still yielded, with
     /// `Symbol.size` `None`.
-    fn functions(&self) -> PySymbolIter {
+    fn functions(&self) -> PyResult<PySymbolIter> {
         let syms = self.with_symbols(|t| {
             let mut out: Vec<PySymbol> = Vec::new();
             for &ix in &t.by_addr {
@@ -558,24 +579,28 @@ impl PyLoadedElf {
                 }
             }
             out
-        });
-        PySymbolIter { syms, next: 0 }
+        })?;
+        Ok(PySymbolIter { syms, next: 0 })
     }
 
     /// Every symbol pulled one at a time: a `Symbol` is built only when
     /// pulled, so the Python objects are never all live at once.  The Rust
     /// table is collected up front.
-    fn iter_symbols(&self) -> PySymbolIter {
-        PySymbolIter {
-            syms: self.with_symbols(|t| t.syms.clone()),
+    fn iter_symbols(&self) -> PyResult<PySymbolIter> {
+        Ok(PySymbolIter {
+            syms: self.with_symbols(|t| t.syms.clone())?,
             next: 0,
-        }
+        })
     }
 
     /// ELF entry-point address from the first loaded ELF.
-    fn entry_point(&self) -> u64 {
+    fn entry_point(&self) -> PyResult<u64> {
         // `load_elf` always pushes one ELF, so `first()` is never `None`.
-        self.elfs.first().map_or(0, |o| o.file().entry())
+        self.elfs.first().map_or(Ok(0), |o| {
+            o.checked_file()
+                .map(|f| f.entry())
+                .map_err(into_strider_err)
+        })
     }
 
     /// Read up to `size` raw bytes at `addr`.  Returns fewer bytes near a

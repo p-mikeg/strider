@@ -11,30 +11,23 @@ use crate::function::PyFunction;
 use crate::options::{PyCfgOptions, PyLifterOptions};
 use crate::reader::{AnyMemReader, MemInput};
 
-/// Pins USE to the creating thread while leaving the value free to move and to
-/// be dropped anywhere.
+/// Pins USE to the creating thread, leaving the value free to move and to be
+/// dropped anywhere.
 ///
-/// `Sleigh` is `!Send` only for the raw pointers in its FFI handles; the C++
-/// carries no thread-local state, so destroying it off-thread is safe. What is
-/// NOT safe is decoding from two threads: `lift_one` carries context-register
-/// state (ARM/Thumb, x86 segment, MIPS16) across calls, and the GIL serialises
-/// those calls without preventing them from interleaving. `owner` rejects the
-/// second thread instead.
+/// `Strider` is already `Send`: rsleigh declares it for `SleighCtxLowLevel`,
+/// so this type carries no `unsafe` and `T: Send` stays compiler-checked.
+/// What is not safe is decoding from two threads, because `lift_one` carries
+/// context-register state (ARM/Thumb, x86 segment, MIPS16) across calls and
+/// the GIL serialises those calls without stopping them interleaving. `owner`
+/// rejects the second thread.
 ///
-/// Moving is what matters: without it a `Function` dropped on a worker thread
-/// leaks its whole `Lifter`, because PyO3 refuses to run an `unsendable`
+/// Moving is what matters: pinned, a `Function` dropped on a worker thread
+/// leaks its whole `Lifter`, because PyO3 will not run an `unsendable`
 /// destructor off-thread.
 pub(crate) struct ThreadPinned<T> {
     owner: std::thread::ThreadId,
     value: T,
 }
-
-// SAFETY: `T` is only ever read through `get`/`get_mut`, which refuse every
-// thread but `owner`, so the value is never touched from two threads. Drop is
-// the one exception and is sound because nothing reachable from `T` is
-// refcounted non-atomically (the reader is reached as an `Arc`-backed snapshot,
-// never an `Rc`) and Sleigh's destructor touches no thread-local state.
-unsafe impl<T> Send for ThreadPinned<T> {}
 
 impl<T> ThreadPinned<T> {
     fn new(value: T) -> Self {
@@ -44,7 +37,7 @@ impl<T> ThreadPinned<T> {
         }
     }
 
-    fn check(&self) -> PyResult<()> {
+    pub(crate) fn check(&self) -> PyResult<()> {
         if std::thread::current().id() == self.owner {
             return Ok(());
         }
@@ -559,6 +552,11 @@ impl PyLifter {
         mem: Bound<'_, PyAny>,
         rom: Option<Bound<'_, PyAny>>,
     ) -> PyResult<()> {
+        // Rejected up front rather than owner-preserving, so `add_elf` fails
+        // off-thread exactly as every other Sleigh-touching method does; a
+        // rebuild that kept the old owner would leave the caller holding a
+        // handle it still cannot use.
+        self.inner.check()?;
         *self = build_lifter(arch, mem, rom)?;
         Ok(())
     }
@@ -572,20 +570,24 @@ impl PyLifter {
 
     /// How `name` is classified: the `opts` entry for it when there is one,
     /// else the built-in table, else `None` for a name strider has no answer
-    /// for (which fails the lift of any function containing it).
+    /// for (which fails the lift of any function containing it).  Raises
+    /// `StriderError` off the handle's thread.
     #[pyo3(signature = (name, opts=None))]
     fn call_other_abi(
         &self,
         py: Python<'_>,
         name: &str,
         opts: Option<Py<PyCfgOptions>>,
-    ) -> Option<crate::call_other_abi::PyCallOtherAbi> {
+    ) -> PyResult<Option<crate::call_other_abi::PyCallOtherAbi>> {
         if let Some(opts) = opts
             && let Some(abi) = opts.borrow(py).call_other_abis.get(name)
         {
-            return Some(abi.clone());
+            return Ok(Some(abi.clone()));
         }
-        crate::call_other_abi::PyCallOtherAbi::builtin(self.inner.get().ok()?.arch().preset(), name)
+        // `None` means "no answer for this name", so an off-thread failure
+        // must raise rather than borrow that meaning.
+        let preset = self.inner.get()?.arch().preset();
+        Ok(crate::call_other_abi::PyCallOtherAbi::builtin(preset, name))
     }
 
     /// Build the control-flow graph of the function at `entry`, without
@@ -597,6 +599,10 @@ impl PyLifter {
         entry: u64,
         opts: Option<Py<PyCfgOptions>>,
     ) -> PyResult<PyCfg> {
+        {
+            let lifter = try_borrow_lifter(&slf, py)?;
+            crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
+        }
         let arch_name = try_borrow_lifter(&slf, py)?.arch_name;
         let cfg_opts = match &opts {
             Some(o) => cfg_options_from(&o.borrow(py), arch_name)?,
@@ -688,6 +694,7 @@ impl PyLifter {
 
         let (arch_name, cc_built, per_address_built) = {
             let lifter = try_borrow_lifter(&slf, py)?;
+            crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
             let regs = lifter.inner.get()?.sleigh_regs();
             let arch_name = lifter.arch_name;
             let cc_built = build_cc(&cc, regs, arch_name)?;
