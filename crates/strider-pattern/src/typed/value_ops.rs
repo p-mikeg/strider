@@ -83,7 +83,10 @@ macro_rules! variant_unary_any {
 ///
 /// `BitNot` is deliberately NOT expressed here: its match side pins
 /// `int_const(u128::MAX)` while its build side derives all-ones from the
-/// root's width, so the two are genuinely different lowerings.
+/// root's width, so the two are genuinely different lowerings. The build side
+/// stops at I128, skipping rather than interning a constant truncated to the
+/// `u128` carrier; the match side stops only where the reader does, at a value
+/// past `u128`.
 macro_rules! dual_pat {
     ($ty:ident<$($g:ident),+ $(,)?>, |$me:ident, $b:ident| $body:block) => {
         impl<$($g: MatchPat),+> MatchPat for $ty<$($g),+> {

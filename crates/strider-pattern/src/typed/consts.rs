@@ -1,9 +1,12 @@
 //! Constant-literal typed builders.
 //!
 //! `int_const`'s match is width-masked, so `int_const(u128::MAX)` matches a
-//! width-relative all-ones constant. `int_const_any_width` additionally
-//! recognises the value held at a narrower width and widened into the
-//! constant's type, by zero or by sign extension.
+//! width-relative all-ones constant up to I128. At I256 and I512 the mask
+//! saturates at 128 bits, so a constant whose value still fits `u128` matches
+//! on its low 128 bits, while one past `u128` (an all-ones among them) never
+//! does and the query silently returns nothing.
+//! `int_const_any_width` additionally recognises the value held at a narrower
+//! width and widened into the constant's type, by zero or by sign extension.
 
 use std::cell::RefCell;
 

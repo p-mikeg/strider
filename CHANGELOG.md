@@ -11,7 +11,7 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   varnodes, so using one with a `Lifter` of another architecture now raises.
   It used to analyse silently against the wrong varnodes: an x86-64 function
   under a convention built from a 32-bit `Sleigh` simply had no arguments.
-- `CallingConvention.no_return()` passed as `analyze`'s main `cc` raises. It was
+- `cc.no_return()` passed as `analyze`'s main `cc` raises. It was
   silently dropped there and only ever meant anything as a `per_address_ccs`
   override.
 - `Match[capture]` raises once the function has been compacted, like every other
@@ -382,7 +382,8 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `OptimizerPass`; `get_type_hints` no longer raises `NameError` on a published
   pattern protocol method.
 - The explorer pans by mouse drag and by the arrow keys, and zooms about the
-  pointer with ctrl+wheel or `+` / `-`, with `f` to fit the graph to the window
+  pointer with ctrl+wheel and about the window centre with `+` / `-`, with `f`
+  to fit the graph to the window
   and `0` for 100%. A drag ending over a node pans rather than re-centering.
 - `visualize(whole=True)` opens on the entire graph rather than a neighborhood,
   and seeds a toolbar toggle so the page can switch back.

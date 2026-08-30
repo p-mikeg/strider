@@ -82,9 +82,11 @@ impl crate::peephole::PeepholePass for LoadForward {
 
 /// O(loads * memory-defs) in the worst case: the walk is per load and its memo
 /// is keyed on the probed location, so loads at different offsets share
-/// nothing. Roughly 4x per doubling of N on N conditional stack stores read
-/// back by N loads, against about 2x for every other pass. Either axis alone is
-/// free: the cost is the product.
+/// nothing. Roughly 4x per doubling of N on N stack stores read back by N
+/// loads at distinct offsets, against about 2x for every other pass. The loads
+/// are that axis on their own, with no `MemPhi` in the graph; conditional
+/// stores only raise the constant. Aim every load at one offset and the memo
+/// hits, which measures linear.
 ///
 /// Answering in one pass needs a per-location def index, which a `MemPhi` DAG
 /// has no linear order to build one over; that is a MemorySSA redesign, not a
