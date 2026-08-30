@@ -54,15 +54,15 @@ Sixteen crates: six generic utilities, nine strider-specific, plus the
 `strider-ir-test-utils` dev-dependency. External dep `rsleigh` (GHIDRA's Sleigh
 p-code lifter), vendored as a git submodule at `externals/rsleigh`, is used by
 every crate that touches machine state, i.e. all but the five payload-agnostic
-leaves (`dot`, `entity-utils`, `graph-algorithms`, `read-only-memory`,
+crates (`dot`, `entity-utils`, `graph-algorithms`, `read-only-memory`,
 `strider-graph`).
 
 Generic:
 
 - `dot` -- Graphviz / dark-themed HTML renderer.
 - `entity-utils` -- `cranelift-entity` helpers (`DenseEntitySet`, `Worklist`,
-  `EntityInterner`). Use these over `std` `HashSet`/`HashMap` when keying by
-  `NodeId` / `ValueId`.
+  `EntityInterner`, `UnionDag`). Use these over `std` `HashSet`/`HashMap` when
+  keying by `NodeId` / `ValueId`.
 - `graph-algorithms` -- generic traversal (`walk`) and dominance-based SSA
   support (dominance frontiers, dominator-tree preorder, iterated-DF phi
   placement) over opaque node ids. Test-only `graphmock` DSL under `tests/`.
@@ -273,10 +273,11 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
 ## strider-py
 
 Domain-namespaced submodules (`strider.ir`, `.lift`, `.cfg`, `.sleigh`,
-`.reader`, `.opt`, `.pattern`, `.template`, plus `.explore`, which backs
-`visualize` and is bound but outside `__all__`) plus the single top-level
-`strider.StriderError`. `strider.lift.lifter(arch, mem, rom=None)` builds the
-lift handle; `analyze(entry, cc, opts)` returns an `AnalyzeResult` with
+`.reader`, `.opt`, `.pattern` with its nested `.pattern.constraints`,
+`.template`, plus `.explore`, which backs `visualize` and is bound but outside
+`__all__`) plus the single top-level `strider.StriderError`.
+`strider.lift.lifter(arch, mem, rom=None)` builds the lift handle;
+`analyze(entry, cc, opts)` returns an `AnalyzeResult` with
 `.cfg` / `.function` / `.unresolved` (also unpackable as a 3-tuple). Pattern
 queries (`find_all` / `find_unique`) and rendering (`Function.to_dot(pretty=)`)
 live on the returned objects. See the `.pyi` stubs for the typed surface.

@@ -39,7 +39,8 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    IR, feed the targets back, re-lift, and repeat until the edge set stops
    changing. What is left over is reported, never raised; it arrives through
    four channels, described in
-   [python-api.md](python-api.md#12-the-cfg-stridercfg).
+   [python-api.md](python-api.md#12-the-cfg-stridercfg). `cfg.is_complete()`
+   tests all four at once.
 7. **Query** it: describe a shape, get back every match with the values you
    asked to capture. `one_of` and `first_of` spell alternatives inside one
    pattern; a list of patterns joins on the captures they share, and
@@ -50,7 +51,8 @@ binary -> CFG -> IR -> optimizations -> pattern queries
 
 `prog.visualize(fn)` serves the graph as an interactive explorer in a browser,
 opening on the neighborhood around one node, or on all of it with `whole=True`.
-It is the quickest way to see the shape a pattern has to match.
+Drag or press the arrow keys to pan, ctrl+wheel to zoom, `f` to fit. It is the
+quickest way to see the shape a pattern has to match.
 
 The [quickstart](../README.md#quickstart) in the README is that pipeline in
 eight statements of Python. [CHANGELOG.md](../CHANGELOG.md) lists what 0.2.0
