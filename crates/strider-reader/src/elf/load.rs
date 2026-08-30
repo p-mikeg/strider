@@ -62,6 +62,10 @@ impl OwnedElf {
 
     /// Re-parses each call; see the type docs.
     ///
+    /// Reads the mapping, so a file SHORTENED under a live handle faults here
+    /// rather than returning: use [`checked_file`](Self::checked_file) at the
+    /// top of any operation on a handle that may have outlived a rebuild.
+    ///
     /// # Panics
     ///
     /// When the bytes no longer parse as ELF. [`parse`](Self::parse) validated
@@ -72,6 +76,19 @@ impl OwnedElf {
     pub fn file(&self) -> object::File<'_> {
         object::File::parse(self.backing.as_slice())
             .expect("bytes were validated as ELF at construction")
+    }
+
+    /// [`file`](Self::file) behind [`check_unchanged`](Self::check_unchanged):
+    /// the guarded way in for anything that parses the image (entry point,
+    /// symbol table, header flags), where an unguarded parse of a shortened
+    /// mapping is a SIGBUS.
+    ///
+    /// # Errors
+    ///
+    /// When the file changed on disk since it was mapped.
+    pub fn checked_file(&self) -> Result<object::File<'_>> {
+        self.check_unchanged()?;
+        Ok(self.file())
     }
 
     /// One `stat` of the mapped file, comparing it against what it was when
@@ -99,6 +116,10 @@ impl OwnedElf {
     /// both `ELFDATA2MSB`, and decoding either as the other yields byte-swapped
     /// instructions, so the flag is the only thing that separates them. Always
     /// `false` off ARM, where the bit is not defined.
+    ///
+    /// Parses the mapping, so it has [`file`](Self::file)'s hazard and no way
+    /// to report it: on a handle that may have outlived a rebuild, call
+    /// [`check_unchanged`](Self::check_unchanged) first.
     #[must_use]
     pub fn is_arm_be8(&self) -> bool {
         /// `EF_ARM_BE8`, from the ARM ELF ABI.

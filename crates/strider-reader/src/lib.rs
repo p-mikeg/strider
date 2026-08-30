@@ -184,6 +184,31 @@ impl MemRegion {
         self.start_addr
     }
 
+    /// One `stat` of the file these bytes were mapped from, compared against
+    /// what it was at map time. Regions over owned bytes answer `Ok` with no
+    /// syscall.
+    ///
+    /// Belongs at the top of an operation, never inside one: [`read`] does no
+    /// syscall and cannot, so a change racing a read in progress is still a
+    /// torn read or a SIGBUS past a shortened end.
+    ///
+    /// # Errors
+    ///
+    /// When the mapped file no longer stats, or no longer looks like the file
+    /// that was mapped.
+    ///
+    /// [`read`]: Self::read
+    pub fn check_unchanged(&self) -> Result<()> {
+        self.bytes.check_unchanged()
+    }
+
+    /// Which mapping backs this region, for deduping [`check_unchanged`].
+    ///
+    /// [`check_unchanged`]: Self::check_unchanged
+    fn mapping_id(&self) -> Option<usize> {
+        self.bytes.mapping_id()
+    }
+
     /// The file-initial bytes, with no relocation patch applied.
     pub(crate) fn raw(&self) -> &[u8] {
         &self.bytes.as_slice()[self.offset..self.offset + self.len]
@@ -311,6 +336,27 @@ impl MemRegionsLookupTable {
             *reach = running;
         }
         Self { regions }
+    }
+
+    /// [`MemRegion::check_unchanged`] over the table, one `stat` per distinct
+    /// mapping rather than per region: an image's regions all share one.
+    ///
+    /// # Errors
+    ///
+    /// When any mapped file behind the table changed since it was mapped.
+    pub fn check_unchanged(&self) -> Result<()> {
+        let mut stat_ed: Vec<usize> = Vec::new();
+        for (region, _) in self.regions.values() {
+            let Some(id) = region.mapping_id() else {
+                continue;
+            };
+            if stat_ed.contains(&id) {
+                continue;
+            }
+            stat_ed.push(id);
+            region.check_unchanged()?;
+        }
+        Ok(())
     }
 
     /// Reads bytes at `addr` from whichever region wins; `None` when none
