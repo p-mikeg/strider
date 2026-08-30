@@ -120,7 +120,7 @@ states an implicit register footprint.
 
 Float arguments have their own index space: `function_arg_float(2)` reaches a
 float parameter, and at a call site the float arguments follow the integer ones,
-so on SysV `call().arg(6)` is the first of them.
+so on SysV `call().arg(6, p)` is the first of them.
 
 `analyze` returns an `AnalyzeResult` (`.cfg` / `.function` / `.unresolved`),
 which also unpacks as the 3-tuple above. `prog.symbol_at(addr)` reverse-resolves

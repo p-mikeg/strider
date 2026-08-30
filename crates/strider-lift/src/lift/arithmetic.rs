@@ -197,7 +197,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let lhs = self.read_input(insn, 0)?;
         let rhs = self.read_input(insn, 1)?;
         let out_ty = out_vn.int_type()?;
-        // Sdiv / Srem SIGN-extend a narrower operand; every other op
+        // Sdiv / Srem / SShiftRight SIGN-extend a narrower operand; every other op
         // zero-extends, correct for the bitwise / shift-left / unsigned ops
         // whose low-width result is sign-agnostic.  Equal widths, the common
         // case, make the coercion a no-op.
