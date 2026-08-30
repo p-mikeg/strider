@@ -34,8 +34,8 @@ that image for you (the loaded file minus its writable mappings), so a load out
 of an RWX segment is fetched from but never folded. For a raw blob you pass one
 in as `rom=` (see the ROM reader in the [Python guide](python-guide.md)).
 
-An image whose only `PT_LOAD` is RWX, which is how a Linux `vmlinux` is normally
-laid out, therefore has no read-only part at all: every load fails to fold and
+An image whose only `PT_LOAD` is RWX, the MIPS `vmlinux` shape (x86-64 and arm64
+ship separate RX / R / RW segments), therefore has no read-only part at all: every load fails to fold and
 the pass goes quiet rather than reporting anything. Check `prog.rom()`, whose
 repr counts its regions, when folding you expected does not happen; the fix is
 to hand in a `rom=` covering the constant data yourself.

@@ -146,8 +146,13 @@ for m in function.find_all(
      load(addr=int_add(var(base), int_const(o2)))],
     ignore_casts=True,
 ):
-    print("two fields off one base, at", m.uint(o1), "and", m.uint(o2))
+    print("fields off one base, at", m.uint(o1), "and", m.uint(o2))
 ```
+
+A join constrains the patterns to agree on `base`; it does not make them pick
+different loads. On `array_sum` this prints four rows, two of which pair a
+field with itself (`4 and 4`, `8 and 8`). Compare the offsets yourself when
+you want distinct ones.
 
 ## Constraints: relating matches by control flow
 
@@ -222,14 +227,20 @@ captures. The `find` side is a `strider.pattern` pattern; the `replace` side is
 a `strider.template` template, which covers the ops that can be built:
 
 ```python
-from strider.pattern import Capture, int_add, int_const, var
+from strider.pattern import Capture, int_mul, int_const, var
 from strider import template as t
 
 x = Capture()
-# Replace `x + 0` with `x` everywhere.
-n = function.rewrite(find=int_add(var(x), int_const(0)), replace=t.var(x))
-print("rewrote", n, "sites")
+# Strength-reduce the index scaling: `x * 4` becomes `x << 2`.
+n = function.rewrite(find=int_mul(var(x), int_const(4)),
+                     replace=t.int_shl(t.var(x), t.int_const(2)))
+print("rewrote", n, "sites")   # 3, on array_sum
 ```
+
+Pick a shape the pipeline leaves behind. `analyze` hands you an optimized
+graph, so the algebraic identities are the one thing that is guaranteed absent:
+`find=int_add(var(x), int_const(0))` reports 0 sites because `ConstantFold`
+removed every one before you saw the function.
 
 A bare `strider.pattern.Pat` is accepted on the `replace` side for
 compatibility, but only its build-valid subset compiles.

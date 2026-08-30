@@ -56,7 +56,8 @@ fn coefficient_fits_carrier(ty: strider_ir::node::ValueType) -> bool {
 ///
 /// A count is an ordinary constant of the shifted type, so an `I64` shift can
 /// name 200 and `1u128 << 200` panics. The coefficient would be right without
-/// this: the lifter saturates an out-of-range count to zero and `2^C` is also
+/// this: an out-of-range count makes the p-code shift produce zero, and `2^C` is
+/// also
 /// zero once masked to the width, so both give `x`. The guard is about the
 /// shift in this rule, not about the shift in the program.
 fn shift_in_range(
@@ -402,8 +403,8 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
 fn build_identity_rules() -> Vec<crate::BoxedRule> {
     let (x, c) = (Capture::new(), Capture::new());
     // All-ones is output-width-dependent, so compare `c` against the per-match
-    // output type rather than a fixed constant. Both sides are `None` past the
-    // `u128` carrier, so match on `Some` rather than comparing the `Option`s.
+    // output type rather than a fixed constant. Past the `u128` carrier the mask
+    // saturates, so match on `Some` rather than comparing the `Option`s.
     let is_all_ones = move |edit: &strider_pattern::Matcher,
                             ty: strider_ir::node::ValueType,
                             b: &strider_pattern::Bindings| {
