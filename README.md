@@ -128,10 +128,16 @@ an address to the `Symbol` covering it. A failure raised by strider itself
 carries its Rust trace on `.backtrace`, and `STRIDER_BACKTRACE=1` folds it into
 the message.
 
-Nothing in an ELF header distinguishes hard-float ARM32 from soft-float, so
-`load_elf` picks `arm_aapcs`; a soft-float binary needs
-`cc=strider.sleigh.CallingConvention.arm_aapcs_soft()` or its float arguments
-read as empty registers.
+`load_elf` reads ARM32's float ABI from EABI `e_flags` and picks `arm_aapcs`
+or `arm_aapcs_soft`. A relocatable object carries no such bit, and an image
+setting neither falls to hard-float; pass
+`cc=strider.sleigh.CallingConvention.arm_aapcs_soft()` for those, or float
+arguments read as empty registers.
+
+The hard-float bank is one set of 16 single-precision slots `s0..s15` aliased
+as `d0..d7`. `arg_passing_regs_float` names the double carriers, so a function
+taking `float` arguments reports the wrong varnode at every odd position;
+`function_arg_float` is a candidate there, not an answer.
 
 Memory precision is tunable per analysis, and every knob is one claim about the
 code that the IR cannot check, so all six sit in `AssumptionOptions`. Each one's
@@ -256,7 +262,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 cargo test --workspace --release   # a debug_assert hides from the debug run
-cargo doc --workspace --no-deps
+RUSTDOCFLAGS='-D rustdoc::broken_intra_doc_links' cargo doc --workspace --no-deps
 ```
 
 The Python side, from the repository root:
