@@ -371,8 +371,8 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
 
 - `ElfFileMemReader::from_elf_relocated` serves relocated bytes. Every other
   constructor serves the file-initial bytes, which the type doc now says.
-- `StriderError.backtrace` carries the Rust backtrace when
-  `STRIDER_BACKTRACE=1` is set; the message format changed with it.
+- `StriderError.backtrace` carries the Rust backtrace, captured by default;
+  `STRIDER_BACKTRACE=1` folds it into the message too.
 - `Lifter.optimize` takes `opts=` and threads the handle's `rom`, so a
   hand-built pipeline sees the same read-only image `analyze` does.
 - `CallOtherOverrides::new` rejects a duplicate user-op name rather than
