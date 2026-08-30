@@ -101,7 +101,15 @@ impl DotStyle {
 /// The two-char sequences `\n` / `\l` / `\r` pass through verbatim: they are
 /// DOT's own line-break escapes (centre / left / right justified) and callers
 /// hand-emit them. Any other backslash doubles. A literal newline becomes
-/// `\n`; a literal carriage return is left alone.
+/// `\n`.
+///
+/// Every other control character becomes the printable text `\xNN`. Labels
+/// carry symbol names and disassembly lifted out of the binary under analysis,
+/// so a control byte is reachable input: a NUL ends the quoted string mid-label
+/// for Graphviz's lexer, and the rest survive into the rendered SVG, where
+/// C0 outside tab / newline / return is not a legal XML character and fails the
+/// parse. Tab is left alone, being legal in both and meaningful whitespace in
+/// disassembly.
 fn escape_dot_label(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -117,6 +125,14 @@ fn escape_dot_label(s: &str) -> String {
                 _ => out.push_str("\\\\"),
             },
             '\n' => out.push_str("\\n"),
+            '\t' => out.push('\t'),
+            // Doubled, so Graphviz renders the four characters rather than
+            // reading `\x` as an escape of its own.
+            c if c.is_control() => {
+                // Writing to a `String` is infallible; the discard is for
+                // `unused_must_use`.
+                let _ = write!(out, "\\\\x{:02x}", c as u32);
+            }
             c => out.push(c),
         }
     }
@@ -357,9 +373,8 @@ impl<G: GraphDotDumper> GraphDot<G> {
 mod label_tests {
     use super::{escape_dot_label, json_quote};
 
-    /// A *literal* carriage return is not stripped, unlike the two-char `\r`
-    /// escape, and a recognised DOT escape passes through where any other
-    /// backslash doubles.
+    /// A recognised DOT escape passes through where any other backslash
+    /// doubles.
     #[test]
     fn escape_dot_label_escapes_exactly_what_dot_needs() {
         for (input, want) in [
@@ -372,7 +387,29 @@ mod label_tests {
             ("a\\rb", "a\\rb"),
             ("a\\b", "a\\\\b"),
             ("\\", "\\\\"),
-            ("a\rb", "a\rb"),
+            ("a\tb", "a\tb"),
+        ] {
+            assert_eq!(escape_dot_label(input), want, "input {input:?}");
+        }
+    }
+
+    /// A label carries symbol names and disassembly straight out of the binary
+    /// under analysis. Left raw, a NUL ends the quoted string for Graphviz's
+    /// lexer and the other C0 bytes reach the rendered SVG, where they are not
+    /// legal XML.
+    #[test]
+    fn escape_dot_label_makes_control_characters_printable() {
+        for (input, want) in [
+            ("a\u{0}b", "a\\\\x00b"),
+            ("a\u{1}b", "a\\\\x01b"),
+            ("a\rb", "a\\\\x0db"),
+            ("a\u{1b}b", "a\\\\x1bb"),
+            ("a\u{1f}b", "a\\\\x1fb"),
+            ("a\u{7f}b", "a\\\\x7fb"),
+            ("a\u{9f}b", "a\\\\x9fb"),
+            // The boundary on each side: neither is a control character.
+            ("a b", "a b"),
+            ("a\u{a0}b", "a\u{a0}b"),
         ] {
             assert_eq!(escape_dot_label(input), want, "input {input:?}");
         }
