@@ -25,46 +25,47 @@ enum Store {
 
 struct MappedFile {
     map: memmap2::Mmap,
+    /// Held open so the check re-stats the mapped INODE. Re-resolving the path
+    /// would compare against whatever sits at that name now, which a rename, a
+    /// replacement or the caller's `chdir` all change while the mapping stays
+    /// valid.
+    file: std::fs::File,
+    /// For the error message only.
     path: std::path::PathBuf,
     identity: FileIdentity,
 }
 
-/// What a `stat` says about the mapped file, sampled when it was mapped.
+/// What a `stat` says about the mapped inode, sampled when it was mapped.
 ///
 /// Only a coherence hint: a rewrite in place that keeps the size and lands
-/// inside the filesystem's mtime granularity is indistinguishable from no
-/// change at all.
+/// inside the same second is indistinguishable from no change at all. mtime is
+/// compared at whole seconds because drvfs truncates it on `utimensat`, so a
+/// `cp -p` or `touch -r` of a file onto itself otherwise reports a change.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FileIdentity {
     len: u64,
-    /// `None` on a filesystem that does not report one.
-    mtime: Option<std::time::SystemTime>,
-    #[cfg(unix)]
-    dev: u64,
-    #[cfg(unix)]
-    ino: u64,
+    /// Whole seconds since the epoch; `None` on a filesystem that reports no
+    /// mtime, or for a timestamp before it.
+    mtime_secs: Option<u64>,
 }
 
 impl FileIdentity {
     fn of(meta: &std::fs::Metadata) -> Self {
         Self {
             len: meta.len(),
-            mtime: meta.modified().ok(),
-            #[cfg(unix)]
-            dev: std::os::unix::fs::MetadataExt::dev(meta),
-            #[cfg(unix)]
-            ino: std::os::unix::fs::MetadataExt::ino(meta),
+            mtime_secs: meta.modified().ok().and_then(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .ok()
+                    .map(|d| d.as_secs())
+            }),
         }
     }
 
     /// What differs from `now`, for the error message; `None` when equal.
+    /// The inode is pinned by the held fd, so only its contents can move.
     fn diff(&self, now: &Self) -> Option<String> {
         if self == now {
             return None;
-        }
-        #[cfg(unix)]
-        if (self.dev, self.ino) != (now.dev, now.ino) {
-            return Some("it was replaced by a different file".to_owned());
         }
         if self.len != now.len {
             return Some(format!(
@@ -72,7 +73,7 @@ impl FileIdentity {
                 self.len, now.len
             ));
         }
-        Some("its modification time changed".to_owned())
+        Some("it was written to".to_owned())
     }
 }
 
@@ -111,8 +112,9 @@ impl FileBytes {
                 let meta = file.metadata().context("failed to stat mapped file")?;
                 Ok(Self(Store::Mapped(Arc::new(MappedFile {
                     map,
-                    path: path.to_path_buf(),
                     identity: FileIdentity::of(&meta),
+                    file,
+                    path: path.to_path_buf(),
                 }))))
             }
             Err(map_err) => match std::fs::read(path) {
@@ -140,14 +142,25 @@ impl FileBytes {
             return Ok(());
         };
         let path = m.path.display();
-        let meta = std::fs::metadata(&m.path)
-            .with_context(|| format!("mapped file {path} can no longer be read"))?;
+        let meta = m
+            .file
+            .metadata()
+            .with_context(|| format!("mapped file {path} can no longer be stat'd"))?;
         match m.identity.diff(&FileIdentity::of(&meta)) {
             None => Ok(()),
             Some(what) => anyhow::bail!(
                 "mapped file {path} changed on disk since it was mapped: {what}. \
                  Re-open it, or set STRIDER_NO_MMAP=1 to read it into memory instead."
             ),
+        }
+    }
+
+    /// Identity of the backing mapping, so a caller holding many regions cut
+    /// from one file stats it once. `None` for owned bytes, which never stat.
+    pub(crate) fn mapping_id(&self) -> Option<usize> {
+        match &self.0 {
+            Store::Owned(_) => None,
+            Store::Mapped(m) => Some(Arc::as_ptr(m) as usize),
         }
     }
 

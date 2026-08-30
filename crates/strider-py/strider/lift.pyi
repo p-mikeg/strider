@@ -51,45 +51,11 @@ class AnalyzeResult(NamedTuple):
 class AssumptionOptions:
     """Claims about the code being analysed, for `LifterOptions(assumptions=...)`.
 
-    None of these is checked, and each one's risky value is the positive one,
-    so any of them can make the answer wrong on valid input. Clearing all six
-    (and leaving `noalias_allocators` empty) is the only configuration sound
-    under any input.
-
-    Two default `True`, both honoured by every compiler this analyses and
-    without which the alias oracle answers may-alias almost everywhere.
-    `stack_global_disjoint` says the stack and global/constant memory
-    (`.data`, `.rodata`, `.bss`, MMIO) never overlap at runtime, so a memory
-    walk steps through a constant-address store when looking back from a stack
-    load and vice-versa; it is wrong only where a constant address
-    coincidentally equals `sp + K`. `assume_incoming_args_survive_calls` lets
-    a call on an incoming stack-argument slot's memory chain leave the slot
-    alone, so the argument is still detectable afterwards; it reaches
-    incoming-argument detection only, where it holds for any conforming
-    callee, those slots being the caller's memory above the entry SP.
-
-    `distinct_sp_bases_disjoint` treats a store rooted at a different SP base
-    than the entry SP, an alignment-masked frame local say, as disjoint from
-    the probed location.
-
-    `callee_preserves_stack_args` empties the outgoing-argument window, so a
-    value spilled at the stack top forwards across a call. The psABIs let a
-    callee write the argument slots that hold its own parameters; this asserts
-    compiler output does not. It is inert on its own: the window is consulted
-    only under `escape_analysis` or at a call to a `noalias_allocators`
-    address, so set it together with one of those.
-
-    `noalias_allocators` lists callee addresses of pure `malloc`-like
-    allocators: a size in, a fresh non-overlapping pointer out, no pointer
-    arguments. Distinct allocations are then disjoint and a load steps through
-    such a call. An address that can return an existing or interior pointer
-    (`realloc`, `free`, an aligned-alloc taking a pointer) breaks that.
-
-    `escape_analysis` forwards a spill load across a call and past an opaque
-    store when the frame is provably private, meaning no stack address escapes
-    to a callee. The proof is sound; the claim is that no callee returns a
-    struct by value, an sret hidden pointer being an escape the analysis may
-    not see.
+    None is checked, and each one's risky value is the positive one, so any of
+    them can make the answer wrong on valid input. `stack_global_disjoint` and
+    `assume_incoming_args_survive_calls` default `True`, the other four off or
+    empty; clearing all six is the only configuration sound under any input.
+    What each one claims is in `docs/python-api.md` section 2.
     """
 
     # Read-only: the options types are frozen, so a plain attribute
@@ -208,7 +174,8 @@ class Lifter:
     ) -> Optional[CallOtherAbi]:
         """How `name` is classified: the `opts` entry for it when there is
         one, else the built-in table, else `None` for a name strider has no
-        answer for (which fails the lift of any function containing it)."""
+        answer for (which fails the lift of any function containing it).
+        Raises `StriderError` off the handle's thread."""
         ...
     def build_cfg(
         self,

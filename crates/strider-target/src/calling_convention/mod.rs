@@ -566,7 +566,15 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
 const ARM_AAPCS_VFP_BASE: CallingConvention = CallingConvention {
     stack_ptr_reg_name: "sp",
     arg_passing_regs: &["r0", "r1", "r2", "r3"],
-    // AAPCS-VFP: the VFP argument bank is d0..d7 (also viewed as s0..s15).
+    // AAPCS-VFP (IHI 0042 6.1.2.1) allocates ONE bank of 16 single-precision
+    // slots s0..s15, aliased as d0..d7. A `double` at float position j lands in
+    // dj, a `float` in sj: `sf(1.f, 2.f)` puts the second argument in s1, the
+    // upper half of d0. Which rule applies depends on the callee's signature,
+    // which the IR does not carry, so this lists the double carriers and a
+    // float-argument function reports the wrong varnode at every odd position
+    // and cannot see positions 8..15 at all. Same approximation as MIPS o32
+    // below, and the reason `function_arg_float` is a candidate rather than an
+    // answer on this arch.
     arg_passing_regs_float: &["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"],
     callee_saved_regs: &[
         "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "lr",
@@ -716,8 +724,9 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
         },
     },
     // ARM 32-bit AAPCS, hard-float (VFP) argument variant.  A binary built
-    // `-mfloat-abi=soft` / `softfp` wants `arm_aapcs_soft` instead; nothing in
-    // an ELF header distinguishes them for the lifter, so the caller picks.
+    // `-mfloat-abi=soft` / `softfp` wants `arm_aapcs_soft`; EABI `e_flags`
+    // records which, and `load_elf` reads it.  A relocatable object carries no
+    // float-ABI bit, and an image setting neither falls to this one.
     CcPresetRow {
         name: "arm_aapcs",
         cc: ARM_AAPCS_VFP_BASE,
