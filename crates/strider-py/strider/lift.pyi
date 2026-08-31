@@ -156,6 +156,13 @@ class Lifter:
         """INTERNAL. Rebuild the handle's Sleigh and orchestrator state, so a
         newly merged-in ELF becomes visible."""
         ...
+    @property
+    def arch(self) -> SleighArch:
+        """The `SleighArch` this handle decodes with.
+
+        Enough, with `reader()` and `rom()`, to build a SECOND handle over the
+        same memory, which is how a thread that does not own this one renders."""
+        ...
     def reader(self) -> MemLike:
         """The code source (`BufferReader` or `MemReader`) this handle was
         built with."""
@@ -238,7 +245,8 @@ class Lifter:
         port: int = ...,
         depth: Optional[int] = ...,
         whole: bool = ...,
-    ) -> None:
+        background: bool = ...,
+    ) -> int:
         """Start the interactive explorer for `target`, a `Function` or a
         `Cfg`. Prints the local URL and blocks on this thread until Ctrl-C.
 
