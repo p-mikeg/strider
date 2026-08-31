@@ -25,8 +25,6 @@
 //! and before `IfCondInversion` (so the cond carries at most one `Xor(_, 1)`
 //! layer).
 
-use std::rc::Rc;
-
 use crate::{BoxedRule, rewrite_rule};
 use strider_ir::IRViewer;
 use strider_ir::node::{ExtendOp, IntBinaryOp, NodeId, NodeKind, ValueId, ValueType};
@@ -40,19 +38,18 @@ use crate::error::Result;
 use crate::peephole::{PeepholePass, PeepholeRewrite, SeedOrder, first_matching_rule};
 
 #[derive(Clone)]
-pub struct FlagCmpCanonicalize {
-    rules: Rc<Vec<BoxedRule>>,
-}
+pub struct FlagCmpCanonicalize;
 
 thread_local! {
-    static RULES: Rc<Vec<BoxedRule>> = Rc::new(build_rules());
+    /// Built once per thread, and held here rather than in the pass so the
+    /// pass stays `Send`; see `ConstantFold`.
+    static RULES: Vec<BoxedRule> = build_rules();
 }
 
 impl FlagCmpCanonicalize {
+    #[must_use]
     pub fn new() -> Self {
-        Self {
-            rules: RULES.with(Rc::clone),
-        }
+        Self
     }
 }
 
@@ -92,7 +89,7 @@ impl PeepholePass for FlagCmpCanonicalize {
         if let Some(cmp) = canonicalize_cr_bit_test(edit, root)? {
             return Ok(PeepholeRewrite::from_new_value(edit, Some(cmp)));
         }
-        let opt = first_matching_rule(&self.rules, edit, root)?;
+        let opt = RULES.with(|rules| first_matching_rule(rules, edit, root))?;
         Ok(PeepholeRewrite::from_new_value(edit, opt))
     }
 

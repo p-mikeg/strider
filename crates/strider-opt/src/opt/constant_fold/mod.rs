@@ -9,24 +9,23 @@ mod rules;
 #[cfg(test)]
 mod tests;
 
-use std::rc::Rc;
-
 /// Folds constant expressions and applies algebraic identities.
 #[derive(Clone)]
-pub struct ConstantFold {
-    rules: Rc<Vec<crate::BoxedRule>>,
-}
+pub struct ConstantFold;
 
 thread_local! {
-    /// Rebuilding the rule set costs about as much as one run of the pass.
-    static RULES: Rc<Vec<crate::BoxedRule>> = Rc::new(rules::build_rules());
+    /// Rebuilding the rule set costs about as much as one run of the pass, so
+    /// it is built once per thread. Held HERE rather than in the pass, which
+    /// keeps the pass free of the `Rc` and so `Send`: a pipeline is handed
+    /// between threads, and a boxed rule is `Send` but not `Sync`, so an owning
+    /// field could be neither shared nor moved.
+    static RULES: Vec<crate::BoxedRule> = rules::build_rules();
 }
 
 impl ConstantFold {
+    #[must_use]
     pub fn new() -> Self {
-        Self {
-            rules: RULES.with(Rc::clone),
-        }
+        Self
     }
 }
 
@@ -64,7 +63,7 @@ impl PeepholePass for ConstantFold {
         _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
-        let opt = first_matching_rule(&self.rules, edit, root)?;
+        let opt = RULES.with(|rules| first_matching_rule(rules, edit, root))?;
         Ok(PeepholeRewrite::from_new_value(edit, opt))
     }
 }

@@ -137,11 +137,14 @@ macro_rules! clone_box_shim {
     ($(#[$attr:meta])* $shim:ident for dyn $obj:ident) => {
         $(#[$attr])*
         pub trait $shim {
-            fn clone_box(&self) -> Box<dyn $obj>;
+            /// `Send` so a pipeline can be handed to another thread: the
+            /// Python binding wraps one in a class that must be, and holding
+            /// it back would keep the GIL held across a whole `analyze`.
+            fn clone_box(&self) -> Box<dyn $obj + Send>;
         }
 
-        impl<T: $obj + Clone + 'static> $shim for T {
-            fn clone_box(&self) -> Box<dyn $obj> {
+        impl<T: $obj + Clone + Send + 'static> $shim for T {
+            fn clone_box(&self) -> Box<dyn $obj + Send> {
                 Box::new(self.clone())
             }
         }
@@ -184,8 +187,8 @@ clone_box_shim! {
 /// called once per iteration in registration order, repeating until no pass
 /// reports a change.
 pub struct OptimizerPipeline {
-    passes: Vec<Box<dyn Optimizer>>,
-    post_passes: Vec<Box<dyn PostOptimizer>>,
+    passes: Vec<Box<dyn Optimizer + Send>>,
+    post_passes: Vec<Box<dyn PostOptimizer + Send>>,
 }
 
 impl Default for OptimizerPipeline {
@@ -203,22 +206,22 @@ impl OptimizerPipeline {
         }
     }
 
-    pub fn add<O: Optimizer + 'static>(&mut self, opt: O) {
+    pub fn add<O: Optimizer + Send + 'static>(&mut self, opt: O) {
         self.passes.push(Box::new(opt));
     }
 
-    pub fn add_post_pass<O: PostOptimizer + 'static>(&mut self, opt: O) {
+    pub fn add_post_pass<O: PostOptimizer + Send + 'static>(&mut self, opt: O) {
         self.post_passes.push(Box::new(opt));
     }
 
     /// The fixed-point passes in registration order.
     #[must_use]
-    pub fn passes(&self) -> &[Box<dyn Optimizer>] {
+    pub fn passes(&self) -> &[Box<dyn Optimizer + Send>] {
         &self.passes
     }
 
     #[must_use]
-    pub fn post_passes(&self) -> &[Box<dyn PostOptimizer>] {
+    pub fn post_passes(&self) -> &[Box<dyn PostOptimizer + Send>] {
         &self.post_passes
     }
 
@@ -557,7 +560,7 @@ mod tests {
 
     #[test]
     fn optimizer_name_is_the_concrete_struct_name() {
-        let p: Box<dyn Optimizer> = Box::new(crate::opt::constant_fold::ConstantFold::default());
+        let p: Box<dyn Optimizer + Send> = Box::new(crate::opt::constant_fold::ConstantFold);
         assert_eq!(p.name(), "ConstantFold");
     }
 }
