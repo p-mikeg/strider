@@ -1,14 +1,14 @@
 use pyo3::prelude::*;
 use pyo3::types::PyType;
-use std::cell::{RefCell, RefMut};
+use std::sync::Mutex;
 
 use crate::errors::into_strider_err;
 
 /// A type-erased fixed-point pass.
-pub(crate) type ErasedPass = Box<dyn strider_orchestrator::opt::Optimizer>;
+pub(crate) type ErasedPass = Box<dyn strider_orchestrator::opt::Optimizer + Send>;
 
 /// A type-erased post-pass, run once after the fixed-point loop.
-pub(crate) type ErasedPostPass = Box<dyn strider_orchestrator::opt::PostOptimizer>;
+pub(crate) type ErasedPostPass = Box<dyn strider_orchestrator::opt::PostOptimizer + Send>;
 
 // `OptimizerPipeline::add` is generic, so a type-erased box cannot be fed back
 // into it.  These forwarders satisfy the bound.
@@ -101,23 +101,24 @@ impl PipelineState {
 /// `default()`, then `add(pass)` / `add_post(pass)`; apply it with
 /// `Lifter.optimize(function, pipeline)`.  Applying a pipeline copies its
 /// passes, so one pipeline drives any number of calls.
-// `unsendable` pins the wrapper to its creating thread; cross-thread access
-// raises `pyo3_runtime.PanicException`, which derives from `BaseException`,
-// not `Exception`.
-#[pyclass(name = "OptimizerPipeline", module = "strider.opt", unsendable)]
+#[pyclass(name = "OptimizerPipeline", module = "strider.opt")]
 pub struct PyOptimizerPipeline {
-    state: RefCell<PipelineState>,
+    state: Mutex<PipelineState>,
 }
 
 impl PyOptimizerPipeline {
     fn new_with(state: PipelineState) -> Self {
         Self {
-            state: RefCell::new(state),
+            state: Mutex::new(state),
         }
     }
 
-    fn borrow_state(&self) -> RefMut<'_, PipelineState> {
-        self.state.borrow_mut()
+    /// A `Mutex`, not a `RefCell`: the class is `Send`, and the GIL alone does
+    /// not cover a borrow taken while it is released.
+    fn borrow_state(&self) -> std::sync::MutexGuard<'_, PipelineState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     pub(crate) fn new_full_default() -> Self {
