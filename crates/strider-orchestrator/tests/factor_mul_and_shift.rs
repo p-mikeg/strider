@@ -56,7 +56,7 @@ fn folded_coefficient(bytes: Vec<u8>) -> Option<u128> {
 #[test]
 fn a_sum_of_scaled_copies_folds_to_one_multiply() {
     // Assembled with `as --64`; the scratch is %rcx, which SysV does not return.
-    let cases: [(&str, &[u8], u128); 6] = [
+    let cases: [(&str, &[u8], u128); 10] = [
         // imul $3,%rdi,%rax ; imul $5,%rdi,%rcx ; add %rcx,%rax
         (
             "x*3 + x*5",
@@ -110,6 +110,44 @@ fn a_sum_of_scaled_copies_folds_to_one_multiply() {
                 0xc9, 0x31, 0xd2, 0xc3,
             ],
             u128::from(u64::MAX - 2),
+        ),
+        // `Neg` pins the subtrahend, so a bare `x` on the RIGHT is a different
+        // shape from `x - x*C` and needs its own rule. Both are ordinary
+        // codegen.
+        // imul $3,%rdi,%rax ; sub %rdi,%rax
+        (
+            "x*3 - x",
+            &[
+                0x48, 0x6b, 0xc7, 0x03, 0x48, 0x29, 0xf8, 0x31, 0xc9, 0x31, 0xd2, 0xc3,
+            ],
+            2,
+        ),
+        // mov %rdi,%rax ; shl $2,%rax ; sub %rdi,%rax
+        (
+            "(x<<2) - x",
+            &[
+                0x48, 0x89, 0xf8, 0x48, 0xc1, 0xe0, 0x02, 0x48, 0x29, 0xf8, 0x31, 0xc9, 0x31, 0xd2,
+                0xc3,
+            ],
+            3,
+        ),
+        // mov %rdi,%rax ; shl $3,%rax ; imul $3,%rdi,%rcx ; sub %rcx,%rax
+        (
+            "(x<<3) - x*3",
+            &[
+                0x48, 0x89, 0xf8, 0x48, 0xc1, 0xe0, 0x03, 0x48, 0x6b, 0xcf, 0x03, 0x48, 0x29, 0xc8,
+                0x31, 0xc9, 0x31, 0xd2, 0xc3,
+            ],
+            5,
+        ),
+        // mov %rdi,%rax ; shl $4,%rax ; mov %rdi,%rcx ; shl $1,%rcx ; sub %rcx,%rax
+        (
+            "(x<<4) - (x<<1)",
+            &[
+                0x48, 0x89, 0xf8, 0x48, 0xc1, 0xe0, 0x04, 0x48, 0x89, 0xf9, 0x48, 0xd1, 0xe1, 0x48,
+                0x29, 0xc8, 0x31, 0xc9, 0x31, 0xd2, 0xc3,
+            ],
+            14,
         ),
     ];
     for (name, bytes, want) in cases {

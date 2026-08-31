@@ -216,6 +216,30 @@ class _Visualizer(Protocol):
     def completions(self) -> list[str]: ...
 
 
+class _RenderSources:
+    """What a serving thread needs to build a decoder of its own.
+
+    Captured from the target's own handle when the visualizer is CONSTRUCTED,
+    never when a render arrives. Reading `arch` / `reader()` / `rom()` takes a
+    shared borrow of that handle, and `analyze` holds it mutably with the GIL
+    released, so a read from the serving thread fails with "Already mutably
+    borrowed" for as long as the analysis runs. Constructing happens on the
+    caller's thread, where no analysis of theirs can be in flight.
+    """
+
+    def __init__(self, lifter: Any) -> None:
+        self._arch = lifter.arch
+        self._mem = lifter.reader()
+        self._rom = lifter.rom()
+
+    def build(self) -> Any:
+        """A handle pinned to the calling thread. Costs an sla parse, so the
+        caller keeps it rather than building one per render."""
+        from . import lift as _lift
+
+        return _lift.lifter(self._arch, self._mem, self._rom)
+
+
 #: A neighborhood knob set to 0 means "no limit". The renderers compare against
 #: these bounds rather than allocating from them, so an unreachable bound is how
 #: "unlimited" is spelled.
@@ -237,24 +261,15 @@ class _IrVisualizer:
     def __init__(self, function: Function, whole: bool = True) -> None:
         self._fn = function
         self._whole = whole
+        self._sources = _RenderSources(function.cfg.lifter)
         self._render_lifter: Any = None
 
     def _lifter(self) -> Any:
-        """A decoder owned by whichever thread renders.
-
-        Pretty rendering resolves register and address-space names, which reads
-        tables every handle on the same arch answers identically. Decoding is
-        what is pinned to a thread, so the serving thread builds its own handle
-        rather than borrowing the one the function was lifted with -- that one
-        belongs to the thread still using it to query.
-
-        Built on first render, on the calling thread, and kept.
-        """
+        """A decoder owned by whichever thread renders; built from the sources
+        `_render_sources` captured before serving began. See `_RenderSources`
+        for why they are captured rather than read here."""
         if self._render_lifter is None:
-            from . import lift as _lift
-
-            src = self._fn.cfg.lifter
-            self._render_lifter = _lift.lifter(src.arch, src.reader(), src.rom())
+            self._render_lifter = self._sources.build()
         return self._render_lifter
 
     def entry(self) -> int:
@@ -306,15 +321,13 @@ class _CfgVisualizer:
         # Decodes, so it runs here, on the thread that owns the lifter, and the
         # server thread only ever reads the result.
         self._texts: dict[int, str] = cfg._region_texts()
+        self._sources = _RenderSources(cfg.lifter)
         self._render_lifter: Any = None
 
     def _lifter(self) -> Any:
         """A decoder owned by whichever thread renders; see `_IrVisualizer`."""
         if self._render_lifter is None:
-            from . import lift as _lift
-
-            src = self._cfg.lifter
-            self._render_lifter = _lift.lifter(src.arch, src.reader(), src.rom())
+            self._render_lifter = self._sources.build()
         return self._render_lifter
 
     def entry(self) -> int:
@@ -601,7 +614,6 @@ def _serve_background(
     url = f"http://{host}:{bound_port}/"
 
     def run() -> None:
-        _RUNNING[bound_port] = (srv, threading.current_thread())
         try:
             srv.serve_forever()
         finally:
@@ -610,12 +622,14 @@ def _serve_background(
             srv.visualizer = None
 
     thread = threading.Thread(target=run, name=f"strider-explorer-{bound_port}", daemon=False)
+    # Registered HERE, not in the worker: the port is already bound, so a
+    # `shutdown()` racing this return must find the server. `shutdown` carries
+    # its own `started` guard for one not yet inside `serve_forever`, so there
+    # is nothing to wait for. Waiting would also be a trap: `BaseServer.shutdown`
+    # blocks until the serve loop EXITS, so calling it on a loop that never
+    # ENTERED hangs, and the error meant to report that never raises.
+    _RUNNING[bound_port] = (srv, thread)
     thread.start()
-    # `_RUNNING` is written by the worker, so a `shutdown()` racing this return
-    # would find nothing; wait for the loop to actually be serving.
-    if not srv.started.wait(_SHUTDOWN_START_SECONDS):
-        srv.shutdown()
-        raise RuntimeError(f"explorer on port {bound_port} did not start serving")
     print(f"strider explorer -> {url}  (strider.explore.shutdown({bound_port}) to stop)")
     print("  drag or arrows pan, ctrl+wheel or +/- zooms, f fits, 0 is 100%")
     return bound_port

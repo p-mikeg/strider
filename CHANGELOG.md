@@ -6,6 +6,21 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
 
 ### Breaking, Python
 
+- AArch64 `usdot` / `bfdot` **by element** no longer lift, so `analyze` raises
+  on a function containing one. They used to lift with whichever register the
+  PREVIOUS instruction left in that operand slot, silently: `usdot v0.4s,
+  v1.16b, v2.4b[0]` after two `ldr q` read `v7`, the register the first load
+  wrote. The sla constructor for the lane operand exports nothing, so there is
+  no correct register to name, and failing is the only honest answer until it
+  does. It costs coverage on i8mm and bf16 dot-product kernels, which is where
+  those instructions appear; measured at 4,846 encodings per 40M random AArch64
+  words, and nothing else on any preset changed.
+
+- `visualize`'s `whole` now defaults to `True`, so it opens on the entire graph.
+  A caller relying on the neighborhood opening must pass `whole=False`. A
+  neighborhood hides nodes without saying so, which makes a truncated view
+  indistinguishable from a small function.
+
 - A `CallingConvention.custom(sleigh, ..)` or `CallOtherAbi.custom(sleigh, ..)`
   resolves register names against the `Sleigh` it is given and freezes the
   varnodes, so using one with a `Lifter` of another architecture now raises.
@@ -385,8 +400,31 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   pointer with ctrl+wheel and about the window centre with `+` / `-`, with `f`
   to fit the graph to the window
   and `0` for 100%. A drag ending over a node pans rather than re-centering.
-- `visualize(whole=True)` opens on the entire graph rather than a neighborhood,
-  and seeds a toolbar toggle so the page can switch back.
+- A sum of scaled copies of one value folds to a single multiply for every
+  mul/shift pairing, not just two multiplies: `x*3 + (x << 2)`, `(x << 2) +
+  (x << 3)`, `x*3 - x` and the rest all canonicalise to `x*C`. A shift by C is
+  a multiply by 2^C, so a compiler emits these interchangeably, and a pattern
+  now has one shape to match instead of nine.
+
+- `visualize` opens on the entire graph; `whole=False` opens on a neighborhood
+  instead, and the toolbar toggle switches between them either way.
+- `visualize(background=True)` serves on its own thread and returns straight
+  away, so the calling thread keeps querying while the page is open; stop it
+  with `strider.explore.shutdown(port)`. `visualize` now returns the bound port
+  either way, where it used to return `None`.
+- The explorer's neighborhood knobs open uncapped: `0` means no limit on depth,
+  hub cap and max nodes, and their ceilings are raised.
+- `ElfLifter.add_symbol_file(path)` attaches a debug or symbol companion's
+  symbols without its bytes; `add_elf` refuses such a file, since it is linked
+  at the same addresses as the image it describes.
+- `ElfLifter.add_symbols({name: addr | (addr, size)}, is_function=)` adds
+  symbols that live in no ELF, such as a `System.map`. A size is what lets
+  `symbol_at` resolve an address inside the symbol.
+- `Lifter.arch` and `Cfg.lifter`, together enough to build a second handle over
+  the same memory.
+- `lifter=` on `Function.to_dot` / `neighborhood_dot` and `Cfg.to_dot` /
+  `neighborhood_dot`, to render through a handle other than the one that built
+  the graph. A handle for a different arch is rejected.
 - A mapped file must not change on disk while it is loaded.
 
 ### Performance
@@ -428,6 +466,29 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
 
 ### Fixed
 
+- Three inputs took the whole process down from a plain `build_cfg`, with no
+  options set, and now raise a catchable `StriderError`. A malformed
+  instruction in a MIPS branch delay slot wrote tens of kilobytes past a
+  destroyed stack frame, because the handler that renders the error message
+  disassembled through a walker the unwind had already invalidated. An AArch64
+  operand the parse allocated but never built answered with a null address
+  space that the p-code builder dereferenced. And a region seated at the top of
+  the address space handed `BTreeMap::range` two equal excluded bounds.
+- A PowerPC `tw` / `twi` / `td` / `tdi` seals its region as no-return whenever
+  its TO mask covers either trichotomy, signed `LT|GT|EQ` or unsigned
+  `LTU|GTU|EQ`, which is seven of the 32 masks. Only all-bits-set counted
+  before, so the other six left dead fall-through code reachable.
+- x86-64 `rdtsc`, `rdpmc` and `xgetbv` kept the caller's upper 32 bits in RAX
+  and RDX, and carried a data dependency on the incoming register that the
+  machine does not have. Intel SDM Vol. 2B: in 64-bit mode these clear the high
+  half. A pattern asking "does this depend on the caller's RAX?" answered yes.
+- `OptimizerPipeline` is no longer thread-pinned. Touching one from another
+  thread raised `pyo3_runtime.PanicException`, which derives from
+  `BaseException` and so escapes `except Exception`.
+- `analyze` releases the GIL on the custom-pipeline path too. It used to hold
+  it for the whole analysis, stalling every other Python thread.
+- `Cfg.unverified_seeded_sites()` on a `build_cfg` result holds every site you
+  seeded; its docstring claimed it was always empty there.
 - AArch64 `addv` into a byte destination did not zero the rest of the vector
   register, so `__builtin_popcount` read the surviving `cnt` lanes back and
   returned a value with them in it.

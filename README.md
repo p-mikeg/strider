@@ -89,10 +89,11 @@ base, off = Capture("base"), Capture("off")
 for hit in function.find_all(load(addr=int_add(base, off)), ignore_casts=True):
     print("offset =", hit[off].uint_opt)   # None if it is not a constant
 
-# The explorer draws the neighborhood around a node you pick, so it stays
-# usable on large functions; visualize(whole=True) draws all of it. Drag or
-# arrow-key to pan, ctrl+wheel to zoom, f to fit.
-prog.visualize(function)   # prints a local URL; Ctrl-C to stop
+# The explorer draws the whole graph; visualize(whole=False) opens on the
+# neighborhood around a node instead, which stays usable on large functions.
+# Drag or arrow-key to pan, ctrl+wheel to zoom, f to fit.
+prog.visualize(function)                   # prints a local URL; Ctrl-C to stop
+prog.visualize(function, background=True)  # ...or serve and keep querying
 ```
 
 You can also decide matches with your own logic: `.when(f)` filters one pattern

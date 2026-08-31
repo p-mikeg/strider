@@ -14,8 +14,7 @@ use strider_pattern::{Capture, MatchPat, Matcher, Pattern, bool_not, var};
 pub struct IfCondInversion;
 
 thread_local! {
-    /// Rebuilding the pattern dominates the cost of constructing this pass, so
-    /// it is built once per thread. Held here rather than in the pass so the
+    /// Built once per thread, and held here rather than in the pass so the
     /// pass stays `Send`; see `ConstantFold`.
     static PATTERN: (Pattern, Capture) = {
         let capture = Capture::new();

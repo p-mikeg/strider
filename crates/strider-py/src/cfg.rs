@@ -149,6 +149,10 @@ impl PyCfg {
                 let b = l
                     .try_borrow()
                     .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
+                self.lifter
+                    .try_borrow(py)
+                    .map_err(|_| crate::strider_cls::reentrant_lifter_err())?
+                    .check_same_arch(&b)?;
                 f(b.sleigh()?)
             }
             None => {

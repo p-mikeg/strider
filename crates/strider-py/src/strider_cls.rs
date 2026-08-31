@@ -401,6 +401,23 @@ fn collect_py_deps(mem: &MemInput, rom: Option<&MemInput>) -> Vec<std::sync::Arc
 }
 
 impl PyLifter {
+    /// Rejects a handle built for a different arch.
+    ///
+    /// The register and address-space tables a render reads are what differ:
+    /// rendering an x86-64 function through an aarch64 handle names `RSI` as
+    /// `sp` and emits no error at all, so the check has to be here.
+    pub(crate) fn check_same_arch(&self, other: &Self) -> PyResult<()> {
+        if self.arch_name == other.arch_name {
+            return Ok(());
+        }
+        Err(into_strider_err(anyhow::anyhow!(
+            "lifter is for {}, but this graph was lifted with {}; a render \
+             resolves names through the arch's own tables, so the two must match",
+            other.arch_name,
+            self.arch_name
+        )))
+    }
+
     pub(crate) fn sleigh(&self) -> PyResult<&rsleigh::Sleigh<AnyMemReader>> {
         Ok(self.inner.get()?.sleigh())
     }
