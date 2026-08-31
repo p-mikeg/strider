@@ -669,6 +669,12 @@ impl PyLifter {
         Ok(PyCfg::new(py, inner, slf, seeded))
     }
 
+    /// Runs the fixed-point loop with the GIL released, so other Python
+    /// threads keep running. One consequence: a DAEMON thread sitting inside
+    /// this call when the interpreter starts finalizing is killed while it
+    /// holds no GIL, and the forced unwind out of the released region aborts
+    /// the process. Analyse on non-daemon threads, and join them.
+    ///
     /// Lift, optimise and resolve the function at `entry`, returning an
     /// `AnalyzeResult` (`cfg`, `function`, `unresolved`; also unpacks as a
     /// 3-tuple).
@@ -914,9 +920,9 @@ impl PyLifter {
     /// The neighborhood knobs open uncapped and are set from the page, where
     /// 0 means no limit on each.
     ///
-    /// Off the main thread you MUST pair this with
-    /// `strider.explore.shutdown(port)` and a thread join before the
-    /// interpreter exits, or the process aborts.
+    /// `strider.explore.shutdown(port)` stops a server and joins its thread.
+    /// It is registered to run before the interpreter joins non-daemon
+    /// threads, so an explorer left running does not hang or abort at exit.
     #[pyo3(signature = (target, host="127.0.0.1".to_string(), port=0, depth=None, whole=true, background=false))]
     // One parameter per Python keyword; splitting them into a struct would just
     // move the same list somewhere the `#[pyo3(signature)]` cannot see it.

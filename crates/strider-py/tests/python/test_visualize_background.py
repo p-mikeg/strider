@@ -1,6 +1,7 @@
 """`visualize(background=True)`: the explorer serves on its own thread while
 the calling thread keeps querying."""
 
+import socket
 import threading
 import urllib.error
 import urllib.parse
@@ -136,6 +137,30 @@ def test_rendering_works_while_the_caller_analyses():
             strider.explore.shutdown(port)
         assert not failures, (query, failures[:3])
         assert ok > 0, f"{query}: the render thread never completed a render"
+
+
+def test_a_connection_that_sends_nothing_does_not_wedge_the_server():
+    """A browser's speculative preconnect is a socket that sends nothing.
+
+    The serve loop is single-threaded, so without a read timeout that one
+    connection blocks every later request forever, `shutdown` cannot stop a
+    loop parked in `finish_request`, and the interpreter's own join -- which
+    has no timeout -- inherits the wait. The timeout must also stay under
+    `_SHUTDOWN_JOIN_SECONDS`, or the connection outlives the join and the hang
+    comes back one level up."""
+    assert strider.explore._Handler.timeout is not None
+    assert strider.explore._Handler.timeout < strider.explore._SHUTDOWN_JOIN_SECONDS
+
+    lift = strider.lift.load_elf(str(fixture_path("x64", "switch")))
+    fn = lift.analyze(next(iter(lift.functions())).address).function
+    port = strider.explore.visualize(fn, background=True)
+    quiet = socket.create_connection(("127.0.0.1", port))
+    try:
+        entry = _get(port, "/entry").strip()
+        assert _get(port, f"/dot?center={entry}&pretty=1").startswith("digraph")
+    finally:
+        quiet.close()
+        assert strider.explore.shutdown(port) == [port]
 
 
 def test_blocking_mode_is_still_the_default():
