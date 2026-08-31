@@ -237,6 +237,25 @@ class _IrVisualizer:
     def __init__(self, function: Function, whole: bool = True) -> None:
         self._fn = function
         self._whole = whole
+        self._render_lifter: Any = None
+
+    def _lifter(self) -> Any:
+        """A decoder owned by whichever thread renders.
+
+        Pretty rendering resolves register and address-space names, which reads
+        tables every handle on the same arch answers identically. Decoding is
+        what is pinned to a thread, so the serving thread builds its own handle
+        rather than borrowing the one the function was lifted with -- that one
+        belongs to the thread still using it to query.
+
+        Built on first render, on the calling thread, and kept.
+        """
+        if self._render_lifter is None:
+            from . import lift as _lift
+
+            src = self._fn.cfg.lifter
+            self._render_lifter = _lift.lifter(src.arch, src.reader(), src.rom())
+        return self._render_lifter
 
     def entry(self) -> int:
         """The node id to center the first view on."""
@@ -260,9 +279,12 @@ class _IrVisualizer:
         value per declared control. `pretty=False` falls back to the
         structure-faithful view for when the readable one cannot be trusted.
         `whole` renders every node and ignores the neighborhood knobs."""
+        pretty = params.get("pretty", True)
+        # Only a pretty render needs a decoder; the raw one is pure IR.
+        lf = self._lifter() if pretty else None
         if params.pop("whole", False):
-            return cast("str", self._fn.to_dot(pretty=params.get("pretty", True)))
-        return self._fn.neighborhood_dot(center, **_uncap(params))
+            return cast("str", self._fn.to_dot(pretty=pretty, lifter=lf))
+        return self._fn.neighborhood_dot(center, **_uncap(params), lifter=lf)
 
     def search(self, query: str) -> dict[str, Any]:
         """Node ids matching the pattern expression `query`."""
@@ -281,7 +303,19 @@ class _CfgVisualizer:
         reuse by every text search."""
         self._cfg = cfg
         self._whole = whole
+        # Decodes, so it runs here, on the thread that owns the lifter, and the
+        # server thread only ever reads the result.
         self._texts: dict[int, str] = cfg._region_texts()
+        self._render_lifter: Any = None
+
+    def _lifter(self) -> Any:
+        """A decoder owned by whichever thread renders; see `_IrVisualizer`."""
+        if self._render_lifter is None:
+            from . import lift as _lift
+
+            src = self._cfg.lifter
+            self._render_lifter = _lift.lifter(src.arch, src.reader(), src.rom())
+        return self._render_lifter
 
     def entry(self) -> int:
         """The region index to center the first view on."""
@@ -302,9 +336,10 @@ class _CfgVisualizer:
     def dot(self, center: int, params: dict[str, Any]) -> str:
         """DOT for the regions around `center`, `params` holding one value per
         declared control. `whole` renders every region."""
+        lf = self._lifter()
         if params.pop("whole", False):
-            return cast("str", self._cfg.to_dot())
-        return self._cfg.neighborhood_dot(center, **_uncap(params))
+            return cast("str", self._cfg.to_dot(lifter=lf))
+        return self._cfg.neighborhood_dot(center, **_uncap(params), lifter=lf)
 
     def search(self, query: str) -> dict[str, Any]:
         """Center the region containing `query` when it parses as an address,
@@ -502,7 +537,8 @@ def visualize(
     port: int = 0,
     depth: int | None = None,
     whole: bool = True,
-) -> None:
+    background: bool = False,
+) -> int:
     """Start the explorer for `target`, a `Function` from `analyze` or a
     `Cfg` from `build_cfg` / `analyze`. Blocks serving requests until
     interrupted.
@@ -518,13 +554,20 @@ def visualize(
     set from the page; 0 means no limit on each. `depth=None` keeps that, while
     a number seeds the toolbar's depth control instead.
 
-    Runs on the thread that created `target`: rendering decodes through the
-    `Lifter`, which is pinned to its creating thread, so serving from another
-    raises `StriderError`. A `Cfg` raises before the server binds; a
-    `Function` binds and serves, and only `pretty=True` rendering raises.
-    `shutdown(port)` is called from another thread to unblock it, and the
-    serving thread must be joined before the interpreter exits: a thread still
-    parked here at interpreter shutdown aborts the process."""
+    Blocks until interrupted, and returns the port it had bound.
+    `background=True` serves on a thread instead and returns the port straight
+    away, so the calling thread keeps querying while the browser is open --
+    stop it with `shutdown(port)`.
+
+    Either way the server renders through a decoder of its own, built on the
+    serving thread from this one's arch and readers. Decoding is pinned to its
+    creating thread, so the alternative would be for the browser and your
+    queries to contend for one; the tables a render reads are identical for any
+    handle on the same arch, so a second one costs only its own memory.
+
+    `shutdown(port)` joins the serving thread as well as stopping the server: a
+    thread still parked in the serve loop at interpreter exit aborts the
+    process, which is also why the thread is not a daemon."""
     tn = type(target).__name__
     if tn == "Function":
         vis: _Visualizer = _IrVisualizer(cast("Function", target), whole)
@@ -532,7 +575,50 @@ def visualize(
         vis = _CfgVisualizer(cast("Cfg", target), whole)
     else:
         raise TypeError(f"visualize expects a Function or Cfg, got {tn}")
-    return _serve(vis, host=host, port=port, depth=depth)
+    if not background:
+        return _serve(vis, host=host, port=port, depth=depth)
+    return _serve_background(vis, host=host, port=port, depth=depth)
+
+
+def _serve_background(
+    visualizer: _Visualizer,
+    *,
+    host: str,
+    port: int,
+    depth: int | None,
+) -> int:
+    """Serve on a NON-DAEMON thread and return the bound port.
+
+    Non-daemon so an interpreter exiting with the explorer still up joins the
+    thread rather than aborting inside its Rust frame; `shutdown` is registered
+    to stop it first, so the join completes.
+
+    Binding happens on THIS thread, before the worker starts, so a port already
+    in use raises here instead of vanishing into the thread. Rendering then runs
+    on the worker, which is why the visualizer needs a decoder of its own."""
+    srv = _Server((host, port), visualizer, depth)
+    bound_port: int = srv.server_address[1]
+    url = f"http://{host}:{bound_port}/"
+
+    def run() -> None:
+        _RUNNING[bound_port] = (srv, threading.current_thread())
+        try:
+            srv.serve_forever()
+        finally:
+            _RUNNING.pop(bound_port, None)
+            srv.server_close()
+            srv.visualizer = None
+
+    thread = threading.Thread(target=run, name=f"strider-explorer-{bound_port}", daemon=False)
+    thread.start()
+    # `_RUNNING` is written by the worker, so a `shutdown()` racing this return
+    # would find nothing; wait for the loop to actually be serving.
+    if not srv.started.wait(_SHUTDOWN_START_SECONDS):
+        srv.shutdown()
+        raise RuntimeError(f"explorer on port {bound_port} did not start serving")
+    print(f"strider explorer -> {url}  (strider.explore.shutdown({bound_port}) to stop)")
+    print("  drag or arrows pan, ctrl+wheel or +/- zooms, f fits, 0 is 100%")
+    return bound_port
 
 
 def _serve(
@@ -541,10 +627,10 @@ def _serve(
     host: str = "127.0.0.1",
     port: int = 0,
     depth: int | None = None,
-) -> None:
+) -> int:
     """Serve the explorer over any visualizer-shaped object. Prints the URL
     to stdout for the caller to open. Blocks serving requests until
-    interrupted."""
+    interrupted, then returns the port it had bound."""
     srv = _Server((host, port), visualizer, depth)
     bound_port: int = srv.server_address[1]
     url = f"http://{host}:{bound_port}/"
@@ -562,3 +648,4 @@ def _serve(
         # `srv`, so drop the `Function` / `Cfg` here, on the thread that
         # created them.
         srv.visualizer = None
+    return bound_port
