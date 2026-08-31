@@ -130,14 +130,35 @@ impl PyCfg {
         py: Python<'_>,
         f: impl FnOnce(&rsleigh::Sleigh<AnyMemReader>) -> PyResult<R>,
     ) -> PyResult<R> {
+        self.with_sleigh_of(py, None, f)
+    }
+
+    /// `with` renders through a handle other than the one that built this CFG,
+    /// which is how a thread that does not own the original decoder renders.
+    fn with_sleigh_of<R>(
+        &self,
+        py: Python<'_>,
+        with: Option<&Bound<'_, PyLifter>>,
+        f: impl FnOnce(&rsleigh::Sleigh<AnyMemReader>) -> PyResult<R>,
+    ) -> PyResult<R> {
         // `borrow` would panic when the owning `Lifter` is mid-`analyze`
         // (a `read()` callback rendering this Cfg), and that panic aborts:
         // it cannot unwind out of rsleigh's `extern "C"` fetch callback.
-        let lifter_borrow = self
-            .lifter
-            .try_borrow(py)
-            .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
-        f(lifter_borrow.sleigh()?)
+        match with {
+            Some(l) => {
+                let b = l
+                    .try_borrow()
+                    .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
+                f(b.sleigh()?)
+            }
+            None => {
+                let lifter_borrow = self
+                    .lifter
+                    .try_borrow(py)
+                    .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
+                f(lifter_borrow.sleigh()?)
+            }
+        }
     }
 
     fn dispatch_dot(
@@ -145,8 +166,9 @@ impl PyCfg {
         py: Python<'_>,
         style: &str,
         op: CfgDotOp<'_>,
+        with: Option<&Bound<'_, PyLifter>>,
     ) -> PyResult<CfgDotResult> {
-        self.with_sleigh(py, |sleigh| {
+        self.with_sleigh_of(py, with, |sleigh| {
             let d = dot::GraphDot::new(self.inner.dot_dumper(sleigh), dot_style_for(Some(style))?);
             match op {
                 CfgDotOp::ToHtml(p) => d
@@ -216,6 +238,16 @@ fn mismatched_dot_result() -> PyErr {
 
 #[pymethods]
 impl PyCfg {
+    /// The `Lifter` that built this CFG.
+    ///
+    /// Its `arch` / `reader()` / `rom()` are what a second handle over the same
+    /// memory is built from, which is how a renderer on another thread gets a
+    /// decoder of its own without disturbing this one.
+    #[getter]
+    fn lifter(&self, py: Python<'_>) -> Py<PyLifter> {
+        self.lifter.clone_ref(py)
+    }
+
     /// Machine addresses this CFG reached carrying two different ISA modes.
     ///
     /// One region owns the bytes, decoded in whichever mode the work queue
@@ -294,19 +326,20 @@ impl PyCfg {
     /// Render the CFG to DOT. Returns the DOT string when `path` is
     /// `None`, otherwise writes it to `path` and returns `None`.
     /// `style` selects the dot theme (default `"dark_cfg"`).
-    #[pyo3(signature = (path=None, style=None))]
+    #[pyo3(signature = (path=None, style=None, *, lifter=None))]
     fn to_dot(
         &self,
         py: Python<'_>,
         path: Option<&str>,
         style: Option<&str>,
+        lifter: Option<&Bound<'_, PyLifter>>,
     ) -> PyResult<Option<String>> {
         let style = style.unwrap_or(DEFAULT_CFG_STYLE);
         match path {
             Some(p) => self
-                .dispatch_dot(py, style, CfgDotOp::ToDot(p))
+                .dispatch_dot(py, style, CfgDotOp::ToDot(p), lifter)
                 .map(|_| None),
-            None => match self.dispatch_dot(py, style, CfgDotOp::DotStr)? {
+            None => match self.dispatch_dot(py, style, CfgDotOp::DotStr, lifter)? {
                 CfgDotResult::Dot(s) => Ok(Some(s)),
                 CfgDotResult::Html(_) | CfgDotResult::Unit => Err(mismatched_dot_result()),
             },
@@ -326,9 +359,9 @@ impl PyCfg {
         let style = style.unwrap_or(DEFAULT_CFG_STYLE);
         match path {
             Some(p) => self
-                .dispatch_dot(py, style, CfgDotOp::ToHtml(p))
+                .dispatch_dot(py, style, CfgDotOp::ToHtml(p), None)
                 .map(|_| None),
-            None => match self.dispatch_dot(py, style, CfgDotOp::HtmlStr)? {
+            None => match self.dispatch_dot(py, style, CfgDotOp::HtmlStr, None)? {
                 CfgDotResult::Html(s) => Ok(Some(s)),
                 CfgDotResult::Dot(_) | CfgDotResult::Unit => Err(mismatched_dot_result()),
             },
@@ -381,16 +414,17 @@ impl PyCfg {
 
     /// Pretty neighborhood DOT around region `center`: BFS over predecessor
     /// and successor regions, capped at `max_nodes`.
-    #[pyo3(signature = (center, depth=5, max_nodes=60))]
+    #[pyo3(signature = (center, depth=5, max_nodes=60, *, lifter=None))]
     fn neighborhood_dot(
         &self,
         py: Python<'_>,
         center: u32,
         depth: usize,
         max_nodes: usize,
+        lifter: Option<&Bound<'_, PyLifter>>,
     ) -> PyResult<String> {
         let node = strider_cfg::RegionId::new(center as usize);
-        self.with_sleigh(py, |sleigh| {
+        self.with_sleigh_of(py, lifter, |sleigh| {
             self.inner
                 .neighborhood_dot(sleigh, node, depth, max_nodes)
                 .map_err(into_strider_err)

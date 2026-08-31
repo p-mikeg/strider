@@ -373,6 +373,10 @@ pub struct PyLifter {
     /// The `SleighArch` preset this handle was built for, compared against
     /// the arch a `custom(...)` CC / `CallOtherAbi` froze its varnodes on.
     arch_name: &'static str,
+    /// The arch itself, so `arch` can hand back a `SleighArch` and a caller can
+    /// build a second handle over the same memory. `Copy`, so keeping it costs
+    /// nothing over the name alone.
+    arch: strider_target::SleighArch,
     /// The same Python reader/rom callback objects the adapters hold, so
     /// `__traverse__` can make the otherwise-buried lifter to reader edge
     /// visible to the cyclic GC.  Empty for the owned-data path.
@@ -478,9 +482,11 @@ fn build_lifter(
     let rom_input = rom.as_ref().map(|r| r.extract::<MemInput>()).transpose()?;
     let py_deps = collect_py_deps(&mem_input, rom_input.as_ref());
     let arch_name = arch.preset_name;
+    let arch_value = arch.inner;
     Ok(PyLifter {
         inner: ThreadPinned::new(build_strider(arch, mem_input, rom_input)?),
         arch_name,
+        arch: arch_value,
         py_deps,
         mem_obj: Some(mem.unbind()),
         rom_obj: rom.map(Bound::unbind),
@@ -489,6 +495,21 @@ fn build_lifter(
 
 #[pymethods]
 impl PyLifter {
+    /// The `SleighArch` this handle decodes with.
+    ///
+    /// Enough, with `reader()` and `rom()`, to build a SECOND handle over the
+    /// same memory. That is how a background renderer gets a decoder of its
+    /// own: decoding is pinned to the creating thread, but the register and
+    /// address-space tables a render reads are the same for any handle on the
+    /// same arch.
+    #[getter]
+    fn arch(&self) -> crate::arch::PySleighArch {
+        crate::arch::PySleighArch {
+            inner: self.arch,
+            preset_name: self.arch_name,
+        }
+    }
+
     /// Build a handle for `arch` reading code from `mem`, with `rom` as the
     /// optional read-only memory for constant folding.
     #[new]
@@ -872,7 +893,10 @@ impl PyLifter {
     /// Off the main thread you MUST pair this with
     /// `strider.explore.shutdown(port)` and a thread join before the
     /// interpreter exits, or the process aborts.
-    #[pyo3(signature = (target, host="127.0.0.1".to_string(), port=0, depth=None, whole=true))]
+    #[pyo3(signature = (target, host="127.0.0.1".to_string(), port=0, depth=None, whole=true, background=false))]
+    // One parameter per Python keyword; splitting them into a struct would just
+    // move the same list somewhere the `#[pyo3(signature)]` cannot see it.
+    #[allow(clippy::too_many_arguments)]
     fn visualize(
         &self,
         py: Python<'_>,
@@ -881,7 +905,8 @@ impl PyLifter {
         port: u16,
         depth: Option<usize>,
         whole: bool,
-    ) -> PyResult<()> {
+        background: bool,
+    ) -> PyResult<u16> {
         let explore = py.import_bound("strider.explore")?;
         let kwargs = pyo3::types::PyDict::new_bound(py);
         kwargs.set_item("host", host)?;
@@ -890,8 +915,10 @@ impl PyLifter {
         // off the binding signature and shows as the control's default.
         kwargs.set_item("depth", depth)?;
         kwargs.set_item("whole", whole)?;
-        explore.call_method("visualize", (target,), Some(&kwargs))?;
-        Ok(())
+        kwargs.set_item("background", background)?;
+        explore
+            .call_method("visualize", (target,), Some(&kwargs))?
+            .extract()
     }
 }
 
