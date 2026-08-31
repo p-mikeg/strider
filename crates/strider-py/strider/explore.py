@@ -381,6 +381,20 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     happens to collect next.
     """
 
+    #: Without this the read of the request line blocks forever, and one
+    #: connection that sends nothing is enough to wedge everything: the server
+    #: is single-threaded so no later request is served, `shutdown` cannot stop
+    #: a loop that is inside `finish_request` rather than `select`, and the
+    #: serving thread is not a daemon, so the interpreter's own join never
+    #: returns either. A browser opening a speculative connection and sending
+    #: nothing is exactly this shape.
+    #:
+    #: Must stay well under `_SHUTDOWN_JOIN_SECONDS`: `shutdown` gives the
+    #: serving thread that long to finish, and a connection still being waited
+    #: on outlives the join, after which the interpreter's own join -- which
+    #: has no timeout at all -- inherits the wait.
+    timeout = 2.0
+
     def _send(
         self, body: str | bytes, ctype: str = "text/html", code: int = 200
     ) -> None:
