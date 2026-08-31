@@ -732,9 +732,11 @@ impl PyLifter {
             &call_other_abis,
             arch_name,
         )?;
-        // The fixed-point loop runs without the GIL on the default path
-        // only: `custom_pipeline`'s boxed `dyn Optimizer`s aren't `Send`, so
-        // a closure capturing one fails `allow_threads`'s `Ungil` bound.
+        // The fixed-point loop runs without the GIL either way: a pipeline's
+        // boxed passes are `Send`, so a closure capturing one satisfies
+        // `allow_threads`'s `Ungil` bound. Holding it would stall every other
+        // Python thread for the length of an analysis, which is what an
+        // explorer serving in the background would feel.
         let result = {
             let mut lifter = try_borrow_lifter_mut(&slf, py)?;
             // Reborrow before the closure so its captured type is a plain
@@ -743,9 +745,10 @@ impl PyLifter {
             let inner = lifter.inner.get_mut()?;
             match custom_pipeline {
                 Some(pipeline) => prefer_pending_control_flow(
-                    inner
-                        .analyze(entry, &cc_built, &lift_opts, &opt_opts, Some(pipeline))
-                        .map_err(into_strider_err),
+                    py.allow_threads(|| {
+                        inner.analyze(entry, &cc_built, &lift_opts, &opt_opts, Some(pipeline))
+                    })
+                    .map_err(into_strider_err),
                 )?,
                 None => prefer_pending_control_flow(
                     py.allow_threads(|| {
