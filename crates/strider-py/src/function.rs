@@ -30,10 +30,18 @@ impl PyFunction {
         style: Option<&str>,
         path: Option<&str>,
         html: bool,
+        with: Option<&Bound<'_, crate::strider_cls::PyLifter>>,
     ) -> PyResult<Option<String>> {
         use crate::strider_cls::{DotOp, DotResult};
         let cfg = self.cfg.bind(py).try_borrow()?;
-        let lifter = cfg.lifter.bind(py).try_borrow()?;
+        let borrowed;
+        let lifter = match with {
+            Some(l) => l.try_borrow()?,
+            None => {
+                borrowed = cfg.lifter.bind(py);
+                borrowed.try_borrow()?
+            }
+        };
         let op = match (html, path) {
             (true, Some(p)) => DotOp::DumpHtml(p),
             (false, Some(p)) => DotOp::DumpDot(p),
@@ -131,17 +139,24 @@ impl PyFunction {
     /// side-tables inline, no constant inlining or virtual nodes.
     ///
     /// `pretty=True` inlines constants, adds virtual nodes and resolves
-    /// register names, which needs the `Sleigh` behind the parent `Cfg`'s
-    /// `Lifter`. A theme name in place of `True` picks the dot theme.
-    #[pyo3(signature = (path=None, *, pretty=Pretty::Flag(false)))]
+    /// register names, which needs a `Sleigh`; by default the one behind the
+    /// parent `Cfg`'s `Lifter`. A theme name in place of `True` picks the dot
+    /// theme.
+    ///
+    /// `lifter=` renders through a different handle instead. Decoding is
+    /// pinned to its creating thread, so a renderer on another thread passes
+    /// its own handle here; the tables a render reads are identical for any
+    /// handle on the same arch.
+    #[pyo3(signature = (path=None, *, pretty=Pretty::Flag(false), lifter=None))]
     fn to_dot(
         &self,
         py: Python<'_>,
         path: Option<&str>,
         pretty: Pretty,
+        lifter: Option<&Bound<'_, crate::strider_cls::PyLifter>>,
     ) -> PyResult<Option<String>> {
         if let Some(style) = pretty.theme() {
-            return self.pretty_dot(py, Some(style), path, /* html */ false);
+            return self.pretty_dot(py, Some(style), path, /* html */ false, lifter);
         }
         let s = self
             .with_read_value(strider_ir::Function::raw_dot)?
@@ -165,7 +180,7 @@ impl PyFunction {
         pretty: Pretty,
     ) -> PyResult<Option<String>> {
         if let Some(style) = pretty.theme() {
-            return self.pretty_dot(py, Some(style), path, /* html */ true);
+            return self.pretty_dot(py, Some(style), path, /* html */ true, None);
         }
         let s = self
             .with_read_value(strider_ir::Function::raw_html)?
@@ -205,7 +220,7 @@ impl PyFunction {
     /// `pretty=False` (the default) draws the nodes exactly as stored;
     /// `pretty=True` inlines constants, adds virtual nodes and resolves
     /// register names, so it needs the `Sleigh` behind `cfg`.
-    #[pyo3(signature = (center, depth=5, hub_cap=12, max_nodes=60, count_producers=false, *, pretty=false))]
+    #[pyo3(signature = (center, depth=5, hub_cap=12, max_nodes=60, count_producers=false, *, pretty=false, lifter=None))]
     #[allow(clippy::too_many_arguments)]
     fn neighborhood_dot(
         &self,
@@ -216,10 +231,18 @@ impl PyFunction {
         max_nodes: usize,
         count_producers: bool,
         pretty: bool,
+        lifter: Option<&Bound<'_, crate::strider_cls::PyLifter>>,
     ) -> PyResult<String> {
         if pretty {
             let cfg = self.cfg.bind(py).try_borrow()?;
-            let lifter = cfg.lifter.bind(py).try_borrow()?;
+            let borrowed;
+            let lifter = match lifter {
+                Some(l) => l.try_borrow()?,
+                None => {
+                    borrowed = cfg.lifter.bind(py);
+                    borrowed.try_borrow()?
+                }
+            };
             return lifter.dispatch_neighborhood_dot(
                 self,
                 center,

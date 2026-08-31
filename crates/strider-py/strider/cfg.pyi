@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Literal, Optional, Union
 
 from .ir import Node
+from .lift import Lifter
 from .sleigh import CallOtherAbi
 
 __all__: list[str]
@@ -15,9 +16,18 @@ DotStyle = Literal["dark", "dark_cfg", "empty"]
 class Cfg:
     """Control-flow graph of a single function, produced by
     `Lifter.build_cfg` and returned as `AnalyzeResult.cfg`."""
+    @property
+    def lifter(self) -> Lifter:
+        """The `Lifter` that built this CFG. Its `arch` / `reader()` / `rom()`
+        are what a second handle over the same memory is built from."""
+        ...
 
     def to_dot(
-        self, path: Optional[str] = ..., style: Optional[DotStyle] = ...
+        self,
+        path: Optional[str] = ...,
+        style: Optional[DotStyle] = ...,
+        *,
+        lifter: Optional[Lifter] = ...,
     ) -> Optional[str]:
         """Render the CFG to DOT. Returns the DOT string when `path` is
         `None`, otherwise writes it to `path` and returns `None`.
@@ -58,7 +68,12 @@ class Cfg:
         """The region index of the CFG entry, the default explorer center."""
         ...
     def neighborhood_dot(
-        self, center: int, depth: int = ..., max_nodes: int = ...
+        self,
+        center: int,
+        depth: int = ...,
+        max_nodes: int = ...,
+        *,
+        lifter: Optional[Lifter] = ...,
     ) -> str:
         """DOT for the regions within `depth` hops of region `center`
         (predecessors and successors), capped at `max_nodes`."""
