@@ -260,9 +260,11 @@ class Lifter:
         A function of a few thousand nodes can keep the layout engine busy for
         a long time.
 
-        Off the main thread you MUST pair this with
-        `strider.explore.shutdown(port)` and a thread join before the
-        interpreter exits, or the process aborts.
+        `strider.explore.shutdown(port)` stops a server and joins its thread. It
+
+        is registered to run before the interpreter joins non-daemon threads, so
+
+        an explorer left running does not hang or abort at exit.
         """
         ...
 
