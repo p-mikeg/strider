@@ -89,6 +89,55 @@ def test_concurrent_render_and_query_do_not_disturb_each_other():
     assert not errors, errors
 
 
+def test_rendering_works_while_the_caller_analyses():
+    """The whole point of the mode, and the case CI missed.
+
+    Rendering must not borrow the handle `analyze` holds. It holds it mutably
+    with the GIL RELEASED, so anything on the render path that reaches for it
+    fails for the entire length of an analysis -- which is exactly when someone
+    is watching the page. Hammering with `to_dot` from the main thread does not
+    catch this, because a shared borrow is fine; only a concurrent `analyze`
+    does."""
+    lift = strider.lift.load_elf(str(fixture_path("x64", "switch")))
+    sym = next(iter(lift.functions()))
+    result = lift.analyze(sym.address)
+    # Every render path: the whole-graph one the page opens on, the
+    # neighborhood one behind the toggle, and the Cfg explorer, which passes a
+    # lifter unconditionally.
+    for target, query in (
+        (result.function, "pretty=1"),
+        (result.function, "whole=0&pretty=1"),
+        (result.cfg, "whole=0"),
+    ):
+        port = strider.explore.visualize(target, background=True)
+        entry = _get(port, "/entry").strip()
+        ok = 0
+        failures: list[str] = []
+        stop = threading.Event()
+
+        def render(port=port, entry=entry, query=query, failures=failures):
+            nonlocal ok
+            while not stop.is_set():
+                try:
+                    _get(port, f"/dot?center={entry}&{query}")
+                    ok += 1
+                except Exception as exc:  # noqa: BLE001 - asserted below
+                    failures.append(str(exc))
+                    return
+
+        t = threading.Thread(target=render, daemon=True)
+        t.start()
+        try:
+            for _ in range(30):
+                lift.analyze(sym.address)
+        finally:
+            stop.set()
+            t.join(timeout=30)
+            strider.explore.shutdown(port)
+        assert not failures, (query, failures[:3])
+        assert ok > 0, f"{query}: the render thread never completed a render"
+
+
 def test_blocking_mode_is_still_the_default():
     """`background` defaults off, so an existing caller still blocks."""
     import inspect

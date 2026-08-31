@@ -224,8 +224,9 @@ pub struct PyLoadedElf {
     /// linked at the same addresses as the image it describes, so merging it
     /// through `add_elf` would collide with what is already mapped.
     symbol_elfs: Vec<strider_reader::OwnedElf>,
-    /// Symbols supplied directly, which win nothing: they are appended last and
-    /// an earlier source keeps the name.
+    /// Symbols supplied directly. Appended last, so an ELF keeps a colliding
+    /// name; `symbol_at` still reaches these by address, and one with a size
+    /// can win there.
     extra_symbols: Vec<PySymbol>,
     /// Every symbol of every source, built on the first symbol query and
     /// dropped whenever a source is added.
@@ -486,7 +487,9 @@ impl PyLoadedElf {
     /// A rebuild between two operations is caught here; a change racing a read
     /// already in progress is still a torn read or a SIGBUS.
     fn check_unchanged(&self) -> PyResult<()> {
-        for elf in &self.elfs {
+        // `symbol_elfs` too: `build_symbol_table` parses every one of them, and
+        // parsing a shortened mapping panics or takes a SIGBUS.
+        for elf in self.elfs.iter().chain(&self.symbol_elfs) {
             elf.check_unchanged().map_err(into_strider_err)?;
         }
         Ok(())

@@ -263,13 +263,17 @@ original. Example `03` walks through this end to end.
 
 ## Looking at the graph
 
-The interactive explorer is the easiest way to look at a function, and the only
-one that stays usable on large graphs: it shows the neighborhood around a node
-and re-centers as you click, instead of drawing everything at once.
+The interactive explorer is the easiest way to look at a function. It opens on
+the whole graph, because a neighborhood view hides nodes without saying so and
+you cannot tell a small function from a truncated one. `whole=False` opens on
+the neighborhood around a node and re-centers as you click, which is what stays
+usable on a graph of a few thousand nodes.
 
 ```python
-prog.visualize(function)              # prints a local URL; blocks until Ctrl-C
-prog.visualize(function, whole=True)  # the entire graph instead
+prog.visualize(function)                   # prints a local URL; blocks until Ctrl-C
+prog.visualize(function, whole=False)      # a neighborhood, re-centering as you click
+port = prog.visualize(function, background=True)   # serve and keep querying
+strider.explore.shutdown(port)             # ...until you stop it
 ```
 
 Drag with the mouse or press the arrow keys to pan (hold shift for a longer
@@ -279,16 +283,16 @@ pans rather than following it.
 
 The toolbar controls the render: depth, hub cap (a node with more consumers than
 this is drawn but not expanded), max nodes, whether a node's inputs count toward
-the hub cap, and whether to render pretty. They start at the `neighborhood_dot`
-defaults except pretty, which the explorer opens on, and depth when
-`visualize(depth=...)` seeds it; `reset` puts them back. The `whole` toggle
-draws the entire graph, which the neighborhood knobs no longer apply to and
-which a few thousand nodes can keep the layout engine busy on for a long
-time.
+the hub cap, and whether to render pretty. The three limits open at `0`, which
+means no limit on each, and pretty opens on; `visualize(depth=...)` seeds depth
+instead, and `reset` puts them back. The `whole` toggle switches to a
+neighborhood, which is what those limits apply to; drawing everything can keep
+the layout engine busy for a while on a few thousand nodes.
 
-It blocks the calling thread, and it reaches back into the lifter, which
-decodes only on the thread that built it. Serving off another thread has rules,
-worked through in [python-api.md](python-api.md#10-visualizing).
+It blocks the calling thread unless you pass `background=True`, which serves on
+its own thread and hands back the port. Either way the server renders through a
+decoder of its own, so your handle stays free to keep analysing; see
+[python-api.md](python-api.md#10-visualizing).
 
 For a static picture, render the IR or the CFG to a self-contained HTML file:
 
