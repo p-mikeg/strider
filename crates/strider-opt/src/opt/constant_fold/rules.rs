@@ -157,13 +157,103 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
         ),
     );
 
+    // x*C1 + (x << C2) -> x*(C1 + 2^C2)
+    let add_mul_shl = rewrite_rule(
+        int_add(
+            int_mul(var(x), int_const(c1)),
+            int_shl(var(x), int_const(c2)),
+        )
+        .when_match(move |edit, ty, binds| {
+            coefficient_fits_carrier(ty)
+                && all_same_width(edit, binds, ty, &[x, c1])
+                && shift_in_range(edit, binds, ty, c2)
+        }),
+        template::int_mul(
+            var(x),
+            int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(1u128 << c2)),
+        ),
+    );
+
+    // (x << C1) + (x << C2) -> x*(2^C1 + 2^C2)
+    let add_shl_shl = rewrite_rule(
+        int_add(
+            int_shl(var(x), int_const(c1)),
+            int_shl(var(x), int_const(c2)),
+        )
+        .when_match(move |edit, ty, binds| {
+            all_same_width(edit, binds, ty, &[x])
+                && shift_in_range(edit, binds, ty, c1)
+                && shift_in_range(edit, binds, ty, c2)
+        }),
+        template::int_mul(
+            var(x),
+            int_const_with!([c1: uint, c2: uint] => (1u128 << c1).wrapping_add(1u128 << c2)),
+        ),
+    );
+
+    // x*C1 - (x << C2) -> x*(C1 - 2^C2)
+    let sub_mul_shl = rewrite_rule(
+        int_add(
+            int_mul(var(x), int_const(c1)),
+            int_neg(int_shl(var(x), int_const(c2))),
+        )
+        .when_match(move |edit, ty, binds| {
+            coefficient_fits_carrier(ty)
+                && all_same_width(edit, binds, ty, &[x, c1])
+                && shift_in_range(edit, binds, ty, c2)
+        }),
+        template::int_mul(
+            var(x),
+            int_const_with!([c1: uint, c2: uint] => c1.wrapping_sub(1u128 << c2)),
+        ),
+    );
+
+    // (x << C1) - x*C2 -> x*(2^C1 - C2)
+    let sub_shl_mul = rewrite_rule(
+        int_add(
+            int_shl(var(x), int_const(c1)),
+            int_neg(int_mul(var(x), int_const(c2))),
+        )
+        .when_match(move |edit, ty, binds| {
+            coefficient_fits_carrier(ty)
+                && all_same_width(edit, binds, ty, &[x, c2])
+                && shift_in_range(edit, binds, ty, c1)
+        }),
+        template::int_mul(
+            var(x),
+            int_const_with!([c1: uint, c2: uint] => (1u128 << c1).wrapping_sub(c2)),
+        ),
+    );
+
+    // (x << C1) - (x << C2) -> x*(2^C1 - 2^C2)
+    let sub_shl_shl = rewrite_rule(
+        int_add(
+            int_shl(var(x), int_const(c1)),
+            int_neg(int_shl(var(x), int_const(c2))),
+        )
+        .when_match(move |edit, ty, binds| {
+            all_same_width(edit, binds, ty, &[x])
+                && shift_in_range(edit, binds, ty, c1)
+                && shift_in_range(edit, binds, ty, c2)
+        }),
+        template::int_mul(
+            var(x),
+            int_const_with!([c1: uint, c2: uint] => (1u128 << c1).wrapping_sub(1u128 << c2)),
+        ),
+    );
+
     vec![
         Box::new(add_self_mul),
         Box::new(add_mul_mul),
         Box::new(add_self_shl),
+        Box::new(add_mul_shl),
+        Box::new(add_shl_shl),
         Box::new(sub_self_mul),
         Box::new(sub_mul_mul),
         Box::new(sub_self_shl),
+        Box::new(sub_mul_shl),
+        Box::new(sub_shl_mul),
+        Box::new(sub_shl_shl),
     ]
 }
 
