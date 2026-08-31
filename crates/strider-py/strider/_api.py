@@ -341,6 +341,34 @@ class ElfLifter(Lifter):
         self._elf.add_elf(path, apply_relocations)
         self._rebuild(self._arch, self._elf.reader(), rom=self._elf.ro_reader())
 
+    def add_symbol_file(self, path: str) -> None:
+        """Take the symbols of `path` and none of its bytes.
+
+        This is how a separate debug or symbol file attaches after loading: a
+        `objcopy --only-keep-debug` companion and distro debuginfo are linked
+        at the same addresses as the image they describe, so `add_elf` would
+        refuse them as an overlap. Both `.symtab` and `.dynsym` are read, as
+        for any ELF, and the already-loaded ELFs keep a colliding name.
+
+        The mapped bytes are untouched, so nothing about lifting changes; only
+        `symbol`, `symbol_at`, `symbols`, `functions` and `iter_symbols` see
+        more."""
+        self._elf.add_symbol_file(path)
+
+    def add_symbols(
+        self,
+        symbols: "dict[str, Union[int, tuple[int, int]]]",
+        *,
+        is_function: bool = True,
+    ) -> None:
+        """Add symbols directly, for names that live in no ELF: a map file, a
+        kernel `System.map`, a database, or your own naming.
+
+        Each value is an address, or an `(address, size)` pair when the extent
+        is known, which is what lets `symbol_at` resolve an interior address.
+        An ELF already carrying a name keeps its own answer for that name."""
+        self._elf.add_symbols(symbols, is_function=is_function)
+
     def analyze(
         self,
         entry: Union[str, int],
