@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use object::{Object, ObjectSymbol};
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyDict};
 
 use crate::errors::into_strider_err;
 use strider_reader::elf::{ElfSectionLayout, LoadFilter, RegionSource};
@@ -220,8 +220,15 @@ pub struct PyLoadedElf {
     rom: PyBufferReader,
     /// The region-collection strategy this ELF was loaded with.
     source: ElfRegionSource,
-    /// Every symbol of every loaded ELF, built on the first symbol query and
-    /// dropped by `add_elf`.
+    /// ELFs consulted for symbols only, never for bytes: a debug companion is
+    /// linked at the same addresses as the image it describes, so merging it
+    /// through `add_elf` would collide with what is already mapped.
+    symbol_elfs: Vec<strider_reader::OwnedElf>,
+    /// Symbols supplied directly, which win nothing: they are appended last and
+    /// an earlier source keeps the name.
+    extra_symbols: Vec<PySymbol>,
+    /// Every symbol of every source, built on the first symbol query and
+    /// dropped whenever a source is added.
     symbol_table: Mutex<Option<SymbolTable>>,
 }
 
@@ -384,7 +391,7 @@ impl PyLoadedElf {
         };
         let mut syms: Vec<PySymbol> = Vec::new();
         let mut by_name: HashMap<String, usize> = HashMap::new();
-        for obj in &self.elfs {
+        for obj in self.elfs.iter().chain(&self.symbol_elfs) {
             let file = obj.file();
             let layout = ElfSectionLayout::new(&file);
             let relocatable = file.kind() == object::ObjectKind::Relocatable;
@@ -424,6 +431,16 @@ impl PyLoadedElf {
             for (name, ix) in per_elf {
                 by_name.entry(name).or_insert(ix);
             }
+        }
+        // Hand-supplied symbols land last, so a name any ELF already carries
+        // keeps the ELF's answer; `symbol_at` still sees these by address.
+        for extra in &self.extra_symbols {
+            let ix = syms.len();
+            syms.push(PySymbol {
+                region: region_of(extra.address),
+                ..extra.clone()
+            });
+            by_name.entry(extra.name.clone()).or_insert(ix);
         }
         let mut by_addr: Vec<usize> = (0..syms.len()).collect();
         by_addr.sort_by_key(|&i| syms[i].address);
@@ -643,6 +660,51 @@ impl PyLoadedElf {
         self.symbol_table.lock_shared().take();
         Ok(())
     }
+
+    /// Take the symbols of `path` and none of its bytes.
+    ///
+    /// This is how a separate debug or symbol file attaches: `objcopy
+    /// --only-keep-debug` output and distro debuginfo are linked at the same
+    /// addresses as the image they describe, so `add_elf` would refuse them as
+    /// an overlap. Both `.symtab` and `.dynsym` are read, as for any ELF.
+    ///
+    /// The already-loaded ELFs keep a colliding name; addresses that fall
+    /// outside every mapped region are still recorded, and simply have no
+    /// region attached.
+    fn add_symbol_file(&mut self, path: &str) -> PyResult<()> {
+        let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
+        self.symbol_elfs.push(obj);
+        self.symbol_table.lock_shared().take();
+        Ok(())
+    }
+
+    /// Add symbols directly, for names that live in no ELF at all: a map file,
+    /// a kernel `System.map`, a database, or your own naming.
+    ///
+    /// `symbols` maps a name to an address, or to a `(address, size)` pair
+    /// when the extent is known. `is_function` marks them all as code, which
+    /// is what `functions()` iterates. An ELF already carrying a name keeps
+    /// its own answer for that name.
+    #[pyo3(signature = (symbols, *, is_function=true))]
+    fn add_symbols(&mut self, symbols: &Bound<'_, PyDict>, is_function: bool) -> PyResult<()> {
+        for (name, value) in symbols.iter() {
+            let name: String = name.extract()?;
+            let (address, size) = if let Ok((a, n)) = value.extract::<(u64, u64)>() {
+                (a, (n != 0).then_some(n))
+            } else {
+                (value.extract::<u64>()?, None)
+            };
+            self.extra_symbols.push(PySymbol {
+                name,
+                address,
+                size,
+                is_function,
+                region: None,
+            });
+        }
+        self.symbol_table.lock_shared().take();
+        Ok(())
+    }
 }
 
 fn load_elf_impl(
@@ -655,6 +717,8 @@ fn load_elf_impl(
     let rom = PyBufferReader::from_regions(elf_to_rom_regions(&obj, source, apply_relocations)?);
     Ok(PyLoadedElf {
         elfs: vec![obj],
+        symbol_elfs: Vec::new(),
+        extra_symbols: Vec::new(),
         mem,
         rom,
         source,
