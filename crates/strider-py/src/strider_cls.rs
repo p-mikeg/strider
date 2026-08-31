@@ -857,19 +857,22 @@ impl PyLifter {
     }
 
     /// Start the interactive explorer for `target`, a `Function` or a `Cfg`.
-    /// It renders the NEIGHBORHOOD around a node you pick (inputs and outputs
-    /// out to `depth` hops), which is what scales to large functions. Prints
-    /// the local URL and blocks on this thread until Ctrl-C.
+    /// Prints the local URL and blocks on this thread until Ctrl-C.
     ///
-    /// `whole=True` opens on the entire graph instead and seeds the toolbar's
-    /// `whole` toggle. The neighborhood knobs do not apply while it is on, and
-    /// a function of a few thousand nodes can keep the layout engine busy for
-    /// a long time.
+    /// Opens on the WHOLE graph: a neighborhood view hides nodes without
+    /// saying so. `whole=False` opens on the neighborhood around a node you
+    /// pick instead (inputs and outputs out to `depth` hops), which is what
+    /// scales to large functions; the toolbar's `whole` toggle switches
+    /// between them either way. A function of a few thousand nodes can keep
+    /// the layout engine busy for a while, so prefer `whole=False` there.
+    ///
+    /// The neighborhood knobs open uncapped and are set from the page, where
+    /// 0 means no limit on each.
     ///
     /// Off the main thread you MUST pair this with
     /// `strider.explore.shutdown(port)` and a thread join before the
     /// interpreter exits, or the process aborts.
-    #[pyo3(signature = (target, host="127.0.0.1".to_string(), port=0, depth=None, whole=false))]
+    #[pyo3(signature = (target, host="127.0.0.1".to_string(), port=0, depth=None, whole=true))]
     fn visualize(
         &self,
         py: Python<'_>,
