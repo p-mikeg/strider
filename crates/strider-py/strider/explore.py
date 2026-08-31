@@ -105,26 +105,28 @@ _KNOB_UI = {
     "depth": {
         "kind": "int",
         "label": "depth",
-        "help": "how many hops out from the centered node to draw",
-        "min": 1,
-        "max": 20,
+        "help": "how many hops out from the centered node to draw; 0 draws "
+        "every hop",
+        "min": 0,
+        "max": 4096,
         "step": 1,
     },
     "hub_cap": {
         "kind": "int",
         "label": "hub cap",
         "help": "a node with more consumers than this is drawn but not "
-        "expanded, so one popular value cannot flood the view",
-        "min": 1,
-        "max": 512,
+        "expanded, so one popular value cannot flood the view; 0 expands "
+        "every node",
+        "min": 0,
+        "max": 100000,
         "step": 2,
     },
     "max_nodes": {
         "kind": "int",
         "label": "max nodes",
-        "help": "hard cap on how many nodes the view may draw",
-        "min": 1,
-        "max": 2000,
+        "help": "hard cap on how many nodes the view may draw; 0 is no cap",
+        "min": 0,
+        "max": 100000,
         "step": 10,
     },
     "whole": {
@@ -214,10 +216,25 @@ class _Visualizer(Protocol):
     def completions(self) -> list[str]: ...
 
 
+#: A neighborhood knob set to 0 means "no limit". The renderers compare against
+#: these bounds rather than allocating from them, so an unreachable bound is how
+#: "unlimited" is spelled.
+_NO_LIMIT = 1 << 62
+
+
+def _uncap(params: dict[str, Any]) -> dict[str, Any]:
+    """`params` with every 0-valued neighborhood knob turned into a bound the
+    walk never reaches."""
+    return {
+        k: (_NO_LIMIT if k in ("depth", "hub_cap", "max_nodes") and v == 0 else v)
+        for k, v in params.items()
+    }
+
+
 class _IrVisualizer:
     """A `Function` as a `_Visualizer`."""
 
-    def __init__(self, function: Function, whole: bool = False) -> None:
+    def __init__(self, function: Function, whole: bool = True) -> None:
         self._fn = function
         self._whole = whole
 
@@ -233,6 +250,9 @@ class _IrVisualizer:
             ["whole", "depth", "hub_cap", "max_nodes", "count_producers", "pretty"],
             pretty=True,
             whole=self._whole,
+            depth=0,
+            hub_cap=0,
+            max_nodes=0,
         )
 
     def dot(self, center: int, params: dict[str, Any]) -> str:
@@ -242,7 +262,7 @@ class _IrVisualizer:
         `whole` renders every node and ignores the neighborhood knobs."""
         if params.pop("whole", False):
             return cast("str", self._fn.to_dot(pretty=params.get("pretty", True)))
-        return self._fn.neighborhood_dot(center, **params)
+        return self._fn.neighborhood_dot(center, **_uncap(params))
 
     def search(self, query: str) -> dict[str, Any]:
         """Node ids matching the pattern expression `query`."""
@@ -256,7 +276,7 @@ class _IrVisualizer:
 class _CfgVisualizer:
     """A `Cfg` as a `_Visualizer`."""
 
-    def __init__(self, cfg: Cfg, whole: bool = False) -> None:
+    def __init__(self, cfg: Cfg, whole: bool = True) -> None:
         """Explore `cfg`, building its per-region disassembly text once for
         reuse by every text search."""
         self._cfg = cfg
@@ -275,6 +295,8 @@ class _CfgVisualizer:
             self._cfg.neighborhood_dot,
             ["whole", "depth", "max_nodes"],
             whole=self._whole,
+            depth=0,
+            max_nodes=0,
         )
 
     def dot(self, center: int, params: dict[str, Any]) -> str:
@@ -282,7 +304,7 @@ class _CfgVisualizer:
         declared control. `whole` renders every region."""
         if params.pop("whole", False):
             return cast("str", self._cfg.to_dot())
-        return self._cfg.neighborhood_dot(center, **params)
+        return self._cfg.neighborhood_dot(center, **_uncap(params))
 
     def search(self, query: str) -> dict[str, Any]:
         """Center the region containing `query` when it parses as an address,
@@ -479,20 +501,22 @@ def visualize(
     host: str = "127.0.0.1",
     port: int = 0,
     depth: int | None = None,
-    whole: bool = False,
+    whole: bool = True,
 ) -> None:
     """Start the explorer for `target`, a `Function` from `analyze` or a
     `Cfg` from `build_cfg` / `analyze`. Blocks serving requests until
     interrupted.
 
-    `depth=None` starts at the renderer's own default depth; a number seeds
-    the toolbar's depth control instead. Every other render knob starts at the
-    renderer default and is set from the page.
+    Opens on the entire graph. `whole=False` starts on a neighborhood around
+    the entry instead; either way the toolbar's `whole` toggle switches between
+    them from the page. Drawing everything is the honest default -- a
+    neighborhood hides nodes without saying so -- but a function of a few
+    thousand nodes can keep the layout engine busy for a while, so turn `whole`
+    off for those.
 
-    `whole=True` opens on the entire graph rather than a neighborhood, and
-    seeds the toolbar's `whole` toggle so the page can switch back. The
-    neighborhood knobs do not apply while it is on, and a function of a few
-    thousand nodes can keep the layout engine busy for a long time.
+    The neighborhood knobs (depth, hub cap, max nodes) open uncapped, and are
+    set from the page; 0 means no limit on each. `depth=None` keeps that, while
+    a number seeds the toolbar's depth control instead.
 
     Runs on the thread that created `target`: rendering decodes through the
     `Lifter`, which is pinned to its creating thread, so serving from another
