@@ -225,6 +225,33 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
         ),
     );
 
+    // x*C - x -> x*(C - 1)
+    //
+    // `Neg` pins which operand is subtracted, so commutative matching cannot
+    // reach this from the `x - x*C` rule; the bare `x` on the right needs its
+    // own rule, as does the shift form below.
+    let sub_mul_self = rewrite_rule(
+        int_add(int_mul(var(x), int_const(c1)), int_neg(var(x))).when_match(
+            move |edit, ty, binds| {
+                coefficient_fits_carrier(ty) && all_same_width(edit, binds, ty, &[x, c1])
+            },
+        ),
+        template::int_mul(var(x), int_const_with!([c1: uint] => c1.wrapping_sub(1))),
+    );
+
+    // (x << C) - x -> x*(2^C - 1)
+    let sub_shl_self = rewrite_rule(
+        int_add(int_shl(var(x), int_const(c1)), int_neg(var(x))).when_match(
+            move |edit, ty, binds| {
+                all_same_width(edit, binds, ty, &[x]) && shift_in_range(edit, binds, ty, c1)
+            },
+        ),
+        template::int_mul(
+            var(x),
+            int_const_with!([c1: uint] => (1u128 << c1).wrapping_sub(1)),
+        ),
+    );
+
     // (x << C1) - (x << C2) -> x*(2^C1 - 2^C2)
     let sub_shl_shl = rewrite_rule(
         int_add(
@@ -254,6 +281,8 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
         Box::new(sub_mul_shl),
         Box::new(sub_shl_mul),
         Box::new(sub_shl_shl),
+        Box::new(sub_mul_self),
+        Box::new(sub_shl_self),
     ]
 }
 
