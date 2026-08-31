@@ -3,8 +3,6 @@
 //! Convergence: each application removes one `Xor`-with-1 from the cond, and a
 //! doubly-inverted cond collapses first via `ConstantFold`'s `!!x -> x`.
 
-use std::rc::Rc;
-
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
@@ -13,26 +11,22 @@ use crate::peephole::PeepholeRewrite;
 use strider_pattern::{Capture, MatchPat, Matcher, Pattern, bool_not, var};
 
 #[derive(Clone)]
-pub struct IfCondInversion {
-    inner_pat: Rc<Pattern>,
-    inner_capture: Capture,
-}
+pub struct IfCondInversion;
 
 thread_local! {
-    /// Rebuilding the pattern dominates the cost of constructing this pass.
-    static PATTERN: (Rc<Pattern>, Capture) = {
+    /// Rebuilding the pattern dominates the cost of constructing this pass, so
+    /// it is built once per thread. Held here rather than in the pass so the
+    /// pass stays `Send`; see `ConstantFold`.
+    static PATTERN: (Pattern, Capture) = {
         let capture = Capture::new();
-        (Rc::new(bool_not(var(capture)).into_pattern()), capture)
+        (bool_not(var(capture)).into_pattern(), capture)
     };
 }
 
 impl IfCondInversion {
+    #[must_use]
     pub fn new() -> Self {
-        let (inner_pat, inner_capture) = PATTERN.with(|(p, c)| (Rc::clone(p), *c));
-        Self {
-            inner_pat,
-            inner_capture,
-        }
+        Self
     }
 }
 
@@ -54,7 +48,7 @@ impl crate::peephole::PeepholePass for IfCondInversion {
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         let Some(inner_value) =
-            is_inverted_cond_match(edit.function(), root, &self.inner_pat, self.inner_capture)
+            PATTERN.with(|(pat, cap)| is_inverted_cond_match(edit.function(), root, pat, *cap))
         else {
             return Ok(PeepholeRewrite::NoChange);
         };

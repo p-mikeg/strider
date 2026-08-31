@@ -185,7 +185,7 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     Ok(overall)
 }
 
-impl<P: PeepholePass + Clone + 'static> crate::pipeline::Optimizer for P {
+impl<P: PeepholePass + Clone + Send + 'static> crate::pipeline::Optimizer for P {
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
