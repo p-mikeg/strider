@@ -23,6 +23,12 @@ pub struct PyCfg {
     pub(crate) inner: strider_cfg::Cfg,
     /// The `Lifter` that built `inner`, borrowed for its Sleigh.
     pub(crate) lifter: Py<PyLifter>,
+    /// That lifter's arch preset, copied at construction so a render can check
+    /// a supplied handle against it WITHOUT borrowing `lifter`: `analyze` holds
+    /// that one mutably with the GIL released, and a borrow here would fail for
+    /// the length of an analysis, which is exactly when a background explorer
+    /// is rendering.
+    pub(crate) arch_name: &'static str,
     /// `machine_addr -> joined p-code text`.
     pcode_map: OnceLock<HashMap<u64, String>>,
     region_index: OnceLock<RegionIndex>,
@@ -76,24 +82,32 @@ fn span_upper_bound(region: &strider_cfg::Region) -> u64 {
 impl PyCfg {
     /// The `build_cfg` path: one build, no resolver, so that build's own
     /// reports are the whole accumulation.
-    pub(crate) fn new(inner: strider_cfg::Cfg, lifter: Py<PyLifter>, seeded: Vec<u64>) -> Self {
+    pub(crate) fn new(
+        py: Python<'_>,
+        inner: strider_cfg::Cfg,
+        lifter: Py<PyLifter>,
+        seeded: Vec<u64>,
+    ) -> Self {
         let reports = CfgReports {
             unresolved: Vec::new(),
             unverified_seeded: seeded,
             isa_mode_conflicts: machine_addrs(inner.isa_mode_conflicts()),
             interior_branch_targets: machine_addrs(inner.interior_branch_targets()),
         };
-        Self::with_reports(inner, lifter, reports)
+        Self::with_reports(py, inner, lifter, reports)
     }
 
     pub(crate) fn with_reports(
+        py: Python<'_>,
         inner: strider_cfg::Cfg,
         lifter: Py<PyLifter>,
         reports: CfgReports,
     ) -> Self {
+        let arch_name = lifter.borrow(py).arch_name;
         Self {
             inner,
             lifter,
+            arch_name,
             pcode_map: OnceLock::new(),
             region_index: OnceLock::new(),
             reports,
@@ -149,10 +163,7 @@ impl PyCfg {
                 let b = l
                     .try_borrow()
                     .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
-                self.lifter
-                    .try_borrow(py)
-                    .map_err(|_| crate::strider_cls::reentrant_lifter_err())?
-                    .check_same_arch(&b)?;
+                b.check_arch_is(self.arch_name)?;
                 f(b.sleigh()?)
             }
             None => {

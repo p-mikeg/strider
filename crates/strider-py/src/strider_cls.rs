@@ -372,7 +372,7 @@ pub struct PyLifter {
     inner: ThreadPinned<strider_orchestrator::Strider<AnyMemReader>>,
     /// The `SleighArch` preset this handle was built for, compared against
     /// the arch a `custom(...)` CC / `CallOtherAbi` froze its varnodes on.
-    arch_name: &'static str,
+    pub(crate) arch_name: &'static str,
     /// The arch itself, so `arch` can hand back a `SleighArch` and a caller can
     /// build a second handle over the same memory. `Copy`, so keeping it costs
     /// nothing over the name alone.
@@ -404,17 +404,21 @@ impl PyLifter {
     /// Rejects a handle built for a different arch.
     ///
     /// The register and address-space tables a render reads are what differ:
-    /// rendering an x86-64 function through an aarch64 handle names `RSI` as
-    /// `sp` and emits no error at all, so the check has to be here.
-    pub(crate) fn check_same_arch(&self, other: &Self) -> PyResult<()> {
-        if self.arch_name == other.arch_name {
+    /// rendering an x86-64 function through an aarch64 handle names RAX `pc`
+    /// and RCX `sp`, and emits no error at all, so the check has to be here.
+    ///
+    /// Takes the graph's arch NAME rather than its handle: reading it off that
+    /// handle would borrow the one `analyze` holds mutably with the GIL
+    /// released, which is the contention this whole path exists to avoid.
+    pub(crate) fn check_arch_is(&self, graph_arch: &'static str) -> PyResult<()> {
+        if self.arch_name == graph_arch {
             return Ok(());
         }
         Err(into_strider_err(anyhow::anyhow!(
             "lifter is for {}, but this graph was lifted with {}; a render \
              resolves names through the arch's own tables, so the two must match",
-            other.arch_name,
-            self.arch_name
+            self.arch_name,
+            graph_arch
         )))
     }
 
@@ -662,7 +666,7 @@ impl PyLifter {
             .map(|addr| addr.machine_addr.addr)
             .collect();
         seeded.sort_unstable();
-        Ok(PyCfg::new(inner, slf, seeded))
+        Ok(PyCfg::new(py, inner, slf, seeded))
     }
 
     /// Lift, optimise and resolve the function at `entry`, returning an
@@ -793,7 +797,7 @@ impl PyLifter {
             isa_mode_conflicts: machine_addrs(&result.isa_mode_conflicts),
             interior_branch_targets: machine_addrs(&result.interior_branch_targets),
         };
-        let cfg_obj = Py::new(py, PyCfg::with_reports(cfg, slf.clone_ref(py), reports))?;
+        let cfg_obj = Py::new(py, PyCfg::with_reports(py, cfg, slf.clone_ref(py), reports))?;
 
         let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
         let result = analyze_result_type(py)?

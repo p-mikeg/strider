@@ -37,8 +37,10 @@ impl PyFunction {
         let borrowed;
         let lifter = match with {
             Some(l) => {
-                let l = l.try_borrow()?;
-                cfg.lifter.bind(py).try_borrow()?.check_same_arch(&l)?;
+                let l = l
+                    .try_borrow()
+                    .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
+                l.check_arch_is(cfg.arch_name)?;
                 l
             }
             None => {
@@ -242,8 +244,10 @@ impl PyFunction {
             let borrowed;
             let lifter = match lifter {
                 Some(l) => {
-                    let l = l.try_borrow()?;
-                    cfg.lifter.bind(py).try_borrow()?.check_same_arch(&l)?;
+                    let l = l
+                        .try_borrow()
+                        .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
+                    l.check_arch_is(cfg.arch_name)?;
                     l
                 }
                 None => {

@@ -13,8 +13,10 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   wrote. The sla constructor for the lane operand exports nothing, so there is
   no correct register to name, and failing is the only honest answer until it
   does. It costs coverage on i8mm and bf16 dot-product kernels, which is where
-  those instructions appear; measured at 4,846 encodings per 40M random AArch64
-  words, and nothing else on any preset changed.
+  those instructions appear, but the measured cost on real code is nothing:
+  21,607,094 instruction words across 16 arm64 kernels and 47 arm64 shared
+  objects contain no occurrence at all, and an A/B over 20,892 arm64 kernel
+  functions changed none of them for this reason.
 
 - `visualize`'s `whole` now defaults to `True`, so it opens on the entire graph.
   A caller relying on the neighborhood opening must pass `whole=False`. A
@@ -477,11 +479,23 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
 - A PowerPC `tw` / `twi` / `td` / `tdi` seals its region as no-return whenever
   its TO mask covers either trichotomy, signed `LT|GT|EQ` or unsigned
   `LTU|GTU|EQ`, which is seven of the 32 masks. Only all-bits-set counted
-  before, so the other six left dead fall-through code reachable.
+  before, so the other six left dead fall-through code reachable. Correctness
+  only: across 21 PowerPC kernels, 321,048 trap instructions in 125,166,009
+  words, none of the six new masks occurs.
+- Thumb `sev` / `sev.w` raise `SendEvent`, as the A32 form already did. They
+  previously emitted nothing, so a wait/signal pair read as a no-op on one
+  encoding and not the other. This is the branch's widest change on real code:
+  3,657 of 34,603 functions in a Thumb kernel gain a node. `SendEvent` is
+  classified pure, so nothing else about those functions moves.
+- A32 `csdb` decodes as itself instead of falling through to an `msr` with an
+  empty field mask, which used to make `cpsr` a tracked varnode and mint three
+  temporaries per site. 101 instructions across 75 functions in an ARM kernel.
 - x86-64 `rdtsc`, `rdpmc` and `xgetbv` kept the caller's upper 32 bits in RAX
   and RDX, and carried a data dependency on the incoming register that the
   machine does not have. Intel SDM Vol. 2B: in 64-bit mode these clear the high
   half. A pattern asking "does this depend on the caller's RAX?" answered yes.
+  `rdtscp` is the exception and stays opaque: its sla constructor writes no
+  register at all, so its whole result comes from the CallOther ABI table.
 - `OptimizerPipeline` is no longer thread-pinned. Touching one from another
   thread raised `pyo3_runtime.PanicException`, which derives from
   `BaseException` and so escapes `except Exception`.
