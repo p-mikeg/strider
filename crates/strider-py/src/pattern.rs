@@ -716,8 +716,9 @@ impl PatRepr {
 // with no count at all. Either can be driven from a Python `for` loop, which
 // involves no Python recursion and so hits no interpreter limit; DROPPING the
 // result is unbounded native recursion, and MEASURED it overflows an 8 MiB
-// stack at roughly 7_000 links (raising `ulimit -s` moves it). Bounding those
-// needs the operand depth computed at construction, or an iterative `Drop`.
+// stack between 40_000 and 41_000 links (raising `ulimit -s` moves it), since
+// PyO3 0.22 has no `Py_TRASHCAN`. Bounding those needs the operand depth
+// computed at construction, or an iterative `Drop`.
 
 /// Compile-recursion levels, NOT builder calls: a nested call costs two, so
 /// the ceiling a caller sees is about half this. Well above any hand-written
