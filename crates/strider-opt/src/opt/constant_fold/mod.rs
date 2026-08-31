@@ -14,11 +14,12 @@ mod tests;
 pub struct ConstantFold;
 
 thread_local! {
-    /// Rebuilding the rule set costs about as much as one run of the pass, so
-    /// it is built once per thread. Held HERE rather than in the pass, which
-    /// keeps the pass free of the `Rc` and so `Send`: a pipeline is handed
-    /// between threads, and a boxed rule is `Send` but not `Sync`, so an owning
-    /// field could be neither shared nor moved.
+    /// Building the set costs ~250us, more than a whole run of the pass over a
+    /// small function, so it is built once per thread. Held HERE rather than in
+    /// the pass, which keeps the pass `Send`: a `BoxedRule` carries no
+    /// auto-trait bound at all, so an owning field of ANY kind, `Rc`, `Arc` or
+    /// plain `Box`, would make the pass `!Send` and a pipeline unable to cross
+    /// a thread.
     static RULES: Vec<crate::BoxedRule> = rules::build_rules();
 }
 

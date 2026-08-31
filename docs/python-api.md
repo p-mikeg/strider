@@ -205,7 +205,27 @@ prog.read(addr, size)          # raw bytes, or None when unmapped
 prog.reader()                  # the BufferReader over the loaded sections
 prog.rom()                     # the read-only image LoadReadOnly folds from, or None
 prog.add_elf("libc.so")        # merge another ELF (shared library)
+prog.arch                      # the SleighArch this handle decodes with
 ```
+
+Symbols can also be attached after loading, which is how a stripped image gets
+its names back:
+
+```python
+prog.add_symbol_file("vmlinux.debug")   # its symbols, none of its bytes
+prog.add_symbols({                      # names that live in no ELF at all
+    "handle_irq": 0xffffffff81001200,
+    "irq_table":  (0xffffffff81800000, 0x400),   # (address, size)
+})
+```
+
+`add_symbol_file` is for a separate debug or symbol file: `objcopy
+--only-keep-debug` output and distro debuginfo are linked at the SAME addresses
+as the image they describe, so `add_elf` refuses them as an overlap. Only the
+symbols are taken, so nothing about lifting changes. `add_symbols` takes an
+address, or an `(address, size)` pair when the extent is known, which is what
+lets `symbol_at` resolve an address inside the symbol rather than only its
+first byte. Both lose a name an already-loaded ELF carries, matching `add_elf`.
 
 A `Symbol` carries `name`, `address`, `size`, `end`, `is_function` and
 `region`. `size` is `None` when the ELF records no extent (`st_size == 0`),
@@ -658,10 +678,15 @@ prog.visualize(function)          # interactive explorer; prints a URL, blocks
 prog.visualize(cfg)               # a Cfg works too
 ```
 
-The explorer renders the **neighborhood** around a node you pick rather than the
-whole graph, so it stays fast on large functions; `visualize(whole=True)` opens
-on the entire graph instead, and seeds the toolbar's **whole** toggle so the
-page can switch back.
+The explorer opens on the **whole graph**: a neighborhood view hides nodes
+without saying so, so you cannot tell a small function from a truncated one.
+`visualize(whole=False)` opens on the neighborhood around a node instead, which
+stays fast on a large function, and the toolbar's **whole** toggle switches
+between them either way.
+
+`visualize` returns the port it bound. `background=True` serves on its own
+thread and returns straight away, so the calling thread keeps querying while the
+page is open; stop it with `strider.explore.shutdown(port)`.
 
 Drag with the mouse or press the arrow keys to pan (shift for a longer step);
 ctrl+wheel zooms about the pointer and `+` / `-` about the window centre, `f`
@@ -672,37 +697,28 @@ than this is drawn but not expanded), **max nodes**, **+prod** (count a node's
 inputs toward the hub cap too) and **pretty** (inlined constants, resolved
 register names), with
 **whole** (draw the entire graph, which the neighborhood knobs stop applying
-to) and **reset** to go back. Each control starts at the `neighborhood_dot` default
-except **pretty**, which the explorer opens on, and **depth** when
-`visualize(depth=...)` seeds it.
+to) and **reset** to go back. The three limits start at `0`, which means no
+limit on each; **pretty** and **whole** start on, and **depth** takes whatever
+`visualize(depth=...)` seeds.
 
-`visualize` blocks the calling thread. A `Function` / `Cfg` moves between
-threads freely, but both explorers reach back into the lifter, which decodes
-only on the thread that built it. A `Cfg` explorer builds its disassembly text
-up front, so calling it from another thread raises `StriderError: this Lifter
-was built on another thread` before the server binds; a `Function` explorer
-binds, then answers every **pretty** render, which the toolbar opens on, with
-that same error. Build the lifter inside the serving thread, and pair it with
-`strider.explore.shutdown(port)` and a thread join before the interpreter
-exits:
+`visualize()` blocks until interrupted; `background=True` serves on its own
+non-daemon thread and returns the port immediately:
 
 ```python
-import threading
-import time
-
-def serve():
-    prog = strider.lift.load_elf("fixtures/out/x86/switch.elf")
-    _cfg, fn, _u = prog.analyze("dispatch_value")
-    prog.visualize(fn, port=8080)
-
-t = threading.Thread(target=serve)
-t.start()
-# shutdown returns the ports it stopped, and [] until the server registers,
-# so this is also how you wait for one that is still starting up.
-while not strider.explore.shutdown(8080):
-    time.sleep(0.05)
-t.join()   # shutdown joins it too, but with a 5s bound; this one has none
+port = prog.visualize(fn, background=True)
+# ... keep querying, analysing and rendering on this thread ...
+strider.explore.shutdown(port)   # stops the server and joins its thread
 ```
+
+The server renders through a decoder it builds for itself, from the target
+lifter's `arch`, `reader()` and `rom()`, captured before serving starts. A
+render only ever reads the register and address-space tables, which any handle
+on the same arch answers identically, so the two never contend: your handle
+stays free to `analyze` while the page is being drawn. The second handle costs
+an sla parse (tens of milliseconds, once) and its own memory.
+
+`shutdown` is registered to run before the interpreter joins non-daemon threads,
+so an explorer left running does not hang or abort the process at exit.
 
 For static output use `function.to_dot(pretty=True)`, `function.to_html(path)`,
 or `function.neighborhood_dot(center, depth=2, pretty=True)`.
