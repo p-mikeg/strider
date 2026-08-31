@@ -105,10 +105,11 @@ def _query(controls, **over):
     )
 
 
-def test_ir_controls_report_the_renderer_defaults():
-    """Every knob the renderer takes is offered, with the renderer's own
-    default. A number restated here instead would drift the moment the Rust
-    signature changed."""
+def test_ir_controls_report_the_renderer_knobs_uncapped():
+    """Every knob the renderer takes is offered. The page opens on the whole
+    graph with the neighborhood knobs uncapped, since a neighborhood hides
+    nodes without saying so; the knob SET still comes from the binding, so a
+    knob added in Rust shows up here rather than drifting."""
     port = 8934
     t = _serve_bg("ir", port)
     try:
@@ -124,10 +125,15 @@ def test_ir_controls_report_the_renderer_defaults():
             "count_producers",
             "pretty",
         ]
-        assert ctrls["whole"]["default"] is False
+        assert ctrls["whole"]["default"] is True
+        # 0 is "no limit" on each; the renderer's own defaults are caps, which
+        # is the wrong opening for a view that should show everything.
+        for name in ("depth", "hub_cap", "max_nodes"):
+            assert ctrls[name]["default"] == 0, name
+            assert ctrls[name]["min"] == 0, name
         sig = inspect.signature(strider.ir.Function.neighborhood_dot).parameters
-        for name in ("depth", "hub_cap", "max_nodes", "count_producers"):
-            assert ctrls[name]["default"] == sig[name].default, name
+        assert set(ctrls) - {"whole"} <= set(sig)
+        assert ctrls["count_producers"]["default"] == sig["count_producers"].default
         # The page opens on the readable view; the binding opens on the raw one.
         assert ctrls["pretty"]["default"] is True
         # usable without the source
@@ -144,12 +150,13 @@ def test_cfg_controls_are_the_ones_the_cfg_renderer_takes():
     try:
         ctrls = _controls(port)
         assert list(ctrls) == ["whole", "depth", "max_nodes"]
-        assert ctrls["whole"]["default"] is False
+        assert ctrls["whole"]["default"] is True
         sig = inspect.signature(strider.cfg.Cfg.neighborhood_dot).parameters
         for name in ctrls:
             if name == "whole":  # synthetic, not a renderer parameter
                 continue
-            assert ctrls[name]["default"] == sig[name].default, name
+            assert name in sig, name
+            assert ctrls[name]["default"] == 0, name
     finally:
         _stop(port, t)
 
@@ -189,6 +196,9 @@ def test_every_control_changes_the_rendered_dot():
         ctrls = _controls(port)
 
         def dot(**over):
+            # `whole` is the opening view and ignores these knobs, so every
+            # case here asks for the neighborhood renderer explicitly.
+            over.setdefault("whole", 0)
             return _get(port, f"/dot?center={entry}{_query(ctrls, **over)}")
 
         assert _nodes(dot(depth=1)) < _nodes(dot(depth=8, max_nodes=2000))
@@ -238,10 +248,10 @@ def test_visualize_cfg_serves_neighborhood_and_search():
     t = _serve_bg("cfg", port)
     try:
         entry = int(_get(port, "/entry"))
-        dot = _get(port, f"/dot?center={entry}&depth=1")
+        dot = _get(port, f"/dot?center={entry}&whole=0&depth=1")
         # `pretty` is a Function control keyed by IR node id; a Cfg declares
         # none, so the query param is ignored rather than changing the view.
-        assert _get(port, f"/dot?center={entry}&depth=1&pretty=0") == dot
+        assert _get(port, f"/dot?center={entry}&whole=0&depth=1&pretty=0") == dot
         assert "#ffcc00" in dot                 # center highlighted
         # address search centers the containing block
         res = json.loads(_get(port, "/pattern?q=0x1000"))
@@ -256,7 +266,7 @@ def test_visualize_ir_still_works():
     t = _serve_bg("ir", port)
     try:
         entry = int(_get(port, "/entry"))
-        dot = _get(port, f"/dot?center={entry}&depth=2&pretty=1")
+        dot = _get(port, f"/dot?center={entry}&whole=0&depth=2&pretty=1")
         assert "#ffcc00" in dot   # center highlighted => a real neighborhood
     finally:
         _stop(port, t)
