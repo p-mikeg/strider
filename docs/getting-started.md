@@ -50,9 +50,11 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    different registers.
 
 `prog.visualize(fn)` serves the graph as an interactive explorer in a browser,
-opening on the neighborhood around one node, or on all of it with `whole=True`.
-Drag or press the arrow keys to pan, ctrl+wheel to zoom, `f` to fit. It is the
-quickest way to see the shape a pattern has to match.
+opening on the whole graph; `whole=False` opens on the neighborhood around one
+node instead, which stays usable on a large function. `background=True` serves
+on its own thread and returns the port, so you can keep querying while the page
+is open. Drag or press the arrow keys to pan, ctrl+wheel to zoom, `f` to fit.
+It is the quickest way to see the shape a pattern has to match.
 
 The [quickstart](../README.md#quickstart) in the README is that pipeline in
 eight statements of Python. [CHANGELOG.md](../CHANGELOG.md) lists what 0.2.0
