@@ -378,6 +378,14 @@ impl MemRegionsLookupTable {
             // Nothing at or below this start reaches `addr`, so neither will
             // anything further down. Without this an UNMAPPED read scans every
             // region with a lower start, which is O(n) per read.
+            //
+            // `reach` is a PREFIX MAXIMUM, so one region spanning the image
+            // holds it above every interior address and this never fires: the
+            // scan is then O(regions below `addr`) per read. Sections are one
+            // region each and `SHN_XINDEX` lifts the 65535 cap, so a crafted
+            // image can make that large -- measured 1.48s for one 627-byte
+            // function under 200k nested regions. Bounding it wants an
+            // interval structure rather than a prefix max.
             if *reach <= addr {
                 break;
             }
