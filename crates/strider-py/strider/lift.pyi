@@ -84,6 +84,13 @@ class AssumptionOptions:
     ) -> None:
         """Build the claims; every field defaults as documented above."""
         ...
+    @staticmethod
+    def none() -> "AssumptionOptions":
+        """Every claim cleared: the only configuration sound under any input.
+
+        Two of the six default `True`, so this is not `AssumptionOptions()`.
+        """
+        ...
 
 class LifterOptions:
     """Per-call options for `Lifter.analyze`.
