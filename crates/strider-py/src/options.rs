@@ -251,6 +251,25 @@ py_options! {
     escape_analysis: bool = false, bool;
 }
 
+#[pymethods]
+impl PyAssumptionOptions {
+    /// Every claim cleared: the only configuration sound under any input
+    /// program, forwarding solely what the IR structurally proves.
+    #[staticmethod]
+    fn none() -> Self {
+        // Spelled out, not the `#[new]` defaults: two of those are `True`, and
+        // a field added default-on would otherwise survive `none`.
+        Self {
+            stack_global_disjoint: false,
+            assume_incoming_args_survive_calls: false,
+            distinct_sp_bases_disjoint: false,
+            callee_preserves_stack_args: false,
+            noalias_allocators: Vec::new(),
+            escape_analysis: false,
+        }
+    }
+}
+
 /// Lift, optimize, and CFG knobs for one `analyze` call.
 ///
 /// Raises `ValueError` for a nested `function_max_size=0`.
