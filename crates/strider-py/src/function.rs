@@ -356,6 +356,11 @@ impl PyFunction {
     /// Arguments mirror `find_all`. The count is taken after deduplication, so
     /// `ignore_root` decides whether distinct roots binding the same captures
     /// count as one match or many.
+    ///
+    /// `ignore_root=True` with a pattern that binds NO captures leaves every
+    /// match keyed identically, so this succeeds on any number of occurrences
+    /// and returns an arbitrary one. To ask "does this shape occur exactly
+    /// once", leave `ignore_root` false or give the pattern a capture.
     #[pyo3(signature = (pat, ignore_root=false, ignore_casts=IgnoreCasts::Flag(false), constraints=None))]
     fn find_unique(
         slf: Py<Self>,
