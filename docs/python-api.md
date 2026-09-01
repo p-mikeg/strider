@@ -186,6 +186,17 @@ A non-empty `noalias_allocators` carries the same two gaps without
 `escape_analysis` being set: it forwards a stack spill across a listed call
 whenever the frame is provably private.
 
+Its disjointness claim covers allocations live at once. Nothing models
+deallocation, so a freed allocation stays a distinct base: where the program
+frees a pointer and the allocator hands the same storage back, a load from the
+stale pointer is taken not to see the new object's stores. Reaching that needs
+a use-after-free in the analysed program, so the knob is least trustworthy on
+exactly the bug class you might be looking for.
+
+`AssumptionOptions.none()` clears all six, which is the only configuration
+sound under any input; `AssumptionOptions()` is not that, since two default
+`True`.
+
 ### ElfLifter metadata
 
 ```python
