@@ -240,7 +240,9 @@ py_options! {
     /// Callee addresses of pure `noalias` heap allocators (`malloc`/`calloc`-like:
     /// a size in, a fresh non-overlapping pointer out, no pointer arguments).
     /// Distinct allocations are treated as disjoint, and a load steps through
-    /// such a call.
+    /// such a call. Disjointness holds among allocations live at once: nothing
+    /// models deallocation, so a stale pointer is taken as disjoint from the
+    /// storage the allocator handed out again.
     noalias_allocators: Vec<u64> = Vec::new(), debug;
 
     /// When the frame is provably private (no stack address escapes to a

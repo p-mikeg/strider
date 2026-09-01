@@ -428,6 +428,10 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `neighborhood_dot`, to render through a handle other than the one that built
   the graph. A handle for a different arch is rejected.
 - A mapped file must not change on disk while it is loaded.
+- `AssumptionOptions.none()` clears all six claims in one call, the only
+  configuration sound under any input. `AssumptionOptions()` is not that: two
+  of the six default `True`, so a hand-written "assume nothing" silently gains
+  any claim added default-on later.
 
 ### Performance
 
