@@ -46,3 +46,11 @@ fn load_elf_missing_path_is_io_error() {
         "got: {err}",
     );
 }
+
+/// A directory stats fine and is not a regular file. The same guard is what
+/// stops a FIFO, whose read-only open blocks until a writer appears.
+#[test]
+fn load_elf_on_a_non_regular_file_is_an_error() {
+    let err = strider_reader::load_elf("/tmp").unwrap_err();
+    assert!(err.to_string().contains("not a regular file"), "got: {err}",);
+}
