@@ -601,6 +601,16 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `rldic` / `rldcr` mask stayed unknown through the whole pipeline.
 - MIPS64 `drotrv` rotated by `32 - shift` on a 64-bit value, degrading to a
   plain logical shift right for counts above 32. In the vendored Sleigh specs.
+- The AArch64 `FRINT{A,I,M,N,P,X,Z}` family lifted as a float-to-INTEGER
+  conversion. Sleigh's `trunc()` is p-code `FLOAT_TRUNC`, and one constructor
+  per operand shape carried it for all seven rounding modes, so `ceil(2.5)`
+  answered the integer 2 where the hardware gives 3.0 -- the wrong domain as
+  well as the wrong direction, on what gcc -O2 inlines
+  `ceil`/`floor`/`round`/`trunc`/`rint`/`nearbyint` to. p-code can express only
+  three of the seven modes, so the family now lifts opaquely through a pure
+  `NEON_frint` user-op: the function still lifts and only the rounded value is
+  unknown, where before it was wrong. In the vendored Sleigh specs, whose own
+  test annotations already marked these `--status fail`.
 - x86 `PSLLD` / `PSLLQ` shifted each vector lane by a different per-lane count
   instead of the one count the ISA reads from `SRC[63:0]`, and `PSRAD` took its
   count from the whole 128-bit operand, so a nonzero upper half saturated every
