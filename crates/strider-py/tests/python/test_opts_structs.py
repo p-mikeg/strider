@@ -155,7 +155,9 @@ def test_none_clears_every_claim():
     n = strider.lift.AssumptionOptions.none()
     # Enumerated, not listed: a claim added default-on has to trip this, which
     # is the whole reason `none` exists beside the constructor.
-    claims = [f for f in dir(n) if not f.startswith("_") and f != "none"]
+    claims = [
+        f for f in dir(n) if not f.startswith("_") and not callable(getattr(n, f))
+    ]
     assert claims, "no claims discovered"
     for name in claims:
         value = getattr(n, name)
