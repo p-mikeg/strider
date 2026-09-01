@@ -146,10 +146,11 @@ def test_a_connection_that_sends_nothing_does_not_wedge_the_server():
     connection blocks every later request forever, `shutdown` cannot stop a
     loop parked in `finish_request`, and the interpreter's own join -- which
     has no timeout -- inherits the wait. The timeout must also stay under
-    `_SHUTDOWN_JOIN_SECONDS`, or the connection outlives the join and the hang
-    comes back one level up."""
+    `_SHUTDOWN_START_SECONDS`: `serve_forever` sets `started` only after the
+    first request completes, so a quiet FIRST connection keeps it clear, and
+    `shutdown` giving up on that event leaves the server running."""
     assert strider.explore._Handler.timeout is not None
-    assert strider.explore._Handler.timeout < strider.explore._SHUTDOWN_JOIN_SECONDS
+    assert strider.explore._Handler.timeout < strider.explore._SHUTDOWN_START_SECONDS
 
     lift = strider.lift.load_elf(str(fixture_path("x64", "switch")))
     fn = lift.analyze(next(iter(lift.functions())).address).function
@@ -169,3 +170,52 @@ def test_blocking_mode_is_still_the_default():
 
     sig = inspect.signature(strider.explore.visualize)
     assert sig.parameters["background"].default is False
+
+
+def test_the_response_body_is_not_bound_by_the_request_read_deadline():
+    """`wbufsize` is 0, so the body is one `sendall`, and a socket timeout
+    bounds that whole call. Under the read deadline a client slower than the
+    body is cut off mid-body while the headers have promised its full length.
+
+    Pinned here rather than end-to-end: forcing a real `sendall` to block needs
+    a body larger than the socket buffers, which no fixture graph reaches."""
+    explore = strider.explore
+
+    class _Conn:
+        def __init__(self):
+            self.deadlines = []
+
+        def settimeout(self, t):
+            self.deadlines.append(t)
+
+    class _Wfile:
+        def __init__(self):
+            self.written = b""
+
+        def write(self, b):
+            self.written += b
+
+    class _Probe(explore._Handler):
+        def __init__(self):  # no socket, no base __init__
+            self.connection = _Conn()
+
+        def send_response(self, *a, **k):
+            pass
+
+        def send_header(self, *a, **k):
+            pass
+
+        def end_headers(self):
+            pass
+
+    h = _Probe()
+    wfile = _Wfile()
+    h.wfile = wfile  # pyright: ignore[reportAttributeAccessIssue]
+    h._send(b"x" * 4096, "text/plain")
+    read_deadline = explore._Handler.timeout
+    assert read_deadline is not None
+    assert wfile.written == b"x" * 4096
+    assert h.connection.deadlines == [explore._WRITE_SECONDS, read_deadline], (
+        "the body write must run under its own deadline and restore the read one"
+    )
+    assert explore._WRITE_SECONDS > read_deadline
