@@ -987,8 +987,10 @@ mod heap_tests {
         Ok(())
     }
 
-    /// Two allocations never overlap.  `stack_global_disjoint` is off, so the
-    /// verdict rests on the noalias guarantee alone.
+    /// Two allocations live at once never overlap.  `stack_global_disjoint` is
+    /// off, so the verdict rests on the noalias guarantee alone.  Liveness is
+    /// the scope of that guarantee: see
+    /// [`a_reused_allocation_is_still_taken_as_disjoint`].
     #[test]
     fn two_heap_objects_are_disjoint() -> crate::Result<()> {
         use strider_ir::IRViewer;
@@ -1017,6 +1019,45 @@ mod heap_tests {
             cfg.verdict(&fg, load, store),
             AliasVerdict::Disjoint,
             "two distinct heap allocations never overlap"
+        );
+        Ok(())
+    }
+
+    /// Pins a known limitation, not a guarantee.  Nothing models deallocation,
+    /// so the second `malloc` is a distinct base even where the program freed
+    /// the first and the allocator handed the same storage back.  A load from
+    /// the stale pointer is then taken not to see the new object's stores.
+    /// Reaching it requires a use-after-free in the analysed program.  Modelling
+    /// deallocation would change this verdict to `MayAlias`.
+    #[test]
+    fn a_reused_allocation_is_still_taken_as_disjoint() -> crate::Result<()> {
+        use strider_ir::IRViewer;
+        use strider_ir::node::NodeKind;
+        let mut b = builder()?;
+        let p = alloc_call(&mut b, MALLOC)?;
+        let x = b.build_int_const(0x11u64, ValueType::I64)?;
+        b.build_store(p, x, rsleigh::VnSpace::RAM)?;
+        // Where a `free(p)` would sit: unmodelled, so it changes nothing.
+        let q = alloc_call(&mut b, MALLOC)?;
+        let loaded = b.build_load(q, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        b.build_return(Some(loaded), &[])?;
+        let fg = built(b, &[MALLOC])?;
+
+        let store = fg
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
+            .expect("store node");
+        let load = fg
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+            .expect("load node");
+        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false));
+        assert_eq!(
+            cfg.verdict(&fg, load, store),
+            AliasVerdict::Disjoint,
+            "the reuse is invisible: distinct calls stay distinct bases"
         );
         Ok(())
     }
