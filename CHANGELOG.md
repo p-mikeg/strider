@@ -406,7 +406,7 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   mul/shift pairing, not just two multiplies: `x*3 + (x << 2)`, `(x << 2) +
   (x << 3)`, `x*3 - x` and the rest all canonicalise to `x*C`. A shift by C is
   a multiply by 2^C, so a compiler emits these interchangeably, and a pattern
-  now has one shape to match instead of nine.
+  now has one shape to match instead of thirteen.
 
 - `visualize` opens on the entire graph; `whole=False` opens on a neighborhood
   instead, and the toolbar toggle switches between them either way.
