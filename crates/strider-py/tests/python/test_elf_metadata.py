@@ -1,3 +1,7 @@
+import os
+
+import pytest
+
 import strider
 
 from .conftest import fixture_path
@@ -48,3 +52,34 @@ def test_be8_flag_picks_the_be8_arch(tmp_path):
     be8 = tmp_path / "be8.elf"
     be8.write_bytes(raw)
     assert strider.lift.load_elf(str(be8)).arch.name() == "arm_be_kernel"
+
+
+def test_a_rewrite_the_guard_cannot_see_raises_rather_than_panics(tmp_path):
+    """`check_unchanged` compares a size and an mtime truncated to whole
+    seconds, so a same-length rewrite inside one second passes it and the
+    re-parse then runs on bytes that are no longer ELF. That used to abort out
+    of Rust as `PanicException`, which derives from `BaseException` and so
+    escapes `except Exception`.
+
+    The mtime is restored rather than raced, so the guard passes every run."""
+    victim = tmp_path / "victim.elf"
+    victim.write_bytes(fixture_path("x64", "arithmetic").read_bytes())
+    before = os.stat(victim)
+    lifter = strider.lift.load_elf(str(victim))
+
+    victim.write_bytes(b"\x00" * before.st_size)  # same length, not ELF
+    os.utime(victim, (before.st_atime, before.st_mtime))
+
+    with pytest.raises(strider.StriderError):
+        lifter.entry_point()
+
+
+def test_a_fifo_is_rejected_rather_than_blocking(tmp_path):
+    """Opening a FIFO read-only blocks until a writer appears, so `load_elf`
+    on one never returned. The check stats first, which does not open."""
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("no mkfifo on this platform")
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    with pytest.raises((ValueError, strider.StriderError)):
+        strider.lift.load_elf(str(fifo))
