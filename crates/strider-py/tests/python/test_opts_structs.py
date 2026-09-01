@@ -149,3 +149,19 @@ def test_with_cfg_carries_over_every_other_field():
 
     # `with_cfg` copies, it does not mutate the receiver.
     assert opts.cfg.function_max_size == 64
+
+
+def test_none_clears_every_claim():
+    n = strider.lift.AssumptionOptions.none()
+    # Enumerated, not listed: a claim added default-on has to trip this, which
+    # is the whole reason `none` exists beside the constructor.
+    claims = [f for f in dir(n) if not f.startswith("_") and f != "none"]
+    assert claims, "no claims discovered"
+    for name in claims:
+        value = getattr(n, name)
+        assert value is False or value == [], f"{name} is {value!r}, not cleared"
+
+
+def test_none_differs_from_the_default_group():
+    assert strider.lift.AssumptionOptions().stack_global_disjoint is True
+    assert strider.lift.AssumptionOptions.none().stack_global_disjoint is False
