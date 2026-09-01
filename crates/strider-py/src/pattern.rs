@@ -70,8 +70,10 @@ impl PyCapture {
 }
 
 // Both tables live for the process: a `Capture` is a bare u32 handle into
-// them, so an id handed out stays resolvable. Names come from source text, so
-// the set is bounded by the calling program.
+// them, so an id handed out stays resolvable. Nothing prunes them, so a name
+// built from data rather than written in source (`Capture(f"arg{i}")`) is
+// retained for the life of the process: 200k distinct names measured at
+// +25.7 MB, which `gc.collect()` does not release.
 fn intern_table() -> &'static Mutex<HashMap<String, Capture>> {
     static TABLE: std::sync::OnceLock<Mutex<HashMap<String, Capture>>> = std::sync::OnceLock::new();
     TABLE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -710,10 +712,11 @@ impl PatRepr {
 // process. This counter turns that abort into an exception.
 //
 // It bounds COMPILING, and the `.capture()` / `.when()` / `.of_width()` chain
-// at construction. It does NOT bound the other two ways to nest: a free
+// at construction. It does NOT bound the other three ways to nest: a free
 // constructor (`int_add(deep, ...)`) goes through `PyPat::from_repr`, which
-// starts a fresh count, and a builder operand slot holds a bare `Py<PyAny>`
-// with no count at all. Either can be driven from a Python `for` loop, which
+// starts a fresh count, a `strider.template` constructor does the same, and a
+// builder operand slot holds a bare `Py<PyAny>` with no count at all. Any of
+// them can be driven from a Python `for` loop, which
 // involves no Python recursion and so hits no interpreter limit; DROPPING the
 // result is unbounded native recursion, and MEASURED it overflows an 8 MiB
 // stack between 40_000 and 41_000 links (raising `ulimit -s` moves it), since
@@ -2348,6 +2351,11 @@ macro_rules! builder_slot_methods {
             }
 
             /// Some output rather than a fixed slot; otherwise `output`.
+            ///
+            /// A capture binds a NODE, and `find_all` reports each distinct set
+            /// of bound nodes once, so every output of ONE node collapses to a
+            /// single match: this asks whether such an output exists, not which
+            /// ones do. Enumerate slots with `output(n)`, which binds each.
             fn any_output(slf: Bound<'_, Self>) -> PyOutputSlot {
                 PyOutputSlot {
                     parent: slf.into_any().unbind(),
