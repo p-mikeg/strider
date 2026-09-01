@@ -524,6 +524,14 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `isFIQinterruptsEnabled`, `isIRQinterruptsEnabled` and `ClearExclusiveLocal`
   were missing beside siblings that were present, so `cpsid a` failed where
   `cpsie a` lifted. MIPS `syscall` was unclassified on all four MIPS presets.
+- PowerPC `CR2` / `CR3` / `CR4`, the non-volatile condition fields, were absent
+  from every PowerPC convention's callee-saved set, so a `Call` clobbered them
+  and a compare held across a call read as opaque afterwards -- a silently wrong
+  branch, reported through no channel. `CR0` / `CR1` and `CR5`-`CR7` really are
+  volatile and stay out. Named individually, which is how `mfcr` / `mtcrf` name
+  them, never as the 8-byte `crall` container that spans the volatile fields
+  too. PowerPC libc alone carries 878 `mfcr`, 712 `mtcrf` and 1,541 branches
+  reading `cr2`-`cr4`.
 - PowerPC `r2` and `r13` are callee-saved on every PowerPC convention, and the
   PPC64 stack-argument base is 112 bytes on ELFv1 and 96 on ELFv2 -- the linkage
   area plus the 64-byte parameter save area, not the linkage area alone. Every

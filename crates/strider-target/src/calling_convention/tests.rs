@@ -85,6 +85,9 @@ struct Case {
     /// `callee_saved_regs` is built GPRs first, floats second.
     callee_saved_count: usize,
     callee_saved_float_count: usize,
+    /// Neither GPR nor float: PowerPC's non-volatile condition fields, which
+    /// are 1 byte each and sit after the floats.
+    callee_saved_cond_count: usize,
     ret_count: usize,
     reg_size_bytes: u32,
     stack_ptr_name: &'static str,
@@ -101,6 +104,7 @@ fn cases() -> Vec<Case> {
             arg_count: 6,
             callee_saved_count: 6,
             callee_saved_float_count: 0,
+            callee_saved_cond_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "RSP",
@@ -117,6 +121,7 @@ fn cases() -> Vec<Case> {
             arg_count: 0,
             callee_saved_count: 4,
             callee_saved_float_count: 0,
+            callee_saved_cond_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "ESP",
@@ -133,6 +138,7 @@ fn cases() -> Vec<Case> {
             arg_count: 4,
             callee_saved_count: 9,
             callee_saved_float_count: 8,
+            callee_saved_cond_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
@@ -149,6 +155,7 @@ fn cases() -> Vec<Case> {
             arg_count: 8,
             callee_saved_count: 12,
             callee_saved_float_count: 8,
+            callee_saved_cond_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
@@ -165,6 +172,7 @@ fn cases() -> Vec<Case> {
             arg_count: 4,
             callee_saved_count: 11,
             callee_saved_float_count: 12,
+            callee_saved_cond_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
@@ -181,6 +189,7 @@ fn cases() -> Vec<Case> {
             arg_count: 4,
             callee_saved_count: 11,
             callee_saved_float_count: 12,
+            callee_saved_cond_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
@@ -197,6 +206,7 @@ fn cases() -> Vec<Case> {
             arg_count: 8,
             callee_saved_count: 11,
             callee_saved_float_count: 8,
+            callee_saved_cond_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
@@ -213,6 +223,7 @@ fn cases() -> Vec<Case> {
             arg_count: 8,
             callee_saved_count: 11,
             callee_saved_float_count: 8,
+            callee_saved_cond_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
@@ -230,6 +241,7 @@ fn cases() -> Vec<Case> {
             // r2 + r13 (reserved TLS/SDA) + r14..r31 (18) + LR.
             callee_saved_count: 21,
             callee_saved_float_count: 18,
+            callee_saved_cond_count: 3,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "r1",
@@ -246,6 +258,7 @@ fn cases() -> Vec<Case> {
             arg_count: 8,
             callee_saved_count: 21,
             callee_saved_float_count: 18,
+            callee_saved_cond_count: 3,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "r1",
@@ -264,6 +277,7 @@ fn cases() -> Vec<Case> {
             // deliberate link-register tradeoff (consistent with PPC32).
             callee_saved_count: 21,
             callee_saved_float_count: 18,
+            callee_saved_cond_count: 3,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "r1",
@@ -283,6 +297,7 @@ fn cases() -> Vec<Case> {
             // See PowerPC ELFv1 (BE) above.
             callee_saved_count: 21,
             callee_saved_float_count: 18,
+            callee_saved_cond_count: 3,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "r1",
@@ -301,6 +316,7 @@ fn cases() -> Vec<Case> {
             arg_count: 8,
             callee_saved_count: 12,
             callee_saved_float_count: 8,
+            callee_saved_cond_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
@@ -317,6 +333,7 @@ fn cases() -> Vec<Case> {
             arg_count: 4,
             callee_saved_count: 9,
             callee_saved_float_count: 8,
+            callee_saved_cond_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
@@ -333,6 +350,7 @@ fn cases() -> Vec<Case> {
             arg_count: 4,
             callee_saved_count: 9,
             callee_saved_float_count: 8,
+            callee_saved_cond_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
@@ -352,6 +370,7 @@ fn cases() -> Vec<Case> {
             arg_count: 3,          // EAX, EDX, ECX
             callee_saved_count: 4, // EBX, ESI, EDI, EBP
             callee_saved_float_count: 0,
+            callee_saved_cond_count: 0,
             ret_count: 2, // EAX, EDX
             reg_size_bytes: 4,
             stack_ptr_name: "ESP",
@@ -414,7 +433,7 @@ fn presets_resolve_correct_register_sets() {
         );
         assert_eq!(
             built.callee_saved_regs.len(),
-            c.callee_saved_count + c.callee_saved_float_count,
+            c.callee_saved_count + c.callee_saved_float_count + c.callee_saved_cond_count,
             "{}: callee-saved",
             c.name
         );
@@ -468,10 +487,17 @@ fn presets_resolved_registers_have_expected_size() {
                 c.name, c.reg_size_bytes,
             );
         }
+        let (saved_float, saved_cond) = saved_float.split_at(c.callee_saved_float_count);
         assert_eq!(
             saved_float.len(),
             c.callee_saved_float_count,
             "{}: callee-saved float registers follow the GPRs",
+            c.name,
+        );
+        assert_eq!(
+            saved_cond.len(),
+            c.callee_saved_cond_count,
+            "{}: condition fields follow the floats",
             c.name,
         );
     }
