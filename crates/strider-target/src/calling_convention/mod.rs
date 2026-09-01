@@ -540,6 +540,11 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
         // ELFv1 3.2.2 / ELFv2 2.2.1 make f14-f31 non-volatile.
         "LR", "f14", "f15", "f16", "f17", "f18", "f19", "f20", "f21", "f22", "f23", "f24", "f25",
         "f26", "f27", "f28", "f29", "f30", "f31",
+        // CR2-CR4 are the non-volatile condition fields; CR0/CR1 and CR5-CR7
+        // are volatile. Named individually because that is how `mfcr` /
+        // `mtcrf` name them -- never as the 8-byte `crall` container, which
+        // spans the volatile fields too.
+        "cr2", "cr3", "cr4",
     ],
     ret_val_regs: &["r3", "r4"],
     // `long double` is IBM double-double and returns in the f1:f2 pair, as
@@ -803,6 +808,11 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
                 // SysV PPC32 3-16: f14-f31 are non-volatile.
                 "f14", "f15", "f16", "f17", "f18", "f19", "f20", "f21", "f22", "f23", "f24", "f25",
                 "f26", "f27", "f28", "f29", "f30", "f31",
+                // CR2-CR4 are the non-volatile condition fields; CR0/CR1 and
+                // CR5-CR7 are volatile. Named individually because that is how
+                // `mfcr` / `mtcrf` name them -- never as the 8-byte `crall`
+                // container, which spans the volatile fields too.
+                "cr2", "cr3", "cr4",
             ],
             ret_val_regs: &["r3", "r4"],
             ret_val_regs_float: &["f1", "f2"],
