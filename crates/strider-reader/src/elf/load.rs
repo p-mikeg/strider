@@ -85,10 +85,15 @@ impl OwnedElf {
     ///
     /// # Errors
     ///
-    /// When the file changed on disk since it was mapped.
+    /// When the file changed on disk since it was mapped, or when the mapped
+    /// bytes no longer parse. The guard reads a truncated mtime and a size, so
+    /// a same-length rewrite within one second passes it; parsing fallibly here
+    /// is what keeps that case an error rather than the panic
+    /// [`file`](Self::file) documents.
     pub fn checked_file(&self) -> Result<object::File<'_>> {
         self.check_unchanged()?;
-        Ok(self.file())
+        object::File::parse(self.backing.as_slice())
+            .map_err(|e| anyhow::anyhow!("the mapped image no longer parses as ELF: {e}"))
     }
 
     /// One `stat` of the mapped file, comparing it against what it was when
