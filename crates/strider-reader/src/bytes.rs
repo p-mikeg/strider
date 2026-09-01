@@ -97,6 +97,15 @@ impl FileBytes {
     /// fails too; the mapping error is then folded into the message.
     pub(crate) fn map_path<P: AsRef<std::path::Path>>(path: P) -> crate::Result<Self> {
         let path = path.as_ref();
+        // Before any open: opening a FIFO read-only BLOCKS until a writer
+        // appears, so both paths below would hang rather than fail. `metadata`
+        // follows symlinks and does not open, so a link to a regular file
+        // still passes and a pipe cannot stall the check itself.
+        // A stat failure falls through, so a missing path still reports the
+        // io error the open below produces rather than this one.
+        if std::fs::metadata(path).is_ok_and(|m| !m.is_file()) {
+            anyhow::bail!("{}: not a regular file", path.display());
+        }
         if std::env::var_os("STRIDER_NO_MMAP").is_some_and(|v| v != "0") {
             return Ok(Self::from_vec(
                 std::fs::read(path).context("failed to read file")?,
