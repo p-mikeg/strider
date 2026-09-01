@@ -14,6 +14,7 @@ For non-ELF or custom sources, build a `Lifter` directly with
 from __future__ import annotations
 
 import os
+import stat as _stat
 import struct
 from typing import TYPE_CHECKING, Iterator, Mapping, Optional, Union
 
@@ -65,6 +66,12 @@ class _ElfHeader:
     __slots__ = ("is_64bit", "is_little_endian", "e_machine", "e_flags")
 
     def __init__(self, path: str) -> None:
+        # Checked before opening: opening a FIFO read-only BLOCKS until a
+        # writer appears, so `load_elf` on one never returns. `os.stat`
+        # follows symlinks and does not open, so a link to a regular file
+        # still passes and a pipe cannot stall the check itself.
+        if not _stat.S_ISREG(os.stat(path).st_mode):
+            raise ValueError(f"{path!r}: not a regular file")
         with open(path, "rb") as f:
             header = f.read(52)
         if len(header) < 20 or header[:4] != b"\x7fELF":
