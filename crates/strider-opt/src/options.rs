@@ -77,6 +77,11 @@ pub struct AssumptionOptions {
     /// return an existing or interior pointer (`realloc`, `free`, an
     /// aligned-alloc taking a pointer) produces unsound Disjoint verdicts.
     ///
+    /// Disjointness holds among allocations live at once.  Nothing models
+    /// deallocation, so a freed allocation stays a distinct base and a stale
+    /// pointer is taken as disjoint from the storage the allocator handed out
+    /// again.  The load that exposes this is a use-after-free.
+    ///
     /// A non-empty set also forwards a stack spill across a listed call when the
     /// frame is provably private, so it carries the same two gaps
     /// [`escape_analysis`](Self::escape_analysis) documents, without that knob
