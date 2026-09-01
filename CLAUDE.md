@@ -218,7 +218,8 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
     `Arc<AtomicUsize>`, not an `Rc<Cell<_>>`. `JoinPredicateFn` is
     `Arc<... + Send + Sync>`: `JoinConstraint` is `Clone`, so the predicate is
     shared rather than duplicated.
-  - `strider-py`: `OptimizerPipeline` is the only `#[pyclass(unsendable)]`.
+  - `strider-py`: no `#[pyclass(unsendable)]` remains -- `OptimizerPipeline`
+    was the last, and holds a `Mutex<PipelineState>` instead.
     `Lifter` moves and drops anywhere but decodes only on its creating thread,
     which `ThreadPinned` enforces with a catchable `StriderError`, because
     `Sleigh` is thread-affine (see below). `BufferReader` is an

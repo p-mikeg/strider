@@ -248,6 +248,12 @@ class Function:
         keys dedup on captures alone. `constraints` filters joined results by
         control-flow relations (`dominates`, `phi_input_from_edge`).
 
+        In a joined query, a pattern whose captures are ALL shared with an
+        earlier one contributes nothing of its own to the dedup key, so rows
+        differing only in THAT pattern's root collapse to one. Giving it a
+        capture of its own reports them separately -- which is why adding an
+        otherwise unused capture can raise the number of rows.
+
         A single root can yield several matches, one per distinct binding. A
         commutative op whose operands both satisfy a captured sub-pattern
         reports one match per operand: `int_add(anything().capture(k),
@@ -270,6 +276,11 @@ class Function:
         An ambiguous pattern raises here rather than returning one of several:
         `int_add(anything().capture(k), anything())` binds `k` to either operand,
         so pin the intent with `.ordered()` or narrow the operands.
+
+        `ignore_root=True` with a pattern that binds NO captures leaves every
+        match keyed identically, so this succeeds on any number of occurrences
+        and returns an arbitrary one. To ask "does this occur exactly once",
+        leave `ignore_root` false or give the pattern a capture.
         """
         ...
     def find_unique_value(
