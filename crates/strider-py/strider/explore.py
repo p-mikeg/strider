@@ -372,6 +372,14 @@ class _CfgVisualizer:
         return []
 
 
+#: Deadline for writing one response body, distinct from the request-read
+#: deadline because the two fail differently: a stalled read is a connection
+#: that will never say anything, while a slow read is a real client on a slow
+#: link. Loose enough that no realistic graph is truncated, bounded so a client
+#: that stops reading cannot park the single-threaded loop indefinitely.
+_WRITE_SECONDS = 300.0
+
+
 class _Handler(http.server.BaseHTTPRequestHandler):
     """The explorer's HTTP surface, served from `self.server`'s visualizer.
 
@@ -389,10 +397,13 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     #: returns either. A browser opening a speculative connection and sending
     #: nothing is exactly this shape.
     #:
-    #: Must stay well under `_SHUTDOWN_JOIN_SECONDS`: `shutdown` gives the
-    #: serving thread that long to finish, and a connection still being waited
-    #: on outlives the join, after which the interpreter's own join -- which
-    #: has no timeout at all -- inherits the wait.
+    #: Must stay under `_SHUTDOWN_START_SECONDS`, which is what a wedge here
+    #: actually races. `serve_forever` sets `started` from `service_actions`,
+    #: which it reaches only AFTER the first request completes, so a quiet
+    #: FIRST connection leaves `started` clear for the whole handler; `shutdown`
+    #: then gives up waiting for it and never stops the server at all. The join
+    #: budget is not the bound -- `BaseServer.shutdown` is untimed and runs
+    #: before the join, so the loop has always exited by the time it is reached.
     timeout = 2.0
 
     def _send(
@@ -404,9 +415,21 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(b)))
             self.end_headers()
+            # `wbufsize` is 0, so this is a single `sendall`, and a socket
+            # timeout bounds that whole call rather than each write within it.
+            # Under the read deadline a client slower than the body is cut off
+            # mid-body while the headers have already promised its full length,
+            # which reads as a corrupt graph rather than an error. Only the
+            # request read needs the tight bound; give the write its own.
+            self.connection.settimeout(_WRITE_SECONDS)
             self.wfile.write(b)
-        except (BrokenPipeError, ConnectionError):
-            pass  # client cancelled the request (e.g. clicked again)
+        except (BrokenPipeError, ConnectionError, TimeoutError):
+            # Cancelled (clicked again), or too slow to read. Either way this
+            # connection is finished: retrying the send would spend the whole
+            # deadline over again on a socket already known to be stalled.
+            self.close_connection = True
+        finally:
+            self.connection.settimeout(self.timeout)
 
     def do_GET(self) -> None:
         # Close after each response. This server is single-threaded, so it
@@ -512,7 +535,7 @@ _SHUTDOWN_START_SECONDS = 5.0
 
 def shutdown(port: int | None = None) -> list[int]:
     """Stop explorer servers started by `visualize`, unblocking whatever
-    thread is parked in it. Returns the ports it acted on.
+    thread is parked in it. Returns the ports it stopped.
 
     `port=None` stops every running explorer. Safe to call when nothing is
     running (returns `[]`), and safe to call from a thread other than the one
@@ -533,18 +556,22 @@ def shutdown(port: int | None = None) -> list[int]:
         (p, s) for p, s in _RUNNING.items() if p == port
     ]
     current = threading.current_thread()
-    for _p, (srv, _thread) in targets:
+    stopped = []
+    for p, (srv, _thread) in targets:
         # `BaseServer.shutdown` waits on an event `serve_forever` clears on
         # entry and sets on exit, so calling it before the loop starts blocks
         # forever.
         if srv.started.wait(_SHUTDOWN_START_SECONDS):
             srv.shutdown()  # returns once the serve loop has exited
+            stopped.append(p)
     for _p, (_srv, thread) in targets:
         # Joining the thread serving us would deadlock; that caller is already
         # past the frame this exists to drain.
         if thread is not current and thread.is_alive():
             thread.join(timeout=_SHUTDOWN_JOIN_SECONDS)
-    return [p for p, _s in targets]
+    # Only what was really stopped: giving up on `started` leaves the server
+    # serving, and saying otherwise would report a shutdown that did not happen.
+    return stopped
 
 
 # Runs BEFORE the non-daemon-thread join, which is the only point at which a
