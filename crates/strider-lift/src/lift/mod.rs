@@ -182,6 +182,40 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             .collect()
     }
 
+    /// Every register a LOAD / STORE addresses through the REGISTER space: the
+    /// FOURTH source of tracked varnodes, beside the decoded instructions, the
+    /// convention, and a `CallOther`'s footprint.
+    ///
+    /// The address is computed, so the register appears in no pcode operand and
+    /// `find_all_unique_vns` cannot see it. Without this the register is not in
+    /// the universe, `write_vn` has nothing to write, and the lift fails on a
+    /// function that used to (wrongly) lift the write as memory.
+    ///
+    /// Silent about an address that does not fold: that is the lift's error to
+    /// raise, against the op, where it can say so.
+    fn register_space_vns(&self, cfg: &strider_cfg::Cfg) -> Vec<rsleigh::Vn> {
+        let mut found: rustc_hash::FxHashSet<rsleigh::Vn> = rustc_hash::FxHashSet::default();
+        for region in cfg.regions() {
+            let mut consts = pcode_consts::PcodeConsts::default();
+            for wrapped in &region.insns {
+                consts.observe(wrapped.addr, &wrapped.insn);
+                let vn = match wrapped.insn.opcode {
+                    rsleigh::Opcode::Store => {
+                        pcode_consts::register_store_target(&wrapped.insn, &consts)
+                    }
+                    rsleigh::Opcode::Load => {
+                        pcode_consts::register_load_source(&wrapped.insn, &consts)
+                    }
+                    _ => None,
+                };
+                if let Some(vn) = vn {
+                    found.insert(vn);
+                }
+            }
+        }
+        found.into_iter().collect()
+    }
+
     /// Every register a `CallOther` in `cfg` touches through its ABI footprint
     /// instead of its pcode operands: the third source of tracked varnodes,
     /// beside the decoded instructions and the calling convention. x86-64
@@ -274,6 +308,14 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // membership, not a scan: the Vec is the SSoT for order only.
         let mut seen: rustc_hash::FxHashSet<rsleigh::Vn> = all_vns.iter().copied().collect();
         for vn in self.call_other_footprint_vns(cfg, &opts.cfg.call_other_overrides) {
+            if seen.insert(vn) {
+                all_vns.push(vn);
+            }
+        }
+        // A register a LOAD / STORE reaches through the REGISTER space is named
+        // by a computed address rather than a pcode operand, so it is invisible
+        // to `find_all_unique_vns` and has to be seeded here too.
+        for vn in self.register_space_vns(cfg) {
             if seen.insert(vn) {
                 all_vns.push(vn);
             }

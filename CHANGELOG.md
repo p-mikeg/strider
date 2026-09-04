@@ -535,7 +535,12 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   the lift now writes that register. It fails the function when the address does
   NOT fold, rather than naming the wrong register or falling back to memory.
   Def-site collection resolves it through the same code over the same op
-  sequence, so a register written is a register a phi was placed for.
+  sequence, so a register written is a register a phi was placed for, and the
+  register joins the tracked varnode set, which is otherwise built from pcode
+  operands alone and so cannot see a computed address. The multi-register form
+  (`vst1.32 {d0-d1}, [r0]`), whose sla body loops with the register offset
+  advancing per iteration, has no single answer and fails: 14 functions in
+  4,918,502, each of which previously lifted a wrong memory store silently.
 - PowerPC `CR2` / `CR3` / `CR4`, the non-volatile condition fields, were absent
   from every PowerPC convention's callee-saved set, so a `Call` clobbered them
   and a compare held across a call read as opaque afterwards -- a silently wrong
