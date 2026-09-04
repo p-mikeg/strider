@@ -14,6 +14,7 @@ mod function_lifter;
 mod integer;
 mod memory;
 mod misc;
+mod pcode_consts;
 pub(crate) mod pcode_util;
 mod pruned_ssa;
 mod vn_io;
@@ -56,6 +57,9 @@ pub struct Lifter<R: rsleigh::MemReader> {
     sleigh: rsleigh::Sleigh<R>,
     /// Cached at construction: `Sleigh::regs()` is expensive.
     sleigh_regs: rsleigh::SleighRegs,
+    /// The declared register file as a slice, for the per-op containment
+    /// queries in [`pcode_consts`]. `SleighRegs` only hands out an iterator.
+    declared_reg_vns: Vec<rsleigh::Vn>,
     user_op_names: Vec<String>,
     /// Flowing context vars, discovered once (constant per sla) and lent to
     /// every `build_cfg` so decode mode propagates along CFG edges.
@@ -73,6 +77,7 @@ pub struct Lifter<R: rsleigh::MemReader> {
 impl<R: rsleigh::MemReader> Lifter<R> {
     pub fn new(arch: strider_target::SleighArch, sleigh: rsleigh::Sleigh<R>) -> Result<Self> {
         let sleigh_regs = sleigh.regs()?;
+        let declared_reg_vns = sleigh_regs.vns().collect();
         let user_op_names = sleigh.user_op_names().unwrap_or_default();
         let flow_vars = strider_cfg::FlowVars::discover(&sleigh)?;
         // Read on the still-fresh engine, so this is the pspec default, not a
@@ -88,6 +93,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             arch,
             sleigh,
             sleigh_regs,
+            declared_reg_vns,
             user_op_names,
             flow_vars,
             entry_defaults,
@@ -114,6 +120,13 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     #[must_use]
     pub fn sleigh_regs(&self) -> &rsleigh::SleighRegs {
         &self.sleigh_regs
+    }
+
+    /// The declared register file, for containment queries against a computed
+    /// REGISTER-space address.
+    #[must_use]
+    pub fn declared_reg_vns(&self) -> &[rsleigh::Vn] {
+        &self.declared_reg_vns
     }
 
     /// `per_address_ccs` supplies CC overrides for call TARGETS.  Pass an
@@ -179,6 +192,47 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             .collect::<rustc_hash::FxHashSet<rsleigh::Vn>>()
             .into_iter()
             .collect()
+    }
+
+    /// Every register a LOAD / STORE addresses through the REGISTER space: the
+    /// FOURTH source of tracked varnodes, beside the decoded instructions, the
+    /// convention, and a `CallOther`'s footprint.
+    ///
+    /// The address is computed, so the register appears in no pcode operand and
+    /// `find_all_unique_vns` cannot see it. Without this the register is not in
+    /// the universe, `write_vn` has nothing to write, and the lift fails on a
+    /// function that used to (wrongly) lift the write as memory.
+    ///
+    /// Silent about an address that does not resolve: the lift takes its
+    /// opaque path there, which clobbers registers already in the set.
+    ///
+    /// The ENCLOSING declared register is seeded, not the resolved slice. A
+    /// computed offset need not land on a declared boundary, and seeding a
+    /// partially-overlapping slice would break the nesting the tracked set
+    /// relies on -- see [`pcode_consts::register_slot`].
+    fn register_space_vns(&self, cfg: &strider_cfg::Cfg) -> Vec<rsleigh::Vn> {
+        let declared = self.declared_reg_vns();
+        let mut found: rustc_hash::FxHashSet<rsleigh::Vn> = rustc_hash::FxHashSet::default();
+        for region in cfg.regions() {
+            let mut consts = pcode_consts::PcodeConsts::default();
+            for wrapped in &region.insns {
+                consts.observe(wrapped.addr, &wrapped.insn);
+                let slot = match wrapped.insn.opcode {
+                    rsleigh::Opcode::Store => {
+                        pcode_consts::register_store_target(&wrapped.insn, &consts, declared)
+                    }
+                    rsleigh::Opcode::Load => {
+                        pcode_consts::register_load_source(&wrapped.insn, &consts, declared)
+                    }
+                    _ => None,
+                };
+                if let Some(vn) = slot.and_then(|s| pcode_consts::enclosing_register(declared, &s))
+                {
+                    found.insert(vn);
+                }
+            }
+        }
+        found.into_iter().collect()
     }
 
     /// Every register a `CallOther` in `cfg` touches through its ABI footprint
@@ -273,6 +327,14 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // membership, not a scan: the Vec is the SSoT for order only.
         let mut seen: rustc_hash::FxHashSet<rsleigh::Vn> = all_vns.iter().copied().collect();
         for vn in self.call_other_footprint_vns(cfg, &opts.cfg.call_other_overrides) {
+            if seen.insert(vn) {
+                all_vns.push(vn);
+            }
+        }
+        // A register a LOAD / STORE reaches through the REGISTER space is named
+        // by a computed address rather than a pcode operand, so it is invisible
+        // to `find_all_unique_vns` and has to be seeded here too.
+        for vn in self.register_space_vns(cfg) {
             if seen.insert(vn) {
                 all_vns.push(vn);
             }
@@ -455,7 +517,14 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 .node_weight(cfg_rid)
                 .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
             let special_terminator = SpecialTerm::from_terminator(&region.terminator);
+            self.pcode_consts.reset();
             for wrapped_insn in &region.insns {
+                // Observed BEFORE the skip, and reset per region above, because
+                // `collect_def_sites` feeds every op of every region through an
+                // identical resolver. The two must see the same sequence or a
+                // register write can land where no phi was placed for it.
+                self.pcode_consts
+                    .observe(wrapped_insn.addr, &wrapped_insn.insn);
                 if special_terminator
                     .as_ref()
                     .is_some_and(|s| s.skips_opcode(wrapped_insn.insn.opcode))
