@@ -22,6 +22,11 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     /// plus every CC register.  Varnodes absent from it fall through to the
     /// scan in `container_of`.
     pub(crate) container_map: vn_container::ContainerMap,
+    /// Constant values of the current machine instruction's temporaries, fed
+    /// every op in `region.insns` order. `collect_def_sites` runs an identical
+    /// one over the same sequence, so a register store resolves to the same
+    /// varnode on both sides.
+    pub(crate) pcode_consts: super::pcode_consts::PcodeConsts,
     /// The FIRST value committed to `ISAModeSwitch` at a machine address (ARM's
     /// `setISAMode` reads it, MIPS's `JXWritePC` writes it) and that address:
     /// the mode the instruction decodes its branch target(s) in. First, not
@@ -159,6 +164,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             per_address_ccs,
             call_other_overrides,
             container_map,
+            pcode_consts: super::pcode_consts::PcodeConsts::default(),
             pending_isa_mode: None,
             isa_mode_switch_vn,
             region_last_addrs: rustc_hash::FxHashMap::default(),
