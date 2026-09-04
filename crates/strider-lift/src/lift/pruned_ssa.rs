@@ -39,8 +39,13 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 .region_graph()
                 .node_weight(r)
                 .expect("region id from region_ids() is in the graph");
+            // One resolver per region, fed every op in order, exactly as the
+            // lift feeds its own: the register a store resolves to must be the
+            // same on both sides or a write lands with no phi placed for it.
+            let mut consts = super::pcode_consts::PcodeConsts::default();
             for wrapped in &region.insns {
-                self.record_insn_defs(&wrapped.insn, r, &mut defs)?;
+                consts.observe(wrapped.addr, &wrapped.insn);
+                self.record_insn_defs(&wrapped.insn, r, &mut defs, &consts)?;
             }
         }
         Ok(defs)
@@ -51,6 +56,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         insn: &rsleigh::Insn,
         r: RegionId,
         defs: &mut FxHashMap<InitialVnId, FxHashSet<RegionId>>,
+        consts: &super::pcode_consts::PcodeConsts,
     ) -> Result<()> {
         match insn.opcode {
             // A call writes the CC's ret + clobber registers and adjusts SP,
@@ -91,9 +97,18 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                     }
                 }
             }
+            // A STORE into the REGISTER space writes a register, not memory:
+            // the sla addresses one that way when an instruction field picks
+            // it (ARM `vld1.N {dX[i]}`). Mirrors `handle_store`, which fails
+            // the lift when the same address does not fold, so a def is
+            // recorded exactly when one is written.
+            Opcode::Store => {
+                if let Some(vn) = super::pcode_consts::register_store_target(insn, consts) {
+                    self.add_def(&vn, r, defs);
+                }
+            }
             // Write no tracked variable.
-            Opcode::Store
-            | Opcode::Branch
+            Opcode::Branch
             | Opcode::CondBranch
             | Opcode::Return
             | Opcode::BranchIndirect

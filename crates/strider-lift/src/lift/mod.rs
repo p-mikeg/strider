@@ -14,6 +14,7 @@ mod function_lifter;
 mod integer;
 mod memory;
 mod misc;
+mod pcode_consts;
 pub(crate) mod pcode_util;
 mod pruned_ssa;
 mod vn_io;
@@ -455,7 +456,14 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 .node_weight(cfg_rid)
                 .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
             let special_terminator = SpecialTerm::from_terminator(&region.terminator);
+            self.pcode_consts.reset();
             for wrapped_insn in &region.insns {
+                // Observed BEFORE the skip, and reset per region above, because
+                // `collect_def_sites` feeds every op of every region through an
+                // identical resolver. The two must see the same sequence or a
+                // register write can land where no phi was placed for it.
+                self.pcode_consts
+                    .observe(wrapped_insn.addr, &wrapped_insn.insn);
                 if special_terminator
                     .as_ref()
                     .is_some_and(|s| s.skips_opcode(wrapped_insn.insn.opcode))

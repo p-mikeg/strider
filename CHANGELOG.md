@@ -524,6 +524,18 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `isFIQinterruptsEnabled`, `isIRQinterruptsEnabled` and `ClearExclusiveLocal`
   were missing beside siblings that were present, so `cpsid a` failed where
   `cpsie a` lifted. MIPS `syscall` was unclassified on all four MIPS presets.
+- A p-code `LOAD` / `STORE` addressing the REGISTER space lifted as opaque
+  memory, so the register it names was never read or written and no phi was
+  placed for it -- the value simply vanished, with `is_complete()` still true
+  and nothing reported. A sla addresses a register this way when an instruction
+  field picks it rather than naming it outright, which is how ARM's
+  `vld1.N {dX[i]}, [addr]` writes one lane: `str r0,[sp]; vld1.32 {d0[0]},[sp];
+  vmov.32 r0,d0[0]` returned 0 instead of `r0`. The address is built from
+  constants the decoder substituted, so it folds to the register it names, and
+  the lift now writes that register. It fails the function when the address does
+  NOT fold, rather than naming the wrong register or falling back to memory.
+  Def-site collection resolves it through the same code over the same op
+  sequence, so a register written is a register a phi was placed for.
 - PowerPC `CR2` / `CR3` / `CR4`, the non-volatile condition fields, were absent
   from every PowerPC convention's callee-saved set, so a `Call` clobbered them
   and a compare held across a call read as opaque afterwards -- a silently wrong
