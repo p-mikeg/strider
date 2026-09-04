@@ -39,8 +39,13 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 .region_graph()
                 .node_weight(r)
                 .expect("region id from region_ids() is in the graph");
+            // One resolver per region, fed every op in order, exactly as the
+            // lift feeds its own: the register a store resolves to must be the
+            // same on both sides or a write lands with no phi placed for it.
+            let mut consts = super::pcode_consts::PcodeConsts::default();
             for wrapped in &region.insns {
-                self.record_insn_defs(&wrapped.insn, r, &mut defs)?;
+                consts.observe(wrapped.addr, &wrapped.insn);
+                self.record_insn_defs(&wrapped.insn, r, &mut defs, &consts)?;
             }
         }
         Ok(defs)
@@ -51,6 +56,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         insn: &rsleigh::Insn,
         r: RegionId,
         defs: &mut FxHashMap<InitialVnId, FxHashSet<RegionId>>,
+        consts: &super::pcode_consts::PcodeConsts,
     ) -> Result<()> {
         match insn.opcode {
             // A call writes the CC's ret + clobber registers and adjusts SP,
@@ -91,9 +97,27 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                     }
                 }
             }
+            // A STORE into the REGISTER space writes a register, not memory:
+            // the sla addresses one that way when an instruction field picks
+            // it (ARM `vld1.N {dX[i]}`). Mirrors `handle_store` on both of its
+            // paths -- the named register when the address resolves, and the
+            // whole register file when it does not -- so a def is recorded for
+            // exactly what is written.
+            Opcode::Store => {
+                let declared = self.lifter.declared_reg_vns();
+                if let Some(vn) = super::pcode_consts::register_store_target(insn, consts, declared)
+                {
+                    self.add_def(&vn, r, defs);
+                } else if super::pcode_consts::is_register_space_access(insn) {
+                    for vn in
+                        super::pcode_consts::opaque_clobber_set(self.builder.function().all_vns())
+                    {
+                        self.add_def(&vn, r, defs);
+                    }
+                }
+            }
             // Write no tracked variable.
-            Opcode::Store
-            | Opcode::Branch
+            Opcode::Branch
             | Opcode::CondBranch
             | Opcode::Return
             | Opcode::BranchIndirect
