@@ -89,6 +89,26 @@ pub fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::V
         .unwrap_or(*vn)
 }
 
+/// Smallest same-space varnode in `vns` enclosing `vn`, or `None` when none
+/// does. Unlike [`largest_container_in`] a miss is reported rather than
+/// answered with `vn` itself: the caller is asking whether `vn` is a slice of
+/// something `vns` declares, and a computed offset need not be.
+///
+/// Smallest, because the answer names the register a computed address reaches:
+/// the widest enclosing view would over-state which bytes the access covers.
+pub fn smallest_enclosing(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> Option<rsleigh::Vn> {
+    if !is_aliasable_space(vn.addr_space) {
+        return None;
+    }
+    vns.iter()
+        .filter(|c| vn_contains(c, vn))
+        // `addr_off` breaks an equal-size tie for the same reason
+        // `largest_container_in` does: two resolvers disagreeing would put a
+        // read and a write of one varnode under different SSA variables.
+        .min_by_key(|c| (c.size, c.addr_off))
+        .copied()
+}
+
 /// O(1) `vn -> container` lookup for the register-aliasing reads, built once
 /// per function. A miss falls back to a linear scan.
 #[derive(Debug, Clone, Default)]
