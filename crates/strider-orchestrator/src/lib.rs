@@ -615,7 +615,7 @@ fn apply_resolutions(
         // reports no mode for ANY target, including the ones a mode-bearing
         // classification already proved. Re-deriving must widen the arm set,
         // not re-decode the old arms in the mode flowing into the branch.
-        let targets = adopt_known_modes(prev, targets, flowing_at(addr));
+        let (targets, assumed_mode) = adopt_known_modes(prev, targets, flowing_at(addr));
         // The caller's own seed is unioned in by ADDRESS every round, after
         // both mode filters and never subject to them: a seed carries a mode
         // only if the caller built one, and filtering it against a mode-bearing
@@ -643,8 +643,10 @@ fn apply_resolutions(
             }
         }
         // A mode flip decodes an address two ways, so the seated arm is as
-        // unclaimable as a dropped one.
-        if derived_dropped || narrowed {
+        // unclaimable as a dropped one; an arm seated at a mode-committing site
+        // on a mode nothing proved for it is decodable but unverified, which is
+        // the same answer to "may this be incomplete?".
+        if derived_dropped || narrowed || assumed_mode {
             progress.derived_incomplete.push(addr);
         }
         known_targets.insert(addr, targets);
@@ -699,32 +701,48 @@ fn seed_still_covers(
 /// [`Progress::derived_incomplete`] rather than relying on the cfg to re-defer
 /// it.
 /// Where every proved mode IS the flowing one, seating `None` decodes
-/// identically, so the set still widens.
+/// identically, so the set still widens -- but only the arms already evaluated
+/// proved that mode, and they are no evidence about an arm nobody has
+/// evaluated. A later round widening the index can therefore seat an address
+/// whose committed mode was never checked. The set still widens, because
+/// dropping it would cost every same-mode dispatch its arms, and the second
+/// return value tells the caller to REPORT the site so the guess cannot pass
+/// as a settled answer.
 fn adopt_known_modes(
     known: Option<&ResolvedTargets>,
     targets: ResolvedTargets,
     flowing_isa_bit: bool,
-) -> ResolvedTargets {
-    let Some(known) = known else { return targets };
+) -> (ResolvedTargets, bool) {
+    let Some(known) = known else {
+        return (targets, false);
+    };
     let known_targets = concrete_targets(known);
     let modes: FxHashMap<u64, bool> = known_targets
         .iter()
         .filter_map(|t| t.isa_bit.map(|bit| (t.addr, bit)))
         .collect();
     if modes.is_empty() || matches!(targets, ResolvedTargets::LinkRegister) {
-        return targets;
+        return (targets, false);
     }
     let interworking = modes.values().any(|&bit| bit != flowing_isa_bit);
     let known_addrs: rustc_hash::FxHashSet<u64> = known_targets.iter().map(|t| t.addr).collect();
+    let mut assumed = false;
     let kept: Vec<strider_cfg::ResolvedTarget> = concrete_targets(&targets)
         .iter()
         .filter_map(|t| match (t.isa_bit, modes.get(&t.addr)) {
             (Some(_), _) => Some(*t),
             (None, Some(&bit)) => Some(strider_cfg::ResolvedTarget::new(t.addr, Some(bit))),
-            (None, None) => (!interworking || known_addrs.contains(&t.addr)).then_some(*t),
+            (None, None) if known_addrs.contains(&t.addr) => Some(*t),
+            // New to a mode-committing site, and the site does not interwork so
+            // the flowing mode decodes it the same way the proved arms decode.
+            // Kept, and flagged: nobody evaluated THIS arm's mode.
+            (None, None) => (!interworking).then(|| {
+                assumed = true;
+                *t
+            }),
         })
         .collect();
-    resolved_from(kept)
+    (resolved_from(kept), assumed)
 }
 
 /// A resolved target as the convergence check sees it: `(address, isa_bit)`,
@@ -1783,6 +1801,12 @@ mod tests {
 
     /// A proved mode EQUAL to the flowing one seats identically to no mode at
     /// all, so the set still widens: the drop is for sites that switch ISA.
+    ///
+    /// It is still an assumption -- 0x2004's own mode was never evaluated, and
+    /// only the OTHER arms proved the one it is decoded in -- so the site is
+    /// reported. Dropping the arm instead would cost every same-mode dispatch
+    /// its widening; reporting keeps the arm and refuses to call the answer
+    /// settled.
     #[test]
     fn apply_resolutions_widens_a_site_whose_proved_mode_is_the_flowing_one() {
         let (progress, folded) = round(
@@ -1792,6 +1816,26 @@ mod tests {
         );
         assert!(progress.changed);
         assert_eq!(folded, multiple(&[(0x2000, Some(false)), (0x2004, None)]));
+        assert_eq!(
+            progress.derived_incomplete,
+            vec![pcode_addr(0x1000)],
+            "an arm seated on a mode nothing proved for it must be reported"
+        );
+    }
+
+    /// The same site, re-derived with nothing new, assumes nothing and so
+    /// reports nothing: the flag is for arms the site had not already seated.
+    #[test]
+    fn apply_resolutions_reports_nothing_when_no_new_arm_is_assumed() {
+        let (_progress, folded) = round(
+            Some(multiple(&[(0x2000, Some(false)), (0x2004, Some(false))])),
+            multiple(&[(0x2000, None), (0x2004, None)]),
+            None,
+        );
+        assert_eq!(
+            folded,
+            multiple(&[(0x2000, Some(false)), (0x2004, Some(false))])
+        );
     }
 
     /// An address the seated set already holds without a proved mode stays;
