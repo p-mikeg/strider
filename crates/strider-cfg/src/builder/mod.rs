@@ -367,7 +367,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
 
     /// Lowers the out-of-function arm of a conditional branch, creating the
     /// stub on first use.  It is wired as a regular CondBranch successor but
-    /// never enqueued, so no byte outside `[start, start + fn_max_size)` is
+    /// never enqueued, so no TARGET outside `[start, start + fn_max_size)` is
     /// decoded.
     ///
     /// Keyed through `start_addr_to_region_id` like any region, so two

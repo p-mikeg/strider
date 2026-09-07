@@ -154,6 +154,34 @@ different loads. On `array_sum` this prints four rows, two of which pair a
 field with itself (`4 and 4`, `8 and 8`). Compare the offsets yourself when
 you want distinct ones.
 
+### One pattern, several shapes
+
+Compiled code reaches the same result more than one way, and writing a query
+per spelling gets tedious. `one_of` takes a list and matches any of them,
+reporting every hit; `first_of` stops at the first that matches, which is what
+you want when the alternatives overlap and you only care that one applied.
+Either can sit in any slot, so the alternation goes where the variation is
+rather than around the whole pattern:
+
+```python
+from strider.pattern import one_of, load, int_add, var, Capture
+
+base, off = Capture("base"), Capture("off")
+# A field read is `base + offset` in one function and a bare pointer in the
+# next; one query covers both.
+hits = function.find_all(
+    load(addr=one_of([int_add(base, off), var(base)])),
+    ignore_casts=True,
+)
+```
+
+Three more shape helpers worth knowing. `.ordered()` turns off commutative
+matching where you need the operands in the order you wrote them.
+`.any_input(p)` matches `p` against any input slot, for nodes whose arity you
+do not want to pin. And `load().non_stack()` / `load().heap_only()` filter by
+what the address is rooted at, which is how you separate spills from real
+memory traffic.
+
 ## Constraints: relating matches by control flow
 
 Joining on a shared capture ties patterns together by *identity* (the same node).
@@ -326,6 +354,9 @@ The three that trip people up most:
   match either operand order. The rest keep the order you wrote.
 - **`phi()` matches any phi**, whatever register it carries; `phi_for(vn)`
   narrows to one. Use `mem_phi()` for the memory merge.
+- **A value added to a multiple of itself collapses.** `x + x*2` is folded to
+  `x*3`, and `x + (x<<1)` with it -- thirteen add/subtract against
+  multiply/shift pairings end up as one `x * K`. Look for the product.
 
 When a pattern still comes up empty, dump the raw graph
 (`function.to_html("graph.html")` without `pretty`) and walk forward from the

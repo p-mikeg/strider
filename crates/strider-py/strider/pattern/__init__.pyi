@@ -49,7 +49,10 @@ ValueTy = Literal[
 #: `"lt"` and `"slt"` are equivalent to `"Equal"`, `"Less"` and `"Sless"`.
 #: Matched case-insensitively at runtime.
 IntCmpOpName = Literal[
-    "Equal", "Less", "Sless", "Carry", "Scarry", "Sborrow", "eq", "lt", "slt",
+    "Equal", "Less", "Sless", "Carry", "Scarry", "Sborrow",
+    "equal", "less", "sless", "carry", "scarry", "sborrow",
+    "EQUAL", "LESS", "SLESS", "CARRY", "SCARRY", "SBORROW",
+    "eq", "lt", "slt", "EQ", "LT", "SLT", "Eq", "Lt", "Slt",
 ]
 
 #: Widening-operation names accepted by `int_extend`.
@@ -493,8 +496,9 @@ class OrderedPat(Protocol):
         """Stop the matcher retrying this op with its operands swapped; a
         no-op where the op's operands are ordered already, as on `int_le` or
         `int_shl`. Pins this node alone, so `int_add(int_mul(a, b),
-        c).ordered()` leaves the inner `int_mul` commuting. A shape with no
-        operands to order (a wildcard, a constant, a `one_of`) raises."""
+        c).ordered()` leaves the inner `int_mul` commuting. On a finished `Pat`
+        a shape with no operands to order (a wildcard, a constant, a `one_of`)
+        raises; the typed binary builders set a flag and cannot."""
         ...
 
 @runtime_checkable
@@ -785,7 +789,8 @@ def bool_const(value: bool | Capture | None = ...) -> Pat:
 def float_const(bits: int | Capture | None = ...) -> Pat:
     """Match a float constant whose raw bits equal `bits`. Given a `Capture`,
     or nothing, match any float constant, binding it when there is a
-    capture."""
+    capture. The bits are a `u64`: a negative
+    `int` is a `TypeError`."""
 def any_int(c: Capture | None = ...) -> Pat:
     """Match any node with an integer output (`I1` through `I512`), constant
     or not, optionally binding it to `c`. `I1` is an integer type, so this
@@ -989,9 +994,9 @@ def int_sign_extend(operand: ValueLike) -> Pat:
 def int_extend(op: ExtendOpName, operand: ValueLike) -> Pat:
     """Match a widening of the kind named by `op`."""
 
-def load(addr: ValueLike = ...) -> LoadPat:
+def load(addr: ValueLike | None = ...) -> LoadPat:
     """Start a `Load` pattern builder, optionally pinning the address."""
-def store(addr: ValueLike = ..., data: ValueLike = ...) -> StorePat:
+def store(addr: ValueLike | None = ..., data: ValueLike | None = ...) -> StorePat:
     """Start a `Store` pattern builder, optionally pinning the address and
     the stored value."""
 def call() -> CallPat:
@@ -1001,7 +1006,7 @@ def call_other() -> CallOtherPat:
     builder."""
 def ret() -> RetPat:
     """Start a `Return` pattern builder."""
-def if_else(cond: ValueLike = ...) -> IfPat:
+def if_else(cond: ValueLike | None = ...) -> IfPat:
     """Start a conditional-branch pattern builder, optionally pinning the
     condition."""
 
