@@ -318,10 +318,10 @@ impl PyCfg {
     /// return (an ARM `pop {pc}` epilogue) clears it. Read whichever channel
     /// is non-empty to tell the cases apart.
     ///
-    /// On a `build_cfg` CFG the first two channels are empty by construction,
-    /// so `True` there means only that no ISA mode clashed and no branch
-    /// landed off an instruction boundary. It says nothing about indirect
-    /// branches, which `build_cfg` never resolves.
+    /// On a `build_cfg` CFG `unresolved` is empty by construction, and
+    /// `unverified_seeded_sites` holds every site you seeded -- so seeding one
+    /// makes this `False`. It says nothing about indirect branches, which
+    /// `build_cfg` never resolves.
     fn is_complete(&self) -> bool {
         let r = &self.reports;
         r.unresolved.is_empty()

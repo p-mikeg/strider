@@ -6,6 +6,14 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
 
 ### Breaking, Python
 
+- A `Lifter` decodes only on the thread that built it. Calling `analyze`,
+  `build_cfg`, `optimize`, `pcode_at`, `reg`, `reg_name`, `call_other_abi`,
+  `user_op_names`, or a renderer taking `lifter=`, from another thread raises a
+  catchable `StriderError` instead of corrupting Sleigh's decoder state. The
+  handle itself moves and drops anywhere; build a second one over the same
+  `arch` / `reader()` / `rom()` to work off-thread. `BufferReader` and a loaded
+  ELF became `Arc<Mutex<_>>` to make that safe.
+
 - AArch64 `usdot` / `bfdot` **by element** no longer lift, so `analyze` raises
   on a function containing one. They used to lift with whichever register the
   PREVIOUS instruction left in that operand slot, silently: `usdot v0.4s,
@@ -17,11 +25,6 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   21,607,094 instruction words across 16 arm64 kernels and 47 arm64 shared
   objects contain no occurrence at all, and an A/B over 20,892 arm64 kernel
   functions changed none of them for this reason.
-
-- `visualize`'s `whole` now defaults to `True`, so it opens on the entire graph.
-  A caller relying on the neighborhood opening must pass `whole=False`. A
-  neighborhood hides nodes without saying so, which makes a truncated view
-  indistinguishable from a small function.
 
 - A `CallingConvention.custom(sleigh, ..)` or `CallOtherAbi.custom(sleigh, ..)`
   resolves register names against the `Sleigh` it is given and freezes the
@@ -472,6 +475,42 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
 
 ### Fixed
 
+- An ARM `VLD2/3/4` or `VST2/3/4` multiple-structures instruction no longer
+  fails the whole function. The register the p-code addresses through the
+  REGISTER space is picked by a loop-carried pointer, so it does not fold to a
+  constant, and refusing to lift it cost every de-interleaving NEON function --
+  24 forms across every element size -- that v0.1.0 had handled. The access is
+  now opaque: it stays in the REGISTER space, so a later read of the same slot
+  sees the write, and every tracked register is re-read afterwards, so none
+  keeps a value the write may have replaced.
+- A resolved REGISTER-space address is gated on a declared register enclosing
+  it. ARM's `VLD4`/`VST4` single-lane forms omit the element-size scale their
+  siblings apply, so the address could straddle two registers; seeding that
+  slot broke aliasing silently, and a `vld4.32` lane write followed by
+  `vmov r0,s18` returned s18's entry value.
+- `int_const_any_width(v)` no longer matches a constant that merely shares
+  `v`'s low bits. A hunt for `0x1234` matched a stored `0x34`, and `0` answered
+  a search for `256`.
+- An indirect site that has proved an ISA mode now reports itself when a later
+  round seats an arm on that mode without evaluating it. The arm is still
+  seated -- dropping it costs every same-mode dispatch its widening -- but
+  `is_complete()` no longer calls the answer settled.
+- An object file's relocations resolve against `.symtab`, the table its
+  `sh_link` names. `object` reports the first `SHT_DYNSYM` section as the
+  dynamic table whatever the `e_type`, so an `ET_REL` carrying one patched in
+  an unrelated symbol's `st_value`, silently.
+- A `CallOther` whose p-code output is a memory operand (x86 `sgdt [mem]`) no
+  longer fails the function; `save_processor_state` was unliftable on every
+  x86-64 kernel.
+- A `call_other_abis` override outranks the built-in trap rule, in the CFG and
+  in the lifter alike.
+- The allocator stack relaxation is gated on frame privacy.
+- The explorer's read deadline no longer truncates a slow client's response
+  body, and `explore.shutdown` returns only the ports it actually stopped.
+- A connection that sends nothing no longer wedges the explorer, and then the
+  interpreter, at exit.
+- `load_elf` no longer aborts on a guarded parse, nor hangs on a FIFO.
+
 - Three inputs took the whole process down from a plain `build_cfg`, with no
   options set, and now raise a catchable `StriderError`. A malformed
   instruction in a MIPS branch delay slot wrote tens of kilobytes past a
@@ -506,7 +545,8 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
 - `analyze` releases the GIL on the custom-pipeline path too. It used to hold
   it for the whole analysis, stalling every other Python thread.
 - `Cfg.unverified_seeded_sites()` on a `build_cfg` result holds every site you
-  seeded; its docstring claimed it was always empty there.
+  seeded; its docstring, its `.pyi` stub and both copies of `is_complete`'s
+  all claimed it was always empty there.
 - AArch64 `addv` into a byte destination did not zero the rest of the vector
   register, so `__builtin_popcount` read the surviving `cnt` lanes back and
   returned a value with them in it.
