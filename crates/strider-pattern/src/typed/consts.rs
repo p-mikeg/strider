@@ -136,12 +136,21 @@ fn value_at_some_width(stored: u128, out_ty: ValueType, v: u128) -> bool {
         if low != (v & w_mask) {
             continue;
         }
+        let sign_bit_w = if w >= 128 { 0 } else { 1u128 << (w - 1) };
+        // `v` must itself BE a `w`-wide value, or "held at `w`" says nothing.
+        // Comparing only the low `w` bits accepts any query sharing them, so a
+        // search for `0x1234` matched a stored `0x34`.
+        let v_above = v & !w_mask;
+        let v_is_w_wide =
+            v_above == 0 || (sign_bit_w != 0 && (low & sign_bit_w) != 0 && v_above == !w_mask);
+        if !v_is_w_wide {
+            continue;
+        }
         let above_w_mask = output_mask & !w_mask;
         let above = stored & above_w_mask;
         if above == 0 {
             return true; // zero-extended form
         }
-        let sign_bit_w = if w >= 128 { 0 } else { 1u128 << (w - 1) };
         if sign_bit_w != 0 && (low & sign_bit_w) != 0 && above == above_w_mask {
             return true; // sign-extended form
         }
@@ -603,6 +612,45 @@ mod any_width_tests {
             0x80_0000_0002,
             ValueType::I40,
             0x80_0000_0001
+        ));
+    }
+
+    /// A query wider than the candidate width is not that width's value, so
+    /// sharing its low bits is not a match. Comparing only the low `w` bits
+    /// made every constant a hit for any query ending in the same byte.
+    #[test]
+    fn a_query_with_bits_above_the_candidate_width_does_not_match() {
+        // 0 is not 256, 0x1_0000 or 0x1_0000_0000 at any width.
+        for q in [256u128, 0x1_0000, 0x1_0000_0000] {
+            assert!(
+                !value_at_some_width(0, ValueType::I64, q),
+                "0 matched {q:#x}"
+            );
+        }
+        // The realistic shape: hunting a magic number, hitting its low byte.
+        assert!(!value_at_some_width(0x34, ValueType::I64, 0x1234));
+        assert!(!value_at_some_width(0x2A, ValueType::I32, 0x122A));
+        // Same hole on the sign-extended arm: -128 is not 384.
+        let minus_128 = (-128i128) as u128;
+        assert!(!value_at_some_width(minus_128, ValueType::I64, 384));
+    }
+
+    /// The negative queries the doc promises still reach their stored form.
+    #[test]
+    fn a_negative_query_still_matches_both_widened_forms() {
+        // -50 held at I32 and ZERO-extended into I64.
+        let minus_50 = (-50i128) as u128;
+        assert!(value_at_some_width(
+            0x0000_0000_FFFF_FFCE,
+            ValueType::I64,
+            minus_50
+        ));
+        // -1 held at I8 and sign-extended into I64.
+        let minus_1 = (-1i128) as u128;
+        assert!(value_at_some_width(
+            u128::from(u64::MAX),
+            ValueType::I64,
+            minus_1
         ));
     }
 }
