@@ -103,7 +103,10 @@ _p.ValueTy = _t.Literal[  # type: ignore[attr-defined]
     "F128",
 ]
 _p.IntCmpOpName = _t.Literal[  # type: ignore[attr-defined]
-    "Equal", "Less", "Sless", "Carry", "Scarry", "Sborrow", "eq", "lt", "slt",
+    "Equal", "Less", "Sless", "Carry", "Scarry", "Sborrow",
+    "equal", "less", "sless", "carry", "scarry", "sborrow",
+    "EQUAL", "LESS", "SLESS", "CARRY", "SCARRY", "SBORROW",
+    "eq", "lt", "slt", "EQ", "LT", "SLT", "Eq", "Lt", "Slt",
 ]
 _p.ExtendOpName = _t.Literal[  # type: ignore[attr-defined]
     "zero", "zero_extend", "ZeroExtend", "sign", "sign_extend", "SignExtend",

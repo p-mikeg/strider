@@ -28,6 +28,12 @@ In the order the default pipeline runs them:
 algebraic identities (`x + 0`, `x * 1`, and so on), and folds constant
 truncations and extensions. Most other passes depend on it having run.
 
+It also collects a value against itself: `x + x*2` becomes `x*3`, and the same
+for a shift standing in for a multiply, so `x + (x<<1)` folds too. Thirteen
+pairings of add / subtract with multiply / shift reduce to one `x * K`, which
+means a pattern written against the shape in the source will not match. Search
+for the folded form, or for `int_mul(x, int_const_any_width(K))`.
+
 **LoadReadOnly.** When a load reads a fixed address that lands in read-only
 memory, it replaces the load with the constant stored there. `load_elf` derives
 that image for you (the loaded file minus its writable mappings), so a load out

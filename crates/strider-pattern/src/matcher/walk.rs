@@ -154,8 +154,10 @@ fn counting<'a>(
 /// `node`, with no associated output.
 ///
 /// Such a node can only satisfy a root whose output vertex imposes no value
-/// requirement (a bare `anything()`, or a control builder; `var()` is not one,
-/// it carries a capture); a root demanding a value output is rejected.
+/// requirement (a bare `anything()`, or a control builder); a root demanding a
+/// value output is rejected here. A `var()` root is rejected too, but not by
+/// this test, which reads width and kind: its capture is what
+/// `bind_sibling_outputs` refuses.
 ///
 /// `k` is the root continuation; see [`try_match`]. `count_root` is `false`
 /// for a sub-pattern matched inside another walk; see [`try_match_nested`].
