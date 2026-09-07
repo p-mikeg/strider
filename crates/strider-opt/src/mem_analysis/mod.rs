@@ -491,15 +491,22 @@ fn classify_store_addr(function: &Function, store_node: NodeId) -> AddrClass {
 /// such a base disjoint from a constant address it may equal. Under
 /// `AssumptionOptions::none()` the misclassification is inert -- every pair it
 /// reaches falls to `MayAlias`.
-fn is_alignment_mask(m: u128) -> bool {
+fn is_alignment_mask(m: u128, width_bits: usize) -> bool {
     let tz = m.trailing_zeros();
-    if tz == 0 || tz == 128 {
+    if tz == 0 || (tz as usize) >= width_bits || width_bits == 0 || width_bits > 128 {
         return false;
     }
-    // Past the low zero run the rest must be a contiguous block of 1s, i.e.
-    // `shifted + 1` is a power of two.
-    let shifted = m >> tz;
-    shifted != 0 && shifted & shifted.wrapping_add(1) == 0
+    // Past the low zero run the rest must be a contiguous block of 1s that
+    // reaches the TOP of the address width. `sp & 0x10` is 0 or 16 and
+    // `sp & 0xFFFF_FFF0` at I64 truncates to the low 4 GiB; neither is `sp`
+    // rounded down, and treating either as a stack base lets
+    // `stack_global_disjoint` call it disjoint from a constant it may equal.
+    let width_mask = if width_bits == 128 {
+        u128::MAX
+    } else {
+        (1u128 << width_bits) - 1
+    };
+    m & width_mask == width_mask & !((1u128 << tz) - 1)
 }
 
 /// The operands of a node whose signature fixes its arity at two.
@@ -519,9 +526,20 @@ pub(crate) fn alignment_masked_operand(function: &Function, node: NodeId) -> Opt
         return None;
     }
     let [l, r] = binary_operands(function, node);
-    if function.int_const_u128(r).is_some_and(is_alignment_mask) {
+    // The mask only names a stack base relative to the width it is applied at.
+    let Ok(ty) = function.value_type(function.node_outputs(node)[0]) else {
+        return None;
+    };
+    let width = ty.bit_width();
+    if function
+        .int_const_u128(r)
+        .is_some_and(|m| is_alignment_mask(m, width))
+    {
         Some(l)
-    } else if function.int_const_u128(l).is_some_and(is_alignment_mask) {
+    } else if function
+        .int_const_u128(l)
+        .is_some_and(|m| is_alignment_mask(m, width))
+    {
         Some(r)
     } else {
         None

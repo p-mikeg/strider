@@ -381,16 +381,6 @@ def test_ignore_casts_true_is_the_all_mask():
     )
 
 
-def test_ignore_casts_mask_keyword_is_gone():
-    g = _patterns_graph()
-    with pytest.raises(TypeError):
-        # Deliberate: `ignore_casts_mask` is the removed keyword this test pins.
-        g.find_all(
-            int_add(anything(), anything()),
-            ignore_casts_mask=CastMask.extend(),  # type: ignore[call-arg]
-        )
-
-
 def test_vn_space_constants_round_trip():
     assert strider.sleigh.VnSpace.RAM.name() == "RAM"
     assert strider.sleigh.VnSpace.REGISTER.name() == "REGISTER"

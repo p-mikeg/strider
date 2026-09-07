@@ -1012,7 +1012,13 @@ fn seated_arm_losses(
         let strider_cfg::RegionTerminator::Switch { targets, addr, .. } = &region.terminator else {
             continue;
         };
-        let Some(asked) = known_targets.get(addr) else {
+        // `seed_for`, not a bare lookup: a caller can only spell the MACHINE
+        // address, so a seed keyed at p-code index 0 counts for the whole
+        // instruction -- which is exactly how `CfgOptions::seated` seated it.
+        // An exact-key lookup skipped every dispatch whose `BRANCHIND` is not
+        // the instruction's first p-code op, i.e. ARM `bx`, MIPS `jr` and x86
+        // `jmp [mem]`, so this check never ran for them.
+        let Some(asked) = seed_for(known_targets, *addr) else {
             continue;
         };
         let seated: rustc_hash::FxHashSet<u64> = targets.iter().map(|t| t.addr).collect();
