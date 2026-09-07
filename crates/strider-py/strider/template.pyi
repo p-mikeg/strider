@@ -2,8 +2,9 @@
 
 `strider.pattern.Pat` is the match side (the `find`); `Template` is the build
 side (the `replace`): the node, op and constant constructors plus
-`var(capture)`. `Function.rewrite(find, replace)` and `rewrite_all` type
-`replace` as `Template`.
+`var(capture)`. `Function.rewrite(find, replace)` and `rewrite_all` take a
+`TemplateLike`: a `Template`, a `Pat`, a `Capture`, or a capture's name as a
+`str`.
 """
 
 from __future__ import annotations

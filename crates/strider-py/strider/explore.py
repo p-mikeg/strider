@@ -1,18 +1,18 @@
 """Interactive IR explorer: a small local server plus a graphviz frontend.
 
-`Lifter.visualize(target)` serves a page showing the neighborhood (inputs and
-outputs) around the entry node. Click a node to re-center on it, click an edge
-to walk along it, shift-click to mark it. The search bar runs a strider
-pattern, with autocomplete, and highlights the matching nodes.
+`Lifter.visualize(target)` serves a page showing the whole graph. Pass
+`whole=False` for the neighborhood (inputs and outputs) around one node
+instead, which stays usable on a large function. Click a node to re-center on
+it, click an edge to walk along it, shift-click to mark it. The search bar runs
+a strider pattern, with autocomplete, and highlights the matching nodes.
 
-The graph is rendered a neighborhood at a time, never whole. Drawn node ids
-are IR node ids, so pattern matches line up one to one with what you see.
-Per-use constant boxes (`c*`) and virtual nodes (`v*`: if.true, if.false,
-Post Call) are not navigation targets.
+Drawn node ids are IR node ids, so pattern matches line up one to one with what
+you see. Per-use constant boxes (`c*`) and virtual nodes (`v*`: if.true,
+if.false, Post Call) are not navigation targets.
 
-The render controls in the toolbar are built from `/controls`, whose defaults
-are read out of the renderer binding's own signature, so a default changed in
-Rust reaches the page with no edit here.
+The render controls in the toolbar are built from `/controls`. Most of those
+defaults are the explorer's own, not the renderer binding's: the page opens
+uncapped where the binding caps depth and node count.
 """
 
 from __future__ import annotations

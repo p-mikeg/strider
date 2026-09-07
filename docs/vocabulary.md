@@ -22,6 +22,13 @@ and how the result comes back (which registers, which stack slots). Strider
 needs it to know where a function's inputs live. `load_elf` picks it from the
 ELF header.
 
+**ISA mode.** Some architectures encode two instruction sets in one binary and
+switch between them at runtime: ARM and Thumb, MIPS32 and MIPS16. Which one an
+address decodes as is not in the bytes, it is carried by the branch that
+reached it, so the CFG tracks a mode per edge. `cfg.isa_mode_conflicts()`
+reports an address two edges reached in different modes, which only one of them
+can win.
+
 ## Control flow
 
 **Region.** A straight run of instructions with no jumps in or out of the
@@ -122,6 +129,17 @@ single pattern matches all of them. For example subtraction `a - b` is always
 stored as `a + (-b)`, so you never have to write both. The
 [python guide](python-guide.md) lists the ones that most often surprise people.
 
+**Assumption.** A claim about the code being analysed that the IR cannot
+prove, and that the optimizer needs before it can rule two memory accesses
+apart: that the stack and globals do not overlap, that a named allocator
+returns fresh storage, and four more. `AssumptionOptions` holds them. A wrong
+one makes the answer wrong rather than imprecise, so
+`AssumptionOptions.none()` is the configuration sound under any input.
+
+**Noalias allocator.** A function you name as returning storage nothing else
+points at, `malloc` being the usual one. Its return value becomes a base
+distinct from every other, which is what lets a load step through a call to it.
+
 **Stack offset.** When a load or store addresses memory as "stack pointer plus
 a fixed amount", Strider records that amount. It lets you ask for stack accesses
 specifically, or for one exact slot.
@@ -140,6 +158,17 @@ without pinning down the parts you do not care about.
 matches anything and remembers what it matched, so you can read it back. Write
 it as a `Capture("name")` object; a bare string works only as the *read-back
 key* on a `Match`, not as a pattern operand.
+
+**Alternation.** One pattern standing for several shapes: `one_of` matches any
+of them and reports every hit, `first_of` takes the first that matches and
+stops. Either can sit in any slot, so an alternation of two address forms is
+still one query.
+
+**Join / constraint.** Two patterns searched together, matched up on the
+captures they share, so you can ask about a relationship rather than a single
+shape. A `constraints=` entry narrows which pairings count: `dominates` keeps
+only those where one half's control reaches the other, and a `JoinPredicate`
+runs your own test over the pair.
 
 **Match.** One result of a query. It carries every capture's value: index it
 with the capture and read the aspect you want, `hit[off].uint`,
