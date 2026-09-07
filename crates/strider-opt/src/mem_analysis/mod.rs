@@ -841,7 +841,8 @@ impl MemWalker<'_> {
     /// window instead, dropping `k` and everything above `base_offset`.
     ///
     /// Erring NARROW would be unsound: a gap ends the window, and the inner
-    /// probe stops at the first `Call`, so an argument store hidden behind an
+    /// probe stops at a `Call` whenever `calls_block` is set -- it is not under
+    /// `incoming_args` -- so an argument store hidden behind an
     /// EARLIER call would end the prefix at that call and let a load from a
     /// slot the NEXT callee owns forward across that callee.  A def the probe
     /// cannot see through therefore CONTINUES the window

@@ -352,8 +352,12 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             true_target: target_addr,
         })?;
         // An OOB successor is wired straight to its (shared, possibly
-        // pre-existing) stub and never enqueued, so nothing outside the
-        // function bound is ever decoded.  When both arms hit the same OOB
+        // pre-existing) stub and never enqueued, so no TARGET outside the
+        // function bound is decoded.  Sequential decoding still crosses it by
+        // up to one instruction: an instruction starting in range is decoded
+        // whole, and its trailing bytes join the region's span.  Nothing looks
+        // those bytes up -- an address at or above the bound classifies as a
+        // tail call and is never explored.  When both arms hit the same OOB
         // address this adds two parallel edges to one stub, mirroring the
         // in-range degenerate case: `region_if` reads the second edge as the
         // fall-through side.
