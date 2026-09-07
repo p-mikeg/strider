@@ -14,7 +14,13 @@ binary -> CFG -> IR -> optimizations -> pattern queries
 
 1. **Read** the bytes of a function out of the binary. An executable, a shared
    library, or an unlinked object file all load, with relocations applied as the
-   bytes are read.
+   bytes are read. The image is mapped rather than copied, so a large object
+   opens in tens of milliseconds and faults in only what you touch; set
+   `STRIDER_NO_MMAP=1` to read it instead, which a network or 9p mount needs.
+   Sections of an object file that shared an address are rebased apart, which
+   moves every `ET_REL` symbol address. A stripped binary can borrow names from
+   elsewhere: `add_symbol_file` takes a debug file, `add_symbols` takes a dict
+   or a kernel `System.map`.
 2. **Lift** each machine instruction into a simpler, CPU-independent form
    (using GHIDRA's Sleigh engine). An instruction Sleigh leaves opaque, like a
    syscall or a trap, is classified by a built-in ABI table saying whether it
@@ -31,10 +37,13 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    get their own types instead of being rounded to a machine word. This is the
    thing you query.
 5. **Optimize** the IR so equivalent code always looks the same, which makes
-   patterns simple to write. How far it goes is set by
-   `LifterOptions(assumptions=AssumptionOptions(...))`, six claims about the
-   code that the IR cannot prove. A wrong one makes the answer wrong, so
-   clearing all six is the one configuration sound under any input.
+   patterns simple to write. Equivalent shapes really do collapse: `x + x*2`
+   becomes `x*3`, so a pattern written against the source shape will not match
+   -- [optimizations.md](optimizations.md) lists what each pass reshapes. How
+   far it goes is set by `LifterOptions(assumptions=AssumptionOptions(...))`,
+   six claims about the code that the IR cannot prove. A wrong one makes the
+   answer wrong, so clearing all six is the one configuration sound under any
+   input.
 6. **Resolve** the indirect branches: classify each one against the optimized
    IR, feed the targets back, re-lift, and repeat until the edge set stops
    changing. What is left over is reported, never raised; it arrives through
@@ -48,6 +57,23 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    own `JoinPredicate`. Arguments index by ABI position with floats in a space
    of their own, so `function_arg(0)` and `function_arg_float(0)` name
    different registers.
+
+## Where the API lives
+
+Everything is under a submodule named for what it does, and importing from the
+home submodule is the supported spelling:
+
+```python
+strider.lift      # load_elf, lifter, analyze -- the entry point
+strider.ir        # Function, Node, Vn: the graph you query
+strider.cfg       # Cfg, CfgOptions, the four incompleteness channels
+strider.pattern   # the query DSL, plus .pattern.constraints for joins
+strider.template  # the build side of a rewrite
+strider.opt       # OptimizerPipeline, passes, AssumptionOptions
+strider.reader    # BufferReader and the memory interfaces
+strider.sleigh    # SleighArch, CallingConvention, CallOtherAbi
+strider.StriderError    # the one top-level name
+```
 
 `prog.visualize(fn)` serves the graph as an interactive explorer in a browser,
 opening on the whole graph; `whole=False` opens on the neighborhood around one
