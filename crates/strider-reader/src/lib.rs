@@ -317,6 +317,70 @@ pub struct MemRegionsLookupTable {
     /// starting at or below it, so a descending walk can stop once no earlier
     /// region can still reach the address.
     regions: BTreeMap<u64, (MemRegion, u64)>,
+    /// Ascending starts, and a max-end tree over the matching ends: the
+    /// fully-covering lookup in O(log n) rather than a walk down every region
+    /// with a lower start.
+    starts: Vec<u64>,
+    covers: MaxEnd,
+}
+
+/// Max-end segment tree over `ends`, which is in ascending-start order.
+///
+/// One question: "is there a region whose start is at or below `addr` and
+/// whose end reaches `addr + len`, and which is the LAST such?" That is the
+/// fully-covering case, so every instruction fetch, and answering it by
+/// walking starts downward is O(n) on an image that nests regions.
+#[derive(Debug)]
+struct MaxEnd {
+    /// `1`-rooted, leaves at `size..size * 2`.
+    tree: Vec<u64>,
+    size: usize,
+}
+
+impl MaxEnd {
+    fn new(ends: &[u64]) -> Self {
+        if ends.is_empty() {
+            return Self {
+                tree: Vec::new(),
+                size: 0,
+            };
+        }
+        let size = ends.len().next_power_of_two();
+        let mut tree = vec![0u64; size * 2];
+        tree[size..size + ends.len()].copy_from_slice(ends);
+        for i in (1..size).rev() {
+            tree[i] = tree[i * 2].max(tree[i * 2 + 1]);
+        }
+        Self { tree, size }
+    }
+
+    /// Rightmost index in `[0, hi]` whose end is at least `want`.
+    fn rightmost(&self, hi: usize, want: u64) -> Option<usize> {
+        if self.size == 0 {
+            return None;
+        }
+        self.descend(1, 0, self.size - 1, hi, want)
+    }
+
+    fn descend(
+        &self,
+        node: usize,
+        lo: usize,
+        hi_node: usize,
+        hi: usize,
+        want: u64,
+    ) -> Option<usize> {
+        if lo > hi || self.tree[node] < want {
+            return None;
+        }
+        if lo == hi_node {
+            return Some(lo);
+        }
+        let mid = lo + (hi_node - lo) / 2;
+        // Right first: the answer is the rightmost index, so the first hit wins.
+        self.descend(node * 2 + 1, mid + 1, hi_node, hi, want)
+            .or_else(|| self.descend(node * 2, lo, mid, hi, want))
+    }
 }
 
 impl MemRegionsLookupTable {
@@ -335,7 +399,14 @@ impl MemRegionsLookupTable {
             running = running.max(*reach);
             *reach = running;
         }
-        Self { regions }
+        let starts: Vec<u64> = regions.keys().copied().collect();
+        let ends: Vec<u64> = regions.values().map(|(r, _)| r.end_addr()).collect();
+        let covers = MaxEnd::new(&ends);
+        Self {
+            regions,
+            starts,
+            covers,
+        }
     }
 
     /// [`MemRegion::check_unchanged`] over the table, one `stat` per distinct
@@ -373,6 +444,19 @@ impl MemRegionsLookupTable {
     /// to the fully-covering outer region rather than returning the inner
     /// region's truncated prefix.
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
+        // A region fully covering the request wins outright, and that is every
+        // instruction fetch, so it is answered in O(log n) instead of by the
+        // walk below. `want` saturates because a region's end cannot exceed
+        // `u64::MAX` either, so an overflowing request covers nothing.
+        let want = addr.saturating_add(out.len() as u64);
+        let below = self.starts.partition_point(|&s| s <= addr);
+        if below > 0
+            && let Some(i) = self.covers.rightmost(below - 1, want)
+            && let Some((_, (region, _))) = self.regions.range(..=self.starts[i]).next_back()
+            && region.fully_covers(addr, out.len())
+        {
+            return region.read(addr, out);
+        }
         let mut best: Option<(&MemRegion, usize)> = None;
         for (_, (region, reach)) in self.regions.range(..=addr).rev() {
             // Nothing at or below this start reaches `addr`, so neither will
@@ -381,11 +465,15 @@ impl MemRegionsLookupTable {
             //
             // `reach` is a PREFIX MAXIMUM, so one region spanning the image
             // holds it above every interior address and this never fires: the
-            // scan is then O(regions below `addr`) per read. Sections are one
-            // region each and `SHN_XINDEX` lifts the 65535 cap, so a crafted
-            // image can make that large -- measured 1.48s for one 627-byte
-            // function under 200k nested regions. Bounding it wants an
-            // interval structure rather than a prefix max.
+            // scan is then O(regions below `addr`). Sections are one region
+            // each and `SHN_XINDEX` lifts the 65535 cap, so a crafted image
+            // can make that large.
+            //
+            // Only PARTIAL reads reach here: a fully-covering region, which is
+            // every instruction fetch, was answered by `covers` above. The
+            // remaining linear case needs a read that no single region
+            // satisfies, and it returns a short fill, so it cannot be repeated
+            // to walk a function.
             if *reach <= addr {
                 break;
             }
