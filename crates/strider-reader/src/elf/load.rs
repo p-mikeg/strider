@@ -107,9 +107,10 @@ impl OwnedElf {
     /// # Errors
     ///
     /// When the file no longer stats, or no longer looks like the file that
-    /// was mapped: a different size, a different modification time, or a
-    /// different inode. A rewrite in place that preserves both size and mtime
-    /// is not detectable this way.
+    /// was mapped: a different size or a different modification time, the only
+    /// two fields the recorded identity holds. A rewrite in place that preserves both,
+    /// and a different file moved onto the path, both pass -- the inode is
+    /// pinned by the held fd, so only the contents can move under it.
     pub fn check_unchanged(&self) -> Result<()> {
         self.backing.check_unchanged()
     }

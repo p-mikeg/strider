@@ -743,7 +743,9 @@ arch = sleigh.SleighArch.x86_64()      # a preset; also arm(), aarch64(), mipsbe
 arch.name()                            # "x86_64"
 arch.endianness()                      # "little" / "big"
 
-lift.reg("RAX")                        # the Vn for a register name (uppercase), or None
+lift.reg("RAX")                        # the Vn for a register name, or None
+                                       # matched exactly: x86 spells them upper,
+                                       # every other arch lower ("r0", "x0", "r3")
 lift.reg_name(vn)                      # the name for a Vn, or None
 lift.pcode_at(entry, addr)             # decode one instruction's p-code as text
 
