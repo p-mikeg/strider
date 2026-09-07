@@ -173,24 +173,45 @@ class BoundCapture:
     `None`. A numeric capture also converts and compares directly (`int(m[c])`,
     `m[c] == 0x10`)."""
 
-    has: bool
-    uint: int
-    uint_opt: Optional[int]
-    sint: int
-    sint_opt: Optional[int]
-    boolean: bool
-    boolean_opt: Optional[bool]
-    float_bits: int
-    float_bits_opt: Optional[int]
-    op: str
-    op_opt: Optional[str]
-    value_type: str
-    value_type_opt: Optional[str]
-    vn: Vn
-    vn_opt: Optional[Vn]
-    node: Node
-    node_opt: Optional[Node]
-    asm_fingerprint: list[int]
+    # Read-only: these are `#[getter]`s on a frozen pyclass, so a plain
+    # attribute declaration would let a type checker accept `x.f = ...`,
+    # which raises at runtime.
+    @property
+    def has(self) -> bool: ...
+    @property
+    def uint(self) -> int: ...
+    @property
+    def uint_opt(self) -> Optional[int]: ...
+    @property
+    def sint(self) -> int: ...
+    @property
+    def sint_opt(self) -> Optional[int]: ...
+    @property
+    def boolean(self) -> bool: ...
+    @property
+    def boolean_opt(self) -> Optional[bool]: ...
+    @property
+    def float_bits(self) -> int: ...
+    @property
+    def float_bits_opt(self) -> Optional[int]: ...
+    @property
+    def op(self) -> str: ...
+    @property
+    def op_opt(self) -> Optional[str]: ...
+    @property
+    def value_type(self) -> str: ...
+    @property
+    def value_type_opt(self) -> Optional[str]: ...
+    @property
+    def vn(self) -> Vn: ...
+    @property
+    def vn_opt(self) -> Optional[Vn]: ...
+    @property
+    def node(self) -> Node: ...
+    @property
+    def node_opt(self) -> Optional[Node]: ...
+    @property
+    def asm_fingerprint(self) -> list[int]: ...
     def __int__(self) -> int: ...
     def __index__(self) -> int: ...
     def __eq__(self, other: object) -> bool: ...
@@ -288,9 +309,13 @@ class Pat(OrderedPat):
         "operates on booleans", see `bool_inputs(inner)`."""
         ...
 
-#: What a sub-pattern slot accepts: a raw `int` (an `int_const`), a `Capture`, a
+#: What a pattern position accepts: a raw `int` (an `int_const`), a `Capture`, a
 #: finished `Pat`, or any of the typed builders below (auto-finalised at the call
 #: site, so an explicit `.into_pat()` is never required).
+#:
+#: This is the TOP-LEVEL type -- what `find_all` and `one_of` take, where a
+#: control builder is a legitimate thing to search for. An operand slot is
+#: narrower: see `ValueLike` and `MemLike`.
 PatLike = Union[
     int,
     Capture,
@@ -312,6 +337,38 @@ PatLike = Union[
     "IntBinaryPat",
     "FloatBinaryPat",
     "BoolBinaryPat",
+]
+
+#: What a VALUE operand slot accepts. The control-only builders are absent:
+#: `store`, `mem_phi`, `ret`, `if_else`, `indirect_branch`, `unreachable` and
+#: `switch` produce no value, so passing one raises at QUERY time rather than
+#: at construction.
+ValueLike = Union[
+    int,
+    Capture,
+    Pat,
+    "CallPat",
+    "CallOtherPat",
+    "LoadPat",
+    "PhiPat",
+    "EntryPat",
+    "RegionPat",
+    "FunctionArgPat",
+    "IntBinaryPat",
+    "FloatBinaryPat",
+    "BoolBinaryPat",
+]
+
+#: What a MEMORY slot accepts: the four memory producers, or a `Pat` -- which
+#: is how an `one_of` over them arrives. `load` is absent because it produces a
+#: value, and passing one raises rather than building a pattern that can never
+#: match.
+MemLike = Union[
+    Pat,
+    "StorePat",
+    "MemPhiPat",
+    "CallPat",
+    "CallOtherPat",
 ]
 
 #: A builder method that chains returns the SAME builder, so the type is
@@ -352,7 +409,7 @@ class InputPat(Protocol):
     """A builder whose node kind exposes raw input slots. Not `EntryPat`
     (`Entry` is `inputs: []`), nor `FunctionArgPat` and the three binary-op
     builders, whose operands are fixed at construction."""
-    def input(self: _S, idx: int, p: PatLike) -> _S:
+    def input(self: _S, idx: int, p: ValueLike) -> _S:
         """Match `p` against raw input slot `idx`.
 
         Slot 0 is not uniform across kinds: `Call` is `[ctrl, mem, target,
@@ -386,7 +443,7 @@ class CtrlPat(Protocol):
 @runtime_checkable
 class MemPat(Protocol):
     """A builder whose node kind has a memory input."""
-    def mem(self: _S, p: PatLike) -> _S:
+    def mem(self: _S, p: MemLike) -> _S:
         """Match `p` against the node's memory predecessor; takes a memory
         producer (`store` / `mem_phi` / `call` / `call_other`)."""
         ...
@@ -403,7 +460,7 @@ class MemAccessPat(Protocol):
     compose, and which survives is fixed by the builder, not by the order you
     called them. `stack_only` does keep an offset `stack_offset` pinned.
     """
-    def addr(self: _S, p: PatLike) -> _S:
+    def addr(self: _S, p: ValueLike) -> _S:
         """Constrain the address operand (`inputs[1]`)."""
         ...
     def bit_width(self: _S, n: int) -> _S:
@@ -494,13 +551,13 @@ class CallPat(NodePat, InputPat, CtrlPat, MemPat, OutputPat):
     Inputs are `[ctrl, mem, target, sp, arg0, ...]`, outputs `[ctrl, mem,
     result, ...clobbers]`.
     """
-    def target(self, p: Union[PatLike, list[PatLike]]) -> "CallPat":
+    def target(self, p: Union[ValueLike, list[ValueLike]]) -> "CallPat":
         """Constrain the call target. `p` is any pattern operand, including
         a raw int, which matches a call to that literal address. A list of
         them matches a call to any one entry; an empty list matches
         nothing."""
         ...
-    def arg(self, idx: int, p: PatLike) -> "CallPat":
+    def arg(self, idx: int, p: ValueLike) -> "CallPat":
         """Constrain positional argument `idx` (0-based, raw input slot
         `idx + 4`)."""
         ...
@@ -522,7 +579,7 @@ class CallOtherPat(NodePat, InputPat, CtrlPat, MemPat, OutputPat):
     def name(self, n: str) -> "CallOtherPat":
         """Constrain the matched node's user-op name."""
         ...
-    def arg(self, idx: int, p: PatLike) -> "CallOtherPat":
+    def arg(self, idx: int, p: ValueLike) -> "CallOtherPat":
         """Constrain raw `inputs[idx]`, unshifted."""
         ...
     def res(self) -> "CallOtherPat":
@@ -536,7 +593,7 @@ class RetPat(NodePat, InputPat, CtrlPat):
     Inputs are `[ctrl, mem, retval0, ...]`; a `Return` has no outputs, so
     the pattern is rooted on the node itself.
     """
-    def ret_val(self, idx: int, p: PatLike) -> "RetPat":
+    def ret_val(self, idx: int, p: ValueLike) -> "RetPat":
         """Constrain returned value `idx` (0-based, raw input slot
         `idx + 2`)."""
         ...
@@ -546,7 +603,7 @@ class IfPat(NodePat, InputPat, CtrlPat, OutputPat):
 
     Inputs are `[ctrl, cond]`, outputs `[true, false]`, both control edges.
     """
-    def cond(self, p: PatLike) -> "IfPat":
+    def cond(self, p: ValueLike) -> "IfPat":
         """Constrain the branch condition (`inputs[1]`)."""
         ...
     def true_branch(self, p: PatLike) -> "IfPat":
@@ -575,7 +632,7 @@ class StorePat(NodePat, InputPat, MemPat, MemAccessPat, OutputPat):
 
     Inputs are `[mem, addr, data]`, the one output the new memory token.
     """
-    def data(self, p: PatLike) -> "StorePat":
+    def data(self, p: ValueLike) -> "StorePat":
         """Constrain the stored value (`inputs[2]`)."""
         ...
 
@@ -591,7 +648,7 @@ class PhiPat(NodePat, InputPat, OutputPat):
         """Require the phi to be tagged `vn` or a register containing it, so
         `eax` matches a phi tagged `rax`."""
         ...
-    def phi_input(self, idx: int, p: PatLike) -> "PhiPat":
+    def phi_input(self, idx: int, p: ValueLike) -> "PhiPat":
         """Constrain the value merged from predecessor `idx`, raw input slot
         `idx + 1`."""
         ...
@@ -606,7 +663,7 @@ class MemPhiPat(NodePat, InputPat, OutputPat):
 
     Same slot layout as `PhiPat`, with a memory token per predecessor.
     """
-    def phi_input(self, idx: int, p: PatLike) -> "MemPhiPat":
+    def phi_input(self, idx: int, p: MemLike) -> "MemPhiPat":
         """Constrain the memory token merged from predecessor `idx`, raw
         input slot `idx + 1`. Takes a memory producer."""
         ...
@@ -638,7 +695,7 @@ class IndirectBranchPat(NodePat, InputPat, CtrlPat, MemPat):
     Inputs are `[ctrl, mem, target]` plus the optional interworking ISA
     mode; there are no outputs, so the pattern is rooted on the node itself.
     """
-    def target(self, p: Union[PatLike, list[PatLike]]) -> "IndirectBranchPat":
+    def target(self, p: Union[ValueLike, list[ValueLike]]) -> "IndirectBranchPat":
         """Constrain the dispatch target (`inputs[2]`). `p` is any pattern
         operand, including a raw int, which matches a branch to that literal
         address. A list of them matches any one entry; an empty list matches
@@ -658,7 +715,7 @@ class SwitchPat(NodePat, InputPat, CtrlPat, OutputPat):
 
     Inputs are `[ctrl, selector]`, outputs one control edge per arm.
     """
-    def selector(self, p: Union[PatLike, list[PatLike]]) -> "SwitchPat":
+    def selector(self, p: Union[ValueLike, list[ValueLike]]) -> "SwitchPat":
         """The value the switch dispatches on (`inputs[1]`). The arms'
         addresses are the control outputs, not this slot. `p` is any pattern
         operand, including a raw int, which matches that literal value. A
@@ -702,13 +759,13 @@ def value_of_width(n: int) -> Pat:
     means "produces a boolean", which INCLUDES comparisons, since a
     comparison's output is `I1` however wide its operands are. The chained
     form is `Pat.of_width(n)`."""
-def inputs_of_width(n: int, inner: PatLike) -> Pat:
+def inputs_of_width(n: int, inner: ValueLike) -> Pat:
     """Match `inner` and require all of ITS value inputs to be `n` bits wide.
     At least one value input and one value output are required, so a constant
     or a sink never matches vacuously. Width 1 means "operates on booleans",
     which reaches a comparison only where its OPERANDS are `I1`, not merely
     its result. The input-side counterpart of `value_of_width`."""
-def bool_inputs(inner: PatLike) -> Pat:
+def bool_inputs(inner: ValueLike) -> Pat:
     """Match `inner` whose value inputs are all booleans (1-bit `I1`).
     Exactly `inputs_of_width(1, inner)`, named for intent."""
 def int_const(value: int | list[int] | Capture | None = ...) -> Pat:
@@ -814,127 +871,127 @@ def unreachable() -> UnreachablePat:
 def switch() -> SwitchPat:
     """Start a resolved multi-way dispatch pattern builder."""
 
-def int_add(l: PatLike, r: PatLike) -> Pat:
+def int_add(l: ValueLike, r: ValueLike) -> Pat:
     """Match integer addition. Commutative: both operand orders are
     tried."""
-def int_sub(l: PatLike, r: PatLike) -> Pat:
+def int_sub(l: ValueLike, r: ValueLike) -> Pat:
     """Match integer subtraction."""
-def int_mul(l: PatLike, r: PatLike) -> Pat:
+def int_mul(l: ValueLike, r: ValueLike) -> Pat:
     """Match integer multiplication. Commutative."""
-def int_div(l: PatLike, r: PatLike) -> Pat:
+def int_div(l: ValueLike, r: ValueLike) -> Pat:
     """Match unsigned integer division."""
-def int_sdiv(l: PatLike, r: PatLike) -> Pat:
+def int_sdiv(l: ValueLike, r: ValueLike) -> Pat:
     """Match signed integer division."""
-def int_rem(l: PatLike, r: PatLike) -> Pat:
+def int_rem(l: ValueLike, r: ValueLike) -> Pat:
     """Match unsigned integer remainder."""
-def int_srem(l: PatLike, r: PatLike) -> Pat:
+def int_srem(l: ValueLike, r: ValueLike) -> Pat:
     """Match signed integer remainder."""
-def int_shl(l: PatLike, r: PatLike) -> Pat:
+def int_shl(l: ValueLike, r: ValueLike) -> Pat:
     """Match a left shift."""
-def int_shr(l: PatLike, r: PatLike) -> Pat:
+def int_shr(l: ValueLike, r: ValueLike) -> Pat:
     """Match a logical (zero-filling) right shift."""
-def int_sshr(l: PatLike, r: PatLike) -> Pat:
+def int_sshr(l: ValueLike, r: ValueLike) -> Pat:
     """Match an arithmetic (sign-filling) right shift."""
-def int_and(l: PatLike, r: PatLike) -> Pat:
+def int_and(l: ValueLike, r: ValueLike) -> Pat:
     """Match a bitwise AND. Commutative."""
-def int_or(l: PatLike, r: PatLike) -> Pat:
+def int_or(l: ValueLike, r: ValueLike) -> Pat:
     """Match a bitwise OR. Commutative."""
-def int_xor(l: PatLike, r: PatLike) -> Pat:
+def int_xor(l: ValueLike, r: ValueLike) -> Pat:
     """Match a bitwise XOR. Commutative."""
-def int_cmp(op: IntCmpOpName, l: PatLike, r: PatLike) -> Pat:
+def int_cmp(op: IntCmpOpName, l: ValueLike, r: ValueLike) -> Pat:
     """Match a named integer comparison, e.g. `"Equal"`, `"Less"`,
     `"Sless"`, `"Carry"`."""
-def int_eq(l: PatLike, r: PatLike) -> Pat:
+def int_eq(l: ValueLike, r: ValueLike) -> Pat:
     """Match an integer equality test. Commutative."""
-def int_ne(l: PatLike, r: PatLike) -> Pat:
+def int_ne(l: ValueLike, r: ValueLike) -> Pat:
     """Match an integer inequality test."""
-def int_lt(l: PatLike, r: PatLike) -> Pat:
+def int_lt(l: ValueLike, r: ValueLike) -> Pat:
     """Match an unsigned less-than test."""
-def int_le(l: PatLike, r: PatLike) -> Pat:
+def int_le(l: ValueLike, r: ValueLike) -> Pat:
     """Match an unsigned less-or-equal test."""
-def int_slt(l: PatLike, r: PatLike) -> Pat:
+def int_slt(l: ValueLike, r: ValueLike) -> Pat:
     """Match a signed less-than test."""
-def int_sle(l: PatLike, r: PatLike) -> Pat:
+def int_sle(l: ValueLike, r: ValueLike) -> Pat:
     """Match a signed less-or-equal test."""
-def int_carry(l: PatLike, r: PatLike) -> Pat:
+def int_carry(l: ValueLike, r: ValueLike) -> Pat:
     """Match an unsigned-addition carry test. Commutative."""
-def int_scarry(l: PatLike, r: PatLike) -> Pat:
+def int_scarry(l: ValueLike, r: ValueLike) -> Pat:
     """Match a signed-addition overflow test. Commutative."""
-def int_sborrow(l: PatLike, r: PatLike) -> Pat:
+def int_sborrow(l: ValueLike, r: ValueLike) -> Pat:
     """Match a signed-subtraction overflow test."""
 
-def int_neg(operand: PatLike) -> Pat:
+def int_neg(operand: ValueLike) -> Pat:
     """Match arithmetic negation (`-x`)."""
-def int_not(operand: PatLike) -> Pat:
+def int_not(operand: ValueLike) -> Pat:
     """Match bitwise complement (`~x`)."""
 
-def bool_and(l: PatLike, r: PatLike) -> Pat:
+def bool_and(l: ValueLike, r: ValueLike) -> Pat:
     """Match a logical AND on 1-bit values. Commutative."""
-def bool_or(l: PatLike, r: PatLike) -> Pat:
+def bool_or(l: ValueLike, r: ValueLike) -> Pat:
     """Match a logical OR on 1-bit values. Commutative."""
-def bool_xor(l: PatLike, r: PatLike) -> Pat:
+def bool_xor(l: ValueLike, r: ValueLike) -> Pat:
     """Match a logical XOR on 1-bit values. Commutative."""
-def bool_not(operand: PatLike) -> Pat:
+def bool_not(operand: ValueLike) -> Pat:
     """Match a logical NOT on a 1-bit value."""
 
-def float_add(l: PatLike, r: PatLike) -> Pat:
+def float_add(l: ValueLike, r: ValueLike) -> Pat:
     """Match float addition. Commutative."""
-def float_sub(l: PatLike, r: PatLike) -> Pat:
+def float_sub(l: ValueLike, r: ValueLike) -> Pat:
     """Match float subtraction."""
-def float_mul(l: PatLike, r: PatLike) -> Pat:
+def float_mul(l: ValueLike, r: ValueLike) -> Pat:
     """Match float multiplication. Commutative."""
-def float_div(l: PatLike, r: PatLike) -> Pat:
+def float_div(l: ValueLike, r: ValueLike) -> Pat:
     """Match float division."""
-def float_neg(operand: PatLike) -> Pat:
+def float_neg(operand: ValueLike) -> Pat:
     """Match float negation."""
-def float_abs(operand: PatLike) -> Pat:
+def float_abs(operand: ValueLike) -> Pat:
     """Match float absolute value."""
-def float_sqrt(operand: PatLike) -> Pat:
+def float_sqrt(operand: ValueLike) -> Pat:
     """Match a float square root."""
-def float_ceil(operand: PatLike) -> Pat:
+def float_ceil(operand: ValueLike) -> Pat:
     """Match a round-toward-positive-infinity."""
-def float_floor(operand: PatLike) -> Pat:
+def float_floor(operand: ValueLike) -> Pat:
     """Match a round-toward-negative-infinity."""
-def float_round(operand: PatLike) -> Pat:
+def float_round(operand: ValueLike) -> Pat:
     """Match a round to nearest, ties away from zero."""
-def float_is_nan(operand: PatLike) -> Pat:
+def float_is_nan(operand: ValueLike) -> Pat:
     """Match a NaN test, the IEEE 754 self-inequality `x != x`."""
-def float_eq(l: PatLike, r: PatLike) -> Pat:
+def float_eq(l: ValueLike, r: ValueLike) -> Pat:
     """Match a float equality test. Commutative."""
-def float_ne(l: PatLike, r: PatLike) -> Pat:
+def float_ne(l: ValueLike, r: ValueLike) -> Pat:
     """Match a float inequality test."""
-def float_lt(l: PatLike, r: PatLike) -> Pat:
+def float_lt(l: ValueLike, r: ValueLike) -> Pat:
     """Match a float less-than test."""
-def float_le(l: PatLike, r: PatLike) -> Pat:
+def float_le(l: ValueLike, r: ValueLike) -> Pat:
     """Match a float less-or-equal test, NaN-aware."""
 
-def int_to_float(operand: PatLike) -> Pat:
+def int_to_float(operand: ValueLike) -> Pat:
     """Match a signed-integer conversion to the nearest representable float."""
-def float_to_int(operand: PatLike) -> Pat:
+def float_to_int(operand: ValueLike) -> Pat:
     """Match a float-to-integer conversion, truncating toward zero."""
-def float_to_float(operand: PatLike) -> Pat:
+def float_to_float(operand: ValueLike) -> Pat:
     """Match a float-to-float reprecision."""
-def int_bits_to_float(operand: PatLike) -> Pat:
+def int_bits_to_float(operand: ValueLike) -> Pat:
     """Match a same-width reinterpretation of integer bits as a float."""
-def float_bits_to_int(operand: PatLike) -> Pat:
+def float_bits_to_int(operand: ValueLike) -> Pat:
     """Match a same-width reinterpretation of float bits as an integer."""
 
-def int_truncate(operand: PatLike) -> Pat:
+def int_truncate(operand: ValueLike) -> Pat:
     """Match a narrowing that keeps the low bits."""
-def int_popcount(operand: PatLike) -> Pat:
+def int_popcount(operand: ValueLike) -> Pat:
     """Match a set-bit count."""
-def int_lzcount(operand: PatLike) -> Pat:
+def int_lzcount(operand: ValueLike) -> Pat:
     """Match a leading-zero count."""
-def int_zero_extend(operand: PatLike) -> Pat:
+def int_zero_extend(operand: ValueLike) -> Pat:
     """Match a widening that fills the new high bits with zero."""
-def int_sign_extend(operand: PatLike) -> Pat:
+def int_sign_extend(operand: ValueLike) -> Pat:
     """Match a widening that replicates the sign bit."""
-def int_extend(op: ExtendOpName, operand: PatLike) -> Pat:
+def int_extend(op: ExtendOpName, operand: ValueLike) -> Pat:
     """Match a widening of the kind named by `op`."""
 
-def load(addr: PatLike = ...) -> LoadPat:
+def load(addr: ValueLike = ...) -> LoadPat:
     """Start a `Load` pattern builder, optionally pinning the address."""
-def store(addr: PatLike = ..., data: PatLike = ...) -> StorePat:
+def store(addr: ValueLike = ..., data: ValueLike = ...) -> StorePat:
     """Start a `Store` pattern builder, optionally pinning the address and
     the stored value."""
 def call() -> CallPat:
@@ -944,14 +1001,14 @@ def call_other() -> CallOtherPat:
     builder."""
 def ret() -> RetPat:
     """Start a `Return` pattern builder."""
-def if_else(cond: PatLike = ...) -> IfPat:
+def if_else(cond: ValueLike = ...) -> IfPat:
     """Start a conditional-branch pattern builder, optionally pinning the
     condition."""
 
-def int_binary(op: str, l: PatLike, r: PatLike) -> IntBinaryPat:
+def int_binary(op: str, l: ValueLike, r: ValueLike) -> IntBinaryPat:
     """Match a named integer binary op (`"Add"`, `"Shl"`, `"And"`),
     returning a chainable builder."""
-def bool_binary(op: str, l: PatLike, r: PatLike) -> BoolBinaryPat:
+def bool_binary(op: str, l: ValueLike, r: ValueLike) -> BoolBinaryPat:
     """Match a named boolean binary op (`"And"`, `"Or"`, `"Xor"`).
 
     Booleans are 1-bit integers, so this matches an integer op at `I1`,
@@ -959,28 +1016,28 @@ def bool_binary(op: str, l: PatLike, r: PatLike) -> BoolBinaryPat:
     op. Returns a chainable builder; call `.ordered()` to disable
     commutative matching.
     """
-def float_binary(op: str, l: PatLike, r: PatLike) -> FloatBinaryPat:
+def float_binary(op: str, l: ValueLike, r: ValueLike) -> FloatBinaryPat:
     """Match a named float binary op (`"Add"`, `"Mul"`, `"Div"`), returning
     a chainable builder."""
 
-def any_int_binary(c: Capture, l: PatLike, r: PatLike) -> Pat:
+def any_int_binary(c: Capture, l: ValueLike, r: ValueLike) -> Pat:
     """Match ANY integer binary op with these operands, binding the node to
     `c` so you can read the variant back with `Match.op(c)`."""
-def any_int_unary(c: Capture, operand: PatLike) -> Pat:
+def any_int_unary(c: Capture, operand: ValueLike) -> Pat:
     """Match any `IntUnaryOp` on `operand`, binding the node to `c`. The enum
     holds only `Neg`; `Popcount` and `Lzcount` are their own kinds."""
-def any_int_cmp(c: Capture, l: PatLike, r: PatLike) -> Pat:
+def any_int_cmp(c: Capture, l: ValueLike, r: ValueLike) -> Pat:
     """Match any integer comparison with these operands, binding the node to
     `c`."""
-def any_bool_binary(c: Capture, l: PatLike, r: PatLike) -> Pat:
+def any_bool_binary(c: Capture, l: ValueLike, r: ValueLike) -> Pat:
     """Match any `IntBinaryOp` at `I1` with these operands, binding the node
     to `c`. A 1-bit logical NOT is `Xor(x, 1)`, so it matches here with a
     `bool_const(True)` operand."""
-def any_float_binary(c: Capture, l: PatLike, r: PatLike) -> Pat:
+def any_float_binary(c: Capture, l: ValueLike, r: ValueLike) -> Pat:
     """Match any float binary op with these operands, binding the node to
     `c`."""
-def any_float_unary(c: Capture, operand: PatLike) -> Pat:
+def any_float_unary(c: Capture, operand: ValueLike) -> Pat:
     """Match any float unary op on `operand`, binding the node to `c`."""
-def any_float_cmp(c: Capture, l: PatLike, r: PatLike) -> Pat:
+def any_float_cmp(c: Capture, l: ValueLike, r: ValueLike) -> Pat:
     """Match any float comparison with these operands, binding the node to
     `c`."""
