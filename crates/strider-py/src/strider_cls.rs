@@ -908,7 +908,14 @@ impl PyLifter {
     }
 
     /// Start the interactive explorer for `target`, a `Function` or a `Cfg`.
-    /// Prints the local URL and blocks on this thread until Ctrl-C.
+    /// Prints the local URL and blocks on this thread until Ctrl-C;
+    /// `background=True` serves on its own thread and RETURNS the bound port,
+    /// so you can keep querying while the page is open.
+    ///
+    /// `host` / `port` choose where to bind, `port=0` taking whatever is free.
+    /// The default binds loopback: any other `host` puts the graph of the
+    /// binary you are analysing on the network, and no endpoint authenticates.
+    /// `depth` is the neighborhood radius, used only when `whole=False`.
     ///
     /// Opens on the WHOLE graph: a neighborhood view hides nodes without
     /// saying so. `whole=False` opens on the neighborhood around a node you
