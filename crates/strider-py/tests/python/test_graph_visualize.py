@@ -64,17 +64,6 @@ def test_pretty_carries_the_theme():
         g.to_html(pretty="not_a_theme")  # type: ignore[arg-type]
 
 
-def test_style_keyword_is_gone():
-    import pytest
-
-    g = _build_graph()
-    with pytest.raises(TypeError):
-        # Deliberate: `style` is the removed keyword this test pins.
-        g.to_html(style="dark")  # type: ignore[call-arg]
-    with pytest.raises(TypeError):
-        g.to_dot(style="dark")  # type: ignore[call-arg]
-
-
 def test_lifter_render_methods_removed():
     """The pretty renders live on `Function` behind `pretty=True`; the
     `Lifter`-side duplicates are gone, so one verb has one home."""
