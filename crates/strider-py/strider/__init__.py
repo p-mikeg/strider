@@ -78,6 +78,18 @@ _p.PatLike = _t.Union[  # type: ignore[attr-defined]
     _p.RegionPat, _p.IndirectBranchPat, _p.UnreachablePat, _p.SwitchPat,
     _p.FunctionArgPat, _p.IntBinaryPat, _p.FloatBinaryPat, _p.BoolBinaryPat,
 ]
+# A VALUE operand slot is narrower than a pattern position: the control-only
+# builders produce no value, so passing one raises at query time.
+_p.ValueLike = _t.Union[  # type: ignore[attr-defined]
+    int, _p.Capture, _p.Pat, _p.CallPat, _p.CallOtherPat, _p.LoadPat,
+    _p.PhiPat, _p.EntryPat, _p.RegionPat, _p.FunctionArgPat, _p.IntBinaryPat,
+    _p.FloatBinaryPat, _p.BoolBinaryPat,
+]
+# A MEMORY slot takes the four memory producers, or a `Pat` -- which is how an
+# `one_of` over them arrives.
+_p.MemLike = _t.Union[  # type: ignore[attr-defined]
+    _p.Pat, _p.StorePat, _p.MemPhiPat, _p.CallPat, _p.CallOtherPat,
+]
 _p.CaptureKey = _t.Union[_p.Capture, str]  # type: ignore[attr-defined]
 _p.constraints.ConstraintLike = _t.Union[  # type: ignore[attr-defined]
     _p.constraints.JoinConstraint, _p.constraints.JoinPredicate
@@ -96,7 +108,10 @@ _p.IntCmpOpName = _t.Literal[  # type: ignore[attr-defined]
 _p.ExtendOpName = _t.Literal[  # type: ignore[attr-defined]
     "zero", "zero_extend", "ZeroExtend", "sign", "sign_extend", "SignExtend",
 ]
-_export(_p, "PatLike", "CaptureKey", "ValueTy", "IntCmpOpName", "ExtendOpName")
+_export(
+    _p, "PatLike", "ValueLike", "MemLike", "CaptureKey", "ValueTy",
+    "IntCmpOpName", "ExtendOpName",
+)
 _export(_p.constraints, "ConstraintLike")
 
 # PyO3's `#[pyclass(extends = ...)]` takes exactly one base, so the builders
