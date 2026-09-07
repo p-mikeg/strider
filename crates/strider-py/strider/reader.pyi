@@ -71,14 +71,23 @@ class Symbol:
     """One ELF symbol: where it is, what the ELF says it spans, and which
     loaded region it falls in."""
 
-    #: The symbol name as spelled in the ELF symbol table.
-    name: str
-    #: The symbol's virtual address (`st_value`).
-    address: int
-    #: `None` for `st_size == 0`, which records no extent rather than an empty
-    #: one: a hand-written `.S` entry point with no `.size` directive is still
-    #: a whole function.
-    size: Optional[int]
+    # Read-only: these are `#[getter]`s on a frozen pyclass, so a plain
+    # attribute declaration would let a type checker accept `x.f = ...`,
+    # which raises at runtime.
+    @property
+    def name(self) -> str:
+        """The symbol name as spelled in the ELF symbol table."""
+        ...
+    @property
+    def address(self) -> int:
+        """The symbol's virtual address (`st_value`)."""
+        ...
+    @property
+    def size(self) -> Optional[int]:
+        """`None` for `st_size == 0`, which records no extent rather than an
+        empty one: a hand-written `.S` entry point with no `.size` directive is
+        still a whole function."""
+        ...
 
     @property
     def is_function(self) -> bool:
