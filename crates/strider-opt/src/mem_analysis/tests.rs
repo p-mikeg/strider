@@ -988,9 +988,15 @@ mod heap_tests {
     }
 
     /// Two allocations live at once never overlap.  `stack_global_disjoint` is
-    /// off, so the verdict rests on the noalias guarantee alone.  Liveness is
-    /// the scope of that guarantee: see
-    /// [`a_reused_allocation_is_still_taken_as_disjoint`].
+    /// off, so the verdict rests on the noalias guarantee alone.
+    ///
+    /// LIVENESS is the scope of that guarantee, and the same graph pins the
+    /// limitation: nothing models deallocation, so a second `malloc` is a
+    /// distinct base even where the program freed the first and the allocator
+    /// handed the same storage back.  A load from the stale pointer is then
+    /// taken not to see the new object's stores.  Reaching that needs a
+    /// use-after-free in the analysed program; modelling deallocation would
+    /// make this verdict `MayAlias`.
     #[test]
     fn two_heap_objects_are_disjoint() -> crate::Result<()> {
         use strider_ir::IRViewer;
@@ -1019,45 +1025,6 @@ mod heap_tests {
             cfg.verdict(&fg, load, store),
             AliasVerdict::Disjoint,
             "two distinct heap allocations never overlap"
-        );
-        Ok(())
-    }
-
-    /// Pins a known limitation, not a guarantee.  Nothing models deallocation,
-    /// so the second `malloc` is a distinct base even where the program freed
-    /// the first and the allocator handed the same storage back.  A load from
-    /// the stale pointer is then taken not to see the new object's stores.
-    /// Reaching it requires a use-after-free in the analysed program.  Modelling
-    /// deallocation would change this verdict to `MayAlias`.
-    #[test]
-    fn a_reused_allocation_is_still_taken_as_disjoint() -> crate::Result<()> {
-        use strider_ir::IRViewer;
-        use strider_ir::node::NodeKind;
-        let mut b = builder()?;
-        let p = alloc_call(&mut b, MALLOC)?;
-        let x = b.build_int_const(0x11u64, ValueType::I64)?;
-        b.build_store(p, x, rsleigh::VnSpace::RAM)?;
-        // Where a `free(p)` would sit: unmodelled, so it changes nothing.
-        let q = alloc_call(&mut b, MALLOC)?;
-        let loaded = b.build_load(q, rsleigh::VnSpace::RAM, ValueType::I64)?;
-        b.build_return(Some(loaded), &[])?;
-        let fg = built(b, &[MALLOC])?;
-
-        let store = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
-            .expect("store node");
-        let load = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-            .expect("load node");
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false));
-        assert_eq!(
-            cfg.verdict(&fg, load, store),
-            AliasVerdict::Disjoint,
-            "the reuse is invisible: distinct calls stay distinct bases"
         );
         Ok(())
     }
@@ -2892,5 +2859,32 @@ mod modular_offset_tests {
             "the accesses are two bytes apart mod 2^32 and overlap",
         );
         Ok(())
+    }
+}
+
+/// An alignment mask rounds an address DOWN, so its 1-run has to reach the top
+/// of the width it is applied at. A run that stops short is a bit-extraction
+/// or a truncation, and neither yields a stack address -- but both used to
+/// anchor a stack base, which `stack_global_disjoint` then called disjoint
+/// from a constant address it may equal.
+#[test]
+fn only_a_top_reaching_run_is_an_alignment_mask() {
+    use super::is_alignment_mask;
+    for (m, width) in [
+        (0xFFFF_FFFF_FFFF_FFF0u128, 64),
+        (0xFFFF_FFF0, 32),
+        (!0xFu128, 128),
+    ] {
+        assert!(is_alignment_mask(m, width), "{m:#x} at {width} rounds down");
+    }
+    for (m, width, why) in [
+        (0x10u128, 64, "one bit, not a run to the top"),
+        (0xF0, 64, "a run, but nowhere near the top"),
+        (0xFFFF_FFF0, 64, "reaches the top of 32, not of 64"),
+        (0xF, 64, "no low zero run: a bit-extraction"),
+        (0, 64, "no alignment effect"),
+        (u128::MAX, 64, "all ones: no alignment effect"),
+    ] {
+        assert!(!is_alignment_mask(m, width), "{m:#x} at {width}: {why}");
     }
 }

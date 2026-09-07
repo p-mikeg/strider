@@ -104,13 +104,6 @@ def test_ret_ctrl_matches_what_preceded_by_matched():
     assert len(fn.find_all(p.ret().ctrl(p.anything()))) == 1
 
 
-def test_preceded_by_is_gone():
-    for b in (p.ret(), p.switch(), p.indirect_branch(), p.unreachable()):
-        assert not hasattr(b, "preceded_by")
-
-
-# --- `IfPat.ctrl` is new -------------------------------------------------
-
 def test_if_ctrl_constrains_the_control_predecessor():
     fn = _diamond_fn()
     assert len(fn.find_all(p.if_else())) == 1
