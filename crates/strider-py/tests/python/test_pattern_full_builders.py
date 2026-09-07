@@ -458,9 +458,13 @@ def test_mem_rejects_value_operand():
     # match a real memory chain; the builder must reject it rather than
     # silently yield a dead pattern.
     with pytest.raises(strider.StriderError):
-        store().addr(int_const(0x100)).mem(load().addr(int_const(0x200))).into_pat()
+        store().addr(int_const(0x100)).mem(
+            load().addr(int_const(0x200))  # pyright: ignore[reportArgumentType]
+        ).into_pat()
     with pytest.raises(strider.StriderError):
-        load().addr(int_const(0x100)).mem(var(Capture())).into_pat()
+        load().addr(int_const(0x100)).mem(
+            var(Capture())  # pyright: ignore[reportArgumentType]
+        ).into_pat()
 
 
 def test_deeply_nested_typed_builder_raises_not_aborts():

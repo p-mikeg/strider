@@ -23,8 +23,10 @@ import http.server
 import inspect
 import json
 import pathlib
+import socket
 import socketserver
 import threading
+import time
 import urllib.parse
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -380,6 +382,43 @@ class _CfgVisualizer:
 _WRITE_SECONDS = 300.0
 
 
+class _DeadlineReader:
+    """`rfile` under a whole-request deadline rather than a per-`recv` one.
+
+    Delegates everything; before each read it sets the socket timeout to the
+    time left in the budget, so a client that keeps trickling bytes still runs
+    out. Only the methods `BaseHTTPRequestHandler` uses to parse a request are
+    wrapped, which is all of `readline` and `read`.
+    """
+
+    def __init__(self, inner: Any, conn: Any, budget: float) -> None:
+        self._inner = inner
+        self._conn = conn
+        self._budget = budget
+        self._deadline = time.monotonic() + budget
+
+    def restart(self) -> None:
+        """A new request on a kept-alive connection gets a fresh budget."""
+        self._deadline = time.monotonic() + self._budget
+
+    def _arm(self) -> None:
+        left = self._deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError("request exceeded the read deadline")
+        self._conn.settimeout(left)
+
+    def readline(self, *a: Any, **k: Any) -> bytes:
+        self._arm()
+        return cast(bytes, self._inner.readline(*a, **k))
+
+    def read(self, *a: Any, **k: Any) -> bytes:
+        self._arm()
+        return cast(bytes, self._inner.read(*a, **k))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
 class _Handler(http.server.BaseHTTPRequestHandler):
     """The explorer's HTTP surface, served from `self.server`'s visualizer.
 
@@ -431,6 +470,23 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         finally:
             self.connection.settimeout(self.timeout)
 
+    def _host_is_local(self, addr: Any) -> bool:
+        """Whether `Host` names this server on a loopback name.
+
+        Absent (HTTP/1.0) is allowed: a rebinding attack is driven by a browser
+        and browsers always send one. A caller that bound a non-loopback
+        interface asked for outside reach, so only the port is checked there.
+        """
+        host = self.headers.get("Host")
+        if host is None:
+            return True
+        parts: list[Any] = list(addr) if isinstance(addr, tuple) else []
+        bound = str(parts[0]) if parts else ""
+        if bound not in ("127.0.0.1", "::1", "localhost"):
+            return True
+        name = host.rsplit(":", 1)[0].strip("[]")
+        return name in ("127.0.0.1", "::1", "localhost")
+
     def do_GET(self) -> None:
         # Close after each response. This server is single-threaded, so it
         # must never sit blocked in a keep-alive read on an idle connection:
@@ -438,6 +494,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         # times out.
         self.close_connection = True
         srv = cast("_Server", self.server)
+        # A page in the user's browser can resolve its own hostname to
+        # 127.0.0.1 and reach this server; dispatching on `self.path` alone
+        # would then let it read `/dot`, the whole rendered graph of the binary
+        # under analysis. The `Host` header is what distinguishes that from a
+        # real local request, and no browser lets a page forge it.
+        if not self._host_is_local(cast(Any, srv.server_address)):
+            self._send("bad host", ctype="text/plain", code=421)
+            return
         visualizer = cast("_Visualizer", srv.visualizer)
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
@@ -469,11 +533,31 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         except Exception as e:  # noqa: BLE001 (surface the error to the UI)
             self._send(f"{type(e).__name__}: {e}", "text/plain", code=400)
 
+    def setup(self) -> None:
+        super().setup()
+        # `timeout` is a per-`recv` deadline, so on its own it only fires on a
+        # connection that says NOTHING. A client dripping one byte at a time
+        # resets it with every byte and blocks the single-threaded loop
+        # forever, which stalls `shutdown` and the interpreter's own join
+        # exactly as a silent connection used to. `_DeadlineReader` re-arms the
+        # socket with what is LEFT of one whole-request budget before each
+        # read, so the timeout each `recv` gets shrinks toward zero and a drip
+        # runs out of budget rather than renewing it.
+        budget = self.timeout if self.timeout is not None else 2.0
+        self.rfile = cast(  # type: ignore[assignment]
+            Any, _DeadlineReader(self.rfile, self.connection, budget)
+        )
+
     def handle_one_request(self) -> None:
         # Swallow the client-disconnect races the single-threaded loop hits.
         try:
+            if isinstance(self.rfile, _DeadlineReader):
+                self.rfile.restart()
             super().handle_one_request()
         except (BrokenPipeError, ConnectionError):
+            self.close_connection = True
+        except (TimeoutError, socket.timeout):
+            # Out of budget mid-request: the client is not going to finish.
             self.close_connection = True
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 (base signature)
