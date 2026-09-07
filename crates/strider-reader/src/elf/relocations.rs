@@ -543,8 +543,17 @@ fn resolve_symbol_target(
         .map_or_else(|| reloc.target(), RelocationTarget::Symbol)
     {
         RelocationTarget::Symbol(idx) => {
+            // An ET_REL's per-section `SHT_REL`/`SHT_RELA` indexes the table
+            // its `sh_link` names -- `.symtab` -- so it must NOT be resolved
+            // against the dynamic table. `object`'s `dynamic_symbol_table` is
+            // simply the first `SHT_DYNSYM` section in the file, populated
+            // whatever the `e_type`, so an object file carrying one otherwise
+            // sends every relocation to the wrong table and patches in an
+            // unrelated symbol's `st_value`.
+            let relocatable = obj.kind() == object::ObjectKind::Relocatable;
             let resolved = obj
                 .dynamic_symbol_table()
+                .filter(|_| !relocatable)
                 .map_or_else(|| obj.symbol_by_index(idx), |t| t.symbol_by_index(idx))
                 .map(|s| {
                     (

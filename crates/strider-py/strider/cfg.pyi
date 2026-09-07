@@ -116,8 +116,9 @@ class Cfg:
         Not unresolved (you asserted the answer), but nothing checked it.
         Seating a seed changes the CFG the classifier reads, so a stale or
         wrong seed can stop it deriving and take the site's real arms with it.
-        These are the sites where that cannot be ruled out. Always empty for a
-        CFG from `build_cfg`, which runs no resolver.
+        These are the sites where that cannot be ruled out. For a `build_cfg`
+        result it is every site you seeded, since no classifier ran to check
+        any of them.
         """
         ...
     def is_complete(self) -> bool:
@@ -132,10 +133,10 @@ class Cfg:
         return (an ARM `pop {pc}` epilogue) clears it. Read whichever channel
         is non-empty to tell the cases apart.
 
-        On a `build_cfg` CFG the first two channels are empty by construction,
-        so `True` there means only that no ISA mode clashed and no branch
-        landed off an instruction boundary. It says nothing about indirect
-        branches, which `build_cfg` never resolves.
+        On a `build_cfg` CFG `unresolved` is empty by construction, and
+        `unverified_seeded_sites` holds every site you seeded -- so seeding one
+        makes this `False`. It says nothing about indirect branches, which
+        `build_cfg` never resolves.
         """
         ...
     def region_at(self, addr: int) -> Optional[int]:

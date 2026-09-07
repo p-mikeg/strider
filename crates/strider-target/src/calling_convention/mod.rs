@@ -633,11 +633,11 @@ const MIPS_O32_BASE: CallingConvention = CallingConvention {
     // Single-precision; doubles use the f0/f1 pair.  Unused on soft-float
     // builds.
     //
-    // $f1 is absent, so a returned double is the low half alone: the `Return`
-    // takes `f0` and truncates to I32, silently.  Listing $f1 would make the
-    // high half visible but not joined -- the two would be separate return
-    // slots, not one f64 -- and it changes the Return arity of every o32
-    // function, so it wants measuring before it lands.
+    // $f1 is absent because it does not need naming: container mapping
+    // promotes `f0` to the tracked 8-byte `f0_1` pair the mips32 sla declares
+    // over each even/odd FPR pair, which is what every double-format
+    // instruction writes, so a real `double` return carries both halves.
+    // A `float` return keeps the 4-byte slot.
     ret_val_regs_float: &["f0", "f2"],
     stack_args: Some(StackArgs {
         base_offset: 16,

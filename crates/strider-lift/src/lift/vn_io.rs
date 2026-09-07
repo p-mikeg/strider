@@ -120,11 +120,11 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         if self.isa_mode_switch_vn.is_some_and(|sw| sw == *vn)
             && let Some(addr) = self.builder.lift_addr()
         {
-            // FIRST write per machine address wins. The ARMv7/v8 sla writes
-            // ISAModeSwitch TWICE for `mov pc, rN`: `SetThumbMode((rN & 1) != 0)`
-            // commits the real bit, then `ALUWritePC(rN & ~1)` re-derives it from
-            // the already-masked value, whose cone KnownBits folds to a constant
-            // 0.
+            // FIRST write per machine address wins. MIPS writes ISAModeSwitch
+            // a second time AFTER its `BranchIndirect`, a delay-slot artefact
+            // the branch never reads. No shipped ARM sla writes it twice --
+            // `ALUWritePC` IS `BXWritePC` under VERSION_7, so `mov pc, rN`
+            // expands to one `SetThumbMode`.
             if !matches!(self.pending_isa_mode, Some((_, prev)) if prev == addr) {
                 self.pending_isa_mode = Some((val, addr));
             }
