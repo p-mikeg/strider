@@ -481,9 +481,16 @@ fn classify_store_addr(function: &Function, store_node: NodeId) -> AddrClass {
     classify_addr(function, function.store_addr(store_node))
 }
 
-/// A contiguous run of high 1-bits over at least one low 0-bit, e.g.
-/// `0xFFFF_FFF0`.  A low-bit mask like `0xF` is a bit-extraction, not a base,
-/// and zero / all-ones have no alignment effect, so all are rejected.
+/// A contiguous run of 1-bits over at least one low 0-bit, e.g. `0xFFFF_FFF0`.
+/// A low-bit mask like `0xF` is a bit-extraction, not a base, and zero /
+/// all-ones have no alignment effect, so all are rejected.
+///
+/// Not checked, and unsound where it matters: that the run reaches the top of
+/// the ADDRESS width. `sp & 0x10` and a 32-bit truncation mask both pass here
+/// and neither yields `sp` rounded down, so `stack_global_disjoint` can call
+/// such a base disjoint from a constant address it may equal. Under
+/// `AssumptionOptions::none()` the misclassification is inert -- every pair it
+/// reaches falls to `MayAlias`.
 fn is_alignment_mask(m: u128) -> bool {
     let tz = m.trailing_zeros();
     if tz == 0 || tz == 128 {

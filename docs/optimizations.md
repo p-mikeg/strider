@@ -76,6 +76,15 @@ straight to the load. A wider store is narrowed to the load's range; anything
 short of an exact base-and-offset match blocks, as does an intervening call or
 control merge.
 
+This pass is quadratic in the number of loads times the number of memory
+definitions: each load walks the memory chain from its own cursor, with no
+shared memo. It is the one pass that does not scale linearly, and on a long
+chain of distinct stack slots it dominates the pipeline -- measured at 89% of
+optimize time on a 14,000-node function built from `-O0` C. Optimized code does
+not have that shape, because calls and aliasing break the chains, so the cost
+shows up on debug builds and firmware rather than on release binaries. Drop
+`LoadForward` from a custom pipeline if you hit it.
+
 With `AssumptionOptions(escape_analysis=True)` it also forwards across a call,
 when no stack address escapes to the callee and the slot is not one the call
 hands it as an argument. With `noalias_allocators=[addr, ...]` naming pure
