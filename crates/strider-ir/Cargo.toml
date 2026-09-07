@@ -9,8 +9,12 @@ rust-version.workspace = true
 
 [features]
 # Exposes builder/inspection helpers used only by downstream crates' tests
-# (e.g. `build_sub_as_add_neg`, `count_kind`, `set_call_cc`). Dev-dep only, so
-# production builds never carry them. Mirrors strider-graph's `test-injectors`.
+# (e.g. `build_sub_as_add_neg`, `count_kind`, `set_call_cc`). Absent from the
+# wheel: `cargo tree -p strider-py -e normal` resolves strider-ir with no
+# features. A plain `cargo build --workspace` DOES enable it, because
+# strider-ir-test-utils is a default member that depends on it normally and
+# resolver v2 unifies features across the workspace. Mirrors strider-graph's
+# `test-injectors`.
 test-util = []
 
 [dependencies]
