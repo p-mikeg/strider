@@ -162,6 +162,10 @@ impl Region {
                 .addr
                 .machine_addr
                 .addr
+                // Saturating here is right where `contains_addr` needs
+                // `checked`: a span that runs off the top of the address space
+                // is as long as the space allows, and this is a LENGTH, not a
+                // boundary an ownership test compares against.
                 .saturating_add(u64::from(last.len))
                 .saturating_sub(self.start_addr.machine_addr.addr),
             None => u64::from(self.empty_span_len),
@@ -192,12 +196,16 @@ impl Region {
         if addr.machine_addr == last.addr.machine_addr {
             return addr <= last.addr;
         }
-        addr.machine_addr.addr
-            < last
-                .addr
-                .machine_addr
-                .addr
-                .saturating_add(u64::from(last.len))
+        // `checked_add`, not `saturating`: an instruction whose bytes cross the
+        // top of the address space would saturate the end to `u64::MAX` and
+        // then report the byte AT `u64::MAX` unowned, which sends the builder
+        // to decode a second region inside that instruction. Overflow means
+        // the region owns everything at or above its start, which is what
+        // `Builder::add_region` already does with `Bound::Unbounded`.
+        match last.addr.machine_addr.addr.checked_add(u64::from(last.len)) {
+            Some(end) => addr.machine_addr.addr < end,
+            None => true,
+        }
     }
 }
 
