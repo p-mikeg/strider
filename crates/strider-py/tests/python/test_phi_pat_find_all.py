@@ -45,4 +45,4 @@ def test_phi_nests_as_a_value_operand():
     import pytest
 
     with pytest.raises(strider.StriderError):
-        g.find_all(pat.store(data=pat.mem_phi()))
+        g.find_all(pat.store(data=pat.mem_phi()))  # pyright: ignore[reportArgumentType]

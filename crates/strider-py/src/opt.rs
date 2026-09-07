@@ -70,6 +70,13 @@ impl strider_orchestrator::opt::PostOptimizer for OptAsPostPass {
         let _ = self.0.apply(edit, ctx)?;
         Ok(())
     }
+
+    /// The WRAPPED pass's name. Reporting the wrapper's would put a type name
+    /// no caller can construct into `post_passes`, breaking the round trip
+    /// `add_post` documents.
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
 }
 
 struct PipelineState {

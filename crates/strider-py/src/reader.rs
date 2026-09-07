@@ -341,7 +341,55 @@ struct SymbolTable {
     by_addr_max_end: Vec<u64>,
 }
 
+/// A build id as the hex string every tool prints it in.
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 impl PyLoadedElf {
+    /// Refuses a symbol file that describes a different binary.
+    ///
+    /// The whole point of attaching one is a stripped image, where every name
+    /// comes from the symbol file alone -- so a wrong-build file yields a
+    /// complete, silently wrong name-to-address map rather than an obviously
+    /// empty one. `.note.gnu.build-id` settles it when both carry one, since a
+    /// debug file keeps the build id of the image it was split from.
+    /// Otherwise the architecture has to agree, which catches the coarse
+    /// mistakes; nothing catches two builds of the same source with neither a
+    /// build id nor a differing arch.
+    fn check_describes_a_loaded_image(
+        &self,
+        candidate: &strider_reader::OwnedElf,
+        path: &str,
+    ) -> PyResult<()> {
+        let Some(image) = self.elfs.first() else {
+            return Ok(());
+        };
+        let image = image.checked_file().map_err(into_strider_err)?;
+        let cand = candidate.checked_file().map_err(into_strider_err)?;
+        use object::read::Object as _;
+
+        if let (Ok(Some(a)), Ok(Some(b))) = (image.build_id(), cand.build_id()) {
+            if a != b {
+                return Err(into_strider_err(anyhow::anyhow!(
+                    "{path}: build id {} does not match the loaded image's {}; \
+                     it describes a different binary",
+                    hex(b),
+                    hex(a),
+                )));
+            }
+            return Ok(());
+        }
+        if image.architecture() != cand.architecture() {
+            return Err(into_strider_err(anyhow::anyhow!(
+                "{path}: architecture {:?} does not match the loaded image's {:?}",
+                cand.architecture(),
+                image.architecture(),
+            )));
+        }
+        Ok(())
+    }
+
     /// Building parses the mapping, so a file that changed underneath is an
     /// error here rather than a SIGBUS. A table already built needs no mapping
     /// and costs no stat.
@@ -676,6 +724,7 @@ impl PyLoadedElf {
     /// region attached.
     fn add_symbol_file(&mut self, path: &str) -> PyResult<()> {
         let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
+        self.check_describes_a_loaded_image(&obj, path)?;
         self.symbol_elfs.push(obj);
         self.symbol_table.lock_shared().take();
         Ok(())
