@@ -22,6 +22,7 @@ use strider_pattern::{
 
 use crate::errors::into_strider_err;
 use crate::value_ops::value_ops;
+use strider_pattern::WithOutput;
 
 /// Binds a matched node so its value, op variant or fingerprint can be read
 /// back from the `Match`. Each `Capture()` is globally unique.

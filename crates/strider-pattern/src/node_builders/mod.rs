@@ -47,6 +47,66 @@ macro_rules! delegate_with_output {
 }
 pub(crate) use delegate_with_output;
 
+/// The forwarders every [`NodePat`](node_pat::NodePat) wrapper repeats
+/// verbatim. `$inner` names the field, `0` for a newtype; each method is opted
+/// into by name, so a builder that has to do work in one of them (`StorePat`
+/// synthesises a data producer in `build`) simply leaves it out and writes its
+/// own.
+///
+/// Only the forwarders whose DOC is the same for every builder live here.
+/// `ctrl`, `mem` and `target` name a specific slot per node kind, so they stay
+/// hand-written where that sentence is worth reading.
+macro_rules! delegate_node_pat {
+    ($ty:ty, $inner:tt, [$($m:ident),* $(,)?]) => {
+        impl $ty {
+            $($crate::node_builders::delegate_node_pat!(@m $inner, $m);)*
+        }
+    };
+
+    (@m $inner:tt, capture) => {
+        /// Binds this node to `c`, so a match reports which node matched.
+        pub fn capture(mut self, c: $crate::capture::Capture) -> Self {
+            self.$inner = self.$inner.capture(c);
+            self
+        }
+    };
+    (@m $inner:tt, build) => {
+        /// Seals the builder into a [`Pattern`](crate::Pattern).
+        pub fn build(self) -> $crate::Pattern {
+            self.$inner.build()
+        }
+    };
+    (@m $inner:tt, input) => {
+        /// Raw input slot `slot`, unshifted. Slot numbering is per node kind,
+        /// laid out by the IR's `expected_signature`; the named accessors are
+        /// the intended surface and this is the escape hatch beneath them.
+        pub fn input<P: $crate::matcher::match_pat::MatchPat + 'static>(
+            mut self,
+            slot: usize,
+            p: P,
+        ) -> Self {
+            self.$inner = self.$inner.input(slot, p);
+            self
+        }
+    };
+    (@m $inner:tt, any_input) => {
+        /// Matches *some* input without pinning a slot. Every input a fixed
+        /// operand has not already pinned is a candidate, and the sub-pattern
+        /// discriminates: a typed value sub binds only a value input, while
+        /// `var` / `anything` also reaches the control and memory edges.
+        /// Repeatable, each call adding one constraint; several existentials
+        /// on one node take distinct slots.
+        pub fn any_input<P: $crate::matcher::match_pat::MatchPat + 'static>(
+            mut self,
+            p: P,
+        ) -> Self {
+            self.$inner = self.$inner.input_any(p);
+            self
+        }
+    };
+}
+pub(crate) use delegate_node_pat;
+
 /// Defers a sub-pattern's compilation until `build`, once the shared
 /// [`MatcherBuilder`] exists.
 pub(crate) type SubCompiler = Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef + Send>;
