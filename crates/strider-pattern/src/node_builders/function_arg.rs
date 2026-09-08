@@ -29,7 +29,7 @@ pub struct FunctionArgPat {
     source: Option<FunctionArgSource>,
     class: FunctionArgClass,
     index: Option<u32>,
-    capture: Option<Capture>,
+    captures: Vec<Capture>,
 }
 
 impl FunctionArgPat {
@@ -51,9 +51,9 @@ impl FunctionArgPat {
         self
     }
 
-    /// Binds the carrier's value output.
+    /// Binds the carrier's value output. Repeatable: every capture binds it.
     pub fn capture(mut self, c: Capture) -> Self {
-        self.capture = Some(c);
+        self.captures.push(c);
         self
     }
 
@@ -63,7 +63,7 @@ impl FunctionArgPat {
             source,
             class,
             index,
-            capture,
+            captures,
         } = self;
         let node = b.node(KindSpec::Any);
         let value_out = b.value_output(node, 0);
@@ -105,7 +105,7 @@ impl FunctionArgPat {
                 }
             }),
         );
-        if let Some(c) = capture {
+        for c in captures {
             b.capture_output(value_out, c);
         }
         value_out

@@ -96,6 +96,17 @@ macro_rules! delegate_node_pat {
         /// `var` / `anything` also reaches the control and memory edges.
         /// Repeatable, each call adding one constraint; several existentials
         /// on one node take distinct slots.
+        ///
+        /// # Cost
+        ///
+        /// `k` existentials on a node with `n` inputs enumerate all
+        /// `n * (n-1) * ... * (n-k+1)` injective assignments, whether or not
+        /// they capture: uncaptured ones share one binding signature and
+        /// collapse to a single reported match, so the cost is in
+        /// configurations explored rather than results, and a guard above
+        /// prunes none of them. It scales with the matched node's arity, so
+        /// pin a slot with `input` where that arity is large (a wide phi, a
+        /// variadic call).
         pub fn any_input<P: $crate::matcher::match_pat::MatchPat + 'static>(
             mut self,
             p: P,

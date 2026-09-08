@@ -89,8 +89,9 @@ pub struct PatNode {
     pub kind: KindSpec,
     /// Binds the matched *node* (`Binding::Node`). Only for value-less roots
     /// (`Return`, `IndirectBranch`, `Switch`, `Unreachable`, `If`) with no
-    /// value output vertex to anchor a value capture on.
-    pub capture: Option<crate::capture::Capture>,
+    /// value output vertex to anchor a value capture on. Repeatable: every
+    /// listed capture binds that node.
+    pub captures: Vec<crate::capture::Capture>,
     /// Runs before descending into inputs.
     pub node_predicate: Option<NodePredicate>,
     pub post_match: Option<PostMatchFn>,
@@ -127,7 +128,7 @@ impl PatNode {
     pub fn from_kind(kind: KindSpec) -> Self {
         Self {
             kind,
-            capture: None,
+            captures: Vec::new(),
             node_predicate: None,
             post_match: None,
             binding_walk: None,
@@ -167,7 +168,8 @@ pub struct PatValue {
     /// output independently, so two of them can settle on the same one.
     pub any_slot: bool,
     /// Where value captures live: `int_add(var(x), ..)` binds `x` here.
-    pub capture: Option<crate::capture::Capture>,
+    /// Repeatable: `var(x).capture(y)` binds both to the matched value.
+    pub captures: Vec<crate::capture::Capture>,
     /// A crate-minted capture pinning ONE vertex consumed at several pattern
     /// slots to a single IR value. Structural sharing alone does not do it:
     /// each slot is matched on its own, so `float_eq(x, x)` would otherwise
@@ -186,7 +188,7 @@ impl PatValue {
             width: None,
             match_slot: None,
             any_slot: false,
-            capture: None,
+            captures: Vec::new(),
             identity: None,
         }
     }
