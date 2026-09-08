@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _profiler = dhat::Profiler::new_heap();
 
     let obj = strider_reader::load_elf(kernel_path())?;
-    let obj = obj.file();
+    let obj = obj.checked_file().expect("the mapped file is unchanged");
     let mem_reader = strider_reader::ElfFileMemReader::from_object(&obj)?;
     let rom = strider_reader::ElfFileMemReader::from_object(&obj)?;
 
