@@ -1093,7 +1093,7 @@ fn re_imposing_a_context_over_an_it_block_builds() {
     let defaults = flow.snapshot(&sleigh, 0x1000);
 
     let mut round = |target: u64| -> usize {
-        flow.reset_at(&mut sleigh, 0x1000, &defaults)
+        flow.pin_at(&mut sleigh, 0x1000, &defaults)
             .expect("reset entry context");
         let (var, value) = arch
             .entry_mode_context(0x1001)
