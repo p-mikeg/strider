@@ -38,12 +38,14 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    thing you query.
 5. **Optimize** the IR so equivalent code always looks the same, which makes
    patterns simple to write. Equivalent shapes really do collapse: `x + x*2`
-   becomes `x*3`, so a pattern written against the source shape will not match
-   -- [optimizations.md](optimizations.md) lists what each pass reshapes. How
-   far it goes is set by `LifterOptions(assumptions=AssumptionOptions(...))`,
-   six claims about the code that the IR cannot prove. A wrong one makes the
-   answer wrong, so clearing all six is the one configuration sound under any
-   input.
+   becomes `x*3`, so a pattern written against the source shape will not match.
+   [optimizations.md](optimizations.md) lists what each pass reshapes. How far
+   it goes is set by `LifterOptions(assumptions=AssumptionOptions(...))`, six
+   claims about the code that the IR cannot prove. A wrong one makes the answer
+   wrong, and two of the six default `True`, so `AssumptionOptions.none()` is
+   the configuration sound under any input; `AssumptionOptions()` is not, and a
+   hand-written "assume nothing" silently gains any claim added default-on
+   later.
 6. **Resolve** the indirect branches: classify each one against the optimized
    IR, feed the targets back, re-lift, and repeat until the edge set stops
    changing. What is left over is reported, never raised; it arrives through
@@ -64,26 +66,29 @@ Everything is under a submodule named for what it does, and importing from the
 home submodule is the supported spelling:
 
 ```python
-strider.lift      # load_elf, lifter, analyze -- the entry point
-strider.ir        # Function, Node, Vn: the graph you query
+strider.lift      # the entry point: load_elf and lifter, plus LifterOptions,
+                  # AssumptionOptions and the AnalyzeResult they produce
+strider.ir        # Function and Node: the graph you query
 strider.cfg       # Cfg, CfgOptions, the four incompleteness channels
 strider.pattern   # the query DSL, plus .pattern.constraints for joins
 strider.template  # the build side of a rewrite
-strider.opt       # OptimizerPipeline, passes, AssumptionOptions
-strider.reader    # BufferReader and the memory interfaces
-strider.sleigh    # SleighArch, CallingConvention, CallOtherAbi
+strider.opt       # OptimizerPipeline and the passes it runs
+strider.reader    # BufferReader, Symbol, and the memory interfaces
+strider.sleigh    # SleighArch, CallingConvention, CallOtherAbi, Vn, VnSpace
 strider.StriderError    # the one top-level name
 ```
 
 `prog.visualize(fn)` serves the graph as an interactive explorer in a browser,
 opening on the whole graph; `whole=False` opens on the neighborhood around one
-node instead, which stays usable on a large function. `background=True` serves
-on its own thread and returns the port, so you can keep querying while the page
-is open. Drag or press the arrow keys to pan, ctrl+wheel to zoom, `f` to fit.
-It is the quickest way to see the shape a pattern has to match.
+node instead, which stays usable on a large function. It blocks until
+interrupted, and `background=True` serves on its own thread and returns the
+port, so you can keep querying while the page is open;
+`strider.explore.shutdown(port)` stops that one. The keys and the toolbar are
+in [python-api.md](python-api.md#10-visualizing). It is the quickest way to see
+the shape a pattern has to match.
 
-The [quickstart](../README.md#quickstart) in the README is that pipeline in
-eight statements of Python. [CHANGELOG.md](../CHANGELOG.md) lists what 0.2.0
+The [quickstart](../README.md#quickstart) in the README is that pipeline end to
+end in Python. [CHANGELOG.md](../CHANGELOG.md) lists what 0.2.0
 added over 0.1.0, breaking entries first.
 
 ## Where to go next
