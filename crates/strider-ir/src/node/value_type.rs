@@ -159,14 +159,10 @@ impl ValueType {
     /// that must not truncate has to special-case those two. Floats return 0,
     /// so masking a float value yields 0.
     pub fn bit_mask_u128(self) -> u128 {
-        let bits = self.bit_width();
-        if bits == 0 || !self.is_integer() {
+        if !self.is_integer() {
             return 0;
         }
-        if bits >= 128 {
-            return u128::MAX;
-        }
-        (1u128 << bits) - 1
+        low_bits_mask_u128(self.bit_width())
     }
 
     /// Masks a raw IEEE 754 pattern to this float type's width. Widths at or
@@ -206,11 +202,22 @@ impl ValueType {
         }
         let sign_bit = 1u128 << (bits - 1);
         if (masked & sign_bit) != 0 {
-            let high_extension = !((1u128 << bits) - 1);
+            let high_extension = !low_bits_mask_u128(bits);
             Some((masked | high_extension) as i128)
         } else {
             Some(masked as i128)
         }
+    }
+}
+
+/// Mask of the low `bits` bits. `bits >= 128` saturates to `u128::MAX`, the
+/// whole carrier, rather than the mask that width really names.
+#[inline]
+pub fn low_bits_mask_u128(bits: usize) -> u128 {
+    if bits >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << bits) - 1
     }
 }
 
