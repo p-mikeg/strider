@@ -177,11 +177,12 @@ pub struct PatValue {
 }
 
 impl PatValue {
-    /// No type or width constraint.
-    pub fn value(slot: usize) -> Self {
+    /// Unconstrained but for the kind, which is what separates the three
+    /// constructors below; every other field starts empty.
+    fn of_kind(slot: usize, kind: OutputKindSpec) -> Self {
         Self {
             slot,
-            kind: OutputKindSpec::AnyValue,
+            kind,
             width: None,
             match_slot: None,
             any_slot: false,
@@ -190,29 +191,18 @@ impl PatValue {
         }
     }
 
+    /// No type or width constraint.
+    pub fn value(slot: usize) -> Self {
+        Self::of_kind(slot, OutputKindSpec::AnyValue)
+    }
+
     pub fn control(slot: usize) -> Self {
-        Self {
-            slot,
-            kind: OutputKindSpec::Control,
-            width: None,
-            match_slot: None,
-            any_slot: false,
-            capture: None,
-            identity: None,
-        }
+        Self::of_kind(slot, OutputKindSpec::Control)
     }
 
     /// The IR's memory side channel.
     pub fn memory(slot: usize) -> Self {
-        Self {
-            slot,
-            kind: OutputKindSpec::Memory,
-            width: None,
-            match_slot: None,
-            any_slot: false,
-            capture: None,
-            identity: None,
-        }
+        Self::of_kind(slot, OutputKindSpec::Memory)
     }
 }
 
