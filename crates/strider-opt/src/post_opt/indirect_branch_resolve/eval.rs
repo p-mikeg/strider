@@ -54,10 +54,10 @@ impl<'a> Evaluator<'a> {
             rom,
             map: FxHashMap::default(),
             slot_maps: FxHashMap::default(),
-            off_segment: MemAnalyzer::new(
-                MemOptions::call_blocking(assumptions.stack_global_disjoint)
-                    .with_noalias_allocators(&assumptions.noalias_allocators),
-            ),
+            off_segment: MemAnalyzer::new(MemOptions::call_blocking(
+                assumptions.stack_global_disjoint,
+                &assumptions.noalias_allocators,
+            )),
         }
     }
 
