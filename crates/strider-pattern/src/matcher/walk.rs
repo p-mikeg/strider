@@ -45,7 +45,6 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueId, ValueKind};
 
 use crate::bindings::{Binding, Bindings};
-use crate::graph_ext::PatGraphRead;
 use crate::matcher::{Matcher, OutputKindSpec, PatNode, PatValue, Pattern, cast_levels};
 
 struct Ctx<'a> {
@@ -187,8 +186,8 @@ pub(crate) fn try_match_node(
 
 /// A root demanding a value output cannot match a zero-output IR node.
 fn root_requires_value_output(pat: &Pattern, root: PatNodeId) -> bool {
-    pat.graph.produced_outputs(root).iter().any(|&ov| {
-        let o = pat.graph.output_weight(ov);
+    pat.graph.node_outputs(root).iter().any(|&ov| {
+        let o = pat.graph.value_kind_ref(ov);
         o.width.is_some() || matches!(o.kind, OutputKindSpec::Value(_) | OutputKindSpec::AnyValue)
     })
 }
@@ -208,7 +207,7 @@ fn root_output_vertex_for(
     matcher: &Matcher,
     root_value: ValueId,
 ) -> Option<PatValueId> {
-    let outs = pat.graph.produced_outputs(root);
+    let outs = pat.graph.node_outputs(root);
     let mut iter = outs.iter().copied();
     let first = iter.next()?;
     if iter.next().is_none() {
@@ -218,7 +217,7 @@ fn root_output_vertex_for(
     let (_node, ir_slot) = matcher.function().value_definition(root_value);
     outs.iter()
         .copied()
-        .find(|&out_vertex| pat.graph.output_weight(out_vertex).slot as u32 == ir_slot)
+        .find(|&out_vertex| pat.graph.value_kind_ref(out_vertex).slot as u32 == ir_slot)
 }
 
 /// Recursive worker, continuation-passing so a guard failure anywhere above can
@@ -240,7 +239,7 @@ fn try_match_at(
     bindings: &mut Bindings,
     k: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
-    let nd = ctx.pat.graph.node_weight(pat_node);
+    let nd = ctx.pat.graph.node_kind(pat_node);
     if !nd.kind.matches(ctx.function().node_kind(ir_node)) {
         return false;
     }
@@ -253,7 +252,7 @@ fn try_match_at(
     // no-output-at-the-slot arm. A bare `anything()` demands nothing and still
     // matches a `Return`.
     if let Some(ov_idx) = out_vertex {
-        let ov = ctx.pat.graph.output_weight(ov_idx);
+        let ov = ctx.pat.graph.value_kind_ref(ov_idx);
         match root_value {
             Some(value) if !output_ok(ov, ctx.function(), value) => return false,
             None if vertex_imposes_requirement(ov) => return false,
@@ -277,7 +276,7 @@ fn try_match_at(
     let n_fixed = node_inputs.fixed;
 
     // Carries this node's own captures; see `bind_all_captures`.
-    let out_weight = out_vertex.map(|ov| ctx.pat.graph.output_weight(ov));
+    let out_weight = out_vertex.map(|ov| ctx.pat.graph.value_kind_ref(ov));
 
     // Alternation (`one_of` / `first_of`): `inputs` are independent alternative
     // sub-patterns, not operands, all tried against the SAME `ir_node`. `one_of`
@@ -434,7 +433,7 @@ fn finish_node(
     let sibs: Vec<PatValueId> = ctx
         .pat
         .graph
-        .produced_outputs(pat_node)
+        .node_outputs(pat_node)
         .iter()
         .copied()
         .filter(|&ov| Some(ov) != out_vertex)
@@ -471,7 +470,7 @@ fn bind_sibling_outputs(
         }
         return k(b);
     };
-    let ov = ctx.pat.graph.output_weight(ov_idx);
+    let ov = ctx.pat.graph.value_kind_ref(ov_idx);
     let outs = ctx.function().node_outputs(ir_node);
     let pinned = [ov.slot];
     let enumerated: Vec<usize>;
@@ -657,13 +656,12 @@ pub(crate) fn collect_node_inputs(graph: &crate::matcher::graph::PatGraph) -> Ve
     graph
         .all_node_ids()
         .map(|node| {
-            let mut edges: Vec<InputEdge> = graph
-                .consumed_inputs(node)
+            let mut edges: Vec<InputEdge> = crate::graph_ext::consumed_inputs(graph, node)
                 .into_iter()
                 .map(|(slot, out_vertex)| InputEdge {
                     consumer_slot: slot,
                     out_vertex,
-                    producer: graph.producer_of(out_vertex),
+                    producer: graph.producer(out_vertex),
                 })
                 .collect();
             // Stable, so each group keeps its relative order.
@@ -842,13 +840,24 @@ fn vertex_imposes_requirement(o: &PatValue) -> bool {
         || !matches!(o.kind, OutputKindSpec::Any)
 }
 
+/// `value` is a memory token whose producer offers no value output, so a
+/// value anchor on that node has nothing else to bind.
+fn is_sole_token_of(f: &strider_ir::Function, value: ValueId) -> bool {
+    matches!(f.value_kind(value), ValueKind::Memory)
+        && f.node_outputs(f.producer(value))
+            .iter()
+            .all(|&o| f.value_kind(o).as_value().is_none())
+}
+
 fn output_ok(o: &PatValue, f: &strider_ir::Function, value: ValueId) -> bool {
     let val = f.value_kind(value).as_value();
     let kind_ok = match &o.kind {
         // A `width` constraint below can still narrow this to a value.
         OutputKindSpec::Any => true,
         OutputKindSpec::Value(ty) => val == Some(*ty),
-        OutputKindSpec::AnyValue => val.is_some(),
+        OutputKindSpec::AnyValue => {
+            val.is_some() || (o.token_fallback && is_sole_token_of(f, value))
+        }
         OutputKindSpec::Control => matches!(f.value_kind(value), ValueKind::Control),
         OutputKindSpec::Memory => matches!(f.value_kind(value), ValueKind::Memory),
         OutputKindSpec::PhiToken => matches!(f.value_kind(value), ValueKind::PhiToken),
