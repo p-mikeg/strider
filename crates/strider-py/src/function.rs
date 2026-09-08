@@ -13,13 +13,22 @@ pub struct PyFunction {
     pub(crate) inner: RefCell<strider_ir::Function>,
     /// The `Cfg` this function was lifted from.
     pub(crate) cfg: Py<PyCfg>,
+    /// The assumptions the IR in `inner` was last optimized under, rewritten by
+    /// every pipeline run.  `rewrite` refills the memory-class table and must
+    /// classify a heap base the way the run that produced this IR did.
+    assumptions: RefCell<strider_orchestrator::opt::AssumptionOptions>,
 }
 
 impl PyFunction {
-    pub(crate) fn new(function: strider_ir::Function, cfg: Py<PyCfg>) -> Self {
+    pub(crate) fn new(
+        function: strider_ir::Function,
+        cfg: Py<PyCfg>,
+        assumptions: strider_orchestrator::opt::AssumptionOptions,
+    ) -> Self {
         Self {
             inner: RefCell::new(function),
             cfg,
+            assumptions: RefCell::new(assumptions),
         }
     }
 
@@ -109,6 +118,7 @@ impl PyFunction {
         // partially rewritten, and a bump after the `?` never happens.
         function.graph_mut().bump_generation();
         let mut ctx = strider_orchestrator::opt::OptCtx::new(rom);
+        *self.assumptions.borrow_mut() = options.assumptions.clone();
         ctx.options = options;
         pipeline.run(&mut function, &mut ctx).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("{label} failed: {e:?}"))
@@ -337,6 +347,7 @@ impl PyFunction {
         Ok(PyFunction {
             inner: RefCell::new(cloned),
             cfg: self.cfg.clone_ref(py),
+            assumptions: RefCell::new(self.assumptions.borrow().clone()),
         })
     }
 
@@ -457,7 +468,11 @@ impl PyFunction {
         let mut function = self
             .try_write_inner()
             .map_err(crate::errors::into_strider_err)?;
-        apply_rules_count_on(&mut function, std::slice::from_ref(&rule))
+        apply_rules_count_on(
+            &mut function,
+            std::slice::from_ref(&rule),
+            &self.assumptions.borrow(),
+        )
     }
 
     /// Apply `(find, replace)` pairs round-robin at every reachable node,
@@ -481,7 +496,7 @@ impl PyFunction {
         let mut function = self
             .try_write_inner()
             .map_err(crate::errors::into_strider_err)?;
-        apply_rules_count_on(&mut function, &rules)
+        apply_rules_count_on(&mut function, &rules, &self.assumptions.borrow())
     }
 
     /// A `Node` handle on the node at `node_id`. Raises `StriderError` for an
@@ -728,7 +743,11 @@ fn dedup_matches(
 }
 
 /// Returns the total per-`(node, rule)` fire count.
-fn apply_rules_count_on<R>(function: &mut strider_ir::Function, rules: &[R]) -> PyResult<usize>
+fn apply_rules_count_on<R>(
+    function: &mut strider_ir::Function,
+    rules: &[R],
+    assumptions: &strider_orchestrator::opt::AssumptionOptions,
+) -> PyResult<usize>
 where
     R: for<'g> Fn(
         &mut strider_opt::EditFunction<'g>,
@@ -740,7 +759,8 @@ where
     function.graph_mut().bump_generation();
     let count = {
         let mut ctx = strider_opt::EditFunction::new(function);
-        strider_opt::apply_rules_count(&mut ctx, rules).map_err(crate::errors::into_strider_err)?
+        strider_opt::apply_rules_count_with(&mut ctx, rules, assumptions)
+            .map_err(crate::errors::into_strider_err)?
     };
     Ok(count)
 }

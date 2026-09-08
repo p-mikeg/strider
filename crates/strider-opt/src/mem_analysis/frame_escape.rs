@@ -36,6 +36,7 @@
 //! write the caller's frame outside the argument area, and no pointer is
 //! fabricated numerically equal to a private slot.
 
+use rustc_hash::FxHashSet;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::{Function, IRViewer, IRWalker, IntBinaryOp};
 
@@ -43,22 +44,29 @@ use crate::mem_analysis::{MemKind, decompose};
 
 /// A value is a frame address iff it decomposes to a *stack* base; a heap base
 /// (an allocator's pointer) is not part of the frame `U`.
-fn is_frame_addr(function: &Function, v: strider_ir::node::ValueId) -> bool {
-    decompose(function, v).is_some_and(|e| e.kind == MemKind::Stack)
+fn is_frame_addr(
+    function: &Function,
+    v: strider_ir::node::ValueId,
+    noalias_allocators: &FxHashSet<u64>,
+) -> bool {
+    decompose(function, v, noalias_allocators).is_some_and(|e| e.kind == MemKind::Stack)
 }
 
 /// Cached [`frame_address_escapes`]. The verdict is a pure function of the
 /// current graph; the optimizer clears the memo after every mutating pass.
-pub(crate) fn frame_address_escapes_cached(function: &Function) -> bool {
+pub(crate) fn frame_address_escapes_cached(
+    function: &Function,
+    noalias_allocators: &FxHashSet<u64>,
+) -> bool {
     if let Some(escapes) = function.side_tables().frame_escape() {
         return escapes;
     }
-    let escapes = frame_address_escapes(function);
+    let escapes = frame_address_escapes(function, noalias_allocators);
     function.side_tables().set_frame_escape(escapes);
     escapes
 }
 
-fn frame_address_escapes(function: &Function) -> bool {
+fn frame_address_escapes(function: &Function, noalias_allocators: &FxHashSet<u64>) -> bool {
     for node in function.walk() {
         let kind = *function.node_kind(node);
         // A Call's inputs are [ctrl, mem, target, sp, ...args]; slot 3 is the
@@ -72,10 +80,10 @@ fn frame_address_escapes(function: &Function) -> bool {
             if function.value_type_opt(v).is_none() {
                 continue;
             }
-            if !is_frame_addr(function, v) {
+            if !is_frame_addr(function, v, noalias_allocators) {
                 continue;
             }
-            if !use_is_address_only(function, node, kind, idx) {
+            if !use_is_address_only(function, node, kind, idx, noalias_allocators) {
                 return true;
             }
         }
@@ -90,13 +98,19 @@ fn frame_address_escapes(function: &Function) -> bool {
 /// The `Load`/`Store` test is by slot index, not value equality: a self-store
 /// `Store(V, V)` puts the same `ValueId` in both the address and data slots, so
 /// comparing against the address operand would mask the escaping data operand.
-fn use_is_address_only(function: &Function, node: NodeId, kind: NodeKind, idx: usize) -> bool {
+fn use_is_address_only(
+    function: &Function,
+    node: NodeId,
+    kind: NodeKind,
+    idx: usize,
+    noalias_allocators: &FxHashSet<u64>,
+) -> bool {
     match kind {
         NodeKind::Load(_) | NodeKind::Store(_) => idx == 1,
         NodeKind::IntBinaryOp(IntBinaryOp::Add | IntBinaryOp::And) => function
             .single_value_output(node)
             .ok()
-            .is_some_and(|(out, _)| is_frame_addr(function, out)),
+            .is_some_and(|(out, _)| is_frame_addr(function, out, noalias_allocators)),
         _ => false,
     }
 }
@@ -104,6 +118,7 @@ fn use_is_address_only(function: &Function, node: NodeId, kind: NodeKind, idx: u
 #[cfg(test)]
 mod tests {
     use super::frame_address_escapes;
+    use rustc_hash::FxHashSet;
     use strider_ir::node::{ValueId, ValueType};
     use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::sp_arg_frame;
@@ -149,7 +164,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         assert!(
-            !frame_address_escapes(&fg),
+            !frame_address_escapes(&fg, &FxHashSet::default()),
             "a spill address used only as a Load/Store address does not escape"
         );
         Ok(())
@@ -172,7 +187,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         assert!(
-            !frame_address_escapes(&fg),
+            !frame_address_escapes(&fg, &FxHashSet::default()),
             "the Call's SP anchor must not count as an escape"
         );
         Ok(())
@@ -191,7 +206,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         assert!(
-            frame_address_escapes(&fg),
+            frame_address_escapes(&fg, &FxHashSet::default()),
             "a frame address in a store's data operand escapes"
         );
         Ok(())
@@ -209,7 +224,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         assert!(
-            frame_address_escapes(&fg),
+            frame_address_escapes(&fg, &FxHashSet::default()),
             "a frame address passed as a call argument escapes"
         );
         Ok(())
@@ -229,7 +244,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         assert!(
-            frame_address_escapes(&fg),
+            frame_address_escapes(&fg, &FxHashSet::default()),
             "a frame address passed as a CallOther argument escapes"
         );
         Ok(())
@@ -245,7 +260,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         assert!(
-            frame_address_escapes(&fg),
+            frame_address_escapes(&fg, &FxHashSet::default()),
             "returning a frame address escapes"
         );
         Ok(())
@@ -266,19 +281,25 @@ mod tests {
         collapse_phis(&mut fg);
 
         assert_eq!(fg.side_tables().frame_escape(), None, "cold");
-        assert!(!super::frame_address_escapes_cached(&fg));
+        assert!(!super::frame_address_escapes_cached(
+            &fg,
+            &FxHashSet::default()
+        ));
         assert_eq!(fg.side_tables().frame_escape(), Some(false), "warmed");
 
         // Poisoning proves the cached bit is consulted, not recomputed.
         fg.side_tables().set_frame_escape(true);
         assert!(
-            super::frame_address_escapes_cached(&fg),
+            super::frame_address_escapes_cached(&fg, &FxHashSet::default()),
             "returns the cached bit"
         );
 
         // Clearing forces a fresh, correct recompute.
         fg.side_tables().clear_frame_escape();
-        assert!(!super::frame_address_escapes_cached(&fg));
+        assert!(!super::frame_address_escapes_cached(
+            &fg,
+            &FxHashSet::default()
+        ));
         Ok(())
     }
 
@@ -296,7 +317,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         assert!(
-            frame_address_escapes(&fg),
+            frame_address_escapes(&fg, &FxHashSet::default()),
             "Store(V, V) exposes V through the data operand"
         );
         Ok(())
@@ -318,7 +339,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         assert!(
-            frame_address_escapes(&fg),
+            frame_address_escapes(&fg, &FxHashSet::default()),
             "a frame address feeding non-address arithmetic escapes"
         );
         Ok(())
