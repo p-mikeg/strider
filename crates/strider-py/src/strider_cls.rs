@@ -24,13 +24,17 @@ use crate::reader::{AnyMemReader, MemInput};
 /// Moving is what matters: pinned, a `Function` dropped on a worker thread
 /// leaks its whole `Lifter`, because PyO3 will not run an `unsendable`
 /// destructor off-thread.
-pub(crate) struct ThreadPinned<T> {
+///
+/// Not generic: the only thing pinned is the `Strider` behind a `Lifter`, and
+/// the message below names it, so a second instantiation would have to say
+/// something this cannot.
+pub(crate) struct ThreadPinned {
     owner: std::thread::ThreadId,
-    value: T,
+    value: strider_orchestrator::Strider<AnyMemReader>,
 }
 
-impl<T> ThreadPinned<T> {
-    fn new(value: T) -> Self {
+impl ThreadPinned {
+    fn new(value: strider_orchestrator::Strider<AnyMemReader>) -> Self {
         Self {
             owner: std::thread::current().id(),
             value,
@@ -48,12 +52,12 @@ impl<T> ThreadPinned<T> {
         )))
     }
 
-    pub(crate) fn get(&self) -> PyResult<&T> {
+    pub(crate) fn get(&self) -> PyResult<&strider_orchestrator::Strider<AnyMemReader>> {
         self.check()?;
         Ok(&self.value)
     }
 
-    pub(crate) fn get_mut(&mut self) -> PyResult<&mut T> {
+    pub(crate) fn get_mut(&mut self) -> PyResult<&mut strider_orchestrator::Strider<AnyMemReader>> {
         self.check()?;
         Ok(&mut self.value)
     }
@@ -369,7 +373,7 @@ fn analyze_result_type(py: Python<'_>) -> PyResult<PyObject> {
 pub struct PyLifter {
     /// Owns the Sleigh, cached register table and optional rom. Pinned to
     /// the creating thread for USE; still free to move and to be dropped.
-    inner: ThreadPinned<strider_orchestrator::Strider<AnyMemReader>>,
+    inner: ThreadPinned,
     /// The `SleighArch` preset this handle was built for, compared against
     /// the arch a `custom(...)` CC / `CallOtherAbi` froze its varnodes on.
     pub(crate) arch_name: &'static str,

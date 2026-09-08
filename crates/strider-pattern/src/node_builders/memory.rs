@@ -7,16 +7,15 @@
 //! `Load` is value-producing and nests as a value operand; `Store` is a
 //! memory-token root exposing its token via [`MemPat`].
 
+use super::delegate_node_pat;
 use crate::node_builders::delegate_with_output;
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
-use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
 
 use super::MemPat;
-use super::flow::OutputPat;
 use super::node_pat::{KindCheck, NodePat, variant_kind};
 
 /// The address-region filter of a `Load`/`Store` pattern: a mutually-exclusive
@@ -151,13 +150,6 @@ impl LoadPat {
         self
     }
 
-    /// Candidates are mem and addr. A typed value sub binds only addr;
-    /// `var` / `anything` also reaches the memory edge. Repeatable.
-    pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.inner = self.inner.input_any(p);
-        self
-    }
-
     /// Pins the value output's width.
     pub fn bit_width(mut self, n: u32) -> Self {
         self.bit_width = Some(n);
@@ -191,32 +183,6 @@ impl LoadPat {
     /// allocator's return pointer). Replaces any region filter set before it.
     pub fn heap_only(mut self) -> Self {
         self.region.set_heap_only();
-        self
-    }
-
-    /// Raw input slot `slot`. Slot numbering is per node kind, laid out by the
-    /// IR's `expected_signature`; the named accessors above are the intended
-    /// surface and this is the escape hatch beneath them.
-    pub fn input<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
-        self.inner = self.inner.input(slot, p);
-        self
-    }
-
-    /// The one output, at slot 0. Returns a terminal taking one of
-    /// `.capture(c)`, `.of_width(w)`, `.of_type(ty)`.
-    pub fn output(self, slot: usize) -> OutputPat<Self> {
-        OutputPat::at(self, Some(slot))
-    }
-
-    /// Some output rather than a fixed slot; otherwise
-    /// [`output`](Self::output).
-    pub fn any_output(self) -> OutputPat<Self> {
-        OutputPat::at(self, None)
-    }
-
-    /// Binds the value output.
-    pub fn capture(mut self, c: Capture) -> Self {
-        self.inner = self.inner.capture(c);
         self
     }
 
@@ -256,6 +222,7 @@ pub fn load() -> LoadPat {
 }
 
 delegate_with_output!(LoadPat, inner);
+delegate_node_pat!(LoadPat, inner, [capture, input, any_input]);
 
 /// Inputs `[mem(0), addr(1), data(2)]`, single output the new memory token.
 pub struct StorePat {
@@ -295,13 +262,6 @@ impl StorePat {
         self
     }
 
-    /// Candidates are mem, addr and data. A typed value sub binds only addr
-    /// or data; `var` / `anything` also reaches the memory edge. Repeatable.
-    pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.inner = self.inner.input_any(p);
-        self
-    }
-
     /// Pins the width of the data input, `inputs[2]`.
     pub fn bit_width(mut self, n: u32) -> Self {
         self.bit_width = Some(n);
@@ -335,31 +295,6 @@ impl StorePat {
     /// allocator's return pointer). Replaces any region filter set before it.
     pub fn heap_only(mut self) -> Self {
         self.region.set_heap_only();
-        self
-    }
-
-    /// Raw input slot `slot`. Slot numbering is per node kind, laid out by the
-    /// IR's `expected_signature`; the named accessors above are the intended
-    /// surface and this is the escape hatch beneath them.
-    pub fn input<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
-        self.inner = self.inner.input(slot, p);
-        self
-    }
-
-    /// The one output, at slot 0. Returns a terminal taking one of
-    /// `.capture(c)`, `.of_width(w)`, `.of_type(ty)`.
-    pub fn output(self, slot: usize) -> OutputPat<Self> {
-        OutputPat::at(self, Some(slot))
-    }
-
-    /// Some output rather than a fixed slot; otherwise
-    /// [`output`](Self::output).
-    pub fn any_output(self) -> OutputPat<Self> {
-        OutputPat::at(self, None)
-    }
-
-    pub fn capture(mut self, c: Capture) -> Self {
-        self.inner = self.inner.capture(c);
         self
     }
 
@@ -409,3 +344,4 @@ pub fn store() -> StorePat {
 }
 
 delegate_with_output!(StorePat, inner);
+delegate_node_pat!(StorePat, inner, [capture, input, any_input]);
