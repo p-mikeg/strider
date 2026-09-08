@@ -262,3 +262,54 @@ fn filter_accepts_match_and_visits_child() {
         child_invocations.load(Ordering::Relaxed),
     );
 }
+
+/// A vertex takes any number of captures. Silently keeping only the last was a
+/// capture that never fired and never showed up in `bound_captures` either.
+#[test]
+fn a_second_capture_on_one_vertex_binds_alongside_the_first() {
+    let function = shapes::add_consts(5, 3);
+    let (p, q) = (Capture::new(), Capture::new());
+    let pat = any_int_const().capture(p).capture(q).into_pattern();
+
+    let declared: Vec<Capture> = pat.bound_captures().collect();
+    assert!(declared.contains(&p) && declared.contains(&q));
+
+    let m = Matcher::new(&function);
+    let hits = m.find_all(&pat).unwrap();
+    assert_eq!(hits.len(), 2);
+    for hit in &hits {
+        assert!(hit.value(p).is_some());
+        assert_eq!(hit.value(p), hit.value(q));
+    }
+}
+
+/// `var(x).capture(y)`: the wildcard's own capture and the added one both bind.
+#[test]
+fn a_wildcard_capture_and_an_added_one_both_bind() {
+    let function = shapes::add_consts(5, 3);
+    let (x, y) = (Capture::new(), Capture::new());
+    let pat = int_add(var(x).capture(y), anything()).into_pattern();
+
+    let m = Matcher::new(&function);
+    let hits = m.find_all(&pat).unwrap();
+    assert!(!hits.is_empty());
+    for hit in &hits {
+        assert!(hit.value(x).is_some());
+        assert_eq!(hit.value(x), hit.value(y));
+    }
+}
+
+/// The node-capture side of the same rule, for a value-less root.
+#[test]
+fn a_second_node_capture_binds_alongside_the_first() {
+    let function = shapes::add_consts(5, 3);
+    let (a1, a2) = (Capture::new(), Capture::new());
+    let pat = ret().capture(a1).capture(a2).build();
+
+    let m = Matcher::new(&function);
+    let hits = m.find_all(&pat).unwrap();
+    assert_eq!(hits.len(), 1);
+    let graph = function.graph();
+    assert!(hits[0].node(a1, graph).is_some());
+    assert_eq!(hits[0].node(a1, graph), hits[0].node(a2, graph));
+}

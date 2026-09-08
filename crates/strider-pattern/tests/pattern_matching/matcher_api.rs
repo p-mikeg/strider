@@ -897,3 +897,35 @@ fn match_at_on_return_node_of_minimal_function() {
             .is_none()
     );
 }
+
+/// A `Match` holds raw ids. `Function::compact` renumbers them, so an accessor
+/// handed the compacted graph must report nothing rather than index out of
+/// bounds or read a different node.
+#[test]
+fn a_match_used_after_compact_reports_stale_instead_of_indexing() {
+    let mut t = Tb::empty();
+    // Unreferenced constants, dropped by the compaction, so the surviving ids
+    // shift far enough that a stale one is past the end of the arena.
+    for i in 0..40u64 {
+        let _dead = t.u64(0x1000 + i);
+    }
+    let a = t.u64(5);
+    let b = t.u64(3);
+    let sum = t.add(a, b);
+    let mut function = t.ret_val(sum);
+
+    let c = Capture::new();
+    let pat = int_add(anything().capture(c), anything()).into_pattern();
+    let hit = {
+        let m = Matcher::new(&function);
+        m.find_all(&pat).unwrap().into_iter().next().unwrap()
+    };
+    assert!(hit.node(c, function.graph()).is_some());
+    assert!(!hit.is_stale(function.graph()));
+
+    function.compact().unwrap();
+    assert!(hit.is_stale(function.graph()));
+    assert_eq!(hit.node(c, function.graph()), None);
+    assert!(hit.asm_fingerprint(c, &function).is_empty());
+    assert_eq!(hit.get_vn(c, &function), None);
+}

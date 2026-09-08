@@ -755,3 +755,148 @@ fn dominates_over_a_node_with_no_cfg_position_answers_neither_way() {
         "the negation of an unanswerable relation is still unanswerable"
     );
 }
+
+/// One diamond whose arms write distinct constants to `reg`, so the merge
+/// region carries a value `Phi`.
+fn diamond_with_a_phi() -> strider_ir::Function {
+    let reg = strider_ir_test_utils::reg_vn(0, 8);
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .tracked(reg)
+        .callee_saved(reg)
+        .build_fn()
+        .unwrap();
+    let head = b.create_region_all().unwrap();
+    let t_arm = b.create_region_all().unwrap();
+    let f_arm = b.create_region_all().unwrap();
+    let merge = b.create_region_all().unwrap();
+    b.set_entry_region_all(head).unwrap();
+
+    b.set_region(head);
+    b.set_lift_addr(Some(0x1000));
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, t_arm, f_arm).unwrap();
+    b.set_lift_addr(None);
+
+    for (arm, k) in [(t_arm, 10u64), (f_arm, 20u64)] {
+        b.set_region(arm);
+        b.set_lift_addr(Some(0x1010 + k));
+        let v = b.build_int_const(k, ValueType::I64).unwrap();
+        b.write_variable(&reg, v).unwrap();
+        b.build_branch(merge).unwrap();
+        b.set_lift_addr(None);
+    }
+
+    b.set_region(merge);
+    b.set_lift_addr(Some(0x1030));
+    let merged = b.read_variable(&reg).unwrap();
+    b.build_return(None, &[merged]).unwrap();
+    b.set_lift_addr(None);
+    b.build().unwrap()
+}
+
+#[test]
+fn phi_input_from_edge_selects_the_arm_merged_from_that_edge() {
+    let function = diamond_with_a_phi();
+    let m = Matcher::new(&function);
+    let (e, ph, v) = (Capture::new(), Capture::new(), Capture::new());
+    let guard = if_else().capture_true(e).build();
+    let phi_p = strider_pattern::phi()
+        .any_input(int_const(v))
+        .capture(ph)
+        .build();
+
+    let rows = m
+        .find_joined_constrained(
+            &[&guard, &phi_p],
+            &[JoinConstraint::PhiInputFromEdge {
+                phi: ph,
+                edge: e,
+                value: v,
+            }],
+        )
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0]
+            .iter()
+            .find_map(|hit| hit.bindings().get_uint(v, &function))
+            .unwrap(),
+        10,
+        "the true arm merges 10"
+    );
+}
+
+/// A `phi` capture bound to something that is not a phi cannot answer
+/// `PhiInputFromEdge`, so the constraint drops the tuple and its NEGATION drops
+/// it too. Two-valued, the negation would admit every row the caller asked to
+/// exclude; `Dominates` is three-valued for the same reason.
+#[test]
+fn phi_input_from_edge_over_a_non_phi_answers_neither_way() {
+    let function = diamond_with_a_phi();
+    let m = Matcher::new(&function);
+    let (e, not_phi, v) = (Capture::new(), Capture::new(), Capture::new());
+    let guard = if_else().capture_true(e).build();
+    let bogus = strider_pattern::any_int_const()
+        .capture(not_phi)
+        .into_pattern();
+    let val = strider_pattern::any_int_const().capture(v).into_pattern();
+
+    let cons = JoinConstraint::PhiInputFromEdge {
+        phi: not_phi,
+        edge: e,
+        value: v,
+    };
+    assert_eq!(
+        m.find_joined_constrained(&[&guard, &bogus, &val], std::slice::from_ref(&cons))
+            .unwrap()
+            .len(),
+        0,
+        "unanswerable, so no row"
+    );
+    assert_eq!(
+        m.find_joined_constrained(
+            &[&guard, &bogus, &val],
+            &[JoinConstraint::Not(Box::new(cons))]
+        )
+        .unwrap()
+        .len(),
+        0,
+        "the negation of an unanswerable relation is still unanswerable"
+    );
+}
+
+/// The same, for an `edge` capture that carries no control edge.
+#[test]
+fn phi_input_from_edge_over_a_non_control_edge_answers_neither_way() {
+    let function = diamond_with_a_phi();
+    let m = Matcher::new(&function);
+    let (not_edge, ph, v) = (Capture::new(), Capture::new(), Capture::new());
+    let phi_p = strider_pattern::phi().capture(ph).build();
+    let bogus = strider_pattern::any_int_const()
+        .capture(not_edge)
+        .into_pattern();
+    let val = strider_pattern::any_int_const().capture(v).into_pattern();
+
+    let cons = JoinConstraint::PhiInputFromEdge {
+        phi: ph,
+        edge: not_edge,
+        value: v,
+    };
+    assert_eq!(
+        m.find_joined_constrained(&[&phi_p, &bogus, &val], std::slice::from_ref(&cons))
+            .unwrap()
+            .len(),
+        0,
+        "unanswerable, so no row"
+    );
+    assert_eq!(
+        m.find_joined_constrained(
+            &[&phi_p, &bogus, &val],
+            &[JoinConstraint::Not(Box::new(cons))]
+        )
+        .unwrap()
+        .len(),
+        0,
+        "the negation of an unanswerable relation is still unanswerable"
+    );
+}

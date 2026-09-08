@@ -451,10 +451,12 @@ pub struct IfPat {
     outputs: Vec<(Option<usize>, IfOutput)>,
     true_branch: Option<BranchWalk>,
     false_branch: Option<BranchWalk>,
-    capture: Option<Capture>,
+    captures: Vec<Capture>,
     capture_true: Option<Capture>,
     capture_false: Option<Capture>,
     branch_captures: WalkCaptures,
+    /// An unmatchable branch pattern, replayed onto the builder at `lower`.
+    branch_refusal: Option<String>,
 }
 
 /// The one aspect a single `.output(slot)` / `.any_output()` call commits.
@@ -517,22 +519,27 @@ impl IfPat {
     /// other branch or by a guard above fall through to the next one instead of
     /// losing the match.
     ///
-    /// # Panics
+    /// # Refusal
     ///
-    /// If `pat` is not a single-rooted acyclic graph the matcher can handle.
+    /// A `pat` that is not a single-rooted acyclic graph the matcher can
+    /// handle is refused at build time: every query on the resulting pattern
+    /// errors, rather than reading as a silent "branch did not match".
     pub fn with_true(self, pat: Pattern) -> Self {
         self.with_branch(0, pat)
     }
 
     /// Control output slot 1. See [`with_true`](Self::with_true), which also
-    /// documents the panic and the branch-capture agreement rule.
+    /// documents the refusal and the branch-capture agreement rule.
     pub fn with_false(self, pat: Pattern) -> Self {
         self.with_branch(1, pat)
     }
 
     /// `slot` 0 is true, 1 is false.
     fn with_branch(mut self, slot: usize, pat: Pattern) -> Self {
-        validate_branch_pattern(&pat);
+        if let Err(e) = pat.root() {
+            self.branch_refusal
+                .get_or_insert(format!("If branch pattern is not matchable ({e})"));
+        }
         self.branch_captures.bound.extend(pat.bound_captures());
         // Both branches must match, so each one's guarantees carry over whole.
         self.branch_captures
@@ -554,8 +561,9 @@ impl IfPat {
         self
     }
 
+    /// Repeatable: every capture binds the matched `If` node.
     pub fn capture(mut self, c: Capture) -> Self {
-        self.capture = Some(c);
+        self.captures.push(c);
         self
     }
 
@@ -587,11 +595,15 @@ impl IfPat {
             outputs,
             true_branch,
             false_branch,
-            capture,
+            captures,
             capture_true,
             capture_false,
             branch_captures,
+            branch_refusal,
         } = self;
+        if let Some(why) = branch_refusal {
+            b.reject(why);
+        }
         let node = b.node(KindSpec::Exact(NodeKind::If));
         let true_out = b.control_output(node, 0);
         let false_out = b.control_output(node, 1);
@@ -649,7 +661,7 @@ impl IfPat {
                 branch_captures,
             );
         }
-        if let Some(c) = capture {
+        for c in captures {
             b.capture_node(node, c);
         }
         node
@@ -680,19 +692,6 @@ impl MatchPat for IfPat {
     }
 }
 
-/// Rejects a branch pattern that is not single-rooted and matchable, so a
-/// multi-sink / rootless / cyclic one fails eagerly at build time instead of
-/// reading as a silent "branch did not match" at match time.
-///
-/// # Panics
-///
-/// If `pat` has no derivable match root.
-fn validate_branch_pattern(pat: &Pattern) {
-    if let Err(e) = pat.root() {
-        panic!("If branch pattern is not matchable ({e})");
-    }
-}
-
 /// `false` when the output has zero or several consumers, or when no
 /// configuration of `pat` against `bindings` is accepted.
 ///
@@ -717,11 +716,12 @@ fn match_branch_consumer(
     let Ok((first, _)) = f.value_uses(out).exactly_one() else {
         return false;
     };
-    // `validate_branch_pattern` proved `pat` single-rooted at build time, so
-    // an `Err` here is a real bug and is surfaced rather than swallowed.
+    // `with_branch` refused an unmatchable `pat`, so this walk is unreachable
+    // for one; an `Err` here is a real bug and is surfaced rather than
+    // swallowed.
     match matcher.match_at_into(first, pat, bindings, k) {
         Ok(hit) => hit,
-        Err(e) => unreachable!("validated branch pattern failed to match: {e}"),
+        Err(e) => unreachable!("refused branch pattern reached the matcher: {e}"),
     }
 }
 
