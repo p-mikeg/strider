@@ -34,7 +34,7 @@ pub(super) struct WorkItem {
     pub(super) addr: PcodeInsnAddr,
     /// The context this target decodes in: what Sleigh flowed to it for a
     /// direct edge, else the function mode carrying the resolved branch's
-    /// ISA-mode bit. Restored before decode, undoing a forward-hold clobber.
+    /// ISA-mode bit. Pinned before decode, undoing a forward-hold clobber.
     pub(super) carried: FlowContext,
     /// Seeded from `known_targets` rather than reached by a decoded branch. A
     /// direct edge that will not decode is a real error; a seeded one may be a
@@ -516,7 +516,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
 
     /// Routes `addr` to the region that owns it, or decodes a new one; a branch
     /// into an existing region's interior splits it. Before decoding a fresh
-    /// region `restore_at` pins the `carried` context this edge captured, so a
+    /// region the `carried` context this edge captured is pinned, so a
     /// strider-resolved or backward target still decodes in the mode that
     /// reaches it.
     fn explore(
@@ -560,8 +560,16 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         }
         if !self.flow_vars.is_empty() {
             // Undoes a sibling region's forward-hold clobber of this address.
+            //
+            // Several sla context vars alias the ISA-mode bit (ARM `TMode`,
+            // `T`, `LowBitCodeMode`, `ISA_MODE` all at bit (0,0)), so the diff
+            // can write an alias last and flip the intended mode.  Repairing
+            // that is `RegionBuilder::hold_isa_mode`'s job: the `RegionBuilder`
+            // below opens with a `lift_one` on this same address, and that
+            // repair runs unconditionally where one here would be gated on
+            // `pin_at` having written at all.
             self.flow_vars
-                .restore_at(self.sleigh, addr.machine_addr.addr, &carried)?;
+                .pin_at(self.sleigh, addr.machine_addr.addr, &carried)?;
         }
         let isa_mode = self.isa_mode_of(&carried);
         RegionBuilder::new(self, addr, parent_region, isa_mode).build()?;

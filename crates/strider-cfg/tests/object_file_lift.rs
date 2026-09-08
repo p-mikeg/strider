@@ -6,7 +6,7 @@
 //! `strider_reader::elf::ElfSectionLayout` rebases apart; without the section
 //! dispatch the memory map comes out empty.
 
-use object::{Object, ObjectSymbol};
+use object::Object;
 use strider_cfg::{Builder, CfgOptions};
 use strider_target::SleighArch;
 

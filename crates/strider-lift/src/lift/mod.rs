@@ -70,7 +70,7 @@ pub struct Lifter<R: rsleigh::MemReader> {
     entry_defaults: strider_cfg::FlowContext,
     /// The same, for the `noflow` vars that still change the decode
     /// ([`SleighArch::transient_decode_vars`]).  They are outside `flow_vars`
-    /// by construction, so `reset_at` cannot reach them.
+    /// by construction, so `pin_at` cannot reach them.
     transient_defaults: Vec<(&'static str, u32)>,
 }
 
@@ -138,7 +138,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         per_address_ccs: &rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Result<strider_cfg::Cfg> {
         // A prior function's `globalset` holds forward until the next change
-        // point and leaks into this cold entry on a reused engine.
+        // point and leaks into this cold entry on a reused engine: pin the
+        // entry back to the pspec defaults captured on the fresh engine.
         let entry_mode = self.arch.entry_mode_context(entry.addr);
         let decode_addr = if entry_mode.is_some() {
             entry.addr & !1
@@ -146,10 +147,10 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             entry.addr
         };
         self.flow_vars
-            .reset_at(&mut self.sleigh, decode_addr, &self.entry_defaults)?;
+            .pin_at(&mut self.sleigh, decode_addr, &self.entry_defaults)?;
         // A `noflow` commit holds at exactly the address it was made for, so a
         // prior function's `mov lr,pc` leaves `LRset` set at THIS entry and its
-        // `bx` would decode as an indirect call. `reset_at` covers the flowing
+        // `bx` would decode as an indirect call. `pin_at` covers the flowing
         // vars only, so clear these by name.
         for (name, default) in &self.transient_defaults {
             if self.sleigh.get_context_at(decode_addr, name)? != *default {

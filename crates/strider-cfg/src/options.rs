@@ -9,7 +9,9 @@ pub struct CfgOptions {
     /// `Some(0)` is coerced to unbounded by [`crate::Builder::for_arch`].
     pub fn_max_size: Option<u64>,
     /// When `false`, an unconditional branch *below* the function start is
-    /// a tail call rather than an edge to follow.
+    /// a tail call rather than an edge to follow.  Read only while
+    /// `fn_max_size` is `None`: a set size fixes the extent, so a target below
+    /// the start is a tail call whatever this says.
     pub allow_code_before_start_addr: bool,
     /// A `BranchIndirect` listed here seats its cached terminator directly;
     /// every other site defers via `UnresolvedIndirectBranch`.  Read through
@@ -25,10 +27,10 @@ impl CfgOptions {
     /// The answer seated for `addr`, falling back to the machine address alone.
     ///
     /// An entry at p-code index 0 seats any `BranchIndirect` in that machine
-    /// instruction, so a caller holding only a machine address (all
-    /// `unresolved_indirect_branches` reports) can spell a key. An exact key
-    /// wins: it is the only way to tell two `BranchIndirect`s in one
-    /// instruction apart.
+    /// instruction, so a caller holding only a machine address can spell a key;
+    /// a Python one only ever holds that, the bindings flattening every
+    /// reported site to its machine address. An exact key wins: it is the only
+    /// way to tell two `BranchIndirect`s in one instruction apart.
     pub fn seated(&self, addr: PcodeInsnAddr) -> Option<&ResolvedTargets> {
         self.known_targets.get(&addr).or_else(|| {
             let start = PcodeInsnAddr::at_machine_start(addr.machine_addr.addr);

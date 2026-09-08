@@ -7,7 +7,7 @@ use strider_target::SleighArch;
 
 /// `mov lr, pc` commits ARM's `LRset` at the NEXT address, and `ARMinstructions
 /// .sinc` picks `call [pc]` over `goto [pc]` for a `bx` under it. `LRset` is
-/// `noflow`, so it is outside the flowing set `reset_at` restores: analysing the
+/// `noflow`, so it is outside the flowing set `pin_at` restores: analysing the
 /// function at 0x1000 first must not turn 0x1004's `bx r0` into a call when
 /// 0x1004 is later analysed as its own cold entry.
 #[test]
