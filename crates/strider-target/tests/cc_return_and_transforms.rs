@@ -100,3 +100,75 @@ fn validate_rejects_preserve_all_alongside_return_registers() {
         "error must name the offending field, got {msg:?}"
     );
 }
+
+/// A MIPS o32 `double` return lives in the $f0/$f1 pair.  `ret_val_regs()`
+/// hands the CC list to the lifter with no container projection, so a 4-byte
+/// `f0` here truncates the return to I32; the pair register is 8 bytes.
+#[test]
+fn mips_o32_double_return_covers_the_full_fpr_pair() {
+    for arch in [SleighArch::mipsbe32(), SleighArch::mipsle32()] {
+        let regs = regs_for(arch);
+        let built = CallingConvention::mips_o32().build(&regs).expect("build");
+        assert_eq!(
+            float_ret_names(CallingConvention::mips_o32(), arch),
+            vec!["f0_1".to_string(), "f2_3".to_string()],
+        );
+        for vn in &built.ret_val_regs_float {
+            assert_eq!(vn.size, 8, "{arch:?}: a double return needs all 8 bytes");
+        }
+    }
+}
+
+/// n64's FPRs are already 8 bytes and its sla declares no pair register, so
+/// o32's pair naming must not leak into it.
+#[test]
+fn mips_n64_double_return_uses_the_plain_eight_byte_fprs() {
+    for arch in [SleighArch::mipsbe64(), SleighArch::mipsle64()] {
+        let regs = regs_for(arch);
+        let built = CallingConvention::mips_n64().build(&regs).expect("build");
+        assert_eq!(
+            float_ret_names(CallingConvention::mips_n64(), arch),
+            vec!["f0".to_string(), "f2".to_string()],
+        );
+        for vn in &built.ret_val_regs_float {
+            assert_eq!(vn.size, 8, "{arch:?}");
+        }
+    }
+}
+
+/// The o32 float ARGUMENT side needs no such renaming: `float_arg_slots`
+/// projects `f12` / `f14` through the container map, and they land in the
+/// DISTINCT `f12_13` / `f14_15` pairs, so neither slot is shared and both
+/// carry the full 8 bytes.
+#[test]
+fn mips_o32_double_arguments_project_to_distinct_full_width_pairs() {
+    for arch in [SleighArch::mipsbe32(), SleighArch::mipsle32()] {
+        let regs = regs_for(arch);
+        let built = CallingConvention::mips_o32().build(&regs).expect("build");
+        let pair = |name: &str| regs.name_to_vn(name).expect(name);
+        let (f12_13, f14_15) = (pair("f12_13"), pair("f14_15"));
+        assert_ne!(f12_13, f14_15, "{arch:?}: the two pairs must be distinct");
+        let container_of = |v: &rsleigh::Vn| {
+            for c in [f12_13, f14_15] {
+                if c.addr_space == v.addr_space
+                    && c.addr_off <= v.addr_off
+                    && u128::from(c.addr_off) + u128::from(c.size)
+                        >= u128::from(v.addr_off) + u128::from(v.size)
+                {
+                    return c;
+                }
+            }
+            *v
+        };
+        let slots = built.float_arg_slots(&[f12_13, f14_15], container_of);
+        let names: Vec<String> = slots
+            .iter()
+            .map(|s| {
+                let vn = s.expect("every o32 float arg slot has a carrier");
+                assert_eq!(vn.size, 8, "{arch:?}: a double argument needs 8 bytes");
+                regs.vn_to_name(vn).expect("named").to_string()
+            })
+            .collect();
+        assert_eq!(names, vec!["f12_13".to_string(), "f14_15".to_string()]);
+    }
+}
