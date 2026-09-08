@@ -244,10 +244,18 @@ impl SleighArch {
     /// `FlowVars` cannot see these: it takes the sla's FLOWING set, and these
     /// are excluded from it by definition. ARM's `LRset` picks `call [pc]` over
     /// `goto [pc]` for `bx` (`ARMinstructions.sinc`), and `REToverride` /
-    /// `CALLoverride` reclassify a return and a call the same way.
+    /// `CALLoverride` reclassify a return and a call the same way. MIPS's
+    /// `PAIR_INSTRUCTION_FLAG` (`mips.sinc`) selects the `lwl`/`swl`/`ldl`/`sdl`
+    /// constructor that does the whole unaligned access against the one that
+    /// does half, and `globalset(inst_next, ...)` paints it forward, so a
+    /// commit outlives the function that made it.
     #[must_use]
     pub fn transient_decode_vars(&self) -> &'static [&'static str] {
         match self.preset {
+            ArchPreset::MipsBe32
+            | ArchPreset::MipsLe32
+            | ArchPreset::MipsBe64
+            | ArchPreset::MipsLe64 => &["PAIR_INSTRUCTION_FLAG"],
             ArchPreset::Arm
             | ArchPreset::ArmBe
             | ArchPreset::ArmBeKernel
