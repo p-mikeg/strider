@@ -1302,3 +1302,48 @@ fn collecting_stack_args_is_linear_in_the_slot_count() -> Result<()> {
     );
     Ok(())
 }
+
+/// A wide store patched in part by a nearer narrow one is no slot's value: the
+/// live 8 bytes are neither store's data, so slot 0 is unknown and nothing is
+/// collected.
+#[test]
+fn partly_overwritten_wide_store_supplies_no_arg() -> Result<()> {
+    let sp = stack_vn();
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }))
+        .build_fn_single_region()?;
+    let sp_v0 = b.read_variable(&sp)?;
+    let wide = b.build_int_const(0xAAAA_AAAA_AAAA_AAAAu64, ValueType::I64)?;
+    b.build_store(sp_v0, wide, rsleigh::VnSpace::RAM)?;
+    // Patches the high half of the wide store, i.e. slot 1.
+    let four = b.build_int_const(4u64, ValueType::I32)?;
+    let sp_plus_4 = b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::I32)?;
+    let patch = b.build_int_const(0xBBBB_BBBBu64, ValueType::I32)?;
+    b.build_store(sp_plus_4, patch, rsleigh::VnSpace::RAM)?;
+
+    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    b.build_call_cc(target, None)?;
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(CallStackArgCollect);
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    let call_id = find_call(fg.graph())?;
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    assert_eq!(
+        inputs.len(),
+        4,
+        "ctrl + mem + target + sp and no args: the wide store is live only in \
+         part, so it is not slot 0's value; got inputs={inputs:?}"
+    );
+    Ok(())
+}

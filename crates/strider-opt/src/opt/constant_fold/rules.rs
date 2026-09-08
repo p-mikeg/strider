@@ -300,8 +300,11 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
 
     // (x + C1) + C2 -> x + (C1 + C2)
     let rule_add_add = rewrite_rule(
-        int_add(int_add(var(x), int_const(c1)), int_const(c2))
-            .when_match(move |edit, ty, binds| all_same_width(edit, binds, ty, &[x, c1, c2])),
+        int_add(int_add(var(x), int_const(c1)), int_const(c2)).when_match(
+            move |edit, ty, binds| {
+                coefficient_fits_carrier(ty) && all_same_width(edit, binds, ty, &[x, c1, c2])
+            },
+        ),
         template::int_add(
             var(x),
             int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
