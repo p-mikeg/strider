@@ -91,9 +91,9 @@ pub trait WithOutput: Sized {
 
     /// Some output rather than a fixed slot; otherwise [`output`](Self::output).
     ///
-    /// A capture binds a NODE, and `find_all` reports each distinct set of
-    /// bound nodes once, so every output of one node collapses to a single
-    /// match: this asks whether such an output exists, not which ones do.
+    /// Enumerating: `find_all` dedups at value granularity, so every
+    /// qualifying output is its own match. The collapse to one match per node
+    /// is `strider-py`'s, in `dedup_matches`.
     fn any_output(self) -> OutputPat<Self> {
         OutputPat::at(self, None)
     }
@@ -454,7 +454,9 @@ pub struct IfPat {
     captures: Vec<Capture>,
     capture_true: Option<Capture>,
     capture_false: Option<Capture>,
-    branch_captures: WalkCaptures,
+    /// Per branch slot, so replacing a branch drops the captures the
+    /// discarded walk declared.
+    branch_captures: [WalkCaptures; 2],
     /// An unmatchable branch pattern, replayed onto the builder at `lower`.
     branch_refusal: Option<String>,
 }
@@ -540,11 +542,15 @@ impl IfPat {
             self.branch_refusal
                 .get_or_insert(format!("If branch pattern is not matchable ({e})"));
         }
-        self.branch_captures.bound.extend(pat.bound_captures());
         // Both branches must match, so each one's guarantees carry over whole.
-        self.branch_captures
-            .guaranteed
-            .extend(pat.guaranteed_captures().unwrap_or_default());
+        self.branch_captures[slot] = WalkCaptures {
+            bound: pat.bound_captures().collect(),
+            guaranteed: pat
+                .guaranteed_captures()
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
+        };
         let walk = Box::new(
             move |m: &crate::Matcher,
                   if_node,
@@ -658,13 +664,22 @@ impl IfPat {
                         (None, None) => k(bnd),
                     },
                 ),
-                branch_captures,
+                merged_branch_captures(branch_captures),
             );
         }
         for c in captures {
             b.capture_node(node, c);
         }
         node
+    }
+}
+
+/// One declaration covering both branch walks, which ride a single
+/// `binding_walk`.
+fn merged_branch_captures([t, f]: [WalkCaptures; 2]) -> WalkCaptures {
+    WalkCaptures {
+        bound: [t.bound, f.bound].concat(),
+        guaranteed: [t.guaranteed, f.guaranteed].concat(),
     }
 }
 
