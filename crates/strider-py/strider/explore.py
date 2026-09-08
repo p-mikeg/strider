@@ -374,12 +374,18 @@ class _CfgVisualizer:
         return []
 
 
-#: Deadline for writing one response body, distinct from the request-read
-#: deadline because the two fail differently: a stalled read is a connection
-#: that will never say anything, while a slow read is a real client on a slow
-#: link. Loose enough that no realistic graph is truncated, bounded so a client
-#: that stops reading cannot park the single-threaded loop indefinitely.
-_WRITE_SECONDS = 300.0
+#: How long a response write may make NO progress before the connection is
+#: given up on. Progress re-arms it, so a client on a slow link still receives a
+#: whole 1.4 MB body however long that takes, which a fixed total budget cannot
+#: promise. Well above what flow control alone produces: a client draining 4 KiB
+#: every 50 ms measured an 11 s window with no send accepted, so a deadline in
+#: that range cuts off a healthy transfer.
+_WRITE_STALL_SECONDS = 60.0
+
+#: Longest one blocked `send` waits before the write loop re-checks
+#: `_Server.stopping`. This, not the stall deadline, is what bounds `shutdown`
+#: and interpreter exit with a body in flight.
+_WRITE_POLL_SECONDS = 0.5
 
 
 class _DeadlineReader:
@@ -436,33 +442,60 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     #: returns either. A browser opening a speculative connection and sending
     #: nothing is exactly this shape.
     #:
-    #: Must stay under `_SHUTDOWN_START_SECONDS`, which is what a wedge here
-    #: actually races. `serve_forever` sets `started` from `service_actions`,
-    #: which it reaches only AFTER the first request completes, so a quiet
-    #: FIRST connection leaves `started` clear for the whole handler; `shutdown`
-    #: then gives up waiting for it and never stops the server at all. The join
-    #: budget is not the bound -- `BaseServer.shutdown` is untimed and runs
-    #: before the join, so the loop has always exited by the time it is reached.
+    #: Both directions are bounded, but by different rules: the read by this
+    #: whole-request budget, the write by a no-progress deadline plus the stop
+    #: flag (`_write_body`). Neither is tied to `_SHUTDOWN_START_SECONDS` any
+    #: more, because `_Server.serve_forever` sets `started` on entry rather than
+    #: after the first request completes.
     timeout = 2.0
+
+    def _write_body(self, b: bytes) -> None:
+        """Send `b`, waking every `_WRITE_POLL_SECONDS` to re-check whether the
+        server is stopping.
+
+        `wbufsize` is 0, so `wfile.write` is one `sendall` under one socket
+        timeout, and no value for that timeout works: short enough to reach
+        `shutdown` truncates a slow client mid-body against a `Content-Length`
+        already promising the rest, long enough not to parks the
+        single-threaded loop for that whole deadline. `send` is a single
+        syscall, so a timeout means nothing was sent and `sent` stays exact,
+        which is what separates the two: the deadline re-arms on progress, and
+        the stop flag cuts a write that has none.
+        """
+        stopping = cast("_Server", self.server).stopping
+        view = memoryview(b)
+        sent = 0
+        deadline = time.monotonic() + _WRITE_STALL_SECONDS
+        while sent < len(view):
+            if stopping.is_set():
+                raise TimeoutError("server is stopping")
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError("client stopped reading the response")
+            self.connection.settimeout(min(_WRITE_POLL_SECONDS, left))
+            try:
+                n = self.connection.send(view[sent:])
+            except (TimeoutError, socket.timeout):
+                continue
+            if n:
+                sent += n
+                deadline = time.monotonic() + _WRITE_STALL_SECONDS
 
     def _send(
         self, body: str | bytes, ctype: str = "text/html", code: int = 200
     ) -> None:
         b = body.encode() if isinstance(body, str) else body
         try:
+            # The headers go out under `wfile`'s `sendall`; a poll slice is
+            # ample for a few hundred bytes into a fresh connection, and the
+            # read deadline the socket still carries could be near zero.
+            self.connection.settimeout(_WRITE_POLL_SECONDS)
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(b)))
             self.end_headers()
-            # `wbufsize` is 0, so this is a single `sendall`, and a socket
-            # timeout bounds that whole call rather than each write within it.
-            # Under the read deadline a client slower than the body is cut off
-            # mid-body while the headers have already promised its full length,
-            # which reads as a corrupt graph rather than an error. Only the
-            # request read needs the tight bound; give the write its own.
-            self.connection.settimeout(_WRITE_SECONDS)
-            self.wfile.write(b)
-        except (BrokenPipeError, ConnectionError, TimeoutError):
+            self._write_body(b)
+        except (BrokenPipeError, ConnectionError, TimeoutError, socket.timeout):
             # Cancelled (clicked again), or too slow to read. Either way this
             # connection is finished: retrying the send would spend the whole
             # deadline over again on a socket already known to be stalled.
@@ -583,20 +616,28 @@ class _Server(socketserver.TCPServer):
         self.visualizer: _Visualizer | None = visualizer
         self.entry = visualizer.entry()
         self.controls = visualizer.controls()
-        #: Set from inside the serve loop. `BaseServer.shutdown` blocks
+        #: Set on entry to the serve loop. `BaseServer.shutdown` blocks
         #: forever unless `serve_forever` is already running, so a `shutdown`
         #: racing the start must wait for this.
         self.started = threading.Event()
+        #: Set by `shutdown` before it stops the loop, so a handler blocked
+        #: writing to a client that is not reading gives up rather than holding
+        #: the single-threaded loop for the whole no-progress deadline.
+        self.stopping = threading.Event()
         if depth is not None:
             for ctl in self.controls:
                 if ctl["name"] == "depth":
                     ctl["default"] = _parse_control(ctl, str(depth))
         super().__init__(address, _Handler)
 
-    def service_actions(self) -> None:
-        # Called once per poll iteration, on the serving thread, with the loop
-        # already entered.
+    def serve_forever(self, poll_interval: float = 0.5) -> None:
+        # Marked here, not from `service_actions`: that runs only AFTER a
+        # request completes, so a first connection that holds the handler leaves
+        # `started` clear and `shutdown` gives up on a server that is running.
+        # Setting it early cannot hang a racing `shutdown` either: its
+        # `__shutdown_request` is read on the first loop iteration.
         self.started.set()
+        super().serve_forever(poll_interval)
 
 
 #: Explorer servers currently serving, with the thread parked in each, keyed by
@@ -641,6 +682,10 @@ def shutdown(port: int | None = None) -> list[int]:
     ]
     current = threading.current_thread()
     stopped = []
+    # Every server first, before waiting on any: a handler writing a body polls
+    # this, so the loop it holds is reachable within `_WRITE_POLL_SECONDS`.
+    for _p, (srv, _thread) in targets:
+        srv.stopping.set()
     for p, (srv, _thread) in targets:
         # `BaseServer.shutdown` waits on an event `serve_forever` clears on
         # entry and sets on exit, so calling it before the loop starts blocks
@@ -683,8 +728,8 @@ def visualize(
 
     Opens on the entire graph. `whole=False` starts on a neighborhood around
     the entry instead; either way the toolbar's `whole` toggle switches between
-    them from the page. Drawing everything is the honest default -- a
-    neighborhood hides nodes without saying so -- but a function of a few
+    them from the page. Drawing everything is the honest default, since a
+    neighborhood hides nodes without saying so, but a function of a few
     thousand nodes can keep the layout engine busy for a while, so turn `whole`
     off for those.
 

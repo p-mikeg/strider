@@ -879,7 +879,13 @@ impl PyLifter {
         }
         // `Sleigh::lift_one` carries context-register state across calls, so
         // sweeping through the persistent Sleigh would dirty it for a later
-        // `analyze`/`build_cfg`. A clone inherits no context state.
+        // `analyze`/`build_cfg`. The clone is that one-way isolation; it is not
+        // a clean engine, and must not be one. `Sleigh::clone` replays the
+        // pinned `set_context_at` commits, which is what makes this sweep decode
+        // an address in the ISA mode the CFG decoded it in rather than in the
+        // pspec default. Past `MAX_CONTEXT_COMMITS` the replay is dropped and
+        // the sweep falls back to those defaults, the same best-effort answer
+        // `pcode_at` gives for an address no analysis has ever reached.
         let mut sleigh = self.sleigh()?.clone();
         with_pending_control_flow(|| {
             let mut cur = entry;
@@ -934,7 +940,7 @@ impl PyLifter {
     /// `strider.explore.shutdown(port)` stops a server and joins its thread.
     /// It is registered to run before the interpreter joins non-daemon
     /// threads, so an explorer left running does not hang or abort at exit.
-    #[pyo3(signature = (target, host="127.0.0.1".to_string(), port=0, depth=None, whole=true, background=false))]
+    #[pyo3(signature = (target, host="127.0.0.1", port=0, depth=None, whole=true, background=false))]
     // One parameter per Python keyword; splitting them into a struct would just
     // move the same list somewhere the `#[pyo3(signature)]` cannot see it.
     #[allow(clippy::too_many_arguments)]
@@ -942,7 +948,7 @@ impl PyLifter {
         &self,
         py: Python<'_>,
         target: Py<PyAny>,
-        host: String,
+        host: &str,
         port: u16,
         depth: Option<usize>,
         whole: bool,

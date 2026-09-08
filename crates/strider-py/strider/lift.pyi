@@ -212,6 +212,12 @@ class Lifter:
 
         An empty `unresolved` is not a complete answer: see `AnalyzeResult`
         for the four channels, and `Cfg.is_complete` to test them all.
+
+        Runs the fixed-point loop with the GIL released, so other Python
+        threads keep running. One consequence: a DAEMON thread sitting inside
+        this call when the interpreter starts finalizing is killed while it
+        holds no GIL, and the forced unwind out of the released region aborts
+        the process. Analyse on non-daemon threads, and join them.
         """
         ...
     def optimize(
@@ -408,7 +414,10 @@ class ElfLifter(Lifter):
         opts: Optional[LifterOptions] = ...,
     ) -> AnalyzeResult:
         """Lift the function at `entry`, a symbol name or an address. `cc`
-        defaults to this handle's convention."""
+        defaults to this handle's convention.
+
+        Releases the GIL as `Lifter.analyze` does, with the same consequence
+        for a daemon thread parked inside it at interpreter finalization."""
         ...
     def __repr__(self) -> str: ...
 

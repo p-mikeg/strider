@@ -27,6 +27,15 @@ impl PyTemplate {
     }
 }
 
+impl Drop for PyTemplate {
+    fn drop(&mut self) {
+        crate::pattern::defer_drop(std::mem::replace(
+            &mut self.repr,
+            std::sync::Arc::new(PatRepr::Any),
+        ));
+    }
+}
+
 #[pymethods]
 impl PyTemplate {
     /// Exposes the operand sub-templates, `Py` handles the collector cannot

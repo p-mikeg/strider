@@ -204,28 +204,54 @@ def test_any_of_predicate_cycle_is_collectable():
     assert ref() is None, "cycle through a nested JoinPredicate closure leaked"
 
 
-DEEP_CHAIN = """
-import strider.pattern as p
-from .conftest import fixture_path
+#: Well past the 40_000-to-41_000 link boundary an 8 MiB stack measured, so it
+#: stays decisive where that limit is raised.
+_DEEP_LINKS = 200_000
 
-x = p.anything()
-try:
-    for _ in range(50000):
-        x = x.of_width(32)
-except Exception:
-    pass
+#: Every way to nest that `MAX_PATTERN_NESTING` does not bound. A free
+#: constructor (`strider.pattern` or `strider.template`) starts a fresh count,
+#: and a builder operand slot was never counted at all. None of these use
+#: `.of_width()`, which IS counted and stops at 512, three orders of magnitude
+#: short of a stack overflow.
+DEEP_SHAPES = {
+    "pattern_free": ("strider.pattern", "m.int_const(1)", "m.int_add(x, m.int_const(1))"),
+    "template_free": ("strider.template", "m.int_const(1)", "m.int_add(x, m.int_const(1))"),
+    "builder_slot": ("strider.pattern", "m.anything()", "m.load(addr=x)"),
+    "builder_arg": ("strider.pattern", "m.anything()", "m.call().arg(0, x)"),
+    "binary_operand": (
+        "strider.pattern",
+        "m.anything()",
+        "m.int_binary('add', x, m.int_const(1))",
+    ),
+}
+
+DEEP_CHAIN = """
+import {mod} as m
+x = {seed}
+for _ in range({n}):
+    x = {step}
+print("built", flush=True)
 del x
+print("dropped", flush=True)
 """
 
 
-def test_a_deep_pat_chain_never_crashes_the_interpreter():
-    """Unbounded native recursion over the wrapper chain (traverse, drop)
-    takes the process down with SIGSEGV; a depth error is fine."""
+@pytest.mark.parametrize("shape", sorted(DEEP_SHAPES))
+def test_dropping_a_deep_chain_does_not_crash_the_interpreter(shape):
+    """Dropping the chain descends one native frame per link, and PyO3 0.22 has
+    no `Py_TRASHCAN`, so it used to take the process down with SIGSEGV and no
+    catchable exception. Building it is the cheap half; the crash is in the
+    drop, which is why the child prints on both sides of the `del`."""
     import subprocess
     import sys
 
-    r = subprocess.run([sys.executable, "-c", DEEP_CHAIN], capture_output=True)
-    assert r.returncode >= 0, f"killed by signal {-r.returncode}: {r.stderr!r}"
+    mod, seed, step = DEEP_SHAPES[shape]
+    script = DEEP_CHAIN.format(mod=mod, seed=seed, step=step, n=_DEEP_LINKS)
+    r = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=300
+    )
+    assert r.returncode == 0, f"exit {r.returncode}: {r.stderr}"
+    assert r.stdout.split() == ["built", "dropped"], r.stdout
 
 
 class _ReentrantIndex:

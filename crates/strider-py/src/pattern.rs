@@ -282,6 +282,55 @@ impl PyPat {
     }
 }
 
+impl Drop for PyPat {
+    fn drop(&mut self) {
+        defer_drop(std::mem::replace(&mut self.repr, Arc::new(PatRepr::Any)));
+    }
+}
+
+thread_local! {
+    /// Operand state taken off dropping pattern wrappers, drained by whichever
+    /// drop opened the loop.
+    static DROP_QUEUE: std::cell::RefCell<Vec<Box<dyn std::any::Any>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    static DRAINING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Clears `DRAINING` even if a drop below unwinds.
+struct DrainGuard;
+
+impl Drop for DrainGuard {
+    fn drop(&mut self) {
+        DRAINING.with(|d| d.set(false));
+    }
+}
+
+/// Drops `value` without recursing through the operand chain hanging off it.
+///
+/// An operand slot holds another wrapper, so a plain drop descends one native
+/// frame per link while the chain that built it went through a Python `for`
+/// loop and hit no interpreter limit. PyO3 0.22 has no `Py_TRASHCAN`, and an
+/// 8 MiB stack measured an overflow between 40_000 and 41_000 links. Queueing
+/// holds the depth at the three frames from here back to here: the drain drops
+/// one handle, its wrapper's `Drop` enqueues that wrapper's own state, and
+/// control returns here.
+pub(crate) fn defer_drop<T: 'static>(value: T) {
+    let mut boxed: Option<Box<dyn std::any::Any>> = Some(Box::new(value));
+    let queued = DROP_QUEUE
+        .try_with(|q| q.borrow_mut().push(boxed.take().expect("not yet queued")))
+        .is_ok();
+    // Only when thread-local teardown has already taken the queue away, and
+    // then the recursive drop is the sole option left.
+    drop(boxed);
+    if !queued || DRAINING.with(|d| d.replace(true)) {
+        return;
+    }
+    let _guard = DrainGuard;
+    while let Some(next) = DROP_QUEUE.with(|q| q.borrow_mut().pop()) {
+        drop(next);
+    }
+}
+
 /// A `Pat` wrapping `slf`, which it owns as an operand handle.
 fn derive(slf: &Bound<'_, PyPat>, make: impl FnOnce(Py<PyAny>) -> PatRepr) -> PyResult<PyPat> {
     let depth = slf.borrow().depth + 1;
@@ -717,12 +766,10 @@ impl PatRepr {
 // constructor (`int_add(deep, ...)`) goes through `PyPat::from_repr`, which
 // starts a fresh count, a `strider.template` constructor does the same, and a
 // builder operand slot holds a bare `Py<PyAny>` with no count at all. Any of
-// them can be driven from a Python `for` loop, which
-// involves no Python recursion and so hits no interpreter limit; DROPPING the
-// result is unbounded native recursion, and MEASURED it overflows an 8 MiB
-// stack between 40_000 and 41_000 links (raising `ulimit -s` moves it), since
-// PyO3 0.22 has no `Py_TRASHCAN`. Bounding those needs the operand depth
-// computed at construction, or an iterative `Drop`.
+// them can be driven from a Python `for` loop, which involves no Python
+// recursion and so hits no interpreter limit. Dropping the first two is safe
+// however deep (`drop_repr_deferred`); a chain nested through BUILDER operand
+// slots alone still drops recursively.
 
 /// Compile-recursion levels, NOT builder calls: a nested call costs two, so
 /// the ceiling a caller sees is about half this. Well above any hand-written
@@ -2801,6 +2848,21 @@ macro_rules! node_builder {
             common: std::cell::RefCell<CommonState>,
         }
 
+        // An operand slot holds another builder or `Pat`, so a chain of these
+        // drops one native frame per link; see `defer_drop`. `try_borrow_mut`
+        // for the same reason `__clear__` uses it, and a refusal only costs
+        // this one link its deferral.
+        impl Drop for $ty {
+            fn drop(&mut self) {
+                if let Ok(mut inner) = self.inner.try_borrow_mut() {
+                    defer_drop(std::mem::take(&mut *inner));
+                }
+                if let Ok(mut common) = self.common.try_borrow_mut() {
+                    defer_drop(std::mem::take(&mut *common));
+                }
+            }
+        }
+
         impl $ty {
             fn new() -> Self {
                 Self {
@@ -2959,6 +3021,18 @@ struct CallInner {
 pub struct PyCallPat {
     inner: std::cell::RefCell<CallInner>,
     common: std::cell::RefCell<CommonState>,
+}
+
+// An operand slot holds another builder or `Pat`; see `defer_drop`.
+impl Drop for PyCallPat {
+    fn drop(&mut self) {
+        if let Ok(mut inner) = self.inner.try_borrow_mut() {
+            defer_drop(std::mem::take(&mut *inner));
+        }
+        if let Ok(mut common) = self.common.try_borrow_mut() {
+            defer_drop(std::mem::take(&mut *common));
+        }
+    }
 }
 
 impl PyCallPat {
@@ -3803,6 +3877,15 @@ pub struct PyFunctionArgPat {
     common: std::cell::RefCell<CommonState>,
 }
 
+// `common` carries the `input` / `any_input` operand handles; see `defer_drop`.
+impl Drop for PyFunctionArgPat {
+    fn drop(&mut self) {
+        if let Ok(mut common) = self.common.try_borrow_mut() {
+            defer_drop(std::mem::take(&mut *common));
+        }
+    }
+}
+
 impl PyFunctionArgPat {
     fn new() -> Self {
         Self {
@@ -3940,6 +4023,21 @@ macro_rules! binary_op_builder {
             rhs: Py<PyAny>,
             ordered: std::cell::Cell<bool>,
             common: std::cell::RefCell<CommonState>,
+        }
+
+        // `lhs` / `rhs` hold whatever nested here, so a chain of these drops one
+        // native frame per link; see `defer_drop`. Whoever is deallocating holds
+        // the GIL, so re-entering it here only bumps a count.
+        impl Drop for $ty {
+            fn drop(&mut self) {
+                Python::with_gil(|py| {
+                    defer_drop(std::mem::replace(&mut self.lhs, py.None()));
+                    defer_drop(std::mem::replace(&mut self.rhs, py.None()));
+                });
+                if let Ok(mut common) = self.common.try_borrow_mut() {
+                    defer_drop(std::mem::take(&mut *common));
+                }
+            }
         }
 
         impl $ty {

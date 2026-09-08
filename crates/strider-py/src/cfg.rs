@@ -176,6 +176,23 @@ impl PyCfg {
         }
     }
 
+    /// `center` as a region id this CFG actually has.
+    ///
+    /// `RegionId::new` takes any `usize`, so an out-of-range argument would
+    /// render an empty graph rather than say anything, and `u32::MAX` is
+    /// petgraph's end sentinel, never a region.
+    fn region_id(&self, center: u32) -> PyResult<strider_cfg::RegionId> {
+        if center != u32::MAX {
+            let id = strider_cfg::RegionId::new(center as usize);
+            if self.inner.region_graph().node_weight(id).is_some() {
+                return Ok(id);
+            }
+        }
+        Err(into_strider_err(anyhow::anyhow!(
+            "invalid region id {center}"
+        )))
+    }
+
     fn dispatch_dot(
         &self,
         py: Python<'_>,
@@ -438,7 +455,7 @@ impl PyCfg {
         max_nodes: usize,
         lifter: Option<&Bound<'_, PyLifter>>,
     ) -> PyResult<String> {
-        let node = strider_cfg::RegionId::new(center as usize);
+        let node = self.region_id(center)?;
         self.with_sleigh_of(py, lifter, |sleigh| {
             self.inner
                 .neighborhood_dot(sleigh, node, depth, max_nodes)
