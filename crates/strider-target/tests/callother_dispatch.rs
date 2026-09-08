@@ -501,3 +501,33 @@ fn mips_syscall_carries_the_linux_footprint() {
     let o32 = expect_call(classify(ArchPreset::MipsBe32, "syscall"));
     assert!(!o32.implicit_reads.contains(&"t3"));
 }
+
+/// The ARM32 sla declares no output for `software_smc` / `software_hvc`, so
+/// an empty write footprint lets a read after the SMC resolve to the value
+/// that flowed in.  SMCCC returns in r0..r3.
+#[test]
+fn arm32_smc_and_hvc_clobber_the_smccc_result_registers() {
+    for preset in [
+        ArchPreset::Arm,
+        ArchPreset::ArmBe,
+        ArchPreset::ArmBeKernel,
+        ArchPreset::ArmThumb,
+    ] {
+        for op in ["software_smc", "software_hvc"] {
+            let abi = expect_call(classify(preset, op));
+            for r in ["r0", "r1", "r2", "r3"] {
+                assert!(
+                    abi.implicit_writes.contains(&r),
+                    "{preset:?}/{op}: {r} carries an SMCCC result, got {:?}",
+                    abi.implicit_writes
+                );
+            }
+            assert_eq!(
+                abi.implicit_reads,
+                &["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"]
+            );
+            assert!(abi.clobbers_memory, "{preset:?}/{op}");
+            assert!(!abi.no_return, "{preset:?}/{op}: SMC returns");
+        }
+    }
+}
