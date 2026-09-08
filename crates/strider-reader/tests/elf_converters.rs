@@ -24,10 +24,11 @@ fn elf_code_and_readonly_sections_include_text_and_rodata_exclude_data_and_bss()
     let regions = elf_get_loadable_regions(&obj).unwrap();
 
     let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
-    assert!(addrs.contains(&0x1000), ".text must be included");
-    assert!(addrs.contains(&0x2000), ".rodata must be included");
-    assert!(!addrs.contains(&0x3000), ".data must be excluded");
-    assert!(!addrs.contains(&0x4000), ".bss must be excluded");
+    let base = |name| common::section_base(&bytes, name);
+    assert!(addrs.contains(&base(".text")), ".text must be included");
+    assert!(addrs.contains(&base(".rodata")), ".rodata must be included");
+    assert!(!addrs.contains(&base(".data")), ".data must be excluded");
+    assert!(!addrs.contains(&base(".bss")), ".bss must be excluded");
     assert_eq!(regions.len(), 2);
 }
 
@@ -43,8 +44,12 @@ fn code_and_readonly_preset_skips_nobits() {
     let regions = elf_get_loadable_regions(&obj).unwrap();
 
     let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
-    assert!(addrs.contains(&0x1000), ".text must be present");
-    assert!(!addrs.contains(&0x2000), ".bss (NOBITS) must be skipped");
+    let base = |name| common::section_base(&bytes, name);
+    assert!(addrs.contains(&base(".text")), ".text must be present");
+    assert!(
+        !addrs.contains(&base(".bss")),
+        ".bss (NOBITS) must be skipped"
+    );
 }
 
 /// A failing `section.data()` on an accepted section must propagate, not skip.
@@ -276,12 +281,13 @@ fn et_rel_sections_sharing_a_start_are_rebased_apart() {
         assert_eq!(table.read(base, &mut buf), Some(1), "{name} at {base:#x}");
         assert_eq!(buf[0], want, "{name} must serve its own byte");
     }
+    let sec_base = |name: &str| {
+        use object::Object as _;
+        layout.section_base(&obj.section_by_name(name).unwrap())
+    };
     assert_eq!(
-        layout.section_base(&{
-            use object::Object as _;
-            obj.section_by_name(".second").unwrap()
-        }),
-        0x1001,
+        sec_base(".second"),
+        sec_base(".first") + 1,
         "the loser of the collision is placed just past the winner"
     );
 }
@@ -302,10 +308,14 @@ fn allocatable_sections_include_text_rodata_data_and_exclude_bss() {
     let regions = common::regions(&bytes, LoadFilter::AllAllocatable);
 
     let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
-    assert!(addrs.contains(&0x1000), ".text must be included");
-    assert!(addrs.contains(&0x2000), ".rodata must be included");
-    assert!(addrs.contains(&0x3000), ".data must be included");
-    assert!(!addrs.contains(&0x4000), ".bss (NOBITS) must be excluded");
+    let base = |name| common::section_base(&bytes, name);
+    assert!(addrs.contains(&base(".text")), ".text must be included");
+    assert!(addrs.contains(&base(".rodata")), ".rodata must be included");
+    assert!(addrs.contains(&base(".data")), ".data must be included");
+    assert!(
+        !addrs.contains(&base(".bss")),
+        ".bss (NOBITS) must be excluded"
+    );
     assert_eq!(regions.len(), 3);
 }
 
@@ -319,8 +329,12 @@ fn allocatable_preset_skips_nobits() {
     let regions = common::regions(&bytes, LoadFilter::AllAllocatable);
 
     let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
-    assert!(addrs.contains(&0x1000), ".text must be present");
-    assert!(!addrs.contains(&0x2000), ".bss (NOBITS) must be skipped");
+    let base = |name| common::section_base(&bytes, name);
+    assert!(addrs.contains(&base(".text")), ".text must be present");
+    assert!(
+        !addrs.contains(&base(".bss")),
+        ".bss (NOBITS) must be skipped"
+    );
 }
 
 /// The data-error propagation contract, re-pinned through the allocatable
@@ -454,7 +468,12 @@ fn read_only_presets_exclude_a_writable_executable_mapping() {
         .iter()
         .map(|r| r.start_addr())
         .collect();
-    assert_eq!(fetch, vec![0x1000, 0x2000], "RWX stays fetchable");
+    let base = |name| common::section_base(&bytes, name);
+    assert_eq!(
+        fetch,
+        vec![base(".text"), base(".rodata")],
+        "RWX stays fetchable"
+    );
 
     for (name, regions) in [
         (
@@ -478,7 +497,11 @@ fn read_only_presets_exclude_a_writable_executable_mapping() {
         ),
     ] {
         let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
-        assert_eq!(addrs, vec![0x2000], "{name} must exclude the RWX mapping");
+        assert_eq!(
+            addrs,
+            vec![base(".rodata")],
+            "{name} must exclude the RWX mapping"
+        );
     }
 }
 

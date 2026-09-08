@@ -39,10 +39,14 @@ fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
     let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem)
         .expect("create Sleigh for ET_REL fixture");
 
-    let tz_addr = obj
-        .symbol_by_name("tzcount")
-        .expect("tzcount symbol present in .o")
-        .address();
+    // Through the layout, not raw `st_value`: an ET_REL symbol's `st_value` is
+    // an offset into its section, and the reader seats those sections apart at
+    // a synthetic base.
+    let layout = strider_reader::elf::ElfSectionLayout::new(&obj);
+    let tz_addr = layout.symbol_address(
+        &obj.symbol_by_name("tzcount")
+            .expect("tzcount symbol present in .o"),
+    );
 
     let cfg = Builder::for_arch(&arch, &mut sleigh, tz_addr, &CfgOptions::default())
         .build()
