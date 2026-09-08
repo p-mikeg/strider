@@ -494,7 +494,7 @@ fn apply_elf_relocations_patches_dispatch_table_x86_64() {
         panic!("missing {path:?}; run `make -C fixtures CASE=elf_relocs ARCH=x64`");
     }
     let owned = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = owned.file();
+    let obj = owned.checked_file().expect("the mapped file is unchanged");
     // `dispatch_table` lives in `.data.rel.ro`, which the default
     // code-and-readonly loader skips as writable; the wider loader picks it up
     // so the applier has somewhere to patch.
@@ -534,7 +534,7 @@ fn default_loader_omits_data_rel_ro() {
         return;
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = obj.file();
+    let obj = obj.checked_file().expect("the mapped file is unchanged");
     let regions = strider_reader::elf::elf_get_loadable_regions(&obj).unwrap();
     let table_addr = sym_addr(&obj, "dispatch_table");
     assert!(
@@ -560,7 +560,7 @@ fn apply_elf_relocations_no_op_on_pre_resolved_binary() {
         return; // skip if fixture not built
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = obj.file();
+    let obj = obj.checked_file().expect("the mapped file is unchanged");
     let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).expect("regions");
     let before: Vec<Vec<u8>> = regions.iter().map(common::region_bytes).collect();
     strider_reader::elf::apply_elf_relocations(
@@ -590,7 +590,7 @@ fn apply_elf_relocations_idempotent() {
         return;
     }
     let owned = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = owned.file();
+    let obj = owned.checked_file().expect("the mapped file is unchanged");
     let mut regions = owned
         .regions(
             strider_reader::elf::RegionSource::Auto,
@@ -782,7 +782,7 @@ fn a_read_straddling_a_relocated_site_serves_the_patched_bytes() {
         return;
     }
     let owned = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = owned.file();
+    let obj = owned.checked_file().expect("the mapped file is unchanged");
     let table = strider_reader::MemRegionsLookupTable::new(
         owned
             .regions(
@@ -836,7 +836,7 @@ fn ppc_rel32_patches_a_rodata_jump_table() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/out/ppc32be/switch_masked_loop.o");
     let owned = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = owned.file();
+    let obj = owned.checked_file().expect("the mapped file is unchanged");
     let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).expect("regions");
     strider_reader::elf::apply_elf_relocations(
         &mut regions,
