@@ -2,9 +2,9 @@ use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{ExtendOp, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker};
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
-    Capture, CaptureExt, CastMask, MatchPat, Matcher, any_int_const, anything, call, call_other,
-    entry, if_else, indirect_branch, int_add, int_const, load, mem_phi, phi, region, ret, store,
-    switch, unreachable, var,
+    Capture, CaptureExt, CastMask, MatchPat, Matcher, WithOutput, any_int_const, anything, call,
+    call_other, entry, if_else, indirect_branch, int_add, int_const, load, mem_phi, phi, region,
+    ret, store, switch, unreachable, var,
 };
 
 /// `call(addr)` followed by a `Return`.
