@@ -430,10 +430,10 @@ fn a_bss_symbol_does_not_resolve_into_text() {
 }
 
 /// A `SHF_TLS` section is addressed as an offset into the per-thread block, so
-/// the layout leaves it at its `sh_addr`, 0 in a `.o`. Loading it anyway
-/// seats `.tdata` at VMA 0 ahead of `.text`, and every read of the code serves
-/// its bytes instead. `gcc -c` emits this shape wherever a TLS section
-/// precedes the code one, e.g. `-ffunction-sections` output.
+/// the layout leaves it at its `sh_addr`, 0 in a `.o`. Loading it anyway maps
+/// `.tdata` at an address that means nothing, and one the rebase keeps
+/// unmapped. `gcc -c` emits this shape wherever a TLS section precedes the code
+/// one, e.g. `-ffunction-sections` output.
 #[test]
 fn a_tls_section_is_not_loaded_and_never_shadows_code() {
     let bytes = build_elf_with_sections(&[
@@ -506,10 +506,13 @@ fn an_unmapped_bss_address_answers_no_read() {
 /// gABI: an ET_REL `st_value` is an offset from the start of the section
 /// `st_shndx` names, so a symbol's address is that section's base plus it.
 /// Every ordinary `.o` has `sh_addr == 0`, which hides the missing term.
+///
+/// The `sh_addr` here is above the synthetic image base, so the section is not
+/// rebased and the declared address is the loaded one.
 #[test]
 fn an_et_rel_symbol_address_includes_its_sections_sh_addr() {
     let bytes = build_elf_with_sections_and_symbols(
-        &[SectionSpec::text(0x1000, vec![0x90; 0x20])],
+        &[SectionSpec::text(0x8000_0000, vec![0x90; 0x20])],
         &[SymbolSpec {
             name: b"f",
             section: 0,
@@ -520,7 +523,10 @@ fn an_et_rel_symbol_address_includes_its_sections_sh_addr() {
     let obj = object::File::parse(&bytes[..]).unwrap();
     let layout = ElfSectionLayout::new(&obj);
     let text = layout.section_base(&obj.section_by_name(".text").unwrap());
-    assert_eq!(text, 0x1000, "a non-colliding section keeps its sh_addr");
+    assert_eq!(
+        text, 0x8000_0000,
+        "a section above the base keeps its sh_addr"
+    );
     assert_eq!(
         layout.symbol_address(&obj.symbol_by_name("f").unwrap()),
         text + 0x10
@@ -568,4 +574,61 @@ fn a_nobits_section_overrunning_the_address_space_does_not_move_the_watermark() 
     let regions = elf::elf_get_loadable_regions(&obj).expect("the load must survive the .bss");
     assert_eq!(regions.len(), 1, "only `.text` has bytes to load");
     assert_eq!(common::region_bytes(&regions[0]), vec![0x90; 4]);
+}
+
+/// Address 0 must stay unmapped on an ET_REL. Seated there the object makes a
+/// null dereference a readable, foldable ROM read, and a relocation site whose
+/// symbol does not resolve keeps its file-initial zero, which then folds
+/// through `LoadReadOnly` to the bytes at 0 instead of failing to fold.
+#[test]
+fn an_object_file_leaves_address_zero_unmapped() {
+    let synthetic = build_elf_with_sections(&[
+        SectionSpec::text(0, vec![0x90; 0x20]),
+        SectionSpec::rodata(0, vec![0xaa; 8]),
+    ]);
+    let fixture_bytes = {
+        let path = fixture("x64", "memory.o");
+        if path.exists() {
+            Some(std::fs::read(&path).unwrap())
+        } else {
+            // A missing fixture must be VISIBLE: a silent skip reports as a pass.
+            eprintln!(
+                "SKIP {}: {} is not built; run `make -C fixtures`",
+                module_path!(),
+                path.display()
+            );
+            None
+        }
+    };
+    for bytes in [Some(synthetic), fixture_bytes].into_iter().flatten() {
+        let obj = object::File::parse(&bytes[..]).unwrap();
+        assert_eq!(obj.kind(), object::ObjectKind::Relocatable);
+        let reader = elf::ElfFileMemReader::from_object(&obj).unwrap();
+        assert!(
+            ReadOnlyMemory::read(&reader, 0, &mut [0u8; 1]).is_err(),
+            "address 0 must answer no ROM read"
+        );
+        let table =
+            MemRegionsLookupTable::new(common::regions(&bytes, elf::LoadFilter::AllAllocatable));
+        assert_eq!(table.read(0, &mut [0u8; 1]), None, "address 0 is mapped");
+        // A symbol of a section the layout seats: `.tdata` (per-thread
+        // offsets), an empty section and a non-allocatable one occupy no
+        // address space and keep `sh_addr`.
+        let layout = ElfSectionLayout::new(&obj);
+        let seated: Vec<_> = nonempty_alloc_sections(&obj)
+            .iter()
+            .map(|s| s.index())
+            .collect();
+        for sym in obj
+            .symbols()
+            .filter(|s| s.section_index().is_some_and(|i| seated.contains(&i)))
+        {
+            assert_ne!(
+                layout.symbol_address(&sym),
+                0,
+                "{:?} resolves to address 0",
+                sym.name()
+            );
+        }
+    }
 }
