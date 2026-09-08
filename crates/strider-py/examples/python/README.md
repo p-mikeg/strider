@@ -1,8 +1,8 @@
 # `strider-py` examples
 
-Runnable scripts covering every major surface of `strider-py`. Most run
-against the fixture ELFs in `fixtures/out/x86/`; 02, 08, 10, 11, 12, 15 and 17
-supply bytes from Python and need no ELF.
+Seventeen runnable scripts, indexed below. Most run against the fixture ELFs
+in `fixtures/out/x86/`; 02, 08, 10, 11, 12, 15 and 17 supply bytes from Python
+and need no ELF.
 
 ## Prerequisites
 

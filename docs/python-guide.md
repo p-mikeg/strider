@@ -327,24 +327,21 @@ dot = function.neighborhood_dot(function.entry_node(), depth=2, pretty=True)
 
 ## When a pattern does not match
 
-The usual reason is that optimization already rewrote the shape you expected.
-The three that trip people up most:
+The usual reason is that optimization already rewrote the shape you expected;
+[optimizations.md](optimizations.md) lists what each pass reshapes. The three
+that trip people up most:
 
 - **Subtraction and "not equal" style ops are not primitives.** The lifter
   lowers `a - b` to `a + (-b)`, and `a != b` to `not (a == b)`. Use the alias
   constructors (`int_sub`, `int_le`, `float_ne`, ...) instead of building the raw
   shape.
-- **Commutative ops try both orders for you.** The integer `int_add`,
-  `int_mul`, `int_and`, `int_or`, `int_xor` and their `I1` spellings `bool_and`,
-  `bool_or`, `bool_xor`, the float `float_add`, `float_mul`, and the commutative
-  comparisons `int_eq`, `int_carry`, `int_scarry`, `float_eq` all match either
-  operand order, as do the lowered `int_ne` and `float_ne` that wrap an equality.
-  The rest keep the order you wrote.
+- **Commutative ops try both orders for you.** The integer adds, multiplies and
+  bitwise ops, the float `float_add` and `float_mul`, and the commutative
+  comparisons all match either operand order, as do the lowered `int_ne` and
+  `float_ne` that wrap an equality. The rest keep the order you wrote;
+  [python-api.md](python-api.md#operators) enumerates which is which.
 - **`phi()` matches any phi**, whatever register it carries; `phi_for(vn)`
   narrows to one. Use `mem_phi()` for the memory merge.
-- **A value added to a multiple of itself collapses.** `x + x*2` is folded to
-  `x*3`, and `x + (x<<1)` with it: thirteen add/subtract against multiply/shift
-  pairings end up as one `x * K`. Look for the product.
 
 When a pattern still comes up empty, dump the raw graph
 (`function.to_html("graph.html")` without `pretty`) and walk forward from the

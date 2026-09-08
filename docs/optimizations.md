@@ -2,7 +2,7 @@
 
 Before you query a function, Strider optimizes its IR for regularity rather than
 for speed: clutter folds away and equivalent code is rewritten into one agreed
-shape, so a single pattern matches every case instead of a dozen near-misses.
+shape, so a single pattern matches every case instead of each near-miss.
 
 `analyze` runs the default set for you. The passes are worth knowing because when
 a pattern does not match, it is usually because one of them already reshaped what
@@ -26,7 +26,8 @@ In the order the default pipeline runs them:
 
 **ConstantFold.** Computes anything whose inputs are all constant, applies
 algebraic identities (`x + 0`, `x * 1`, and so on), and folds constant
-truncations and extensions. Most other passes depend on it having run.
+truncations and extensions. `LoadReadOnly`, `FlagCmpCanonicalize` and
+`IfCondInversion` are ordered after it and say so.
 
 It also collects a value against itself: `x + x*2` becomes `x*3`, and the same
 for a shift standing in for a multiply, so `x + (x<<1)` folds too. Thirteen
@@ -40,11 +41,10 @@ that image for you (the loaded file minus its writable mappings), so a load out
 of an RWX segment is fetched from but never folded. For a raw blob you pass one
 in as `rom=` (see the ROM reader in the [Python guide](python-guide.md)).
 
-An image whose only `PT_LOAD` is RWX, the MIPS `vmlinux` shape (x86-64 and arm64
-ship separate RX / R / RW segments), therefore has no read-only part at all: every load fails to fold and
-the pass goes quiet rather than reporting anything. Check `prog.rom()`, whose
-repr counts its regions, when folding you expected does not happen; the fix is
-to hand in a `rom=` covering the constant data yourself.
+An image whose only `PT_LOAD` is RWX therefore has no read-only part at all:
+every load fails to fold and the pass goes quiet rather than reporting anything.
+Check `prog.rom()`, whose repr counts its regions, when folding you expected does
+not happen; the fix is to hand in a `rom=` covering the constant data yourself.
 
 **KnownBits.** Tracks which bits of each value are known to be 0 or 1. When every
 bit of a result is pinned down, it becomes a constant.
@@ -79,17 +79,20 @@ along with the matching phi and memory-phi inputs.
 constant address, a heap object) and later loaded back from exactly that
 location with nothing overwriting it in between, the stored value is handed
 straight to the load. A wider store is narrowed to the load's range; anything
-short of an exact base-and-offset match blocks, as does an intervening call or
-control merge.
+short of an exact base-and-offset match blocks, as does an intervening control
+merge. So does an intervening call, unless its convention declares
+`preserves_memory`, which is what `cc.preserves_all()` and
+`per_address_ccs={callee_addr: cc}` buy for a transparent hook such as
+`__fentry__`.
 
 This pass is quadratic in the number of loads times the number of memory
-definitions: each load walks the memory chain from its own cursor, with no
-shared memo. It is the one pass that does not scale linearly, and on a long
-chain of distinct stack slots it dominates the pipeline, measured at 89% of
-optimize time on a 14,000-node function built from `-O0` C. Optimized code does
-not have that shape, because calls and aliasing break the chains, so the cost
-shows up on debug builds and firmware rather than on release binaries. Drop
-`LoadForward` from a custom pipeline if you hit it.
+definitions: each load walks the memory chain from its own cursor, and its memo
+is keyed on the probed location, so loads at different offsets share nothing.
+On a long chain of distinct stack slots that is roughly 4x per doubling of the
+chain, against about 2x for every other pass, and it dominates the pipeline.
+Optimized code does not have that shape, because calls and aliasing break the
+chains, so the cost shows up on debug builds and firmware rather than on
+release binaries. Drop `LoadForward` from a custom pipeline if you hit it.
 
 With `AssumptionOptions(escape_analysis=True)` it also forwards across a call,
 when no stack address escapes to the callee and the slot is not one the call
@@ -102,8 +105,7 @@ to memory, forwards too. Set on its own it changes nothing.
 
 ## Post-passes
 
-These run once on the settled graph. They record facts on it, and two of
-them also edit it:
+In the order the default pipeline runs them:
 
 **StackOffsetDetect.** For every load and store whose address reduces to a stack
 terminal plus a fixed amount, it records the pair. Offsets are comparable only
@@ -163,5 +165,5 @@ Four shapes come back in `unresolved` rather than as an error:
 
 Build a custom set of passes with the `strider.opt` builders and pass it through
 `LifterOptions(pipeline=...)`. `analyze` appends `IndirectBranchClassify` to
-whatever you build, so `resolve_indirect_branches=False` is how you leave it
-out.
+whatever you build either way; `resolve_indirect_branches=False` turns it off
+rather than leaving it out, and it still records its report.

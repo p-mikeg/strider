@@ -40,9 +40,14 @@ one; `cfg.is_complete()` reads all four, and
 `load_elf` maps the image rather than copying it, and applies its relocations as
 bytes are read, so a large object opens in tens of milliseconds and faults in
 only what you analyse. Linked images, shared libraries and unlinked `ET_REL`
-objects all load. [docs/getting-started.md](docs/getting-started.md) covers the
-mapping, and [docs/python-api.md](docs/python-api.md#1-loading-a-binary) the
-knobs over it (`STRIDER_NO_MMAP=1`, `from_segments`, `apply_relocations`).
+objects all load. A mapped image must not change on disk while a handle over it
+lives: rebuilding the binary under a live handle raises `StriderError: mapped
+file ... changed on disk since it was mapped`, so re-open it, or set
+`STRIDER_NO_MMAP=1` to read it into memory instead. That is the REPL and
+notebook failure mode. [docs/getting-started.md](docs/getting-started.md)
+covers the mapping, and
+[docs/python-api.md](docs/python-api.md#1-loading-a-binary) the knobs over it
+(`STRIDER_NO_MMAP=1`, `from_segments`, `apply_relocations`).
 
 ```python
 import strider
@@ -85,13 +90,19 @@ for hit in function.find_all(load(addr=int_add(base, off)), ignore_casts=True):
     print("offset =", hit[off].uint_opt)   # None if it is not a constant
 
 # The explorer draws the whole graph; visualize(whole=False) opens on the
-# neighborhood around a node instead, which stays usable on large functions.
+# neighborhood around the entry instead, which stays usable on large functions.
 prog.visualize(function)          # prints a local URL; blocks until interrupted
 
 # ...or serve on a thread and keep querying:
 port = prog.visualize(function, background=True)
 strider.explore.shutdown(port)
 ```
+
+A lift handle decodes only on the thread that built it: `analyze`,
+`build_cfg`, `optimize`, `pcode_at` and the rest raise a catchable
+`StriderError` from anywhere else. The handle itself moves and drops anywhere,
+so build a second one over the same `arch` / `reader()` / `rom()` to work
+off-thread, which is what the background explorer does for its own renderer.
 
 You can also decide matches with your own logic: `.when(f)` filters one pattern
 against a callable, backtracking so other bindings are still tried, and a
@@ -130,6 +141,10 @@ which also unpacks as the 3-tuple above. `prog.symbol(name)` returns a `Symbol`
 (`name`, `address`, `size`, `end`, `is_function`, `region`) where 0.1.0 returned
 a bare address, so a 0.1.0 script doing arithmetic on one needs `.address` now;
 `prog.symbol_at(addr)` reverse-resolves an address to the `Symbol` covering it.
+The query API renamed with it, which is every line of the 0.1.0 quickstart:
+`add` is `int_add`, a bare string is no longer a capture operand (`Capture` is),
+and `const_uint` is `uint`. [CHANGELOG.md](CHANGELOG.md) lists the rest,
+breaking entries first.
 A failure raised by strider itself carries its Rust trace on `.backtrace`, and
 `STRIDER_BACKTRACE=1` folds it into the message.
 
@@ -145,8 +160,8 @@ about the code that the IR cannot check, passed as
 the positive one, and two of the six default `True`, so
 `AssumptionOptions.none()` is the only spelling of "assume nothing" that stays
 sound as claims are added; `AssumptionOptions()` is not it.
-[docs/getting-started.md](docs/getting-started.md) and
-[docs/optimizations.md](docs/optimizations.md) say what each one buys.
+[docs/python-api.md](docs/python-api.md#2-analyzing-a-function) says what each
+one buys.
 
 A function that never returns still answers queries. A `while (1)`, a spin loop
 or a `panic` helper ending in a self-jump reaches no return instruction, so the
@@ -183,7 +198,8 @@ git clone --recursive https://github.com/p-mikeg/strider
 git submodule update --init --recursive
 ```
 
-The fixture binaries are stored in Git LFS, so fetch them too:
+The fixture binaries under `fixtures/out/` are stored in Git LFS, so fetch them
+too and the examples and tests run without a cross-compiler:
 
 ```bash
 git lfs install && git lfs pull
@@ -198,9 +214,7 @@ uv run maturin develop    # build the Rust extension
 uv run pytest             # run the test suite
 ```
 
-The fixture binaries under `fixtures/out/` are committed through Git LFS, so the
-examples and tests run without a cross-compiler. Rebuild them with `cd fixtures
-&& make` after changing the sources.
+Rebuild the fixtures with `cd fixtures && make` after changing their sources.
 
 ## Architecture
 
@@ -232,8 +246,9 @@ runs against the committed fixtures (`cargo run -p strider-orchestrator
 --example orchestrator_demo`), driving the stages by hand (`Lifter::new`,
 `build_cfg`, `build_ir`, `pipeline.run`) and dumping each one.
 [`examples/analyze_kernel.rs`](crates/strider-orchestrator/examples/analyze_kernel.rs)
-is the one-call form, but it is a profiling harness: it needs an image path and
-a symbol you supply.
+is the one-call form, but it is a profiling harness: it takes the image path in
+`argv[1]` (or `$STRIDER_KERNEL`), and the symbol and the architecture are
+constants at the top of the file that you edit.
 
 ## Build & test
 
