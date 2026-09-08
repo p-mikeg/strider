@@ -5,7 +5,7 @@
 # Strider
 
 > *"He's one of them Rangers. Dangerous folk they are, wandering the Wilds."*
-> -- Barliman Butterbur, *The Fellowship of the Ring*
+> Barliman Butterbur, *The Fellowship of the Ring*
 
 Strider is named after Aragorn's ranger alias: a tracker who finds what others
 miss. It hunts through compiled binaries, letting you ask precise questions
@@ -29,25 +29,20 @@ MIPS16 entry lands in the right decoder. Whatever stays unresolved comes back
 in `unresolved`; you can hand in your own answers with
 `CfgOptions(known_targets={dispatch_addr: [target, ...]})`, or turn the
 classifier off entirely with `LifterOptions(resolve_indirect_branches=False)`.
-Seating an answer changes the CFG the classifier reads, so a wrong seed can stop
-it deriving and take the site's real arms with it. An unresolved branch is a
-result, never an error: `analyze` raises only on a genuine lift, CFG or
-optimizer failure. A converged CFG is never silently incomplete, but it says so
-through four channels rather than one, of which `isa_mode_conflicts` can only
-fire on ARM and MIPS; the reference covers each in
-[docs/python-api.md](docs/python-api.md#12-the-cfg-stridercfg).
+An unresolved branch is a result, never an error: `analyze` raises only on a
+genuine lift, CFG or optimizer failure, and
+[docs/optimizations.md](docs/optimizations.md#dispatch-shapes-that-do-not-resolve)
+lists the dispatch shapes that still come back that way. A converged CFG is
+never silently incomplete, but it says so through four channels rather than
+one; `cfg.is_complete()` reads all four, and
+[docs/python-api.md](docs/python-api.md#12-the-cfg-stridercfg) covers each.
 
 `load_elf` maps the image rather than copying it, and applies its relocations as
 bytes are read, so a large object opens in tens of milliseconds and faults in
-only what you analyse. Set `STRIDER_NO_MMAP=1` to read the file instead, which
-a network or 9p mount needs: a paging error through a mapping is a SIGBUS no
-caller can catch.
-
-Linked images and unlinked object files both load: `load_elf` walks `PT_LOAD`
-program headers and falls back to sections for an `ET_REL` object.
-`apply_relocations=False` also narrows what is mapped to code and read-only
-data, so a writable section like `.data` or `.got` reads as `None` rather than
-as its on-disk bytes.
+only what you analyse. Linked images, shared libraries and unlinked `ET_REL`
+objects all load. [docs/getting-started.md](docs/getting-started.md) covers the
+mapping, and [docs/python-api.md](docs/python-api.md#1-loading-a-binary) the
+knobs over it (`STRIDER_NO_MMAP=1`, `from_segments`, `apply_relocations`).
 
 ```python
 import strider
@@ -91,9 +86,11 @@ for hit in function.find_all(load(addr=int_add(base, off)), ignore_casts=True):
 
 # The explorer draws the whole graph; visualize(whole=False) opens on the
 # neighborhood around a node instead, which stays usable on large functions.
-# Drag or arrow-key to pan, ctrl+wheel to zoom, f to fit.
-prog.visualize(function)                   # prints a local URL; Ctrl-C to stop
-prog.visualize(function, background=True)  # ...or serve and keep querying
+prog.visualize(function)          # prints a local URL; blocks until interrupted
+
+# ...or serve on a thread and keep querying:
+port = prog.visualize(function, background=True)
+strider.explore.shutdown(port)
 ```
 
 You can also decide matches with your own logic: `.when(f)` filters one pattern
@@ -101,6 +98,11 @@ against a callable, backtracking so other bindings are still tried, and a
 `JoinPredicate` subclass correlates captures across several patterns. Worked
 through in
 [docs/python-guide.md](docs/python-guide.md#constraints-relating-matches-by-control-flow).
+
+`find_all` returns every match; `find_unique_value(pat, capture)` returns the
+one constant a capture is bound to across all of them, which is the answer to
+"what value does this function always pass here", and raises when two matches
+disagree.
 
 `one_of([a, b])` yields a separate match for every arm that matches;
 `first_of` cuts to the first that matches. `int_add(a, b).ordered()` pins
@@ -124,10 +126,12 @@ float parameter, and at a call site the float arguments follow the integer ones,
 so on SysV `call().arg(6, p)` is the first of them.
 
 `analyze` returns an `AnalyzeResult` (`.cfg` / `.function` / `.unresolved`),
-which also unpacks as the 3-tuple above. `prog.symbol_at(addr)` reverse-resolves
-an address to the `Symbol` covering it. A failure raised by strider itself
-carries its Rust trace on `.backtrace`, and `STRIDER_BACKTRACE=1` folds it into
-the message.
+which also unpacks as the 3-tuple above. `prog.symbol(name)` returns a `Symbol`
+(`name`, `address`, `size`, `end`, `is_function`, `region`) where 0.1.0 returned
+a bare address, so a 0.1.0 script doing arithmetic on one needs `.address` now;
+`prog.symbol_at(addr)` reverse-resolves an address to the `Symbol` covering it.
+A failure raised by strider itself carries its Rust trace on `.backtrace`, and
+`STRIDER_BACKTRACE=1` folds it into the message.
 
 `load_elf` reads ARM32's float ABI from EABI `e_flags` and picks `arm_aapcs`
 or `arm_aapcs_soft`. A relocatable object carries no such bit, and an image
@@ -135,38 +139,14 @@ setting neither falls to hard-float; pass
 `cc=strider.sleigh.CallingConvention.arm_aapcs_soft()` for those, or float
 arguments read as empty registers.
 
-The hard-float bank is one set of 16 single-precision slots `s0..s15` aliased
-as `d0..d7`. `arg_passing_regs_float` names the double carriers, so a function
-taking `float` arguments reports the wrong varnode at every odd position;
-`function_arg_float` is a candidate there, not an answer.
-
-Memory precision is tunable per analysis, and every knob is one claim about the
-code that the IR cannot check, so all six sit in `AssumptionOptions`. Each one's
-risky value is the positive one; clearing all six forwards only what the IR
-structurally proves and is the one configuration sound under any input.
-`stack_global_disjoint` (default `True`) says no constant address equals
-`sp + K` at runtime. `assume_incoming_args_survive_calls` (default `True`) says
-a callee leaves an incoming stack-argument slot as it found it, and reaches
-which loads count as incoming arguments, nothing else. The four defaulting off:
-`escape_analysis` forwards a spill across a call when no stack address escapes
-to the callee; `noalias_allocators=[malloc_addr]` lets a load step through a
-pure allocator call, whose result is a fresh disjoint object;
-`callee_preserves_stack_args` treats the outgoing argument slots as untouched by
-the callee, which the psABI permits it to write, and does nothing on its own:
-its only reader sits behind `escape_analysis` or a non-empty
-`noalias_allocators`; and `distinct_sp_bases_disjoint` says a store off one
-stack base cannot alias one off another. Pass them as
-`LifterOptions(assumptions=AssumptionOptions(...))`.
-
-Some indirect-dispatch shapes do not resolve yet, and come back in
-`unresolved` rather than as an error: AArch64 big-endian stack-array dispatch
-built through a `bfi` insert against an alignment-masked SP; MIPS64
-GOT-indirect dispatch, where the table routes through `gp` even under
-`-fno-pic` and the values lift as `Add(Load[gp+off], const)` rather than a raw
-constant; PowerPC stack-array dispatch on ppc32le, ppc64be and ppc64le, whose
-lifted shape is uncharacterised (ppc32be resolves); and, on any arch, a masked
-switch index whose real bound lives on a loop back edge, where the
-over-approximated answer oscillates and the site is abandoned.
+Memory precision is tunable per analysis: `AssumptionOptions` holds six claims
+about the code that the IR cannot check, passed as
+`LifterOptions(assumptions=AssumptionOptions(...))`. Each one's risky value is
+the positive one, and two of the six default `True`, so
+`AssumptionOptions.none()` is the only spelling of "assume nothing" that stays
+sound as claims are added; `AssumptionOptions()` is not it.
+[docs/getting-started.md](docs/getting-started.md) and
+[docs/optimizations.md](docs/optimizations.md) say what each one buys.
 
 A function that never returns still answers queries. A `while (1)`, a spin loop
 or a `panic` helper ending in a self-jump reaches no return instruction, so the
@@ -203,7 +183,7 @@ git clone --recursive https://github.com/p-mikeg/strider
 git submodule update --init --recursive
 ```
 
-The fixture object files are stored in Git LFS, so fetch them too:
+The fixture binaries are stored in Git LFS, so fetch them too:
 
 ```bash
 git lfs install && git lfs pull
@@ -218,9 +198,9 @@ uv run maturin develop    # build the Rust extension
 uv run pytest             # run the test suite
 ```
 
-The fixture binaries under `fixtures/out/` are committed, the object files
-through Git LFS, so the examples and tests run without a cross-compiler. Rebuild
-them with `cd fixtures && make` after changing the sources.
+The fixture binaries under `fixtures/out/` are committed through Git LFS, so the
+examples and tests run without a cross-compiler. Rebuild them with `cd fixtures
+&& make` after changing the sources.
 
 ## Architecture
 
