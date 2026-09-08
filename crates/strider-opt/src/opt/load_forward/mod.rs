@@ -34,7 +34,14 @@ pub struct LoadForward {
     /// its SP, and a forwarded value can only make an address the window scan
     /// could not place placeable, which ends a prefix sooner than the memo
     /// says.
-    analyzer: RefCell<Option<MemAnalyzer>>,
+    analyzers: RefCell<Option<Analyzers>>,
+}
+
+/// `alias` carries the assumption knobs and decides whether to forward;
+/// `narrow` carries none and is the only one a permanent rewire may name.
+struct Analyzers {
+    alias: MemAnalyzer,
+    narrow: MemAnalyzer,
 }
 
 impl Clone for LoadForward {
@@ -50,7 +57,7 @@ impl crate::peephole::PeepholePass for LoadForward {
     }
 
     fn start_sweep(&self) {
-        *self.analyzer.borrow_mut() = None;
+        *self.analyzers.borrow_mut() = None;
     }
 
     // A fresh forward reaches a consumer only through an address edge, which
@@ -67,15 +74,19 @@ impl crate::peephole::PeepholePass for LoadForward {
         root: NodeId,
     ) -> Result<crate::peephole::PeepholeRewrite> {
         // `call_blocking`: a store at another SP base may still alias.
-        let options = MemOptions::call_blocking(opt_ctx.options.assumptions.stack_global_disjoint)
+        let options = MemOptions::call_blocking(opt_ctx.options.assumptions.stack_global_disjoint);
+        let relaxed = options
             .with_escape_analysis(opt_ctx.options.assumptions.escape_analysis)
             .with_callee_preserves_stack_args(
                 opt_ctx.options.assumptions.callee_preserves_stack_args,
             );
-        let mut analyzer = self.analyzer.borrow_mut();
-        let alias_cfg = analyzer.get_or_insert_with(|| MemAnalyzer::new(options));
+        let mut analyzers = self.analyzers.borrow_mut();
+        let cfgs = analyzers.get_or_insert_with(|| Analyzers {
+            alias: MemAnalyzer::new(relaxed),
+            narrow: MemAnalyzer::new(options),
+        });
         Ok(crate::peephole::PeepholeRewrite::from_changed(
-            try_forward_load(edit, root, alias_cfg)?.changed(),
+            try_forward_load(edit, root, &cfgs.alias, &cfgs.narrow)?.changed(),
         ))
     }
 }
@@ -91,12 +102,13 @@ impl crate::peephole::PeepholePass for LoadForward {
 /// Answering in one pass needs a per-location def index, which a `MemPhi` DAG
 /// has no linear order to build one over; that is a MemorySSA redesign, not a
 /// tuning knob. `narrow_load_to` below is what keeps the constant down in
-/// practice: it shortens each load's edge, so later sweeps skip the run already
-/// proven disjoint.
+/// practice: it shortens each load's edge to its relaxation-free clobber, so
+/// later sweeps skip the run already proven disjoint.
 fn try_forward_load(
     edit: &mut crate::EditFunction<'_>,
     load: NodeId,
     alias_cfg: &MemAnalyzer,
+    narrow_cfg: &MemAnalyzer,
 ) -> Result<OptimizationResult> {
     let mem = edit
         .memory_input_of(load)
@@ -104,9 +116,12 @@ fn try_forward_load(
     let (load_value, load_ty) = edit.single_value_output(load)?;
 
     let clobber_node = alias_cfg.nearest_clobber(edit.function(), load, mem);
-    // Shorten the load's memory edge onto its nearest clobber so future walks
-    // skip the proven-disjoint run.  Harmless if the load then forwards away.
-    crate::mem_ssa::narrow_load_to(edit, load, clobber_node);
+    // Shorten the load's memory edge onto the clobber `narrow_cfg` proves so
+    // future walks skip the proven-disjoint run.  Never `alias_cfg`'s: the
+    // rewire outlives this run, and a later run with the relaxations off would
+    // inherit an edge that only holds with them on.
+    let sound_clobber = narrow_cfg.nearest_clobber(edit.function(), load, mem);
+    crate::mem_ssa::narrow_load_to(edit, load, sound_clobber);
 
     if !matches!(edit.node_kind(clobber_node), NodeKind::Store(_)) {
         return Ok(OptimizationResult::NoChange);

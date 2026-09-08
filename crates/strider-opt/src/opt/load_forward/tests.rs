@@ -1959,3 +1959,45 @@ fn nested_loop_exit_merge_never_forwards_the_store_after_phi_collapse() -> Resul
     );
     Ok(())
 }
+
+/// A rewire outlives the run that made it, so it may only name a clobber that
+/// holds with the assumption knobs off: re-optimising under
+/// `AssumptionOptions::none()` must not inherit an edge past the `Call`.
+#[test]
+fn narrowing_across_a_call_never_outlives_escape_analysis() -> Result<()> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let frame = b.build_int_const((-32i64) as u64, ValueType::I32)?;
+        let call_sp =
+            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::I32)?;
+        b.write_variable(&sp, call_sp)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        b.build_call(target, &[], &[], 0)?;
+        // Nothing is stored, so the load can only narrow.
+        let eight = b.build_int_const((-8i64) as u64, ValueType::I32)?;
+        let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let mut relaxed = crate::OptCtx::new(None);
+    relaxed.options.assumptions.escape_analysis = true;
+    crate::test_support::standard_test().run(&mut fg, &mut relaxed)?;
+
+    let mut sound = crate::OptCtx::new(None);
+    sound.options.assumptions = crate::AssumptionOptions::none();
+    crate::test_support::standard_test().run(&mut fg, &mut sound)?;
+
+    let load = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+        .expect("nothing stores to the slot, so the load survives");
+    let mem = fg.node_inputs(load)[0];
+    assert!(
+        matches!(fg.node_kind(fg.producer(mem)), NodeKind::Call),
+        "the Call must stay on the load's memory chain, got {:?}",
+        fg.node_kind(fg.producer(mem)),
+    );
+    Ok(())
+}
