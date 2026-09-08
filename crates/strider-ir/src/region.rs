@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use cranelift_entity::packed_option::PackedOption;
 use cranelift_entity::{SecondaryMap, entity_impl};
 
 use crate::IRViewer;
@@ -20,12 +21,10 @@ pub(crate) struct Region {
     cur_ctrl: ValueId,
     /// Advances through Store, Call, and CallOther.
     cur_memory: ValueId,
-    variables: SecondaryMap<InitialVnId, ValueId>,
-    /// One `Phi` output per `phi_vars` entry. Entries outside `phi_vars` are
-    /// unset.
-    initial_variables: SecondaryMap<InitialVnId, ValueId>,
-    /// Variables that have a `Phi` here.
-    phi_vars: Vec<InitialVnId>,
+    /// Current SSA value per variable. Unset means no definition reaches here.
+    variables: SecondaryMap<InitialVnId, PackedOption<ValueId>>,
+    /// One `Phi` output per variable with a phi here, in creation order.
+    phis: Vec<(InitialVnId, ValueId)>,
 }
 
 pub(crate) struct TerminatedRegion {
@@ -93,25 +92,65 @@ impl FunctionBuilder {
         self.cur_region = Some(region);
     }
 
-    /// Appends one operand per `region` phi, taken from `variables`. A variable
-    /// with no phi at `region` is skipped. Operand order follows the call
-    /// order, pairing `phi.operand[i]` with `region`'s i-th control
-    /// predecessor.
+    /// Appends one operand per `region` phi, taken from `variables`. Operand
+    /// order follows the call order, pairing `phi.operand[i]` with `region`'s
+    /// i-th control predecessor.
+    ///
+    /// `variables` is read raw, an absent entry yielding `ValueId(0)`, so the
+    /// callers pass the entry region's complete `InitialVar` seed.
     pub(crate) fn link_region_variables(
         &mut self,
         region: RegionId,
         variables: &SecondaryMap<InitialVnId, ValueId>,
     ) -> Result<()> {
-        // Cloned so the graph edits below don't hold a borrow of
-        // `self.regions[region]`.
-        let phi_vars = self.regions[region].phi_vars.clone();
-        for var_id in phi_vars {
-            let region_variable_output_id = self.regions[region].initial_variables[var_id];
-            let region_variable_id = self.function().producer(region_variable_output_id);
-            let current_variable = variables[var_id];
+        let operands: Vec<ValueId> = self.regions[region]
+            .phis
+            .iter()
+            .map(|&(var_id, _)| variables[var_id])
+            .collect();
+        self.append_phi_operands(region, &operands)
+    }
+
+    /// One operand per `region` phi, read out of `source`'s current values.
+    ///
+    /// Errors on a variable `source` has no value for, which is a region the
+    /// rename walk never reached: `translate_regions` walks the dominator
+    /// pre-order, which excludes the regions unreachable from the entry, while
+    /// `link_region_edges` walks every CFG edge.
+    fn reaching_phi_operands(&self, region: RegionId, source: RegionId) -> Result<Vec<ValueId>> {
+        self.regions[region]
+            .phis
+            .iter()
+            .map(|&(var_id, _)| {
+                self.regions[source].variables[var_id]
+                    .expand()
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "no definition of variable {var_id:?} reaches region {} on its edge \
+                             into region {}",
+                            source.as_u32(),
+                            region.as_u32()
+                        )
+                    })
+            })
+            .collect()
+    }
+
+    fn append_phi_operands(&mut self, region: RegionId, operands: &[ValueId]) -> Result<()> {
+        let phis = self.regions[region].phis.len();
+        if operands.len() != phis {
+            return Err(anyhow!(
+                "region {} carries {phis} phis but the incoming edge supplies {} operands",
+                region.as_u32(),
+                operands.len()
+            ));
+        }
+        for (i, &operand) in operands.iter().enumerate() {
+            let phi_value = self.regions[region].phis[i].1;
+            let phi_node = self.function().producer(phi_value);
             self.function_mut()
                 .graph_mut()
-                .add_node_input(region_variable_id, current_variable);
+                .add_node_input(phi_node, operand);
         }
         Ok(())
     }
@@ -132,12 +171,14 @@ impl FunctionBuilder {
             .graph_mut()
             .add_node_input(memory_node, phi_token);
 
-        let mut initial_variables = SecondaryMap::new();
+        let mut phis = Vec::with_capacity(phi_vars.len());
+        let mut variables = SecondaryMap::new();
         for &vn_id in phi_vars {
             let var = self.function().initial_vn(vn_id);
-            initial_variables[vn_id] = self.build_vn_phi(var, phi_token, &[])?;
+            let value = self.build_vn_phi(var, phi_token, &[])?;
+            phis.push((vn_id, value));
+            variables[vn_id] = value.into();
         }
-        let variables = initial_variables.clone();
 
         self.require_memory_kind(memory)?;
         self.require_control_kind(control)?;
@@ -148,8 +189,7 @@ impl FunctionBuilder {
             cur_ctrl: control,
             cur_memory: memory,
             variables,
-            initial_variables,
-            phi_vars: phi_vars.to_vec(),
+            phis,
         }))
     }
 
@@ -158,9 +198,8 @@ impl FunctionBuilder {
     /// dominator-tree order.
     pub fn inherit_variables(&mut self, region: RegionId, idom: RegionId) {
         let mut variables = self.regions[idom].variables.clone();
-        let phi_vars = self.regions[region].phi_vars.clone();
-        for var_id in phi_vars {
-            variables[var_id] = self.regions[region].initial_variables[var_id];
+        for &(var_id, value) in &self.regions[region].phis {
+            variables[var_id] = value.into();
         }
         self.regions[region].variables = variables;
     }
@@ -171,7 +210,11 @@ impl FunctionBuilder {
         region: RegionId,
         variables: SecondaryMap<InitialVnId, ValueId>,
     ) {
-        self.regions[region].variables = variables;
+        let mut packed = SecondaryMap::new();
+        for (var_id, &value) in variables.iter() {
+            packed[var_id] = value.into();
+        }
+        self.regions[region].variables = packed;
     }
 
     /// Repoints every phi-carrying variable's current value at its own `Phi`
@@ -180,20 +223,28 @@ impl FunctionBuilder {
     /// value.
     pub(crate) fn seed_phi_vars_from_phis(&mut self, region: RegionId) {
         let r = &mut self.regions[region];
-        for &var_id in &r.phi_vars {
-            r.variables[var_id] = r.initial_variables[var_id];
+        for i in 0..r.phis.len() {
+            let (var_id, value) = r.phis[i];
+            r.variables[var_id] = value.into();
         }
     }
 
     pub fn write_variable_from_id(&mut self, var_id: InitialVnId, value: ValueId) -> Result<()> {
         let region_id = self.require_cur_region()?;
-        self.regions[region_id].variables[var_id] = value;
+        self.regions[region_id].variables[var_id] = value.into();
         Ok(())
     }
 
     pub(crate) fn read_variable_from_id(&self, var_id: InitialVnId) -> Result<ValueId> {
         let region_id = self.require_cur_region()?;
-        Ok(self.regions[region_id].variables[var_id])
+        self.regions[region_id].variables[var_id]
+            .expand()
+            .ok_or_else(|| {
+                anyhow!(
+                    "no definition of variable {var_id:?} reaches region {}",
+                    region_id.as_u32()
+                )
+            })
     }
 
     pub(crate) fn link_control_regions(
@@ -227,15 +278,11 @@ impl FunctionBuilder {
     ) -> Result<()> {
         self.link_control_regions(region, control)?;
         self.link_memory_regions(region, memory)?;
-        // Take-and-restore instead of cloning. `link_region_variables` reads
-        // only `phi_vars` / `initial_variables`, so a self-loop
-        // (`cur_region == region`, an entry that is its own loop header) never
-        // observes the emptied slot.
-        let source = std::mem::take(&mut self.regions[cur_region].variables);
-        let res = self.link_region_variables(region, &source);
-        self.regions[cur_region].variables = source;
-        res?;
-        Ok(())
+        // Collected before the appends, so a self-loop (`cur_region == region`,
+        // an entry that is its own loop header) takes the values reaching the
+        // back edge rather than the ones it is about to seat.
+        let operands = self.reaching_phi_operands(region, cur_region)?;
+        self.append_phi_operands(region, &operands)
     }
 
     /// Links `child_region` as the fallthrough successor of `parent_region`.

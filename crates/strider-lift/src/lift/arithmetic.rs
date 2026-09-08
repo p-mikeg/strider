@@ -157,12 +157,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             IntBinaryOp::And,
             out_ty,
         )?;
-        // Either direction: `Or` below pins both operands to `out_ty`, and a
-        // Sleigh shift count is any width.
-        let widened_count =
-            self.builder
-                .extend_if_needed(count, out_ty, strider_ir::ExtendOp::ZeroExtend)?;
-        let narrow = self.builder.truncate_if_needed(widened_count, out_ty)?;
+        let narrow = self.builder.truncate_if_needed(count, out_ty)?;
         self.builder
             .build_int_binary_operation(narrow, addend, IntBinaryOp::Or, out_ty)
     }

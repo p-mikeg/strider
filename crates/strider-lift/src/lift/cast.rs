@@ -7,9 +7,13 @@ use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, ensure_const_space, nth_input_or_err, require_output_vn};
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
-    /// Right-shift by `byte_offset * 8`, then truncate.  P-code requires
-    /// `byte_offset < value_size`; a larger one wraps the multiply, so it is
-    /// rejected outright.
+    /// Right-shift by `byte_offset * 8`, then truncate.
+    ///
+    /// P-code DEFINES an offset at or past the input width, as zero
+    /// (`OpBehaviorSubpiece::evaluateBinary`), but Sleigh's `truncation`
+    /// operator keeps offsets in range, so one arriving here means the decode
+    /// is not what this handler models: fail the lift rather than emit a
+    /// constant zero for it.
     pub(super) fn handle_subpiece(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input_vn = nth_input_or_err(insn, 0)?;
         ensure_const_space(
@@ -29,13 +33,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let out_vn = require_output_vn(insn)?;
         // No overflow: byte_offset < input.size <= u32::MAX.
         let bit_shift = byte_offset * 8;
-        // Guards a future Subpiece-width extension. The check above bounds
-        // `bit_shift` by the input's own width, which reaches 504 on a `zmm`.
-        debug_assert!(
-            bit_shift < u64::from(input_vn.size) * 8,
-            "Subpiece bit_shift {bit_shift} must be < input bit-width {}",
-            u64::from(input_vn.size) * 8,
-        );
         let shifted = self.builder.build_shift_by_const(
             value,
             bit_shift,

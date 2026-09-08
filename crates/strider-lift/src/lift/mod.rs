@@ -1,5 +1,7 @@
 use anyhow::{Result, anyhow};
 
+use crate::lift_options::LiftOptions;
+
 mod arithmetic;
 mod boolean;
 mod call;
@@ -45,8 +47,6 @@ pub struct LiftOutcome {
     /// WIDEN a table that resolved before the CFG finished growing.
     pub switch_anchors: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
 }
-
-pub use crate::lift_options::LiftOptions;
 
 /// The CFG-to-IR lift engine, built once and reused across every function and
 /// rebuild iteration.  The calling convention is per-function, hence a per-call
@@ -602,6 +602,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 .ok_or_else(|| anyhow!("no region {src:?} in cfg"))?
                 .terminator;
             if matches!(src_terminator, strider_cfg::RegionTerminator::Unconditional) {
+                // Every CFG edge, against a `translate_regions` that walks the
+                // dominator pre-order: a source unreachable from the entry has
+                // no values, which `link_regions` rejects the moment the target
+                // carries a phi.
                 self.builder.link_regions(
                     ir_region_of(region_map, src)?,
                     ir_region_of(region_map, tgt)?,

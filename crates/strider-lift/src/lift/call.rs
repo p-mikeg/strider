@@ -1,6 +1,5 @@
 use anyhow::Context as _;
 use anyhow::{Result, anyhow};
-use strider_ir::IRViewer as _;
 
 use super::FunctionLifter;
 
@@ -37,13 +36,17 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 
         // A PowerPC trap whose TO mask names every relation fires
         // unconditionally, so the fall-through is dead. The mask is the op's
-        // first explicit operand, a CONST varnode this reads back as its
-        // `IntConst`. A caller override for the name states what this binary's
-        // build of the op does, so it answers instead, as it does for the
-        // region terminator.
-        let to_mask = explicit_args
-            .first()
-            .and_then(|&v| self.builder.function().int_const_u128(v));
+        // first explicit operand, read off the CONST varnode rather than the
+        // lifted value: `RegionBuilder` decides the same thing the same way,
+        // and an operand that merely FOLDS to a constant would terminate a
+        // region the cfg kept open. A caller override for the name states what
+        // this binary's build of the op does, so it answers instead, as it does
+        // for the region terminator.
+        let to_mask = insn
+            .inputs
+            .get(1)
+            .filter(|vn| vn.addr_space == rsleigh::VnSpace::CONST)
+            .map(|vn| u128::from(vn.addr_off));
         let overridden = self.call_other_overrides.get(name).is_some();
         let terminate = abi.no_return
             || (!overridden
@@ -55,7 +58,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 
     /// Implicit-read registers come FIRST in the arg list, before the explicit
     /// pcode operands.
-    fn build_abi_call_other(
+    pub(super) fn build_abi_call_other(
         &mut self,
         user_op_id: u64,
         name: &str,
