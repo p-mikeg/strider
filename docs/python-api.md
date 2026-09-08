@@ -6,7 +6,7 @@ walkthrough instead, read the [Python guide](python-guide.md).
 The typed `.pyi` stubs under `crates/strider-py/strider/` are the source of
 truth for exact signatures (and list every arithmetic operator, which this doc
 groups rather than enumerates). Blocks showing a whole flow run against the
-committed fixture ELFs in `fixtures/out/x86/`; the signature listings use
+committed fixture ELFs under `fixtures/out/`; the signature listings use
 placeholder names.
 
 The public surface is eight domain submodules plus one top-level error.
@@ -193,10 +193,6 @@ stale pointer is taken not to see the new object's stores. Reaching that needs
 a use-after-free in the analysed program, so the knob is least trustworthy on
 exactly the bug class you might be looking for.
 
-`AssumptionOptions.none()` clears all six, which is the only configuration
-sound under any input; `AssumptionOptions()` is not that, since two default
-`True`.
-
 ### ElfLifter metadata
 
 ```python
@@ -246,7 +242,9 @@ the `(start, end)` of the loaded region the symbol maps into, such as `.text`.
 
 `symbol_at` takes the nearest symbol at or below the address whose recorded
 extent reaches it. A symbol with no recorded size covers only its own address,
-and aliases sharing an address resolve to the code symbol among them.
+and aliases sharing an address are ranked by recorded extent first and by being
+code second, which is the order `functions()` uses, so a sized data alias wins
+over an unsized function one.
 
 ---
 
@@ -386,10 +384,10 @@ return value when nested as a value), `.output(slot)` (a specific output).
 A call's float arguments are appended after its integer ones, never interleaved,
 so an integer argument keeps the index it would have had without them: on x86-64
 SysV `.arg(6)` is the first float argument. Each class indexes by ABI position
-off the convention's own register list, the float positions starting at
-`len(arg_passing_regs)`, so `.arg(6)` is XMM0 whether or not the analyzed
-function names it. The incoming-argument patterns index the two classes
-separately instead.
+off the convention's own register list, the float positions starting at the
+count of integer argument registers the convention declares (six on x86-64
+SysV), so `.arg(6)` is XMM0 whether or not the analyzed function names it. The
+incoming-argument patterns index the two classes separately instead.
 
 If slots: `.cond(p)`, `.ctrl(p)`, `.true_branch(p)` / `.false_branch(p)` (what
 an edge leads to), `.capture_true(c)` / `.capture_false(c)` (bind the edge for
@@ -419,9 +417,9 @@ isinstance(p.entry(), p.InputPat)     # False
 node kind: `Call` inputs are `[ctrl, mem, target, sp, arg0, ...]`, `Load`'s are
 `[mem, addr]`, `If`'s are `[ctrl, cond]`, while `Call` OUTPUTS are
 `[ctrl, mem, result, ...clobbers]` and `Load`'s are `[value]`. The IR's
-`expected_signature` (`strider-ir/src/node_signature.rs`) is the source of
-truth. They are the escape hatch beneath the named accessors, not a replacement
-for them. What a slot holds decides what can bind it: only an untyped wildcard
+`expected_signature` (`crates/strider-ir/src/node_signature.rs`) is the source
+of truth. They are the escape hatch beneath the named accessors, not a
+replacement for them. What a slot holds decides what can bind it: only an untyped wildcard
 (`var` / `anything`) reaches a Control, memory or phi-token edge, never a typed
 value sub-pattern.
 
@@ -473,7 +471,9 @@ builders (`ret` / `if_else` / `switch` / `indirect_branch` / `unreachable`).
 ```python
 c = p.Capture()                # fresh, anonymous
 off = p.Capture("off")         # named; two Capture("off") are one variable
-p.int_add(off, p.anything())       # a bare string is NOT a capture; use Capture(...)
+p.int_add(off, p.anything())   # a Capture operand binds
+p.int_add("base", off)         # a bare string is NOT a capture: this builds,
+                               # and find_all raises on it
 ```
 
 You read a capture back by the object or by its name string
@@ -481,26 +481,16 @@ You read a capture back by the object or by its name string
 
 ### Chaining methods
 
-The value-op functions (`int_add`, `int_mul`, `int_const`, ...) return a finished `Pat`.
-The typed builders (`load`, `call`, `int_binary`, ...) return a builder you keep
-chaining, finalised with `.into_pat()` or passed straight to `find_all`.
+The value-op functions (`int_add`, `int_mul`, `int_const`, ...) return a
+finished `Pat`; the typed builders (`load`, `call`, `int_binary`, ...) return a
+builder, finalised with `.into_pat()` or passed straight to `find_all`. Both
+carry the `NodePat` methods above, and `.capture(c)` takes a name as readily as
+a `Capture`.
 
-Both a `Pat` and a builder carry `.capture(c)` / `.when(f)`:
-
-```python
-p.int_add(a, b).capture(c)                  # bind the matched node to c
-p.int_add(a, b).capture("sum")              # ... naming it instead
-p.int_add(a, b).when(lambda m: ...)         # keep the match only if the predicate holds
-```
-
-A value pattern also takes `.of_width(bits)` / `.value_ty("i64")` /
-`.bool_valued()`. The
-`int_binary` / `bool_binary` / `float_binary` builders take `.ordered()`. Node
-builders (`load`, `call`, ...) have their own slots (`.addr`, `.arg`,
-`.cond`, ...).
+Only a value pattern takes `.of_width(bits)` / `.value_ty("i64")` /
+`.bool_valued()`:
 
 ```python
-p.int_binary("Add", a, b).ordered()     # do not also try swapped operands
 p.int_const(c).of_width(32)             # constrain the constant's width
 p.var(c).value_ty("i64")                # ... or a captured value's type
 ```
@@ -695,13 +685,9 @@ prog.visualize(cfg)               # a Cfg works too
 
 The explorer opens on the **whole graph**: a neighborhood view hides nodes
 without saying so, so you cannot tell a small function from a truncated one.
-`visualize(whole=False)` opens on the neighborhood around a node instead, which
-stays fast on a large function, and the toolbar's **whole** toggle switches
-between them either way.
-
-`visualize` returns the port it bound. `background=True` serves on its own
-thread and returns straight away, so the calling thread keeps querying while the
-page is open; stop it with `strider.explore.shutdown(port)`.
+`visualize(whole=False)` opens on the neighborhood around the entry instead,
+which stays fast on a large function, and the toolbar's **whole** toggle
+switches between them either way.
 
 Drag with the mouse or press the arrow keys to pan (shift for a longer step);
 ctrl+wheel zooms about the pointer and `+` / `-` about the window centre, `f`
@@ -716,8 +702,9 @@ to) and **reset** to go back. The three limits start at `0`, which means no
 limit on each; **pretty** and **whole** start on, and **depth** takes whatever
 `visualize(depth=...)` seeds.
 
-`visualize()` blocks until interrupted; `background=True` serves on its own
-non-daemon thread and returns the port immediately:
+`visualize()` blocks until interrupted and returns the port it bound;
+`background=True` serves on its own non-daemon thread and returns that port
+immediately:
 
 ```python
 port = prog.visualize(fn, background=True)
@@ -735,8 +722,8 @@ an sla parse (tens of milliseconds, once) and its own memory.
 `shutdown` is registered to run before the interpreter joins non-daemon threads,
 so an explorer left running does not hang or abort the process at exit.
 
-For static output use `function.to_dot(pretty=True)`, `function.to_html(path)`,
-or `function.neighborhood_dot(center, depth=2, pretty=True)`.
+For static output use the renderers in
+[section 3](#3-the-function-and-its-nodes).
 
 ---
 
@@ -803,9 +790,10 @@ rather than a loss, so an ARM `pop {pc}` epilogue lands here and not in
 `unresolved`. `isa_mode_conflicts()` and `interior_branch_targets()` carry the
 other two; `isa_mode_conflicts()` is structurally always empty outside the four
 ARM and four MIPS presets, the only ones with an ISA-mode context variable to
-disagree about. The first, third and fourth accumulate across resolution
-rounds, so a later round cannot launder an earlier loss;
-`unverified_seeded_sites` is derived once from the final CFG. `is_complete()`
+disagree about. `unresolved`, `isa_mode_conflicts` and
+`interior_branch_targets` accumulate across resolution rounds, so a later round
+cannot launder an earlier loss; `unverified_seeded_sites` is derived once from
+the final CFG. `is_complete()`
 folds all four into one answer.
 
 `CfgOptions` (passed via `LifterOptions.cfg` or `Lifter.build_cfg`) tunes CFG
@@ -863,10 +851,11 @@ except strider.StriderError as e:
     log.debug("%s", e.backtrace)  # frames, when you are chasing strider itself
 ```
 
-`STRIDER_BACKTRACE=1` folds the trace into the message instead; it reads from
-`os.environ` and takes effect on the next error. Importing strider sets
-`RUST_LIB_BACKTRACE=1` if neither backtrace variable is set, which is what
-makes capture the default; export either one beforehand to keep strider from
-writing to the environment at all. `RUST_BACKTRACE=0` in the environment
-suppresses the capture, leaving `.backtrace` holding the message and no
-frames.
+`STRIDER_BACKTRACE=1` folds the trace into the message instead, and takes
+effect on the next error. Importing strider sets `RUST_LIB_BACKTRACE=1` if
+neither backtrace variable is set, which is what makes capture the default.
+Both the write and the reads go through the process environment rather than
+`os.environ`, so setting one from Python after the import has no effect and the
+write is invisible to `os.environ`; export what you want before starting the
+interpreter. `RUST_BACKTRACE=0` in the environment suppresses the capture,
+leaving `.backtrace` holding the message and no frames.

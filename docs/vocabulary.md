@@ -135,6 +135,7 @@ apart: that the stack and globals do not overlap, that a named allocator
 returns fresh storage, and four more. `AssumptionOptions` holds them. A wrong
 one makes the answer wrong rather than imprecise, so
 `AssumptionOptions.none()` is the configuration sound under any input.
+[python-api.md](python-api.md#2-analyzing-a-function) says what each one buys.
 
 **Noalias allocator.** A function you name as returning storage nothing else
 points at, `malloc` being the usual one. Its return value becomes a base
@@ -144,9 +145,11 @@ distinct from every other, which is what lets a load step through a call to it.
 a fixed amount", Strider records that amount. It lets you ask for stack accesses
 specifically, or for one exact slot.
 
-**Asm-fingerprint.** Every IR node remembers the addresses of the machine
-instructions that produced it. Given a match, you can map the value back to the
-exact assembly it came from.
+**Asm-fingerprint.** An IR node that a machine instruction produced remembers
+that instruction's address, so given a match you can map the value back to the
+exact assembly it came from. It is empty on the six kinds the lifter
+synthesises rather than lifts: `Entry`, `InitialMemory`, `InitialVar`,
+`Region`, `Phi` and `MemPhi`.
 
 ## Querying
 
