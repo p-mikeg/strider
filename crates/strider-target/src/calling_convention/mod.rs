@@ -274,6 +274,7 @@ impl BuiltCallingConvention {
     /// - `callee_saved_regs` is disjoint from `arg_passing_regs`,
     ///   `arg_passing_regs_float`, `ret_val_regs`, and `ret_val_regs_float`
     /// - `ret_val_regs` and `ret_val_regs_float` are disjoint
+    /// - `arg_passing_regs` and `arg_passing_regs_float` are disjoint
     /// - `stack_vn` is in none of the five register lists
     /// - no duplicates within any single list
     /// - a `Some` `link_register_vn` is also in `callee_saved_regs` (the

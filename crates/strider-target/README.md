@@ -48,7 +48,9 @@ that implicit footprint:
   beyond the p-code operands.
 - `clobbers_memory`: whether it advances the IR's memory edge (true for atomics,
   barriers, port I/O, syscalls; false for pure compute like `rdtsc`).
-- `no_return`: whether control never comes back (true for a trap or `sysret`).
+- `no_return`: whether control never comes back (true for `sysret`, an ERET, or
+  a trap that cannot fall through; the PowerPC `tw`/`td` family is conditional
+  and stays returning).
 
 `classify(preset, name)` says how to lift a given user-op: `NoOp` emits nothing (a
 hint with no effect on the model), and `Call(abi)` emits a CallOther node
