@@ -124,9 +124,11 @@ pub(crate) fn run_peephole<P: PeepholePass>(
 ) -> Result<OptimizationResult> {
     pass.start_sweep();
     // Seeds iterate in reverse-postorder (or postorder, per `seed_order`), not
-    // discovery/preorder order. Safe because the cached live set stays exactly
-    // the entry-reachable set, and every rule is confluent (fires only when it
-    // strictly simplifies), so any valid order converges.
+    // discovery/preorder order. Each pass picks the order its rules need:
+    // `FlagCmpCanonicalize` seeds outermost-first because a bottom-up seed
+    // would rewrite an inner sub-pattern and destroy the enclosing flag-tree
+    // match. Confluence is not assumed; the dequeue budget below turns a
+    // non-confluent rule pair into an error rather than a hang.
     let seed: Vec<NodeId> = match pass.seed_order() {
         SeedOrder::ReversePostorder => edit
             .reverse_postorder_filter(|k| pass.matches_kind(k))

@@ -2287,3 +2287,86 @@ fn range_of_non_integer_value_is_top() {
     assert!(iv.is_top(u128::MAX), "F64 range must be top, got {iv:?}",);
     assert!(iv.count() > 1, "F64 range must not be a singleton");
 }
+
+/// `k` `If`s in a chain, each bounding the same value on its true edge, which
+/// leaves for a leaf `Return`; the false edge continues the chain.  Returns
+/// `(function, value, first_leaf)`, the leaf two dominator steps from the
+/// entry however large `k` is.
+fn build_guard_fan(k: usize) -> (strider_ir::Function, ValueId, NodeId) {
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let entry = b.create_region_all().unwrap();
+    let leaves: Vec<_> = (0..k).map(|_| b.create_region_all().unwrap()).collect();
+    let rest: Vec<_> = (0..k).map(|_| b.create_region_all().unwrap()).collect();
+    b.set_entry_region_all(entry).unwrap();
+
+    b.set_region(entry);
+    let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
+    let idx = b
+        .build_load(dummy_addr, rsleigh::VnSpace::RAM, ValueType::I32)
+        .unwrap();
+    let mut cur = entry;
+    for i in 0..k {
+        b.set_region(cur);
+        let bound = b
+            .build_int_const(1000u64 - i as u64, ValueType::I32)
+            .unwrap();
+        let cond = b
+            .build_int_cmp_operation(idx, bound, IntCmpOp::Less, ValueType::I32)
+            .unwrap();
+        b.build_if(cond, leaves[i], rest[i]).unwrap();
+        b.set_region(leaves[i]);
+        b.build_return(Some(idx), &[]).unwrap();
+        cur = rest[i];
+    }
+    b.set_region(cur);
+    b.build_return(Some(idx), &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+
+    let first_if = f
+        .walk()
+        .find(|&n| matches!(f.node_kind(n), NodeKind::If))
+        .expect("an If node");
+    let true_edge = f.node_outputs(first_if)[0];
+    let leaf = f
+        .graph()
+        .value_uses(true_edge)
+        .next()
+        .expect("the true edge has a consumer")
+        .0;
+    (f, idx, leaf)
+}
+
+/// A guard lookup costs the query point's dominator depth, not the value's
+/// guard count: `k` guards on one value must not make a query two steps from
+/// the entry `k` times more expensive.  Keyed by node, the whole chain from
+/// the leaf is three nodes whatever `k` is.
+#[test]
+fn a_guard_lookup_tracks_dominator_depth_not_guard_count() {
+    let mut probes = Vec::new();
+    for k in [4usize, 32] {
+        let (f, idx, leaf) = build_guard_fan(k);
+        let doms = control_dominators(&f);
+        let known = analyze_known_bits(&f).unwrap();
+        let mut ranges = compute_value_ranges(&f, &doms, &known);
+        assert_eq!(
+            ranges.guards[&idx].len(),
+            k,
+            "each If's true edge bounds the value"
+        );
+        crate::value_range::GUARD_PROBES.with(|c| c.set(0));
+        let iv = ranges.range_of(idx, leaf);
+        assert_eq!(
+            (iv.lo, iv.hi),
+            (0, 999),
+            "the outermost guard is idx < 1000"
+        );
+        probes.push(crate::value_range::GUARD_PROBES.with(std::cell::Cell::get));
+    }
+    assert_eq!(
+        probes[0], probes[1],
+        "8x the guards, same dominator chain: {probes:?}"
+    );
+}

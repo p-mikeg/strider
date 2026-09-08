@@ -243,6 +243,7 @@ impl OptimizerPipeline {
         // A memo left by an earlier run was derived against that run's
         // assumptions, this one's may differ.
         function.side_tables().clear_memory_slots();
+        function.side_tables().clear_frame_escape();
         {
             // Scoped so the borrow of `function` is released before the
             // validation step below.

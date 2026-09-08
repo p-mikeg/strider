@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType, low_bits_mask_u128};
 use strider_ir::{Function, IRViewer, IntBinaryOp, MemDecomp};
 use strider_target::Endianness;
 
@@ -505,25 +505,18 @@ fn classify_addr(
     }
 }
 
-/// The one classification of a `Store`'s address, so every consumer agrees.
-fn classify_store_addr(
-    function: &Function,
-    store_node: NodeId,
-    noalias_allocators: &FxHashSet<u64>,
-) -> AddrClass {
-    classify_addr(
-        function,
-        function.store_addr(store_node),
-        noalias_allocators,
-    )
-}
-
-/// A contiguous run of 1-bits over at least one low 0-bit, e.g. `0xFFFF_FFF0`.
-/// A low-bit mask like `0xF` is a bit-extraction, not a base, and zero /
-/// all-ones have no alignment effect, so all are rejected.
+/// A contiguous run of 1-bits over a low 0-bit run of a plausible alignment,
+/// e.g. `0xFFFF_FFF0`.  A low-bit mask like `0xF` is a bit-extraction, not a
+/// base, and zero / all-ones have no alignment effect, so all are rejected.
 fn is_alignment_mask(m: u128, width_bits: usize) -> bool {
+    /// Largest alignment a frame demands, `alignas(4096)`.  Past it the mask
+    /// clears more of the address than any ABI aligns: `sp & 0x8000_0000` at
+    /// I32 is 0 or 0x8000_0000, which is not `sp` rounded down in any useful
+    /// sense, the same reason `sp & 0x10` is rejected below.
+    const MAX_ALIGN_BITS: u32 = 12;
     let tz = m.trailing_zeros();
-    if tz == 0 || (tz as usize) >= width_bits || width_bits == 0 || width_bits > 128 {
+    // A width past the `u128` carrier has no mask this can compare against.
+    if tz == 0 || tz > MAX_ALIGN_BITS || (tz as usize) >= width_bits || width_bits > 128 {
         return false;
     }
     // Past the low zero run the rest must be a contiguous block of 1s that
@@ -531,12 +524,8 @@ fn is_alignment_mask(m: u128, width_bits: usize) -> bool {
     // `sp & 0xFFFF_FFF0` at I64 truncates to the low 4 GiB; neither is `sp`
     // rounded down, and treating either as a stack base lets
     // `stack_global_disjoint` call it disjoint from a constant it may equal.
-    let width_mask = if width_bits == 128 {
-        u128::MAX
-    } else {
-        (1u128 << width_bits) - 1
-    };
-    m & width_mask == width_mask & !((1u128 << tz) - 1)
+    let width_mask = low_bits_mask_u128(width_bits);
+    m & width_mask == width_mask & !low_bits_mask_u128(tz as usize)
 }
 
 /// The operands of a node whose signature fixes its arity at two.
@@ -935,7 +924,7 @@ impl MemWalker<'_> {
         let Some(mem_value) = function.memory_input_of(call) else {
             return true;
         };
-        let window_hi = load_off + self.load.size;
+        let window_hi = load_off.saturating_add(self.load.size);
         let geometry = ArgWindowGeometry {
             mem_start: mem_value,
             base: call_base,
@@ -984,7 +973,8 @@ impl MemWalker<'_> {
 /// argument prefix answers every probe against that call.
 pub(crate) struct ArgWindow {
     /// `[start, end)` of each anchored argument slot, ascending and
-    /// non-overlapping.
+    /// non-overlapping.  Whole ABI slots, not store extents: a store narrower
+    /// than the slot still hands the callee the rest of it.
     ranges: Vec<(i128, i128)>,
     /// The slot the prefix could not be shown to end at, from which the callee
     /// keeps everything above ([`SlotReach::Blinded`]).
@@ -996,7 +986,7 @@ pub(crate) struct ArgWindow {
 
 impl ArgWindow {
     /// Does `[offset, hi)` meet the owned region?  Mirrors the prefix walk:
-    /// the first slot ending above `offset` decides, and a slot at or above
+    /// the first range ending above `offset` decides, and a range at or above
     /// `hi` is one the probe never reaches.
     fn covers(&self, offset: i128, hi: i128) -> bool {
         match self
@@ -1081,9 +1071,16 @@ fn scan_arg_window(
                 };
             }
         };
-        let size = store.size(function);
-        ranges.push((slot_off, slot_off.saturating_add(size)));
-        cursor += geometry.args.slots_spanned(size);
+        // The callee owns the whole ABI slot, not only the bytes the store
+        // wrote: a sub-slot argument (`mov [rsp+8], eax` for a 4-byte 7th
+        // integer arg on SysV x86-64) leaves the slot's tail callee-writable,
+        // and a range stopping at the store width would answer `false` for a
+        // probe there.
+        cursor += geometry.args.slots_spanned(store.size(function));
+        let slot_end = geometry
+            .sp_offset
+            .saturating_add(geometry.args.offset_of(cursor));
+        ranges.push((slot_off, slot_end));
     }
 }
 
@@ -1439,7 +1436,15 @@ pub(crate) struct MemOptions {
 impl MemOptions {
     /// A `Call` on the memory chain clobbers the probed location, and
     /// distinct SP bases stay conservatively non-disjoint.
-    pub(crate) fn call_blocking(stack_global_disjoint: bool) -> Self {
+    ///
+    /// The allocator set is a parameter, not a default: the `decompose` memo
+    /// lives on the `Function` keyed by `ValueId` alone, so an analyzer built
+    /// against a narrower set reads back a heap base another one cached and
+    /// answers `Disjoint` where its own configuration forbids it.
+    pub(crate) fn call_blocking(
+        stack_global_disjoint: bool,
+        noalias_allocators: &std::sync::Arc<FxHashSet<u64>>,
+    ) -> Self {
         Self {
             stack_global_disjoint,
             calls_block: true,
@@ -1447,7 +1452,7 @@ impl MemOptions {
             callee_preserves_stack_args: false,
             escape_analysis: false,
             call_relaxations: true,
-            noalias_allocators: std::sync::Arc::default(),
+            noalias_allocators: std::sync::Arc::clone(noalias_allocators),
         }
     }
 
@@ -1458,19 +1463,11 @@ impl MemOptions {
             calls_block: !options.assumptions.assume_incoming_args_survive_calls,
             distinct_sp_bases_disjoint: options.assumptions.distinct_sp_bases_disjoint,
             callee_preserves_stack_args: options.assumptions.callee_preserves_stack_args,
-            ..Self::call_blocking(stack_global_disjoint)
-                .with_noalias_allocators(&options.assumptions.noalias_allocators)
+            ..Self::call_blocking(
+                stack_global_disjoint,
+                &options.assumptions.noalias_allocators,
+            )
         }
-    }
-
-    /// Opt into treating a listed callee's return as a fresh heap base
-    /// ([`crate::AssumptionOptions::noalias_allocators`]).
-    pub(crate) fn with_noalias_allocators(
-        mut self,
-        allocators: &std::sync::Arc<FxHashSet<u64>>,
-    ) -> Self {
-        self.noalias_allocators = std::sync::Arc::clone(allocators);
-        self
     }
 
     /// Opt into forwarding an SP-rooted load across a private-frame `Call`.
@@ -1548,21 +1545,16 @@ impl MemAnalyzer {
         };
         let window = scan_arg_window(function, &self.options, geometry, scan_hi);
         let covered = window.covers(offset, hi);
-        // Keep whichever entry reaches FURTHER. Overwriting with a narrower
-        // `known_to` makes a later, higher probe miss and rescan the whole
-        // prefix.
+        // The fresh window always reaches at least as far as any it replaces:
+        // the reuse test above consumed every cached entry with
+        // `known_to >= hi`, and this scan's `known_to` is `scan_hi` (`>= hi`)
+        // or `i128::MAX`.
         //
         // Descending probes reuse the first window outright; ascending ones
         // rescan, but against the doubled `scan_hi` above rather than their own
         // `hi`, so the misses are logarithmic in the range rather than one per
         // probe.
-        let mut memo = self.arg_windows.borrow_mut();
-        match memo.get(&call) {
-            Some(prev) if prev.known_to >= window.known_to => {}
-            _ => {
-                memo.insert(call, window);
-            }
-        }
+        self.arg_windows.borrow_mut().insert(call, window);
         covered
     }
 
@@ -1607,7 +1599,11 @@ impl MemAnalyzer {
     /// The store's address class paired with its stored width.
     fn store_sized(&self, function: &Function, store: NodeId) -> SizedAddr {
         SizedAddr {
-            class: classify_store_addr(function, store, &self.options.noalias_allocators),
+            class: classify_addr(
+                function,
+                function.store_addr(store),
+                &self.options.noalias_allocators,
+            ),
             size: store_value_byte_size(function, function.store_data(store)),
             addr_bits: addr_bit_width(function, function.store_addr(store)),
         }

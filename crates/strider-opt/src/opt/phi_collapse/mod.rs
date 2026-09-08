@@ -47,17 +47,17 @@ impl PeepholePass for PhiCollapse {
             return Ok(PeepholeRewrite::NoChange);
         };
 
-        let changed = edit.replace_value(phi_value, unique)?;
+        edit.replace_value(phi_value, unique)?;
         // Kill inline rather than waiting for the end-of-iteration cull: this
         // drops the phi from the live set THIS sweep so it stops counting as a
         // live consumer of its Region's phi-token, letting `RegionCollapse`
         // detach that Region in the same iteration.
+        //
+        // The kill is a change whatever `replace_value` reported: an unused phi
+        // output rewires nothing, and reporting `NoChange` there lets the
+        // pipeline's fixed point exit having just dropped a live-set member.
         edit.kill_node(root);
-        Ok(if changed {
-            PeepholeRewrite::Changed { new_node: None }
-        } else {
-            PeepholeRewrite::NoChange
-        })
+        Ok(PeepholeRewrite::Changed { new_node: None })
     }
 
     /// A collapse can make a consumer phi trivial too, so cascade in one sweep.
