@@ -46,20 +46,24 @@ pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsle
         // the narrower slices it contains.
         bucket.sort_by_key(|(_, v)| (v.addr_off, std::cmp::Reverse(v.size)));
 
-        // Enclosures still extending past the current start, SURVIVORS only.
-        let mut open: Vec<(u128, rsleigh::Vn)> = Vec::new();
+        // Widest reach among the survivors seen so far, and the earliest start
+        // achieving it. Every survivor starts at or before the current entry
+        // by the sort, so one reaching `v_end` encloses `v`; it is STRICTLY
+        // wider unless it spans `v`'s exact range, which the start
+        // distinguishes. No open LIST: a shorter reach can never subsume where
+        // the widest does not, so an input of byte-identical varnodes cannot
+        // grow the state.
+        let mut max_end: u128 = 0;
+        let mut earliest_at_max_end: u64 = u64::MAX;
         for (idx, v) in bucket {
             let v_end = end_of(&v);
-            // Every remaining entry starts at or after `v.addr_off`, so an open
-            // ending before it can enclose neither `v` nor anything later.
-            open.retain(|&(end, _)| end >= u128::from(v.addr_off));
-            // `off <= v.off` already holds by the sort, so a strictly wider
-            // open reaching `v_end` makes `v` a subsumed sub-register view.
-            let enclosed = open.iter().any(|&(end, c)| end >= v_end && c.size > v.size);
+            let enclosed =
+                max_end > v_end || (max_end == v_end && earliest_at_max_end < v.addr_off);
             if enclosed {
                 dropped[idx] = true;
-            } else {
-                open.push((v_end, v));
+            } else if v_end > max_end {
+                max_end = v_end;
+                earliest_at_max_end = v.addr_off;
             }
         }
     }
@@ -77,9 +81,8 @@ pub fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::V
     if !is_aliasable_space(vn.addr_space) {
         return *vn;
     }
-    let end = end_of(vn);
     vns.iter()
-        .filter(|c| c.addr_space == vn.addr_space && c.addr_off <= vn.addr_off && end_of(c) >= end)
+        .filter(|c| vn_contains(c, vn))
         // `addr_off` breaks an equal-size tie so this agrees with
         // `ContainerMap`, which scans a differently ordered list. Two resolvers
         // disagreeing would put a read and a write of one varnode under
@@ -149,27 +152,21 @@ impl ContainerMap {
             opens.sort_by_key(|v| (v.addr_off, std::cmp::Reverse(v.size)));
             qs.sort_by_key(|q| (q.addr_off, std::cmp::Reverse(q.size)));
 
-            // Two-pointer sweep over the active enclosure window. Each query
-            // scans `active`, which holds only the containers open at that
-            // address and is register-file sized, so the sweep is O(q) after
-            // the two sorts.
+            // Two-pointer sweep over the active enclosure window. `retain`
+            // prunes it to the containers still open at `q`'s start, keeping
+            // it register-file sized, so the sweep is O(q) after the two
+            // sorts. `largest_container_in` does the selection, which is what
+            // keeps the two resolvers from disagreeing.
             let mut active: Vec<rsleigh::Vn> = Vec::new();
             let mut ti = 0usize;
             for q in qs {
                 let q_start = q.addr_off;
-                let q_end = end_of(&q);
                 while ti < opens.len() && opens[ti].addr_off <= q_start {
                     active.push(opens[ti]);
                     ti += 1;
                 }
                 active.retain(|c| end_of(c) >= u128::from(q_start));
-                let container = active
-                    .iter()
-                    .filter(|c| end_of(c) >= q_end)
-                    .max_by_key(|c| (c.size, c.addr_off))
-                    .copied()
-                    .unwrap_or(q);
-                map.insert(q, container);
+                map.insert(q, largest_container_in(&active, &q));
             }
         }
         Self { map }
@@ -273,6 +270,80 @@ mod tests {
         assert_eq!(cm.container_of(&survivors, &inner), b, "widest encloser");
         assert_eq!(cm.container_of(&survivors, &a), a);
         assert_eq!(cm.container_of(&survivors, &b), b);
+    }
+
+    /// Byte-identical varnodes never subsume one another (enclosure is
+    /// STRICT), so an open-list sweep keeps every one of them live and the
+    /// scan turns quadratic.
+    #[test]
+    fn dedup_stays_linear_on_byte_identical_varnodes() {
+        fn run(n: usize) -> std::time::Duration {
+            let input = vec![reg(0, 4); n];
+            let start = std::time::Instant::now();
+            let out = dedup_overlapping_largest(&input);
+            assert_eq!(out.len(), n, "equal-size duplicates all survive");
+            start.elapsed()
+        }
+        run(2_000);
+        let small = run(8_000);
+        let large = run(64_000);
+        // Linear would be 8x; quadratic 64x. Loose enough to survive a loaded
+        // machine, tight enough to fail the open-list shape.
+        assert!(
+            large.as_secs_f64() < small.as_secs_f64() * 24.0,
+            "8x the input cost {:.1}x ({small:?} -> {large:?})",
+            large.as_secs_f64() / small.as_secs_f64(),
+        );
+    }
+
+    /// A read and a write of one varnode landing under different SSA
+    /// variables is an SSA miscompile, so the sweep and the scan must answer
+    /// identically over a nested register file.
+    #[test]
+    fn container_map_and_linear_scan_agree_over_a_nested_file() {
+        // Three-level nesting plus a crossing pair, the shapes a real
+        // register file mixes.
+        let tracked: Vec<rsleigh::Vn> = (0..8)
+            .flat_map(|i| [reg(i * 16, 16), reg(i * 16, 8), reg(i * 16 + 8, 8)])
+            .chain([uniq(0, 12), uniq(2, 18)])
+            .collect();
+        let survivors = dedup_overlapping_largest(&tracked);
+        let queries: Vec<rsleigh::Vn> = (0..8)
+            .flat_map(|i| [reg(i * 16, 4), reg(i * 16 + 8, 4), reg(i * 16, 16)])
+            .chain([uniq(5, 4), uniq(0, 12), uniq(19, 1)])
+            .collect();
+        let cm = ContainerMap::build(&survivors, queries.iter().copied());
+        for q in &queries {
+            assert_eq!(
+                cm.container_of(&survivors, q),
+                largest_container_in(&survivors, q),
+                "{q:?}"
+            );
+        }
+    }
+
+    /// The subsumption test the sweep reduces to: an entry is dropped iff a
+    /// survivor already reaches past its end, or reaches exactly its end from
+    /// an EARLIER start (which makes that survivor strictly wider).
+    #[test]
+    fn dedup_drops_only_on_a_strictly_wider_reach() {
+        // Same end, earlier start: the later entry is a suffix slice.
+        assert_eq!(
+            dedup_overlapping_largest(&[reg(0, 10), reg(2, 8)]),
+            vec![reg(0, 10)]
+        );
+        // Same end, same start, same size: neither subsumes.
+        assert_eq!(dedup_overlapping_largest(&[reg(2, 8), reg(2, 8)]).len(), 2);
+        // A survivor reaching further than any later entry drops all of them.
+        assert_eq!(
+            dedup_overlapping_largest(&[reg(0, 16), reg(4, 4), reg(8, 8)]),
+            vec![reg(0, 16)]
+        );
+        // Spaces are independent: a REGISTER container cannot drop a UNIQUE.
+        assert_eq!(
+            dedup_overlapping_largest(&[reg(0, 16), uniq(4, 4)]),
+            vec![reg(0, 16), uniq(4, 4)]
+        );
     }
 
     #[test]
