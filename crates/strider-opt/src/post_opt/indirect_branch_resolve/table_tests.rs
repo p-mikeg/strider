@@ -384,7 +384,13 @@ fn decompose_index_picks_shallowest_narrowed_index() {
     let target_value = g.indirect_branch_target(branch);
     let (known, doms) = make_known_and_doms(&g);
     let mut ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
-    match decompose_index(&g, &mut ranges, target_value, branch) {
+    match decompose_index(
+        &g,
+        &mut ranges,
+        target_value,
+        branch,
+        &rustc_hash::FxHashSet::default(),
+    ) {
         Some((_v, iv)) => assert_eq!(
             (iv.lo, iv.hi),
             (0, 7),

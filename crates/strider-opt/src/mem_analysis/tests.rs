@@ -49,7 +49,7 @@ mod decompose_tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let live_sp = crate::test_support::return_value(fg.graph())?;
-        let r = decompose(&fg, live_sp);
+        let r = decompose(&fg, live_sp, &no_allocators());
         assert!(matches!(r, Some(MemExpr { offset: 0, .. })));
         let _ = sp_val;
         Ok(())
@@ -65,7 +65,7 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let r = decompose(&fg, addr);
+        let r = decompose(&fg, addr, &no_allocators());
         assert!(matches!(r, Some(MemExpr { offset: -4, .. })));
         Ok(())
     }
@@ -87,7 +87,7 @@ mod decompose_tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         assert_eq!(
-            decompose(&fg, twice).map(|e| e.offset),
+            decompose(&fg, twice, &no_allocators()).map(|e| e.offset),
             Some(-2),
             "two 0x7FFFFFFF bumps of a 32-bit pointer land at sp - 2"
         );
@@ -105,8 +105,8 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let r1 = decompose(&fg, addr);
-        let r2 = decompose(&fg, addr);
+        let r1 = decompose(&fg, addr, &no_allocators());
+        let r2 = decompose(&fg, addr, &no_allocators());
         assert!(matches!(
             (&r1, &r2),
             (
@@ -137,7 +137,7 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        assert!(decompose(&fg, c).is_none());
+        assert!(decompose(&fg, c, &no_allocators()).is_none());
         Ok(())
     }
 
@@ -154,7 +154,7 @@ mod decompose_tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
 
-        let off = |v| decompose(&fg, v).map(|e| e.offset);
+        let off = |v| decompose(&fg, v, &no_allocators()).map(|e| e.offset);
         assert_eq!(off(s1), Some(-4), "s1 = sp - 4");
         assert_eq!(off(s2), Some(-12), "s2 = sp - 12");
         assert_eq!(off(s3), Some(-24), "s3 = sp - 24");
@@ -194,7 +194,7 @@ mod decompose_tests {
         // Do NOT collapse phis: the multi-predecessor loop-header Phi has to
         // survive or the cone contains no cycle.
 
-        let truth = |v: ValueId| -> Option<MemExpr> { decompose(&fg, v) };
+        let truth = |v: ValueId| -> Option<MemExpr> { decompose(&fg, v, &no_allocators()) };
         let t_phi = truth(sp_phi);
         let t_dec = truth(sp_dec);
         let t_global = truth(global);
@@ -213,7 +213,7 @@ mod decompose_tests {
             [sp_dec, global, sp_phi],
         ] {
             for v in order {
-                let got = decompose(&fg, v);
+                let got = decompose(&fg, v, &no_allocators());
                 let want = if v == sp_phi {
                     t_phi
                 } else if v == sp_dec {
@@ -268,7 +268,7 @@ mod decompose_tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
 
-        let r = decompose(&fg, sp_at_c);
+        let r = decompose(&fg, sp_at_c, &no_allocators());
         assert!(
             r.is_none(),
             "expected None for VarPhi(sp) with a non-SP-rooted predecessor, got {r:?}"
@@ -291,7 +291,7 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let r = decompose(&fg, aligned);
+        let r = decompose(&fg, aligned, &no_allocators());
         // Offset 0 because alignment can shift the value by 0..7 bytes: no
         // constant delta to pin, only a stable `ValueId` later decompositions
         // can reference.
@@ -326,8 +326,10 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let aligned_dec = decompose(&fg, aligned).expect("aligned must decompose");
-        let post_sub_dec = decompose(&fg, post_sub).expect("post_sub must decompose");
+        let aligned_dec =
+            decompose(&fg, aligned, &no_allocators()).expect("aligned must decompose");
+        let post_sub_dec =
+            decompose(&fg, post_sub, &no_allocators()).expect("post_sub must decompose");
         let MemExpr {
             base: aligned_base,
             offset: aligned_off,
@@ -364,7 +366,7 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let r = decompose(&fg, current);
+        let r = decompose(&fg, current, &no_allocators());
         assert!(matches!(r, Some(MemExpr { offset: 0, .. })));
         Ok(())
     }
@@ -384,7 +386,7 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let MemExpr { offset, .. } = decompose(&fg, current)
+        let MemExpr { offset, .. } = decompose(&fg, current, &no_allocators())
             .expect("5000-node chain must decompose without stack-overflowing");
         assert_eq!(
             offset, N as i128,
@@ -426,7 +428,7 @@ mod alias_tests {
         distinct_sp_bases_disjoint: bool,
     ) -> AliasVerdict {
         let store_size = store_value_byte_size(f, f.store_data(store));
-        let store_class = classify_store_addr(f, store);
+        let store_class = classify_store_addr(f, store, &no_allocators());
         let mut opt_options = crate::OptOptions::default();
         opt_options.assumptions.distinct_sp_bases_disjoint = distinct_sp_bases_disjoint;
         let options = MemOptions::incoming_args(mode, &opt_options);
@@ -445,7 +447,7 @@ mod alias_tests {
                 size: store_size,
                 addr_bits,
             },
-            options,
+            &options,
         )
     }
 
@@ -667,6 +669,7 @@ mod cfg_tests {
 #[cfg(test)]
 mod heap_tests {
     use crate::mem_analysis::*;
+    use std::sync::Arc;
     use strider_ir::node::{ValueId, ValueType};
     use strider_ir::{Function, FunctionBuilder, IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::RegisterSet;
@@ -709,27 +712,32 @@ mod heap_tests {
             .build_fn_single_region()
     }
 
-    fn built(mut b: FunctionBuilder, allocators: &[u64]) -> crate::Result<Function> {
+    /// The function and the allocator set every query over it must share.
+    fn built(
+        mut b: FunctionBuilder,
+        allocators: &[u64],
+    ) -> crate::Result<(Function, Arc<FxHashSet<u64>>)> {
         b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        fg.side_tables_mut()
-            .set_noalias_allocators(allocators.iter().copied().collect());
-        Ok(fg)
+        let fg = b.build()?;
+        Ok((fg, Arc::new(allocators.iter().copied().collect())))
     }
 
     /// Like [`built`], but first runs `PhiCollapse`/`RegionCollapse` so a
     /// `read_variable(sp)` becomes the bare `InitialVar(sp)` that `decompose`
     /// recognises (matching the post-collapse state `LoadForward` runs in).
-    fn built_collapsed(mut b: FunctionBuilder, allocators: &[u64]) -> crate::Result<Function> {
+    fn built_collapsed(
+        mut b: FunctionBuilder,
+        allocators: &[u64],
+    ) -> crate::Result<(Function, Arc<FxHashSet<u64>>)> {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
         p.run(&mut fg, &mut crate::OptCtx::new(None))?;
-        fg.side_tables_mut()
-            .set_noalias_allocators(allocators.iter().copied().collect());
-        Ok(fg)
+        // That run decomposed against an empty set; these queries use `allocators`.
+        fg.side_tables().clear_memory_slots();
+        Ok((fg, Arc::new(allocators.iter().copied().collect())))
     }
 
     /// A prologue: drops SP by `bytes`, so a slot at `entry_sp - k` for
@@ -755,8 +763,8 @@ mod heap_tests {
         let eight = b.build_int_const(8u64, ValueType::I64)?;
         let addr = b.build_int_binary_operation(p, eight, IntBinaryOp::Add, ValueType::I64)?;
         b.build_return(Some(addr), &[])?;
-        let fg = built(b, &[MALLOC])?;
-        let r = decompose(&fg, addr);
+        let (fg, na) = built(b, &[MALLOC])?;
+        let r = decompose(&fg, addr, &na);
         assert!(
             matches!(r, Some(MemExpr { base, offset: 8, .. }) if base == p),
             "malloc()+8 must decompose to a heap base at the call's return value, got {r:?}"
@@ -778,9 +786,9 @@ mod heap_tests {
         let aligned =
             b.build_int_binary_operation(bumped, mask, IntBinaryOp::And, ValueType::I64)?;
         b.build_return(Some(aligned), &[])?;
-        let fg = built(b, &[MALLOC])?;
+        let (fg, na) = built(b, &[MALLOC])?;
         assert!(
-            decompose(&fg, aligned).is_none(),
+            decompose(&fg, aligned, &na).is_none(),
             "an aligned heap pointer must be opaque, not a Stack base Disjoint from its object"
         );
         Ok(())
@@ -799,14 +807,14 @@ mod heap_tests {
         let aligned =
             b.build_int_binary_operation(bumped, mask, IntBinaryOp::And, ValueType::I64)?;
         b.build_return(Some(aligned), &[])?;
-        let fg = built(b, &[MALLOC])?;
+        let (fg, na) = built(b, &[MALLOC])?;
         // Warm the memo: commit the raw base as a heap slot.
         assert!(
-            matches!(decompose(&fg, p), Some(MemExpr { base, offset: 0, .. }) if base == p),
+            matches!(decompose(&fg, p, &na), Some(MemExpr { base, offset: 0, .. }) if base == p),
             "raw malloc() return must decompose to its own heap base"
         );
         assert!(
-            decompose(&fg, aligned).is_none(),
+            decompose(&fg, aligned, &na).is_none(),
             "aligned heap pointer must be opaque even when its base is memoized as Heap"
         );
         Ok(())
@@ -817,9 +825,9 @@ mod heap_tests {
         let mut b = builder()?;
         let p = alloc_call(&mut b, 0x2000)?;
         b.build_return(Some(p), &[])?;
-        let fg = built(b, &[MALLOC])?;
+        let (fg, na) = built(b, &[MALLOC])?;
         assert!(
-            decompose(&fg, p).is_none(),
+            decompose(&fg, p, &na).is_none(),
             "a call to 0x2000 is not in the allocator set, so its return is opaque"
         );
         Ok(())
@@ -834,9 +842,9 @@ mod heap_tests {
         let (_call, rets) = b.build_call(target, &[], &[ret_reg(), clobber_reg()], 0)?;
         let clobber = rets[1];
         b.build_return(Some(clobber), &[])?;
-        let fg = built(b, &[MALLOC])?;
+        let (fg, na) = built(b, &[MALLOC])?;
         assert!(
-            decompose(&fg, clobber).is_none(),
+            decompose(&fg, clobber, &na).is_none(),
             "a clobbered output of an allocator call is not a heap base"
         );
         Ok(())
@@ -849,9 +857,9 @@ mod heap_tests {
         let (_call, rets) = b.build_call(sp_val, &[], &[ret_reg()], 0)?;
         let p = rets[0];
         b.build_return(Some(p), &[])?;
-        let fg = built(b, &[MALLOC])?;
+        let (fg, na) = built(b, &[MALLOC])?;
         assert!(
-            decompose(&fg, p).is_none(),
+            decompose(&fg, p, &na).is_none(),
             "a non-constant (indirect) call target can't be matched, so it stays opaque"
         );
         Ok(())
@@ -863,9 +871,9 @@ mod heap_tests {
         let p = alloc_call(&mut b, MALLOC)?;
         let q = alloc_call(&mut b, MALLOC)?;
         b.build_return(Some(p), &[])?;
-        let fg = built(b, &[MALLOC])?;
-        let bp = decompose(&fg, p).expect("p is a heap base").base;
-        let bq = decompose(&fg, q).expect("q is a heap base").base;
+        let (fg, na) = built(b, &[MALLOC])?;
+        let bp = decompose(&fg, p, &na).expect("p is a heap base").base;
+        let bq = decompose(&fg, q, &na).expect("q is a heap base").base;
         assert_ne!(bp, bq, "two malloc calls must yield distinct heap bases");
         Ok(())
     }
@@ -879,8 +887,8 @@ mod heap_tests {
         let four2 = b.build_int_const(4u64, ValueType::I64)?;
         let outer = b.build_int_binary_operation(inner, four2, IntBinaryOp::Add, ValueType::I64)?;
         b.build_return(Some(outer), &[])?;
-        let fg = built(b, &[MALLOC])?;
-        let r = decompose(&fg, outer);
+        let (fg, na) = built(b, &[MALLOC])?;
+        let r = decompose(&fg, outer, &na);
         assert!(
             matches!(r, Some(MemExpr { base, offset: 8, .. }) if base == p),
             "(malloc()+4)+4 must decompose to the heap base at offset 8, got {r:?}"
@@ -907,7 +915,7 @@ mod heap_tests {
         let q = alloc_call(&mut b, MALLOC)?;
         let loaded = b.build_load(q, rsleigh::VnSpace::RAM, ValueType::I64)?;
         b.build_return(Some(loaded), &[])?;
-        let fg = built(b, &[MALLOC])?;
+        let (fg, na) = built(b, &[MALLOC])?;
 
         let store = super::only_store(&fg);
         let load = fg
@@ -915,7 +923,7 @@ mod heap_tests {
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("load node");
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false));
+        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false).with_noalias_allocators(&na));
         assert_eq!(
             cfg.verdict(&fg, load, store),
             AliasVerdict::Disjoint,
@@ -940,7 +948,7 @@ mod heap_tests {
         let loaded = b.build_load(heap_addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
         b.build_return(Some(loaded), &[])?;
         // Collapse the trivial sp Phi so the stack address decomposes.
-        let fg = built_collapsed(b, &[MALLOC])?;
+        let (fg, na) = built_collapsed(b, &[MALLOC])?;
 
         let store = super::only_store(&fg);
         let load = fg
@@ -948,7 +956,7 @@ mod heap_tests {
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("load");
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false));
+        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false).with_noalias_allocators(&na));
         assert_eq!(
             cfg.verdict(&fg, load, store),
             AliasVerdict::Disjoint,
@@ -971,11 +979,11 @@ mod heap_tests {
         let at16 = b.build_int_binary_operation(p, sixteen, IntBinaryOp::Add, ValueType::I64)?;
         let loaded = b.build_load(at16, rsleigh::VnSpace::RAM, ValueType::I64)?; // [p+16..24)
         b.build_return(Some(loaded), &[])?;
-        let fg = built(b, &[MALLOC])?;
+        let (fg, na) = built(b, &[MALLOC])?;
 
         let store = super::only_store(&fg);
         let load = fg.producer(loaded);
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false));
+        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false).with_noalias_allocators(&na));
         assert_eq!(
             cfg.verdict(&fg, load, store),
             AliasVerdict::Disjoint,
@@ -997,11 +1005,11 @@ mod heap_tests {
         let p = alloc_call(&mut b, MALLOC)?;
         let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::I64)?;
         b.build_return(Some(loaded), &[])?;
-        let fg = built(b, &[MALLOC])?;
+        let (fg, na) = built(b, &[MALLOC])?;
 
         let store = super::only_store(&fg);
         let load = fg.producer(loaded);
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false));
+        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false).with_noalias_allocators(&na));
         assert_eq!(
             cfg.verdict(&fg, load, store),
             AliasVerdict::MayAlias,
@@ -1029,7 +1037,7 @@ mod heap_tests {
             b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
         let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
         b.build_return(Some(loaded), &[])?;
-        let fg = built_collapsed(b, &[MALLOC])?;
+        let (fg, na) = built_collapsed(b, &[MALLOC])?;
 
         let store = super::only_store(&fg);
         let load = fg
@@ -1038,7 +1046,7 @@ mod heap_tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("load");
         let mem = fg.node_inputs(load)[0];
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false));
+        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false).with_noalias_allocators(&na));
         assert_eq!(
             cfg.nearest_clobber(&fg, load, mem),
             store,
@@ -1055,7 +1063,7 @@ mod heap_tests {
         let p = alloc_call(&mut b, MALLOC)?;
         let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::I64)?;
         b.build_return(Some(loaded), &[])?;
-        let fg = built(b, &[MALLOC])?;
+        let (fg, na) = built(b, &[MALLOC])?;
 
         let call = fg
             .graph()
@@ -1064,7 +1072,7 @@ mod heap_tests {
             .expect("call");
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false));
+        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false).with_noalias_allocators(&na));
         assert_eq!(
             cfg.nearest_clobber(&fg, load, mem),
             call,
@@ -1094,7 +1102,7 @@ mod heap_tests {
         let mut fg = b.build()?;
 
         let mut ctx = crate::OptCtx::new(None);
-        ctx.options.assumptions.noalias_allocators = [MALLOC].into_iter().collect();
+        ctx.options.assumptions.noalias_allocators = Arc::new([MALLOC].into_iter().collect());
         crate::test_support::standard_test().run(&mut fg, &mut ctx)?;
 
         let ret = crate::test_support::return_value(fg.graph())?;
@@ -1135,7 +1143,7 @@ mod heap_tests {
         let mut fg = b.build()?;
 
         let mut ctx = crate::OptCtx::new(None);
-        ctx.options.assumptions.noalias_allocators = [MALLOC].into_iter().collect();
+        ctx.options.assumptions.noalias_allocators = Arc::new([MALLOC].into_iter().collect());
         crate::test_support::standard_test().run(&mut fg, &mut ctx)?;
 
         let ret = crate::test_support::return_value(fg.graph())?;
@@ -1166,7 +1174,7 @@ mod heap_tests {
         let (call, outs) = b.build_call(target, &[], &[clobber_reg()], 0)?;
         let clobber = outs[0];
         b.build_return(Some(clobber), &[])?;
-        let mut fg = built(b, &[MALLOC])?;
+        let (mut fg, na) = built(b, &[MALLOC])?;
         // A per-call convention declaring a return register this function does
         // not track: the declaration alone must not mint a base.
         let cc = fg.default_cc().clone();
@@ -1178,7 +1186,7 @@ mod heap_tests {
             },
         );
         assert!(
-            decompose(&fg, clobber).is_none(),
+            decompose(&fg, clobber, &na).is_none(),
             "with no tracked return register the first output is a clobber, not a heap base"
         );
         Ok(())
@@ -1211,11 +1219,12 @@ mod heap_tests {
         let _p = alloc_call(&mut b, MALLOC)?;
         let reload = b.build_load(slot0, rsleigh::VnSpace::RAM, ValueType::I64)?;
         b.build_return(Some(reload), &[])?;
-        let fg = built_collapsed(b, &[MALLOC])?;
+        let (fg, na) = built_collapsed(b, &[MALLOC])?;
 
         let load = fg.producer(reload);
         let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(MemOptions::call_blocking(true));
+        let analyzer =
+            MemAnalyzer::new(MemOptions::call_blocking(true).with_noalias_allocators(&na));
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call),
@@ -1238,9 +1247,9 @@ mod heap_tests {
             .build_fn_single_region()?;
         let p = alloc_call(&mut b, MALLOC)?;
         b.build_return(Some(p), &[])?;
-        let fg = built(b, &[MALLOC])?;
+        let (fg, na) = built(b, &[MALLOC])?;
         assert!(
-            decompose(&fg, p).is_none(),
+            decompose(&fg, p, &na).is_none(),
             "a callee with no return register must not be treated as an allocator"
         );
         Ok(())
@@ -1253,9 +1262,9 @@ mod heap_tests {
         let eight = b.build_int_const(8u64, ValueType::I64)?;
         let addr = b.build_int_binary_operation(p, eight, IntBinaryOp::Add, ValueType::I64)?;
         b.build_return(Some(addr), &[])?;
-        let fg = built(b, &[])?;
+        let (fg, na) = built(b, &[])?;
         assert!(
-            decompose(&fg, addr).is_none(),
+            decompose(&fg, addr, &na).is_none(),
             "with an empty allocator set, a heap pointer must stay opaque (feature off)"
         );
         Ok(())
@@ -1274,7 +1283,7 @@ mod heap_tests {
             let (call, _rets) = b.build_call(target, &[], &[ret_reg()], 0)?;
             let loaded = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::I64)?;
             b.build_return(Some(loaded), &[])?;
-            let mut fg = built(b, &[])?;
+            let (mut fg, na) = built(b, &[])?;
 
             let cc = fg.default_cc().clone();
             fg.side_tables_mut().set_call_cc(
@@ -1287,7 +1296,8 @@ mod heap_tests {
 
             let load = fg.producer(loaded);
             let mem = fg.node_inputs(load)[0];
-            let analyzer = MemAnalyzer::new(MemOptions::call_blocking(true));
+            let analyzer =
+                MemAnalyzer::new(MemOptions::call_blocking(true).with_noalias_allocators(&na));
             let clobber = analyzer.nearest_clobber(&fg, load, mem);
             Ok(matches!(fg.node_kind(clobber), NodeKind::Store(_)))
         };
@@ -1315,7 +1325,7 @@ mod heap_tests {
             let (call_other, _rets) = b.build_call_other(0, &[], &[], true, false)?;
             let loaded = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::I64)?;
             b.build_return(Some(loaded), &[])?;
-            let mut fg = built(b, &[])?;
+            let (mut fg, na) = built(b, &[])?;
 
             let cc = fg.default_cc().clone();
             fg.side_tables_mut().set_call_cc(
@@ -1328,7 +1338,8 @@ mod heap_tests {
 
             let load = fg.producer(loaded);
             let mem = fg.node_inputs(load)[0];
-            let analyzer = MemAnalyzer::new(MemOptions::call_blocking(true));
+            let analyzer =
+                MemAnalyzer::new(MemOptions::call_blocking(true).with_noalias_allocators(&na));
             let clobber = analyzer.nearest_clobber(&fg, load, mem);
             Ok(matches!(fg.node_kind(clobber), NodeKind::Store(_)))
         };
@@ -1375,11 +1386,15 @@ mod heap_tests {
         b.build_call(target, &[], &[ret_reg()], 0)?;
         let loaded = b.build_load(arg_slot, rsleigh::VnSpace::RAM, ValueType::I64)?;
         b.build_return(Some(loaded), &[])?;
-        let fg = built_collapsed(b, &[])?;
+        let (fg, na) = built_collapsed(b, &[])?;
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(MemOptions::call_blocking(true).with_escape_analysis(true));
+        let analyzer = MemAnalyzer::new(
+            MemOptions::call_blocking(true)
+                .with_noalias_allocators(&na)
+                .with_escape_analysis(true),
+        );
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call),
@@ -1448,7 +1463,7 @@ mod heap_tests {
         let slot = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I64)?;
         let loaded = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I64)?;
         b.build_return(Some(loaded), &[])?;
-        let fg = built_collapsed(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
+        let (fg, na) = built_collapsed(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
 
         let store = super::only_store(&fg);
         let load = fg
@@ -1456,7 +1471,7 @@ mod heap_tests {
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("load");
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false));
+        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false).with_noalias_allocators(&na));
         assert_eq!(
             cfg.verdict(&fg, load, store),
             AliasVerdict::Disjoint,
@@ -1475,11 +1490,11 @@ mod heap_tests {
         b.build_store(pa, x, rsleigh::VnSpace::RAM)?;
         let loaded = b.build_load(phi, rsleigh::VnSpace::RAM, ValueType::I64)?;
         b.build_return(Some(loaded), &[])?;
-        let fg = built_collapsed(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
+        let (fg, na) = built_collapsed(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
 
         let store = super::only_store(&fg);
         let load = fg.producer(loaded);
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false));
+        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false).with_noalias_allocators(&na));
         assert_eq!(
             cfg.verdict(&fg, load, store),
             AliasVerdict::MayAlias,
@@ -1529,9 +1544,9 @@ mod heap_tests {
         b.set_region(join);
         let phi = b.read_variable(&ret_reg())?;
         b.build_return(Some(phi), &[])?;
-        let fg = built_collapsed(b, &[MALLOC])?;
+        let (fg, na) = built_collapsed(b, &[MALLOC])?;
         assert!(
-            decompose(&fg, phi).is_none(),
+            decompose(&fg, phi, &na).is_none(),
             "a phi merging a stack pointer names no allocation"
         );
         Ok(())
@@ -1576,10 +1591,10 @@ mod heap_tests {
 
         b.set_region(exit);
         b.build_return(Some(phi), &[])?;
-        let fg = built_collapsed(b, &[MALLOC])?;
+        let (fg, na) = built_collapsed(b, &[MALLOC])?;
         assert!(
             matches!(
-                decompose(&fg, phi),
+                decompose(&fg, phi, &na),
                 Some(MemExpr {
                     kind: MemKind::HeapOpaque,
                     ..
@@ -1639,7 +1654,7 @@ mod heap_tests {
                 b.build_if(c, alts[level + 1], joins[level + 1])?;
             }
         }
-        let fg = built(b, &[MALLOC])?;
+        let (fg, na) = built(b, &[MALLOC])?;
 
         let phis: Vec<ValueId> = {
             use strider_ir::IRViewer;
@@ -1652,7 +1667,7 @@ mod heap_tests {
         };
         SPINE_STEPS.with(|c| c.set(0));
         for v in phis.iter().rev() {
-            decompose(&fg, *v);
+            decompose(&fg, *v, &na);
         }
         Ok(SPINE_STEPS.with(std::cell::Cell::get))
     }
@@ -1667,6 +1682,49 @@ mod heap_tests {
             big <= small * 6,
             "quadrupling the phi chain must not multiply the walk by 16: 50 \
              levels took {small} steps, 200 levels took {big}"
+        );
+        Ok(())
+    }
+
+    /// SOUNDNESS: `LoadForward` runs two analyzers over one `Function` and they
+    /// share its decomposition memo, so both carry the run's allocator set.
+    /// The permanent memory-edge rewire is `narrow`'s alone: with the set it
+    /// steps past the call that allocated a DIFFERENT object and stops at the
+    /// one that allocated this pointer, without it at the first allocator call
+    /// it meets.
+    #[test]
+    fn both_load_forward_analyzers_see_the_allocator_set() -> crate::Result<()> {
+        let mut b = builder()?;
+        let p = alloc_call(&mut b, MALLOC)?;
+        let q = alloc_call(&mut b, KMEM_CACHE_ALLOC)?;
+        let two = b.build_int_const(2u64, ValueType::I64)?;
+        b.build_store(q, two, rsleigh::VnSpace::RAM)?;
+        // No store to `p`'s object, so the load survives to be inspected.
+        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        b.build_return(Some(loaded), &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+
+        let mut ctx = crate::OptCtx::new(None);
+        ctx.options.assumptions.noalias_allocators =
+            Arc::new([MALLOC, KMEM_CACHE_ALLOC].into_iter().collect());
+        let mut pipeline = crate::OptimizerPipeline::new();
+        pipeline.add(crate::PhiCollapse);
+        pipeline.add(crate::RegionCollapse);
+        pipeline.add(crate::LoadForward::default());
+        pipeline.run(&mut fg, &mut ctx)?;
+
+        let load = fg
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+            .expect("load");
+        let clobber = fg.producer(fg.node_inputs(load)[0]);
+        assert_eq!(
+            fg.int_const_u128(fg.node_inputs(clobber)[2]),
+            Some(u128::from(MALLOC)),
+            "the load's memory edge must narrow past the kmem_cache_alloc that \
+             allocated a different object, onto the malloc that allocated its own"
         );
         Ok(())
     }
@@ -2014,7 +2072,7 @@ mod spine_memo {
         for (i, v) in chain.iter().rev().enumerate() {
             let want = -4 * (len - i) as i128;
             assert_eq!(
-                decompose(&fg, *v).map(|e| e.offset),
+                decompose(&fg, *v, &no_allocators()).map(|e| e.offset),
                 Some(want),
                 "link {i} from the bottom is sp{want}"
             );

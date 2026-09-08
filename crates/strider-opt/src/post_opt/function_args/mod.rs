@@ -38,7 +38,10 @@ impl PostOptimizer for FunctionArgDetect {
         // Narrowing rewires the graph, so it may only ever use what a
         // call-blocking walk proves; `alias_cfg` carries the relaxations and
         // decides detection alone.
-        let narrow_cfg = MemAnalyzer::new(MemOptions::call_blocking(stack_global_disjoint));
+        let narrow_cfg = MemAnalyzer::new(
+            MemOptions::call_blocking(stack_global_disjoint)
+                .with_noalias_allocators(&opt_ctx.options.assumptions.noalias_allocators),
+        );
         detect_stack_args(edit, &alias_cfg, &narrow_cfg, stack_args, first_stack_arg);
         Ok(())
     }
