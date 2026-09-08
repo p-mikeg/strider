@@ -172,50 +172,73 @@ def test_blocking_mode_is_still_the_default():
     assert sig.parameters["background"].default is False
 
 
-def test_the_response_body_is_not_bound_by_the_request_read_deadline():
-    """`wbufsize` is 0, so the body is one `sendall`, and a socket timeout
-    bounds that whole call. Under the read deadline a client slower than the
-    body is cut off mid-body while the headers have promised its full length.
+class _WriteProbe:
+    """`_Handler._send` over a stub socket, with no base `__init__`."""
 
-    Pinned here rather than end-to-end: forcing a real `sendall` to block needs
-    a body larger than the socket buffers, which no fixture graph reaches."""
+    def __init__(self, per_send):
+        explore = strider.explore
+        self.deadlines = []
+        self.sent = b""
+        self._per_send = per_send
+        self.stopping = threading.Event()
+
+        probe = self
+
+        class _Probe(explore._Handler):
+            def __init__(self):
+                self.connection = probe  # pyright: ignore[reportAttributeAccessIssue]
+                self.server = probe  # pyright: ignore[reportAttributeAccessIssue]
+
+            def send_response(self, *a, **k):
+                pass
+
+            def send_header(self, *a, **k):
+                pass
+
+            def end_headers(self):
+                pass
+
+        self.handler = _Probe()
+
+    def settimeout(self, t):
+        self.deadlines.append(t)
+
+    def send(self, view):
+        if self._per_send is None:
+            raise TimeoutError  # the peer never makes room
+        b = bytes(view[: self._per_send])
+        self.sent += b
+        return len(b)
+
+
+def test_the_response_body_goes_out_in_interruptible_slices():
+    """One `sendall` under one socket timeout has no good value: short enough
+    for `shutdown` to reach the serve loop and it truncates a slow client
+    mid-body against a `Content-Length` already promising the rest; long enough
+    not to and it parks the single-threaded loop for that whole deadline.
+
+    Pinned here rather than end-to-end: forcing a real send to block needs a
+    body larger than the socket buffers, which no fixture graph reaches."""
     explore = strider.explore
+    p = _WriteProbe(per_send=1000)
+    p.handler._send(b"x" * 4096, "text/plain")
 
-    class _Conn:
-        def __init__(self):
-            self.deadlines = []
-
-        def settimeout(self, t):
-            self.deadlines.append(t)
-
-    class _Wfile:
-        def __init__(self):
-            self.written = b""
-
-        def write(self, b):
-            self.written += b
-
-    class _Probe(explore._Handler):
-        def __init__(self):  # no socket, no base __init__
-            self.connection = _Conn()
-
-        def send_response(self, *a, **k):
-            pass
-
-        def send_header(self, *a, **k):
-            pass
-
-        def end_headers(self):
-            pass
-
-    h = _Probe()
-    wfile = _Wfile()
-    h.wfile = wfile  # pyright: ignore[reportAttributeAccessIssue]
-    h._send(b"x" * 4096, "text/plain")
     read_deadline = explore._Handler.timeout
     assert read_deadline is not None
-    assert wfile.written == b"x" * 4096
-    assert h.connection.deadlines == [explore._WRITE_SECONDS, read_deadline], (
-        "the body write must run under its own deadline and restore the read one"
+    assert p.sent == b"x" * 4096, "a slow peer must still receive the whole body"
+    assert p.deadlines[-1] == read_deadline, "the read deadline must be restored"
+    assert max(p.deadlines[:-1]) <= explore._WRITE_POLL_SECONDS, (
+        "no slice may hold the serve loop past one stop-flag poll"
     )
-    assert explore._WRITE_SECONDS > read_deadline
+    assert explore._WRITE_STALL_SECONDS > explore._WRITE_POLL_SECONDS
+
+
+def test_a_body_write_with_no_progress_gives_up_when_the_server_is_stopping():
+    """What bounds `shutdown` and interpreter exit. The no-progress deadline is
+    far too long to wait for, and lengthening it is what keeps a real slow
+    client from being cut off."""
+    p = _WriteProbe(per_send=None)
+    p.stopping.set()
+    p.handler._send(b"x" * 4096, "text/plain")
+    assert p.sent == b""
+    assert p.handler.close_connection, "a cut write must close its connection"
