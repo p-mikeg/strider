@@ -6,8 +6,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 
 use crate::errors::into_strider_err;
-use strider_reader::elf::{ElfSectionLayout, LoadFilter, RegionSource};
-use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory};
+use strider_reader::elf::{ElfSectionLayout, LoadFilter, OpdTable, RegionSource};
+use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory, RegionIndex};
 
 /// The GIL already serialises every access; `Mutex` is here so a wrapper
 /// holding one is `Send`, which is what lets a `Function` outlive the thread
@@ -243,31 +243,17 @@ fn invalidate_and_extend(reader: &PyBufferReader, regions: Vec<MemRegion>) {
 /// A sub-range where a `new` region overlaps an `existing` one with DIFFERENT
 /// bytes, or `None` if every overlap is byte-identical (a benign re-merge of
 /// the same image). See `add_elf` for why differing overlap is rejected.
-///
-/// `existing` is start-ordered once so a `new` region probes only the prefix
-/// whose running maximum end still reaches it, rather than every region.
 fn differing_overlap(existing: &[MemRegion], new: &[MemRegion]) -> Option<(u64, u64)> {
-    let mut order: Vec<usize> = (0..existing.len()).collect();
-    order.sort_unstable_by_key(|&i| existing[i].start_addr());
-    // Running maximum end address over the start-ordered prefix: the walk back
-    // from a `new` region's upper bound stops once no earlier region reaches it.
-    let mut max_end: Vec<u64> = Vec::with_capacity(order.len());
-    let mut reach = 0u64;
-    for &i in &order {
-        reach = reach.max(existing[i].end_addr());
-        max_end.push(reach);
-    }
+    let index = RegionIndex::new(existing);
     for n in new {
         let (n_lo, n_hi) = (n.start_addr(), n.end_addr());
-        let mut rank = order.partition_point(|&i| existing[i].start_addr() < n_hi);
-        while rank > 0 && max_end[rank - 1] > n_lo {
-            let e = &existing[order[rank - 1]];
+        for i in index.overlapping(n_lo, n_hi) {
+            let e = &existing[i];
             let lo = n_lo.max(e.start_addr());
             let hi = n_hi.min(e.end_addr());
-            if lo < hi && !n.same_bytes_in(e, lo, hi) {
+            if !n.same_bytes_in(e, lo, hi) {
                 return Some((lo, hi));
             }
-            rank -= 1;
         }
     }
     None
@@ -281,12 +267,15 @@ pub struct PySymbol {
     /// The symbol name as spelled in the ELF symbol table.
     #[pyo3(get)]
     name: String,
-    /// The symbol's virtual address (`st_value`).
+    /// The symbol's virtual address (`st_value`), except for a ppc64 ELFv1
+    /// function, where it is the code the `.opd` descriptor at `st_value`
+    /// names.
     #[pyo3(get)]
     address: u64,
     /// `None` for `st_size == 0`, which records no extent rather than an
     /// empty one: a hand-written `.S` entry point with no `.size` directive
-    /// is still a whole function.
+    /// is still a whole function. Also `None` once a ppc64 ELFv1 descriptor
+    /// has been followed, `st_size` having measured the descriptor.
     #[pyo3(get)]
     size: Option<u64>,
     is_function: bool,
@@ -409,34 +398,16 @@ impl PyLoadedElf {
     /// wins within an ELF, and the first ELF in load order wins across them.
     fn build_symbol_table(&self) -> SymbolTable {
         let mem = self.mem.inner.lock_shared();
-        // Region indices by ascending start, with a prefix maximum of each
-        // region's end.  An `ET_REL` object carries one region per SHF_ALLOC
-        // section, so scanning them per symbol is quadratic in a
-        // `-ffunction-sections` build where both axes grow together.
-        let mut by_start: Vec<usize> = (0..mem.regions.len()).collect();
-        by_start.sort_unstable_by_key(|&i| mem.regions[i].start_addr());
-        let mut reach: Vec<u64> = Vec::with_capacity(by_start.len());
-        let mut furthest = 0u64;
-        for &i in &by_start {
-            furthest = furthest.max(mem.regions[i].end_addr());
-            reach.push(furthest);
-        }
+        // Indexed rather than scanned per symbol: an `ET_REL` object carries one
+        // region per SHF_ALLOC section, so a `-ffunction-sections` build grows
+        // both axes together.
+        let index = RegionIndex::new(&mem.regions);
         // The highest start among the regions covering `address`, which is how
-        // `MemRegionsLookupTable::read` resolves an overlap; taking slice order
-        // could name a region that never serves these bytes.
+        // `MemRegionsLookupTable::read` resolves an overlap; slice order could
+        // name a region that never serves these bytes.
         let region_of = |address: u64| -> Option<(u64, u64)> {
-            let hi = by_start.partition_point(|&i| mem.regions[i].start_addr() <= address);
-            for slot in (0..hi).rev() {
-                // Nothing at or below `slot` reaches `address` any more.
-                if reach[slot] <= address {
-                    break;
-                }
-                let r = &mem.regions[by_start[slot]];
-                if r.contains(address) {
-                    return Some((r.start_addr(), r.end_addr()));
-                }
-            }
-            None
+            let r = &mem.regions[index.covering(address, 1).next()?];
+            Some((r.start_addr(), r.end_addr()))
         };
         let mut syms: Vec<PySymbol> = Vec::new();
         let mut by_name: HashMap<String, usize> = HashMap::new();
@@ -450,6 +421,9 @@ impl PyLoadedElf {
             };
             let layout = ElfSectionLayout::new(&file);
             let relocatable = file.kind() == object::ObjectKind::Relocatable;
+            // `None` for everything but a linked ppc64 ELFv1 image; built once
+            // per ELF rather than per symbol.
+            let opd = OpdTable::new(&file);
             let mut per_elf: HashMap<String, usize> = HashMap::new();
             // `.symtab` and `.dynsym` overlap: an exported symbol is in both, and
             // only `iter_symbols` would show it twice.
@@ -460,7 +434,20 @@ impl PyLoadedElf {
                 if name.is_empty() || !symbol_is_addressed(&sym, relocatable) {
                     continue;
                 }
-                let address = layout.symbol_address(&sym);
+                let is_function = sym.kind() == object::SymbolKind::Text;
+                let declared = layout.symbol_address(&sym);
+                // On ppc64 ELFv1 an `STT_FUNC` `st_value` addresses an `.opd`
+                // descriptor, not code, and `st_size` measures that descriptor.
+                // Following one therefore drops the size too: bounding the lift
+                // to the 24-byte triple would cut every function short.
+                let followed = opd
+                    .as_ref()
+                    .filter(|_| is_function)
+                    .and_then(|t| t.entry_at(declared));
+                let (address, size) = match followed {
+                    Some(code) => (code, None),
+                    None => (declared, (sym.size() != 0).then(|| sym.size())),
+                };
                 if !seen.insert((name.to_string(), address)) {
                     continue;
                 }
@@ -468,8 +455,8 @@ impl PyLoadedElf {
                 syms.push(PySymbol {
                     name: name.to_string(),
                     address,
-                    size: (sym.size() != 0).then(|| sym.size()),
-                    is_function: sym.kind() == object::SymbolKind::Text,
+                    size,
+                    is_function,
                     region: region_of(address),
                 });
                 match per_elf.entry(name.to_string()) {
@@ -671,7 +658,14 @@ impl PyLoadedElf {
         // `load_elf` always pushes one ELF, so `first()` is never `None`.
         self.elfs.first().map_or(Ok(0), |o| {
             o.checked_file()
-                .map(|f| f.entry())
+                .map(|f| {
+                    // `e_entry` is a descriptor too on ppc64 ELFv1, exactly as
+                    // an `STT_FUNC` `st_value` is.
+                    let entry = f.entry();
+                    OpdTable::new(&f)
+                        .and_then(|t| t.entry_at(entry))
+                        .unwrap_or(entry)
+                })
                 .map_err(into_strider_err)
         })
     }
