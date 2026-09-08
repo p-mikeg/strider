@@ -17,10 +17,13 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    bytes are read. The image is mapped rather than copied, so a large object
    opens in tens of milliseconds and faults in only what you touch; set
    `STRIDER_NO_MMAP=1` to read it instead, which a network or 9p mount needs.
+   The mapped file must not change on disk while a handle over it lives, so
+   rebuilding the binary under a live handle raises `StriderError` rather than
+   serving the new bytes: re-open it, or read it in.
    Sections of an object file that shared an address are rebased apart, which
    moves every `ET_REL` symbol address. A stripped binary can borrow names from
-   elsewhere: `add_symbol_file` takes a debug file, `add_symbols` takes a dict
-   or a kernel `System.map`.
+   elsewhere: `add_symbol_file` takes a debug file, `add_symbols` takes a
+   dict, so a `System.map` you have parsed into one.
 2. **Lift** each machine instruction into a simpler, CPU-independent form
    (using GHIDRA's Sleigh engine). An instruction Sleigh leaves opaque, like a
    syscall or a trap, is classified by a built-in ABI table saying whether it
@@ -37,15 +40,14 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    get their own types instead of being rounded to a machine word. This is the
    thing you query.
 5. **Optimize** the IR so equivalent code always looks the same, which makes
-   patterns simple to write. Equivalent shapes really do collapse: `x + x*2`
-   becomes `x*3`, so a pattern written against the source shape will not match.
+   patterns simple to write. Equivalent shapes really do collapse, so a pattern
+   written against the source shape often will not match;
    [optimizations.md](optimizations.md) lists what each pass reshapes. How far
    it goes is set by `LifterOptions(assumptions=AssumptionOptions(...))`, six
    claims about the code that the IR cannot prove. A wrong one makes the answer
    wrong, and two of the six default `True`, so `AssumptionOptions.none()` is
-   the configuration sound under any input; `AssumptionOptions()` is not, and a
-   hand-written "assume nothing" silently gains any claim added default-on
-   later.
+   the configuration sound under any input;
+   [python-api.md](python-api.md#2-analyzing-a-function) says what each buys.
 6. **Resolve** the indirect branches: classify each one against the optimized
    IR, feed the targets back, re-lift, and repeat until the edge set stops
    changing. What is left over is reported, never raised; it arrives through
@@ -69,7 +71,8 @@ home submodule is the supported spelling:
 strider.lift      # the entry point: load_elf and lifter, plus LifterOptions,
                   # AssumptionOptions and the AnalyzeResult they produce
 strider.ir        # Function and Node: the graph you query
-strider.cfg       # Cfg, CfgOptions, the four incompleteness channels
+strider.cfg       # Cfg, CfgOptions, and three of the four incompleteness
+                  # channels; the fourth, unresolved, rides on AnalyzeResult
 strider.pattern   # the query DSL, plus .pattern.constraints for joins
 strider.template  # the build side of a rewrite
 strider.opt       # OptimizerPipeline and the passes it runs
@@ -79,13 +82,18 @@ strider.StriderError    # the one top-level name
 ```
 
 `prog.visualize(fn)` serves the graph as an interactive explorer in a browser,
-opening on the whole graph; `whole=False` opens on the neighborhood around one
-node instead, which stays usable on a large function. It blocks until
+opening on the whole graph; `whole=False` opens on the neighborhood around the
+entry instead, which stays usable on a large function. It blocks until
 interrupted, and `background=True` serves on its own thread and returns the
 port, so you can keep querying while the page is open;
 `strider.explore.shutdown(port)` stops that one. The keys and the toolbar are
 in [python-api.md](python-api.md#10-visualizing). It is the quickest way to see
 the shape a pattern has to match.
+
+The handle itself is pinned to the thread that built it: `analyze`,
+`build_cfg`, `optimize` and the rest raise `StriderError` from anywhere else,
+so a background worker builds its own handle over the same `arch` / `reader()`
+/ `rom()`. The handle moves and drops on any thread; only decoding is pinned.
 
 The [quickstart](../README.md#quickstart) in the README is that pipeline end to
 end in Python. [CHANGELOG.md](../CHANGELOG.md) lists what 0.2.0
@@ -98,11 +106,6 @@ added over 0.1.0, breaking entries first.
 - **[python-guide.md](python-guide.md)** is the practical walkthrough: analyzing
   many functions, writing patterns, constraints, rewrites, drawing the graph,
   and what to check when a pattern does not match.
-- **[python-api.md](python-api.md)** is the reference for every user-facing
-  Python API, with a runnable example of each.
-- **[optimizations.md](optimizations.md)** explains the passes `analyze` runs,
-  the usual reason a pattern's shape differs from the source.
-- **`crates/strider-py/examples/python/`** has seventeen runnable scripts,
-  numbered from a quickstart up to custom target ABIs.
-- The top-level **[README](../README.md)** is the dense reference once you are
-  past this page.
+
+The top-level [README](../README.md) indexes the rest of the guides and the
+runnable examples.
