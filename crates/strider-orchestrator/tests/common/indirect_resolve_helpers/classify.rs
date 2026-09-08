@@ -110,7 +110,7 @@ pub(crate) fn build_initial_var_target_scenario_x86_64() -> (Function, strider_i
 pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
 -> (Function, strider_ir::Value, rsleigh::Vn) {
     use strider_ir::node::ValueType;
-    use strider_ir_test_utils::RegisterSet;
+    use strider_ir_test_utils::sp_frame;
     use strider_orchestrator::opt::{ConstantFold, LoadForward, OptimizerPipeline};
 
     let sp = rsleigh::Vn {
@@ -123,11 +123,8 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let mut b = RegisterSet::new()
-        .tracked(sp)
+    let mut b = sp_frame(sp)
         .tracked(lr)
-        .callee_saved(sp)
-        .stack_vn(sp)
         .link_register(lr)
         .build_fn_single_region()
         .expect("build_fn_single_region");
@@ -209,7 +206,7 @@ pub(crate) fn build_push_target_pop_pc_scenario(
     k: u64,
 ) -> (Function, strider_ir::Value, rsleigh::Vn) {
     use strider_ir::node::ValueType;
-    use strider_ir_test_utils::RegisterSet;
+    use strider_ir_test_utils::sp_frame;
     use strider_orchestrator::opt::{ConstantFold, LoadForward, OptimizerPipeline};
 
     let sp = rsleigh::Vn {
@@ -222,11 +219,8 @@ pub(crate) fn build_push_target_pop_pc_scenario(
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
-    let mut b = RegisterSet::new()
-        .tracked(sp)
+    let mut b = sp_frame(sp)
         .tracked(lr)
-        .callee_saved(sp)
-        .stack_vn(sp)
         .build_fn_single_region()
         .expect("build_fn_single_region");
 
@@ -552,7 +546,7 @@ pub(crate) fn build_stack_array_dispatch_scenario(
 ) -> (Function, strider_ir::node::ValueId, rsleigh::Vn) {
     use strider_ir::node::{ValueId, ValueKind, ValueType};
     use strider_ir::{ExtendOp, IntBinaryOp};
-    use strider_ir_test_utils::RegisterSet;
+    use strider_ir_test_utils::sp_frame;
     use strider_orchestrator::opt::{
         ConstantFold, KnownBits, OptimizerPipeline, PhiCollapse, RegionCollapse,
     };
@@ -576,11 +570,8 @@ pub(crate) fn build_stack_array_dispatch_scenario(
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    let mut b = RegisterSet::new()
-        .tracked(sp)
+    let mut b = sp_frame(sp)
         .tracked(arg_vn)
-        .callee_saved(sp)
-        .stack_vn(sp)
         .build_fn_single_region()
         .expect("build_fn_single_region");
     let sp_val = b.read_variable(&sp).expect("read sp");

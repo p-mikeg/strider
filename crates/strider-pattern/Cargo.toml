@@ -7,6 +7,11 @@ description = "Graph pattern matching and rewriting over strider's IR."
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+# Exposes `Match::get_vn`, used only by this crate's integration tests. Off in
+# the wheel, on for `cargo test` via the self dev-dependency below.
+test-util = []
+
 [dependencies]
 strider-ir = { workspace = true }
 strider-graph = { workspace = true }
@@ -18,6 +23,8 @@ itertools = { workspace = true, features = ["use_alloc"] }
 rustc-hash.workspace = true
 
 [dev-dependencies]
+# Self dev-dependency: turns `test-util` on for the `tests/` targets only.
+strider-pattern = { workspace = true, features = ["test-util"] }
 # Test-only IR helper (build_sub_as_add_neg) used in typed_match tests.
 strider-ir = { workspace = true, features = ["test-util"] }
 strider-ir-test-utils = { path = "../strider-ir-test-utils" }

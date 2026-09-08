@@ -22,6 +22,7 @@ use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::MachineInsnAddr;
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
+use strider_ir_test_utils::IrWalkerEx;
 use strider_orchestrator::opt::OptOptions;
 use strider_orchestrator::{LiftOptions, Strider};
 
@@ -51,7 +52,7 @@ fn narrow_alias_read_lifts_with_truncate_or_mask_shape() {
         .expect("cfg");
     let function = driver.build_ir(&cfg, cc).expect("build_ir").function;
 
-    let truncates = common::count_kind(&function, |k| matches!(k, NodeKind::Truncate));
+    let truncates = function.count_kind(|k| matches!(k, NodeKind::Truncate));
     let ands = common::count_int_binop(&function, strider_ir::IntBinaryOp::And);
     assert!(
         truncates + ands >= 1,

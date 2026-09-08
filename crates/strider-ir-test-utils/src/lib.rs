@@ -481,6 +481,26 @@ pub fn stack_vn_aarch64() -> rsleigh::Vn {
     reg_vn(0x40, 8)
 }
 
+/// `RegisterSet` with one varnode as the tracked, callee-saved stack pointer.
+pub fn sp_frame(sp: rsleigh::Vn) -> RegisterSet {
+    RegisterSet::new().tracked(sp).callee_saved(sp).stack_vn(sp)
+}
+
+/// `RegisterSet` with one varnode as the tracked, argument-passing stack
+/// pointer.
+pub fn sp_arg_frame(sp: rsleigh::Vn) -> RegisterSet {
+    RegisterSet::new().tracked(sp).arg(sp).stack_vn(sp)
+}
+
+/// [`strider_target::StackArgs`] in the shape [`RegisterSet::stack_args`] takes.
+#[must_use]
+pub fn stack_args_at(base_offset: i128, increment: i128) -> Option<strider_target::StackArgs> {
+    Some(strider_target::StackArgs {
+        base_offset,
+        increment,
+    })
+}
+
 /// Single-region function with `stack_vn` tracked as the stack pointer. The
 /// closure gets the read-back SP (`InitialVar(stack_vn)`) and owns the whole
 /// body, the `Return` included.
