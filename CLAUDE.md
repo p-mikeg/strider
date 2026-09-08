@@ -59,48 +59,48 @@ crates (`dot`, `entity-utils`, `graph-algorithms`, `read-only-memory`,
 
 Generic:
 
-- `dot` -- Graphviz / dark-themed HTML renderer.
-- `entity-utils` -- `cranelift-entity` helpers (`DenseEntitySet`, `Worklist`,
+- `dot`: Graphviz / dark-themed HTML renderer.
+- `entity-utils`: `cranelift-entity` helpers (`DenseEntitySet`, `Worklist`,
   `EntityInterner`, `UnionDag`). Use these over `std` `HashSet`/`HashMap` when
   keying by `NodeId` / `ValueId`.
-- `graph-algorithms` -- generic traversal (`walk`) and dominance-based SSA
+- `graph-algorithms`: generic traversal (`walk`) and dominance-based SSA
   support (dominance frontiers, dominator-tree preorder, iterated-DF phi
   placement) over opaque node ids. Test-only `graphmock` DSL under `tests/`.
-- `strider-graph` -- generic despite the name: the payload-agnostic bipartite
+- `strider-graph`: generic despite the name: the payload-agnostic bipartite
   sea-of-nodes `Graph<N, V, C: NodeCacheable<N, V>>` that `strider-ir` and
   `strider-pattern` build on. No `Hash`/`Eq` bound on payloads; dedup lives in
   the `C` policy, backed by the hash-on-demand `NodeCache`.
-- `read-only-memory` -- the `ReadOnlyMemory` trait, in its own crate so the
+- `read-only-memory`: the `ReadOnlyMemory` trait, in its own crate so the
   optimizer / lifter / reader depend on it one-way without back-edging through
   the ELF reader.
-- `vn-container` -- varnode container geometry (`vn_contains`,
+- `vn-container`: varnode container geometry (`vn_contains`,
   `largest_container_in`, ...) over `rsleigh` and `rustc-hash`, with no
   workspace dependency, so ir / lift / opt / pattern share one "which tracked
   varnode contains this one".
 
 Strider:
 
-- `strider-ir` -- the sea-of-nodes IR.
-- `strider-target` -- pure target descriptions (`SleighArch`,
+- `strider-ir`: the sea-of-nodes IR.
+- `strider-target`: pure target descriptions (`SleighArch`,
   `CallingConvention` / `BuiltCallingConvention`, the `CallOther` ABI table).
-- `strider-reader` -- ELF loader and `ReadOnlyMemory` backend.
-- `strider-cfg` -- bytes -> `Cfg` of basic-block regions via Sleigh. IR-free.
-- `strider-lift` -- CFG -> IR. The `Lifter<R>` engine owns the arch, `Sleigh<R>`
+- `strider-reader`: ELF loader and `ReadOnlyMemory` backend.
+- `strider-cfg`: bytes -> `Cfg` of basic-block regions via Sleigh. IR-free.
+- `strider-lift`: CFG -> IR. The `Lifter<R>` engine owns the arch, `Sleigh<R>`
   and cached `SleighRegs`; the calling convention is a per-call argument.
-- `strider-pattern` -- the graph-based pattern DSL (`Pattern` / `Capture` /
+- `strider-pattern`: the graph-based pattern DSL (`Pattern` / `Capture` /
   `Matcher` / `Match` / builders) over `strider-graph` with the `NeverCacheable`
   policy. `Pat` is the Python class, not a Rust type.
-- `strider-opt` -- optimization passes, the `OptimizerPipeline`, the
+- `strider-opt`: optimization passes, the `OptimizerPipeline`, the
   `rewrite_rule` facade over `strider-pattern`, and the
   `indirect_branch_resolve` classifiers. Pure graph->graph; the classifier
   reports targets and the orchestrator rebuilds the CFG from them.
-- `strider-orchestrator` -- `Strider::analyze` plus the re-exported lift engine
+- `strider-orchestrator`: `Strider::analyze` plus the re-exported lift engine
   (`Lifter` / `LiftOptions` / `LiftOutcome` at the crate root) and `strider-opt`
   re-exported as `opt`.
-- `strider-ir-test-utils` -- `make_empty_fn` / `RegisterSet` builders,
+- `strider-ir-test-utils`: `make_empty_fn` / `RegisterSet` builders,
   `MockRom`, asm-fingerprint stamping, and the `proptest-gen`-gated
   `proptest_gen` generator, shared by tests.
-- `strider-py` -- PyO3 bindings (`maturin develop` builds a wheel).
+- `strider-py`: PyO3 bindings (`maturin develop` builds a wheel).
 
 ## Dependency graph (X -> Y = X depends on Y)
 
@@ -218,7 +218,7 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
     `Arc<AtomicUsize>`, not an `Rc<Cell<_>>`. `JoinPredicateFn` is
     `Arc<... + Send + Sync>`: `JoinConstraint` is `Clone`, so the predicate is
     shared rather than duplicated.
-  - `strider-py`: no `#[pyclass(unsendable)]` remains -- `OptimizerPipeline`
+  - `strider-py`: no `#[pyclass(unsendable)]` remains. `OptimizerPipeline`
     was the last, and holds a `Mutex<PipelineState>` instead.
     `Lifter` moves and drops anywhere but decodes only on its creating thread,
     which `ThreadPinned` enforces with a catchable `StriderError`, because
@@ -247,9 +247,9 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
   successor or whose re-derived widening could not be seated (an interworking
   `Switch` carries no ISA-mode input, so a re-derived arm has no mode to decode
   in); empty means fully resolved. `unverified_seeded_sites` holds a dispatch
-  the CFG consumed as `Return` / `TailCall` -- a complete answer that cannot be
-  verified, not a loss, which is why an ARM `pop {pc}` epilogue lands here and
-  not in the first channel. `isa_mode_conflicts` and `interior_branch_targets`
+  the CFG consumed as `Return` / `TailCall`, a complete answer that cannot be
+  verified rather than a loss, which is why an ARM `pop {pc}` epilogue lands
+  here and not in the first channel. `isa_mode_conflicts` and `interior_branch_targets`
   carry the other two. The first, third and fourth accumulate across rounds, so
   a later round cannot launder an earlier loss; `unverified_seeded_sites` is
   derived once from the final CFG. `isa_mode_conflicts` is structurally always
