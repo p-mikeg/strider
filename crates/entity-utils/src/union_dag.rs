@@ -1,7 +1,6 @@
 use cranelift_entity::packed_option::PackedOption;
 use cranelift_entity::{EntityList, EntityRef, ListPool, PrimaryMap, SecondaryMap, entity_impl};
-
-use crate::DenseEntitySet;
+use rustc_hash::FxHashSet;
 
 /// Never exposed; callers address the DAG by their own external key `N`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -22,6 +21,8 @@ pub struct UnionDag<N: EntityRef, V: Copy> {
     roots: SecondaryMap<N, PackedOption<UnionId>>,
     nodes: PrimaryMap<UnionId, Node<V>>,
     links: ListPool<UnionId>,
+    /// The `(dst, src)` pairs already linked, one entry per DISTINCT link.
+    linked: FxHashSet<(UnionId, UnionId)>,
 }
 
 impl<N: EntityRef, V: Copy> Default for UnionDag<N, V> {
@@ -30,6 +31,7 @@ impl<N: EntityRef, V: Copy> Default for UnionDag<N, V> {
             roots: SecondaryMap::new(),
             nodes: PrimaryMap::new(),
             links: ListPool::new(),
+            linked: FxHashSet::default(),
         }
     }
 }
@@ -66,17 +68,12 @@ impl<N: EntityRef, V: Copy> UnionDag<N, V> {
             return;
         };
         let dst_root = self.ensure(dst);
-        // Repeating one `(dst, src)` pair would otherwise grow `dst`'s parents
-        // without bound and turn `for_each` linear in the number of `union`
-        // calls: its `seen` set hides the repetition in the ANSWER, not in the
-        // COST. Checking the last entry catches the repeated pair; an
-        // interleaved re-union costs one redundant link.
-        let last = self.nodes[dst_root]
-            .parents
-            .as_slice(&self.links)
-            .last()
-            .copied();
-        if last == Some(src_root) {
+        // Re-linking one `(dst, src)` pair would otherwise grow `dst`'s
+        // parents without bound and turn `for_each` linear in the number of
+        // `union` calls: its `seen` set hides the repetition in the ANSWER,
+        // not in the COST. `linked` catches the pair whatever else was unioned
+        // in between, so `parents` holds one entry per distinct link.
+        if !self.linked.insert((dst_root, src_root)) {
             return;
         }
         self.nodes[dst_root].parents.push(src_root, &mut self.links);
@@ -94,7 +91,10 @@ impl<N: EntityRef, V: Copy> UnionDag<N, V> {
         let Some(root) = self.roots[n].expand() else {
             return;
         };
-        let mut seen: DenseEntitySet<UnionId> = DenseEntitySet::new();
+        // Sized by what the walk VISITS. A dense set would zero a backing
+        // vector reaching the largest `UnionId` in the arena, making a call
+        // that yields one value cost in proportion to the whole arena.
+        let mut seen: FxHashSet<UnionId> = FxHashSet::default();
         let mut stack = vec![root];
         seen.insert(root);
         while let Some(id) = stack.pop() {
@@ -226,6 +226,55 @@ mod tests {
         let root = dag.roots[Key(0)].expand().expect("dst has a root");
         assert_eq!(dag.nodes[root].parents.as_slice(&dag.links).len(), 1);
         assert_eq!(set_of(&dag, Key(0)), FxHashSet::from_iter([1, 2]));
+    }
+
+    /// Interleaving two pairs must not defeat the guard either: a
+    /// last-parent-only check pushes a link on every call, so the walk cost
+    /// grows with the CALL count while the answer stays at three values.
+    #[test]
+    fn alternating_union_pairs_add_one_link_each() {
+        let mut dag: UnionDag<Key, u64> = UnionDag::new();
+        dag.extend(Key(0), 1);
+        dag.extend(Key(1), 2);
+        dag.extend(Key(2), 3);
+        for _ in 0..100 {
+            dag.union(Key(0), Key(1));
+            dag.union(Key(0), Key(2));
+        }
+        let root = dag.roots[Key(0)].expand().expect("dst has a root");
+        assert_eq!(dag.nodes[root].parents.as_slice(&dag.links).len(), 2);
+        assert_eq!(set_of(&dag, Key(0)), FxHashSet::from_iter([1, 2, 3]));
+    }
+
+    /// `for_each` must cost what it YIELDS, not what the arena holds: a dense
+    /// `seen` set grows a zeroed vector reaching the largest `UnionId`, so
+    /// sweeping every key of a large arena is quadratic.
+    #[test]
+    fn for_each_cost_does_not_scale_with_the_arena() {
+        fn sweep(n: u32) -> std::time::Duration {
+            let mut dag: UnionDag<Key, u64> = UnionDag::new();
+            for i in 0..n {
+                dag.extend(Key(i), u64::from(i));
+            }
+            let start = std::time::Instant::now();
+            let mut yielded = 0usize;
+            for i in 0..n {
+                dag.for_each(Key(i), |_| yielded += 1);
+            }
+            assert_eq!(yielded, n as usize);
+            start.elapsed()
+        }
+        // Warm the allocator so the first sweep is not paying for it.
+        sweep(4_000);
+        let small = sweep(25_000);
+        let large = sweep(200_000);
+        // Linear would be 8x; quadratic 64x. A loose bound keeps this stable
+        // on a loaded machine while still failing the dense-set shape.
+        assert!(
+            large.as_secs_f64() < small.as_secs_f64() * 24.0,
+            "8x the keys cost {:.1}x the sweep ({small:?} -> {large:?})",
+            large.as_secs_f64() / small.as_secs_f64(),
+        );
     }
 
     #[test]

@@ -1,6 +1,25 @@
-/// Integer variants name their width in bits; `I1` is one of them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ValueType {
+// The enum and its `ALL` listing come from one variant list, so a new width
+// cannot reach the exhaustive matches without reaching `ALL`.
+macro_rules! value_types {
+    ($( $(#[$meta:meta])* $name:ident ),* $(,)?) => {
+        /// Integer variants name their width in bits; `I1` is one of them.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub enum ValueType {
+            $( $(#[$meta])* $name, )*
+        }
+
+        impl ValueType {
+            /// Every variant, in declaration order (the floats follow the
+            /// ints, so this is not width order). The SSoT for any surface
+            /// enumerating the set, the Python bindings included.
+            pub const ALL: [Self; [$(value_types!(@unit $name)),*].len()] =
+                [$(Self::$name),*];
+        }
+    };
+    (@unit $name:ident) => { () };
+}
+
+value_types! {
     /// The boolean type: a comparison or logical-op result, 0 or 1.
     I1,
     I8,
@@ -36,35 +55,6 @@ pub enum ValueType {
     F80,
     /// ARM's `vcvt.f32.f16 Qd,Dm` writes a 16-byte float destination.
     F128,
-}
-
-impl ValueType {
-    /// Every variant, in declaration order (the floats follow the ints, so
-    /// this is not width order). The SSoT for any surface that has to
-    /// enumerate the set without the compiler's exhaustiveness check.
-    pub const ALL: [Self; 21] = [
-        Self::I1,
-        Self::I8,
-        Self::I16,
-        Self::I24,
-        Self::I32,
-        Self::I40,
-        Self::I48,
-        Self::I56,
-        Self::I64,
-        Self::I72,
-        Self::I80,
-        Self::I96,
-        Self::I112,
-        Self::I128,
-        Self::I256,
-        Self::I512,
-        Self::F16,
-        Self::F32,
-        Self::F64,
-        Self::F80,
-        Self::F128,
-    ];
 }
 
 impl ValueType {
