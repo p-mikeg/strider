@@ -101,18 +101,17 @@ impl Function {
 
     /// Interns `value` masked to `ty`'s width.
     ///
-    /// # Panics
-    /// If `ty` is a float type, whose mask is zero: every value would intern as
-    /// `0`. Use [`crate::IRBuilderExt::build_float_const`] for those.
+    /// `ty` must be an integer type; a float one masks to zero, so every value
+    /// interns as `0`. Not asserted: the resulting `IntConst` carries a float
+    /// output type, which [`crate::validate`] rejects, and a caller reaching
+    /// here from a user-supplied rewrite needs that as a catchable error
+    /// rather than a panic. [`crate::IRBuilderExt::build_int_const`] checks up
+    /// front and returns `Err`.
     pub fn intern_int_const(
         &mut self,
         value: u128,
         ty: crate::node::ValueType,
     ) -> crate::node::const_value::ConstId {
-        assert!(
-            ty.is_integer(),
-            "intern_int_const needs an integer type; {ty:?} masks to zero"
-        );
         let masked = value & ty.bit_mask_u128();
         self.const_interner
             .intern(crate::node::const_value::ConstValue::Bits(masked))
@@ -124,9 +123,7 @@ impl Function {
     /// representation, so an over-long or over-wide spelling of a value would
     /// otherwise intern as a second, unequal constant.
     ///
-    /// # Panics
-    ///
-    /// On a non-integer `ty`, whose mask is zero, via
+    /// A non-integer `ty` masks to zero, exactly as in
     /// [`intern_int_const`](Self::intern_int_const).
     pub fn intern_int_const_limbs(
         &mut self,
