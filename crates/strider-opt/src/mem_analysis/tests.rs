@@ -1,9 +1,19 @@
+/// The fixtures below build exactly one `Store`.
+#[cfg(test)]
+fn only_store(f: &strider_ir::Function) -> strider_ir::node::NodeId {
+    use strider_ir::IRViewer;
+    f.graph()
+        .all_node_ids()
+        .find(|&n| matches!(f.node_kind(n), strider_ir::node::NodeKind::Store(_)))
+        .expect("one store")
+}
+
 #[cfg(test)]
 mod decompose_tests {
     use crate::mem_analysis::*;
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
-    use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
+    use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, sp_arg_frame};
 
     use super::super::test_sp as sp;
 
@@ -32,11 +42,7 @@ mod decompose_tests {
     #[test]
     fn decompose_sp_initial_var() -> crate::Result<()> {
         let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .arg(sp)
-            .stack_vn(sp)
-            .build_fn_single_region()?;
+        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         b.build_return(Some(sp_val), &[])?;
         b.set_lift_addr(None);
@@ -52,34 +58,9 @@ mod decompose_tests {
     #[test]
     fn decompose_sp_sub_constant() -> crate::Result<()> {
         let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .arg(sp)
-            .stack_vn(sp)
-            .build_fn_single_region()?;
+        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let addr = sub_off(&mut b, sp_val, 4, ValueType::I32)?;
-        b.build_return(Some(addr), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
-        let r = decompose(&fg, addr);
-        assert!(matches!(r, Some(MemExpr { offset: -4, .. })));
-        Ok(())
-    }
-
-    #[test]
-    fn decompose_sp_add_negative_unsigned() -> crate::Result<()> {
-        let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .arg(sp)
-            .stack_vn(sp)
-            .build_fn_single_region()?;
-        let sp_val = b.read_variable(&sp)?;
-        let neg_four = b.build_int_const(0xFFFF_FFFCu64, ValueType::I32)?;
-        let addr =
-            b.build_int_binary_operation(sp_val, neg_four, IntBinaryOp::Add, ValueType::I32)?;
         b.build_return(Some(addr), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -96,11 +77,7 @@ mod decompose_tests {
     #[test]
     fn decompose_wraps_the_offset_to_the_address_width() -> crate::Result<()> {
         let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .arg(sp)
-            .stack_vn(sp)
-            .build_fn_single_region()?;
+        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let big = b.build_int_const(0x7FFF_FFFFu64, ValueType::I32)?;
         let once = b.build_int_binary_operation(sp_val, big, IntBinaryOp::Add, ValueType::I32)?;
@@ -121,11 +98,7 @@ mod decompose_tests {
     fn decompose_is_idempotent_and_committed_slot_round_trips() -> crate::Result<()> {
         // Committing a slot is what `StackOffsetDetect` does.
         let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .arg(sp)
-            .stack_vn(sp)
-            .build_fn_single_region()?;
+        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let addr = sub_off(&mut b, sp_val, 4, ValueType::I32)?;
         b.build_return(Some(addr), &[])?;
@@ -171,11 +144,7 @@ mod decompose_tests {
     #[test]
     fn decompose_walks_deep_offset_chain() -> crate::Result<()> {
         let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .arg(sp)
-            .stack_vn(sp)
-            .build_fn_single_region()?;
+        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let s1 = sub_off(&mut b, sp_val, 4, ValueType::I32)?;
         let s2 = sub_off(&mut b, s1, 8, ValueType::I32)?;
@@ -198,11 +167,7 @@ mod decompose_tests {
     #[test]
     fn decompose_sp_cycle_classifies_identically_regardless_of_query_order() -> crate::Result<()> {
         let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .arg(sp)
-            .stack_vn(sp)
-            .build_fn()?;
+        let mut b = sp_arg_frame(sp).build_fn()?;
         let entry = b.create_region_all()?;
         let loop_hdr = b.create_region_all()?;
         let exit = b.create_region_all()?;
@@ -273,11 +238,7 @@ mod decompose_tests {
         // read a non-SP-rooted phi as the first stack argument, or forward a
         // load over it.
         let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .arg(sp)
-            .stack_vn(sp)
-            .build_fn()?;
+        let mut b = sp_arg_frame(sp).build_fn()?;
         let entry = b.create_region_all()?;
         let a = b.create_region_all()?;
         let bb = b.create_region_all()?;
@@ -321,11 +282,7 @@ mod decompose_tests {
     #[test]
     fn decompose_sp_and_with_alignment_mask_yields_opaque_base() -> crate::Result<()> {
         let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .arg(sp)
-            .stack_vn(sp)
-            .build_fn_single_region()?;
+        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
         let aligned =
@@ -359,11 +316,7 @@ mod decompose_tests {
     #[test]
     fn decompose_sp_sub_after_and_chains_offset_through_opaque_base() -> crate::Result<()> {
         let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .arg(sp)
-            .stack_vn(sp)
-            .build_fn_single_region()?;
+        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
         let aligned =
@@ -399,11 +352,7 @@ mod decompose_tests {
     #[test]
     fn decompose_sp_deep_and_chain_terminates_without_overflow() -> crate::Result<()> {
         let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .arg(sp)
-            .stack_vn(sp)
-            .build_fn_single_region()?;
+        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let mut current = b.read_variable(&sp)?;
         let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
         const N: usize = 6000;
@@ -423,11 +372,7 @@ mod decompose_tests {
     #[test]
     fn decompose_sp_does_not_stack_overflow_on_deep_chain() -> crate::Result<()> {
         let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .arg(sp)
-            .stack_vn(sp)
-            .build_fn_single_region()?;
+        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let mut current = b.read_variable(&sp)?;
         const N: usize = 5000;
         for _ in 0..N {
@@ -470,12 +415,7 @@ mod alias_tests {
             .expect("InitialVar has 1 output")[0]
     }
 
-    fn only_store(f: &Function) -> NodeId {
-        f.graph()
-            .all_node_ids()
-            .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
-            .expect("one store")
-    }
+    use super::only_store;
 
     fn store_alias_verdict(
         f: &Function,
@@ -519,6 +459,32 @@ mod alias_tests {
             .expect("phi collapse");
     }
 
+    /// `store [base + 8]` plus a load from the same address, so the store and
+    /// its SP-rooted address stay reachable.  `align` masks the base to 8
+    /// bytes first, giving a base the decomposer cannot offset-compare with
+    /// the entry SP.
+    fn store_at_base_plus_eight(sp: rsleigh::Vn, align: bool) -> Function {
+        let mut f = make_sp_fn(sp, |b, sp_val| {
+            let base = if align {
+                let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
+                b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I32)?
+            } else {
+                sp_val
+            };
+            let eight = b.build_int_const(8u64, ValueType::I32)?;
+            let store_addr =
+                b.build_int_binary_operation(base, eight, IntBinaryOp::Add, ValueType::I32)?;
+            let data = b.build_int_const(0xAAu64, ValueType::I32)?;
+            b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
+            let loaded = b.build_load(store_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+            b.build_return(Some(loaded), &[])?;
+            Ok(())
+        })
+        .unwrap();
+        collapse(&mut f);
+        f
+    }
+
     /// A `Store` at an alignment-masked base `(sp & mask) + 8` must not be
     /// proven disjoint from an entry-SP query just because the offsets do not
     /// overlap.  The bases differ by the runtime `sp mod align`, so comparing
@@ -526,28 +492,11 @@ mod alias_tests {
     #[test]
     fn different_base_terminal_store_may_alias() {
         let sp = stack_vn_x86();
-        let mut f = make_sp_fn(sp, |b, sp_val| {
-            let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
-            let aligned =
-                b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I32)?;
-            let eight = b.build_int_const(8u64, ValueType::I32)?;
-            let store_addr =
-                b.build_int_binary_operation(aligned, eight, IntBinaryOp::Add, ValueType::I32)?;
-            let data = b.build_int_const(0xAAu64, ValueType::I32)?;
-            b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
-            // Keeps the store and its SP-address phi reachable.
-            let loaded = b.build_load(store_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-            b.build_return(Some(loaded), &[])?;
-            Ok(())
-        })
-        .unwrap();
-        collapse(&mut f);
-
-        let store = only_store(&f);
+        let f = store_at_base_plus_eight(sp, true);
         let query_base = entry_sp_value(&f, sp);
         let verdict = store_alias_verdict(
             &f,
-            store,
+            only_store(&f),
             AddrClass::StackRooted {
                 base: query_base,
                 offset: 0,
@@ -570,27 +519,11 @@ mod alias_tests {
     #[test]
     fn different_base_terminal_store_disjoint_when_opted_in() {
         let sp = stack_vn_x86();
-        let mut f = make_sp_fn(sp, |b, sp_val| {
-            let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
-            let aligned =
-                b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I32)?;
-            let eight = b.build_int_const(8u64, ValueType::I32)?;
-            let store_addr =
-                b.build_int_binary_operation(aligned, eight, IntBinaryOp::Add, ValueType::I32)?;
-            let data = b.build_int_const(0xAAu64, ValueType::I32)?;
-            b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
-            let loaded = b.build_load(store_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-            b.build_return(Some(loaded), &[])?;
-            Ok(())
-        })
-        .unwrap();
-        collapse(&mut f);
-
-        let store = only_store(&f);
+        let f = store_at_base_plus_eight(sp, true);
         let query_base = entry_sp_value(&f, sp);
         let verdict = store_alias_verdict(
             &f,
-            store,
+            only_store(&f),
             AddrClass::StackRooted {
                 base: query_base,
                 offset: 0,
@@ -609,25 +542,11 @@ mod alias_tests {
     #[test]
     fn same_base_disjoint_offsets_is_disjoint() {
         let sp = stack_vn_x86();
-        let mut f = make_sp_fn(sp, |b, sp_val| {
-            let eight = b.build_int_const(8u64, ValueType::I32)?;
-            let store_addr =
-                b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
-            let data = b.build_int_const(0xAAu64, ValueType::I32)?;
-            b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
-            // Keeps the store and its SP-address phi reachable.
-            let loaded = b.build_load(store_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-            b.build_return(Some(loaded), &[])?;
-            Ok(())
-        })
-        .unwrap();
-        collapse(&mut f);
-
-        let store = only_store(&f);
+        let f = store_at_base_plus_eight(sp, false);
         let query_base = entry_sp_value(&f, sp);
         let verdict = store_alias_verdict(
             &f,
-            store,
+            only_store(&f),
             AddrClass::StackRooted {
                 base: query_base,
                 offset: 0,
@@ -642,25 +561,11 @@ mod alias_tests {
     #[test]
     fn same_base_same_offset_is_match() {
         let sp = stack_vn_x86();
-        let mut f = make_sp_fn(sp, |b, sp_val| {
-            let eight = b.build_int_const(8u64, ValueType::I32)?;
-            let store_addr =
-                b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
-            let data = b.build_int_const(0xAAu64, ValueType::I32)?;
-            b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
-            // Keeps the store and its SP-address phi reachable.
-            let loaded = b.build_load(store_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
-            b.build_return(Some(loaded), &[])?;
-            Ok(())
-        })
-        .unwrap();
-        collapse(&mut f);
-
-        let store = only_store(&f);
+        let f = store_at_base_plus_eight(sp, false);
         let query_base = entry_sp_value(&f, sp);
         let verdict = store_alias_verdict(
             &f,
-            store,
+            only_store(&f),
             AddrClass::StackRooted {
                 base: query_base,
                 offset: 8,
@@ -736,11 +641,7 @@ mod cfg_tests {
         p.add(RegionCollapse);
         p.run(&mut f, &mut OptCtx::new(None)).expect("collapse");
 
-        let store = f
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
-            .expect("store node");
+        let store = super::only_store(&f);
         let load = f
             .graph()
             .all_node_ids()
@@ -999,8 +900,6 @@ mod heap_tests {
     /// make this verdict `MayAlias`.
     #[test]
     fn two_heap_objects_are_disjoint() -> crate::Result<()> {
-        use strider_ir::IRViewer;
-        use strider_ir::node::NodeKind;
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
         let x = b.build_int_const(0x11u64, ValueType::I64)?;
@@ -1010,11 +909,7 @@ mod heap_tests {
         b.build_return(Some(loaded), &[])?;
         let fg = built(b, &[MALLOC])?;
 
-        let store = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
-            .expect("store node");
+        let store = super::only_store(&fg);
         let load = fg
             .graph()
             .all_node_ids()
@@ -1031,8 +926,6 @@ mod heap_tests {
 
     #[test]
     fn heap_and_stack_are_disjoint() -> crate::Result<()> {
-        use strider_ir::IRViewer;
-        use strider_ir::node::NodeKind;
         let mut b = builder()?;
         let sp_val = b.read_variable(&sp())?;
         let eight = b.build_int_const(8u64, ValueType::I64)?;
@@ -1049,11 +942,7 @@ mod heap_tests {
         // Collapse the trivial sp Phi so the stack address decomposes.
         let fg = built_collapsed(b, &[MALLOC])?;
 
-        let store = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
-            .expect("store");
+        let store = super::only_store(&fg);
         let load = fg
             .graph()
             .all_node_ids()
@@ -1072,8 +961,6 @@ mod heap_tests {
     /// the SP-rooted offset semantics.
     #[test]
     fn same_heap_object_uses_offset_ranges() -> crate::Result<()> {
-        use strider_ir::IRViewer;
-        use strider_ir::node::NodeKind;
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
         let zero = b.build_int_const(0u64, ValueType::I64)?;
@@ -1086,11 +973,7 @@ mod heap_tests {
         b.build_return(Some(loaded), &[])?;
         let fg = built(b, &[MALLOC])?;
 
-        let store = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
-            .expect("store");
+        let store = super::only_store(&fg);
         let load = fg.producer(loaded);
         let cfg = MemAnalyzer::new(MemOptions::call_blocking(false));
         assert_eq!(
@@ -1105,8 +988,6 @@ mod heap_tests {
     /// the opaque pointer could be this very allocation, spilled and reloaded.
     #[test]
     fn heap_vs_opaque_may_alias() -> crate::Result<()> {
-        use strider_ir::IRViewer;
-        use strider_ir::node::NodeKind;
         let mut b = builder()?;
         // An opaque store address: a pointer loaded from a global.
         let global = b.build_int_const(0x4000u64, ValueType::I64)?;
@@ -1118,11 +999,7 @@ mod heap_tests {
         b.build_return(Some(loaded), &[])?;
         let fg = built(b, &[MALLOC])?;
 
-        let store = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
-            .expect("store");
+        let store = super::only_store(&fg);
         let load = fg.producer(loaded);
         let cfg = MemAnalyzer::new(MemOptions::call_blocking(false));
         assert_eq!(
@@ -1139,8 +1016,6 @@ mod heap_tests {
     /// bound `escape_analysis` forwards under.
     #[test]
     fn allocator_call_is_transparent_to_a_stack_slot() -> crate::Result<()> {
-        use strider_ir::IRViewer;
-        use strider_ir::node::NodeKind;
         let mut b = builder()?;
         let sp_val = b.read_variable(&sp())?;
         let slot_off = b.build_int_const((-8i64) as u64, ValueType::I64)?;
@@ -1156,11 +1031,7 @@ mod heap_tests {
         b.build_return(Some(loaded), &[])?;
         let fg = built_collapsed(b, &[MALLOC])?;
 
-        let store = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
-            .expect("store");
+        let store = super::only_store(&fg);
         let load = fg
             .graph()
             .all_node_ids()
@@ -1180,8 +1051,6 @@ mod heap_tests {
     /// allocator call; the call is that region's definition point.
     #[test]
     fn allocator_call_clobbers_its_own_allocation() -> crate::Result<()> {
-        use strider_ir::IRViewer;
-        use strider_ir::node::NodeKind;
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
         let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::I64)?;
@@ -1208,7 +1077,6 @@ mod heap_tests {
     /// the full pipeline.
     #[test]
     fn stack_spill_forwards_across_allocator_end_to_end() -> crate::Result<()> {
-        use strider_ir::IRViewer;
         let mut b = builder()?;
         let sp_val = b.read_variable(&sp())?;
         let slot_off = b.build_int_const((-8i64) as u64, ValueType::I64)?;
@@ -1244,7 +1112,6 @@ mod heap_tests {
     /// either, even though nothing else changed.
     #[test]
     fn escaped_frame_does_not_forward_across_an_allocator() -> crate::Result<()> {
-        use strider_ir::IRViewer;
         let mut b = builder()?;
         let sp_val = b.read_variable(&sp())?;
         let slot_off = b.build_int_const((-8i64) as u64, ValueType::I64)?;
@@ -1323,7 +1190,6 @@ mod heap_tests {
     /// may scratch it, so a reload of that slot must not forward.
     #[test]
     fn allocator_does_not_forward_its_own_stack_argument_slot() -> crate::Result<()> {
-        use strider_ir::IRViewer;
         let sp = sp();
         let stack_args = strider_target::StackArgs {
             base_offset: 0,
@@ -1574,8 +1440,6 @@ mod heap_tests {
     /// not disqualify the incoming stack-argument slots.
     #[test]
     fn phi_of_two_allocations_is_disjoint_from_the_stack() -> crate::Result<()> {
-        use strider_ir::IRViewer;
-        use strider_ir::node::NodeKind;
         let (mut b, phi, _pa, _pc) = alloc_phi_diamond()?;
         let x = b.build_int_const(0x11u64, ValueType::I64)?;
         b.build_store(phi, x, rsleigh::VnSpace::RAM)?;
@@ -1586,11 +1450,7 @@ mod heap_tests {
         b.build_return(Some(loaded), &[])?;
         let fg = built_collapsed(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
 
-        let store = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
-            .expect("store");
+        let store = super::only_store(&fg);
         let load = fg
             .graph()
             .all_node_ids()
@@ -1610,8 +1470,6 @@ mod heap_tests {
     /// make it Disjoint from the very allocation it holds.
     #[test]
     fn phi_of_allocations_may_alias_its_own_arm() -> crate::Result<()> {
-        use strider_ir::IRViewer;
-        use strider_ir::node::NodeKind;
         let (mut b, phi, pa, _pc) = alloc_phi_diamond()?;
         let x = b.build_int_const(0x11u64, ValueType::I64)?;
         b.build_store(pa, x, rsleigh::VnSpace::RAM)?;
@@ -1619,11 +1477,7 @@ mod heap_tests {
         b.build_return(Some(loaded), &[])?;
         let fg = built_collapsed(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
 
-        let store = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
-            .expect("store");
+        let store = super::only_store(&fg);
         let load = fg.producer(loaded);
         let cfg = MemAnalyzer::new(MemOptions::call_blocking(false));
         assert_eq!(
@@ -1825,7 +1679,7 @@ mod arg_window_complexity {
     use crate::mem_analysis::*;
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
-    use strider_ir_test_utils::RegisterSet;
+    use strider_ir_test_utils::sp_frame;
 
     /// A spill at `sp - 8`, `calls` back-to-back calls under a lowered SP, then
     /// its reload.  The nearest call's window scan runs into the call before
@@ -1837,10 +1691,7 @@ mod arg_window_complexity {
             base_offset: 0,
             increment: 4,
         };
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
+        let mut b = sp_frame(sp)
             .stack_args(Some(stack_args))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
@@ -1901,10 +1752,7 @@ mod arg_window_complexity {
             base_offset: 0,
             increment: 4,
         };
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
+        let mut b = sp_frame(sp)
             .stack_args(Some(stack_args))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
@@ -1975,10 +1823,7 @@ mod arg_window_complexity {
             base_offset: 0,
             increment: 4,
         };
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
+        let mut b = sp_frame(sp)
             .stack_args(Some(stack_args))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
@@ -2045,10 +1890,7 @@ mod arg_window_complexity {
             base_offset: 0,
             increment: 4,
         };
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
+        let mut b = sp_frame(sp)
             .stack_args(Some(stack_args))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
@@ -2139,17 +1981,13 @@ mod spine_memo {
     use crate::mem_analysis::*;
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
-    use strider_ir_test_utils::RegisterSet;
+    use strider_ir_test_utils::sp_arg_frame;
 
     /// `sp - 4 - 4 - ...`, `len` links deep, left un-flattened (`ConstantFold`
     /// would collapse it).  The returned chain runs shallowest link first.
     fn add_chain(len: usize) -> crate::Result<(strider_ir::Function, Vec<ValueId>)> {
         let sp = strider_ir_test_utils::stack_vn_x86();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .arg(sp)
-            .stack_vn(sp)
-            .build_fn_single_region()?;
+        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let mut cur = b.read_variable(&sp)?;
         let mut chain = Vec::with_capacity(len);
         for _ in 0..len {
@@ -2206,7 +2044,7 @@ mod arg_window_visibility {
     use crate::mem_analysis::*;
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
-    use strider_ir_test_utils::RegisterSet;
+    use strider_ir_test_utils::sp_frame;
 
     /// ```text
     /// store P -> sp+0     ; f's arg0
@@ -2222,10 +2060,7 @@ mod arg_window_visibility {
             base_offset: 0,
             increment: 4,
         };
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
+        let mut b = sp_frame(sp)
             .stack_args(Some(stack_args))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
@@ -2286,10 +2121,7 @@ mod arg_window_visibility {
             base_offset: 0,
             increment: 4,
         };
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
+        let mut b = sp_frame(sp)
             .stack_args(Some(stack_args))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
@@ -2354,10 +2186,7 @@ mod arg_window_visibility {
             base_offset: 4,
             increment: 4,
         };
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
+        let mut b = sp_frame(sp)
             .stack_args(Some(stack_args))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
@@ -2422,10 +2251,7 @@ mod arg_window_visibility {
             base_offset: 0,
             increment: 4,
         };
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
+        let mut b = sp_frame(sp)
             .stack_args(Some(stack_args))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
@@ -2487,10 +2313,7 @@ mod arg_window_visibility {
             base_offset: 4,
             increment: 4,
         };
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
+        let mut b = sp_frame(sp)
             .stack_args(Some(stack_args))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
@@ -2550,10 +2373,7 @@ mod arg_window_visibility {
             base_offset: 0,
             increment: 4,
         };
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
+        let mut b = sp_frame(sp)
             .stack_args(Some(stack_args))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
@@ -2613,21 +2433,15 @@ mod own_frame_tests {
     use crate::mem_analysis::*;
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
-    use strider_ir_test_utils::RegisterSet;
+    use strider_ir_test_utils::{sp_frame, stack_args_at};
 
     /// `in_own_frame` reads a raw base, so it must recognise the alignment
     /// anchor `decompose` produces rather than take any `And` on trust.
     #[test]
     fn only_an_alignment_masked_sp_is_a_frame_base() -> crate::Result<()> {
         let sp = strider_ir_test_utils::stack_vn_x86();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
-            .stack_args(Some(strider_target::StackArgs {
-                base_offset: 0,
-                increment: 4,
-            }))
+        let mut b = sp_frame(sp)
+            .stack_args(stack_args_at(0, 4))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
         let align = b.build_int_const(0xFFFF_FFF0u64, ValueType::I32)?;
@@ -2658,14 +2472,8 @@ mod own_frame_tests {
     #[test]
     fn an_access_reaching_over_the_argument_bound_is_not_private() -> crate::Result<()> {
         let sp = strider_ir_test_utils::stack_vn_x86();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
-            .stack_args(Some(strider_target::StackArgs {
-                base_offset: 4,
-                increment: 4,
-            }))
+        let mut b = sp_frame(sp)
+            .stack_args(stack_args_at(4, 4))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
         let align = b.build_int_const(0xFFFF_FFF0u64, ValueType::I32)?;
@@ -2707,14 +2515,8 @@ mod own_frame_tests {
     #[test]
     fn an_alignment_anchor_above_the_entry_sp_is_not_this_frame() -> crate::Result<()> {
         let sp = strider_ir_test_utils::stack_vn_x86();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
-            .stack_args(Some(strider_target::StackArgs {
-                base_offset: 4,
-                increment: 4,
-            }))
+        let mut b = sp_frame(sp)
+            .stack_args(stack_args_at(4, 4))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
         let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::I32)?;
@@ -2814,7 +2616,7 @@ mod modular_offset_tests {
     use crate::mem_analysis::*;
     use strider_ir::node::{NodeKind, ValueType};
     use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
-    use strider_ir_test_utils::RegisterSet;
+    use strider_ir_test_utils::sp_arg_frame;
 
     use super::super::test_sp as sp;
 
@@ -2826,11 +2628,7 @@ mod modular_offset_tests {
     #[test]
     fn offsets_two_bytes_apart_across_the_wrap_may_alias() -> crate::Result<()> {
         let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .arg(sp)
-            .stack_vn(sp)
-            .build_fn_single_region()?;
+        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let k_a = b.build_int_const(0x7FFF_FFFEu64, ValueType::I32)?;
         let a = b.build_int_binary_operation(sp_val, k_a, IntBinaryOp::Add, ValueType::I32)?;

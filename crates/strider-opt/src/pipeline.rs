@@ -305,8 +305,8 @@ mod tests {
     use super::{OptCtx, Optimizer};
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IRViewer, IRWalker};
-    use strider_ir_test_utils::IrBuilderEx;
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
+    use strider_ir_test_utils::{IrBuilderEx, stack_args_at};
 
     /// Single-region function returning `IntConst(k)`.
     fn one_const_fn(k: u64) -> strider_ir::Function {
@@ -390,10 +390,7 @@ mod tests {
         let mut b = strider_ir_test_utils::RegisterSet::new()
             .tracked(sp)
             .callee_saved(sp)
-            .stack_args(Some(strider_target::StackArgs {
-                base_offset: 0,
-                increment: 8,
-            }))
+            .stack_args(stack_args_at(0, 8))
             .build_fn()?;
         let region = b.create_region_all()?;
         b.set_entry_region_all(region)?;
@@ -482,14 +479,8 @@ mod tests {
             addr_space: rsleigh::VnSpace::REGISTER,
             size: 4,
         };
-        let mut b = strider_ir_test_utils::RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
-            .stack_args(Some(strider_target::StackArgs {
-                base_offset: 0,
-                increment: 4,
-            }))
+        let mut b = strider_ir_test_utils::sp_frame(sp)
+            .stack_args(stack_args_at(0, 4))
             .build_fn()?;
         let region = b.create_region_all()?;
         b.set_entry_region_all(region)?;

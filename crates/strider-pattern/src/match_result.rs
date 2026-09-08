@@ -1,8 +1,8 @@
 use rustc_hash::FxHashSet;
-use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{Graph, IRViewer};
+use strider_ir::Graph;
+use strider_ir::node::{NodeId, ValueId};
 
-use crate::bindings::{Binding, Bindings};
+use crate::bindings::Bindings;
 use crate::capture::Capture;
 
 /// Holds raw ids, which [`strider_ir::Function::compact`] invalidates. The
@@ -85,7 +85,11 @@ impl Match {
     ///
     /// * `InitialVar(vn)`: the varnode read at function entry.
     /// * `Call` / `CallOther` clobber outputs: the clobbered register.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn get_vn(&self, c: Capture, function: &strider_ir::Function) -> Option<rsleigh::Vn> {
+        use crate::bindings::Binding;
+        use strider_ir::IRViewer;
+        use strider_ir::node::NodeKind;
         if self.is_stale(function.graph()) {
             return None;
         }

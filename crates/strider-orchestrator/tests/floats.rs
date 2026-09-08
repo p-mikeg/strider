@@ -2,6 +2,7 @@ mod common;
 use common::*;
 use strider_ir::node::NodeKind;
 use strider_ir::{FloatBinaryOp, FloatCmpOp};
+use strider_ir_test_utils::IrWalkerEx;
 
 per_arch_test!("floats", "f32_arith", has_four_float_binops);
 per_arch_test!("floats", "f64_arith", has_four_float_binops);
@@ -30,19 +31,19 @@ fn has_four_float_binops(function: &strider_ir::Function) {
 }
 fn has_float_to_float(function: &strider_ir::Function) {
     assert!(
-        has_kind(function, |k| matches!(k, NodeKind::FloatToFloat)),
+        function.has_kind(|k| matches!(k, NodeKind::FloatToFloat)),
         "expected >=1 FloatToFloat node"
     );
 }
 fn has_int_to_float(function: &strider_ir::Function) {
     assert!(
-        has_kind(function, |k| matches!(k, NodeKind::IntToFloat)),
+        function.has_kind(|k| matches!(k, NodeKind::IntToFloat)),
         "expected >=1 IntToFloat node"
     );
 }
 fn has_float_to_int(function: &strider_ir::Function) {
     assert!(
-        has_kind(function, |k| matches!(k, NodeKind::FloatToInt)),
+        function.has_kind(|k| matches!(k, NodeKind::FloatToInt)),
         "expected >=1 FloatToInt node"
     );
 }

@@ -1460,6 +1460,7 @@ dependencies = [
  "strider-graph",
  "strider-ir",
  "strider-ir-test-utils",
+ "strider-pattern",
  "strider-target",
  "vn-container",
 ]

@@ -322,17 +322,15 @@ fn int_const_any_width_negative_i128_template_rhs() {
     );
 }
 
-/// A raw-built template with non-contiguous input slots must fail `instantiate`
-/// with a typed error rather than silently closing the gap, which would land
-/// slot 2's producer at IR input index 1: wrong IR, no diagnostic.
-#[test]
-fn instantiate_noncontiguous_raw_template_slots_errors() {
+/// Builds `Add(l, r)` with `r` wired at `r_slot`, instantiates it, and returns
+/// the resulting error's message.
+fn instantiate_add_with_rhs_slot_err(r_slot: usize) -> String {
     let mut b = TemplateBuilder::new();
     let l = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(5))));
     let r = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(7))));
     let add_node = b.node(KindSpec::Exact(NodeKind::IntBinaryOp(IntBinaryOp::Add)));
     b.input(add_node, 0, l);
-    b.input(add_node, 2, r); // gap at slot 1
+    b.input(add_node, r_slot, r);
     let _out = b.value_output(add_node, 0);
     let tpl = b.finish();
 
@@ -341,9 +339,17 @@ fn instantiate_noncontiguous_raw_template_slots_errors() {
     let bindings = Bindings::default();
 
     let mut ef = EditFunction::new(&mut fx);
-    let err = instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::I64)
-        .expect_err("non-contiguous slots must error");
-    let msg = err.to_string();
+    instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::I64)
+        .expect_err("a malformed slot layout must error")
+        .to_string()
+}
+
+/// A raw-built template with non-contiguous input slots must fail `instantiate`
+/// with a typed error rather than silently closing the gap, which would land
+/// slot 2's producer at IR input index 1: wrong IR, no diagnostic.
+#[test]
+fn instantiate_noncontiguous_raw_template_slots_errors() {
+    let msg = instantiate_add_with_rhs_slot_err(2);
     assert!(
         msg.contains("slot"),
         "error should name the slot-contiguity violation; got: {msg}"
@@ -354,23 +360,7 @@ fn instantiate_noncontiguous_raw_template_slots_errors() {
 /// rather than silently drop the earlier edge.
 #[test]
 fn instantiate_duplicate_raw_template_slot_errors() {
-    let mut b = TemplateBuilder::new();
-    let l = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(5))));
-    let r = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(7))));
-    let add_node = b.node(KindSpec::Exact(NodeKind::IntBinaryOp(IntBinaryOp::Add)));
-    b.input(add_node, 0, l);
-    b.input(add_node, 0, r); // duplicate slot 0
-    let _out = b.value_output(add_node, 0);
-    let tpl = b.finish();
-
-    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::I64)).unwrap();
-    let lhs_root = fx.walk().next().unwrap();
-    let bindings = Bindings::default();
-
-    let mut ef = EditFunction::new(&mut fx);
-    let err = instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::I64)
-        .expect_err("duplicate slot must error");
-    let msg = err.to_string();
+    let msg = instantiate_add_with_rhs_slot_err(0);
     assert!(
         msg.contains("slot"),
         "error should name the duplicate-slot violation; got: {msg}"

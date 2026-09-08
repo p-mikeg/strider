@@ -6,8 +6,8 @@ use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
 use strider_ir_test_utils::IrBuilderEx;
 use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::{
-    RegisterSet, SENTINEL_LIFT_ADDR, reg_vn, stack_vn_aarch64, stack_vn_x86 as sp32_vn,
-    stack_vn_x86_64 as stack_vn,
+    RegisterSet, SENTINEL_LIFT_ADDR, reg_vn, sp_frame, stack_args_at, stack_vn_aarch64,
+    stack_vn_x86 as sp32_vn, stack_vn_x86_64 as stack_vn,
 };
 
 fn rdi_like_vn() -> rsleigh::Vn {
@@ -104,14 +104,8 @@ fn rerunning_pass_is_idempotent_no_duplicate_carriers() -> Result<()> {
 #[test]
 fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 4,
-            increment: 8,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     {
@@ -149,14 +143,8 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
 #[test]
 fn aligned_sp_load_is_not_a_stack_arg() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 4,
-            increment: 8,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
@@ -197,14 +185,8 @@ fn build_sp_load(
 fn detects_ten_contiguous_stack_args() -> Result<()> {
     const N: usize = 10;
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 0,
-            increment: 8,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(0, 8))
         .build_fn_single_region()?;
     let _sp_val = b.read_variable(&sp)?;
     // No intervening stores, so each load reads InitialMemory.
@@ -241,14 +223,8 @@ fn detects_ten_contiguous_stack_args() -> Result<()> {
 #[test]
 fn stack_arg_gap_truncates() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 4,
-            increment: 4,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 4))
         .build_fn_single_region()?;
     let _sp_val = b.read_variable(&sp)?;
     let a = build_sp_load(&mut b, &sp, 4)?;
@@ -292,14 +268,8 @@ fn stack_arg_gap_truncates() -> Result<()> {
 #[test]
 fn stack_arg_load_chain_is_narrowed_without_changing_detection() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 4,
-            increment: 8,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     for off in [8u64, 12u64] {
@@ -338,15 +308,7 @@ fn stack_arg_load_chain_is_narrowed_without_changing_detection() -> Result<()> {
 #[test]
 fn memphi_shadow_disqualifies() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 4,
-            increment: 8,
-        }))
-        .build_fn()?;
+    let mut b = sp_frame(sp).stack_args(stack_args_at(4, 8)).build_fn()?;
     let entry = b.create_region_all()?;
     let true_br = b.create_region_all()?;
     let false_br = b.create_region_all()?;
@@ -397,14 +359,8 @@ fn memphi_shadow_disqualifies() -> Result<()> {
 #[test]
 fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     let sp = stack_vn_aarch64();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 0,
-            increment: 8,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(0, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // Combined so neither load is dead.
@@ -447,14 +403,8 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
 #[test]
 fn wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 4,
-            increment: 4,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 4))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // The 8-byte `double`, spanning slots 0 and 1.
@@ -502,14 +452,8 @@ fn wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
 #[test]
 fn span_four_wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 0,
-            increment: 4,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(0, 4))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // 16 bytes, spanning slots 0..3.
@@ -654,10 +598,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
         .arg(rdi)
         .arg(rsi)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 8,
-            increment: 8,
-        }))
+        .stack_args(stack_args_at(8, 8))
         .callee_saved(rdi)
         .build_fn_single_region()?;
 
@@ -705,14 +646,8 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
 #[test]
 fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
     let sp = stack_vn_aarch64();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 4,
-            increment: 8,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     let wide_data = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, ValueType::I64)?;
@@ -742,14 +677,8 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
 #[test]
 fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 4,
-            increment: 8,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // Covers [0,4).
@@ -786,15 +715,7 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
 #[test]
 fn memphi_partial_overlap_shadows() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 4,
-            increment: 8,
-        }))
-        .build_fn()?;
+    let mut b = sp_frame(sp).stack_args(stack_args_at(4, 8)).build_fn()?;
     let entry = b.create_region_all()?;
     let then_r = b.create_region_all()?;
     let else_r = b.create_region_all()?;
@@ -850,14 +771,8 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
 #[test]
 fn isolated_high_offset_load_dropped() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 4,
-            increment: 4,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 4))
         .build_fn_single_region()?;
     let _sp_val = b.read_variable(&sp)?;
     let v = build_sp_load(&mut b, &sp, 12)?;
@@ -885,14 +800,8 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, PhiCollapse, RegionCollapse};
 
     let sp = stack_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 4,
-            increment: 8,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // -4 read as signed i64.
@@ -928,14 +837,8 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
 #[test]
 fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 4,
-            increment: 8,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // Covers [4,8).
@@ -969,14 +872,8 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
 #[test]
 fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 4,
-            increment: 8,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // A global write to a fixed `.data` address.
@@ -1012,14 +909,8 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
 #[test]
 fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 4,
-            increment: 8,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // Covers [0,4).
@@ -1053,15 +944,7 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
 #[test]
 fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 4,
-            increment: 8,
-        }))
-        .build_fn()?;
+    let mut b = sp_frame(sp).stack_args(stack_args_at(4, 8)).build_fn()?;
     let entry = b.create_region_all()?;
     let then_r = b.create_region_all()?;
     let else_r = b.create_region_all()?;
@@ -1120,14 +1003,8 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
     const CHAIN_LEN: usize = 10_000;
 
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 4,
-            increment: 8,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // Disjoint stack stores at offsets 16, 20, 24, ...
@@ -1190,14 +1067,8 @@ fn call_other_on_the_chain_blocks_under_either_survival_setting() -> Result<()> 
     };
 
     let new_fn = || -> Result<strider_ir::Function> {
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
-            .stack_args(Some(strider_target::StackArgs {
-                base_offset: 0,
-                increment: 8,
-            }))
+        let mut b = sp_frame(sp)
+            .stack_args(stack_args_at(0, 8))
             .build_fn_single_region()?;
         build(&mut b)?;
         b.build()
@@ -1251,14 +1122,8 @@ fn incoming_args_survive_calls_toggle_gates_arg_across_call() -> Result<()> {
     };
 
     let mut fg_default = {
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
-            .stack_args(Some(strider_target::StackArgs {
-                base_offset: 4,
-                increment: 8,
-            }))
+        let mut b = sp_frame(sp)
+            .stack_args(stack_args_at(4, 8))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         build(&mut b, sp_val)?;
@@ -1275,14 +1140,8 @@ fn incoming_args_survive_calls_toggle_gates_arg_across_call() -> Result<()> {
     );
 
     let mut fg_conservative = {
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
-            .stack_args(Some(strider_target::StackArgs {
-                base_offset: 4,
-                increment: 8,
-            }))
+        let mut b = sp_frame(sp)
+            .stack_args(stack_args_at(4, 8))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         build(&mut b, sp_val)?;
@@ -1348,14 +1207,8 @@ fn function_args_combine_phi_or_semantics_pinned() {
 #[test]
 fn arg_detection_does_not_narrow_a_load_past_a_call() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 4,
-            increment: 8,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, ValueType::I32)?;
@@ -1389,14 +1242,8 @@ fn arg_detection_does_not_narrow_a_load_past_a_call() -> Result<()> {
 #[test]
 fn memory_clobbering_call_other_blocks_regardless_of_the_survival_flag() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 0,
-            increment: 8,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(0, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     let (call_node, _result) = b.build_call_other_abi(
