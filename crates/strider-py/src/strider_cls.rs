@@ -190,7 +190,7 @@ fn opt_options_from(
             assume_incoming_args_survive_calls: a.assume_incoming_args_survive_calls,
             distinct_sp_bases_disjoint: a.distinct_sp_bases_disjoint,
             callee_preserves_stack_args: a.callee_preserves_stack_args,
-            noalias_allocators: a.noalias_allocators.iter().copied().collect(),
+            noalias_allocators: std::sync::Arc::new(a.noalias_allocators.iter().copied().collect()),
             escape_analysis: a.escape_analysis,
         }
     };
@@ -809,7 +809,14 @@ impl PyLifter {
         };
         let cfg_obj = Py::new(py, PyCfg::with_reports(py, cfg, slf.clone_ref(py), reports))?;
 
-        let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
+        let py_function = Py::new(
+            py,
+            PyFunction::new(
+                function,
+                cfg_obj.clone_ref(py),
+                opt_opts.assumptions.clone(),
+            ),
+        )?;
         let result = analyze_result_type(py)?
             .bind(py)
             .call1((cfg_obj, py_function, unresolved))?;

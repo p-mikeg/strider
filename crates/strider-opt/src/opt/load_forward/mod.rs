@@ -37,8 +37,10 @@ pub struct LoadForward {
     analyzers: RefCell<Option<Analyzers>>,
 }
 
-/// `alias` carries the assumption knobs and decides whether to forward;
-/// `narrow` carries none and is the only one a permanent rewire may name.
+/// `alias` carries the call-boundary relaxations and decides whether to
+/// forward; `narrow` carries none and is the only one a permanent rewire may
+/// name.  Both carry `noalias_allocators`, a claim about the program rather
+/// than a relaxation.
 struct Analyzers {
     alias: MemAnalyzer,
     narrow: MemAnalyzer,
@@ -73,17 +75,23 @@ impl crate::peephole::PeepholePass for LoadForward {
         opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<crate::peephole::PeepholeRewrite> {
-        // `call_blocking`: a store at another SP base may still alias.
-        let options = MemOptions::call_blocking(opt_ctx.options.assumptions.stack_global_disjoint);
-        let relaxed = options
-            .with_escape_analysis(opt_ctx.options.assumptions.escape_analysis)
-            .with_callee_preserves_stack_args(
-                opt_ctx.options.assumptions.callee_preserves_stack_args,
-            );
         let mut analyzers = self.analyzers.borrow_mut();
-        let cfgs = analyzers.get_or_insert_with(|| Analyzers {
-            alias: MemAnalyzer::new(relaxed),
-            narrow: MemAnalyzer::new(options),
+        let cfgs = analyzers.get_or_insert_with(|| {
+            let assumptions = &opt_ctx.options.assumptions;
+            // `call_blocking`: a store at another SP base may still alias.
+            // `noalias_allocators` is on both: it is a claim about the program,
+            // not a call-boundary relaxation, and both analyzers must decompose
+            // against the same set or one poisons the other's memo.
+            let options = MemOptions::call_blocking(assumptions.stack_global_disjoint)
+                .with_noalias_allocators(&assumptions.noalias_allocators);
+            let relaxed = options
+                .clone()
+                .with_escape_analysis(assumptions.escape_analysis)
+                .with_callee_preserves_stack_args(assumptions.callee_preserves_stack_args);
+            Analyzers {
+                alias: MemAnalyzer::new(relaxed),
+                narrow: MemAnalyzer::new(options),
+            }
         });
         Ok(crate::peephole::PeepholeRewrite::from_changed(
             try_forward_load(edit, root, &cfgs.alias, &cfgs.narrow)?.changed(),

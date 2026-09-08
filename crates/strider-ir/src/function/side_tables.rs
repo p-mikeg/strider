@@ -78,10 +78,6 @@ pub struct SideTables {
     /// share both.
     memory_offsets: RefCell<SecondaryMap<ValueId, MemDecomp>>,
     memory_interner: RefCell<EntityInterner<MemoryId, (ValueId, i128)>>,
-    /// Callee addresses of pure `noalias` heap allocators. A `Call` to one of
-    /// these has a fresh heap-base return. Survives [`Self::clear_memory_slots`]
-    /// and compaction: machine addresses, not arena ids.
-    noalias_allocators: FxHashSet<u64>,
     /// Per-output case target addresses for a `Switch`: machine addresses, not
     /// arena ids.
     switch_targets: FxHashMap<NodeId, Vec<u64>>,
@@ -232,19 +228,6 @@ impl SideTables {
     pub fn clear_memory_slots(&self) {
         self.memory_offsets.borrow_mut().clear();
         *self.memory_interner.borrow_mut() = EntityInterner::new();
-    }
-
-    /// Replaces the set of pure-allocator callee addresses. Clears the
-    /// decomposition memo, since the verdict for any heap address depends on it.
-    pub fn set_noalias_allocators(&mut self, addrs: FxHashSet<u64>) {
-        self.noalias_allocators = addrs;
-        self.clear_memory_slots();
-    }
-
-    /// Whether `addr` is a configured pure-allocator callee.
-    #[inline]
-    pub fn is_noalias_allocator(&self, addr: u64) -> bool {
-        self.noalias_allocators.contains(&addr)
     }
 
     /// Memoized frame-escape verdict, or `None` when not yet computed.
@@ -410,20 +393,6 @@ mod tests {
             assert_eq!(class, st.memory_class(v));
             assert_eq!(slot, st.memory_slot_resolved(v));
         }
-    }
-
-    /// Wholesale replacement; the deny pins the writer to a `&mut` borrow.
-    #[test]
-    #[deny(unused_mut)]
-    fn noalias_allocators_replace_through_mut() {
-        let mut st = SideTables::default();
-        assert!(!st.is_noalias_allocator(0x1000));
-        st.set_noalias_allocators(FxHashSet::from_iter([0x1000, 0x2000]));
-        assert!(st.is_noalias_allocator(0x1000));
-        assert!(st.is_noalias_allocator(0x2000));
-        st.set_noalias_allocators(FxHashSet::from_iter([0x2000]));
-        assert!(!st.is_noalias_allocator(0x1000), "wholesale replacement");
-        assert!(st.is_noalias_allocator(0x2000));
     }
 
     #[test]

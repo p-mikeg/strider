@@ -81,13 +81,20 @@ pub(crate) enum AliasVerdict {
 /// Sound because the fixed-point loop drains the memo after every changing
 /// pass; the post-passes that skip the drain only mutate the graph in ways that
 /// leave every address value's decomposition unchanged.
-pub(crate) fn decompose(function: &Function, value: ValueId) -> Option<MemExpr> {
+///
+/// The memo is per `function` and shared: every walk over one `function` must
+/// pass the same `noalias_allocators`, or one caller's verdict answers another.
+pub(crate) fn decompose(
+    function: &Function,
+    value: ValueId,
+    noalias_allocators: &FxHashSet<u64>,
+) -> Option<MemExpr> {
     match function.side_tables().memory_class(value) {
         MemDecomp::Stack(_) | MemDecomp::Heap(_) => return resolve_slot(function, value),
         MemDecomp::NotMemory => return None,
         MemDecomp::Unknown => {}
     }
-    let result = spine_walk(function, value);
+    let result = spine_walk(function, value, noalias_allocators);
     match result {
         Some(e) => {
             let st = function.side_tables();
@@ -144,15 +151,23 @@ enum SpineEnd {
 /// the root's offset less what accrued getting there.  Committing only the root
 /// would make a consumer-first sweep re-walk the whole spine per query,
 /// O(depth^2) over the chain.
-fn spine_walk(function: &Function, value: ValueId) -> Option<MemExpr> {
+fn spine_walk(
+    function: &Function,
+    value: ValueId,
+    noalias_allocators: &FxHashSet<u64>,
+) -> Option<MemExpr> {
     let mut trail: Vec<(ValueId, i128)> = Vec::new();
-    let result = match spine_walk_trailed(function, value, &mut trail) {
+    let result = match spine_walk_trailed(function, value, &mut trail, noalias_allocators) {
         SpineEnd::Rooted(root) => Some(root),
-        SpineEnd::Phi { phi, offset } if phi_names_an_allocation(function, phi) => Some(MemExpr {
-            base: phi,
-            offset,
-            kind: MemKind::HeapOpaque,
-        }),
+        SpineEnd::Phi { phi, offset }
+            if phi_names_an_allocation(function, phi, noalias_allocators) =>
+        {
+            Some(MemExpr {
+                base: phi,
+                offset,
+                kind: MemKind::HeapOpaque,
+            })
+        }
         SpineEnd::Phi { .. } | SpineEnd::Opaque => None,
     };
     commit_trail(function, &trail, result);
@@ -200,7 +215,11 @@ fn commit_trail(function: &Function, trail: &[(ValueId, i128)], root: Option<Mem
 /// A verdict is exact per frontier node (each decides on the terminals IT
 /// reaches, propagated along the arm edges) and is committed for all of them,
 /// so a nested chain costs one frontier walk in total, not one per query.
-fn phi_names_an_allocation(function: &Function, root: ValueId) -> bool {
+fn phi_names_an_allocation(
+    function: &Function,
+    root: ValueId,
+    noalias_allocators: &FxHashSet<u64>,
+) -> bool {
     let mut nodes = vec![root];
     let mut index: FxHashMap<ValueId, usize> = FxHashMap::default();
     index.insert(root, 0);
@@ -218,7 +237,7 @@ fn phi_names_an_allocation(function: &Function, root: ValueId) -> bool {
             .collect();
         for arm in arms {
             let mut trail: Vec<(ValueId, i128)> = Vec::new();
-            match spine_walk_trailed(function, arm, &mut trail) {
+            match spine_walk_trailed(function, arm, &mut trail, noalias_allocators) {
                 SpineEnd::Phi { phi, .. } => {
                     let j = match index.get(&phi) {
                         Some(&j) => j,
@@ -285,6 +304,7 @@ fn spine_walk_trailed(
     function: &Function,
     value: ValueId,
     trail: &mut Vec<(ValueId, i128)>,
+    noalias_allocators: &FxHashSet<u64>,
 ) -> SpineEnd {
     let mut cur = value;
     let mut acc: i128 = 0;
@@ -346,7 +366,7 @@ fn spine_walk_trailed(
             }
             // A pure allocator's return pointer is a fresh heap base, bottomed
             // out exactly like the SP terminal.
-            NodeKind::Call if is_allocator_return(function, cur, node) => {
+            NodeKind::Call if is_allocator_return(function, cur, node, noalias_allocators) => {
                 // An alignment mask above a heap base leaves the masked pointer's
                 // offset to the raw base unknown, and heap disjointness is exact,
                 // so returning the Stack-kinded anchor would call an aligned heap
@@ -416,7 +436,12 @@ fn spine_walk_trailed(
 /// heap base. `build_call` emits ret-vals before clobbers, so the return
 /// pointer is the first `Call` value output (`outputs[2]`, after control and
 /// memory); only that output is a base, never a clobbered register.
-fn is_allocator_return(function: &Function, value: ValueId, call: NodeId) -> bool {
+fn is_allocator_return(
+    function: &Function,
+    value: ValueId,
+    call: NodeId,
+    noalias_allocators: &FxHashSet<u64>,
+) -> bool {
     if function.node_outputs(call).get(2) != Some(&value) {
         return false;
     }
@@ -425,7 +450,7 @@ fn is_allocator_return(function: &Function, value: ValueId, call: NodeId) -> boo
     let is_alloc = function
         .int_const_u128(target)
         .and_then(|a| u64::try_from(a).ok())
-        .is_some_and(|a| function.side_tables().is_noalias_allocator(a));
+        .is_some_and(|a| noalias_allocators.contains(&a));
     // A cheap gate before the tracked-varnode scan below: the allocator set is
     // empty by default.
     if !is_alloc {
@@ -459,8 +484,12 @@ fn resolve_slot(function: &Function, value: ValueId) -> Option<MemExpr> {
     Some(MemExpr { base, offset, kind })
 }
 
-fn classify_addr(function: &Function, addr: ValueId) -> AddrClass {
-    match decompose(function, addr) {
+fn classify_addr(
+    function: &Function,
+    addr: ValueId,
+    noalias_allocators: &FxHashSet<u64>,
+) -> AddrClass {
+    match decompose(function, addr, noalias_allocators) {
         Some(MemExpr { base, offset, kind }) => match kind {
             MemKind::Heap => AddrClass::HeapRooted { base, offset },
             MemKind::HeapOpaque => AddrClass::HeapOpaque,
@@ -477,8 +506,16 @@ fn classify_addr(function: &Function, addr: ValueId) -> AddrClass {
 }
 
 /// The one classification of a `Store`'s address, so every consumer agrees.
-fn classify_store_addr(function: &Function, store_node: NodeId) -> AddrClass {
-    classify_addr(function, function.store_addr(store_node))
+fn classify_store_addr(
+    function: &Function,
+    store_node: NodeId,
+    noalias_allocators: &FxHashSet<u64>,
+) -> AddrClass {
+    classify_addr(
+        function,
+        function.store_addr(store_node),
+        noalias_allocators,
+    )
 }
 
 /// A contiguous run of 1-bits over at least one low 0-bit, e.g. `0xFFFF_FFF0`.
@@ -632,7 +669,7 @@ pub(crate) struct SizedAddr {
 pub(crate) fn alias_verdict(
     load: SizedAddr,
     store: SizedAddr,
-    options: MemOptions,
+    options: &MemOptions,
 ) -> AliasVerdict {
     let distinct_sp_bases_disjoint = options.distinct_sp_bases_disjoint;
     match (load.class, store.class) {
@@ -795,7 +832,10 @@ impl MemWalker<'_> {
             AddrClass::StackRooted { base, offset } => {
                 self.analyzer.options.call_relaxations
                     && in_own_frame(function, base, offset, self.load.size)
-                    && !frame_escape::frame_address_escapes_cached(function)
+                    && !frame_escape::frame_address_escapes_cached(
+                        function,
+                        &self.analyzer.options.noalias_allocators,
+                    )
             }
             _ => false,
         };
@@ -917,7 +957,9 @@ impl MemWalker<'_> {
         if !self.analyzer.options.call_relaxations {
             return false;
         }
-        let Some(ret_base) = allocator_return_base(function, call) else {
+        let Some(ret_base) =
+            allocator_return_base(function, call, &self.analyzer.options.noalias_allocators)
+        else {
             return false;
         };
         match self.load.class {
@@ -985,7 +1027,7 @@ struct ArgWindowGeometry {
 /// scanned for one probe answers a shallower one conservatively.
 fn scan_arg_window(
     function: &Function,
-    options: MemOptions,
+    options: &MemOptions,
     geometry: &ArgWindowGeometry,
     hi: i128,
 ) -> ArgWindow {
@@ -1356,15 +1398,19 @@ fn at_or_below_entry_sp(function: &Function, value: ValueId, acc: i128) -> bool 
 }
 
 /// The heap base a `Call` returns if it is a known pure allocator, else `None`.
-fn allocator_return_base(function: &Function, call: NodeId) -> Option<ValueId> {
+fn allocator_return_base(
+    function: &Function,
+    call: NodeId,
+    noalias_allocators: &FxHashSet<u64>,
+) -> Option<ValueId> {
     if !matches!(function.node_kind(call), NodeKind::Call) {
         return None;
     }
     let ret = *function.node_outputs(call).get(2)?;
-    is_allocator_return(function, ret, call).then_some(ret)
+    is_allocator_return(function, ret, call, noalias_allocators).then_some(ret)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct MemOptions {
     stack_global_disjoint: bool,
     /// Whether a `Call` / `CallOther` on the probed location's memory chain
@@ -1383,6 +1429,11 @@ pub(crate) struct MemOptions {
     /// ([`MemWalker::in_outgoing_arg_area`]), which the relaxations would
     /// otherwise re-enter.
     call_relaxations: bool,
+    /// Callee addresses whose return is a fresh heap base
+    /// ([`crate::AssumptionOptions::noalias_allocators`]).  Shared, so every
+    /// analyzer over one `Function` decomposes against the same set and none
+    /// poisons the `memory_offsets` memo for another.
+    noalias_allocators: std::sync::Arc<FxHashSet<u64>>,
 }
 
 impl MemOptions {
@@ -1396,6 +1447,7 @@ impl MemOptions {
             callee_preserves_stack_args: false,
             escape_analysis: false,
             call_relaxations: true,
+            noalias_allocators: std::sync::Arc::default(),
         }
     }
 
@@ -1407,7 +1459,18 @@ impl MemOptions {
             distinct_sp_bases_disjoint: options.assumptions.distinct_sp_bases_disjoint,
             callee_preserves_stack_args: options.assumptions.callee_preserves_stack_args,
             ..Self::call_blocking(stack_global_disjoint)
+                .with_noalias_allocators(&options.assumptions.noalias_allocators)
         }
+    }
+
+    /// Opt into treating a listed callee's return as a fresh heap base
+    /// ([`crate::AssumptionOptions::noalias_allocators`]).
+    pub(crate) fn with_noalias_allocators(
+        mut self,
+        allocators: &std::sync::Arc<FxHashSet<u64>>,
+    ) -> Self {
+        self.noalias_allocators = std::sync::Arc::clone(allocators);
+        self
     }
 
     /// Opt into forwarding an SP-rooted load across a private-frame `Call`.
@@ -1423,9 +1486,11 @@ impl MemOptions {
         self
     }
 
-    fn without_call_relaxations(mut self) -> Self {
-        self.call_relaxations = false;
-        self
+    fn without_call_relaxations(&self) -> Self {
+        Self {
+            call_relaxations: false,
+            ..self.clone()
+        }
     }
 }
 
@@ -1481,7 +1546,7 @@ impl MemAnalyzer {
             ),
             _ => hi,
         };
-        let window = scan_arg_window(function, self.options, geometry, scan_hi);
+        let window = scan_arg_window(function, &self.options, geometry, scan_hi);
         let covered = window.covers(offset, hi);
         // Keep whichever entry reaches FURTHER. Overwriting with a narrower
         // `known_to` makes a later, higher probe miss and rescan the whole
@@ -1501,8 +1566,12 @@ impl MemAnalyzer {
         covered
     }
 
-    pub(crate) fn options(&self) -> MemOptions {
-        self.options
+    pub(crate) fn options(&self) -> &MemOptions {
+        &self.options
+    }
+
+    pub(crate) fn noalias_allocators(&self) -> &FxHashSet<u64> {
+        &self.options.noalias_allocators
     }
 
     fn walker(&self, load: SizedAddr, load_space: rsleigh::VnSpace) -> MemWalker<'_> {
@@ -1516,11 +1585,15 @@ impl MemAnalyzer {
 
     /// The one place the knobs meet [`alias_verdict`].
     fn alias(&self, load: SizedAddr, store: SizedAddr) -> AliasVerdict {
-        alias_verdict(load, store, self.options)
+        alias_verdict(load, store, &self.options)
     }
 
     fn load_sized(&self, function: &Function, load: NodeId) -> SizedAddr {
-        let class = classify_addr(function, function.load_addr(load));
+        let class = classify_addr(
+            function,
+            function.load_addr(load),
+            &self.options.noalias_allocators,
+        );
         let (_, ty) = function
             .single_value_output(load)
             .expect("Load has 1 typed output per node signature");
@@ -1534,7 +1607,7 @@ impl MemAnalyzer {
     /// The store's address class paired with its stored width.
     fn store_sized(&self, function: &Function, store: NodeId) -> SizedAddr {
         SizedAddr {
-            class: classify_store_addr(function, store),
+            class: classify_store_addr(function, store, &self.options.noalias_allocators),
             size: store_value_byte_size(function, function.store_data(store)),
             addr_bits: addr_bit_width(function, function.store_addr(store)),
         }
@@ -1542,7 +1615,7 @@ impl MemAnalyzer {
 
     /// See the free [`decompose`].
     pub(crate) fn decompose(&self, function: &Function, value: ValueId) -> Option<MemExpr> {
-        decompose(function, value)
+        decompose(function, value, &self.options.noalias_allocators)
     }
 
     /// The node-based counterpart of the class-based [`alias_verdict`].
@@ -1647,7 +1720,11 @@ impl MemAnalyzer {
             base: store_base,
             offset: store_offset,
             ..
-        } = decompose(function, function.store_addr(clobber))?;
+        } = decompose(
+            function,
+            function.store_addr(clobber),
+            &self.options.noalias_allocators,
+        )?;
         (store_base == base).then_some(ReachingSpStore {
             node: clobber,
             store_offset,
@@ -1700,6 +1777,12 @@ pub(crate) fn store_value_byte_size(function: &Function, store_data: ValueId) ->
         .value_type(store_data)
         .expect("Store data input is a value")
         .byte_size() as i128
+}
+
+/// The allocator set for the tests that configure none.
+#[cfg(test)]
+pub(crate) fn no_allocators() -> FxHashSet<u64> {
+    FxHashSet::default()
 }
 
 /// The 4-byte x86 SP varnode the tests in this module tree share. `heap_tests`

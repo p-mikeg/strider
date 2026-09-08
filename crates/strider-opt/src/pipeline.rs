@@ -240,12 +240,9 @@ impl OptimizerPipeline {
         ctx: &mut OptCtx<'_>,
     ) -> crate::Result<()> {
         const MAX_ITERS: u32 = 1024;
-        // Publish the pure-allocator set onto the function so every `decompose`
-        // sees one consistent set. Config, not a memo, so it persists across the
-        // per-pass memo drains below.
-        function
-            .side_tables_mut()
-            .set_noalias_allocators(ctx.options.assumptions.noalias_allocators.clone());
+        // A memo left by an earlier run was derived against that run's
+        // assumptions, this one's may differ.
+        function.side_tables().clear_memory_slots();
         {
             // Scoped so the borrow of `function` is released before the
             // validation step below.
@@ -291,7 +288,10 @@ impl OptimizerPipeline {
             // changing pass above drained it.  A caller pipeline need not
             // register `StackOffsetDetect`, so refill it here or `stack_only`
             // matches nothing and says nothing.
-            crate::post_opt::stack_offset_detect::stamp_all(&mut edit);
+            crate::post_opt::stack_offset_detect::stamp_all(
+                &mut edit,
+                &ctx.options.assumptions.noalias_allocators,
+            );
         }
         strider_ir::validate::validate(function)?;
         Ok(())

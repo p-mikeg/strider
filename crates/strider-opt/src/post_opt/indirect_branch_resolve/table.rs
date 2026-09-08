@@ -77,9 +77,15 @@ pub(crate) fn classify_dispatch_value(
     mode_value: Option<ValueId>,
 ) -> Option<ResolvedTargets> {
     // A `Load[reg]` function pointer has no bounded dominator and defers here.
-    let (idx_value, range) = decompose_index(function, ranges, target_value, site)?;
+    let (idx_value, range) = decompose_index(
+        function,
+        ranges,
+        target_value,
+        site,
+        &assumptions.noalias_allocators,
+    )?;
 
-    let mut ev = super::eval::Evaluator::new(function, rom, assumptions.stack_global_disjoint);
+    let mut ev = super::eval::Evaluator::new(function, rom, assumptions);
     let pruned = super::eval::cone_order_pruned(function, target_value, idx_value);
     // The branch's committed ISA mode (an interworking `bx`/`jr`-dispatch),
     // `(entry & 1)`, evaluated per index so each arm carries its own mode.
@@ -151,6 +157,7 @@ fn decompose_index(
     ranges: &mut crate::value_range::RangeMap<'_>,
     target: ValueId,
     site: NodeId,
+    noalias_allocators: &rustc_hash::FxHashSet<u64>,
 ) -> Option<(ValueId, Interval)> {
     // Node weight `None` marks the virtual ENTRY, `Some(v)` a cone value.
     let mut g: DiGraph<Option<ValueId>, ()> = DiGraph::new();
@@ -171,7 +178,9 @@ fn decompose_index(
         // The addressing arithmetic, a foldable load's address, or nothing for
         // an opaque source.
         let inputs: Vec<ValueId> = match function.node_kind(function.producer(v)) {
-            NodeKind::Load(_) => foldable_load_address(function, v).into_iter().collect(),
+            NodeKind::Load(_) => foldable_load_address(function, v, noalias_allocators)
+                .into_iter()
+                .collect(),
             NodeKind::InitialVar(_)
             | NodeKind::Phi
             | NodeKind::Call
@@ -189,7 +198,7 @@ fn decompose_index(
             // `sp + const` and alignment masks but rejects `sp & 0xF`, which is
             // a bounded VALUE and must stay a candidate index.
             if function.int_const_u128(p).is_some()
-                || crate::mem_analysis::decompose(function, p).is_some()
+                || crate::mem_analysis::decompose(function, p, noalias_allocators).is_some()
             {
                 continue;
             }
@@ -220,19 +229,28 @@ fn decompose_index(
 /// The check is operand-level because a stack table load
 /// `Load[(sp+base) + idx*stride]` has an INDEX-DEPENDENT address that never
 /// decomposes as a whole, though its `sp+base` operand does.
-fn foldable_load_address(function: &strider_ir::Function, load: ValueId) -> Option<ValueId> {
+fn foldable_load_address(
+    function: &strider_ir::Function,
+    load: ValueId,
+    noalias_allocators: &rustc_hash::FxHashSet<u64>,
+) -> Option<ValueId> {
     let addr = function.int_inputs(load).next()?;
-    let foldable = is_base_operand(function, addr)
+    let foldable = is_base_operand(function, addr, noalias_allocators)
         || function
             .int_inputs(addr)
-            .any(|op| is_base_operand(function, op));
+            .any(|op| is_base_operand(function, op, noalias_allocators));
     foldable.then_some(addr)
 }
 
 /// The two bases the evaluator can fold a `Load` through: a const rodata base
 /// or an SP-rooted stack base.
-fn is_base_operand(function: &strider_ir::Function, v: ValueId) -> bool {
-    function.int_const_u128(v).is_some() || crate::mem_analysis::decompose(function, v).is_some()
+fn is_base_operand(
+    function: &strider_ir::Function,
+    v: ValueId,
+    noalias_allocators: &rustc_hash::FxHashSet<u64>,
+) -> bool {
+    function.int_const_u128(v).is_some()
+        || crate::mem_analysis::decompose(function, v, noalias_allocators).is_some()
 }
 
 /// A genuinely-bounded non-constant integer whose bound is a real narrowing,
