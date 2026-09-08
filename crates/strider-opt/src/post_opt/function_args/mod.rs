@@ -38,10 +38,10 @@ impl PostOptimizer for FunctionArgDetect {
         // Narrowing rewires the graph, so it may only ever use what a
         // call-blocking walk proves; `alias_cfg` carries the relaxations and
         // decides detection alone.
-        let narrow_cfg = MemAnalyzer::new(
-            MemOptions::call_blocking(stack_global_disjoint)
-                .with_noalias_allocators(&opt_ctx.options.assumptions.noalias_allocators),
-        );
+        let narrow_cfg = MemAnalyzer::new(MemOptions::call_blocking(
+            stack_global_disjoint,
+            &opt_ctx.options.assumptions.noalias_allocators,
+        ));
         detect_stack_args(edit, &alias_cfg, &narrow_cfg, stack_args, first_stack_arg);
         Ok(())
     }
@@ -51,6 +51,13 @@ impl PostOptimizer for FunctionArgDetect {
 /// then walks slots from 0 assigning one ordinal per anchored argument.  A
 /// wider-than-slot argument advances the cursor across every slot it spans but
 /// the ordinal by one.
+///
+/// The span comes from the widest load anchored at the cursor, so two adjacent
+/// arguments read by one wide load and one narrow load (a 16-byte load at slot
+/// 0 plus an 8-byte load at slot 1 on x86-64) merge into ONE ordinal and shift
+/// every later index down by one.  Separating them needs the callee's
+/// signature; unlike the over-collection above, the failure mode is a wrong
+/// index, not a surplus one.
 fn detect_stack_args(
     edit: &mut crate::EditFunction<'_>,
     alias_cfg: &MemAnalyzer,
