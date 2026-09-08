@@ -56,3 +56,15 @@ fn relocated(
         .regions(strider_reader::elf::RegionSource::Auto, filter, true)
         .unwrap()
 }
+
+/// Where `bytes`' section `name` is loaded. An ET_REL is rebased off a
+/// synthetic image base, so a declared `sh_addr` is not the loaded address.
+pub(crate) fn section_base(bytes: &[u8], name: &str) -> u64 {
+    use object::{Object as _, ObjectSection as _};
+    let obj = object::File::parse(bytes).expect("parse ELF");
+    let sec = obj
+        .sections()
+        .find(|s| s.name() == Ok(name))
+        .unwrap_or_else(|| panic!("no section {name}"));
+    strider_reader::elf::ElfSectionLayout::new(&obj).section_base(&sec)
+}

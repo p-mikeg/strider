@@ -67,8 +67,9 @@ impl LoadFilter {
     /// `SHF_EXECINSTR` then pick exec-or-rodata vs include-writable.
     ///
     /// A `SHF_TLS` section is addressed as an offset into the per-thread block,
-    /// so [`ElfSectionLayout`] leaves it at its `sh_addr`. Loading it would put
-    /// a non-empty `.tdata` at VMA 0 in front of `.text`.
+    /// so [`ElfSectionLayout`] leaves it at its `sh_addr`. Loading it would map
+    /// a non-empty `.tdata` at its `sh_addr`, 0 in a `.o`, at an address that
+    /// means nothing and that the rebase deliberately leaves unmapped.
     fn section_accepts(self, sh_flags: u64) -> bool {
         let is_alloc = sh_flags & u64::from(object::elf::SHF_ALLOC) != 0;
         let is_tls = sh_flags & u64::from(object::elf::SHF_TLS) != 0;
@@ -97,8 +98,10 @@ impl LoadFilter {
 ///
 /// # Errors
 ///
-/// When an accepted segment or section's `data()` can't be read, or its
-/// `address + length` would exceed `u64::MAX`.
+/// When an accepted segment or section's `data()` can't be read, its
+/// `address + length` would exceed `u64::MAX`, or the copies exceed the
+/// loader's amplification ceiling over the distinct file bytes behind them;
+/// every mapping is copied here, the caller holding no image to window into.
 pub fn elf_get_loadable_regions(obj: &object::File<'_>) -> Result<Vec<MemRegion>> {
     Ok(collect_regions(
         obj,
@@ -196,13 +199,15 @@ fn deduped_sections<'d>(
         .collect())
 }
 
-/// Where each section is actually loaded.
+/// Where each ET_REL section is loaded: a synthetic image base upwards, so
+/// address 0 stays unmapped.
 ///
 /// An ET_REL object is unlinked, and every toolchain leaves `sh_addr` at 0
 /// there, so `.text`, `.text.startup` and `.rodata` all claim VMA 0. Assigning
 /// them distinct addresses is the linker's job, and this does it: sections are
 /// walked in index order and any whose `sh_addr` runs into already-placed space
-/// moves up to `align_up(watermark, sh_addralign)`.
+/// moves up to `align_up(watermark, sh_addralign)`, the watermark starting at
+/// the image base.
 ///
 /// Populated only for an ET_REL. A linked image has real, disjoint `sh_addr`s,
 /// so it holds no entries and every address passes through untouched.
@@ -214,6 +219,16 @@ pub struct ElfSectionLayout {
     bases: BTreeMap<usize, u64>,
 }
 
+/// Where an ET_REL's first rebased section is seated, so that address 0 stays
+/// unmapped. A mapped 0 makes a null dereference a readable, foldable ROM read,
+/// and every relocation site whose symbol does not resolve keeps its
+/// file-initial zero, which then folds through `LoadReadOnly` to the bytes at 0
+/// instead of failing to fold.
+///
+/// Round, obviously not a link-time address, and inside the low 2 GiB so an
+/// absolute 32-bit relocation field still holds it.
+const ET_REL_IMAGE_BASE: u64 = 0x1000_0000;
+
 impl ElfSectionLayout {
     /// A rebase whose alignment round-up would run past `u64::MAX` seats the
     /// section at the bare watermark; building its [`MemRegion`] is what
@@ -224,7 +239,7 @@ impl ElfSectionLayout {
         if obj.kind() != ObjectKind::Relocatable {
             return Self { bases };
         }
-        let mut watermark = 0u64;
+        let mut watermark = ET_REL_IMAGE_BASE;
         for sec in obj.sections() {
             // `SHF_TLS` is allocatable but lives in the per-thread block, not
             // the flat address space: a `.tdata` / `.tbss` symbol's `st_value`
@@ -397,8 +412,10 @@ pub(crate) fn loaded_section_indices(
 ///
 /// # Errors
 ///
-/// When an accepted segment or section's `data()` can't be read, or its
-/// `address + length` would exceed `u64::MAX`.
+/// When an accepted segment or section's `data()` can't be read, its
+/// `address + length` would exceed `u64::MAX`, or, on the copying path, the
+/// copies exceed [`MAX_COPY_AMPLIFICATION`] times the distinct file bytes
+/// behind them.
 pub(crate) fn collect_regions(
     obj: &object::File<'_>,
     bytes: Option<&FileBytes>,
@@ -521,27 +538,21 @@ fn collect_loadable_segments(
 }
 
 /// One [`MemRegion`] per accepted file-backed section, at its
-/// [`ElfSectionLayout`] base, under **first-wins dedup** on that base.
+/// [`ElfSectionLayout`] base, in section-index order under **first-wins dedup**
+/// on that base.
 fn collect_loadable_sections_dedup(
     obj: &object::File<'_>,
     bytes: Option<&FileBytes>,
     filter: LoadFilter,
     layout: &ElfSectionLayout,
 ) -> Result<LoadedImage> {
-    let mut by_addr: BTreeMap<u64, (MemRegion, bool)> = BTreeMap::new();
+    let mut out = LoadedImage::default();
     let mut budget = CopyBudget::default();
     for sec in deduped_sections(obj, filter, layout)? {
-        by_addr.insert(
-            sec.base,
-            (
-                region_from(bytes, sec.base, sec.file_range, sec.data, &mut budget)?,
-                sec.sh_flags & u64::from(object::elf::SHF_WRITE) != 0,
-            ),
+        out.push(
+            region_from(bytes, sec.base, sec.file_range, sec.data, &mut budget)?,
+            sec.sh_flags & u64::from(object::elf::SHF_WRITE) != 0,
         );
-    }
-    let mut out = LoadedImage::default();
-    for (region, writable) in by_addr.into_values() {
-        out.push(region, writable);
     }
     Ok(out)
 }

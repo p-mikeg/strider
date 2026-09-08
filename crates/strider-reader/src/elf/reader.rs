@@ -33,8 +33,10 @@ impl ElfFileMemReader {
     ///
     /// # Errors
     ///
-    /// Unreadable segment / section data, or a mapping whose
-    /// `address + length` exceeds `u64::MAX`.
+    /// Unreadable segment / section data, a mapping whose `address + length`
+    /// exceeds `u64::MAX`, or copies exceeding the loader's amplification
+    /// ceiling over the distinct file bytes behind them; this constructor
+    /// copies every mapping.
     pub fn from_object(obj: &object::File<'_>) -> Result<Self> {
         let layout = ElfSectionLayout::new(obj);
         Ok(Self::over(collect_regions(
@@ -196,10 +198,11 @@ mod tests {
         let obj = object::File::parse(&bytes[..]).expect("parse");
         let sec_addr = {
             use object::{Object as _, ObjectSection as _};
-            obj.sections()
+            let sec = obj
+                .sections()
                 .find(|s| s.name() == Ok(".text"))
-                .expect(".text")
-                .address()
+                .expect(".text");
+            ElfSectionLayout::new(&obj).section_base(&sec)
         };
         let reader = ElfFileMemReader::from_object(&obj).expect("from_object");
 

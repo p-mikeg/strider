@@ -70,6 +70,15 @@ fn patched_rel32(bytes: &[u8]) -> i32 {
     let path = dir.join("t.o");
     std::fs::write(&path, bytes).expect("write");
     let elf = load_elf(&path).expect("load_elf");
+    let obj = elf.checked_file().expect("the mapped file is unchanged");
+    // `.text` is rebased off the synthetic ET_REL image base; the field is the
+    // `call`'s rel32, one byte into it.
+    let field_addr = {
+        use object::Object as _;
+        strider_reader::elf::ElfSectionLayout::new(&obj)
+            .section_base(&obj.section_by_name(".text").expect(".text"))
+            + 1
+    };
     let regions = elf
         .regions(
             strider_reader::elf::RegionSource::Auto,
@@ -79,7 +88,9 @@ fn patched_rel32(bytes: &[u8]) -> i32 {
         .expect("regions");
     let mut field = [0u8; 4];
     assert!(
-        regions.iter().any(|r| r.read(1, &mut field) == Some(4)),
+        regions
+            .iter()
+            .any(|r| r.read(field_addr, &mut field) == Some(4)),
         "no region covers the call's rel32 field"
     );
     let _ = std::fs::remove_file(&path);

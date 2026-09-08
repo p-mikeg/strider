@@ -9,9 +9,10 @@ not read a mapping the program can write.
 ## What's here
 
 - `MemRegion` and `MemRegionsLookupTable`: backend-independent byte regions keyed
-  by start address. A read one region fully covers is a binary search;
-  otherwise it walks down from there, stopping as soon as no lower-start region
-  still reaches the address.
+  by start address. A read is served by exactly one of them, never a per-byte
+  merge: the highest-start region fully covering the request, else the region
+  serving the most bytes from the address. Both are O(log n) descents of a
+  max-end tree, whether the regions are disjoint or nest.
 - `ElfFileMemReader`: the ELF backend, built with `ElfFileMemReader::from_elf`
   (shares the ELF's bytes) or `::from_object` (copies them); implements both
   reader traits. Those, and `::from_bytes` / `::from_path`, serve the
@@ -38,8 +39,10 @@ it just mapped and holds the fd, so the check follows that inode rather than the
 path.
 
 Checked at the top of an operation, one `stat` each: `OwnedElf::regions`,
-`OwnedElf::checked_file` and every `ElfFileMemReader` constructor run it
-themselves, and `check_unchanged` on `OwnedElf`, `MemRegion`,
+`OwnedElf::checked_file` and the `ElfFileMemReader` constructors that map a file
+(`from_elf`, `from_elf_relocated`, `from_path`) run it themselves --
+`from_object` and `from_bytes` serve copied bytes and have nothing to stat --
+and `check_unchanged` on `OwnedElf`, `MemRegion`,
 `MemRegionsLookupTable` and `ElfFileMemReader` runs it on demand, one `stat`
 per mapping rather than per region. A binary rebuilt between two operations is
 then an `Err` naming the file, not bytes from a program that is no longer there.
@@ -51,8 +54,6 @@ Not checked, and not checkable:
 - Every `read`. They are syscall-free and stay that way, so a change landing
   after an operation's check and before its reads is still a torn read, or a
   SIGBUS past a shortened end that kills the process uncatchably.
-- `OwnedElf::file`, which parses the mapping and faults on a shortened one.
-  `checked_file` is the guarded way in.
 - A rewrite in place that preserves the size and lands within the same second:
   the identity is size plus mtime at whole-second granularity (drvfs truncates
   mtime, so a finer comparison reports a change on identical bytes).
@@ -60,14 +61,14 @@ Not checked, and not checkable:
   are what was mapped, and reporting it would break analysing a build-system
   temp file that gets replaced or unlinked mid-run.
 
-`STRIDER_NO_MMAP=1` reads the file instead: it costs the file's size in memory,
-cannot tear, and needs no check at all.
+`STRIDER_NO_MMAP` set to any value but `0` reads the file instead: it costs the
+file's size in memory, cannot tear, and needs no check at all.
 
 ET_EXEC / ET_DYN load from PT_LOAD program headers. Everything else, ET_REL
 above all, loads from sections, whose pre-link `sh_addr` is typically 0 for all
 of them; `elf::ElfSectionLayout` rebases the collisions apart the way a linker
-would, and every address a caller sees (region start, relocation site, symbol)
-goes through it.
+would, from a synthetic image base that leaves address 0 unmapped, and every
+address a caller sees (region start, relocation site, symbol) goes through it.
 
 The `ReadOnlyMemory` view rejects any writable mapping outright, so on an image
 whose only PT_LOAD is RWX (the MIPS `vmlinux` shape; x86-64 and arm64 ship

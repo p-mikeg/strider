@@ -378,6 +378,15 @@ fn apply_one_relocation(
         return Ok(());
     };
 
+    // Ahead of `covering`, which charges the site to the patch budget: a kind
+    // that records nothing must not loosen the allowance for the ones that do.
+    // `PltRelative`'s L collapses to S here since no PLT is materialised.
+    let pc_relative = match reloc.kind() {
+        RelocationKind::Absolute => false,
+        RelocationKind::Relative | RelocationKind::PltRelative => true,
+        _ => return Ok(()),
+    };
+
     let site_regions = sink.covering(region_index, regions, site, field_addr, size_bytes)?;
     let addend = reloc_addend(
         reloc,
@@ -389,14 +398,12 @@ fn apply_one_relocation(
     );
     // S, A, P follow the System V ABI generic relocation formula:
     // S = target_addr, A = addend, P = site_addr. P is the storage unit, not
-    // the field inside it. `PltRelative`'s L collapses to S here since no PLT
-    // is materialised.
-    let value = match reloc.kind() {
-        RelocationKind::Absolute => apply_addend(target_addr, addend),
-        RelocationKind::Relative | RelocationKind::PltRelative => {
-            apply_addend(target_addr, addend).wrapping_sub(site_addr)
-        }
-        _ => return Ok(()),
+    // the field inside it.
+    let value = apply_addend(target_addr, addend);
+    let value = if pc_relative {
+        value.wrapping_sub(site_addr)
+    } else {
+        value
     };
 
     sink.record(&site_regions, field_addr, value, size_bytes, endian_le);

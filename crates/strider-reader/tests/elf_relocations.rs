@@ -319,6 +319,8 @@ fn et_rel_relocations_apply_to_each_rebased_section() {
     let fx = common::elf_fixture::build_et_rel_vma_collision_elf();
     let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
+    let data_base = common::section_base(&fx.bytes, ".data");
+    let text_base = common::section_base(&fx.bytes, ".text.f");
     let mut regions = common::regions(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
     assert_eq!(
         regions
@@ -326,10 +328,10 @@ fn et_rel_relocations_apply_to_each_rebased_section() {
             .map(|r| (r.start_addr(), common::region_bytes(r)))
             .collect::<Vec<_>>(),
         vec![
-            (0, fx.data_bytes.clone()),
-            (fx.data_bytes.len() as u64, fx.text_bytes.clone()),
+            (data_base, fx.data_bytes.clone()),
+            (text_base, fx.text_bytes.clone()),
         ],
-        "fixture geometry: `.data` (index 1) keeps VMA 0, `.text.f` follows it",
+        "fixture geometry: `.data` (index 1) is seated first, `.text.f` follows it",
     );
 
     strider_reader::elf::apply_elf_relocations(
@@ -339,7 +341,7 @@ fn et_rel_relocations_apply_to_each_rebased_section() {
     )
     .expect("apply");
 
-    assert_eq!(read_u64_le(&regions, 0), Some(fx.sym_value));
+    assert_eq!(read_u64_le(&regions, data_base), Some(fx.sym_value));
     assert_eq!(
         common::region_bytes(&regions[1]),
         fx.text_bytes,
@@ -633,7 +635,7 @@ fn et_rel_relocations_apply_when_the_colliding_sections_are_byte_identical() {
     .expect("apply");
 
     assert_eq!(
-        read_u64_le(&regions, 0),
+        read_u64_le(&regions, common::section_base(&fx.bytes, ".data")),
         Some(fx.sym_value),
         "`.data` won the all-allocatable load, so its relocation must apply"
     );
@@ -670,22 +672,28 @@ fn et_rel_byte_identical_collision_does_not_patch_the_other_section() {
 fn et_rel_sections_colliding_at_vma_zero_get_bases_of_their_own() {
     let fx = common::elf_fixture::build_et_rel_vma_collision_elf();
     let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
-    let data_len = fx.data_bytes.len() as u64;
+    let data_base = common::section_base(&fx.bytes, ".data");
+    let text_base = common::section_base(&fx.bytes, ".text.f");
+    assert_eq!(
+        text_base,
+        data_base + fx.data_bytes.len() as u64,
+        "fixture geometry: `.text.f` is placed just past `.data`"
+    );
 
-    // `.data` is section index 1 and `.text.f` index 2, so `.data` keeps VMA 0
-    // and `.text.f` is placed just past it.
+    // `.data` is section index 1 and `.text.f` index 2, so `.data` is seated
+    // first and `.text.f` is placed just past it.
     for (name, regions, expected) in [
         (
             "code-and-readonly",
             strider_reader::elf::elf_get_loadable_regions(&obj).expect("regions"),
-            vec![(data_len, fx.text_bytes.clone())],
+            vec![(text_base, fx.text_bytes.clone())],
         ),
         (
             "all-allocatable",
             common::regions(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable),
             vec![
-                (0, fx.data_bytes.clone()),
-                (data_len, fx.text_bytes.clone()),
+                (data_base, fx.data_bytes.clone()),
+                (text_base, fx.text_bytes.clone()),
             ],
         ),
     ] {
@@ -711,11 +719,12 @@ fn a_common_symbol_relocation_is_skipped_not_applied() {
         object::elf::SHN_COMMON,
         4, // the alignment, not an address
     );
+    let site = common::section_base(&fx.bytes, ".data");
     let regions = common::load_with_relocations(&fx.bytes);
     let table = strider_reader::MemRegionsLookupTable::new(regions);
     let mut got = [0u8; 8];
     table
-        .read_exact(0, &mut got)
+        .read_exact(site, &mut got)
         .expect("read the relocated site");
     assert_eq!(
         got, [0u8; 8],
@@ -845,13 +854,20 @@ fn ppc_rel32_patches_a_rodata_jump_table() {
     )
     .expect("apply");
 
-    // `S + A - P` for entry 0 is (.text + 0x90) - 0x1d0 = -0x140.
-    let raw = read_u32_be(&regions, 0x1d0).expect("the rebased .rodata table");
+    let layout = strider_reader::elf::ElfSectionLayout::new(&obj);
+    let base = |name: &str| {
+        use object::Object as _;
+        layout.section_base(&obj.section_by_name(name).expect(name))
+    };
+    let (text, rodata) = (base(".text"), base(".rodata"));
+
+    // `S + A - P` for entry 0 is (.text + 0x90) - .rodata = -0x140.
+    let raw = read_u32_be(&regions, rodata).expect("the rebased .rodata table");
     let first = raw as i32;
     assert_eq!(first, -0x140, "table[0] must be patched, not left at 0");
     assert_eq!(
-        0x1d0i64 + i64::from(first),
-        0x90,
+        rodata as i64 + i64::from(first),
+        text as i64 + 0x90,
         "resolves to .text + 0x90"
     );
 }
@@ -879,7 +895,7 @@ fn reloc_field_past_its_own_section_does_not_patch_the_next_one() {
     let table = strider_reader::MemRegionsLookupTable::new(regions);
     let mut got = [0u8; 8];
     table
-        .read_exact(fx.data_bytes.len() as u64, &mut got)
+        .read_exact(common::section_base(&fx.bytes, ".text.f"), &mut got)
         .expect("read `.text.f`, rebased past `.data`");
     assert_eq!(
         got[..],
