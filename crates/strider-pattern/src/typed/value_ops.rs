@@ -12,7 +12,7 @@ use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 
-use crate::matcher::match_pat::{MatchPat, Pre};
+use crate::matcher::match_pat::{CaptureExt, MatchPat, Pre};
 use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef};
 use crate::template::template_pat::TemplatePat;
 use crate::template::{TemplateBuilder, TmplValueRef};
@@ -166,9 +166,13 @@ pub struct BitNot<I> {
 
 impl<I: MatchPat> MatchPat for BitNot<I> {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        // `int_const`'s match is width-masked, so `u128::MAX` matches
-        // all-ones at any output width.
-        int_xor(self.inner, int_const(u128::MAX)).compile(b)
+        // `int_const`'s match masks to the output width, and that mask
+        // saturates at 128 bits, so past the carrier `u128::MAX` would accept
+        // any constant whose low 128 bits are set. Reject those widths: a
+        // true I256 / I512 all-ones is unreadable through `int_const_u128`
+        // anyway.
+        let all_ones = int_const(u128::MAX).when_match(|_m, ty, _b| ty.bit_width() <= 128);
+        int_xor(self.inner, all_ones).compile(b)
     }
 }
 
