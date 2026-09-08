@@ -61,31 +61,60 @@ fn an_unparsed_aarch64_operand_is_an_error() {
     );
 }
 
-/// A constructor that exports no result leaves its handle untouched, so on a
-/// reused `ParserContext` the operand carries whatever the previous instruction
-/// left there. `usdot` / `bfdot` by element hit this: alone they fail, but
-/// after any instruction that dirties the slot they lifted with a register
-/// taken from that instruction. The failure has to be the same either way.
+/// The lane operand of a by-element dot product used to reach the pcodeop
+/// itself, and its subtable exports nothing, so on a reused `ParserContext` it
+/// carried whatever register the previous instruction left in the slot. The
+/// constructors now read the lane with `SIMD_PIECE`, so the operand is the one
+/// the encoding names whatever ran before it.
 #[test]
-fn a_by_element_dot_product_does_not_lift_a_stale_operand() {
-    let opts = CfgOptions {
-        fn_max_size: Some(0x40),
-        ..CfgOptions::default()
-    };
+fn a_by_element_dot_product_reads_the_register_its_encoding_names() {
     let arch = SleighArch::aarch64();
     // ldr q7,[x0] ; ldr q13,[x1] ; usdot v0.4s,v1.16b,v2.4b[0] ; ret
     let dirtied = hex(b"0700c03d2d00c03d20f0824fc0035fd6");
     let alone = hex(b"20f0824fc0035fd6");
-    let reader = BufMemReader::new(dirtied, 0);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    assert!(
-        Builder::for_arch(&arch, &mut sleigh, 0, &opts)
-            .build()
-            .is_err(),
-        "the by-element operand is unresolved, so it must fail here exactly as \
-         it does with no instruction in front of it",
+
+    let reg_inputs = |bytes: Vec<u8>, usdot_at: u64| {
+        let reader = BufMemReader::new(bytes, 0);
+        let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+        // Decode from the top so the dirtied case really does reuse the
+        // context the two loads left behind.
+        let mut addr = 0;
+        while addr < usdot_at {
+            addr += sleigh
+                .lift_one(addr)
+                .expect("decode leading insn")
+                .machine_insn_len as u64;
+        }
+        let lifted = sleigh.lift_one(usdot_at).expect("the dot product decodes");
+        let regs: Vec<rsleigh::Vn> = lifted
+            .insns
+            .iter()
+            .flat_map(|insn| insn.inputs.iter().copied())
+            .filter(|vn| vn.addr_space == rsleigh::VnSpace::REGISTER)
+            .collect();
+        (regs, sleigh.regs().expect("regs").clone())
+    };
+
+    let (after_loads, regs) = reg_inputs(dirtied, 8);
+    let (on_its_own, _) = reg_inputs(alone, 0);
+    assert_eq!(
+        after_loads, on_its_own,
+        "the operand comes from the encoding, so what ran before cannot change it",
     );
-    build_is_survivable(&arch, alone, 0, &opts);
+
+    let off = |name: &str| {
+        regs.name_to_vn(name)
+            .expect("register must resolve")
+            .addr_off
+    };
+    let reads = |name: &str| after_loads.iter().any(|vn| vn.addr_off == off(name));
+    assert!(reads("q2"), "v2 is the encoded lane source");
+    for stale in ["q7", "q13"] {
+        assert!(
+            !reads(stale),
+            "{stale} is only what the loads left in the slot"
+        );
+    }
 }
 
 #[test]
