@@ -276,27 +276,15 @@ fn try_match_at(
     let inputs = &node_inputs.edges;
     let n_fixed = node_inputs.fixed;
 
-    // Captures for THIS node, independent of operand ordering. An
-    // output-vertex capture binds the matched VALUE; a node-declared capture
-    // binds the matched NODE. The vertex's identity pin binds the value too,
-    // so a second slot consuming the same vertex conflicts unless it lands on
-    // the same value. All present ones must bind.
+    // Carries this node's own captures; see `bind_all_captures`.
     let out_weight = out_vertex.map(|ov| ctx.pat.graph.output_weight(ov));
-    let value_cap = |cap: Option<crate::Capture>| {
-        cap.and_then(|cap| root_value.map(|value| (cap, Binding::Value(value))))
-    };
-    let cap_bindings = [
-        value_cap(out_weight.and_then(|ov| ov.capture)),
-        nd.capture.map(|cap| (cap, Binding::Node(ir_node))),
-        value_cap(out_weight.and_then(|ov| ov.identity)),
-    ];
 
     // Alternation (`one_of` / `first_of`): `inputs` are independent alternative
     // sub-patterns, not operands, all tried against the SAME `ir_node`. `one_of`
     // enumerates every matching arm; `first_of` cuts to the first.
     if nd.alternation {
         let mark = bindings.mark();
-        if !bind_all_captures(bindings, &cap_bindings) {
+        if !bind_all_captures(bindings, nd, out_weight, ir_node, root_value) {
             return false;
         }
         for alt in inputs {
@@ -357,11 +345,13 @@ fn try_match_at(
         && ctx.function().node_kind(ir_node).is_commutative();
 
     // The existential candidate set: every input slot of `ir_node` a fixed
-    // operand has not pinned. Invariant across the search, so collected once
-    // here rather than per recursion level (and empty in the common
-    // no-`any_input` case). `Candidates::Only` never extends the `Claimed`
-    // chain, so a pinned slot is excluded here or it is offered twice; the
-    // commutative pair is `OneOf` and `Claimed` handles it.
+    // operand has not pinned. `k` existentials enumerate every injective
+    // assignment over it, which is what `any_input`'s documented cost is.
+    // Invariant across the search, so collected once here rather than per
+    // recursion level (and empty in the common no-`any_input` case).
+    // `Candidates::Only` never extends the `Claimed` chain, so a pinned slot is
+    // excluded here or it is offered twice; the commutative pair is `OneOf` and
+    // `Claimed` handles it.
     //
     // No kind filter here: the sub-pattern discriminates. A sub carries an
     // output-kind and reaches only inputs of that kind (a value sub skips
@@ -396,7 +386,7 @@ fn try_match_at(
         // re-drives this node and everything beneath it.
         let mut finalize = |b: &mut Bindings| -> bool {
             let inner = b.mark();
-            if !bind_all_captures(b, &cap_bindings) {
+            if !bind_all_captures(b, nd, out_weight, ir_node, root_value) {
                 return false;
             }
             if finish_node(
@@ -499,9 +489,11 @@ fn bind_sibling_outputs(
             continue;
         }
         let here = b.mark();
-        if [ov.capture, ov.identity]
-            .into_iter()
-            .flatten()
+        if ov
+            .captures
+            .iter()
+            .copied()
+            .chain(ov.identity)
             .any(|cap| !b.bind_capture(cap, Binding::Value(val)))
         {
             b.restore(here);
@@ -801,11 +793,32 @@ fn match_assignments(
     }
 }
 
-/// Bind every present capture all-or-nothing: on the first rebind conflict,
-/// roll back what THIS call bound and return `false`.
-fn bind_all_captures(b: &mut Bindings, caps: &[Option<(crate::Capture, Binding)>]) -> bool {
+/// Bind every capture this pat node declares, all-or-nothing: on the first
+/// rebind conflict, roll back what THIS call bound and return `false`.
+///
+/// An output-vertex capture binds the matched VALUE and needs one, so it is
+/// skipped at a node-rooted position; a node-declared capture binds the matched
+/// NODE. The vertex's identity pin binds the value too, so a second slot
+/// consuming the same vertex conflicts unless it lands on the same value.
+fn bind_all_captures(
+    b: &mut Bindings,
+    nd: &PatNode,
+    out_weight: Option<&PatValue>,
+    ir_node: NodeId,
+    root_value: Option<ValueId>,
+) -> bool {
+    let vertex_caps: &[crate::Capture] = out_weight.map_or(&[], |ov| ov.captures.as_slice());
+    let identity = out_weight.and_then(|ov| ov.identity);
+    let value_caps = root_value.into_iter().flat_map(move |value| {
+        vertex_caps
+            .iter()
+            .copied()
+            .chain(identity)
+            .map(move |cap| (cap, Binding::Value(value)))
+    });
+    let node_caps = nd.captures.iter().map(|&cap| (cap, Binding::Node(ir_node)));
     let mark = b.mark();
-    for &(cap, binding) in caps.iter().flatten() {
+    for (cap, binding) in value_caps.chain(node_caps) {
         if !b.bind_capture(cap, binding) {
             b.restore(mark);
             return false;
@@ -822,7 +835,7 @@ fn input_at(ctx: &Ctx, ir_node: NodeId, slot: usize) -> Option<ValueId> {
 /// Whether the vertex constrains anything at all: a capture or identity pin to
 /// bind, or a kind / width / slot filter.
 fn vertex_imposes_requirement(o: &PatValue) -> bool {
-    o.capture.is_some()
+    !o.captures.is_empty()
         || o.identity.is_some()
         || o.width.is_some()
         || o.match_slot.is_some()

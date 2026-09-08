@@ -97,13 +97,13 @@ decorator! {
 
 decorator! {
     /// Post-match guard, with bindings visibility, on the inner root. A root
-    /// with no value output fails it: the guard is typed, and there is no type
-    /// to hand it.
+    /// with no value output is refused at build time: the guard is typed, and
+    /// there is no type to hand it.
     Guarded<P, F>
     [ where F: Fn(&crate::Matcher, strider_ir::node::ValueType, &crate::Bindings) -> bool + 'static + Send ]
     { f: F }
     |b, o, self| {
-        b.set_post_match(
+        b.set_post_match_typed(
             o,
             Box::new(move |m, _node, ty, bnd| ty.is_some_and(|ty| (self.f)(m, ty, bnd))),
         );
@@ -141,7 +141,8 @@ pub trait CaptureExt: MatchPat {
     }
     /// Run `f` after the whole sub-pattern matches; `false` fails the match.
     /// `f` is typed, so a root with no value output (a control, memory or
-    /// `PhiToken` edge, or a zero-output node) fails it. Guard those through
+    /// `PhiToken` edge, or a zero-output node) is REFUSED at build time and
+    /// every query on the pattern errors. Guard those through
     /// [`Pattern::with_root_post_match`](crate::Pattern::with_root_post_match),
     /// which sees the missing type.
     fn when_match<F>(self, f: F) -> Guarded<Self, F>

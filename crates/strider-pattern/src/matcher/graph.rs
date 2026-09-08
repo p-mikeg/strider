@@ -47,10 +47,19 @@ impl Pattern {
         Ok(root)
     }
 
+    /// A build-time refusal, reported through the same channel as an
+    /// unmatchable graph. The first one recorded wins.
+    pub(crate) fn reject(&mut self, why: String) {
+        if self.root.is_ok() {
+            self.root = Err(why);
+        }
+    }
+
     /// O(1) read of the verdict memoized at construction.
     ///
     /// # Errors
-    /// If the pattern is rootless, cyclic, or multi-sink.
+    /// If the pattern is rootless, cyclic, multi-sink, or was refused at build
+    /// time.
     pub fn root(&self) -> anyhow::Result<NodeId> {
         self.root.clone().map_err(anyhow::Error::msg)
     }
@@ -60,11 +69,11 @@ impl Pattern {
     pub fn bound_captures(&self) -> impl Iterator<Item = crate::capture::Capture> + '_ {
         self.graph
             .all_node_ids()
-            .filter_map(|n| self.graph.node_kind(n).capture)
+            .flat_map(|n| self.graph.node_kind(n).captures.iter().copied())
             .chain(
                 self.graph
                     .all_value_ids()
-                    .filter_map(|v| self.graph.value_kind_ref(v).capture),
+                    .flat_map(|v| self.graph.value_kind_ref(v).captures.iter().copied()),
             )
             .chain(
                 self.graph
@@ -101,9 +110,7 @@ impl Pattern {
         // This node's own capture, and any on the values it produces, bind
         // whenever the node matches at all. A binding walk has to succeed for
         // the node to match, so what it guarantees is guaranteed here.
-        if let Some(c) = self.graph.node_kind(node).capture {
-            out.insert(c);
-        }
+        out.extend(self.graph.node_kind(node).captures.iter().copied());
         out.extend(
             self.graph
                 .node_kind(node)
@@ -113,9 +120,7 @@ impl Pattern {
                 .copied(),
         );
         for &vertex in self.graph.node_outputs(node) {
-            if let Some(c) = self.graph.value_kind_ref(vertex).capture {
-                out.insert(c);
-            }
+            out.extend(self.graph.value_kind_ref(vertex).captures.iter().copied());
         }
         // Each input contributes its own vertex capture plus everything its
         // producer guarantees. For an alternation those are ARMS, so the vertex
@@ -127,9 +132,7 @@ impl Pattern {
             .into_iter()
             .map(|(_, vertex)| {
                 let mut caps = self.guaranteed_from(self.graph.producer_of(vertex), memo);
-                if let Some(c) = self.graph.value_kind_ref(vertex).capture {
-                    caps.insert(c);
-                }
+                caps.extend(self.graph.value_kind_ref(vertex).captures.iter().copied());
                 caps
             })
             .collect();
@@ -155,14 +158,12 @@ impl Pattern {
     /// no value output. Composes with a guard already on the root, like
     /// [`MatcherBuilder::set_post_match`](crate::matcher::MatcherBuilder::set_post_match).
     ///
-    /// # Panics
-    ///
-    /// If the pattern has no unique sink root.
+    /// A pattern with no unique sink root has nowhere to put the guard; it
+    /// already errors at query time, so this is a no-op there.
     pub(crate) fn set_root_post_match(&mut self, f: PostMatchFn) {
-        let root = self
-            .graph
-            .derive_root()
-            .expect("pattern has a unique sink root");
+        let Ok(root) = self.root() else {
+            return;
+        };
         let slot = &mut self.graph.node_kind_mut(root).post_match;
         *slot = Some(match slot.take() {
             Some(prev) => Box::new(move |m, n, ty, b| prev(m, n, ty, b) && f(m, n, ty, b)),

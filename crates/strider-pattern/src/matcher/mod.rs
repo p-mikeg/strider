@@ -42,6 +42,41 @@ fn root_kind_discriminant(pat: &Pattern, root: PatNodeId) -> Option<Discriminant
     pat.graph.node_weight(root).kind.discriminant()
 }
 
+/// The kinds an alternation root accepts: its arms', deduplicated, since the
+/// arms are tried against the SAME IR node. `None` for a non-alternation root
+/// and for one with a kind-`Any` arm, which admits every node.
+fn alternation_kind_discriminants(
+    pat: &Pattern,
+    root: PatNodeId,
+) -> Option<Vec<Discriminant<NodeKind>>> {
+    if !pat.graph.node_weight(root).alternation {
+        return None;
+    }
+    let mut kinds: Vec<Discriminant<NodeKind>> = Vec::new();
+    let mut seen = vec![root];
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        for (_, vertex) in pat.graph.consumed_inputs(node) {
+            let arm = pat.graph.producer_of(vertex);
+            match root_kind_discriminant(pat, arm) {
+                Some(d) => {
+                    if !kinds.contains(&d) {
+                        kinds.push(d);
+                    }
+                }
+                None if pat.graph.node_weight(arm).alternation => {
+                    if !seen.contains(&arm) {
+                        seen.push(arm);
+                        stack.push(arm);
+                    }
+                }
+                None => return None,
+            }
+        }
+    }
+    Some(kinds)
+}
+
 pub struct Matcher<'f> {
     pub(crate) function: &'f Function,
     kind_index: OnceCell<KindIndex>,
@@ -155,15 +190,26 @@ impl<'f> Matcher<'f> {
     }
 
     /// The IR nodes to attempt `pat` at: a discriminant-rooted pattern scans
-    /// only its `KindIndex` bucket, a kind-`Any` root the whole reachable
-    /// graph.
+    /// only its `KindIndex` bucket, an alternation root the union of its arms'
+    /// buckets, a kind-`Any` root the whole reachable graph.
     fn candidates<'p>(
         &'p self,
         pat: &Pattern,
         root: PatNodeId,
     ) -> impl Iterator<Item = NodeId> + 'p {
-        match root_kind_discriminant(pat, root) {
-            Some(d) => Either::Left(self.kind_index().nodes_of_kind(d).iter().copied()),
+        if let Some(d) = root_kind_discriminant(pat, root) {
+            return Either::Left(Either::Left(
+                self.kind_index().nodes_of_kind(d).iter().copied(),
+            ));
+        }
+        match alternation_kind_discriminants(pat, root) {
+            // Deduplicated, so no node is offered twice and no match is
+            // reported twice.
+            Some(ds) => {
+                Either::Left(Either::Right(ds.into_iter().flat_map(move |d| {
+                    self.kind_index().nodes_of_kind(d).iter().copied()
+                })))
+            }
             None => Either::Right(self.function.walk()),
         }
     }
@@ -205,7 +251,7 @@ impl<'f> Matcher<'f> {
         {
             let mut collect = |b: &mut Bindings| -> bool {
                 if seen.insert(b.binding_signature()) {
-                    hits.push(Match::from_root(node, b.clone()));
+                    hits.push(Match::from_root_in(node, b.clone(), self.function.graph()));
                 }
                 first_only
             };
@@ -840,8 +886,15 @@ impl<'f> ConstraintEval<'f> {
                 ) else {
                     return None;
                 };
+                // Three-valued like `Dominates`: a `phi` capture bound to a
+                // non-phi, or an `edge` one carrying no control edge, leaves
+                // the relation unanswerable. Answering `false` would hand
+                // `Not` the rows it was asked to exclude.
+                if !self.function.value_kind(edge_v).is_control() {
+                    return None;
+                }
                 Some(
-                    self.phi_arms_from_edge(phi_v, edge_v)
+                    self.phi_arms_from_edge(phi_v, edge_v)?
                         .any(|arm| arm == val_v),
                 )
             }
@@ -888,7 +941,8 @@ impl<'f> ConstraintEval<'f> {
     }
 
     /// Every value the `Phi`/`MemPhi` producing `phi_v` merges on a predecessor
-    /// reached through branch edge `edge_v`.
+    /// reached through branch edge `edge_v`. `None` when `phi_v` does not come
+    /// from a phi at all, which no arm set can express.
     ///
     /// Slot alignment: a phi's inputs are `[PhiToken, v0, v1, ...]`, so data
     /// input `i+1` is predecessor `i`'s value, while its owning `Region` (the
@@ -915,22 +969,21 @@ impl<'f> ConstraintEval<'f> {
         &self,
         phi_v: ValueId,
         edge_v: ValueId,
-    ) -> impl Iterator<Item = ValueId> + '_ {
-        self.arm_scan(phi_v)
-            .into_iter()
-            .flat_map(move |(phi_inputs, region_inputs)| {
-                region_inputs
-                    .into_iter()
-                    .enumerate()
-                    .filter(move |(_, c)| {
-                        // Edge against EDGE. Do NOT rewrite the right operand
-                        // as `producer(*c)`: that is the `If`, which PRECEDES
-                        // the edge, so the direct `c == edge_v` case breaks.
-                        dominates(self.split_doms(), CtrlKey::Edge(edge_v), CtrlKey::Edge(*c))
-                    })
-                    // Region control input `i` maps to phi data input `i + 1`.
-                    .filter_map(move |(i, _)| phi_inputs.get(i + 1).copied())
-            })
+    ) -> Option<impl Iterator<Item = ValueId> + '_> {
+        let (phi_inputs, region_inputs) = self.arm_scan(phi_v)?;
+        Some(
+            region_inputs
+                .into_iter()
+                .enumerate()
+                .filter(move |(_, c)| {
+                    // Edge against EDGE. Do NOT rewrite the right operand
+                    // as `producer(*c)`: that is the `If`, which PRECEDES
+                    // the edge, so the direct `c == edge_v` case breaks.
+                    dominates(self.split_doms(), CtrlKey::Edge(edge_v), CtrlKey::Edge(*c))
+                })
+                // Region control input `i` maps to phi data input `i + 1`.
+                .filter_map(move |(i, _)| phi_inputs.get(i + 1).copied()),
+        )
     }
 
     /// The phi's inputs and its region's control inputs.
