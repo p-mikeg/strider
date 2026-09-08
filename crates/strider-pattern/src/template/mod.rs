@@ -269,13 +269,16 @@ fn resolve_binding_tys(
 /// The closure computed `v` in `u128`, so a carry or borrow out of bit 127 is
 /// lost. That is the declared width's own modulus up to `I128`, and the WRONG
 /// one past it: `2^127 + 2^127` reads back as `0` rather than `2^128`. Skip the
-/// rewrite instead of interning a truncated constant.
+/// rewrite instead of interning a truncated constant. A float `value_ty` has no
+/// integer literal to intern at all, and skips for the same reason: the caller
+/// gave a float-typed root an integer constant, which is the rule's mistake,
+/// not a graph error to surface downstream.
 fn intern_fn_int_const<B: IRBuilder>(
     builder: &mut B,
     value_ty: ValueType,
     v: u128,
 ) -> anyhow::Result<NodeKind> {
-    if value_ty.bit_width() > 128 {
+    if value_ty.bit_width() > 128 || !value_ty.is_integer() {
         return Err(crate::skip());
     }
     Ok(NodeKind::IntConst(

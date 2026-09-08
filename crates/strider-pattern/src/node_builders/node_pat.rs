@@ -51,7 +51,7 @@ pub(crate) struct NodePat {
     /// Sparse: raw input slot to compiler.
     inputs: Vec<(usize, SubCompiler)>,
     node_predicate: Option<NodePredicateFactory>,
-    capture: Option<Capture>,
+    captures: Vec<Capture>,
     anchor: AnchorKind,
     output_width: Option<u32>,
     /// `(slot, bits)`.
@@ -68,7 +68,7 @@ impl NodePat {
             kind,
             inputs: Vec::new(),
             node_predicate: None,
-            capture: None,
+            captures: Vec::new(),
             anchor: AnchorKind::None,
             output_width: None,
             input_widths: Vec::new(),
@@ -176,8 +176,9 @@ impl NodePat {
     }
 
     /// Binds the anchor output where there is one, otherwise the node.
+    /// Repeatable: every capture binds the same thing.
     pub(crate) fn capture(mut self, c: Capture) -> Self {
-        self.capture = Some(c);
+        self.captures.push(c);
         self
     }
 
@@ -216,7 +217,7 @@ impl NodePat {
             kind,
             inputs,
             node_predicate,
-            capture,
+            captures,
             anchor,
             output_width,
             input_widths,
@@ -279,7 +280,7 @@ impl NodePat {
         if let Some(factory) = node_predicate {
             b.set_node_predicate_at(node, factory());
         }
-        if let Some(c) = capture {
+        for c in captures {
             match anchor_out {
                 Some(out) => b.capture_output(out, c),
                 None => b.capture_node(node, c),

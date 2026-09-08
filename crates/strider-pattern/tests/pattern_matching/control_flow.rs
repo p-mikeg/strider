@@ -334,18 +334,28 @@ fn if_branch_slot_accepts_built_control_pattern() {
     );
 }
 
-/// A malformed (multi-sink / rootless) branch pattern must be rejected loudly
-/// at `with_true` build time, so a typo surfaces instead of reading as "branch
-/// did not match".
+/// A malformed (multi-sink / rootless) branch pattern is refused at
+/// `with_true` build time, so a typo surfaces as a query error instead of
+/// reading as "branch did not match". A pattern is untrusted input, so the
+/// refusal is a `Result`, not a panic.
 #[test]
-#[should_panic(expected = "If branch pattern is not matchable")]
-fn with_true_multi_sink_branch_pattern_panics_not_silently_skips() {
+fn with_true_multi_sink_branch_pattern_is_refused_not_silently_skipped() {
     // Two unconsumed leaf sinks make `root()` error.
     let mut mb = MatcherBuilder::new();
     let _a = mb.leaf(KindSpec::Any);
     let _b = mb.leaf(KindSpec::Any);
     let bad = mb.finish();
-    let _ = if_else().with_true(bad).build();
+    let pat = if_else().with_true(bad).build();
+
+    let function = shapes::if_cmp_then_return(4);
+    let err = Matcher::new(&function)
+        .find_all(&pat)
+        .map(|hits| hits.len())
+        .expect_err("a refused pattern must error");
+    assert!(
+        err.to_string()
+            .contains("If branch pattern is not matchable")
+    );
 }
 
 /// A capture bound inside an If branch sub-pattern binds in the enclosing
