@@ -8,7 +8,7 @@
 //! SP-relative load resolved against the [`SlotMap`] of the stores above it.
 //! Any unresolved value, a non-const dispatch result, or a cycle yields `None`.
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRViewer, ReadOnlyMemory};
@@ -47,14 +47,17 @@ impl<'a> Evaluator<'a> {
     pub(crate) fn new(
         function: &'a strider_ir::Function,
         rom: Option<&'a dyn ReadOnlyMemory>,
-        stack_global_disjoint: bool,
+        assumptions: &crate::AssumptionOptions,
     ) -> Self {
         Self {
             function,
             rom,
             map: FxHashMap::default(),
             slot_maps: FxHashMap::default(),
-            off_segment: MemAnalyzer::new(MemOptions::call_blocking(stack_global_disjoint)),
+            off_segment: MemAnalyzer::new(
+                MemOptions::call_blocking(assumptions.stack_global_disjoint)
+                    .with_noalias_allocators(&assumptions.noalias_allocators),
+            ),
         }
     }
 
@@ -187,7 +190,7 @@ impl<'a> Evaluator<'a> {
         let map = self
             .slot_maps
             .entry((mem, base))
-            .or_insert_with(|| SlotMap::build(f, mem, base));
+            .or_insert_with(|| SlotMap::build(f, mem, base, self.off_segment.noalias_allocators()));
         let reaching = map.reaching(offset, size);
         match reaching {
             Reaching::Store(store) => Some(f.store_data(store)),
@@ -294,9 +297,14 @@ enum Reaching {
 }
 
 impl SlotMap {
-    fn build(function: &strider_ir::Function, mem: ValueId, base: ValueId) -> Self {
+    fn build(
+        function: &strider_ir::Function,
+        mem: ValueId,
+        base: ValueId,
+        noalias_allocators: &FxHashSet<u64>,
+    ) -> Self {
         let mut budget = SLOT_MAP_BUDGET;
-        Self::build_within(function, mem, base, &mut budget, 0)
+        Self::build_within(function, mem, base, &mut budget, 0, noalias_allocators)
     }
 
     fn build_within(
@@ -305,6 +313,7 @@ impl SlotMap {
         base: ValueId,
         budget: &mut u32,
         depth: u32,
+        noalias_allocators: &FxHashSet<u64>,
     ) -> Self {
         let mut claims: FxHashMap<i128, Claim> = FxHashMap::default();
         let mut cur = Some(mem);
@@ -329,12 +338,25 @@ impl SlotMap {
                         .phi_data_inputs(node)
                         .collect::<SmallVec<[ValueId; 4]>>()
                         .into_iter()
-                        .map(|arm| Self::build_within(function, arm, base, budget, depth + 1))
+                        .map(|arm| {
+                            Self::build_within(
+                                function,
+                                arm,
+                                base,
+                                budget,
+                                depth + 1,
+                                noalias_allocators,
+                            )
+                        })
                         .collect();
                     break;
                 }
                 NodeKind::Store(space) if space == rsleigh::VnSpace::RAM => {
-                    match crate::mem_analysis::decompose(function, function.store_addr(node)) {
+                    match crate::mem_analysis::decompose(
+                        function,
+                        function.store_addr(node),
+                        noalias_allocators,
+                    ) {
                         Some(MemExpr {
                             base: store_base,
                             offset,
@@ -517,7 +539,7 @@ mod tests {
         assert!(pruned.contains(&idx), "pruned cone includes the stop node");
         assert!(pruned.contains(&dispatch), "pruned cone includes the root");
 
-        let mut ev = Evaluator::new(&function, None, true);
+        let mut ev = Evaluator::new(&function, None, &crate::AssumptionOptions::default());
         ev.begin_index(idx, 7);
         assert_eq!(ev.eval_root(&pruned, dispatch), Some(107));
         ev.begin_index(idx, 8);
@@ -556,7 +578,7 @@ mod tests {
         // The bail-on-first-failure contract requires `order` to be the cone
         // pruned at the index.
         let order = cone_order_pruned(&function, sum, idx);
-        let mut ev = Evaluator::new(&function, None, true);
+        let mut ev = Evaluator::new(&function, None, &crate::AssumptionOptions::default());
         ev.begin_index(idx, 5);
         assert_eq!(ev.eval_root(&order, sum), Some(105));
         ev.begin_index(idx, 7); // fresh map
@@ -566,7 +588,7 @@ mod tests {
     #[test]
     fn unseeded_index_is_none() {
         let (function, _idx, sum) = build_add_idx_100();
-        let mut ev = Evaluator::new(&function, None, true);
+        let mut ev = Evaluator::new(&function, None, &crate::AssumptionOptions::default());
         // Pruning at `sum` itself leaves a cone of only `[sum]`.
         let order_sum = cone_order_pruned(&function, sum, sum);
         ev.begin_index(sum, 5);
