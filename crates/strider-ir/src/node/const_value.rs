@@ -53,6 +53,19 @@ mod tests {
     use super::*;
     use crate::function::test_function;
 
+    /// A user-supplied rewrite can reach `intern_int_const` with a float type
+    /// (the pattern template materialiser guards only on WIDTH, and every
+    /// float type is <= 128 bits).  Panicking there surfaces in Python as a
+    /// `PanicException`, which derives from `BaseException` and so escapes
+    /// `except Exception`; `validate` reports the same mistake catchably.
+    #[test]
+    fn intern_int_const_on_a_float_type_does_not_panic() {
+        use crate::node::ValueType;
+        let mut f = test_function();
+        let id = f.intern_int_const(0, ValueType::F64);
+        assert_eq!(*f.const_value(id), ConstValue::Bits(0));
+    }
+
     /// No unmasked `Bits` may slip in via the limb path.
     #[test]
     fn intern_int_const_limbs_masks_fits_u128_to_width() {
