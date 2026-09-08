@@ -168,24 +168,6 @@ impl NodeKind {
             .head_len()
     }
 
-    /// Fixed output slots before the variadic tail. See
-    /// [`input_head_len`](Self::input_head_len).
-    #[must_use]
-    pub fn output_head_len(&self) -> usize {
-        crate::node_signature::expected_signature(self)
-            .outputs
-            .head_len()
-    }
-
-    /// The value kind input slot `idx` admits, `None` past the arity bound.
-    #[must_use]
-    pub fn expected_input_kind(&self, idx: usize) -> Option<ExpectedValueKind> {
-        crate::node_signature::expected_signature(self)
-            .inputs
-            .at(idx)
-            .map(|s| s.kind)
-    }
-
     /// The value kind output slot `idx` admits, `None` past the arity bound.
     #[must_use]
     pub fn expected_output_kind(&self, idx: usize) -> Option<ExpectedValueKind> {

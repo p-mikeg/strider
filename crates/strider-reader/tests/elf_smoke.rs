@@ -26,7 +26,7 @@ fn assert_smoke(arch: &str) {
     );
 
     let obj = strider_reader::load_elf(&path).unwrap();
-    let obj = obj.file();
+    let obj = obj.checked_file().expect("the mapped file is unchanged");
     assert_eq!(
         obj.endianness(),
         object::Endianness::Little,

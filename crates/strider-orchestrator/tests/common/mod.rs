@@ -279,7 +279,7 @@ pub(crate) fn lift_for_pipeline(
     }
     let obj = strider_reader::load_elf(&path)
         .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
-    let obj = obj.file();
+    let obj = obj.checked_file().expect("the mapped file is unchanged");
     let sleigh_arch = arch.sleigh();
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let (mut ana, cc) = driver_for_reader(arch, mem);
