@@ -3,7 +3,6 @@ use strider_graph::{Graph, NeverCacheable, NodeId};
 
 use super::CastMask;
 use super::vertex::{PatNode, PatValue, PostMatchFn};
-use crate::graph_ext::PatGraphRead;
 
 pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
 
@@ -42,7 +41,7 @@ impl Pattern {
     /// Zero sinks (rootless / cyclic), more than one sink, or a cycle in the
     /// root's input cone.
     fn resolve_root(graph: &PatGraph) -> anyhow::Result<NodeId> {
-        let root = graph.derive_root()?;
+        let root = crate::graph_ext::derive_root(graph)?;
         crate::graph_ext::reachable_topo(graph, root)?;
         Ok(root)
     }
@@ -126,16 +125,15 @@ impl Pattern {
         // producer guarantees. For an alternation those are ARMS, so the vertex
         // capture belongs to that arm and must not be hoisted out of the
         // intersection.
-        let per_input: Vec<FxHashSet<crate::capture::Capture>> = self
-            .graph
-            .consumed_inputs(node)
-            .into_iter()
-            .map(|(_, vertex)| {
-                let mut caps = self.guaranteed_from(self.graph.producer_of(vertex), memo);
-                caps.extend(self.graph.value_kind_ref(vertex).captures.iter().copied());
-                caps
-            })
-            .collect();
+        let per_input: Vec<FxHashSet<crate::capture::Capture>> =
+            crate::graph_ext::consumed_inputs(&self.graph, node)
+                .into_iter()
+                .map(|(_, vertex)| {
+                    let mut caps = self.guaranteed_from(self.graph.producer(vertex), memo);
+                    caps.extend(self.graph.value_kind_ref(vertex).captures.iter().copied());
+                    caps
+                })
+                .collect();
         if self.graph.node_kind(node).alternation {
             // Exactly one arm fires, so only what EVERY arm binds is guaranteed.
             let mut arms = per_input.into_iter();

@@ -12,7 +12,7 @@ use std::cell::RefCell;
 
 use rustc_hash::FxHashSet;
 
-use strider_ir::node::{NodeId, NodeKind, ValueType};
+use strider_ir::node::{NodeId, NodeKind, ValueType, low_bits_mask_u128};
 use strider_ir::{ConstId, IRViewer};
 
 use crate::capture::Capture;
@@ -127,11 +127,7 @@ fn value_at_some_width(stored: u128, out_ty: ValueType, v: u128) -> bool {
         if w > output_width {
             break;
         }
-        let w_mask: u128 = if w >= 128 {
-            u128::MAX
-        } else {
-            (1u128 << w) - 1
-        };
+        let w_mask = low_bits_mask_u128(w);
         let low = stored & w_mask;
         if low != (v & w_mask) {
             continue;

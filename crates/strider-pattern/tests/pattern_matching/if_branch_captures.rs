@@ -270,3 +270,24 @@ fn independent_branch_bindings_multiply_while_a_shared_one_agrees() {
         .build();
     assert_eq!(m.find_all(&agreeing).unwrap().len(), 2);
 }
+
+/// A second `with_true` replaces the walk, so the discarded one's captures
+/// must go with it: a rewrite RHS naming the dropped capture would otherwise
+/// pass the construction-time coverage check and fail at instantiation.
+#[test]
+fn replacing_a_branch_drops_the_discarded_walk_captures() {
+    let dropped = Capture::new();
+    let kept = Capture::new();
+    let pat = if_else()
+        .with_true(var(dropped).into_pattern())
+        .with_true(var(kept).into_pattern())
+        .build();
+
+    assert!(
+        !pat.bound_captures().any(|c| c == dropped),
+        "the replaced branch walk must stop declaring its capture"
+    );
+    let guaranteed = pat.guaranteed_captures().unwrap();
+    assert!(!guaranteed.contains(&dropped));
+    assert!(guaranteed.contains(&kept));
+}

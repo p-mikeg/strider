@@ -553,3 +553,26 @@ fn int_const_template_rhs_on_a_float_root_skips() {
         assert!(is_skip(&err), "must decline the rewrite, got: {err}");
     }
 }
+
+/// `instantiate` densifies the declared output slots, so a gap would shift a
+/// later slot onto the wrong IR output index and check it against the wrong
+/// entry of the node signature. `collect_inputs` already refuses the
+/// analogous input gap.
+#[test]
+fn a_gapped_template_output_slot_is_refused() {
+    let mut b = TemplateBuilder::new();
+    let mem = b.node(KindSpec::Exact(NodeKind::InitialMemory));
+    let _slot_1_only = b.memory_output(mem, 1);
+    let tpl = b.finish();
+
+    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::I64)).unwrap();
+    let lhs_root = fx.walk().next().unwrap();
+    let bindings = Bindings::default();
+    let mut ef = EditFunction::new(&mut fx);
+    let err = instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::I64)
+        .expect_err("a gapped output slot must be refused");
+    assert!(
+        err.to_string().contains("non-contiguous output slots"),
+        "{err}"
+    );
+}

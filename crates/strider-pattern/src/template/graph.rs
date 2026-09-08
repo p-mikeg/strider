@@ -7,7 +7,7 @@
 use strider_graph::{Graph, NeverCacheable, NodeId};
 
 use crate::capture::Capture;
-use crate::graph_ext::{HasInputSlots, PatGraphRead};
+use crate::graph_ext::HasInputSlots;
 use crate::matcher::OutputKindSpec;
 use crate::template::{TemplateKind, TemplateTy};
 
@@ -104,7 +104,7 @@ impl Template {
     /// Unless there is exactly one sink: zero means rootless or cyclic, more
     /// than one means multi-rooted.
     pub fn root(&self) -> anyhow::Result<NodeId> {
-        self.graph.derive_root()
+        crate::graph_ext::derive_root(&self.graph)
     }
 
     /// Drives the rewrite engine's construction-time coverage check, which
