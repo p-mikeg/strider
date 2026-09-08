@@ -7,6 +7,10 @@ use crate::Cfg;
 
 /// Walks BOTH edge directions, so predecessors and successors alike.  BFS
 /// visits in level order, so the `max_nodes` budget keeps the nearest regions.
+///
+/// `center` is in the set before the budget is consulted, so the result holds
+/// at least it however small `max_nodes` is, and at most `max(1, max_nodes)`
+/// regions.
 pub(crate) fn neighborhood_regions(
     cfg: &Cfg,
     center: NodeIndex,
@@ -38,7 +42,7 @@ pub(crate) fn neighborhood_regions(
 
 impl Cfg {
     /// Pretty render around `center`.  Node ids are region indices; `center`
-    /// gets a gold border.
+    /// gets a gold border, and is rendered whatever `max_nodes` is.
     pub fn neighborhood_dot<R: rsleigh::MemReader>(
         &self,
         sleigh: &rsleigh::Sleigh<R>,
@@ -90,6 +94,10 @@ mod tests {
         );
         assert!(d1.contains(&entry));
         assert!(neighborhood_regions(&cfg, entry, 5, 1).len() <= 1);
+        // The centre outranks the budget, so a zero budget still renders it.
+        let none_budgeted = neighborhood_regions(&cfg, entry, 5, 0);
+        assert_eq!(none_budgeted.len(), 1);
+        assert!(none_budgeted.contains(&entry));
 
         // Exercises the Incoming half: the `ret` block is a confluence of the
         // jne-taken edge and the nop fall-through, so centering there must pull
