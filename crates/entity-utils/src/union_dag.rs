@@ -1,6 +1,7 @@
 use cranelift_entity::packed_option::PackedOption;
 use cranelift_entity::{EntityList, EntityRef, ListPool, PrimaryMap, SecondaryMap, entity_impl};
 use rustc_hash::FxHashSet;
+use std::hash::Hash;
 
 /// Never exposed; callers address the DAG by their own external key `N`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -16,44 +17,51 @@ struct Node<V> {
 }
 
 #[derive(Clone, Debug)]
-pub struct UnionDag<N: EntityRef, V: Copy> {
+pub struct UnionDag<N: EntityRef, V: Copy + Eq + Hash> {
     /// `NONE` means the key has no set yet.
     roots: SecondaryMap<N, PackedOption<UnionId>>,
     nodes: PrimaryMap<UnionId, Node<V>>,
     links: ListPool<UnionId>,
     /// The `(dst, src)` pairs already linked, one entry per DISTINCT link.
     linked: FxHashSet<(UnionId, UnionId)>,
+    /// The `(root, value)` pairs already extended, one entry per DISTINCT value.
+    held: FxHashSet<(UnionId, V)>,
 }
 
-impl<N: EntityRef, V: Copy> Default for UnionDag<N, V> {
+impl<N: EntityRef, V: Copy + Eq + Hash> Default for UnionDag<N, V> {
     fn default() -> Self {
         Self {
             roots: SecondaryMap::new(),
             nodes: PrimaryMap::new(),
             links: ListPool::new(),
             linked: FxHashSet::default(),
+            held: FxHashSet::default(),
         }
     }
 }
 
-impl<N: EntityRef, V: Copy> UnionDag<N, V> {
+impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
     pub fn new() -> Self {
         Self::default()
     }
 
     /// O(1) amortised: the first value fills `n`'s own node, later ones become
-    /// absorbed leaves.
+    /// absorbed leaves. Re-adding a value already in `n`'s set is a no-op.
     pub fn extend(&mut self, n: N, v: V) {
-        match self.roots[n].expand() {
-            None => {
-                let id = self.alloc(Some(v));
-                self.roots[n] = id.into();
-            }
-            Some(root) if self.nodes[root].own.is_none() => self.nodes[root].own = Some(v),
-            Some(root) => {
-                let leaf = self.alloc(Some(v));
-                self.nodes[root].parents.push(leaf, &mut self.links);
-            }
+        let root = self.ensure(n);
+        // Same reason `union` keeps `linked`: re-adding one value would grow
+        // `root`'s parents without bound and turn `for_each` linear in the
+        // number of `extend` calls, its `seen` set hiding the repetition in the
+        // ANSWER, not in the COST. Keyed by the pair rather than by `own`
+        // alone, so alternating values do not each defeat the guard.
+        if !self.held.insert((root, v)) {
+            return;
+        }
+        if self.nodes[root].own.is_none() {
+            self.nodes[root].own = Some(v);
+        } else {
+            let leaf = self.alloc(Some(v));
+            self.nodes[root].parents.push(leaf, &mut self.links);
         }
     }
 
@@ -225,6 +233,35 @@ mod tests {
         }
         let root = dag.roots[Key(0)].expand().expect("dst has a root");
         assert_eq!(dag.nodes[root].parents.as_slice(&dag.links).len(), 1);
+        assert_eq!(set_of(&dag, Key(0)), FxHashSet::from_iter([1, 2]));
+    }
+
+    /// Repeating one value must not grow the parents list: `for_each`'s `seen`
+    /// hides the repetition in the answer, so only the visit count shows it.
+    #[test]
+    fn repeating_one_extend_value_is_visited_once() {
+        let mut dag: UnionDag<Key, u64> = UnionDag::new();
+        for _ in 0..1000 {
+            dag.extend(Key(0), 0xdead);
+        }
+        let mut visits = 0usize;
+        dag.for_each(Key(0), |_| visits += 1);
+        assert_eq!(visits, 1);
+    }
+
+    /// Interleaving two values must not defeat the guard either: an
+    /// own-value-only check absorbs a leaf on every other call, so the walk
+    /// cost grows with the CALL count while the answer stays at two values.
+    #[test]
+    fn alternating_extend_values_are_visited_once_each() {
+        let mut dag: UnionDag<Key, u64> = UnionDag::new();
+        for _ in 0..1000 {
+            dag.extend(Key(0), 1);
+            dag.extend(Key(0), 2);
+        }
+        let mut visits = 0usize;
+        dag.for_each(Key(0), |_| visits += 1);
+        assert_eq!(visits, 2);
         assert_eq!(set_of(&dag, Key(0)), FxHashSet::from_iter([1, 2]));
     }
 
