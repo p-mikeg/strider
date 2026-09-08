@@ -226,8 +226,9 @@ impl FunctionBuilder {
         self.build_return(None, &ret_values)
     }
 
-    /// Test-only: the ABI resolution and writeback the lifter performs in prod
-    /// around [`Self::build_call_other`].
+    /// Test-only mirror of the lifter's `build_abi_call_other`: the ABI
+    /// resolution and writeback it performs in prod around
+    /// [`Self::build_call_other`].
     #[allow(clippy::missing_errors_doc, clippy::too_many_arguments)]
     #[cfg(any(test, feature = "test-util"))]
     pub fn build_call_other_abi(
@@ -254,8 +255,23 @@ impl FunctionBuilder {
 
         // Result then implicit-write clobbers, deduplicated with the result
         // winning ties.
-        let result_vn =
-            output.map(|vn| vn_container::largest_container_in(self.function().all_vns(), &vn));
+        let result_vn = match output
+            .map(|vn| vn_container::largest_container_in(self.function().all_vns(), &vn))
+        {
+            // An intrinsic writing a memory operand (x86 `sgdt [mem]`) has an
+            // output no slot can carry; the memory clobber already advances the
+            // chain over the write, so the slot is dropped rather than failing.
+            Some(vn)
+                if abi.clobbers_memory
+                    && !matches!(
+                        vn.addr_space,
+                        rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE
+                    ) =>
+            {
+                None
+            }
+            other => other,
+        };
         let mut clobber_vns: SmallVec<[rsleigh::Vn; 4]> = SmallVec::new();
         for vn in &abi.implicit_writes {
             let c = vn_container::largest_container_in(self.function().all_vns(), vn);
@@ -281,12 +297,18 @@ impl FunctionBuilder {
 
         // Clobbers before the result, so an aliased clobber cannot re-clobber
         // it.
-        for (vn, value) in core::iter::zip(&clobber_vns, clobber_values) {
-            self.write_variable(vn, *value)?;
-        }
+        //
+        // Skipped for a terminating op: the region is already closed, so
+        // `write_variable` would bind into it and no successor could read the
+        // binding. The output slots dangle, which is what `no_return` means.
         let result = ret_val_values.first().copied();
-        if let (Some(c), Some(value)) = (result_vn, result) {
-            self.write_variable(&c, value)?;
+        if !terminate {
+            for (vn, value) in core::iter::zip(&clobber_vns, clobber_values) {
+                self.write_variable(vn, *value)?;
+            }
+            if let (Some(c), Some(value)) = (result_vn, result) {
+                self.write_variable(&c, value)?;
+            }
         }
         Ok((node, result))
     }

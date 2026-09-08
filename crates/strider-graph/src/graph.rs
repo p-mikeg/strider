@@ -437,6 +437,24 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         N: Clone,
         V: Clone,
     {
+        let remap = self.retain_reachable_stale_cache(reachable);
+        self.rebuild_cache();
+        remap
+    }
+
+    /// [`Self::retain_reachable`] stopping short of the cache rebuild, for a
+    /// caller that rewrites cache-key-bearing payloads afterwards and would
+    /// discard it. The cache is left keyed on the pre-compaction ids: the
+    /// caller MUST [`rebuild_cache`](Self::rebuild_cache) before any deduping
+    /// create.
+    pub fn retain_reachable_stale_cache(
+        &mut self,
+        reachable: impl IntoIterator<Item = NodeId>,
+    ) -> NodeIdRemap
+    where
+        N: Clone,
+        V: Clone,
+    {
         self.generation = self.generation.wrapping_add(1);
 
         let reachable: Vec<NodeId> = reachable.into_iter().collect();
@@ -516,8 +534,6 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         for use_id in all_use_ids {
             self.store.link_use_to_value_list(use_id);
         }
-
-        self.cache.rebuild::<N, V, C>(&self.store);
 
         remap
     }

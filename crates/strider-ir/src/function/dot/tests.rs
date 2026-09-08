@@ -23,6 +23,24 @@ fn probe_sleigh() -> rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<Vec<u8>>
     .expect("create probe Sleigh")
 }
 
+type ProbeReader = rsleigh::mem_readers::BufMemReader<Vec<u8>>;
+
+fn make_dumper<'a>(
+    function: &'a Function,
+    entry: NodeId,
+    sleigh: &'a rsleigh::Sleigh<ProbeReader>,
+) -> FunctionDotDumper<'a, ProbeReader> {
+    FunctionDotDumper {
+        entry,
+        function,
+        sleigh,
+        regs: std::borrow::Cow::Owned(sleigh.regs().expect("regs")),
+        node_to_arg_indices: build_arg_reverse_map(function),
+        nodes: None,
+        center: None,
+    }
+}
+
 fn render(function: &Function, entry: NodeId) -> String {
     render_with_state(function, entry).0
 }
@@ -33,18 +51,22 @@ fn render_with_state(
     entry: NodeId,
 ) -> (String, super::FunctionDotDumperState) {
     let sleigh = probe_sleigh();
-    let dumper = FunctionDotDumper {
-        entry,
-        function,
-        sleigh: &sleigh,
-        node_to_arg_indices: build_arg_reverse_map(function),
-        nodes: None,
-        center: None,
-    };
+    let dumper = make_dumper(function, entry, &sleigh);
     use ::dot::GraphDot;
     GraphDot::new(dumper, ::dot::DotStyle::empty())
         .as_dot_with_state()
         .expect("render must succeed")
+}
+
+/// `to_dot` renders un-validated IR, where a `Phi` can carry no output at all.
+#[test]
+fn phi_without_an_output_labels_rather_than_panicking() {
+    let mut f = test_function();
+    let entry = f.entry();
+    let phi = f.graph_mut().create_node(NodeKind::Phi, [], []);
+    let sleigh = probe_sleigh();
+    let dumper = make_dumper(&f, entry, &sleigh);
+    assert_eq!(dumper.pretty_label(phi), "φ Val");
 }
 
 fn count_lines<'a>(s: &'a str, pred: impl Fn(&'a str) -> bool) -> usize {
@@ -485,14 +507,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
         .create_node(NodeKind::Return, [cs_false_ctrl], []);
 
     let sleigh = probe_sleigh();
-    let dumper = FunctionDotDumper {
-        entry,
-        function: &f,
-        sleigh: &sleigh,
-        node_to_arg_indices: build_arg_reverse_map(&f),
-        nodes: None,
-        center: None,
-    };
+    let dumper = make_dumper(&f, entry, &sleigh);
 
     let style = ::dot::DotStyle::empty();
     let mut emitter = ::dot::DotEmitter::new("test", &style);
@@ -1065,14 +1080,7 @@ fn neighborhood_center_is_highlighted_and_navigable_even_when_const() {
         .create_node(NodeKind::Return, [ctrl, memv, a2v], []);
 
     let sleigh = probe_sleigh();
-    let dumper = FunctionDotDumper {
-        entry,
-        function: &f,
-        sleigh: &sleigh,
-        node_to_arg_indices: build_arg_reverse_map(&f),
-        nodes: None,
-        center: None,
-    };
+    let dumper = make_dumper(&f, entry, &sleigh);
 
     let dot = dumper.neighborhood_dot(add1, 3, 12, 100, false).unwrap();
     let decl = node_decls(&dot)
@@ -1139,14 +1147,7 @@ fn neighborhood_duplicates_shared_const_per_use() {
 
     let entry = f.entry();
     let sleigh = probe_sleigh();
-    let dumper = FunctionDotDumper {
-        entry,
-        function: &f,
-        sleigh: &sleigh,
-        node_to_arg_indices: build_arg_reverse_map(&f),
-        nodes: None,
-        center: None,
-    };
+    let dumper = make_dumper(&f, entry, &sleigh);
     let dot = dumper.neighborhood_dot(center, 3, 12, 100, false).unwrap();
 
     let sevens = node_decls(&dot)
