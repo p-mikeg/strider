@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub type Result<T> = anyhow::Result<T>;
 
@@ -437,11 +437,8 @@ impl Iterator for Covering<'_> {
 
 /// Max-end segment tree over `ends`, which is in ascending-start order.
 ///
-/// One question: "is there a region whose start is at or below `addr` and
-/// whose end reaches `want`, and which is the LAST such?" That is the
-/// fully-covering case, so every instruction fetch, and repeating it walks
-/// every region covering a relocation site; answering it by walking starts
-/// downward is O(n) on an image that nests regions.
+/// Answers, in O(log n): the last entry at or below a given index whose end
+/// reaches `want`.
 #[derive(Debug)]
 struct MaxEnd {
     /// `1`-rooted, leaves at `size..size * 2`.
@@ -515,16 +512,14 @@ impl MemRegionsLookupTable {
     ///
     /// When any mapped file behind the table changed since it was mapped.
     pub fn check_unchanged(&self) -> Result<()> {
-        let mut stat_ed: Vec<usize> = Vec::new();
+        let mut stat_ed: BTreeSet<usize> = BTreeSet::new();
         for region in &self.regions {
             let Some(id) = region.mapping_id() else {
                 continue;
             };
-            if stat_ed.contains(&id) {
-                continue;
+            if stat_ed.insert(id) {
+                region.check_unchanged()?;
             }
-            stat_ed.push(id);
-            region.check_unchanged()?;
         }
         Ok(())
     }
