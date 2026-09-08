@@ -148,6 +148,15 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
 
 ### Breaking, Rust
 
+- `OwnedElf::file` is crate-private and `is_arm_be8` returns `Result<bool>`.
+  Both parse the mapping, and a file rebuilt under a live handle makes that a
+  SIGBUS no caller can catch -- which neither a `File` return nor a `bool` had
+  any way to report. `checked_file` is the way in.
+- `NodeKind::output_head_len` and `expected_input_kind` are removed; nothing
+  called either. `input_head_len` and `expected_output_kind` stay, and are
+  used.
+
+
 - The `rsleigh` path dependency moved from a sibling `../rsleigh` checkout to
   the `externals/rsleigh` git submodule: clone with `--recursive`, or
   `git submodule update --init --recursive`.
@@ -169,10 +178,9 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `elf_get_readonly_regions` and `elf_get_loadable_regions_including_writable`
   (use `OwnedElf::regions` with a `LoadFilter`). `MemRegion::fully_covers` is
   `pub(crate)`.
-- `NodeKind` gains `input_head_len` / `output_head_len` /
-  `expected_input_kind` / `expected_output_kind`, so a consumer outside
-  `strider-ir` can read the slot-layout single source of truth instead of
-  hardcoding the shift. `strider-pattern`'s `call().arg(n)`, `ret_val(n)` and
+- `NodeKind` gains `input_head_len` and `expected_output_kind`, so a consumer
+  outside `strider-ir` can read the slot-layout single source of truth instead
+  of hardcoding the shift. `strider-pattern`'s `call().arg(n)`, `ret_val(n)` and
   `phi_input(n)` now do. `NodeKind::is_terminator` likewise replaces three
   hand-written copies of the terminator set.
 - A template whose declared output kinds contradict its node signature is

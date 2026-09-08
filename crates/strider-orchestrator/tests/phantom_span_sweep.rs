@@ -38,7 +38,9 @@ fn build_cfg_phantom_span_asserts_hold_for_every_fixture_function() {
             let Ok(obj_owned) = strider_reader::load_elf(&path) else {
                 continue;
             };
-            let obj = obj_owned.file();
+            let obj = obj_owned
+                .checked_file()
+                .expect("the mapped file is unchanged");
             let Ok(mem) = strider_reader::ElfFileMemReader::from_object(&obj) else {
                 continue;
             };

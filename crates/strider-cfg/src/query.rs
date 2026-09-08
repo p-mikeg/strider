@@ -188,7 +188,7 @@ mod tests {
         );
         let obj = strider_reader::load_elf(&path)
             .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
-        let obj = obj.file();
+        let obj = obj.checked_file().expect("the mapped file is unchanged");
         let mem = strider_reader::ElfFileMemReader::from_object(&obj)
             .expect("ElfFileMemReader::from_object");
         let arch = SleighArch::x86_64();
