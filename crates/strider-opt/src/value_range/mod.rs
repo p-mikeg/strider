@@ -1,9 +1,15 @@
 //! Dominator-scoped per-`(value, region)` integer range analysis.
 //!
-//! Minimal interval lattice seeded from `If(IntCmp(v, const))` guards
-//! (edge-sensitive, propagated via the control dominator tree) and from
-//! `KnownBits` upper bounds.  Fail-closed: anything uncertain returns the
-//! full type range (top).
+//! Interval lattice with four seeds:
+//!
+//! - `If(IntCmp(v, const))` guards, edge-sensitive, propagated via the control
+//!   dominator tree, and back-propagated through an `Add(X, const)` spine.
+//! - `KnownBits` upper bounds and strides.
+//! - Guard recovery at a `Region` every predecessor of which bounds the same
+//!   value.
+//! - Forward propagation through a monotone constant scaling.
+//!
+//! Fail-closed: anything uncertain returns the full type range (top).
 //!
 //! SOUNDNESS INVARIANT: `range_of` may widen toward top but must NEVER return
 //! an interval tighter than the real runtime value set.
@@ -13,7 +19,7 @@ use rustc_hash::FxHashMap;
 
 use petgraph::algo::dominators::Dominators;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
-use strider_ir::{IRViewer, IRWalker, IntBinaryOp, IntCmpOp, dominates};
+use strider_ir::{IRViewer, IRWalker, IntBinaryOp, IntCmpOp};
 
 use crate::opt::known_bits::{KnownBitsFacts, KnownBitsMap};
 
@@ -289,18 +295,20 @@ enum MemoSlot {
 pub struct RangeMap<'f> {
     function: &'f strider_ir::Function,
     doms: &'f Dominators<NodeId>,
-    /// Per guarded value, the `(guard_node, interval)` pairs proven AT that
-    /// node: an `If`'s guarded successor edge, or a `Region` every one of whose
-    /// predecessor edges bounds the value (a merge whose arms all constrain it).
-    guards: FxHashMap<ValueId, Vec<(NodeId, Interval)>>,
+    /// Per guarded value, the interval proven AT each guard node: an `If`'s
+    /// guarded successor edge, or a `Region` every one of whose predecessor
+    /// edges bounds the value (a merge whose arms all constrain it).
+    ///
+    /// Keyed by node so a lookup walks the query point's dominator chain
+    /// instead of the value's whole guard list: `k` guards on one value and
+    /// `m` query points cost `m * depth`, not `k * m * depth`.
+    guards: FxHashMap<ValueId, FxHashMap<NodeId, Interval>>,
     /// Flow-insensitive `[0, max_value]` bounds from KnownBits.
     kb_bounds: SecondaryMap<ValueId, Option<Interval>>,
     /// Resolved intervals, with `InProgress` cutting resolution cycles.
     memo: FxHashMap<(ValueId, NodeId), MemoSlot>,
     /// `dominating_guard` is a pure function of `guards` and `doms`, both
-    /// fixed here, and every `range_of` frame asks it at least once.  Without
-    /// this each ask walks the value's whole guard list running a
-    /// dominator-chain test per entry.
+    /// fixed here, and every `range_of` frame asks it at least once.
     guard_memo: std::cell::RefCell<FxHashMap<(ValueId, NodeId), Option<Interval>>>,
 }
 
@@ -312,6 +320,18 @@ impl<'f> RangeMap<'f> {
     /// top.  Any other value intersects its dominating guards with the
     /// KnownBits base.  Unconstrained means top.
     pub fn range_of(&mut self, value: ValueId, region: NodeId) -> Interval {
+        // A width past the `u128` carrier has no mask the value is inside, so
+        // `Interval::top` there is not a bound. Refusing locally keeps the
+        // non-bound out of `const_scale`, which would otherwise turn it into a
+        // tight claim (`top(u128::MAX).shr(200)` is "exactly zero").
+        if self
+            .function
+            .value_type_opt(value)
+            .and_then(crate::opt::known_bits::type_mask_u128)
+            .is_none()
+        {
+            return Interval::top(u128::MAX);
+        }
         let key = (value, region);
 
         // A cycle, cut by returning top for the back-edge; the frame that
@@ -441,18 +461,25 @@ impl<'f> RangeMap<'f> {
 
     /// Intersection of every guard on `value` whose `guard_node` dominates
     /// `region`, or `None` when none apply.
-    pub(crate) fn dominating_guard(&self, value: ValueId, region: NodeId) -> Option<Interval> {
+    fn dominating_guard(&self, value: ValueId, region: NodeId) -> Option<Interval> {
         if let Some(hit) = self.guard_memo.borrow().get(&(value, region)) {
             return *hit;
         }
         #[cfg(test)]
         GUARD_SCANS.with(|c| c.set(c.get() + 1));
-        let verdict = self.guards.get(&value).and_then(|guard_list| {
-            guard_list
-                .iter()
-                .filter(|(guard_region, _)| dominates(self.doms, *guard_region, region))
-                .map(|(_, interval)| *interval)
-                .reduce(Interval::intersect)
+        let verdict = self.guards.get(&value).and_then(|by_node| {
+            match self.doms.dominators(region) {
+                // The chain starts at `region` itself.
+                Some(chain) => chain
+                    .inspect(|_| {
+                        #[cfg(test)]
+                        GUARD_PROBES.with(|c| c.set(c.get() + 1));
+                    })
+                    .filter_map(|d| by_node.get(&d).copied())
+                    .reduce(Interval::intersect),
+                // Off the dominator tree, `dominates` still holds reflexively.
+                None => by_node.get(&region).copied(),
+            }
         });
         self.guard_memo
             .borrow_mut()
@@ -536,9 +563,12 @@ impl<'f> RangeMap<'f> {
 
 #[cfg(test)]
 thread_local! {
-    /// [`RangeMap::dominating_guard`] calls, each a linear scan with a
-    /// dominance test per entry.
+    /// [`RangeMap::dominating_guard`] calls that missed the memo, each a walk
+    /// of the query point's dominator chain.
     pub(crate) static GUARD_SCANS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Guard-map lookups, one per dominator-chain step: the cost a query pays,
+    /// which must track the chain's depth and not the value's guard count.
+    pub(crate) static GUARD_PROBES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// `u128::MAX` (unconstrained top) when the value carries no typed edge, for a
@@ -599,6 +629,22 @@ fn is_sign_bit_known_zero(
     known[value].zeros & sign_bit != 0
 }
 
+/// Records `interval` as proven at `node`, intersecting with any bound already
+/// recorded there.
+fn add_guard(
+    guards: &mut FxHashMap<ValueId, FxHashMap<NodeId, Interval>>,
+    value: ValueId,
+    node: NodeId,
+    interval: Interval,
+) {
+    guards
+        .entry(value)
+        .or_default()
+        .entry(node)
+        .and_modify(|iv| *iv = iv.intersect(interval))
+        .or_insert(interval);
+}
+
 /// Builds the flow-insensitive KnownBits bases, extracts per-`If` guard facts,
 /// then recovers guards at a merge every predecessor of which bounds the same
 /// value.
@@ -635,7 +681,7 @@ pub fn compute_value_ranges<'f>(
         }
     }
 
-    let mut guards: FxHashMap<ValueId, Vec<(NodeId, Interval)>> = FxHashMap::default();
+    let mut guards: FxHashMap<ValueId, FxHashMap<NodeId, Interval>> = FxHashMap::default();
 
     for if_node in function.walk_kind(|k| matches!(k, NodeKind::If)) {
         let if_outputs = function.node_outputs(if_node);
@@ -665,16 +711,12 @@ pub fn compute_value_ranges<'f>(
                 continue;
             }
 
-            guards
-                .entry(guarded_value)
-                .or_default()
-                .push((consumer, guard_interval));
+            add_guard(&mut guards, guarded_value, consumer, guard_interval);
 
             // Back-propagate through `Add(X, const)`: a guard on `idx - K`
             // gives `idx` the shifted bound.
             // Bounded like every other walk here: an `Add` spine is linear in
-            // the function, and each step pushes a guard entry that every
-            // later `dominating_guard` has to filter.
+            // the function.
             const MAX_ADD_BACKPROP: usize = 64;
             let mut cur = guarded_value;
             let mut iv = guard_interval;
@@ -684,7 +726,7 @@ pub fn compute_value_ranges<'f>(
                     break;
                 }
                 steps += 1;
-                guards.entry(operand).or_default().push((consumer, shifted));
+                add_guard(&mut guards, operand, consumer, shifted);
                 cur = operand;
                 iv = shifted;
             }
@@ -721,7 +763,7 @@ pub fn compute_value_ranges<'f>(
             .map(|(_, iv)| *iv)
             .reduce(Interval::union)
             .expect("pred_edges has >= 2 entries");
-        guards.entry(v0).or_default().push((region, union));
+        add_guard(&mut guards, v0, region, union);
     }
 
     RangeMap {

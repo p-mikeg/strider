@@ -98,8 +98,10 @@ pub(crate) fn eval_node_const(
             )?))
         }
         // Only a RAM load reads the image.  A register / unique / const-space
-        // load names a different address space, and the root gate in
-        // `load_readonly` checks the root alone, so a nested one reaches here.
+        // load names a different address space.  A nested load reaches here
+        // from `post_opt::indirect_branch_resolve::eval`, whose `resolve` reads
+        // the evaluator's memo; `load_readonly` passes a `resolve` that never
+        // recurses into another node.
         NodeKind::Load(space) if space == rsleigh::VnSpace::RAM => {
             let rom = rom?;
             let addr = u64::try_from(resolve(function.load_addr(node))?).ok()?;
