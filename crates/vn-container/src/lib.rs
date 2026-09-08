@@ -31,7 +31,12 @@ pub fn vn_contains(outer: &rsleigh::Vn, inner: &rsleigh::Vn) -> bool {
 /// otherwise the two views look like independent SSA variables. Only
 /// CONTAINMENT collapses: two PARTIALLY overlapping varnodes both survive and
 /// are modelled as non-aliasing, so a write to one is invisible to a read of
-/// the other. No register file checked has one: they all nest exactly.
+/// the other. No register file checked declares one: they all nest exactly.
+/// That discharges the REGISTER half; a computed register slot is held to the
+/// same shape upstream by `strider-lift`'s `register_slot`, which drops a slot
+/// [`smallest_enclosing`] cannot seat in a declared register. UNIQUE, a
+/// temporary arena, carries no such guarantee: a crossing pair of temporaries
+/// survives as two independent SSA variables.
 pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh::Vn> {
     let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<(usize, rsleigh::Vn)>> = FxHashMap::default();
     for (i, v) in all_used_variables.iter().enumerate() {
