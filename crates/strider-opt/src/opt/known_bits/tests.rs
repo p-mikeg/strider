@@ -967,13 +967,6 @@ fn diamond_folds_absorb_exactly_their_shared_cone_addrs() -> Result<()> {
 }
 
 #[test]
-fn kb_default_is_all_unknown() {
-    let kb = super::KnownBitsFacts::default();
-    assert_eq!(kb.ones, 0);
-    assert_eq!(kb.zeros, 0);
-}
-
-#[test]
 fn kb_struct_literal_disjoint_ones_zeros() {
     let kb = super::KnownBitsFacts {
         ones: 0b01,

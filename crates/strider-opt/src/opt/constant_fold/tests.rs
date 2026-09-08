@@ -196,8 +196,10 @@ fn fold_int_binary_two_consts_cases() -> Result<()> {
     Ok(())
 }
 
+/// `Xor(C, C)` with ONE interned constant on both inputs: two-constant
+/// folding, not a `x ^ x -> 0` identity, which the optimizer does not have.
 #[test]
-fn fold_int_xor_self() -> Result<()> {
+fn fold_int_xor_of_one_constant_twice() -> Result<()> {
     let mut fg = make_fn(|b| {
         let x = b.build_int_const(0xABu64, ValueType::I64).unwrap();
         b.build_int_binary_operation(x, x, IntBinaryOp::Xor, ValueType::I64)
@@ -210,8 +212,9 @@ fn fold_int_xor_self() -> Result<()> {
     Ok(())
 }
 
+/// As [`fold_int_xor_of_one_constant_twice`], over the lowered `Add(C, Neg(C))`.
 #[test]
-fn fold_int_sub_self() -> Result<()> {
+fn fold_int_sub_of_one_constant_twice() -> Result<()> {
     let mut fg = make_fn(|b| {
         let x = b.build_int_const(0xABu64, ValueType::I64).unwrap();
         b.build_sub_as_add_neg(x, x, ValueType::I64)

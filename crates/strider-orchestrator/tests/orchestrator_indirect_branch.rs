@@ -7,6 +7,7 @@ mod common;
 
 use object::{Object, ObjectSymbol};
 use strider_ir::{IRViewer, IRWalker};
+use strider_ir_test_utils::IrWalkerEx;
 
 fn run_orchestrator_on(
     arch: common::Arch,
@@ -193,13 +194,6 @@ fn orchestrator_mips64_sparse_switch_is_if_chain() {
     );
 }
 
-fn count_kind(function: &strider_ir::Function, want: strider_ir::node::NodeKind) -> usize {
-    function
-        .walk()
-        .filter(|nid| *function.node_kind(*nid) == want)
-        .count()
-}
-
 /// A switch whose index is loop-carried and whose loop back-edge is reachable
 /// only THROUGH a switch arm.  Resolution iteration 1 sees a CFG where the
 /// header has one predecessor, so the index is the entry constant, the table
@@ -220,7 +214,9 @@ fn assert_loop_carried_switch_reaches_every_arm(arch: common::Arch, arms: usize)
     // genuinely unresolvable and defers honestly, so the invariant under test
     // is that every arm is reached, not the placeholder count.
     assert!(
-        count_kind(&result.function, strider_ir::node::NodeKind::Call) > 0,
+        result
+            .function
+            .has_kind(|k| *k == strider_ir::node::NodeKind::Call),
         "{arch:?}/switch/main: `f` is called from one switch arm, so a missing Call \
          means arms were never decoded: the table resolved to a single target",
     );

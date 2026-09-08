@@ -106,7 +106,7 @@ mod tests {
     use super::frame_address_escapes;
     use strider_ir::node::{ValueId, ValueType};
     use strider_ir::{IRBuilderExt, IntBinaryOp};
-    use strider_ir_test_utils::RegisterSet;
+    use strider_ir_test_utils::sp_arg_frame;
 
     use super::super::test_sp as sp;
 
@@ -133,11 +133,7 @@ mod tests {
 
     fn new_builder() -> crate::Result<strider_ir::FunctionBuilder> {
         let sp = sp();
-        RegisterSet::new()
-            .tracked(sp)
-            .arg(sp)
-            .stack_vn(sp)
-            .build_fn_single_region()
+        sp_arg_frame(sp).build_fn_single_region()
     }
 
     #[test]
