@@ -87,7 +87,18 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             Opcode::FloatFloat2Float => self.handle_float_float_to_float(insn)?,
             Opcode::FloatTrunc => self.handle_float_trunc(insn)?,
             Opcode::Load => self.handle_load(insn)?,
-            Opcode::SegmentOp => self.handle_segment_op(insn)?,
+            // Decompiler-internal, like PtrAdd / PtrSub above.  No SLEIGH
+            // production emits SEGMENTOP; its only producer is the decompiler
+            // action `ActionSegmentize`, which puts a host `AddrSpace*` in
+            // input 0.  CPUI_INDIRECT marks a value an unmodelled call or store
+            // may have changed, which only the decompiler's SSA construction
+            // mints.
+            Opcode::SegmentOp | Opcode::Indirect => {
+                bail!(
+                    "opcode {:?} is decompiler-internal; rsleigh::lift_one is contracted not to emit it",
+                    insn.opcode
+                );
+            }
             // JVM constant-pool lookup; opaque, variadic refs.
             Opcode::CPoolRef => self.handle_cpool_ref(insn)?,
             // JVM object allocation; opaque.
@@ -155,8 +166,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             Opcode::FloatRound => self.process_float_unary_op(insn, FloatUnaryOp::Round)?,
             Opcode::FloatEqual => self.process_float_cmp_op(insn, FloatCmpOp::Equal)?,
             Opcode::FloatLess => self.process_float_cmp_op(insn, FloatCmpOp::Less)?,
-
-            _ => bail!("unimplemented p-code opcode {:?}", insn.opcode),
+            // Exhaustive over `rsleigh::Opcode`: a new one is a compile error
+            // here rather than a runtime "unimplemented opcode".
         }
         Ok(())
     }

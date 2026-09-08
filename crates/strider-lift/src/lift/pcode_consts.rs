@@ -110,10 +110,7 @@ impl PcodeConsts {
 }
 
 fn mask_to(v: u128, size_bytes: u32) -> u128 {
-    match size_bytes.checked_mul(8) {
-        Some(bits) if bits < 128 => v & ((1u128 << bits) - 1),
-        _ => v,
-    }
+    v & strider_ir::node::low_bits_mask_u128(size_bytes.saturating_mul(8) as usize)
 }
 
 /// The register a STORE writes, when it addresses the REGISTER space and its
