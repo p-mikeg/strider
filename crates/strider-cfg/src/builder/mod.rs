@@ -1150,46 +1150,23 @@ mod tests {
         assert!(b.find_region_containing_addr(addr(0x1000, 0)).is_none());
     }
 
+    /// One region spanning `[0x1000, 0x100f]`: its start, an interior address
+    /// and its last instruction all resolve to it.
     #[test]
-    fn find_region_at_start_addr() {
+    fn find_region_at_addr_covers_the_whole_span() {
         let mut sleigh = make_sleigh();
         let mut b = make_builder(0x1000, &mut sleigh);
         let id = b
             .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
             .unwrap();
-        assert_eq!(
-            b.find_region_containing_addr(addr(0x1000, 0))
-                .map(|(i, _)| i),
-            Some(id)
-        );
-    }
-
-    #[test]
-    fn find_region_at_interior_addr() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
-        let id = b
-            .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
-            .unwrap();
-        assert_eq!(
-            b.find_region_containing_addr(addr(0x1008, 0))
-                .map(|(i, _)| i),
-            Some(id)
-        );
-    }
-
-    #[test]
-    fn find_region_at_last_insn() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
-        let id = b
-            .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
-            .unwrap();
-        assert_eq!(
-            b.find_region_containing_addr(addr(0x100f, 0))
-                .map(|(i, _)| i),
-            Some(id)
-        );
+        for probe in [0x1000u64, 0x1008, 0x100f] {
+            assert_eq!(
+                b.find_region_containing_addr(addr(probe, 0))
+                    .map(|(i, _)| i),
+                Some(id),
+                "{probe:#x}"
+            );
+        }
     }
 
     /// A region starting inside another's last instruction is the greatest
