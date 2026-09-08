@@ -264,6 +264,18 @@ impl PyFunction {
                 count_producers,
             );
         }
+        // The raw render is pure IR and needs no decoder, but a `lifter=` the
+        // caller passed anyway is still checked: every other `lifter=` renderer
+        // raises on a mismatched arch, a re-entrant handle or a foreign thread,
+        // and returning a graph here would report none of the three.
+        if let Some(l) = lifter {
+            let arch = self.cfg.bind(py).try_borrow()?.arch_name;
+            let l = l
+                .try_borrow()
+                .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
+            l.check_arch_is(arch)?;
+            l.sleigh()?;
+        }
         self.with_read_value(|function| {
             let nid = function
                 .graph()
