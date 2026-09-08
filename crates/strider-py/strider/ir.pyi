@@ -251,7 +251,7 @@ class Function:
         In a joined query, a pattern whose captures are ALL shared with an
         earlier one contributes nothing of its own to the dedup key, so rows
         differing only in THAT pattern's root collapse to one. Giving it a
-        capture of its own reports them separately -- which is why adding an
+        capture of its own reports them separately, which is why adding an
         otherwise unused capture can raise the number of rows.
 
         A single root can yield several matches, one per distinct binding. A

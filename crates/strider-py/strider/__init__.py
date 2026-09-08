@@ -85,7 +85,7 @@ _p.ValueLike = _t.Union[  # type: ignore[attr-defined]
     _p.PhiPat, _p.EntryPat, _p.RegionPat, _p.FunctionArgPat, _p.IntBinaryPat,
     _p.FloatBinaryPat, _p.BoolBinaryPat,
 ]
-# A MEMORY slot takes the four memory producers, or a `Pat` -- which is how an
+# A MEMORY slot takes the four memory producers, or a `Pat`, which is how an
 # `one_of` over them arrives.
 _p.MemLike = _t.Union[  # type: ignore[attr-defined]
     _p.Pat, _p.StorePat, _p.MemPhiPat, _p.CallPat, _p.CallOtherPat,

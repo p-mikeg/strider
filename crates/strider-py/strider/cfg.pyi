@@ -134,7 +134,7 @@ class Cfg:
         is non-empty to tell the cases apart.
 
         On a `build_cfg` CFG `unresolved` is empty by construction, and
-        `unverified_seeded_sites` holds every site you seeded -- so seeding one
+        `unverified_seeded_sites` holds every site you seeded, so seeding one
         makes this `False`. It says nothing about indirect branches, which
         `build_cfg` never resolves.
         """

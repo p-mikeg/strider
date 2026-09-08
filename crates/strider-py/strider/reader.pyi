@@ -80,13 +80,16 @@ class Symbol:
         ...
     @property
     def address(self) -> int:
-        """The symbol's virtual address (`st_value`)."""
+        """The symbol's virtual address (`st_value`), except for a ppc64
+        ELFv1 function, where it is the code the `.opd` descriptor at
+        `st_value` names."""
         ...
     @property
     def size(self) -> Optional[int]:
         """`None` for `st_size == 0`, which records no extent rather than an
         empty one: a hand-written `.S` entry point with no `.size` directive is
-        still a whole function."""
+        still a whole function. Also `None` once a ppc64 ELFv1 descriptor has
+        been followed, `st_size` having measured the descriptor."""
         ...
 
     @property
