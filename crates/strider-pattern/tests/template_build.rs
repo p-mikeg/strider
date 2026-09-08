@@ -7,7 +7,8 @@ use strider_ir::node::{NodeId, ValueId, ValueType};
 use strider_pattern::matcher::{KindSpec, Pattern};
 use strider_pattern::template::{self, Template, TemplateBuilder, instantiate};
 use strider_pattern::{
-    Bindings, Capture, MatchPat, Matcher, TemplatePat, int_add, int_const, int_const_any_width, var,
+    Bindings, Capture, MatchPat, Matcher, TemplatePat, int_add, int_const, int_const_any_width,
+    is_skip, var,
 };
 
 /// Matches `lhs` exactly once and returns the root node, its bindings, and the
@@ -542,4 +543,23 @@ fn instantiate_rejects_an_output_kind_the_node_signature_forbids() {
         msg.contains("output slot 0") && msg.contains("Memory"),
         "the error must name the slot and the kind the signature expects, got: {msg}"
     );
+}
+
+/// A float-typed root has no integer literal to intern, so an `int_const` RHS
+/// declines the rewrite instead of interning against a float type and failing
+/// validation with a node-signature complaint that names the wrong mistake.
+#[test]
+fn int_const_template_rhs_on_a_float_root_skips() {
+    let rhs = int_const_any_width(1).into_template();
+
+    let mut fx = make_empty_fn(|b| b.build_int_const(0u64, T::I64)).unwrap();
+    let lhs_root = fx.walk().next().unwrap();
+    let bindings = Bindings::default();
+    let mut ef = EditFunction::new(&mut fx);
+
+    for float_ty in [T::F32, T::F64] {
+        let err = instantiate(&rhs, &mut ef, &bindings, lhs_root, &[lhs_root], float_ty)
+            .expect_err("an integer literal on a float root must not be interned");
+        assert!(is_skip(&err), "must decline the rewrite, got: {err}");
+    }
 }

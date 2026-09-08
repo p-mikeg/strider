@@ -202,3 +202,38 @@ fn empty_alternation_matches_nothing() {
     let ordered = OneOf::first(Vec::new()).into_pattern();
     assert!(m.find_all(&ordered).unwrap().is_empty());
 }
+
+/// The alternation root scans the union of its arms' kind buckets instead of
+/// the whole graph. Arms sharing a discriminant must not offer a node twice,
+/// and one kind-`Any` arm must fall back to the full scan.
+#[test]
+fn an_alternation_root_scans_its_arms_kinds_without_double_reporting() {
+    let mut t = Tb::empty();
+    let a = t.u64(5);
+    let b = t.u64(3);
+    let sum = t.add(a, b);
+    let prod = t.mul(a, b);
+    let root = t.add(sum, prod);
+    let f = t.ret_val(root);
+    let m = Matcher::new(&f);
+
+    // Both arms are IntBinaryOp, so they share one bucket.
+    let same_kind = one_of![
+        int_add(anything(), anything()),
+        int_mul(anything(), anything()),
+    ]
+    .into_pattern();
+    assert_eq!(m.find_all(&same_kind).unwrap().len(), 3);
+
+    // Nested alternations contribute their own arms' kinds.
+    let nested = one_of![one_of![int_mul(anything(), anything())], ret()].into_pattern();
+    assert_eq!(m.find_all(&nested).unwrap().len(), 2);
+
+    // A kind-`Any` arm admits every node, so the prefilter must give way.
+    let with_wildcard = one_of![int_mul(anything(), anything()), anything()].into_pattern();
+    let bare = anything().into_pattern();
+    assert_eq!(
+        m.find_all(&with_wildcard).unwrap().len(),
+        m.find_all(&bare).unwrap().len()
+    );
+}

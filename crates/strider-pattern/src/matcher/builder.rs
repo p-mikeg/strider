@@ -37,6 +37,10 @@ impl SealNode for PatNode {
 /// that produced them.
 pub struct MatcherBuilder {
     core: StagedGraph<PatNode, PatValue>,
+    /// Spellings the engine cannot honour, surfaced at query time through
+    /// [`Pattern::root`]. A pattern is untrusted input, so refusing one is a
+    /// `Result`, never a panic.
+    refusals: Vec<String>,
 }
 
 impl Default for MatcherBuilder {
@@ -49,7 +53,14 @@ impl MatcherBuilder {
     pub fn new() -> Self {
         Self {
             core: StagedGraph::new(),
+            refusals: Vec::new(),
         }
+    }
+
+    /// Records a build-time refusal; every query on the sealed pattern then
+    /// fails with `why`.
+    pub fn reject(&mut self, why: String) {
+        self.refusals.push(why);
     }
 
     /// One value output at slot `0`, no inputs.
@@ -190,9 +201,10 @@ impl MatcherBuilder {
     }
 
     /// Binds the matched output's value (`Binding::Value`), e.g.
-    /// `int_add(var(x), ..)` captures `x`'s value, not its node.
+    /// `int_add(var(x), ..)` captures `x`'s value, not its node. Additive:
+    /// `var(x).capture(y)` binds both.
     pub fn capture_output(&mut self, out: PatValueRef, c: crate::capture::Capture) {
-        self.out_of(out).capture = Some(c);
+        self.out_of(out).captures.push(c);
     }
 
     /// Forces every slot consuming `out` to bind the SAME IR value. Wiring one
@@ -203,9 +215,9 @@ impl MatcherBuilder {
     }
 
     /// Binds the matched node (`Binding::Node`), for zero-value-output roots
-    /// like `Return` / `If`.
+    /// like `Return` / `If`. Additive, like [`Self::capture_output`].
     pub fn capture_node(&mut self, node: PatNodeRef, c: crate::capture::Capture) {
-        self.core.kind_mut(node.0).capture = Some(c);
+        self.core.kind_mut(node.0).captures.push(c);
     }
 
     /// Composes with any predicate already on `out`'s producer rather than
@@ -241,6 +253,31 @@ impl MatcherBuilder {
         nd.walk_captures = captures;
     }
 
+    /// [`Self::set_post_match`] for a guard that needs the matched output's
+    /// `ValueType` (`when_match`). A control / memory / phi-token vertex or a
+    /// kind with no value output can never supply one, so the guard would
+    /// reject every match whatever it returns; refuse instead.
+    pub(crate) fn set_post_match_typed(
+        &mut self,
+        out: PatValueRef,
+        f: crate::matcher::PostMatchFn,
+    ) {
+        let untyped_kind = valueless_kind(&self.core.kind_mut(out.node).kind);
+        let untyped_output = matches!(
+            self.out_of(out).kind,
+            OutputKindSpec::Control | OutputKindSpec::Memory | OutputKindSpec::PhiToken
+        );
+        if untyped_kind || untyped_output {
+            self.reject(
+                "`when_match` is typed and this root produces no value output, so the \
+                 guard could never run; use `Pattern::with_root_post_match`, which is \
+                 handed the missing type"
+                    .into(),
+            );
+        }
+        self.set_post_match(out, f);
+    }
+
     pub fn set_post_match(&mut self, out: PatValueRef, f: crate::matcher::PostMatchFn) {
         let slot = &mut self.core.kind_mut(out.node).post_match;
         *slot = Some(match slot.take() {
@@ -249,8 +286,19 @@ impl MatcherBuilder {
         });
     }
 
-    /// Disables commutative operand reordering on `out`'s producer.
+    /// Disables commutative operand reordering on `out`'s producer. Refused on
+    /// an alternation: its inputs are alternatives, not operands, so nothing
+    /// reads the flag.
     pub fn set_force_ordered(&mut self, out: PatValueRef) {
+        if self.core.kind_mut(out.node).alternation {
+            self.reject(
+                "`ordered` on an alternation does nothing: `one_of` / `first_of` arms are \
+                 alternatives, not operands; put `.ordered()` on the arm whose operands \
+                 must not swap"
+                    .into(),
+            );
+            return;
+        }
         self.core.kind_mut(out.node).force_ordered = true;
     }
 
@@ -267,8 +315,13 @@ impl MatcherBuilder {
     /// # Panics
     /// On a cyclic staged graph (a builder bug).
     pub fn finish(self) -> Pattern {
+        let refusals = self.refusals;
         let graph = self.core.seal().expect("cyclic staged pattern graph");
-        Pattern::from_graph(graph)
+        let mut pat = Pattern::from_graph(graph);
+        if let Some(why) = refusals.into_iter().next() {
+            pat.reject(why);
+        }
+        pat
     }
 
     fn stage(&mut self, kind: PatNode) -> PatNodeRef {
@@ -286,6 +339,22 @@ impl MatcherBuilder {
     fn out_of(&mut self, out: PatValueRef) -> &mut PatValue {
         self.core.output_mut(out.node, out.output)
     }
+}
+
+/// Node kinds producing no value output, so nothing can hand a typed guard a
+/// [`ValueType`].
+fn valueless_kind(spec: &KindSpec) -> bool {
+    spec.discriminant().is_some_and(|d| {
+        [
+            NodeKind::If,
+            NodeKind::Switch,
+            NodeKind::Return,
+            NodeKind::IndirectBranch,
+            NodeKind::Unreachable,
+        ]
+        .iter()
+        .any(|k| std::mem::discriminant(k) == d)
+    })
 }
 
 #[cfg(test)]
