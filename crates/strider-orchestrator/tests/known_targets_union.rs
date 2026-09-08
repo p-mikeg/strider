@@ -21,7 +21,7 @@ fn arms_with(
 ) -> (Vec<u64>, Vec<PcodeInsnAddr>, Vec<u64>, Vec<PcodeInsnAddr>) {
     let path = common::binary_path(common::Arch::X86, "switch");
     let owned = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = owned.file();
+    let obj = owned.checked_file().expect("the mapped file is unchanged");
     let sa = common::Arch::X86.sleigh();
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem");
     let sleigh = rsleigh::Sleigh::new(sa.sla_spec(), sa.pspec(), mem).expect("sleigh");
@@ -165,7 +165,7 @@ fn a_site_seated_only_from_a_seed_is_named_as_unverified() {
 fn x64_main_with_seed(seed: Vec<u64>) -> (Vec<u64>, Vec<PcodeInsnAddr>, Vec<PcodeInsnAddr>) {
     let path = common::binary_path(common::Arch::X64, "switch");
     let owned = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = owned.file();
+    let obj = owned.checked_file().expect("the mapped file is unchanged");
     let sa = common::Arch::X64.sleigh();
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem");
     let sleigh = rsleigh::Sleigh::new(sa.sla_spec(), sa.pspec(), mem).expect("sleigh");
@@ -221,7 +221,7 @@ fn x64_main_with_seed(seed: Vec<u64>) -> (Vec<u64>, Vec<PcodeInsnAddr>, Vec<Pcod
 fn a_seeded_site_is_still_reported_unverified_with_resolution_off() {
     let path = common::binary_path(common::Arch::X86, "switch");
     let owned = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = owned.file();
+    let obj = owned.checked_file().expect("the mapped file is unchanged");
     let sa = common::Arch::X86.sleigh();
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem");
     let sleigh = rsleigh::Sleigh::new(sa.sla_spec(), sa.pspec(), mem).expect("sleigh");

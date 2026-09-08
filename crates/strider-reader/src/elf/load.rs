@@ -63,8 +63,11 @@ impl OwnedElf {
     /// Re-parses each call; see the type docs.
     ///
     /// Reads the mapping, so a file SHORTENED under a live handle faults here
-    /// rather than returning: use [`checked_file`](Self::checked_file) at the
-    /// top of any operation on a handle that may have outlived a rebuild.
+    /// rather than returning. Crate-private for that reason: a `File` is not a
+    /// `Result`, so this has no way to report it, and the fault is a SIGBUS no
+    /// caller can catch. [`checked_file`](Self::checked_file) is the way in
+    /// from outside, and every internal use sits behind a
+    /// [`check_unchanged`](Self::check_unchanged).
     ///
     /// # Panics
     ///
@@ -73,7 +76,7 @@ impl OwnedElf {
     /// [`load_elf`] states; rebuilding the file under a live `OwnedElf` breaks
     /// it, as reading with `STRIDER_NO_MMAP=1` does not.
     #[inline]
-    pub fn file(&self) -> object::File<'_> {
+    pub(crate) fn file(&self) -> object::File<'_> {
         object::File::parse(self.backing.as_slice())
             .expect("bytes were validated as ELF at construction")
     }
@@ -123,21 +126,25 @@ impl OwnedElf {
     /// instructions, so the flag is the only thing that separates them. Always
     /// `false` off ARM, where the bit is not defined.
     ///
-    /// Parses the mapping, so it has [`file`](Self::file)'s hazard and no way
-    /// to report it: on a handle that may have outlived a rebuild, call
-    /// [`check_unchanged`](Self::check_unchanged) first.
-    #[must_use]
-    pub fn is_arm_be8(&self) -> bool {
+    /// Parses the mapping, so it is guarded: a `bool` return could not report a
+    /// file rebuilt under a live handle, and reading a shortened mapping is a
+    /// SIGBUS no caller can catch.
+    ///
+    /// # Errors
+    ///
+    /// When the file changed on disk since it was mapped, or the mapped bytes
+    /// no longer parse.
+    pub fn is_arm_be8(&self) -> Result<bool> {
         /// `EF_ARM_BE8`, from the ARM ELF ABI.
         const EF_ARM_BE8: u32 = 0x0080_0000;
-        let file = self.file();
+        let file = self.checked_file()?;
         if object::read::Object::architecture(&file) != object::Architecture::Arm {
-            return false;
+            return Ok(false);
         }
-        matches!(
+        Ok(matches!(
             object::read::Object::flags(&file),
             object::FileFlags::Elf { e_flags, .. } if e_flags & EF_ARM_BE8 != 0
-        )
+        ))
     }
 
     /// The mappings `source` and `filter` select, as windows into this ELF's

@@ -26,7 +26,7 @@ fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
     }
 
     let obj = strider_reader::load_elf(&path).expect("load tzcount.o");
-    let obj = obj.file();
+    let obj = obj.checked_file().expect("the mapped file is unchanged");
     assert_eq!(
         obj.kind(),
         object::ObjectKind::Relocatable,

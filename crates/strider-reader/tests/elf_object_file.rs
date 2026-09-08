@@ -37,7 +37,7 @@ fn et_rel_object_file_loads_text_at_tzcount_symbol_address() {
     }
 
     let obj = strider_reader::load_elf(&path).expect("load_elf on .o");
-    let obj = obj.file();
+    let obj = obj.checked_file().expect("the mapped file is unchanged");
     assert_eq!(
         obj.kind(),
         object::ObjectKind::Relocatable,
