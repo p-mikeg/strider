@@ -391,6 +391,9 @@ class ElfLifter(Lifter):
 
         Raises `TypeError` when `entry` is neither `str` nor `int`, and
         `StriderError` when the binary changed on disk since it was loaded.
+
+        Releases the GIL as `Lifter.analyze` does, with the same consequence
+        for a daemon thread parked inside it at interpreter finalization.
         """
         # A rebuild between load_elf and this call would otherwise be read
         # through a stale mapping: silently different bytes, or a SIGBUS.

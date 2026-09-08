@@ -316,7 +316,7 @@ class Pat(OrderedPat):
 #: finished `Pat`, or any of the typed builders below (auto-finalised at the call
 #: site, so an explicit `.into_pat()` is never required).
 #:
-#: This is the TOP-LEVEL type -- what `find_all` and `one_of` take, where a
+#: This is the TOP-LEVEL type: what `find_all` and `one_of` take, where a
 #: control builder is a legitimate thing to search for. An operand slot is
 #: narrower: see `ValueLike` and `MemLike`.
 PatLike = Union[
@@ -362,7 +362,7 @@ ValueLike = Union[
     "BoolBinaryPat",
 ]
 
-#: What a MEMORY slot accepts: the four memory producers, or a `Pat` -- which
+#: What a MEMORY slot accepts: the four memory producers, or a `Pat`, which
 #: is how an `one_of` over them arrives. `load` is absent because it produces a
 #: value, and passing one raises rather than building a pattern that can never
 #: match.
