@@ -95,6 +95,10 @@ pub struct PatNode {
     /// Runs before descending into inputs.
     pub node_predicate: Option<NodePredicate>,
     pub post_match: Option<PostMatchFn>,
+    /// A `when_match` guard sits in `post_match`, so retyping this node's
+    /// output to `Control` has to re-run the refusal that guard was admitted
+    /// under.
+    pub typed_post_match: bool,
     /// Runs after `post_match`; may bind.
     pub binding_walk: Option<BindingWalkFn>,
     /// Declares what `binding_walk` binds.
@@ -131,6 +135,7 @@ impl PatNode {
             captures: Vec::new(),
             node_predicate: None,
             post_match: None,
+            typed_post_match: false,
             binding_walk: None,
             walk_captures: WalkCaptures::default(),
             force_ordered: false,
@@ -170,6 +175,10 @@ pub struct PatValue {
     /// Where value captures live: `int_add(var(x), ..)` binds `x` here.
     /// Repeatable: `var(x).capture(y)` binds both to the matched value.
     pub captures: Vec<crate::capture::Capture>,
+    /// Widens an `AnyValue` vertex to also accept the memory token of a node
+    /// that produces no value output. Set only on an alternation arm at the
+    /// root, where nothing consumes the edge.
+    pub token_fallback: bool,
     /// A crate-minted capture pinning ONE vertex consumed at several pattern
     /// slots to a single IR value. Structural sharing alone does not do it:
     /// each slot is matched on its own, so `float_eq(x, x)` would otherwise
@@ -189,6 +198,7 @@ impl PatValue {
             match_slot: None,
             any_slot: false,
             captures: Vec::new(),
+            token_fallback: false,
             identity: None,
         }
     }

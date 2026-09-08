@@ -1,7 +1,7 @@
 use strider_ir::IRViewer as _;
 use strider_ir_test_utils::{Tb, reg_vn};
 use strider_pattern::{
-    Capture, MatchPat, Matcher, call_other, load, one_of, ret, value_of_width, var,
+    Capture, MatchPat, Matcher, call, call_other, first_of, load, one_of, ret, value_of_width, var,
 };
 
 /// `ret(int_add(5, 3))`: the `Return` produces no value.
@@ -120,4 +120,30 @@ fn one_of_in_a_control_slot_matches_like_the_single_arm() {
         single.len(),
         "one_of in a control slot must match wherever its arm does"
     );
+}
+
+/// A `Call` under a convention with no return or clobber registers produces
+/// only `[Control, Memory]`, so a value anchor has nothing to bind. Nothing
+/// consumes a root, so the anchor there falls back to that lone token.
+#[test]
+fn a_root_matches_a_call_with_no_value_output() {
+    let mut t = Tb::empty();
+    t.call_at(0x1000);
+    let f = t.ret_nothing();
+
+    let m = Matcher::new(&f);
+    let bare = m.find_all(&call().build()).unwrap();
+    assert_eq!(bare.len(), 1, "the fixture has one Call");
+
+    for (spelling, pat) in [
+        ("call()", MatchPat::into_pattern(call())),
+        ("one_of![call()]", one_of![call()].into_pattern()),
+        ("first_of![call()]", first_of![call()].into_pattern()),
+    ] {
+        assert_eq!(
+            m.find_all(&pat).unwrap().len(),
+            bare.len(),
+            "{spelling} must match wherever call().build() does"
+        );
+    }
 }

@@ -26,7 +26,7 @@ use strider_ir::node::{ExpectedValueKind, NodeId, NodeKind, ValueId, ValueKind, 
 use strider_ir::{Function, IRBuilder, IRViewer};
 
 use crate::bindings::Bindings;
-use crate::graph_ext::{PatGraphRead, reachable_topo};
+use crate::graph_ext::{consumed_inputs, reachable_topo};
 use crate::matcher::OutputKindSpec;
 
 pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind> + Send>;
@@ -108,7 +108,7 @@ pub fn instantiate<B: IRBuilder>(
     let mut root_value: Option<ValueId> = None;
 
     for vtx in order {
-        let nd = template.graph.node_weight(vtx);
+        let nd = template.graph.node_kind(vtx);
 
         // A `Capture` leaf has no build kind: it IS the materialisation. Its
         // `ValueCapture` output resolves to the LHS binding, reusing that
@@ -116,11 +116,11 @@ pub fn instantiate<B: IRBuilder>(
         // The capture id lives on the output, not the marker node.
         let kind = match &nd.kind {
             TmplNodeKind::Capture => {
-                let outs = template.graph.produced_outputs(vtx);
+                let outs = template.graph.node_outputs(vtx);
                 let out_vtx = *outs
                     .first()
                     .ok_or_else(|| anyhow!("capture leaf has no value-capture output"))?;
-                let TmplValue::ValueCapture(cap) = template.graph.output_weight(out_vtx) else {
+                let TmplValue::ValueCapture(cap) = template.graph.value_kind_ref(out_vtx) else {
                     return Err(anyhow!("capture leaf output is not a ValueCapture"));
                 };
                 let bound_value = bindings.get_value(*cap).ok_or_else(|| {
@@ -176,7 +176,7 @@ pub fn instantiate<B: IRBuilder>(
 
         // Usually a single value output; a multi-output node such as a
         // `Store` declares its memory output here too.
-        let outputs = output_kinds_for(template, vtx, root_ty, &binding_tys);
+        let outputs = output_kinds_for(template, vtx, root_ty, &binding_tys)?;
         for (slot, got) in outputs.iter().enumerate() {
             let want = kind.expected_output_kind(slot).ok_or_else(|| {
                 anyhow::anyhow!(
@@ -197,9 +197,9 @@ pub fn instantiate<B: IRBuilder>(
         // Map each template output vertex onto the IR output at the same
         // slot, so multi-output consumers wire the right edge.
         let ir_outputs = builder.function().node_outputs(node);
-        for out_vtx in template.graph.produced_outputs(vtx).iter().copied() {
+        for out_vtx in template.graph.node_outputs(vtx).iter().copied() {
             // A `ValueCapture` never hangs off a `Build` node.
-            let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) else {
+            let TmplValue::TmplOutput(o) = template.graph.value_kind_ref(out_vtx) else {
                 continue;
             };
             let ir_value = *ir_outputs.get(o.slot).ok_or_else(|| {
@@ -247,8 +247,8 @@ fn resolve_binding_tys(
 ) -> FxHashMap<crate::Capture, ValueType> {
     let mut out: FxHashMap<crate::Capture, ValueType> = FxHashMap::default();
     for vtx in template.graph.all_node_ids() {
-        for out_vtx in template.graph.produced_outputs(vtx).iter().copied() {
-            let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) else {
+        for out_vtx in template.graph.node_outputs(vtx).iter().copied() {
+            let TmplValue::TmplOutput(o) = template.graph.value_kind_ref(out_vtx) else {
                 continue;
             };
             let TemplateTy::InheritBinding(cap) = o.ty else {
@@ -295,7 +295,7 @@ fn collect_inputs(
     materialised: &FxHashMap<TmplValueId, ValueId>,
 ) -> anyhow::Result<Vec<ValueId>> {
     let mut inputs_by_slot: BTreeMap<usize, ValueId> = BTreeMap::new();
-    for (slot, producer_out_vtx) in template.graph.consumed_inputs(node_vtx) {
+    for (slot, producer_out_vtx) in consumed_inputs(&template.graph, node_vtx) {
         let producer_value = *materialised.get(&producer_out_vtx).ok_or_else(|| {
             anyhow!("producer output not materialised before consumer (topo order bug)")
         })?;
@@ -352,11 +352,11 @@ fn node_value_ty(
 ) -> ValueType {
     template
         .graph
-        .produced_outputs(node_vtx)
+        .node_outputs(node_vtx)
         .iter()
         .copied()
         .find_map(|out_vtx| {
-            let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) else {
+            let TmplValue::TmplOutput(o) = template.graph.value_kind_ref(out_vtx) else {
                 return None;
             };
             match resolved_output_kind(o, root_ty, binding_tys) {
@@ -394,16 +394,26 @@ fn output_kinds_for(
     node_vtx: NodeId,
     root_ty: ValueType,
     binding_tys: &FxHashMap<crate::Capture, ValueType>,
-) -> Vec<ValueKind> {
+) -> anyhow::Result<Vec<ValueKind>> {
     let mut by_slot: BTreeMap<usize, ValueKind> = BTreeMap::new();
-    for out_vtx in template.graph.produced_outputs(node_vtx).iter().copied() {
-        if let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) {
+    for out_vtx in template.graph.node_outputs(node_vtx).iter().copied() {
+        if let TmplValue::TmplOutput(o) = template.graph.value_kind_ref(out_vtx) {
             by_slot.insert(o.slot, resolved_output_kind(o, root_ty, binding_tys));
         }
     }
     if by_slot.is_empty() {
-        vec![ValueKind::Typed(root_ty)]
-    } else {
-        by_slot.into_values().collect()
+        return Ok(vec![ValueKind::Typed(root_ty)]);
     }
+    // As in `collect_inputs`: the dense `into_values()` would shift a later
+    // slot down onto the wrong IR output index, and the signature check above
+    // would then validate the wrong slot.
+    if by_slot.keys().enumerate().any(|(i, &slot)| i != slot) {
+        let slots: Vec<usize> = by_slot.keys().copied().collect();
+        return Err(anyhow!(
+            "template node has non-contiguous output slots {slots:?}, \
+             expected 0..{} (raw-builder mis-wire)",
+            by_slot.len()
+        ));
+    }
+    Ok(by_slot.into_values().collect())
 }

@@ -34,12 +34,11 @@ use strider_ir::{
 };
 
 use crate::bindings::{Binding, Bindings};
-use crate::graph_ext::PatGraphRead;
 use crate::match_result::Match;
 
 /// `None` for a kind-`Any` root.
 fn root_kind_discriminant(pat: &Pattern, root: PatNodeId) -> Option<Discriminant<NodeKind>> {
-    pat.graph.node_weight(root).kind.discriminant()
+    pat.graph.node_kind(root).kind.discriminant()
 }
 
 /// The kinds an alternation root accepts: its arms', deduplicated, since the
@@ -49,22 +48,22 @@ fn alternation_kind_discriminants(
     pat: &Pattern,
     root: PatNodeId,
 ) -> Option<Vec<Discriminant<NodeKind>>> {
-    if !pat.graph.node_weight(root).alternation {
+    if !pat.graph.node_kind(root).alternation {
         return None;
     }
     let mut kinds: Vec<Discriminant<NodeKind>> = Vec::new();
     let mut seen = vec![root];
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
-        for (_, vertex) in pat.graph.consumed_inputs(node) {
-            let arm = pat.graph.producer_of(vertex);
+        for (_, vertex) in crate::graph_ext::consumed_inputs(&pat.graph, node) {
+            let arm = pat.graph.producer(vertex);
             match root_kind_discriminant(pat, arm) {
                 Some(d) => {
                     if !kinds.contains(&d) {
                         kinds.push(d);
                     }
                 }
-                None if pat.graph.node_weight(arm).alternation => {
+                None if pat.graph.node_kind(arm).alternation => {
                     if !seen.contains(&arm) {
                         seen.push(arm);
                         stack.push(arm);

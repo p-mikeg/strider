@@ -93,3 +93,33 @@ fn ordered_on_a_commutative_node_still_pins_the_operand_order() {
     assert_eq!(hits.len(), 1, "one ordering, not two");
     let _ = IntBinaryOp::Add;
 }
+
+/// A `ctrl()` slot retypes its operand to `Control` only after compiling it,
+/// so the guard's build-time refusal has to re-run there. Without it the
+/// query returns nothing and reports no error.
+#[test]
+fn a_typed_guard_in_a_control_slot_is_refused() {
+    let pat = strider_pattern::call()
+        .ctrl(anything().when_match(|_m, _ty, _b| true))
+        .build();
+    assert!(error_of(&pat).contains("with_root_post_match"));
+
+    let pat = strider_pattern::call()
+        .ctrl(one_of![anything().when_match(|_m, _ty, _b| true)])
+        .build();
+    assert!(
+        error_of(&pat).contains("with_root_post_match"),
+        "an alternation arm is retyped with its alternation",
+    );
+}
+
+/// The same slot without the guard still matches, so the refusal is about the
+/// guard rather than the `ctrl` operand.
+#[test]
+fn an_unguarded_control_slot_operand_still_matches() {
+    let mut t = Tb::empty();
+    t.call_at(0x1000);
+    let function = t.ret_nothing();
+    let pat = strider_pattern::call().ctrl(anything()).build();
+    assert_eq!(Matcher::new(&function).find_all(&pat).unwrap().len(), 1);
+}
