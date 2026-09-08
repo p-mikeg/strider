@@ -23,7 +23,7 @@ strider.__version__
 
 ## 1. Loading a binary
 
-### `lift.load_elf` -- the common path
+### `lift.load_elf`, the common path
 
 ```python
 prog = strider.lift.load_elf("fixtures/out/x86/switch.elf")
@@ -46,7 +46,7 @@ would. Every address you get back is that synthetic one, not a file offset and
 not an address the object will ever be loaded at, so `prog.symbol("f")` on a
 `.o` is only comparable against other addresses from the same load.
 
-### `lift.lifter` -- raw bytes, no ELF
+### `lift.lifter`, raw bytes and no ELF
 
 ```python
 mem = strider.reader.BufferReader(0x1000, b"\x48\x01\xd8\xc3")  # add rax,rbx; ret
@@ -95,7 +95,7 @@ A plain `Lifter` needs an address and a calling convention:
 _cfg, fn, _u = lift.analyze(0x1000, sleigh.CallingConvention.x86_64_systemv())
 ```
 
-### `lift.LifterOptions` -- per-call tuning
+### `lift.LifterOptions`, per-call tuning
 
 ```python
 opts = strider.lift.LifterOptions(
@@ -213,10 +213,10 @@ prog.symbol_opt("f")           # ... or None
 prog.symbol_at(0x401234)       # the Symbol covering an address, or None
 
 prog.read(addr, size)          # raw bytes, or None when unmapped
-prog.reader()                  # the BufferReader over the loaded sections
+prog.reader()                  # the BufferReader over the mapped regions: PT_LOAD
+                               # segments unless from_segments=False
 prog.rom()                     # the read-only image LoadReadOnly folds from, or None
 prog.add_elf("libc.so")        # merge another ELF (shared library)
-prog.arch                      # the SleighArch this handle decodes with
 ```
 
 Symbols can also be attached after loading, which is how a stripped image gets
@@ -268,7 +268,9 @@ n.op()                         # "Add" / "Less" / ... or None for op-less kinds
 n.value_type()                 # "I64" / "I1" / "F64" / ... or None
 n.inputs(), n.outputs()        # neighbouring nodes (Node handles, not ids)
 n.uint(), n.sint(), n.boolean(), n.float_bits()   # constants
-n.vn()                         # varnode for an InitialVar / clobber, else None
+n.vn()                         # the varnode this node names: an InitialVar's entry
+                               # register, a Call's return register (its FIRST value
+                               # output, never one clobber), else None
 n.asm_fingerprint()            # machine addresses that produced this node
 ```
 
@@ -338,10 +340,12 @@ p.float_add(a, b); p.float_lt(a, b); p.float_sqrt(a)
 p.int_zero_extend(x); p.int_sign_extend(x); p.int_truncate(x)                   # width casts
 ```
 
-`int_add`, `int_mul`, `int_and`, `int_or`, `int_xor`, `float_add`, `float_mul`,
-`int_eq`, `int_carry`, `int_scarry` and `float_eq` match **commutatively**;
-every other operator, `int_shl` / `int_shr` / `int_lt` / `int_div` and the rest,
-keeps the order you wrote. `.ordered()` pins the order on any binary pattern,
+`int_add`, `int_mul`, `int_and`, `int_or`, `int_xor`, their `I1` spellings
+`bool_and` / `bool_or` / `bool_xor`, `float_add`, `float_mul`, `int_eq`,
+`int_carry`, `int_scarry` and `float_eq` match **commutatively**, and a lowered
+comparison inherits that from the comparison it wraps, so `int_ne` and
+`float_ne` do too. Every other operator, `int_shl` / `int_shr` / `int_lt` /
+`int_div` and the rest, keeps the order you wrote. `.ordered()` pins the order on any binary pattern,
 the `int_add` sugar as much as the `int_binary` builder; it raises only on a
 shape with no operand pair, such as `anything()`:
 
@@ -428,7 +432,7 @@ value sub-pattern.
 `.output(slot)` and `.any_output()` return a terminal taking one of
 `.capture(c)`, `.of_width(w)`, `.of_type("i64")`, which hands the builder back.
 
-### `any_input` -- match *some* input
+### `any_input`, matching *some* input
 
 ```python
 p.mem_phi().any_input(p.store(addr=p.anything(), data=p.anything()))  # some input is a store
@@ -440,7 +444,7 @@ p.load().input(1, x)                                                  # raw slot
 memory producer (`store` / `mem_phi`) a memory input, a wildcard any input at
 all including control and phi-token edges.
 
-### `one_of` / `first_of` -- alternation (OR)
+### `one_of` / `first_of`, alternation (OR)
 
 ```python
 base, off = p.Capture("b"), p.Capture("off")
@@ -448,8 +452,8 @@ p.one_of([p.int_add(base, p.int_const(off)), p.var(base)])   # base+K, or bare b
 ```
 
 `one_of` is the OR combinator, dual to a `find_all([...])` list (which is AND).
-An arm is anything a top-level pattern is -- a value shape, `store()` /
-`mem_phi()`, `call()`, ... -- and the result nests in any slot (value, memory,
+An arm is anything a top-level pattern is: a value shape, `store()` /
+`mem_phi()`, `call()`, and the rest. The result nests in any slot (value, memory,
 control):
 
 ```python
@@ -459,7 +463,7 @@ p.ret().ctrl(p.one_of([p.load(), p.call()]))     # control slot
 
 `one_of` is a **union**: every arm that matches is enumerated with its own
 bindings, so order carries no meaning and a downstream constraint can pick the
-arm it needs. `first_of` is the **ordered** variant -- it cuts to the first
+arm it needs. `first_of` is the **ordered** variant: it cuts to the first
 matching arm, so a permissive leading arm shadows the rest; list most-specific
 first. Any pattern kind is a valid arm, including the node-rooted control
 builders (`ret` / `if_else` / `switch` / `indirect_branch` / `unreachable`).
@@ -519,7 +523,7 @@ they bind the same value. `find_unique_value(pat, capture)` deduplicates by the
 captured constant instead: `None` for no match, the value when all matches
 agree, `StriderError` for two or more distinct values. Pass `signed=True` to
 read the value as two's-complement. Its `pat` and `constraints` behave as in
-`find_all` -- a list `pat` joins on shared captures, and `constraints=[...]`
+`find_all`: a list `pat` joins on shared captures, and `constraints=[...]`
 filters the joined tuples before the value dedup.
 
 ```python
@@ -611,7 +615,7 @@ branch-edge captures; it is not "reachable from", so no single incoming edge
 dominates a merge/loop-header phi. `phi_input_from_edge(phi, edge, value)` says
 "the value `phi` merges from that branch edge is `value`".
 
-### `JoinPredicate` -- your own logic
+### `JoinPredicate`, your own logic
 
 Subclass, declare the captures it reads (so it correlates and range-checks like
 a built-in), and decide in `constraint`:
@@ -761,6 +765,12 @@ cover from register names. `CallOtherAbi` describes one Sleigh user-op, for
 you need it without a lifter, and resolves the names both `custom` constructors
 take. `crates/strider-py/examples/python/17_custom_abis.py` uses each of them.
 
+ARM32 hard-float passes arguments in one bank of 16 single-precision slots
+`s0..s15`, aliased as `d0..d7`. The convention names the double carriers, so a
+function taking `float` arguments reports the wrong varnode at every odd
+position and `function_arg_float(n)` is a candidate there rather than an
+answer.
+
 ---
 
 ## 12. The CFG (`strider.cfg`)
@@ -789,7 +799,7 @@ successor, one whose re-derived widening could not be seated, one whose answer
 oscillated, and one still growing when the iteration cap ran out; empty means
 fully resolved. `unverified_seeded_sites()` holds a dispatch the CFG consumed as
 a `Return` or a `TailCall`, which is a complete answer that cannot be verified
-rather than a loss -- an ARM `pop {pc}` epilogue lands here, not in
+rather than a loss, so an ARM `pop {pc}` epilogue lands here and not in
 `unresolved`. `isa_mode_conflicts()` and `interior_branch_targets()` carry the
 other two; `isa_mode_conflicts()` is structurally always empty outside the four
 ARM and four MIPS presets, the only ones with an ISA-mode context variable to
@@ -817,8 +827,8 @@ so it drops out of `unresolved` even when the classifier could not read it.
 Seating changes the CFG the classifier reads, so a wrong seed can stop it
 deriving and take the site's real arms with it: `cfg.unverified_seeded_sites()`
 names the sites that settled holding nothing but your seed. It also names every
-site the CFG consumed outright -- a `LinkRegister` answer became a `Return`, a
-single out-of-function target became a `TailCall` -- whether that answer was
+site the CFG consumed outright (a `LinkRegister` answer became a `Return`, a
+single out-of-function target became a `TailCall`), whether that answer was
 seeded or derived, since those leave no placeholder for a dispatch with more
 arms to show up in.
 

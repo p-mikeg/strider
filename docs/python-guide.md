@@ -298,29 +298,15 @@ the neighborhood around a node and re-centers as you click, which is what stays
 usable on a graph of a few thousand nodes.
 
 ```python
-prog.visualize(function)                   # prints a local URL; blocks until Ctrl-C
+prog.visualize(function)                   # prints a local URL; blocks until interrupted
 prog.visualize(function, whole=False)      # a neighborhood, re-centering as you click
 port = prog.visualize(function, background=True)   # serve and keep querying
 strider.explore.shutdown(port)             # ...until you stop it
 ```
 
-Drag with the mouse or press the arrow keys to pan (hold shift for a longer
-step); ctrl+wheel or `+` / `-` zooms, `f` fits the graph to the window and `0`
-returns to 100%. Clicking a node re-centers on it, so a drag that ends over one
-pans rather than following it.
-
-The toolbar controls the render: depth, hub cap (a node with more consumers than
-this is drawn but not expanded), max nodes, whether a node's inputs count toward
-the hub cap, and whether to render pretty. The three limits open at `0`, which
-means no limit on each, and pretty opens on; `visualize(depth=...)` seeds depth
-instead, and `reset` puts them back. The `whole` toggle switches to a
-neighborhood, which is what those limits apply to; drawing everything can keep
-the layout engine busy for a while on a few thousand nodes.
-
-It blocks the calling thread unless you pass `background=True`, which serves on
-its own thread and hands back the port. Either way the server renders through a
-decoder of its own, so your handle stays free to keep analysing; see
-[python-api.md](python-api.md#10-visualizing).
+Either way the server renders through a decoder of its own, so your handle
+stays free to keep analysing. The keys, the toolbar and what its limits apply to
+are in [python-api.md](python-api.md#10-visualizing).
 
 For a static picture, render the IR or the CFG to a self-contained HTML file:
 
@@ -348,15 +334,17 @@ The three that trip people up most:
   lowers `a - b` to `a + (-b)`, and `a != b` to `not (a == b)`. Use the alias
   constructors (`int_sub`, `int_le`, `float_ne`, ...) instead of building the raw
   shape.
-- **Commutative ops try both orders for you.** The integer `int_add`, `int_mul`,
-  `int_and`, `int_or`, `int_xor`, the float `float_add`, `float_mul`, and the
-  commutative comparisons `int_eq`, `int_carry`, `int_scarry`, `float_eq` all
-  match either operand order. The rest keep the order you wrote.
+- **Commutative ops try both orders for you.** The integer `int_add`,
+  `int_mul`, `int_and`, `int_or`, `int_xor` and their `I1` spellings `bool_and`,
+  `bool_or`, `bool_xor`, the float `float_add`, `float_mul`, and the commutative
+  comparisons `int_eq`, `int_carry`, `int_scarry`, `float_eq` all match either
+  operand order, as do the lowered `int_ne` and `float_ne` that wrap an equality.
+  The rest keep the order you wrote.
 - **`phi()` matches any phi**, whatever register it carries; `phi_for(vn)`
   narrows to one. Use `mem_phi()` for the memory merge.
 - **A value added to a multiple of itself collapses.** `x + x*2` is folded to
-  `x*3`, and `x + (x<<1)` with it -- thirteen add/subtract against
-  multiply/shift pairings end up as one `x * K`. Look for the product.
+  `x*3`, and `x + (x<<1)` with it: thirteen add/subtract against multiply/shift
+  pairings end up as one `x * K`. Look for the product.
 
 When a pattern still comes up empty, dump the raw graph
 (`function.to_html("graph.html")` without `pretty`) and walk forward from the
