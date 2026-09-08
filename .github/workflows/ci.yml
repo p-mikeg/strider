@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [master, develop]
+    branches: [master, develop, 'fix/**', 'release/**']
   pull_request:
 
 env:
@@ -19,8 +19,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          # The fixture object files are LFS-backed; without this they check out
-          # as pointer text and every test that loads one fails.
+          # The fixture binaries are LFS-backed; without this they check out as
+          # pointer text and every test that loads one fails.
           lfs: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -40,8 +40,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          # The fixture object files are LFS-backed; without this they check out
-          # as pointer text and every test that loads one fails.
+          # The fixture binaries are LFS-backed; without this they check out as
+          # pointer text and every test that loads one fails.
           lfs: true
       - uses: dtolnay/rust-toolchain@1.91.0
       - uses: Swatinem/rust-cache@v2
@@ -53,8 +53,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          # The fixture object files are LFS-backed; without this they check out
-          # as pointer text and every test that loads one fails.
+          # The fixture binaries are LFS-backed; without this they check out as
+          # pointer text and every test that loads one fails.
           lfs: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
