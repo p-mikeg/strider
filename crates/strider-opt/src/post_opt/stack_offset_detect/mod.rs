@@ -1,5 +1,7 @@
 //! Stamps the side-table memory class with the slot `(base, K)` for every Store
-//! / Load whose address decomposes to a single SP-derived `base + K` terminal.
+//! / Load whose address decomposes to a single `base + K` terminal.  `base` is
+//! SP-derived, or a listed allocator's return when `noalias_allocators` is
+//! non-empty.
 //!
 //! `K` is only comparable against another access sharing the same `base`.
 
@@ -11,7 +13,8 @@ use crate::error::Result;
 use crate::mem_analysis::decompose;
 use crate::pipeline::PostOptimizer;
 
-/// Annotates SP-relative `Store` / `Load` offsets in the side-table memory class.
+/// Annotates `Store` / `Load` offsets against their stack or heap base in the
+/// side-table memory class.
 #[derive(Clone)]
 pub struct StackOffsetDetect;
 

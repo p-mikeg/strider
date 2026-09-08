@@ -79,11 +79,10 @@ impl crate::peephole::PeepholePass for LoadForward {
         let cfgs = analyzers.get_or_insert_with(|| {
             let assumptions = &opt_ctx.options.assumptions;
             // `call_blocking`: a store at another SP base may still alias.
-            // `noalias_allocators` is on both: it is a claim about the program,
-            // not a call-boundary relaxation, and both analyzers must decompose
-            // against the same set or one poisons the other's memo.
-            let options = MemOptions::call_blocking(assumptions.stack_global_disjoint)
-                .with_noalias_allocators(&assumptions.noalias_allocators);
+            let options = MemOptions::call_blocking(
+                assumptions.stack_global_disjoint,
+                &assumptions.noalias_allocators,
+            );
             let relaxed = options
                 .clone()
                 .with_escape_analysis(assumptions.escape_analysis)
