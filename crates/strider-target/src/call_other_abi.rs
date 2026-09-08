@@ -514,6 +514,26 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             no_return: false,
         }),
     },
+    // The AArch32 half of the same SMCCC (`ARM.sinc:150-151`, raised by
+    // `ARMinstructions.sinc:1591`/`:1608` and the Thumb pair at
+    // `ARMTHUMBinstructions.sinc:1444`/`:1451`).  The sla declares no output
+    // for either op, so without this row nothing writes r0 and a read after
+    // an SMC resolves to the value that flowed IN.  SMC32/HVC32 passes
+    // arguments in r0..r7 and returns in r0..r3; SMCCC 1.0 leaves r4..r14
+    // unpredictable (1.1+ preserves them), so clobber through r12 and leave
+    // `sp` / `lr` alone, matching the aarch64 row's x0..x17.
+    CallOtherRow {
+        preset_arches: ARM32_ALL,
+        op_names: &["software_hvc", "software_smc"],
+        class: CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: &["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"],
+            implicit_writes: &[
+                "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12",
+            ],
+            clobbers_memory: true,
+            no_return: false,
+        }),
+    },
     // x86 RDPKRU: reads ECX (which must be 0), zeroes EDX; EAX is the op's own
     // pcode output (not declared here; the result-wins-ties dedup would drop
     // it, but listing it is a latent double-clobber trap).
@@ -790,12 +810,16 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: PURE,
     },
     // AArch64 SVE LDR / STR of a Z or P register (`AARCH64sve.sinc:4504`,
-    // `:4513`, `:6531`, `:6540`).  These look like the rest of the `SVE_*`
-    // compute ops but are the one memory pair among them: the sla passes the
-    // BASE REGISTER as a value (`Zd = SVE_ldr(Zd, Rn_GPR64xsp, imm)`,
-    // `SVE_str(Zd, Rn_GPR64xsp, imm)`), NOT a dynamic memory varnode, so no
-    // p-code Load or Store is emitted and the access is entirely implicit.
-    // They are exactly why `SVE_` is not a prefix family.
+    // `:4513`, `:6531`, `:6540`).  The sla passes the BASE REGISTER as a
+    // value (`Zd = SVE_ldr(Zd, Rn_GPR64xsp, imm)`, `SVE_str(Zd,
+    // Rn_GPR64xsp, imm)`), NOT a dynamic memory varnode, so no p-code Load or
+    // Store is emitted and the access is entirely implicit.  74 of the 315
+    // `SVE_*` user-ops have that shape (every `SVE_ld*`, `SVE_st*`,
+    // `SVE_prf*`; `SVE_ld1b` at `:2650` is structurally identical to
+    // `SVE_ldr`), which is why `SVE_` is not a prefix family: the rest are
+    // register compute.  These two are listed because they are the ones seen;
+    // an unlisted name fails the lift rather than forwarding across a hidden
+    // access.
     CallOtherRow {
         preset_arches: AARCH64_BOTH,
         op_names: &["SVE_ldr", "SVE_str"],
@@ -1151,16 +1175,12 @@ static ARCH_INDEPENDENT_TABLE: &[(&str, CallOtherClass)] = &[
     // core waits.
     ("WaitForEvent", MEM_CLOBBER),
     ("WaitForInterrupt", MEM_CLOBBER),
-    // BKPT / HLT may return via a WARN-style handler, and HVC / SMC DO
-    // return and may mutate memory, so all four are returning
+    // BKPT / HLT may return via a WARN-style handler, so they are returning
     // side-effecting ops rather than NoReturn: over-terminating would
-    // truncate the function.  The SMCCC register footprint is
-    // arch-specific and omitted here, leaving these memory-safe but
-    // register-imprecise.
+    // truncate the function.  `software_hvc` / `software_smc` do the same but
+    // carry a register footprint, so they live in `ARCH_SPECIFIC_TABLE`.
     ("software_bkpt", MEM_CLOBBER),
     ("software_hlt", MEM_CLOBBER),
-    ("software_hvc", MEM_CLOBBER),
-    ("software_smc", MEM_CLOBBER),
     // AArch64 privileged-state writes: an unmodeled sysreg write, the
     // generic SYS write, and address translation (AT_S1E1R writes PAR and
     // pokes the MMU).  Conservatively memory-affecting.
@@ -1240,17 +1260,19 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
 ///   names no `[ram]` address at all, so the family is `PURE`.  Arch-scoped
 ///   because PowerPC (`FloatingRoundToIntegerTowardZero1`) and x86
 ///   (`FloatingReciprocalAprox`) spell unrelated ops with the same stem.
-/// * `NEON_*` (AArch64): all 156 `AARCH64instructions.sinc` declares, used
+/// * `NEON_*` (AArch64): all 159 `AARCH64instructions.sinc` declares, used
 ///   throughout `AARCH64neon.sinc`, are arithmetic / crypto / permute compute
 ///   with listed register operands; not one is a load, store, prefetch, or
 ///   barrier (NEON `LD1` / `ST1` lift to real p-code Load / Store), so the
 ///   family is `PURE`.
 /// * `TLBI_*` / `DC_*` / `IC_*` (AArch64): every member is a TLB-invalidate or
 ///   cache-maintenance system op, so `MEM_CLOBBER`.
-/// * `SVE_*` (AArch64): NOT homogeneous.  `SVE_ldr` / `SVE_str` take a base
+/// * `SVE_*` (AArch64): NOT homogeneous.  74 of the 315 declares (`SVE_ld*`,
+///   `SVE_st*`, `SVE_prf*`, `SVE_ldr` / `SVE_str` among them) take a base
 ///   register rather than a dynamic memory varnode, so their access is
-///   implicit; they are individual `MEM_CLOBBER` rows and the rest stay
-///   individual too.
+///   implicit; a `PURE` family here would make every SVE load and store
+///   forwardable.  Memory-shaped names get individual `MEM_CLOBBER` rows and
+///   the rest stay individual too.
 /// * `vp*_avx` / `*_avx2` / `*_avx512*` (x86): NOT homogeneous.  The same
 ///   prefixes cover gather / scatter / compress / expand / maskmov / MXCSR ops
 ///   that reach memory the p-code does not spell out, so the SIMD members are
