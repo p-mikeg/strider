@@ -441,7 +441,13 @@ impl PyLoadedElf {
         let mut syms: Vec<PySymbol> = Vec::new();
         let mut by_name: HashMap<String, usize> = HashMap::new();
         for obj in self.elfs.iter().chain(&self.symbol_elfs) {
-            let file = obj.file();
+            // `with_symbols` stats every mapping before calling this, so a
+            // rebuild between the two is the torn-read race the reader
+            // documents rather than something to report here. Skipping the ELF
+            // is still better than panicking across the FFI for it.
+            let Ok(file) = obj.checked_file() else {
+                continue;
+            };
             let layout = ElfSectionLayout::new(&file);
             let relocatable = file.kind() == object::ObjectKind::Relocatable;
             let mut per_elf: HashMap<String, usize> = HashMap::new();
@@ -606,12 +612,11 @@ impl PyLoadedElf {
     /// an arch from it. `False` off ARM.
     #[getter]
     fn is_arm_be8(&self) -> PyResult<bool> {
-        // Reads the header out of the mapping.
-        self.check_unchanged()?;
-        Ok(self
-            .elfs
-            .first()
-            .is_some_and(strider_reader::OwnedElf::is_arm_be8))
+        // Guarded inside: reads the header out of the mapping.
+        match self.elfs.first() {
+            Some(elf) => elf.is_arm_be8().map_err(into_strider_err),
+            None => Ok(false),
+        }
     }
 
     /// Every symbol across every loaded ELF as `dict[str, Symbol]`, keyed by

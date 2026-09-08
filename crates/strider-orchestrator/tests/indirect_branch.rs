@@ -34,7 +34,7 @@ fn assert_indirect_goto_resolves_to_both_labels(arch: Arch) {
     let path = binary_path(arch, "indirect_branch");
     let owned = strider_reader::load_elf(&path)
         .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
-    let obj = owned.file();
+    let obj = owned.checked_file().expect("the mapped file is unchanged");
     let sleigh_arch = arch.sleigh();
     // The Thumb interworking bit IS the entry's ISA mode; `build_cfg` masks it
     // off for decoding itself.

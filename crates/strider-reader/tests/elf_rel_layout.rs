@@ -51,7 +51,7 @@ fn digest(regions: &[MemRegion]) -> u64 {
 fn all_loader_digests(owned: &strider_reader::OwnedElf) -> Vec<u64> {
     use elf::LoadFilter::{AllAllocatable, CodeAndReadOnly, ImmutableOnly};
     use elf::RegionSource::{Auto, Sections};
-    let obj = owned.file();
+    let obj = owned.checked_file().expect("the mapped file is unchanged");
     let regions = |source, filter, relocate| owned.regions(source, filter, relocate).unwrap();
     vec![
         digest(&elf::elf_get_loadable_regions(&obj).unwrap()),
@@ -126,7 +126,7 @@ fn linked_images_load_identically_to_before_the_et_rel_rebase() {
             continue;
         }
         let owned = strider_reader::load_elf(&path).unwrap();
-        let obj = owned.file();
+        let obj = owned.checked_file().expect("the mapped file is unchanged");
         let layout = ElfSectionLayout::new(&obj);
         for sec in obj.sections() {
             assert_eq!(
@@ -177,7 +177,7 @@ fn every_allocatable_section_of_an_object_file_serves_its_own_bytes() {
                 continue;
             }
             let owned = strider_reader::load_elf(&path).unwrap();
-            let obj = owned.file();
+            let obj = owned.checked_file().expect("the mapped file is unchanged");
             let layout = ElfSectionLayout::new(&obj);
             let table = MemRegionsLookupTable::new(
                 owned
@@ -225,7 +225,7 @@ fn object_file_symbols_resolve_into_their_own_section() {
         return;
     }
     let owned = strider_reader::load_elf(&path).unwrap();
-    let obj = owned.file();
+    let obj = owned.checked_file().expect("the mapped file is unchanged");
     let layout = ElfSectionLayout::new(&obj);
     let table = MemRegionsLookupTable::new(elf::elf_get_loadable_regions(&obj).unwrap());
 
@@ -270,7 +270,7 @@ fn object_file_jump_table_is_mapped_and_relocated() {
         return;
     }
     let owned = strider_reader::load_elf(&path).unwrap();
-    let obj = owned.file();
+    let obj = owned.checked_file().expect("the mapped file is unchanged");
     let layout = ElfSectionLayout::new(&obj);
     let table = MemRegionsLookupTable::new(
         owned
@@ -344,7 +344,7 @@ fn a_rebased_writable_section_is_still_not_read_only_memory() {
         return;
     }
     let owned = strider_reader::load_elf(&path).unwrap();
-    let obj = owned.file();
+    let obj = owned.checked_file().expect("the mapped file is unchanged");
     let layout = ElfSectionLayout::new(&obj);
     let reader = elf::ElfFileMemReader::from_object(&obj).unwrap();
 
@@ -542,7 +542,7 @@ fn a_linked_image_symbol_address_is_its_st_value() {
         return;
     }
     let owned = strider_reader::load_elf(&path).unwrap();
-    let obj = owned.file();
+    let obj = owned.checked_file().expect("the mapped file is unchanged");
     let layout = ElfSectionLayout::new(&obj);
     let mut checked = 0usize;
     for sym in obj.symbols() {

@@ -16,7 +16,7 @@ fn load_elf_parses_valid_tempfile() {
     f.flush().unwrap();
 
     let obj = strider_reader::load_elf(f.path()).unwrap();
-    let obj = obj.file();
+    let obj = obj.checked_file().expect("the mapped file is unchanged");
     assert_eq!(obj.endianness(), Endianness::Little);
 
     let sec = obj.section_by_name(".text").expect(".text section");

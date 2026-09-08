@@ -284,7 +284,7 @@ fn analyze_with_opts(
         panic!("missing test binary {path:?}; run `make -C fixtures`");
     }
     let obj = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = obj.file();
+    let obj = obj.checked_file().expect("the mapped file is unchanged");
     let sa = arch.sleigh();
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem");
     let sleigh = rsleigh::Sleigh::new(sa.sla_spec(), sa.pspec(), mem).expect("sleigh");
