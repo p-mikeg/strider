@@ -36,7 +36,7 @@ pub struct CallingConvention {
     /// In positional order.
     ret_val_regs: &'static [&'static str],
     /// Float return registers (`q0` on aarch64, `XMM0` on x86_64, `d0` on ARM
-    /// AAPCS hard-float (VFP), `f0` on MIPS O32).
+    /// AAPCS hard-float (VFP), the `f0_1` pair on MIPS O32).
     ret_val_regs_float: &'static [&'static str],
     /// `None` when the convention passes no arguments on the stack.
     stack_args: Option<StackArgs>,
@@ -503,6 +503,12 @@ const X86_CDECL_BASE: CallingConvention = CallingConvention {
         base_offset: 4,
         increment: 4,
     }),
+    // A callee returning a struct or union also pops the caller's hidden
+    // result pointer (Intel386 psABI), so the caller observes SP advanced by
+    // 8 and `gcc -m32` emits `ret $0x4`.  `ret_stack_pop` is one constant per
+    // convention and the IR carries no callee return class, so that call site
+    // needs a per-address CC override with `ret_stack_pop: 8`; without one
+    // every later SP-relative access there is misattributed by one slot.
     ret_stack_pop: 4,
     // `call` pushes the return address.
     link_register_reg_name: None,
@@ -630,15 +636,15 @@ const MIPS_O32_BASE: CallingConvention = CallingConvention {
         "f20", "f21", "f22", "f23", "f24", "f25", "f26", "f27", "f28", "f29", "f30", "f31",
     ],
     ret_val_regs: &["v0", "v1"],
-    // Single-precision; doubles use the f0/f1 pair.  Unused on soft-float
-    // builds.
-    //
-    // $f1 is absent because it does not need naming: container mapping
-    // promotes `f0` to the tracked 8-byte `f0_1` pair the mips32 sla declares
-    // over each even/odd FPR pair, which is what every double-format
-    // instruction writes, so a real `double` return carries both halves.
-    // A `float` return keeps the 4-byte slot.
-    ret_val_regs_float: &["f0", "f2"],
+    // O32 returns a `double` in the $f0/$f1 pair, which the mips32 sla
+    // (`FREGSIZE 4`) declares as the 8-byte `f0_1` over each even/odd FPR
+    // pair; every double-format instruction writes it.  Naming the 4-byte
+    // `f0` instead TRUNCATES the return: `Function::ret_val_regs` hands the
+    // list to the lifter verbatim, with no tracked-container projection, so
+    // the read slices I32 out of `f0_1` and the high half is discarded.
+    // n64 overrides this back to `f0` / `f2`, which are 8 bytes there.
+    // Unused on soft-float builds.
+    ret_val_regs_float: &["f0_1", "f2_3"],
     stack_args: Some(StackArgs {
         base_offset: 16,
         increment: 4,
@@ -776,6 +782,9 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             arg_passing_regs: &["a0", "a1", "a2", "a3", "t0", "t1", "t2", "t3"],
             // N64 widens the float argument bank to eight, $f12..$f19.
             arg_passing_regs_float: &["f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19"],
+            // `FREGSIZE 8`: the FPRs are already 8 bytes and the sla declares
+            // no `f0_1` pair register, so n64 undoes o32's pair naming.
+            ret_val_regs_float: &["f0", "f2"],
             // n64's float argument bank is $f12-$f19; the callee-saved set
             // narrows from o32's $f20-$f31 to $f24-$f31.
             callee_saved_regs: &[
