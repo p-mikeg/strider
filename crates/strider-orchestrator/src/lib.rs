@@ -222,11 +222,15 @@ where
         let mut narrow_rounds: FxHashMap<PcodeInsnAddr, u32> = FxHashMap::default();
         // Sticky: a site that lost ground in ANY round cannot be claimed
         // complete by a later one that merely re-derives the smaller set. Also
-        // carries the sites the loop abandoned, whose arms are frozen at
-        // whatever the round before it gave up had seated.
+        // carries the sites the loop abandoned, whose seat is REMOVED, so every
+        // later round seats nothing at all there.
         let mut derived_incomplete: Vec<PcodeInsnAddr> =
             seated_arm_losses(&cfg, &working.cfg.known_targets);
         let mut still_growing: Vec<PcodeInsnAddr> = Vec::new();
+        // Sticky: the flag fires on the round that seats the guessed arm, and
+        // every later round finds that arm already in `known_targets` and so
+        // assumes nothing.
+        let mut assumed_modes: Vec<PcodeInsnAddr> = Vec::new();
         // Sticky for the same reason `derived_incomplete` is: a round's
         // inexact edge fed the classifier, whose derived targets persist into
         // every later round, so a final CFG without one does not mean none was
@@ -287,6 +291,7 @@ where
                 }
             }
             derived_incomplete.extend(progress.derived_incomplete);
+            assumed_modes.extend(progress.assumed_modes);
             if !progress.changed {
                 converged = true;
                 break;
@@ -342,6 +347,7 @@ where
             )?;
             // `apply_resolutions` already pushes every narrowed address here.
             derived_incomplete.extend(progress.derived_incomplete);
+            assumed_modes.extend(progress.assumed_modes);
             still_growing.clear();
             still_growing.extend(progress.grew);
             final_targets = Some(folded);
@@ -362,13 +368,24 @@ where
                 incomplete_derived: &derived_incomplete,
             },
         );
-        let unverified_seeded = unverified_seeded_sites(
+        let mut unverified_seeded = unverified_seeded_sites(
             &cfg,
             &switch_anchors,
             &unclassified,
             &lift_opts.cfg.known_targets,
             settled,
         );
+        // Derived once from the final cfg, then extended with the rounds'
+        // accumulated guesses, filtered to the ones still seated: a site whose
+        // seat the loop dropped carries no guessed arm any more, and this
+        // channel claims the answer is whole.
+        unverified_seeded.extend(
+            assumed_modes
+                .into_iter()
+                .filter(|addr| settled.contains_key(addr)),
+        );
+        unverified_seeded.sort_unstable();
+        unverified_seeded.dedup();
 
         if lift_opts.compact {
             function.compact()?;
@@ -473,7 +490,7 @@ pub struct AnalyzeResult {
     pub interior_branch_targets: Vec<PcodeInsnAddr>,
     /// Sites whose answer nothing verified.
     ///
-    /// Two shapes land here. A seated `Switch` holding exactly the caller's
+    /// Three shapes land here. A seated `Switch` holding exactly the caller's
     /// `known_targets` and nothing derived: not unresolved (the caller
     /// asserted the answer), but seating changes the CFG the classifier
     /// reads, so a stale seed can stop the selector deriving and take the
@@ -482,6 +499,11 @@ pub struct AnalyzeResult {
     /// `LinkRegister` answer becomes a `Return` and a single target outside
     /// the function becomes a `TailCall`, leaving no placeholder and no
     /// anchor, so a dispatch that had more arms leaves no other trace.
+    ///
+    /// A third, on an arch with an ISA-mode var: an arm a mode-less
+    /// re-derivation discovered at a site whose other arms all proved the
+    /// flowing mode. It is seated and it decodes, but nothing evaluated that
+    /// arm's own mode.
     pub unverified_seeded_sites: Vec<PcodeInsnAddr>,
 }
 
@@ -543,6 +565,10 @@ struct Progress {
     /// A successor carried over from an earlier round needs no channel of its
     /// own: dropping one is exactly what stops the answer being a superset.
     derived_incomplete: Vec<PcodeInsnAddr>,
+    /// Addresses that seated a NEW arm on a mode nothing proved for that arm.
+    /// The arm set is whole, so this is an unverified answer rather than an
+    /// incomplete one.
+    assumed_modes: Vec<PcodeInsnAddr>,
 }
 
 /// Fold `resolutions` into `known_targets`, keyed back to pcode addresses
@@ -642,12 +668,13 @@ fn apply_resolutions(
                 progress.grew.push(addr);
             }
         }
-        // A mode flip decodes an address two ways, so the seated arm is as
-        // unclaimable as a dropped one; an arm seated at a mode-committing site
-        // on a mode nothing proved for it is decodable but unverified, which is
-        // the same answer to "may this be incomplete?".
-        if derived_dropped || narrowed || assumed_mode {
+        if derived_dropped || narrowed {
             progress.derived_incomplete.push(addr);
+        }
+        // Decodable, and the arm set is whole: nothing evaluated THIS arm's
+        // mode, which is the unverified channel, not the incomplete one.
+        if assumed_mode {
+            progress.assumed_modes.push(addr);
         }
         known_targets.insert(addr, targets);
     }
@@ -701,13 +728,13 @@ fn seed_still_covers(
 /// [`Progress::derived_incomplete`] rather than relying on the cfg to re-defer
 /// it.
 /// Where every proved mode IS the flowing one, seating `None` decodes
-/// identically, so the set still widens -- but only the arms already evaluated
+/// identically, so the set still widens. Only the arms already evaluated
 /// proved that mode, and they are no evidence about an arm nobody has
-/// evaluated. A later round widening the index can therefore seat an address
-/// whose committed mode was never checked. The set still widens, because
-/// dropping it would cost every same-mode dispatch its arms, and the second
-/// return value tells the caller to REPORT the site so the guess cannot pass
-/// as a settled answer.
+/// evaluated, so a later round widening the index can seat an address whose
+/// committed mode was never checked. Dropping it would cost every same-mode
+/// dispatch its arms, so it is kept and the second return value reports the
+/// site through [`Progress::assumed_modes`]: the arm set is whole, which is an
+/// UNVERIFIED answer rather than an incomplete one.
 fn adopt_known_modes(
     known: Option<&ResolvedTargets>,
     targets: ResolvedTargets,
@@ -1822,8 +1849,12 @@ mod tests {
         );
         assert!(progress.changed);
         assert_eq!(folded, multiple(&[(0x2000, Some(false)), (0x2004, None)]));
+        assert!(
+            progress.derived_incomplete.is_empty(),
+            "nothing was dropped and nothing narrowed"
+        );
         assert_eq!(
-            progress.derived_incomplete,
+            progress.assumed_modes,
             vec![pcode_addr(0x1000)],
             "an arm seated on a mode nothing proved for it must be reported"
         );
@@ -1833,7 +1864,7 @@ mod tests {
     /// reports nothing: the flag is for arms the site had not already seated.
     #[test]
     fn apply_resolutions_reports_nothing_when_no_new_arm_is_assumed() {
-        let (_progress, folded) = round(
+        let (progress, folded) = round(
             Some(multiple(&[(0x2000, Some(false)), (0x2004, Some(false))])),
             multiple(&[(0x2000, None), (0x2004, None)]),
             None,
@@ -1842,6 +1873,7 @@ mod tests {
             folded,
             multiple(&[(0x2000, Some(false)), (0x2004, Some(false))])
         );
+        assert!(progress.assumed_modes.is_empty());
     }
 
     /// An address the seated set already holds without a proved mode stays;
