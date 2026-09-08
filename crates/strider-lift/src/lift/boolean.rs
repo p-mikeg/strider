@@ -1,6 +1,9 @@
 //! Booleans are the 1-bit integer `I1`, so these lower to ordinary integer
-//! ops: and/or/xor at `I1`, and `BoolNeg` to `Xor(x, IntConst(1)):I1`.  Sleigh
-//! always supplies already-`I1` operands.
+//! ops: and/or/xor at `I1`, and `BoolNeg` to `Xor(x, IntConst(1)):I1`.
+//!
+//! The operands are 1-BYTE varnodes, which read back as `I8`, so the narrowing
+//! to `I1` below is load-bearing.  It is exact: a p-code boolean is 0 or 1, and
+//! `OpBehaviorBoolAnd` and friends are the bare bitwise ops over it.
 
 use strider_ir::{IRBuilderExt, IntBinaryOp, ValueType};
 

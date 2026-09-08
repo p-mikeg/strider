@@ -153,7 +153,7 @@ fn seating_cost(count: usize) -> (usize, usize) {
         .build(lifter.sleigh_regs())
         .expect("cc");
     let (outcome, visits) = lifter
-        .build_ir_counting_sink_visits(&cfg, cc, &crate::lift::LiftOptions::default())
+        .build_ir_counting_sink_visits(&cfg, cc, &crate::LiftOptions::default())
         .expect("lift");
     (visits, sinks(&outcome.function))
 }

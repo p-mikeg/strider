@@ -61,20 +61,32 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         region_map: &super::RegionMap,
     ) -> Result<()> {
         let cond_raw = self.read_input(insn, 1)?;
-        // Sleigh always feeds `CBRANCH` an already-`I1` condition (verified
-        // across arches), so this truncate is normally a no-op.  If a wider
-        // provably-0/1 value ever arrives (a flag zero-extended into a
-        // multi-byte register), narrowing to the low bit is exact for it.
+        // Real, not a no-op: a 1-byte flag varnode reads back as `I8`, because
+        // `write_reg_vn` coerces every register write to `reg.int_type()` and
+        // `int_for_byte_size(1)` is `I8`.  Narrowing to the low bit is exact
+        // for a p-code condition, which is 0 or 1.
         let cond = self
             .builder
             .truncate_if_needed(cond_raw, strider_ir::ValueType::I1)?;
+        // `region_if` validated the index, so a missing arm means no successor
+        // of this region owns the address that arm branches to.
         let res = self.cfg.region_if(region_id)?;
-        let if_true_region = res
-            .if_true_region
-            .ok_or_else(|| anyhow!("invalid region index {region_id:?}"))?;
-        let if_false_region = res
-            .if_false_region
-            .ok_or_else(|| anyhow!("invalid region index {region_id:?}"))?;
+        let terminator = self
+            .cfg
+            .region_graph()
+            .node_weight(region_id)
+            .map(|r| &r.terminator);
+        let if_true_region = res.if_true_region.ok_or_else(|| {
+            anyhow!(
+                "no successor of region {region_id:?} contains the taken target of {terminator:?}"
+            )
+        })?;
+        let if_false_region = res.if_false_region.ok_or_else(|| {
+            anyhow!(
+                "region {region_id:?} has no fall-through successor beside the one holding the \
+                 taken target of {terminator:?}"
+            )
+        })?;
         let true_block = super::ir_region_of(region_map, if_true_region)?;
         let false_block = super::ir_region_of(region_map, if_false_region)?;
         self.builder.build_if(cond, true_block, false_block)?;
