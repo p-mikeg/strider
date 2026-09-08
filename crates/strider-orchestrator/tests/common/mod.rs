@@ -335,67 +335,45 @@ pub(crate) fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Func
 
 use strider_ir::node::NodeKind;
 
-pub(crate) fn count_kind<F: Fn(&NodeKind) -> bool>(
-    function: &strider_ir::Function,
-    pred: F,
-) -> usize {
-    function.count_kind(pred)
-}
-
 pub(crate) fn count_int_binop(
     function: &strider_ir::Function,
     op: strider_ir::IntBinaryOp,
 ) -> usize {
-    count_kind(
-        function,
-        |k| matches!(k, NodeKind::IntBinaryOp(o) if *o == op),
-    )
+    function.count_kind(|k| matches!(k, NodeKind::IntBinaryOp(o) if *o == op))
 }
 pub(crate) fn count_int_unop(function: &strider_ir::Function, op: strider_ir::IntUnaryOp) -> usize {
-    count_kind(
-        function,
-        |k| matches!(k, NodeKind::IntUnaryOp(o) if *o == op),
-    )
+    function.count_kind(|k| matches!(k, NodeKind::IntUnaryOp(o) if *o == op))
 }
 pub(crate) fn count_int_cmp(function: &strider_ir::Function, op: strider_ir::IntCmpOp) -> usize {
-    count_kind(function, |k| matches!(k, NodeKind::IntCmpOp(o) if *o == op))
+    function.count_kind(|k| matches!(k, NodeKind::IntCmpOp(o) if *o == op))
 }
 pub(crate) fn count_float_binop(
     function: &strider_ir::Function,
     op: strider_ir::FloatBinaryOp,
 ) -> usize {
-    count_kind(
-        function,
-        |k| matches!(k, NodeKind::FloatBinaryOp(o) if *o == op),
-    )
+    function.count_kind(|k| matches!(k, NodeKind::FloatBinaryOp(o) if *o == op))
 }
 pub(crate) fn count_float_unop(
     function: &strider_ir::Function,
     op: strider_ir::FloatUnaryOp,
 ) -> usize {
-    count_kind(
-        function,
-        |k| matches!(k, NodeKind::FloatUnaryOp(o) if *o == op),
-    )
+    function.count_kind(|k| matches!(k, NodeKind::FloatUnaryOp(o) if *o == op))
 }
 pub(crate) fn count_float_cmp(
     function: &strider_ir::Function,
     op: strider_ir::FloatCmpOp,
 ) -> usize {
-    count_kind(
-        function,
-        |k| matches!(k, NodeKind::FloatCmpOp(o) if *o == op),
-    )
+    function.count_kind(|k| matches!(k, NodeKind::FloatCmpOp(o) if *o == op))
 }
 
 pub(crate) fn count_calls(function: &strider_ir::Function) -> usize {
-    count_kind(function, |k| matches!(k, NodeKind::Call))
+    function.count_kind(|k| matches!(k, NodeKind::Call))
 }
 pub(crate) fn count_ifs(function: &strider_ir::Function) -> usize {
-    count_kind(function, |k| matches!(k, NodeKind::If))
+    function.count_kind(|k| matches!(k, NodeKind::If))
 }
 pub(crate) fn count_returns(function: &strider_ir::Function) -> usize {
-    count_kind(function, |k| matches!(k, NodeKind::Return))
+    function.count_kind(|k| matches!(k, NodeKind::Return))
 }
 
 /// Counts the distinct control-flow paths converging at any `Return` node.
@@ -507,13 +485,10 @@ pub(crate) fn count_loops(function: &strider_ir::Function) -> usize {
     count
 }
 pub(crate) fn count_loads(function: &strider_ir::Function) -> usize {
-    count_kind(function, |k| matches!(k, NodeKind::Load(_)))
+    function.count_kind(|k| matches!(k, NodeKind::Load(_)))
 }
 pub(crate) fn count_stores(function: &strider_ir::Function) -> usize {
-    count_kind(function, |k| matches!(k, NodeKind::Store(_)))
-}
-pub(crate) fn has_kind<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred: F) -> bool {
-    function.has_kind(pred)
+    function.count_kind(|k| matches!(k, NodeKind::Store(_)))
 }
 
 /// Counts Store/Load nodes whose address decomposed to an SP-relative slot in
