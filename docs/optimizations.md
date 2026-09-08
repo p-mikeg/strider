@@ -85,7 +85,7 @@ control merge.
 This pass is quadratic in the number of loads times the number of memory
 definitions: each load walks the memory chain from its own cursor, with no
 shared memo. It is the one pass that does not scale linearly, and on a long
-chain of distinct stack slots it dominates the pipeline -- measured at 89% of
+chain of distinct stack slots it dominates the pipeline, measured at 89% of
 optimize time on a 14,000-node function built from `-O0` C. Optimized code does
 not have that shape, because calls and aliasing break the chains, so the cost
 shows up on debug builds and firmware rather than on release binaries. Drop
@@ -144,6 +144,20 @@ own, which the loop then grows from; a site that ends up holding nothing but
 your seed is reported by `cfg.unverified_seeded_sites()`, since seating can stop
 the classifier deriving. `LifterOptions(resolve_indirect_branches=False)` turns
 the classifier off and leaves every site for you to answer.
+
+### Dispatch shapes that do not resolve
+
+Four shapes come back in `unresolved` rather than as an error:
+
+- AArch64 big-endian stack-array dispatch built through a `bfi` insert against
+  an alignment-masked SP.
+- MIPS64 GOT-indirect dispatch, where the table routes through `gp` even under
+  `-fno-pic`, so the entries lift as `Add(Load[gp+off], const)` rather than a
+  raw constant.
+- PowerPC stack-array dispatch on ppc32le, ppc64be and ppc64le, whose lifted
+  shape is uncharacterised. ppc32be resolves.
+- On any architecture, a masked switch index whose real bound lives on a loop
+  back edge: the over-approximated answer oscillates, so the site is abandoned.
 
 ## Using a different pipeline
 
