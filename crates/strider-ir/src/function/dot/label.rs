@@ -1,5 +1,4 @@
 use rsleigh::MemReader;
-use std::io;
 
 use super::{FunctionDotDumper, node_fillcolor};
 use crate::IRViewer;
@@ -7,21 +6,17 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueType};
 
 /// A REGISTER varnode matching a named register renders as that name (`"RAX"`);
 /// anything else as `<space>[0x<off>]:<size>`, or `0x<off>:<size>` for CONST.
-///
-/// # Errors
-///
-/// Propagates `sleigh.regs()` failures.
 pub(crate) fn vn_to_display_name<R: MemReader>(
     sleigh: &rsleigh::Sleigh<R>,
+    regs: &rsleigh::SleighRegs,
     vn: &rsleigh::Vn,
-) -> anyhow::Result<String> {
-    let regs = sleigh.regs()?;
-    Ok(vn.ctx_fmt(sleigh, &regs).to_string())
+) -> String {
+    vn.ctx_fmt(sleigh, regs).to_string()
 }
 
 impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
-    fn vn_to_name(&self, vn: &rsleigh::Vn) -> io::Result<String> {
-        vn_to_display_name(self.sleigh, vn).map_err(|e| io::Error::other(e.to_string()))
+    fn vn_to_name(&self, vn: &rsleigh::Vn) -> String {
+        vn_to_display_name(self.sleigh, &self.regs, vn)
     }
 
     /// Checks the default code space first so arches whose code space isn't
@@ -86,21 +81,23 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         }
     }
 
-    pub(super) fn pretty_label(&self, node: NodeId) -> io::Result<String> {
+    pub(super) fn pretty_label(&self, node: NodeId) -> String {
         let kind = self.function.node_kind(node);
 
-        let label = match kind {
+        match kind {
             NodeKind::InitialVar(id) => match self.function.initial_vn_opt(*id) {
-                Some(vn) => format!("init\n{}", self.vn_to_name(&vn)?),
+                Some(vn) => format!("init\n{}", self.vn_to_name(&vn)),
                 None => format!("init\n#{}", id.index()),
             },
             NodeKind::MemPhi => "φ Mem".to_string(),
+            // An output-less Phi (malformed graph) labels rather than panics.
             NodeKind::Phi => match self
                 .function
-                .get_vn_for_value(self.function.node_outputs(node)[0])
+                .first_value_output_of(node)
+                .and_then(|v| self.function.get_vn_for_value(v))
             {
                 None => "φ Val".to_string(),
-                Some(var) => format!("φ {}", self.vn_to_name(&var)?),
+                Some(var) => format!("φ {}", self.vn_to_name(&var)),
             },
 
             NodeKind::IntConst(id) => {
@@ -206,9 +203,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             }
 
             _ => format!("{kind:?}"),
-        };
-
-        Ok(label)
+        }
     }
 
     /// `"{prefix}\n{from} -> {to}"`, from-type off input 0 and to-type off the
@@ -227,40 +222,32 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     }
 
     pub(super) fn emit_const_node(&self, node: NodeId, dot_id: &str, out: &mut ::dot::DotEmitter) {
-        let kind = self.function.node_kind(node);
-        let fc = node_fillcolor(kind);
-        let label = self
-            .pretty_label(node)
-            .unwrap_or_else(|_| format!("{kind:?}"));
+        let fc = node_fillcolor(self.function.node_kind(node));
+        let label = self.pretty_label(node);
         out.node(dot_id, &label, "ellipse", &[("fillcolor", fc)]);
     }
 
     /// Label for a Call / CallOther output past `[Control, Memory]`, taken from
     /// the output's `value_vn` tag.  Falls back to `outN` for the two
     /// structural slots and for untagged outputs.
-    pub(super) fn call_clobbered_name(&self, value_id: ValueId) -> io::Result<String> {
+    pub(super) fn call_clobbered_name(&self, value_id: ValueId) -> String {
         let (_call_id, output_index) = self.function.value_definition(value_id);
         if output_index < 2 {
-            return Ok(format!("out{output_index}"));
+            return format!("out{output_index}");
         }
         match self.function.get_vn_for_value(value_id) {
             Some(vn) => self.vn_to_name(&vn),
-            None => Ok(format!("out{output_index}")),
+            None => format!("out{output_index}"),
         }
     }
 
     /// Return inputs are `[ctrl, mem, ret_val_regs[0], ...]`, so slot `i + 2` is
     /// `ret_val_regs[i]`.  `None` when the slot is out of range of the stored
     /// convention.
-    pub(super) fn return_ret_name(&self, input_slot: usize) -> io::Result<Option<String>> {
-        let Some(i) = input_slot.checked_sub(2) else {
-            return Ok(None);
-        };
-        let ret_regs = self.function.ret_val_regs();
-        let Some(vn) = ret_regs.get(i) else {
-            return Ok(None);
-        };
-        self.vn_to_name(vn).map(Some)
+    pub(super) fn return_ret_name(&self, input_slot: usize) -> Option<String> {
+        let i = input_slot.checked_sub(2)?;
+        let vn = *self.function.ret_val_regs().get(i)?;
+        Some(self.vn_to_name(&vn))
     }
 }
 
@@ -288,7 +275,7 @@ mod tests {
             addr_space: VnSpace::CONST,
             size: 4,
         };
-        let name = vn_to_display_name(&sleigh, &vn).unwrap();
+        let name = vn_to_display_name(&sleigh, &sleigh.regs().unwrap(), &vn);
         assert_eq!(name, "0x2a:4");
     }
 
@@ -300,7 +287,7 @@ mod tests {
             addr_space: VnSpace::RAM,
             size: 8,
         };
-        let name = vn_to_display_name(&sleigh, &vn).unwrap();
+        let name = vn_to_display_name(&sleigh, &sleigh.regs().unwrap(), &vn);
         assert_eq!(name, "ram[0x1000]:8");
     }
 
@@ -312,7 +299,7 @@ mod tests {
             addr_space: VnSpace::UNIQUE,
             size: 1,
         };
-        let name = vn_to_display_name(&sleigh, &vn).unwrap();
+        let name = vn_to_display_name(&sleigh, &sleigh.regs().unwrap(), &vn);
         assert_eq!(name, "unique[0x80]:1");
     }
 
@@ -326,7 +313,7 @@ mod tests {
             .iter()
             .find_map(|&n| regs.name_to_vn(n).map(|v| (n, v)))
             .expect("no known register resolved");
-        let resolved = vn_to_display_name(&sleigh, &vn).unwrap();
+        let resolved = vn_to_display_name(&sleigh, &regs, &vn);
         assert_eq!(resolved, name);
     }
 
@@ -339,7 +326,7 @@ mod tests {
             addr_space: VnSpace::REGISTER,
             size: 1,
         };
-        let resolved = vn_to_display_name(&sleigh, &bogus).unwrap();
+        let resolved = vn_to_display_name(&sleigh, &sleigh.regs().unwrap(), &bogus);
         assert_eq!(resolved, "register[0xffffffffffffffff]:1");
     }
 
@@ -352,7 +339,7 @@ mod tests {
             addr_space: VnSpace::new(b'?'),
             size: 1,
         };
-        let resolved = vn_to_display_name(&sleigh, &exotic).unwrap();
+        let resolved = vn_to_display_name(&sleigh, &sleigh.regs().unwrap(), &exotic);
         assert_eq!(resolved, "?[0x0]:1");
     }
 }

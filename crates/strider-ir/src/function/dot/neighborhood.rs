@@ -100,6 +100,7 @@ impl<R: MemReader> FunctionDotDumper<'_, R> {
             entry: self.entry,
             function: self.function,
             sleigh: self.sleigh,
+            regs: std::borrow::Cow::Borrowed(&self.regs),
             node_to_arg_indices: self.node_to_arg_indices.clone(),
             nodes: Some(set),
             center: Some(center),
