@@ -235,11 +235,17 @@ pub fn trap_is_unconditional(name: &str, to_mask: Option<u128>) -> bool {
 const PURE: CallOtherClass = CallOtherClass::PURE;
 const MEM_CLOBBER: CallOtherClass = CallOtherClass::MEM_CLOBBER;
 
-/// ARM A-profile processor-mode switch: the ARM ARM banks `sp` and `lr` per
-/// mode, so the values live across one are not the ones that came in.
+/// ARM A-profile processor-mode switch: every mode banks R13/R14 and FIQ also
+/// banks R8-R12 (ARM ARM DDI 0406C B1.3.2), so the values live across one are
+/// not the ones that came in.  `ARM.sinc` defines `r13_svc` / `r14_svc` and
+/// uses them nowhere, so no banking is modelled and this list is the model.
+///
+/// The FIQ set is applied to all eight ops, not to `setFIQMode` alone: the
+/// switch OUT of FIQ un-banks R8-R12 just as the switch in banks them, and the
+/// incoming mode is not something the analyser knows.
 const ARM_MODE_SWITCH: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
     implicit_reads: &[],
-    implicit_writes: &["sp", "lr"],
+    implicit_writes: &["r8", "r9", "r10", "r11", "r12", "sp", "lr"],
     clobbers_memory: false,
     no_return: false,
 });
@@ -404,7 +410,15 @@ fn classify_ppc(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
     // `vsx<ver>_<n>`, and `vector<Op>`.  Reached only after `PPC_TABLE`, which
     // holds the nineteen `vsx*` forms whose memory access the sla leaves out of
     // the p-code; everything else in the three families is register compute
-    // over pcode-explicit operands.
+    // touching no RAM.
+    //
+    // Eight of them are register compute whose DESTINATION the sla drops, the
+    // `slbMoveFromEntryESID` case again: `vsx.sinc:1442` calls
+    // `vsx300_49(A,B)` with `XT` written nowhere, and the seven `BF`-writing
+    // compares `vsx300_29`/`30`/`34`/`35`/`74`/`75`/`76` (`:1359`, `:1363`,
+    // `:1379`, `:1383`, `:1543`, `:1547`, `:1551`) pass `BF2:1` as an INPUT.
+    // The destination is instruction-encoded, so no fixed register name could
+    // be listed here; the memory classification is unaffected.
     if name.starts_with("altv") || name.starts_with("vsx") || name.starts_with("vector") {
         return Some(PURE);
     }
@@ -634,8 +648,9 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     },
     // MONITOR (0F 01 C8) sets up an address-range monitor.  Sleigh emits
     // `monitor()` with zero pcode operands, so the register reads belong in
-    // `implicit_reads`.  Per Intel SDM Vol. 2B 4-39: RAX = linear address to
-    // monitor, ECX = extensions (must be 0), EDX = hints (must be 0).
+    // `implicit_reads`.  Per the Intel SDM `MONITOR` entry: RAX = linear
+    // address to monitor, ECX = extensions (must be 0), EDX = hints (must
+    // be 0).
     // Clobbers memory because it interacts with the cache subsystem and pairs
     // with a later MWAIT, though it does not mutate stack-frame contents.  AMD
     // MONITORX (0F 01 FA) shares the ABI per AMD64 Vol. 3.
@@ -661,10 +676,10 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         }),
     },
     // MWAIT (0F 01 C9) / MWAITX (0F 01 FB) enter a low-power state until the
-    // armed cache line is written.  Per Intel SDM Vol. 2B 4-44: EAX = hints,
-    // ECX = extensions (must be 0), no GPR writes.  Clobbers memory because it
-    // serialises with the prior MONITOR's cache-line arming and is a
-    // memory-order point; stack frames are unaffected.
+    // armed cache line is written.  Per the Intel SDM `MWAIT` entry:
+    // EAX = hints, ECX = extensions (must be 0), no GPR writes.  Clobbers
+    // memory because it serialises with the prior MONITOR's cache-line arming
+    // and is a memory-order point; stack frames are unaffected.
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["mwait", "mwaitx"],
@@ -723,7 +738,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &[
-            // AES-NI (`ia.sinc:10299-10349`), the whole block:
+            // AES-NI (`ia.sinc:10347-10399`), the whole block:
             // `XmmReg1 = <op>(XmmReg1, XmmReg2_m128)`.
             "aesdec",
             "aesdeclast",
@@ -731,15 +746,15 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             "aesenclast",
             "aesimc",
             "aeskeygenassist",
-            // `Reg32 = crc32(Reg32, rm8|rm16|rm32)` (`ia.sinc:10249-10256`).
+            // `Reg32 = crc32(Reg32, rm8|rm16|rm32)` (`ia.sinc:10297-10304`).
             "crc32",
             // `XmmReg1 = pblendvb(XmmReg1, XmmReg2_m128, XMM0)`
-            // (`ia.sinc:9929-9931`): the otherwise-implicit XMM0 is a listed
+            // (`ia.sinc:9977-9979`): the otherwise-implicit XMM0 is a listed
             // operand, like SHA256RNDS2 above.
             "pblendvb",
-            // MMX / SSE `psraw` (`ia.sinc:8913-8941`).
+            // MMX `psraw` (`ia.sinc:8930-8933`) and its SSE form (`:8962-8964`).
             "psraw",
-            // MOVNTDQA (`ia.sinc:10243`) is `XmmReg = movntdqa(XmmReg, m128)`:
+            // MOVNTDQA (`ia.sinc:10291`) is `XmmReg = movntdqa(XmmReg, m128)`:
             // a non-temporal LOAD whose access is the explicit `m128` p-code
             // Load, leaving the user-op itself pure.
             "movntdqa",
@@ -755,7 +770,8 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             "vpshufb_avx",
             "vpshufd_avx",
             "vpsrldq_avx",
-            // VMOVNTDQ (`avx.sinc:1259-1270`) is `m128 = vmovntdq_avx(XmmReg1)`:
+            // VMOVNTDQ (`avx.sinc:1267`, `:1273`) is
+            // `m128 = vmovntdq_avx(XmmReg1)`:
             // the non-temporal STORE is the explicit `m128` p-code Store, so
             // the user-op computes a value and touches no RAM itself.
             "vmovntdq_avx",
@@ -786,11 +802,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     },
     // x86 ops that DO reach memory without the p-code saying so.
     //
-    // MOVDIR64B (`ia.sinc:7290-7304`) is `movdir64b(Reg, m512)`: the 64-byte
+    // MOVDIR64B (`ia.sinc:7294-7308`) is `movdir64b(Reg, m512)`: the 64-byte
     // SOURCE read is the explicit `m512` Load, but the 64-byte destination
     // store to the address in `Reg` is modelled nowhere.
     //
-    // VIA PadLock XSHA256 (`ia.sinc:9881`) is `xsha256(ECX,ESI,EDI)`: it
+    // VIA PadLock XSHA256 (`ia.sinc:9928`) is `xsha256(ECX,ESI,EDI)`: it
     // streams ECX blocks from [ESI] and writes the digest at [EDI], with
     // neither access spelled in p-code.  ECX/ESI/EDI are listed operands, so
     // the register channel stays empty.
@@ -842,9 +858,9 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         ],
         class: PURE,
     },
-    // A processor-mode switch re-banks `sp` and `lr` (ARM ARM B1.3.2), so the
-    // frame the next instruction sees is not the one that flowed in.
-    // Arch-specific because `sp` and `lr` are ARM-32 register names, and
+    // A processor-mode switch re-banks the registers `ARM_MODE_SWITCH`
+    // names, so the frame the next instruction sees is not the one that flowed
+    // in.  Arch-specific because `r8`..`lr` are ARM-32 register names, and
     // `ARM.sinc` is the only vendored spec declaring these pcodeops.
     CallOtherRow {
         preset_arches: ARM32_ALL,
@@ -1108,7 +1124,14 @@ static ARCH_INDEPENDENT_TABLE: &[(&str, CallOtherClass)] = &[
     ("TLB_read_indexed_entryPageMask", PURE),
     ("getHWRegister", PURE),
     ("move_from_thread_cp0", PURE),
-    // MIPS PREF, an architectural no-op prefetch hint.
+    // MIPS PREF.  Every hint but one is architecturally a no-op; hint 25
+    // (`PrepareForStore`) leaves the target cache line UNPREDICTABLE, so it is
+    // a memory write this `PURE` does not model.  The sla passes the hint as a
+    // plain operand (`mips32Instructions.sinc:501`
+    // `prefetch(OFF_BASE, hint:1)`), so no row can separate the two.  `PURE`
+    // is the deliberate choice: a program reading the line a `pref 25` armed
+    // without writing it first is already unpredictable, and `MEM_CLOBBER`
+    // would break the memory edge at every prefetch hint in every MIPS binary.
     ("prefetch", PURE),
     // x86 reads into a register with no RAM effect: VERW (writes ZF),
     // RDPMC (perf counter into EDX:EAX, pcode-explicit like RDTSC), and
@@ -1560,8 +1583,8 @@ mod tests {
     #[test]
     fn monitor_mwait_implicit_register_channels() {
         // Sleigh emits `monitor()` / `mwait()` with zero pcode operands, so
-        // the register reads have to live in `implicit_reads`.  Per Intel SDM
-        // Vol. 2B 4-39 (MONITOR) and 4-44 (MWAIT).
+        // the register reads have to live in `implicit_reads`.  Per the Intel
+        // SDM `MONITOR` and `MWAIT` entries.
         let m64 = classify(crate::ArchPreset::X86_64, "monitor").expect("monitor x86_64");
         let CallOtherClass::Call(abi) = m64 else {
             panic!("expected Call(abi) for monitor")

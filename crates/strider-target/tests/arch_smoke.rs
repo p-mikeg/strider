@@ -66,3 +66,52 @@ fn presets_endianness_matches_arch() {
         );
     }
 }
+
+/// Every name `transient_decode_vars` returns must be a context var the
+/// preset's own sla declares: the lifter reads each through `get_context_at`
+/// and silently drops the ones that fail, so a misspelling leaves the var
+/// leaking across functions with no signal.
+#[test]
+fn transient_decode_vars_resolve_on_their_preset() {
+    for preset in ArchPreset::ALL {
+        let arch = preset.arch();
+        let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
+            .unwrap_or_else(|e| panic!("{preset:?}: Sleigh::new failed: {e:?}"));
+        for name in arch.transient_decode_vars() {
+            sleigh
+                .get_context_at(0, name)
+                .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e:?}"));
+        }
+    }
+}
+
+/// MIPS `PAIR_INSTRUCTION_FLAG` is `noflow` (`mips.sinc`) yet selects the
+/// `lwl`/`swl`/`ldl`/`sdl` constructor that performs the whole unaligned
+/// access, and `globalset(inst_next, ...)` paints it forward. Outside
+/// `FlowVars` by construction, so only this list makes a cold entry clear it.
+#[test]
+fn mips_presets_clear_the_pair_instruction_flag() {
+    for preset in [
+        ArchPreset::MipsBe32,
+        ArchPreset::MipsLe32,
+        ArchPreset::MipsBe64,
+        ArchPreset::MipsLe64,
+    ] {
+        assert_eq!(
+            preset.arch().transient_decode_vars(),
+            &["PAIR_INSTRUCTION_FLAG"],
+            "{preset:?}"
+        );
+    }
+    // ARM's three are unrelated and must not have picked it up.
+    for preset in [ArchPreset::Arm, ArchPreset::ArmThumb] {
+        let vars = preset.arch().transient_decode_vars();
+        assert!(!vars.contains(&"PAIR_INSTRUCTION_FLAG"), "{preset:?}");
+        assert!(vars.contains(&"LRset"), "{preset:?}");
+    }
+    assert!(
+        ArchPreset::X86_64.arch().transient_decode_vars().is_empty(),
+        "x86_64 declares none",
+    );
+}
