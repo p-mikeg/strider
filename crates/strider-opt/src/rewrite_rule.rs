@@ -168,10 +168,32 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
 /// One call walks the graph once, so a rule whose output its own LHS matches
 /// needs the caller to loop to a fixed point.
 ///
+/// Claims nothing about the program: [`apply_rules_count_with`] carries the
+/// assumptions the graph was optimized under.
+///
 /// # Errors
 ///
 /// Propagates the first error returned by any rule.
 pub fn apply_rules_count<R>(edit: &mut EditFunction<'_>, rules: &[R]) -> Result<usize>
+where
+    R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
+{
+    apply_rules_count_with(edit, rules, &crate::AssumptionOptions::none())
+}
+
+/// [`apply_rules_count`] under the assumptions the graph was optimized with, so
+/// the memory-class refill below classifies a heap base the way the pipeline
+/// did.  Rewriting under a narrower set than the pipeline used silently drops
+/// every heap access out of `heap_only()`.
+///
+/// # Errors
+///
+/// Propagates the first error returned by any rule.
+pub fn apply_rules_count_with<R>(
+    edit: &mut EditFunction<'_>,
+    rules: &[R],
+    assumptions: &crate::AssumptionOptions,
+) -> Result<usize>
 where
     R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
 {
@@ -193,7 +215,7 @@ where
     edit.clean();
     edit.function().side_tables().clear_memory_slots();
     edit.function().side_tables().clear_frame_escape();
-    crate::post_opt::stack_offset_detect::stamp_all(edit);
+    crate::post_opt::stack_offset_detect::stamp_all(edit, &assumptions.noalias_allocators);
     Ok(applied)
 }
 

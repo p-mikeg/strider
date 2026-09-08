@@ -86,7 +86,10 @@ pub struct AssumptionOptions {
     /// frame is provably private, so it carries the same two gaps
     /// [`escape_analysis`](Self::escape_analysis) documents, without that knob
     /// being set.
-    pub noalias_allocators: rustc_hash::FxHashSet<u64>,
+    ///
+    /// A shared handle: every `MemOptions` built for one run clones the same
+    /// set, so no analyzer walking a `Function` sees a different one.
+    pub noalias_allocators: std::sync::Arc<rustc_hash::FxHashSet<u64>>,
     /// When the function's frame is provably private (no stack address escapes
     /// to any callee), forward a spill `Load` across a `Call` and step it past
     /// an opaque (`Anchor`) store. Both rest on the same axiom: nothing outside
@@ -112,7 +115,7 @@ impl AssumptionOptions {
             assume_incoming_args_survive_calls: false,
             distinct_sp_bases_disjoint: false,
             callee_preserves_stack_args: false,
-            noalias_allocators: rustc_hash::FxHashSet::default(),
+            noalias_allocators: std::sync::Arc::default(),
             escape_analysis: false,
         }
     }
@@ -125,7 +128,7 @@ impl Default for AssumptionOptions {
             assume_incoming_args_survive_calls: true,
             distinct_sp_bases_disjoint: false,
             callee_preserves_stack_args: false,
-            noalias_allocators: rustc_hash::FxHashSet::default(),
+            noalias_allocators: std::sync::Arc::default(),
             escape_analysis: false,
         }
     }

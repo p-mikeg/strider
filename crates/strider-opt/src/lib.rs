@@ -7,7 +7,9 @@ mod pipeline;
 pub mod rewrite_rule;
 pub use error::Result;
 pub use options::{AssumptionOptions, OptOptions};
-pub use rewrite_rule::{BoxedRule, apply_rules_count, rewrite_rule, rewrite_rule_runtime};
+pub use rewrite_rule::{
+    BoxedRule, apply_rules_count, apply_rules_count_with, rewrite_rule, rewrite_rule_runtime,
+};
 pub use strider_ir::{EditFunction, FunctionState};
 
 mod const_eval;
