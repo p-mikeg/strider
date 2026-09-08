@@ -177,6 +177,13 @@ impl PostOptimizer for IndirectBranchClassify {
                 // `mode_value` is `None` there and every re-derived target
                 // reports no mode. Returning `None` keeps the seated arms and
                 // REPORTS the site unresolved: they may be a proper subset.
+                //
+                // A site can also STOP deriving as the CFG grows: a back edge
+                // puts the arms' `Call` on the path to the dispatch, and a
+                // table base held in a call-clobbered register is not a
+                // constant there. `mips32le/switch.elf::main` is that case; a
+                // per-`Call` `preserves_regs` override supplies the callee's
+                // real clobber set.
                 let resolved = if matches!(function.node_kind(node), NodeKind::Switch) {
                     // Fail closed like every other bail on this path: an absent
                     // node is not an unresolved one, so `continue` here would

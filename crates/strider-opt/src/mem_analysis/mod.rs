@@ -484,13 +484,6 @@ fn classify_store_addr(function: &Function, store_node: NodeId) -> AddrClass {
 /// A contiguous run of 1-bits over at least one low 0-bit, e.g. `0xFFFF_FFF0`.
 /// A low-bit mask like `0xF` is a bit-extraction, not a base, and zero /
 /// all-ones have no alignment effect, so all are rejected.
-///
-/// Not checked, and unsound where it matters: that the run reaches the top of
-/// the ADDRESS width. `sp & 0x10` and a 32-bit truncation mask both pass here
-/// and neither yields `sp` rounded down, so `stack_global_disjoint` can call
-/// such a base disjoint from a constant address it may equal. Under
-/// `AssumptionOptions::none()` the misclassification is inert -- every pair it
-/// reaches falls to `MayAlias`.
 fn is_alignment_mask(m: u128, width_bits: usize) -> bool {
     let tz = m.trailing_zeros();
     if tz == 0 || (tz as usize) >= width_bits || width_bits == 0 || width_bits > 128 {
@@ -1015,7 +1008,9 @@ fn scan_arg_window(
             };
         }
         let store = match scan.reach_at(function, slot_off) {
-            SlotReach::Anchored(hit) => hit,
+            // A partly overwritten anchor still marks bytes the caller wrote,
+            // which is all the window asks.
+            SlotReach::Anchored { store, .. } => store,
             // Nothing the caller wrote as an argument reaches the slot, so the
             // argument list ends below it.
             //
@@ -1078,6 +1073,9 @@ pub(crate) struct ArgStoreScan {
     /// Anchor offset -> the store anchored there, for the anchors no nearer
     /// store already covers.
     anchored: FxHashMap<i128, ReachingSpStore>,
+    /// Anchored offsets a nearer store overwrote in part: the range is still
+    /// written, the anchor's data is no longer its value.
+    overwritten: FxHashSet<i128>,
     /// A loop back-edge can put an already-scanned store back on the chain
     /// below itself, which would make the resume loop forever.
     seen: FxHashSet<NodeId>,
@@ -1103,6 +1101,7 @@ impl ArgStoreScan {
             cursor: Some(mem_start),
             covered: BTreeMap::new(),
             anchored: FxHashMap::default(),
+            overwritten: FxHashSet::default(),
             seen: FxHashSet::default(),
             stopped_at: None,
         }
@@ -1128,7 +1127,13 @@ impl ArgStoreScan {
                 self.probe
                     .nearest_sp_clobber(function, self.mem_start, self.base, slot_off, 1);
             return match self.probe.anchored_store(function, def, self.base) {
-                Some(hit) if hit.store_offset == slot_off => SlotReach::Anchored(hit),
+                Some(hit) if hit.store_offset == slot_off => {
+                    let end = slot_off.saturating_add(hit.size(function));
+                    SlotReach::Anchored {
+                        store: hit,
+                        whole: !range_overlaps(&self.covered, slot_off, end),
+                    }
+                }
                 // Anchored below the slot: it covers the slot without the
                 // caller ever having written the slot itself.
                 Some(_) => SlotReach::NotAnArgument,
@@ -1136,7 +1141,10 @@ impl ArgStoreScan {
             };
         }
         match self.anchored.get(&slot_off) {
-            Some(hit) => SlotReach::Anchored(*hit),
+            Some(hit) => SlotReach::Anchored {
+                store: *hit,
+                whole: !self.overwritten.contains(&slot_off),
+            },
             // A store anchored below covers the slot, so the slot was not
             // written as a slot.
             None => SlotReach::NotAnArgument,
@@ -1159,16 +1167,18 @@ impl ArgStoreScan {
             self.stopped_at = Some(def);
             return false;
         };
+        let end = hit.store_offset.saturating_add(hit.size(function));
         // A store an already-scanned one covers is not the nearest reaching
-        // def of its own anchor, so it must not claim that anchor.
+        // def of its own anchor, so it must not claim that anchor.  One
+        // overlapped past its start keeps the anchor, since the range is still
+        // written, but a nearer store owns some of its bytes.
         if !range_covers(&self.covered, hit.store_offset) {
             self.anchored.insert(hit.store_offset, hit);
+            if range_overlaps(&self.covered, hit.store_offset, end) {
+                self.overwritten.insert(hit.store_offset);
+            }
         }
-        add_range(
-            &mut self.covered,
-            hit.store_offset,
-            hit.store_offset.saturating_add(hit.size(function)),
-        );
+        add_range(&mut self.covered, hit.store_offset, end);
         self.cursor = function.memory_input_of(def);
         true
     }
@@ -1176,8 +1186,10 @@ impl ArgStoreScan {
 
 /// What reaches one argument slot on a call's memory chain.
 pub(crate) enum SlotReach {
-    /// A store anchored exactly at the slot.
-    Anchored(ReachingSpStore),
+    /// A store anchored exactly at the slot.  `whole` is false when a nearer
+    /// store overwrote part of it: the caller still wrote the range, but the
+    /// anchor's data is not what the slot holds.
+    Anchored { store: ReachingSpStore, whole: bool },
     /// A visible def that is not a store anchored at the slot, so the caller
     /// did not write it as an argument.
     NotAnArgument,
@@ -1224,6 +1236,16 @@ fn range_covers(set: &BTreeMap<i128, i128>, point: i128) -> bool {
     set.range(..=point)
         .next_back()
         .is_some_and(|(_, &e)| e > point)
+}
+
+/// Whether any covered byte lies in `[start, end)`.
+fn range_overlaps(set: &BTreeMap<i128, i128>, start: i128, end: i128) -> bool {
+    end > start
+        && (set
+            .range(..start)
+            .next_back()
+            .is_some_and(|(_, &e)| e > start)
+            || set.range(start..end).next().is_some())
 }
 
 /// Does the access `[base + offset, base + offset + size)` lie wholly in THIS
