@@ -6,16 +6,15 @@
 //! `Phi` produces a value output at slot 0; `MemPhi` produces a memory token
 //! there and implements [`MemPat`] so a `load` / `store` can chain off it.
 
+use super::delegate_node_pat;
 use crate::node_builders::delegate_with_output;
 use strider_ir::IRViewer;
 use strider_ir::node::NodeKind;
 
-use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{KindSpec, MatcherBuilder, NodePredicate, PatValueRef, Pattern};
 
 use super::MemPat;
-use super::flow::OutputPat;
 use super::node_pat::NodePat;
 
 /// Requires the matched `Phi`'s `value_vn` tag to contain `vn`.
@@ -43,21 +42,6 @@ impl PhiPat {
         self
     }
 
-    /// Raw input slot `slot`, unshifted: slot 0 is the phi token,
-    /// predecessor `i`'s value is slot `i + 1`.
-    pub fn input<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
-        self.inner = self.inner.input(slot, p);
-        self
-    }
-
-    /// Matches some incoming value predecessor without pinning one. A typed
-    /// sub matches only value predecessors; `var` / `anything` also binds the
-    /// `PhiToken` ownership edge.
-    pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.inner = self.inner.input_any(p);
-        self
-    }
-
     /// The ownership edge: raw slot 0, carrying the owning `Region`'s
     /// `PhiToken` output.
     pub fn phi_token<P: MatchPat + 'static>(mut self, p: P) -> Self {
@@ -69,24 +53,6 @@ impl PhiPat {
     /// `vn`, so a sub-register matches its container's phi.
     pub fn for_vn(mut self, vn: rsleigh::Vn) -> Self {
         self.var_filter = Some(vn);
-        self
-    }
-
-    /// The one output, at slot 0. Returns a terminal taking one of
-    /// `.capture(c)`, `.of_width(w)`, `.of_type(ty)`.
-    pub fn output(self, slot: usize) -> OutputPat<Self> {
-        OutputPat::at(self, Some(slot))
-    }
-
-    /// Some output rather than a fixed slot; otherwise
-    /// [`output`](Self::output).
-    pub fn any_output(self) -> OutputPat<Self> {
-        OutputPat::at(self, None)
-    }
-
-    /// Binds the value output.
-    pub fn capture(mut self, c: Capture) -> Self {
-        self.inner = self.inner.capture(c);
         self
     }
 
@@ -120,6 +86,7 @@ pub fn phi() -> PhiPat {
 }
 
 delegate_with_output!(PhiPat, inner);
+delegate_node_pat!(PhiPat, inner, [capture, input, any_input]);
 
 /// A [`phi`] pre-narrowed by [`PhiPat::for_vn`].
 pub fn phi_for(vn: rsleigh::Vn) -> PhiPat {
@@ -137,43 +104,9 @@ impl MemPhiPat {
         Self(self.0.input_mem(NodeKind::MemPhi.input_head_len() + idx, p))
     }
 
-    /// Raw input slot `slot`, unshifted: slot 0 is the phi token,
-    /// predecessor `i`'s memory token is slot `i + 1`.
-    pub fn input<P: MatchPat + 'static>(self, slot: usize, p: P) -> Self {
-        Self(self.0.input(slot, p))
-    }
-
-    /// Candidates are every input a fixed operand has not pinned: `PhiToken`
-    /// at slot 0 and each memory predecessor after it. A typed value sub binds
-    /// neither; only `var` / `anything` reaches them. Repeatable.
-    pub fn any_input<P: MatchPat + 'static>(self, p: P) -> Self {
-        Self(self.0.input_any(p))
-    }
-
     /// See [`PhiPat::phi_token`].
     pub fn phi_token<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input(0, p))
-    }
-
-    /// The one output, at slot 0. Returns a terminal taking one of
-    /// `.capture(c)`, `.of_width(w)`, `.of_type(ty)`.
-    pub fn output(self, slot: usize) -> OutputPat<Self> {
-        OutputPat::at(self, Some(slot))
-    }
-
-    /// Some output rather than a fixed slot; otherwise
-    /// [`output`](Self::output).
-    pub fn any_output(self) -> OutputPat<Self> {
-        OutputPat::at(self, None)
-    }
-
-    /// Binds the memory-token output.
-    pub fn capture(self, c: Capture) -> Self {
-        Self(self.0.capture(c))
-    }
-
-    pub fn build(self) -> Pattern {
-        self.0.build()
     }
 }
 
@@ -191,3 +124,4 @@ pub fn mem_phi() -> MemPhiPat {
 }
 
 delegate_with_output!(MemPhiPat, 0);
+delegate_node_pat!(MemPhiPat, 0, [capture, build, input, any_input]);
