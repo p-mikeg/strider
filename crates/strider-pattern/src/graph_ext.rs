@@ -4,8 +4,7 @@
 //! slot 4. The generic graph stores inputs densely, so each input's original
 //! consumer slot rides on the node payload ([`HasInputSlots::input_slots`]),
 //! parallel to the generic graph's input order.
-//! [`consumed_inputs`](PatGraphRead::consumed_inputs) zips the two back
-//! together.
+//! [`consumed_inputs`] zips the two back together.
 
 use anyhow::anyhow;
 use petgraph::visit::{DfsPostOrder, Reversed, Walker};
@@ -18,67 +17,44 @@ pub(crate) trait HasInputSlots {
     fn input_slots(&self) -> &[usize];
 }
 
-pub(crate) trait PatGraphRead<N: HasInputSlots, V> {
-    fn node_weight(&self, node: NodeId) -> &N;
-    fn output_weight(&self, value: ValueId) -> &V;
-    fn producer_of(&self, value: ValueId) -> NodeId;
-    /// Recovers each input's sparse consumer slot from the node payload.
-    fn consumed_inputs(&self, node: NodeId) -> Vec<(usize, ValueId)>;
-    /// Borrows the generic graph's contiguous output slice.
-    fn produced_outputs(&self, node: NodeId) -> &[ValueId];
-    /// The root is the unique sink, derived structurally rather than stored.
-    ///
-    /// # Errors
-    /// Unless there is exactly one sink: zero means rootless or cyclic, more
-    /// than one means multi-rooted.
-    fn derive_root(&self) -> anyhow::Result<NodeId>;
+/// Recovers each input's sparse consumer slot from the node payload.
+pub(crate) fn consumed_inputs<N: HasInputSlots, V>(
+    graph: &Graph<N, V, NeverCacheable>,
+    node: NodeId,
+) -> Vec<(usize, ValueId)> {
+    let slots = graph.node_kind(node).input_slots();
+    graph
+        .node_inputs(node)
+        .into_iter()
+        .enumerate()
+        .map(|(i, value)| (slots[i], value))
+        .collect()
 }
 
-impl<N: HasInputSlots, V> PatGraphRead<N, V> for Graph<N, V, NeverCacheable> {
-    fn node_weight(&self, node: NodeId) -> &N {
-        self.node_kind(node)
-    }
-
-    fn output_weight(&self, value: ValueId) -> &V {
-        self.value_kind_ref(value)
-    }
-
-    fn producer_of(&self, value: ValueId) -> NodeId {
-        self.producer(value)
-    }
-
-    fn consumed_inputs(&self, node: NodeId) -> Vec<(usize, ValueId)> {
-        let slots = self.node_kind(node).input_slots();
-        self.node_inputs(node)
-            .into_iter()
-            .enumerate()
-            .map(|(i, value)| (slots[i], value))
-            .collect()
-    }
-
-    fn produced_outputs(&self, node: NodeId) -> &[ValueId] {
-        self.node_outputs(node)
-    }
-
-    fn derive_root(&self) -> anyhow::Result<NodeId> {
-        let sinks: Vec<NodeId> = self
-            .all_node_ids()
-            .filter(|&node| {
-                self.node_outputs(node)
-                    .iter()
-                    .all(|&out| self.value_uses(out).next().is_none())
-            })
-            .collect();
-        match sinks.as_slice() {
-            [only] => Ok(*only),
-            [] => Err(anyhow!(
-                "pattern graph has no sink node (rootless or cyclic)"
-            )),
-            many => Err(anyhow!(
-                "pattern graph has {} sink nodes; expected exactly one (multi-rooted)",
-                many.len()
-            )),
-        }
+/// The root is the unique sink, derived structurally rather than stored.
+///
+/// # Errors
+/// Unless there is exactly one sink: zero means rootless or cyclic, more than
+/// one means multi-rooted.
+pub(crate) fn derive_root<N, V>(graph: &Graph<N, V, NeverCacheable>) -> anyhow::Result<NodeId> {
+    let sinks: Vec<NodeId> = graph
+        .all_node_ids()
+        .filter(|&node| {
+            graph
+                .node_outputs(node)
+                .iter()
+                .all(|&out| graph.value_uses(out).next().is_none())
+        })
+        .collect();
+    match sinks.as_slice() {
+        [only] => Ok(*only),
+        [] => Err(anyhow!(
+            "pattern graph has no sink node (rootless or cyclic)"
+        )),
+        many => Err(anyhow!(
+            "pattern graph has {} sink nodes; expected exactly one (multi-rooted)",
+            many.len()
+        )),
     }
 }
 

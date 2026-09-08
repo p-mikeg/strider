@@ -15,9 +15,14 @@ pub trait MatchPat: Sized + Send {
         self.compile(b)
     }
 
+    /// Nothing consumes the root's output, so a value anchor there also
+    /// accepts the memory token of a node producing no value at all: a `Call`
+    /// under a convention with no return or clobber registers, which
+    /// `NodePat::build` reaches through its memory anchor.
     fn into_pattern(self) -> Pattern {
         let mut b = MatcherBuilder::new();
-        self.compile(&mut b);
+        let root = self.compile(&mut b);
+        b.set_token_fallback(root);
         b.finish()
     }
 }
