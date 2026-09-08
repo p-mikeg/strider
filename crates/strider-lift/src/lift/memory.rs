@@ -84,7 +84,11 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             opaque_clobber_set(self.builder.function().all_vns()).collect();
         for vn in clobbered {
             let ty = vn.int_type()?;
-            let slot = self.builder.build_int_const(u128::from(vn.addr_off), ty)?;
+            // Slot width is the SPACE's; at `ty` the offset masks to the
+            // register's own width and distinct registers share one slot
+            // (ppc `cr0` 0x900 and `xer_so` 0x400 both land on 0).
+            let slot =
+                self.build_addr_const(rsleigh::VnSpace::REGISTER, vn.addr_off, "REGISTER space")?;
             let value = self
                 .builder
                 .build_load(slot, rsleigh::VnSpace::REGISTER, ty)?;
