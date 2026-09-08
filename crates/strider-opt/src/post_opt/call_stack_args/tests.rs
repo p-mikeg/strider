@@ -1159,7 +1159,7 @@ fn collect_walk_steps(slots: usize) -> Result<u64> {
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let call_id = find_call(fg.graph())?;
-    let alias_cfg = MemAnalyzer::new(MemOptions::call_blocking(true));
+    let alias_cfg = MemAnalyzer::new(MemOptions::call_blocking(true, &Default::default()));
     crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
     let args = collect_stack_args(&fg, call_id, stack_args, &alias_cfg);
     assert_eq!(args.len(), slots, "every argument slot must be collected");

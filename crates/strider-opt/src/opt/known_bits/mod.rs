@@ -1,7 +1,7 @@
 use cranelift_entity::SecondaryMap;
 use entity_utils::{DenseEntitySet, Worklist};
 
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType, low_bits_mask_u128};
 use strider_ir::{ExtendOp, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 
 use crate::error::Result;
@@ -168,9 +168,9 @@ pub(crate) fn node_known_bits(
             let l = known[lhs];
             let r = known[rhs];
             match op {
-                // Every arm masks to `type_mask`: an operand may legally be
-                // wider than this node's output, and its above-width known bits
-                // must not leak into these facts.
+                // Every arm masks to `type_mask`, defensively: the graph is
+                // not re-validated mid-pipeline, and an operand's above-width
+                // known bits must not leak into these facts.
                 IntBinaryOp::And => KnownBitsFacts {
                     ones: l.ones & r.ones & type_mask,
                     zeros: (l.zeros | r.zeros) & type_mask,
@@ -272,13 +272,8 @@ pub(crate) fn node_known_bits(
             // `8 * byte_size`, the width Sleigh counts over
             // (`opbehavior.cc:791`); only `I1` differs from `bit_width`.
             let max_val = (input_ty.byte_size() * 8) as u64;
-            let bits_needed = u64::from(u64::BITS - max_val.leading_zeros());
-            let result_mask = if bits_needed >= 128 {
-                u128::MAX
-            } else {
-                (1u128 << bits_needed) - 1
-            };
-            let upper_zeros = type_mask & !result_mask;
+            let bits_needed = (u64::BITS - max_val.leading_zeros()) as usize;
+            let upper_zeros = type_mask & !low_bits_mask_u128(bits_needed);
             KnownBitsFacts {
                 ones: 0,
                 zeros: upper_zeros,
