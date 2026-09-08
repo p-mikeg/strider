@@ -7,13 +7,12 @@ use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind};
 
 /// Whether `node` has a single output with no uses.
-fn all_uses_go_through_inline(graph: &Graph, node: NodeId) -> bool {
+fn has_one_unused_output(graph: &Graph, node: NodeId) -> bool {
     let outputs = graph.node_outputs(node);
     if outputs.len() != 1 {
         return false;
     }
-    let value = outputs[0];
-    graph.value_uses(value).count() == 0
+    graph.value_uses(outputs[0]).next().is_none()
 }
 
 impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
@@ -49,7 +48,7 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
         out: &mut ::dot::DotEmitter,
         state: &mut Self::State,
     ) -> core::result::Result<(), Self::Error> {
-        let Some(cur_id) = self.try_declare_node(node, out, state)? else {
+        let Some(cur_id) = self.try_declare_node(node, out, state) else {
             return Ok(());
         };
         let kind = *self.function.node_kind(node);
@@ -59,7 +58,7 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
         }
 
         for (idx, parent_value) in self.function.node_inputs(node).into_iter().enumerate() {
-            self.emit_input_edge(node, &cur_id, kind, idx, parent_value, out, state)?;
+            self.emit_input_edge(node, &cur_id, kind, idx, parent_value, out, state);
         }
 
         Ok(())
@@ -74,21 +73,21 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         node: NodeId,
         out: &mut ::dot::DotEmitter,
         state: &mut FunctionDotDumperState,
-    ) -> std::io::Result<Option<String>> {
+    ) -> Option<String> {
         let kind = *self.function.node_kind(node);
         if state.renders_per_use(self.function.graph(), node) {
-            return Ok(None);
+            return None;
         }
         if matches!(kind, NodeKind::InitialVar(_))
-            && all_uses_go_through_inline(self.function.graph(), node)
+            && has_one_unused_output(self.function.graph(), node)
         {
-            return Ok(None);
+            return None;
         }
 
         let cur_id = state.get_dot_id(self.function.graph(), node);
 
         // Arg carrier nodes get an "[arg N]" prefix and a double border.
-        let base_label = self.pretty_label(node)?;
+        let base_label = self.pretty_label(node);
         let label = if let Some(tags) = self.node_to_arg_indices.get(&node) {
             let tag: String = tags
                 .iter()
@@ -113,7 +112,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         }
 
         out.node(&cur_id, &label, node_shape(&kind), &extra);
-        Ok(Some(cur_id))
+        Some(cur_id)
     }
 
     /// Reuses any virtual a previously-rendered consumer already created.
@@ -177,7 +176,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         parent_value: crate::node::ValueId,
         out: &mut ::dot::DotEmitter,
         state: &mut FunctionDotDumperState,
-    ) -> core::result::Result<(), std::io::Error> {
+    ) {
         let parent_id = self.function.producer(parent_value);
         // Restricted render: drop edges whose producer is out of view.
         if self
@@ -185,7 +184,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             .as_ref()
             .is_some_and(|set| !set.contains(&parent_id))
         {
-            return Ok(());
+            return;
         }
         let parent_kind = *self.function.node_kind(parent_id);
 
@@ -198,7 +197,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             } else if parent_kind == NodeKind::Call {
                 let (_, output_index) = self.function.value_definition(parent_value);
                 if output_index >= 2 {
-                    let name = self.call_clobbered_name(parent_value)?;
+                    let name = self.call_clobbered_name(parent_value);
                     let label = format!("Post Call\n{name}");
                     let virt_id = state.alloc_virtual_id();
                     let call_dot_id = state.get_dot_id(self.function.graph(), parent_id);
@@ -247,7 +246,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             Some(format!("ref{idx}"))
         } else if matches!(kind, NodeKind::Return) && idx >= 2 {
             // Slots 2.. are the convention's return registers in ABI order.
-            self.return_ret_name(idx)?
+            self.return_ret_name(idx)
         } else {
             pred_index(kind, idx).map(|pred| format!("pred{pred}"))
         };
@@ -265,7 +264,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         if state.renders_per_use(self.function.graph(), parent_id) {
             self.emit_const_node(parent_id, &parent_dot_id, out);
         }
-        Ok(())
     }
 }
 

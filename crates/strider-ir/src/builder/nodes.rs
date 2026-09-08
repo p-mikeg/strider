@@ -82,7 +82,9 @@ impl FunctionBuilder {
         Ok(node)
     }
 
-    /// Terminates the current region with an unconditional branch to `dest`.
+    /// Test-only: terminates the current region with an unconditional branch
+    /// to `dest`.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn build_branch(&mut self, dest: RegionId) -> Result<()> {
         let res = self.terminate_cur_region()?;
         self.require_terminator_kinds(&res)?;

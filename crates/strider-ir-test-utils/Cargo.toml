@@ -8,10 +8,10 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-# `test-util` exposes the build_call_cc / build_call_other_abi convenience
-# constructors this crate's `tb.rs` builders use. This is a NORMAL dependency,
-# so a workspace-wide build resolves strider-ir with the feature on; only the
-# wheel, which never depends on this crate, resolves it without.
+# `test-util` exposes the build_call_cc / build_call_other_abi / build_branch
+# convenience constructors this crate's `tb.rs` builders use. This is a NORMAL
+# dependency, so a workspace-wide build resolves strider-ir with the feature on;
+# only the wheel, which never depends on this crate, resolves it without.
 strider-ir = { workspace = true, features = ["test-util"] }
 strider-target = { workspace = true }
 rsleigh.workspace = true
