@@ -4,17 +4,17 @@
 //! A sla marks some context variables as *flowing*: the ISA mode (ARM `TMode`,
 //! ppc `vle`) plus per-instruction decode internals (condition eval, IT-block
 //! state, register-list iteration, x86 operand/address size) Sleigh flows
-//! along straight-line code. x86-64 flows dozens of them, so snapshot / reset /
-//! restore do real work on every arch; only the mode-bit helpers are
+//! along straight-line code. x86-64 flows dozens of them, so snapshotting and
+//! pinning do real work on every arch; only the mode-bit helpers are
 //! ARM/MIPS-specific, and nothing wires them to ppc `vle`.
 //!
 //! Like GHIDRA's `ContextDatabase`, the context is a value committed per
-//! address. Reset every flowing var at a cold entry (undo a prior function's
-//! leak on a reused engine), then before decoding a region restore every var to
-//! the value that flowed to it (its *captured* context), so a region Sleigh
-//! never straight-line-flowed to (a strider-resolved indirect target, a backward
-//! edge) still decodes in it. An interworking resolved branch bakes its own
-//! ISA-mode bit into the captured context it hands the target (see
+//! address. Pin a cold entry back to the pspec defaults (undo a prior
+//! function's leak on a reused engine), then before decoding a region pin every
+//! var to the value that flowed to it (its *captured* context), so a region
+//! Sleigh never straight-line-flowed to (a strider-resolved indirect target, a
+//! backward edge) still decodes in it. An interworking resolved branch bakes
+//! its own ISA-mode bit into the captured context it hands the target (see
 //! [`FlowVars::with_mode_bit`]).
 
 /// The context vars the sla marks as flowing. Constant per sla, so the lift
@@ -79,42 +79,6 @@ impl FlowVars {
         )
     }
 
-    /// Pin `addr`'s context back to `defaults`, undoing any commit that
-    /// forward-held into this cold entry from a prior function on a reused
-    /// engine.  `pin_at` writes only what differs, so a clean entry costs no
-    /// parse-cache invalidation.
-    pub fn reset_at<R: rsleigh::MemReader>(
-        &self,
-        sleigh: &mut rsleigh::Sleigh<R>,
-        addr: u64,
-        defaults: &FlowContext,
-    ) -> crate::Result<()> {
-        self.pin_at(sleigh, addr, defaults)?;
-        Ok(())
-    }
-
-    /// Restore `addr`'s context to `want`, the context captured for the edge
-    /// reaching this region, undoing a sibling region's forward-hold clobber
-    /// since.
-    ///
-    /// Several sla context vars alias the ISA-mode bit (ARM `TMode`, `T`,
-    /// `LowBitCodeMode`, `ISA_MODE` all at bit (0,0)), so `pin_at`'s diff can
-    /// write an alias last and flip the intended mode. Repairing that is
-    /// `RegionBuilder::hold_isa_mode`'s job, not this one: `explore` always
-    /// follows this call with a `RegionBuilder` whose first act is a
-    /// `lift_one` on this same address, and that repair runs unconditionally
-    /// where a repair here would additionally be gated on `pin_at` having
-    /// written at all.
-    pub fn restore_at<R: rsleigh::MemReader>(
-        &self,
-        sleigh: &mut rsleigh::Sleigh<R>,
-        addr: u64,
-        want: &FlowContext,
-    ) -> crate::Result<()> {
-        self.pin_at(sleigh, addr, want)?;
-        Ok(())
-    }
-
     /// `ctx`'s value for the flow var named `var`, or `None` if not a flow var
     /// or `ctx` is not one of ours (a default-constructed `function_mode`).
     #[must_use]
@@ -131,9 +95,12 @@ impl FlowVars {
         self.vars.iter().any(|n| n == name)
     }
 
-    /// Set only the vars where `addr`'s current context disagrees with `want`,
-    /// returning whether anything was written.  A `set_context_at` flushes
-    /// Sleigh's whole parse cache, so an all-agreeing context must cost none.
+    /// Commit `want` at `addr`, overwriting whatever flowed or forward-held
+    /// there.
+    ///
+    /// Only the vars where `addr`'s current context disagrees are written.  A
+    /// `set_context_at` flushes Sleigh's whole parse cache, so an all-agreeing
+    /// context must cost none.
     ///
     /// Writes are FLOWING, so anything painted here holds until the next explicit
     /// change point. ARM's IT-block vars (`itmode` `(5,5)`, `cond_mask`
@@ -143,19 +110,17 @@ impl FlowVars {
     /// bits at once, so several of the overlapping views do enter one diff. That
     /// is safe: `want` for this group is always a whole snapshot, so the
     /// overlapping views write the same value to every bit they share.
-    fn pin_at<R: rsleigh::MemReader>(
+    pub fn pin_at<R: rsleigh::MemReader>(
         &self,
         sleigh: &mut rsleigh::Sleigh<R>,
         addr: u64,
         want: &FlowContext,
-    ) -> crate::Result<bool> {
+    ) -> crate::Result<()> {
         let current = self.snapshot(sleigh, addr);
-        let mut wrote = false;
         for (name, value) in self.diff(&current, want) {
             sleigh.set_context_at(addr, name, value)?;
-            wrote = true;
         }
-        Ok(wrote)
+        Ok(())
     }
 
     /// `base` with the flow var named `var` set to `bit`, used to bake a
@@ -227,7 +192,7 @@ mod tests {
     }
 
     #[test]
-    fn reset_diff_reports_all_disagreeing_vars() {
+    fn diff_reports_all_disagreeing_vars() {
         let vars = arm_like();
         let have = FlowContext(vec![1, 1]);
         let want = FlowContext(vec![0, 0]);
@@ -308,7 +273,7 @@ mod tests {
     /// (`bindings.cpp`'s `invalidateDisassembly`), so re-imposing the ISA-mode
     /// var when nothing was written costs a re-decode of every region.
     #[test]
-    fn restore_at_over_a_matching_context_does_not_flush_the_parse_cache() {
+    fn pin_at_over_a_matching_context_does_not_flush_the_parse_cache() {
         let (mut sleigh, reads) = counting_arm_sleigh();
         let flow = FlowVars::discover(&sleigh).expect("discover flow vars");
         let want = flow.snapshot(&sleigh, 0x1000);
@@ -318,14 +283,13 @@ mod tests {
         sleigh.lift_one(0x1000).expect("re-lift");
         let cached_lift = reads.get() - before;
 
-        flow.restore_at(&mut sleigh, 0x1000, &want)
-            .expect("restore_at");
+        flow.pin_at(&mut sleigh, 0x1000, &want).expect("pin_at");
         let before = reads.get();
-        sleigh.lift_one(0x1000).expect("lift after restore");
+        sleigh.lift_one(0x1000).expect("lift after pin");
         assert_eq!(
             reads.get() - before,
             cached_lift,
-            "restoring a context that already matches re-decoded the instruction",
+            "pinning a context that already matches re-decoded the instruction",
         );
     }
 
@@ -343,21 +307,22 @@ mod tests {
             sleigh.set_context_at(0x1000, name, 0).expect("clear");
         }
         let want = FlowContext(vec![1, 1]);
-        assert!(
-            vars.pin_at(&mut sleigh, 0x1000, &want).expect("pin"),
+        vars.pin_at(&mut sleigh, 0x1000, &want).expect("pin");
+        assert_eq!(
+            vars.snapshot(&sleigh, 0x1000),
+            want,
             "a differing context must be written"
         );
-        assert_eq!(vars.snapshot(&sleigh, 0x1000), want);
     }
 
     /// The real ARM sla declares four flow vars at the same bit `(0,0)`:
     /// `TMode`, `T`, `LowBitCodeMode`, `ISA_MODE`. A resolved interworking target
     /// that switches a Thumb function to ARM sets only `TMode` to 0 in the
     /// carried context; the three aliases stay at the Thumb value, and
-    /// `restore_at`'s diff writes them last, clobbering the intended mode. The
+    /// `pin_at`'s diff writes them last, clobbering the intended mode. The
     /// ISA-mode var must be re-imposed last so the target decodes as ARM.
     #[test]
-    fn restore_at_reimposes_isa_mode_var_over_its_sla_aliases() {
+    fn pin_at_reimposes_isa_mode_var_over_its_sla_aliases() {
         use rsleigh::mem_readers::BufMemReader;
         use strider_target::SleighArch;
         let arch = SleighArch::arm();
@@ -384,15 +349,14 @@ mod tests {
         let carried = flow.with_mode_bit(&function_mode, "TMode", false);
 
         // The target's live context is ARM-default (not yet Thumb-painted): all
-        // four bit-(0,0) aliases read 0 there, so restoring the carried context
+        // four bit-(0,0) aliases read 0 there, so pinning the carried context
         // sees the three aliases DIFFER (0 vs the Thumb 1) and writes them.
         sleigh
             .set_context_at(0x2000, "TMode", 0)
             .expect("arm-default target");
-        flow.restore_at(&mut sleigh, 0x2000, &carried)
-            .expect("restore_at");
+        flow.pin_at(&mut sleigh, 0x2000, &carried).expect("pin_at");
         // `pin_at`'s diff writes the bit-(0,0) aliases, which can land after
-        // `TMode` and flip it. `restore_at` no longer repairs that;
+        // `TMode` and flip it. `pin_at` does not repair that;
         // `RegionBuilder::hold_isa_mode` does, unconditionally, on the
         // `lift_one` that `explore` always follows this call with. The
         // end-to-end guarantee is pinned by
