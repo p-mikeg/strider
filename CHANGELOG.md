@@ -3,6 +3,8 @@
 ## 0.2.0
 
 Both the Python and the Rust surfaces changed; the two are listed separately.
+The shape each API settled into is in
+[docs/python-api.md](docs/python-api.md).
 
 ### Breaking, Python
 
@@ -14,24 +16,31 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `arch` / `reader()` / `rom()` to work off-thread. `BufferReader` and a loaded
   ELF became `Arc<Mutex<_>>` to make that safe.
 
-- A `CallingConvention.custom(sleigh, ..)` or `CallOtherAbi.custom(sleigh, ..)`
-  resolves register names against the `Sleigh` it is given and freezes the
-  varnodes, so using one with a `Lifter` of another architecture now raises.
-  It used to analyse silently against the wrong varnodes: an x86-64 function
-  under a convention built from a 32-bit `Sleigh` simply had no arguments.
+- `CallingConvention.custom(sleigh, ..)` resolves register names against the
+  `Sleigh` it is given and freezes the varnodes, so using one with a `Lifter`
+  of another architecture now raises. It used to analyse silently against the
+  wrong varnodes: an x86-64 function under a convention built from a 32-bit
+  `Sleigh` simply had no arguments.
 - `cc.no_return()` passed as `analyze`'s main `cc` raises. It was
   silently dropped there and only ever meant anything as a `per_address_ccs`
   override.
-- `Match[capture]` raises once the function has been compacted, like every other
-  capture accessor. It used to succeed and leave the failure to the next read.
+- `capture in match` raises once the function has been compacted, like every
+  other capture accessor. `__contains__` answered out of the stale arena, where
+  every reader beside it already checked the graph generation.
+- `Match[capture]` returns a `BoundCapture` carrying every reader (`.uint`,
+  `.node`, `.op`, ... and their `_opt` forms), where v0.1.0 returned the value
+  itself: a bool, else an int, else raw float bits, else `None`. Numeric use is
+  unchanged (`m[off] == 4`, `int(m[off])`), but `m[c] is None` no longer tests
+  for an unbound capture: a `BoundCapture` is never `None`, so the check
+  silently inverts. Ask `c in m` instead, or read `m[c].uint_opt` for a value
+  that may not be a constant.
 - `float_is_nan(p)` and `float_le(a, b)` require the operand each repeats to be
   the SAME value, so they match strictly fewer shapes. `float_is_nan` previously
   matched every lowered `float_ne`.
-- `switch().output(n)` binds the arm at slot `n`. It used to bind every arm, one
-  match each.
 - A `.when()` predicate whose matched root is a control or memory edge, or a
-  node with no value output, now fails the match instead of being handed a
-  fabricated `I1`.
+  node with no value output, is handed the real matched node as `Match.root`,
+  where it used to be handed a fabricated `I1`. The match itself still stands
+  or falls on what the predicate returns.
 
 - `Match.op`, `.value_type`, `.vn`, `.node` and `.float_bits` return a value and
   RAISE when the capture is absent, where v0.1.0 returned `None`. The
@@ -41,7 +50,8 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `boolean`.
 
 - Pattern builders renamed `add` -> `int_add` to follow the convention; const
-  readers shortened.
+  readers shortened. The settled vocabulary is in
+  [docs/python-api.md](docs/python-api.md#4-patterns).
 - A bare string is no longer a capture operand; use `Capture(name)`.
 - Raw ints coerce to `int_const`, so `int_add(base, 4)` works.
 - `call().at()` / `.at_any()` -> `.target()`, which also takes a list of
@@ -68,26 +78,32 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
 - `Lifter.neighborhood_dot(function, center, ...)` is gone:
   `Function.neighborhood_dot(center, ..., pretty=True)` renders it.
 - The symbol accessors return a `Symbol` record (`name`, `address`, `size`,
-  `end`, `is_function`, `region`), so `symbol(name)` is no longer an address:
-  `symbol_size` is gone, and
-  `functions()` / `iter_symbols()` yield `Symbol`s rather than tuples.
-  `size` is `None` when the ELF records no extent, and `functions()` yields
-  those symbols rather than dropping them.
+  `end`, `is_function`, `region`), so `symbol(name)` is no longer an address
+  and `symbol_size` is gone. `functions()` yields `Symbol`s where v0.1.0
+  yielded name strings, and yields function symbols only, one per address: a
+  data symbol, or an alias of an address already listed, is dropped, keeping
+  the one whose size the ELF records. `size` is `None` when the ELF records no
+  extent, and such a symbol is still yielded.
 - An `ET_REL` symbol's address changes: sections that shared one are rebased
   apart.
 - `wide_const_bytes()` returns `bytes`; it returned `list[int]`.
 - `Node` equality and hash include the graph generation, so a handle held across
   an `optimize` no longer compares equal to a fresh one.
-- The unchecked memory claims move off `LifterOptions` into
-  `LifterOptions(assumptions=AssumptionOptions(...))`, without their `assume_`
-  prefix: `assume_distinct_sp_bases_disjoint` ->
-  `distinct_sp_bases_disjoint`, joining the new `callee_preserves_stack_args`,
-  `noalias_allocators` and
-  `escape_analysis`.
-- `LifterOptions(calls_clobber=...)` -> `assume_incoming_args_survive_calls`,
-  inverted, defaulting to `True`. It reaches which loads count as incoming
-  arguments, and nothing else: a memory-clobbering `CallOther` blocks whatever
-  it says.
+- The three unchecked memory claims move off `LifterOptions` into
+  `LifterOptions(assumptions=AssumptionOptions(...))`, and
+  `strider.lift.AliasMode` is gone with them.
+  `alias_mode="stack_global_disjoint" | "strict"` was one boolean claim wearing
+  an enum and is `stack_global_disjoint`, defaulting `True`; `calls_clobber` is
+  `assume_incoming_args_survive_calls`, inverted and defaulting `True`, which
+  reaches which loads count as incoming arguments and nothing else (a
+  memory-clobbering `CallOther` blocks whatever it says); and
+  `assume_distinct_sp_bases_disjoint` is `distinct_sp_bases_disjoint`, the one
+  name that sheds its `assume_` prefix, which
+  `assume_incoming_args_survive_calls` keeps. They join the new
+  `callee_preserves_stack_args`, `noalias_allocators` and `escape_analysis`,
+  and `AssumptionOptions.none()` clears all six, which no single knob promised
+  before. [docs/python-api.md](docs/python-api.md#2-analyzing-a-function) says
+  what each one buys.
 - `any_int` / `any_float` / `any_bool` match any node with an output of that
   type, constant or not, so "any integer constant" is now `int_const()`:
   `any_int_const` / `any_float_const` / `any_bool_const` are gone, and
@@ -101,10 +117,6 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `UnreachablePat`. It was the same slot `CallPat.ctrl` names, under a second
   name; relational vocabulary belongs with `dominates` in
   `pattern.constraints`.
-- `CfgOptions(call_other_abis=...)` values are `strider.sleigh.CallOtherAbi`
-  objects, not the strings `"noop"` / `"pure"` / `"mem_clobber"` /
-  `"no_return"`: `{"trap": "no_return"}` becomes
-  `{"trap": strider.sleigh.CallOtherAbi.no_return()}`.
 - `LoadPat.mem_in` / `StorePat.mem_in` -> `.mem`, the name `call()`,
   `call_other()` and `indirect_branch()` already give that slot. It is the
   node's memory predecessor either way, so `load` and `store` join the
@@ -114,15 +126,6 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   the raw-slot method every other builder's `input` is, so `.input(0, p)`
   reaches the phi token rather than predecessor 0's value.
 
-- Every claim the analysis cannot check now sits in `AssumptionOptions`.
-  `LifterOptions(alias_mode="stack_global_disjoint" | "strict")` is gone: the
-  mode was one boolean claim wearing an enum, and it is
-  `AssumptionOptions(stack_global_disjoint=...)`, defaulting `True`.
-  `LifterOptions(assume_incoming_args_survive_calls=...)` moves there too,
-  unchanged and still defaulting `True`. `LifterOptions` loses both
-  attributes; `strider.lift.AliasMode` is gone. Clearing all six fields of
-  `AssumptionOptions` is the only configuration sound under any input, which
-  no single knob promised before.
 - `Cfg.is_complete()` answers the four-channel question in one call. The
   `AnalyzeResult` docstring used to say an empty `unresolved` meant the answer
   was complete, which contradicted the Rust contract: a site the CFG consumed
@@ -140,11 +143,6 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   the mapping, and a file rebuilt under a live handle makes that a SIGBUS no
   caller can catch, which neither a `File` return nor a `bool` had any way to
   report. `checked_file` is the way in.
-- `NodeKind::output_head_len` and `expected_input_kind` are removed; nothing
-  called either. `input_head_len` and `expected_output_kind` stay, and are
-  used.
-
-
 - The `rsleigh` path dependency moved from a sibling `../rsleigh` checkout to
   the `externals/rsleigh` git submodule: clone with `--recursive`, or
   `git submodule update --init --recursive`.
@@ -159,16 +157,15 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `Pattern` moves between threads with the value that owns it. A `.filter()` or
   `.when_match()` closure capturing an `Rc<Cell<_>>` no longer compiles;
   capture an `Arc<AtomicUsize>`.
-- `float_is_nan` / `float_le` pin the operand they repeat to one value;
-  `switch().output(n)` pins the slot; and `PostMatchFn` takes
-  `Option<ValueType>`, so a guard on a root with no value output fails rather
-  than seeing a fabricated `I1`. All three used to match too much.
+- `float_is_nan` / `float_le` pin the operand they repeat to one value, so they
+  match strictly fewer shapes, and `PostMatchFn` takes `Option<ValueType>`, so
+  a guard on a root with no value output fails rather than seeing a fabricated
+  `I1`.
 - Removed with no consumer: `Cfg::raw_neighborhood_dot`, the `ConstValue`
   re-export from `strider-ir`, `dot::Result`, `PostOrder::into_visited`,
-  `DenseEntitySet::clear`, `Cfg::switch_arm_region`
-  (use `switch_arm_regions`), `OwnedElf::ppc64_abi_level`,
-  `elf_get_readonly_regions` and `elf_get_loadable_regions_including_writable`
-  (use `OwnedElf::regions` with a `LoadFilter`), and `MemRegion::fully_covers`.
+  `DenseEntitySet::clear` and `MemRegion::fully_covers`.
+- `elf_get_loadable_regions_including_writable` is gone; use `OwnedElf::regions`
+  with a `LoadFilter`.
 - `NodeKind` gains `input_head_len` and `expected_output_kind`, so a consumer
   outside `strider-ir` can read the slot-layout single source of truth instead
   of hardcoding the shift. `strider-pattern`'s `call().arg(n)`, `ret_val(n)` and
@@ -185,13 +182,6 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   read, no gate compiled it, and the stubs are hand-written and checked by
   `test_stub_parity.py`.
 
-- `AliasMode` is gone; Breaking, Python describes the move.
-  `OptOptions::alias_mode` and `assume_incoming_args_survive_calls` become
-  `AssumptionOptions::stack_global_disjoint` and
-  `AssumptionOptions::assume_incoming_args_survive_calls`, leaving `OptOptions`
-  as `{ resolve_indirect_branches, assumptions }`. `AssumptionOptions`'s
-  `Default` is hand-written rather than derived, so `default()` keeps those two
-  on and `AssumptionOptions::none()` clears all six.
 - `graph_algorithms::walk::VisitTracker` and
   `graph_algorithms::dominance::DefSites` are gone, each having had one
   implementation. `PreOrder` / `PostOrder` take one type parameter, the graph,
@@ -213,12 +203,6 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `apply_elf_relocations` takes the `LoadFilter` its regions were built with,
   and `apply_elf_relocations_autoload` is gone.
 - `Cfg::region_id_at_start` is gone.
-- `CallOtherOverrides::new` takes `(String, CallOtherOverride)` entries, where
-  `CallOtherOverride` is either a `CallOtherClass` or a caller-resolved
-  `BuiltCallOtherAbi`, so an override can carry an implicit register footprint.
-  `classify_with` returns a `CallOtherLookup`, whose `built(&regs)` yields the
-  resolved footprint (`None` for `NoOp`), borrowed when the caller pre-resolved
-  it.
 - Every pattern builder spells its name the way `strider.pattern` does, so one
   query reads the same in either language. The 21 integer builders take an
   `int_` prefix (`add` -> `int_add`, `and` -> `int_and`, `bit_not` ->
@@ -264,28 +248,32 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
 - `IndirectBranch` takes an optional fourth input, the ISA mode its instruction
   commits. `Unreachable` takes an optional memory input.
 - `ValueType` gains `I24`, `I40`, `I56`, `I72`, `I96`, `I112`, `F16` and `F128`.
-- `OptOptions` gains `resolve_indirect_branches` and, in a new
-  `AssumptionOptions` group, `escape_analysis` and `noalias_allocators`.
-- `MemAliasOptions` is gone. `OptOptions::arg_alias` splits: the two unchecked
-  claims move into `OptOptions::assumptions` (`AssumptionOptions`) as
-  `distinct_sp_bases_disjoint` and `callee_preserves_stack_args`, joining
-  `escape_analysis` and `noalias_allocators`; `calls_clobber` becomes
-  `OptOptions::assume_incoming_args_survive_calls`, inverted and defaulting to
-  `true`.
+- `AliasMode` and `MemAliasOptions` are gone, and every claim the analysis
+  cannot check gathers in `OptOptions::assumptions`, an `AssumptionOptions`:
+  `OptOptions::alias_mode` becomes `stack_global_disjoint`,
+  `MemAliasOptions::calls_clobber` becomes
+  `assume_incoming_args_survive_calls` (inverted, and defaulting `true` where
+  the derived `Default` had it `false`), and
+  `MemAliasOptions::assume_distinct_sp_bases_disjoint` becomes
+  `distinct_sp_bases_disjoint`, joining the new `callee_preserves_stack_args`,
+  `noalias_allocators` and `escape_analysis`. `OptOptions::arg_alias` is gone
+  with them, leaving `OptOptions` as
+  `{ resolve_indirect_branches, assumptions }`, `resolve_indirect_branches`
+  being new. `AssumptionOptions`'s `Default` is hand-written rather than
+  derived, so `default()` keeps two on and `AssumptionOptions::none()` clears
+  all six.
 - `WithOutput`'s slot is an `Option<usize>`, `None` being the existential
   `any_output()`.
 
 ### Added
 
 - A converged CFG reports incompleteness through four channels on
-  `AnalyzeResult`, not one: `unresolved_indirect_branches` (a lost successor or
-  an unseatable widening), `unverified_seeded_sites` (a dispatch consumed as a
-  return or tail call, a complete answer that cannot be verified, which is
-  where an ARM `pop {pc}` epilogue lands), `isa_mode_conflicts` and
-  `interior_branch_targets`. The first, third and fourth accumulate across
-  rounds, so a later round cannot launder an earlier loss;
-  `unverified_seeded_sites` is derived from the final CFG. A consumer asking
-  whether a result may be incomplete reads all four.
+  `AnalyzeResult`, not one: `unresolved_indirect_branches`,
+  `unverified_seeded_sites`, `isa_mode_conflicts` and
+  `interior_branch_targets`. A consumer asking whether a result may be
+  incomplete reads all four;
+  [docs/python-api.md](docs/python-api.md#12-the-cfg-stridercfg) says what each
+  one carries.
 - `Cfg.isa_mode_conflicts()` (Rust: `AnalyzeResult::isa_mode_conflicts`):
   addresses reached carrying two different ISA modes, where one region owns the
   bytes and the losing path's arm is not the stream it believes.
@@ -295,9 +283,7 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   the classifier derived, plus every site the CFG consumed outright as a return
   or a tail call, seeded or derived. A `"return"` or single-out-of-function
   seed is consumed at CFG-build time, leaving no placeholder to report, so it
-  is named here too. Seating a seed changes the CFG the classifier reads, so a
-  stale seed can stop the selector deriving and take the site's real arms with
-  it.
+  is named here too.
 - `BuiltCallingConvention::float_arg_slots`, the positional float / vector
   argument registers; v0.1.0 modelled float RETURNS only.
 - `Cfg::interior_branch_targets()` and `AnalyzeResult::interior_branch_targets`
@@ -384,8 +370,13 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
   `STRIDER_BACKTRACE=1` folds it into the message too.
 - `Lifter.optimize` takes `opts=` and threads the handle's `rom`, so a
   hand-built pipeline sees the same read-only image `analyze` does.
-- `CallOtherOverrides::new` rejects a duplicate user-op name rather than
-  silently keeping the first, which `get` would have shadowed.
+- `CallOtherOverrides::new` takes `(String, CallOtherOverride)` entries, where
+  `CallOtherOverride` is either a `CallOtherClass` or a caller-resolved
+  `BuiltCallOtherAbi`, so an override can carry an implicit register footprint,
+  and it rejects a duplicate user-op name rather than silently keeping the
+  first, which `get` would have shadowed. `classify_with` returns a
+  `CallOtherLookup`, whose `built(&regs)` yields the resolved footprint (`None`
+  for `NoOp`), borrowed when the caller pre-resolved it.
 - Twenty-six names join seven modules' `__all__`, fifteen of them in
   `strider.pattern`, among them `ElfLifter`, `load_elf`, `PatLike`, `ValueTy`,
   `DotStyle` and `OptimizerPass`; `get_type_hints` no longer raises `NameError`
@@ -422,8 +413,7 @@ Both the Python and the Rust surfaces changed; the two are listed separately.
 - A mapped file must not change on disk while it is loaded.
 - `AssumptionOptions.none()` clears all six claims in one call, the only
   configuration sound under any input. `AssumptionOptions()` is not that: two
-  of the six default `True`, so a hand-written "assume nothing" silently gains
-  any claim added default-on later.
+  of the six default `True`.
 
 ### Performance
 

@@ -149,13 +149,13 @@ Dev-dependencies are not in that graph, and are not a DAG:
   `FloatBitsToInt`.
 - Opaque: `SegmentOp { op_id }`, `CPoolRef`, `New`.
 
-Op sub-enums (`node/ops.rs`): `IntUnaryOp{Neg}` (complement `~x` is
-`Xor(x, all_ones)`); `IntBinaryOp{Add,And,Or,Xor,Div,Sdiv,Rem,Srem,ShiftRight,
+Op sub-enums (`node/ops.rs`): `IntUnaryOp{Neg}`;
+`IntBinaryOp{Add,And,Or,Xor,Div,Sdiv,Rem,Srem,ShiftRight,
 SShiftRight,ShiftLeft,Mul}`; `IntCmpOp{Equal,Sless,Less,Carry,Scarry,Sborrow}`
 (output `I1`); `FloatBinaryOp{Add,Mul,Div}`;
 `FloatUnaryOp{Neg,Abs,Sqrt,Ceil,Floor,Round}`; `FloatCmpOp{Equal,Less}`;
 `ExtendOp{ZeroExtend,SignExtend}`. Subtraction and the `<=` / `!=` comparisons
-arrive already lowered; see Lift-time canonicalisations.
+arrive already lowered.
 
 `ValueType` (`node/value_type.rs`): `I1, I8, I16, I24, I32, I40, I48, I56, I64,
 I72, I80, I96, I112, I128, I256, I512, F16, F32, F64, F80, F128`. Booleans are
@@ -209,7 +209,6 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
   opt into `Rc` at a call site only if needed. Nothing runs in parallel, so a
   `Send` bound never buys concurrency here; it buys the right to MOVE a value
   between threads, which is what a Python caller needs.
-  - `strider-reader`: a mapped image is shared by every region cut from it.
   - `read-only-memory`: `ReadOnlyMemory: Send` so `strider-py` can drop the GIL
     around `analyze`. The `Sync` half it also carries is unused.
   - `strider-pattern`: every boxed closure a pattern lowers to is `+ Send`, and
@@ -242,34 +241,18 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
   `MAX_RESOLUTION_ITERATIONS` while every site still grows is the discovery
   depth limit, and those sites come back as unresolved too.
 - A converged CFG is never silently incomplete, but it reports through FOUR
-  channels on `AnalyzeResult`, and a consumer asking "may this be incomplete?"
-  reads all four. `unresolved_indirect_branches` holds a site that lost a
-  successor or whose re-derived widening could not be seated (an interworking
-  `Switch` carries no ISA-mode input, so a re-derived arm has no mode to decode
-  in); empty means fully resolved. `unverified_seeded_sites` holds a dispatch
-  the CFG consumed as `Return` / `TailCall`, a complete answer that cannot be
-  verified rather than a loss, which is why an ARM `pop {pc}` epilogue lands
-  here and not in the first channel. `isa_mode_conflicts` and `interior_branch_targets`
-  carry the other two. The first, third and fourth accumulate across rounds, so
-  a later round cannot launder an earlier loss; `unverified_seeded_sites` is
-  derived once from the final CFG. `isa_mode_conflicts` is structurally always
-  empty off ARM and MIPS: both producers gate on `SleighArch::isa_mode_var()`,
-  `Some` only for the four ARM and four MIPS presets.
+  fields on `AnalyzeResult` — `unresolved_indirect_branches`,
+  `unverified_seeded_sites`, `isa_mode_conflicts`, `interior_branch_targets` —
+  and a consumer asking "may this be incomplete?" reads all four. Each field's
+  contract is on the struct (`crates/strider-orchestrator/src/lib.rs`).
 - SP-alias precision is tuned by `OptOptions` (`resolve_indirect_branches`,
   `assumptions`), threaded through `OptCtx` into every SP-aware pass.
-  `assumptions` is an `AssumptionOptions` holding `stack_global_disjoint`,
-  `assume_incoming_args_survive_calls`, `distinct_sp_bases_disjoint`,
-  `callee_preserves_stack_args`, `noalias_allocators` and `escape_analysis`:
-  each is a claim about the code being analysed that the IR cannot prove, so a
-  wrong one miscompiles. Every field's risky value is the positive one; the
-  first two default ON (the pipeline is unusably imprecise without them) and
-  the rest off, so `AssumptionOptions::none()`, not `::default()`, is the
-  configuration sound under any input. `callee_preserves_stack_args` is inert
-  alone: its only reader, `in_outgoing_arg_area` in `mem_analysis`, is reached
-  only under `escape_analysis` or a non-empty `noalias_allocators`.
-  `noalias_allocators` (pure `malloc`-like callee addresses) is published onto
-  the `Function` so `decompose` classifies a `Call` return as a heap base;
-  distinct heap objects are disjoint and a load steps through such a call.
+  `assumptions` is an `AssumptionOptions` of six claims about the code being
+  analysed that the IR cannot prove, so a wrong one miscompiles; every field's
+  risky value is the positive one, two default ON, and
+  `AssumptionOptions::none()`, not `::default()`, is the configuration sound
+  under any input. Per-field detail is on the struct
+  (`crates/strider-opt/src/options.rs`).
 
 ## strider-py
 
