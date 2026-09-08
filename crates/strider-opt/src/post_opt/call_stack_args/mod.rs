@@ -59,11 +59,12 @@ fn collect_stack_args(
     let mut cursor = 0usize;
     loop {
         let slot_off = call_sp_off + stack_args.offset_of(cursor);
-        // A slot reached by anything but a store of its own ends the prefix:
-        // a covering store anchored earlier means the slot was never written
-        // as a slot, and a def the scan cannot see through leaves nothing to
-        // collect.
-        let SlotReach::Anchored(store) = scan.reach_at(function, slot_off) else {
+        // A slot reached by anything but a whole store of its own ends the
+        // prefix: a covering store anchored earlier means the slot was never
+        // written as a slot, a def the scan cannot see through leaves nothing
+        // to collect, and an anchor a nearer store patched in part holds no
+        // one value to collect.
+        let SlotReach::Anchored { store, whole: true } = scan.reach_at(function, slot_off) else {
             break;
         };
         args.push(store.data(function));

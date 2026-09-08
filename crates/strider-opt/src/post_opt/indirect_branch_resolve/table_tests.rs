@@ -2256,3 +2256,109 @@ mod stack_table_cost {
         );
     }
 }
+
+/// `mips32le/switch.elf::main`: the table base lives in a register across a
+/// `Call` on one arm.  With `clobber`, the callee's clobber of that register
+/// reaches the dispatch, so the base is a merge of the literal and an unknown.
+fn seated_switch_over_merged_base(clobber: bool) -> (Function, NodeId) {
+    use strider_ir::IntCmpOp;
+    let sp = sp32_vn();
+    let base_vn = strider_ir_test_utils::reg_vn(0x20, 4);
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .tracked(base_vn)
+        .build_fn()
+        .unwrap();
+    let entry = b.create_region_all().unwrap();
+    let side = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let arm0 = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+
+    b.set_region(entry);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let base_c = b.build_int_const(0x4000u64, ValueType::I32).unwrap();
+    b.write_variable(&base_vn, base_c).unwrap();
+    let raw = build_non_const_idx(&mut b);
+    let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
+    let cond = b
+        .build_int_cmp_operation(raw, zero, IntCmpOp::Equal, ValueType::I32)
+        .unwrap();
+    b.build_if(cond, side, dispatch).unwrap();
+
+    b.set_region(side);
+    if clobber {
+        let callee = b.build_int_const(0x8000u64, ValueType::I32).unwrap();
+        let (_, outs) = b.build_call(callee, &[], &[base_vn], 0).unwrap();
+        b.write_variable(&base_vn, outs[0]).unwrap();
+    }
+    b.build_branch(dispatch).unwrap();
+
+    b.set_region(dispatch);
+    let base = b.read_variable(&base_vn).unwrap();
+    let one = b.build_int_const(1u64, ValueType::I32).unwrap();
+    let idx = b
+        .build_int_binary_operation(raw, one, IntBinaryOp::And, ValueType::I32)
+        .unwrap();
+    let stride_c = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let off = b
+        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
+        .unwrap();
+    let addr = b
+        .build_int_binary_operation(base, off, IntBinaryOp::Add, ValueType::I32)
+        .unwrap();
+    let selector = b.build_load(addr, VnSpace::RAM, ValueType::I32).unwrap();
+    // Seated on one of the two slots, as a site resolved before the CFG closed.
+    let switch = b.build_switch(selector, &[(arm0, 0x1000)]).unwrap();
+
+    b.set_region(arm0);
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+    (b.build().unwrap(), switch)
+}
+
+fn rederive_seated_switch(mut g: Function, switch: NodeId) -> Option<ResolvedTargets> {
+    let rom = MockRom::strided(0x4000, 4, vec![0x1000, 0x2000], 4);
+    let mut prep = OptimizerPipeline::new();
+    prep.add(PhiCollapse);
+    prep.add(ConstantFold::new());
+    prep.add(RegionCollapse);
+    prep.run(&mut g, &mut crate::OptCtx::new(Some(&rom)))
+        .expect("prep");
+    let mut ctx = crate::OptCtx::new(Some(&rom));
+    crate::run_post(&super::super::IndirectBranchClassify, &mut g, &mut ctx).expect("classify");
+    ctx.indirect_resolutions
+        .get(&switch)
+        .expect("the seated switch is reported")
+        .clone()
+}
+
+/// The control: with the base reaching the dispatch unchanged on both paths it
+/// is the literal, and the seated switch widens to both slots.
+#[test]
+fn seated_switch_rederives_when_the_table_base_survives_the_merge() {
+    let (g, switch) = seated_switch_over_merged_base(false);
+    assert_eq!(
+        rederive_seated_switch(g, switch),
+        Some(ResolvedTargets::Multiple(vec![
+            strider_cfg::ResolvedTarget::new(0x1000, None),
+            strider_cfg::ResolvedTarget::new(0x2000, None),
+        ])),
+    );
+}
+
+/// A callee may leave anything in the base register, so on the path through
+/// the `Call` the dispatch reads an unknown address: no target set is proven
+/// and the site must defer, keeping its seated arms and reporting unresolved.
+///
+/// The arms a narrower round seated can still be right, as they are for
+/// `mips32le/switch.elf::main` (GCC's interprocedural register allocation knows
+/// the local callee leaves the register alone); an ABI-level clobber set cannot
+/// know that, and a per-`Call` `preserves_regs` override is what supplies it.
+#[test]
+fn seated_switch_defers_when_a_call_clobbers_the_table_base() {
+    let (g, switch) = seated_switch_over_merged_base(true);
+    assert_eq!(rederive_seated_switch(g, switch), None);
+}
