@@ -328,13 +328,15 @@ impl Function {
     /// Compacts the arena down to the nodes reachable from [`Self::entry`],
     /// returning the old-to-new translation table.  Pre-compaction `NodeId` /
     /// `ValueId` / `UseId` values are invalidated; callers holding one MUST
-    /// rewrite it through the returned [`NodeIdRemap`].  Leaves the side-tables
-    /// stale; use [`Self::compact`] to remap those too.
-    pub(crate) fn retain_reachable(&mut self) -> NodeIdRemap {
+    /// rewrite it through the returned [`NodeIdRemap`].
+    ///
+    /// Leaves the side-tables AND the dedup cache stale, so only
+    /// [`Self::compact`], which settles both, may call it.
+    fn retain_reachable(&mut self) -> NodeIdRemap {
         // Collect into a `Vec` first to end the immutable borrow before
         // `graph_mut()`.
         let reachable: Vec<NodeId> = self.walk().collect();
-        self.graph_mut().retain_reachable(reachable)
+        self.graph_mut().retain_reachable_stale_cache(reachable)
     }
 
     /// Retains only nodes reachable from [`Self::entry`], updating the stored
@@ -407,6 +409,7 @@ impl Function {
             entry,
             function: self,
             sleigh,
+            regs: std::borrow::Cow::Owned(sleigh.regs()?),
             node_to_arg_indices,
             nodes: None,
             center: None,

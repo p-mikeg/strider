@@ -571,8 +571,8 @@ impl<'g> EditFunction<'g> {
 
         // Each Phi/MemPhi loses slots `pred_index + 1`; the Region loses
         // `pred_index`.
+        let phi_idxs: Vec<u32> = indices.iter().map(|&i| i + 1).collect();
         for &phi in &phi_nodes {
-            let phi_idxs: Vec<u32> = indices.iter().map(|&i| i + 1).collect();
             self.remove_node_inputs_batch(phi, &phi_idxs);
         }
         self.remove_node_inputs_batch(region, &indices);

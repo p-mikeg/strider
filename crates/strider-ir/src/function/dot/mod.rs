@@ -110,6 +110,9 @@ pub struct FunctionDotDumper<'a, R: MemReader> {
     pub(crate) entry: NodeId,
     pub(crate) function: &'a Function,
     pub(crate) sleigh: &'a rsleigh::Sleigh<R>,
+    /// Resolved once: `Sleigh::regs` rebuilds the whole table per call, and a
+    /// render names a varnode per label.
+    pub(crate) regs: std::borrow::Cow<'a, rsleigh::SleighRegs>,
     /// Carrier node -> arg tags.
     pub(crate) node_to_arg_indices: FxHashMap<NodeId, Vec<ArgTag>>,
     /// Restrict the render to the induced subgraph over these nodes; `None`
