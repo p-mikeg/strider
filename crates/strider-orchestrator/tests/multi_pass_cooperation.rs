@@ -4,7 +4,7 @@
 
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
-use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, stack_vn_x86_64};
+use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, sp_frame, stack_vn_x86_64};
 use strider_orchestrator::opt::{
     CfgDetach, ConstantFold, DeadBranchElimination, LoadForward, OptimizerPipeline, PhiCollapse,
     RegionCollapse,
@@ -121,11 +121,7 @@ fn const_fold_then_dbe_then_phi_collapse() -> Result<()> {
 #[test]
 fn stack_pipeline_full_cooperation() -> Result<()> {
     let sp = stack_vn_x86_64();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .build_fn()?;
+    let mut b = sp_frame(sp).build_fn()?;
 
     let entry = b.create_region_all()?;
     let live = b.create_region_all()?;

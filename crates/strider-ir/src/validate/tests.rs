@@ -1055,20 +1055,22 @@ fn memory_chain_preserving_call_unconsumed_memory_output_not_flagged() {
         .expect("a memory-preserving Call's unconsumed memory output must not be flagged");
 }
 
-#[test]
-fn graph_invariants_extend_must_strictly_widen() {
-    use crate::node::ExtendOp;
-
+/// Builds `kind(IntConst:in_ty) -> out_ty` into a returned spine and asserts
+/// the validator rejects it as a width-direction violation.
+fn assert_width_direction_rejected(
+    kind: NodeKind,
+    in_ty: ValueType,
+    out_ty: ValueType,
+    in_width: usize,
+    out_width: usize,
+) {
     let mut s = spine();
-    let (c, c_value) = int_const(&mut s.f, 5, ValueType::I64);
+    let (c, c_value) = int_const(&mut s.f, 5, in_ty);
     stamp(&mut s.f, c);
 
-    // I64 down to I32.
-    let bad = s.f.graph_mut().create_node(
-        NodeKind::Extend(ExtendOp::ZeroExtend),
-        [c_value],
-        [ValueKind::Typed(ValueType::I32)],
-    );
+    let bad =
+        s.f.graph_mut()
+            .create_node(kind, [c_value], [ValueKind::Typed(out_ty)]);
     stamp(&mut s.f, bad);
     let [bad_value] = s.f.node_outputs_exact::<1>(bad).unwrap();
     s.f.graph_mut()
@@ -1077,72 +1079,37 @@ fn graph_invariants_extend_must_strictly_widen() {
     assert_validation_err(&s.f, |e| {
         matches!(
             e,
-            ValidationError::ExtendTruncateWidthDirection {
-                in_width: 64,
-                out_width: 32,
-                ..
-            }
+            ValidationError::ExtendTruncateWidthDirection { in_width: i, out_width: o, .. }
+                if *i == in_width && *o == out_width
         )
     });
+}
+
+#[test]
+fn graph_invariants_extend_must_strictly_widen() {
+    assert_width_direction_rejected(
+        NodeKind::Extend(crate::node::ExtendOp::ZeroExtend),
+        ValueType::I64,
+        ValueType::I32,
+        64,
+        32,
+    );
 }
 
 #[test]
 fn graph_invariants_truncate_must_strictly_narrow() {
-    let mut s = spine();
-    let (c, c_value) = int_const(&mut s.f, 5, ValueType::I32);
-    stamp(&mut s.f, c);
-
-    // I32 up to I64.
-    let bad = s.f.graph_mut().create_node(
-        NodeKind::Truncate,
-        [c_value],
-        [ValueKind::Typed(ValueType::I64)],
-    );
-    stamp(&mut s.f, bad);
-    let [bad_value] = s.f.node_outputs_exact::<1>(bad).unwrap();
-    s.f.graph_mut()
-        .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, bad_value], []);
-
-    assert_validation_err(&s.f, |e| {
-        matches!(
-            e,
-            ValidationError::ExtendTruncateWidthDirection {
-                in_width: 32,
-                out_width: 64,
-                ..
-            }
-        )
-    });
+    assert_width_direction_rejected(NodeKind::Truncate, ValueType::I32, ValueType::I64, 32, 64);
 }
 
 #[test]
 fn graph_invariants_equal_width_extend_is_rejected() {
-    use crate::node::ExtendOp;
-
-    let mut s = spine();
-    let (c, c_value) = int_const(&mut s.f, 5, ValueType::I32);
-    stamp(&mut s.f, c);
-
-    let bad = s.f.graph_mut().create_node(
-        NodeKind::Extend(ExtendOp::SignExtend),
-        [c_value],
-        [ValueKind::Typed(ValueType::I32)],
+    assert_width_direction_rejected(
+        NodeKind::Extend(crate::node::ExtendOp::SignExtend),
+        ValueType::I32,
+        ValueType::I32,
+        32,
+        32,
     );
-    stamp(&mut s.f, bad);
-    let [bad_value] = s.f.node_outputs_exact::<1>(bad).unwrap();
-    s.f.graph_mut()
-        .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, bad_value], []);
-
-    assert_validation_err(&s.f, |e| {
-        matches!(
-            e,
-            ValidationError::ExtendTruncateWidthDirection {
-                in_width: 32,
-                out_width: 32,
-                ..
-            }
-        )
-    });
 }
 
 /// `Entry -> Region` whose control output is its own second predecessor. Both

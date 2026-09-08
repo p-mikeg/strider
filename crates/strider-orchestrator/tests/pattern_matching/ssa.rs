@@ -116,14 +116,7 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     // The pass reads its layout from the function's own CC, so the fixture
     // carries `sp` as the SP and a stack-arg layout based at +4.
     let mut t = Tb::from_rs(
-        strider_ir_test_utils::RegisterSet::new()
-            .tracked(sp)
-            .callee_saved(sp)
-            .stack_vn(sp)
-            .stack_args(Some(strider_target::StackArgs {
-                base_offset: 4,
-                increment: 4,
-            })),
+        strider_ir_test_utils::sp_frame(sp).stack_args(strider_ir_test_utils::stack_args_at(4, 4)),
     );
 
     // `read *(sp + 4)`: the first stack arg in cdecl-style.

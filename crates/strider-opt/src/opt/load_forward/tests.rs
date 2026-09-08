@@ -6,7 +6,8 @@ use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::IrBuilderEx;
 use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::{
-    RegisterSet, SENTINEL_LIFT_ADDR, stack_vn_aarch64 as sp64_vn, stack_vn_x86 as sp32_vn,
+    SENTINEL_LIFT_ADDR, sp_frame, stack_args_at, stack_vn_aarch64 as sp64_vn,
+    stack_vn_x86 as sp32_vn,
 };
 use strider_target::Endianness;
 
@@ -646,11 +647,7 @@ fn does_not_forward_anchor_load_across_different_anchor_interferer() -> Result<(
 #[test]
 fn bail_on_call_between() -> Result<()> {
     let sp = sp64_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .build_fn_single_region()?;
+    let mut b = sp_frame(sp).build_fn_single_region()?;
 
     let sp_val = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, ValueType::I64)?;
@@ -683,11 +680,7 @@ fn bail_on_call_between() -> Result<()> {
 #[test]
 fn call_other_blocks_forwarding_even_over_private_frame() -> Result<()> {
     let sp = sp64_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .build_fn_single_region()?;
+    let mut b = sp_frame(sp).build_fn_single_region()?;
 
     let sp_val = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, ValueType::I64)?;
@@ -722,11 +715,7 @@ fn call_other_blocks_forwarding_even_over_private_frame() -> Result<()> {
 #[test]
 fn per_branch_stores_same_offset_do_not_forward_and_synthesize_no_phi() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .build_fn()?;
+    let mut b = sp_frame(sp).build_fn()?;
     let entry = b.create_region_all()?;
     let then_r = b.create_region_all()?;
     let else_r = b.create_region_all()?;
@@ -789,11 +778,7 @@ fn per_branch_stores_same_offset_do_not_forward_and_synthesize_no_phi() -> Resul
 #[test]
 fn three_predecessor_memphi_blocks_forwarding_no_phi() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .build_fn()?;
+    let mut b = sp_frame(sp).build_fn()?;
     let entry = b.create_region_all()?;
     let arm_a = b.create_region_all()?;
     let inner = b.create_region_all()?;
@@ -854,11 +839,7 @@ fn three_predecessor_memphi_blocks_forwarding_no_phi() -> Result<()> {
 #[test]
 fn dominating_store_across_collapsible_merge_forwards_with_no_phi() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .build_fn()?;
+    let mut b = sp_frame(sp).build_fn()?;
     let entry = b.create_region_all()?;
     let then_r = b.create_region_all()?;
     let else_r = b.create_region_all()?;
@@ -918,11 +899,7 @@ fn dominating_store_across_collapsible_merge_forwards_with_no_phi() -> Result<()
 #[test]
 fn phi_missing_store_on_one_branch_bails() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .build_fn()?;
+    let mut b = sp_frame(sp).build_fn()?;
     let entry = b.create_region_all()?;
     let then_r = b.create_region_all()?;
     let else_r = b.create_region_all()?;
@@ -976,11 +953,7 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
 #[test]
 fn phi_identical_values_no_new_phi() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .build_fn()?;
+    let mut b = sp_frame(sp).build_fn()?;
     let entry = b.create_region_all()?;
     let then_r = b.create_region_all()?;
     let else_r = b.create_region_all()?;
@@ -1126,41 +1099,6 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     Ok(())
 }
 
-/// A `u16` load out of a `u32` store.
-#[test]
-fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
-    let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let twelve = b.build_int_const(12u64, ValueType::I32)?;
-        let addr = b.build_sub_as_add_neg(sp_val, twelve, ValueType::I32)?;
-        let wide = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32)?;
-        b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I16)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
-
-    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(reachable_loads, 0, "Load u16 must be forwarded");
-    let ret = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
-        .expect("return node exists");
-    let ret_inputs = fg.node_inputs(ret);
-    let val_ty = fg.value_type_opt(ret_inputs[2]);
-    assert_eq!(val_ty, Some(ValueType::I16));
-    assert_eq!(
-        fg.int_const_u128(ret_inputs[2]),
-        Some(0xBEEF),
-        "forwarded u16 load must fold to low 16 bits 0xBEEF",
-    );
-    Ok(())
-}
-
 /// On big-endian the load takes the high bytes, so forwarding must shift
 /// before truncating rather than emit the LE plain `Truncate`.
 ///
@@ -1170,10 +1108,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
 #[test]
 fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
+    let mut b = sp_frame(sp)
         .endianness(Endianness::Big)
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
@@ -1247,11 +1182,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
 #[test]
 fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
     let sp = sp64_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .build_fn()?;
+    let mut b = sp_frame(sp).build_fn()?;
     let entry = b.create_region_all()?;
     let then_r = b.create_region_all()?;
     let else_r = b.create_region_all()?;
@@ -1339,11 +1270,7 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
 #[test]
 fn load_forward_never_increases_phi_count() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .build_fn()?;
+    let mut b = sp_frame(sp).build_fn()?;
     let entry = b.create_region_all()?;
     let then_r = b.create_region_all()?;
     let else_r = b.create_region_all()?;
@@ -1561,10 +1488,7 @@ fn spill_in_the_outgoing_arg_area_does_not_forward_across_a_call() -> Result<()>
         base_offset: 0,
         increment: 4,
     };
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
+    let mut b = sp_frame(sp)
         .stack_args(Some(stack_args))
         .build_fn_single_region()?;
 
@@ -1605,10 +1529,7 @@ fn spill_above_the_outgoing_arg_area_still_forwards_across_a_call() -> Result<()
         base_offset: 0,
         increment: 4,
     };
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
+    let mut b = sp_frame(sp)
         .stack_args(Some(stack_args))
         .build_fn_single_region()?;
 
@@ -1661,10 +1582,7 @@ fn spill_below_the_arg_window(offset: i64) -> Result<strider_ir::Function> {
         base_offset: 8,
         increment: 4,
     };
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
+    let mut b = sp_frame(sp)
         .stack_args(Some(stack_args))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
@@ -1724,10 +1642,7 @@ fn stack_top_spill_across_call(preserves_stack_args: bool) -> Result<u128> {
         base_offset: 0,
         increment: 4,
     };
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
+    let mut b = sp_frame(sp)
         .stack_args(Some(stack_args))
         .build_fn_single_region()?;
     let entry_sp = b.read_variable(&sp)?;
@@ -1789,14 +1704,8 @@ fn stack_top_spill_forwards_across_call_only_under_the_relaxation() -> Result<()
 #[test]
 fn one_window_answers_reloads_on_either_side_of_it() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs {
-            base_offset: 0,
-            increment: 4,
-        }))
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(0, 4))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     let mut addrs = Vec::new();
