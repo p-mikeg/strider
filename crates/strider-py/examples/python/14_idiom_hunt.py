@@ -46,10 +46,12 @@ def idioms() -> dict[str, PatLike]:
     }
 
 
+# A commutative pattern answers once per operand order, so count distinct
+# match roots to get sites rather than binding rows.
 print(f"scanning array_sum ({fn.node_count()} nodes) for idioms:\n")
 found: list[tuple[str, int]] = []
 for name, pat in idioms().items():
-    n = len(fn.find_all(pat, ignore_casts=True))
+    n = len({m.root for m in fn.find_all(pat, ignore_casts=True)})
     flag = "*" if n else " "
     print(f"  [{flag}] {name:22} {n:3d}")
     if n:
