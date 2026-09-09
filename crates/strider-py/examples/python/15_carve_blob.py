@@ -42,7 +42,7 @@ for name, (offset, signature) in ENTRIES.items():
     sig_hits = len(fn.find_all(signature, ignore_casts=True))
     ret_hits = len(fn.find_all(ret()))
     print(
-        f"  {name:9} @ {addr:#011x}  {fn.node_count():2d} nodes  "
+        f"  {name:18} @ {addr:#010x}  {fn.node_count():2d} nodes  "
         f"signature x{sig_hits}  ret x{ret_hits}"
     )
     assert sig_hits >= 1, f"{name}: expected its signature in the IR"

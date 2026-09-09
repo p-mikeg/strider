@@ -8,6 +8,7 @@ from strider.pattern import (
     anything,
     first_of,
     any_int_binary,
+    int_add,
     int_const,
     load,
     one_of,
@@ -30,13 +31,25 @@ print(f"array_sum: {len(fn.find_all(anything()))} reachable IR nodes\n")
 
 
 # --- 1. one_of / first_of: alternation ---
-# first_of commits to the first alternative per node; differs from one_of only
-# when the alternatives overlap.
+# Disjoint arms behave the same either way.
 print("=== one_of / first_of ===")
 mem_ops = fn.find_all(one_of([load(), store()]))
 print(f"memory ops (load OR store): {len(mem_ops)}")
-catch_all = fn.find_all(first_of([load(), anything()]))
-print(f"first_of([load, anything]): {len(catch_all)}")
+
+# Overlapping arms are where they part. one_of is a union: `base + K` fires
+# both arms, so the row where `off` bound survives alongside the bare-base one.
+# first_of cuts at the first arm that matches, so a permissive arm in front
+# means the specific one is never tried and `off` never binds.
+b, off = Capture("b"), Capture("off")
+specific = int_add(var(b), int_const(off))
+for label, addr_pat in (
+    ("one_of([var, add])", one_of([var(b), specific])),
+    ("first_of([var, add])", first_of([var(b), specific])),
+    ("first_of([add, var])", first_of([specific, var(b)])),
+):
+    rows = fn.find_all(load(addr=addr_pat), ignore_casts=True)
+    bound = sum(1 for m in rows if off in m)
+    print(f"{label:22} {len(rows):3d} rows, {bound} with `off` bound")
 
 
 # --- 2. int_const of a set: a constant drawn from several ---
@@ -64,10 +77,12 @@ print(f"exactly one Return node (root node id {the_ret.root})")
 
 # --- 5. any_int_binary: bind the operator variant ---
 # The first Capture binds the node; Match.op reads back which variant fired.
+# Both operands are wildcards, so a commutative op answers twice per node;
+# collecting roots into a set counts nodes.
 print("\n=== any_int_binary: which operators appear ===")
 op, lhs, rhs = Capture("op"), Capture("l"), Capture("r")
-by_op: dict[str, int] = {}
+by_op: dict[str, set[int]] = {}
 for m in fn.find_all(any_int_binary(op, lhs, rhs)):
-    by_op[m.op(op)] = by_op.get(m.op(op), 0) + 1
-for name, count in sorted(by_op.items(), key=lambda kv: -kv[1]):
-    print(f"  {name:12} x{count}")
+    by_op.setdefault(m.op(op), set()).add(m.root)
+for name, nodes in sorted(by_op.items(), key=lambda kv: -len(kv[1])):
+    print(f"  {name:12} x{len(nodes)}")

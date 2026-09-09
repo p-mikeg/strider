@@ -32,10 +32,15 @@ _cfg, function, unresolved = lft.analyze(
 print(f"lifted {function.node_count()} nodes from {len(CODE)} raw bytes")
 print(f"unresolved indirect branches: {len(unresolved)}")
 
-# The lea is address arithmetic, so it lifts to an int_add of the two arg registers.
+# The lea is address arithmetic, so it lifts to an int_add of the two arg
+# registers. int_add is commutative, so that one node answers twice, once per
+# operand order.
 a, b = Capture("a"), Capture("b")
 adds = function.find_all(int_add(a, b))
-print(f"int_add sites (the edi + esi from the lea): {len(adds)}")
+print(
+    f"int_add: {len(adds)} binding row(s) over "
+    f"{len({m.root for m in adds})} node(s) (the edi + esi from the lea)"
+)
 assert adds
 
 rets = function.find_all(ret())

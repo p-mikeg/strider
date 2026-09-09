@@ -1,12 +1,13 @@
 //! Heap-allocation profile of `Strider::analyze` on `SYMBOL` in the image
-//! passed as `argv[1]`, a real allocation-heavy function in the FreeBSD 12.4
-//! kernel it was written against.  Run:
+//! named by `argv[1]` or `$STRIDER_KERNEL`, an allocation-heavy function in
+//! the FreeBSD 12.4 kernel it was written against.  Run:
 //!
 //! ```text
 //! cargo run --release --example dhat_analyze -- /path/to/kernel
 //! ```
 //!
-//! Writes `dhat-heap.json`, ranked by allocation site total bytes and blocks.
+//! Writes `dhat-heap.json` on exit: total bytes and blocks per allocation
+//! site, for dhat's `dh_view` viewer.
 
 use object::{Object, ObjectSymbol};
 

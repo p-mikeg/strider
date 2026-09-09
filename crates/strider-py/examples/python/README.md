@@ -59,8 +59,9 @@ Two settings the raw-bytes examples use:
   the last instruction. A `BufferReader` answers those addresses with a short
   read, so its trailing 16 or 64 zero bytes (15 pads each routine to a `0x20`
   boundary with NOPs instead) change nothing. A `MemReader` that returns `None`
-  rather than short-reading needs them, and needs more than a handful: the 64
-  `0x90` NOPs of 02 and 08 lift, four do not.
+  rather than short-reading needs them, and needs more than a handful: 02's
+  three-byte stream still fails to lift with eight trailing NOPs and succeeds
+  with sixteen, so 02 and 08 carry 64.
 - **`allow_code_before_start_addr=True`** (every raw-bytes example but 02):
   without it an unconditional branch below the entry is a tail call rather than
   an edge to follow. It is insurance for a carve whose entry is not its lowest address.

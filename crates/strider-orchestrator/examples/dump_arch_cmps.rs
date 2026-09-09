@@ -1,8 +1,8 @@
-//! Dumps p-code lifts for `cmp`-then-conditional-branch sequences across
-//! every flag-architecture Strider supports.  Used to design the
-//! `FlagCmpCanonicalize` pass's per-arch rule set: each arch's
-//! `cmp`+cond emits a fixed boolean tree of named flag varnodes that
-//! can then be matched and rewritten.
+//! Dumps p-code lifts for `cmp`-then-conditional-branch sequences, one arch
+//! per flag model Strider supports plus flagless MIPS for contrast.  Used to
+//! design the `FlagCmpCanonicalize` pass's per-arch rule set: on a flag arch
+//! `cmp`+cond emits a fixed boolean tree of named flag varnodes that can then
+//! be matched and rewritten.
 //!
 //! Run: `cargo run -p strider-orchestrator --example dump_arch_cmps`
 
