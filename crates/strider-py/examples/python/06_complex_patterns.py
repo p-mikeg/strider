@@ -29,7 +29,7 @@ print("=== 1. multi-level capture chain ===")
 base, idx, stride = Capture("base"), Capture("idx"), Capture("stride")
 pat1 = load(addr=int_add(base, int_mul(idx, stride)))
 hits = function.find_all(pat1, ignore_casts=True)
-print(f"found {len(hits)} indexed-array-load shapes")
+print(f"found {len(hits)} binding rows over {len({h.root for h in hits})} loads")
 for h in hits[:3]:
     print(
         f"  base={h.uint_opt(base)!r:>12}  idx={h.uint_opt(idx)!r:>10}  "
@@ -44,8 +44,8 @@ for h in hits[:3]:
 print("\n=== 2. back-reference (one Capture in two positions) ===")
 a, b, v = Capture("a"), Capture("b"), Capture("v")
 print(
-    f"int_add(a, b): {len(function.find_all(int_add(a, b)))}, "
-    f"int_add(v, v) (same node both sides): {len(function.find_all(int_add(v, v)))}"
+    f"int_add(a, b): {len(function.find_all(int_add(a, b)))} rows, "
+    f"int_add(v, v) (same node both sides): {len(function.find_all(int_add(v, v)))} rows"
 )
 sbase, so1, so2 = Capture("sbase"), Capture("so1"), Capture("so2")
 same_base = function.find_all(

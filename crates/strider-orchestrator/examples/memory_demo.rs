@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!();
     println!("open memory-graph-opt.html in a browser to see:");
-    println!("  - Stack stores with [sp+OFF] labels and no addr edge");
+    println!("  - stack stores labelled `base sp - K`, each still fed by its addr edge");
 
     Ok(())
 }

@@ -1,7 +1,7 @@
-//! Runs `Strider::analyze` on `SYMBOL` in the image passed as `argv[1]`, a
-//! real heavy function in the FreeBSD 12.4 kernel it was written against, with
-//! no profiler wiring, so an external sampling profiler gets a clean target.
-//! Run under samply:
+//! Runs `Strider::analyze` on `SYMBOL` in the image named by `argv[1]` or
+//! `$STRIDER_KERNEL`, a heavy function in the FreeBSD 12.4 kernel it was
+//! written against, with no profiler wiring, so an external sampling profiler
+//! gets a clean target.  Run under samply:
 //!
 //! ```text
 //! cargo build --release --example analyze_kernel
