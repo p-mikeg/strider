@@ -37,7 +37,8 @@ rule_repl = tpl.int_add(tpl.var(x), tpl.int_add(tpl.var(y), tpl.int_const(0)))
 
 no_opt = baseline.clone()
 n = no_opt.rewrite(find=rule_find, replace=rule_repl)
-print(f"\nreintroduced {n} redundant `y + 0` sub-expression(s)")
+# Fewer nodes appear than sites rewritten: equal `y + 0` expressions dedup.
+print(f"\nrewrote {n} `x + y` site(s) into `x + (y + 0)`")
 print(f"no further optimization applied                 : {shape(no_opt)}")
 
 # ConstantFold alone folds the identity back.
@@ -53,7 +54,7 @@ elf.optimize(full, strider.opt.OptimizerPipeline.default())
 print(f"default pipeline                                : {shape(full)}")
 
 print(
-    f"\nnode counts, no reoptimize: {shape(no_opt)['nodes']}, "
+    f"\nreachable node counts, no reoptimize: {shape(no_opt)['nodes']}, "
     f"ConstantFold-only: {shape(partial)['nodes']}, "
     f"default: {shape(full)['nodes']}"
 )
