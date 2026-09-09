@@ -27,8 +27,12 @@ fn = analyze("patterns", "mul_then_add")
 a, b, prod, c = Capture("a"), Capture("b"), Capture("prod"), Capture("c")
 joined = fn.find_all([int_mul(a, b).capture(prod), int_add(prod, c)])
 nested = fn.find_all(int_add(int_mul(a, b), c))  # the same shape, written inline
-print(f"join [mul.capture(prod), add(prod, c)]: {len(joined)} (mul, add) pair(s)")
-print(f"equivalent nested add(mul(a, b), c): {len(nested)}")
+# roots holds one node id per pattern in the query. int_mul is commutative, so
+# the one (mul, add) pair here answers twice.
+pairs = {tuple(m.roots) for m in joined}
+print(f"join [mul.capture(prod), add(prod, c)]: {len(joined)} binding rows")
+print(f"  over {len(pairs)} distinct (mul, add) node pair(s): {sorted(pairs)}")
+print(f"equivalent nested add(mul(a, b), c): {len(nested)} binding rows")
 print("  a shared capture equals the nested form; the two halves need not nest")
 
 
@@ -51,11 +55,12 @@ class DifferentOffsets(k.JoinPredicate):
         return x is not None and y is not None and x != y
 
 
+# The two halves are interchangeable, so each unordered pair answers twice,
+# once per assignment of the two loads to read1 / read2.
 pairs = fn2.find_all([read1, read2], constraints=[DifferentOffsets()], ignore_casts=True)
-print(f"two same-base loads at different offsets: {len(pairs)}")
-if pairs:
-    r = pairs[0]
-    print(f"  e.g. base + {r.uint_opt(o1)} and base + {r.uint_opt(o2)}")
+print(f"two same-base loads at different offsets: {len(pairs)} row(s)")
+for r in pairs:
+    print(f"  base + {r.uint_opt(o1)} and base + {r.uint_opt(o2)}")
 
 
 # --- 3. Constraint algebra: negate (and any_of / all_of) ---
