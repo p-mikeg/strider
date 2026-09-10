@@ -1,5 +1,5 @@
 use crate::{IrBuilderEx, RegisterSet};
-use strider_ir::node::{ValueId, ValueType};
+use strider_ir::node::{NodeId, ValueId, ValueType};
 use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder, IRBuilderExt, IntBinaryOp,
     IntCmpOp, IntUnaryOp,
@@ -253,9 +253,30 @@ impl Tb {
         let tgt = self.u64(addr);
         self.fb.build_call_cc(tgt, None).expect("call");
     }
-    /// Yields the ret-value output when `output_vn` is `Some`. The builder
-    /// itself reads `implicit_read_vns` and emits one clobber per
-    /// `implicit_write_vns` entry.
+    /// [`strider_ir::FunctionBuilder::build_call_other`] plus the user-op name
+    /// stamp, which patterns and dumps read.
+    pub fn named_call_other(
+        fb: &mut FunctionBuilder,
+        user_op_id: u64,
+        name: &str,
+        args: &[ValueId],
+        output_vns: &[rsleigh::Vn],
+        clobbers_memory: bool,
+        terminate: bool,
+    ) -> anyhow::Result<(NodeId, Vec<ValueId>)> {
+        let (node, outputs) =
+            fb.build_call_other(user_op_id, args, output_vns, clobbers_memory, terminate)?;
+        fb.function_mut()
+            .side_tables_mut()
+            .set_call_other_name(node, name);
+        Ok((node, outputs))
+    }
+
+    /// Yields the ret-value output when `output_vn` is `Some`. Reads
+    /// `implicit_read_vns` into the leading argument slots and emits one
+    /// clobber output per `implicit_write_vns` entry, the result winning a tie.
+    /// Every vn must be a tracked container; a sub-register slice is the
+    /// lifter's job.
     pub fn call_other(
         &mut self,
         name: &str,
@@ -265,16 +286,41 @@ impl Tb {
         implicit_read_vns: &[rsleigh::Vn],
         implicit_write_vns: &[rsleigh::Vn],
     ) -> Option<ValueId> {
-        let abi = strider_target::BuiltCallOtherAbi {
-            implicit_reads: implicit_read_vns.to_vec(),
-            implicit_writes: implicit_write_vns.to_vec(),
-            clobbers_memory: false,
-            no_return: false,
-        };
-        let (_node, result) = self
-            .fb
-            .build_call_other_abi(user_op_id, name, args, &abi, output_vn, false)
-            .expect("call_other");
+        let mut all_args: Vec<ValueId> = Vec::with_capacity(implicit_read_vns.len() + args.len());
+        for vn in implicit_read_vns {
+            all_args.push(self.read_var(vn));
+        }
+        all_args.extend_from_slice(args);
+
+        let mut clobber_vns: Vec<rsleigh::Vn> = Vec::new();
+        for vn in implicit_write_vns {
+            if Some(*vn) != output_vn && !clobber_vns.contains(vn) {
+                clobber_vns.push(*vn);
+            }
+        }
+        let mut output_vns: Vec<rsleigh::Vn> = output_vn.into_iter().collect();
+        output_vns.extend_from_slice(&clobber_vns);
+
+        let (_node, outputs) = Self::named_call_other(
+            &mut self.fb,
+            user_op_id,
+            name,
+            &all_args,
+            &output_vns,
+            false,
+            false,
+        )
+        .expect("call_other");
+
+        let (ret_vals, clobbers) = outputs.split_at(output_vn.iter().count());
+        // Clobbers first, so an aliased clobber cannot re-clobber the result.
+        for (vn, v) in core::iter::zip(&clobber_vns, clobbers) {
+            self.write_var(vn, *v);
+        }
+        let result = ret_vals.first().copied();
+        if let (Some(vn), Some(v)) = (output_vn, result) {
+            self.write_var(&vn, v);
+        }
         result
     }
 

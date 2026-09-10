@@ -5,7 +5,7 @@
 
 use strider_ir::node::ValueType;
 use strider_ir::{Function, FunctionBuilder, IRBuilderExt};
-use strider_ir_test_utils::RegisterSet;
+use strider_ir_test_utils::{RegisterSet, Tb};
 use strider_pattern::{Capture, CaptureExt, Matcher, anything, call_other, int_const, mem_phi};
 
 /// One `cpuid` CallOther with no explicit argument and no result register, so
@@ -14,21 +14,7 @@ fn build_cpuid_graph() -> Function {
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
         .expect("build_fn_single_region");
-    let _ = b
-        .build_call_other_abi(
-            7,
-            "cpuid",
-            &[],
-            &strider_target::BuiltCallOtherAbi {
-                implicit_reads: Vec::new(),
-                implicit_writes: Vec::new(),
-                clobbers_memory: false,
-                no_return: false,
-            },
-            None,
-            false,
-        )
-        .expect("cpuid");
+    Tb::named_call_other(&mut b, 7, "cpuid", &[], &[], false, false).expect("cpuid");
     b.build_return(None, &[]).expect("return");
     b.build().expect("FunctionBuilder::build")
 }
@@ -72,21 +58,7 @@ fn arg_constrains_pcode_explicit_value_argument() {
         .expect("build_fn_single_region");
     let a0 = b.build_int_const(0x11u64, ValueType::I64).expect("a0");
     // Inputs are [ctrl(0), mem(1), arg0(2)].
-    let _ = b
-        .build_call_other_abi(
-            9,
-            "rdmsr",
-            &[a0],
-            &strider_target::BuiltCallOtherAbi {
-                implicit_reads: Vec::new(),
-                implicit_writes: Vec::new(),
-                clobbers_memory: false,
-                no_return: false,
-            },
-            None,
-            false,
-        )
-        .expect("rdmsr");
+    Tb::named_call_other(&mut b, 9, "rdmsr", &[a0], &[], false, false).expect("rdmsr");
     b.build_return(None, &[]).expect("return");
     let function = b.build().expect("build");
     let matcher = Matcher::new(&function);
