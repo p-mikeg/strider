@@ -72,46 +72,6 @@ where
         self.rom.as_deref()
     }
 
-    /// The ISA-mode bit a target seated with no mode of its own decodes in, per
-    /// indirect site: the same [`strider_cfg::flowing_isa_bit_at`] probe
-    /// `Builder::enqueue_resolved` makes at that branch address, with
-    /// `entry_bit` from [`strider_cfg::Cfg::function_isa_bit`] covering a site
-    /// whose context carries no value yet and every arch with no ISA-mode var.
-    ///
-    /// The probe runs here AFTER `build_lift` returned, where the builder runs
-    /// it at the branch region's seal, so the answers can differ. Sleigh
-    /// context is forward-flowing and both re-imposers write only on drift
-    /// (`FlowVars::pin_at`, `RegionBuilder::hold_isa_mode`), so a region
-    /// explored later and starting below the branch can paint its own mode
-    /// across this address. Where they differ [`adopt_known_modes`] takes the
-    /// wrong `interworking` verdict, which either drops a mode-less arm
-    /// ([`Progress::derived_incomplete`]) or keeps one at a genuinely
-    /// interworking site ([`Progress::assumed_modes`]); both are reported, so
-    /// the incompleteness channels hold, but the seated mode can be wrong.
-    /// Closing it needs the bit captured per site at seal time and returned on
-    /// [`strider_cfg::Cfg`].
-    fn flowing_isa_bits(
-        &self,
-        unresolved: &UnresolvedAnchors,
-        switch_anchors: &UnresolvedAnchors,
-        entry_bit: bool,
-    ) -> FxHashMap<PcodeInsnAddr, bool> {
-        let sleigh = self.lifter.sleigh();
-        unresolved
-            .iter()
-            .chain(switch_anchors.iter())
-            .map(|(addr, _)| {
-                let bit = strider_cfg::flowing_isa_bit_at(
-                    &self.arch,
-                    sleigh,
-                    addr.machine_addr.addr,
-                    entry_bit,
-                );
-                (*addr, bit)
-            })
-            .collect()
-    }
-
     /// Structural CFG build only: no lift, no optimisation, no
     /// indirect-branch resolution.
     ///
@@ -274,11 +234,7 @@ where
                 converged = true;
                 break;
             }
-            let flowing = self.flowing_isa_bits(
-                &unresolved,
-                &switch_anchors,
-                cfg.function_isa_bit().unwrap_or(false),
-            );
+            let flowing = flowing_isa_bits(&cfg, &unresolved, &switch_anchors);
             let progress = apply_resolutions(
                 &mut working.cfg.known_targets,
                 &lift_opts.cfg.known_targets,
@@ -346,11 +302,7 @@ where
         let mut final_targets = None;
         if !converged {
             let mut folded = working.cfg.known_targets.clone();
-            let flowing = self.flowing_isa_bits(
-                &unresolved,
-                &switch_anchors,
-                cfg.function_isa_bit().unwrap_or(false),
-            );
+            let flowing = flowing_isa_bits(&cfg, &unresolved, &switch_anchors);
             let progress = apply_resolutions(
                 &mut folded,
                 &lift_opts.cfg.known_targets,
@@ -696,6 +648,33 @@ fn apply_resolutions(
         known_targets.insert(addr, targets);
     }
     Ok(progress)
+}
+
+/// The ISA-mode bit a target seated with no mode of its own decodes in, per
+/// indirect site.
+///
+/// Read off the cfg, which sampled it while each site's region was decoding
+/// (`Builder::sample_flowing_isa_bit`). Probing the live engine again here
+/// would answer for whichever region painted the branch address last, and
+/// [`adopt_known_modes`] would then take the wrong `interworking` verdict.
+/// [`strider_cfg::Cfg::function_isa_bit`] covers an address no indirect branch
+/// was sealed at and every arch with no ISA-mode var.
+fn flowing_isa_bits(
+    cfg: &strider_cfg::Cfg,
+    unresolved: &UnresolvedAnchors,
+    switch_anchors: &UnresolvedAnchors,
+) -> FxHashMap<PcodeInsnAddr, bool> {
+    let entry_bit = cfg.function_isa_bit().unwrap_or(false);
+    unresolved
+        .iter()
+        .chain(switch_anchors.iter())
+        .map(|(addr, _)| {
+            (
+                *addr,
+                cfg.flowing_isa_bit_at_site(*addr).unwrap_or(entry_bit),
+            )
+        })
+        .collect()
 }
 
 /// The caller's answer for `addr`. A caller can only spell the machine address,
