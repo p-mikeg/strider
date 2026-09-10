@@ -1,6 +1,8 @@
 use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
 
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 use crate::call_other_abi::PyCallOtherAbi;
 use crate::cc::PyCallingConvention;
@@ -57,6 +59,51 @@ impl<'py> FromPyObject<'py> for CallOtherAbiArg {
     }
 }
 
+/// A mapping argument. Any mapping, not only a `dict`: the `known_targets` /
+/// `call_other_abis` getters hand back a read-only proxy, and that has to
+/// round-trip through the constructor.
+pub struct MapArg<T>(pub T);
+
+impl<'py, T: FromPyObject<'py>> FromPyObject<'py> for MapArg<T> {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        if ob.is_instance_of::<PyDict>() {
+            return T::extract_bound(ob).map(Self);
+        }
+        let as_dict = ob.py().get_type_bound::<PyDict>().call1((ob,))?;
+        T::extract_bound(&as_dict).map(Self)
+    }
+}
+
+/// A table's Python face, built once and handed out read-only.
+///
+/// Rebuilding it per read turns a seeded 20k-entry table into milliseconds on
+/// every attribute access, and `analyze` reads one; the proxy is read-only
+/// because the authority is the Rust map beside it, which no mutation here
+/// would reach.
+#[derive(Default)]
+struct MappingView(OnceLock<PyObject>);
+
+impl MappingView {
+    fn get<'py, T: IntoPy<PyObject> + Clone>(
+        &self,
+        py: Python<'py>,
+        source: &T,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let obj = match self.0.get() {
+            Some(o) => o,
+            None => {
+                let dict = source.clone().into_py(py);
+                let proxy = py
+                    .import_bound("types")?
+                    .getattr("MappingProxyType")?
+                    .call1((dict,))?;
+                self.0.get_or_init(|| proxy.unbind())
+            }
+        };
+        Ok(obj.bind(py).clone())
+    }
+}
+
 /// CFG-shaping knobs, keyword-only.
 #[pyclass(name = "CfgOptions", module = "strider.cfg")]
 #[derive(Clone, Default)]
@@ -79,16 +126,21 @@ pub struct PyCfgOptions {
     /// resolver itself proves only for a bare link register. An empty list
     /// seats nothing, leaving the site an unresolved indirect branch; the
     /// classifier still runs unless `resolve_indirect_branches=False`.
-    #[pyo3(get)]
-    pub known_targets: std::collections::HashMap<u64, KnownTarget>,
+    ///
+    /// `Arc`: one seeded table is read by every `analyze` through the same
+    /// options object, and a per-call clone of it is O(table).
+    pub known_targets: Arc<HashMap<u64, KnownTarget>>,
     /// Classifications for Sleigh user-op names, as
     /// `{name: strider.sleigh.CallOtherAbi}`, winning over the built-in table.
     ///
     /// `Lifter.user_op_names()` lists the names a binary can contain, and
     /// `Lifter.call_other_abi(name)` reads back what strider already makes of
     /// one.
-    #[pyo3(get)]
-    pub call_other_abis: std::collections::HashMap<String, PyCallOtherAbi>,
+    pub call_other_abis: Arc<HashMap<String, PyCallOtherAbi>>,
+    /// The two tables' Python faces, shared with every clone of this object,
+    /// which shares the tables themselves.
+    known_targets_view: Arc<MappingView>,
+    call_other_abis_view: Arc<MappingView>,
 }
 
 #[pymethods]
@@ -97,23 +149,52 @@ impl PyCfgOptions {
     /// for an unbounded lift.
     #[new]
     #[pyo3(signature = (*, function_max_size = None, allow_code_before_start_addr = false,
-                        known_targets = std::collections::HashMap::new(),
-                        call_other_abis = std::collections::HashMap::new()))]
+                        known_targets = MapArg(HashMap::new()),
+                        call_other_abis = MapArg(HashMap::new())))]
     fn new(
         function_max_size: Option<u64>,
         allow_code_before_start_addr: bool,
-        known_targets: std::collections::HashMap<u64, KnownTarget>,
-        call_other_abis: std::collections::HashMap<String, CallOtherAbiArg>,
+        known_targets: MapArg<HashMap<u64, KnownTarget>>,
+        call_other_abis: MapArg<HashMap<String, CallOtherAbiArg>>,
     ) -> PyResult<Self> {
         reject_zero_max_size(function_max_size)?;
         Ok(Self {
             function_max_size,
             allow_code_before_start_addr,
-            known_targets,
-            call_other_abis: call_other_abis
-                .into_iter()
-                .map(|(name, abi)| (name, abi.0))
-                .collect(),
+            known_targets: Arc::new(known_targets.0),
+            call_other_abis: Arc::new(
+                call_other_abis
+                    .0
+                    .into_iter()
+                    .map(|(name, abi)| (name, abi.0))
+                    .collect(),
+            ),
+            known_targets_view: Arc::default(),
+            call_other_abis_view: Arc::default(),
+        })
+    }
+
+    /// Indirect-branch answers supplied by the caller, as a read-only
+    /// `{dispatch_address: [target_address, ...] | "return"}` mapping.
+    #[getter]
+    fn known_targets<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.known_targets_view.get(py, &*self.known_targets)
+    }
+
+    /// Classifications for Sleigh user-op names, as a read-only
+    /// `{name: strider.sleigh.CallOtherAbi}` mapping.
+    #[getter]
+    fn call_other_abis<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.call_other_abis_view.get(py, &*self.call_other_abis)
+    }
+
+    /// This object with `function_max_size` set, sharing both tables rather
+    /// than rebuilding them through Python.
+    fn with_function_max_size(&self, function_max_size: u64) -> PyResult<Self> {
+        reject_zero_max_size(Some(function_max_size))?;
+        Ok(Self {
+            function_max_size: Some(function_max_size),
+            ..self.clone()
         })
     }
 
