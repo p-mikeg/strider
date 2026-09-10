@@ -773,11 +773,8 @@ fn with_known_targets_empty_map_falls_through_to_tier_1() {
     assert!(had_unresolved);
 }
 
-/// An out-of-range arm has no per-target tail-call escape, so it is dropped;
-/// the table keeps the arms that are in range, leaving the seat short of what
-/// `known_targets` named.
 #[test]
-fn known_multiple_drops_only_its_out_of_range_target() {
+fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
     let base = 0x1000u64;
     let mut bytes = vec![0xff, 0xe0u8];
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
@@ -801,24 +798,20 @@ fn known_multiple_drops_only_its_out_of_range_target() {
     };
     let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
         .build()
-        .expect("build must succeed; the out-of-range arm is dropped");
+        .expect("build must succeed; mixed Multiple defers via UnresolvedIndirectBranch");
 
-    let seated: Vec<Vec<u64>> = cfg
-        .regions()
-        .filter_map(|r| match &r.terminator {
-            RegionTerminator::Switch { targets, .. } => {
-                Some(targets.iter().map(|t| t.addr).collect())
-            }
-            _ => None,
-        })
-        .collect();
-    assert_eq!(seated, vec![vec![0x1004]]);
+    let mut had_unresolved = false;
+    let mut had_switch = false;
+    for region in cfg.regions() {
+        match &region.terminator {
+            RegionTerminator::UnresolvedIndirectBranch { .. } => had_unresolved = true,
+            RegionTerminator::Switch { .. } => had_switch = true,
+            _ => {}
+        }
+    }
     assert!(
-        !cfg.regions().any(|r| matches!(
-            r.terminator,
-            RegionTerminator::UnresolvedIndirectBranch { .. }
-        )),
-        "one bad arm must not cost the whole table"
+        had_unresolved && !had_switch,
+        "Multiple with an OOB target must defer via UnresolvedIndirectBranch, not emit a Switch"
     );
 }
 
