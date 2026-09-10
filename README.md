@@ -115,7 +115,7 @@ one constant a capture is bound to across all of them, which is the answer to
 "what value does this function always pass here", and raises when two matches
 disagree.
 
-`one_of([a, b])` yields a separate match for every arm that matches;
+`one_of([a, b])` yields a match per arm that matches with distinct bindings;
 `first_of` cuts to the first that matches. `int_add(a, b).ordered()` pins
 operand order, overriding commutative both-orders matching. Either nests in a
 value, memory or control slot. `load().non_stack()` and `store().heap_only()`
