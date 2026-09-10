@@ -498,39 +498,37 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 })?;
             }
             crate::ResolvedTargets::Multiple(targets) => {
-                // A bad arm costs itself, not the table: an out-of-range one has
-                // no per-target tail-call escape, and one interior to a region
-                // but off every instruction boundary can neither be split out
-                // nor found by `switch_arm_regions` at lift time.  Both are what
-                // an over-approximated table bound produces, so dropping the
-                // whole seat over one of them loses the arms that were right.
+                // An empty target set carries no dispatch information; an
+                // out-of-range one has no per-target tail-call escape; one
+                // interior to a region but off every instruction boundary can
+                // neither be split out nor found by `switch_arm_regions` at lift
+                // time.  Deferring beats failing the whole function over one
+                // over-approximated table entry: a bad arm is evidence the whole
+                // bound is wrong, and seating the rest decodes whatever else it
+                // over-approximated into. Measured over 155 kernels, dropping
+                // arms individually instead cost 485 functions, which then fail
+                // outright where they used to lift with the site unresolved.
                 //
-                // The off-boundary arm is reported here the way
+                // The off-boundary arm is reported the way
                 // `Builder::seat_non_boundary_target` reports the one discovered
-                // after seating.  The out-of-range arm leaves the seat short of
-                // what `known_targets` names, which is its own report.
-                let mut seatable = Vec::with_capacity(targets.len());
-                for target in targets {
+                // after seating, so the loss lands on a channel either way.
+                let mut deferred = false;
+                for target in targets.iter() {
                     let a = PcodeInsnAddr::at_machine_start(target.addr);
-                    if self.is_branch_tail_call_nocheck(a) {
-                        continue;
-                    }
                     if self.builder.addr_is_interior_non_boundary(a) {
                         self.builder.interior_branch_targets.push(a);
-                        continue;
+                        deferred = true;
+                    } else if self.is_branch_tail_call_nocheck(a) {
+                        deferred = true;
                     }
-                    seatable.push(target);
                 }
-                // No arm left, so no dispatch information: defer the site rather
-                // than seat a `Switch` the lift cannot resolve.
-                if seatable.is_empty() {
+                if targets.is_empty() || deferred {
                     self.finish_current_region(RegionTerminator::UnresolvedIndirectBranch {
                         target_vn,
                         addr,
                     })?;
                     return Ok(InsnOutcome::RegionClosed);
                 }
-                let targets = seatable;
                 let region = self.finish_current_region(RegionTerminator::Switch {
                     target_vn,
                     targets: targets.clone(),
