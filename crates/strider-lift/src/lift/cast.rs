@@ -7,13 +7,16 @@ use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, ensure_const_space, nth_input_or_err, require_output_vn};
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
-    /// Right-shift by `byte_offset * 8`, then truncate.
+    /// Right-shift by `byte_offset * 8`, then coerce to the output width.
     ///
     /// P-code DEFINES an offset at or past the input width, as zero
     /// (`OpBehaviorSubpiece::evaluateBinary`), but Sleigh's `truncation`
     /// operator keeps offsets in range, so one arriving here means the decode
     /// is not what this handler models: fail the lift rather than emit a
     /// constant zero for it.
+    ///
+    /// An output WIDER than the input is accepted and zero-extends, which is
+    /// `& calc_mask(sizeout)` over the narrower value (`opbehavior.cc:764`).
     pub(super) fn handle_subpiece(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input_vn = nth_input_or_err(insn, 0)?;
         ensure_const_space(
@@ -41,7 +44,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         )?;
         let result = self
             .builder
-            .truncate_if_needed(shifted, out_vn.int_type()?)?;
+            .convert_to_int_if_needed(shifted, out_vn.int_type()?)?;
         self.write_vn(out_vn, result)
     }
 
