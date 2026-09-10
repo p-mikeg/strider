@@ -1117,7 +1117,7 @@ mod tests {
     /// One out-of-range arm (a `switch` case that tail-calls) costs itself, not
     /// the table: the site stays a `Switch` on the arms that are in range.
     #[test]
-    fn an_out_of_range_switch_arm_is_dropped_and_the_table_survives() {
+    fn an_out_of_range_switch_arm_defers_the_whole_table() {
         let base = 0x1000u64;
         let bytes = vec![0xff, 0xe0, 0xc3, 0xc3]; // jmp rax; ret; ret
 
@@ -1138,24 +1138,18 @@ mod tests {
 
         let cfg = build_cfg(bytes, base, &opts).expect("build");
         assert_every_switch_target_has_an_arm(&cfg);
-        let targets = cfg
-            .regions()
-            .find_map(|r| match &r.terminator {
-                RegionTerminator::Switch { targets, .. } => Some(targets.clone()),
-                _ => None,
-            })
-            .expect("the table must survive its out-of-range arm");
-        assert_eq!(
-            targets.iter().map(|t| t.addr).collect::<Vec<_>>(),
-            vec![0x1002, 0x1003],
+        assert!(
+            cfg.regions()
+                .all(|r| !matches!(r.terminator, RegionTerminator::Switch { .. })),
+            "an out-of-range arm is evidence the bound is wrong, so the site defers",
         );
     }
 
-    /// An arm already interior to a decoded region when the site is sealed is
-    /// dropped and reported, exactly as `seat_non_boundary_target` handles the
-    /// one discovered later.
+    /// An arm already interior to a decoded region when the site is sealed
+    /// defers the site, and is reported the way `seat_non_boundary_target`
+    /// reports the one discovered later.
     #[test]
-    fn a_seat_time_interior_switch_arm_is_dropped_and_reported() {
+    fn a_seat_time_interior_switch_arm_is_reported_and_defers() {
         let base = 0x1000u64;
         let mut bytes = MOVABS_RAX_0.to_vec(); // 0x1000..0x100a
         bytes.push(0x90); // 0x100a: nop, seals the movabs region
@@ -1178,21 +1172,10 @@ mod tests {
 
         let cfg = build_cfg(bytes, base, &opts).expect("build");
         assert_every_switch_target_has_an_arm(&cfg);
-        let targets = cfg
-            .regions()
-            .find_map(|r| match &r.terminator {
-                RegionTerminator::Switch { targets, .. } => Some(targets.clone()),
-                _ => None,
-            })
-            .expect("the table must survive its off-boundary arm");
-        assert_eq!(
-            targets.iter().map(|t| t.addr).collect::<Vec<_>>(),
-            vec![0x100d]
-        );
         assert_eq!(
             cfg.interior_branch_targets(),
             &[addr(0x1005, 0)],
-            "an arm dropped at seal time must be reported like one dropped later",
+            "an arm off every boundary must be reported, not only deferred",
         );
     }
 
