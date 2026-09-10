@@ -185,9 +185,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                     self.out_type_suffix(node, "\n-> "),
                 )
             }
-            NodeKind::SegmentOp { op_id } => {
-                format!("SegmentOp #{op_id}{}", self.out_type_suffix(node, ":"))
-            }
             NodeKind::CPoolRef => format!("CPoolRef{}", self.out_type_suffix(node, ":")),
             NodeKind::New => format!("New{}", self.out_type_suffix(node, ":")),
 
