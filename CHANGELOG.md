@@ -137,6 +137,36 @@ The shape each API settled into is in
   fresh `Load` left none, so `load().stack_only()` and `store().heap_only()`
   silently matched the wrong nodes or none at all afterwards.
 
+- An `ET_REL` object's sections seat at a synthetic image base rather than at
+  address 0, so every symbol address in an unlinked `.o` moves and address 0 is
+  unmapped. A `.text` seated at 0 was served as read-only memory: a null
+  dereference, and every relocation site left at its file-initial zero, folded
+  to instruction bytes instead of failing to fold.
+- `Cfg.is_complete()` answers `False` for a `build_cfg` CFG that holds an
+  unresolved indirect branch. It read three of the four channels, and the
+  fourth reached only `AnalyzeResult`, so the method both guides present as the
+  completeness test asserted the opposite of the truth on the one CFG that
+  cannot consult it.
+- `Lifter.optimize(function)` raises when the function was lifted by another
+  handle. It folded that function's constant-address loads against THIS
+  handle's rom, so a foreign binary's bytes arrived as constants; every
+  renderer already compared architectures.
+- A root-level pattern matches a `Call` that produces no value output --
+  `one_of([...])`, `first_of([...])` and a bare `call()` alike. The root
+  lowering anchored on a value, so a call built from a no-clobber convention
+  was invisible to every one of them.
+- `float_is_nan`'s sibling `int_not` is refused when the output is wider than
+  128 bits, where it used to match an `Xor` against a saturated mask that is
+  not a complement, and miss the real one.
+- A `.when_match()` guard in a `ctrl()` slot is refused at build time, as the
+  same guard already was elsewhere. It was accepted and could never fire, so
+  the query answered nothing with no error.
+- A `Template` declaring a gapped output slot is refused, as the input side
+  already refused the same gap; it used to densify silently.
+- `CallOtherAbi.__eq__` and `__hash__` include the architecture the ABI was
+  frozen against, so two `custom(...)` ABIs from different arches no longer
+  compare equal or collide in a dict while being mutually unusable.
+
 ### Breaking, Rust
 
 - `OwnedElf::file` is gone and `is_arm_be8` returns `Result<bool>`. Both parse
@@ -264,6 +294,42 @@ The shape each API settled into is in
   all six.
 - `WithOutput`'s slot is an `Option<usize>`, `None` being the existential
   `any_output()`.
+
+- `FlowVars::reset_at` and `FlowVars::restore_at` are one `pin_at(..)`
+  returning `Result<()>`. They had identical bodies, and the `bool` both
+  production callers discarded is gone.
+- `FunctionBuilder::build_call_other_abi` is removed. It re-implemented
+  `strider-lift`'s `build_abi_call_other`; that is the only copy now.
+- `FunctionBuilder::build_branch` takes the `test-util` gate its siblings
+  carry, and `Function::retain_reachable` is private -- neither had a
+  production caller. `Graph` grows a stale-cache entry point for the one
+  caller that re-keys the dedup cache afterwards.
+- Dot labelling is infallible: resolving the register table once per render
+  rather than once per varnode removed the failure it fed, so `pretty_label`,
+  `call_clobbered_name`, `return_ret_name`, `try_declare_node` and
+  `emit_input_edge` no longer return `io::Result`.
+- `MemOptions::call_blocking` takes the `noalias_allocators` set as a required
+  parameter and `with_noalias_allocators` is gone. The decomposition memo is
+  keyed by `ValueId` alone, so two analyzers over one `Function` must decompose
+  against the same set or one answers the other's question.
+- `Region`'s variable map holds `PackedOption<ValueId>` and an unrenamed read
+  errors. `ValueId` derives `Default`, so a slot never written read back as
+  `Entry`'s control edge: a real value dressed as an SSA variable.
+- A `SegmentOp` or `Indirect` opcode fails the lift by name. Neither can come
+  from `lift_one` -- `SegmentOp`'s only producer is a decompiler action whose
+  first input is a host pointer. The dispatch is exhaustive now, so a new
+  rsleigh opcode is a compile error rather than a runtime message.
+- `Builder::enqueue_resolved` takes the dispatch's `PcodeInsnAddr` rather than
+  a bare address, and `Cfg` carries the flowing ISA bit each indirect site was
+  sampled at.
+- An ARM processor-mode switch clobbers `r8`-`r12` as well as `sp` and `lr`.
+  FIQ banks R8-R14 and the sla models no banking, so this table is the whole
+  model; it widens a clobber set, so ARM32 results where a mode switch appears
+  are less precise, which is the sound direction.
+- `SleighArch::transient_decode_vars` returns `PAIR_INSTRUCTION_FLAG` on the
+  four MIPS presets. It is `noflow`, selects a constructor, and is
+  forward-painted, so an unset one decoded the next function's entry against
+  the paired form on a reused engine.
 
 ### Added
 
@@ -415,6 +481,20 @@ The shape each API settled into is in
   configuration sound under any input. `AssumptionOptions()` is not that: two
   of the six default `True`.
 
+- `Cfg.flowing_isa_bit_at_site` reports the ISA-mode bit flowing into each
+  indirect-branch site, sampled by the builder at the moment it decides it.
+- `strider_ir::node::low_bits_mask_u128` gives the low-*n*-bits mask one owner;
+  four crates restated it with four different `>= 128` guards.
+- `IntBinaryOpName`, `BoolBinaryOpName` and `FloatBinaryOpName` join the
+  existing `Literal` aliases, so `bool_binary("Add")` no longer type-checks
+  clean and raises at runtime.
+- `int_const` accepts a value in `[2^127, 2^128)`, which the equivalent raw-int
+  operand already did.
+- `strider-cfg`, `strider-lift` and `strider-orchestrator` ship READMEs, as
+  `strider-py`, `strider-reader` and `strider-target` already did.
+- The seventeen example scripts run in CI. They were type-checked and never
+  executed, so a script that imported cleanly and then raised passed the gate.
+
 ### Performance
 
 - A partial read no longer walks every region with a lower start. One region
@@ -474,6 +554,22 @@ The shape each API settled into is in
   region each and `SHN_XINDEX` lifting the 65535 header cap. Over 1,000 to
   64,000 eight-byte regions nested under one spanning region: 0.048us to
   0.093us per read, where the walk was 1.40us to 142us.
+
+- `Function.to_dot(pretty=True)` resolves the Sleigh register table once per
+  render instead of once per varnode name. rsleigh documents that call as
+  expensive; measured at 331us against the 1440 registers x86-64 declares, and
+  it was reached once per `Return` input slot and once per `Call` clobber edge.
+- `pcode_at` caches one sweep engine on the handle rather than cloning the
+  whole `Sleigh` per call. Decoding a single instruction cost 30.6ms against
+  0.8ms to decode the entire function; the next five calls now cost nothing,
+  and the linear sweep no longer makes repeated calls quadratic.
+- A guard lookup walks the query point's dominator chain instead of scanning
+  every guard recorded for that value. Guards on one value cost the square of
+  their count in entries scanned and grew cubically -- 4096 entries and 9.4ms
+  at 64 guards, against 3 probes now.
+- Stamping the same lift address on a node the dedup cache returned adds one
+  leaf rather than one per call, so an asm fingerprint grows with distinct
+  addresses instead of with node creations.
 
 ### Fixed
 
@@ -898,6 +994,58 @@ The shape each API settled into is in
 - The Sleigh parse cache was not invalidated on an out-of-band context write,
   and not flushed when a context variable was re-pinned, so an address could
   decode against a stale constructor. Both in the vendored submodule.
+
+- One client sending a byte at a time, never finishing its request line, held
+  the explorer's single-threaded loop indefinitely: `shutdown()` did not return
+  and the interpreter could not exit, so a REPL in that state needed `SIGKILL`.
+  The read deadline armed once per `readline`, and the buffered reader loops
+  `recv` inside one of those, so each read renewed the whole budget. It arms
+  per `recv` now.
+- A callee owns the whole argument slot, not the bytes the caller wrote into
+  it. The outgoing-argument window recorded each range as the store's extent
+  while advancing by whole ABI slots, so the tail of a sub-slot argument -- a
+  4-byte seventh integer argument on x86-64 SysV -- fell outside the window and
+  a load of those bytes forwarded across a call that may write them. Reachable
+  only under `escape_analysis` or a non-empty `noalias_allocators`.
+- An ISA-mode clash costs the arm that names the clashing address, not the
+  whole jump table. Every producer of a mode clash is direct flow, so a table
+  lost all its arms because two unrelated direct branches disagreed about one
+  target.
+- The flowing ISA bit is sampled where it is decided. The builder read it at a
+  branch's seal and the orchestrator read it again after the build, and a
+  region explored later can paint its own mode across the branch's address in
+  between, inverting the interworking test.
+- Abandoning a site removes both keys that can name it. A fold is keyed by the
+  anchor's p-code address and a caller seed by machine address, so a site the
+  loop had given up on kept being re-seated.
+- Deep pattern nesting is bounded by measured stack as well as by level count.
+  The count is calibrated for the main thread's 8 MiB; an unoptimised build on
+  a 2 MiB thread stack died at 255 nested operands, inside the documented 512
+  levels. A release build was never affected.
+- An `__index__` that re-enters the pattern builder raises instead of
+  recursing without bound. The depth guard fired, and the integer extraction
+  swallowed its error before retrying at another width -- two recursions per
+  level.
+- A failed multi-pattern query no longer consumes the one-shot patterns it had
+  already taken, and a failed `add_symbols` no longer commits the entries it
+  had processed, where they surfaced after some later mutation and a corrected
+  retry duplicated them.
+- `PhiCollapse` reports the node it killed. It returned "no change" when the
+  phi had no uses, so the fixed-point loop could exit having just removed a
+  live-set member.
+- `sp & 0x8000_0000` is not an alignment mask, so it no longer roots a stack
+  base; a value range at a width past the `u128` carrier stays top rather than
+  being narrowed by a later scaling; and the pipeline clears the frame-escape
+  bit beside the decomposition memo.
+- Reading a relocation's kind before charging the patch budget stops a table of
+  GOT relocations inflating the amplification allowance, and a mapped-file
+  freshness check dedups by set rather than by linear scan.
+- Replacing an `IfPat` branch drops the discarded branch's captures, which
+  otherwise stayed in the declared set and failed a rewrite at instantiation.
+- Six example scripts reported binding rows as sites. Commutative matching
+  answers once per operand order, so every count whose noun was "sites" or
+  "pairs" was doubled, and one demo printed a number that disproved its own
+  comment.
 
 ## 0.1.0
 
