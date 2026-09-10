@@ -489,7 +489,11 @@ fn classify_addr(
     addr: ValueId,
     noalias_allocators: &FxHashSet<u64>,
 ) -> AddrClass {
-    match decompose(function, addr, noalias_allocators) {
+    // A heap class needs a listed allocator, so with none configured it is
+    // another analyzer's, read back out of the shared `decompose` memo.
+    let decomposed = decompose(function, addr, noalias_allocators)
+        .filter(|e| e.kind == MemKind::Stack || !noalias_allocators.is_empty());
+    match decomposed {
         Some(MemExpr { base, offset, kind }) => match kind {
             MemKind::Heap => AddrClass::HeapRooted { base, offset },
             MemKind::HeapOpaque => AddrClass::HeapOpaque,
@@ -862,11 +866,9 @@ impl MemWalker<'_> {
     /// [`crate::AssumptionOptions::callee_preserves_stack_args`] empties the
     /// window instead, dropping `k` and everything above `base_offset`.
     ///
-    /// Erring NARROW would be unsound: a gap ends the window, and the inner
-    /// probe stops at a `Call` whenever `calls_block` is set -- it is not under
-    /// `incoming_args` -- so an argument store hidden behind an
-    /// EARLIER call would end the prefix at that call and let a load from a
-    /// slot the NEXT callee owns forward across that callee.  A def the probe
+    /// Erring NARROW would be unsound: an argument store the inner probe
+    /// cannot see past would end the prefix below the slot it wrote and let a
+    /// load from a slot the callee owns forward across it.  A def the probe
     /// cannot see through therefore CONTINUES the window
     /// ([`SlotReach::Blinded`]).
     ///
@@ -908,7 +910,7 @@ impl MemWalker<'_> {
         }
         // Below the first argument slot is the callee's frame and the reserved
         // area, both of which it may scratch.
-        let window_lo = call_sp_off + stack_args.map_or(0, |s| s.base_offset);
+        let window_lo = call_sp_off.saturating_add(stack_args.map_or(0, |s| s.base_offset));
         if load_off < window_lo {
             return true;
         }
@@ -1031,7 +1033,9 @@ fn scan_arg_window(
     let mut ranges = Vec::new();
     let mut cursor = 0usize;
     loop {
-        let slot_off = geometry.sp_offset + geometry.args.offset_of(cursor);
+        let slot_off = geometry
+            .sp_offset
+            .saturating_add(geometry.args.offset_of(cursor));
         if slot_off >= hi {
             return ArgWindow {
                 ranges,
@@ -1384,8 +1388,11 @@ fn at_or_below_entry_sp(function: &Function, value: ValueId, acc: i128) -> bool 
                 if !seen.insert(cur) {
                     return false;
                 }
-                for arm in function.int_inputs(cur) {
-                    work.push((arm, acc));
+                let arms = work.len();
+                work.extend(function.value_inputs(node).map(|arm| (arm, acc)));
+                // An arm the walk never reads is a displacement it never bounds.
+                if work.len() == arms {
+                    return false;
                 }
             }
             _ => return false,
@@ -1467,6 +1474,20 @@ impl MemOptions {
                 stack_global_disjoint,
                 &options.assumptions.noalias_allocators,
             )
+        }
+    }
+
+    /// Every claim off, so a verdict holds under
+    /// [`crate::AssumptionOptions::none`].  What a permanent rewire may name.
+    pub(crate) fn structural() -> Self {
+        Self {
+            stack_global_disjoint: false,
+            calls_block: true,
+            distinct_sp_bases_disjoint: false,
+            callee_preserves_stack_args: false,
+            escape_analysis: false,
+            call_relaxations: false,
+            noalias_allocators: std::sync::Arc::default(),
         }
     }
 
