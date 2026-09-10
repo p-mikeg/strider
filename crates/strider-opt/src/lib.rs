@@ -28,9 +28,7 @@ pub use opt::constant_fold::ConstantFold;
 pub use opt::dead_branch::DeadBranchElimination;
 pub use opt::flag_cmp_canonicalize::FlagCmpCanonicalize;
 pub use opt::if_cond_inversion::IfCondInversion;
-#[cfg(test)]
-pub(crate) use opt::known_bits::KnownBitsMap;
-pub use opt::known_bits::{KnownBits, analyze as analyze_known_bits};
+pub use opt::known_bits::{KnownBits, KnownBitsFacts, KnownBitsMap, analyze as analyze_known_bits};
 pub use opt::load_forward::LoadForward;
 pub use opt::load_readonly::LoadReadOnly;
 pub use opt::phi_collapse::PhiCollapse;

@@ -41,7 +41,7 @@ use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId};
 /// `rom` is the binary's read-only image; `None` disables the rodata arm.  The
 /// stack-pointer varnode and the target endianness come off `function`.
 #[must_use]
-pub fn classify_table_dispatch(
+pub(crate) fn classify_table_dispatch(
     function: &strider_ir::Function,
     branch: NodeId,
     rom: Option<&dyn ReadOnlyMemory>,
