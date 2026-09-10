@@ -113,21 +113,7 @@ fn call_arg_nests_value_builder_load() {
 /// A `CallOther` named `name` with op id `op`, then return.
 fn call_other_named(name: &str, op: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let (_node, _result) = b
-        .build_call_other_abi(
-            op,
-            name,
-            &[],
-            &strider_target::BuiltCallOtherAbi {
-                implicit_reads: Vec::new(),
-                implicit_writes: Vec::new(),
-                clobbers_memory: false,
-                no_return: false,
-            },
-            None,
-            false,
-        )
-        .unwrap();
+    strider_ir_test_utils::Tb::named_call_other(&mut b, op, name, &[], &[], false, false).unwrap();
     b.build_return(None, &[]).unwrap();
     b.build().unwrap()
 }

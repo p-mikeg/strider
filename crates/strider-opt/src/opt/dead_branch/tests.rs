@@ -337,17 +337,13 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
 
         b.set_region(true_r);
         // Gives the join's MemPhi a non-trivial mem-input from the dead branch.
-        let (call_node, _) = b.build_call_other_abi(
+        let (call_node, _) = strider_ir_test_utils::Tb::named_call_other(
+            &mut b,
             0,
             "cpuid",
             &[],
-            &strider_target::BuiltCallOtherAbi {
-                implicit_reads: Vec::new(),
-                implicit_writes: Vec::new(),
-                clobbers_memory: false,
-                no_return: false,
-            },
-            None,
+            &[],
+            false,
             false,
         )?;
         let mem_value = b.function().node_outputs(call_node)[1];
