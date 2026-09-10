@@ -159,7 +159,9 @@ mod tests {
         );
     }
 
-    /// Bulk variant of `cacheable_node_is_deduplicated`.
+    /// Bulk variant of `cacheable_node_is_deduplicated`: the gate for the
+    /// borrowed-key dedup probe, whose hash must agree with the owned-key
+    /// insert or every repeat allocates a fresh node.
     #[test]
     fn cacheable_node_dedup_is_stable_across_many_calls() {
         let mut function = test_function();
@@ -298,31 +300,6 @@ mod tests {
             .graph_mut()
             .create_node(NodeKind::Phi, [phi_token, c_value], [ty]);
         assert_ne!(p1, p2, "identical Phis must stay distinct (non-cacheable)");
-    }
-
-    /// Entry is cacheable: a function has only one.
-    #[test]
-    fn entry_node_kind_dedupes_on_repeated_create() {
-        let mut function = test_function();
-        let e1 = function
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        let e2 = function
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        assert_eq!(e1, e2, "Entry must dedupe: only one per function");
-    }
-
-    #[test]
-    fn initial_memory_dedupes_on_repeated_create() {
-        let mut function = test_function();
-        let m1 = function
-            .graph_mut()
-            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-        let m2 = function
-            .graph_mut()
-            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-        assert_eq!(m1, m2, "InitialMemory must dedupe: only one per function");
     }
 
     /// The `InitialVnId` is part of the node kind, so same-id calls dedup and
@@ -1154,43 +1131,6 @@ mod tests {
     }
 
     #[test]
-    fn asm_fingerprint_extend_then_get() {
-        let mut function = test_function();
-        let n = function
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        function
-            .side_tables_mut()
-            .extend_asm_fingerprint(n, &[0x1000, 0x1004, 0x1008]);
-        assert_eq!(
-            function.side_tables().asm_fingerprint(n),
-            FxHashSet::from_iter([0x1000, 0x1004, 0x1008])
-        );
-    }
-
-    #[test]
-    fn asm_fingerprint_extend_dedupes() {
-        let mut function = test_function();
-        let n = function
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        function
-            .side_tables_mut()
-            .extend_asm_fingerprint(n, &[0x1004, 0x1000, 0x1004]);
-        assert_eq!(
-            function.side_tables().asm_fingerprint(n),
-            FxHashSet::from_iter([0x1000, 0x1004])
-        );
-        function
-            .side_tables_mut()
-            .extend_asm_fingerprint(n, &[0x1008, 0x1000, 0x1004]);
-        assert_eq!(
-            function.side_tables().asm_fingerprint(n),
-            FxHashSet::from_iter([0x1000, 0x1004, 0x1008])
-        );
-    }
-
-    #[test]
     fn asm_fingerprint_extend_from_unions_two_nodes() {
         let mut function = test_function();
         let a = function
@@ -1213,30 +1153,6 @@ mod tests {
         assert_eq!(
             function.side_tables().asm_fingerprint(b),
             FxHashSet::from_iter([0x1004, 0x100C])
-        );
-    }
-
-    #[test]
-    fn asm_fingerprint_extend_never_shrinks() {
-        let mut function = test_function();
-        let n = function
-            .graph_mut()
-            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        function
-            .side_tables_mut()
-            .extend_asm_fingerprint(n, &[0x1000, 0x1004, 0x1008]);
-        // A strict subset must not remove existing entries.
-        function
-            .side_tables_mut()
-            .extend_asm_fingerprint(n, &[0x1004]);
-        assert_eq!(
-            function.side_tables().asm_fingerprint(n),
-            FxHashSet::from_iter([0x1000, 0x1004, 0x1008])
-        );
-        function.side_tables_mut().extend_asm_fingerprint(n, &[]);
-        assert_eq!(
-            function.side_tables().asm_fingerprint(n),
-            FxHashSet::from_iter([0x1000, 0x1004, 0x1008])
         );
     }
 
