@@ -132,3 +132,18 @@ fn a_region_at_the_top_of_the_address_space_is_an_error() {
         &opts,
     );
 }
+
+#[test]
+fn a_region_based_at_the_top_of_the_address_space_is_an_error() {
+    // The reader's end offset is `base + len`: seating the buffer so that sum
+    // passes 2^64 overflowed it inside the read callback Sleigh calls across
+    // the FFI boundary, where a panic cannot unwind and aborts the process.
+    for start in [u64::MAX, u64::MAX - 1, u64::MAX - 4] {
+        build_is_survivable(
+            &SleighArch::x86_64(),
+            vec![0xc3, 0x48, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00],
+            start,
+            &CfgOptions::default(),
+        );
+    }
+}
