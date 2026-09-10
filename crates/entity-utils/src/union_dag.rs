@@ -95,6 +95,11 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
     /// value: a shared sub-DAG is walked once, but the same value held by two
     /// nodes is yielded twice and the caller must collect it. Cycle-safe:
     /// mutual absorption still terminates.
+    ///
+    /// Costs the transitive closure reached from `n`, not the count of values
+    /// yielded. On a chain of unions each key reaches the whole chain below it,
+    /// so sweeping every key is quadratic in the chain length; no caller does
+    /// that.
     pub fn for_each(&self, n: N, mut f: impl FnMut(V)) {
         let Some(root) = self.roots[n].expand() else {
             return;
@@ -283,9 +288,11 @@ mod tests {
         assert_eq!(set_of(&dag, Key(0)), FxHashSet::from_iter([1, 2, 3]));
     }
 
-    /// `for_each` must cost what it YIELDS, not what the arena holds: a dense
-    /// `seen` set grows a zeroed vector reaching the largest `UnionId`, so
-    /// sweeping every key of a large arena is quadratic.
+    /// A dense `seen` set grows a zeroed vector reaching the largest `UnionId`,
+    /// so one call would cost the whole arena. The keys here are independent
+    /// singletons, so each closure is one node: what this pins is `seen` being
+    /// sized by the walk. The closure itself is the other half of the cost and
+    /// is not measured here.
     #[test]
     fn for_each_cost_does_not_scale_with_the_arena() {
         fn sweep(n: u32) -> std::time::Duration {
