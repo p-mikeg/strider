@@ -113,6 +113,9 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// self-wired edges `explore` never sees), and carried across a region
     /// split.
     pub(super) region_isa_mode: BTreeMap<NodeIndex, u32>,
+    /// The ISA-mode bit flowing into each indirect-branch site, sampled at the
+    /// site's seal; see [`Self::sample_flowing_isa_bit`].
+    pub(super) flowing_isa_bits: BTreeMap<PcodeInsnAddr, bool>,
     /// Addresses reached in two different ISA modes; see
     /// [`Cfg::isa_mode_conflicts`].
     pub(super) isa_mode_conflicts: Vec<PcodeInsnAddr>,
@@ -159,6 +162,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             work_queue: Vec::new(),
             undecodable_seeded: Vec::new(),
             region_isa_mode: BTreeMap::new(),
+            flowing_isa_bits: BTreeMap::new(),
             isa_mode_conflicts: Vec::new(),
             interior_branch_targets: Vec::new(),
             non_boundary_seats: rustc_hash::FxHashMap::default(),
@@ -246,7 +250,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     }
 
     /// Enqueue `addr` as a strider-*resolved indirect* target of `parent`,
-    /// resolved from the branch at `branch_addr`.  Sleigh never flowed the mode
+    /// resolved from the branch at `branch_site`.  Sleigh never flowed the mode
     /// here, so decode in the function mode (default transients: a target is a
     /// region start, where IT-block/register-list state is fresh) with the
     /// ISA-mode var set to what the branch commits: an interworking branch's own
@@ -257,22 +261,12 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         parent: Option<NodeIndex>,
         addr: PcodeInsnAddr,
         isa_bit: Option<bool>,
-        branch_addr: u64,
+        branch_site: PcodeInsnAddr,
     ) {
-        let carried = match self.arch.isa_mode_var() {
-            Some(var) => {
-                // Degrading to the function's own mode, not to `false`, which
-                // would decode every resolved same-mode target of a Thumb
-                // function as ARM.
-                let entry_bit = self
-                    .isa_mode_of(&self.function_mode)
-                    .is_some_and(|v| v != 0);
-                let bit = isa_bit.unwrap_or_else(|| {
-                    crate::flowing_isa_bit_at(&self.arch, self.sleigh, branch_addr, entry_bit)
-                });
-                self.flow_vars.with_mode_bit(&self.function_mode, var, bit)
-            }
-            None => self.function_mode.clone(),
+        let flowing = self.sample_flowing_isa_bit(branch_site);
+        let carried = match (self.arch.isa_mode_var(), isa_bit.or(flowing)) {
+            (Some(var), Some(bit)) => self.flow_vars.with_mode_bit(&self.function_mode, var, bit),
+            _ => self.function_mode.clone(),
         };
         self.work_queue.push(WorkItem {
             parent,
@@ -363,6 +357,30 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         self.arch
             .isa_mode_var()
             .and_then(|var| self.flow_vars.value_of(ctx, var))
+    }
+
+    /// Records, and returns, the ISA-mode bit flowing into the indirect branch
+    /// at `site`: the mode a target seated there with no mode of its own
+    /// decodes in.
+    ///
+    /// Sampled at the site's seal, where `RegionBuilder::hold_isa_mode` has just
+    /// re-imposed the owning region's mode at this address, and kept: reading
+    /// [`crate::flowing_isa_bit_at`] again after the build answers for whichever
+    /// region painted the address last. `None` on an arch with no ISA-mode var.
+    pub(super) fn sample_flowing_isa_bit(&mut self, site: PcodeInsnAddr) -> Option<bool> {
+        self.arch.isa_mode_var()?;
+        if let Some(&bit) = self.flowing_isa_bits.get(&site) {
+            return Some(bit);
+        }
+        // Degrading to the function's own mode, not to `false`, which would
+        // decode every resolved same-mode target of a Thumb function as ARM.
+        let entry_bit = self
+            .isa_mode_of(&self.function_mode)
+            .is_some_and(|v| v != 0);
+        let bit =
+            crate::flowing_isa_bit_at(&self.arch, self.sleigh, site.machine_addr.addr, entry_bit);
+        self.flowing_isa_bits.insert(site, bit);
+        Some(bit)
     }
 
     /// Lowers the out-of-function arm of a conditional branch, creating the
@@ -690,6 +708,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             link_register_seated: self.link_register_seated,
             tail_call_seated: self.tail_call_seated,
             function_isa_bit,
+            flowing_isa_bits: self.flowing_isa_bits,
         })
     }
 }
@@ -1043,6 +1062,92 @@ mod tests {
         };
         let parent = b.add_region(dispatch).unwrap();
         let _ = b.seat_non_boundary_target(parent, owner, addr(0x3000, 0));
+    }
+
+    /// The flowing bit a site records is the mode its own region decoded in,
+    /// and is NOT recoverable once the build is over.
+    ///
+    /// ARM at 0x1000:
+    ///
+    /// ```text
+    /// 1000  b 0x1010
+    /// 1008  (Thumb) b .        ; the seeded interworking arm
+    /// 1010  bx r0              ; the dispatch, seated with two arms
+    /// 1020  bx lr              ; the mode-less arm
+    /// ```
+    ///
+    /// The dispatch's region never drifts, so nothing splits the context at
+    /// 0x1010; the Thumb arm at 0x1008 is explored afterwards and paints its
+    /// own mode forward across the dispatch. A read after the build then calls
+    /// the ARM dispatch Thumb.
+    #[test]
+    fn a_later_thumb_region_repaints_the_dispatch_a_site_already_sampled() {
+        let base = 0x1000u64;
+        let arch = strider_target::SleighArch::arm();
+        let mut bytes = vec![0u8; 0x30];
+        let mut put = |at: u64, word: u32| {
+            let off = (at - base) as usize;
+            bytes[off..off + 4].copy_from_slice(&word.to_le_bytes());
+        };
+        for i in 0..0xc {
+            put(base + i * 4, 0xe12f_ff1e); // bx lr
+        }
+        put(0x1000, 0xea00_0002); // b 0x1010
+        put(0x1008, 0x0000_e7fe); // (Thumb) b .
+        put(0x1010, 0xe12f_ff10); // bx r0
+
+        let reader = rsleigh::mem_readers::BufMemReader::new(bytes, base);
+        let mut sleigh =
+            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
+        let flow = crate::FlowVars::discover(&sleigh).expect("discover flow vars");
+        let function_mode = flow.snapshot(&sleigh, base);
+        let mut known_targets = rustc_hash::FxHashMap::default();
+        known_targets.insert(
+            PcodeInsnAddr::at_machine_start(0x1010),
+            crate::ResolvedTargets::Multiple(vec![
+                crate::ResolvedTarget::new(0x1008, Some(true)),
+                crate::ResolvedTarget::new(0x1020, None),
+            ]),
+        );
+        let opts = crate::CfgOptions {
+            known_targets,
+            ..crate::CfgOptions::default()
+        };
+        let cfg = super::Builder::for_arch(&arch, &mut sleigh, base, &opts)
+            .with_flow_context(&flow, function_mode)
+            .build()
+            .expect("build");
+
+        let dispatch = cfg
+            .regions()
+            .find_map(|r| match &r.terminator {
+                RegionTerminator::Switch { addr, .. } => Some(*addr),
+                _ => None,
+            })
+            .expect("switch region");
+        assert_eq!(
+            cfg.flowing_isa_bit_at_site(dispatch),
+            Some(false),
+            "the dispatch's own region decoded as ARM",
+        );
+        assert!(
+            crate::flowing_isa_bit_at(&arch, &sleigh, dispatch.machine_addr.addr, false),
+            "premise: a read after the build must see the Thumb arm's paint, or \
+             the seal-time sample is proving nothing",
+        );
+        let insn_len = |start: u64| {
+            cfg.regions()
+                .find(|r| r.start_addr.machine_addr.addr == start)
+                .and_then(|r| r.insns.first())
+                .map(|i| i.len)
+        };
+        assert_eq!(insn_len(0x1008), Some(2), "the interworking arm is Thumb");
+        assert_eq!(
+            insn_len(0x1020),
+            Some(4),
+            "a mode-less arm decodes in the bit the seal sampled, not the one \
+             the Thumb arm painted over it",
+        );
     }
 
     /// A direct edge needs exactly one var of the parent's context, so a second
