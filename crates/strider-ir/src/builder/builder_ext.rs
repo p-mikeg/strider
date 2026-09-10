@@ -371,21 +371,6 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::FloatBitsToInt, [value], int_type))
     }
 
-    fn build_segment_op(
-        &mut self,
-        op_id: u64,
-        segment: ValueId,
-        offset: ValueId,
-        output_type: ValueType,
-    ) -> Result<ValueId> {
-        self.validate_value_inputs(&[segment, offset])?;
-        Ok(self.build_single_output_pure(
-            NodeKind::SegmentOp { op_id },
-            [segment, offset],
-            output_type,
-        ))
-    }
-
     fn build_opaque_variadic(
         &mut self,
         kind: NodeKind,
