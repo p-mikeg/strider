@@ -16,7 +16,6 @@ use strider_ir::{Function, IRViewer, IntBinaryOp, MemDecomp};
 use strider_target::Endianness;
 
 use crate::OptOptions;
-use crate::mem_ssa::MemorySSAWalker;
 use AddrClass::*;
 
 mod frame_escape;
@@ -726,7 +725,7 @@ pub(crate) fn alias_verdict(
     }
 }
 
-/// The SP-aware [`MemorySSAWalker`].
+/// The SP-aware [`crate::mem_ssa::find_nearest_clobber`] predicate carrier.
 struct MemWalker<'a> {
     analyzer: &'a MemAnalyzer,
     /// The probed location.  Precomputed rather than a `Load` `NodeId`, since
@@ -748,7 +747,9 @@ thread_local! {
     pub(crate) static WALK_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-impl MemorySSAWalker for MemWalker<'_> {
+impl MemWalker<'_> {
+    /// The [`crate::mem_ssa::find_nearest_clobber`] predicate: does `def`
+    /// overlap the probed location?
     fn def_clobbers(&mut self, function: &Function, def: NodeId) -> bool {
         #[cfg(test)]
         WALK_STEPS.with(|c| c.set(c.get() + 1));
@@ -1673,7 +1674,9 @@ impl MemAnalyzer {
         let load = self.load_sized(function, load);
         let mem_node = function.producer(mem);
         let mut walker = self.walker(load, load_space);
-        walker.find_nearest_clobber(function, mem_node)
+        crate::mem_ssa::find_nearest_clobber(function, mem_node, &mut |f, d| {
+            walker.def_clobbers(f, d)
+        })
     }
 
     /// The nearest `Store` covering `[offset, offset + probe_size)` relative to
@@ -1719,7 +1722,9 @@ impl MemAnalyzer {
             },
             rsleigh::VnSpace::RAM,
         );
-        walker.find_nearest_clobber(function, function.producer(mem_start))
+        crate::mem_ssa::find_nearest_clobber(function, function.producer(mem_start), &mut |f, d| {
+            walker.def_clobbers(f, d)
+        })
     }
 
     /// `clobber` read as a `Store` whose own SP offset shares `base`, the only
@@ -1811,6 +1816,19 @@ pub(crate) fn test_sp() -> rsleigh::Vn {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     }
+}
+
+/// Collapses region phis to the bare `InitialVar(sp) + k` terminals
+/// `decompose` recognises, the post-`PhiCollapse` state in which
+/// `LoadForward` runs the analysis.  `ConstantFold` is left out so the
+/// deep-chain and memo tests keep their un-flattened structure.
+#[cfg(test)]
+fn collapse_phis(fg: &mut strider_ir::Function) {
+    let mut p = crate::OptimizerPipeline::new();
+    p.add(crate::PhiCollapse);
+    p.add(crate::RegionCollapse);
+    p.run(fg, &mut crate::OptCtx::new(None))
+        .expect("phi collapse");
 }
 
 #[cfg(test)]

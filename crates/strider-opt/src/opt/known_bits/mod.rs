@@ -131,7 +131,7 @@ fn shift_known_bits(
 
 /// Known bits of `node_id`'s first integer value output.  `None` if it has no
 /// such output, or nothing can be proven about it.
-pub(crate) fn node_known_bits(
+fn node_known_bits(
     function: &strider_ir::Function,
     node_id: NodeId,
     known: &KnownBitsMap,

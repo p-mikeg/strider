@@ -1,5 +1,6 @@
 use strider_ir::IRViewer;
 use strider_ir::node::NodeKind;
+use strider_ir_test_utils::IrWalkerEx;
 
 use super::handler_tests::lift_bytes;
 
@@ -12,19 +13,12 @@ fn x86_64_fn(bytes: Vec<u8>) -> strider_ir::Function {
     .expect("fixture must lift")
 }
 
-fn count_kind(f: &strider_ir::Function, want: fn(&NodeKind) -> bool) -> usize {
-    f.graph()
-        .all_node_ids()
-        .filter(|n| want(f.node_kind(*n)))
-        .count()
-}
-
 fn stores(f: &strider_ir::Function) -> usize {
-    count_kind(f, |k| matches!(k, NodeKind::Store(_)))
+    f.count_kind(|k| matches!(k, NodeKind::Store(_)))
 }
 
 fn sinks(f: &strider_ir::Function) -> usize {
-    count_kind(f, |k| matches!(k, NodeKind::Unreachable))
+    f.count_kind(|k| matches!(k, NodeKind::Unreachable))
 }
 
 /// `add eax,1 ; mov [0x2000],eax ; jmp f`: the cycle has no exit, so nothing
@@ -55,7 +49,7 @@ fn multi_region_exit_free_cycle_keeps_its_store() {
         0xeb, 0xef, // L2: jmp f
     ]);
     assert!(
-        count_kind(&f, |k| matches!(k, NodeKind::MemPhi)) >= 1,
+        f.count_kind(|k| matches!(k, NodeKind::MemPhi)) >= 1,
         "the join carries a loop-carried MemPhi"
     );
     assert_eq!(sinks(&f), 1, "one sink for the one exit-free cycle");
@@ -72,7 +66,7 @@ fn returning_function_gets_no_sink() {
     ]);
     assert_eq!(sinks(&f), 0, "a returning function needs no sink");
     assert_eq!(
-        count_kind(&f, |k| matches!(k, NodeKind::If)),
+        f.count_kind(|k| matches!(k, NodeKind::If)),
         0,
         "no branch is seated on a returning function"
     );
