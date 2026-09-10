@@ -2560,13 +2560,14 @@ macro_rules! builder_slot_methods {
 // field-set, generated here from a compact spec so the `.when()` wiring and
 // capture handling live in ONE place.
 //
-// The three root flavors differ only in how `build_pattern_py` and the
+// The four root flavors differ only in how `build_pattern_py` and the
 // nestable-compile methods derive from `core_builder`:
 //
 //   * `value` produces a value and exposes `compile_value`, so it nests as a
 //     value operand. `.when()` rides on `wrap_when`.
 //   * `mem` produces a memory token and exposes `compile_mem` for a `mem`
 //     slot. `.when()` is applied by `apply_when_to_pattern`.
+//   * `mem_value` produces both, so it nests in either position.
 //   * `node` is node-rooted only: same build as `mem`, no nestable compile.
 //
 // Field kinds: `pat` / `mem` (one operand slot), `multi_match` / `multi_mem`
