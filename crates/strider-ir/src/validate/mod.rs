@@ -15,10 +15,11 @@ mod tests;
 use graph_invariants::{
     check_function_invariants_arith_widths, check_function_invariants_asm_fingerprints,
     check_function_invariants_consts, check_function_invariants_control_single_use,
-    check_function_invariants_extend_truncate, check_function_invariants_memory_chain,
-    check_function_invariants_phis, check_function_invariants_region,
-    check_function_invariants_side_indices, check_function_invariants_switch,
-    check_function_invariants_terminator_reachable, check_function_invariants_uniqueness,
+    check_function_invariants_data_cycles, check_function_invariants_extend_truncate,
+    check_function_invariants_memory_chain, check_function_invariants_phis,
+    check_function_invariants_region, check_function_invariants_side_indices,
+    check_function_invariants_switch, check_function_invariants_terminator_reachable,
+    check_function_invariants_uniqueness,
 };
 use local_typing::check_local_typing;
 
@@ -50,6 +51,7 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     check_function_invariants_switch(function, &reachable, &mut errs);
     check_function_invariants_asm_fingerprints(function, &reachable, &mut errs);
     check_function_invariants_memory_chain(function, &reachable, &mut errs);
+    check_function_invariants_data_cycles(function, &reachable, &mut errs);
     check_function_invariants_side_indices(function, &reachable, &mut errs);
     check_function_invariants_terminator_reachable(function, &mut errs);
 
@@ -210,6 +212,16 @@ pub enum ValidationError {
          pattern, so two otherwise-equal constants would not dedup"
     )]
     FloatConstWidthMismatch { node: NodeId, bits: u64 },
+
+    #[error(
+        "node {node:?} (kind {kind:?}) is its own transitive data producer; only a \
+         Phi / MemPhi may close a data cycle, and reverse post-order otherwise \
+         yields the node before its own producer"
+    )]
+    DataCycle {
+        node: NodeId,
+        kind: crate::node::NodeKind,
+    },
 
     #[error(
         "reachable Store {node:?} (kind {kind:?}) produces a Memory output that no \

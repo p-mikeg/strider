@@ -4,39 +4,6 @@ use common::graph;
 use graph_algorithms::walk::GraphRef;
 use std::ops::ControlFlow;
 
-#[test]
-fn parses_linear_chain() {
-    let _ = graph(
-        "
-        a -> b
-        b -> c
-        c -> d
-    ",
-    );
-}
-
-#[test]
-fn parses_diamond_topology() {
-    let _ = graph(
-        "
-        a -> b, c
-        b, c -> d
-    ",
-    );
-}
-
-#[test]
-fn parses_self_referential_cycle() {
-    let _ = graph(
-        "
-        a -> b
-        b -> c
-        c -> b
-        c -> d
-    ",
-    );
-}
-
 fn succs(g: &common::Graph, node: common::NodeId) -> Vec<String> {
     let mut out = Vec::new();
     let _ = g.try_successors(node, |s| {

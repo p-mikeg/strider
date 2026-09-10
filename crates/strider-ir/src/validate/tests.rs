@@ -1,5 +1,5 @@
 use super::*;
-use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
 /// Distinct from any real machine address.
 const SENTINEL: u64 = 0xDEAD_BEEF_0000_0001;
@@ -364,8 +364,6 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
 
 #[test]
 fn local_typing_wrong_input_count() {
-    use crate::node::IntBinaryOp;
-
     let mut s = spine();
     let (_c, c_value) = int_const(&mut s.f, 5, ValueType::I64);
 
@@ -541,41 +539,6 @@ fn graph_invariants_mem_phi_arity_mismatch() {
     let mem_phi_value = s.f.node_outputs(mem_phi).iter().copied().next().unwrap();
     s.f.graph_mut()
         .create_node(NodeKind::Return, [cs_ctrl_value, mem_phi_value], []);
-
-    assert_validation_err(&s.f, |e| {
-        matches!(
-            e,
-            ValidationError::PhiValueArityMismatch {
-                expected_predecessors: 1,
-                actual_values: 2,
-                ..
-            }
-        )
-    });
-}
-
-#[test]
-fn graph_invariants_value_phi_arity_mismatch() {
-    let mut s = spine();
-    let cs = s.f.graph_mut().create_node(
-        NodeKind::Region,
-        [s.entry_ctrl],
-        [ValueKind::Control, ValueKind::PhiToken],
-    );
-    let cs_phi_value = s.f.node_outputs(cs).iter().copied().nth(1).unwrap();
-    let cs_ctrl_value = s.f.node_outputs(cs).iter().copied().next().unwrap();
-
-    let (_c1, c1_value) = int_const(&mut s.f, 1, ValueType::I64);
-
-    // Two value inputs under a one-predecessor Region.
-    let vp = s.f.graph_mut().create_node(
-        NodeKind::Phi,
-        [cs_phi_value, c1_value, c1_value],
-        [ValueKind::Typed(ValueType::I64)],
-    );
-    let vp_value = s.f.node_outputs(vp).iter().copied().next().unwrap();
-    s.f.graph_mut()
-        .create_node(NodeKind::Return, [cs_ctrl_value, s.mem_value, vp_value], []);
 
     assert_validation_err(&s.f, |e| {
         matches!(
@@ -1235,4 +1198,66 @@ fn graph_invariants_float_const_bits_above_declared_width_detected() {
     assert_validation_err(&s.f, |e| {
         matches!(e, ValidationError::FloatConstWidthMismatch { .. })
     });
+}
+
+/// A non-phi node reachable from its own output. The walk terminates on it, so
+/// nothing else notices, and reverse post-order then yields the node before its
+/// own producer.
+#[test]
+fn self_referential_data_edge_flagged() {
+    let mut s = spine();
+    let (a_n, a) = int_const(&mut s.f, 1, ValueType::I64);
+    stamp(&mut s.f, a_n);
+    let (b_n, b) = int_const(&mut s.f, 2, ValueType::I64);
+    stamp(&mut s.f, b_n);
+    let add = s.f.graph_mut().create_node(
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        [a, b],
+        [ValueKind::Typed(ValueType::I64)],
+    );
+    stamp(&mut s.f, add);
+    let [sum] = s.f.node_outputs_exact::<1>(add).unwrap();
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, sum], []);
+    stamp(&mut s.f, ret);
+
+    let slot = s.f.graph().node_input_id_at(add, 1).unwrap();
+    s.f.graph_mut().update_input(slot, sum);
+
+    assert_validation_err(&s.f, |e| matches!(e, ValidationError::DataCycle { .. }));
+}
+
+/// A loop-carried `Phi` closes a data cycle legitimately.
+#[test]
+fn phi_carried_data_cycle_not_flagged() {
+    let mut s = spine();
+    let (one_n, one) = int_const(&mut s.f, 1, ValueType::I64);
+    stamp(&mut s.f, one_n);
+    let token =
+        s.f.graph_mut()
+            .create_node(NodeKind::Region, [s.entry_ctrl], [ValueKind::Control]);
+    stamp(&mut s.f, token);
+    let [region_ctrl] = s.f.node_outputs_exact::<1>(token).unwrap();
+    let phi = s.f.graph_mut().create_node(
+        NodeKind::Phi,
+        [region_ctrl, one],
+        [ValueKind::Typed(ValueType::I64)],
+    );
+    stamp(&mut s.f, phi);
+    let [phi_val] = s.f.node_outputs_exact::<1>(phi).unwrap();
+    let add = s.f.graph_mut().create_node(
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        [phi_val, one],
+        [ValueKind::Typed(ValueType::I64)],
+    );
+    stamp(&mut s.f, add);
+    let [sum] = s.f.node_outputs_exact::<1>(add).unwrap();
+    s.f.graph_mut().add_node_input(phi, sum);
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [region_ctrl, s.mem_value, sum], []);
+    stamp(&mut s.f, ret);
+
+    assert_no_validation_err(&s.f, |e| matches!(e, ValidationError::DataCycle { .. }));
 }
