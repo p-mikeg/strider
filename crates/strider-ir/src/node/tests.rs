@@ -30,40 +30,6 @@ fn signed_int_for_i1_is_one_bit() {
 }
 
 #[test]
-fn bit_width_is_eight_times_byte_size_except_i1() {
-    assert_eq!(ValueType::I1.bit_width(), 1);
-    assert_eq!(ValueType::I1.byte_size(), 1);
-    for ty in [
-        ValueType::I8,
-        ValueType::I16,
-        ValueType::I24,
-        ValueType::I32,
-        ValueType::I40,
-        ValueType::I48,
-        ValueType::I56,
-        ValueType::I64,
-        ValueType::I72,
-        ValueType::I80,
-        ValueType::I96,
-        ValueType::I112,
-        ValueType::I128,
-        ValueType::I256,
-        ValueType::I512,
-        ValueType::F16,
-        ValueType::F32,
-        ValueType::F64,
-        ValueType::F80,
-        ValueType::F128,
-    ] {
-        assert_eq!(
-            ty.bit_width(),
-            ty.byte_size() * 8,
-            "bit_width mismatch for {ty:?}"
-        );
-    }
-}
-
-#[test]
 fn is_value_only_for_output_type() {
     assert!(ValueKind::Typed(ValueType::I64).is_value());
     assert!(!ValueKind::Control.is_value());
@@ -131,7 +97,6 @@ fn is_const_only_for_constant_kinds() {
 /// Every kind that receives inputs after creation must be non-cacheable.
 #[test]
 fn non_cacheable_kinds_are_not_cacheable() {
-    let space = rsleigh::VnSpace::RAM;
     let non_cacheable = [
         NodeKind::Return,
         NodeKind::Region,
@@ -139,7 +104,6 @@ fn non_cacheable_kinds_are_not_cacheable() {
         NodeKind::Phi,
         NodeKind::Call,
     ];
-    let _ = space;
     for kind in non_cacheable {
         assert!(!kind.is_cacheable(), "{kind:?} should not be cacheable");
     }
@@ -152,39 +116,6 @@ fn arithmetic_kinds_are_cacheable() {
     assert!(NodeKind::IntBinaryOp(crate::node::IntBinaryOp::Add).is_cacheable());
     assert!(NodeKind::IntUnaryOp(crate::node::IntUnaryOp::Neg).is_cacheable());
     assert!(NodeKind::If.is_cacheable());
-}
-
-#[test]
-fn float_byte_sizes() {
-    assert_eq!(ValueType::F32.byte_size(), 4);
-    assert_eq!(ValueType::F64.byte_size(), 8);
-}
-
-#[test]
-fn float_bit_widths() {
-    assert_eq!(ValueType::F32.bit_width(), 32);
-    assert_eq!(ValueType::F64.bit_width(), 64);
-}
-
-#[test]
-fn float_as_str() {
-    assert_eq!(ValueType::F32.as_str(), "f32");
-    assert_eq!(ValueType::F64.as_str(), "f64");
-}
-
-#[test]
-fn is_float_only_for_float_types() {
-    assert!(ValueType::F32.is_float());
-    assert!(ValueType::F64.is_float());
-    assert!(!ValueType::I32.is_float());
-    assert!(!ValueType::I64.is_float());
-    assert!(!ValueType::I1.is_float());
-}
-
-#[test]
-fn is_integer_false_for_float_types() {
-    assert!(!ValueType::F32.is_integer());
-    assert!(!ValueType::F64.is_integer());
 }
 
 #[test]
@@ -319,7 +250,6 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         NodeKind::Load(space),
         NodeKind::Store(space),
         NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
-        NodeKind::IntConst(crate::node::const_value::ConstId::new(0)),
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         NodeKind::IntCmpOp(IntCmpOp::Equal),

@@ -232,7 +232,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             }
         };
 
-        let (label, color) = edge_style(self, node, idx, parent_value);
+        let (label, color) = edge_style(self, node, idx);
 
         // Call inputs are [ctrl, mem, target, sp, args...], so arg N is at
         // 4 + N.  CallOther has no target slot, so its args start at 2.

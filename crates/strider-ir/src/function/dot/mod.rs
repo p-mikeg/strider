@@ -88,13 +88,12 @@ pub(super) fn role_color(role: SlotRole) -> &'static str {
     }
 }
 
-/// `(label, color)` for the edge delivering `value` into `consumer`'s
-/// `input_idx`-th slot, both driven by the consumer's expected signature.
+/// `(label, color)` for the edge into `consumer`'s `input_idx`-th slot, both
+/// driven by the consumer's expected signature.
 pub(super) fn edge_style<R: MemReader>(
     dumper: &FunctionDotDumper<'_, R>,
     consumer: NodeId,
     input_idx: usize,
-    _value: ValueId,
 ) -> (&'static str, &'static str) {
     let kind = dumper.function.node_kind(consumer);
     let sig = expected_signature(kind);
@@ -180,15 +179,21 @@ impl FunctionDotDumperState {
         self.dot_to_node.get(dot_id).copied()
     }
 
+    /// Test-only: the full emitted-id -> `NodeId` mapping.
+    #[cfg(test)]
     pub fn dot_to_node(&self) -> impl Iterator<Item = (&str, NodeId)> {
         self.dot_to_node.iter().map(|(k, &v)| (k.as_str(), v))
     }
 
-    /// A DOT id backed by no graph `NodeId`, for virtual nodes.
-    pub(super) fn alloc_virtual_id(&mut self) -> String {
+    fn fresh_id(&mut self, prefix: char) -> String {
         let id = self.next_unique_id;
         self.next_unique_id += 1;
-        format!("v{id}")
+        format!("{prefix}{id}")
+    }
+
+    /// A DOT id backed by no graph `NodeId`, for virtual nodes.
+    pub(super) fn alloc_virtual_id(&mut self) -> String {
+        self.fresh_id('v')
     }
 
     /// Whether `node` draws a private box beside each consumer instead of one
@@ -201,9 +206,7 @@ impl FunctionDotDumperState {
     /// counter for a [per-use](Self::renders_per_use) constant.
     pub(super) fn get_dot_id(&mut self, graph: &Graph, node_id: NodeId) -> String {
         let s = if self.renders_per_use(graph, node_id) {
-            let id = self.next_unique_id;
-            self.next_unique_id += 1;
-            format!("c{id}")
+            self.fresh_id('c')
         } else {
             node_id.as_u32().to_string()
         };
