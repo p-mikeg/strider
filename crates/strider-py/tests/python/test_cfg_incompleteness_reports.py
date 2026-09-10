@@ -36,10 +36,11 @@ def _arm_program() -> bytes:
     ```
 
     Seating the table decodes 0x1040 as Thumb and then reaches 0x1042 as ARM,
-    which is the clash. That costs the dispatch, so the round after it rebuilds
-    with no arm at 0x1042 at all, but the Thumb-only `bx r0` it discovered
-    keeps the loop going for one more round, so the returned CFG is the clean
-    one.
+    which is the clash. The clashing arm is dropped and the Thumb arm re-seated,
+    so the round after it rebuilds reaching 0x1042 only as interior bytes of the
+    Thumb region, and the `bx r0` it discovered keeps the loop going for one
+    more round. Nothing in the returned CFG says two modes ever arrived there;
+    the report is what carries it.
     """
     words = {BASE + i * 4: 0xE12FFF1E for i in range(0x40)}  # bx lr
     words[0x1000] = 0xE3500002
@@ -63,12 +64,14 @@ def _analyze_arm() -> strider.lift.AnalyzeResult:
 
 def test_a_mode_clash_is_reported_after_its_round_is_rebuilt_away() -> None:
     result = _analyze_arm()
-    assert result.cfg.region_at(CLASH) is None, (
-        f"precondition: the returned CFG must no longer reach {CLASH:#x}, "
-        "or the final-CFG read would answer and the test proves nothing"
+    # Precondition: the returned CFG reaches CLASH only through the surviving
+    # Thumb arm, so no ARM decode of it is left to read the clash off. A
+    # final-CFG answer would prove nothing about the sticky report.
+    assert result.cfg.region_at(CLASH) == result.cfg.region_at(0x1041), (
+        f"precondition: {CLASH:#x} must be interior to the Thumb arm's region"
     )
     assert result.cfg.isa_mode_conflicts() == [CLASH]
-    # The clash costs the dispatch, which comes back as a live placeholder.
+    # The clash costs its own arm; the dispatch stays a live placeholder.
     assert result.unresolved == [0x1010]
     assert not result.cfg.is_complete()
 
