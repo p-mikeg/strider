@@ -1107,35 +1107,6 @@ fn build_call_other_terminate_false_keeps_region_open() -> Result<()> {
 }
 
 #[test]
-fn build_segment_op_produces_pure_node() -> Result<()> {
-    let mut b = builder_with_region()?;
-    let seg = b.build_int_const(0x10u64, ValueType::I16)?;
-    let off = b.build_int_const(0x100u64, ValueType::I32)?;
-    let value = b.build_segment_op(1, seg, off, ValueType::I64)?;
-    let node = b.function().producer(value);
-    assert_eq!(
-        b.function().node_kind(node),
-        &NodeKind::SegmentOp { op_id: 1 }
-    );
-    assert_eq!(
-        b.function().value_kind(value),
-        ValueKind::Typed(ValueType::I64)
-    );
-    Ok(())
-}
-
-#[test]
-fn build_segment_op_is_cacheable_across_identical_calls() -> Result<()> {
-    let mut b = builder_with_region()?;
-    let seg = b.build_int_const(0x10u64, ValueType::I16)?;
-    let off = b.build_int_const(0x100u64, ValueType::I32)?;
-    let a = b.build_segment_op(1, seg, off, ValueType::I64)?;
-    let c = b.build_segment_op(1, seg, off, ValueType::I64)?;
-    assert_eq!(a, c, "SegmentOp is pure -> identical calls must dedup");
-    Ok(())
-}
-
-#[test]
 fn build_cpool_ref_produces_typed_node() -> Result<()> {
     let mut b = builder_with_region()?;
     let r0 = b.build_int_const(0xAAu64, ValueType::I32)?;

@@ -130,14 +130,6 @@ pub enum NodeKind {
         user_op_id: u64,
     },
 
-    /// Sleigh `SegmentOp`: resolves a (segment, offset) pair to a flat
-    /// pointer. Pure.
-    ///
-    /// Inputs: `[segment, offset]`. Outputs: `[Typed]` (pointer-sized).
-    SegmentOp {
-        op_id: u64,
-    },
-
     /// Sleigh `CPoolRef`: Java constant-pool lookup. Resolution can have
     /// observable side effects (class loading).
     ///
@@ -215,8 +207,7 @@ impl NodeKind {
             | Self::FloatToInt
             | Self::FloatToFloat
             | Self::IntBitsToFloat
-            | Self::FloatBitsToInt
-            | Self::SegmentOp { .. } => true,
+            | Self::FloatBitsToInt => true,
 
             // Inputs grow after construction.
             Self::Region
@@ -269,7 +260,6 @@ impl NodeKind {
             | Self::FloatToFloat
             | Self::IntBitsToFloat
             | Self::FloatBitsToInt
-            | Self::SegmentOp { .. }
             | Self::Return
             | Self::IndirectBranch
             | Self::Unreachable
@@ -317,7 +307,6 @@ impl NodeKind {
             | Self::FloatToFloat
             | Self::IntBitsToFloat
             | Self::FloatBitsToInt
-            | Self::SegmentOp { .. }
             | Self::CPoolRef
             | Self::New => false,
         }
@@ -362,7 +351,7 @@ impl NodeKind {
     }
 }
 
-// The largest inline payload is a u64 (FloatConst / CallOther / SegmentOp).
+// The largest inline payload is a u64 (FloatConst / CallOther).
 const _: () = assert!(
     std::mem::size_of::<NodeKind>() <= 16,
     "NodeKind must stay <= 16 bytes (no inline payload may exceed 8 bytes)"
