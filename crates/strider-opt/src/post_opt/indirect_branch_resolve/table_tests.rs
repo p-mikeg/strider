@@ -1448,19 +1448,8 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         // LOCK is a FullClobber, so the Stack chain must break here.
-        let (lock_node, _result) = b.build_call_other_abi(
-            0x1234,
-            "LOCK",
-            &[],
-            &strider_target::BuiltCallOtherAbi {
-                implicit_reads: Vec::new(),
-                implicit_writes: Vec::new(),
-                clobbers_memory: false,
-                no_return: false,
-            },
-            None,
-            false,
-        )?;
+        let (lock_node, _outputs) =
+            strider_ir_test_utils::Tb::named_call_other(b, 0x1234, "LOCK", &[], &[], false, false)?;
         let lock_mem_value = b.function().memory_output_of(lock_node)?;
         b.advance_cur_region_memory(lock_mem_value)?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
