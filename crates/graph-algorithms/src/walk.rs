@@ -45,12 +45,12 @@ impl<G: GraphRef> GraphRef for &'_ G {
 
 /// Stack state for a pre-order DFS.
 #[derive(Debug)]
-pub struct PreOrderContext<N> {
+pub(crate) struct PreOrderContext<N> {
     stack: Vec<N>,
 }
 
 impl<N: Copy> PreOrderContext<N> {
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self { stack: Vec::new() }
     }
 
@@ -58,12 +58,12 @@ impl<N: Copy> PreOrderContext<N> {
     /// LIFO; callers wanting forward order must reverse the iterator
     /// themselves. [`PostOrderContext::reset`] seeds its stack the same way,
     /// but reversing its post-order restores source order.
-    pub fn reset(&mut self, roots: impl IntoIterator<Item = N>) {
+    pub(crate) fn reset(&mut self, roots: impl IntoIterator<Item = N>) {
         self.stack.clear();
         self.stack.extend(roots);
     }
 
-    pub fn next(
+    pub(crate) fn next(
         &mut self,
         graph: impl GraphRef<NodeId = N>,
         visited: &mut DenseEntitySet<N>,
@@ -151,12 +151,12 @@ where
 
 /// Stack state for a post-order DFS.
 #[derive(Debug)]
-pub struct PostOrderContext<N> {
+pub(crate) struct PostOrderContext<N> {
     stack: Vec<(WalkPhase, N)>,
 }
 
 impl<N: Copy> PostOrderContext<N> {
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self { stack: Vec::new() }
     }
 
@@ -164,13 +164,13 @@ impl<N: Copy> PostOrderContext<N> {
     /// backwards and so preserves source order in any derived RPO: if `u`
     /// precedes `v` in `roots` and no path runs `v -> u`, `u` precedes `v` in
     /// the RPO.
-    pub fn reset(&mut self, roots: impl IntoIterator<Item = N>) {
+    pub(crate) fn reset(&mut self, roots: impl IntoIterator<Item = N>) {
         self.stack.clear();
         self.stack
             .extend(roots.into_iter().map(|node| (WalkPhase::Pre, node)));
     }
 
-    pub fn next(
+    pub(crate) fn next(
         &mut self,
         graph: impl GraphRef<NodeId = N>,
         visited: &mut DenseEntitySet<N>,
@@ -188,7 +188,7 @@ impl<N: Copy> PostOrderContext<N> {
 
     /// Exposes both pre- and post-visit events; [`next`](Self::next) filters
     /// down to the post-visits.
-    pub fn next_event(
+    pub(crate) fn next_event(
         &mut self,
         graph: impl GraphRef<NodeId = N>,
         visited: &mut DenseEntitySet<N>,
@@ -252,7 +252,9 @@ where
         }
     }
 
-    /// See [`PostOrderContext::next_event`].
+    /// Both the pre- and post-visit event of each node, where the iterator
+    /// yields only the post-visits. The pre/post pair brackets the node's
+    /// subtree, which is what bounds the current DFS path.
     pub fn next_event(&mut self) -> Option<(WalkPhase, G::NodeId)> {
         self.ctx.next_event(&self.graph, &mut self.visited)
     }

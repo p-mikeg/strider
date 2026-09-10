@@ -107,7 +107,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                     None => format!("const <dangling const {id:?}>"),
                     Some(_) if out_ty.is_some_and(|t| t.is_wide_int()) => {
                         // Stored little-endian; render high->low.
-                        let bits = out_ty.map_or(0, |t| t.byte_size() * 8);
+                        let bits = out_ty.map_or(0, ValueType::bit_width);
                         let bytes = self
                             .function
                             .int_const_wide_le_bytes(node)
