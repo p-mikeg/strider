@@ -85,14 +85,11 @@ merge. So does an intervening call, unless its convention declares
 `per_address_ccs={callee_addr: cc}` buy for a transparent hook such as
 `__fentry__`.
 
-This pass is quadratic in the number of loads times the number of memory
-definitions: each load walks the memory chain from its own cursor, and its memo
-is keyed on the probed location, so loads at different offsets share nothing.
-On a long chain of distinct stack slots that is roughly 4x per doubling of the
-chain, against about 2x for every other pass, and it dominates the pipeline.
-Optimized code does not have that shape, because calls and aliasing break the
-chains, so the cost shows up on debug builds and firmware rather than on
-release binaries. Drop `LoadForward` from a custom pipeline if you hit it.
+Cost is loads times memory definitions: each load walks the chain from its own
+cursor and its memo is keyed on the probed location, so a long chain of distinct
+stack slots costs roughly 4x per doubling, against about 2x for every other
+pass. Calls and aliasing break such chains, so it is debug builds and firmware
+that hit it; drop `LoadForward` from a custom pipeline if you do.
 
 With `AssumptionOptions(escape_analysis=True)` it also forwards across a call,
 when no stack address escapes to the callee and the slot is not one the call
@@ -128,9 +125,9 @@ are already in place before this pass runs.
 ## Indirect-branch resolution
 
 Jump tables, computed calls and returns are resolved by their own post-pass,
-`IndirectBranchClassify`, which `analyze` appends to whatever pipeline it runs
-(the Rust API can list it itself; `strider.opt` does not expose it).
-After optimizing, Strider classifies each unresolved
+`IndirectBranchClassify`, which `analyze` appends to the pipeline it runs unless
+that pipeline already lists it (the Rust API can; `strider.opt` does not expose
+it). After optimizing, Strider classifies each unresolved
 indirect branch against the clean IR, feeds any newly discovered targets back in,
 and re-lifts, repeating until the set of edges stops changing. Whatever still
 cannot be resolved comes back as the `unresolved` list from `analyze`, never as
@@ -164,6 +161,7 @@ Four shapes come back in `unresolved` rather than as an error:
 ## Using a different pipeline
 
 Build a custom set of passes with the `strider.opt` builders and pass it through
-`LifterOptions(pipeline=...)`. `analyze` appends `IndirectBranchClassify` to
-whatever you build either way; `resolve_indirect_branches=False` turns it off
-rather than leaving it out, and it still records its report.
+`LifterOptions(pipeline=...)`. `analyze` appends `IndirectBranchClassify` unless
+the pipeline already lists it, which `strider.opt` gives you no way to do;
+`resolve_indirect_branches=False` turns it off rather than leaving it out, and
+it still records its report.
