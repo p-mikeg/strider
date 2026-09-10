@@ -461,9 +461,12 @@ p.ret().ctrl(p.one_of([p.load(), p.call()]))     # control slot
 
 `one_of` is a **union**: every arm that matches is enumerated with its own
 bindings, so order carries no meaning and a downstream constraint can pick the
-arm it needs. `first_of` is the **ordered** variant: it cuts to the first
-matching arm, so a permissive leading arm shadows the rest; list most-specific
-first. Any pattern kind is a valid arm, including the node-rooted control
+arm it needs. A match is identified by what it binds, so two arms matching one
+node with the same bindings are one match: at the root of a pattern that
+captures nothing, `one_of([load(), anything()])` answers exactly what
+`anything()` does, and the arms need a capture to tell them apart. `first_of`
+is the **ordered** variant: it cuts to the first matching arm, so a permissive
+leading arm shadows the rest; list most-specific first. Any pattern kind is a valid arm, including the node-rooted control
 builders (`ret` / `if_else` / `switch` / `indirect_branch` / `unreachable`).
 
 ### Captures
