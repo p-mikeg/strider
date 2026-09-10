@@ -513,7 +513,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // `Builder::seat_non_boundary_target` reports the one discovered
                 // after seating, so the loss lands on a channel either way.
                 let mut deferred = false;
-                for target in targets.iter() {
+                for target in &targets {
                     let a = PcodeInsnAddr::at_machine_start(target.addr);
                     if self.builder.addr_is_interior_non_boundary(a) {
                         self.builder.interior_branch_targets.push(a);
