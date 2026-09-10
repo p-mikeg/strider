@@ -22,54 +22,12 @@ optimized IR that matches, with the values you asked to capture. Typical
 questions: what offset does this function read off a pointer, what value does it
 pass to `malloc`, what does it return when the input matches a condition.
 
-Indirect branches resolve by re-lifting until the edge set settles. Each address
-decodes once, in the ISA mode carried by the edge that reached it, and a
-resolved target carries its own mode, so an ARM/Thumb interworking branch or a
-MIPS16 entry lands in the right decoder. Whatever stays unresolved comes back
-in `unresolved`; you can hand in your own answers with
-`CfgOptions(known_targets={dispatch_addr: [target, ...]})`, or turn the
-classifier off entirely with `LifterOptions(resolve_indirect_branches=False)`.
-An unresolved branch is a result, never an error: `analyze` raises only on a
-genuine lift, CFG or optimizer failure, and
-[docs/optimizations.md](docs/optimizations.md#dispatch-shapes-that-do-not-resolve)
-lists the dispatch shapes that still come back that way. A converged CFG is
-never silently incomplete, but it says so through four channels rather than
-one; `cfg.is_complete()` reads all four, and
+Executables, shared libraries and unlinked `ET_REL` objects all load, mapped
+rather than copied. Indirect branches resolve by re-lifting until the edge set
+settles, and whatever stays unresolved is reported, never raised. A converged
+CFG is never silently incomplete, but it says so through four channels rather
+than one, which `cfg.is_complete()` folds into one answer;
 [docs/python-api.md](docs/python-api.md#12-the-cfg-stridercfg) covers each.
-
-`load_elf` maps the image rather than copying it, and applies its relocations as
-bytes are read, so a large object opens in tens of milliseconds and faults in
-only what you analyse. Linked images, shared libraries and unlinked `ET_REL`
-objects all load. A mapped image must not change on disk while a handle over it
-lives: rebuilding the binary under a live handle raises `StriderError: mapped
-file ... changed on disk since it was mapped`, so re-open it, or set
-`STRIDER_NO_MMAP=1` to read it into memory instead. That is the REPL and
-notebook failure mode. [docs/getting-started.md](docs/getting-started.md)
-covers the mapping, and
-[docs/python-api.md](docs/python-api.md#1-loading-a-binary) the knobs over it
-(`STRIDER_NO_MMAP=1`, `from_segments`, `apply_relocations`).
-
-```python
-import strider
-
-obj = strider.lift.load_elf("fixtures/out/x64/memory.o")   # an unlinked .o
-cfg, function, unresolved = obj.analyze("array_sum")
-```
-
-Every width Sleigh emits is an IR type, from `I24` through `I512` plus `F16`,
-`F80` and `F128`, so a function touching one lifts rather than failing outright.
-An unmapped width still fails the whole function's lift, which is the signal
-that a spec reached a shape the IR does not model.
-
-The image `LoadReadOnly` folds constants out of is the loaded file minus its
-writable mappings, so a load out of an RWX segment is fetched from but never
-folded.
-
-A convention can be narrowed for one analysis: `cc.preserves_all()` clobbers
-nothing, and `cc.preserves_regs()` preserves the registers but still clobbers
-memory. Pair either with `LifterOptions(per_address_ccs={callee_addr: cc})`,
-keyed by the direct-call target rather than the call site, to model a
-transparent hook such as `__fentry__`.
 
 ## Quickstart
 
@@ -98,75 +56,120 @@ port = prog.visualize(function, background=True)
 strider.explore.shutdown(port)
 ```
 
-A lift handle decodes only on the thread that built it: `analyze`,
-`build_cfg`, `optimize`, `pcode_at` and the rest raise a catchable
-`StriderError` from anywhere else. The handle itself moves and drops anywhere,
-so build a second one over the same `arch` / `reader()` / `rom()` to work
-off-thread, which is what the background explorer does for its own renderer.
+## What's new in 0.2.0
 
-You can also decide matches with your own logic: `.when(f)` filters one pattern
-against a callable, backtracking so other bindings are still tried, and a
-`JoinPredicate` subclass correlates captures across several patterns. Worked
-through in
-[docs/python-guide.md](docs/python-guide.md#constraints-relating-matches-by-control-flow).
+[CHANGELOG.md](CHANGELOG.md) is the full list, breaking entries first. What a
+0.1.0 script could not do:
 
-`find_all` returns every match; `find_unique_value(pat, capture)` returns the
-one constant a capture is bound to across all of them, which is the answer to
-"what value does this function always pass here", and raises when two matches
-disagree.
+**Load more images.** Unlinked `ET_REL` objects analyse, their colliding
+sections rebased apart the way a linker would. On ppc64 ELFv1 a function symbol
+names an `.opd` descriptor rather than code, and strider follows it to the entry
+address, so `analyze("name")` works there at all. A stripped image borrows names
+from elsewhere: `prog.add_symbol_file(path)` takes the symbols of a debug file,
+`prog.add_symbols({"f": addr})` a dict such as a parsed `System.map`. `load_elf`
+maps the image and applies relocations as bytes are read, so a large object opens
+in tens of milliseconds and faults in only what you analyse;
+[docs/python-api.md](docs/python-api.md#1-loading-a-binary) covers the knobs over
+it, including the mapped file changing on disk under a live handle.
 
-`one_of([a, b])` yields a match per arm that matches with distinct bindings;
-`first_of` cuts to the first that matches. `int_add(a, b).ordered()` pins
-operand order, overriding commutative both-orders matching. Either nests in a
-value, memory or control slot. `load().non_stack()` and `store().heap_only()`
-filter by where the address lives. An integer literal stands in for `int_const`
-in any slot, so
-`int_add(base, 4)` is the same pattern as `int_add(base, int_const(4))`. Call
-sites are selected with `call().target(addr)`, or `call().target([a, b])` for a
-set of addresses.
+**Rewrite the graph.** `function.rewrite(find=, replace=)` matches with the
+pattern language and rebuilds with `strider.template`, returning how many sites
+fired; `function.rewrite_all([(find, replace), ...])` stages several rules in one
+walk over the graph. `function.clone()` gives you a copy to rewrite without
+touching the original.
 
-A user-op strider has no ABI for fails the lift of every function containing
-it. `prog.user_op_names()` lists what the architecture can emit,
-`prog.call_other_abi(name)` reads back the classification in force, and
+**Run your own passes.** `strider.opt.OptimizerPipeline` is a pass list you build
+(`.empty()` or `.default()`, then `.add` / `.add_post`) and hand to
+`LifterOptions(pipeline=...)`. `analyze` runs it without the GIL, as it does the
+default pipeline, so a thread holding its own lift handle keeps working.
+
+**Describe an ABI.** `CallingConvention.custom(sleigh, ...)` builds a convention
+out of register names. `cc.preserves_all()` clobbers nothing and
+`cc.preserves_regs()` preserves the registers but still clobbers memory; pair
+either with `LifterOptions(per_address_ccs={callee_addr: cc})`, keyed by the
+direct-call target rather than the call site, to model a transparent hook such as
+`__fentry__`. ARM32's float ABI is read from EABI `e_flags`, but a relocatable
+object carries no such bit and an image setting neither falls to hard-float, so
+pass `cc=strider.sleigh.CallingConvention.arm_aapcs_soft()` for those or float
+arguments read as empty registers. A user-op strider has no ABI for fails the
+lift of every function containing it: `prog.user_op_names()` lists what the
+architecture can emit, `prog.call_other_abi(name)` reads back the classification
+in force, and
 `CfgOptions(call_other_abis={"movmskps": strider.sleigh.CallOtherAbi.pure()})`
-supplies the missing one; `CallOtherAbi.custom(sleigh, implicit_reads=[...])`
-states an implicit register footprint.
+supplies the missing one.
 
-Float arguments have their own index space: `function_arg_float(2)` reaches a
-float parameter, and at a call site the float arguments follow the integer ones,
-so on SysV `call().arg(6, p)` is the first of them.
+**Ask more of a query.** `one_of([a, b])` yields a match per arm that matches
+with distinct bindings; `first_of` cuts to the first that matches. An empty list
+is a pattern too, matching nothing rather than raising, so arms assembled at
+runtime need no special case. `int_add(a, b).ordered()` pins operand order,
+overriding commutative both-orders matching, and an integer literal stands in for
+`int_const` in any slot. `load().non_stack()` and `store().heap_only()` filter by
+where the address lives; `call().target(addr)`, or `call().target([a, b])`,
+selects call sites. Float arguments have their own index space, so
+`function_arg_float(2)` reaches a float parameter and at a call site the float
+arguments follow the integer ones, making `call().arg(6, p)` the first of them on
+SysV. `.when(f)` decides a match with your own callable, backtracking so other
+bindings are still tried, and a `JoinPredicate` subclass correlates captures
+across several patterns, worked through in
+[docs/python-guide.md](docs/python-guide.md#constraints-relating-matches-by-control-flow).
+`find_unique_value(pat, capture)` returns the one constant a capture is bound to
+across every match, which is the answer to "what value does this function always
+pass here", and raises when two matches disagree.
 
-`analyze` returns an `AnalyzeResult` (`.cfg` / `.function` / `.unresolved`),
-which also unpacks as the 3-tuple above. `prog.symbol(name)` returns a `Symbol`
-(`name`, `address`, `size`, `end`, `is_function`, `region`) where 0.1.0 returned
-a bare address, so a 0.1.0 script doing arithmetic on one needs `.address` now;
+**Resolve more branches.** Each address decodes once, in the ISA mode carried by
+the edge that reached it, and a resolved target carries its own mode, so an
+ARM/Thumb interworking branch or a MIPS16 entry lands in the right decoder. Hand
+in answers of your own with
+`CfgOptions(known_targets={dispatch_addr: [target, ...]})`, or turn the
+classifier off entirely with `LifterOptions(resolve_indirect_branches=False)`.
+[docs/optimizations.md](docs/optimizations.md#dispatch-shapes-that-do-not-resolve)
+lists the dispatch shapes that still come back in `unresolved`.
+
+**Lift more code.** The IR types the odd widths Sleigh specs produce, `I24`
+through `I512` plus `F16`, `F80` and `F128`; a width outside that set fails the
+whole function's lift, which is the signal that a spec reached a shape the IR
+does not model. A function that never returns still answers queries: a
+`while (1)`, a spin loop or a `panic` helper ending in a self-jump reaches no
+return instruction, so Strider seats a sink on the cycle at lift time, which is
+what keeps its stores and their operands in the graph.
+
+**Fold more.** `ConstantFold` factors repeated terms, so `x + x*2` is `x*3` and
+thirteen such pairings of `*` and `<<` against `+` and `-` reach a query as one
+shape. The image `LoadReadOnly` folds constants out of is the loaded file minus
+its writable mappings, so a load out of an RWX segment is fetched from but never
+folded. How far the rest goes is tunable per analysis with
+`LifterOptions(assumptions=AssumptionOptions(...))`, six claims the IR cannot
+check, of which `AssumptionOptions.none()` is the sound floor and
+`AssumptionOptions()` is not;
+[docs/python-api.md](docs/python-api.md#2-analyzing-a-function) says what each one
+buys.
+
+**Diagnose.** A failure raised by strider itself carries its Rust trace on
+`.backtrace`, and `STRIDER_BACKTRACE=1` folds it into the message.
+
+## Upgrading from 0.1.0
+
+The query API renamed, which is every line of the 0.1.0 quickstart: `add` is
+`int_add`, a bare string is no longer a capture operand (`Capture` is), and
+`hit.const_uint(c)` is `hit.uint(c)`. `prog.symbol(name)` returns a `Symbol`
+(`name`, `address`, `size`, `end`, `is_function`, `region`) where 0.1.0 returned a
+bare address, so a script doing arithmetic on one needs `.address` now;
 `prog.symbol_at(addr)` reverse-resolves an address to the `Symbol` covering it.
-The query API renamed with it, which is every line of the 0.1.0 quickstart:
-`add` is `int_add`, a bare string is no longer a capture operand (`Capture` is),
-and `const_uint` is `uint`. [CHANGELOG.md](CHANGELOG.md) lists the rest,
-breaking entries first.
-A failure raised by strider itself carries its Rust trace on `.backtrace`, and
-`STRIDER_BACKTRACE=1` folds it into the message.
+`analyze` returns an `AnalyzeResult` (`.cfg` / `.function` / `.unresolved`), which
+still unpacks as the 3-tuple above.
 
-`load_elf` reads ARM32's float ABI from EABI `e_flags` and picks `arm_aapcs`
-or `arm_aapcs_soft`. A relocatable object carries no such bit, and an image
-setting neither falls to hard-float; pass
-`cc=strider.sleigh.CallingConvention.arm_aapcs_soft()` for those, or float
-arguments read as empty registers.
+A lift handle now decodes only on the thread that built it, so a script that
+analysed from a worker raises a catchable `StriderError` there. Build a second
+handle over the same `arch` / `reader()` / `rom()` on that thread, which is what
+the background explorer does for its own renderer;
+[docs/getting-started.md](docs/getting-started.md#where-the-api-lives) has the
+detail.
 
-Memory precision is tunable per analysis: `AssumptionOptions` holds six claims
-about the code that the IR cannot check, passed as
-`LifterOptions(assumptions=AssumptionOptions(...))`. Each one's risky value is
-the positive one, and two of the six default `True`, so
-`AssumptionOptions.none()` is the only spelling of "assume nothing" that stays
-sound as claims are added; `AssumptionOptions()` is not it.
-[docs/python-api.md](docs/python-api.md#2-analyzing-a-function) says what each
-one buys.
+A 0.1.0 pattern that now matches nothing has most often met `ConstantFold`'s
+repeated-term factoring: `x + x*2` reaches the query as `x*3`. Draw the function
+with `prog.visualize(function)` to see the shape the optimizer left behind.
 
-A function that never returns still answers queries. A `while (1)`, a spin loop
-or a `panic` helper ending in a self-jump reaches no return instruction, so the
-loop body has nothing anchoring it; Strider seats a sink on the cycle at lift
-time, which is what keeps its stores and their operands in the graph.
+[CHANGELOG.md](CHANGELOG.md) lists the rest, breaking entries first.
 
 ## Documentation
 
