@@ -123,3 +123,45 @@ fn an_unguarded_control_slot_operand_still_matches() {
     let pat = strider_pattern::call().ctrl(anything()).build();
     assert_eq!(Matcher::new(&function).find_all(&pat).unwrap().len(), 1);
 }
+
+/// A chain of `adds` add nodes over `adds + 1` wildcard leaves.
+fn add_chain(adds: usize) -> Pattern {
+    let mut b = MatcherBuilder::new();
+    let mut o = b.leaf(KindSpec::Any);
+    b.set_output_any(o);
+    for _ in 0..adds {
+        let leaf = b.leaf(KindSpec::Any);
+        b.set_output_any(leaf);
+        o = b.binary(IntBinaryOp::Add, o, leaf);
+    }
+    b.finish()
+}
+
+/// The engine recurses once per pattern NODE, so an unbounded pattern aborts
+/// the process instead of erroring. The cap is a refusal on the normal channel.
+#[test]
+fn a_pattern_at_the_node_cap_still_builds() {
+    let pat = add_chain(127);
+    assert!(pat.root().is_ok());
+    let function = add_5_3();
+    assert!(Matcher::new(&function).find_all(&pat).is_ok());
+}
+
+#[test]
+fn a_pattern_over_the_node_cap_is_refused() {
+    assert!(error_of(&add_chain(128)).contains("nodes"));
+}
+
+/// Nested alternations recurse at COMPILE time, before a node count exists.
+#[test]
+fn a_deeply_nested_alternation_is_refused() {
+    fn nest(depth: u32) -> strider_pattern::OneOf {
+        let inner: strider_pattern::BoxedAlt = if depth == 0 {
+            strider_pattern::boxed_alt(anything())
+        } else {
+            strider_pattern::boxed_alt(nest(depth - 1))
+        };
+        strider_pattern::OneOf::new(vec![inner])
+    }
+    assert!(!error_of(&nest(4000).into_pattern()).is_empty());
+}

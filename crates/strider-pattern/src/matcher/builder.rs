@@ -41,6 +41,8 @@ pub struct MatcherBuilder {
     /// [`Pattern::root`]. A pattern is untrusted input, so refusing one is a
     /// `Result`, never a panic.
     refusals: Vec<String>,
+    /// Alternation arms currently being lowered; see [`Self::enter_nesting`].
+    nesting: usize,
 }
 
 impl Default for MatcherBuilder {
@@ -54,7 +56,29 @@ impl MatcherBuilder {
         Self {
             core: StagedGraph::new(),
             refusals: Vec::new(),
+            nesting: 0,
         }
+    }
+
+    /// Opens one level of nested lowering, refusing past `MAX_PATTERN_NODES`.
+    /// An alternation arm lowers before its own node is staged, so the node cap
+    /// at seal comes too late for this recursion. `false` means the caller must
+    /// not descend.
+    pub(crate) fn enter_nesting(&mut self) -> bool {
+        if self.nesting >= crate::matcher::graph::MAX_PATTERN_NODES {
+            self.reject(format!(
+                "pattern nests more than {} levels deep, over what lowering can \
+                 recurse through",
+                crate::matcher::graph::MAX_PATTERN_NODES
+            ));
+            return false;
+        }
+        self.nesting += 1;
+        true
+    }
+
+    pub(crate) fn leave_nesting(&mut self) {
+        self.nesting -= 1;
     }
 
     /// Records a build-time refusal; every query on the sealed pattern then
