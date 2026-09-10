@@ -148,3 +148,28 @@ def test_lifter_pcode_at_rejects_misaligned_target():
     entry = prog.symbol("array_sum").address
     with pytest.raises(strider.StriderError):
         prog.pcode_at(entry, entry + 1)
+
+
+def _image(code: bytes, base: int = 0x1000):
+    """`(cfg, function)` for `code` mapped at `base`, lifted x86-64 SysV."""
+    mem = strider.reader.BufferReader(base, code)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    cfg, function, _unresolved = lift.analyze(
+        base, strider.sleigh.CallingConvention.x86_64_systemv()
+    )
+    return cfg, function
+
+
+def test_fingerprint_pcode_rejects_a_node_from_another_image():
+    """A `Node` names a slot in ITS OWN function; answering for one lifted
+    from different bytes hands back this image's p-code as if it were the
+    other's."""
+    cfg_a, _fn_a = _image(bytes([0x83, 0xC0, 0x01, 0xC3]))  # add eax, 1; ret
+    _cfg_b, fn_b = _image(bytes([0x6B, 0xC0, 0x07, 0xC3]))  # imul eax, eax, 7; ret
+
+    foreign = [
+        fn_b.node(nid) for nid in fn_b.node_ids() if fn_b.node(nid).asm_fingerprint()
+    ]
+    assert foreign, "expected at least one fingerprinted node in the second image"
+    with pytest.raises(strider.StriderError):
+        cfg_a.fingerprint_pcode(foreign[0])

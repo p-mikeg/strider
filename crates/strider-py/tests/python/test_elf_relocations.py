@@ -69,3 +69,13 @@ def test_apply_relocations_default_argument_is_true():
     elf = strider.lift.load_elf(str(X64_RELOCS()))
     table_addr = elf.symbol("dispatch_table").address
     assert _read_u64_le(elf, table_addr) == elf.symbol("helper_a").address
+
+
+def test_add_elf_default_argument_matches_load_elf():
+    """The two loaders relocate alike: a merged ELF is normally the ET_DYN
+    case relocations exist for, and a flag that flips between the two is a
+    silently different image."""
+    import inspect
+
+    p = inspect.signature(strider.lift.ElfLifter.add_elf).parameters
+    assert p["apply_relocations"].default is True

@@ -84,3 +84,10 @@ manual_is_power_of_two             = "warn"
 # actually act on the failure, say so in the doc body instead.
 missing_errors_doc = "allow"
 
+[profile.release]
+# The shipped wheel is a release build, so an arithmetic slip there decides
+# between a trap and a silently wrong slot / address. `debug-assertions` stays
+# off: those are the invariant checks the debug and `cargo test --release`
+# runs already gate on.
+overflow-checks  = true
+debug-assertions = false

@@ -336,7 +336,10 @@ fn derive(slf: &Bound<'_, PyPat>, make: impl FnOnce(Py<PyAny>) -> PatRepr) -> Py
     let depth = slf.borrow().depth + 1;
     if depth > MAX_PATTERN_NESTING {
         return Err(into_strider_err(anyhow::anyhow!(
-            "pattern nesting too deep (max {MAX_PATTERN_NESTING} compile levels; a nested builder call costs two)"
+            "pattern nesting too deep: over {MAX_PATTERN_NESTING} levels, and a \
+             nested builder call costs two. That is the loosest bound; this \
+             thread's stack budget and the matcher's own node cap both reject \
+             shallower patterns still"
         )));
     }
     Ok(PyPat {
@@ -836,7 +839,10 @@ impl DepthGuard {
             let next = d.get() + 1;
             if next > MAX_PATTERN_NESTING {
                 return Err(into_strider_err(anyhow::anyhow!(
-                    "pattern nesting too deep (max {MAX_PATTERN_NESTING} compile levels; a nested builder call costs two)"
+                    "pattern nesting too deep: over {MAX_PATTERN_NESTING} levels, \
+                     and a nested builder call costs two. That is the loosest \
+                     bound; this thread's stack budget and the matcher's own node \
+                     cap both reject shallower patterns still"
                 )));
             }
             if next == 1 {
@@ -1328,9 +1334,12 @@ impl PatRepr {
         } = self
         {
             // Compiled in before this scope opened, so the attachments are
-            // reported here instead.
+            // replayed into it: the `Pattern` moves to whatever is being
+            // finalised here, and its predicates have to move with it or the
+            // new owner reports none and a cycle through one is uncollectable.
             if !when_handles.is_empty() {
                 note_when_attached();
+                retain_when(when_handles);
             }
             return pattern
                 .lock()
@@ -1668,15 +1677,20 @@ fn retain_when_handles<T>(build: impl FnOnce() -> PyResult<T>) -> PyResult<(T, V
     Ok((built?, RetainedWhenScope::handles()))
 }
 
+/// Registers already-compiled predicates with the open scope.
+fn retain_when(handles: &[WhenFn]) {
+    RETAINED_WHEN.with(|c| {
+        if let Some(open) = c.borrow_mut().as_mut() {
+            open.extend(handles.iter().map(Arc::clone));
+        }
+    });
+}
+
 /// Wraps `f` for a compiled closure, registering it with the open scope.
 fn attach_when(f: PyObject) -> WhenFn {
     note_when_attached();
     let f = Arc::new(f);
-    RETAINED_WHEN.with(|c| {
-        if let Some(handles) = c.borrow_mut().as_mut() {
-            handles.push(Arc::clone(&f));
-        }
-    });
+    retain_when(std::slice::from_ref(&f));
     f
 }
 
@@ -1687,6 +1701,8 @@ pub(crate) fn compile_rewrite_lhs(py: Python<'_>, pat: &PatLike<'_>) -> PyResult
     let saw_when = REWRITE_LHS_WHEN.with(|c| c.replace(outer)) == Some(true);
     let compiled = compiled?;
     if saw_when {
+        // Nothing ran, so the one-shot pattern this may have taken goes back.
+        pat.restore(compiled);
         return Err(into_strider_err(anyhow::anyhow!(
             "a .when() predicate cannot run on a rewrite `find` pattern: the \
              function is held for mutation while the rule fires, so the \
@@ -2442,6 +2458,23 @@ macro_rules! builder_common_methods {
     };
 }
 
+/// Ceiling on a caller-supplied operand index. Orders of magnitude past any
+/// node's real arity, and low enough that the head-slot shift a builder applies
+/// (`input_head_len() + idx`) cannot overflow a `usize` on any target.
+const MAX_OPERAND_INDEX: usize = 1 << 20;
+
+/// Rejects an operand index the shift would carry out of range. Unchecked, the
+/// sum wraps onto a real slot in a build without `overflow-checks` and panics
+/// in one with them; both are worse than an error.
+fn check_operand_index(idx: usize) -> PyResult<()> {
+    if idx > MAX_OPERAND_INDEX {
+        return Err(into_strider_err(anyhow::anyhow!(
+            "operand index {idx} is out of range (max {MAX_OPERAND_INDEX})"
+        )));
+    }
+    Ok(())
+}
+
 // The generic slot vocabulary beneath the named operand accessors, declared
 // once per builder by naming the slot kinds it has rather than restating the
 // methods. `any_input` / `input` / `output` are emitted here and applied from
@@ -2473,9 +2506,17 @@ macro_rules! builder_slot_methods {
             /// `expected_signature` (`strider-ir/src/node_signature.rs`) is
             /// the source of truth. This is the escape hatch beneath the named
             /// accessors, not a replacement for them.
-            fn input<'py>(slf: PyRef<'py, Self>, idx: usize, p: Py<PyAny>) -> PyRef<'py, Self> {
+            ///
+            /// `usize::MAX` is the matcher's own "some input" sentinel, so an
+            /// index anywhere near it is rejected rather than read as one.
+            fn input<'py>(
+                slf: PyRef<'py, Self>,
+                idx: usize,
+                p: Py<PyAny>,
+            ) -> PyResult<PyRef<'py, Self>> {
+                crate::pattern::check_operand_index(idx)?;
                 slf.common.borrow_mut().inputs.push((idx, p));
-                slf
+                Ok(slf)
             }
         }
     };
@@ -2554,9 +2595,6 @@ macro_rules! node_builder {
     (@members $inner:ident [ $($acc:tt)* ] { mem $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
         node_builder!(@members $inner [ $($acc)* $name: Option<Py<PyAny>>, ] $($rest)*);
     };
-    (@members $inner:ident [ $($acc:tt)* ] { multi_pat $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
-        node_builder!(@members $inner [ $($acc)* $name: Vec<Py<PyAny>>, ] $($rest)*);
-    };
     (@members $inner:ident [ $($acc:tt)* ] { multi_match $name:ident($idx:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
         node_builder!(@members $inner [ $($acc)* $name: Vec<($idx, Py<PyAny>)>, ] $($rest)*);
     };
@@ -2603,18 +2641,6 @@ macro_rules! node_builder {
         let __slot = clone_opt($py, &$self.inner.borrow().$name);
         if let Some(__p) = __slot {
             $b = $b.$m(compile_operand_mem(__p.bind($py))?);
-        }
-    };
-    (@apply $self:ident, $py:ident, $b:ident, { multi_pat $name:ident: $m:ident = $doc:literal }) => {
-        let __items: Vec<Py<PyAny>> = $self
-            .inner
-            .borrow()
-            .$name
-            .iter()
-            .map(|p| p.clone_ref($py))
-            .collect();
-        for __p in __items {
-            $b = $b.$m(compile_any_input(__p.bind($py))?);
         }
     };
     (@apply $self:ident, $py:ident, $b:ident, { multi_match $name:ident($idx:ty): $m:ident = $doc:literal }) => {
@@ -2716,9 +2742,6 @@ macro_rules! node_builder {
     (@traverse $inner:ident, $visit:ident, { mem $name:ident: $m:ident = $doc:literal }) => {
         if let Some(__p) = $inner.$name.as_ref() { $visit.call(__p)?; }
     };
-    (@traverse $inner:ident, $visit:ident, { multi_pat $name:ident: $m:ident = $doc:literal }) => {
-        for __p in &$inner.$name { $visit.call(__p)?; }
-    };
     (@traverse $inner:ident, $visit:ident, { multi_match $name:ident($idx:ty): $m:ident = $doc:literal }) => {
         for (_, __p) in &$inner.$name { $visit.call(__p)?; }
     };
@@ -2743,9 +2766,6 @@ macro_rules! node_builder {
     };
     (@clear $inner:ident, { mem $name:ident: $m:ident = $doc:literal }) => {
         $inner.$name = None;
-    };
-    (@clear $inner:ident, { multi_pat $name:ident: $m:ident = $doc:literal }) => {
-        $inner.$name.clear();
     };
     (@clear $inner:ident, { multi_match $name:ident($idx:ty): $m:ident = $doc:literal }) => {
         $inner.$name.clear();
@@ -2808,30 +2828,31 @@ macro_rules! node_builder {
             }
         ] $($rest)*);
     };
-    (@setters $ty:ident [ $($acc:tt)* ] { multi_pat $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
-        node_builder!(@setters $ty [ $($acc)*
-            #[doc = $doc]
-            fn $m<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
-                slf.inner.borrow_mut().$name.push(p);
-                slf
-            }
-        ] $($rest)*);
-    };
     (@setters $ty:ident [ $($acc:tt)* ] { multi_match $name:ident($idx:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
         node_builder!(@setters $ty [ $($acc)*
             #[doc = $doc]
-            fn $m<'py>(slf: PyRef<'py, Self>, idx: $idx, p: Py<PyAny>) -> PyRef<'py, Self> {
+            fn $m<'py>(
+                slf: PyRef<'py, Self>,
+                idx: $idx,
+                p: Py<PyAny>,
+            ) -> PyResult<PyRef<'py, Self>> {
+                check_operand_index(idx)?;
                 slf.inner.borrow_mut().$name.push((idx, p));
-                slf
+                Ok(slf)
             }
         ] $($rest)*);
     };
     (@setters $ty:ident [ $($acc:tt)* ] { multi_mem $name:ident($idx:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
         node_builder!(@setters $ty [ $($acc)*
             #[doc = $doc]
-            fn $m<'py>(slf: PyRef<'py, Self>, idx: $idx, p: Py<PyAny>) -> PyRef<'py, Self> {
+            fn $m<'py>(
+                slf: PyRef<'py, Self>,
+                idx: $idx,
+                p: Py<PyAny>,
+            ) -> PyResult<PyRef<'py, Self>> {
+                check_operand_index(idx)?;
                 slf.inner.borrow_mut().$name.push((idx, p));
-                slf
+                Ok(slf)
             }
         ] $($rest)*);
     };
@@ -3248,9 +3269,10 @@ impl PyCallPat {
         Ok(slf)
     }
     /// Constrain positional argument `idx` (0-based).
-    fn arg<'py>(slf: PyRef<'py, Self>, idx: usize, p: Py<PyAny>) -> PyRef<'py, Self> {
+    fn arg<'py>(slf: PyRef<'py, Self>, idx: usize, p: Py<PyAny>) -> PyResult<PyRef<'py, Self>> {
+        check_operand_index(idx)?;
         slf.inner.borrow_mut().args.push((idx, p));
-        slf
+        Ok(slf)
     }
     /// Constrain the call's memory predecessor.
     fn mem<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {

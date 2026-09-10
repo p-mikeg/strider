@@ -195,7 +195,10 @@ class Lifter:
         opts: Optional[CfgOptions] = ...,
     ) -> Cfg:
         """Build the control-flow graph of the function at `entry`, without
-        lifting or optimising."""
+        lifting or optimising.
+
+        Holds the GIL for the whole build, unlike `analyze`: decoding is short
+        next to a full analysis, and it runs on the handle's own thread."""
         ...
     def analyze(
         self,
@@ -230,7 +233,10 @@ class Lifter:
 
         Runs against this handle's `rom`, so `LoadReadOnly` folds here exactly
         as it does inside `analyze`. Invalidates outstanding `Node` / `Match`
-        handles and every node id for `function`."""
+        handles and every node id for `function`.
+
+        Holds the GIL for the whole run, unlike `analyze`: a pipeline may
+        contain Python-defined passes, which need it."""
         ...
     def reg(self, name: str) -> Optional[Vn]:
         """The varnode for the register called `name`, or `None` when the
@@ -377,9 +383,14 @@ class ElfLifter(Lifter):
         """The `BufferReader` over the regions `load_elf` mapped: PT_LOAD segments
         unless `from_segments=False`."""
         ...
-    def add_elf(self, path: str, *, apply_relocations: bool = ...) -> None:
+    def add_elf(self, path: str, *, apply_relocations: bool = True) -> None:
         """Merge another ELF, such as a shared library, into this handle.
         The earlier-loaded ELF wins on name collisions.
+
+        `apply_relocations` defaults to `True`, matching `load_elf`: a merged
+        ELF is normally the ET_DYN case relocations exist for, and the flag
+        also selects what is mapped, so `False` drops writable non-executable
+        sections rather than serving their on-disk bytes.
 
         Raises `StriderError` if the new ELF maps code over an address already
         loaded with different bytes (two ELFs at the same base cannot merge)."""
