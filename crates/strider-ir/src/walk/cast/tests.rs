@@ -116,42 +116,8 @@ fn cast_mask_of_float_bits_to_int() {
 }
 
 /// Spot check only; exhaustiveness is enforced by the no-`_` match in
-/// `cast_mask_of`.
-#[test]
-fn cast_mask_of_non_cast_kinds_is_empty() {
-    let non_casts = [
-        NodeKind::Entry,
-        NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
-        NodeKind::IntBinaryOp(IntBinaryOp::Add),
-        NodeKind::FloatToFloat,
-        NodeKind::Region,
-    ];
-    for k in non_casts {
-        assert_eq!(
-            cast_mask_of(&k),
-            CastMask::empty(),
-            "expected cast_mask_of({k:?}) = empty()"
-        );
-    }
-}
-
-#[test]
-fn cast_mask_of_returns_non_empty_for_all_cast_kinds() {
-    let casts = [
-        NodeKind::Extend(ExtendOp::ZeroExtend),
-        NodeKind::Extend(ExtendOp::SignExtend),
-        NodeKind::Truncate,
-        NodeKind::IntBitsToFloat,
-        NodeKind::FloatBitsToInt,
-    ];
-    for k in casts {
-        assert!(
-            !cast_mask_of(&k).is_empty(),
-            "expected cast_mask_of({k:?}) to be non-empty"
-        );
-    }
-}
-
+/// `cast_mask_of`. Float conversions change the value, unlike bit-level
+/// casts, so they stay out of the walk-through set too.
 #[test]
 fn cast_mask_of_returns_empty_for_non_cast_kinds() {
     let non_casts = [
@@ -178,13 +144,4 @@ fn cast_mask_of_returns_empty_for_non_cast_kinds() {
             "expected cast_mask_of({k:?}) = empty"
         );
     }
-}
-
-/// Float conversions change the value, unlike bit-level casts, so they stay
-/// out of the walk-through set.
-#[test]
-fn cast_mask_of_excludes_float_conversions() {
-    assert_eq!(cast_mask_of(&NodeKind::FloatToFloat), CastMask::empty());
-    assert_eq!(cast_mask_of(&NodeKind::FloatToInt), CastMask::empty());
-    assert_eq!(cast_mask_of(&NodeKind::IntToFloat), CastMask::empty());
 }
