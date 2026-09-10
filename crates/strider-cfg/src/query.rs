@@ -262,6 +262,7 @@ mod tests {
             link_register_seated: Vec::new(),
             tail_call_seated: Vec::new(),
             function_isa_bit: None,
+            flowing_isa_bits: std::collections::BTreeMap::new(),
         };
 
         let s = cfg.region_if(src).unwrap();
@@ -294,6 +295,7 @@ mod tests {
             link_register_seated: Vec::new(),
             tail_call_seated: Vec::new(),
             function_isa_bit: None,
+            flowing_isa_bits: std::collections::BTreeMap::new(),
         };
 
         let s = cfg.region_if(src).unwrap();
@@ -324,6 +326,7 @@ mod tests {
             link_register_seated: Vec::new(),
             tail_call_seated: Vec::new(),
             function_isa_bit: None,
+            flowing_isa_bits: std::collections::BTreeMap::new(),
         };
 
         let s = cfg.region_if(src).unwrap();
@@ -357,6 +360,7 @@ mod tests {
             link_register_seated: Vec::new(),
             tail_call_seated: Vec::new(),
             function_isa_bit: None,
+            flowing_isa_bits: std::collections::BTreeMap::new(),
         };
 
         let arms = cfg.switch_arm_regions(src);
@@ -392,6 +396,7 @@ mod tests {
             link_register_seated: Vec::new(),
             tail_call_seated: Vec::new(),
             function_isa_bit: None,
+            flowing_isa_bits: std::collections::BTreeMap::new(),
         };
 
         assert_eq!(

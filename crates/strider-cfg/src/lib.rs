@@ -12,10 +12,12 @@ pub type Result<T> = anyhow::Result<T>;
 
 /// The ISA-mode bit flowing into `addr`, falling back to `entry_bit`.
 ///
-/// The one derivation of the flowing bit: `Builder::enqueue_resolved` reads it
-/// for a seed the classifier gave no mode, and `Strider`'s fold reads it per
-/// site. A second derivation that agreed by accident would decode a resolved
-/// target in the wrong mode the first time they diverged.
+/// Only meaningful while the region owning `addr` is decoding, and
+/// `Builder::sample_flowing_isa_bit` is the one place that reads it there.
+/// Sleigh context flows forward and both re-imposers write only on drift, so a
+/// region explored later and starting below `addr` paints its own mode over it;
+/// a read after the build answers for that later region.
+/// [`Cfg::flowing_isa_bit_at_site`] carries the seal-time answer out instead.
 pub fn flowing_isa_bit_at<R: rsleigh::MemReader>(
     arch: &strider_target::SleighArch,
     sleigh: &rsleigh::Sleigh<R>,
@@ -52,6 +54,7 @@ pub struct Cfg {
     pub(crate) link_register_seated: Vec<types::PcodeInsnAddr>,
     pub(crate) tail_call_seated: Vec<types::PcodeInsnAddr>,
     pub(crate) function_isa_bit: Option<bool>,
+    pub(crate) flowing_isa_bits: std::collections::BTreeMap<types::PcodeInsnAddr, bool>,
 }
 
 impl Cfg {
@@ -119,11 +122,21 @@ impl Cfg {
     ///
     /// NOT the live base. `Builder::enqueue_resolved` reads the context AT the
     /// branch address first and reaches for this only when that read fails, so
-    /// a caller deciding a seated target's mode has to read the branch
-    /// address's context too, or its interworking test can disagree with the
-    /// decode.
+    /// a caller deciding a seated target's mode reads
+    /// [`Self::flowing_isa_bit_at_site`] first and falls back to this.
     pub fn function_isa_bit(&self) -> Option<bool> {
         self.function_isa_bit
+    }
+
+    /// The ISA-mode bit that flowed into the indirect branch at `site`, sampled
+    /// while that site's region was decoded: the mode a target seated there
+    /// with no mode of its own decodes in.
+    ///
+    /// `None` for an address no indirect branch was sealed at, and on an arch
+    /// with no ISA-mode var, where [`Self::function_isa_bit`] is the whole
+    /// answer.
+    pub fn flowing_isa_bit_at_site(&self, site: types::PcodeInsnAddr) -> Option<bool> {
+        self.flowing_isa_bits.get(&site).copied()
     }
 }
 
