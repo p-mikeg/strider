@@ -110,9 +110,8 @@ pub fn smallest_enclosing(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> Option<rslei
     }
     vns.iter()
         .filter(|c| vn_contains(c, vn))
-        // `addr_off` breaks an equal-size tie for the same reason
-        // `largest_container_in` does: two resolvers disagreeing would put a
-        // read and a write of one varnode under different SSA variables.
+        // An equal-size tie needs two PARTIALLY overlapping enclosers, which no
+        // declared register file has; `addr_off` only makes the pick total.
         .min_by_key(|c| (c.size, c.addr_off))
         .copied()
 }

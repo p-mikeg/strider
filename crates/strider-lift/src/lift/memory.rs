@@ -74,6 +74,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// re-read depends on the store, so the optimizer cannot forward the old
     /// value across it, and a register read repeatedly after the store sees one
     /// value rather than a fresh unknown each time.
+    ///
+    /// O(tracked registers), and again in `collect_def_sites`, where a def site
+    /// per register widens the whole function's iterated dominance frontier.
+    /// Narrower needs a bound on the address, which is what this path lacks.
     fn opaque_register_store(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let addr = self.read_input(insn, 1)?;
         let data = self.read_input(insn, 2)?;
