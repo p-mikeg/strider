@@ -16,29 +16,15 @@ use common::*;
 use strider_ir::{IRViewer, IRWalker};
 
 use strider_pattern::{
-    Capture, CaptureExt, CastMask, JoinConstraint, MatchPat, Matcher, Pattern, anything, call,
-    if_else, int_add, int_and, int_cmp, int_const, load, store, var,
+    Capture, CaptureExt, JoinConstraint, MatchPat, Pattern, anything, call, if_else, int_add,
+    int_and, int_cmp, int_const, load, store, var,
 };
 
 use strider_ir::IntCmpOp;
 use strider_ir::node::{NodeId, NodeKind};
 
-/// Cast mask shared by every pattern in this module: skips Extend/Truncate
-/// width casts some lifters insert between mismatched-width operations.
-fn cast_mask() -> CastMask {
-    CastMask::EXTEND | CastMask::TRUNCATE
-}
-
 fn finish<P: MatchPat>(p: P) -> Pattern {
     p.into_pattern().ignore_casts_mask(cast_mask())
-}
-
-fn masked(p: Pattern) -> Pattern {
-    p.ignore_casts_mask(cast_mask())
-}
-
-fn matcher(function: &strider_ir::Function) -> Matcher<'_> {
-    Matcher::new(function)
 }
 
 /// Matches an `IntConst` single-bit mask (nonzero, popcount 1); captures

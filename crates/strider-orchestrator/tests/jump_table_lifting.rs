@@ -25,29 +25,10 @@ use strider_ir::{Function, IRViewer, IRWalker};
 use strider_ir_test_utils::IrWalkerEx;
 
 mod common;
+use common::{count_switches, find_unique_switch};
 
 fn count_eq_cmps(function: &Function) -> usize {
     function.count_kind(|k| matches!(k, NodeKind::IntCmpOp(strider_ir::IntCmpOp::Equal)))
-}
-
-fn count_switches(function: &Function) -> usize {
-    function.count_kind(|k| matches!(k, NodeKind::Switch))
-}
-
-/// Panics if zero or more than one `Switch` node is present; either case
-/// indicates a fixture-construction bug.
-fn find_unique_switch(function: &Function) -> strider_ir::node::NodeId {
-    let mut iter = function
-        .walk()
-        .filter(|&nid| matches!(function.node_kind(nid), NodeKind::Switch));
-    let first = iter
-        .next()
-        .expect("fixture must contain exactly one Switch node");
-    assert!(
-        iter.next().is_none(),
-        "fixture has more than one Switch node"
-    );
-    first
 }
 
 fn count_int_consts_eq(function: &Function, want: u64) -> usize {
