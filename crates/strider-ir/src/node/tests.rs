@@ -336,7 +336,6 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         NodeKind::FloatToInt,
         NodeKind::FloatBitsToInt,
         NodeKind::FloatToFloat,
-        NodeKind::SegmentOp { op_id: 0 },
         NodeKind::CPoolRef,
         NodeKind::New,
     ]
