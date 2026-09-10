@@ -330,8 +330,18 @@ mod tests {
         );
         assert_eq!(ValueType::I128.get_unsigned_int(u128::MAX), Some(u128::MAX));
         assert_eq!(ValueType::F32.get_unsigned_int(0x12345678u128), None);
+        // Every bit above the declared width clears.
+        assert_eq!(
+            ValueType::I8.get_unsigned_int(u128::MAX),
+            Some(u128::from(u8::MAX))
+        );
+        assert_eq!(
+            ValueType::I64.get_unsigned_int(u128::MAX),
+            Some(u128::from(u64::MAX))
+        );
         // I1 masks to the low bit.
         assert_eq!(ValueType::I1.get_unsigned_int(1), Some(1));
+        assert_eq!(ValueType::I1.get_unsigned_int(0), Some(0));
         assert_eq!(ValueType::I1.get_unsigned_int(0xFE), Some(0));
     }
 

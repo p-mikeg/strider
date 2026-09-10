@@ -366,7 +366,7 @@ impl Function {
     /// Rebuilds [`Self::const_interner`] over only the values referenced by
     /// surviving `IntConst(id)` nodes, rewriting each node's id in place.
     ///
-    /// Only safe after [`Graph::retain_reachable`] has settled the arena.
+    /// Only safe after [`Graph::retain_reachable_stale_cache`] has settled the arena.
     fn gc_consts(&mut self) {
         let mut live_old_ids: Vec<ConstId> = Vec::new();
         let mut const_nodes: Vec<NodeId> = Vec::new();

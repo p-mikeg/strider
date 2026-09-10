@@ -1327,27 +1327,33 @@ mod tests {
         b.set_lift_addr(Some(0x10));
         let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
         let data = b.build_int_const(0x42u64, ValueType::I64).unwrap();
-        // A dead Store->Load chain hung off the live InitialMemory, consumed by
-        // nothing on the live spine.  Built via the low-level create_node so the
-        // memory edge bypasses the builder's current-region threading.
         let init_mem = b.entry_memory;
-        let store_node = b.create_node(
-            NodeKind::Store(rsleigh::VnSpace::RAM),
-            [init_mem, addr, data],
-            [ValueKind::Memory],
-        );
-        let store_mem = b.function().node_outputs_exact::<1>(store_node).unwrap()[0];
-        let load_node = b.create_node(
-            NodeKind::Load(rsleigh::VnSpace::RAM),
-            [store_mem, addr],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let loaded = b.function().node_outputs_exact::<1>(load_node).unwrap()[0];
         // The live spine returns an unrelated const.
         let ret_val = b.build_int_const(1u64, ValueType::I64).unwrap();
         b.build_return(Some(ret_val), &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
+
+        // A dead Store->Load chain hung off the live InitialMemory, consumed by
+        // nothing on the live spine. Spliced in after the build, which
+        // validates and rejects an unanchored Store on the memory chain.
+        let store_node = function.graph_mut().create_node(
+            NodeKind::Store(rsleigh::VnSpace::RAM),
+            [init_mem, addr, data],
+            [ValueKind::Memory],
+        );
+        let store_mem = function.node_outputs_exact::<1>(store_node).unwrap()[0];
+        let load_node = function.graph_mut().create_node(
+            NodeKind::Load(rsleigh::VnSpace::RAM),
+            [store_mem, addr],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let loaded = function.node_outputs_exact::<1>(load_node).unwrap()[0];
+        for n in [store_node, load_node] {
+            function
+                .side_tables_mut()
+                .extend_asm_fingerprint(n, &[0x10]);
+        }
 
         let return_node = function
             .graph()

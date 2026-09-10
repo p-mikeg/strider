@@ -98,26 +98,36 @@ impl DotStyle {
 
 /// Escapes a string for use as a DOT double-quoted label.
 ///
-/// The two-char sequences `\n` / `\l` / `\r` pass through verbatim: they are
-/// DOT's own line-break escapes (centre / left / right justified) and callers
-/// hand-emit them. Any other backslash doubles. A literal newline becomes
-/// `\n`.
+/// Every backslash doubles. Labels carry symbol names and disassembly lifted
+/// out of the binary under analysis, so `\l` inside one is two characters of a
+/// name, not DOT's left-justify break: passed through, Graphviz breaks the line
+/// there and the name is silently cut. A caller that means the break emits it
+/// through [`DotEmitter::node_raw_label`]. A literal newline becomes `\n`.
 ///
-/// Every other control character becomes the printable text `\xNN`. Labels
-/// carry symbol names and disassembly lifted out of the binary under analysis,
-/// so a control byte is reachable input: a NUL ends the quoted string mid-label
-/// for Graphviz's lexer, and the rest survive into the rendered SVG, where
-/// C0 outside tab / newline / return is not a legal XML character and fails the
-/// parse. Tab is left alone, being legal in both and meaningful whitespace in
-/// disassembly.
+/// Every other control character becomes the printable text `\xNN`: a NUL ends
+/// the quoted string mid-label for Graphviz's lexer, and the rest survive into
+/// the rendered SVG, where C0 outside tab / newline / return is not a legal XML
+/// character and fails the parse. Tab is left alone, being legal in both and
+/// meaningful whitespace in disassembly.
 fn escape_dot_label(s: &str) -> String {
+    escape_label_inner(s, false)
+}
+
+/// [`escape_dot_label`] with DOT's own `\n` / `\l` / `\r` line-break escapes
+/// passed through un-doubled. Only for a caller that hand-emits them around
+/// content it has already escaped itself.
+fn escape_dot_label_keep_breaks(s: &str) -> String {
+    escape_label_inner(s, true)
+}
+
+fn escape_label_inner(s: &str, keep_breaks: bool) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(ch) = chars.next() {
         match ch {
             '"' => out.push_str("\\\""),
             '\\' => match chars.peek() {
-                Some(&c @ ('n' | 'l' | 'r')) => {
+                Some(&c @ ('n' | 'l' | 'r')) if keep_breaks => {
                     chars.next();
                     out.push('\\');
                     out.push(c);
@@ -195,12 +205,15 @@ impl DotEmitter {
     /// caller owns quoting it (a hex colour needs its own `"..."`, a bare ident
     /// like `dashed` does not).
     pub fn node(&mut self, id: &str, label: &str, shape: &str, extra: &[(&str, &str)]) {
+        self.node_inner(id, &escape_dot_label(label), shape, extra);
+    }
+
+    fn node_inner(&mut self, id: &str, escaped_label: &str, shape: &str, extra: &[(&str, &str)]) {
         let id = escape_dot_label(id);
-        let label = escape_dot_label(label);
         self.out.push_str("  \"");
         self.out.push_str(&id);
         self.out.push_str("\" [label=\"");
-        self.out.push_str(&label);
+        self.out.push_str(escaped_label);
         self.out.push_str("\", shape=");
         self.out.push_str(shape);
 
@@ -210,6 +223,13 @@ impl DotEmitter {
         }
 
         self.out.push_str("];\n");
+    }
+
+    /// [`Self::node`] with DOT's `\n` / `\l` / `\r` line-break escapes in
+    /// `label` left intact. The caller owns having escaped whatever it wrapped
+    /// them around.
+    pub fn node_raw_label(&mut self, id: &str, label: &str, shape: &str, extra: &[(&str, &str)]) {
+        self.node_inner(id, &escape_dot_label_keep_breaks(label), shape, extra);
     }
 
     /// Endpoints are escaped; `extra` follows the same caller-quotes-the-value
@@ -371,10 +391,10 @@ impl<G: GraphDotDumper> GraphDot<G> {
 
 #[cfg(test)]
 mod label_tests {
-    use super::{escape_dot_label, json_quote};
+    use super::{escape_dot_label, escape_dot_label_keep_breaks, json_quote};
 
-    /// A recognised DOT escape passes through where any other backslash
-    /// doubles.
+    /// Every backslash doubles, a DOT line-break bigram included: in a label
+    /// it is content, not markup.
     #[test]
     fn escape_dot_label_escapes_exactly_what_dot_needs() {
         for (input, want) in [
@@ -382,14 +402,29 @@ mod label_tests {
             ("", ""),
             ("a\"b", "a\\\"b"),
             ("a\nb", "a\\nb"),
+            ("a\\nb", "a\\\\nb"),
+            ("a\\lb", "a\\\\lb"),
+            ("a\\rb", "a\\\\rb"),
+            ("a\\b", "a\\\\b"),
+            ("\\", "\\\\"),
+            ("a\tb", "a\tb"),
+            ("C:\\lib\\name", "C:\\\\lib\\\\name"),
+        ] {
+            assert_eq!(escape_dot_label(input), want, "input {input:?}");
+        }
+    }
+
+    /// The break-preserving path a hand-emitting caller uses.
+    #[test]
+    fn escape_dot_label_keep_breaks_passes_the_break_escapes_through() {
+        for (input, want) in [
             ("a\\nb", "a\\nb"),
             ("a\\lb", "a\\lb"),
             ("a\\rb", "a\\rb"),
             ("a\\b", "a\\\\b"),
-            ("\\", "\\\\"),
-            ("a\tb", "a\tb"),
+            ("a\"b", "a\\\"b"),
         ] {
-            assert_eq!(escape_dot_label(input), want, "input {input:?}");
+            assert_eq!(escape_dot_label_keep_breaks(input), want, "input {input:?}");
         }
     }
 
@@ -417,10 +452,16 @@ mod label_tests {
 
     #[test]
     fn escape_dot_label_combined_inputs_round_trip() {
-        // A real IR/CFG label: both a DOT escape (\l) and a literal newline.
+        // A real CFG label: both a DOT escape (\l) and a literal newline.
         let input = "Instruction(addr=0x401000)\n\\l0x401000: ADD";
-        let want = "Instruction(addr=0x401000)\\n\\l0x401000: ADD";
-        assert_eq!(escape_dot_label(input), want);
+        assert_eq!(
+            escape_dot_label(input),
+            "Instruction(addr=0x401000)\\n\\\\l0x401000: ADD"
+        );
+        assert_eq!(
+            escape_dot_label_keep_breaks(input),
+            "Instruction(addr=0x401000)\\n\\l0x401000: ADD"
+        );
     }
 
     /// `<` is escaped unconditionally, not just `</`: matching only the pair
