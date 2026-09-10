@@ -531,3 +531,28 @@ fn distinct_file_ranges_load_untouched_by_the_copy_bound() {
     let obj = parse(&bytes);
     assert_eq!(elf_get_loadable_regions(&obj).unwrap().len(), 2);
 }
+
+/// Two PT_LOADs at one `p_vaddr` are one region, the widest: the lookup table
+/// keeps a single region per start address, so the narrower one winning would
+/// make the bytes past its end unfetchable.
+#[test]
+fn equal_vaddr_pt_loads_collapse_to_the_widest() {
+    let bytes = common::elf_fixture::build_equal_vaddr_loads_elf(&[0x20, 0x4]);
+    let obj = parse(&bytes);
+    let regions = elf_get_loadable_regions(&obj).unwrap();
+    let base = common::elf_fixture::EQUAL_VADDR_LOAD_BASE;
+    assert_eq!(
+        regions
+            .iter()
+            .map(|r| (r.start_addr(), r.end_addr()))
+            .collect::<Vec<_>>(),
+        vec![(base, base + 0x20)]
+    );
+
+    let table = strider_reader::MemRegionsLookupTable::new(regions);
+    let mut got = [0u8; 0x20];
+    table
+        .read_exact(base, &mut got)
+        .expect("every mapped byte is fetchable");
+    assert_eq!(got, std::array::from_fn::<u8, 0x20, _>(|i| i as u8));
+}
