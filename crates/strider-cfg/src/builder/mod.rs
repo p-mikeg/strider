@@ -36,10 +36,11 @@ pub(super) struct WorkItem {
     /// direct edge, else the function mode carrying the resolved branch's
     /// ISA-mode bit. Pinned before decode, undoing a forward-hold clobber.
     pub(super) carried: FlowContext,
-    /// Seeded from `known_targets` rather than reached by a decoded branch. A
-    /// direct edge that will not decode is a real error; a seeded one may be a
-    /// misclassified jump-table entry, so it is dropped and reported instead.
-    pub(super) seeded: bool,
+    /// The indirect-branch site this target was seated from, `None` for a
+    /// direct edge. A direct edge that will not decode is a real error; a
+    /// seeded one may be a misclassified jump-table entry, so it is dropped and
+    /// reported against its own site instead.
+    pub(super) seeded_by: Option<PcodeInsnAddr>,
 }
 
 /// Incrementally constructs a [`Cfg`] from a binary entry point.
@@ -107,7 +108,7 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// not the address alone: two explorations of one address decode in
     /// different contexts by construction, so a failure at one site says
     /// nothing about the same address reached from another.
-    pub(super) undecodable_seeded: Vec<(Option<NodeIndex>, PcodeInsnAddr)>,
+    pub(super) undecodable_seeded: Vec<(Option<NodeIndex>, crate::UndecodableTarget)>,
     /// The ISA mode each region was decoded in.  Read by the conflict checks
     /// in [`Self::explore`] and `RegionBuilder::note_isa_mode_clash` (the
     /// self-wired edges `explore` never sees), and carried across a region
@@ -245,7 +246,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             parent,
             addr,
             carried,
-            seeded: false,
+            seeded_by: None,
         });
     }
 
@@ -272,7 +273,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             parent,
             addr,
             carried,
-            seeded: true,
+            seeded_by: Some(branch_site),
         });
     }
 
@@ -613,11 +614,11 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// function's lift, which is the outcome dropping the target exists to
     /// avoid.
     fn drop_undecodable_switch_arms(&mut self) {
-        for (site, target) in self.undecodable_seeded.clone() {
-            let Some(site) = site else {
+        for (parent, bad) in self.undecodable_seeded.clone() {
+            let Some(parent) = parent else {
                 continue;
             };
-            let Some(region) = self.region_graph.node_weight_mut(site) else {
+            let Some(region) = self.region_graph.node_weight_mut(parent) else {
                 continue;
             };
             let crate::RegionTerminator::Switch {
@@ -629,7 +630,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 continue;
             };
             let before = targets.len();
-            targets.retain(|t| t.addr != target.machine_addr.addr);
+            targets.retain(|t| t.addr != bad.target.machine_addr.addr);
             if targets.len() == before {
                 continue;
             }
@@ -639,7 +640,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                     addr: *addr,
                 };
             }
-            self.remove_arm_edge(site, target);
+            self.remove_arm_edge(parent, bad.target);
         }
     }
 
@@ -671,16 +672,23 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             parent: parent_region,
             addr: address,
             carried,
-            seeded,
+            seeded_by,
         }) = self.work_queue.pop()
         {
-            match self.explore(parent_region, address, carried) {
-                Ok(()) => {}
+            match (self.explore(parent_region, address, carried), seeded_by) {
+                (Ok(()), _) => {}
                 // A seeded target that will not decode is a misclassification,
-                // not a broken function: drop the edge and report the address so
-                // the caller learns the site is unresolved.
-                Err(_) if seeded => self.undecodable_seeded.push((parent_region, address)),
-                Err(e) => return Err(e),
+                // not a broken function: drop the edge and report the address
+                // against the site that named it, so the caller freezes that
+                // site alone.
+                (Err(_), Some(site)) => self.undecodable_seeded.push((
+                    parent_region,
+                    crate::UndecodableTarget {
+                        site,
+                        target: address,
+                    },
+                )),
+                (Err(e), None) => return Err(e),
             }
         }
         self.drop_undecodable_switch_arms();
@@ -701,7 +709,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             undecodable_seeded: self
                 .undecodable_seeded
                 .iter()
-                .map(|&(_, target)| target)
+                .map(|&(_, bad)| bad)
                 .collect(),
             isa_mode_conflicts: self.isa_mode_conflicts,
             interior_branch_targets: self.interior_branch_targets,
@@ -1036,6 +1044,155 @@ mod tests {
             targets.iter().map(|t| t.addr).collect::<Vec<_>>(),
             vec![0x1002],
             "both copies of the off-boundary arm must be dropped from the table",
+        );
+    }
+
+    /// Overlapping code: sequential decoding steps OVER a region start that is
+    /// interior to an instruction it decodes, so two regions own those bytes
+    /// with two different instruction streams.
+    ///
+    /// ```text
+    /// 1000  je 0x1010
+    /// 1002  jmp 0x1014      ; decodes 0x1014 as a region of its own
+    /// 1010  movabs rax, i64 ; ten bytes, spanning 0x1014
+    /// 101a  ret
+    /// ```
+    ///
+    /// The fall-through seal is an exact-key lookup, so nothing on the decode
+    /// path lands on 0x1014 and no other channel names it.
+    #[test]
+    fn a_region_start_stepped_over_by_a_later_decode_is_reported() {
+        let base = 0x1000u64;
+        let mut bytes = vec![0x74, 0x0e]; // 0x1000: je 0x1010
+        bytes.extend_from_slice(&[0xeb, 0x10]); // 0x1002: jmp 0x1014
+        bytes.extend_from_slice(&[0x90; 12]); // 0x1004..0x1010: never decoded
+        // 0x1010: movabs rax, imm64; the immediate byte at 0x1014 is `ret`.
+        bytes.extend_from_slice(&[0x48, 0xb8, 0x00, 0x00, 0xc3, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        bytes.push(0xc3); // 0x101a: ret
+
+        let cfg = build_cfg(bytes, base, &crate::CfgOptions::default()).expect("build");
+
+        assert_eq!(
+            cfg.regions()
+                .filter(|r| r.contains_addr(addr(0x1014, 0)))
+                .count(),
+            2,
+            "the overlap this pins must actually happen",
+        );
+        assert_eq!(cfg.interior_branch_targets(), &[addr(0x1014, 0)]);
+    }
+
+    /// A seeded arm that will not decode is reported against the site that
+    /// named it, not by address alone.
+    #[test]
+    fn an_undecodable_seeded_target_carries_its_site() {
+        let base = 0x1000u64;
+        let bytes = vec![0xff, 0xe0, 0xc3]; // jmp rax; ret
+
+        let branch = PcodeInsnAddr {
+            machine_addr: base.into(),
+            insn_index: branch_indirect_index(&bytes, base, base),
+        };
+        let mut known_targets = rustc_hash::FxHashMap::default();
+        known_targets.insert(
+            branch,
+            crate::ResolvedTargets::Multiple(vec![0x1002.into(), 0x9000.into()]),
+        );
+        let opts = crate::CfgOptions {
+            known_targets,
+            ..crate::CfgOptions::default()
+        };
+
+        let cfg = build_cfg(bytes, base, &opts).expect("build");
+        assert_eq!(
+            cfg.undecodable_seeded_targets(),
+            &[crate::UndecodableTarget {
+                site: branch,
+                target: addr(0x9000, 0),
+            }],
+        );
+        assert_every_switch_target_has_an_arm(&cfg);
+    }
+
+    /// One out-of-range arm (a `switch` case that tail-calls) costs itself, not
+    /// the table: the site stays a `Switch` on the arms that are in range.
+    #[test]
+    fn an_out_of_range_switch_arm_is_dropped_and_the_table_survives() {
+        let base = 0x1000u64;
+        let bytes = vec![0xff, 0xe0, 0xc3, 0xc3]; // jmp rax; ret; ret
+
+        let branch = PcodeInsnAddr {
+            machine_addr: base.into(),
+            insn_index: branch_indirect_index(&bytes, base, base),
+        };
+        let mut known_targets = rustc_hash::FxHashMap::default();
+        known_targets.insert(
+            branch,
+            crate::ResolvedTargets::Multiple(vec![0x1002.into(), 0x1003.into(), 0x9000.into()]),
+        );
+        let opts = crate::CfgOptions {
+            fn_max_size: Some(0x10),
+            known_targets,
+            ..crate::CfgOptions::default()
+        };
+
+        let cfg = build_cfg(bytes, base, &opts).expect("build");
+        assert_every_switch_target_has_an_arm(&cfg);
+        let targets = cfg
+            .regions()
+            .find_map(|r| match &r.terminator {
+                RegionTerminator::Switch { targets, .. } => Some(targets.clone()),
+                _ => None,
+            })
+            .expect("the table must survive its out-of-range arm");
+        assert_eq!(
+            targets.iter().map(|t| t.addr).collect::<Vec<_>>(),
+            vec![0x1002, 0x1003],
+        );
+    }
+
+    /// An arm already interior to a decoded region when the site is sealed is
+    /// dropped and reported, exactly as `seat_non_boundary_target` handles the
+    /// one discovered later.
+    #[test]
+    fn a_seat_time_interior_switch_arm_is_dropped_and_reported() {
+        let base = 0x1000u64;
+        let mut bytes = MOVABS_RAX_0.to_vec(); // 0x1000..0x100a
+        bytes.push(0x90); // 0x100a: nop, seals the movabs region
+        bytes.extend_from_slice(&[0xff, 0xe0]); // 0x100b: jmp rax
+        bytes.push(0xc3); // 0x100d: ret
+
+        let branch = PcodeInsnAddr {
+            machine_addr: 0x100b.into(),
+            insn_index: branch_indirect_index(&bytes, base, 0x100b),
+        };
+        let mut known_targets = rustc_hash::FxHashMap::default();
+        known_targets.insert(
+            branch,
+            crate::ResolvedTargets::Multiple(vec![0x1005.into(), 0x100d.into()]),
+        );
+        let opts = crate::CfgOptions {
+            known_targets,
+            ..crate::CfgOptions::default()
+        };
+
+        let cfg = build_cfg(bytes, base, &opts).expect("build");
+        assert_every_switch_target_has_an_arm(&cfg);
+        let targets = cfg
+            .regions()
+            .find_map(|r| match &r.terminator {
+                RegionTerminator::Switch { targets, .. } => Some(targets.clone()),
+                _ => None,
+            })
+            .expect("the table must survive its off-boundary arm");
+        assert_eq!(
+            targets.iter().map(|t| t.addr).collect::<Vec<_>>(),
+            vec![0x100d]
+        );
+        assert_eq!(
+            cfg.interior_branch_targets(),
+            &[addr(0x1005, 0)],
+            "an arm dropped at seal time must be reported like one dropped later",
         );
     }
 
@@ -1456,7 +1613,13 @@ mod tests {
         b.region_graph.add_edge(live, arm, ());
         // The failing site wired its arm edge before the decode that errored.
         b.region_graph.add_edge(failed, arm, ());
-        b.undecodable_seeded.push((Some(failed), addr(shared, 0)));
+        b.undecodable_seeded.push((
+            Some(failed),
+            crate::UndecodableTarget {
+                site: addr(0x1000, 0),
+                target: addr(shared, 0),
+            },
+        ));
 
         b.drop_undecodable_switch_arms();
 

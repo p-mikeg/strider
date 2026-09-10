@@ -448,12 +448,19 @@ pub struct AnalyzeResult {
     pub isa_mode_conflicts: Vec<PcodeInsnAddr>,
     /// Branch targets interior to a region but off every instruction boundary.
     ///
-    /// No region can start there (decoding from inside an instruction yields a
-    /// different stream), so the edge is seated on the region that owns the
-    /// bytes, whose instructions start earlier. Like `isa_mode_conflicts` a
-    /// direct edge produces these, so they are reported here rather than in
-    /// `unresolved_indirect_branches`. Non-empty means `cfg` claims a
-    /// successor the branch does not actually enter at.
+    /// No region can start there: decoding from inside an instruction yields a
+    /// different stream. What `cfg` does about it depends on the branch. A
+    /// direct one keeps its edge, seated on the region that OWNS the bytes,
+    /// whose instructions start earlier, so `cfg` claims a successor the branch
+    /// does not enter at. A `Switch` arm is dropped and no edge is wired, so
+    /// `cfg` claims FEWER successors than the table named, and a table left with
+    /// no arm degrades to an unresolved site. Overlapping code puts an
+    /// already-decoded region's start inside an instruction a later region
+    /// decodes, and reports that start here too: two regions then own those
+    /// bytes with two different instruction streams.
+    ///
+    /// Like `isa_mode_conflicts` a direct edge produces these, so they are
+    /// reported here rather than in `unresolved_indirect_branches`.
     pub interior_branch_targets: Vec<PcodeInsnAddr>,
     /// Sites whose answer nothing verified.
     ///
@@ -605,12 +612,15 @@ fn apply_resolutions(
     // `Progress::derived_incomplete`.
     let mut progress = Progress::default();
     for (addr, targets) in staged {
-        let prev = known_targets.get(&addr);
+        // `seed_for`, not a bare lookup: a caller can only spell the MACHINE
+        // address, so at a site whose `BRANCHIND` is not the instruction's
+        // first p-code op the answer to adopt modes from is keyed there.
+        let known = seed_for(known_targets, addr);
         // A seated `Switch` carries no ISA-mode input, so its re-derivation
         // reports no mode for ANY target, including the ones a mode-bearing
         // classification already proved. Re-deriving must widen the arm set,
         // not re-decode the old arms in the mode flowing into the branch.
-        let (targets, assumed_mode) = adopt_known_modes(prev, targets, flowing_at(addr));
+        let (targets, assumed_mode) = adopt_known_modes(known, targets, flowing_at(addr));
         // The caller's own seed is unioned in by ADDRESS every round, after
         // both mode filters and never subject to them: a seed carries a mode
         // only if the caller built one, and filtering it against a mode-bearing
@@ -626,7 +636,12 @@ fn apply_resolutions(
             .into_iter()
             .flatten()
             .any(|a| !seated.contains(a));
-        let prev = prev.map(target_keys).unwrap_or_default();
+        // The exact key, where the fold writes: the convergence diff compares
+        // this address's own entry across rounds.
+        let prev = known_targets
+            .get(&addr)
+            .map(target_keys)
+            .unwrap_or_default();
         let next = target_keys(&targets);
         let narrowed = narrows(&prev, &next);
         if prev != next {
@@ -966,7 +981,9 @@ fn abandon_site(
 ///
 /// A classifier that over-approximates a jump-table bound reaches past the
 /// table and names addresses that are not code. The bound is what is wrong, so
-/// no arm of that answer is trustworthy and the whole seat goes.
+/// no arm of that answer is trustworthy and the whole seat goes -- the seat of
+/// the SITE that named it. The same address seated from another site decodes in
+/// that site's own committed context, so its failure there is no verdict here.
 ///
 /// An address two edges reach in different ISA modes is decoded once, in
 /// whichever mode won the work queue, so the other edge's arm is not the
@@ -979,7 +996,7 @@ fn abandon_site(
 /// dropped here are exactly the ones the classifier re-derives every round, so
 /// a site left open would re-seat them and cycle until the iteration cap.
 fn abandon_undecodable(
-    undecodable_targets: &[PcodeInsnAddr],
+    undecodable_targets: &[strider_cfg::UndecodableTarget],
     clashing_targets: &[PcodeInsnAddr],
     abandoned: &mut rustc_hash::FxHashSet<PcodeInsnAddr>,
     known_targets: &mut FxHashMap<PcodeInsnAddr, ResolvedTargets>,
@@ -987,7 +1004,21 @@ fn abandon_undecodable(
     let addrs = |sites: &[PcodeInsnAddr]| -> rustc_hash::FxHashSet<u64> {
         sites.iter().map(|a| a.machine_addr.addr).collect()
     };
-    let undecodable = addrs(undecodable_targets);
+    // Both keys of each site, since a caller can only spell the machine address
+    // ([`seed_for`]) while the cfg reports the `BRANCHIND`'s own p-code address.
+    let mut undecodable: FxHashMap<PcodeInsnAddr, rustc_hash::FxHashSet<u64>> =
+        FxHashMap::default();
+    for bad in undecodable_targets {
+        for key in [
+            bad.site,
+            PcodeInsnAddr::at_machine_start(bad.site.machine_addr.addr),
+        ] {
+            undecodable
+                .entry(key)
+                .or_default()
+                .insert(bad.target.machine_addr.addr);
+        }
+    }
     let clashing = addrs(clashing_targets);
     if undecodable.is_empty() && clashing.is_empty() {
         return Vec::new();
@@ -1003,7 +1034,7 @@ fn abandon_undecodable(
     let hit: Vec<(PcodeInsnAddr, Vec<strider_cfg::ResolvedTarget>)> = known_targets
         .iter()
         .filter_map(|(site, targets)| {
-            if names(targets, &undecodable) {
+            if undecodable.get(site).is_some_and(|bad| names(targets, bad)) {
                 return Some((*site, Vec::new()));
             }
             names(targets, &clashing).then(|| {
@@ -2351,6 +2382,14 @@ mod tests {
     /// The `BRANCHIND` of an ARM `bx`, a MIPS `jr` or an x86 `jmp [mem]` is not
     /// the instruction's first p-code op, so the anchor key and the only key a
     /// caller can spell are two entries for one site.
+    /// A seeded arm at `target` that would not decode, seated from `site`.
+    fn undecodable(site: PcodeInsnAddr, target: u64) -> strider_cfg::UndecodableTarget {
+        strider_cfg::UndecodableTarget {
+            site,
+            target: pcode_addr(target),
+        }
+    }
+
     fn mid_insn_addr(machine: u64) -> PcodeInsnAddr {
         PcodeInsnAddr {
             machine_addr: MachineInsnAddr::from(machine),
@@ -2384,7 +2423,12 @@ mod tests {
         known.insert(site, multiple(&[(0x2000, None), (0x9000, None)]));
         let mut abandoned = rustc_hash::FxHashSet::default();
 
-        let hit = abandon_undecodable(&[pcode_addr(0x9000)], &[], &mut abandoned, &mut known);
+        let hit = abandon_undecodable(
+            &[undecodable(site, 0x9000)],
+            &[],
+            &mut abandoned,
+            &mut known,
+        );
 
         assert_eq!(hit, vec![site]);
         assert!(
@@ -2393,6 +2437,28 @@ mod tests {
              arm of that answer survives",
         );
         assert!(abandoned.contains(&site));
+    }
+
+    /// One site's undecodable arm is no verdict on another site naming the same
+    /// address: each decodes in its own committed context.
+    #[test]
+    fn an_undecodable_target_freezes_only_the_site_that_named_it() {
+        let bad = mid_insn_addr(0x1000);
+        let other = pcode_addr(0x1100);
+        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        known.insert(bad, multiple(&[(0x2000, None), (0x9000, None)]));
+        known.insert(other, multiple(&[(0x9000, None)]));
+        let mut abandoned = rustc_hash::FxHashSet::default();
+
+        let hit = abandon_undecodable(&[undecodable(bad, 0x9000)], &[], &mut abandoned, &mut known);
+
+        assert_eq!(hit, vec![bad]);
+        assert!(!known.contains_key(&bad));
+        assert_eq!(
+            target_keys(&known[&other]),
+            target_keys(&multiple(&[(0x9000, None)])),
+        );
+        assert!(!abandoned.contains(&other));
     }
 
     /// An ISA clash is raised by ANY two edges reaching one address, direct
@@ -2446,7 +2512,7 @@ mod tests {
         let mut abandoned = rustc_hash::FxHashSet::default();
 
         let hit = abandon_undecodable(
-            &[pcode_addr(0x9000)],
+            &[undecodable(pcode_addr(0x7000), 0x9000)],
             &[pcode_addr(0x8000)],
             &mut abandoned,
             &mut known,
@@ -2455,6 +2521,59 @@ mod tests {
         assert!(hit.is_empty());
         assert_eq!(known.len(), 2);
         assert!(abandoned.is_empty());
+    }
+
+    /// One fold at a `BRANCHIND` anchored mid-instruction, with the previous
+    /// round's mode-bearing answer seated under `known_key`.
+    fn fold_mid_insn(known_key: PcodeInsnAddr) -> (BTreeSet<TargetKey>, Progress) {
+        let (_function, node) = fn_with_live_indirect_branch();
+        let anchor = mid_insn_addr(0x1000);
+        let anchors: UnresolvedAnchors = vec![(anchor, node)];
+        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        known.insert(known_key, multiple(&[(0x2000, Some(true))]));
+        let mut resolutions: IndirectResolutions = FxHashMap::default();
+        resolutions.insert(node, Some(multiple(&[(0x2000, None), (0x3000, None)])));
+        let progress = apply_resolutions(
+            &mut known,
+            &FxHashMap::default(),
+            &Vec::new(),
+            &anchors,
+            resolutions,
+            &FxHashMap::default(),
+            &rustc_hash::FxHashSet::default(),
+        )
+        .expect("fold");
+        (target_keys(&known[&anchor]), progress)
+    }
+
+    /// A caller can only spell the machine address, so at a site whose
+    /// `BRANCHIND` is not the instruction's first p-code op the mode-bearing
+    /// answer is seated under the machine-start key. Adoption must read it
+    /// there: an exact-key miss adopts nothing, and the interworking arm the
+    /// anchor-keyed fold drops is seated mode-less with every report empty.
+    #[test]
+    fn apply_resolutions_adopts_a_mode_seated_under_the_machine_start_key() {
+        let (anchored, anchored_progress) = fold_mid_insn(mid_insn_addr(0x1000));
+        let (machine_start, machine_start_progress) = fold_mid_insn(pcode_addr(0x1000));
+
+        assert_eq!(
+            anchored,
+            target_keys(&multiple(&[(0x2000, Some(true))])),
+            "the mode-less 0x3000 must not be seated at an interworking site",
+        );
+        assert_eq!(
+            anchored_progress.derived_incomplete,
+            vec![mid_insn_addr(0x1000)]
+        );
+        assert_eq!(machine_start, anchored);
+        assert_eq!(
+            machine_start_progress.derived_incomplete,
+            anchored_progress.derived_incomplete,
+        );
+        assert_eq!(
+            machine_start_progress.assumed_modes,
+            anchored_progress.assumed_modes,
+        );
     }
 
     /// A frozen site takes no further classification, so the arms
