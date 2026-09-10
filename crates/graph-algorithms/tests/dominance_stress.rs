@@ -274,3 +274,19 @@ fn a_repeated_node_appears_once_in_the_preorder() {
     };
     assert_eq!(dominator_tree_preorder(&mock, 0), vec![0, 1, 2]);
 }
+
+/// `DF(root) ∋ root` needs the climb from the root's predecessor to pass
+/// THROUGH the root, which only `idom(root) == None` allows. On `0 -> 1 -> 2 ->
+/// 0` the root-as-own-idom encoding silently returns `{1: [0], 2: [0]}`, with
+/// no key 0.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "root must have no immediate dominator")]
+fn dominance_frontiers_rejects_root_as_its_own_idom() {
+    let mock = Mock {
+        nodes: vec![0, 1, 2],
+        preds: HashMap::from([(0, vec![2]), (1, vec![0]), (2, vec![1])]),
+        idom: HashMap::from([(0, 0), (1, 0), (2, 1)]),
+    };
+    let _ = dominance_frontiers(&mock, 0);
+}

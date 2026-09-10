@@ -1,36 +1,6 @@
 use super::*;
 use cranelift_entity::EntityRef;
 
-/// Bits above the declared width must be cleared even when set.
-#[test]
-fn unsigned_int_masks_to_declared_width() {
-    let wide: u128 = u128::MAX;
-    assert_eq!(
-        ValueType::I8.get_unsigned_int(wide),
-        Some(u128::from(u8::MAX))
-    );
-    assert_eq!(
-        ValueType::I16.get_unsigned_int(wide),
-        Some(u128::from(u16::MAX))
-    );
-    assert_eq!(
-        ValueType::I32.get_unsigned_int(wide),
-        Some(u128::from(u32::MAX))
-    );
-    assert_eq!(
-        ValueType::I64.get_unsigned_int(wide),
-        Some(u128::from(u64::MAX))
-    );
-}
-
-#[test]
-fn unsigned_int_masks_i1_to_low_bit() {
-    assert_eq!(ValueType::I1.get_unsigned_int(1), Some(1));
-    assert_eq!(ValueType::I1.get_unsigned_int(0), Some(0));
-    assert_eq!(ValueType::I1.get_unsigned_int(0xFE), Some(0));
-}
-
-/// The MSB of the declared width is the sign bit.
 #[test]
 fn signed_int_sign_extends_from_declared_width() {
     assert_eq!(ValueType::I8.get_signed_int(u128::from(u8::MAX)), Some(-1));

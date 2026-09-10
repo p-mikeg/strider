@@ -33,15 +33,21 @@ pub trait DomTree {
 /// its climb records the one pair `(p, b)` and then dies.
 #[must_use]
 pub fn dominance_frontiers<G: DomTree>(g: &G, root: G::Node) -> Frontiers<G::Node> {
+    debug_assert!(
+        g.immediate_dominator(root).is_none(),
+        "root must have no immediate dominator: a root encoded as its own idom \
+         stops the climb below itself and silently drops it from its own frontier"
+    );
     let mut frontiers: Frontiers<G::Node> = FxHashMap::default();
     // Membership runs beside the `Vec`s, which keep discovery order: a wide
     // join fans one frontier out to every join, so scanning one for the
-    // duplicate check is quadratic in its own length.
+    // duplicate check is quadratic in its own length. Drained by `remove`
+    // rather than `clear`: the set never shrinks its allocation, so a `clear`
+    // after one long climb costs a memset over that capacity for every later
+    // node, which is quadratic in the node count on a graph with one deep
+    // chain.
     let mut recorded: FxHashSet<(G::Node, G::Node)> = FxHashSet::default();
-    // Reused across nodes, and drained by `remove` rather than `clear`: the set
-    // never shrinks its allocation, so a `clear` after one long climb costs a
-    // memset over that capacity for every later node, which is quadratic in the
-    // node count on a graph with one deep chain.
+    // The pairs `recorded` holds for the node being processed.
     let mut climbed: Vec<(G::Node, G::Node)> = Vec::new();
     for b in g.nodes() {
         // Every pair recorded below carries this `b`, so an earlier `b`'s

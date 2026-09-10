@@ -103,7 +103,8 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         } else {
             &[]
         };
-        out.node(&dot_id, &label, "box", extra);
+        // The label carries hand-emitted `\l` breaks per instruction.
+        out.node_raw_label(&dot_id, &label, "box", extra);
 
         // Edges are unweighted, so label and style come from the SOURCE
         // region's terminator.  A `CondBranch` source defers to `region_if`

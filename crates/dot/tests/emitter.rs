@@ -128,3 +128,44 @@ fn edge_endpoints_with_special_chars_are_escaped() {
         "unexpected DOT: {out}"
     );
 }
+
+/// A symbol name lifted out of the binary is DATA. Left un-doubled, the two
+/// characters `\l` reach Graphviz as a line break and the rest of the name is
+/// dropped from that line.
+#[test]
+fn node_label_backslash_bigram_is_not_a_line_break() {
+    let style = DotStyle::empty();
+    let mut e = DotEmitter::new("G", &style);
+    e.node("n0", "C:\\lib\\name", "box", &[]);
+    let out = e.finish();
+    assert!(
+        out.contains("label=\"C:\\\\lib\\\\name\""),
+        "unexpected DOT: {out}"
+    );
+}
+
+#[test]
+fn node_id_backslash_bigram_is_not_a_line_break() {
+    let style = DotStyle::empty();
+    let mut e = DotEmitter::new("G", &style);
+    e.node("a\\lb", "lbl", "box", &[]);
+    e.edge("a\\lb", "c\\nd", &[("label", "x\\ry")]);
+    let out = e.finish();
+    assert!(out.contains("\"a\\\\lb\""), "unescaped node id: {out}");
+    assert!(out.contains("\"c\\\\nd\""), "unescaped endpoint: {out}");
+    assert!(out.contains("label=\"x\\\\ry\""), "unescaped label: {out}");
+}
+
+/// The CFG dumper hand-emits `\l` around its own text; that break must still
+/// reach Graphviz while the surrounding data stays escaped.
+#[test]
+fn node_raw_label_keeps_hand_emitted_line_breaks() {
+    let style = DotStyle::empty();
+    let mut e = DotEmitter::new("G", &style);
+    e.node_raw_label("n0", "hdr\\l0x1000: nop\\l", "box", &[]);
+    let out = e.finish();
+    assert!(
+        out.contains("label=\"hdr\\l0x1000: nop\\l\""),
+        "line break lost: {out}"
+    );
+}

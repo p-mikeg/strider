@@ -1,9 +1,76 @@
+use core::ops::ControlFlow;
+
 use crate::IRViewer;
 use crate::function::Function;
+use crate::graph::Graph;
 use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueKind};
-use crate::walk::NodeIdSet;
+use crate::walk::{NodeIdSet, PostOrder, WalkPhase};
 
 use super::ValidationError;
+
+/// The data producers of a node, restricted to `universe`. `Phi` / `MemPhi`
+/// expand to nothing: closing a data cycle is what they are for.
+#[derive(Clone, Copy)]
+struct DataProducers<'a> {
+    graph: &'a Graph,
+    universe: &'a NodeIdSet,
+}
+
+impl DataProducers<'_> {
+    fn of(self, node: NodeId) -> impl Iterator<Item = NodeId> {
+        let phi = matches!(self.graph.node_kind(node), NodeKind::Phi | NodeKind::MemPhi);
+        (!phi)
+            .then(|| self.graph.node_inputs(node))
+            .into_iter()
+            .flatten()
+            .filter(move |&value| !self.graph.value_kind(value).is_control())
+            .map(move |value| self.graph.value_definition(value).0)
+            .filter(move |&producer| self.universe.contains(producer))
+    }
+}
+
+impl graph_algorithms::walk::GraphRef for DataProducers<'_> {
+    type NodeId = NodeId;
+
+    fn try_successors(
+        &self,
+        node: NodeId,
+        f: impl FnMut(NodeId) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
+        self.of(node).try_for_each(f)
+    }
+}
+
+/// No non-phi node is its own transitive data producer.
+///
+/// The DFS post-order's Pre/Post events bound the current path, so a producer
+/// still on it is a back edge.
+pub(super) fn check_function_invariants_data_cycles(
+    function: &Function,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    let producers = DataProducers {
+        graph: function.graph(),
+        universe: reachable,
+    };
+    let mut walk = PostOrder::new(producers, reachable.iter());
+    let mut on_path = NodeIdSet::new();
+    while let Some((phase, node)) = walk.next_event() {
+        match phase {
+            WalkPhase::Pre => {
+                on_path.insert(node);
+                if producers.of(node).any(|p| on_path.contains(p)) {
+                    errs.push(ValidationError::DataCycle {
+                        node,
+                        kind: *function.node_kind(node),
+                    });
+                }
+            }
+            WalkPhase::Post => on_path.remove(node),
+        }
+    }
+}
 
 /// At most one live [`NodeKind::Entry`] and one live
 /// [`NodeKind::InitialMemory`]. Neither is required.
@@ -348,6 +415,12 @@ pub(super) fn check_function_invariants_asm_fingerprints(
 ///
 /// Scoped to `Store`: a memory-preserving `Call` / `CallOther` legitimately
 /// leaves its Memory output unconsumed.
+///
+/// The entry walk reaches a `Store` only through a consumer of that output, so
+/// a violation means a severed use-list. The stronger shape, every `Store` the
+/// memory chain reaches is entry-reachable, is false: `PhiCollapse` can make
+/// two stores identical, and the node cache subsumes one into the other,
+/// leaving a corpse that still consumes the chain.
 pub(super) fn check_function_invariants_memory_chain(
     function: &Function,
     reachable: &NodeIdSet,

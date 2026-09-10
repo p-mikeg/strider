@@ -431,22 +431,10 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// use-lists, so `value_uses` reported consumers no node owns.
     ///
     /// Invalidates every pre-compaction `NodeId` / `ValueId` / `UseId`, and
-    /// bumps the generation counter.
-    pub fn retain_reachable(&mut self, reachable: impl IntoIterator<Item = NodeId>) -> NodeIdRemap
-    where
-        N: Clone,
-        V: Clone,
-    {
-        let remap = self.retain_reachable_stale_cache(reachable);
-        self.rebuild_cache();
-        remap
-    }
-
-    /// [`Self::retain_reachable`] stopping short of the cache rebuild, for a
-    /// caller that rewrites cache-key-bearing payloads afterwards and would
-    /// discard it. The cache is left keyed on the pre-compaction ids: the
-    /// caller MUST [`rebuild_cache`](Self::rebuild_cache) before any deduping
-    /// create.
+    /// bumps the generation counter. The cache is left keyed on the
+    /// PRE-compaction ids, for a caller that rewrites cache-key-bearing
+    /// payloads afterwards and would discard a rebuild: it MUST
+    /// [`rebuild_cache`](Self::rebuild_cache) before any deduping create.
     pub fn retain_reachable_stale_cache(
         &mut self,
         reachable: impl IntoIterator<Item = NodeId>,
@@ -539,7 +527,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     }
 }
 
-/// Sparse old-to-new id table from [`Graph::retain_reachable`]: only surviving
+/// Sparse old-to-new id table from [`Graph::retain_reachable_stale_cache`]: only surviving
 /// ids are populated, dropped ids return `None`.
 #[derive(Debug, Clone, Default)]
 pub struct NodeIdRemap {
