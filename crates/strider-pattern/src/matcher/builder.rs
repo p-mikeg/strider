@@ -93,7 +93,8 @@ impl MatcherBuilder {
     /// Matches if any alternative matches the node. The alternatives wire as
     /// this node's inputs, but the matcher tries each against the *same* IR
     /// node rather than as operands, enumerating every arm that matches (a
-    /// union). Empty `alts` matches nothing.
+    /// union). Empty `alts` matches nothing. `find_all` dedups on the binding
+    /// signature, so arms that match one node identically are one row.
     ///
     /// The alternation output is [`OutputKindSpec::Any`], so it nests in a
     /// value, control, or memory slot alike; the arms discriminate.

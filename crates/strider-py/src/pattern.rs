@@ -2091,6 +2091,12 @@ pub fn initial_var_for(vn: crate::sleigh::PyVn) -> PyPat {
 /// narrower arm; a join or `.when` downstream then keeps the binding it needs.
 /// Use `first_of` for an ordered choice that cuts to the first matching arm.
 ///
+/// A match is identified by what it BINDS, so two arms matching one node with
+/// the same bindings are one match. At the root of a pattern that captures
+/// nothing that collapses every arm onto the node, and
+/// `one_of([load(), anything()])` answers exactly what `anything()` does; give
+/// the arms a capture to tell them apart.
+///
 /// Captures under an alternative that did not fire are left UNBOUND, not
 /// defaulted, so `Match.has(c)` (or a `None` from `Match.uint_opt(c)`)
 /// tells you which arm matched and lets you pick your own default:
