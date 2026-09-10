@@ -769,6 +769,78 @@ pub(crate) fn simple_text_elf(addr: u64, bytes: &[u8]) -> Vec<u8> {
     })
 }
 
+/// Address the [`build_equal_vaddr_loads_elf`] mappings all start at.
+pub(crate) const EQUAL_VADDR_LOAD_BASE: u64 = 0x1000;
+
+/// An x86-64 ET_EXEC whose PT_LOADs all map the same `.text` extent at
+/// [`EQUAL_VADDR_LOAD_BASE`], one per entry of `filesz`. Byte `i` of the extent
+/// holds `i as u8`.
+///
+/// A linker never emits this, but nothing in the format forbids it, and the
+/// mappings differ only in how far they reach.
+pub(crate) fn build_equal_vaddr_loads_elf(filesz: &[u64]) -> Vec<u8> {
+    let text: Vec<u8> = (0..*filesz.iter().max().expect("at least one PT_LOAD"))
+        .map(|i| i as u8)
+        .collect();
+    let mut buf = Vec::new();
+    {
+        let mut w = Writer::new(Endianness::Little, true, &mut buf);
+        let _null = w.reserve_null_section_index();
+        let text_name = w.add_section_name(b".text");
+        let _text_idx = w.reserve_section_index();
+        let _shstr = w.reserve_shstrtab_section_index();
+
+        w.reserve_file_header();
+        w.reserve_program_headers(filesz.len() as u32);
+        let text_off = w.reserve(text.len(), 1);
+        w.reserve_shstrtab();
+        w.reserve_section_headers();
+
+        w.write_file_header(&FileHeader {
+            os_abi: elf::ELFOSABI_SYSV,
+            abi_version: 0,
+            e_type: elf::ET_EXEC,
+            e_machine: elf::EM_X86_64,
+            e_entry: EQUAL_VADDR_LOAD_BASE,
+            e_flags: 0,
+        })
+        .expect("write file header");
+
+        w.write_align_program_headers();
+        for &len in filesz {
+            w.write_program_header(&ProgramHeader {
+                p_type: elf::PT_LOAD,
+                p_flags: elf::PF_R | elf::PF_X,
+                p_offset: text_off as u64,
+                p_vaddr: EQUAL_VADDR_LOAD_BASE,
+                p_paddr: EQUAL_VADDR_LOAD_BASE,
+                p_filesz: len,
+                p_memsz: len,
+                p_align: 1,
+            });
+        }
+
+        w.write(&text);
+        w.write_shstrtab();
+
+        w.write_null_section_header();
+        w.write_section_header(&SectionHeader {
+            name: Some(text_name),
+            sh_type: elf::SHT_PROGBITS,
+            sh_flags: u64::from(elf::SHF_ALLOC | elf::SHF_EXECINSTR),
+            sh_addr: EQUAL_VADDR_LOAD_BASE,
+            sh_offset: text_off as u64,
+            sh_size: text.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        });
+        w.write_shstrtab_section_header();
+    }
+    buf
+}
+
 /// `simple_text_elf` with caller-chosen endianness, for round-trip tests.
 struct OneSectionOpts<'a> {
     addr: u64,

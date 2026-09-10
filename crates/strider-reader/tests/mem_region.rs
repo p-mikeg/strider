@@ -508,17 +508,3 @@ fn region_index_overlapping_reports_the_regions_a_range_touches() {
     assert!(index.overlapping(0x1500, 0x1600).next().is_none());
     assert!(index.overlapping(0x1000, 0x1000).next().is_none());
 }
-
-#[test]
-fn region_index_widest_at_picks_the_region_serving_the_most() {
-    let regions = [make_region(0x1000, 0x40), make_region(0x1010, 0x10)];
-    let index = RegionIndex::new(&regions);
-    assert_eq!(
-        index.widest_at(0x1010),
-        Some(0),
-        "the higher start serves fewer bytes from here"
-    );
-    assert_eq!(index.widest_at(0x1030), Some(0));
-    assert_eq!(index.widest_at(0x0fff), None);
-    assert_eq!(index.widest_at(0x1040), None);
-}

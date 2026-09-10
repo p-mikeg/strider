@@ -77,6 +77,17 @@ impl FileIdentity {
     }
 }
 
+/// The whole of the already-open `file`, `len` being what its `stat` reported.
+///
+/// Through the fd rather than the path, so the bytes come from the inode the
+/// checks above ran on however the name is rebound meanwhile.
+fn read_all(file: &mut std::fs::File, len: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read as _;
+    let mut bytes = Vec::with_capacity(usize::try_from(len).unwrap_or(0));
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
 impl FileBytes {
     pub(crate) fn from_vec(bytes: Vec<u8>) -> Self {
         Self(Store::Owned(Arc::new(bytes)))
@@ -93,12 +104,13 @@ impl FileBytes {
     ///
     /// # Errors
     ///
-    /// When the file cannot be opened or stat'd, or when the fallback read
-    /// fails too; the mapping error is then folded into the message.
+    /// When the file cannot be opened or stat'd, is not a regular file, or when
+    /// the fallback read fails too; the mapping error is then folded into the
+    /// message.
     pub(crate) fn map_path<P: AsRef<std::path::Path>>(path: P) -> crate::Result<Self> {
         let path = path.as_ref();
         // Before any open: opening a FIFO read-only BLOCKS until a writer
-        // appears, so both paths below would hang rather than fail. `metadata`
+        // appears, so the open below would hang rather than fail. `metadata`
         // follows symlinks and does not open, so a link to a regular file
         // still passes and a pipe cannot stall the check itself.
         // A stat failure falls through, so a missing path still reports the
@@ -106,12 +118,19 @@ impl FileBytes {
         if std::fs::metadata(path).is_ok_and(|m| !m.is_file()) {
             anyhow::bail!("{}: not a regular file", path.display());
         }
+        let mut file = std::fs::File::open(path).context("failed to read file")?;
+        // Again on the fd, which is the one every read below goes through: a
+        // FIFO a writer had already opened swapped onto the path between the
+        // stat and the open passes the check above and then blocks the read.
+        let opened = file.metadata().context("failed to stat file")?;
+        if !opened.is_file() {
+            anyhow::bail!("{}: not a regular file", path.display());
+        }
         if std::env::var_os("STRIDER_NO_MMAP").is_some_and(|v| v != "0") {
             return Ok(Self::from_vec(
-                std::fs::read(path).context("failed to read file")?,
+                read_all(&mut file, opened.len()).context("failed to read file")?,
             ));
         }
-        let file = std::fs::File::open(path).context("failed to read file")?;
         // SAFETY: the mapping contract above is the caller's; the bytes are
         // only ever read through a shared reference.
         match unsafe { memmap2::Mmap::map(&file) } {
@@ -126,7 +145,7 @@ impl FileBytes {
                     path: path.to_path_buf(),
                 }))))
             }
-            Err(map_err) => match std::fs::read(path) {
+            Err(map_err) => match read_all(&mut file, opened.len()) {
                 Ok(bytes) => Ok(Self::from_vec(bytes)),
                 Err(read_err) => Err(anyhow::Error::new(read_err).context(format!(
                     "failed to read file, and mapping it failed: {map_err}"

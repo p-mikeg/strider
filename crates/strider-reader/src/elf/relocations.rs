@@ -156,6 +156,7 @@ pub(crate) fn apply_elf_relocations_with(
         per_region: &mut patches,
         sites: 0,
         records: 0,
+        scratch: Vec::new(),
     };
     for_each_reloc_site(obj, &owners, layout, |site_addr, avail, reloc| {
         apply_one_relocation(
@@ -273,7 +274,7 @@ fn apply_one_relocation(
     // at all, since `PT_GNU_RELRO` is not modelled.
     if let Some((value, size_bytes)) = image_relative_reloc(reloc, obj.architecture(), endian_le) {
         let site_regions = sink.covering(region_index, regions, site, site_addr, size_bytes)?;
-        sink.record(&site_regions, site_addr, value, size_bytes, endian_le);
+        sink.record(site_regions, site_addr, value, size_bytes, endian_le);
         return Ok(());
     }
 
@@ -315,7 +316,7 @@ fn apply_one_relocation(
         };
         let value = apply_addend(target_addr, addend);
         sink.record(
-            &site_regions,
+            site_regions,
             site_addr,
             if pc_relative {
                 value.wrapping_sub(site_addr)
@@ -406,7 +407,7 @@ fn apply_one_relocation(
         value
     };
 
-    sink.record(&site_regions, field_addr, value, size_bytes, endian_le);
+    sink.record(site_regions, field_addr, value, size_bytes, endian_le);
     Ok(())
 }
 
@@ -449,6 +450,10 @@ struct PatchSink<'a> {
     per_region: &'a mut [Vec<Patch>],
     sites: usize,
     records: usize,
+    /// Handed out by [`PatchSink::covering`] and taken back by
+    /// [`PatchSink::record`], so the covering list is allocated once for the
+    /// whole walk rather than once per site.
+    scratch: Vec<usize>,
 }
 
 impl PatchSink<'_> {
@@ -469,8 +474,10 @@ impl PatchSink<'_> {
         field_addr: u64,
         size_bytes: usize,
     ) -> Result<Vec<usize>> {
+        let mut covering = std::mem::take(&mut self.scratch);
+        covering.clear();
         if (field_addr - site.addr) + size_bytes as u64 > site.avail {
-            return Ok(Vec::new());
+            return Ok(covering);
         }
         self.sites += 1;
         let allowance = self
@@ -480,9 +487,8 @@ impl PatchSink<'_> {
         // One past the allowance is enough to report the overrun, and is what
         // keeps a site covered by every region of a crafted image from
         // materialising that list at all.
-        let covering: Vec<usize> = covering_regions(index, regions, field_addr, size_bytes)
-            .take(allowance + 1)
-            .collect();
+        covering
+            .extend(covering_regions(index, regions, field_addr, size_bytes).take(allowance + 1));
         if covering.len() > allowance {
             anyhow::bail!(
                 "relocation site {field_addr:#x} lands in more overlapping regions than the \
@@ -495,24 +501,24 @@ impl PatchSink<'_> {
     }
 
     /// Records the low `size_bytes` of `value` at `site_addr`, on every region
-    /// in `covering`.
+    /// in `covering`, and takes that buffer back for the next site.
     ///
     /// An empty `covering` silently skips: either the site is unmapped, or its
     /// field width runs past the end of the region its first byte lands in.
     fn record(
         &mut self,
-        covering: &[usize],
+        covering: Vec<usize>,
         site_addr: u64,
         value: u64,
         size_bytes: usize,
         endian_le: bool,
     ) {
-        let Some(patch) = Patch::new(site_addr, value, size_bytes, endian_le) else {
-            return;
-        };
-        for &i in covering {
-            self.per_region[i].push(patch);
+        if let Some(patch) = Patch::new(site_addr, value, size_bytes, endian_le) {
+            for &i in &covering {
+                self.per_region[i].push(patch);
+            }
         }
+        self.scratch = covering;
     }
 }
 
@@ -543,9 +549,10 @@ fn mips_corrected_symbol(
 /// `sh_addr` sits at a synthetic base.
 ///
 /// `None` (caller skips the relocation) when the index doesn't resolve
-/// (malformed ELF), when it resolves to the legitimate weak / undef case
-/// (`address == 0 && is_undefined`), when the symbol is an unallocated
-/// `SHN_COMMON`, or when the target isn't a `Symbol`.
+/// (malformed ELF), when its `st_shndx` names no section header, when it
+/// resolves to the legitimate weak / undef case (`address == 0 &&
+/// is_undefined`), when the symbol is an unallocated `SHN_COMMON`, or when the
+/// target isn't a `Symbol`.
 fn resolve_symbol_target(
     obj: &object::File<'_>,
     layout: &super::sections::ElfSectionLayout,
@@ -571,7 +578,7 @@ fn resolve_symbol_target(
                 .map(|s| {
                     (
                         s.address(),
-                        layout.symbol_address(&s),
+                        layout.try_symbol_address(&s),
                         s.is_undefined(),
                         s.is_common(),
                     )
@@ -584,6 +591,9 @@ fn resolve_symbol_target(
             if raw == 0 && undef {
                 return None;
             }
+            // An `st_shndx` past the section table: the offset it declares has
+            // no base, so there is no address to patch.
+            let addr = addr?;
             // `SHN_COMMON` holds the symbol's alignment in `st_value`; its
             // address exists only once the link allocates it in `.bss`.
             if common {
