@@ -275,6 +275,10 @@ impl<'f> Matcher<'f> {
 
     /// The first match of `pat` at `node`, if any.
     ///
+    /// `node` is taken as given, so a node unreachable from the entry answers
+    /// here while [`find_all`](Self::find_all), which seeds from
+    /// [`IRWalker::walk`], never offers it.
+    ///
     /// # Errors
     /// If `pat` is not a single-rooted, acyclic graph (see [`Pattern::root`]).
     pub fn match_at(&self, node: NodeId, pat: &Pattern) -> anyhow::Result<Option<Match>> {

@@ -7,8 +7,8 @@ use strider_ir::node::{NodeId, ValueId, ValueType};
 use strider_pattern::matcher::{KindSpec, Pattern};
 use strider_pattern::template::{self, Template, TemplateBuilder, instantiate};
 use strider_pattern::{
-    Bindings, Capture, MatchPat, Matcher, TemplatePat, int_add, int_const, int_const_any_width,
-    is_skip, var,
+    Bindings, Capture, CaptureExt, MatchPat, Matcher, TemplatePat, int_add, int_const,
+    int_const_any_width, is_skip, var,
 };
 
 /// Matches `lhs` exactly once and returns the root node, its bindings, and the
@@ -575,4 +575,18 @@ fn a_gapped_template_output_slot_is_refused() {
         err.to_string().contains("non-contiguous output slots"),
         "{err}"
     );
+}
+
+/// A build-side capture replaces what it wraps, so only a leaf may carry one.
+/// The composite form is compile-fail:
+///
+///     template::int_add(var(a), var(b)).capture(c).into_template();
+///     // error[E0599]: no method named `into_template` found for struct
+///     //              `Captured<IntBinaryFixed<Var, Var>>`
+#[test]
+fn leaf_capture_is_the_binding_it_names() {
+    let (a, c) = (Capture::new(), Capture::new());
+    let t = var(a).capture(c).into_template();
+    let caps: Vec<_> = t.referenced_captures().collect();
+    assert_eq!(caps, vec![c]);
 }
