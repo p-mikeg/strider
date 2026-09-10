@@ -371,8 +371,8 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     // an explicit p-code store, leaving its op a pure byte swap); its clobber
     // above is an over-approximation.
     ("LoadDoublewordByteReverseIndexed", MEM_CLOBBER),
-    // The vector shift-control generator (lvsl/lvsr) and the hardware RNG
-    // produce a pcode-explicit output and touch no RAM. Altivec/VSX/vector
+    // The vector shift-control generator (lvsl, `altivec.sinc:219`) and the
+    // hardware RNG produce a pcode-explicit output and touch no RAM. Altivec/VSX/vector
     // compute is covered by the `altv`/`vsx`/`vector` prefix below.
     ("loadVectorForShiftLeft", PURE),
     ("random", PURE),
@@ -482,12 +482,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["swi"],
-        class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            clobbers_memory: true,
-            no_return: false,
-        }),
+        class: MEM_CLOBBER,
     },
     // Linux x86_64 syscall: RAX = number, RDI/RSI/RDX/R10/R8/R9 = args, RAX =
     // return.  RCX and R11 are clobbered by the SYSCALL instruction itself
@@ -569,12 +564,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["rdtsc"],
-        class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            clobbers_memory: false,
-            no_return: false,
-        }),
+        class: PURE,
     },
     // `ia.sinc` gives RDTSC explicit p-code writes and RDTSCP none, so RDTSCP
     // declares the whole set here: EDX:EAX plus ECX (IA32_TSC_AUX's low 32).
@@ -597,12 +587,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["rdmsr"],
-        class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            clobbers_memory: false,
-            no_return: false,
-        }),
+        class: PURE,
     },
     // x86 WRMSR.  Sleigh emits `tmp:8 = (zext(EDX)<<32)|zext(EAX); wrmsr(ECX,
     // tmp);`, so ECX and tmp (and transitively EDX/EAX) are explicit operands
@@ -612,12 +597,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["wrmsr"],
-        class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            clobbers_memory: true,
-            no_return: false,
-        }),
+        class: MEM_CLOBBER,
     },
     // RDFSBASE / RDGSBASE read the FS/GS segment base into a GPR.  Sleigh
     // emits `r32 = readfsbase()` / `r64 = readfsbase()` with the destination
@@ -625,12 +605,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["readfsbase", "readgsbase"],
-        class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            clobbers_memory: false,
-            no_return: false,
-        }),
+        class: PURE,
     },
     // WRFSBASE / WRGSBASE write the FS/GS base from a GPR, emitted as
     // `writefsbase(r64)` (or `zext(r32)`) with the source as the explicit
@@ -639,12 +614,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["writefsbase", "writegsbase"],
-        class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            clobbers_memory: true,
-            no_return: false,
-        }),
+        class: MEM_CLOBBER,
     },
     // MONITOR (0F 01 C8) sets up an address-range monitor.  Sleigh emits
     // `monitor()` with zero pcode operands, so the register reads belong in
@@ -709,12 +679,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &["swapgs"],
-        class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            clobbers_memory: true,
-            no_return: false,
-        }),
+        class: MEM_CLOBBER,
     },
     // x86 SIMD / crypto / bit-manipulation intrinsics GHIDRA leaves as named
     // `pcodeop`s.  Every one is register-to-register: the constructors in
@@ -746,13 +711,13 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             "aesenclast",
             "aesimc",
             "aeskeygenassist",
-            // `Reg32 = crc32(Reg32, rm8|rm16|rm32)` (`ia.sinc:10297-10304`).
+            // `Reg32 = crc32(Reg32, rm8|rm16|rm32)` (`ia.sinc:10298-10304`).
             "crc32",
             // `XmmReg1 = pblendvb(XmmReg1, XmmReg2_m128, XMM0)`
-            // (`ia.sinc:9977-9979`): the otherwise-implicit XMM0 is a listed
+            // (`ia.sinc:9978-9979`): the otherwise-implicit XMM0 is a listed
             // operand, like SHA256RNDS2 above.
             "pblendvb",
-            // MMX `psraw` (`ia.sinc:8930-8933`) and its SSE form (`:8962-8964`).
+            // MMX `psraw` (`ia.sinc:8931-8933`) and its SSE form (`:8962-8964`).
             "psraw",
             // MOVNTDQA (`ia.sinc:10291`) is `XmmReg = movntdqa(XmmReg, m128)`:
             // a non-temporal LOAD whose access is the explicit `m128` p-code
@@ -789,7 +754,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             // alternation of `ia.sinc:1308-1309`.
             //
             // `vpbroadcastb_avx512bw` has a zero-operand form
-            // (`avx512.sinc:10168`) where GHIDRA's own comment records it could
+            // (`avx512.sinc:10171`) where GHIDRA's own comment records it could
             // not model the ModRM GPR source, so the op's value is opaque and
             // its GPR read unmodelled.  That is a REGISTER imprecision in the
             // sla, not a memory effect: the register is instruction-encoded, so
@@ -1190,9 +1155,6 @@ static ARCH_INDEPENDENT_TABLE: &[(&str, CallOtherClass)] = &[
     // CallOther user-op.
     ("SYNC", MEM_CLOBBER),
     ("synch", MEM_CLOBBER),
-    // ARM SVC / SWI raised by an immediate: a possible syscall path, and
-    // the kernel can do anything to memory including the user stack frame.
-    ("software_interrupt", MEM_CLOBBER),
     // WFE/WFI are synchronisation / low-power wait points: a remote agent
     // may modify shared memory, an escaped stack frame included, while the
     // core waits.
