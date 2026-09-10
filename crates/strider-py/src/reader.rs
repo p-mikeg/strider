@@ -684,14 +684,18 @@ impl PyLoadedElf {
 
     /// Merge another ELF (e.g. a shared library) into this one, extending
     /// the regions and symbol set.  The earlier-loaded ELF wins a name
-    /// collision.  Set `apply_relocations` for ET_DYN binaries whose
-    /// sections ship with unresolved relocations.
+    /// collision.
+    ///
+    /// `apply_relocations` defaults to `True`, as it does on `load_elf`: a
+    /// merged ELF is normally the ET_DYN case relocations exist for, and it
+    /// also selects what is mapped, so `False` drops writable non-executable
+    /// sections rather than serving their on-disk bytes.
     ///
     /// Errors if the new ELF maps code over an address already loaded with
     /// DIFFERENT bytes: `add_elf` places shared objects at distinct addresses,
     /// so two ELFs linked at the same base cannot share one address space (a
     /// byte-identical re-merge of the same image is allowed and is a no-op).
-    #[pyo3(signature = (path, apply_relocations=false))]
+    #[pyo3(signature = (path, apply_relocations=true))]
     fn add_elf(&mut self, path: &str, apply_relocations: bool) -> PyResult<()> {
         let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
         let mem_regions = elf_to_mem_regions(&obj, self.source, apply_relocations)?;

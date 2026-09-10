@@ -371,8 +371,10 @@ impl PyFunction {
         ignore_casts: IgnoreCasts,
         constraints: Option<Vec<Bound<'_, PyAny>>>,
     ) -> PyResult<Vec<crate::matcher::PyMatch>> {
-        let patterns = build_query_patterns(py, pat, &ignore_casts)?;
+        // Constraints first: `build_query_patterns` TAKES a one-shot control
+        // pattern, and a raise after that burns it for a query that never ran.
         let constraints = collect_constraints(&constraints)?;
+        let patterns = build_query_patterns(py, pat, &ignore_casts)?;
         let (raw, generation) = run_pattern_query(&slf, py, &patterns, &constraints)?;
         dedup_matches(&slf, py, raw, generation, ignore_root)
     }
@@ -395,8 +397,10 @@ impl PyFunction {
         ignore_casts: IgnoreCasts,
         constraints: Option<Vec<Bound<'_, PyAny>>>,
     ) -> PyResult<crate::matcher::PyMatch> {
-        let patterns = build_query_patterns(py, pat, &ignore_casts)?;
+        // Constraints first: `build_query_patterns` TAKES a one-shot control
+        // pattern, and a raise after that burns it for a query that never ran.
         let constraints = collect_constraints(&constraints)?;
+        let patterns = build_query_patterns(py, pat, &ignore_casts)?;
         let (raw, generation) = run_pattern_query(&slf, py, &patterns, &constraints)?;
         let mut matches = dedup_matches(&slf, py, raw, generation, ignore_root)?;
         match matches.len() {
@@ -433,8 +437,10 @@ impl PyFunction {
         signed: bool,
     ) -> PyResult<Option<PyObject>> {
         let cap = capture.resolve()?;
-        let patterns = build_query_patterns(py, pat, &ignore_casts)?;
+        // Constraints first: `build_query_patterns` TAKES a one-shot control
+        // pattern, and a raise after that burns it for a query that never ran.
         let constraints = collect_constraints(&constraints)?;
+        let patterns = build_query_patterns(py, pat, &ignore_casts)?;
         let (raw, generation) = run_pattern_query(&slf, py, &patterns, &constraints)?;
         let matches = dedup_matches(&slf, py, raw, generation, true)?;
         if signed {

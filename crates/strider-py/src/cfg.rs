@@ -446,13 +446,25 @@ impl PyCfg {
     ///
     /// An address this CFG has no decode for is skipped, so every pair is a
     /// genuine hit.
+    ///
+    /// Raises `StriderError` for a `node` from a function some other `Cfg`
+    /// produced: addresses collide across images, so the answer would be this
+    /// CFG's p-code labelled with the other's node.
     fn fingerprint_pcode(
-        &self,
+        slf: &Bound<'_, Self>,
         py: Python<'_>,
         node: PyRef<'_, PyNode>,
     ) -> PyResult<Vec<(u64, String)>> {
+        if !node.function.bind(py).try_borrow()?.cfg.bind(py).is(slf) {
+            return Err(into_strider_err(anyhow::anyhow!(
+                "this Node belongs to a function another Cfg lifted; a \
+                 fingerprint is machine addresses, which collide across images, \
+                 so the two must be the same Cfg"
+            )));
+        }
+        let slf = slf.borrow();
         let addrs = node.asm_fingerprint(py)?;
-        let map = self.pcode_map();
+        let map = slf.pcode_map();
         let mut out: Vec<(u64, String)> = addrs
             .into_iter()
             .filter_map(|addr| map.get(&addr).cloned().map(|text| (addr, text)))
