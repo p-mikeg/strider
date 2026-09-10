@@ -1910,3 +1910,100 @@ fn narrowing_across_a_call_never_outlives_escape_analysis() -> Result<()> {
     );
     Ok(())
 }
+
+/// `stack_global_disjoint` is a claim about the program, so an edge narrowed
+/// under it may not survive into a run without it: re-optimising under
+/// `AssumptionOptions::none()` must not inherit an edge past the global store.
+#[test]
+fn narrowing_past_a_global_store_never_outlives_stack_global_disjoint() -> Result<()> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let global = b.build_int_const(0x4000u64, ValueType::I32)?;
+        let value = b.build_int_const(0x22u64, ValueType::I32)?;
+        b.build_store(global, value, rsleigh::VnSpace::RAM)?;
+        // Nothing is stored to the slot, so the load can only narrow.
+        let eight = b.build_int_const((-8i64) as u64, ValueType::I32)?;
+        let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    crate::test_support::standard_test().run(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    let mut sound = crate::OptCtx::new(None);
+    sound.options.assumptions = crate::AssumptionOptions::none();
+    crate::test_support::standard_test().run(&mut fg, &mut sound)?;
+
+    let load = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+        .expect("nothing stores to the slot, so the load survives");
+    let mem = fg.node_inputs(load)[0];
+    assert!(
+        matches!(fg.node_kind(fg.producer(mem)), NodeKind::Store(_)),
+        "the global Store must stay on the load's memory chain, got {:?}",
+        fg.node_kind(fg.producer(mem)),
+    );
+    Ok(())
+}
+
+/// `noalias_allocators` is a claim too: a listed callee steps a stack load past
+/// itself only while the claim holds, so the narrowed edge may not carry it
+/// into a run under `AssumptionOptions::none()`.
+#[test]
+fn narrowing_across_an_allocator_never_outlives_noalias_allocators() -> Result<()> {
+    const ALLOCATOR: u64 = 0x1000;
+    let sp = sp32_vn();
+    // A return register, without which the call has no fresh heap base and
+    // `noalias_allocators` never reaches it.
+    let ret_reg = rsleigh::Vn {
+        addr_off: 0x00,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 4,
+    };
+    let mut b = strider_ir_test_utils::RegisterSet::new()
+        .tracked(sp)
+        .tracked(ret_reg)
+        .callee_saved(sp)
+        .ret(ret_reg)
+        .stack_vn(sp)
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    let frame = b.build_int_const((-32i64) as u64, ValueType::I32)?;
+    let call_sp = b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::I32)?;
+    b.write_variable(&sp, call_sp)?;
+    let target = b.build_int_const(ALLOCATOR, ValueType::I32)?;
+    let (_, rets) = b.build_call(target, &[], &[ret_reg], 0)?;
+    // Nothing is stored, so the load can only narrow.
+    let eight = b.build_int_const((-8i64) as u64, ValueType::I32)?;
+    let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    // Keeps the allocator's pointer live, so the call keeps the return output
+    // `is_allocator_return` reads.
+    let sum = b.build_int_binary_operation(loaded, rets[0], IntBinaryOp::Add, ValueType::I32)?;
+    b.build_return(Some(sum), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut relaxed = crate::OptCtx::new(None);
+    relaxed.options.assumptions.noalias_allocators =
+        std::sync::Arc::new([ALLOCATOR].into_iter().collect());
+    crate::test_support::standard_test().run(&mut fg, &mut relaxed)?;
+
+    let mut sound = crate::OptCtx::new(None);
+    sound.options.assumptions = crate::AssumptionOptions::none();
+    crate::test_support::standard_test().run(&mut fg, &mut sound)?;
+
+    let load = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+        .expect("nothing stores to the slot, so the load survives");
+    let mem = fg.node_inputs(load)[0];
+    assert!(
+        matches!(fg.node_kind(fg.producer(mem)), NodeKind::Call),
+        "the Call must stay on the load's memory chain, got {:?}",
+        fg.node_kind(fg.producer(mem)),
+    );
+    Ok(())
+}

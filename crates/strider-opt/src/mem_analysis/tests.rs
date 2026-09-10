@@ -1681,14 +1681,27 @@ mod heap_tests {
         Ok(())
     }
 
-    /// SOUNDNESS: `LoadForward` runs two analyzers over one `Function` and they
-    /// share its decomposition memo, so both carry the run's allocator set.
-    /// The permanent memory-edge rewire is `narrow`'s alone: with the set it
-    /// steps past the call that allocated a DIFFERENT object and stops at the
-    /// one that allocated this pointer, without it at the first allocator call
-    /// it meets.
+    /// Runs `LoadForward` over a function with two live allocations under the
+    /// given allocator set.
+    fn run_load_forward(mut b: FunctionBuilder, allocators: &[u64]) -> crate::Result<Function> {
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+        let mut ctx = crate::OptCtx::new(None);
+        ctx.options.assumptions.noalias_allocators = Arc::new(allocators.iter().copied().collect());
+        let mut pipeline = crate::OptimizerPipeline::new();
+        pipeline.add(crate::PhiCollapse);
+        pipeline.add(crate::RegionCollapse);
+        pipeline.add(crate::LoadForward::default());
+        pipeline.run(&mut fg, &mut ctx)?;
+        Ok(fg)
+    }
+
+    /// SOUNDNESS: the memory-edge rewire outlives the run, so it may name only
+    /// what holds with the allocator set empty.  Two allocations are disjoint
+    /// under the set and both opaque without it, so the edge stops at the store
+    /// to the OTHER object, not past it.
     #[test]
-    fn both_load_forward_analyzers_see_the_allocator_set() -> crate::Result<()> {
+    fn narrowing_never_carries_the_allocator_set() -> crate::Result<()> {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
         let q = alloc_call(&mut b, KMEM_CACHE_ALLOC)?;
@@ -1697,17 +1710,7 @@ mod heap_tests {
         // No store to `p`'s object, so the load survives to be inspected.
         let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::I64)?;
         b.build_return(Some(loaded), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-
-        let mut ctx = crate::OptCtx::new(None);
-        ctx.options.assumptions.noalias_allocators =
-            Arc::new([MALLOC, KMEM_CACHE_ALLOC].into_iter().collect());
-        let mut pipeline = crate::OptimizerPipeline::new();
-        pipeline.add(crate::PhiCollapse);
-        pipeline.add(crate::RegionCollapse);
-        pipeline.add(crate::LoadForward::default());
-        pipeline.run(&mut fg, &mut ctx)?;
+        let fg = run_load_forward(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
 
         let load = fg
             .graph()
@@ -1715,11 +1718,136 @@ mod heap_tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("load");
         let clobber = fg.producer(fg.node_inputs(load)[0]);
+        assert!(
+            matches!(fg.node_kind(clobber), NodeKind::Store(_)),
+            "the store to the other allocation must stay on the load's memory \
+             chain, got {:?}",
+            fg.node_kind(clobber),
+        );
+        Ok(())
+    }
+
+    /// The forwarding half still reads the set: the load steps past a store to
+    /// a DIFFERENT allocation and takes its own object's value.
+    #[test]
+    fn forwarding_reads_the_allocator_set() -> crate::Result<()> {
+        let mut b = builder()?;
+        let p = alloc_call(&mut b, MALLOC)?;
+        let q = alloc_call(&mut b, KMEM_CACHE_ALLOC)?;
+        let one = b.build_int_const(1u64, ValueType::I64)?;
+        b.build_store(p, one, rsleigh::VnSpace::RAM)?;
+        let two = b.build_int_const(2u64, ValueType::I64)?;
+        b.build_store(q, two, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        b.build_return(Some(loaded), &[])?;
+        let fg = run_load_forward(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
+
+        let ret = crate::test_support::return_value(fg.graph())?;
         assert_eq!(
-            fg.int_const_u128(fg.node_inputs(clobber)[2]),
-            Some(u128::from(MALLOC)),
-            "the load's memory edge must narrow past the kmem_cache_alloc that \
-             allocated a different object, onto the malloc that allocated its own"
+            fg.int_const_u128(ret),
+            Some(1),
+            "the load must forward past the store to the other allocation"
+        );
+        Ok(())
+    }
+}
+
+/// The window is placed by adding an ABI-declared offset to a decomposed SP,
+/// neither of which this crate bounds.
+#[cfg(test)]
+mod arg_window_bounds {
+    use crate::mem_analysis::*;
+    use strider_ir::node::{NodeKind, ValueType};
+    use strider_ir::{IRBuilderExt, IRWalker, IntBinaryOp};
+    use strider_ir_test_utils::{sp_frame, stack_args_at};
+
+    fn saturating_args() -> Option<strider_target::StackArgs> {
+        stack_args_at(i128::MAX, 8)
+    }
+
+    /// The first slot sits past the carrier, so placing the window saturates
+    /// instead of overflowing.
+    #[test]
+    fn a_window_base_past_the_carrier_saturates() -> crate::Result<()> {
+        let sp = strider_ir_test_utils::stack_vn_x86();
+        let mut b = sp_frame(sp)
+            .stack_args(saturating_args())
+            .build_fn_single_region()?;
+        let sp_val = b.read_variable(&sp)?;
+        // A call SP ABOVE the entry SP, so the declared base offset is added to
+        // a positive displacement.
+        let eight = b.build_int_const(8u64, ValueType::I32)?;
+        let call_sp =
+            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
+        b.write_variable(&sp, call_sp)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        b.build_call(target, &[], &[], 0)?;
+        b.build_return(None, &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+        // Collapses `read_variable(sp)` to the bare `InitialVar(sp)` the call's
+        // SP has to decompose to for the window to be placed at all.
+        let mut collapse = crate::OptimizerPipeline::new();
+        collapse.add(crate::PhiCollapse);
+        collapse.add(crate::RegionCollapse);
+        collapse.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        let _ = sp_val;
+
+        let call = fg
+            .walk()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Call))
+            .expect("the fixture has one call");
+        let analyzer = MemAnalyzer::new(MemOptions::call_blocking(false, &Default::default()));
+        let MemExpr {
+            base, offset: 8, ..
+        } = analyzer
+            .decompose(&fg, fg.node_inputs(call)[3])
+            .expect("the call's SP is the entry SP plus 8")
+        else {
+            panic!("the call's SP is the entry SP plus 8")
+        };
+        let walker = analyzer.walker(
+            SizedAddr {
+                class: AddrClass::StackRooted { base, offset: -8 },
+                size: 4,
+                addr_bits: Some(32),
+            },
+            rsleigh::VnSpace::RAM,
+        );
+        assert!(
+            walker.in_outgoing_arg_area(&fg, call),
+            "a window that starts past the carrier covers everything below it"
+        );
+        Ok(())
+    }
+
+    /// Same bound one level in: the prefix scan steps slot offsets off the same
+    /// SP.
+    #[test]
+    fn a_slot_offset_past_the_carrier_saturates() -> crate::Result<()> {
+        let sp = strider_ir_test_utils::stack_vn_x86();
+        let mut b = sp_frame(sp)
+            .stack_args(saturating_args())
+            .build_fn_single_region()?;
+        let sp_val = b.read_variable(&sp)?;
+        let one = b.build_int_const(1u64, ValueType::I32)?;
+        b.build_store(sp_val, one, rsleigh::VnSpace::RAM)?;
+        b.build_return(None, &[])?;
+        b.set_lift_addr(None);
+        let fg = b.build()?;
+
+        let store = super::only_store(&fg);
+        let geometry = ArgWindowGeometry {
+            mem_start: fg.node_outputs(store)[0],
+            base: sp_val,
+            lo: 0,
+            sp_offset: 8,
+            args: saturating_args().expect("declared above"),
+        };
+        let window = scan_arg_window(&fg, &MemOptions::structural(), &geometry, i128::MAX);
+        assert!(
+            !window.covers(-8, -4),
+            "a window whose first slot saturates owns nothing below it"
         );
         Ok(())
     }
@@ -2634,6 +2762,62 @@ mod own_frame_tests {
         assert!(
             !in_own_frame(&fg, entry_sp, 0, 8),
             "a wide access from below the bound reaches over it"
+        );
+        Ok(())
+    }
+
+    /// Every unknown in the entry-SP walk answers `false`; a `Phi` the walk
+    /// reads no arm from is one of them.
+    #[test]
+    fn a_phi_with_no_readable_arm_is_not_this_frame() -> crate::Result<()> {
+        use strider_ir::IRWalker;
+        use strider_ir::node::{NodeKind, ValueKind};
+
+        let sp = strider_ir_test_utils::stack_vn_x86();
+        let mut b = sp_frame(sp)
+            .stack_args(stack_args_at(0, 4))
+            .build_fn_single_region()?;
+        let entry_sp = b.read_variable(&sp)?;
+        let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::I32)?;
+        let anchor =
+            b.build_int_binary_operation(entry_sp, mask, IntBinaryOp::And, ValueType::I32)?;
+        b.build_store(anchor, mask, rsleigh::VnSpace::RAM)?;
+        b.build_return(None, &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+
+        // A float-armed `Phi`: no arm is an integer, so the walk reads none.
+        let region = fg
+            .walk()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+            .expect("the fixture has one region");
+        let token = fg.node_outputs(region)[1];
+        let arms: Vec<_> = [0u64, 1u64]
+            .into_iter()
+            .map(|bits| {
+                let n = strider_ir_test_utils::sentinel_node(
+                    &mut fg,
+                    NodeKind::FloatConst(bits),
+                    [],
+                    [ValueKind::Typed(ValueType::F32)],
+                );
+                fg.node_outputs(n)[0]
+            })
+            .collect();
+        let phi = strider_ir_test_utils::sentinel_node(
+            &mut fg,
+            NodeKind::Phi,
+            [token, arms[0], arms[1]],
+            [ValueKind::Typed(ValueType::F32)],
+        );
+        let phi_value = fg.node_outputs(phi)[0];
+        let masked = fg.node_input_id_at(fg.producer(anchor), 0)?;
+        fg.graph_mut().update_input(masked, phi_value);
+
+        assert!(
+            !in_own_frame(&fg, anchor, -8, 4),
+            "an anchor over a phi with no readable arm has an unbounded \
+             displacement, so it is not this frame's base"
         );
         Ok(())
     }

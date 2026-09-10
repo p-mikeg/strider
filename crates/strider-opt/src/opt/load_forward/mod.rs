@@ -37,10 +37,8 @@ pub struct LoadForward {
     analyzers: RefCell<Option<Analyzers>>,
 }
 
-/// `alias` carries the call-boundary relaxations and decides whether to
-/// forward; `narrow` carries none and is the only one a permanent rewire may
-/// name.  Both carry `noalias_allocators`, a claim about the program rather
-/// than a relaxation.
+/// `alias` carries the run's claims and decides whether to forward; `narrow`
+/// carries none, and is the only one a permanent rewire may name.
 struct Analyzers {
     alias: MemAnalyzer,
     narrow: MemAnalyzer,
@@ -79,17 +77,17 @@ impl crate::peephole::PeepholePass for LoadForward {
         let cfgs = analyzers.get_or_insert_with(|| {
             let assumptions = &opt_ctx.options.assumptions;
             // `call_blocking`: a store at another SP base may still alias.
-            let options = MemOptions::call_blocking(
+            let relaxed = MemOptions::call_blocking(
                 assumptions.stack_global_disjoint,
                 &assumptions.noalias_allocators,
-            );
-            let relaxed = options
-                .clone()
-                .with_escape_analysis(assumptions.escape_analysis)
-                .with_callee_preserves_stack_args(assumptions.callee_preserves_stack_args);
+            )
+            .with_escape_analysis(assumptions.escape_analysis)
+            .with_callee_preserves_stack_args(assumptions.callee_preserves_stack_args);
             Analyzers {
                 alias: MemAnalyzer::new(relaxed),
-                narrow: MemAnalyzer::new(options),
+                // `narrow_load_to` rewires for good, so every claim is off:
+                // the edge outlives the run that made it.
+                narrow: MemAnalyzer::new(MemOptions::structural()),
             }
         });
         Ok(crate::peephole::PeepholeRewrite::from_changed(
