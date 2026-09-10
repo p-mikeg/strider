@@ -38,7 +38,6 @@ strider-ir = { workspace = true, features = ["test-util"] }
 # `Graph::next_node_id`, used by the peephole's rewrite-bookkeeping test.
 strider-graph = { workspace = true, features = ["test-injectors"] }
 strider-ir-test-utils = { workspace = true }
-object.workspace = true
 criterion.workspace = true
 
 [[bench]]

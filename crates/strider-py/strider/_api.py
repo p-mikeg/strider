@@ -28,14 +28,12 @@ _ext = _importlib.import_module("strider._strider")
 if TYPE_CHECKING:
     # `_ext` is an opaque module to a checker, so its attributes come back as
     # `Any`; the stub imports below are the same classes with their real types.
-    from .cfg import CfgOptions
     from .lift import Lifter, LifterOptions
     from .reader import BufferReader, MemLike, RomLike, Symbol
     from .sleigh import CallingConvention, SleighArch
 else:
     CallingConvention = _ext.sleigh.CallingConvention
     SleighArch = _ext.sleigh.SleighArch
-    CfgOptions = _ext.cfg.CfgOptions
     Lifter = _ext.lift.Lifter
     LifterOptions = _ext.lift.LifterOptions
 
@@ -340,9 +338,14 @@ class ElfLifter(Lifter):
         segments unless `from_segments=False`)."""
         return self._elf.reader()
 
-    def add_elf(self, path: str, *, apply_relocations: bool = False) -> None:
+    def add_elf(self, path: str, *, apply_relocations: bool = True) -> None:
         """Merge another ELF, such as a shared library, into this handle.
         The earlier-loaded ELF wins on name collisions.
+
+        `apply_relocations` defaults to `True`, matching `load_elf`: a merged
+        ELF is normally the ET_DYN case relocations exist for, and the flag
+        also selects what is mapped, so `False` drops writable non-executable
+        sections rather than serving their on-disk bytes.
 
         Raises `StriderError` if the new ELF maps code over an address already
         loaded with different bytes: `add_elf` places shared objects at distinct
@@ -409,16 +412,11 @@ class ElfLifter(Lifter):
             addr = sym.address
             # An unrecorded symbol size leaves the lift unbounded.
             if opts.cfg.function_max_size is None and sym.size is not None:
-                # Every other field is carried over by hand: a rebuilt
-                # `CfgOptions` silently drops whatever this call forgets.
-                opts = opts.with_cfg(
-                    CfgOptions(
-                        function_max_size=sym.size,
-                        allow_code_before_start_addr=opts.cfg.allow_code_before_start_addr,
-                        known_targets=opts.cfg.known_targets,
-                        call_other_abis=opts.cfg.call_other_abis,
-                    )
-                )
+                # `with_function_max_size` carries every other field over on
+                # the Rust side: rebuilding `CfgOptions` from its attributes
+                # drops whatever this call forgets, and copies the seeded
+                # tables through Python on every analyse.
+                opts = opts.with_cfg(opts.cfg.with_function_max_size(sym.size))
         elif isinstance(target, int):
             addr = target
         else:

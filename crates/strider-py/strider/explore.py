@@ -635,6 +635,14 @@ class _Server(socketserver.TCPServer):
         #: writing to a client that is not reading gives up rather than holding
         #: the single-threaded loop for the whole no-progress deadline.
         self.stopping = threading.Event()
+        #: Set once the thread that served is out of the serve loop and has
+        #: dropped the visualizer. What `shutdown` waits on when the thread
+        #: is the caller's own and outlives the loop, so joining it cannot
+        #: return.
+        self.finished = threading.Event()
+        #: Whether the thread in `_RUNNING` was started to serve, and so ends
+        #: when the loop does. False for a foreground `visualize`.
+        self.owns_thread = False
         if depth is not None:
             for ctl in self.controls:
                 if ctl["name"] == "depth":
@@ -654,7 +662,8 @@ class _Server(socketserver.TCPServer):
 #: Explorer servers currently serving, with the thread parked in each, keyed by
 #: the port they bound. `visualize` blocks, so a caller running it on another
 #: thread holds no handle on the server; this registry is how `shutdown` reaches
-#: it, and the thread is what `shutdown` joins.
+#: it. The thread is what `shutdown` joins, but only when the server started
+#: it (`owns_thread`).
 _RUNNING: dict[int, tuple[_Server, threading.Thread]] = {}
 
 
@@ -704,11 +713,20 @@ def shutdown(port: int | None = None) -> list[int]:
         if srv.started.wait(_SHUTDOWN_START_SECONDS):
             srv.shutdown()  # returns once the serve loop has exited
             stopped.append(p)
-    for _p, (_srv, thread) in targets:
-        # Joining the thread serving us would deadlock; that caller is already
-        # past the frame this exists to drain.
-        if thread is not current and thread.is_alive():
-            thread.join(timeout=_SHUTDOWN_JOIN_SECONDS)
+    for p, (srv, thread) in targets:
+        # Nothing to drain out of a loop that never ran, and nothing will ever
+        # signal one; joining the thread serving us would deadlock, and that
+        # caller is already past the frame this exists to drain.
+        if p not in stopped or thread is current:
+            continue
+        if srv.owns_thread:
+            if thread.is_alive():
+                thread.join(timeout=_SHUTDOWN_JOIN_SECONDS)
+        else:
+            # A foreground `visualize` registered its CALLER's thread, which
+            # goes on running after the serve loop returns, so a join can only
+            # burn the whole timeout. `finished` is the same drain point.
+            srv.finished.wait(_SHUTDOWN_JOIN_SECONDS)
     # Only what was really stopped: giving up on `started` leaves the server
     # serving, and saying otherwise would report a shutdown that did not happen.
     return stopped
@@ -801,6 +819,7 @@ def _serve_background(
             _RUNNING.pop(bound_port, None)
             srv.server_close()
             srv.visualizer = None
+            srv.finished.set()
 
     thread = threading.Thread(target=run, name=f"strider-explorer-{bound_port}", daemon=False)
     # Registered HERE, not in the worker: the port is already bound, so a
@@ -809,6 +828,7 @@ def _serve_background(
     # is nothing to wait for. Waiting would also be a trap: `BaseServer.shutdown`
     # blocks until the serve loop EXITS, so calling it on a loop that never
     # ENTERED hangs, and the error meant to report that never raises.
+    srv.owns_thread = True
     _RUNNING[bound_port] = (srv, thread)
     thread.start()
     print(f"strider explorer -> {url}  (strider.explore.shutdown({bound_port}) to stop)")
@@ -843,4 +863,5 @@ def _serve(
         # `srv`, so drop the `Function` / `Cfg` here, on the thread that
         # created them.
         srv.visualizer = None
+        srv.finished.set()
     return bound_port

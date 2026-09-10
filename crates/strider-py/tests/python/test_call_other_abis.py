@@ -38,31 +38,25 @@ def test_override_reaches_the_decode(x86_memory_elf):
     assert plain is not None and overridden is not None
 
 
-def test_symbol_entry_carries_every_cfg_field(monkeypatch, x86_memory_elf):
-    """`ElfLifter.analyze(<name>)` rebuilds `CfgOptions` to seat the symbol's
-    recorded size; a field it forgets is silently dropped."""
-    import strider._api as api
-
-    real = api.CfgOptions  # type: ignore[attr-defined]  # the binding this test patches
-    seen = {}
-
-    def recording(**kwargs):
-        seen.update(kwargs)
-        return real(**kwargs)
-
-    monkeypatch.setattr(api, "CfgOptions", recording)
-    prog = strider.lift.load_elf(str(x86_memory_elf))
-    prog.analyze(
-        "array_sum",
-        opts=strider.lift.LifterOptions(
-            cfg=strider.cfg.CfgOptions(
-                allow_code_before_start_addr=True,
-                call_other_abis={"swi": strider.sleigh.CallOtherAbi.no_return()},
-            )
-        ),
+def test_symbol_entry_carries_every_cfg_field(x86_memory_elf):
+    """`ElfLifter.analyze(<name>)` narrows `CfgOptions` to the symbol's
+    recorded size through `with_function_max_size`, the single carrier; a
+    field it forgets is silently dropped."""
+    opts = strider.cfg.CfgOptions(
+        allow_code_before_start_addr=True,
+        known_targets={0x1000: "return"},
+        call_other_abis={"swi": strider.sleigh.CallOtherAbi.no_return()},
     )
-    fields = {n for n in dir(real) if not n.startswith("_")}
-    assert fields <= set(seen), f"dropped {sorted(fields - set(seen))}"
-    assert seen["call_other_abis"] == {
+    narrowed = opts.with_function_max_size(0x100)
+    assert narrowed.function_max_size == 0x100
+    carried = {n for n in dir(opts) if not n.startswith("_")}
+    carried -= {"function_max_size", "with_function_max_size"}
+    for name in carried:
+        assert getattr(narrowed, name) == getattr(opts, name), f"dropped {name}"
+    assert narrowed.call_other_abis == {
         "swi": strider.sleigh.CallOtherAbi.no_return()
     }
+
+    # The symbol path is what reaches for it; a lift through it must survive.
+    prog = strider.lift.load_elf(str(x86_memory_elf))
+    prog.analyze("array_sum", opts=strider.lift.LifterOptions(cfg=opts))

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional, Union
+from typing import Literal, Mapping, Optional, Union
 
 from .ir import Node
 from .lift import Lifter
@@ -169,18 +169,25 @@ class CfgOptions:
     def function_max_size(self) -> Optional[int]: ...
     @property
     def allow_code_before_start_addr(self) -> bool: ...
+    # The two tables are read-only VIEWS onto what the constructor stored,
+    # built once and handed out unchanged: a seeded table can hold tens of
+    # thousands of entries, and `analyze` reads it.
     @property
-    def known_targets(self) -> dict[int, Union[list[int], Literal["return"]]]: ...
+    def known_targets(self) -> Mapping[int, Union[list[int], Literal["return"]]]: ...
     @property
-    def call_other_abis(self) -> dict[str, CallOtherAbi]: ...
+    def call_other_abis(self) -> Mapping[str, CallOtherAbi]: ...
     def __init__(
         self,
         *,
         function_max_size: Optional[int] = ...,
         allow_code_before_start_addr: bool = ...,
-        known_targets: dict[int, Union[list[int], Literal["return"]]] = ...,
-        call_other_abis: dict[str, CallOtherAbi] = ...,
+        known_targets: Mapping[int, Union[list[int], Literal["return"]]] = ...,
+        call_other_abis: Mapping[str, CallOtherAbi] = ...,
     ) -> None:
         """Build the options. Raises `ValueError` for
         `function_max_size=0`."""
+        ...
+    def with_function_max_size(self, function_max_size: int) -> "CfgOptions":
+        """These options with `function_max_size` set, sharing both tables.
+        Raises `ValueError` for `0`."""
         ...

@@ -67,8 +67,10 @@ def test_a_deep_query_on_a_small_thread_stack_survives():
     fn = _function()
     kind, value = _on_thread(lambda: fn.find_all(_chain(_NESTED)), _SMALL_STACK)
     if kind == "raised":
+        # Which bound answers depends on the build: the stack budget in an
+        # unoptimised one, the matcher's node cap in an optimised one.
         assert isinstance(value, strider.StriderError), value
-        assert "nesting too deep" in str(value)
+        assert "too deep" in str(value) or "nodes, over the" in str(value)
 
 
 def test_the_count_bound_still_answers_for_a_pathological_chain():
