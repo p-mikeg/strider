@@ -12,19 +12,7 @@ use strider_orchestrator::{LiftOptions, Strider};
 use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
-
-/// The call target sits near the function entry so the absolute address is
-/// known.
-///
-/// Layout at base 0x1000:
-///   0x1000  e8 fb 0f 00 00     call 0x2000
-///   0x1005  c3                 ret
-fn x86_64_call_then_ret() -> (Vec<u8>, u64, u64) {
-    let bytes = vec![0xe8, 0xfb, 0x0f, 0x00, 0x00, 0xc3];
-    let entry = 0x1000;
-    let call_target = 0x2000;
-    (bytes, entry, call_target)
-}
+use common::x86_64_call_then_ret;
 
 #[test]
 fn call_to_overridden_address_has_zero_clobber_outputs() {

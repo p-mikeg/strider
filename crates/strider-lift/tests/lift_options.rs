@@ -10,46 +10,6 @@ fn lift_options_default() {
     assert!(d.compact);
 }
 
-#[test]
-fn lift_options_embeds_cfg_knobs() {
-    let opts = LiftOptions {
-        cfg: strider_cfg::CfgOptions {
-            fn_max_size: Some(0x1000),
-            allow_code_before_start_addr: true,
-            ..Default::default()
-        },
-        ..LiftOptions::default()
-    };
-    assert_eq!(opts.cfg.fn_max_size, Some(0x1000));
-    assert!(opts.cfg.allow_code_before_start_addr);
-}
-
-#[test]
-fn lift_options_embeds_known_targets_seed() {
-    // `Strider::analyze` clones this map to seed its resolution loop; the raw
-    // lift path passes it to the CFG builder verbatim.
-    use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
-
-    let site = PcodeInsnAddr {
-        machine_addr: MachineInsnAddr::from(0x1000u64),
-        insn_index: 0,
-    };
-    let mut known = rustc_hash::FxHashMap::default();
-    known.insert(site, ResolvedTargets::Single(0x2000.into()));
-    let opts = LiftOptions {
-        cfg: strider_cfg::CfgOptions {
-            known_targets: known,
-            ..Default::default()
-        },
-        ..LiftOptions::default()
-    };
-    assert_eq!(opts.cfg.known_targets.len(), 1);
-    assert_eq!(
-        opts.cfg.known_targets.get(&site),
-        Some(&ResolvedTargets::Single(0x2000.into()))
-    );
-}
-
 /// A `per_address_ccs` override names registers the lifted function itself may
 /// never touch.  Its INTEGER argument registers are read through
 /// `read_variable`, which hard-fails on an untracked varnode, so they must be

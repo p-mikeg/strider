@@ -2,7 +2,7 @@ use super::*;
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{IRBuilderExt, IRWalker};
 use strider_ir_test_utils::IrWalkerEx;
-use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
+use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, make_if_fn, reg_vn};
 
 use crate::{CfgDetach, ConstantFold, OptCtx, OptimizerPipeline, PhiCollapse, RegionCollapse};
 
@@ -28,30 +28,6 @@ fn destructive_teardown(fg: &mut strider_ir::Function) -> Result<()> {
     crate::pipeline::run_one(&DeadBranchElimination, fg, &mut OptCtx::new(None))?;
     crate::pipeline::run_one(&CfgDetach, fg, &mut OptCtx::new(None))?;
     Ok(())
-}
-
-fn make_if_fn(cond_val: bool) -> Result<strider_ir::Function> {
-    let mut b = strider_ir_test_utils::empty_builder()?;
-    let entry = b.create_region_all()?;
-    let true_region = b.create_region_all()?;
-    let false_region = b.create_region_all()?;
-
-    b.set_entry_region_all(entry)?;
-    b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let cond = b.build_boolean_const(cond_val);
-    b.build_if(cond, true_region, false_region)?;
-
-    b.set_region(true_region);
-    let true_val = b.build_int_const(1u64, strider_ir::ValueType::I64)?;
-    b.build_return(Some(true_val), &[])?;
-
-    b.set_region(false_region);
-    let false_val = b.build_int_const(2u64, strider_ir::ValueType::I64)?;
-    b.build_return(Some(false_val), &[])?;
-    b.set_lift_addr(None);
-
-    b.build()
 }
 
 /// The condition is the proof for taking the arm, so the surviving control

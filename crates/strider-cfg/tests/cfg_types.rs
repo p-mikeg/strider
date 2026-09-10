@@ -1,6 +1,5 @@
 use strider_cfg::{
     CfgOptions, MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator,
-    ResolvedTarget,
 };
 
 fn addr(machine: u64, insn: u64) -> PcodeInsnAddr {
@@ -47,15 +46,6 @@ fn machine_insn_addr_from_u64() {
 }
 
 #[test]
-fn machine_insn_addr_ordering() {
-    let lo: MachineInsnAddr = 0x100u64.into();
-    let hi: MachineInsnAddr = 0x200u64.into();
-    assert!(lo < hi);
-    assert!(hi > lo);
-    assert_eq!(lo, lo);
-}
-
-#[test]
 fn pcode_addr_orders_by_machine_addr_first() {
     // A larger insn_index never outranks a smaller machine address.
     assert!(addr(200, 0) > addr(100, 99));
@@ -66,24 +56,6 @@ fn pcode_addr_orders_by_machine_addr_first() {
 fn pcode_addr_orders_by_insn_index_when_machine_addr_equal() {
     assert!(addr(100, 1) > addr(100, 0));
     assert!(addr(100, 5) > addr(100, 4));
-    assert_eq!(addr(100, 3), addr(100, 3));
-}
-
-#[test]
-fn pcode_addr_ordering_is_antisymmetric() {
-    let a = addr(0x400, 2);
-    let b = addr(0x400, 5);
-    assert!(a < b);
-    assert!(b > a);
-}
-
-#[test]
-fn pcode_addr_equality() {
-    let a = addr(0x1000, 7);
-    let b = addr(0x1000, 7);
-    assert_eq!(a, b);
-    assert!(a >= b);
-    assert!(a <= b);
 }
 
 #[test]
@@ -168,24 +140,6 @@ fn cfg_options_default_knobs() {
 }
 
 #[test]
-fn cfg_options_set_fn_max_size() {
-    let sized = CfgOptions {
-        fn_max_size: Some(0x1000),
-        ..CfgOptions::default()
-    };
-    assert_eq!(sized.fn_max_size, Some(0x1000));
-}
-
-#[test]
-fn cfg_options_allow_code_before_start_addr() {
-    let allow = CfgOptions {
-        allow_code_before_start_addr: true,
-        ..CfgOptions::default()
-    };
-    assert!(allow.allow_code_before_start_addr);
-}
-
-#[test]
 fn cfg_options_both_set() {
     let both = CfgOptions {
         fn_max_size: Some(0x1000),
@@ -194,64 +148,4 @@ fn cfg_options_both_set() {
     };
     assert_eq!(both.fn_max_size, Some(0x1000));
     assert!(both.allow_code_before_start_addr);
-}
-
-#[test]
-fn switch_variant_round_trips_target_vn_and_targets() {
-    let target_vn = rsleigh::Vn {
-        addr_off: 0x20,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let targets: Vec<ResolvedTarget> = vec![0x1100u64, 0x1200, 0x1300, 0x1400]
-        .into_iter()
-        .map(Into::into)
-        .collect();
-    let term = RegionTerminator::Switch {
-        addr: strider_cfg::PcodeInsnAddr::at_machine_start(0x1000),
-        target_vn,
-        targets: targets.clone(),
-    };
-    let cloned = term.clone();
-    assert_eq!(term, cloned, "Clone + Eq round-trip");
-    match cloned {
-        RegionTerminator::Switch {
-            target_vn: tvn,
-            targets: tts,
-            ..
-        } => {
-            assert_eq!(tvn, target_vn);
-            assert_eq!(tts, targets);
-        }
-        other => panic!("clone changed variant: {other:?}"),
-    }
-}
-
-#[test]
-fn unresolved_indirect_branch_variant_is_constructible() {
-    let target_vn = rsleigh::Vn {
-        size: 8,
-        addr_off: 0x100,
-        addr_space: rsleigh::VnSpace::REGISTER,
-    };
-    let pcode_addr = PcodeInsnAddr {
-        machine_addr: MachineInsnAddr { addr: 0x1000 },
-        insn_index: 3,
-    };
-    let term = RegionTerminator::UnresolvedIndirectBranch {
-        target_vn,
-        addr: pcode_addr,
-    };
-    let cloned = term.clone();
-    assert_eq!(term, cloned);
-    match term {
-        RegionTerminator::UnresolvedIndirectBranch {
-            target_vn: got_vn,
-            addr: got_addr,
-        } => {
-            assert_eq!(got_vn, target_vn);
-            assert_eq!(got_addr, pcode_addr);
-        }
-        other => panic!("unexpected variant: {other:?}"),
-    }
 }

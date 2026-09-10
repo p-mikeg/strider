@@ -366,6 +366,47 @@ pub(crate) fn count_float_cmp(
     function.count_kind(|k| matches!(k, NodeKind::FloatCmpOp(o) if *o == op))
 }
 
+pub(crate) fn count_switches(function: &strider_ir::Function) -> usize {
+    function.count_kind(|k| matches!(k, NodeKind::Switch))
+}
+
+/// Panics if zero or more than one `Switch` node is present; either case
+/// indicates a fixture-construction bug.
+pub(crate) fn find_unique_switch(function: &strider_ir::Function) -> strider_ir::node::NodeId {
+    let mut iter = function
+        .walk()
+        .filter(|&nid| matches!(function.node_kind(nid), NodeKind::Switch));
+    let first = iter
+        .next()
+        .expect("fixture must contain exactly one Switch node");
+    assert!(
+        iter.next().is_none(),
+        "fixture has more than one Switch node"
+    );
+    first
+}
+
+/// Cast selectivity shared by the pattern-query suites: skips the
+/// Extend/Truncate width casts some lifters insert between mismatched-width
+/// operations.
+pub(crate) fn cast_mask() -> strider_pattern::CastMask {
+    strider_pattern::CastMask::EXTEND | strider_pattern::CastMask::TRUNCATE
+}
+
+pub(crate) fn masked(p: strider_pattern::Pattern) -> strider_pattern::Pattern {
+    p.ignore_casts_mask(cast_mask())
+}
+
+pub(crate) fn matcher(function: &strider_ir::Function) -> strider_pattern::Matcher<'_> {
+    strider_pattern::Matcher::new(function)
+}
+
+/// `call 0x2000; ret` at 0x1000, x86-64.  Returns (bytes, entry, call_target).
+pub(crate) fn x86_64_call_then_ret() -> (Vec<u8>, u64, u64) {
+    let bytes = vec![0xe8, 0xfb, 0x0f, 0x00, 0x00, 0xc3];
+    (bytes, 0x1000, 0x2000)
+}
+
 pub(crate) fn count_calls(function: &strider_ir::Function) -> usize {
     function.count_kind(|k| matches!(k, NodeKind::Call))
 }
