@@ -160,3 +160,13 @@ def test_wide_const_bytes_is_bytes():
     wide = [f.node(n) for n in f.node_ids() if f.node(n).wide_const_bytes() is not None]
     assert wide
     assert isinstance(wide[0].wide_const_bytes(), bytes)
+
+
+def test_int_const_takes_the_unsigned_128_bit_half():
+    """`[2^127, 2^128)` has no `i128` carrier, and the raw-int operand form
+    already accepted it: `int_add(x, 2**127)` built while `int_const(2**127)`
+    raised."""
+    top = 1 << 127
+    assert strider.pattern.int_const(top) is not None
+    assert strider.template.int_const(top) is not None
+    assert strider.pattern.int_add(strider.pattern.anything(), top) is not None

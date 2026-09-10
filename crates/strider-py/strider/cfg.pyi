@@ -38,7 +38,10 @@ class Cfg:
     ) -> Optional[str]:
         """Render the CFG to a standalone HTML page. Returns the HTML string
         when `path` is `None`, otherwise writes it and returns `None`.
-        `style` selects the theme (default `"dark_cfg"`)."""
+        `style` selects the theme (default `"dark_cfg"`).
+
+        Takes no `lifter=`, so it always renders through the owning handle and
+        raises off its thread; `to_dot(lifter=...)` is the escape hatch."""
         ...
     def pcode_at(self, addr: int) -> Optional[str]:
         """The p-code lifted from the machine instruction at `addr`, joined
@@ -133,15 +136,14 @@ class Cfg:
         return (an ARM `pop {pc}` epilogue) clears it. Read whichever channel
         is non-empty to tell the cases apart.
 
-        On a `build_cfg` CFG `unresolved` is empty by construction, and
-        `unverified_seeded_sites` holds every site you seeded, so seeding one
-        makes this `False`. It says nothing about indirect branches, which
-        `build_cfg` never resolves.
+        On a `build_cfg` CFG `unresolved` is every indirect branch that build
+        left without an outgoing edge, since `build_cfg` resolves none of them,
+        and `unverified_seeded_sites` holds every site you seeded.
         """
         ...
     def region_at(self, addr: int) -> Optional[int]:
         """The index of the region whose instruction range contains `addr`,
-        else `None`."""
+        else `None`. The lowest index where regions overlap."""
         ...
     def _region_texts(self) -> dict:
         """Disassembly text for every region, keyed by region index. The

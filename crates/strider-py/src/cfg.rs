@@ -45,8 +45,10 @@ pub struct PyCfg {
 /// earlier loss; `unverified_seeded` is derived once from the final CFG.
 pub(crate) struct CfgReports {
     /// The same list `AnalyzeResult.unresolved` carries, held here so
-    /// `is_complete` can test all four channels from one object. Empty for a
-    /// `build_cfg` result, which resolves nothing.
+    /// `is_complete` can test all four channels from one object. For a
+    /// `build_cfg` result it is read off the regions instead, since no
+    /// resolver ran to report one: every site that build left an
+    /// `UnresolvedIndirectBranch`.
     pub(crate) unresolved: Vec<u64>,
     /// For a `build_cfg` result this is every site the caller seeded: no
     /// classifier ran, so nothing checked any of them. `analyze` narrows it to
@@ -63,6 +65,32 @@ pub(crate) struct CfgReports {
 struct RegionIndex {
     starts: Vec<(strider_cfg::PcodeInsnAddr, strider_cfg::RegionId)>,
     max_span: u64,
+}
+
+/// Machine addresses of the branches this build left unresolved, sorted and
+/// deduped. The `build_cfg` stand-in for `AnalyzeResult.unresolved`: no
+/// resolver ran, so the regions are the only record that a site has no
+/// outgoing edge.
+fn unresolved_indirect_sites(cfg: &strider_cfg::Cfg) -> Vec<u64> {
+    let g = cfg.region_graph();
+    let mut out: Vec<u64> = g
+        .node_indices()
+        .filter_map(|idx| {
+            match &g
+                .node_weight(idx)
+                .expect("node_indices() only yields present nodes")
+                .terminator
+            {
+                strider_cfg::RegionTerminator::UnresolvedIndirectBranch { addr, .. } => {
+                    Some(addr.machine_addr.addr)
+                }
+                _ => None,
+            }
+        })
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// Over-estimating costs probes, never a missed owner.
@@ -89,7 +117,7 @@ impl PyCfg {
         seeded: Vec<u64>,
     ) -> Self {
         let reports = CfgReports {
-            unresolved: Vec::new(),
+            unresolved: unresolved_indirect_sites(&inner),
             unverified_seeded: seeded,
             isa_mode_conflicts: machine_addrs(inner.isa_mode_conflicts()),
             interior_branch_targets: machine_addrs(inner.interior_branch_targets()),
@@ -335,10 +363,9 @@ impl PyCfg {
     /// return (an ARM `pop {pc}` epilogue) clears it. Read whichever channel
     /// is non-empty to tell the cases apart.
     ///
-    /// On a `build_cfg` CFG `unresolved` is empty by construction, and
-    /// `unverified_seeded_sites` holds every site you seeded -- so seeding one
-    /// makes this `False`. It says nothing about indirect branches, which
-    /// `build_cfg` never resolves.
+    /// On a `build_cfg` CFG `unresolved` is every indirect branch that build
+    /// left without an outgoing edge, since `build_cfg` resolves none of them,
+    /// and `unverified_seeded_sites` holds every site you seeded.
     fn is_complete(&self) -> bool {
         let r = &self.reports;
         r.unresolved.is_empty()
@@ -381,6 +408,9 @@ impl PyCfg {
     /// Render the CFG to a standalone HTML page. Returns the HTML string
     /// when `path` is `None`, otherwise writes it and returns `None`.
     /// `style` selects the dot theme (default `"dark_cfg"`).
+    ///
+    /// Takes no `lifter=`, so it always renders through the owning handle and
+    /// raises off its thread; `to_dot(lifter=...)` is the escape hatch.
     #[pyo3(signature = (path=None, style=None))]
     fn to_html(
         &self,

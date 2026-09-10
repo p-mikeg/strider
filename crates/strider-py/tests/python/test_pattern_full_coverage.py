@@ -246,13 +246,13 @@ def test_bool_binary_usable_as_subpattern():
 def test_bool_binary_invalid_op_raises():
     from strider.pattern import bool_binary
     with pytest.raises(strider.StriderError):
-        bool_binary("NopeOp", Capture("x"), Capture("y"))
+        bool_binary("NopeOp", Capture("x"), Capture("y"))  # type: ignore[arg-type]
 
 
 def test_int_binary_invalid_op_raises():
     from strider.pattern import int_binary
     with pytest.raises(strider.StriderError):
-        int_binary("NopeOp", Capture("x"), Capture("y"))
+        int_binary("NopeOp", Capture("x"), Capture("y"))  # type: ignore[arg-type]
 
 
 

@@ -101,8 +101,6 @@ class LifterOptions:
     the calling convention for a callee, keyed by the direct-call target
     address rather than the call site. `pipeline`, when set,
     replaces the default optimizer pipeline for the calls these options drive.
-
-    Raises `ValueError` for a nested `function_max_size=0`.
     """
 
     # Read-only: the options types are frozen, so a plain attribute

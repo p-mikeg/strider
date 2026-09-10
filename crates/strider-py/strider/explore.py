@@ -21,6 +21,7 @@ import ast
 import atexit
 import http.server
 import inspect
+import io
 import json
 import pathlib
 import socket
@@ -388,41 +389,45 @@ _WRITE_STALL_SECONDS = 60.0
 _WRITE_POLL_SECONDS = 0.5
 
 
-class _DeadlineReader:
-    """`rfile` under a whole-request deadline rather than a per-`recv` one.
+class _DeadlineReader(io.RawIOBase):
+    """The raw socket layer under `rfile`, under a whole-request deadline.
 
-    Delegates everything; before each read it sets the socket timeout to the
-    time left in the budget, so a client that keeps trickling bytes still runs
-    out. Only the methods `BaseHTTPRequestHandler` uses to parse a request are
-    wrapped, which is all of `readline` and `read`.
+    Before each `recv` it sets the socket timeout to what is LEFT of the
+    budget, so the window shrinks toward zero and a client trickling bytes runs
+    out rather than renewing it.
+
+    Under the buffer, not over it: `BufferedReader.readline` loops `recv`
+    inside ONE call, so arming per `readline` hands every one of those recvs a
+    full fresh window, which is exactly what a drip exploits.
     """
 
     def __init__(self, inner: Any, conn: Any, budget: float) -> None:
+        super().__init__()
         self._inner = inner
         self._conn = conn
         self._budget = budget
         self._deadline = time.monotonic() + budget
 
     def restart(self) -> None:
-        """A new request on a kept-alive connection gets a fresh budget."""
+        """Start the budget at the top of a request rather than at connection
+        accept. `do_GET` closes the connection, so this fires once per one."""
         self._deadline = time.monotonic() + self._budget
 
-    def _arm(self) -> None:
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Any) -> int | None:
         left = self._deadline - time.monotonic()
         if left <= 0:
             raise TimeoutError("request exceeded the read deadline")
         self._conn.settimeout(left)
+        return cast("int | None", self._inner.readinto(buffer))
 
-    def readline(self, *a: Any, **k: Any) -> bytes:
-        self._arm()
-        return cast(bytes, self._inner.readline(*a, **k))
-
-    def read(self, *a: Any, **k: Any) -> bytes:
-        self._arm()
-        return cast(bytes, self._inner.read(*a, **k))
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._inner, name)
+    def close(self) -> None:
+        try:
+            self._inner.close()
+        finally:
+            super().close()
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -456,7 +461,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         `wbufsize` is 0, so `wfile.write` is one `sendall` under one socket
         timeout, and no value for that timeout works: short enough to reach
         `shutdown` truncates a slow client mid-body against a `Content-Length`
-        already promising the rest, long enough not to parks the
+        already promising the rest, long enough not to park the
         single-threaded loop for that whole deadline. `send` is a single
         syscall, so a timeout means nothing was sent and `sent` stays exact,
         which is what separates the two: the deadline re-arms on progress, and
@@ -508,7 +513,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
         Absent (HTTP/1.0) is allowed: a rebinding attack is driven by a browser
         and browsers always send one. A caller that bound a non-loopback
-        interface asked for outside reach, so only the port is checked there.
+        interface asked for outside reach, so every `Host` passes there.
         """
         host = self.headers.get("Host")
         if host is None:
@@ -572,20 +577,25 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         # connection that says NOTHING. A client dripping one byte at a time
         # resets it with every byte and blocks the single-threaded loop
         # forever, which stalls `shutdown` and the interpreter's own join
-        # exactly as a silent connection used to. `_DeadlineReader` re-arms the
-        # socket with what is LEFT of one whole-request budget before each
-        # read, so the timeout each `recv` gets shrinks toward zero and a drip
-        # runs out of budget rather than renewing it.
+        # exactly as a silent connection used to. `_DeadlineReader` replaces
+        # the RAW layer under `rfile`, so what is left of one whole-request
+        # budget arms every `recv`, the ones `BufferedReader.readline` loops
+        # over inside a single call included.
         budget = self.timeout if self.timeout is not None else 2.0
+        raw = self.rfile
+        if isinstance(raw, io.BufferedIOBase):
+            raw = raw.detach()
+        self._deadline_reader = _DeadlineReader(raw, self.connection, budget)
         self.rfile = cast(  # type: ignore[assignment]
-            Any, _DeadlineReader(self.rfile, self.connection, budget)
+            Any, io.BufferedReader(self._deadline_reader)
         )
 
     def handle_one_request(self) -> None:
         # Swallow the client-disconnect races the single-threaded loop hits.
         try:
-            if isinstance(self.rfile, _DeadlineReader):
-                self.rfile.restart()
+            reader = getattr(self, "_deadline_reader", None)
+            if reader is not None:
+                reader.restart()
             super().handle_one_request()
         except (BrokenPipeError, ConnectionError):
             self.close_connection = True
@@ -602,7 +612,8 @@ class _Server(socketserver.TCPServer):
     `_Handler` to read.
 
     Single-threaded: a `Function` may only be touched from the thread that
-    created it, which is the caller's thread blocked in `serve_forever`.
+    created it, which is whichever thread is blocked in `serve_forever`: the
+    caller's, or the worker `background=True` starts.
     """
 
     allow_reuse_address = True
