@@ -123,18 +123,7 @@ mod tests {
     use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::sp_arg_frame;
 
-    use super::super::test_sp as sp;
-
-    /// Collapses region phis to the bare `InitialVar(sp) + k` terminals
-    /// `decompose` recognises, matching the post-`PhiCollapse` state in which
-    /// `LoadForward` runs the analysis.
-    fn collapse_phis(fg: &mut strider_ir::Function) {
-        let mut p = crate::OptimizerPipeline::new();
-        p.add(crate::PhiCollapse);
-        p.add(crate::RegionCollapse);
-        p.run(fg, &mut crate::OptCtx::new(None))
-            .expect("phi collapse");
-    }
+    use super::super::{collapse_phis, test_sp as sp};
 
     /// `Add(sp_v, off)` as an `I32` frame address.
     fn frame_off(

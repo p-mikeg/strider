@@ -5,6 +5,7 @@ use strider_ir::{IRBuilderExt, IRViewer, Value};
 
 use super::handler_tests::{lift_bytes, with_test_lifter_tracking_arch};
 use crate::lift::FunctionLifter;
+use strider_ir_test_utils::reg_vn;
 
 type TestReader = rsleigh::mem_readers::BufMemReader<Vec<u8>>;
 
@@ -21,14 +22,6 @@ fn ppc32be() -> strider_target::SleighArch {
 }
 fn ppc32be_term() -> Vec<u8> {
     vec![0x4e, 0x80, 0x00, 0x20]
-}
-
-fn reg_vn(off: u64, size: u32) -> Vn {
-    Vn {
-        size,
-        addr_off: off,
-        addr_space: VnSpace::REGISTER,
-    }
 }
 
 fn unique_vn(off: u64, size: u32) -> Vn {

@@ -17,17 +17,6 @@ mod decompose_tests {
 
     use super::super::test_sp as sp;
 
-    /// Collapses phis to the bare `InitialVar(sp) + k` terminal `decompose`
-    /// recognises.  ConstantFold is left out so the deep-chain and memo tests
-    /// keep their un-flattened structure.
-    fn collapse_phis(fg: &mut strider_ir::Function) {
-        let mut p = crate::OptimizerPipeline::new();
-        p.add(crate::PhiCollapse);
-        p.add(crate::RegionCollapse);
-        p.run(fg, &mut crate::OptCtx::new(None))
-            .expect("phi collapse");
-    }
-
     /// The post-`ConstantFold` shape of `x - k`, i.e. `Add(x, IntConst(-k))`.
     fn sub_off(
         b: &mut strider_ir::FunctionBuilder,

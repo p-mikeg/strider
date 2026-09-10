@@ -1,14 +1,7 @@
 use rsleigh::{Vn, VnSpace};
 
 use super::handler_tests::with_test_lifter_cc;
-
-fn reg(off: u64, size: u32) -> Vn {
-    Vn {
-        size,
-        addr_off: off,
-        addr_space: VnSpace::REGISTER,
-    }
-}
+use strider_ir_test_utils::reg_vn as reg;
 
 /// Struct-literal construction skips ABI-disjointness validation, fine for a
 /// synthetic fixture.
