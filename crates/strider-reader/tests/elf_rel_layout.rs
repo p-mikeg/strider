@@ -562,18 +562,47 @@ fn a_linked_image_symbol_address_is_its_st_value() {
 /// declaring half the address space each run the watermark past `u64::MAX`,
 /// and a saturating one then seats every later section at `u64::MAX`, failing
 /// the whole load over one malformed header.
+///
+/// The overflowing section has still claimed its own base, so the next
+/// allocatable section must not be seated on top of it: its symbols would then
+/// resolve into that section's mapped bytes.
 #[test]
 fn a_nobits_section_overrunning_the_address_space_does_not_move_the_watermark() {
     let half = 0x8000_0000_0000_0000u64;
-    let bytes = build_elf_with_sections(&[
-        SectionSpec::bss_declaring(0, half),
-        SectionSpec::bss_declaring(0, half),
-        SectionSpec::text(0, vec![0x90; 4]),
-    ]);
+    let bytes = build_elf_with_sections_and_symbols(
+        &[
+            SectionSpec::bss_declaring(0, half),
+            SectionSpec::bss_declaring(0, half),
+            SectionSpec::text(0, vec![0x90; 4]),
+        ],
+        &[SymbolSpec {
+            name: b"overflowing_bss",
+            section: 1,
+            value: 0,
+            size: 0,
+        }],
+    );
     let obj = object::File::parse(&bytes[..]).expect("parse");
+    let layout = ElfSectionLayout::new(&obj);
+    let base = |i| layout.section_base(&obj.section_by_index(object::SectionIndex(i)).unwrap());
+    let (overflowing, text) = (base(2), base(3));
+    assert_ne!(
+        overflowing, text,
+        "the overflowing .bss already claimed its base"
+    );
+    assert_eq!(
+        layout.symbol_address(&obj.symbol_by_name("overflowing_bss").unwrap()),
+        overflowing
+    );
+
     let regions = elf::elf_get_loadable_regions(&obj).expect("the load must survive the .bss");
     assert_eq!(regions.len(), 1, "only `.text` has bytes to load");
     assert_eq!(common::region_bytes(&regions[0]), vec![0x90; 4]);
+    assert_eq!(
+        MemRegionsLookupTable::new(regions).read(overflowing, &mut [0u8; 4]),
+        None,
+        "a .bss symbol must not read back .text"
+    );
 }
 
 /// Address 0 must stay unmapped on an ET_REL. Seated there the object makes a

@@ -733,6 +733,27 @@ fn a_common_symbol_relocation_is_skipped_not_applied() {
     );
 }
 
+/// An `st_shndx` past the section table names no section, so an ET_REL symbol
+/// carrying one has no base to be an offset from and no address at all.
+/// Resolving it against a zero base seats the raw `st_value` as if it were
+/// absolute, patching a wild low address into the site.
+#[test]
+fn an_out_of_range_shndx_relocation_is_skipped_not_applied() {
+    let fx = common::elf_fixture::build_et_rel_vma_collision_elf_full(
+        vec![0u8; 8],
+        999, // past the last section header
+        0x40,
+    );
+    let site = common::section_base(&fx.bytes, ".data");
+    let regions = common::load_with_relocations(&fx.bytes);
+    let table = strider_reader::MemRegionsLookupTable::new(regions);
+    let mut got = [0u8; 8];
+    table
+        .read_exact(site, &mut got)
+        .expect("read the relocated site");
+    assert_eq!(got, [0u8; 8], "no section index, so no address to patch");
+}
+
 /// mips64el emits its dynamic relocations as `SHT_REL`, whose `r_info` `object`
 /// reads as one little-endian `u64`, transposing MIPS64's `r_sym` word against
 /// its four type bytes. Both endiannesses must resolve the same symbol.
