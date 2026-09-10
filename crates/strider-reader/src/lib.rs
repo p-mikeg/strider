@@ -359,8 +359,9 @@ impl RegionIndex {
     /// Slice indices of every region fully covering `[addr, addr + len)`,
     /// highest `start` first; a `len` of 0 asks only that `addr` be mapped.
     ///
-    /// One O(log n) descent per index yielded, so a covered site costs two and
-    /// an uncovered one costs a single descent however deeply the image nests.
+    /// One O(log n) descent per index yielded, so a read a region fully covers
+    /// costs one and a partial read two -- the miss here, then the
+    /// widest-serving fallback -- however deeply the image nests.
     pub fn covering(&self, addr: u64, len: u64) -> Covering<'_> {
         // Without the floor a region ENDING at `addr` would answer a
         // zero-length request, which it does not contain.
@@ -381,7 +382,7 @@ impl RegionIndex {
 
     /// Slice index of the region serving the most bytes from `addr`, ties
     /// going to the highest `start`; `None` when nothing maps `addr`.
-    pub fn widest_at(&self, addr: u64) -> Option<usize> {
+    pub(crate) fn widest_at(&self, addr: u64) -> Option<usize> {
         let hi = self
             .entries
             .partition_point(|e| e.start <= addr)
@@ -562,5 +563,29 @@ impl MemRegionsLookupTable {
             anyhow::bail!("read at {addr:#x} spans past mapped memory: got {got} of {want} bytes");
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MemRegion, RegionIndex};
+
+    /// The fallback a read takes when no region fully covers it, and the one
+    /// method here with no caller outside the crate.
+    #[test]
+    fn widest_at_picks_the_region_serving_the_most() {
+        let regions = [
+            MemRegion::new(0x1000, vec![0u8; 0x40]).unwrap(),
+            MemRegion::new(0x1010, vec![0u8; 0x10]).unwrap(),
+        ];
+        let index = RegionIndex::new(&regions);
+        assert_eq!(
+            index.widest_at(0x1010),
+            Some(0),
+            "the higher start serves fewer bytes from here"
+        );
+        assert_eq!(index.widest_at(0x1030), Some(0));
+        assert_eq!(index.widest_at(0x0fff), None);
+        assert_eq!(index.widest_at(0x1040), None);
     }
 }

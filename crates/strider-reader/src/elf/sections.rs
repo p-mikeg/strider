@@ -13,13 +13,14 @@
 //! its own synthetic base. Every address a caller sees goes through it: a
 //! region start, a relocation site, a symbol.
 //!
-//! Section collection still dedups by **loaded** address, first-wins. What
-//! reaches the dedup is the non-empty, allocatable, non-TLS sections, and the
-//! rebase hands exactly those strictly increasing bases, so on ET_REL it never
-//! fires; on a linked image forced down the section walk the bases are the raw
-//! `sh_addr`s, where a linker-script overlay can collide. Dropping the later
-//! section keeps the choice deterministic rather than leaving it to
-//! `MemRegionsLookupTable`'s last-insert-wins rule.
+//! Both walks dedup by **loaded** address, since `MemRegionsLookupTable` keeps
+//! one region per start: sections first-wins, segments widest-wins. What
+//! reaches the section dedup is the non-empty, allocatable, non-TLS sections,
+//! and the rebase hands exactly those strictly increasing bases, so on ET_REL
+//! it never fires; on a linked image forced down the section walk the bases are
+//! the raw `sh_addr`s, where a linker-script overlay can collide. Deciding here
+//! keeps the choice deterministic rather than leaving it to that table's
+//! last-insert-wins rule.
 
 use std::collections::BTreeMap;
 
@@ -217,6 +218,9 @@ fn deduped_sections<'d>(
 pub struct ElfSectionLayout {
     /// Section index -> loaded base. Absent means the section's own `sh_addr`.
     bases: BTreeMap<usize, u64>,
+    /// ET_REL, so `bases` holds every section header and an index absent from
+    /// it is out of range rather than a pass-through.
+    rebased: bool,
 }
 
 /// Where an ET_REL's first rebased section is seated, so that address 0 stays
@@ -237,7 +241,10 @@ impl ElfSectionLayout {
         let mut bases = BTreeMap::new();
         // A linked image's section addresses are the real ones.
         if obj.kind() != ObjectKind::Relocatable {
-            return Self { bases };
+            return Self {
+                bases,
+                rebased: false,
+            };
         }
         let mut watermark = ET_REL_IMAGE_BASE;
         for sec in obj.sections() {
@@ -267,19 +274,22 @@ impl ElfSectionLayout {
             } else {
                 align_up(watermark, sec.align())
             };
-            // A `sh_size` overflowing the address space is malformed; an
-            // untouched watermark keeps the sections after it seatable
-            // instead of pinning them all at `u64::MAX`. SHT_NOBITS never
-            // validates `sh_size`, since it has no file bytes to bound it.
-            if alloc
-                && size != 0
-                && let Some(end) = base.checked_add(size)
-            {
-                watermark = end;
+            // A `sh_size` overflowing the address space is malformed; the
+            // watermark then advances one past the base instead of to the end,
+            // which keeps the sections after it seatable rather than pinning
+            // them all at `u64::MAX`, while still denying them this base: a
+            // section seated on it would serve its bytes to this one's symbols.
+            // SHT_NOBITS never validates `sh_size`, having no file bytes to
+            // bound it.
+            if alloc && size != 0 {
+                watermark = base.checked_add(size).unwrap_or(base.saturating_add(1));
             }
             bases.insert(sec.index().0, base);
         }
-        Self { bases }
+        Self {
+            bases,
+            rebased: true,
+        }
     }
 
     /// Where `sec` is loaded.
@@ -292,12 +302,28 @@ impl ElfSectionLayout {
     /// section's base plus it; a linked image's `st_value` is already the
     /// address and no base is recorded. An undefined, absolute or `SHN_COMMON`
     /// symbol has no section index and is returned as-is.
+    ///
+    /// `None` when an ET_REL `st_shndx` names no section header: the offset it
+    /// declares has no base, so the symbol has no address.
+    pub fn try_symbol_address<'d>(&self, sym: &impl object::ObjectSymbol<'d>) -> Option<u64> {
+        let Some(index) = sym.section_index() else {
+            return Some(sym.address());
+        };
+        match self.base(index.0) {
+            Some(base) => Some(base.wrapping_add(sym.address())),
+            None if self.rebased => None,
+            None => Some(sym.address()),
+        }
+    }
+
+    /// [`try_symbol_address`], reading an out-of-range `st_shndx` as the bare
+    /// `st_value`. Naming a symbol is what that serves; patching one is
+    /// [`try_symbol_address`]'s.
+    ///
+    /// [`try_symbol_address`]: Self::try_symbol_address
     pub fn symbol_address<'d>(&self, sym: &impl object::ObjectSymbol<'d>) -> u64 {
-        let base = sym
-            .section_index()
-            .and_then(|i| self.base(i.0))
-            .unwrap_or(0);
-        base.wrapping_add(sym.address())
+        self.try_symbol_address(sym)
+            .unwrap_or_else(|| sym.address())
     }
 
     fn base(&self, section_index: usize) -> Option<u64> {
@@ -500,16 +526,29 @@ fn region_from(
     }
 }
 
-/// One [`MemRegion`] per accepted PT_LOAD segment, from its file-backed bytes.
+/// One accepted PT_LOAD, carrying everything the segment walk reads.
+struct AcceptedSegment<'d> {
+    addr: u64,
+    p_flags: u32,
+    file_range: (u64, u64),
+    data: &'d [u8],
+}
+
+/// One [`MemRegion`] per accepted PT_LOAD segment, from its file-backed bytes,
+/// in program-header order under **widest-wins dedup** on `p_vaddr`.
 /// Empty `data()` (a BSS-only segment, `p_filesz == 0`) has nothing to load and
 /// is skipped.
-fn collect_loadable_segments(
-    obj: &object::File<'_>,
+///
+/// The dedup rule is the section walk's, resolved the other way: only one
+/// region per start address survives [`crate::MemRegionsLookupTable`], so
+/// keeping a narrower mapping would leave the bytes past its end unfetchable
+/// even though a wider mapping declares them.
+fn collect_loadable_segments<'d>(
+    obj: &object::File<'d>,
     bytes: Option<&FileBytes>,
     filter: LoadFilter,
 ) -> Result<LoadedImage> {
-    let mut out = LoadedImage::default();
-    let mut budget = CopyBudget::default();
+    let mut accepted: Vec<AcceptedSegment<'d>> = Vec::new();
     for seg in obj.segments() {
         // `obj.segments()` already yields PT_LOAD only, so `p_flags` is read
         // purely for the writable / executable filter axis.
@@ -523,15 +562,36 @@ fn collect_loadable_segments(
         if data.is_empty() {
             continue;
         }
+        accepted.push(AcceptedSegment {
+            addr: seg.address(),
+            p_flags,
+            file_range: seg.file_range(),
+            data,
+        });
+    }
+
+    let mut widest: BTreeMap<u64, usize> = BTreeMap::new();
+    for (i, seg) in accepted.iter().enumerate() {
+        widest
+            .entry(seg.addr)
+            // First of a tie, so an image with no collisions is untouched.
+            .and_modify(|w| {
+                if accepted[*w].data.len() < seg.data.len() {
+                    *w = i;
+                }
+            })
+            .or_insert(i);
+    }
+    let mut keep: Vec<usize> = widest.into_values().collect();
+    keep.sort_unstable();
+
+    let mut out = LoadedImage::default();
+    let mut budget = CopyBudget::default();
+    for i in keep {
+        let seg = &accepted[i];
         out.push(
-            region_from(
-                bytes,
-                seg.address(),
-                Some(seg.file_range()),
-                data,
-                &mut budget,
-            )?,
-            p_flags & object::elf::PF_W != 0,
+            region_from(bytes, seg.addr, Some(seg.file_range), seg.data, &mut budget)?,
+            seg.p_flags & object::elf::PF_W != 0,
         );
     }
     Ok(out)
