@@ -71,12 +71,18 @@ pub fn boxed_alt<P: MatchPat + 'static>(p: P) -> BoxedAlt {
 
 impl OneOf {
     fn lower(self, b: &mut MatcherBuilder, slot: AltSlot) -> PatValueRef {
+        // An arm lowers inside this frame, so nesting is bounded here rather
+        // than by the node cap at seal.
+        if !b.enter_nesting() {
+            return b.leaf(crate::matcher::KindSpec::Any);
+        }
         let first_match = self.first_match;
         let refs: Vec<PatValueRef> = self
             .alts
             .into_iter()
             .map(|compile| compile(b, slot))
             .collect();
+        b.leave_nesting();
         if first_match {
             b.first_of(&refs)
         } else {

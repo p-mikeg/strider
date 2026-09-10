@@ -40,12 +40,13 @@
 
 use std::cell::Cell;
 
+use rustc_hash::FxHashMap;
 use strider_graph::{NodeId as PatNodeId, ValueId as PatValueId};
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueId, ValueKind};
 
 use crate::bindings::{Binding, Bindings};
-use crate::matcher::{Matcher, OutputKindSpec, PatNode, PatValue, Pattern, cast_levels};
+use crate::matcher::{KindSpec, Matcher, OutputKindSpec, PatNode, PatValue, Pattern, cast_levels};
 
 struct Ctx<'a> {
     matcher: &'a Matcher<'a>,
@@ -324,21 +325,23 @@ fn try_match_at(
         return false;
     }
 
-    // Commutativity needs exactly two fixed operands at slots {0,1} (the shape
+    // Commutativity needs one or two fixed operands at slots {0,1} (the shape
     // of every commutative IR kind's signature), a commutative IR kind, and no
-    // `.ordered()`. Otherwise both operands stay on `Candidates::Only`, i.e.
-    // one ordering.
-    // Both orderings are re-driven under an enumerating continuation, so
-    // nested commutative nodes multiply when BOTH operands of each satisfy the
-    // same sub-pattern: a spine that feeds itself (`v_i = add(v_i-1, v_i-1)`)
-    // is the shape to watch. A spine with distinct operands does not: the
-    // swapped ordering puts the sub-pattern against a leaf and fails at once.
-    // Dedup collapses the RESULTS, not the enumeration, so the cost is in
-    // configurations explored and grows far faster than the depth; `.ordered()`
-    // pins an operand pair when such a shape has to be matched deep.
+    // `.ordered()`. A single pinned operand reaches both slots too, or the same
+    // query answers differently by which slot it names. Otherwise operands stay
+    // on `Candidates::Only`, i.e. one ordering.
+    //
+    // Both orderings are re-driven under an enumerating continuation, so a
+    // commutative node whose two operands EACH satisfy both sub-patterns
+    // doubles, and nesting multiplies: a wildcard operand satisfies either
+    // side, so an ordinary wildcard-leaved add tree costs 2^k for k nodes under
+    // `find_all`, whose continuation returns `false` and drives every
+    // configuration. `NodeInputs::interchangeable` cuts the symmetric half of
+    // that; `.ordered()` pins an operand pair for the rest.
     let commutative = !nd.force_ordered
-        && n_fixed == 2
-        && inputs[..2]
+        && (1..=COMM_ORDER.len()).contains(&n_fixed)
+        && !node_inputs.interchangeable
+        && inputs[..n_fixed]
             .iter()
             .all(|e| e.consumer_slot < COMM_ORDER.len())
         && ctx.function().node_kind(ir_node).is_commutative();
@@ -430,31 +433,25 @@ fn finish_node(
     b: &mut Bindings,
     k: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
-    let sibs: Vec<PatValueId> = ctx
-        .pat
-        .graph
-        .node_outputs(pat_node)
-        .iter()
-        .copied()
-        .filter(|&ov| Some(ov) != out_vertex)
-        .collect();
+    let outs = ctx.pat.graph.node_outputs(pat_node);
     let inner = b.mark();
-    if bind_sibling_outputs(ctx, nd, &sibs, 0, ir_node, root_value, b, k) {
+    if bind_sibling_outputs(ctx, nd, outs, out_vertex, 0, ir_node, root_value, b, k) {
         return true;
     }
     b.restore(inner);
     false
 }
 
-/// The sibling vertices from `idx` on, then `nd`'s post-match predicate, then
-/// `k`. An `any_slot` vertex enumerates the node's outputs, so a capture on it
-/// binds each in turn and a rejection anywhere above re-drives it; every other
-/// vertex is checked at its own slot.
+/// The output vertices from `idx` on other than `anchor`, then `nd`'s
+/// post-match predicate, then `k`. An `any_slot` vertex enumerates the node's
+/// outputs, so a capture on it binds each in turn and a rejection anywhere
+/// above re-drives it; every other vertex is checked at its own slot.
 #[allow(clippy::too_many_arguments)]
 fn bind_sibling_outputs(
     ctx: &Ctx,
     nd: &PatNode,
     sibs: &[PatValueId],
+    anchor: Option<PatValueId>,
     idx: usize,
     ir_node: NodeId,
     root_value: Option<ValueId>,
@@ -470,6 +467,9 @@ fn bind_sibling_outputs(
         }
         return k(b);
     };
+    if Some(ov_idx) == anchor {
+        return bind_sibling_outputs(ctx, nd, sibs, anchor, idx + 1, ir_node, root_value, b, k);
+    }
     let ov = ctx.pat.graph.value_kind_ref(ov_idx);
     let outs = ctx.function().node_outputs(ir_node);
     let pinned = [ov.slot];
@@ -498,7 +498,7 @@ fn bind_sibling_outputs(
             b.restore(here);
             continue;
         }
-        if bind_sibling_outputs(ctx, nd, sibs, idx + 1, ir_node, root_value, b, k) {
+        if bind_sibling_outputs(ctx, nd, sibs, anchor, idx + 1, ir_node, root_value, b, k) {
             return true;
         }
         b.restore(here);
@@ -508,7 +508,7 @@ fn bind_sibling_outputs(
     // value-less `Return`; one carrying a capture or a filter rejects instead of
     // leaving that capture unbound.
     if !any_slot_present && !vertex_imposes_requirement(ov) {
-        return bind_sibling_outputs(ctx, nd, sibs, idx + 1, ir_node, root_value, b, k);
+        return bind_sibling_outputs(ctx, nd, sibs, anchor, idx + 1, ir_node, root_value, b, k);
     }
     false
 }
@@ -649,10 +649,20 @@ pub(crate) struct InputEdge {
 pub(crate) struct NodeInputs {
     pub(crate) edges: Vec<InputEdge>,
     pub(crate) fixed: usize,
+    /// The two fixed operands bind identically whichever slot each takes, so
+    /// the swapped ordering is redundant. See [`interchangeable`].
+    pub(crate) interchangeable: bool,
 }
 
 /// One entry per pat node, indexed by [`PatNodeId::as_u32`].
-pub(crate) fn collect_node_inputs(graph: &crate::matcher::graph::PatGraph) -> Vec<NodeInputs> {
+///
+/// `compare_operands` is off for a pattern already refused, whose cone may be
+/// deeper than [`interchangeable`] can recurse through.
+pub(crate) fn collect_node_inputs(
+    graph: &crate::matcher::graph::PatGraph,
+    compare_operands: bool,
+) -> Vec<NodeInputs> {
+    let mut memo = FxHashMap::default();
     graph
         .all_node_ids()
         .map(|node| {
@@ -670,9 +680,120 @@ pub(crate) fn collect_node_inputs(graph: &crate::matcher::graph::PatGraph) -> Ve
                 .iter()
                 .filter(|e| e.consumer_slot != crate::matcher::ANY_INPUT_SLOT)
                 .count();
-            NodeInputs { edges, fixed }
+            let interchangeable = compare_operands
+                && fixed == 2
+                && !graph.node_kind(node).alternation
+                && interchangeable(graph, edges[0].out_vertex, edges[1].out_vertex, &mut memo);
+            NodeInputs {
+                edges,
+                fixed,
+                interchangeable,
+            }
         })
         .collect()
+}
+
+/// Whether the two operand sub-patterns accept exactly the same operand pairs
+/// with exactly the same bindings under either ordering, so enumerating the
+/// swap adds nothing.
+///
+/// One vertex feeding both slots qualifies whatever it binds: both slots then
+/// carry the SAME captures and identity pin, and that constraint is symmetric.
+/// Two distinct vertices qualify only while nothing under either binds (a
+/// capture would land on the other operand when swapped) and nothing is opaque
+/// (a boxed predicate cannot be compared to another).
+fn interchangeable(
+    graph: &crate::matcher::graph::PatGraph,
+    a: PatValueId,
+    b: PatValueId,
+    memo: &mut FxHashMap<(PatValueId, PatValueId), bool>,
+) -> bool {
+    if a == b {
+        return true;
+    }
+    if let Some(&hit) = memo.get(&(a, b)) {
+        return hit;
+    }
+    // A cycle would have been refused at seal; the placeholder guards the
+    // sharing-heavy DAG against re-walking a pair mid-flight.
+    memo.insert((a, b), false);
+    let verdict = value_interchangeable(graph.value_kind_ref(a), graph.value_kind_ref(b))
+        && node_interchangeable(graph, graph.producer(a), graph.producer(b), memo);
+    memo.insert((a, b), verdict);
+    verdict
+}
+
+fn node_interchangeable(
+    graph: &crate::matcher::graph::PatGraph,
+    a: PatNodeId,
+    b: PatNodeId,
+    memo: &mut FxHashMap<(PatValueId, PatValueId), bool>,
+) -> bool {
+    if a == b {
+        return true;
+    }
+    let (na, nb) = (graph.node_kind(a), graph.node_kind(b));
+    if !(na.captures.is_empty()
+        && nb.captures.is_empty()
+        && na.node_predicate.is_none()
+        && nb.node_predicate.is_none()
+        && na.post_match.is_none()
+        && nb.post_match.is_none()
+        && na.binding_walk.is_none()
+        && nb.binding_walk.is_none()
+        && na.force_ordered == nb.force_ordered
+        && na.alternation == nb.alternation
+        && na.first_match == nb.first_match
+        && na.input_slots == nb.input_slots
+        && kind_spec_interchangeable(&na.kind, &nb.kind))
+    {
+        return false;
+    }
+    let (ia, ib) = (
+        crate::graph_ext::consumed_inputs(graph, a),
+        crate::graph_ext::consumed_inputs(graph, b),
+    );
+    ia.len() == ib.len()
+        && ia
+            .iter()
+            .zip(&ib)
+            .all(|(&(sa, va), &(sb, vb))| sa == sb && interchangeable(graph, va, vb, memo))
+}
+
+fn value_interchangeable(a: &PatValue, b: &PatValue) -> bool {
+    a.captures.is_empty()
+        && b.captures.is_empty()
+        && a.identity.is_none()
+        && b.identity.is_none()
+        && a.slot == b.slot
+        && a.width == b.width
+        && a.match_slot == b.match_slot
+        && a.any_slot == b.any_slot
+        && a.token_fallback == b.token_fallback
+        && output_kind_eq(&a.kind, &b.kind)
+}
+
+fn output_kind_eq(a: &OutputKindSpec, b: &OutputKindSpec) -> bool {
+    match (a, b) {
+        (OutputKindSpec::Any, OutputKindSpec::Any)
+        | (OutputKindSpec::AnyValue, OutputKindSpec::AnyValue)
+        | (OutputKindSpec::Control, OutputKindSpec::Control)
+        | (OutputKindSpec::Memory, OutputKindSpec::Memory)
+        | (OutputKindSpec::PhiToken, OutputKindSpec::PhiToken) => true,
+        (OutputKindSpec::Value(x), OutputKindSpec::Value(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// [`KindSpec::VariantWith`] carries a closure, so two of them are never known
+/// to agree.
+fn kind_spec_interchangeable(a: &KindSpec, b: &KindSpec) -> bool {
+    match (a, b) {
+        (KindSpec::Any, KindSpec::Any) => true,
+        (KindSpec::Variant(x), KindSpec::Variant(y)) => x == y,
+        (KindSpec::Exact(x), KindSpec::Exact(y)) => x == y,
+        _ => false,
+    }
 }
 
 /// The IR input slots one pattern input may occupy: the whole difference
