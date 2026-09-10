@@ -1409,7 +1409,6 @@ dependencies = [
  "criterion 0.5.1",
  "entity-utils",
  "graph-algorithms",
- "object 0.38.1",
  "petgraph",
  "rsleigh",
  "rustc-hash 2.1.2",
