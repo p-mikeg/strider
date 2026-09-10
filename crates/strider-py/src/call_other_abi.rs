@@ -222,10 +222,13 @@ impl PyCallOtherAbi {
         )
     }
 
-    /// Equality on the footprint, memory effect and no-return flag: a preset
-    /// and a `custom` spelling the same thing compare equal.
+    /// Equality on the footprint, memory effect, no-return flag and the arch a
+    /// `custom` froze its varnodes against: a preset and a `custom` spelling
+    /// the same thing compare equal, two `custom`s frozen on different arches
+    /// do not, since neither is usable where the other is.
     fn __eq__(&self, other: &Self) -> bool {
-        self.is_noop() == other.is_noop()
+        self.source_arch == other.source_arch
+            && self.is_noop() == other.is_noop()
             && self.reads == other.reads
             && self.writes == other.writes
             && self.clobbers_memory() == other.clobbers_memory()
@@ -236,6 +239,7 @@ impl PyCallOtherAbi {
     fn __hash__(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = rustc_hash::FxHasher::default();
+        self.source_arch.hash(&mut h);
         self.is_noop().hash(&mut h);
         self.reads.hash(&mut h);
         self.writes.hash(&mut h);

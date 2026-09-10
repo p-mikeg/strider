@@ -278,7 +278,7 @@ impl PyNode {
 
     /// Sorted, deduped machine-instruction addresses whose lift or subsequent
     /// rewrite contributed to this node's value. Empty for structural kinds
-    /// (Entry, InitialMemory, phis, Region).
+    /// (Entry, InitialMemory, InitialVar, Region, Phi, MemPhi).
     pub(crate) fn asm_fingerprint(&self, py: Python<'_>) -> PyResult<Vec<u64>> {
         self.with_node(py, |function, nid| {
             // The side table yields an unordered set; sort for the documented

@@ -391,6 +391,27 @@ pub struct PyLifter {
     /// The exact `rom` object the handle was built from, returned by `rom()`.
     /// `None` when no rom was supplied, or after `__clear__` during GC.
     rom_obj: Option<Py<PyAny>>,
+    /// The engine `pcode_at` sweeps with, kept between calls. `Sleigh::clone`
+    /// is a whole `Sleigh::new` plus a commit replay, tens of milliseconds
+    /// against the microseconds the one instruction it decodes costs, and
+    /// walking an instruction stream is one call per address.
+    sweep_sleigh: std::cell::RefCell<Option<SweepSleigh>>,
+    /// Bumped by `analyze` and `build_cfg`, the only callers that reach
+    /// `set_context_at`, so a cached sweep engine built before a commit is
+    /// discarded rather than decoding in a mode the current one has moved past.
+    context_gen: std::cell::Cell<u64>,
+}
+
+/// A `pcode_at` sweep engine plus what makes it reusable.
+///
+/// Decoding writes flow context back into the engine, so this is NOT a clean
+/// clone after its first sweep. Re-sweeping the SAME entry re-derives the same
+/// values it already holds, which is what makes reuse decode as a fresh clone
+/// would; a different entry gets a fresh one.
+struct SweepSleigh {
+    context_gen: u64,
+    entry: u64,
+    sleigh: rsleigh::Sleigh<AnyMemReader>,
 }
 
 fn collect_py_deps(mem: &MemInput, rom: Option<&MemInput>) -> Vec<std::sync::Arc<Py<PyAny>>> {
@@ -428,6 +449,12 @@ impl PyLifter {
 
     pub(crate) fn sleigh(&self) -> PyResult<&rsleigh::Sleigh<AnyMemReader>> {
         Ok(self.inner.get()?.sleigh())
+    }
+
+    /// Retires any cached `pcode_at` sweep engine, for a caller about to
+    /// decode through the persistent Sleigh and so possibly commit context.
+    fn bump_context_gen(&self) {
+        self.context_gen.set(self.context_gen.get().wrapping_add(1));
     }
 
     /// The `Function::neighborhood_dot` `pretty=True` path: same node
@@ -515,6 +542,8 @@ fn build_lifter(
         py_deps,
         mem_obj: Some(mem.unbind()),
         rom_obj: rom.map(Bound::unbind),
+        sweep_sleigh: std::cell::RefCell::new(None),
+        context_gen: std::cell::Cell::new(0),
     })
 }
 
@@ -587,6 +616,9 @@ impl PyLifter {
         self.py_deps.clear();
         self.mem_obj = None;
         self.rom_obj = None;
+        // Holds a reader clone, which shares the `Arc<Py<PyAny>>` the deps
+        // above traverse rather than a reference of its own.
+        self.sweep_sleigh.get_mut().take();
     }
 
     /// INTERNAL. Rebuild this handle's Sleigh and orchestrator state from
@@ -656,6 +688,7 @@ impl PyLifter {
         };
         let inner = with_pending_control_flow(|| {
             let mut lifter = try_borrow_lifter_mut(&slf, py)?;
+            lifter.bump_context_gen();
             lifter
                 .inner
                 .get_mut()?
@@ -673,23 +706,23 @@ impl PyLifter {
         Ok(PyCfg::new(py, inner, slf, seeded))
     }
 
-    /// Runs the fixed-point loop with the GIL released, so other Python
-    /// threads keep running. One consequence: a DAEMON thread sitting inside
-    /// this call when the interpreter starts finalizing is killed while it
-    /// holds no GIL, and the forced unwind out of the released region aborts
-    /// the process. Analyse on non-daemon threads, and join them.
-    ///
     /// Lift, optimise and resolve the function at `entry`, returning an
     /// `AnalyzeResult` (`cfg`, `function`, `unresolved`; also unpacks as a
     /// 3-tuple).
-    ///
-    /// An empty `unresolved` is not a complete answer: see `AnalyzeResult`
-    /// for the four channels, and `Cfg.is_complete` to test them all.
     ///
     /// A plain `Lifter` needs an address and a `cc`; it raises
     /// `StriderError` for a symbol name or a missing `cc` (`ElfLifter`
     /// accepts a symbol name and supplies a default `cc`), and on lift
     /// failure.
+    ///
+    /// An empty `unresolved` is not a complete answer: see `AnalyzeResult`
+    /// for the four channels, and `Cfg.is_complete` to test them all.
+    ///
+    /// Runs the fixed-point loop with the GIL released, so other Python
+    /// threads keep running. One consequence: a DAEMON thread sitting inside
+    /// this call when the interpreter starts finalizing is killed while it
+    /// holds no GIL, and the forced unwind out of the released region aborts
+    /// the process. Analyse on non-daemon threads, and join them.
     #[pyo3(signature = (entry, cc=None, opts=None))]
     fn analyze(
         slf: Py<Self>,
@@ -770,6 +803,7 @@ impl PyLifter {
         // explorer serving in the background would feel.
         let result = {
             let mut lifter = try_borrow_lifter_mut(&slf, py)?;
+            lifter.bump_context_gen();
             // Reborrow before the closure so its captured type is a plain
             // `&mut Strider`, not the GIL-bound `PyRefMut`, which embeds a
             // `!Send` `Python<'_>` marker and would fail `Ungil`.
@@ -828,22 +862,32 @@ impl PyLifter {
     /// stays usable.  `opts=None` takes the `LifterOptions` defaults.
     ///
     /// Runs against this handle's rom, so `LoadReadOnly` folds here exactly as
-    /// it does inside `analyze`.  Invalidates outstanding `Node` / `Match`
-    /// handles for `function`.
+    /// it does inside `analyze`.  Raises `StriderError` for a `function` some
+    /// other handle produced: folding its constant-address loads against this
+    /// rom would read a different binary's bytes.  Invalidates outstanding
+    /// `Node` / `Match` handles for `function`.
     #[pyo3(signature = (function, pipeline=None, opts=None))]
     fn optimize(
-        &self,
+        slf: &Bound<'_, Self>,
         py: Python<'_>,
         function: &PyFunction,
         pipeline: Option<&crate::opt::PyOptimizerPipeline>,
         opts: Option<Py<PyLifterOptions>>,
     ) -> PyResult<()> {
+        if !function.cfg.bind(py).try_borrow()?.lifter.bind(py).is(slf) {
+            return Err(into_strider_err(anyhow::anyhow!(
+                "this Function was lifted by a different Lifter; optimize folds \
+                 its constant-address loads against the handle's own rom, so the \
+                 two must be the same handle"
+            )));
+        }
+        let this = slf.try_borrow().map_err(|_| reentrant_lifter_err())?;
         let opts = match opts {
             Some(o) => o,
             None => Py::new(py, PyLifterOptions::new_default(py)?)?,
         };
         let options = opt_options_from(py, &opts.borrow(py))?;
-        let rom = self.inner.get()?.rom();
+        let rom = this.inner.get()?.rom();
         with_pending_control_flow(|| match pipeline {
             Some(p) => function.run_pipeline_in_place(p.build_pipeline(), "optimize", rom, options),
             None => {
@@ -893,11 +937,30 @@ impl PyLifter {
         // pspec default. Past `MAX_CONTEXT_COMMITS` the replay is dropped and
         // the sweep falls back to those defaults, the same best-effort answer
         // `pcode_at` gives for an address no analysis has ever reached.
-        let mut sleigh = self.sleigh()?.clone();
-        with_pending_control_flow(|| {
+        self.inner.check()?;
+        let context_gen = self.context_gen.get();
+        // Taken OUT of the cell for the sweep: `lift_one` reaches a Python
+        // `MemReader.read`, which can call back in here, and a borrow held
+        // across that would panic inside an `extern "C"` frame.
+        let cached = self
+            .sweep_sleigh
+            .try_borrow_mut()
+            .ok()
+            .and_then(|mut slot| slot.take())
+            .filter(|s| s.context_gen == context_gen && s.entry == entry);
+        let mut sweep = match cached {
+            Some(s) => s,
+            None => SweepSleigh {
+                context_gen,
+                entry,
+                sleigh: self.sleigh()?.clone(),
+            },
+        };
+        let out = with_pending_control_flow(|| {
+            let sleigh = &mut sweep.sleigh;
             let mut cur = entry;
             loop {
-                let (text, len) = crate::pcode::lift_one_text(&mut sleigh, cur)?;
+                let (text, len) = crate::pcode::lift_one_text(sleigh, cur)?;
                 if cur == addr {
                     return Ok(text);
                 }
@@ -921,7 +984,11 @@ impl PyLifter {
                 }
                 cur = next;
             }
-        })
+        });
+        if let Ok(mut slot) = self.sweep_sleigh.try_borrow_mut() {
+            *slot = Some(sweep);
+        }
+        out
     }
 
     /// Start the interactive explorer for `target`, a `Function` or a `Cfg`.

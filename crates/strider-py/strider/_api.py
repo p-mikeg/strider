@@ -316,8 +316,10 @@ class ElfLifter(Lifter):
     def symbol_at(self, address: int) -> Optional["Symbol"]:
         """The symbol covering `address`: the nearest one at or below it whose
         recorded extent reaches `address`. A symbol with no recorded size
-        covers only its own address, and aliases sharing an address resolve to
-        the code symbol among them. `None` when nothing covers `address`."""
+        covers only its own address, and aliases sharing an address are ranked
+        by having a recorded extent first, then by being code, so a sized data
+        alias wins over an unsized function one. `None` when nothing covers
+        `address`."""
         return self._elf.symbol_at(address)
 
     def symbols(self) -> Mapping[str, "Symbol"]:

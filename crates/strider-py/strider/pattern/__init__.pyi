@@ -55,6 +55,31 @@ IntCmpOpName = Literal[
     "eq", "lt", "slt", "EQ", "LT", "SLT", "Eq", "Lt", "Slt",
 ]
 
+#: Integer binary-op names accepted by `int_binary`. The short aliases
+#: `"shl"`, `"shr"` and `"sshr"` are equivalent to `"ShiftLeft"`,
+#: `"ShiftRight"` and `"SShiftRight"`. Matched case-insensitively at runtime.
+IntBinaryOpName = Literal[
+    "Add", "And", "Or", "Xor", "Div", "Sdiv", "Rem", "Srem",
+    "ShiftRight", "SShiftRight", "ShiftLeft", "Mul",
+    "add", "and", "or", "xor", "div", "sdiv", "rem", "srem",
+    "shiftright", "sshiftright", "shiftleft", "mul",
+    "ADD", "AND", "OR", "XOR", "DIV", "SDIV", "REM", "SREM",
+    "SHIFTRIGHT", "SSHIFTRIGHT", "SHIFTLEFT", "MUL",
+    "shl", "shr", "sshr", "SHL", "SHR", "SSHR", "Shl", "Shr", "Sshr",
+]
+
+#: Boolean binary-op names accepted by `bool_binary`, the `I1` subset of
+#: `IntBinaryOpName`. Matched case-insensitively at runtime.
+BoolBinaryOpName = Literal[
+    "And", "Or", "Xor", "and", "or", "xor", "AND", "OR", "XOR",
+]
+
+#: Float binary-op names accepted by `float_binary`. Matched
+#: case-insensitively at runtime.
+FloatBinaryOpName = Literal[
+    "Add", "Mul", "Div", "add", "mul", "div", "ADD", "MUL", "DIV",
+]
+
 #: Widening-operation names accepted by `int_extend`.
 ExtendOpName = Literal[
     "zero", "zero_extend", "ZeroExtend", "sign", "sign_extend", "SignExtend",
@@ -152,8 +177,8 @@ class Match:
     def asm_fingerprint(self, key: CaptureKey) -> list[int]:
         """Sorted, deduped machine-instruction addresses whose lift or later
         rewrite contributed to the node bound to `key`. `[]` when `key` is
-        unbound or binds a structural kind (`Entry`, `InitialMemory`, a phi,
-        `Region`)."""
+        unbound or binds a structural kind (`Entry`, `InitialMemory`,
+        `InitialVar`, `Region`, `Phi`, `MemPhi`)."""
         ...
     def node(self, key: CaptureKey) -> Node:
         """A `Node` handle on what `key` bound to (`key` is a `Capture` or a
@@ -1010,10 +1035,10 @@ def if_else(cond: ValueLike | None = ...) -> IfPat:
     """Start a conditional-branch pattern builder, optionally pinning the
     condition."""
 
-def int_binary(op: str, l: ValueLike, r: ValueLike) -> IntBinaryPat:
+def int_binary(op: IntBinaryOpName, l: ValueLike, r: ValueLike) -> IntBinaryPat:
     """Match a named integer binary op (`"Add"`, `"Shl"`, `"And"`),
     returning a chainable builder."""
-def bool_binary(op: str, l: ValueLike, r: ValueLike) -> BoolBinaryPat:
+def bool_binary(op: BoolBinaryOpName, l: ValueLike, r: ValueLike) -> BoolBinaryPat:
     """Match a named boolean binary op (`"And"`, `"Or"`, `"Xor"`).
 
     Booleans are 1-bit integers, so this matches an integer op at `I1`,
@@ -1021,7 +1046,7 @@ def bool_binary(op: str, l: ValueLike, r: ValueLike) -> BoolBinaryPat:
     op. Returns a chainable builder; call `.ordered()` to disable
     commutative matching.
     """
-def float_binary(op: str, l: ValueLike, r: ValueLike) -> FloatBinaryPat:
+def float_binary(op: FloatBinaryOpName, l: ValueLike, r: ValueLike) -> FloatBinaryPat:
     """Match a named float binary op (`"Add"`, `"Mul"`, `"Div"`), returning
     a chainable builder."""
 

@@ -187,7 +187,9 @@ impl PyFunction {
     }
 
     /// Like `to_dot` but wraps the DOT in a self-contained HTML page (embedded
-    /// viz.js, no external `dot` binary). Same arguments and caveats.
+    /// viz.js, no external `dot` binary). Takes no `lifter=`, so a pretty
+    /// render here always goes through the owning handle and raises off its
+    /// thread; `to_dot(pretty=True, lifter=...)` is the escape hatch.
     #[pyo3(signature = (path=None, *, pretty=Pretty::Flag(false)))]
     fn to_html(
         &self,

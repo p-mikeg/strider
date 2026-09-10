@@ -59,8 +59,27 @@ pub fn var(c: PyRef<'_, PyCapture>) -> PyTemplate {
 /// Build an `IntConst` whose stored value, masked to the output width, is
 /// `value`. Bit-pattern equality; negatives use the sign-extended form.
 #[pyfunction]
-pub fn int_const(value: i128) -> PyTemplate {
-    PyTemplate::from_repr(PatRepr::IntConst(value as u128))
+pub fn int_const(value: WideInt) -> PyTemplate {
+    PyTemplate::from_repr(PatRepr::IntConst(value.bits()))
+}
+
+/// A 128-bit constant from either side of the signed/unsigned split, so
+/// `[2^127, 2^128)` is spellable alongside a negative.
+#[derive(FromPyObject)]
+pub enum WideInt {
+    #[pyo3(annotation = "int")]
+    Signed(i128),
+    #[pyo3(annotation = "int")]
+    Unsigned(u128),
+}
+
+impl WideInt {
+    fn bits(self) -> u128 {
+        match self {
+            Self::Signed(v) => v as u128,
+            Self::Unsigned(v) => v,
+        }
+    }
 }
 
 /// Build an `I1` boolean constant equal to `value`.

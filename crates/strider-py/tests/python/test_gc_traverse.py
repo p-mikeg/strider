@@ -269,9 +269,11 @@ class _ReentrantIndex:
 def _unwind_a_pattern_build():
     builder = p.load()
     # Deliberate: pyo3 reads an operand int through `__index__`, which is
-    # where this one re-enters the builder.
+    # where this one re-enters the builder. Its own exception is what comes
+    # back: the operand walk only treats a TypeError / OverflowError as "not
+    # an int" and reads anything else as the caller's error.
     builder.addr(_ReentrantIndex(builder))  # type: ignore[arg-type]
-    with pytest.raises(strider.StriderError):
+    with pytest.raises(ValueError, match="mid-build"):
         builder.into_pat()
 
 
