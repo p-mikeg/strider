@@ -245,17 +245,22 @@ impl SleighArch {
     /// are excluded from it by definition. ARM's `LRset` picks `call [pc]` over
     /// `goto [pc]` for `bx` (`ARMinstructions.sinc`), and `REToverride` /
     /// `CALLoverride` reclassify a return and a call the same way. MIPS's
-    /// `PAIR_INSTRUCTION_FLAG` (`mips.sinc`) selects the `lwl`/`swl`/`ldl`/`sdl`
-    /// constructor that does the whole unaligned access against the one that
-    /// does half, and `globalset(inst_next, ...)` paints it forward, so a
-    /// commit outlives the function that made it.
+    /// `PAIR_INSTRUCTION_FLAG` (`mips.sinc:412`) selects the
+    /// `lwl`/`swl`/`ldl`/`sdl` constructor that does the whole unaligned access
+    /// against the one that does half, and `ext_delay` (`mips.sinc:450`) is
+    /// subtracted from the PC-relative address MIPS16e `OFF_M16PC` computes
+    /// (`mips16.sinc:164`). Each is committed by `globalset(inst_next, ...)`,
+    /// so a commit outlives the function that made it.
     #[must_use]
     pub fn transient_decode_vars(&self) -> &'static [&'static str] {
         match self.preset {
             ArchPreset::MipsBe32
             | ArchPreset::MipsLe32
             | ArchPreset::MipsBe64
-            | ArchPreset::MipsLe64 => &["PAIR_INSTRUCTION_FLAG"],
+            // `ext_delay` is written by the five MIPS16e branch/call
+            // constructors (`mips16.sinc:520,528,542,550,557`), reachable only
+            // at `ISA_MODE=1`.
+            | ArchPreset::MipsLe64 => &["PAIR_INSTRUCTION_FLAG", "ext_delay"],
             ArchPreset::Arm
             | ArchPreset::ArmBe
             | ArchPreset::ArmBeKernel
