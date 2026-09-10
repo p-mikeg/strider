@@ -1045,17 +1045,13 @@ fn call_other_on_the_chain_blocks_under_either_survival_setting() -> Result<()> 
         // Slot 0's address is sp itself.
         let sp_val = b.read_variable(&sp)?;
         // Its sole value-arg is &arg0.
-        let (call_node, _result) = b.build_call_other_abi(
+        let (call_node, _outputs) = strider_ir_test_utils::Tb::named_call_other(
+            b,
             42,
             "escape_helper",
             &[sp_val],
-            &strider_target::BuiltCallOtherAbi {
-                implicit_reads: Vec::new(),
-                implicit_writes: Vec::new(),
-                clobbers_memory: true,
-                no_return: false,
-            },
-            None,
+            &[],
+            true,
             false,
         )?;
         let call_mem_value = b.function().memory_output_of(call_node)?;
@@ -1246,17 +1242,13 @@ fn memory_clobbering_call_other_blocks_regardless_of_the_survival_flag() -> Resu
         .stack_args(stack_args_at(0, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
-    let (call_node, _result) = b.build_call_other_abi(
+    let (call_node, _outputs) = strider_ir_test_utils::Tb::named_call_other(
+        &mut b,
         42,
         "syscall_like",
         &[sp_val],
-        &strider_target::BuiltCallOtherAbi {
-            implicit_reads: Vec::new(),
-            implicit_writes: Vec::new(),
-            clobbers_memory: true,
-            no_return: false,
-        },
-        None,
+        &[],
+        true,
         false,
     )?;
     let call_mem_value = b.function().memory_output_of(call_node)?;
