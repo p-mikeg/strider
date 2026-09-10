@@ -186,7 +186,6 @@ fn decompose_index(
             | NodeKind::Call
             | NodeKind::CallOther { .. }
             | NodeKind::New
-            | NodeKind::SegmentOp { .. }
             | NodeKind::CPoolRef => Vec::new(),
             _ => function.int_inputs(v).collect(),
         };

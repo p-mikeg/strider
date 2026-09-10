@@ -53,7 +53,6 @@ pub const fn cast_mask_of(kind: &NodeKind) -> CastMask {
         | NodeKind::IntToFloat
         | NodeKind::FloatToInt
         | NodeKind::FloatToFloat
-        | NodeKind::SegmentOp { .. }
         | NodeKind::CPoolRef
         | NodeKind::New => CastMask::empty(),
     }

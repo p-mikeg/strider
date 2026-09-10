@@ -27,7 +27,6 @@ pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
 
         NodeKind::Call => "rarrow",
         NodeKind::CallOther { .. } => "doubleoctagon",
-        NodeKind::SegmentOp { .. } => "parallelogram",
         NodeKind::CPoolRef => "folder",
         NodeKind::New => "component",
 
@@ -54,7 +53,6 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
 
         NodeKind::Call => "\"#3a1010\"",
         NodeKind::CallOther { .. } => "\"#3a2810\"", // amber: opaque intrinsic
-        NodeKind::SegmentOp { .. } => "\"#10283a\"", // teal: address computation
         NodeKind::CPoolRef => "\"#2a1a3a\"",         // violet: JVM metadata
         NodeKind::New => "\"#103a2a\"",              // dark green: allocation
 
@@ -77,16 +75,16 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
 
 pub(super) fn role_color(role: SlotRole) -> &'static str {
     match role {
-        SlotRole::Control => "\"#00cccc\"",              // aqua
-        SlotRole::Memory => "\"#cc88aa\"",               // pink
-        SlotRole::Phi | SlotRole::In => "\"#dddddd\"",   // white
-        SlotRole::Lhs => "\"#4488ff\"",                  // blue
-        SlotRole::Rhs => "\"#ff4444\"",                  // red
-        SlotRole::Val | SlotRole::Ret => "\"#88cc88\"",  // green
-        SlotRole::Addr | SlotRole::Off => "\"#cc88ff\"", // purple
+        SlotRole::Control => "\"#00cccc\"",             // aqua
+        SlotRole::Memory => "\"#cc88aa\"",              // pink
+        SlotRole::Phi | SlotRole::In => "\"#dddddd\"",  // white
+        SlotRole::Lhs => "\"#4488ff\"",                 // blue
+        SlotRole::Rhs => "\"#ff4444\"",                 // red
+        SlotRole::Val | SlotRole::Ret => "\"#88cc88\"", // green
+        SlotRole::Addr => "\"#cc88ff\"",                // purple
         SlotRole::Data | SlotRole::Arg | SlotRole::Ref => "\"#ff8800\"", // orange
-        SlotRole::Target | SlotRole::Seg | SlotRole::Sp => "\"#ffdd44\"", // yellow
-        SlotRole::Cond => "\"#ff44ff\"",                 // magenta
+        SlotRole::Target | SlotRole::Sp => "\"#ffdd44\"", // yellow
+        SlotRole::Cond => "\"#ff44ff\"",                // magenta
     }
 }
 
