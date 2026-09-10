@@ -1560,3 +1560,74 @@ fn call_other_writing_a_memory_operand_drops_the_ram_output() {
         );
     });
 }
+
+/// The count operand producers of every shift at `out_ty`, in graph order.
+fn shift_count_producers(
+    f: &strider_ir::Function,
+    op: IntBinaryOp,
+    out_ty: ValueType,
+) -> Vec<NodeKind> {
+    f.graph()
+        .all_node_ids()
+        .filter(|id| f.node_kind(*id) == &NodeKind::IntBinaryOp(op))
+        .filter(|id| f.value_type(f.node_outputs(*id)[0]).ok() == Some(out_ty))
+        .map(|id| {
+            let count = f
+                .node_inputs(id)
+                .get(1)
+                .copied()
+                .expect("shift has a count");
+            *f.node_kind(f.producer(count))
+        })
+        .collect()
+}
+
+/// x86 SIMD shift-by-register reads its count from the full `SRC[63:0]`, so a
+/// count of `0x1_0000_0000` against a 4-byte lane must still read as
+/// out-of-range. Truncating it to the lane width instead makes the shift a
+/// no-op, which p-code defines as a zero / sign fill.
+#[test]
+fn a_shift_count_wider_than_the_output_saturates() {
+    // psrad xmm0,xmm1 ; ret
+    let f = lift_bytes(
+        strider_target::SleighArch::x86_64(),
+        strider_target::CallingConvention::x86_64_systemv(),
+        vec![0x66, 0x0f, 0xe2, 0xc1, 0xc3],
+    )
+    .expect("psrad must lift");
+    let producers = shift_count_producers(&f, IntBinaryOp::SShiftRight, ValueType::I32);
+    assert!(!producers.is_empty(), "psrad lifts to per-lane SShiftRight");
+    for k in &producers {
+        assert_eq!(
+            *k,
+            NodeKind::IntBinaryOp(IntBinaryOp::Or),
+            "an over-wide count must reach the shift through the saturating Or"
+        );
+    }
+    // The saturating addend is `Neg(too_big) & 32`, so the bound is materialised.
+    assert!(
+        f.graph()
+            .all_node_ids()
+            .flat_map(|id| f.node_outputs(id))
+            .any(|&v| f.int_const_u128(v) == Some(32)),
+        "the I32 out-of-range bound must be materialised"
+    );
+}
+
+/// `shl eax,cl` reads a count NARROWER than its output, which p-code already
+/// keeps in range: it takes the plain zero-extend, no saturation.
+#[test]
+fn a_shift_count_narrower_than_the_output_is_left_alone() {
+    // shl eax,cl ; ret
+    let f = lift_bytes(
+        strider_target::SleighArch::x86_64(),
+        strider_target::CallingConvention::x86_64_systemv(),
+        vec![0xd3, 0xe0, 0xc3],
+    )
+    .expect("shl must lift");
+    let producers = shift_count_producers(&f, IntBinaryOp::ShiftLeft, ValueType::I32);
+    assert!(!producers.is_empty(), "shl eax,cl lifts to a ShiftLeft");
+    for k in &producers {
+        assert_eq!(*k, NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend));
+    }
+}
