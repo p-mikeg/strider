@@ -274,28 +274,6 @@ pub(crate) fn cfg_options_from(
     })
 }
 
-pub(crate) fn orch_lift_opts(
-    function_max_size: Option<u64>,
-    allow_code_before_start_addr: bool,
-    per_address_ccs: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
-    compact: bool,
-    known_targets: &std::collections::HashMap<u64, crate::options::KnownTarget>,
-    call_other_abis: &std::collections::HashMap<String, crate::call_other_abi::PyCallOtherAbi>,
-    target_arch: &str,
-) -> PyResult<strider_orchestrator::LiftOptions> {
-    let known = seat_known_targets(known_targets);
-    Ok(strider_orchestrator::LiftOptions {
-        cfg: strider_cfg::CfgOptions {
-            fn_max_size: function_max_size,
-            allow_code_before_start_addr,
-            known_targets: known,
-            call_other_overrides: overrides_from(call_other_abis, target_arch)?,
-        },
-        per_address_ccs,
-        compact,
-    })
-}
-
 pub(crate) fn machine_addrs(addrs: &[strider_cfg::PcodeInsnAddr]) -> Vec<u64> {
     addrs.iter().map(|addr| addr.machine_addr.addr).collect()
 }
@@ -761,15 +739,6 @@ impl PyLifter {
             None => Py::new(py, PyLifterOptions::new_default(py)?)?,
         };
         let opts_ref = opts.borrow(py);
-        let (function_max_size, allow_code_before_start_addr, known_targets, call_other_abis) = {
-            let cfg = opts_ref.cfg.borrow(py);
-            (
-                cfg.function_max_size,
-                cfg.allow_code_before_start_addr,
-                std::sync::Arc::clone(&cfg.known_targets),
-                std::sync::Arc::clone(&cfg.call_other_abis),
-            )
-        };
         let compact = opts_ref.compact;
         let per_address_ccs_py = opts_ref.per_address_ccs.clone().unwrap_or_default();
         let opt_opts = opt_options_from(py, &opts_ref)?;
@@ -790,15 +759,19 @@ impl PyLifter {
             (arch_name, cc_built, per_address_built)
         };
 
-        let lift_opts = orch_lift_opts(
-            function_max_size,
-            allow_code_before_start_addr,
-            per_address_built,
-            compact,
-            &known_targets,
-            &call_other_abis,
-            arch_name,
-        )?;
+        // `arch_name` is only known after the borrow above, so the CFG knobs
+        // are read here rather than with the rest of the options: nothing
+        // between the two points runs Python, and `CfgOptions` is get-only, so
+        // it is the same object either way.
+        let lift_opts = {
+            let opts_ref = opts.borrow(py);
+            let cfg_ref = opts_ref.cfg.borrow(py);
+            strider_orchestrator::LiftOptions {
+                cfg: cfg_options_from(&cfg_ref, arch_name)?,
+                per_address_ccs: per_address_built,
+                compact,
+            }
+        };
         // The fixed-point loop runs without the GIL either way: a pipeline's
         // boxed passes are `Send`, so a closure capturing one satisfies
         // `allow_threads`'s `Ungil` bound. Holding it would stall every other
