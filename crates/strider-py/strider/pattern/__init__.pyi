@@ -850,6 +850,11 @@ def one_of(patterns: Sequence[PatLike]) -> Pat:
     A capture under an arm that did not fire stays unbound, so `Match.has(c)`
     reports which fired: `off = h.uint(o) if h.has(o) else 0`.
     Use `first_of` for an ordered choice that cuts to the first match.
+
+    A match is identified by what it binds, so two arms matching one node with
+    the same bindings are one match. At the root of a pattern that captures
+    nothing, `one_of([load(), anything()])` therefore answers exactly what
+    `anything()` does; give the arms a capture to tell them apart.
     """
 def first_of(patterns: Sequence[PatLike]) -> Pat:
     """Match the FIRST listed sub-pattern that matches (an ordered OR).
