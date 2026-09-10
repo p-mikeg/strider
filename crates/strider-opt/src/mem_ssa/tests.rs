@@ -4,29 +4,27 @@ use strider_ir::{IRBuilderExt, IRWalker};
 use strider_ir_test_utils::make_empty_fn;
 
 /// Aliases exactly the listed memory outputs; every other def is disjoint.
-struct AliasSet {
-    aliasing: Vec<ValueId>,
-}
-impl MemorySSAWalker for AliasSet {
-    fn def_clobbers(&mut self, function: &Function, def: NodeId) -> bool {
+fn alias_set(aliasing: Vec<ValueId>) -> impl FnMut(&Function, NodeId) -> bool {
+    move |function: &Function, def: NodeId| {
         let out = function
             .memory_output_of(def)
             .expect("a classified def has a memory output");
-        self.aliasing.contains(&out)
+        aliasing.contains(&out)
     }
 }
 
-struct NeverAlias;
-impl MemorySSAWalker for NeverAlias {
-    fn def_clobbers(&mut self, _function: &Function, _def: NodeId) -> bool {
-        false
-    }
+fn never_alias() -> impl FnMut(&Function, NodeId) -> bool {
+    |_function: &Function, _def: NodeId| false
 }
 
 /// Walk from the def that produced `start_mem`.
-fn run<W: MemorySSAWalker>(fg: &mut Function, walker: &mut W, start_mem: ValueId) -> NodeId {
+fn run(
+    fg: &mut Function,
+    walker: &mut dyn FnMut(&Function, NodeId) -> bool,
+    start_mem: ValueId,
+) -> NodeId {
     let start = fg.producer(start_mem);
-    walker.find_nearest_clobber(fg, start)
+    super::find_nearest_clobber(fg, start, walker)
 }
 
 fn assert_clean(fg: &Function, r: NodeId) {
@@ -115,10 +113,14 @@ fn linear_chain_with_load(depth: usize) -> (Function, NodeId, ValueId, Vec<Value
 }
 
 /// Walk plus the caller-side `narrow_load_to` rewrite.
-fn run_load<W: MemorySSAWalker>(fg: &mut Function, walker: &mut W, load: NodeId) -> NodeId {
+fn run_load(
+    fg: &mut Function,
+    walker: &mut dyn FnMut(&Function, NodeId) -> bool,
+    load: NodeId,
+) -> NodeId {
     let mem = fg.node_inputs(load)[0];
     let mem_node = fg.producer(mem);
-    let clobber = walker.find_nearest_clobber(fg, mem_node);
+    let clobber = super::find_nearest_clobber(fg, mem_node, walker);
     let mut ctx = crate::EditFunction::new(fg);
     super::narrow_load_to(&mut ctx, load, clobber);
     clobber
@@ -137,9 +139,7 @@ fn narrows_load_past_disjoint_prefix() {
     );
     let furthest = *store_mems.last().unwrap();
 
-    let mut walker = AliasSet {
-        aliasing: vec![furthest],
-    };
+    let mut walker = alias_set(vec![furthest]);
     let r = run_load(&mut fg, &mut walker, load);
     assert_eq!(
         r,
@@ -158,9 +158,7 @@ fn narrows_load_past_disjoint_prefix() {
 fn narrowing_is_idempotent() {
     let (mut fg, load, _head, store_mems) = linear_chain_with_load(3);
     let furthest = *store_mems.last().unwrap();
-    let mut walker = AliasSet {
-        aliasing: vec![furthest],
-    };
+    let mut walker = alias_set(vec![furthest]);
 
     let r1 = run_load(&mut fg, &mut walker, load);
     assert_eq!(fg.node_inputs(load)[0], furthest, "narrowed on first walk");
@@ -266,9 +264,7 @@ fn narrowing_jumps_past_transparent_phi_with_disjoint_prefix() {
     let a3 = mk_const(&mut fg, 0x30);
     let load = mk_load(&mut fg, store_outer_mem, a3);
 
-    let mut walker = AliasSet {
-        aliasing: vec![store_dom_mem],
-    };
+    let mut walker = alias_set(vec![store_dom_mem]);
     let r = run_load(&mut fg, &mut walker, load);
     assert_eq!(
         r,
@@ -295,9 +291,7 @@ fn narrowing_stops_at_disagreeing_phi_skipping_disjoint_prefix() {
     let a3 = mk_const(&mut fg, 0x30);
     let load = mk_load(&mut fg, store_outer_mem, a3);
 
-    let mut walker = AliasSet {
-        aliasing: vec![store_inner_mem],
-    };
+    let mut walker = alias_set(vec![store_inner_mem]);
     let r = run_load(&mut fg, &mut walker, load);
     assert_eq!(
         r,
@@ -314,7 +308,7 @@ fn narrowing_stops_at_disagreeing_phi_skipping_disjoint_prefix() {
 #[test]
 fn initial_memory_with_no_alias_returns_none() {
     let (mut fg, im_value) = empty_chain();
-    let r = run(&mut fg, &mut NeverAlias, im_value);
+    let r = run(&mut fg, &mut never_alias(), im_value);
     assert_clean(&fg, r);
 }
 
@@ -324,9 +318,7 @@ fn linear_chain_finds_nearest_aliasing_store() {
     assert_eq!(store_mems.len(), 4, "four stores in the chain");
     // Second-from-head aliases, so the walk must skip the first store.
     let nearest = store_mems[1];
-    let mut walker = AliasSet {
-        aliasing: vec![nearest],
-    };
+    let mut walker = alias_set(vec![nearest]);
     let r = run(&mut fg, &mut walker, head);
     assert_eq!(
         r,
@@ -339,9 +331,7 @@ fn linear_chain_finds_nearest_aliasing_store() {
 fn non_aliasing_store_is_skipped() {
     let (mut fg, head, store_mems) = linear_store_chain(3);
     let furthest = *store_mems.last().unwrap();
-    let mut walker = AliasSet {
-        aliasing: vec![furthest],
-    };
+    let mut walker = alias_set(vec![furthest]);
     let r = run(&mut fg, &mut walker, head);
     assert_eq!(r, fg.producer(furthest), "walk skips non-aliasing stores");
 }
@@ -349,7 +339,7 @@ fn non_aliasing_store_is_skipped() {
 #[test]
 fn linear_chain_all_clean_returns_none() {
     let (mut fg, head, _store_mems) = linear_store_chain(5);
-    let r = run(&mut fg, &mut NeverAlias, head);
+    let r = run(&mut fg, &mut never_alias(), head);
     assert_clean(&fg, r);
 }
 
@@ -393,7 +383,7 @@ fn mem_phi_all_initial(n_arms: usize) -> (Function, ValueId) {
 #[test]
 fn armless_mem_phi_answers_at_the_chain_start() {
     let (mut fg, phi_value) = mem_phi_all_initial(0);
-    let r = run(&mut fg, &mut NeverAlias, phi_value);
+    let r = run(&mut fg, &mut never_alias(), phi_value);
     assert_eq!(
         r,
         fg.producer(phi_value),
@@ -404,7 +394,7 @@ fn armless_mem_phi_answers_at_the_chain_start() {
 #[test]
 fn mem_phi_all_arms_clean_returns_none() {
     let (mut fg, phi_value) = mem_phi_all_initial(3);
-    let r = run(&mut fg, &mut NeverAlias, phi_value);
+    let r = run(&mut fg, &mut never_alias(), phi_value);
     assert_clean(&fg, r);
 }
 
@@ -441,9 +431,7 @@ fn mem_phi_disagreeing_arms_returns_phi_boundary() {
     );
     let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
-    let mut walker = AliasSet {
-        aliasing: vec![store_mem],
-    };
+    let mut walker = alias_set(vec![store_mem]);
     let r = run(&mut fg, &mut walker, phi_value);
     assert_eq!(
         r,
@@ -479,9 +467,7 @@ fn mem_phi_agreeing_arms_pass_through_to_shared_store() {
     );
     let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
-    let mut walker = AliasSet {
-        aliasing: vec![store_mem],
-    };
+    let mut walker = alias_set(vec![store_mem]);
     let r = run(&mut fg, &mut walker, phi_value);
     assert_eq!(
         r,
@@ -509,9 +495,7 @@ fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
     );
     let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
-    let mut walker = AliasSet {
-        aliasing: vec![arm_a, arm_b],
-    };
+    let mut walker = alias_set(vec![arm_a, arm_b]);
     let r = run(&mut fg, &mut walker, phi_value);
     assert_eq!(
         r,
@@ -533,9 +517,7 @@ fn call_on_chain_is_the_nearest_clobber() {
     let a = mk_const(&mut fg, 0x40);
     let load = mk_load(&mut fg, call_mem, a);
 
-    let mut walker = AliasSet {
-        aliasing: vec![call_mem],
-    };
+    let mut walker = alias_set(vec![call_mem]);
     let r = run_load(&mut fg, &mut walker, load);
     assert_eq!(
         r,
@@ -561,9 +543,7 @@ fn mem_phi_call_arm_disagrees_returns_phi_boundary() {
     let call_mem = mk_call_other(&mut fg, control, im);
     let phi_mem = mk_mem_phi(&mut fg, phi_token, &[call_mem, im]);
 
-    let mut walker = AliasSet {
-        aliasing: vec![call_mem],
-    };
+    let mut walker = alias_set(vec![call_mem]);
     let r = run(&mut fg, &mut walker, phi_mem);
     assert_eq!(
         r,
@@ -620,9 +600,7 @@ fn loop_header_phi_back_edge_is_dropped_not_a_disagreement() {
     let la = mk_const(&mut fg, 0x20);
     let load = mk_load(&mut fg, phi_mem, la);
 
-    let mut walker = AliasSet {
-        aliasing: vec![store_dom_mem],
-    };
+    let mut walker = alias_set(vec![store_dom_mem]);
     let r = run_load(&mut fg, &mut walker, load);
     assert_eq!(
         r,
@@ -639,14 +617,12 @@ fn loop_header_phi_back_edge_is_dropped_not_a_disagreement() {
 fn cyclic_loop_header_phi_terminates() {
     // All-clean: cut the cycle and reach InitialMemory.
     let (mut fg, _entry_store_mem, _load, phi_value) = cyclic_loop_chain();
-    let r_clean = run(&mut fg, &mut NeverAlias, phi_value);
+    let r_clean = run(&mut fg, &mut never_alias(), phi_value);
     assert_clean(&fg, r_clean);
 
     // One aliasing store below the merge: terminates with a clobber too.
     let (mut fg, entry_store_mem, load, _phi_value) = cyclic_loop_chain();
-    let mut walker = AliasSet {
-        aliasing: vec![entry_store_mem],
-    };
+    let mut walker = alias_set(vec![entry_store_mem]);
     let r = run_load(&mut fg, &mut walker, load);
     assert_eq!(
         r,

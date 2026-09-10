@@ -3,53 +3,13 @@
 
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntUnaryOp};
-use strider_ir_test_utils::RegisterSet;
+use strider_ir_test_utils::{RegisterSet, Tb};
 
 use strider_opt::{BoxedRule, EditFunction, apply_rules_count, rewrite_rule, rewrite_rule_runtime};
 use strider_pattern::{
     Capture, Match, MatchPat, Matcher, Pattern, TemplatePat, anything, call, int_add, int_const,
     int_sub, is_skip, skip, var,
 };
-
-/// Wraps a `FunctionBuilder` with a single entry region pre-created,
-/// finalised via `ret_val`.
-struct Tb {
-    fb: strider_ir::FunctionBuilder,
-}
-
-impl Tb {
-    fn empty() -> Self {
-        let fb = RegisterSet::new()
-            .build_fn_single_region()
-            .expect("build_fn_single_region");
-        Self { fb }
-    }
-
-    fn u64(&mut self, v: u64) -> ValueId {
-        self.fb.build_int_const(v, ValueType::I64).unwrap()
-    }
-
-    fn add(&mut self, l: ValueId, r: ValueId) -> ValueId {
-        self.fb
-            .build_int_binary_operation(l, r, IntBinaryOp::Add, ValueType::I64)
-            .expect("int_binary_operation")
-    }
-
-    /// `IntBinaryOp::Sub` is not a primitive; pcode-lift lowers `l - r` to
-    /// `Add(l, Neg(r))`.
-    fn sub(&mut self, l: ValueId, r: ValueId) -> ValueId {
-        let neg = self
-            .fb
-            .build_int_unary_operation(r, IntUnaryOp::Neg, ValueType::I64)
-            .expect("int_unary_operation");
-        self.add(l, neg)
-    }
-
-    fn ret_val(mut self, v: ValueId) -> strider_ir::Function {
-        self.fb.build_return(Some(v), &[]).expect("build_return");
-        self.fb.build().expect("FunctionBuilder::build (validator)")
-    }
-}
 
 #[track_caller]
 fn find_node<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred: F) -> NodeId {

@@ -551,6 +551,36 @@ pub fn if_cmp_then_return(c: u64) -> Function {
     t.finish()
 }
 
+/// `if cond_val { return 1 } else { return 2 }`, over a constant condition, so
+/// a pass that folds the branch has a dead arm to remove.
+///
+/// # Errors
+///
+/// Propagates any error from the builder or from `FunctionBuilder::build`.
+pub fn make_if_fn(cond_val: bool) -> Result<Function> {
+    let mut b = empty_builder()?;
+    let entry = b.create_region_all()?;
+    let true_region = b.create_region_all()?;
+    let false_region = b.create_region_all()?;
+
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let cond = b.build_boolean_const(cond_val);
+    b.build_if(cond, true_region, false_region)?;
+
+    b.set_region(true_region);
+    let true_val = b.build_int_const(1u64, strider_ir::ValueType::I64)?;
+    b.build_return(Some(true_val), &[])?;
+
+    b.set_region(false_region);
+    let false_val = b.build_int_const(2u64, strider_ir::ValueType::I64)?;
+    b.build_return(Some(false_val), &[])?;
+    b.set_lift_addr(None);
+
+    b.build()
+}
+
 /// `return(reg)` over one tracked register, yielding a single
 /// `InitialVar(reg)`. Returns the register so tests can build `phi_for` /
 /// `initial_var_for` patterns against it.
