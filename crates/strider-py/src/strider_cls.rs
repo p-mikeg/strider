@@ -670,6 +670,9 @@ impl PyLifter {
 
     /// Build the control-flow graph of the function at `entry`, without
     /// lifting or optimising.  Raises `StriderError` on a build failure.
+    ///
+    /// Holds the GIL for the whole build, unlike `analyze`: decoding is short
+    /// next to a full analysis, and it runs on the handle's own thread.
     #[pyo3(signature = (entry, opts=None))]
     fn build_cfg(
         slf: Py<Self>,
@@ -763,8 +766,8 @@ impl PyLifter {
             (
                 cfg.function_max_size,
                 cfg.allow_code_before_start_addr,
-                cfg.known_targets.clone(),
-                cfg.call_other_abis.clone(),
+                std::sync::Arc::clone(&cfg.known_targets),
+                std::sync::Arc::clone(&cfg.call_other_abis),
             )
         };
         let compact = opts_ref.compact;
@@ -866,6 +869,9 @@ impl PyLifter {
     /// other handle produced: folding its constant-address loads against this
     /// rom would read a different binary's bytes.  Invalidates outstanding
     /// `Node` / `Match` handles for `function`.
+    ///
+    /// Holds the GIL for the whole run, unlike `analyze`: a pipeline may
+    /// contain Python-defined passes, which need it.
     #[pyo3(signature = (function, pipeline=None, opts=None))]
     fn optimize(
         slf: &Bound<'_, Self>,
