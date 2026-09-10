@@ -6,6 +6,14 @@ use super::vertex::{PatNode, PatValue, PostMatchFn};
 
 pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
 
+/// Pattern nodes one query may recurse through. The engine is
+/// continuation-passing, so a node's later operands are matched inside the
+/// deepest frame of its earlier operands' subtrees and the stack grows with the
+/// NODE COUNT, not the depth. Measured on an 8 MiB debug thread, the densest
+/// shape (a linear add chain) survives 551 nodes and overflows at 553; this
+/// leaves a factor of two.
+pub(crate) const MAX_PATTERN_NODES: usize = 256;
+
 pub struct Pattern {
     pub(crate) graph: PatGraph,
     pub(crate) cast_mask: CastMask,
@@ -19,8 +27,16 @@ impl Pattern {
     /// Seal point of [`MatcherBuilder`](crate::matcher::MatcherBuilder):
     /// resolves and memoizes the match root.
     pub(crate) fn from_graph(graph: PatGraph) -> Self {
-        let root = Self::resolve_root(&graph).map_err(|e| e.to_string());
-        let inputs = super::walk::collect_node_inputs(&graph);
+        let count = graph.all_node_ids().count();
+        let root = if count > MAX_PATTERN_NODES {
+            Err(format!(
+                "pattern has {count} nodes, over the {MAX_PATTERN_NODES} a query can \
+                 recurse through; split it or match the parts separately"
+            ))
+        } else {
+            Self::resolve_root(&graph).map_err(|e| e.to_string())
+        };
+        let inputs = super::walk::collect_node_inputs(&graph, root.is_ok());
         Self {
             graph,
             cast_mask: CastMask::empty(),

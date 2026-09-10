@@ -16,9 +16,11 @@ pub trait TemplatePat: Sized {
     }
 }
 
-/// A build-side `.capture(c)` reuses the LHS binding for `c` verbatim. Since
-/// a capture is always a leaf, it *replaces* `inner` rather than wrapping it.
-impl<P: TemplatePat> TemplatePat for crate::matcher::match_pat::Captured<P> {
+/// A build-side `.capture(c)` reuses the LHS binding for `c` verbatim, so it
+/// REPLACES what it wraps rather than wrapping it. Only a `var()` leaf may be wrapped:
+/// over a composite the discarded operands would vanish from the RHS in
+/// silence, so `template::int_add(..).capture(c)` is a compile error.
+impl TemplatePat for crate::matcher::match_pat::Captured<crate::typed::wildcards::Var> {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         b.capture(self.cap)
     }
