@@ -281,21 +281,20 @@ afterwards to tidy up:
 prog.optimize(function)   # collapse phi / dead-branch noise the rewrite exposed
 ```
 
-Use `rewrite_all([(find, replace), ...])` to stage several rules at once. Every
-rule is tried at every node, in order, and the first to fire at a node is what
-the graph keeps: it redirects the matched root's uses and the rules after it
-find nothing left to redirect. One call walks the graph once over a snapshot of
-the nodes, so a rule whose output its own `find` side matches needs a second
-call. `function.clone()` gives you a copy to rewrite without touching the
-original. Example `03` walks through this end to end.
+Use `rewrite_all([(find, replace), ...])` to stage several rules at once. One
+call walks the graph once, over a snapshot of the nodes, trying every rule at
+every node in order; the first to fire at a node is what the graph keeps, since
+it redirects the matched root's uses and the rules after it find nothing left to
+redirect. A rule whose output its own `find` side matches needs a second call.
+`function.clone()` gives you a copy to rewrite without touching the original.
+Example `03` walks through this end to end.
 
 ## Looking at the graph
 
 The interactive explorer is the easiest way to look at a function. It opens on
-the whole graph, because a neighborhood view hides nodes without saying so and
-you cannot tell a small function from a truncated one. `whole=False` opens on
-the neighborhood around a node and re-centers as you click, which is what stays
-usable on a graph of a few thousand nodes.
+the whole graph; `whole=False` opens on the neighborhood around a node and
+re-centers as you click, which is what stays usable on a graph of a few thousand
+nodes.
 
 ```python
 prog.visualize(function)                   # prints a local URL; blocks until interrupted

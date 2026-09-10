@@ -39,6 +39,19 @@ prog = strider.lift.load_elf("fixtures/out/x86/switch.elf")
 `load_elf` returns an `ElfLifter`: a lifter that also carries the symbol table,
 the loaded memory, and a default calling convention.
 
+The file is mapped, not copied, so a large image opens in tens of milliseconds
+and faults in only the pages you analyse. A mapping must not change on disk
+while a handle over it lives: rebuilding the binary under a live handle raises
+`StriderError: mapped file ... changed on disk since it was mapped` rather than
+serving the new bytes, which is the REPL and notebook failure mode. Re-open it,
+or set `STRIDER_NO_MMAP=1` to read it into memory instead, which is also what a
+network or 9p mount needs, since a page fault there cannot be caught.
+
+On ppc64 ELFv1 a `STT_FUNC` symbol addresses a 24-byte `.opd` descriptor rather
+than code. `load_elf` reads its first doubleword, so `symbol("f").address` and
+`analyze("f")` name the entry point; `size` is `None` there, the descriptor's
+own extent being no measure of the function.
+
 An unlinked object file (`ET_REL`) has no program headers, so it loads from
 sections whatever `from_segments` says. Its sections are pre-link, and typically
 all sit at `sh_addr` 0; Strider rebases the collisions apart the way a linker
@@ -243,8 +256,10 @@ the `(start, end)` of the loaded region the symbol maps into, such as `.text`.
 `symbol_at` takes the nearest symbol at or below the address whose recorded
 extent reaches it. A symbol with no recorded size covers only its own address,
 and aliases sharing an address are ranked by recorded extent first and by being
-code second, which is the order `functions()` uses, so a sized data alias wins
-over an unsized function one.
+code second, so a sized data alias wins over an unsized function one.
+`functions()` ranks nothing that way: it filters to code first and keeps the
+sized one of what remains, so the two accessors can name different symbols at
+one address.
 
 ---
 
@@ -487,8 +502,10 @@ You read a capture back by the object or by its name string
 The value-op functions (`int_add`, `int_mul`, `int_const`, ...) return a
 finished `Pat`; the typed builders (`load`, `call`, `int_binary`, ...) return a
 builder, finalised with `.into_pat()` or passed straight to `find_all`. Both
-carry the `NodePat` methods above, and `.capture(c)` takes a name as readily as
-a `Capture`.
+carry `.capture(c)` and `.when(f)`, and `.capture(c)` takes a name as readily as
+a `Capture`. `.into_pat()` is the builder half only: a `Pat` is finished
+already, so it has no `.into_pat()` and `isinstance(int_add(a, b), NodePat)` is
+`False`.
 
 Only a value pattern takes `.of_width(bits)` / `.value_ty("i64")` /
 `.bool_valued()`:
@@ -646,7 +663,7 @@ x = p.Capture("x")
 count = function.rewrite(find=p.int_mul(p.var(x), p.int_const(4)),
                          replace=t.int_shl(t.var(x), t.int_const(2)))
 
-# Several rules in one pass, applied round-robin at every node:
+# Several rules in one pass: one walk, every rule tried at every node in order.
 function.rewrite_all([
     (p.int_mul(p.var(x), p.int_const(4)), t.int_shl(t.var(x), t.int_const(2))),
     (p.int_mul(p.var(x), p.int_const(8)), t.int_shl(t.var(x), t.int_const(3))),

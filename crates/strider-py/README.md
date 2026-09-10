@@ -35,11 +35,11 @@ the one top-level name.
 
 | Module | Holds |
 |---|---|
-| `strider.lift` | `load_elf`, `lifter`, `Lifter` / `ElfLifter`, `LifterOptions`, `AnalyzeResult` |
+| `strider.lift` | `load_elf`, `lifter`, `Lifter` / `ElfLifter`, `LifterOptions`, `AssumptionOptions`, `AnalyzeResult` |
 | `strider.ir` | `Function`, `Node` |
-| `strider.cfg` | `Cfg`, `CfgOptions` |
-| `strider.sleigh` | `SleighArch`, `CallingConvention`, `Vn` |
-| `strider.reader` | `BufferReader`, `MemReader`, `ReadOnlyMemory` |
+| `strider.cfg` | `Cfg`, `CfgOptions`, `DotStyle` |
+| `strider.sleigh` | `SleighArch`, `Sleigh`, `CallingConvention`, `CallOtherAbi`, `Vn`, `VnSpace` |
+| `strider.reader` | `BufferReader`, `MemReader`, `ReadOnlyMemory`, `Symbol` |
 | `strider.pattern` | the match DSL: `Pat`, `Capture`, `Match`, the builders, `.constraints` |
 | `strider.template` | the build side of a rewrite: `Template` |
 | `strider.opt` | `OptimizerPipeline` and the individual passes |

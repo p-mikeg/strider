@@ -27,6 +27,8 @@ cargo clippy --workspace
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --release   # a debug_assert hides from the debug run
+                                   # (release keeps overflow-checks on and
+                                   #  debug-assertions off; root Cargo.toml)
 RUSTDOCFLAGS='-D rustdoc::broken_intra_doc_links' cargo doc --workspace --no-deps
 cargo +1.91.0 check --workspace --all-targets   # the declared MSRV
 
@@ -89,7 +91,13 @@ Strider:
   and cached `SleighRegs`; the calling convention is a per-call argument.
 - `strider-pattern`: the graph-based pattern DSL (`Pattern` / `Capture` /
   `Matcher` / `Match` / builders) over `strider-graph` with the `NeverCacheable`
-  policy. `Pat` is the Python class, not a Rust type.
+  policy. `Pat` is the Python class, not a Rust type. Both recursion limits are
+  `MAX_PATTERN_NODES` (256, `matcher/graph.rs`): a pattern over that many nodes
+  and a `one_of` nested that deep are both refused through the reject channel
+  (`Pattern.root: Result<NodeId, String>`, surfaced by `Pattern::root()`), not
+  by overflowing the stack. `TemplatePat` is implemented for `Captured<P>` only
+  at `P = Var`, so `template::int_add(..).capture(c)` is a compile error rather
+  than a silently dropped operand.
 - `strider-opt`: optimization passes, the `OptimizerPipeline`, the
   `rewrite_rule` facade over `strider-pattern`, and the
   `indirect_branch_resolve` classifiers. Pure graph->graph; the classifier
@@ -118,8 +126,12 @@ strider-opt        -> strider-cfg, strider-ir, strider-pattern, strider-target,
 strider-orchestrator -> strider-cfg, strider-ir, strider-lift, strider-opt,
                       strider-target
 strider-py         -> orchestrator, opt, cfg, reader, ir, target, pattern, dot
-strider-ir-test-utils (dev) -> strider-ir, strider-target
+strider-ir-test-utils -> strider-ir, strider-target
 ```
+
+`strider-ir-test-utils` is a dev-only crate, but those two are normal
+`[dependencies]` of it, so a workspace-wide build resolves `strider-ir` with the
+feature on.
 
 Workspace production dependencies only. Leaves (no workspace deps): `dot`,
 `entity-utils`, `read-only-memory`, `strider-graph`, `strider-target`,
@@ -201,7 +213,11 @@ If(Xor(C,IntConst(1)):I1){A}{B} -> If(C){B}{A}   (opt::IfCondInversion)
 
 Commutative matching tries both operand orders, driven by the single source of
 truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
-`IntCmpOp::{Equal,Carry,Scarry}`, `FloatCmpOp::Equal`.
+`IntCmpOp::{Equal,Carry,Scarry}`, `FloatCmpOp::Equal`. One pinned operand
+commutes too (`matcher/walk.rs`, `(1..=COMM_ORDER.len()).contains(&n_fixed)`),
+or the same query would answer differently by which slot it named;
+`NodeInputs::interchangeable` cuts the duplicate when both slots hold the same
+value.
 
 ## Cross-cutting invariants
 
@@ -245,6 +261,10 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
   `unverified_seeded_sites`, `isa_mode_conflicts`, `interior_branch_targets` —
   and a consumer asking "may this be incomplete?" reads all four. Each field's
   contract is on the struct (`crates/strider-orchestrator/src/lib.rs`).
+  `interior_branch_targets` also carries a region start a later decode stepped
+  over (`RegionBuilder::note_stepped_over_region_starts`): those bytes have two
+  owners with two different instruction streams, so overlapping code is
+  reported rather than silently double-owned.
 - SP-alias precision is tuned by `OptOptions` (`resolve_indirect_branches`,
   `assumptions`), threaded through `OptCtx` into every SP-aware pass.
   `assumptions` is an `AssumptionOptions` of six claims about the code being
@@ -252,7 +272,10 @@ truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
   risky value is the positive one, two default ON, and
   `AssumptionOptions::none()`, not `::default()`, is the configuration sound
   under any input. Per-field detail is on the struct
-  (`crates/strider-opt/src/options.rs`).
+  (`crates/strider-opt/src/options.rs`). `LoadForward` is two analyzers: the
+  `alias` one derives from `assumptions`, the `narrow` one is pinned to
+  `MemOptions::structural()`, because `narrow_load_to` rewires for good and the
+  edge outlives the run that made it.
 
 ## strider-py
 
@@ -265,3 +288,10 @@ Domain-namespaced submodules (`strider.ir`, `.lift`, `.cfg`, `.sleigh`,
 `.cfg` / `.function` / `.unresolved` (also unpackable as a 3-tuple). Pattern
 queries (`find_all` / `find_unique`) and rendering (`Function.to_dot(pretty=)`)
 live on the returned objects. See the `.pyi` stubs for the typed surface.
+
+`add_elf(path, apply_relocations=True)` defaults the same way `load_elf` does,
+so a second image does not silently serve unrelocated bytes. `CfgOptions`
+exposes `known_targets` / `call_other_abis` as a memoized
+`types.MappingProxyType` over the shared `Arc` table, not a fresh dict per read:
+the authority is the Rust map, and a seeded 20k-entry table would otherwise cost
+milliseconds on every attribute access.

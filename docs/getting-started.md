@@ -14,16 +14,14 @@ binary -> CFG -> IR -> optimizations -> pattern queries
 
 1. **Read** the bytes of a function out of the binary. An executable, a shared
    library, or an unlinked object file all load, with relocations applied as the
-   bytes are read. The image is mapped rather than copied, so a large object
-   opens in tens of milliseconds and faults in only what you touch; set
-   `STRIDER_NO_MMAP=1` to read it instead, which a network or 9p mount needs.
-   The mapped file must not change on disk while a handle over it lives, so
-   rebuilding the binary under a live handle raises `StriderError` rather than
-   serving the new bytes: re-open it, or read it in.
-   Sections of an object file that shared an address are rebased apart, which
-   moves every `ET_REL` symbol address. A stripped binary can borrow names from
-   elsewhere: `add_symbol_file` takes a debug file, `add_symbols` takes a
-   dict, so a `System.map` you have parsed into one.
+   bytes are read. The image is mapped rather than copied, so it must not change
+   on disk while a handle over it lives;
+   [python-api.md](python-api.md#1-loading-a-binary) has that and the knobs over
+   it. Sections of an object file that shared an address are rebased apart,
+   which moves every `ET_REL` symbol address, and a ppc64 ELFv1 function symbol
+   is followed through its `.opd` descriptor to the code it names. A stripped
+   binary can borrow names from elsewhere: `add_symbol_file` takes a debug file,
+   `add_symbols` takes a dict, so a `System.map` you have parsed into one.
 2. **Lift** each machine instruction into a simpler, CPU-independent form
    (using GHIDRA's Sleigh engine). An instruction Sleigh leaves opaque, like a
    syscall or a trap, is classified by a built-in ABI table saying whether it
@@ -41,13 +39,14 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    thing you query.
 5. **Optimize** the IR so equivalent code always looks the same, which makes
    patterns simple to write. Equivalent shapes really do collapse, so a pattern
-   written against the source shape often will not match;
-   [optimizations.md](optimizations.md) lists what each pass reshapes. How far
-   it goes is set by `LifterOptions(assumptions=AssumptionOptions(...))`, six
-   claims about the code that the IR cannot prove. A wrong one makes the answer
-   wrong, and two of the six default `True`, so `AssumptionOptions.none()` is
-   the configuration sound under any input;
+   written against the source shape often will not match: `x + x*2` arrives as
+   `x*3`, and [optimizations.md](optimizations.md) lists what each pass
+   reshapes. How far it goes is set by
+   `LifterOptions(assumptions=AssumptionOptions(...))`, six claims the IR cannot
+   check, of which `AssumptionOptions.none()` is the sound floor;
    [python-api.md](python-api.md#2-analyzing-a-function) says what each buys.
+   `LifterOptions(pipeline=...)` takes a `strider.opt.OptimizerPipeline` and
+   replaces the pass list outright.
 6. **Resolve** the indirect branches: classify each one against the optimized
    IR, feed the targets back, re-lift, and repeat until the edge set stops
    changing. What is left over is reported, never raised; it arrives through
@@ -56,11 +55,16 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    tests all four at once.
 7. **Query** it: describe a shape, get back every match with the values you
    asked to capture. `one_of` and `first_of` spell alternatives inside one
-   pattern; a list of patterns joins on the captures they share, and
-   `constraints=` relates the halves by control flow (`dominates`) or by your
-   own `JoinPredicate`. Arguments index by ABI position with floats in a space
-   of their own, so `function_arg(0)` and `function_arg_float(0)` name
-   different registers.
+   pattern, over an empty list too, which matches nothing rather than raising;
+   a list of patterns joins on the captures they share, and `constraints=`
+   relates the halves by control flow (`dominates`) or by your own
+   `JoinPredicate`. Arguments index by ABI position with floats in a space of
+   their own, so `function_arg(0)` and `function_arg_float(0)` name different
+   registers.
+8. **Rewrite** it, if you want the graph changed rather than read.
+   `function.rewrite(find=, replace=)` matches with the same pattern language
+   and rebuilds with `strider.template`; `function.rewrite_all` stages several
+   rules in one walk. Both return how many sites fired.
 
 ## Where the API lives
 
@@ -77,27 +81,22 @@ strider.pattern   # the query DSL, plus .pattern.constraints for joins
 strider.template  # the build side of a rewrite
 strider.opt       # OptimizerPipeline and the passes it runs
 strider.reader    # BufferReader, Symbol, and the memory interfaces
-strider.sleigh    # SleighArch, CallingConvention, CallOtherAbi, Vn, VnSpace
+strider.sleigh    # SleighArch, Sleigh, CallingConvention, CallOtherAbi, Vn,
+                  # VnSpace; CallingConvention.custom(sleigh, ...) builds an
+                  # ABI of your own out of register names
 strider.StriderError    # the one top-level name
 ```
 
-`prog.visualize(fn)` serves the graph as an interactive explorer in a browser,
-opening on the whole graph; `whole=False` opens on the neighborhood around the
-entry instead, which stays usable on a large function. It blocks until
-interrupted, and `background=True` serves on its own thread and returns the
-port, so you can keep querying while the page is open;
-`strider.explore.shutdown(port)` stops that one. The keys and the toolbar are
-in [python-api.md](python-api.md#10-visualizing). It is the quickest way to see
-the shape a pattern has to match.
+`prog.visualize(fn)` serves the graph as an interactive explorer in a browser
+and is the quickest way to see the shape a pattern has to match;
+[python-api.md](python-api.md#10-visualizing) has the view it opens on, the
+keys and the toolbar.
 
 The handle itself is pinned to the thread that built it: `analyze`,
 `build_cfg`, `optimize` and the rest raise `StriderError` from anywhere else,
 so a background worker builds its own handle over the same `arch` / `reader()`
 / `rom()`. The handle moves and drops on any thread; only decoding is pinned.
-
-The [quickstart](../README.md#quickstart) in the README is that pipeline end to
-end in Python. [CHANGELOG.md](../CHANGELOG.md) lists what 0.2.0
-added over 0.1.0, breaking entries first.
+`analyze` runs without the GIL, so such a worker really does run alongside you.
 
 ## Where to go next
 
@@ -106,6 +105,7 @@ added over 0.1.0, breaking entries first.
 - **[python-guide.md](python-guide.md)** is the practical walkthrough: analyzing
   many functions, writing patterns, constraints, rewrites, drawing the graph,
   and what to check when a pattern does not match.
-
-The top-level [README](../README.md) indexes the rest of the guides and the
-runnable examples.
+- The [quickstart](../README.md#quickstart) is this pipeline end to end in
+  Python, and the [README](../README.md) indexes the rest of the guides and the
+  runnable examples. [CHANGELOG.md](../CHANGELOG.md) lists what 0.2.0 added over
+  0.1.0, breaking entries first.
