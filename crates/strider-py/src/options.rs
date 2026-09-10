@@ -273,8 +273,6 @@ impl PyAssumptionOptions {
 }
 
 /// Lift, optimize, and CFG knobs for one `analyze` call.
-///
-/// Raises `ValueError` for a nested `function_max_size=0`.
 #[pyclass(name = "LifterOptions", module = "strider.lift")]
 pub struct PyLifterOptions {
     /// Nested CFG-shape knobs.
