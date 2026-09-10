@@ -83,8 +83,19 @@ fn add_node(g: &mut TestGraph, a: ValueId, b: ValueId) -> ValueId {
     g.node_outputs(n)[0]
 }
 
+/// `retain_reachable_stale_cache` plus the cache rebuild its contract requires
+/// before the next deduping create.
+fn retain_reachable<N: Clone, V: Clone, C: NodeCacheable<N, V>>(
+    g: &mut Graph<N, V, C>,
+    reachable: impl IntoIterator<Item = NodeId>,
+) -> strider_graph::NodeIdRemap {
+    let remap = g.retain_reachable_stale_cache(reachable);
+    g.rebuild_cache();
+    remap
+}
+
 /// Backward-input closure of `roots`, i.e. a valid argument to
-/// `Graph::retain_reachable`.
+/// `Graph::retain_reachable_stale_cache`.
 fn reachable_from<N, V, C: NodeCacheable<N, V>>(
     g: &Graph<N, V, C>,
     roots: impl IntoIterator<Item = NodeId>,
@@ -335,7 +346,7 @@ proptest! {
 
         let expected = reachable_from(&g, [root]);
 
-        let remap = g.retain_reachable(expected.iter().copied());
+        let remap = retain_reachable(&mut g, expected.iter().copied());
 
         let mut survivor_news: Vec<NodeId> = Vec::new();
         for &old in &expected {
@@ -389,7 +400,8 @@ fn value_with_zero_uses() {
 #[test]
 fn empty_graph_retain_reachable_no_op() {
     let mut g = TestGraph::new();
-    let remap = g.retain_reachable(reachable_from(&g, []));
+    let keep = reachable_from(&g, []);
+    let remap = retain_reachable(&mut g, keep);
     assert_eq!(g.all_node_ids().count(), 0);
     assert_eq!(g.generation(), 1);
     let _ = remap;
@@ -461,7 +473,8 @@ fn compaction_rebuilds_cache() {
     let _zombie = const_node(&mut g, 999);
 
     // Compaction renumbers ids, so the cache must be re-keyed over survivors.
-    let remap = g.retain_reachable(reachable_from(&g, [root]));
+    let keep = reachable_from(&g, [root]);
+    let remap = retain_reachable(&mut g, keep);
     let add_new = remap.node_old_to_new(add).expect("Add survives");
     let x_new = remap.value_old_to_new(x).expect("x survives");
     let y_new = remap.value_old_to_new(y).expect("y survives");
@@ -731,7 +744,8 @@ fn reachable_by_inputs_high_fanin_traversal_unchanged() {
     let _zombie = const_node(&mut g, 9999);
 
     let before = g.all_node_ids().count();
-    let remap = g.retain_reachable(reachable_from(&g, roots.clone()));
+    let keep = reachable_from(&g, roots.clone());
+    let remap = retain_reachable(&mut g, keep);
     for r in &roots {
         assert!(remap.node_old_to_new(*r).is_some(), "root survives");
     }
@@ -862,7 +876,8 @@ mod node_cache_hooks {
         let nv = g.node_outputs(n)[0];
 
         // Every kind caches here, so `n` itself is the root.
-        let remap = g.retain_reachable(reachable_from(&g, [n]));
+        let keep = reachable_from(&g, [n]);
+        let remap = retain_reachable(&mut g, keep);
         let n_new = remap.node_old_to_new(n).expect("n survives");
         let x_new = remap.value_old_to_new(xv).expect("x survives");
         let _ = nv;
@@ -970,5 +985,6 @@ fn retain_reachable_rejects_a_duplicate_node_id() {
     // corrupt.
     let dup = g.producer(x);
     let root = g.producer(sum);
-    let _ = g.retain_reachable(reachable_from(&g, [root]).into_iter().chain([dup]));
+    let keep = reachable_from(&g, [root]).into_iter().chain([dup]);
+    let _ = retain_reachable(&mut g, keep);
 }

@@ -197,30 +197,6 @@ fn raw_dot_is_one_node_per_reachable_node_no_inlining() {
     );
 }
 
-#[test]
-fn dot_output_is_deterministic() {
-    let mut f = test_function();
-    let entry = f
-        .graph_mut()
-        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-
-    let cs = f.graph_mut().create_node(
-        NodeKind::Region,
-        [ctrl],
-        [ValueKind::Control, ValueKind::PhiToken],
-    );
-    let [cs_ctrl, _] = f.node_outputs_exact::<2>(cs).unwrap();
-    f.graph_mut().create_node(NodeKind::Return, [cs_ctrl], []);
-
-    let first = render(&f, entry);
-    let second = render(&f, entry);
-    assert_eq!(
-        first, second,
-        "same graph must render identically on two calls"
-    );
-}
-
 /// A diamond must render deterministically regardless of walk order.
 #[test]
 fn dot_output_diamond_is_deterministic() {

@@ -278,9 +278,9 @@ impl FunctionBuilder {
     ) -> Result<()> {
         self.link_control_regions(region, control)?;
         self.link_memory_regions(region, memory)?;
-        // Collected before the appends, so a self-loop (`cur_region == region`,
-        // an entry that is its own loop header) takes the values reaching the
-        // back edge rather than the ones it is about to seat.
+        // `cur_region`'s current variable map, so a self-loop (`cur_region ==
+        // region`, an entry that is its own loop header) takes the values
+        // reaching the back edge.
         let operands = self.reaching_phi_operands(region, cur_region)?;
         self.append_phi_operands(region, &operands)
     }
