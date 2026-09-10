@@ -37,7 +37,9 @@ pub use options::CfgOptions;
 
 pub use query::IfRegionSuccessors;
 pub(crate) use query::is_addr_tail_call;
-pub use types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator};
+pub use types::{
+    MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator, UndecodableTarget,
+};
 
 use types::RegionGraph;
 
@@ -48,7 +50,7 @@ use petgraph::graph::NodeIndex;
 pub struct Cfg {
     pub(crate) region_graph: RegionGraph,
     pub(crate) entry: NodeIndex,
-    pub(crate) undecodable_seeded: Vec<types::PcodeInsnAddr>,
+    pub(crate) undecodable_seeded: Vec<UndecodableTarget>,
     pub(crate) isa_mode_conflicts: Vec<types::PcodeInsnAddr>,
     pub(crate) interior_branch_targets: Vec<types::PcodeInsnAddr>,
     pub(crate) link_register_seated: Vec<types::PcodeInsnAddr>,
@@ -71,7 +73,11 @@ impl Cfg {
     /// reaches past the table and yields addresses that are not code; dropping
     /// those keeps the rest of the function analysable, and reporting them is
     /// what stops the CFG being silently incomplete.
-    pub fn undecodable_seeded_targets(&self) -> &[types::PcodeInsnAddr] {
+    ///
+    /// Each carries the site it was seated from: the same address reached from
+    /// another site decodes in that site's own committed context, so the
+    /// failure is no verdict there.
+    pub fn undecodable_seeded_targets(&self) -> &[UndecodableTarget] {
         &self.undecodable_seeded
     }
 
@@ -84,13 +90,15 @@ impl Cfg {
     }
 
     /// Branch targets interior to a region but off every instruction boundary,
-    /// which no split can express.
+    /// which no split can express, plus region starts a later decode stepped
+    /// over.
     ///
-    /// The edge was wired to the region that OWNS those bytes, whose stream
-    /// starts earlier, so for a DIRECT branch into overlapping code the arm is
-    /// not the instruction stream the branch jumps to. An over-approximated
-    /// jump-table entry lands here too, where dropping it is right. Either way
-    /// the edge is not exact.
+    /// A DIRECT branch keeps its edge, wired to the region that OWNS those
+    /// bytes, whose stream starts earlier, so the arm is not the instruction
+    /// stream the branch jumps to. A `Switch` arm is dropped and no edge is
+    /// wired, which is right for the over-approximated jump-table entry that
+    /// produces it. A stepped-over region start is neither: those bytes have
+    /// two owners with two different instruction streams.
     pub fn interior_branch_targets(&self) -> &[types::PcodeInsnAddr] {
         &self.interior_branch_targets
     }

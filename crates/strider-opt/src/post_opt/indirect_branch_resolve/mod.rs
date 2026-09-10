@@ -3,7 +3,7 @@
 //!
 //! [`classify_target`] tries an ordered list of sound recognisers, first match
 //! wins: a literal `IntConst` address, an `InitialVar(lr)` return, then
-//! [`table::classify_table_dispatch`] for rodata jump tables and on-stack label
+//! `table::classify_table_dispatch` for rodata jump tables and on-stack label
 //! arrays.  No match leaves the target unresolved.
 
 #![allow(clippy::module_name_repetitions)]
@@ -22,8 +22,6 @@ pub(crate) mod table;
 /// Cap on enumerated table slots: a range narrowed only by a KnownBits stride
 /// still spans billions of them.
 pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
-
-pub use table::classify_table_dispatch;
 
 /// `None` when the dispatch value matches no known sound shape, which defers
 /// the branch.  `rom` is consulted only by the rodata jump-table shape.
@@ -233,9 +231,9 @@ mod tests {
     fn classify_target_bare(
         function: &strider_ir::Function,
         target_value: ValueId,
-    ) -> anyhow::Result<Option<ResolvedTargets>> {
-        Ok(single_const_target(function, target_value, None)
-            .or_else(|| link_register_return(function, target_value)))
+    ) -> Option<ResolvedTargets> {
+        single_const_target(function, target_value, None)
+            .or_else(|| link_register_return(function, target_value))
     }
 
     /// An empty region terminated by a Return over the caller-supplied value,
@@ -354,7 +352,7 @@ mod tests {
             // I64 because BranchIndirect targets are pointer-sized.
             fb.build_int_const(0x1234u64, ValueType::I64).unwrap()
         });
-        let result = classify_target_bare(&function, target).expect("classify");
+        let result = classify_target_bare(&function, target);
         assert_eq!(result, Some(ResolvedTargets::Single(0x1234.into())));
     }
 
@@ -365,7 +363,7 @@ mod tests {
             fb.build_int_const(0xfeed_face_u64, ValueType::I64).unwrap()
         });
         assert_eq!(
-            classify_target_bare(&function, target).expect("classify"),
+            classify_target_bare(&function, target),
             Some(ResolvedTargets::Single(0xfeed_face.into())),
         );
     }
@@ -389,7 +387,7 @@ mod tests {
 
         let producer_value = skip_trivial_var_phis(&function, target);
 
-        let result = classify_target_bare(&function, producer_value).expect("classify");
+        let result = classify_target_bare(&function, producer_value);
         assert_eq!(result, Some(ResolvedTargets::LinkRegister));
     }
 
@@ -415,7 +413,7 @@ mod tests {
 
         let producer_value = skip_trivial_var_phis(&function, target);
 
-        let result = classify_target_bare(&function, producer_value).expect("classify");
+        let result = classify_target_bare(&function, producer_value);
         assert_eq!(result, None);
     }
 
@@ -436,7 +434,7 @@ mod tests {
 
         let producer_value = skip_trivial_var_phis(&function, target);
 
-        let result = classify_target_bare(&function, producer_value).expect("classify");
+        let result = classify_target_bare(&function, producer_value);
         assert_eq!(result, None);
     }
 
@@ -471,9 +469,6 @@ mod tests {
             matches!(producer_kind, NodeKind::IntBinaryOp(_)),
             "fixture must produce an IntBinaryOp; got {producer_kind:?}"
         );
-        assert_eq!(
-            classify_target_bare(&function, target).expect("classify"),
-            None
-        );
+        assert_eq!(classify_target_bare(&function, target), None);
     }
 }

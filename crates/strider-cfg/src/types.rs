@@ -43,6 +43,14 @@ pub struct RegionInstruction {
     pub len: u32,
 }
 
+/// A seeded indirect-branch target that would not decode, with the dispatch
+/// site it was an arm of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UndecodableTarget {
+    pub site: PcodeInsnAddr,
+    pub target: PcodeInsnAddr,
+}
+
 /// How a [`Region`] ends.  Edges are unweighted, so the transfer kind lives
 /// here and nowhere else.
 ///
@@ -64,8 +72,10 @@ pub enum RegionTerminator {
         true_target: PcodeInsnAddr,
     },
     Return,
-    /// Emitted when a CallOther classifies as noreturn: `BUG()`-class traps
-    /// such as x86 `ud2` or aarch64 `brk #imm`.
+    /// Three emitters: a CallOther that classifies as noreturn (`BUG()`-class
+    /// traps such as x86 `ud2` or aarch64 `brk #imm`), a `call` whose target
+    /// carries a no-return calling convention, and a `call` or `callind` whose
+    /// return address falls outside the function bound.
     NoReturn,
     /// Branch leaving the function range, lowered by the IR layer as
     /// `Call(IntConst(target)) + Return`.
