@@ -108,12 +108,28 @@ _p.IntCmpOpName = _t.Literal[  # type: ignore[attr-defined]
     "EQUAL", "LESS", "SLESS", "CARRY", "SCARRY", "SBORROW",
     "eq", "lt", "slt", "EQ", "LT", "SLT", "Eq", "Lt", "Slt",
 ]
+_p.IntBinaryOpName = _t.Literal[  # type: ignore[attr-defined]
+    "Add", "And", "Or", "Xor", "Div", "Sdiv", "Rem", "Srem",
+    "ShiftRight", "SShiftRight", "ShiftLeft", "Mul",
+    "add", "and", "or", "xor", "div", "sdiv", "rem", "srem",
+    "shiftright", "sshiftright", "shiftleft", "mul",
+    "ADD", "AND", "OR", "XOR", "DIV", "SDIV", "REM", "SREM",
+    "SHIFTRIGHT", "SSHIFTRIGHT", "SHIFTLEFT", "MUL",
+    "shl", "shr", "sshr", "SHL", "SHR", "SSHR", "Shl", "Shr", "Sshr",
+]
+_p.BoolBinaryOpName = _t.Literal[  # type: ignore[attr-defined]
+    "And", "Or", "Xor", "and", "or", "xor", "AND", "OR", "XOR",
+]
+_p.FloatBinaryOpName = _t.Literal[  # type: ignore[attr-defined]
+    "Add", "Mul", "Div", "add", "mul", "div", "ADD", "MUL", "DIV",
+]
 _p.ExtendOpName = _t.Literal[  # type: ignore[attr-defined]
     "zero", "zero_extend", "ZeroExtend", "sign", "sign_extend", "SignExtend",
 ]
 _export(
     _p, "PatLike", "ValueLike", "MemLike", "CaptureKey", "ValueTy",
-    "IntCmpOpName", "ExtendOpName",
+    "IntCmpOpName", "IntBinaryOpName", "BoolBinaryOpName", "FloatBinaryOpName",
+    "ExtendOpName",
 )
 _export(_p.constraints, "ConstraintLike")
 
