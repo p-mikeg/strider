@@ -508,8 +508,9 @@ fn covered_end(sym: &PySymbol) -> u64 {
 }
 
 /// The symbol of `group` covering `address`. Aliases sharing an address are
-/// ranked by recorded extent first, then by being code, which is the order
-/// `functions()` uses, so the two accessors agree on the same address.
+/// ranked by having a recorded extent first, then by being code, so a sized
+/// DATA alias outranks an unsized CODE one. `functions()` filters to code
+/// instead, so the two accessors can name different symbols at one address.
 fn covering<'a>(group: impl Iterator<Item = &'a PySymbol>, address: u64) -> Option<&'a PySymbol> {
     let rank = |s: &PySymbol| (s.size.is_some(), s.is_function);
     let mut best: Option<&PySymbol> = None;
@@ -738,6 +739,11 @@ impl PyLoadedElf {
     /// its own answer for that name.
     #[pyo3(signature = (symbols, *, is_function=true))]
     fn add_symbols(&mut self, symbols: &Bound<'_, PyDict>, is_function: bool) -> PyResult<()> {
+        // Extracted whole before anything is committed: a half-written batch
+        // would leave the entries before the bad one in `extra_symbols` while
+        // the cache below still holds a table without them, so a corrected
+        // retry adds each of those twice and `by_name` keeps the first.
+        let mut added = Vec::with_capacity(symbols.len());
         for (name, value) in symbols.iter() {
             let name: String = name.extract()?;
             let (address, size) = if let Ok((a, n)) = value.extract::<(u64, u64)>() {
@@ -745,7 +751,7 @@ impl PyLoadedElf {
             } else {
                 (value.extract::<u64>()?, None)
             };
-            self.extra_symbols.push(PySymbol {
+            added.push(PySymbol {
                 name,
                 address,
                 size,
@@ -753,6 +759,7 @@ impl PyLoadedElf {
                 region: None,
             });
         }
+        self.extra_symbols.append(&mut added);
         self.symbol_table.lock_shared().take();
         Ok(())
     }

@@ -345,6 +345,34 @@ fn derive(slf: &Bound<'_, PyPat>, make: impl FnOnce(Py<PyAny>) -> PatRepr) -> Py
     })
 }
 
+/// `ob` as the u128 `IntConst` interns, or `None` when it is not an integer at
+/// all. Signed first so a negative keeps its two's-complement bits, then
+/// unsigned for `[2^127, 2^128)`, which `i128` cannot hold.
+///
+/// `Bound::extract` discards the exception the conversion raised, so a
+/// `__index__` that itself raises reads as "not an integer" and the next
+/// candidate calls it again. For a re-entrant one that is two recursions per
+/// level: the depth guard fires, its error is swallowed here, and the retry
+/// walks the tree exponentially. Only `TypeError` and `OverflowError` mean the
+/// object is not this kind of operand.
+fn extract_int_operand(ob: &Bound<'_, PyAny>) -> PyResult<Option<u128>> {
+    let py = ob.py();
+    let wrong_kind = |e: &PyErr| {
+        e.is_instance_of::<pyo3::exceptions::PyTypeError>(py)
+            || e.is_instance_of::<pyo3::exceptions::PyOverflowError>(py)
+    };
+    match ob.extract::<i128>() {
+        Ok(v) => return Ok(Some(v as u128)),
+        Err(e) if !wrong_kind(&e) => return Err(e),
+        Err(_) => {}
+    }
+    match ob.extract::<u128>() {
+        Ok(v) => Ok(Some(v)),
+        Err(e) if !wrong_kind(&e) => Err(e),
+        Err(_) => Ok(None),
+    }
+}
+
 // The downcast happens eagerly during the recursive walk so the emitted
 // `FnOnce` closes over owned data only, never a `Bound` re-borrowed across
 // the GIL.
@@ -359,14 +387,9 @@ pub(crate) fn compile_operand_match(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch>
         return p.borrow().repr.compile_match(py);
     }
     // A raw int is `int_const(value)`, carried as the u128 `IntConst` interns;
-    // narrow with `.of_width`.  Signed first so a negative keeps its
-    // two's-complement bits, then unsigned for `[2^127, 2^128)`, which `i128`
-    // cannot hold.  Anything wider has no carrier and falls through to the
-    // operand-kind error below.
-    if let Ok(v) = ob.extract::<i128>() {
-        return PatRepr::IntConst(v as u128).compile_match(py);
-    }
-    if let Ok(v) = ob.extract::<u128>() {
+    // narrow with `.of_width`. Anything wider than 128 bits has no carrier and
+    // falls through to the operand-kind error below.
+    if let Some(v) = extract_int_operand(ob)? {
         return PatRepr::IntConst(v).compile_match(py);
     }
     if let Ok(c) = ob.extract::<PyRef<'_, PyCapture>>() {
@@ -429,12 +452,8 @@ pub(crate) fn compile_operand_template(ob: &Bound<'_, PyAny>) -> PyResult<DynTem
     if let Ok(p) = ob.downcast::<PyPat>() {
         return p.borrow().repr.compile_template(py);
     }
-    // A raw int builds an `int_const(value)` on the RHS too. Signed first, then
-    // unsigned for `[2^127, 2^128)`, matching `compile_operand_match`.
-    if let Ok(v) = ob.extract::<i128>() {
-        return PatRepr::IntConst(v as u128).compile_template(py);
-    }
-    if let Ok(v) = ob.extract::<u128>() {
+    // A raw int builds an `int_const(value)` on the RHS too.
+    if let Some(v) = extract_int_operand(ob)? {
         return PatRepr::IntConst(v).compile_template(py);
     }
     if let Ok(c) = ob.extract::<PyRef<'_, PyCapture>>() {
@@ -759,37 +778,80 @@ impl PatRepr {
 
 // Compiling is native recursion mirroring the Python pattern tree's depth, so
 // a pathologically deep pattern would overflow the Rust stack and abort the
-// process. This counter turns that abort into an exception.
+// process. The two bounds below turn that abort into an exception.
 //
-// It bounds COMPILING, and the `.capture()` / `.when()` / `.of_width()` chain
-// at construction. It does NOT bound the other three ways to nest: a free
+// They bound COMPILING, and the `.capture()` / `.when()` / `.of_width()` chain
+// at construction. They do NOT bound the other three ways to nest: a free
 // constructor (`int_add(deep, ...)`) goes through `PyPat::from_repr`, which
 // starts a fresh count, a `strider.template` constructor does the same, and a
 // builder operand slot holds a bare `Py<PyAny>` with no count at all. Any of
 // them can be driven from a Python `for` loop, which involves no Python
-// recursion and so hits no interpreter limit. Dropping the first two is safe
-// however deep (`drop_repr_deferred`); a chain nested through BUILDER operand
-// slots alone still drops recursively.
+// recursion and so hits no interpreter limit. Dropping any of them is safe
+// however deep: every builder and `Pat` defers its operand slots (`defer_drop`).
 
 /// Compile-recursion levels, NOT builder calls: a nested call costs two, so
 /// the ceiling a caller sees is about half this. Well above any hand-written
 /// pattern; a machine-generated one can exceed it.
+///
+/// The cheap bound of the two, and the one calibrated for the main thread's
+/// 8 MiB stack. [`MAX_PATTERN_STACK`] is what holds on a smaller one.
 const MAX_PATTERN_NESTING: u32 = 512;
+
+/// Stack one compile may consume before the guard bails.
+///
+/// A count alone cannot bound stack: an unoptimised build's frame here is over
+/// twenty times an optimised one's, and a `threading.stack_size(1 << 20)`
+/// thread is an eighth of the main thread's, so 512 levels that fit in release
+/// on the main thread overflow in debug on a small one. Overflowing is a
+/// SIGSEGV, which no Python `except` sees.
+///
+/// Sized for a 1 MiB thread stack, the smallest a caller realistically asks
+/// for: the match walk that follows costs about what the compile did, so half
+/// of that is the budget. An optimised build reaches 512 levels well inside
+/// it, which is why the count is what a released wheel trips on.
+const MAX_PATTERN_STACK: usize = 512 * 1024;
 
 thread_local! {
     static COMPILE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// A frame address from the outermost live guard on this thread, the zero
+    /// the consumption below is measured against.
+    static STACK_BASE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Address of a local in the calling frame. Stack grows DOWN on every target
+/// this ships to, so a deeper frame reads lower; `saturating_sub` is what makes
+/// the other direction read as no consumption rather than as a huge one.
+#[inline(never)]
+fn frame_mark() -> usize {
+    let probe = 0u8;
+    std::hint::black_box(std::ptr::from_ref(&probe)) as usize
 }
 
 struct DepthGuard;
 
 impl DepthGuard {
     fn enter() -> PyResult<Self> {
+        let here = frame_mark();
         COMPILE_DEPTH.with(|d| {
             let next = d.get() + 1;
             if next > MAX_PATTERN_NESTING {
                 return Err(into_strider_err(anyhow::anyhow!(
                     "pattern nesting too deep (max {MAX_PATTERN_NESTING} compile levels; a nested builder call costs two)"
                 )));
+            }
+            if next == 1 {
+                STACK_BASE.set(here);
+            } else {
+                let used = STACK_BASE.get().saturating_sub(here);
+                if used > MAX_PATTERN_STACK {
+                    return Err(into_strider_err(anyhow::anyhow!(
+                        "pattern nesting too deep for this thread's stack ({} KiB \
+                         used of a {} KiB compile budget at {next} levels; give the \
+                         thread a larger stack_size, or nest less)",
+                        used / 1024,
+                        MAX_PATTERN_STACK / 1024,
+                    )));
+                }
             }
             d.set(next);
             Ok(Self)
@@ -1331,7 +1393,24 @@ impl PatQuery<'_> {
     pub(crate) fn to_patterns(&self, py: Python<'_>) -> PyResult<Vec<Pattern>> {
         match self {
             PatQuery::Single(p) => Ok(vec![p.to_pattern(py)?]),
-            PatQuery::Many(ps) => ps.iter().map(|p| p.to_pattern(py)).collect(),
+            PatQuery::Many(ps) => {
+                let mut out = Vec::with_capacity(ps.len());
+                for (i, p) in ps.iter().enumerate() {
+                    match p.to_pattern(py) {
+                        Ok(pat) => out.push(pat),
+                        // A `Finished` pattern is TAKEN, so unwinding past one
+                        // a later entry then failed on would consume it for a
+                        // query that never ran.
+                        Err(e) => {
+                            for (src, pat) in ps[..i].iter().zip(out) {
+                                src.restore(pat);
+                            }
+                            return Err(e);
+                        }
+                    }
+                }
+                Ok(out)
+            }
         }
     }
 }
@@ -1359,6 +1438,17 @@ impl PatLike<'_> {
             PatLike::SwitchPat(b) => b.borrow().build_pattern_py(py),
             PatLike::EntryPat(b) => b.borrow().build_pattern_py(py),
             PatLike::RegionPat(b) => b.borrow().build_pattern_py(py),
+        }
+    }
+
+    /// Put `pat` back where `to_pattern` took it from. A no-op for every
+    /// source that compiles a fresh `Pattern` per call, which is all but a
+    /// `Pat` holding a finished control / variadic one.
+    fn restore(&self, pat: Pattern) {
+        if let PatLike::Pat(p) = self
+            && let PatRepr::Finished { pattern, .. } = &*p.borrow().repr
+        {
+            *pattern.lock().expect("pattern cache poisoned") = Some(pat);
         }
     }
 }
@@ -1841,6 +1931,10 @@ pub fn bool_inputs(inner: Py<PyAny>) -> PyPat {
 pub enum IntConstArg {
     #[pyo3(annotation = "int")]
     One(i128),
+    /// `[2^127, 2^128)`, which `i128` cannot hold. The raw-int operand form
+    /// (`int_add(x, 2**127)`) accepts these, so the named constructor does too.
+    #[pyo3(annotation = "int")]
+    Wide(u128),
     #[pyo3(annotation = "list[int]")]
     Set(Vec<i128>),
     #[pyo3(annotation = "Capture")]
@@ -1866,6 +1960,7 @@ pub fn int_const(value: Option<IntConstArg>) -> PyPat {
         None => PatRepr::AnyIntConst(None),
         Some(IntConstArg::Cap(c)) => PatRepr::AnyIntConst(Some(c.get().inner)),
         Some(IntConstArg::One(v)) => PatRepr::IntConst(v as u128),
+        Some(IntConstArg::Wide(v)) => PatRepr::IntConst(v),
         // `as u128` is the scalar form's conversion: a negative carries its
         // 128-bit two's complement, which the core masks to the candidate's
         // width.  Narrowing to `u64` first would sign-extend only to 64 bits
