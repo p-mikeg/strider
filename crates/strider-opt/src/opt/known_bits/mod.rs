@@ -12,7 +12,7 @@ mod tests;
 
 /// Unrecorded outputs read back as `KnownBitsFacts::default()` (`{0, 0}` =
 /// "no info").
-pub(crate) type KnownBitsMap = SecondaryMap<ValueId, KnownBitsFacts>;
+pub type KnownBitsMap = SecondaryMap<ValueId, KnownBitsFacts>;
 
 /// The all-ones mask for `ty`, or `None` for floats and for integers wider
 /// than the `u128` lattice (`I256` / `I512`).
