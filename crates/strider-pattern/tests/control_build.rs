@@ -1,3 +1,10 @@
+// Shared with the `pattern_matching` target; this one uses only `assertions`.
+#[path = "pattern_matching/support/mod.rs"]
+#[allow(dead_code, unused_imports)]
+mod support;
+
+use support::assertions as a;
+
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{ExtendOp, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker};
 use strider_ir_test_utils::RegisterSet;
@@ -20,46 +27,28 @@ fn call_at(addr: u64) -> strider_ir::Function {
 #[test]
 fn call_at_addr_matches_and_rejects() {
     let function = call_at(0x1234);
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher.find_all(&call().at(0x1234).build()).unwrap().len(),
-        1
-    );
-    assert_eq!(
-        matcher.find_all(&call().at(0x9999).build()).unwrap().len(),
-        0
-    );
+    a::matches(&function, call().at(0x1234).build(), 1);
+    a::none(&function, call().at(0x9999).build());
 }
 
 #[test]
 fn call_target_set() {
     let function = call_at(0x1234);
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher
-            .find_all(
-                &call()
-                    .target(int_const([0x1000u64, 0x1234, 0x9999]))
-                    .build()
-            )
-            .unwrap()
-            .len(),
-        1
+    a::matches(
+        &function,
+        call()
+            .target(int_const([0x1000u64, 0x1234, 0x9999]))
+            .build(),
+        1,
     );
-    assert_eq!(
-        matcher
-            .find_all(&call().target(int_const([0x1000u64, 0x9999])).build())
-            .unwrap()
-            .len(),
-        0
+    a::none(
+        &function,
+        call().target(int_const([0x1000u64, 0x9999])).build(),
     );
     // Empty set is vacuously false.
-    assert_eq!(
-        matcher
-            .find_all(&call().target(int_const(Vec::<u64>::new())).build())
-            .unwrap()
-            .len(),
-        0
+    a::none(
+        &function,
+        call().target(int_const(Vec::<u64>::new())).build(),
     );
 }
 
@@ -67,10 +56,7 @@ fn call_target_set() {
 fn call_target_pattern_captures() {
     let function = call_at(0x1234);
     let c = Capture::new();
-    let hits = Matcher::new(&function)
-        .find_all(&call().target(var(c)).build())
-        .unwrap();
-    assert_eq!(hits.len(), 1);
+    let hits = a::matches(&function, call().target(var(c)).build(), 1);
     assert!(hits[0].value(c).is_some());
 }
 
@@ -92,21 +78,15 @@ fn call_arg_nests_value_builder_load() {
     b.build_call_cc(tgt, None).unwrap();
     b.build_return(None, &[]).unwrap();
     let function = b.build().unwrap();
-    let matcher = Matcher::new(&function);
 
-    assert_eq!(
-        matcher
-            .find_all(&call().arg(0, load().addr(int_const(0x40u128))).build())
-            .unwrap()
-            .len(),
-        1
+    a::matches(
+        &function,
+        call().arg(0, load().addr(int_const(0x40u128))).build(),
+        1,
     );
-    assert_eq!(
-        matcher
-            .find_all(&call().arg(0, load().addr(int_const(0x99u128))).build())
-            .unwrap()
-            .len(),
-        0
+    a::none(
+        &function,
+        call().arg(0, load().addr(int_const(0x99u128))).build(),
     );
 }
 
@@ -121,33 +101,14 @@ fn call_other_named(name: &str, op: u64) -> strider_ir::Function {
 #[test]
 fn call_other_unconstrained_matches() {
     let function = call_other_named("rdtsc", 7);
-    assert_eq!(
-        Matcher::new(&function)
-            .find_all(&call_other().build())
-            .unwrap()
-            .len(),
-        1
-    );
+    a::matches(&function, call_other().build(), 1);
 }
 
 #[test]
 fn call_other_name_filter() {
     let function = call_other_named("rdtsc", 7);
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher
-            .find_all(&call_other().name("rdtsc").build())
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        matcher
-            .find_all(&call_other().name("cpuid").build())
-            .unwrap()
-            .len(),
-        0
-    );
+    a::matches(&function, call_other().name("rdtsc").build(), 1);
+    a::none(&function, call_other().name("cpuid").build());
 }
 
 fn return_const(v: u64) -> strider_ir::Function {
@@ -160,53 +121,26 @@ fn return_const(v: u64) -> strider_ir::Function {
 #[test]
 fn ret_val_matches_and_captures() {
     let function = return_const(7);
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher
-            .find_all(&ret().ret_val(0, int_const(7u128)).build())
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        matcher
-            .find_all(&ret().ret_val(0, int_const(0u128)).build())
-            .unwrap()
-            .len(),
-        0
-    );
+    a::matches(&function, ret().ret_val(0, int_const(7u128)).build(), 1);
+    a::none(&function, ret().ret_val(0, int_const(0u128)).build());
 
     let c = Capture::new();
-    let hits = matcher.find_all(&ret().ret_val(0, var(c)).build()).unwrap();
-    assert_eq!(hits.len(), 1);
+    let hits = a::matches(&function, ret().ret_val(0, var(c)).build(), 1);
     assert!(hits[0].value(c).is_some());
 }
 
 #[test]
 fn ret_without_value_rejects_ret_val() {
     let function = call_at(0x1234); // Return with no value.
-    let matcher = Matcher::new(&function);
-    assert_eq!(matcher.find_all(&ret().build()).unwrap().len(), 1);
-    assert_eq!(
-        matcher
-            .find_all(&ret().ret_val(0, anything()).build())
-            .unwrap()
-            .len(),
-        0
-    );
+    a::matches(&function, ret().build(), 1);
+    a::none(&function, ret().ret_val(0, anything()).build());
 }
 
 #[test]
 fn ret_ctrl_smoke() {
     let function = return_const(7);
     // The Return's ctrl predecessor is a Region, which `anything()` matches.
-    assert_eq!(
-        Matcher::new(&function)
-            .find_all(&ret().ctrl(anything()).build())
-            .unwrap()
-            .len(),
-        1
-    );
+    a::matches(&function, ret().ctrl(anything()).build(), 1);
 }
 
 fn indirect_branch_to(target_addr: u64) -> strider_ir::Function {
@@ -220,10 +154,7 @@ fn indirect_branch_to(target_addr: u64) -> strider_ir::Function {
 fn indirect_branch_captures_node() {
     let function = indirect_branch_to(0x4000);
     let n = Capture::new();
-    let hits = Matcher::new(&function)
-        .find_all(&indirect_branch().capture(n).build())
-        .unwrap();
-    assert_eq!(hits.len(), 1);
+    let hits = a::matches(&function, indirect_branch().capture(n).build(), 1);
     let node = hits[0]
         .node(n, function.graph())
         .expect("indirect_branch node capture");
@@ -236,27 +167,18 @@ fn indirect_branch_captures_node() {
 #[test]
 fn indirect_branch_target_matches_and_captures() {
     let function = indirect_branch_to(0x4000);
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher
-            .find_all(&indirect_branch().target(int_const(0x4000u128)).build())
-            .unwrap()
-            .len(),
-        1
+    a::matches(
+        &function,
+        indirect_branch().target(int_const(0x4000u128)).build(),
+        1,
     );
-    assert_eq!(
-        matcher
-            .find_all(&indirect_branch().target(int_const(0u128)).build())
-            .unwrap()
-            .len(),
-        0
+    a::none(
+        &function,
+        indirect_branch().target(int_const(0u128)).build(),
     );
 
     let c = Capture::new();
-    let hits = matcher
-        .find_all(&indirect_branch().target(var(c)).build())
-        .unwrap();
-    assert_eq!(hits.len(), 1);
+    let hits = a::matches(&function, indirect_branch().target(var(c)).build(), 1);
     assert!(hits[0].value(c).is_some());
 }
 
@@ -269,20 +191,14 @@ fn unreachable_fn() -> strider_ir::Function {
 #[test]
 fn unreachable_matches() {
     let function = unreachable_fn();
-    let hits = Matcher::new(&function)
-        .find_all(&unreachable().build())
-        .unwrap();
-    assert_eq!(hits.len(), 1);
+    a::matches(&function, unreachable().build(), 1);
 }
 
 #[test]
 fn unreachable_captures_node() {
     let function = unreachable_fn();
     let n = Capture::new();
-    let hits = Matcher::new(&function)
-        .find_all(&unreachable().capture(n).build())
-        .unwrap();
-    assert_eq!(hits.len(), 1);
+    let hits = a::matches(&function, unreachable().capture(n).build(), 1);
     let node = hits[0]
         .node(n, function.graph())
         .expect("unreachable node capture");
@@ -310,10 +226,7 @@ fn switch_fn(addr: u64) -> strider_ir::Function {
 fn switch_matches_and_captures() {
     let function = switch_fn(0x1000);
     let n = Capture::new();
-    let hits = Matcher::new(&function)
-        .find_all(&switch().capture(n).build())
-        .unwrap();
-    assert_eq!(hits.len(), 1);
+    let hits = a::matches(&function, switch().capture(n).build(), 1);
     let node = hits[0]
         .node(n, function.graph())
         .expect("switch node capture");
@@ -326,27 +239,15 @@ fn switch_matches_and_captures() {
 #[test]
 fn switch_selector_matches_and_captures() {
     let function = switch_fn(0x1000);
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher
-            .find_all(&switch().selector(int_const(0x1000u128)).build())
-            .unwrap()
-            .len(),
-        1
+    a::matches(
+        &function,
+        switch().selector(int_const(0x1000u128)).build(),
+        1,
     );
-    assert_eq!(
-        matcher
-            .find_all(&switch().selector(int_const(0u128)).build())
-            .unwrap()
-            .len(),
-        0
-    );
+    a::none(&function, switch().selector(int_const(0u128)).build());
 
     let c = Capture::new();
-    let hits = matcher
-        .find_all(&switch().selector(var(c)).build())
-        .unwrap();
-    assert_eq!(hits.len(), 1);
+    let hits = a::matches(&function, switch().selector(var(c)).build(), 1);
     assert!(hits[0].value(c).is_some());
 }
 
@@ -368,12 +269,9 @@ fn switch_output_slot_pins_one_arm() {
     assert_ne!(arm(0), arm(1));
 
     // Two arms, so a third slot has no edge to bind.
-    assert_eq!(
-        matcher
-            .find_all(&switch().output(2).capture(Capture::new()).build())
-            .unwrap()
-            .len(),
-        0
+    a::none(
+        &function,
+        switch().output(2).capture(Capture::new()).build(),
     );
 }
 
@@ -390,23 +288,14 @@ fn if_then_else() -> (strider_ir::Function, strider_ir::node::NodeId) {
 #[test]
 fn if_unconstrained_matches() {
     let (function, _) = if_then_else();
-    assert_eq!(
-        Matcher::new(&function)
-            .find_all(&if_else().build())
-            .unwrap()
-            .len(),
-        1
-    );
+    a::matches(&function, if_else().build(), 1);
 }
 
 #[test]
 fn if_cond_captures() {
     let (function, _) = if_then_else();
     let c = Capture::new();
-    let hits = Matcher::new(&function)
-        .find_all(&if_else().cond(var(c)).build())
-        .unwrap();
-    assert_eq!(hits.len(), 1);
+    let hits = a::matches(&function, if_else().cond(var(c)).build(), 1);
     assert!(hits[0].value(c).is_some());
 }
 
@@ -414,17 +303,13 @@ fn if_cond_captures() {
 fn if_with_true_and_false_branches() {
     let (function, _) = if_then_else();
     // Each control output's single consumer is the branch Region.
-    assert_eq!(
-        Matcher::new(&function)
-            .find_all(
-                &if_else()
-                    .with_true(anything().into_pattern())
-                    .with_false(anything().into_pattern())
-                    .build(),
-            )
-            .unwrap()
-            .len(),
-        1
+    a::matches(
+        &function,
+        if_else()
+            .with_true(anything().into_pattern())
+            .with_false(anything().into_pattern())
+            .build(),
+        1,
     );
 }
 
@@ -432,10 +317,7 @@ fn if_with_true_and_false_branches() {
 fn if_captures_node() {
     let (function, if_id) = if_then_else();
     let n = Capture::new();
-    let hits = Matcher::new(&function)
-        .find_all(&if_else().capture(n).build())
-        .unwrap();
-    assert_eq!(hits.len(), 1);
+    let hits = a::matches(&function, if_else().capture(n).build(), 1);
     assert_eq!(
         hits[0].node(n, function.graph()).expect("if node capture"),
         if_id
@@ -447,10 +329,11 @@ fn if_capture_true_false_bind_distinct_control_outputs() {
     let (function, if_id) = if_then_else();
     let t = Capture::new();
     let f = Capture::new();
-    let hits = Matcher::new(&function)
-        .find_all(&if_else().capture_true(t).capture_false(f).build())
-        .unwrap();
-    assert_eq!(hits.len(), 1);
+    let hits = a::matches(
+        &function,
+        if_else().capture_true(t).capture_false(f).build(),
+        1,
+    );
     let tv = hits[0].value(t).expect("true control output bound");
     let fv = hits[0].value(f).expect("false control output bound");
     assert_ne!(tv, fv, "true and false outputs are distinct values");
@@ -483,13 +366,7 @@ fn if_else_capture_and_control_output_captures_coexist() {
 fn mem_phi_matches_region_head() {
     // A freshly created region carries one MemPhi at its head.
     let function = return_const(0);
-    assert_eq!(
-        Matcher::new(&function)
-            .find_all(&mem_phi().build())
-            .unwrap()
-            .len(),
-        1
-    );
+    a::matches(&function, mem_phi().build(), 1);
 }
 
 #[test]
@@ -502,13 +379,7 @@ fn phi_matches_tagged_phi() {
     let v = b.read_variable(&rax).unwrap();
     b.build_return(Some(v), &[]).unwrap();
     let function = b.build().unwrap();
-    assert_eq!(
-        Matcher::new(&function)
-            .find_all(&phi().build())
-            .unwrap()
-            .len(),
-        1
-    );
+    a::matches(&function, phi().build(), 1);
 }
 
 #[test]
@@ -521,10 +392,8 @@ fn phi_capture_binds_value_output() {
     let v = b.read_variable(&rax).unwrap();
     b.build_return(Some(v), &[]).unwrap();
     let function = b.build().unwrap();
-    let matcher = Matcher::new(&function);
     let c = Capture::new();
-    let hits = matcher.find_all(&phi().capture(c).build()).unwrap();
-    assert_eq!(hits.len(), 1);
+    let hits = a::matches(&function, phi().capture(c).build(), 1);
     assert!(
         hits[0].value(c).is_some(),
         "phi().capture(c) must bind the matched phi's output"
@@ -613,10 +482,11 @@ fn phi_nests_as_a_value_operand() {
         "phi must match nested as a value operand of Add"
     );
     let c = Capture::new();
-    let hits = m
-        .find_all(&int_add(phi().capture(c), anything()).into_pattern())
-        .unwrap();
-    assert_eq!(hits.len(), 1);
+    let hits = a::matches(
+        &function,
+        int_add(phi().capture(c), anything()).into_pattern(),
+        1,
+    );
     assert!(
         hits[0].node(c, function.graph()).is_some(),
         "captured phi binds out"
@@ -703,13 +573,7 @@ fn phi_any_input_matches_a_data_input_regardless_of_slot() {
         "any_input finds the const at a non-first data slot"
     );
     // `IntConst(1)` is the first data slot.
-    assert_eq!(
-        matcher
-            .find_all(&phi().any_input(int_const(1u128)).build())
-            .unwrap()
-            .len(),
-        1,
-    );
+    a::matches(&function, phi().any_input(int_const(1u128)).build(), 1);
     assert_eq!(
         matcher
             .find_all(&phi().any_input(int_const(99u128)).build())
@@ -776,15 +640,12 @@ fn phi_multiple_any_input_bind_distinct_slots() {
     // Phi data inputs are the constants 1 and 2, one slot each.
     let function = phi_over_two_consts();
     let m = Matcher::new(&function);
-    assert_eq!(
-        m.find_all(
-            &phi()
-                .any_input(int_const(1u128))
-                .any_input(int_const(2u128))
-                .build()
-        )
-        .unwrap()
-        .len(),
+    a::matches(
+        &function,
+        phi()
+            .any_input(int_const(1u128))
+            .any_input(int_const(2u128))
+            .build(),
         1,
     );
     assert_eq!(
@@ -799,15 +660,12 @@ fn phi_multiple_any_input_bind_distinct_slots() {
         0,
         "two any_input must bind two DIFFERENT slots",
     );
-    assert_eq!(
-        m.find_all(
-            &phi()
-                .any_input(int_const(1u128))
-                .any_input(any_int_const())
-                .build()
-        )
-        .unwrap()
-        .len(),
+    a::matches(
+        &function,
+        phi()
+            .any_input(int_const(1u128))
+            .any_input(any_int_const())
+            .build(),
         1,
     );
 }
@@ -815,12 +673,12 @@ fn phi_multiple_any_input_bind_distinct_slots() {
 #[test]
 fn phi_any_input_binds_captures_out() {
     let function = phi_over_two_consts();
-    let matcher = Matcher::new(&function);
     let c = Capture::new();
-    let hits = matcher
-        .find_all(&phi().any_input(int_const(2u128).capture(c)).build())
-        .unwrap();
-    assert_eq!(hits.len(), 1);
+    let hits = a::matches(
+        &function,
+        phi().any_input(int_const(2u128).capture(c)).build(),
+        1,
+    );
     assert!(
         hits[0].value(c).is_some(),
         "a capture inside any_input binds out"
@@ -838,15 +696,8 @@ fn phi_for_vn_filters() {
     let v = b.read_variable(&rax).unwrap();
     b.build_return(Some(v), &[]).unwrap();
     let function = b.build().unwrap();
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher.find_all(&phi().for_vn(rax).build()).unwrap().len(),
-        1
-    );
-    assert_eq!(
-        matcher.find_all(&phi().for_vn(rbx).build()).unwrap().len(),
-        0
-    );
+    a::matches(&function, phi().for_vn(rax).build(), 1);
+    a::none(&function, phi().for_vn(rbx).build());
 }
 
 /// `phi_token` targets raw slot 0 directly, no `+1` shift. `PhiToken` falls
@@ -872,8 +723,7 @@ fn phi_token_wildcard_binds_the_phi_token_edge() {
     let function = phi_over_two_consts();
     let matcher = Matcher::new(&function);
     let c = Capture::new();
-    let hits = matcher.find_all(&phi().phi_token(var(c)).build()).unwrap();
-    assert_eq!(hits.len(), 1);
+    let hits = a::matches(&function, phi().phi_token(var(c)).build(), 1);
     let bound = hits[0].value(c).unwrap();
     assert!(
         matches!(
@@ -997,13 +847,7 @@ fn mem_phi_phi_token_targets_slot_zero() {
     );
 
     // A typed sub can never bind the PhiToken slot.
-    assert_eq!(
-        matcher
-            .find_all(&mem_phi().phi_token(int_const(1u128)).build())
-            .unwrap()
-            .len(),
-        0
-    );
+    a::none(&function, mem_phi().phi_token(int_const(1u128)).build());
 
     // Only the join's MemPhi has a genuine store as memory predecessor 0; the
     // other three chain to another MemPhi.
@@ -1024,13 +868,10 @@ fn mem_phi_phi_token_targets_slot_zero() {
 #[test]
 fn call_any_input_binds_target() {
     let function = call_at(0x1234);
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher
-            .find_all(&call().any_input(int_const(0x1234u128)).build())
-            .unwrap()
-            .len(),
-        1
+    a::matches(
+        &function,
+        call().any_input(int_const(0x1234u128)).build(),
+        1,
     );
 }
 
@@ -1047,39 +888,26 @@ fn call_other_any_input_binds_arg() {
 #[test]
 fn ret_any_input_binds_ret_val() {
     let function = return_const(7);
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher
-            .find_all(&ret().any_input(int_const(7u128)).build())
-            .unwrap()
-            .len(),
-        1
-    );
+    a::matches(&function, ret().any_input(int_const(7u128)).build(), 1);
 }
 
 #[test]
 fn indirect_branch_any_input_binds_target() {
     let function = indirect_branch_to(0xBEEF);
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher
-            .find_all(&indirect_branch().any_input(int_const(0xBEEFu128)).build())
-            .unwrap()
-            .len(),
-        1
+    a::matches(
+        &function,
+        indirect_branch().any_input(int_const(0xBEEFu128)).build(),
+        1,
     );
 }
 
 #[test]
 fn switch_any_input_binds_address() {
     let function = switch_fn(0xC0DE);
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher
-            .find_all(&switch().any_input(int_const(0xC0DEu128)).build())
-            .unwrap()
-            .len(),
-        1
+    a::matches(
+        &function,
+        switch().any_input(int_const(0xC0DEu128)).build(),
+        1,
     );
 }
 
@@ -1087,13 +915,10 @@ fn switch_any_input_binds_address() {
 #[test]
 fn unreachable_any_input_wildcard_reaches_ctrl() {
     let function = unreachable_fn();
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher
-            .find_all(&unreachable().any_input(var(Capture::new())).build())
-            .unwrap()
-            .len(),
-        1
+    a::matches(
+        &function,
+        unreachable().any_input(var(Capture::new())).build(),
+        1,
     );
 }
 
@@ -1111,13 +936,10 @@ fn load_any_input_binds_addr() {
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     let function = b.build().unwrap();
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher
-            .find_all(&load().any_input(int_const(0x1000u128)).build())
-            .unwrap()
-            .len(),
-        1
+    a::matches(
+        &function,
+        load().any_input(int_const(0x1000u128)).build(),
+        1,
     );
 }
 
@@ -1135,23 +957,10 @@ fn load_raw_input_slot_is_the_addr_slot() {
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     let function = b.build().unwrap();
-    let matcher = Matcher::new(&function);
     // `Load` is `[mem(0), addr(1)]`.
-    assert_eq!(
-        matcher
-            .find_all(&load().input(1, int_const(0x1000u128)).build())
-            .unwrap()
-            .len(),
-        1
-    );
+    a::matches(&function, load().input(1, int_const(0x1000u128)).build(), 1);
     // Slot 0 is the memory edge; no value pattern binds it.
-    assert_eq!(
-        matcher
-            .find_all(&load().input(0, int_const(0x1000u128)).build())
-            .unwrap()
-            .len(),
-        0
-    );
+    a::none(&function, load().input(0, int_const(0x1000u128)).build());
 }
 
 #[test]
@@ -1168,69 +977,27 @@ fn load_output_and_any_output_reach_the_loaded_value() {
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     let function = b.build().unwrap();
-    let matcher = Matcher::new(&function);
     let c = Capture::new();
-    let hits = matcher
-        .find_all(&load().output(0).capture(c).build())
-        .unwrap();
-    assert_eq!(hits.len(), 1);
+    let hits = a::matches(&function, load().output(0).capture(c).build(), 1);
     assert!(hits[0].value(c).is_some());
-    assert_eq!(
-        matcher
-            .find_all(&load().any_output().of_width(64).build())
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        matcher
-            .find_all(&load().any_output().of_width(7).build())
-            .unwrap()
-            .len(),
-        0
-    );
+    a::matches(&function, load().any_output().of_width(64).build(), 1);
+    a::none(&function, load().any_output().of_width(7).build());
 }
 
 #[test]
 fn if_ctrl_matches_the_control_predecessor() {
     let (function, _) = if_then_else();
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher
-            .find_all(&if_else().ctrl(anything()).build())
-            .unwrap()
-            .len(),
-        1
-    );
+    a::matches(&function, if_else().ctrl(anything()).build(), 1);
     // A value pattern can never bind a Control edge.
-    assert_eq!(
-        matcher
-            .find_all(&if_else().ctrl(int_const(1u128)).build())
-            .unwrap()
-            .len(),
-        0
-    );
+    a::none(&function, if_else().ctrl(int_const(1u128)).build());
 }
 
 #[test]
 fn if_raw_input_slot_is_the_cond_slot() {
     let (function, _) = if_then_else();
-    let matcher = Matcher::new(&function);
     // `If` is `[ctrl(0), cond(1)]`; the fixture branches on a false constant.
-    assert_eq!(
-        matcher
-            .find_all(&if_else().input(1, anything()).build())
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        matcher
-            .find_all(&if_else().any_input(anything()).build())
-            .unwrap()
-            .len(),
-        1
-    );
+    a::matches(&function, if_else().input(1, anything()).build(), 1);
+    a::matches(&function, if_else().any_input(anything()).build(), 1);
 }
 
 #[test]
@@ -1246,14 +1013,7 @@ fn store_any_input_binds_data() {
     b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
     b.build_return(None, &[]).unwrap();
     let function = b.build().unwrap();
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher
-            .find_all(&store().any_input(int_const(99u128)).build())
-            .unwrap()
-            .len(),
-        1
-    );
+    a::matches(&function, store().any_input(int_const(99u128)).build(), 1);
 }
 
 /// Register-passed carrier (`InitialVar(rax)`) at index 0 and stack-passed
@@ -1314,21 +1074,16 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
 fn function_arg_index_matches_carrier() {
     use strider_pattern::function_arg;
     let (function, _rax) = two_arg_carriers();
-    let matcher = Matcher::new(&function);
-    assert_eq!(matcher.find_all(&function_arg(0).build()).unwrap().len(), 1);
-    assert_eq!(matcher.find_all(&function_arg(1).build()).unwrap().len(), 1);
-    assert_eq!(matcher.find_all(&function_arg(2).build()).unwrap().len(), 0);
+    a::matches(&function, function_arg(0).build(), 1);
+    a::matches(&function, function_arg(1).build(), 1);
+    a::none(&function, function_arg(2).build());
 }
 
 #[test]
 fn any_function_arg_matches_every_carrier() {
     use strider_pattern::any_function_arg;
     let (function, _rax) = two_arg_carriers();
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher.find_all(&any_function_arg().build()).unwrap().len(),
-        2
-    );
+    a::matches(&function, any_function_arg().build(), 2);
 }
 
 /// Integer carrier `InitialVar(rax)` at integer index 0 and float carrier
@@ -1410,51 +1165,26 @@ fn function_arg_float_matches_only_the_float_carrier() {
 fn function_arg_reg_matches_only_register_carrier() {
     use strider_pattern::{function_arg, function_arg_reg};
     let (function, rax) = two_arg_carriers();
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher
-            .find_all(&function_arg_reg(rax, 0).build())
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        matcher
-            .find_all(&function_arg_reg(rax, 1).build())
-            .unwrap()
-            .len(),
-        0
-    );
+    a::matches(&function, function_arg_reg(rax, 0).build(), 1);
+    a::none(&function, function_arg_reg(rax, 1).build());
     let rbx = strider_ir_test_utils::reg_vn(8, 8);
-    assert_eq!(
-        matcher
-            .find_all(&function_arg_reg(rbx, 0).build())
-            .unwrap()
-            .len(),
-        0
-    );
+    a::none(&function, function_arg_reg(rbx, 0).build());
     // Sanity: index 0 without a source filter still matches.
-    assert_eq!(matcher.find_all(&function_arg(0).build()).unwrap().len(), 1);
+    a::matches(&function, function_arg(0).build(), 1);
 }
 
 #[test]
 fn function_arg_stack_matches_only_stack_carrier() {
     use strider_pattern::function_arg_stack;
     let (function, _rax) = two_arg_carriers();
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher
-            .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 1).build())
-            .unwrap()
-            .len(),
-        1
+    a::matches(
+        &function,
+        function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 1).build(),
+        1,
     );
-    assert_eq!(
-        matcher
-            .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 0).build())
-            .unwrap()
-            .len(),
-        0
+    a::none(
+        &function,
+        function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 0).build(),
     );
 }
 
@@ -1474,12 +1204,10 @@ fn function_arg_stack_rejects_wrong_offset() {
         "wrong offset must not match the registered stack carrier"
     );
     // Sanity: the correct offset still matches.
-    assert_eq!(
-        matcher
-            .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 1).build())
-            .unwrap()
-            .len(),
-        1
+    a::matches(
+        &function,
+        function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 1).build(),
+        1,
     );
 }
 
@@ -1496,8 +1224,7 @@ fn function_arg_does_not_match_non_carrier() {
     let v = b.read_variable(&rax).unwrap();
     b.build_return(Some(v), &[]).unwrap();
     let function = b.build().unwrap();
-    let matcher = Matcher::new(&function);
-    assert_eq!(matcher.find_all(&function_arg(0).build()).unwrap().len(), 0);
+    a::none(&function, function_arg(0).build());
 }
 
 /// A `Call` clobbering a tracked 64-bit register puts a value output at a
@@ -1667,13 +1394,7 @@ fn branching_fn() -> strider_ir::Function {
 #[test]
 fn entry_matches_exactly_one() {
     let function = branching_fn();
-    assert_eq!(
-        Matcher::new(&function)
-            .find_all(&entry().build())
-            .unwrap()
-            .len(),
-        1,
-    );
+    a::matches(&function, entry().build(), 1);
 }
 
 /// Cross-checked against the same `walk_kind` sweep the Python-facing
@@ -1685,13 +1406,7 @@ fn region_matches_every_region_node() {
         .walk_kind(|k| matches!(k, NodeKind::Region))
         .count();
     assert_eq!(expected, 4, "sanity: entry + true + false + join regions");
-    assert_eq!(
-        Matcher::new(&function)
-            .find_all(&region().build())
-            .unwrap()
-            .len(),
-        expected,
-    );
+    a::matches(&function, region().build(), expected);
 }
 
 #[test]
@@ -1712,13 +1427,7 @@ fn region_any_input_reaches_entry_predecessor() {
 #[test]
 fn region_input_slot_zero_reaches_entry_predecessor() {
     let function = branching_fn();
-    assert_eq!(
-        Matcher::new(&function)
-            .find_all(&region().input(0, entry()).build())
-            .unwrap()
-            .len(),
-        1,
-    );
+    a::matches(&function, region().input(0, entry()).build(), 1);
 }
 
 /// A typed value sub can never bind a `Region`'s Control predecessor edge:
@@ -1726,13 +1435,7 @@ fn region_input_slot_zero_reaches_entry_predecessor() {
 #[test]
 fn region_any_input_typed_value_sub_matches_nothing() {
     let function = branching_fn();
-    assert_eq!(
-        Matcher::new(&function)
-            .find_all(&region().any_input(int_const(0u128)).build())
-            .unwrap()
-            .len(),
-        0,
-    );
+    a::none(&function, region().any_input(int_const(0u128)).build());
 }
 
 fn indirect_branch_with_mode(target_addr: u64, mode: u64) -> strider_ir::Function {
@@ -1748,27 +1451,16 @@ fn indirect_branch_with_mode(target_addr: u64, mode: u64) -> strider_ir::Functio
 #[test]
 fn indirect_branch_isa_mode_matches_only_a_switching_branch() {
     let switching = indirect_branch_with_mode(0x4000, 1);
-    assert_eq!(
-        Matcher::new(&switching)
-            .find_all(&indirect_branch().isa_mode(int_const(1u128)).build())
-            .unwrap()
-            .len(),
-        1
+    a::matches(
+        &switching,
+        indirect_branch().isa_mode(int_const(1u128)).build(),
+        1,
     );
-    assert_eq!(
-        Matcher::new(&switching)
-            .find_all(&indirect_branch().isa_mode(int_const(0u128)).build())
-            .unwrap()
-            .len(),
-        0
+    a::none(
+        &switching,
+        indirect_branch().isa_mode(int_const(0u128)).build(),
     );
 
     let plain = indirect_branch_to(0x4000);
-    assert_eq!(
-        Matcher::new(&plain)
-            .find_all(&indirect_branch().isa_mode(anything()).build())
-            .unwrap()
-            .len(),
-        0
-    );
+    a::none(&plain, indirect_branch().isa_mode(anything()).build());
 }

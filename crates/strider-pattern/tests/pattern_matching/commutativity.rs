@@ -1,4 +1,6 @@
+use strider_ir::node::NodeKind;
 use strider_ir::{FloatBinaryOp, FloatCmpOp, IRBuilderExt, IntBinaryOp, IntCmpOp};
+use strider_pattern::matcher::{KindSpec, MatcherBuilder, PatValueRef};
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
@@ -752,5 +754,78 @@ fn float_lt_does_not_commute() {
             float_const(1.0_f64.to_bits()),
         )
         .into_pattern(),
+    );
+}
+
+/// A commutative node with ONE pinned operand still reaches the other slot,
+/// so the same query cannot answer differently by which slot it names.
+#[test]
+fn single_pinned_operand_reaches_both_slots() {
+    let function = shapes::int_bin(1, 2, IntBinaryOp::Add);
+    for slot in [0, 1] {
+        let mut b = MatcherBuilder::new();
+        let k = MatchPat::compile(int_const(2u128), &mut b);
+        let n = b.node(KindSpec::Exact(NodeKind::IntBinaryOp(IntBinaryOp::Add)));
+        b.input(n, slot, k);
+        b.value_output(n, 0);
+        a::matches(&function, b.finish(), 1);
+    }
+}
+
+/// Structurally identical capture-free operands bind the same either way, so
+/// the swapped ordering is skipped and the enumeration stays linear.
+#[test]
+fn symmetric_wildcard_tree_completes() {
+    const DEPTH: u32 = 7;
+    let mut t = Tb::empty();
+    let mut next = 0u64;
+    let root = ir_add_tree(&mut t, DEPTH, &mut next);
+    let function = t.ret_val(root);
+
+    let mut b = MatcherBuilder::new();
+    pat_add_tree(&mut b, DEPTH);
+    a::matches(&function, b.finish(), 1);
+}
+
+fn ir_add_tree(t: &mut Tb, depth: u32, next: &mut u64) -> strider_ir::node::ValueId {
+    if depth == 0 {
+        *next += 1;
+        return t.u64(*next);
+    }
+    let l = ir_add_tree(t, depth - 1, next);
+    let r = ir_add_tree(t, depth - 1, next);
+    t.add(l, r)
+}
+
+fn pat_add_tree(b: &mut MatcherBuilder, depth: u32) -> PatValueRef {
+    if depth == 0 {
+        let o = b.leaf(KindSpec::Any);
+        b.set_output_any(o);
+        return o;
+    }
+    let l = pat_add_tree(b, depth - 1);
+    let r = pat_add_tree(b, depth - 1);
+    b.binary(IntBinaryOp::Add, l, r)
+}
+
+/// Operands that differ, or that bind, keep both orderings.
+#[test]
+fn asymmetric_and_capturing_operands_keep_both_orders() {
+    let function = shapes::add_consts(5, 3);
+    let k = Capture::new();
+    a::matches(
+        &function,
+        int_add(anything().capture(k), anything()).into_pattern(),
+        2,
+    );
+    a::matches(
+        &function,
+        int_add(int_const(5u128), anything()).into_pattern(),
+        1,
+    );
+    a::matches(
+        &function,
+        int_add(anything(), int_const(5u128)).into_pattern(),
+        1,
     );
 }
