@@ -3,6 +3,9 @@ name: ci
 on:
   push:
     branches: [master, develop, 'fix/**', 'release/**']
+    # Without this a release tag runs nothing: a branch filter does not match
+    # a tag push, so `v0.2.0` would ship ungated.
+    tags: ['v*']
   pull_request:
 
 env:
@@ -30,6 +33,22 @@ jobs:
       # Release too: a `debug_assert` that fires only in debug, and a test that
       # depends on one, both hide from the debug run alone.
       - run: cargo test --workspace --release
+      # `clippy --all-targets` compiles the examples, it never runs them.
+      # `analyze_kernel` and `dhat_analyze` need an external kernel image
+      # (argv[1] / $STRIDER_KERNEL) and panic without one, so they stay
+      # build-only; these three are self-contained. All of them resolve
+      # `fixtures/` relative to the working directory, which must be the
+      # workspace root.
+      - run: cargo run --release -p strider-orchestrator --example dump_arch_cmps
+      - run: cargo run --release -p strider-orchestrator --example orchestrator_demo
+      - run: cargo run --release -p strider-orchestrator --example memory_demo
+      # The two demos write .dot/.html into the working directory. `.gitignore`
+      # covers those names; a new output name that it does not cover fails here
+      # rather than being committed by someone later.
+      - name: the examples leave the tree clean
+        run: |
+          git status --porcelain
+          test -z "$(git status --porcelain)"
       - run: cargo doc --workspace --no-deps
 
   # The floor `Cargo.toml` declares. Without a job on it the declaration rots:
@@ -62,4 +81,24 @@ jobs:
       - run: uv sync --group dev
       - run: uv run maturin develop
       - run: uv run pyright
+      - run: uv run pytest
+
+  # `maturin develop` builds debug. The wheel that ships is a release build,
+  # where a different codegen path and `[profile.release] overflow-checks`
+  # apply, so the suite runs against one too. The debug job above stays: it is
+  # the faster signal on the main path.
+  python-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # The fixture binaries are LFS-backed; without this they check out as
+          # pointer text and every test that loads one fails.
+          lfs: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --group dev
+      - run: uv run maturin develop --release
       - run: uv run pytest

@@ -8,6 +8,29 @@ The shape each API settled into is in
 
 ### Breaking, Python
 
+- `add_elf` applies relocations by default (`apply_relocations=True`), as
+  `load_elf` already did. The flag also selects what is mapped -- `True` every
+  allocatable section, `False` code and read-only data only -- so the two
+  defaults disagreeing served a different image from the same file. Pass
+  `apply_relocations=False` for the old behaviour.
+
+- A pattern over 256 nodes, or a `one_of` nested more than 256 levels deep, is
+  refused with a catchable `StriderError` when the query runs. The matcher is
+  continuation-passing -- a node's later operands match inside the deepest
+  frame of its earlier operands' subtrees -- so stack depth tracks pattern
+  NODES, not pattern depth, and nothing bounded it: measured in debug, a
+  551-node chain and a 1023-node balanced tree both overflowed the stack and
+  aborted the interpreter, and nested `one_of` overflowed at lowering time.
+  Split a larger pattern and match the parts separately.
+
+- The operand-index setters reject an index past 1,048,576: `CallPat.arg`,
+  `CallOtherPat.arg`, `RetPat.ret_val`, `PhiPat.phi_input`,
+  `MemPhiPat.phi_input`, and the generic `.input()`. They passed a `usize`
+  straight into `head_len + idx`. In debug that panicked as a `PanicException`;
+  the shipped wheel had no `[profile.release]`, so overflow checks were off and
+  the index wrapped into the `sp` slot with no error at all. `.input()` also
+  rejects the value that aliased the any-input sentinel.
+
 - A `Lifter` decodes only on the thread that built it. Calling `analyze`,
   `build_cfg`, `optimize`, `pcode_at`, `reg`, `reg_name`, `call_other_abi`,
   `user_op_names`, or a renderer taking `lifter=`, from another thread raises a
@@ -168,6 +191,13 @@ The shape each API settled into is in
   compare equal or collide in a dict while being mutually unusable.
 
 ### Breaking, Rust
+
+- `TemplatePat` is implemented for `Captured<Var>` alone, so `.capture()` on a
+  composite template is a compile error. The blanket impl let
+  `int_add(var(a), var(b)).capture(c)` compile and silently discard the `Add`
+  and both operands, leaving an RHS that replaced the match with `c`'s binding.
+- `Graph::retain_reachable` is `retain_reachable_stale_cache`: rebuilding the
+  node cache is the caller's, which the old name did not say.
 
 - `OwnedElf::file` is gone and `is_arm_be8` returns `Result<bool>`. Both parse
   the mapping, and a file rebuilt under a live handle makes that a SIGBUS no
@@ -333,6 +363,12 @@ The shape each API settled into is in
 
 ### Added
 
+- The root `Cargo.toml` declares `[profile.release]` with
+  `overflow-checks = true`, so an arithmetic slip in the shipped wheel traps
+  instead of wrapping into a silently wrong slot or address.
+  `debug-assertions` stays off: the debug and `cargo test --release` runs
+  already gate on those.
+
 - A converged CFG reports incompleteness through four channels on
   `AnalyzeResult`, not one: `unresolved_indirect_branches`,
   `unverified_seeded_sites`, `isa_mode_conflicts` and
@@ -497,6 +533,24 @@ The shape each API settled into is in
 
 ### Performance
 
+- Reading `CfgOptions.known_targets` or `.call_other_abis` no longer copies the
+  table. Both are cached `mappingproxy` views over one `Arc`-shared map, where a
+  `#[pyo3(get)]` deep-copied the whole table on every read and `_api` read them
+  on every call: `analyze` with 20,000 known targets cost 32.0 ms against
+  1.6 ms, plus 6.8 ms to seat the seeds. The views are read-only -- rebinding
+  the attribute raises `AttributeError`, item assignment `TypeError` -- where
+  the copy silently absorbed a write.
+- Dead-branch elimination memoizes what escapes as well as what does not. It
+  kept only the walk's false verdicts, and the positive memo it did keep proves
+  escape only along routes avoiding every constant branch's dead arm, so a
+  shape where each gate's live arm reaches `Return` only by crossing another
+  gate's dead arm paid a whole-CFG walk per gate: 2n+1 walks at n = 8, 16, 32
+  and 64. The walk now attributes a verdict to every node it covers and drops
+  only the memos whose route crossed a branch that has since folded. One walk
+  at every n.
+- Applying relocations reuses one scratch buffer instead of allocating per
+  relocation site.
+
 - A partial read no longer walks every region with a lower start. One region
   spanning the image held the prefix maximum above every interior address, so
   the walk never terminated early: 2.8 ms for a single read at 262,144 regions.
@@ -659,49 +713,21 @@ The shape each API settled into is in
   function optimised once with `escape_analysis` kept edges only that assumption
   justified, and re-optimising with `AssumptionOptions.none()` inherited them.
   The relaxation decides whether to forward; the rewire uses the structural
-  answer, as `FunctionArgDetect` already did.
+  answer, as `FunctionArgDetect` already did. The structural answer is now the
+  whole of it: the narrowing analyzer had kept `stack_global_disjoint`, whose
+  one reader makes a stack address and a global disjoint, and
+  `noalias_allocators`, which steps the walk past a listed allocator `Call` on
+  frame privacy alone, so the IR handed back still asserted a disjointness
+  `AssumptionOptions.none()` refuses and `FunctionArgDetect` then read the
+  shortened chain as clean. It runs with every claim off, and discards a heap
+  address class when the allocator set is empty, since the decompose memo it
+  shares with the read-only analyzer would otherwise answer disjoint for two
+  distinct heap bases.
 
 - A call's collected stack arguments reported a wide store's value for a slot a
   nearer store had partly overwritten, and dropped the overwriting store. The
   slot ends the prefix instead.
 
-- The x86-64 32-bit destinations that were still missing their zero-extension
-  have it: `RDPKRU`, `LOOP` / `LOOPcc` / `JECXZ` under an address-size override,
-  the `fsgsbase` and `rdpid` reads, `RDRAND`, `RDSEED`, `CMPXCHG8B`, and 30 VEX
-  and EVEX constructors including `VCVTS{S,D,H}2{,U}SI`, `VMOVD`, `VMOVMSKP{S,D}`
-  and the `KMOV` family.
-
-- Nine x86-64 constructors named their ModRM.rm operand with the raw register
-  field, which ignores `REX.B`, so `rdfsbase r9d` read and wrote `ECX`.
-  `rdfsbase`, `rdgsbase`, `rdpid`, `wrfsbase`, `wrgsbase`, `incsspd` / `incsspq`
-  and `rdsspd` / `rdsspq` name the register the encoding does.
-
-- AArch64 `frint32x`, `frint32z`, `frint64x` and `frint64z` zero the
-  destination's upper lanes, which their unrestricted siblings already did. All
-  twenty constructors were missing it.
-
-- `ParserWalker::setOutOfBandState` checked none of the bounds every other
-  walked operand checks, and could evaluate against a pointer the walk never
-  wrote. A memory reader that overstates its read is an error rather than a
-  panic across the FFI boundary.
-
-- AArch64 `usdot`, `sudot` and `bfdot` **by element** decode, in both
-  endiannesses. `usdot` and `bfdot` used to lift with whichever register the
-  previous instruction left in the lane operand's slot, silently: `usdot v0.4s,
-  v1.16b, v2.4b[0]` after two `ldr q` read `v7`, the register the first load
-  wrote. `sudot` did not decode at all, its constructors unreachable. Two
-  defects sat on top of each other. The six dot constructors passed the
-  display-only `Reg.Elem[index]` subtable into the pcodeop instead of reading
-  the lane with `SIMD_PIECE(Re_VPR128.H, vIndexHL:1)`, the convention `sdot` /
-  `udot` / `fcmla` already use; and `vIndexHL` carried two size-keyed
-  alternatives, one indexing by `H:L` and one by `H` alone, so a correct
-  operand alone would still have read the WRONG LANE. `llvm-mc` puts USDOT,
-  SUDOT and BFDOT by element all on `H:L`, and `vIndexHL` is now that one
-  unconditional form. 88 `llvm-mc` encodings (three mnemonics, four lanes,
-  three registers including `v18` and `v31` for the M bit, both `Q`) decode to
-  the right register and lane on `aarch64` and `aarch64be`; an A/B of 4,325,328
-  decodes per side across eight arch/mode combinations shows no regression and
-  170 newly decoding instructions, all of them these three.
 - An ARM `VLD2/3/4` or `VST2/3/4` multiple-structures instruction no longer
   fails the whole function. The register the p-code addresses through the
   REGISTER space is picked by a loop-carried pointer, so it does not fold to a
@@ -775,20 +801,6 @@ The shape each API settled into is in
   before, so the other six left dead fall-through code reachable. Correctness
   only: across 21 PowerPC kernels, 321,048 trap instructions in 125,166,009
   words, none of the six new masks occurs.
-- Thumb `sev` / `sev.w` raise `SendEvent`, as the A32 form already did. They
-  previously emitted nothing, so a wait/signal pair read as a no-op on one
-  encoding and not the other. This is the branch's widest change on real code:
-  3,657 of 34,603 functions in a Thumb kernel gain a node. `SendEvent` is
-  classified pure, so nothing else about those functions moves.
-- A32 `csdb` decodes as itself instead of falling through to an `msr` with an
-  empty field mask, which used to make `cpsr` a tracked varnode and mint three
-  temporaries per site. 101 instructions across 75 functions in an ARM kernel.
-- x86-64 `rdtsc`, `rdpmc` and `xgetbv` kept the caller's upper 32 bits in RAX
-  and RDX, and carried a data dependency on the incoming register that the
-  machine does not have. Intel SDM Vol. 2B: in 64-bit mode these clear the high
-  half. A pattern asking "does this depend on the caller's RAX?" answered yes.
-  `rdtscp` is the exception and stays opaque: its sla constructor writes no
-  register at all, so its whole result comes from the CallOther ABI table.
 - `OptimizerPipeline` is no longer thread-pinned. Touching one from another
   thread raised `pyo3_runtime.PanicException`, which derives from
   `BaseException` and so escapes `except Exception`.
@@ -797,9 +809,6 @@ The shape each API settled into is in
 - `Cfg.unverified_seeded_sites()` on a `build_cfg` result holds every site you
   seeded; its docstring, its `.pyi` stub and both copies of `is_complete`'s
   all claimed it was always empty there.
-- AArch64 `addv` into a byte destination did not zero the rest of the vector
-  register, so `__builtin_popcount` read the surviving `cnt` lanes back and
-  returned a value with them in it.
 - Sign-extending a constant into `I256` / `I512` folded through `i128` and left
   the upper half zero. It emits a real `Extend` past 128 bits, matching what
   the optimizer's own fold does.
@@ -845,9 +854,6 @@ The shape each API settled into is in
   PPC64 stack argument was read at the wrong offset.
 - `software_udf` does not return; it was classified pure, so the lift walked
   past an ARM permanently-undefined instruction into whatever followed.
-- MIPS64 `clz` / `clo` counted the whole 64-bit register rather than the word,
-  and ARM `vcmp` left FPSCR's C clear when unordered, so a float `<=` was true
-  for NaN. Both in the vendored Sleigh specs.
 - A masked switch index whose real bound lives on a loop back edge failed the
   whole function. Such a site is now abandoned and reported, as is any resolved
   target that turns out not to be code: `analyze` no longer errors on an
@@ -914,22 +920,6 @@ The shape each API settled into is in
 - A `LOAD` from the constant space was lifted as an opaque memory read instead
   of the constant its address encodes, so every PowerPC `rlwimi` / `rldimi` /
   `rldic` / `rldcr` mask stayed unknown through the whole pipeline.
-- MIPS64 `drotrv` rotated by `32 - shift` on a 64-bit value, degrading to a
-  plain logical shift right for counts above 32. In the vendored Sleigh specs.
-- The AArch64 `FRINT{A,I,M,N,P,X,Z}` family lifted as a float-to-INTEGER
-  conversion. Sleigh's `trunc()` is p-code `FLOAT_TRUNC`, and one constructor
-  per operand shape carried it for all seven rounding modes, so `ceil(2.5)`
-  answered the integer 2 where the hardware gives 3.0, the wrong domain as well
-  as the wrong direction, on what gcc -O2 inlines
-  `ceil`/`floor`/`round`/`trunc`/`rint`/`nearbyint` to. p-code can express only
-  three of the seven modes, so the family now lifts opaquely through a pure
-  `NEON_frint` user-op: the function still lifts and only the rounded value is
-  unknown, where before it was wrong. In the vendored Sleigh specs, whose own
-  test annotations already marked these `--status fail`.
-- x86 `PSLLD` / `PSLLQ` shifted each vector lane by a different per-lane count
-  instead of the one count the ISA reads from `SRC[63:0]`, and `PSRAD` took its
-  count from the whole 128-bit operand, so a nonzero upper half saturated every
-  lane to the sign. In the vendored Sleigh specs.
 - Splitting a region re-pointed every incoming edge at the first half,
   including an edge seated for an address the second half owns. The successor
   was dropped and the function's lift then failed outright.
@@ -960,11 +950,6 @@ The shape each API settled into is in
   validator rejects the rest.
 - Removing a node input evicted the dedup entry before checking the index, so
   an out-of-range removal left an unchanged node uncached.
-- An out-of-bounds write past the Sleigh parse state: `allocateOperand` checked
-  none of the fixed sizes `ParserContext::initialize` hands out, so an
-  instruction whose parse descended further stored through the next node's
-  `resolve` pointer. Thumb-2 `0xEC8x`..`0xECFx` segfaults a fresh engine on
-  one `lift_one`. In the vendored submodule.
 - `Cfg.isa_mode_conflicts()` and `Cfg.interior_branch_targets()` in Python
   re-read the final CFG, discarding the accumulation `analyze` performs across
   the resolver's rounds, so a conflict raised in an early round and absent from
@@ -979,11 +964,6 @@ The shape each API settled into is in
   as 0 and the shift silently did nothing. P-code tests the full count against
   `8 * sizeout`. x86 SIMD shift-by-register (`psrad xmm, xmm` and friends) is
   exactly that shape.
-- The big-endian ARM VFP register file did not overlay: reversed register blocks
-  line up only if they END together, and the 128-byte `s` block was based with
-  the 256-byte `d` block, so `s0` landed inside `d16` and a write through `s0`
-  was invisible to a read of `d0`. Affects `ARM7_be` and `ARM8_be`. In the
-  vendored Sleigh specs.
 - Sub-register reads and writes on `arm_be_kernel` used the image's data
   endianness rather than the register file's, so every sub-register access took
   the wrong half. BE8 is byte-swapped instructions over a little-endian register
@@ -991,10 +971,6 @@ The shape each API settled into is in
 - A write into a tracked container wider than 16 bytes was refused because the
   mask had no `u128` to live in, making any function mixing 256-bit and 128-bit
   VEX forms unanalysable. Masks are built limb-wise at the container's width.
-- The Sleigh parse cache was not invalidated on an out-of-band context write,
-  and not flushed when a context variable was re-pinned, so an address could
-  decode against a stale constructor. Both in the vendored submodule.
-
 - One client sending a byte at a time, never finishing its request line, held
   the explorer's single-threaded loop indefinitely: `shutdown()` did not return
   and the interpreter could not exit, so a REPL in that state needed `SIGKILL`.
@@ -1046,6 +1022,169 @@ The shape each API settled into is in
   answers once per operand order, so every count whose noun was "sites" or
   "pairs" was doubled, and one demo printed a number that disproved its own
   comment.
+
+- A commutative arity-2 node with only ONE pinned operand tried a single
+  ordering, so pinning slot 0 and pinning slot 1 answered differently for the
+  same query. Both orderings are tried whenever the node commutes. The swapped
+  one is skipped only where it provably yields the same bindings: the two
+  operand vertices are the same vertex, or structurally equal with no capture,
+  identity pin or predicate anywhere in either cone.
+
+- A `.when()` predicate nested into another pattern fell out of the GC graph
+  while the closures still owned it, so a reference cycle through one built
+  that way was never collected. A cached pattern replays its predicate handles
+  into the open scope.
+
+- A query that raises before doing any work -- a bad `constraints` argument, a
+  `.when()` on a rewrite LHS -- restores its one-shot pattern instead of
+  burning it, so the next `find_all` no longer reports a query that never ran.
+
+- `Cfg.fingerprint_pcode` rejects a `Node` whose function another `Cfg` lifted,
+  which it used to answer for with this binary's p-code. A fingerprint is
+  machine addresses, which collide across images; every neighbouring accessor
+  already refused it.
+
+- `explore.shutdown()` called from a worker no longer joins the caller's own
+  still-running thread, which cost the whole five-second join deadline.
+
+- An ET_REL `SHT_NOBITS` section whose base plus `sh_size` passes 2^64 left the
+  watermark alone, so later sections stayed seatable while it had already
+  claimed its aligned base: the next allocatable section got that same base and
+  its symbols resolved into the other section's bytes. A crafted object put
+  `.text` and a `.bss` symbol on one address, where reading the `.bss` symbol
+  returned `.text` opcodes as foldable ROM. The overflow branch advances the
+  watermark.
+
+- Equal-start `PT_LOAD`s dedup widest-first, so the region table and the
+  relocation walk no longer disagree. The section walk deduped by base and the
+  segment walk did not, so the table kept the last and the walk patched the
+  first that covered: two loads at one vaddr lost 28 of 32 fetchable bytes.
+
+- A relocation against an out-of-range `st_shndx` is skipped, as
+  `resolve_symbol_target`'s doc already said, rather than patching the bare
+  `st_value` as an address.
+
+- A folded shift follows the p-code rule: a count at or past `8 * sizeout`
+  gives 0. `IntLeft` clamped at 127 instead, which the trailing mask covered
+  below 128 but not at or above it with a 16-byte output, and the wrong folded
+  constant names the wrong register in `register_store_target`. `IntRight` was
+  wrong independently of the count: it masked the input to the output width
+  AFTER shifting rather than before.
+
+- MIPS16e `ext_delay` is a forward-painted context var, so a value committed by
+  one MIPS16 `jal` no longer changes the constant address the next cold entry
+  computes. `mips.sinc` declares it `noflow`, `mips16.sinc` paints it at five
+  `globalset(inst_next, ..)` sites, and one of those reads it into PC-relative
+  address arithmetic.
+
+- `CallingConvention::validate`'s disjointness rules compare byte ranges, so a
+  callee-saved `d8` against an argument `q8` is rejected. Exact varnode
+  equality let that pass while the doc said disjoint and the runtime check was
+  already byte-accurate. The membership and duplicate rules stay exact: they
+  state identity, not disjointness.
+
+- A seed spelled at the machine start keeps its ISA mode. `apply_resolutions`
+  read `known_targets` by exact p-code key, where every other seed-aware read
+  goes through the machine-start fallback that exists because a caller can only
+  spell the machine address. At any dispatch whose `BRANCHIND` is not the
+  instruction's first p-code op -- ARM `bx`, MIPS `jr`, x86 `jmp [mem]` -- the
+  lookup missed, so the arm was seated mode-less and decoded in the flowing
+  mode, which at an interworking `bx` is the mode being switched away from.
+  Neither mode report fired, so `is_complete` answered true and the next round
+  stayed silent.
+
+- A single out-of-range or interior arm no longer costs the whole seeded table.
+  Bad arms drop individually and land on the channel that reports them -- an
+  interior arm on `interior_branch_targets`, a short seat on
+  `unresolved_indirect_branches` -- where before one tail-calling switch case
+  re-deferred the dispatch every round and the interior case recorded nothing.
+
+- An undecodable seeded target freezes only the site that named it, rather than
+  every site naming that address: `undecodable_seeded_targets` carries the
+  site.
+
+- Overlapping code is reported rather than assumed away. The fall-through check
+  is an exact-key lookup, so a decode could step over a region start interior to
+  an instruction it decodes and leave two regions owning one address with
+  different instruction streams, on none of the five channels a caller reads.
+  Region starts stepped over that way are reported as `interior_branch_targets`.
+  No measurable cost: 1.30 s against 1.38 s over 20 builds and ~60k
+  instructions.
+
+- A backslash in a symbol name is escaped rather than read as a line break.
+  `escape_dot_label` passed `\n`, `\l` and `\r` through un-doubled, unable to
+  tell a caller's escape from one arriving inside the symbol names and lifted
+  disassembly it documents as its content: through real Graphviz the label
+  `C:\lib\name` rendered as three lines, losing characters silently. The one
+  caller that hand-emits `\l` per instruction takes `node_raw_label`.
+
+- `validate` rejects a non-phi node that is its own transitive data producer.
+  The walk terminates on it, so nothing noticed, and reverse post-order then
+  yields the node before its own producer. `dominance_frontiers` asserts the
+  root precondition its sibling already asserted: both need `idom(root) ==
+  None` for the climb to pass through the root, and a tree encoding
+  root-as-own-idom silently loses `DF(root)` containing root, which
+  `phi_placement` then reports no error for.
+
+### Fixed - decoder and sla
+
+The vendored Sleigh engine and specs under `externals/rsleigh`, one line per
+mnemonic group. A caller sees these only in the lift of the named instructions.
+
+- AArch64 `usdot` / `sudot` / `bfdot` **by element**: `usdot` and `bfdot` lifted
+  with whichever register the previous instruction left in the lane operand's
+  slot, and read the wrong lane; `sudot` did not decode at all. Both
+  endiannesses, 170 newly decoding instructions.
+- AArch64 `FRINT{A,I,M,N,P,X,Z}` lifted as a float-to-INTEGER conversion, so
+  `ceil(2.5)` answered the integer 2 where the hardware gives 3.0. p-code
+  expresses three of the seven rounding modes, so the family lifts opaquely
+  through a pure `NEON_frint` user-op: unknown rather than wrong.
+- AArch64 `frint32x` / `frint32z` / `frint64x` / `frint64z` did not zero the
+  destination's upper lanes, in all twenty constructors.
+- AArch64 `addv` into a byte destination did not zero the rest of the vector
+  register, so `__builtin_popcount` read the surviving `cnt` lanes back.
+- The big-endian ARM VFP register file did not overlay: the 128-byte `s` block
+  was based with the 256-byte `d` block, so `s0` landed inside `d16` and a write
+  through `s0` was invisible to a read of `d0`. `ARM7_be` and `ARM8_be`.
+- ARM `vcmp` left FPSCR's C clear when unordered, so a float `<=` was true for
+  NaN.
+- Thumb `sev` / `sev.w` emitted nothing where the A32 form raises `SendEvent`,
+  so a wait/signal pair read as a no-op on one encoding and not the other.
+- A32 `csdb` fell through to an `msr` with an empty field mask, making `cpsr` a
+  tracked varnode and minting three temporaries per site.
+- MIPS64 `clz` / `clo` counted the whole 64-bit register rather than the word.
+- MIPS64 `drotrv` rotated by `32 - shift` on a 64-bit value, degrading to a
+  plain logical shift right for counts above 32.
+- x86 `PSLLD` / `PSLLQ` shifted each vector lane by its own count instead of the
+  one count the ISA reads from `SRC[63:0]`, and `PSRAD` took its count from the
+  whole 128-bit operand, so a nonzero upper half saturated every lane.
+- x86-64 `rdtsc` / `rdpmc` / `xgetbv` kept the caller's upper 32 bits in RAX and
+  RDX and carried a data dependency the machine does not have; in 64-bit mode
+  these clear the high half. `rdtscp` stays opaque: its constructor writes no
+  register, so its whole result comes from the CallOther ABI table.
+- Nine x86-64 constructors named their ModRM.rm operand with the raw register
+  field, which ignores `REX.B`, so `rdfsbase r9d` read and wrote `ECX`:
+  `rdfsbase`, `rdgsbase`, `rdpid`, `wrfsbase`, `wrgsbase`, `incsspd` /
+  `incsspq`, `rdsspd` / `rdsspq`.
+- The x86-64 32-bit destinations still missing their zero-extension have it:
+  `RDPKRU`, `LOOP` / `LOOPcc` / `JECXZ` under an address-size override, the
+  `fsgsbase` and `rdpid` reads, `RDRAND`, `RDSEED`, `CMPXCHG8B`, and 30 VEX and
+  EVEX constructors including `VCVTS{S,D,H}2{,U}SI`, `VMOVD`, `VMOVMSKP{S,D}`
+  and the `KMOV` family.
+- `allocateOperand` checked none of the fixed sizes `ParserContext::initialize`
+  hands out, so an instruction whose parse descended further wrote out of
+  bounds. Thumb-2 `0xEC8x`..`0xECFx` segfaults a fresh engine on one `lift_one`.
+- `ParserWalker::setOutOfBandState` checked none of the bounds every other
+  walked operand checks. A memory reader that overstates its read is an error
+  rather than a panic across the FFI boundary.
+- The parse cache was not invalidated on an out-of-band context write, nor
+  flushed when a context variable was re-pinned, so an address could decode
+  against a stale constructor.
+- `BufMemReader::end_off` summed base and buffer length in `u64`, so a region at
+  the top of the space overflowed inside the read callback, where a panic cannot
+  unwind: it aborted the process. The arithmetic is u128. The pin also moves
+  back onto rsleigh's `master`, off a feature branch where a force-push would
+  make every commit in this release unbuildable.
 
 ## 0.1.0
 
