@@ -520,7 +520,7 @@ pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Val
 /// power-of-two-minus-one bound that lets `KnownBits` derive the
 /// per-arm `bound = MASK + 1`.
 ///
-/// `N` must be `> 0` and `< MAX_TABLE_ENTRIES` (currently 256), and
+/// `N` must be `> 0` and `< MAX_TABLE_ENTRIES` (currently 4096), and
 /// must be a power of 2 so the `idx & (N - 1)` mask lets the range
 /// analysis derive bound = `N` via KnownBits.  Returns
 /// the graph, the target (load output), and the SP varnode the

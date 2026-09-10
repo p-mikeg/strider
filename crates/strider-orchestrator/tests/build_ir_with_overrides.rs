@@ -13,13 +13,7 @@ use strider_orchestrator::LiftOptions;
 use strider_target::CallingConvention as TargetCC;
 
 mod common;
-
-/// Same fixture as `tests/per_address_cc.rs::x86_64_call_then_ret`:
-/// `call 0x2000; ret` at 0x1000.
-fn x86_64_call_then_ret() -> (Vec<u8>, u64, u64) {
-    let bytes = vec![0xe8, 0xfb, 0x0f, 0x00, 0x00, 0xc3];
-    (bytes, 0x1000, 0x2000)
-}
+use common::x86_64_call_then_ret;
 
 #[test]
 fn build_ir_with_applies_per_address_override() {

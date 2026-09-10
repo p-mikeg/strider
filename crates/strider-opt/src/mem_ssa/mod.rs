@@ -20,25 +20,25 @@ use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer};
 
-pub(crate) trait MemorySSAWalker {
-    /// Does `def` overlap the location being analysed?
-    ///
-    /// `def` is never a `MemPhi` or `InitialMemory`; the walk handles those
-    /// structurally.  Return `true` for producers you cannot reason about.
-    ///
-    /// `true` terminates the branch with `def` as the nearest clobber;
-    /// `false` advances past `def` to its own memory input.
-    fn def_clobbers(&mut self, function: &Function, def: NodeId) -> bool;
-
-    /// Nearest clobbering definition backward from `mem`'s memory output, the
-    /// `InitialMemory` node when every path is clean, or `mem` itself when
-    /// every path cycles without reaching either.  Read-only.
-    fn find_nearest_clobber(&mut self, function: &Function, mem: NodeId) -> NodeId
-    where
-        Self: Sized,
-    {
-        MemSsaWalk::new(function, self).nearest_clobber(mem)
+/// Nearest clobbering definition backward from `mem`'s memory output, the
+/// `InitialMemory` node when every path is clean, or `mem` itself when every
+/// path cycles without reaching either.  Read-only.
+///
+/// `def_clobbers` answers whether a def overlaps the location being analysed.
+/// It is never asked about a `MemPhi` or `InitialMemory`; the walk handles
+/// those structurally.  Answer `true` for a producer you cannot reason about:
+/// `true` terminates the branch with that def as the nearest clobber, `false`
+/// advances past it to its own memory input.
+pub(crate) fn find_nearest_clobber(
+    function: &Function,
+    mem: NodeId,
+    def_clobbers: &mut dyn FnMut(&Function, NodeId) -> bool,
+) -> NodeId {
+    MemSsaWalk {
+        function,
+        def_clobbers,
     }
+    .nearest_clobber(mem)
 }
 
 /// Repoints a `Load`'s memory input onto `clobber`'s memory output, skipping
@@ -150,16 +150,12 @@ enum Frame {
     Exit(ValueId, Option<Dep>),
 }
 
-struct MemSsaWalk<'f, 'w, W: MemorySSAWalker> {
+struct MemSsaWalk<'f, 'w> {
     function: &'f Function,
-    walker: &'w mut W,
+    def_clobbers: &'w mut dyn FnMut(&Function, NodeId) -> bool,
 }
 
-impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
-    fn new(function: &'f Function, walker: &'w mut W) -> Self {
-        Self { function, walker }
-    }
-
+impl MemSsaWalk<'_, '_> {
     fn nearest_clobber(&mut self, mem: NodeId) -> NodeId {
         let start_mem = self
             .function
@@ -204,7 +200,7 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
                         // Remember the clean root so the caller can name it.
                         *initial_memory = Some(node);
                     }
-                    if !is_phi && !is_initial && self.walker.def_clobbers(self.function, node) {
+                    if !is_phi && !is_initial && (self.def_clobbers)(self.function, node) {
                         memo.insert(
                             cur,
                             Resolve::Done(Resolved {

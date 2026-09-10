@@ -20,24 +20,10 @@ mod common;
 use std::collections::HashSet;
 use strider_ir::{IRViewer, IRWalker};
 
-use strider_pattern::{
-    Capture, CaptureExt, CastMask, Matcher, Pattern, anything, call, initial_var_for,
-};
+use common::{masked, matcher};
+use strider_pattern::{Capture, CaptureExt, anything, call, initial_var_for};
 
 use strider_ir::node::NodeKind;
-
-/// Cast selectivity mirrors `complex_patterns.rs`.
-fn cast_mask() -> CastMask {
-    CastMask::EXTEND | CastMask::TRUNCATE
-}
-
-fn masked(p: Pattern) -> Pattern {
-    p.ignore_casts_mask(cast_mask())
-}
-
-fn matcher(function: &strider_ir::Function) -> Matcher<'_> {
-    Matcher::new(function)
-}
 
 fn function_arg_indices(function: &strider_ir::Function) -> HashSet<u32> {
     function.side_tables().iter_arg_indices().collect()

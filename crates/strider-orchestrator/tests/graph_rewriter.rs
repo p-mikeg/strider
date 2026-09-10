@@ -9,24 +9,7 @@ use strider_opt::{EditFunction, apply_rules_count, rewrite_rule};
 use strider_pattern::{Capture, int_add, int_const, var};
 
 mod common;
-
-fn count_switches(function: &Function) -> usize {
-    function.count_kind(|k| matches!(k, NodeKind::Switch))
-}
-
-fn find_unique_switch(function: &Function) -> strider_ir::node::NodeId {
-    let mut iter = function
-        .walk()
-        .filter(|&nid| matches!(function.node_kind(nid), NodeKind::Switch));
-    let first = iter
-        .next()
-        .expect("fixture must contain exactly one Switch node");
-    assert!(
-        iter.next().is_none(),
-        "fixture has more than one Switch node"
-    );
-    first
-}
+use common::{count_switches, find_unique_switch};
 
 /// Builds `fn() -> u64 { return Add(K, 0); }` without any Sleigh fixture.
 fn add_k_plus_zero(k: u64) -> Function {
