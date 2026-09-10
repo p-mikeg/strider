@@ -91,13 +91,14 @@ impl PcodeConsts {
         use rsleigh::Opcode;
         let a = || self.value_of(insn.inputs.first()?);
         let b = || self.value_of(insn.inputs.get(1)?);
+        let out_size = insn.output.as_ref()?.size;
         match insn.opcode {
             Opcode::Copy => a(),
             Opcode::IntAdd => Some(a()?.wrapping_add(b()?)),
             Opcode::IntSub => Some(a()?.wrapping_sub(b()?)),
             Opcode::IntMul => Some(a()?.wrapping_mul(b()?)),
-            Opcode::IntLeft => Some(a()? << b()?.min(127)),
-            Opcode::IntRight => Some(a()? >> b()?.min(127)),
+            Opcode::IntLeft => Some(shift_left(a()?, b()?, out_size)),
+            Opcode::IntRight => Some(shift_right(a()?, b()?, out_size)),
             Opcode::IntOr => Some(a()? | b()?),
             Opcode::IntAnd => Some(a()? & b()?),
             Opcode::IntXor => Some(a()? ^ b()?),
@@ -107,6 +108,35 @@ impl PcodeConsts {
             _ => None,
         }
     }
+}
+
+/// `opbehavior.cc:411` `OpBehaviorIntLeft`: a count at or past `8 * sizeout`
+/// gives 0, not a shift by a clamped count. Past 128 the trailing [`mask_to`]
+/// would not cover the difference.
+fn shift_left(v: u128, count: u128, out_size: u32) -> u128 {
+    shifted(count, out_size, || {
+        u32::try_from(count).ok().and_then(|c| v.checked_shl(c))
+    })
+}
+
+/// `opbehavior.cc:432` `OpBehaviorIntRight`, which masks the input to the
+/// output width BEFORE shifting: masking only the result keeps bits that were
+/// never in the output.
+fn shift_right(v: u128, count: u128, out_size: u32) -> u128 {
+    shifted(count, out_size, || {
+        u32::try_from(count)
+            .ok()
+            .and_then(|c| mask_to(v, out_size).checked_shr(c))
+    })
+}
+
+/// A count `8 * out_size` or more is zero; so is one past `u128`'s width,
+/// where every kept bit has left the representable range.
+fn shifted(count: u128, out_size: u32, f: impl FnOnce() -> Option<u128>) -> u128 {
+    if count >= u128::from(out_size) * 8 {
+        return 0;
+    }
+    f().unwrap_or(0)
 }
 
 fn mask_to(v: u128, size_bytes: u32) -> u128 {
@@ -225,6 +255,10 @@ mod tests {
         vn(VnSpace::CONST, v, 4)
     }
 
+    fn konst_of(v: u64, size: u32) -> Vn {
+        vn(VnSpace::CONST, v, size)
+    }
+
     fn op(opcode: Opcode, out: Option<Vn>, ins: &[Vn]) -> rsleigh::Insn {
         rsleigh::Insn {
             opcode,
@@ -312,6 +346,47 @@ mod tests {
         c.observe(at(0x10, 0), &op(Opcode::Copy, Some(t), &[konst(7)]));
         c.observe(at(0x10, 1), &op(Opcode::IntAdd, Some(t), &[t, konst(1)]));
         assert_eq!(c.value_of(&t), Some(8));
+    }
+
+    /// Sleigh returns 0 for a count at or past the output width. A count past
+    /// 128 with a 16-byte output outruns the trailing mask, so a clamp names a
+    /// register the instruction never wrote.
+    #[test]
+    fn a_shift_count_past_the_output_width_folds_to_zero() {
+        let wide = vn(VnSpace::UNIQUE, 1000, 16);
+        let narrow = vn(VnSpace::UNIQUE, 1100, 4);
+        let mut c = PcodeConsts::default();
+        c.observe(
+            at(0x10, 0),
+            &op(Opcode::IntLeft, Some(wide), &[konst(1), konst(200)]),
+        );
+        assert_eq!(c.value_of(&wide), Some(0));
+        c.observe(
+            at(0x10, 1),
+            &op(
+                Opcode::IntRight,
+                Some(narrow),
+                &[konst_of(0x1_0000_0000, 8), konst(32)],
+            ),
+        );
+        assert_eq!(c.value_of(&narrow), Some(0));
+    }
+
+    /// `(in1 & calc_mask(sizeout)) >> in2`: masking after the shift instead
+    /// keeps bits that were never in the output.
+    #[test]
+    fn a_right_shift_masks_the_input_to_the_output_width() {
+        let out = vn(VnSpace::UNIQUE, 1000, 1);
+        let mut c = PcodeConsts::default();
+        c.observe(
+            at(0x10, 0),
+            &op(
+                Opcode::IntRight,
+                Some(out),
+                &[konst_of(0xff00, 8), konst(4)],
+            ),
+        );
+        assert_eq!(c.value_of(&out), Some(0));
     }
 
     #[test]
