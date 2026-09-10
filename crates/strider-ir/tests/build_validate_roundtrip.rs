@@ -327,12 +327,10 @@ fn indirect_branch_placeholder_validates() {
 #[test]
 fn opaque_ops_validate() {
     make_empty_fn(|b| {
-        let seg = b.build_int_const(0x10u64, ValueType::I16)?;
-        let off = b.build_int_const(0x20u64, ValueType::I32)?;
-        let addr = b.build_segment_op(0, seg, off, ValueType::I32)?;
-        let pooled = b.build_cpool_ref(&[addr], ValueType::I32)?;
+        let seed = b.build_int_const(0x10u64, ValueType::I32)?;
+        let pooled = b.build_cpool_ref(&[seed], ValueType::I32)?;
         let obj = b.build_new(&[pooled], ValueType::I32)?;
         Ok(obj)
     })
-    .expect("segment_op / cpool_ref / new must validate");
+    .expect("cpool_ref / new must validate");
 }

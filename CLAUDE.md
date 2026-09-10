@@ -159,7 +159,7 @@ Dev-dependencies are not in that graph, and are not a DAG:
 - Float: `FloatConst(u64)`, `FloatUnaryOp`, `FloatBinaryOp`, `FloatCmpOp`.
 - Conversions: `IntToFloat`, `FloatToInt`, `FloatToFloat`, `IntBitsToFloat`,
   `FloatBitsToInt`.
-- Opaque: `SegmentOp { op_id }`, `CPoolRef`, `New`.
+- Opaque: `CPoolRef`, `New`.
 
 Op sub-enums (`node/ops.rs`): `IntUnaryOp{Neg}`;
 `IntBinaryOp{Add,And,Or,Xor,Div,Sdiv,Rem,Srem,ShiftRight,

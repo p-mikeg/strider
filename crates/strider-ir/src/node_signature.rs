@@ -34,8 +34,6 @@ pub(crate) enum SlotRole {
     Arg,
     Cond,
     Ref,
-    Seg,
-    Off,
     Ret,
     In,
 }
@@ -144,8 +142,6 @@ const SP: Slot = slot(AnyInt, "sp", R::Sp);
 // clobbered registers a `Call` outputs (`ANY_VAL`).
 const ARG: Slot = slot(AnyValue, "arg", R::Arg);
 const RET: Slot = slot(AnyValue, "ret", R::Ret);
-const SEG: Slot = slot(AnyInt, "seg", R::Seg);
-const OFF: Slot = slot(AnyInt, "off", R::Off);
 const REF: Slot = slot(AnyInt, "ref", R::Ref);
 // Per-predecessor Phi input.
 const IN_PHI: Slot = slot(AnyValue, "in", R::In);
@@ -247,7 +243,6 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
             inputs: [CTRL, MEM]; in_tail: ARG,
             outputs: [CTRL, MEM]; out_tail: ANY_VAL,
         ),
-        NodeKind::SegmentOp { .. } => sig!(inputs: [SEG, OFF], outputs: [INT_VAL]),
         NodeKind::CPoolRef => sig!(inputs: []; in_tail: REF, outputs: [INT_VAL]),
         NodeKind::New => sig!(inputs: []; in_tail: ARG, outputs: [INT_VAL]),
     }
@@ -502,7 +497,6 @@ mod tests {
             NodeKind::IntBitsToFloat,
             NodeKind::FloatBitsToInt,
             NodeKind::CallOther { user_op_id: 0 },
-            NodeKind::SegmentOp { op_id: 0 },
             NodeKind::CPoolRef,
             NodeKind::New,
         ]
@@ -546,9 +540,8 @@ mod tests {
             NodeKind::IntBitsToFloat => 29,
             NodeKind::FloatBitsToInt => 30,
             NodeKind::CallOther { .. } => 31,
-            NodeKind::SegmentOp { .. } => 32,
-            NodeKind::CPoolRef => 33,
-            NodeKind::New => 34,
+            NodeKind::CPoolRef => 32,
+            NodeKind::New => 33,
         }
     }
 
