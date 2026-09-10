@@ -120,8 +120,20 @@ impl Default for BuiltCallingConvention {
 /// Far outside any real architecture's register file.
 pub(crate) const SYNTHETIC_STACK_VN_OFFSET: u64 = 0xFFFF_FFFF_FFFF_0000;
 
-fn first_in_both<'a>(a: &'a [rsleigh::Vn], b: &[rsleigh::Vn]) -> Option<&'a rsleigh::Vn> {
-    a.iter().find(|vn| b.contains(vn))
+/// Byte ranges intersecting inside one address space.  `u128` because
+/// `addr_off + size` is exact only there, as in `preserves_all_bytes_of`.
+fn vns_overlap(a: &rsleigh::Vn, b: &rsleigh::Vn) -> bool {
+    a.addr_space == b.addr_space
+        && u128::from(a.addr_off) < u128::from(b.addr_off) + u128::from(b.size)
+        && u128::from(b.addr_off) < u128::from(a.addr_off) + u128::from(a.size)
+}
+
+/// First entry of `a` sharing a byte with any entry of `b`.  Overlap rather
+/// than equality: `d8` and ARM's `q8` that contains it are one register file
+/// location under two names, so a rule saying "disjoint" has to see it.
+fn first_overlapping<'a>(a: &'a [rsleigh::Vn], b: &[rsleigh::Vn]) -> Option<&'a rsleigh::Vn> {
+    a.iter()
+        .find(|vn| b.iter().any(|other| vns_overlap(vn, other)))
 }
 
 fn first_dup(list: &[rsleigh::Vn]) -> Option<&rsleigh::Vn> {
@@ -271,6 +283,9 @@ impl BuiltCallingConvention {
     /// and [`Default`] builds one directly, so a convention reaching the
     /// lifter has not necessarily been through here.
     ///
+    /// Disjointness is over BYTES, not varnode identity, so a container and
+    /// the register it holds count as the same storage.
+    ///
     /// - `callee_saved_regs` is disjoint from `arg_passing_regs`,
     ///   `arg_passing_regs_float`, `ret_val_regs`, and `ret_val_regs_float`
     /// - `ret_val_regs` and `ret_val_regs_float` are disjoint
@@ -304,10 +319,10 @@ impl BuiltCallingConvention {
             ("arg_passing_regs", &self.arg_passing_regs),
             ("arg_passing_regs_float", &self.arg_passing_regs_float),
         ] {
-            if let Some(vn) = first_in_both(list, &self.callee_saved_regs) {
+            if let Some(vn) = first_overlapping(list, &self.callee_saved_regs) {
                 return Err(anyhow::anyhow!(
-                    "BuiltCallingConvention: varnode {vn:?} appears in both \
-                     {list_name} and callee_saved_regs (a single varnode cannot be \
+                    "BuiltCallingConvention: varnode {vn:?} in {list_name} shares \
+                     bytes with callee_saved_regs (a single register cannot be \
                      both caller-supplied and callee-preserved)",
                 ));
             }
@@ -319,30 +334,35 @@ impl BuiltCallingConvention {
             .iter()
             .chain(self.ret_val_regs_float.iter())
         {
-            if self.callee_saved_regs.contains(vn) {
+            if self
+                .callee_saved_regs
+                .iter()
+                .any(|saved| vns_overlap(vn, saved))
+            {
                 return Err(anyhow::anyhow!(
-                    "BuiltCallingConvention: varnode {vn:?} appears in both \
-                     ret_val_regs/ret_val_regs_float and callee_saved_regs",
+                    "BuiltCallingConvention: varnode {vn:?} in \
+                     ret_val_regs/ret_val_regs_float shares bytes with \
+                     callee_saved_regs",
                 ));
             }
         }
         // Integer and float returns are physically distinct register files on
         // every supported arch.  An argument register may legitimately also be
         // a return register: x86_64 SysV RDX is 3rd arg and 2nd int return.
-        if let Some(vn) = first_in_both(&self.ret_val_regs, &self.ret_val_regs_float) {
+        if let Some(vn) = first_overlapping(&self.ret_val_regs, &self.ret_val_regs_float) {
             return Err(anyhow::anyhow!(
-                "BuiltCallingConvention: varnode {vn:?} appears in both \
-                 ret_val_regs and ret_val_regs_float (integer and float \
-                 return registers are physically distinct)",
+                "BuiltCallingConvention: varnode {vn:?} in ret_val_regs shares \
+                 bytes with ret_val_regs_float (integer and float return \
+                 registers are physically distinct)",
             ));
         }
         // Float ABI position `j` lands at `arg_passing_regs.len() + j`, which
         // only holds while the two lists name different registers: one register
         // in both would emit the same value as two different arguments.
-        if let Some(vn) = first_in_both(&self.arg_passing_regs, &self.arg_passing_regs_float) {
+        if let Some(vn) = first_overlapping(&self.arg_passing_regs, &self.arg_passing_regs_float) {
             return Err(anyhow::anyhow!(
-                "BuiltCallingConvention: varnode {vn:?} appears in both \
-                 arg_passing_regs and arg_passing_regs_float (integer and float \
+                "BuiltCallingConvention: varnode {vn:?} in arg_passing_regs \
+                 shares bytes with arg_passing_regs_float (integer and float \
                  argument registers are physically distinct)",
             ));
         }

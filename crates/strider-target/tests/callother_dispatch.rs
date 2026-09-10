@@ -31,6 +31,24 @@ fn arm_be_and_thumb_share_software_interrupt_with_arm() {
     assert_eq!(arm.implicit_writes, arm_thumb.implicit_writes);
 }
 
+/// `software_interrupt` is declared only by ARM (`ARM.sinc:146`), and the
+/// four ARM32 presets are the only ones an ARM sla decodes for, so the name
+/// reaching any other preset would be a caller's typo, not an op.
+#[test]
+fn software_interrupt_is_an_arm32_only_name() {
+    for preset in ArchPreset::ALL {
+        let arm32 = matches!(
+            preset,
+            ArchPreset::Arm | ArchPreset::ArmBe | ArchPreset::ArmBeKernel | ArchPreset::ArmThumb
+        );
+        assert_eq!(
+            classify(*preset, "software_interrupt").is_some(),
+            arm32,
+            "{preset:?}"
+        );
+    }
+}
+
 #[test]
 fn x86_swi_differs_from_arm_software_interrupt() {
     let arm = expect_call(classify(ArchPreset::Arm, "software_interrupt"));
@@ -558,6 +576,37 @@ fn arm32_smc_and_hvc_clobber_the_smccc_result_registers() {
             );
             assert!(abi.clobbers_memory, "{preset:?}/{op}");
             assert!(!abi.no_return, "{preset:?}/{op}: SMC returns");
+        }
+    }
+}
+
+/// The x86 rows whose ABI is an empty register footprint carry no information
+/// beyond `PURE` / `MEM_CLOBBER`; arch scoping lives in the row's
+/// `preset_arches`, not in its class.  Pins the classification each name
+/// resolves to on both x86 widths, and that no other arch answers for them.
+#[test]
+fn x86_empty_footprint_rows_are_pure_or_mem_clobber() {
+    let pure = ["rdtsc", "rdmsr", "readfsbase", "readgsbase"];
+    let mem_clobber = ["swi", "wrmsr", "writefsbase", "writegsbase", "swapgs"];
+    for preset in [ArchPreset::X86, ArchPreset::X86_64] {
+        for name in pure {
+            assert_eq!(
+                classify(preset, name),
+                Some(CallOtherClass::PURE),
+                "{preset:?}/{name}"
+            );
+        }
+        for name in mem_clobber {
+            assert_eq!(
+                classify(preset, name),
+                Some(CallOtherClass::MEM_CLOBBER),
+                "{preset:?}/{name}"
+            );
+        }
+    }
+    for name in pure.iter().chain(mem_clobber.iter()) {
+        for preset in [ArchPreset::Arm, ArchPreset::Aarch64, ArchPreset::MipsBe32] {
+            assert_eq!(classify(preset, name), None, "{preset:?}/{name}");
         }
     }
 }

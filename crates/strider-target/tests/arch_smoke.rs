@@ -86,12 +86,14 @@ fn transient_decode_vars_resolve_on_their_preset() {
     }
 }
 
-/// MIPS `PAIR_INSTRUCTION_FLAG` is `noflow` (`mips.sinc`) yet selects the
-/// `lwl`/`swl`/`ldl`/`sdl` constructor that performs the whole unaligned
-/// access, and `globalset(inst_next, ...)` paints it forward. Outside
-/// `FlowVars` by construction, so only this list makes a cold entry clear it.
+/// The two MIPS `noflow` context vars a `globalset(inst_next, ...)` paints
+/// forward: `PAIR_INSTRUCTION_FLAG` (`mips.sinc:412`), which selects the
+/// `lwl`/`swl`/`ldl`/`sdl` constructor performing the whole unaligned access,
+/// and `ext_delay` (`mips.sinc:450`), which MIPS16e PC-relative address
+/// arithmetic subtracts (`mips16.sinc:164`). Outside `FlowVars` by
+/// construction, so only this list makes a cold entry clear them.
 #[test]
-fn mips_presets_clear_the_pair_instruction_flag() {
+fn mips_presets_clear_both_forward_painted_noflow_vars() {
     for preset in [
         ArchPreset::MipsBe32,
         ArchPreset::MipsLe32,
@@ -100,7 +102,7 @@ fn mips_presets_clear_the_pair_instruction_flag() {
     ] {
         assert_eq!(
             preset.arch().transient_decode_vars(),
-            &["PAIR_INSTRUCTION_FLAG"],
+            &["PAIR_INSTRUCTION_FLAG", "ext_delay"],
             "{preset:?}"
         );
     }
