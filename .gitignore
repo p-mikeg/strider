@@ -29,6 +29,9 @@ __pycache__/
 # Stray ELF artifacts from out-of-tree test builds
 /rust_out
 
+# The `dhat_analyze` example writes this at the working directory on exit.
+/dhat-heap.json
+
 
 # Stray logs from ad-hoc harnesses; two were committed by accident once
 *.log
