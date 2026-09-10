@@ -4,9 +4,9 @@
 //! selector deriving and take the site's real arms with it, which
 //! `unverified_seeded_sites` is the report for.
 //!
-//! Seating is also all-or-nothing: the seed asserts the site's successor set
-//! is complete, so one member the cfg cannot seat leaves the whole site
-//! unseated and reported unresolved.
+//! Seating is per arm: a member the cfg cannot seat is dropped on its own and
+//! the site keeps the rest, reported unresolved so the shorter set is never
+//! read as the complete answer the seed asserted.
 
 mod common;
 
@@ -92,7 +92,7 @@ const DISPATCH: u64 = 0x40113E;
 const OUT_OF_RANGE: u64 = 0x400000;
 
 #[test]
-fn a_seed_the_cfg_declines_is_reported_unresolved_not_partially_seated() {
+fn a_seed_member_the_cfg_declines_costs_only_that_arm() {
     let (baseline, _, starts, _) = arms_with(None);
     // An in-range instruction boundary the classifier does NOT find on its own,
     // so the seed's contribution is observable.
@@ -108,10 +108,9 @@ fn a_seed_the_cfg_declines_is_reported_unresolved_not_partially_seated() {
         "a seatable seed must add {extra:#x}; arms {good_seed:#x?}",
     );
 
-    // A seed asserts the site is COMPLETE, so one unseatable member invalidates
-    // the whole answer: seating the rest would present an arm set missing that
-    // member as complete. The site must come back unresolved instead, and no
-    // subset of the seed may be seated.
+    // One unseatable member costs itself. The seat is then short of what the
+    // seed named, so the site must come back unresolved rather than present the
+    // remaining arms as the complete answer.
     let (mixed, unresolved, _, _) = arms_with(Some(vec![extra, OUT_OF_RANGE]));
     assert_eq!(
         unresolved
@@ -123,9 +122,13 @@ fn a_seed_the_cfg_declines_is_reported_unresolved_not_partially_seated() {
          site was reported fully resolved, or a different site was named",
     );
     assert!(
-        !mixed.contains(&extra),
-        "a declined seed was partially seated: {extra:#x} is presented as a \
-         complete arm set without {OUT_OF_RANGE:#x}; arms {mixed:#x?}",
+        mixed.contains(&extra),
+        "the seatable seed member {extra:#x} went with its unseatable sibling; \
+         arms {mixed:#x?}",
+    );
+    assert!(
+        !mixed.contains(&OUT_OF_RANGE),
+        "an out-of-range arm has no per-target tail-call escape; arms {mixed:#x?}",
     );
 }
 
