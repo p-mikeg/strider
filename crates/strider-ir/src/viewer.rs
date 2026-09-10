@@ -345,7 +345,6 @@ impl IRViewer for Function {
     }
 }
 
-// Reads the field directly; `self.function()` would recurse.
 impl IRViewer for crate::FunctionBuilder {
     #[inline]
     fn function(&self) -> &Function {
@@ -353,7 +352,6 @@ impl IRViewer for crate::FunctionBuilder {
     }
 }
 
-// Reborrows the field directly; `self.function()` would recurse.
 impl IRViewer for crate::EditFunction<'_> {
     #[inline]
     fn function(&self) -> &Function {

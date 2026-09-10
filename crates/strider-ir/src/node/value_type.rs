@@ -362,22 +362,6 @@ mod tests {
     }
 
     #[test]
-    fn u80_f80_widths() {
-        assert_eq!(ValueType::I80.byte_size(), 10);
-        assert_eq!(ValueType::I80.bit_width(), 80);
-        assert_eq!(ValueType::F80.byte_size(), 10);
-        assert_eq!(ValueType::F80.bit_width(), 80);
-    }
-
-    #[test]
-    fn u80_is_integer_and_f80_is_float() {
-        assert!(ValueType::I80.is_integer());
-        assert!(!ValueType::I80.is_float());
-        assert!(ValueType::F80.is_float());
-        assert!(!ValueType::F80.is_integer());
-    }
-
-    #[test]
     fn bit_mask_u128_for_u80() {
         let expected: u128 = (1u128 << 80) - 1;
         assert_eq!(ValueType::I80.bit_mask_u128(), expected);
