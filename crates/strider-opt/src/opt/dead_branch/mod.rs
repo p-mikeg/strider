@@ -67,10 +67,14 @@ impl PeepholePass for DeadBranchElimination {
                 // abort();`, where the fold would be sound. Kept because the
                 // cost is one unfolded branch and the failure mode is a lost
                 // store.
-                if edit
+                let dead_consumers: Vec<NodeId> = edit
                     .graph_ref()
                     .value_uses(dead_ctrl)
-                    .any(|(node, _)| matches!(edit.node_kind(node), NodeKind::Unreachable))
+                    .map(|(node, _)| node)
+                    .collect();
+                if dead_consumers
+                    .iter()
+                    .any(|&node| matches!(edit.node_kind(node), NodeKind::Unreachable))
                 {
                     return Ok(PeepholeRewrite::NoChange);
                 }
@@ -86,7 +90,6 @@ impl PeepholePass for DeadBranchElimination {
 
                 edit.replace_value(live_ctrl, ctrl_value)?;
                 edit.kill_node(root);
-                note_fold(root);
                 Ok(PeepholeRewrite::Changed { new_node: None })
             }
             NodeKind::Switch => {
@@ -122,7 +125,6 @@ impl PeepholePass for DeadBranchElimination {
                 edit.absorb_fingerprint(ctrl_value, addr_value);
                 edit.replace_value(live_ctrl, ctrl_value)?;
                 edit.kill_node(root);
-                note_fold(root);
                 Ok(PeepholeRewrite::Changed { new_node: None })
             }
             _ => Ok(PeepholeRewrite::NoChange),
@@ -132,7 +134,6 @@ impl PeepholePass for DeadBranchElimination {
     fn start_sweep(&self) {
         ESCAPES.with(|memo| *memo.borrow_mut() = None);
         NO_ESCAPE.with(|memo| *memo.borrow_mut() = DenseEntitySet::new());
-        REACHING.with(|memo| *memo.borrow_mut() = Reaching::default());
     }
 
     fn propagate_to_consumers(&self) -> bool {
@@ -151,44 +152,13 @@ thread_local! {
     /// [`escaping_nodes`] for the sweep in progress, shared by every root.
     /// Not a field on the pass: `DeadBranchElimination` is a unit struct other
     /// crates name as a value.
-    static ESCAPES: RefCell<Option<Escapes>> = const { RefCell::new(None) };
+    static ESCAPES: RefCell<Option<DenseEntitySet<NodeId>>> = const { RefCell::new(None) };
 
     /// Nodes an exact walk found no terminator from, shared by every root of
     /// the sweep.  Negative only: a verdict recorded while another root was
     /// excluded can differ from this root's exact answer in one direction
     /// only, declining a fold the walk would have allowed.
     static NO_ESCAPE: RefCell<DenseEntitySet<NodeId>> = RefCell::new(DenseEntitySet::new());
-
-    /// The exact walks' positive verdicts, shared by every root of the sweep.
-    static REACHING: RefCell<Reaching> = RefCell::new(Reaching::default());
-}
-
-/// Nodes an exact walk proved reach a terminator, and the constant-selector
-/// branches whose dead arm those routes cross.
-///
-/// A route through a branch's LIVE arm outlives that branch's fold, which
-/// rewires the arm onto the branch's own control input; only a dead-arm
-/// crossing dies with it, and [`note_fold`] drops the memo when one does.
-#[derive(Default)]
-struct Reaching {
-    nodes: DenseEntitySet<NodeId>,
-    fragile: DenseEntitySet<NodeId>,
-}
-
-/// [`escaping_nodes`] with the dead arms it was built from.
-struct Escapes {
-    nodes: DenseEntitySet<NodeId>,
-    dead_arms: DenseEntitySet<ValueId>,
-}
-
-/// Drops the reaching memo when the folded branch is one its routes crossed.
-fn note_fold(root: NodeId) {
-    REACHING.with(|memo| {
-        let mut memo = memo.borrow_mut();
-        if memo.fragile.contains(root) {
-            *memo = Reaching::default();
-        }
-    });
 }
 
 /// Does the surviving successor still reach a terminator once `root` is gone?
@@ -210,79 +180,54 @@ fn live_side_reaches_terminator(
     root: NodeId,
     live_ctrl: ValueId,
 ) -> bool {
-    let seeds: Vec<NodeId> = edit.value_uses(live_ctrl).map(|(node, _)| node).collect();
+    let mut seen: DenseEntitySet<NodeId> = DenseEntitySet::new();
+    let stack: Vec<NodeId> = edit.value_uses(live_ctrl).map(|(node, _)| node).collect();
     // The same rule the walk below applies to every other control output: the
     // surviving arm having no consumer at all is a dangling edge, not a
     // stranded one.
-    if seeds.is_empty() {
+    if stack.is_empty() {
         return true;
     }
-    ESCAPES.with(|memo| {
+    if ESCAPES.with(|memo| {
         let mut memo = memo.borrow_mut();
         let escapes = memo.get_or_insert_with(|| escaping_nodes(edit));
-        if seeds.iter().any(|&node| escapes.nodes.contains(node)) {
-            return true;
-        }
-        if REACHING.with(|memo| {
-            let memo = memo.borrow();
-            seeds.iter().any(|&node| memo.nodes.contains(node))
-        }) {
-            return true;
-        }
-        if NO_ESCAPE.with(|memo| {
-            let memo = memo.borrow();
-            seeds.iter().all(|&node| memo.contains(node))
-        }) {
-            return false;
-        }
-        #[cfg(test)]
-        FULL_WALKS.with(|c| c.set(c.get() + 1));
-        let verdicts = NO_ESCAPE
-            .with(|memo| exact_walk(edit, root, &seeds, &memo.borrow(), &escapes.dead_arms));
+        stack.iter().any(|&node| escapes.contains(node))
+    }) {
+        return true;
+    }
+    if NO_ESCAPE.with(|memo| {
+        let memo = memo.borrow();
+        stack.iter().all(|&node| memo.contains(node))
+    }) {
+        return false;
+    }
+    #[cfg(test)]
+    FULL_WALKS.with(|c| c.set(c.get() + 1));
+    let reaches = NO_ESCAPE.with(|memo| exact_walk(edit, root, stack, &mut seen, &memo.borrow()));
+    if !reaches {
+        // The stack drained, so every node walked has the same verdict.
         NO_ESCAPE.with(|memo| {
             let mut memo = memo.borrow_mut();
-            for node in &verdicts.stranded {
+            for node in &seen {
                 memo.insert(node);
             }
         });
-        REACHING.with(|memo| {
-            let mut memo = memo.borrow_mut();
-            for node in &verdicts.reaching {
-                memo.nodes.insert(node);
-            }
-            for node in &verdicts.fragile {
-                memo.fragile.insert(node);
-            }
-        });
-        seeds.iter().any(|&node| verdicts.reaching.contains(node))
-    })
+    }
+    reaches
 }
 
-/// One exact walk's verdict for every node it covered.
-struct Verdicts {
-    reaching: DenseEntitySet<NodeId>,
-    stranded: DenseEntitySet<NodeId>,
-    /// See [`Reaching::fragile`].
-    fragile: DenseEntitySet<NodeId>,
-}
-
-/// The whole-CFG traversal [`live_side_reaches_terminator`] falls back to: the
-/// cone forward of the seeds with `root` gone, then a backward close from the
-/// cone's terminators and dangling edges, which is what attributes a verdict to
-/// every node rather than to the seeds alone.
+/// The whole-CFG traversal [`live_side_reaches_terminator`] falls back to,
+/// filling `seen` with everything it reached.
 fn exact_walk(
     edit: &crate::EditFunction<'_>,
     root: NodeId,
-    seeds: &[NodeId],
+    mut stack: Vec<NodeId>,
+    seen: &mut DenseEntitySet<NodeId>,
     no_escape: &DenseEntitySet<NodeId>,
-    dead_arms: &DenseEntitySet<ValueId>,
-) -> Verdicts {
-    let mut cone: DenseEntitySet<NodeId> = DenseEntitySet::new();
-    let mut exits: Vec<NodeId> = Vec::new();
-    let mut stack = seeds.to_vec();
+) -> bool {
     while let Some(node) = stack.pop() {
         // `root` is about to go, and its live successors are already seeded.
-        if node == root || !cone.insert(node) {
+        if node == root || !seen.insert(node) {
             continue;
         }
         // Already proven terminator-free, so its cone adds nothing.
@@ -290,10 +235,8 @@ fn exact_walk(
             continue;
         }
         if edit.node_kind(node).is_terminator() {
-            exits.push(node);
-            continue;
+            return true;
         }
-        let mut dangling = false;
         for &out in edit.node_outputs(node) {
             if !edit.value_kind(out).is_control() {
                 continue;
@@ -303,48 +246,12 @@ fn exact_walk(
                 consumed = true;
                 stack.push(succ);
             }
-            dangling |= !consumed;
-        }
-        if dangling {
-            exits.push(node);
-        }
-    }
-
-    let mut reaching: DenseEntitySet<NodeId> = DenseEntitySet::new();
-    let mut fragile: DenseEntitySet<NodeId> = DenseEntitySet::new();
-    let mut work: Vec<NodeId> = exits
-        .into_iter()
-        .filter(|&node| reaching.insert(node))
-        .collect();
-    while let Some(node) = work.pop() {
-        for value in edit.node_inputs(node) {
-            if !edit.value_kind(value).is_control() {
-                continue;
-            }
-            let pred = edit.producer(value);
-            if !cone.contains(pred) {
-                continue;
-            }
-            if dead_arms.contains(value) {
-                fragile.insert(pred);
-            }
-            if reaching.insert(pred) {
-                work.push(pred);
+            if !consumed {
+                return true;
             }
         }
     }
-
-    let mut stranded: DenseEntitySet<NodeId> = DenseEntitySet::new();
-    for node in &cone {
-        if !reaching.contains(node) {
-            stranded.insert(node);
-        }
-    }
-    Verdicts {
-        reaching,
-        stranded,
-        fragile,
-    }
+    false
 }
 
 /// Nodes from which a terminator or a dangling control edge is reachable
@@ -358,7 +265,7 @@ fn exact_walk(
 /// Valid for the whole sweep.  A fold rewires the live arm onto the branch's
 /// own control input and orphans the dead cone, neither of which is on any
 /// route this set was built from.
-fn escaping_nodes(edit: &crate::EditFunction<'_>) -> Escapes {
+fn escaping_nodes(edit: &crate::EditFunction<'_>) -> DenseEntitySet<NodeId> {
     let mut dead_arms: DenseEntitySet<ValueId> = DenseEntitySet::new();
     let nodes: Vec<NodeId> = edit.walk().collect();
     for &node in &nodes {
@@ -391,10 +298,7 @@ fn escaping_nodes(edit: &crate::EditFunction<'_>) -> Escapes {
         |v| dead_arms.contains(v),
         None,
     );
-    Escapes {
-        nodes: escapes,
-        dead_arms,
-    }
+    escapes
 }
 
 /// The control outputs a constant-selector branch never takes; empty for every
