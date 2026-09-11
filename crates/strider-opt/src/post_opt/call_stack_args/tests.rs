@@ -1218,3 +1218,45 @@ fn partly_overwritten_wide_store_supplies_no_arg() -> Result<()> {
     );
     Ok(())
 }
+
+/// `Lifter.optimize` re-runs the default pipeline over an already optimized
+/// `Function`, so the collected tail must be replaced, not extended.
+#[test]
+fn repeated_pipeline_runs_leave_the_collected_tail_alone() -> Result<()> {
+    let sp = stack_vn();
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(0, 4))
+        .build_fn_single_region()?;
+    let sp_v0 = b.read_variable(&sp)?;
+    let four = b.build_int_const(4u64, ValueType::I32)?;
+    let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
+    b.write_variable(&sp, sp_v1)?;
+    let arg1 = b.build_int_const(22u64, ValueType::I32)?;
+    b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
+
+    let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, ValueType::I32)?;
+    b.write_variable(&sp, sp_v2)?;
+    let arg0 = b.build_int_const(11u64, ValueType::I32)?;
+    b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
+
+    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    b.build_call_cc(target, None)?;
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let pipeline = crate::default_pipeline();
+    for run in 1..=3 {
+        pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        let call_id = find_call(fg.graph())?;
+        let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+        assert_eq!(
+            inputs.len(),
+            6,
+            "run {run}: ctrl+mem+target+sp+2 stack args; got {inputs:?}"
+        );
+        assert_eq!(const_val(&fg, inputs[4], "arg0"), 11, "run {run}: arg0");
+        assert_eq!(const_val(&fg, inputs[5], "arg1"), 22, "run {run}: arg1");
+    }
+    Ok(())
+}
