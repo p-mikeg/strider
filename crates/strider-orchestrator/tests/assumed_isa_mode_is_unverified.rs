@@ -89,33 +89,40 @@ fn mips32be_widened_table_is_reported_unverified() {
     a_widened_table_is_reported_unverified(common::Arch::Mips32be);
 }
 
-/// `switch_masked_loop` over-approximates its index, so the site's answer
-/// narrows twice and the loop abandons it, dropping the seat. The guessed mode
-/// went with it, so the site keeps reporting the LOSS and must not also be
-/// called a complete-but-unverified answer.
-fn an_abandoned_site_stays_on_the_loss_channel(arch: common::Arch) {
+/// `switch_masked_loop`'s dispatch reaches BOTH channels at once, which the two
+/// being complementary for a seated `Switch` alone would hide. Its six arms are
+/// proven off the back edge's bound, but the arms' `Call` clobbers the table
+/// base, so the selector stops deriving once the loop closes: nothing vouches
+/// for the set being whole (a LOSS), while the mode one arm was seated on is
+/// still only inherited (UNVERIFIED).
+fn a_site_can_reach_both_report_channels(arch: common::Arch) {
     let r = analyze(arch, "switch_masked_loop", "masked_loop_switch");
     let site = 0x40072c;
+    assert_eq!(
+        r.arms,
+        [0x400734, 0x400760, 0x400768, 0x400770, 0x400778, 0x400780],
+        "exactly the table's six words, never a slot read past them",
+    );
     assert!(
         r.unresolved.contains(&site),
-        "an abandoned dispatch is a loss; got {:x?}",
+        "a selector that stopped deriving is a loss; got {:x?}",
         r.unresolved,
     );
     assert!(
-        !r.unverified.contains(&site),
-        "nothing is seated there to be unverified; got {:x?}",
+        r.unverified.contains(&site),
+        "the seated mode is still a guess; got {:x?}",
         r.unverified,
     );
 }
 
 #[test]
-fn mips32le_abandoned_site_stays_on_the_loss_channel() {
-    an_abandoned_site_stays_on_the_loss_channel(common::Arch::Mips32le);
+fn mips32le_site_can_reach_both_report_channels() {
+    a_site_can_reach_both_report_channels(common::Arch::Mips32le);
 }
 
 #[test]
-fn mips32be_abandoned_site_stays_on_the_loss_channel() {
-    an_abandoned_site_stays_on_the_loss_channel(common::Arch::Mips32be);
+fn mips32be_site_can_reach_both_report_channels() {
+    a_site_can_reach_both_report_channels(common::Arch::Mips32be);
 }
 
 /// The same C source on an arch with no ISA-mode var: nothing can be assumed,
