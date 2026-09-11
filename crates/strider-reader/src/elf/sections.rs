@@ -219,6 +219,10 @@ fn deduped_sections<'d>(
 pub struct ElfSectionLayout {
     /// Section index -> loaded base. Absent means the section's own `sh_addr`.
     bases: BTreeMap<usize, u64>,
+    /// Sections whose base plus declared size runs past the address space: the
+    /// base is where their region would go, and nothing can be addressed
+    /// through it.
+    unseated: std::collections::BTreeSet<usize>,
     /// ET_REL, so `bases` holds every section header and an index absent from
     /// it is out of range rather than a pass-through.
     rebased: bool,
@@ -237,13 +241,17 @@ const ET_REL_IMAGE_BASE: u64 = 0x1000_0000;
 impl ElfSectionLayout {
     /// A rebase whose alignment round-up would run past `u64::MAX` seats the
     /// section at the bare watermark; building its [`MemRegion`] is what
-    /// reports an `address + length` overflow.
+    /// reports an `address + length` overflow. A section whose declared size
+    /// runs past `u64::MAX` from its base leaves the watermark alone and
+    /// addresses none of its symbols.
     pub fn new(obj: &object::File<'_>) -> Self {
         let mut bases = BTreeMap::new();
+        let mut unseated = std::collections::BTreeSet::new();
         // A linked image's section addresses are the real ones.
         if obj.kind() != ObjectKind::Relocatable {
             return Self {
                 bases,
+                unseated,
                 rebased: false,
             };
         }
@@ -275,20 +283,26 @@ impl ElfSectionLayout {
             } else {
                 align_up(watermark, sec.align())
             };
-            // A `sh_size` overflowing the address space is malformed; the
-            // watermark then advances one past the base instead of to the end,
-            // which keeps the sections after it seatable rather than pinning
-            // them all at `u64::MAX`, while still denying them this base: a
-            // section seated on it would serve its bytes to this one's symbols.
-            // SHT_NOBITS never validates `sh_size`, having no file bytes to
-            // bound it.
+            // A `sh_size` overflowing the address space is malformed and no
+            // base holds it. The watermark stays put, everywhere the sections
+            // after it could go being inside the range this one claims, and
+            // its symbols get no address rather than one resolving into
+            // whichever section took their offsets. SHT_NOBITS never validates
+            // `sh_size`, having no file bytes to bound it; a section carrying
+            // bytes fails the load where its region is built.
             if alloc && size != 0 {
-                watermark = base.checked_add(size).unwrap_or(base.saturating_add(1));
+                match base.checked_add(size) {
+                    Some(end) => watermark = end,
+                    None => {
+                        unseated.insert(sec.index().0);
+                    }
+                }
             }
             bases.insert(sec.index().0, base);
         }
         Self {
             bases,
+            unseated,
             rebased: true,
         }
     }
@@ -304,12 +318,16 @@ impl ElfSectionLayout {
     /// address and no base is recorded. An undefined, absolute or `SHN_COMMON`
     /// symbol has no section index and is returned as-is.
     ///
-    /// `None` when an ET_REL `st_shndx` names no section header: the offset it
-    /// declares has no base, so the symbol has no address.
+    /// `None` when an ET_REL `st_shndx` names no section header, or one whose
+    /// declared size the address space cannot hold: the offset it declares has
+    /// no base, so the symbol has no address.
     pub fn try_symbol_address<'d>(&self, sym: &impl object::ObjectSymbol<'d>) -> Option<u64> {
         let Some(index) = sym.section_index() else {
             return Some(sym.address());
         };
+        if self.unseated.contains(&index.0) {
+            return None;
+        }
         match self.base(index.0) {
             Some(base) => Some(base.wrapping_add(sym.address())),
             None if self.rebased => None,
@@ -380,7 +398,11 @@ impl<'d> OpdTable<'d> {
     ///
     /// "Whole word" is the 8-byte stride the descriptor triple is built from:
     /// a `.opd` offset that is not a multiple of it straddles the {entry, TOC}
-    /// boundary and would read half of each as one address.
+    /// boundary and would read half of each as one address. A multiple naming
+    /// a descriptor's TOC or environment word is followed as if it were an
+    /// entry: which words start a descriptor takes a stride the section does
+    /// not carry, the triple being 24 bytes in compiler output and 16 in the
+    /// hand-written asm that leaves the environment word off.
     ///
     /// Zero because an ET_DYN's `.opd` is file-initially zero under its
     /// `R_PPC64_RELATIVE`s: address 0 is never the entry, and passing `addr`
