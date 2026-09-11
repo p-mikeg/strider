@@ -48,11 +48,13 @@ for hit in function.find_all(load(addr=int_add(base, off)), ignore_casts=True):
 
 # The explorer draws the whole graph; visualize(whole=False) opens on the
 # neighborhood around the entry instead, which stays usable on large functions.
-prog.visualize(function)          # prints a local URL; blocks until interrupted
-
-# ...or serve on a thread and keep querying:
+# On a thread it prints a local URL and returns, so you can keep querying:
 port = prog.visualize(function, background=True)
 strider.explore.shutdown(port)
+
+# Without background= it serves on this thread and blocks until interrupted,
+# so nothing after it runs:
+prog.visualize(function)
 ```
 
 ## What's new in 0.2.0
@@ -312,4 +314,5 @@ uv run maturin develop && uv run pyright && uv run pytest
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). The vendored browser bundles keep their own
+notices; [THIRD-PARTY.md](THIRD-PARTY.md) lists them.
