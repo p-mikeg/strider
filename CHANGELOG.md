@@ -260,8 +260,23 @@ The shape each API settled into is in
   which applies relocation patches.
 - `elf_load_with_relocations`, `elf_load_readonly_with_relocations` and the two
   sections-only region loaders are gone; use `OwnedElf::regions`.
-  `apply_elf_relocations` takes the `LoadFilter` its regions were built with,
-  and `apply_elf_relocations_autoload` is gone.
+  `apply_elf_relocations` and `apply_elf_relocations_autoload` are gone with
+  them, relocations being a `regions(.., relocate)` argument.
+- `ElfFileMemReader::from_bytes`, `::from_path` and `::from_elf_relocated` are
+  gone, and so is `elf::apply_elf_relocations` (`elf::relocations` is no longer
+  a public module). `from_bytes(b)` is `object::File::parse(b)` then
+  `::from_object(&obj)`; `from_path(p)` is `load_elf(p)` then
+  `::from_elf(&owned)`; both `from_elf_relocated` and a load-then-apply pair are
+  `OwnedElf::regions(source, filter, /* relocate */ true)`, the path that
+  windows into the ELF's own bytes instead of copying them.
+- `graph_algorithms::walk::entity_preorder` is gone; call `PreOrder::new`, which
+  it only forwarded to. `entity_postorder` stays.
+- A direct branch to an address the image has no bytes for no longer fails the
+  whole function. The edge is seated as an empty tail-call stub and reported on
+  the new `Cfg::unmapped_branch_targets` / `AnalyzeResult::unmapped_branch_targets`,
+  bound in Python as `cfg.unmapped_branch_targets()`. That is a FIFTH
+  incompleteness channel, and `is_complete()` now folds five. An unmapped ENTRY
+  is still an error.
 - `Cfg::region_id_at_start` is gone.
 - Every pattern builder spells its name the way `strider.pattern` does, so one
   query reads the same in either language. The 21 integer builders take an
@@ -466,8 +481,8 @@ The shape each API settled into is in
 - `indirect_branch().target(p)` and `switch().selector(p)` take a list of
   candidates, like `call().target(p)`; an empty list matches nothing.
 
-- `ElfFileMemReader::from_elf_relocated` serves relocated bytes. Every other
-  constructor serves the file-initial bytes, which the type doc now says.
+- `ElfFileMemReader` serves the file-initial bytes whichever constructor built
+  it, which the type doc now says.
 - `StriderError.backtrace` carries the Rust backtrace, captured by default;
   `STRIDER_BACKTRACE=1` folds it into the message too.
 - `Lifter.optimize` takes `opts=` and threads the handle's `rom`, so a
@@ -626,6 +641,16 @@ The shape each API settled into is in
   addresses instead of with node creations.
 
 ### Fixed
+
+- A `Function` or `Cfg` that crossed to a worker thread leaked the `Lifter` it
+  transitively owned, 21 MB a drop, with an unraisable error to stderr: PyO3
+  refused to run an `unsendable` destructor off-thread and leaked the value
+  instead. Rendering off-thread was worse, raising `PanicException`, a
+  `BaseException` that `except Exception` never catches, so the thread died
+  silently. The handle holds its lifter in a `ThreadPinned`, which pins USE to
+  the creating thread and leaves the value free to move and to be dropped
+  anywhere, so an off-thread decode is a catchable `StriderError` and an
+  off-thread drop is just a drop.
 
 - A register-space `STORE` whose address names no register gave two different
   registers the same SSA value. The clobbering re-read built each register's

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/strider.png" alt="Strider" width="320">
+  <img src="https://raw.githubusercontent.com/p-mikeg/strider/master/docs/strider.png" alt="Strider" width="320">
 </p>
 
 # Strider
@@ -24,10 +24,10 @@ pass to `malloc`, what does it return when the input matches a condition.
 
 Executables, shared libraries and unlinked `ET_REL` objects all load, mapped
 rather than copied. Indirect branches resolve by re-lifting until the edge set
-settles, and whatever stays unresolved is reported, never raised. A converged
-CFG is never silently incomplete, but it says so through four channels rather
-than one, which `cfg.is_complete()` folds into one answer;
-[docs/python-api.md](docs/python-api.md#12-the-cfg-stridercfg) covers each.
+settles, and whatever stays unresolved is reported, never raised.
+`cfg.is_complete()` answers whether the converged CFG may still be short an
+edge; [docs/python-api.md](docs/python-api.md#12-the-cfg-stridercfg) covers the
+five channels it folds together.
 
 ## Quickstart
 
@@ -42,7 +42,6 @@ prog = strider.lift.load_elf("fixtures/out/x86/memory.elf")
 cfg, function, unresolved = prog.analyze("array_sum")
 
 # A capture is a hole the pattern binds; read it back by object or by name.
-# A bare string is not a capture.
 base, off = Capture("base"), Capture("off")
 for hit in function.find_all(load(addr=int_add(base, off)), ignore_casts=True):
     print("offset =", hit[off].uint_opt)   # None if it is not a constant
@@ -59,7 +58,7 @@ strider.explore.shutdown(port)
 ## What's new in 0.2.0
 
 [CHANGELOG.md](CHANGELOG.md) is the full list, breaking entries first. What a
-0.1.0 script could not do:
+0.1.0 script gains:
 
 **Load more images.** Unlinked `ET_REL` objects analyse, their colliding
 sections rebased apart the way a linker would. On ppc64 ELFv1 a function symbol
@@ -71,20 +70,31 @@ maps the image and applies relocations as bytes are read, so a large object open
 in tens of milliseconds and faults in only what you analyse;
 [docs/python-api.md](docs/python-api.md#1-loading-a-binary) covers the knobs over
 it, including the mapped file changing on disk under a live handle.
+`STRIDER_NO_MMAP=1` reads the image instead, for a network or 9p mount whose
+paging error would otherwise arrive as a SIGBUS no caller can catch.
 
-**Rewrite the graph.** `function.rewrite(find=, replace=)` matches with the
-pattern language and rebuilds with `strider.template`, returning how many sites
-fired; `function.rewrite_all([(find, replace), ...])` stages several rules in one
-walk over the graph. `function.clone()` gives you a copy to rewrite without
-touching the original.
+**Rewrite the graph in the query vocabulary.** `strider.template`'s build names
+follow the match side now: `template.add` is `int_add`, `neg` is `int_neg`,
+`popcount` is `int_popcount`, and `signed_int_const` is gone because
+`int_const` builds the same constant. A `strider.pattern.Pat` still passes as
+the `replace` side of `function.rewrite(find=, replace=)`, but only its
+build-valid subset compiles and a match-only shape such as `anything()` says so
+rather than failing at instantiation. `rewrite` and `rewrite_all` refill the
+memory-decomposition side table afterwards, so `load().stack_only()` and
+`store().heap_only()` still answer correctly over a graph a rule rewired.
 
-**Run your own passes.** `strider.opt.OptimizerPipeline` is a pass list you build
-(`.empty()` or `.default()`, then `.add` / `.add_post`) and hand to
-`LifterOptions(pipeline=...)`. `analyze` runs it without the GIL, as it does the
-default pipeline, so a thread holding its own lift handle keeps working.
+**Run your own passes off the GIL.** `analyze` releases the GIL around the
+`strider.opt.OptimizerPipeline` you hand it in `LifterOptions(pipeline=...)`,
+as it does around the default one, and the pipeline is `Send` rather than
+`unsendable`, so a thread holding its own lift handle really does keep working
+alongside you. `Lifter.optimize` takes `opts=` and threads the handle's `rom`,
+so a hand-built pipeline sees the same read-only image `analyze` does.
 
-**Describe an ABI.** `CallingConvention.custom(sleigh, ...)` builds a convention
-out of register names. `cc.preserves_all()` clobbers nothing and
+**Describe an ABI.** `CallingConvention.custom(sleigh, ...)` freezes the
+varnodes it resolves against the `Sleigh` it is handed, so using one with a
+`Lifter` of another architecture raises instead of analysing silently against
+the wrong registers: an x86-64 function under a convention built from a 32-bit
+`Sleigh` simply had no arguments. `cc.preserves_all()` clobbers nothing and
 `cc.preserves_regs()` preserves the registers but still clobbers memory; pair
 either with `LifterOptions(per_address_ccs={callee_addr: cc})`, keyed by the
 direct-call target rather than the call site, to model a transparent hook such as
@@ -114,7 +124,13 @@ across several patterns, worked through in
 [docs/python-guide.md](docs/python-guide.md#constraints-relating-matches-by-control-flow).
 `find_unique_value(pat, capture)` returns the one constant a capture is bound to
 across every match, which is the answer to "what value does this function always
-pass here", and raises when two matches disagree.
+pass here", and raises when two matches disagree. The builders share one
+vocabulary: `.input(i, p)` / `.any_input(p)` and `.output(slot)` /
+`.any_output()` reach every node builder that has those slots, and the stubs
+declare which each has as the `runtime_checkable` protocols `NodePat`,
+`InputPat`, `CtrlPat`, `MemPat`, `MemAccessPat`, `OrderedPat` and `OutputPat`,
+so `isinstance(load(), InputPat)` is true while `isinstance(entry(), InputPat)`
+is false.
 
 **Resolve more branches.** Each address decodes once, in the ISA mode carried by
 the edge that reached it, and a resolved target carries its own mode, so an
@@ -125,24 +141,47 @@ classifier off entirely with `LifterOptions(resolve_indirect_branches=False)`.
 [docs/optimizations.md](docs/optimizations.md#dispatch-shapes-that-do-not-resolve)
 lists the dispatch shapes that still come back in `unresolved`.
 
-**Lift more code.** The IR types the odd widths Sleigh specs produce, `I24`
-through `I512` plus `F16`, `F80` and `F128`; a width outside that set fails the
-whole function's lift, which is the signal that a spec reached a shape the IR
-does not model. A function that never returns still answers queries: a
+**Lift more code.** The IR types eight more of the odd widths Sleigh specs
+produce, `I24`, `I40`, `I56`, `I72`, `I96`, `I112`, `F16` and `F128`, on top of
+the set v0.1.0 already had; a width outside that set fails the whole function's
+lift, which is the signal that a spec reached a shape the IR does not model. A function that never returns still answers queries: a
 `while (1)`, a spin loop or a `panic` helper ending in a self-jump reaches no
 return instruction, so Strider seats a sink on the cycle at lift time, which is
 what keeps its stores and their operands in the graph.
 
-**Fold more.** `ConstantFold` factors repeated terms, so `x + x*2` is `x*3` and
-thirteen such pairings of `*` and `<<` against `+` and `-` reach a query as one
-shape. The image `LoadReadOnly` folds constants out of is the loaded file minus
-its writable mappings, so a load out of an RWX segment is fetched from but never
-folded. How far the rest goes is tunable per analysis with
-`LifterOptions(assumptions=AssumptionOptions(...))`, six claims the IR cannot
-check, of which `AssumptionOptions.none()` is the sound floor and
-`AssumptionOptions()` is not;
-[docs/python-api.md](docs/python-api.md#2-analyzing-a-function) says what each one
-buys.
+**Fold more.** `ConstantFold` factors repeated terms, so thirteen pairings of
+`*` and `<<` against `+` and `-` reach a query as one `x * K` shape. The image
+`LoadReadOnly` folds constants out of is the loaded file minus its writable
+mappings, so a load out of an RWX segment is fetched from but never folded. How
+far the rest goes is tunable per analysis with
+`LifterOptions(assumptions=AssumptionOptions(...))`;
+[docs/python-api.md](docs/python-api.md#2-analyzing-a-function) says what each
+claim buys and which values are sound.
+
+**Draw it.** `visualize` opens on the whole graph and returns the bound port,
+and `background=True` serves on its own thread so the calling thread keeps
+querying; `strider.explore.shutdown(port)` stops it. The page pans by mouse
+drag and by the arrow keys and zooms with ctrl+wheel or `+` / `-`, `f` fits the
+graph to the window and `0` is 100%. The neighborhood knobs open uncapped, `0`
+meaning no limit on depth, hub cap or node count. `Cfg.to_dot(style=)` matches
+`Cfg.to_html(style=)`, and `lifter=` on the four renderers draws through a
+handle other than the one that built the graph.
+
+**Run faster.** The wins a script feels: `pcode_at` decodes through one cached
+engine instead of cloning the whole `Sleigh` per call, 0.8 ms against 30.6 ms;
+dead-branch elimination over chained constant branches is linear rather than
+quadratic, 2.8 ms against 288 ms at 32k nodes; `add_elf` over eight
+3200-region images costs 0.44 s against 2.64 s; an `analyze` carrying 20,000
+`known_targets` costs 1.6 ms against 32.0 ms; and a kernel-scale image opens
+without walking every relocation and symbol first.
+[CHANGELOG.md](CHANGELOG.md) lists the rest.
+
+**Fail catchably.** A pattern over 256 nodes, or a `one_of` nested that deep, is
+refused with a `StriderError` when the query runs, where a 551-node chain or a
+1023-node balanced tree used to overflow the stack and abort the interpreter.
+The operand-index setters reject an index past 1,048,576, and the shipped wheel
+builds with `overflow-checks = true`, so an arithmetic slip traps instead of
+wrapping an index into the `sp` slot with no error at all.
 
 **Diagnose.** A failure raised by strider itself carries its Rust trace on
 `.backtrace`, and `STRIDER_BACKTRACE=1` folds it into the message.
@@ -160,8 +199,9 @@ still unpacks as the 3-tuple above.
 
 A lift handle now decodes only on the thread that built it, so a script that
 analysed from a worker raises a catchable `StriderError` there. Build a second
-handle over the same `arch` / `reader()` / `rom()` on that thread, which is what
-the background explorer does for its own renderer;
+handle over the same `arch` / `reader()` / `rom()` on that thread; `Lifter.arch`
+and the `reader()` / `rom()` accessors are new in 0.2.0 and exist for exactly
+that, and the background explorer uses them for its own renderer.
 [docs/getting-started.md](docs/getting-started.md#where-the-api-lives) has the
 detail.
 
