@@ -1,15 +1,13 @@
 pub mod error;
+pub(crate) mod mem_analysis;
 pub(crate) mod mem_ssa;
 mod options;
 pub(crate) mod peephole;
 mod pipeline;
 pub mod rewrite_rule;
-pub(crate) mod sp_analysis;
 pub use error::Result;
-pub use options::{AliasMode, MemAliasOptions, OptOptions};
-pub use rewrite_rule::{
-    BoxedRule, apply_rules_count, apply_rules_in_order, rewrite_rule, rewrite_rule_runtime,
-};
+pub use options::{AliasMode, AssumptionOptions, OptOptions};
+pub use rewrite_rule::{BoxedRule, apply_rules_count, rewrite_rule, rewrite_rule_runtime};
 pub use strider_ir::{EditFunction, FunctionState};
 
 mod const_eval;
@@ -60,15 +58,12 @@ pub fn default_pipeline() -> OptimizerPipeline {
     p.add(IfCondInversion::new());
     p.add(PhiCollapse);
     p.add(RegionCollapse);
-    // No dedup pass: structural twins a rewrite leaves behind (e.g.
-    // PhiCollapse redirecting two SSA phis to the same value) are re-merged
-    // by `EditFunction::clean()` at every pass boundary.
     p.add(DeadBranchElimination);
     p.add(CfgDetach);
-    p.add(LoadForward);
-    // StackOffsetDetect runs first as a convenience: it pre-populates the
-    // SP-decomposition memo CallStackArgCollect reads, turning that pass's
-    // lookups into O(1) hits. `decompose` self-memoizes, so this is not a
+    p.add(LoadForward::default());
+    // StackOffsetDetect runs first to pre-populate the SP-decomposition memo
+    // CallStackArgCollect reads, turning that pass's lookups into O(1) hits.
+    // `decompose` self-memoizes, so the order is a performance choice, not a
     // correctness dependency.
     p.add_post_pass(StackOffsetDetect);
     p.add_post_pass(CallStackArgCollect);

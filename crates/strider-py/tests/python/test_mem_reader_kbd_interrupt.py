@@ -1,8 +1,7 @@
-"""Regression: `KeyboardInterrupt` / `SystemExit` raised inside a custom
+"""`KeyboardInterrupt` / `SystemExit` raised inside a custom
 `MemReader.read` must propagate, not be converted to `StriderError`.
 
-Every exception used to be folded into a read error, which masked Ctrl-C
-during long lifts.
+Folding them into a read error masks Ctrl-C during a long lift.
 """
 
 import pytest

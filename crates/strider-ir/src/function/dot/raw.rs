@@ -1,6 +1,6 @@
 //! Raw graph renderer for debugging: the graph **exactly as stored**, one DOT
-//! node per reachable-from-entry [`NodeId`], one edge per input edge,
-//! side-table state inline, and none of the pretty renderer's transforms.
+//! node per reachable-from-entry [`NodeId`], one edge per input edge, and
+//! side-table state inline.
 
 use ::dot::{DotEmitter, DotStyle, GraphDot, GraphDotDumper};
 use rustc_hash::FxHashMap;
@@ -16,8 +16,8 @@ fn fmt_vn(vn: &rsleigh::Vn) -> String {
 
 pub(super) struct RawFunctionDumper<'a> {
     function: &'a Function,
-    /// Carrier node -> arg indices.
-    arg_index: FxHashMap<NodeId, Vec<u32>>,
+    /// Carrier node -> arg tags.
+    arg_index: FxHashMap<NodeId, Vec<super::ArgTag>>,
 }
 
 impl<'a> RawFunctionDumper<'a> {
@@ -84,8 +84,9 @@ impl<'a> RawFunctionDumper<'a> {
                 .count();
             s.push_str(&format!("\nclobbers={tagged}"));
         }
-        if let Some(indices) = self.arg_index.get(&node) {
-            s.push_str(&format!("\narg{indices:?}"));
+        if let Some(tags) = self.arg_index.get(&node) {
+            let joined: Vec<String> = tags.iter().map(ToString::to_string).collect();
+            s.push_str(&format!("\n{}", joined.join(", ")));
         }
         s
     }

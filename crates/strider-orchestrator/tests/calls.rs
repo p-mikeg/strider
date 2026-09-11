@@ -1,10 +1,3 @@
-#![allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable
-)]
-
 mod common;
 use common::*;
 

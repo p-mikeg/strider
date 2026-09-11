@@ -111,7 +111,7 @@ fn load_non_rom_addr_no_change() -> Result<()> {
 #[test]
 fn load_non_const_addr_no_change() -> Result<()> {
     let mut fg = make_fn(|b| {
-        // `0x1000 + 0` stays an Add here: ConstantFold is deliberately not run.
+        // `LoadReadOnly` runs alone below, so `0x1000 + 0` stays an Add.
         let base = b.build_int_const(0x1000u64, ValueType::I64)?;
         let off = b.build_int_const(0u64, ValueType::I64)?;
         let addr =
@@ -216,9 +216,9 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
 }
 
 /// The decode tops out at a `u128`, so a wider load would silently truncate;
-/// the width guard blocks it.  The ROM maps 64 bytes on purpose so the read
-/// itself would succeed: this is the guard, not the read-failure path that
-/// `load_oversize_read_no_change` covers.
+/// the width guard blocks it.  The ROM maps 64 bytes so the read itself
+/// succeeds, isolating the guard; `load_oversize_read_no_change` covers the
+/// read-failure path.
 #[test]
 fn const_load_wider_than_16_bytes_does_not_fold() -> Result<()> {
     use strider_ir::IRViewer;

@@ -42,7 +42,7 @@ impl DomInfo {
         let (frontiers, preorder) = {
             let adapter = CfgDomTree { cfg, doms: &doms };
             (
-                graph_algorithms::dominance::dominance_frontiers(&adapter),
+                graph_algorithms::dominance::dominance_frontiers(&adapter, cfg.entry()),
                 graph_algorithms::dominance::dominator_tree_preorder(&adapter, cfg.entry()),
             )
         };

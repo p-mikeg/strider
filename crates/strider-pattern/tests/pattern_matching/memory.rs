@@ -47,7 +47,6 @@ fn load_captures_value_slot() {
 
 #[test]
 fn load_with_patterned_addr() {
-    // addr is itself a pattern: base + 8.
     let mut t = Tb::empty();
     let base = t.u64(0x100);
     let off = t.u64(8);
@@ -58,14 +57,14 @@ fn load_with_patterned_addr() {
     a::matches(
         &function,
         load()
-            .addr(add(int_const(0x100u128), int_const(8u128)))
+            .addr(int_add(int_const(0x100u128), int_const(8u128)))
             .build(),
         1,
     );
     a::none(
         &function,
         load()
-            .addr(add(int_const(0x100u128), int_const(9u128)))
+            .addr(int_add(int_const(0x100u128), int_const(9u128)))
             .build(),
     );
 }
@@ -142,8 +141,6 @@ fn load_only_graph_matches() {
     a::none(&function, store().build());
 }
 
-/// bit_width(n) must select the load whose value output is n bits and leave
-/// the other unmatched, on two same-base loads of different widths.
 #[test]
 fn load_bit_width_filters_among_multiple_loads() {
     let base = reg_vn(0x40, 8);

@@ -1,31 +1,9 @@
-//! `load` / `store` builder matching, including memory-token chaining: a
-//! `load` consuming the token a prior `store` / `mem_phi` produced.
-
-#![allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable
-)]
-
 use strider_ir::node::ValueType;
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
-use strider_pattern::{Capture, Matcher, add, int_const, load, mem_phi, store};
-
-#[test]
-fn load_unconstrained_matches() {
-    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let addr = b.build_int_const(0x10u64, ValueType::I64).unwrap();
-    let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
-        .unwrap();
-    b.build_return(Some(loaded), &[]).unwrap();
-    let function = b.build().unwrap();
-
-    let pat = load().build();
-    assert_eq!(Matcher::new(&function).find_all(&pat).unwrap().len(), 1);
-}
+use strider_pattern::{
+    Capture, CaptureExt, Matcher, call, int_const, load, mem_phi, one_of, store,
+};
 
 #[test]
 fn load_space_matches_ram_and_rejects_unique() {
@@ -42,73 +20,6 @@ fn load_space_matches_ram_and_rejects_unique() {
     assert_eq!(matcher.find_all(&ram).unwrap().len(), 1);
     let unique = load().space(rsleigh::VnSpace::UNIQUE).build();
     assert_eq!(matcher.find_all(&unique).unwrap().len(), 0);
-}
-
-#[test]
-fn load_addr_matches_literal() {
-    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let addr = b.build_int_const(0x100u64, ValueType::I64).unwrap();
-    let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
-        .unwrap();
-    b.build_return(Some(loaded), &[]).unwrap();
-    let function = b.build().unwrap();
-    let matcher = Matcher::new(&function);
-
-    assert_eq!(
-        matcher
-            .find_all(&load().addr(int_const(0x100u128)).build())
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        matcher
-            .find_all(&load().addr(int_const(0x999u128)).build())
-            .unwrap()
-            .len(),
-        0
-    );
-}
-
-#[test]
-fn load_with_patterned_addr() {
-    // addr is itself a pattern: base + 8.
-    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let base = b.build_int_const(0x100u64, ValueType::I64).unwrap();
-    let off = b.build_int_const(8u64, ValueType::I64).unwrap();
-    let addr = b
-        .build_int_binary_operation(base, off, strider_ir::IntBinaryOp::Add, ValueType::I64)
-        .unwrap();
-    let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
-        .unwrap();
-    b.build_return(Some(loaded), &[]).unwrap();
-    let function = b.build().unwrap();
-    let matcher = Matcher::new(&function);
-
-    assert_eq!(
-        matcher
-            .find_all(
-                &load()
-                    .addr(add(int_const(0x100u128), int_const(8u128)))
-                    .build()
-            )
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        matcher
-            .find_all(
-                &load()
-                    .addr(add(int_const(0x100u128), int_const(9u128)))
-                    .build()
-            )
-            .unwrap()
-            .len(),
-        0
-    );
 }
 
 #[test]
@@ -139,42 +50,6 @@ fn load_bit_width_filters_value_output() {
 }
 
 #[test]
-fn load_captures_value_slot() {
-    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let addr = b.build_int_const(0x100u64, ValueType::I64).unwrap();
-    let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
-        .unwrap();
-    b.build_return(Some(loaded), &[]).unwrap();
-    let function = b.build().unwrap();
-
-    let v = Capture::new();
-    let hits = Matcher::new(&function)
-        .find_all(&load().capture(v).build())
-        .unwrap();
-    assert_eq!(hits.len(), 1);
-    let node = hits[0]
-        .node(v, function.graph())
-        .expect("value slot capture");
-    assert!(matches!(
-        function.node_kind(node),
-        strider_ir::node::NodeKind::Load(_)
-    ));
-}
-
-#[test]
-fn store_unconstrained_matches() {
-    let function = store_then_load(0x100, 42);
-    assert_eq!(
-        Matcher::new(&function)
-            .find_all(&store().build())
-            .unwrap()
-            .len(),
-        1
-    );
-}
-
-#[test]
 fn store_addr_and_data() {
     let function = store_then_load(0x200, 77);
     let matcher = Matcher::new(&function);
@@ -198,26 +73,6 @@ fn store_addr_and_data() {
                     .data(int_const(99u128))
                     .build()
             )
-            .unwrap()
-            .len(),
-        0
-    );
-}
-
-#[test]
-fn store_space_matches() {
-    let function = store_then_load(0x100, 42);
-    let matcher = Matcher::new(&function);
-    assert_eq!(
-        matcher
-            .find_all(&store().space(rsleigh::VnSpace::RAM).build())
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        matcher
-            .find_all(&store().space(rsleigh::VnSpace::UNIQUE).build())
             .unwrap()
             .len(),
         0
@@ -257,34 +112,19 @@ fn store_then_load(store_addr: u64, data: u64) -> strider_ir::Function {
 }
 
 #[test]
-fn load_mem_in_matches_preceding_store() {
+fn load_mem_rejects_wrong_store() {
     let function = store_then_load(0x100, 42);
-    let pat = load()
-        .addr(int_const(0x999u128))
-        .mem_in(store().addr(int_const(0x100u128)))
-        .build();
-    let hits = Matcher::new(&function).find_all(&pat).unwrap();
-    assert_eq!(
-        hits.len(),
-        1,
-        "load whose mem_in is the prior store should match exactly once"
-    );
-}
-
-#[test]
-fn load_mem_in_rejects_wrong_store() {
-    let function = store_then_load(0x100, 42);
-    // Store is at 0x100, so a mem_in constrained to another address must
+    // Store is at 0x100, so a mem constrained to another address must
     // break the chain.
     let pat = load()
         .addr(int_const(0x999u128))
-        .mem_in(store().addr(int_const(0xBEEFu128)))
+        .mem(store().addr(int_const(0xBEEFu128)))
         .build();
     assert_eq!(Matcher::new(&function).find_all(&pat).unwrap().len(), 0);
 }
 
 #[test]
-fn load_mem_in_matches_region_mem_phi() {
+fn load_mem_matches_region_mem_phi() {
     // A fresh region head carries a MemPhi as its initial memory token, so
     // the region's first load chains straight off it.
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
@@ -295,7 +135,7 @@ fn load_mem_in_matches_region_mem_phi() {
     b.build_return(Some(v), &[]).unwrap();
     let function = b.build().unwrap();
 
-    let pat = load().mem_in(mem_phi()).build();
+    let pat = load().mem(mem_phi()).build();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert_eq!(
         hits.len(),
@@ -305,9 +145,79 @@ fn load_mem_in_matches_region_mem_phi() {
 }
 
 #[test]
-fn store_mem_in_chains_off_region_mem_phi() {
+fn store_mem_chains_off_region_mem_phi() {
     let function = store_then_load(0x100, 42);
-    let pat = store().mem_in(mem_phi()).build();
+    let pat = store().mem(mem_phi()).build();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
+}
+
+/// A slot a fixed operand pinned is not a candidate for an existential.
+#[test]
+fn any_input_skips_a_slot_a_fixed_operand_pinned() {
+    let function = store_then_load(0x200, 7);
+    let matcher = Matcher::new(&function);
+
+    // The only 7 is the data operand, which `.data()` already claims.
+    assert_eq!(
+        matcher
+            .find_all(
+                &store()
+                    .data(int_const(7u128))
+                    .any_input(int_const(7u128))
+                    .build()
+            )
+            .unwrap()
+            .len(),
+        0
+    );
+
+    // A second 7 in the address slot satisfies both.
+    let both = store_then_load(7, 7);
+    assert_eq!(
+        Matcher::new(&both)
+            .find_all(
+                &store()
+                    .data(int_const(7u128))
+                    .any_input(int_const(7u128))
+                    .build()
+            )
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// A `Call` whose memory token the following `Store` chains off.
+fn call_then_store() -> strider_ir::Function {
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let tgt = b.build_int_const(0x1234u64, ValueType::I64).unwrap();
+    b.build_call_cc(tgt, None).unwrap();
+    let a = b.build_int_const(0x10u64, ValueType::I64).unwrap();
+    let d = b.build_int_const(7u64, ValueType::I32).unwrap();
+    b.build_store(a, d, rsleigh::VnSpace::RAM).unwrap();
+    b.build_return(None, &[]).unwrap();
+    b.build().unwrap()
+}
+
+/// `.capture()` on an alternation arm must not turn the memory slot back into
+/// a value slot: `call()` anchors on its value output there and never matches.
+#[test]
+fn captured_alternation_arm_stays_in_the_memory_slot() {
+    let function = call_then_store();
+    let matcher = Matcher::new(&function);
+    assert_eq!(
+        matcher
+            .find_all(&store().mem(one_of![call()]).build())
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let c = Capture::new();
+    let hits = matcher
+        .find_all(&store().mem(one_of![one_of![call()].capture(c)]).build())
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].value(c).is_some());
 }

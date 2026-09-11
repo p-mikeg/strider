@@ -1,26 +1,36 @@
-"""Serve read-only data from Python for the LoadReadOnly pass to fold against.
-
-LoadReadOnly resolves `Load` nodes at compile-time-constant addresses by
-reading a caller-supplied ROM. That ROM is either a `BufferReader` (reads
-stay on the Rust side) or a subclass of `strider.reader.ReadOnlyMemory`,
-whose `read` fires once per fold candidate.
-
-`ReadOnlyMemory` and the `MemReader` of 02_python_reader.py are independent:
-subclass whichever you need, or use a `BufferReader` for both.
-
-Run from the workspace root:
-    python crates/strider-py/examples/python/07_callback_rom.py
-"""
-
 from __future__ import annotations
 
 import pathlib
 
 import strider
-from strider.pattern import load
+from strider.pattern import int_const, load
 
 WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
+
+ARCH = strider.sleigh.SleighArch.x86()
+CC = strider.sleigh.CallingConvention.x86_cdecl()
+OPTS = strider.lift.LifterOptions(
+    cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
+)
+
+# Real ELF for the code bytes; the ROM comes from Python. `main` reads four
+# 32-bit globals from absolute addresses, which is the shape LoadReadOnly folds.
+elf = strider.lift.load_elf(str(FIXTURE))
+mem = elf.reader()
+addr = elf.symbol("main").address
+
+
+class ProbeRom(strider.reader.ReadOnlyMemory):
+    """Answers nothing, records what it was asked for."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen: list[tuple[int, int]] = []
+
+    def read(self, addr: int, size: int) -> bytes | None:
+        self.seen.append((addr, size))
+        return None
 
 
 class CallbackRom(strider.reader.ReadOnlyMemory):
@@ -33,8 +43,7 @@ class CallbackRom(strider.reader.ReadOnlyMemory):
         self.calls = 0
 
     def read(self, addr: int, size: int) -> bytes | None:
-        # Return exactly `size` RAW bytes. Do not byte-swap; the optimizer
-        # decodes them per the run's endianness.
+        # Return exactly size RAW bytes; no byte-swap (the optimizer decodes per endianness).
         self.calls += 1
         if addr < self.base or addr + size > self.base + len(self.blob):
             return None
@@ -42,36 +51,31 @@ class CallbackRom(strider.reader.ReadOnlyMemory):
         return self.blob[offset:offset + size]
 
 
-# Real ELF for the code bytes, Python-served ROM layered on top.
-elf = strider.lift.load_elf(str(FIXTURE))
-mem = elf.reader()
-addr = elf.symbol("array_sum")
+# A rom that answers None leaves every constant-address load standing, and its
+# call log is the address window the next rom has to cover.
+probe = ProbeRom()
+lft = strider.lift.lifter(ARCH, mem, probe)
+_cfg, unfolded, _unresolved = lft.analyze(addr, CC, opts=OPTS)
+print(f"probed addresses: {sorted({hex(a) for a, _ in probe.seen})}")
+print(f"loads with a rom that answers nothing: {len(unfolded.find_all(load()))}")
 
-# The base address sits well above the fixture's mapped regions so it cannot
-# overlap the real `.rodata`; LoadReadOnly consults this callback only for
-# addresses the ELF reader doesn't cover.
-rom = CallbackRom(base=0xCAFE0000, blob=bytes(range(16)))
+base = min(a for a, _ in probe.seen)
+end = max(a + n for a, n in probe.seen)
+VALUES = (0x11111111, 0x22222222, 0x33333333, 0x44444444)
+blob = b"".join(v.to_bytes(4, "little") for v in VALUES)[: end - base]
 
-# The Lifter wires the ROM into LoadReadOnly itself, so there is no
-# `LoadReadOnly(rom)` pass to construct by hand. `mem` serves both the
-# instruction fetch and the ELF-backed constant loads.
-lft = strider.lift.lifter(strider.sleigh.SleighArch.x86(), mem, rom)
-_cfg, function, _unresolved = lft.analyze(
-    addr,
-    strider.sleigh.CallingConvention.x86_cdecl(),
-    opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)),
-)
-after = len(function.find_all(load()))
+# This callback is the lifter's whole rom, so it is the only fold source; mem
+# feeds instruction fetch. The constants below come from Python, not the ELF.
+rom = CallbackRom(base=base, blob=blob)
+lft = strider.lift.lifter(ARCH, mem, rom)
+_cfg, function, _unresolved = lft.analyze(addr, CC, opts=OPTS)
 
-print(f"loads after optimize: {after}")
+print(f"\nloads after optimize: {len(function.find_all(load()))}")
 print(f"CallbackRom.read invoked {rom.calls} time(s) by LoadReadOnly")
+assert rom.calls > 0, "the rom never fired; wiring bug"
+assert not function.find_all(load()), "every constant-address load should have folded"
 
-if rom.calls == 0:
-    # Expected: array_sum never reaches into the synthetic 0xCAFE0000 region,
-    # so the callback has nothing to answer. The wiring is what this shows,
-    # not this fixture's address pattern.
-    print(
-        "\n(no addresses matched our callback ROM in this fixture — the "
-        "wiring is correct; pick a fixture whose code references your "
-        "ROM region to see folds happen.)"
-    )
+for value in VALUES[: len(blob) // 4]:
+    function.find_unique(int_const(value))
+    print(f"  folded 0x{value:08x} from the callback, present exactly once")
+print("\nok: a Python ReadOnlyMemory is what LoadReadOnly folds against")

@@ -29,8 +29,7 @@ impl PeepholePass for PhiCollapse {
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         let inputs = edit.node_inputs(root);
-        // A well-formed phi has at least its token; without one there is
-        // nothing to collapse.
+        // A well-formed phi has at least its token.
         if inputs.is_empty() {
             return Ok(PeepholeRewrite::NoChange);
         }

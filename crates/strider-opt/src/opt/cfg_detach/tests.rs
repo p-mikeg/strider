@@ -322,7 +322,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     Ok(())
 }
 
-/// A MemPhi-only join, with no variable merged.
+/// A join whose only phi is the MemPhi.
 #[test]
 fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
@@ -461,12 +461,12 @@ fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::Result<()
     assert_eq!(
         fg.node_inputs(join_node).len(),
         1,
-        "join Region drops 3→1 ctrl inputs"
+        "join Region drops 3->1 ctrl inputs"
     );
     assert_eq!(
         fg.node_inputs(var_phi).len(),
         2,
-        "VarPhi drops 3→1 values (token + 1)"
+        "VarPhi drops 3->1 values (token + 1)"
     );
 
     strider_ir::validate::validate(&fg)

@@ -1,10 +1,8 @@
-//! Unlike the match side, a template carries no kindspecs or predicates. A
-//! node is either a [`Build`](TmplNodeKind::Build) declaring a
-//! [`TemplateKind`], or a [`Capture`](TmplNodeKind::Capture) leaf marker
-//! whose [`ValueCapture`](TmplValue::ValueCapture) output resolves through
-//! the LHS [`Bindings`](crate::Bindings) at instantiation. A `Template` is
-//! therefore buildable by construction: it can represent no match-only
-//! shape.
+//! Every template node is either a [`Build`](TmplNodeKind::Build) declaring a
+//! [`TemplateKind`], or a [`Capture`](TmplNodeKind::Capture) leaf marker whose
+//! [`ValueCapture`](TmplValue::ValueCapture) output resolves through the LHS
+//! [`Bindings`](crate::Bindings) at instantiation, so a `Template` is
+//! buildable by construction.
 
 use strider_graph::{Graph, NeverCacheable, NodeId};
 
@@ -35,7 +33,7 @@ pub enum TmplNodeKind {
     Build(TemplateKind),
     /// A leaf resolving through its
     /// [`ValueCapture`](TmplValue::ValueCapture) output to the LHS-bound
-    /// value, as in `add(x, 0) -> x`. Never synthesised, never has inputs.
+    /// value, as in `int_add(x, 0) -> x`. Never synthesised, never has inputs.
     Capture,
 }
 
@@ -81,13 +79,23 @@ impl TmplOutput {
 /// Materialised by [`instantiate`](crate::template::instantiate).
 pub struct Template {
     pub(crate) graph: Graph<TmplNode, TmplValue, NeverCacheable>,
+    /// Captures a `*_const_with!` closure reads at instantiation. They have no
+    /// vertex, so only the declaration makes them visible to the coverage
+    /// check.
+    declared_captures: Vec<Capture>,
 }
 
 impl Template {
     /// For `TemplateBuilder::finish`, once the staging core has sealed the
     /// staged DAG.
-    pub(crate) fn from_graph(graph: Graph<TmplNode, TmplValue, NeverCacheable>) -> Self {
-        Self { graph }
+    pub(crate) fn from_graph(
+        graph: Graph<TmplNode, TmplValue, NeverCacheable>,
+        declared_captures: Vec<Capture>,
+    ) -> Self {
+        Self {
+            graph,
+            declared_captures,
+        }
     }
 
     /// The build root is the unique sink, recovered structurally.
@@ -106,8 +114,16 @@ impl Template {
             .all_value_ids()
             .filter_map(|v| match self.graph.value_kind_ref(v) {
                 TmplValue::ValueCapture(cap) => Some(*cap),
-                TmplValue::TmplOutput(_) => None,
+                // A capture reached only through `capture_typed` lives in the
+                // output's TYPE, not as a value vertex. Unreported, an
+                // unbound one resolves to `root_ty` and the rewrite builds a
+                // node at the wrong width instead of failing the check.
+                TmplValue::TmplOutput(o) => match o.ty {
+                    crate::template::TemplateTy::InheritBinding(cap) => Some(cap),
+                    _ => None,
+                },
             })
+            .chain(self.declared_captures.iter().copied())
     }
 }
 
@@ -123,7 +139,7 @@ mod tests {
         assert!(matches!(o.ty, TemplateTy::InheritRoot));
     }
 
-    /// `bool_not(var(c))` seals into `xor(var(c), IntConst(1)):I1`: the xor,
+    /// `bool_not(var(c))` seals into `int_xor(var(c), IntConst(1)):I1`: the xor,
     /// its const operand and the captured var, so three node vertices.
     #[test]
     fn bool_not_template_builds_three_node_graph() {

@@ -3,6 +3,10 @@ name = "strider-target"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Target descriptions: architectures, calling conventions and CallOther ABIs."
+repository.workspace = true
+rust-version.workspace = true
+readme = "README.md"
 
 [dependencies]
 rsleigh.workspace = true

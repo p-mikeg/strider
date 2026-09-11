@@ -1,9 +1,6 @@
-#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
-
-//! Regression: `load_elf` must not leak its backing bytes. It used to
-//! `Box::leak` the whole file to fabricate a `'static` `object::File`, leaking
-//! one file-sized buffer per call. This loops the loader well past its own
-//! working set and asserts resident memory stays bounded.
+//! `load_elf` must not leak its backing bytes: the whole file is owned by the
+//! returned `OwnedElf` and freed with it. This loops the loader well past its
+//! own working set and asserts resident memory stays bounded.
 
 use std::path::PathBuf;
 
@@ -27,7 +24,13 @@ fn rss_bytes() -> u64 {
 fn load_elf_does_not_leak_backing_bytes() {
     let path = elf_path("x64", "arithmetic");
     if !path.exists() {
-        // Skip cleanly when fixtures aren't built.
+        // A missing fixture must be VISIBLE: a silent return reports as a pass
+        // and this file is the only coverage the ET_REL loader has.
+        eprintln!(
+            "SKIP {}: {} is not built; run `make -C fixtures`",
+            module_path!(),
+            path.display()
+        );
         return;
     }
     let file_size = std::fs::metadata(&path).unwrap().len();
@@ -51,7 +54,7 @@ fn load_elf_does_not_leak_backing_bytes() {
     let budget = file_size.saturating_mul(8).max(4 * 1024 * 1024);
     assert!(
         growth < budget,
-        "RSS grew {growth} bytes over {ITERS} load_elf calls (file {file_size} B, \
-         budget {budget} B) — load_elf is leaking its backing bytes",
+        "load_elf is leaking its backing bytes: RSS grew {growth} bytes over \
+         {ITERS} calls (file {file_size} B, budget {budget} B)",
     );
 }

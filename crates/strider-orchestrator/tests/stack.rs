@@ -1,10 +1,3 @@
-#![allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable
-)]
-
 mod common;
 use common::*;
 
@@ -52,12 +45,12 @@ fn large_local_has_stack_store_and_loop(function: &strider_ir::Function) {
 fn swap_has_two_loads_and_two_stores(function: &strider_ir::Function) {
     assert!(
         count_loads(function) >= 2,
-        "expected ≥2 Loads; got {}",
+        "expected >=2 Loads; got {}",
         count_loads(function)
     );
     assert!(
         count_stores(function) >= 2,
-        "expected ≥2 Stores; got {}",
+        "expected >=2 Stores; got {}",
         count_stores(function)
     );
 }

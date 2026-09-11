@@ -1,4 +1,4 @@
-"""Regression: `KeyboardInterrupt` / `SystemExit` raised inside a Python
+"""`KeyboardInterrupt` / `SystemExit` raised inside a Python
 `ReadOnlyMemory.read` propagates out of `analyze` instead of being
 swallowed and resurfaced as a generic `StriderError`.
 

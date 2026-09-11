@@ -30,9 +30,10 @@ prog = strider.lift.load_elf("fixtures/out/x86/memory.elf")
 `prog` knows the binary's symbols and memory:
 
 ```python
-prog.symbol("array_sum")     # address of a symbol
-prog.symbols()               # {name: address} for all of them
-prog.functions()             # sorted list of function names
+prog.symbol("array_sum")     # a Symbol: name, address, size, end, is_function, region
+prog.symbols()               # {name: Symbol} for all of them
+prog.functions()             # one Symbol per function address, address order
+prog.symbol_at(0x401234)     # the Symbol covering an address, or None
 prog.entry_point()           # the ELF entry point
 prog.read(addr, 16)          # raw bytes, or None if unmapped
 ```
@@ -65,32 +66,33 @@ opts = strider.lift.LifterOptions(
 cfg, function, unresolved = prog.analyze("array_sum", opts=opts)
 ```
 
-**One handle analyzes many functions.** The handle is the fixed setup; call
-`analyze` as often as you like:
+**One handle analyzes many functions.** The handle is the fixed setup:
 
 ```python
-for name in prog.functions():
-    cfg, function, unresolved = prog.analyze(name)
+for sym in prog.functions():
+    cfg, function, unresolved = prog.analyze(sym.address)
     ...
 ```
 
 ## Writing a query
 
-A query is a pattern plus captures. Import the constructors from
-`strider.pattern`:
+A query is a pattern plus captures:
 
 ```python
-from strider.pattern import load, add, call, var, Capture
+from strider.pattern import load, int_add, call, var, Capture
 ```
 
 A pattern describes a shape and leaves holes where you do not care. Captures are
-the holes you want to read back. Use string names (auto-created per pattern) or
-`Capture()` objects when you want to share one across patterns:
+the holes you want to read back, made with `Capture("name")` (or `Capture()`
+for a fresh anonymous one). Two `Capture("off")` intern to one variable, and
+you read a capture back by the object or by its name string. A bare string is
+NOT a capture:
 
 ```python
-# Every load of the form `base + offset`.
-for hit in function.find_all(load(addr=add("base", "off")), ignore_casts=True):
-    print(hit.const_uint("base"), hit.const_uint("off"))
+# Every load of the form `base + offset`; read the offset back.
+base, off = Capture("base"), Capture("off")
+for hit in function.find_all(load(addr=int_add(base, off)), ignore_casts=True):
+    print("offset =", hit[off].uint_opt)   # None if it is not constant
 ```
 
 `ignore_casts=True` tells the matcher to see through width casts (zero/sign
@@ -102,16 +104,27 @@ raises if there is not exactly one.
 
 ### Reading a match
 
-A `Match` carries every capture. The accessors return `None` when the capture
-did not bind a value of that kind:
+A `Match` carries every capture. Each accessor raises if the capture is
+unbound or its node has no value of that kind; the `_opt` form returns `None`
+there instead. Guard with `hit.has("off")` when a capture may be absent.
 
 ```python
-hit.const_uint("off")        # unsigned integer constant, or None if symbolic
-hit.const_int("off")         # signed version
-hit.node("base")             # the matched Node, for deeper inspection
-hit.asm_fingerprint("base")  # machine addresses that produced it
-hit.op("base")               # operation name, e.g. "Add"
+hit[off].uint                # unsigned integer constant (raises if not one)
+hit[off].uint_opt            # ... or None instead of raising
+hit[off].sint                # signed version
+hit[base].node               # the matched Node, for deeper inspection
+hit[base].asm_fingerprint    # machine addresses that produced it
+hit[base].op_opt             # operation name, e.g. "Add", or None
 ```
+
+Index by the `Capture` object, or by its name when it has one (`hit["off"]`).
+A numeric capture also converts and compares directly, so `int(hit[off])` and
+`hit[off] == 0x10` work. The same readers exist as `Match` methods taking the
+capture (`hit.uint(off)`) when that reads better.
+
+A capture can land on a node with no operation and no fingerprint; an
+`InitialVar`, a register as it stood at entry, is the common case. Reach for
+`op_opt` unless you already know the shape.
 
 ### Guards and joins
 
@@ -120,7 +133,7 @@ Attach a Python predicate with `.when(...)` to filter on computed conditions:
 ```python
 c = Capture()
 def aligned(m):
-    v = m.const_uint(c)
+    v = m.uint_opt(c)
     return v is not None and v % 16 == 0
 
 function.find_all(var(c).when(aligned))
@@ -131,14 +144,15 @@ bindings where all patterns match at once are returned, and each result is one
 merged match:
 
 ```python
-from strider.pattern import any_int_const
+from strider.pattern import int_const
 
-base, off = Capture(), Capture()
+base, o1, o2 = Capture(), Capture(), Capture()
 for m in function.find_all(
-    [load(addr=var(base)), load(addr=add(var(base), any_int_const(off)))],
+    [load(addr=int_add(var(base), int_const(o1))),
+     load(addr=int_add(var(base), int_const(o2)))],
     ignore_casts=True,
 ):
-    print("second field at offset", m.const_uint(off))
+    print("two fields off one base, at", m.uint(o1), "and", m.uint(o2))
 ```
 
 ## Constraints: relating matches by control flow
@@ -158,7 +172,7 @@ from strider.pattern.constraints import dominates
 
 alloc, use = Capture(), Capture()
 for m in function.find_all(
-    [call().at(0x1000).capture(alloc), call().at(0x2000).capture(use)],
+    [call().target(0x1000).capture(alloc), call().target(0x2000).capture(use)],
     constraints=[dominates(alloc, use)],
 ):
     # the 0x2000 call is reached only after the 0x1000 call
@@ -172,46 +186,72 @@ edge off an `if` with `capture_true` / `capture_false`, capture the phi, and bin
 the candidate value with its own pattern (here, any integer constant):
 
 ```python
-from strider.pattern import if_else, phi, any_int_const, Capture
+from strider.pattern import if_else, phi, int_const, Capture
 from strider.pattern.constraints import phi_input_from_edge
 
 edge, the_phi, v = Capture(), Capture(), Capture()
 matches = function.find_all(
-    [if_else().capture_true(edge), phi().capture(the_phi), any_int_const(v)],
+    [if_else().capture_true(edge), phi().capture(the_phi), int_const(v)],
     constraints=[phi_input_from_edge(the_phi, edge, v)],
 )
 for m in matches:
-    print("on the taken branch the phi selects", m.const_uint(v))
+    print("on the taken branch the phi selects", m.uint(v))
 ```
 
 `negate(c)` keeps matches where `c` does *not* hold, and `any_of([...])` /
 `all_of([...])` combine several constraints.
 
-## Rewriting the graph
-
-You can also change the IR, not just read it. `rewrite` replaces every match of a
-pattern with a new shape you build from the captures:
+When control flow is not the relation you need, write the rule yourself.
+Subclass `JoinPredicate`, declare the captures it correlates, and return a bool:
 
 ```python
-from strider.pattern import Capture, add, int_const, var
+from strider.pattern import call, int_const, Capture
+from strider.pattern.constraints import JoinPredicate
+
+n = Capture("n")
+
+class MultipleOfEight(JoinPredicate):
+    def captures(self):       return [n]
+    def constraint(self, m):  return m.uint(n) % 8 == 0
+
+# Calls whose first argument is a constant multiple of eight.
+function.find_all([call().arg(0, int_const(n))], constraints=[MultipleOfEight()])
+```
+
+`captures()` tells the matcher which bindings the rule reads, so it is only
+consulted once those are bound.
+
+## Rewriting the graph
+
+`rewrite` replaces every match of a pattern with a new shape you build from the
+captures. The `find` side is a `strider.pattern` pattern; the `replace` side is
+a `strider.template` template, which covers the ops that can be built:
+
+```python
+from strider.pattern import Capture, int_add, int_const, var
+from strider import template as t
 
 x = Capture()
 # Replace `x + 0` with `x` everywhere.
-n = function.rewrite(find=add(var(x), int_const(0)), replace=var(x))
+n = function.rewrite(find=int_add(var(x), int_const(0)), replace=t.var(x))
 print("rewrote", n, "sites")
 ```
 
-The `find` side may use string-shorthand captures, but the `replace` side needs
-real `Capture` objects: a bare string there would be ambiguous. A rewrite can
-expose fresh simplifications, so re-run the optimizer afterwards to tidy up:
+A bare `strider.pattern.Pat` is accepted on the `replace` side for
+compatibility, but only its build-valid subset compiles.
+
+Both the `find` and `replace` sides use `Capture` objects (a bare string is not
+a capture). A rewrite can expose fresh simplifications, so re-run the optimizer
+afterwards to tidy up:
 
 ```python
 prog.optimize(function)   # collapse phi / dead-branch noise the rewrite exposed
 ```
 
-Use `rewrite_all([(find, replace), ...])` to stage several rules at once; they
-apply in order, first match wins per node. `function.clone()` gives you a copy to
-rewrite without touching the original. Example `03` walks through this end to end.
+Use `rewrite_all([(find, replace), ...])` to stage several rules at once; every
+rule is tried at every node, in order, so a rule that fires leaves the rewritten
+graph for the rules after it. `function.clone()` gives you a copy to rewrite
+without touching the original. Example `03` walks through this end to end.
 
 ## Looking at the graph
 
@@ -223,9 +263,32 @@ and re-centers as you click, instead of drawing everything at once.
 prog.visualize(function)   # prints a local URL; blocks until Ctrl-C
 ```
 
-It blocks the calling thread. If you run it on a background thread, you must call
-`strider.explore.shutdown(port)` and join the thread before the interpreter
-exits, or the process aborts.
+The toolbar controls the render: depth, hub cap (a node with more consumers than
+this is drawn but not expanded), max nodes, whether a node's inputs count toward
+the hub cap, and whether to render pretty. They start at the `neighborhood_dot`
+defaults except pretty, which the explorer opens on, and depth when
+`visualize(depth=...)` seeds it; `reset` puts them back.
+
+It blocks the calling thread, and it reads the `Function` / `Cfg` on the thread
+that BUILT them. To serve off the main thread, build the handle inside that
+thread -- calling `visualize` on anything built elsewhere raises
+`PanicException: unsendable` -- and call `strider.explore.shutdown(port)` and
+join the thread before the interpreter exits, or the process aborts:
+
+```python
+import threading
+
+def serve():
+    prog = strider.lift.load_elf("fixtures/out/x86/memory.elf")
+    _cfg, fn, _u = prog.analyze("array_sum")
+    prog.visualize(fn, port=8080)
+
+t = threading.Thread(target=serve)
+t.start()
+...
+strider.explore.shutdown(8080)   # unblocks the server; also joins the thread
+t.join()
+```
 
 For a static picture, render the IR or the CFG to a self-contained HTML file:
 
@@ -241,7 +304,7 @@ not match. A full dump gets unwieldy on a big function, so render just the
 neighborhood around one node instead:
 
 ```python
-dot = function.neighborhood_dot(function.entry_node(), depth=2)
+dot = function.neighborhood_dot(function.entry_node(), depth=2, pretty=True)
 ```
 
 ## When a pattern does not match
@@ -251,18 +314,18 @@ The three that trip people up most:
 
 - **Subtraction and "not equal" style ops are not primitives.** The lifter
   lowers `a - b` to `a + (-b)`, and `a != b` to `not (a == b)`. Use the alias
-  constructors (`sub`, `int_le`, `float_ne`, ...) instead of building the raw
+  constructors (`int_sub`, `int_le`, `float_ne`, ...) instead of building the raw
   shape.
-- **Commutative ops try both orders for you.** `add`, `mul`, `and`, `or`, `xor`
-  match either operand order automatically. Non-commutative ops keep the order
-  you wrote.
-- **`phi()` matches only a register-tagged phi.** Use `mem_phi()` for the
-  memory merge.
+- **Commutative ops try both orders for you.** The integer `int_add`, `int_mul`,
+  `int_and`, `int_or`, `int_xor`, the float `float_add`, `float_mul`, and the
+  commutative comparisons `int_eq`, `int_carry`, `int_scarry`, `float_eq` all
+  match either operand order. The rest keep the order you wrote.
+- **`phi()` matches any phi**, whatever register it carries; `phi_for(vn)`
+  narrows to one. Use `mem_phi()` for the memory merge.
 
 When a pattern still comes up empty, dump the raw graph
 (`function.to_html("graph.html")` without `pretty`) and walk forward from the
-entry looking for the actual shape. The README's *Troubleshooting* section has
-the full list.
+entry looking for the actual shape.
 
 ## Beyond ELF: custom code and data
 
@@ -280,8 +343,8 @@ lft = strider.lift.lifter(arch, mem)
 cfg, function, unresolved = lft.analyze(0x8000, cc)
 ```
 
-A plain lifter works by address only (there is no symbol table) and takes the
-calling convention on each `analyze` call.
+A plain lifter works by address and takes the calling convention on each
+`analyze` call; names come from an ELF, which a raw blob has none of.
 
 When the bytes are computed or streamed rather than a flat blob, subclass
 `MemReader` and override `read`:
@@ -289,8 +352,9 @@ When the bytes are computed or streamed rather than a flat blob, subclass
 ```python
 class MyCode(strider.reader.MemReader):
     def read(self, addr, size):
-        # Return `size` bytes at `addr`, or None if that range is unmapped.
-        return self.bytes_at(addr, size)
+        # Your bytes here: return exactly `size` bytes at `addr`,
+        # or None if that range is unmapped.
+        ...
 
 lft = strider.lift.lifter(arch, MyCode())
 ```
@@ -302,7 +366,9 @@ Subclass `ReadOnlyMemory` the same way:
 ```python
 class MyRodata(strider.reader.ReadOnlyMemory):
     def read(self, addr, size):
-        return self.rodata_at(addr, size)   # bytes, or None if not read-only
+        # Your bytes here, but only where they are genuinely immutable:
+        # return `size` bytes at `addr`, or None if that range is not read-only.
+        ...
 
 lft = strider.lift.lifter(arch, MyCode(), rom=MyRodata())
 ```

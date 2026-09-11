@@ -15,7 +15,7 @@ fn is_const(fg: &strider_ir::Function, v: ValueId, expected: u64) -> bool {
 fn const_val(fg: &strider_ir::Function, v: ValueId, ctx: &str) -> u128 {
     fg.int_const_u128(v).unwrap_or_else(|| {
         panic!(
-            "collected arg should be an IntConst, got {:?} — {ctx}",
+            "collected arg should be an IntConst, got {:?}; {ctx}",
             fg.kind_of_value(v)
         )
     })
@@ -85,7 +85,6 @@ fn local_inits_in_arg_window_are_collected_too() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    // x86 cdecl: ret addr at offset 0, args at +4, +8, +12, ...
     pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
@@ -141,7 +140,6 @@ fn outgoing_wide_arg_store_collected_as_one_arg() -> Result<()> {
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    // ctrl + mem + target + sp + exactly 2 args (the wide double + the int).
     assert_eq!(
         inputs.len(),
         6,
@@ -208,8 +206,6 @@ fn outgoing_span_four_wide_arg_store_collected_as_one_arg() -> Result<()> {
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    // ctrl + mem + target + sp + exactly 2 args, not four inputs for the four
-    // slots the I128 covers.
     assert_eq!(
         inputs.len(),
         6,
@@ -276,8 +272,6 @@ fn outgoing_span_three_wide_arg_store_collected_as_one_arg() -> Result<()> {
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    // ctrl + mem + target + sp + exactly 2 args, not three inputs for the
-    // three slots the I80 covers, and not absorbing the int.
     assert_eq!(
         inputs.len(),
         6,
@@ -362,8 +356,7 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
     Ok(())
 }
 
-/// Ten push-style stack args, proving `StackArgs` has no upper bound on
-/// collection.
+/// Ten push-style stack args, proving `StackArgs` collection is unbounded.
 #[test]
 fn collects_ten_stack_args() -> Result<()> {
     const N: usize = 10;
@@ -401,7 +394,6 @@ fn collects_ten_stack_args() -> Result<()> {
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    // ctrl + mem + target + sp + N stack args.
     assert_eq!(
         inputs.len(),
         4 + N,
@@ -454,7 +446,6 @@ fn slot_hole_truncates_collection_to_dense_prefix() -> Result<()> {
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    // The hole at slot 1 truncates the window before slot 2.
     assert_eq!(
         inputs.len(),
         5,
@@ -468,7 +459,7 @@ fn slot_hole_truncates_collection_to_dense_prefix() -> Result<()> {
     Ok(())
 }
 
-/// One store at slot 0 under an AArch64-style `[0, 4]` table, so exactly one
+/// One store at slot 0 of a base-0 layout (no ret-addr anchor), so exactly one
 /// positional arg is appended even with the higher slots missing.
 #[test]
 fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
@@ -501,14 +492,13 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    // ctrl + memory + target + sp + the single stack arg.
     assert_eq!(inputs.len(), 5, "only one stack arg could be collected");
     Ok(())
 }
 
 /// An unfilled slot 0 must leave the collection empty.  The chain anchor is
-/// the implicit ret-addr push at sp-4, which is not in the `[4, 8]` slot
-/// table, and only slot 1 is filled, so the dense prefix is empty.
+/// the implicit ret-addr push at sp-4, which sits below slot 0's probe offset,
+/// and only slot 1 is filled, so the dense prefix is empty.
 #[test]
 fn missing_slot_zero_skips_collection() -> Result<()> {
     let sp = stack_vn();
@@ -524,14 +514,12 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
     let sp_v0 = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, ValueType::I32)?;
 
-    // rel = 8 from the anchor at sp-4 below, filling slot 1 of the [4, 8] table.
+    // rel = +8 from the anchor at sp-4 below, i.e. slot 1.
     let sp_plus_4 = b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::I32)?;
     let arg1 = b.build_int_const(22u64, ValueType::I32)?;
     b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
 
-    // Chain anchor.  The ret-addr push sits at rel = 0 (from the call-time SP),
-    // below slot 0's probe offset (rel = 4), so it never fills a slot; slot 0
-    // comes up empty and collection stops with nothing collected.
+    // Chain anchor at rel 0, below slot 0's probe offset (rel 4).
     let sp_minus_4 = b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
     b.write_variable(&sp, sp_minus_4)?;
     let retaddr = b.build_int_const(0x1234u64, ValueType::I32)?;
@@ -546,8 +534,6 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
     let before_inputs = fg.node_inputs(find_call(fg.graph())?).len();
 
     let mut pipeline = cf_rp_pipeline();
-    // Ret addr at offset 0 from the anchor, args at +4 and +8.  Slot 0 is
-    // absent, so the dense prefix is empty.
     pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
@@ -672,7 +658,8 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
     let arg1 = b.build_int_const(22u64, ValueType::I32)?;
     b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
 
-    // Volatile global write, cross-class against the stack-arg slots.
+    // A global write at a constant address, cross-class against the stack-arg
+    // slots.
     let global_addr = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32)?;
     let global_data = b.build_int_const(0x1234u64, ValueType::I32)?;
     b.build_store(global_addr, global_data, rsleigh::VnSpace::RAM)?;
@@ -730,8 +717,6 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
 
     let mut sp_cur = sp_initial;
     let global_data = b.build_int_const(0x1234u64, ValueType::I32)?;
-    // A global write after each push means the chain backward from the Call
-    // starts on the final global write, terminating before any arg.
     for (i, base_global_addr) in [0xCAFE0000u64, 0xCAFE0010, 0xCAFE0020, 0xCAFE0030]
         .into_iter()
         .enumerate()
@@ -759,8 +744,6 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    // The trailing global write is the most-recent chain node, so the walk
-    // stops immediately: ctrl + memory + target + sp = 4.
     assert_eq!(
         inputs.len(),
         4,
@@ -813,7 +796,6 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    // x86 cdecl: ret addr at offset 0, args at +4, +8, +12, ...
     pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
@@ -838,8 +820,8 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
 }
 
 /// i386 `kmap_free_wakeup(arg0, arg1, arg2)`.  The compiler stores arg1, arg0,
-/// arg2 in that order, so no two successive chain stores are at adjacent slots.
-/// All three must land in the right slots.
+/// arg2 in that order, so chain order is not slot order.  All three must land
+/// in the right slots.
 #[test]
 fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
     let sp = stack_vn();
@@ -962,8 +944,8 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
 /// A store outside the convention's stack-arg window must terminate the walk.
 ///
 /// Chain order, latest first: `ret-addr@-12, arg0@-8, arg1@-4, local@-16`.
-/// The local at -16 is at relative offset -4 from the anchor and not in the
-/// slot table, so aborting there keeps its value from leaking into an arg slot.
+/// The local at -16 is at relative offset -4 from the anchor, below slot 0, so
+/// aborting there keeps its value from leaking into an arg slot.
 #[test]
 fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     let sp = stack_vn();
@@ -980,7 +962,7 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     let four = b.build_int_const(4u64, ValueType::I32)?;
     let sixteen = b.build_int_const(16u64, ValueType::I32)?;
 
-    // Above the outgoing-args region, so not in the stack-arg slot set.
+    // Below slot 0, so outside the stack-arg slot set.
     let sp_minus_16 = b.build_sub_as_add_neg(sp_v0, sixteen, ValueType::I32)?;
     let local = b.build_int_const(0xDEADu64, ValueType::I32)?;
     b.build_store(sp_minus_16, local, rsleigh::VnSpace::RAM)?;
@@ -1007,7 +989,6 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    // 2-slot cdecl table: ret-addr anchor at +0, arg0 at +4, arg1 at +8.
     pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
@@ -1046,7 +1027,7 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     Ok(())
 }
 
-/// With no per-call override the function-default table is used.
+/// With no per-call override the function-default convention is used.
 #[test]
 fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
     let sp = stack_vn();
@@ -1075,7 +1056,6 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    // No side-table entry, so the default offsets [4, 8] apply.
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
@@ -1096,16 +1076,13 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
     Ok(())
 }
 
-/// A per-call override wins over the function-default table.  The default is
-/// `[4, 8]` and the override `[0, 4]`, so the store at `sp + 0` is slot 0
-/// under the override but outside the default and would otherwise be missed.
+/// A per-call override wins over the function default.  The default's first
+/// slot is at +4 and the override's at +0, so the store at `sp + 0` is slot 0
+/// under the override but below the default's first slot.
 #[test]
 fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
-    #![allow(clippy::unwrap_used)]
-
     let sp = stack_vn();
 
-    // Slot 0 under the override table, absent from the default one.
     let mut b = RegisterSet::new()
         .tracked(sp)
         .callee_saved(sp)
@@ -1126,30 +1103,30 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
     let mut fg = b.build()?;
 
     // The offsets override is derived from this stored CC.
-    let override_cc = strider_target::BuiltCallingConvention::try_new(
-        strider_target::BuiltCallingConventionParts {
-            arg_passing_regs: vec![],
-            callee_saved_regs: vec![],
-            ret_val_regs: vec![],
-            ret_val_regs_float: vec![],
-            stack_vn: sp,
-            stack_args: Some(strider_target::StackArgs {
-                base_offset: 0,
-                increment: 4,
-            }),
-            ret_stack_pop: 0,
-            link_register_vn: None,
-            preserves_memory: false,
-        },
-    )
-    .unwrap();
+    let override_cc = strider_target::BuiltCallingConvention {
+        arg_passing_regs: vec![],
+        callee_saved_regs: vec![],
+        ret_val_regs: vec![],
+        ret_val_regs_float: vec![],
+        stack_vn: sp,
+        stack_args: Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }),
+        ret_stack_pop: 0,
+        link_register_vn: None,
+        preserves_memory: false,
+        preserves_all_registers: false,
+        no_return: false,
+        ..Default::default()
+    };
+    override_cc.validate().unwrap();
     let call_id = fg
         .walk_kind(|k| matches!(k, NodeKind::Call))
         .next()
         .expect("Call node must exist");
     fg.side_tables_mut().set_call_cc(call_id, override_cc);
 
-    // Run with the default table [4, 8]; the pass must read the override.
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
@@ -1173,17 +1150,14 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
     Ok(())
 }
 
-/// The store's offset must come from `Function::stack_offsets` when an entry
+/// The store's offset must come from the side-table memory class when an entry
 /// exists, not from re-deriving it.  The arg0 store's address is replaced with
 /// an opaque constant so decomposition returns `None`, and the side-table is
 /// populated by hand.  Reading the side-table collects the arg; re-deriving
 /// collects none.
 #[test]
 fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result<()> {
-    #![allow(clippy::unwrap_used)]
-
     let sp = stack_vn();
-    // store arg0=77 at sp+4, anchor at sp+0, then call.
     let mut b = RegisterSet::new()
         .tracked(sp)
         .callee_saved(sp)
@@ -1215,7 +1189,6 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
         prep.run(&mut fg, &mut crate::OptCtx::new(None))?;
     }
 
-    // The arg0 store is the one whose data input is IntConst(77).
     let arg0_store = fg
         .walk()
         .find(|&n| {
@@ -1253,7 +1226,6 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     fg.side_tables_mut()
         .set_stack_slot(arg0_store_addr, sp_base, 4);
 
-    // Slot table [4, 8], with offset 0 as the anchor.
     let pass = CallStackArgCollect;
     crate::pipeline::run_post(&pass, &mut fg, &mut crate::OptCtx::new(None))?;
 
@@ -1269,6 +1241,66 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
         is_const(&fg, inputs[4], 77),
         "arg0 should be IntConst(77), got {:?}",
         fg.kind_of_value(inputs[4])
+    );
+    Ok(())
+}
+
+/// `slots` argument stores under a lowered SP, then the call that consumes
+/// them.  Counts the memory-SSA steps one collection costs.
+fn collect_walk_steps(slots: usize) -> Result<u64> {
+    let sp = stack_vn();
+    let stack_args = strider_target::StackArgs {
+        base_offset: 0,
+        increment: 4,
+    };
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_args(Some(stack_args))
+        .build_fn_single_region()?;
+    let entry_sp = b.read_variable(&sp)?;
+    let frame_bytes = 4 * slots as i64;
+    for i in 0..slots {
+        let off = b.build_int_const((4 * i as i64 - frame_bytes) as u64, ValueType::I32)?;
+        let addr = b.build_int_binary_operation(entry_sp, off, IntBinaryOp::Add, ValueType::I32)?;
+        let arg = b.build_int_const(0x100 + i as u64, ValueType::I32)?;
+        b.build_store(addr, arg, rsleigh::VnSpace::RAM)?;
+    }
+    let frame = b.build_int_const((-frame_bytes) as u64, ValueType::I32)?;
+    let call_sp =
+        b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::I32)?;
+    b.write_variable(&sp, call_sp)?;
+    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    b.build_call(target, &[], &[], 0)?;
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    let mut pipeline = crate::OptimizerPipeline::new();
+    pipeline.add(crate::PhiCollapse);
+    pipeline.add(crate::RegionCollapse);
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    let call_id = find_call(fg.graph())?;
+    let alias_cfg = MemAnalyzer::new(MemOptions::call_blocking(
+        crate::AliasMode::StackGlobalDisjoint,
+    ));
+    crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
+    let args = collect_stack_args(&fg, call_id, stack_args, &alias_cfg);
+    assert_eq!(args.len(), slots, "every argument slot must be collected");
+    Ok(crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get))
+}
+
+/// Doubling the argument count may only double the work: one reverse scan of
+/// the call's chain answers every slot, rather than one walk per slot.
+#[test]
+fn collecting_stack_args_is_linear_in_the_slot_count() -> Result<()> {
+    let small = collect_walk_steps(100)?;
+    let big = collect_walk_steps(200)?;
+    assert!(
+        big * 100 <= small * 260,
+        "doubling the argument count must not square the walk: 100 slots took \
+         {small} steps, 200 slots took {big}"
     );
     Ok(())
 }

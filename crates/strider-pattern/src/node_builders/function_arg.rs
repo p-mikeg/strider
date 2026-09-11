@@ -1,5 +1,5 @@
 //! Matches the function-argument *carrier* node the `FunctionArgDetect`
-//! post-pass records in `Function::arg_index_to_values`: an `InitialVar(vn)`
+//! post-pass records in `SideTables::arg_index_to_values`: an `InitialVar(vn)`
 //! for a register-passed arg, a `Load` for a stack-passed one.
 //!
 //! The kind spec has to be [`KindSpec::Any`], since no discriminant separates
@@ -13,9 +13,21 @@ use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
 
+/// Which index space [`FunctionArgPat::index`] refers to. Integer and float
+/// arguments are numbered separately, so the caller states the class.
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub enum FunctionArgClass {
+    #[default]
+    Integer,
+    Float,
+    /// Either class, index counted within whichever one the carrier belongs to.
+    Any,
+}
+
 #[derive(Default)]
 pub struct FunctionArgPat {
     source: Option<FunctionArgSource>,
+    class: FunctionArgClass,
     index: Option<u32>,
     capture: Option<Capture>,
 }
@@ -24,6 +36,13 @@ impl FunctionArgPat {
     /// Register- versus stack-passed.
     pub fn source(mut self, s: FunctionArgSource) -> Self {
         self.source = Some(s);
+        self
+    }
+
+    /// Integer- versus float-register numbering. Defaults to
+    /// [`FunctionArgClass::Integer`].
+    pub fn class(mut self, c: FunctionArgClass) -> Self {
+        self.class = c;
         self
     }
 
@@ -42,40 +61,21 @@ impl FunctionArgPat {
     fn lower(self, b: &mut MatcherBuilder) -> PatValueRef {
         let FunctionArgPat {
             source,
+            class,
             index,
             capture,
         } = self;
         let node = b.node(KindSpec::Any);
         let value_out = b.value_output(node, 0);
 
-        // Index and source carry no cross-binding state, so one node
-        // predicate covers both and short-circuits before child recursion.
+        // Index, class and source carry no cross-binding state, so one node
+        // predicate covers them all and short-circuits before child recursion.
         b.set_node_predicate(
             value_out,
             Box::new(move |matcher, node| {
                 let f = matcher.function();
-                match index {
-                    Some(idx) => {
-                        if !f
-                            .side_tables()
-                            .arg_index_to_values(idx)
-                            .iter()
-                            .any(|&v| f.producer(v) == node)
-                        {
-                            return false;
-                        }
-                    }
-                    None => {
-                        let any = f.side_tables().iter_arg_indices().any(|i| {
-                            f.side_tables()
-                                .arg_index_to_values(i)
-                                .iter()
-                                .any(|&v| f.producer(v) == node)
-                        });
-                        if !any {
-                            return false;
-                        }
-                    }
+                if !is_carrier(f, node, class, index) {
+                    return false;
                 }
                 let Some(expected) = source else {
                     return true;
@@ -118,21 +118,56 @@ impl FunctionArgPat {
     }
 }
 
+/// Whether `node` produces a carrier of `class` at `index`, `index` `None`
+/// accepting any position within the class.
+fn is_carrier(
+    f: &strider_ir::Function,
+    node: strider_ir::node::NodeId,
+    class: FunctionArgClass,
+    index: Option<u32>,
+) -> bool {
+    let st = f.side_tables();
+    let holds =
+        |values: &[strider_ir::node::ValueId]| values.iter().any(|&v| f.producer(v) == node);
+    match (class, index) {
+        (FunctionArgClass::Integer, Some(i)) => holds(st.arg_index_to_values(i)),
+        (FunctionArgClass::Float, Some(i)) => holds(st.float_arg_index_to_values(i)),
+        (FunctionArgClass::Any, Some(i)) => {
+            holds(st.arg_index_to_values(i)) || holds(st.float_arg_index_to_values(i))
+        }
+        (FunctionArgClass::Integer, None) => st
+            .iter_arg_indices()
+            .any(|i| holds(st.arg_index_to_values(i))),
+        (FunctionArgClass::Float, None) => st
+            .iter_float_arg_indices()
+            .any(|i| holds(st.float_arg_index_to_values(i))),
+        (FunctionArgClass::Any, None) => st.arg_carrier_values().any(|v| f.producer(v) == node),
+    }
+}
+
 impl MatchPat for FunctionArgPat {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         self.lower(b)
     }
 }
 
-/// Unfiltered by source, so both register (`InitialVar`) and stack (`Load`)
-/// carriers match.
+/// The `idx`-th integer-class argument. Unfiltered by source, so both register
+/// (`InitialVar`) and stack (`Load`) carriers match.
 pub fn function_arg(idx: u32) -> FunctionArgPat {
     FunctionArgPat::default().index(idx)
 }
 
-/// Any carrier, whatever its index or source.
-pub fn function_arg_any() -> FunctionArgPat {
+/// The `idx`-th float-class argument, counting only float parameters: a
+/// `double f(int, double)` passes its `double` as float argument 0.
+pub fn function_arg_float(idx: u32) -> FunctionArgPat {
     FunctionArgPat::default()
+        .class(FunctionArgClass::Float)
+        .index(idx)
+}
+
+/// Any carrier, whatever its class, index or source.
+pub fn any_function_arg() -> FunctionArgPat {
+    FunctionArgPat::default().class(FunctionArgClass::Any)
 }
 
 /// Restricted to a register-passed `InitialVar(vn)`.

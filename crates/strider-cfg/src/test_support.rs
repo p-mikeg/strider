@@ -14,7 +14,6 @@ pub(crate) fn addr(machine: u64, insn: u64) -> PcodeInsnAddr {
     }
 }
 
-/// A no-op p-code instruction: `Copy` with no output or inputs.
 pub(crate) fn fake_insn() -> rsleigh::Insn {
     rsleigh::Insn {
         opcode: rsleigh::Opcode::Copy,
@@ -23,7 +22,8 @@ pub(crate) fn fake_insn() -> rsleigh::Insn {
     }
 }
 
-/// An `Unconditional` region spanning the given `(machine, insn)` addresses.
+/// An `Unconditional` region spanning the given `(machine, insn)` addresses,
+/// every instruction one byte long.
 pub(crate) fn make_region(addrs: &[(u64, u64)]) -> Region {
     let start = addr(addrs[0].0, addrs[0].1);
     let insns = addrs
@@ -31,19 +31,26 @@ pub(crate) fn make_region(addrs: &[(u64, u64)]) -> Region {
         .map(|&(m, i)| RegionInstruction {
             addr: addr(m, i),
             insn: fake_insn(),
+            len: 1,
         })
         .collect();
     Region {
         start_addr: start,
         insns,
+        empty_span_len: 0,
         terminator: RegionTerminator::Unconditional,
     }
 }
 
-pub(crate) fn make_sleigh() -> rsleigh::Sleigh<TestReader> {
+/// An x86-64 Sleigh reading `bytes` mapped at `base`.
+pub(crate) fn make_sleigh_over(bytes: Vec<u8>, base: u64) -> rsleigh::Sleigh<TestReader> {
     let arch = SleighArch::x86_64();
-    let reader = BufMemReader::new(Vec::<u8>::new(), 0x0);
-    rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create empty Sleigh")
+    let reader = BufMemReader::new(bytes, base);
+    rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh")
+}
+
+pub(crate) fn make_sleigh() -> rsleigh::Sleigh<TestReader> {
+    make_sleigh_over(Vec::new(), 0x0)
 }
 
 pub(crate) fn make_builder<'a>(

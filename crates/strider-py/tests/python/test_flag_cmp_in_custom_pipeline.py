@@ -1,4 +1,4 @@
-"""Regression: `FlagCmpCanonicalize` must run in the pipeline
+"""`FlagCmpCanonicalize` must run in the pipeline
 `Lifter.analyze` drives, or `head->next == &head` shapes stay as
 flag-trees and pattern queries fail silently.
 
@@ -16,8 +16,8 @@ from __future__ import annotations
 import strider
 from strider.pattern import (
     Capture,
-    add,
-    any_int_const,
+    int_add,
+    int_const,
     function_arg,
     int_eq,
     load,
@@ -28,27 +28,31 @@ from .conftest import fixture_path
 
 def test_list_empty_pattern_matches_under_custom_pipeline_with_fcc():
     """The `head->next == &head` shape must be matchable as
-    `int_eq(load(<base>+K), add(<base>, K))` after `analyze`."""
+    `int_eq(load(<base>+K), int_add(<base>, K))` after `analyze`."""
     elf = fixture_path("x64", "list_empty")
     loaded = strider.lift.load_elf(str(elf))
     mem = loaded.reader()
     sleigh = strider.sleigh.SleighArch.x86_64()
     cc = strider.sleigh.CallingConvention.x86_64_systemv()
 
-    entry, max_size = loaded._elf.symbol_addr_and_size("is_thread_group_empty")
+    sym = loaded.symbol("is_thread_group_empty")
 
     lift = strider.lift.lifter(sleigh, mem, rom=mem)
     _cfg, function, _unresolved = lift.analyze(
-        entry, cc, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=max_size))
+        sym.address,
+        cc,
+        opts=strider.lift.LifterOptions(
+            cfg=strider.cfg.CfgOptions(function_max_size=sym.size)
+        ),
     )
 
     o = Capture()
     pat = int_eq(
-        load(addr=add(function_arg(0), any_int_const(o))),
-        add(function_arg(0), any_int_const(o)),
+        load(addr=int_add(function_arg(0), int_const(o))),
+        int_add(function_arg(0), int_const(o)),
     )
     hits = list(function.find_all(pat, ignore_casts=True))
-    offsets = sorted({h.const_uint(o) for h in hits if h.const_uint(o) is not None})
+    offsets = sorted({h.uint(o) for h in hits if h.uint(o) is not None})
     # offsetof(struct task, head) = 4 + 60 = 64; GCC -O2 emits exactly
     # `cmp [rdi+0x40], rdi+0x40`.
     assert 64 in offsets, (

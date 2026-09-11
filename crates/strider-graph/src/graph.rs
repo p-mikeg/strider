@@ -194,6 +194,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     }
 
     #[inline]
+    #[cfg(any(test, feature = "test-injectors"))]
     pub fn next_node_id(&self) -> NodeId {
         self.store.nodes.next_key()
     }
@@ -204,8 +205,15 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     }
 
     /// `None` if no node with that index exists.
+    ///
+    /// `u32::MAX` is `cranelift-entity`'s reserved sentinel and `NodeId::new`
+    /// only debug-asserts on it, so it is rejected before the id is built: a raw id from
+    /// outside (a Python caller) must produce `None`, never a panic.
     #[inline]
     pub fn node_id_from_u32(&self, raw: u32) -> Option<NodeId> {
+        if raw == u32::MAX {
+            return None;
+        }
         let id = NodeId::new(raw as usize);
         self.has_node(id).then_some(id)
     }
@@ -266,6 +274,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     }
 
     #[inline]
+    #[cfg(any(test, feature = "test-injectors"))]
     pub fn value_first_use_id(&self, value: ValueId) -> Option<UseId> {
         self.store.outputs[value].first_use.expand()
     }
@@ -296,15 +305,19 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// Compacts the remaining inputs' indices. `false` if `index` is out of
     /// bounds.
     pub fn remove_node_input(&mut self, node_id: NodeId, index: u32) -> bool {
-        self.cache.invalidate(node_id);
         let index = index as usize;
-        let inputs = &mut self.store.nodes[node_id].inputs;
+        let inputs = &self.store.nodes[node_id].inputs;
         let slice = inputs.as_slice(&self.store.input_pool);
         let Some(&delete_use_id) = slice.get(index) else {
             return false;
         };
+        // After the bounds check: invalidating first would evict a node whose
+        // structure never changed, and this path never re-inserts it.
+        self.cache.invalidate(node_id);
 
-        inputs.remove(index, &mut self.store.input_pool);
+        self.store.nodes[node_id]
+            .inputs
+            .remove(index, &mut self.store.input_pool);
         let tail: SmallVec<[UseId; 4]> = self.store.nodes[node_id]
             .inputs
             .as_slice(&self.store.input_pool)[index..]
@@ -324,8 +337,6 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         node_id: NodeId,
         indices: impl IntoIterator<Item = usize>,
     ) {
-        self.cache.invalidate(node_id);
-
         // Degree-bounded, so a bitset over the current input count is O(D).
         let len = self.store.node_input_uses(node_id).len();
         let mut drop_slot = vec![false; len];
@@ -339,6 +350,9 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         if !any {
             return;
         }
+        // After the early return: invalidating first would evict a node whose
+        // structure never changed, and this path never re-inserts it.
+        self.cache.invalidate(node_id);
 
         // Partition into survivors (reindexed) and victims (unlinked).
         let old_uses: SmallVec<[UseId; 4]> = self.store.node_input_uses(node_id).into();
@@ -399,8 +413,8 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     }
 
     /// Clears `value`'s use-list head, severing the producer's forward link to
-    /// its consumers WITHOUT touching the consumers' input edges. Deliberately
-    /// leaves the graph inconsistent, for tests that need a broken graph.
+    /// its consumers WITHOUT touching the consumers' input edges. Leaves the
+    /// graph inconsistent, for tests that need a broken graph.
     #[doc(hidden)]
     #[cfg(any(test, feature = "test-injectors"))]
     pub fn corrupt_clear_first_use(&mut self, value: ValueId) {
@@ -411,7 +425,10 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// every other node. Returns the old-to-new id translation table.
     ///
     /// `reachable` MUST be backward-input-closed, i.e. every input's producing
-    /// node is present, or this panics on a dangling edge.
+    /// node is present, or this panics on a dangling edge. It MUST also be
+    /// duplicate-free: a repeated id pushes two new nodes, the remap keeps the
+    /// second, and the relink then splices the orphaned first into its values'
+    /// use-lists, so `value_uses` reports consumers no node owns.
     ///
     /// Invalidates every pre-compaction `NodeId` / `ValueId` / `UseId`, and
     /// bumps the generation counter.
@@ -435,6 +452,13 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         // Copy nodes (placeholder slot lists) and outputs first, so every new
         // NodeId / ValueId exists before the second pass rewrites edges.
         for &old_node_id in &reachable {
+            // Not a `debug_assert`: violating it corrupts the arena silently, and
+            // the slot this reads is written on the next line either way.
+            assert!(
+                remap.nodes[old_node_id].is_none(),
+                "`reachable` repeated {old_node_id:?}: the second copy orphans \
+                 the first, whose outputs stay spliced into the use-lists"
+            );
             let new_kind = self.store.nodes[old_node_id].kind.clone();
             let new_node_id = new_nodes.push(Node::new(new_kind));
             remap.nodes[old_node_id] = Some(new_node_id);
@@ -493,7 +517,6 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
             self.store.link_use_to_value_list(use_id);
         }
 
-        // Re-key the cache over the renumbered survivors.
         self.cache.rebuild::<N, V, C>(&self.store);
 
         remap

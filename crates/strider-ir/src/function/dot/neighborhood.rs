@@ -55,10 +55,6 @@ pub(super) fn neighborhood_nodes(
         }
         let prod = producers(f, node);
         let cons = consumers.get(&node).cloned().unwrap_or_default();
-        // Hub degree is the consumer fan-out (the part that explodes); with
-        // `count_producers` the inputs fold in too. A hub still expands its
-        // producers (its inputs, a small fixed set) but not its consumer
-        // fan-out. The center always expands both directions.
         let degree = cons.len() + if count_producers { prod.len() } else { 0 };
         let is_hub = node != center && degree > hub_cap;
         for nb in prod

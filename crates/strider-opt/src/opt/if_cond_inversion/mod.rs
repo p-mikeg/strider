@@ -18,11 +18,19 @@ pub struct IfCondInversion {
     inner_capture: Capture,
 }
 
+thread_local! {
+    /// Rebuilding the pattern dominates the cost of constructing this pass.
+    static PATTERN: (Rc<Pattern>, Capture) = {
+        let capture = Capture::new();
+        (Rc::new(bool_not(var(capture)).into_pattern()), capture)
+    };
+}
+
 impl IfCondInversion {
     pub fn new() -> Self {
-        let inner_capture = Capture::new();
+        let (inner_pat, inner_capture) = PATTERN.with(|(p, c)| (Rc::clone(p), *c));
         Self {
-            inner_pat: Rc::new(bool_not(var(inner_capture)).into_pattern()),
+            inner_pat,
             inner_capture,
         }
     }

@@ -76,7 +76,8 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     }
 
     /// Appends a `base sp +/- K` line to a Store/Load label when the node has a
-    /// `stack_offsets` entry.  The base may be the entry SP or a masked SP.
+    /// Stack-class `memory_offsets` entry.  The base may be the entry SP
+    /// or a masked SP.
     fn with_sp_offset(&self, node: NodeId, label: String) -> String {
         match self.function.stack_offset(node) {
             Some((_, k)) if k < 0 => format!("{label}\nbase sp - {}", -k),
@@ -136,15 +137,13 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                     let v = f32::from_bits(*bits as u32);
                     format!("const {v}:f32")
                 }
-                Some(ValueType::F80) => {
-                    // No native Rust f80, so show raw bits rather than
-                    // mis-rendering as f64.
-                    format!("const {bits:#x}:f80")
-                }
-                _ => {
+                Some(ValueType::F64) => {
                     let v = f64::from_bits(*bits);
                     format!("const {v}:f64")
                 }
+                // No native Rust carrier at these widths, so show raw bits.
+                Some(ty) => format!("const {bits:#x}:{}", ty.as_str()),
+                None => format!("const {bits:#x}"),
             },
 
             NodeKind::Load(space) => {
@@ -156,7 +155,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 let space = self.pretty_vnspace(*space);
                 // data is input 2; memory and addr are 0 and 1
                 let ty = self.input_type_suffix(node, 2, " ");
-                self.with_sp_offset(node, format!("Store{ty}\n→ {space}"))
+                self.with_sp_offset(node, format!("Store{ty}\n-> {space}"))
             }
             NodeKind::Truncate => self.width_change_label(node, "Truncate"),
             NodeKind::Extend(op) => self.width_change_label(node, &format!("{op:?}")),
@@ -186,7 +185,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                     .unwrap_or_default();
                 format!(
                     "CallOther {name_prefix}#{user_op_id}{}",
-                    self.out_type_suffix(node, "\n→ "),
+                    self.out_type_suffix(node, "\n-> "),
                 )
             }
             NodeKind::SegmentOp { op_id } => {
@@ -216,7 +215,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     /// node's own value output.
     fn width_change_label(&self, node: NodeId, prefix: &str) -> String {
         format!(
-            "{prefix}\n{} → {}",
+            "{prefix}\n{} -> {}",
             self.input_type_str(node, 0),
             self.out_type_str(node),
         )
@@ -224,7 +223,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
 
     /// Comparison output is always `i1`, so only the input type varies.
     fn cmp_label(&self, node: NodeId, op: impl core::fmt::Debug) -> String {
-        format!("{op:?}\n{} → i1", self.input_type_str(node, 0))
+        format!("{op:?}\n{} -> i1", self.input_type_str(node, 0))
     }
 
     pub(super) fn emit_const_node(&self, node: NodeId, dot_id: &str, out: &mut ::dot::DotEmitter) {
@@ -266,7 +265,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::vn_to_display_name;
     use rsleigh::{Vn, VnSpace};

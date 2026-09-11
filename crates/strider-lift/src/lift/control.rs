@@ -6,10 +6,10 @@ use super::FunctionLifter;
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     pub(super) fn handle_branch(&mut self) -> Result<()> {
-        // Deliberately a no-op.  Every unconditional successor, branch or
-        // fall-through alike, is wired uniformly by `link_region_edges`.
-        // Emitting an IR branch here too would double-link the successor and
-        // its `Phi` predecessor inputs.
+        // Every unconditional successor, branch or fall-through alike, is
+        // wired uniformly by `link_region_edges`.  Emitting an IR branch here
+        // too would double-link the successor and its `Phi` predecessor
+        // inputs.
         Ok(())
     }
 
@@ -21,27 +21,37 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         target_vn: &rsleigh::Vn,
         targets: &[u64],
         region_map: &super::RegionMap,
+        switch_addr: strider_cfg::PcodeInsnAddr,
     ) -> Result<()> {
         if targets.is_empty() {
             bail!("switch terminator at region {region_id:?} has no targets");
         }
-        // The cfg builder enqueues each target with a `Branch` edge while
-        // constructing the Switch, so every target starts a region by lift time.
+        // The cfg builder enqueues each target while constructing the Switch,
+        // so every target starts a region by lift time.
         let mut arms: Vec<(strider_ir::RegionId, u64)> = Vec::with_capacity(targets.len());
+        // One pass over the successor list, not one per target: a wide kernel
+        // dispatch table is re-scanned on every re-lift round otherwise.
+        let by_start = self.cfg.switch_arm_regions(region_id);
         for &target in targets {
             let machine_addr = strider_cfg::MachineInsnAddr::from(target);
-            let cfg_region = self.cfg.region_id_at_start(machine_addr).ok_or_else(|| {
-                anyhow!("switch target machine address {target:#x} has no CFG region")
-            })?;
+            let cfg_region = by_start
+                .get(&strider_cfg::PcodeInsnAddr::at_machine_start(
+                    machine_addr.addr,
+                ))
+                .copied()
+                .ok_or_else(|| {
+                    anyhow!("switch target machine address {target:#x} has no successor region")
+                })?;
             let ir_region = super::ir_region_of(region_map, cfg_region)?;
             arms.push((ir_region, target));
         }
         let idx = self.read_vn(target_vn)?;
-        // A single arm degenerates to a plain branch.
-        if arms.len() == 1 {
-            return self.builder.build_branch(arms[0].0);
-        }
-        self.builder.build_switch(idx, &arms)
+        // A one-arm table stays a `Switch`, which holds the dispatch selector
+        // the resolver re-reads to widen a site that seated early.  A plain
+        // branch drops the selector as dead and latches the first answer.
+        let node = self.builder.build_switch(idx, &arms)?;
+        self.switch_anchors.push((switch_addr, node));
+        Ok(())
     }
 
     pub(super) fn handle_cond_branch(
@@ -97,21 +107,27 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     ) -> Result<()> {
         // Snapshot the CC-derived pieces so the immutable borrow of the
         // function ends before the &mut read / build / write path below.
-        let (ret_vns, clobber_vns, arg_vns, ret_stack_pop) = {
+        let (ret_vns, clobber_vns, arg_vns, float_arg_vns, ret_stack_pop) = {
             let cc = override_cc.unwrap_or_else(|| self.builder.function().default_cc());
             // Ret-vals and clobbers are two halves of the same projection over
             // `all_vns`, so one scan yields both.
-            let (ret_vns, clobber_vns) =
-                cc.ret_and_clobber_vns(self.builder.function().all_vns(), |v| self.container_of(v));
+            let (ret_vns, clobber_vns) = self.call_ret_and_clobber_vns(override_cc);
+            let float_arg_vns = self.call_float_arg_vns(override_cc);
             (
                 ret_vns,
                 clobber_vns,
                 cc.arg_passing_regs.clone(),
+                float_arg_vns,
                 cc.ret_stack_pop,
             )
         };
 
-        let args = self.read_vns(&arg_vns)?;
+        // APPENDED, never interleaved: an integer argument keeps its `args`
+        // position (hence its `call().arg(N)` index), and float ABI position
+        // `j` lands at `arg_vns.len() + j`, the index
+        // `float_arg_index_to_values` uses on the callee side.
+        let mut args = self.read_vns(&arg_vns)?;
+        args.extend(self.read_vns(&float_arg_vns)?);
 
         let mut output_vns = ret_vns.clone();
         output_vns.extend_from_slice(&clobber_vns);
@@ -124,9 +140,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let (ret_vals, clobbers) = outputs.split_at(ret_vns.len());
 
         // Clobbers first, so an aliased clobber cannot re-clobber the return
-        // value.  Clobbers use `write_variable` because the set legitimately
-        // includes CONST / RAM Sleigh temps the aliasing path cannot slice;
-        // ret-vals are REGISTER / UNIQUE and take the aliasing-aware path.
+        // value.  Both groups are drawn from `all_vns()`, so every entry is
+        // already a tracked container with no slice to insert.
         for (vn, v) in core::iter::zip(&clobber_vns, clobbers) {
             self.builder.write_variable(vn, *v)?;
         }
@@ -176,7 +191,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
 
     /// Emits an `IndirectBranch [ctrl, mem, target]` placeholder anchoring
     /// `target_vn`'s lifted value, carrying the same control and memory
-    /// snapshot a real `Return` would.
+    /// snapshot a real `Return` would, plus the optional ISA-mode input when
+    /// this instruction committed one.
     ///
     /// The NODE id, not the lifted value, is recorded against `addr`: the
     /// optimizer may `replace_all_uses` the value away, and the resolver needs
@@ -189,7 +205,15 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // Read through the register-aliasing path so a sub-register dispatch
         // (`jmp *eax` on x86-64) folds via the same chain as everything else.
         let target_value = self.read_vn(target_vn)?;
-        let placeholder = self.builder.build_indirect_branch(target_value)?;
+        // Only a mode this very instruction committed is the branch's own; an
+        // earlier commit is already the flowing mode and must not be re-read as
+        // an interworking switch.
+        let isa_mode = self
+            .pending_isa_mode
+            .and_then(|(mode, mode_addr)| (mode_addr == addr.machine_addr.addr).then_some(mode));
+        let placeholder = self
+            .builder
+            .build_indirect_branch_with_mode(target_value, isa_mode)?;
         self.unresolved_branches.push((addr, placeholder));
         Ok(())
     }
@@ -197,8 +221,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
     use strider_ir::node::NodeKind;
     use strider_ir::{FunctionBuilder, IRViewer, IRWalker};
     use strider_ir_test_utils::{IrWalkerEx, RegisterSet};
@@ -247,7 +269,7 @@ mod tests {
 
     #[test]
     fn handle_switch_emits_single_switch_node() {
-        // One `Switch` with a control output per arm, not an If-ladder.
+        // One `Switch` with a control output per arm.
         let n = 3;
         let (mut b, idx, regions) = make_builder_with_targets(n);
         let arms: Vec<(strider_ir::RegionId, u64)> = regions

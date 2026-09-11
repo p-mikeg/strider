@@ -1,5 +1,3 @@
-#![allow(dead_code)] // Not every caller uses every helper.
-
 use anyhow::anyhow;
 
 use strider_ir::node::{NodeId, NodeKind};
@@ -55,7 +53,7 @@ pub(crate) fn standard_test() -> OptimizerPipeline {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward);
+    pipeline.add(LoadForward::default());
     pipeline
 }
 
@@ -85,15 +83,6 @@ pub(crate) fn return_value(graph: &Graph) -> crate::Result<Value> {
 pub(crate) fn return_kind(graph: &Graph) -> crate::Result<NodeKind> {
     let val = return_value(graph)?;
     Ok(*graph.kind_of_value(val))
-}
-
-/// Counts nodes matching `pred` over the full arena, detached zombies
-/// included.
-pub(crate) fn count<F: Fn(&NodeKind) -> bool>(graph: &Graph, pred: F) -> usize {
-    graph
-        .all_node_ids()
-        .filter(|&n| pred(graph.node_kind(n)))
-        .count()
 }
 
 /// Panics on zero or multiple `If` nodes; both mean the fixture is wrong.

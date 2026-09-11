@@ -3,6 +3,9 @@ name = "strider-ir"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Strider's sea-of-nodes intermediate representation."
+repository.workspace = true
+rust-version.workspace = true
 
 [features]
 # Exposes builder/inspection helpers used only by downstream crates' tests
@@ -34,7 +37,7 @@ proptest = "1"
 # test-utils) is acceptable.  strider-ir's own `#[cfg(test)] mod tests` blocks
 # in `src/builder/tests.rs` use SENTINEL_LIFT_ADDR / sp_vn_x86_64 etc., so
 # they need the helpers visible at test time.
-strider-ir-test-utils = { workspace = true }
+strider-ir-test-utils = { workspace = true, features = ["proptest-gen"] }
 # Enable the test-only use-list corruption injectors (`Graph::corrupt_*`) for
 # the validator consistency tests. Dev-dep only, so production strider-ir never
 # carries them.

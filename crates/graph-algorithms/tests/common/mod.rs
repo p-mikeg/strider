@@ -1,7 +1,3 @@
-//! Test-only graph DSL.  `&Graph` implements
-//! [`graph_algorithms::walk::GraphRef`], so it plugs straight into
-//! [`graph_algorithms::walk::PreOrder`] / [`graph_algorithms::walk::PostOrder`].
-
 #![allow(
     dead_code,
     clippy::panic,
@@ -80,7 +76,6 @@ pub(crate) fn graph(input: &str) -> Graph {
             continue;
         }
 
-        #[allow(clippy::panic)]
         let (preds, succs) = line
             .split_once("->")
             .unwrap_or_else(|| panic!("graphmock: line missing `->`: {line:?}"));

@@ -82,56 +82,10 @@ impl Cfg {
         }
         Ok(out.finish())
     }
-
-    /// Structure-faithful: one `n<idx>` box per region, edges as stored, no
-    /// Sleigh needed.
-    pub fn raw_neighborhood_dot(
-        &self,
-        center: NodeIndex,
-        depth: usize,
-        max_nodes: usize,
-    ) -> crate::Result<String> {
-        let set = neighborhood_regions(self, center, depth, max_nodes);
-        let g = self.region_graph();
-        let mut out = ::dot::DotEmitter::new("G", &::dot::DotStyle::dark_cfg());
-        for &node in &set {
-            let region = g
-                .node_weight(node)
-                .ok_or_else(|| anyhow::anyhow!("invalid region index {node:?}"))?;
-            let start = region.start_addr.machine_addr.addr;
-            let label = format!(
-                "n{}  {start:#x}\\l{} insns",
-                node.index(),
-                region.insns.len()
-            );
-            let id = format!("n{}", node.index());
-            let extra: &[(&str, &str)] = if node == center {
-                &[("color", "\"#ffcc00\""), ("penwidth", "2.5")]
-            } else {
-                &[]
-            };
-            out.node(&id, &label, "box", extra);
-        }
-        // ponytail: same plain-edge note as `neighborhood_dot`.
-        for &node in &set {
-            for succ in g.neighbors_directed(node, Direction::Outgoing) {
-                if set.contains(&succ) {
-                    out.edge(
-                        &format!("n{}", node.index()),
-                        &format!("n{}", succ.index()),
-                        &[],
-                    );
-                }
-            }
-        }
-        Ok(out.finish())
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
-
     use super::neighborhood_regions;
     use rsleigh::mem_readers::BufMemReader;
     use strider_target::SleighArch;
@@ -210,10 +164,5 @@ mod tests {
             "dot:\n{dot}"
         );
         assert!(dot.contains("#ffcc00"), "dot:\n{dot}");
-
-        let raw = cfg
-            .raw_neighborhood_dot(entry, 1, 999)
-            .expect("raw_neighborhood_dot");
-        assert!(raw.contains(&format!("n{}", entry.index())), "raw:\n{raw}");
     }
 }

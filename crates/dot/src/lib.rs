@@ -1,8 +1,6 @@
 use std::fmt::{Debug, Write};
 use std::path::Path;
 
-pub type Result<T> = anyhow::Result<T>;
-
 const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html");
 
 /// `@viz-js/viz` v3.5.0 standalone build: Graphviz 11.x as Wasm, the Wasm
@@ -10,8 +8,6 @@ const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html"
 /// generated HTML is self-contained: no CDN fetch, no `.wasm` side-load.
 const VIZ_STANDALONE_JS: &str = include_str!("../assets/vendored/viz-standalone.js");
 
-/// Exposed so a host (e.g. the explorer's local server) can serve the payload
-/// directly and stay offline.
 pub fn viz_standalone_js() -> &'static str {
     VIZ_STANDALONE_JS
 }
@@ -23,9 +19,8 @@ const SVG_PAN_ZOOM_JS: &str = include_str!("../assets/vendored/svg-pan-zoom.min.
 /// A graph type that can be serialised to Graphviz DOT format node by node.
 pub trait GraphDotDumper {
     type Node;
-    // Bound is Display, not `std::error::Error`, so impls can pick
-    // `type Error = anyhow::Error`. anyhow's `Error` deliberately does not
-    // implement `std::error::Error`.
+    // Bound is Debug + Display, not `std::error::Error`, so impls can pick
+    // `type Error = anyhow::Error`, which does not implement it.
     type Error: Debug + std::fmt::Display + Send + Sync + 'static;
     type State;
 
@@ -145,8 +140,8 @@ fn json_quote(s: &str) -> String {
             '\t' => out.push_str("\\t"),
             '<' => out.push_str("\\u003c"),
             c if (c as u32) < 0x20 => {
-                // Writing to a `String` is infallible, but clippy::expect_used
-                // forbids the literal `.expect`, hence `let _ =`.
+                // Writing to a `String` is infallible; the discard is for
+                // `unused_must_use`.
                 let _ = write!(out, "\\u{:04x}", c as u32);
             }
             c => out.push(c),
@@ -178,9 +173,11 @@ impl DotEmitter {
         Self { out: s }
     }
 
-    /// `id` and `label` are escaped and quoted. `extra` attributes are
-    /// inserted verbatim; the caller owns quoting the value (a hex colour
-    /// needs its own `"..."`, a bare ident like `dashed` does not).
+    /// `id` and `label` are escaped and quoted; `shape` is spliced RAW. Of
+    /// `extra`, only a `"label"` key is escaped and quoted -- every other
+    /// value, `xlabel` and `tooltip` included, is inserted verbatim and the
+    /// caller owns quoting it (a hex colour needs its own `"..."`, a bare ident
+    /// like `dashed` does not).
     pub fn node(&mut self, id: &str, label: &str, shape: &str, extra: &[(&str, &str)]) {
         let id = escape_dot_label(id);
         let label = escape_dot_label(label);
@@ -268,7 +265,7 @@ fn emit_attr_block(out: &mut String, name: &str, attrs: &[(&str, &str)]) {
 /// Node count above which the viewer defaults to `sfdp`: `dot`'s layered
 /// layout is superlinear and stalls the browser on large graphs. The viewer's
 /// engine picker still lets the user switch back.
-pub const DEFAULT_SFDP_NODE_THRESHOLD: usize = 2000;
+const DEFAULT_SFDP_NODE_THRESHOLD: usize = 2000;
 
 /// Approximate: counting `[label=` also catches edge-label attribute blocks.
 /// It only picks the default engine, so over-counting harmlessly biases large
@@ -302,9 +299,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
 
     /// The DOT source plus the state the dumper accumulated while rendering.
     /// For dumpers whose DOT ids are not the node ids, that state is the
-    /// mapping back from an emitted id to the node it stands for. Use this over
-    /// [`as_dot`](Self::as_dot) when ids the render chose must be resolvable
-    /// (an explorer turning a clicked box back into a node).
+    /// mapping back from an emitted id to the node it stands for.
     ///
     /// # Errors
     /// Forwards any error from [`GraphDotDumper::dump_as_dot`].
@@ -322,6 +317,8 @@ impl<G: GraphDotDumper> GraphDot<G> {
 
     /// An interactive HTML page rendering the DOT client-side via Graphviz
     /// WASM. The vendored JS payloads are inlined, so the page works offline.
+    /// The single place every `graph_template_dot.html` placeholder is
+    /// substituted; a template revision adding one wires it up here.
     ///
     /// # Errors
     /// Same as [`Self::as_dot`].
@@ -357,52 +354,28 @@ impl<G: GraphDotDumper> GraphDot<G> {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable
-)]
 mod label_tests {
     use super::{escape_dot_label, json_quote};
 
+    /// A *literal* carriage return is not stripped, unlike the two-char `\r`
+    /// escape, and a recognised DOT escape passes through where any other
+    /// backslash doubles.
     #[test]
-    fn escape_dot_label_passes_through_plain_ascii() {
-        assert_eq!(escape_dot_label("hello world"), "hello world");
-    }
-
-    #[test]
-    fn escape_dot_label_empty_input_yields_empty_output() {
-        assert_eq!(escape_dot_label(""), "");
-    }
-
-    #[test]
-    fn escape_dot_label_double_quote_becomes_backslash_quote() {
-        assert_eq!(escape_dot_label("a\"b"), "a\\\"b");
-    }
-
-    #[test]
-    fn escape_dot_label_literal_newline_becomes_backslash_n() {
-        assert_eq!(escape_dot_label("a\nb"), "a\\nb");
-    }
-
-    #[test]
-    fn escape_dot_label_recognised_dot_escapes_pass_through() {
-        assert_eq!(escape_dot_label("a\\nb"), "a\\nb");
-        assert_eq!(escape_dot_label("a\\lb"), "a\\lb");
-        assert_eq!(escape_dot_label("a\\rb"), "a\\rb");
-    }
-
-    #[test]
-    fn escape_dot_label_other_backslash_doubles() {
-        assert_eq!(escape_dot_label("a\\b"), "a\\\\b");
-        assert_eq!(escape_dot_label("\\"), "\\\\");
-    }
-
-    #[test]
-    fn escape_dot_label_carriage_return_passes_through_as_is() {
-        // A *literal* '\r' is not stripped, unlike the two-char `\r` escape.
-        assert_eq!(escape_dot_label("a\rb"), "a\rb");
+    fn escape_dot_label_escapes_exactly_what_dot_needs() {
+        for (input, want) in [
+            ("hello world", "hello world"),
+            ("", ""),
+            ("a\"b", "a\\\"b"),
+            ("a\nb", "a\\nb"),
+            ("a\\nb", "a\\nb"),
+            ("a\\lb", "a\\lb"),
+            ("a\\rb", "a\\rb"),
+            ("a\\b", "a\\\\b"),
+            ("\\", "\\\\"),
+            ("a\rb", "a\rb"),
+        ] {
+            assert_eq!(escape_dot_label(input), want, "input {input:?}");
+        }
     }
 
     #[test]
@@ -413,52 +386,31 @@ mod label_tests {
         assert_eq!(escape_dot_label(input), want);
     }
 
+    /// `<` is escaped unconditionally, not just `</`: matching only the pair
+    /// would drag whitespace and case tolerance into the encoder, and a
+    /// `</script>` in a label would otherwise close the surrounding tag.
+    /// 0x20 is the control-escape boundary and high UTF-8 passes through, since
+    /// any compliant parser takes it.
     #[test]
-    fn json_quote_wraps_empty_input_in_double_quotes() {
-        assert_eq!(json_quote(""), "\"\"");
-    }
-
-    #[test]
-    fn json_quote_passes_through_plain_ascii() {
-        assert_eq!(json_quote("hello"), "\"hello\"");
-    }
-
-    #[test]
-    fn json_quote_escapes_double_quote_backslash_and_whitespace() {
-        assert_eq!(json_quote("\""), "\"\\\"\"");
-        assert_eq!(json_quote("\\"), "\"\\\\\"");
-        assert_eq!(json_quote("\n"), "\"\\n\"");
-        assert_eq!(json_quote("\r"), "\"\\r\"");
-        assert_eq!(json_quote("\t"), "\"\\t\"");
-    }
-
-    #[test]
-    fn json_quote_escapes_low_control_chars_as_unicode() {
-        assert_eq!(json_quote("\u{0001}"), "\"\\u0001\"");
-        assert_eq!(json_quote("\u{001f}"), "\"\\u001f\"");
-        // 0x20 (space) is the boundary: it must NOT be unicode-escaped.
-        assert_eq!(json_quote(" "), "\" \"");
-    }
-
-    #[test]
-    fn json_quote_passes_through_high_unicode_unchanged() {
-        // No surrogate expansion; any compliant JSON parser takes UTF-8.
-        assert_eq!(json_quote("café"), "\"café\"");
-        assert_eq!(json_quote("→"), "\"→\"");
-    }
-
-    #[test]
-    fn json_quote_escapes_left_angle_to_avoid_script_break_out() {
-        // A `</script>` in a label would otherwise terminate the surrounding
-        // script tag and spill the rest of the JSON into the document body.
-        assert_eq!(json_quote("</script>"), "\"\\u003c/script>\"");
-    }
-
-    #[test]
-    fn json_quote_escapes_bare_left_angle_too() {
-        // Unconditional on `<`, not just `</`. Matching only `</` would drag
-        // whitespace and case tolerance into the encoder.
-        assert_eq!(json_quote("a<b"), "\"a\\u003cb\"");
+    fn json_quote_escapes_exactly_what_a_script_block_needs() {
+        for (input, want) in [
+            ("", "\"\""),
+            ("hello", "\"hello\""),
+            ("\"", "\"\\\"\""),
+            ("\\", "\"\\\\\""),
+            ("\n", "\"\\n\""),
+            ("\r", "\"\\r\""),
+            ("\t", "\"\\t\""),
+            ("\u{0001}", "\"\\u0001\""),
+            ("\u{001f}", "\"\\u001f\""),
+            (" ", "\" \""),
+            ("café", "\"café\""),
+            ("->", "\"->\""),
+            ("</script>", "\"\\u003c/script>\""),
+            ("a<b", "\"a\\u003cb\""),
+        ] {
+            assert_eq!(json_quote(input), want, "input {input:?}");
+        }
     }
 }
 

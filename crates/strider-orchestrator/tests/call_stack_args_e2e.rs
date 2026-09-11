@@ -1,26 +1,10 @@
-//! End-to-end validity test for the `CallStackArgCollect` optimizer post-pass.
-//!
 //! `CallStackArgCollect` wires positional stack-passed arguments into `Call`
-//! nodes as extra value inputs. A `Call`'s base input shape is `[Control,
-//! Memory, Target, SP]` (4 inputs, see `node_signature` for `NodeKind::Call`);
-//! every input beyond those four is a collected argument.
+//! nodes as extra value inputs past the base `[Control, Memory, Target, SP]`.
 //!
-//! Single-arch (x86) test: on x86 cdecl `arg_passing_regs` is empty (all
-//! arguments stack-passed), so a `Call` with more than 4 inputs proves
-//! `CallStackArgCollect` appended them (no other pass adds Call inputs).
-//! Register-rich arches pass low-arity args in registers, leaving nothing on
-//! the stack for this pass to collect.
-//!
-//! Fixture: `calling_convention.c::forward_8` makes one call,
-//! `sink8(a, b, c, d, e, f, g, h)`, whose 8 int arguments are all
-//! stack-pushed on x86 cdecl.
-
-#![allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable
-)]
+//! x86 only: cdecl's `arg_passing_regs` is empty, so every argument of
+//! `calling_convention.c::forward_8`'s `sink8(a..h)` call is stack-pushed.
+//! Register-rich arches pass all eight in registers, leaving this pass nothing
+//! to collect.
 
 mod common;
 use common::*;
@@ -56,6 +40,6 @@ fn forward_8_call_has_stack_args_collected_x86() {
         max_inputs > CALL_BASE_INPUTS,
         "expected a Call on x86 cdecl to have > {CALL_BASE_INPUTS} inputs \
          (base ctrl/mem/target/sp + collected stack args); the widest Call had \
-         {max_inputs} inputs — CallStackArgCollect did not wire any stack args"
+         {max_inputs} inputs, so CallStackArgCollect wired no stack args"
     );
 }

@@ -1,5 +1,3 @@
-"""End-to-end Python smoke for `Lifter.analyze(per_address_ccs=...)`."""
-
 import strider
 from strider.reader import BufferReader
 from strider.sleigh import CallingConvention, SleighArch
@@ -21,7 +19,7 @@ def test_call_to_overridden_address_lifts_without_error():
     mem = BufferReader(0x1000, _x86_64_call_then_ret_bytes())
 
     fentry_addr = 0x2000
-    overrides = {fentry_addr: CallingConvention.x86_64_all_preserving()}
+    overrides = {fentry_addr: CallingConvention.x86_64_systemv().preserves_all()}
 
     _cfg, function, _unresolved = strider.lift.lifter(arch, mem).analyze(
         0x1000, cc, opts=strider.lift.LifterOptions(per_address_ccs=overrides)
@@ -41,9 +39,11 @@ def test_per_address_ccs_default_empty_does_not_break_normal_calls():
     assert len(matches) == 1
 
 
-def test_x86_64_all_preserving_classmethod_exists():
-    cc = CallingConvention.x86_64_all_preserving()
-    assert cc.name() == "x86_64_all_preserving"
+def test_preserves_all_keeps_preset_name():
+    cc = CallingConvention.x86_64_systemv().preserves_all()
+    assert cc.name() == "x86_64_systemv"
+    # preserves_regs is the memory-clobbering sibling; both exist and chain.
+    assert CallingConvention.x86_64_systemv().preserves_regs().name() == "x86_64_systemv"
 
 
 import pytest
@@ -68,9 +68,6 @@ def _x86_64_arg_thru_hook_to_sink_bytes():
     )
 
 
-# Only one axis: the second one exercised a hand-built pipeline through
-# the old `strider.run(pipeline=...)` entry point, which is gone now that
-# `Lifter.analyze` always drives the canonical default pipeline.
 @pytest.mark.parametrize(
     "with_override,expected_hits",
     [
@@ -81,8 +78,8 @@ def _x86_64_arg_thru_hook_to_sink_bytes():
         (False, 0),
         # An all-preserving override at 0x2000 keeps RDI, so the sink's
         # arg0 is still the function's InitialVar(rdi) = function_arg(0).
-        # Stale arg-carrier ids surviving graph compaction used to mask
-        # this; the side-table is remapped through compact() now.
+        # The arg-carrier side-table is remapped through compact(), so its
+        # ids still name the right nodes here.
         (True, 1),
     ],
 )
@@ -92,13 +89,13 @@ def test_per_address_ccs_honoured_in_both_pipeline_paths(with_override, expected
     mem = BufferReader(0x1000, _x86_64_arg_thru_hook_to_sink_bytes())
 
     overrides = (
-        {0x2000: CallingConvention.x86_64_all_preserving()} if with_override else {}
+        {0x2000: CallingConvention.x86_64_systemv().preserves_all()} if with_override else {}
     )
 
     _cfg, function, _unresolved = strider.lift.lifter(arch, mem, rom=mem).analyze(
         0x1000, cc, opts=strider.lift.LifterOptions(per_address_ccs=overrides)
     )
-    pat = call().at(0x3000).arg(0, function_arg(0))
+    pat = call().target(0x3000).arg(0, function_arg(0))
     hits = function.find_all(pat)
     assert len(hits) == expected_hits, (
         f"with_override={with_override}: got {len(hits)} hits, expected {expected_hits}"

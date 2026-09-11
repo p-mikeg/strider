@@ -3,6 +3,9 @@ name = "read-only-memory"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "The ReadOnlyMemory trait shared by strider's readers and optimizer."
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true

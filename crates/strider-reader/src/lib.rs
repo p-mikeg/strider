@@ -2,13 +2,15 @@ use std::collections::BTreeMap;
 
 pub type Result<T> = anyhow::Result<T>;
 
+mod bytes;
 pub mod elf;
+pub(crate) use bytes::FileBytes;
 pub use elf::{ElfFileMemReader, OwnedElf, load_elf};
 
 /// Error type for every [`rsleigh::MemReader`] impl in the strider crates.
 ///
 /// `rsleigh::MemReader` requires `Err: std::error::Error + 'static`, which
-/// `anyhow::Error` deliberately does not implement. This wrapper satisfies the
+/// `anyhow::Error` does not implement. This wrapper satisfies the
 /// bound while keeping `anyhow!` / `?` usable at call sites.
 #[derive(Debug)]
 pub struct MemReadError(pub(crate) anyhow::Error);
@@ -22,7 +24,6 @@ impl std::fmt::Display for MemReadError {
 impl std::error::Error for MemReadError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         // `anyhow::Error` isn't a `std::error::Error`, but its inner cause is.
-        // Walk one level down so `source()` chasers see the real error.
         self.0.source()
     }
 }
@@ -33,20 +34,85 @@ impl From<anyhow::Error> for MemReadError {
     }
 }
 
-// `From<MemReadError> for anyhow::Error` comes free from anyhow's blanket impl
-// over `std::error::Error + Send + Sync + 'static`.
-
-// The trait lives in the generic `read-only-memory` crate so the optimizer
-// crates can depend on it without back-edging through `strider-reader`.
 pub use read_only_memory::ReadOnlyMemory;
 
-/// A contiguous range of bytes loaded at a fixed virtual address: one
-/// backend-specific mapping (ELF section, blob manifest entry, ...) into the
-/// target's address space.
-#[derive(Clone, Debug)]
+/// A relocation site's patched value, applied over the file-initial bytes when
+/// a read crosses it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Patch {
+    addr: u64,
+    len: u8,
+    /// `len` target-endian bytes of the field value.
+    value: [u8; 8],
+}
+
+/// Widest field any [`Patch`] covers, so a read's first candidate patch is the
+/// first one starting at or after `addr - (MAX_PATCH_LEN - 1)`.
+const MAX_PATCH_LEN: u64 = 8;
+
+impl Patch {
+    /// The low `size_bytes` of `value` at `addr`, in the target's endianness.
+    ///
+    /// # Preconditions
+    ///
+    /// `size_bytes <= 8`, since `value` is a `u64`. Every relocation kind that
+    /// reaches here picks a size in `{1, 2, 4, 8}`.
+    pub(crate) fn new(addr: u64, value: u64, size_bytes: usize, endian_le: bool) -> Option<Self> {
+        // No-op in release rather than an opaque slice panic.
+        if size_bytes > 8 {
+            debug_assert!(
+                false,
+                "Patch::new: size_bytes={size_bytes} exceeds u64 width; every ELF \
+                 relocation kind must select size_bytes in {{1, 2, 4, 8}}"
+            );
+            return None;
+        }
+        let mut bytes = [0u8; 8];
+        // Truncation to the field width; signedness is irrelevant for
+        // fixed-width 2's-complement bit patterns.
+        if endian_le {
+            bytes[..size_bytes].copy_from_slice(&value.to_le_bytes()[..size_bytes]);
+        } else {
+            // Low N bytes, most-significant first.
+            bytes[..size_bytes].copy_from_slice(&value.to_be_bytes()[8 - size_bytes..]);
+        }
+        Some(Self {
+            addr,
+            len: size_bytes as u8,
+            value: bytes,
+        })
+    }
+
+    fn end(&self) -> u64 {
+        self.addr + u64::from(self.len)
+    }
+}
+
+/// A contiguous range of bytes loaded at a fixed virtual address: one mapping
+/// (ELF segment or section) into the target's address space.
+///
+/// The bytes are a window into a shared immutable buffer, and relocations are
+/// a sorted patch list applied to the caller's buffer on read, so loading an
+/// image neither copies it nor faults in the pages nothing reads.
+#[derive(Clone)]
 pub struct MemRegion {
     start_addr: u64,
-    data: Vec<u8>,
+    bytes: FileBytes,
+    offset: usize,
+    len: usize,
+    /// Sorted by `addr`, insertion order kept within one address so the
+    /// last-collected patch at a site is the one that lands.
+    patches: Option<std::sync::Arc<[Patch]>>,
+}
+
+impl std::fmt::Debug for MemRegion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemRegion")
+            .field("start_addr", &format_args!("{:#x}", self.start_addr))
+            .field("len", &self.len)
+            .field("patches", &self.patches.as_ref().map_or(0, |p| p.len()))
+            .finish()
+    }
 }
 
 impl MemRegion {
@@ -54,34 +120,81 @@ impl MemRegion {
     ///
     /// Errors when `start_addr + data.len()` would exceed `u64::MAX`.
     pub fn new(start_addr: u64, data: Vec<u8>) -> Result<Self> {
-        let len = data.len() as u64;
-        start_addr.checked_add(len).ok_or_else(|| {
+        let len = data.len();
+        Self::check_end(start_addr, len)?;
+        Ok(Self {
+            start_addr,
+            bytes: FileBytes::from_vec(data),
+            offset: 0,
+            len,
+            patches: None,
+        })
+    }
+
+    /// `[file_offset, file_offset + len)` of `bytes` mapped at `start_addr`,
+    /// sharing the buffer rather than copying out of it.
+    ///
+    /// # Errors
+    ///
+    /// When the window runs past the end of `bytes`, or `start_addr + len`
+    /// would exceed `u64::MAX`.
+    pub(crate) fn window(
+        start_addr: u64,
+        bytes: &FileBytes,
+        file_offset: u64,
+        len: u64,
+    ) -> Result<Self> {
+        let (offset, len) = (usize::try_from(file_offset)?, usize::try_from(len)?);
+        if offset.checked_add(len).is_none_or(|end| end > bytes.len()) {
+            anyhow::bail!(
+                "file window [{offset}, +{len}) runs past the {} byte image",
+                bytes.len()
+            );
+        }
+        Self::check_end(start_addr, len)?;
+        Ok(Self {
+            start_addr,
+            bytes: bytes.clone(),
+            offset,
+            len,
+            patches: None,
+        })
+    }
+
+    fn check_end(start_addr: u64, len: usize) -> Result<()> {
+        start_addr.checked_add(len as u64).ok_or_else(|| {
             anyhow::anyhow!("region at {start_addr:#x} with length {len} would overflow u64")
         })?;
-        Ok(Self { start_addr, data })
+        Ok(())
+    }
+
+    /// Replaces the patch list, sorting by address; see the field docs for the
+    /// equal-address rule.
+    pub(crate) fn set_patches(&mut self, mut patches: Vec<Patch>) {
+        if patches.is_empty() {
+            self.patches = None;
+            return;
+        }
+        // Stable, so equal-address patches keep collection order.
+        patches.sort_by_key(|p| p.addr);
+        self.patches = Some(patches.into());
     }
 
     pub fn start_addr(&self) -> u64 {
         self.start_addr
     }
 
-    pub fn data(&self) -> &[u8] {
-        &self.data
+    /// The file-initial bytes, with no relocation patch applied.
+    pub(crate) fn raw(&self) -> &[u8] {
+        &self.bytes.as_slice()[self.offset..self.offset + self.len]
     }
 
-    /// A slice, so length can't change through it and the constructor's
-    /// no-overflow invariant survives.
-    pub fn data_mut(&mut self) -> &mut [u8] {
-        &mut self.data
-    }
-
-    /// One past the last address covered. Cannot overflow: [`new`](Self::new)
-    /// rejects any pair that would.
+    /// One past the last address covered. Cannot overflow: the constructors
+    /// reject any pair that would.
     pub fn end_addr(&self) -> u64 {
-        self.start_addr + self.data.len() as u64
+        self.start_addr + self.len as u64
     }
 
-    /// `addr` falls within `[start_addr, end_addr)`.
     pub fn contains(&self, addr: u64) -> bool {
         addr >= self.start_addr && addr < self.end_addr()
     }
@@ -96,25 +209,73 @@ impl MemRegion {
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
         let (offset, available) = self.available_at(addr)?;
         let to_copy = available.min(out.len());
-        out[..to_copy].copy_from_slice(&self.data[offset..offset + to_copy]);
+        out[..to_copy].copy_from_slice(&self.raw()[offset..offset + to_copy]);
+        self.apply_patches(addr, &mut out[..to_copy]);
         Some(to_copy)
     }
 
-    /// `(index into data, non-zero bytes remaining)`, or `None` when `addr` is
-    /// outside.
+    /// Overwrites the parts of `buf` (holding the bytes at `addr`) that a
+    /// relocation patch covers.
+    fn apply_patches(&self, addr: u64, buf: &mut [u8]) {
+        let Some(patches) = self.patches.as_ref() else {
+            return;
+        };
+        let end = addr.saturating_add(buf.len() as u64);
+        let first = patches.partition_point(|p| p.addr < addr.saturating_sub(MAX_PATCH_LEN - 1));
+        for p in &patches[first..] {
+            if p.addr >= end {
+                break;
+            }
+            let (lo, hi) = (p.addr.max(addr), p.end().min(end));
+            if lo >= hi {
+                continue;
+            }
+            let (dst, src, n) = (
+                (lo - addr) as usize,
+                (lo - p.addr) as usize,
+                (hi - lo) as usize,
+            );
+            buf[dst..dst + n].copy_from_slice(&p.value[src..src + n]);
+        }
+    }
+
+    /// `(index into the window, non-zero bytes remaining)`, or `None` when
+    /// `addr` is outside.
     fn available_at(&self, addr: u64) -> Option<(usize, usize)> {
         let offset = usize::try_from(addr.checked_sub(self.start_addr)?).ok()?;
-        let available = self.data.len().checked_sub(offset)?;
+        let available = self.len.checked_sub(offset)?;
         (available != 0).then_some((offset, available))
     }
 
     /// This region covers all of `[addr, addr + len)`. An `addr + len` that
     /// overflows `u64` counts as not covered.
-    pub fn fully_covers(&self, addr: u64, len: usize) -> bool {
+    pub(crate) fn fully_covers(&self, addr: u64, len: usize) -> bool {
         match addr.checked_add(len as u64) {
             Some(end) => self.contains(addr) && end <= self.end_addr(),
             None => false,
         }
+    }
+
+    /// Both regions serve the same bytes across `[lo, hi)`, patches included.
+    /// Any part of the range either region fails to serve in full, whether
+    /// unmapped or short of the request, counts as differing.
+    pub fn same_bytes_in(&self, other: &MemRegion, lo: u64, hi: u64) -> bool {
+        let mut addr = lo;
+        let (mut a, mut b) = ([0u8; 4096], [0u8; 4096]);
+        while addr < hi {
+            let want = (hi - addr).min(a.len() as u64) as usize;
+            let (Some(n), Some(m)) = (
+                self.read(addr, &mut a[..want]),
+                other.read(addr, &mut b[..want]),
+            ) else {
+                return false;
+            };
+            if (n, m) != (want, want) || a[..want] != b[..want] {
+                return false;
+            }
+            addr += want as u64;
+        }
+        true
     }
 }
 
@@ -127,15 +288,29 @@ impl MemRegion {
 /// worst case.
 #[derive(Debug)]
 pub struct MemRegionsLookupTable {
-    regions: BTreeMap<u64, MemRegion>,
+    /// Each region with the greatest `end_addr` among it and everything
+    /// starting at or below it, so a descending walk can stop once no earlier
+    /// region can still reach the address.
+    regions: BTreeMap<u64, (MemRegion, u64)>,
 }
 
 impl MemRegionsLookupTable {
     /// Two regions sharing a start address collapse to the later one.
     pub fn new<I: IntoIterator<Item = MemRegion>>(regions: I) -> Self {
-        Self {
-            regions: regions.into_iter().map(|r| (r.start_addr(), r)).collect(),
+        let mut regions: BTreeMap<u64, (MemRegion, u64)> = regions
+            .into_iter()
+            .map(|r| {
+                let end = r.end_addr();
+                (r.start_addr(), (r, end))
+            })
+            .collect();
+        // Prefix maximum in ascending start order.
+        let mut running = 0u64;
+        for (_, reach) in regions.values_mut() {
+            running = running.max(*reach);
+            *reach = running;
         }
+        Self { regions }
     }
 
     /// Reads bytes at `addr` from whichever region wins; `None` when none
@@ -148,12 +323,18 @@ impl MemRegionsLookupTable {
     /// those); otherwise the region covering the most of it wins, ties going to
     /// the highest start.
     ///
-    /// Consequence worth knowing: a read straddling a shorter inner region's
-    /// end falls through to the fully-covering outer region rather than
-    /// returning the inner region's truncated prefix.
+    /// A read straddling a shorter inner region's end therefore falls through
+    /// to the fully-covering outer region rather than returning the inner
+    /// region's truncated prefix.
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
         let mut best: Option<(&MemRegion, usize)> = None;
-        for (_, region) in self.regions.range(..=addr).rev() {
+        for (_, (region, reach)) in self.regions.range(..=addr).rev() {
+            // Nothing at or below this start reaches `addr`, so neither will
+            // anything further down. Without this an UNMAPPED read scans every
+            // region with a lower start, which is O(n) per read.
+            if *reach <= addr {
+                break;
+            }
             if region.fully_covers(addr, out.len()) {
                 return region.read(addr, out);
             }

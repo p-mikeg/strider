@@ -1,9 +1,6 @@
-//! SSA-shaped patterns: `Phi` (formerly VarPhi), `InitialVar`,
-//! `FunctionArg` side-table.
-//!
-//! Covers: `phi()` / `phi_for(vn)`, `initial_var()` / `initial_var_for(vn)`,
-//! and the `Function::arg_index_to_values` side-table populated by
-//! `FunctionArgDetect`.
+//! SSA-shaped patterns: `phi()` / `phi_for(vn)`, `initial_var()` /
+//! `initial_var_for(vn)`, and the `SideTables::arg_index_to_values` side-table
+//! `FunctionArgDetect` populates.
 
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{IRViewer, IntCmpOp};
@@ -109,7 +106,7 @@ fn phi_for_wrong_vn_rejects() {
 }
 
 // After `FunctionArgDetect`, the underlying `InitialVar` / `Load` nodes
-// survive unchanged and are recorded in `Function::arg_index_to_values`.
+// survive unchanged and are recorded in `SideTables::arg_index_to_values`.
 // The tests below check the side-table contents and carrier node kinds.
 
 /// A graph with one stack-arg at sp-relative offset `4`, index `0`.
@@ -173,7 +170,6 @@ fn function_arg_reg_registered_in_side_table() {
     );
 }
 
-/// Register arg carrier is also matchable via `initial_var_for(vn)`.
 #[test]
 fn function_arg_reg_carrier_matches_initial_var_for() {
     let (g, reg) = shapes::function_arg_reg();
@@ -205,7 +201,6 @@ fn function_arg_stack_registered_in_side_table() {
     );
 }
 
-/// Stack arg at wrong offset is not registered.
 #[test]
 fn function_arg_stack_wrong_offset_absent() {
     let function = graph_fn_arg_stack();
@@ -217,7 +212,6 @@ fn function_arg_stack_wrong_offset_absent() {
     );
 }
 
-/// Register arg carrier is not the same kind as a stack arg carrier.
 #[test]
 fn function_arg_reg_and_stack_carry_different_kinds() {
     let (g_reg, _reg) = shapes::function_arg_reg();
@@ -238,7 +232,6 @@ fn function_arg_reg_and_stack_carry_different_kinds() {
     ));
 }
 
-/// `arg_index_to_values(i)` for a registered index returns a non-empty slice.
 #[test]
 fn arg_index_to_values_returns_carriers_for_registered_index() {
     let (g, _reg) = shapes::function_arg_reg();
@@ -248,7 +241,6 @@ fn arg_index_to_values_returns_carriers_for_registered_index() {
     );
 }
 
-/// `arg_index_to_values(i)` returns empty for an unregistered index.
 #[test]
 fn arg_index_to_values_empty_for_unregistered() {
     let (g, _reg) = shapes::function_arg_reg();
@@ -296,9 +288,9 @@ fn phi_input_from_edge_ties_value_to_its_branch() {
         Capture::new(),
         Capture::new(),
     );
-    let guard = if_node().capture_true(t).capture_false(f).build();
+    let guard = if_else().capture_true(t).capture_false(f).build();
     let phi_p = phi().capture(ph).build();
-    let val = any_int_const().capture(v).into_pattern();
+    let val = int_const(v).into_pattern();
 
     let read = |edge: Capture| -> u128 {
         let hits = m
@@ -337,10 +329,10 @@ fn phi_input_from_edge_ties_value_to_its_branch() {
 /// `reg + 1` (arriving on the loop-exit edge).
 ///
 /// Every path that reaches the loop-exit edge went through the guard's true
-/// edge, so the guard's true edge DOES dominate that arm. The old sole-entry
-/// dominance gate could not see this: it anchored dominance at the edge's
-/// consumer (the loop header) and disabled the clause because that header
-/// has two predecessors, leaving only the direct `==` test, which fails.
+/// edge, so the guard's true edge DOES dominate that arm. A sole-entry
+/// dominance gate misses it: anchoring dominance at the edge's consumer (the
+/// loop header) disables the clause because that header has two
+/// predecessors, leaving only the direct `==` test, which fails.
 fn graph_guarded_loop() -> (strider_ir::Function, rsleigh::Vn) {
     let reg = reg_vn(0, 8);
     let mut t = Tb::bare(vec![reg], &[], &[reg], &[], None, 0);
@@ -376,10 +368,10 @@ fn graph_guarded_loop() -> (strider_ir::Function, rsleigh::Vn) {
 /// The guarded-loop false negative. The exit phi's loop-side arm is reached
 /// only through the guard's true edge, so `phi_input_from_edge` must find it.
 ///
-/// Under the old sole-entry dominance gate this returned nothing: the loop
-/// header's second predecessor (its own latch) disabled the dominance clause,
-/// and the direct `==` clause can't see an arm merged across the loop body.
-/// Edge dominance has no such gate: a latch does not make the guard optional.
+/// A sole-entry dominance gate returns nothing here: the loop header's second
+/// predecessor (its own latch) disables the dominance clause, and the direct
+/// `==` clause can't see an arm merged across the loop body. Edge dominance
+/// holds regardless: a latch does not make the guard optional.
 #[test]
 fn phi_input_from_edge_reaches_into_a_guarded_loop() {
     let (function, _reg) = graph_guarded_loop();
@@ -392,13 +384,13 @@ fn phi_input_from_edge_reaches_into_a_guarded_loop() {
     );
     // Pin the OUTER guard via its condition (`== 7`), so the latch `If`
     // (`== 0`) cannot stand in for it.
-    let guard = if_node()
-        .cond(int_cmp(IntCmpOp::Equal, any(), int_const(7u64)))
+    let guard = if_else()
+        .cond(int_cmp(IntCmpOp::Equal, anything(), int_const(7u64)))
         .capture_true(t)
         .capture_false(f)
         .build();
     let phi_p = phi()
-        .any_input(add(any(), any_int_const()).capture(v))
+        .any_input(int_add(anything(), any_int_const()).capture(v))
         .capture(ph)
         .build();
 
@@ -420,7 +412,7 @@ fn phi_input_from_edge_reaches_into_a_guarded_loop() {
     assert!(
         hits(t) > 0,
         "the exit phi's loop-side arm (`reg + 1`) is reached ONLY through the \
-         guard's true edge, so phi_input_from_edge must find it — the loop \
+         guard's true edge, so phi_input_from_edge must find it: the loop \
          header having a second predecessor (its own latch) does not make the \
          guard optional"
     );
@@ -490,15 +482,12 @@ fn phi_input_from_edge_ties_memphi_memory_to_its_branch() {
         Capture::new(),
         Capture::new(),
     );
-    let guard = if_node().capture_true(t).capture_false(f).build();
+    let guard = if_else().capture_true(t).capture_false(f).build();
     // `mem_phi().capture(mp)` binds `mp` to the MemPhi's memory output; the
     // store's `capture(sv)` binds `sv` to its memory output, the token the
     // MemPhi merges on that predecessor. `dv` reads back which branch.
     let mphi = mem_phi().capture(mp).build();
-    let st = store()
-        .data(any_int_const().capture(dv))
-        .capture(sv)
-        .build();
+    let st = store().data(int_const(dv)).capture(sv).build();
 
     let read = |edge: Capture| -> u128 {
         let hits = m
@@ -556,9 +545,8 @@ fn phi_input_from_edge_any_input_matches_same_arm() {
         Capture::new(),
         Capture::new(),
     );
-    let guard = if_node().capture_true(t).capture_false(f).build();
+    let guard = if_else().capture_true(t).capture_false(f).build();
 
-    // Which edge carries the constant 1? Exactly one of the two.
     let hits_for = |edge: Capture, k: u64| -> usize {
         let phi_p = phi().any_input(int_const(k).capture(v)).capture(ph).build();
         m.find_joined_constrained(
@@ -591,7 +579,6 @@ fn phi_input_from_edge_any_input_matches_same_arm() {
     );
 }
 
-/// A capture bound by `any_input` on the phi pattern is readable from the Match.
 #[test]
 fn phi_input_from_edge_any_input_capture_is_readable() {
     let function = collapsed_phi_diamond();
@@ -602,11 +589,8 @@ fn phi_input_from_edge_any_input_capture_is_readable() {
         Capture::new(),
         Capture::new(),
     );
-    let guard = if_node().capture_true(t).capture_false(f).build();
-    let phi_p = phi()
-        .any_input(any_int_const().capture(v))
-        .capture(ph)
-        .build();
+    let guard = if_else().capture_true(t).capture_false(f).build();
+    let phi_p = phi().any_input(int_const(v)).capture(ph).build();
 
     let read = |edge: Capture| -> u128 {
         let hits = m
@@ -637,15 +621,15 @@ fn phi_input_from_edge_any_input_capture_is_readable() {
     );
 }
 
-/// Regression: three-valued (Kleene) evaluation. A `Not` over a constraint
-/// whose capture is unbound in a row must drop that row, not vacuously keep it.
+/// Three-valued (Kleene) evaluation: a `Not` over a constraint whose capture
+/// is unbound in a row must drop that row, not vacuously keep it.
 ///
 /// `ph` is captured only in the phi arm of a `one_of`, so it's absent in the
 /// bare-const rows. `dominates(ph, ph)` is always true where `ph` is bound, so
 /// `negate(dominates(ph, ph))` is `Some(false)` there. In the `ph`-absent rows
 /// the relation is unanswerable (`None`), and `Not(None) == None`, so under
-/// Kleene every row drops. The pre-fix two-valued code read the absent capture
-/// as `false`, flipped it to a vacuous `true`, and kept exactly those rows.
+/// Kleene every row drops. Two-valued evaluation reads the absent capture as
+/// `false`, flips it to a vacuous `true`, and keeps exactly those rows.
 #[test]
 fn negate_over_an_unbound_capture_drops_every_row() {
     let function = collapsed_phi_diamond();
@@ -653,11 +637,7 @@ fn negate_over_an_unbound_capture_drops_every_row() {
     let (ph, v) = (Capture::new(), Capture::new());
     // `ph` binds only in the first arm; the bare-const second arm leaves it
     // absent, so the pattern matches the phi (ph bound) AND every const (ph not).
-    let operand = one_of![
-        phi().any_input(any_int_const().capture(v)).capture(ph),
-        any_int_const().capture(v),
-    ]
-    .into_pattern();
+    let operand = one_of![phi().any_input(int_const(v)).capture(ph), int_const(v),].into_pattern();
 
     let unconstrained = m.find_joined_constrained(&[&operand], &[]).unwrap().len();
     assert!(
@@ -679,7 +659,7 @@ fn negate_over_an_unbound_capture_drops_every_row() {
     assert_eq!(
         negated, 0,
         "negate(dominates(ph, ph)) drops the ph-bound rows (Some(false)) AND the \
-         ph-unbound rows (None) — the bug kept the latter vacuously"
+         ph-unbound rows (None); two-valued evaluation keeps the latter vacuously"
     );
 }
 
@@ -689,7 +669,7 @@ fn phi_input_from_edge_any_input_negative() {
     let function = collapsed_phi_diamond();
     let m = Matcher::new(&function);
     let (t, ph, v) = (Capture::new(), Capture::new(), Capture::new());
-    let guard = if_node().capture_true(t).build();
+    let guard = if_else().capture_true(t).build();
     // 0xDEAD is on neither arm.
     let phi_p = phi()
         .any_input(int_const(0xDEADu64).capture(v))
@@ -721,13 +701,10 @@ fn phi_input_from_edge_any_input_capture_unifies_with_tuple() {
         Capture::new(),
         Capture::new(),
     );
-    let guard = if_node().capture_true(t).capture_false(f).build();
-    let phi_p = phi()
-        .any_input(any_int_const().capture(v))
-        .capture(ph)
-        .build();
+    let guard = if_else().capture_true(t).capture_false(f).build();
+    let phi_p = phi().any_input(int_const(v)).capture(ph).build();
     // `v` is bound by a free-floating root too: the classic two-root spelling.
-    let val_root = any_int_const().capture(v).into_pattern();
+    let val_root = int_const(v).into_pattern();
 
     let count = |edge: Capture| -> usize {
         m.find_joined_constrained(
@@ -806,13 +783,13 @@ fn phi_input_from_edge_reaches_through_intervening_call() {
         Capture::new(),
         Capture::new(),
     );
-    let guard = if_node().capture_true(t).capture_false(f).build();
+    let guard = if_else().capture_true(t).capture_false(f).build();
     // Pin the MERGE phi (the one the Return consumes): the builder mints a
     // phi per region, and `phi()` alone would also match the branch
     // regions' own single-predecessor phis, whose direct predecessor IS
     // the branch edge.
     let phi_p = ret().ret_val(0, phi().capture(ph)).build();
-    let val = any_int_const().capture(v).into_pattern();
+    let val = int_const(v).into_pattern();
 
     let read = |edge: Capture| -> u128 {
         let hits = m
@@ -859,10 +836,10 @@ fn phi_input_from_edge_any_input_reaches_through_call() {
         Capture::new(),
         Capture::new(),
     );
-    let guard = if_node().capture_true(t).capture_false(f).build();
+    let guard = if_else().capture_true(t).capture_false(f).build();
     // Pin the MERGE phi (see phi_input_from_edge_reaches_through_intervening_call).
     let phi_p = ret()
-        .ret_val(0, phi().any_input(any_int_const().capture(v)).capture(ph))
+        .ret_val(0, phi().any_input(int_const(v)).capture(ph))
         .build();
 
     let read = |edge: Capture| -> u128 {
@@ -959,16 +936,16 @@ fn phi_input_from_edge_rejects_arm_reachable_from_both_branches() {
         Capture::new(),
     );
     // Pin the guard to the OUTER if by its condition operand (a read of `reg`).
-    let outer = if_node()
-        .cond(int_cmp(IntCmpOp::Equal, any(), any()))
+    let outer = if_else()
+        .cond(int_cmp(IntCmpOp::Equal, anything(), anything()))
         .capture_true(c0_t)
         .capture_false(c0_f)
         .build();
     // The phi of `reg` at m2, the one merging 1 and 2.
     let phi_p = ret().ret_val(0, phi_for(reg).capture(ph)).build();
-    let val = any_int_const().capture(v).into_pattern();
+    let val = int_const(v).into_pattern();
 
-    // Guard against a vacuous pass: an unmatched probe would also give ∅.
+    // Guard against a vacuous pass: an unmatched probe would also give {}.
     // The outer `If` and the merge phi must both really be there.
     assert_eq!(m.find_all(&outer).unwrap().len(), 1, "outer if must match");
     assert_eq!(m.find_all(&phi_p).unwrap().len(), 1, "merge phi must match");
@@ -991,10 +968,10 @@ fn phi_input_from_edge_rejects_arm_reachable_from_both_branches() {
     }
 }
 
-/// The wildcard probe, which is how you tell the two ∅s apart. A `∅` from
-/// `PhiInputFromEdge` is ambiguous: either the edge reaches no arm of this
-/// phi, or it does and the arm merges a different value. A wildcard `value`
-/// cannot fail on value grounds, so an empty result from it proves the edge
+/// The wildcard probe tells the two empty results apart. An empty result from `PhiInputFromEdge`
+/// is ambiguous: either the edge reaches no arm of this phi, or it does and
+/// the arm merges a different value. A wildcard `value` cannot fail on value
+/// grounds, so an empty result from it proves the edge
 /// is not visible.
 #[test]
 fn phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch() {
@@ -1007,9 +984,9 @@ fn phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch() {
         Capture::new(),
         Capture::new(),
     );
-    let guard = if_node().capture_true(t).capture_false(f).build();
+    let guard = if_else().capture_true(t).capture_false(f).build();
     let probe = ret()
-        .ret_val(0, phi().any_input(any().capture(v)).capture(ph))
+        .ret_val(0, phi().any_input(anything().capture(v)).capture(ph))
         .build();
     for edge in [t, f] {
         let hits = m
@@ -1028,7 +1005,7 @@ fn phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch() {
         );
     }
 
-    // ...yet a value on no arm still gives ∅, a real mismatch, which the
+    // ...yet a value on no arm still gives {}, a real mismatch, which the
     // wildcard probe above distinguishes from blindness.
     let dead = ret()
         .ret_val(
@@ -1058,15 +1035,18 @@ fn phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch() {
         Capture::new(),
         Capture::new(),
     );
-    let outer = if_node()
-        .cond(int_cmp(IntCmpOp::Equal, any(), any()))
+    let outer = if_else()
+        .cond(int_cmp(IntCmpOp::Equal, anything(), anything()))
         .capture_true(ot)
         .capture_false(of)
         .build();
     let phi2 = ret()
-        .ret_val(0, phi_for(reg2).any_input(any().capture(v2)).capture(ph2))
+        .ret_val(
+            0,
+            phi_for(reg2).any_input(anything().capture(v2)).capture(ph2),
+        )
         .build();
-    // The probe itself must match, otherwise ∅ would be vacuous. The phi
+    // The probe itself must match, otherwise {} would be vacuous. The phi
     // probe matches once per arm (its `any_input` binds `v2` to each in
     // turn, the `find_all` enumeration contract), so assert non-vacuity
     // rather than an arity-coupled count.
@@ -1088,7 +1068,7 @@ fn phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch() {
             .unwrap();
         assert!(
             hits.is_empty(),
-            "wildcard ∅ proves the edge is not visible — the blind case"
+            "wildcard empty-set proves the edge is not visible: the blind case"
         );
     }
 }
@@ -1149,13 +1129,13 @@ fn phi_input_from_edge_enumerates_every_qualifying_arm() {
         Capture::new(),
         Capture::new(),
     );
-    let outer = if_node()
-        .cond(int_cmp(IntCmpOp::Equal, any(), any()))
+    let outer = if_else()
+        .cond(int_cmp(IntCmpOp::Equal, anything(), anything()))
         .capture_true(t)
         .capture_false(f)
         .build();
     let phi_p = ret().ret_val(0, phi_for(reg).capture(ph)).build();
-    let val = any_int_const().capture(v).into_pattern();
+    let val = int_const(v).into_pattern();
 
     let vals = |edge: Capture| -> std::collections::BTreeSet<u128> {
         m.find_joined_constrained(
@@ -1230,12 +1210,12 @@ fn phi_input_from_edge_rejects_empty_branch_criss_cross() {
 
     let m = Matcher::new(&function);
     let (c0_t, ph, v) = (Capture::new(), Capture::new(), Capture::new());
-    let outer = if_node()
-        .cond(int_cmp(IntCmpOp::Equal, any(), any()))
+    let outer = if_else()
+        .cond(int_cmp(IntCmpOp::Equal, anything(), anything()))
         .capture_true(c0_t)
         .build();
     let phi_p = ret().ret_val(0, phi_for(reg).capture(ph)).build();
-    let val = any_int_const().capture(v).into_pattern();
+    let val = int_const(v).into_pattern();
     assert_eq!(m.find_all(&outer).unwrap().len(), 1, "outer if must match");
     assert_eq!(m.find_all(&phi_p).unwrap().len(), 1, "merge phi must match");
 

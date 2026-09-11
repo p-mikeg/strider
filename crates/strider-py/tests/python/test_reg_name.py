@@ -39,6 +39,7 @@ def test_reg_name_decodes_initial_var_varnodes_of_a_lifted_function():
     names = set()
     for m in fn.find_all(p.initial_var()):
         vn = fn.node(m.root).vn()
+        assert vn is not None, "an InitialVar node always names a varnode"
         name = lifter.reg_name(vn)
         if name is not None:
             names.add(name)

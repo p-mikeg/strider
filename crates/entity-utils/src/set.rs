@@ -3,8 +3,7 @@ use core::marker::PhantomData;
 use cranelift_bitset::CompoundBitSet;
 use cranelift_entity::EntityRef;
 
-/// O(1) membership and update, keyed on the entity's integer index. The
-/// visited-set of choice for graph traversal over a dense id space.
+/// O(1) membership and update, keyed on the entity's integer index.
 #[derive(Clone, Debug)]
 pub struct DenseEntitySet<E> {
     bitset: CompoundBitSet,
@@ -23,10 +22,6 @@ impl<E: EntityRef> DenseEntitySet<E> {
         }
     }
 
-    pub fn clear(&mut self) {
-        self.bitset.clear();
-    }
-
     /// NOT O(1): popcounts the backing words rather than reading a cached
     /// length, so O(max_index / 64).
     pub fn len(&self) -> usize {
@@ -42,8 +37,7 @@ impl<E: EntityRef> DenseEntitySet<E> {
         self.bitset.contains(entity.index())
     }
 
-    /// `true` when newly inserted, matching `HashSet::insert` so callers can
-    /// swap implementations. One bitset access, for hot traversal paths.
+    /// `true` when newly inserted, matching `HashSet::insert`.
     pub fn insert(&mut self, entity: E) -> bool {
         self.bitset.insert(entity.index())
     }
@@ -52,8 +46,8 @@ impl<E: EntityRef> DenseEntitySet<E> {
         self.bitset.remove(entity.index());
     }
 
-    /// Ascending entity-index order. A full pass scans the backing words,
-    /// skipping empty ones, so it is O(max_index / 64 + len).
+    /// Ascending entity-index order. A full pass steps through every backing
+    /// word, so it is O(max_index / 64 + len).
     pub fn iter(&self) -> Iter<'_, E> {
         Iter::<E> {
             inner: self.bitset.iter(),
@@ -166,19 +160,6 @@ mod tests {
     }
 
     #[test]
-    fn clear_removes_everything() {
-        let mut s: DenseEntitySet<Id> = DenseEntitySet::new();
-        s.insert(Id(0));
-        s.insert(Id(100));
-        s.clear();
-        assert!(!s.contains(Id(0)));
-        assert!(!s.contains(Id(100)));
-        assert!(s.iter().next().is_none());
-        s.insert(Id(0));
-        assert!(s.contains(Id(0)));
-    }
-
-    #[test]
     fn from_iter_dedups() {
         let s: DenseEntitySet<Id> = [Id(2), Id(1), Id(2), Id(3)].into_iter().collect();
         let collected: Vec<_> = s.iter().collect();
@@ -213,7 +194,7 @@ mod tests {
         assert_eq!(s.len(), 2);
         s.remove(Id(1));
         assert_eq!(s.len(), 1);
-        s.clear();
+        s.remove(Id(2));
         assert_eq!(s.len(), 0);
         assert!(s.is_empty());
     }

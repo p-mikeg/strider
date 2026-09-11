@@ -1,7 +1,3 @@
-"""`phi().any_input(p)`: match a Phi with some data input matching `p`,
-without knowing which predecessor slot carries it.
-"""
-
 import strider
 from strider import pattern as p
 
@@ -25,8 +21,7 @@ def _diamond_phi():
 
 def test_any_input_matches_either_branch_value_regardless_of_slot():
     fn = _diamond_phi()
-    # Each constant sits on one slot; any_input finds it without us naming
-    # the predecessor.
+    # Each constant sits on one slot, found without naming the predecessor.
     assert len(fn.find_all(p.phi().any_input(p.int_const(1)))) >= 1
     assert len(fn.find_all(p.phi().any_input(p.int_const(2)))) >= 1
     assert fn.find_all(p.phi().any_input(p.int_const(99))) == []
@@ -37,12 +32,12 @@ def test_multiple_any_input_bind_distinct_slots():
     assert len(fn.find_all(p.phi().any_input(p.int_const(1)).any_input(p.int_const(2)))) == 1
     # Two any_input(1) need two DIFFERENT inputs equal to 1; only one exists.
     assert fn.find_all(p.phi().any_input(p.int_const(1)).any_input(p.int_const(1))) == []
-    assert len(fn.find_all(p.phi().any_input(p.int_const(1)).any_input(p.any_int_const()))) == 1
+    assert len(fn.find_all(p.phi().any_input(p.int_const(1)).any_input(p.int_const()))) == 1
 
 
 def test_any_input_binds_captures_out():
     fn = _diamond_phi()
     c = p.Capture()
-    hits = fn.find_all(p.phi().any_input(p.any_int_const().capture(c)))
+    hits = fn.find_all(p.phi().any_input(p.int_const().capture(c)))
     assert len(hits) >= 1
-    assert hits[0].const_uint(c) in (1, 2)
+    assert hits[0].uint(c) in (1, 2)

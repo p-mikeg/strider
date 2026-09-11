@@ -1,10 +1,3 @@
-"""Per-arch complex pattern tests: pin the load / store / call / if shapes
-per fixture, i.e. "the structural pattern survives the optimiser".
-
-Narrower than the Rust suite because Python's matcher exposes neither the
-full `ignore_casts_mask` nor every `IntCmpOp` variant.
-"""
-
 from __future__ import annotations
 
 from strider import pattern as pat
@@ -22,12 +15,12 @@ from ._helpers import (
 
 def test_read_struct_fields(arch_id, fixtures_dir):
     g = analyze(arch_id, "complex", "read_struct_fields", fixtures_dir=fixtures_dir)
-    assert count_loads(g) >= 3, "≥3 Loads (s->a, s->b, s->c)"
+    assert count_loads(g) >= 3, ">=3 Loads (s->a, s->b, s->c)"
 
 
 def test_write_struct_fields(arch_id, fixtures_dir):
     g = analyze(arch_id, "complex", "write_struct_fields", fixtures_dir=fixtures_dir)
-    assert count_stores(g) >= 3, "≥3 Stores (s->a=, s->b=, s->c=)"
+    assert count_stores(g) >= 3, ">=3 Stores (s->a=, s->b=, s->c=)"
 
 
 def test_nested_struct_field(arch_id, fixtures_dir):

@@ -148,8 +148,7 @@ mod tests {
 
     #[test]
     fn debug_format_pins_derive() {
-        // Pins the `Debug` derive against silent removal; the format string
-        // itself is deliberately not asserted.
+        // Pins the `Debug` derive against silent removal.
         let mut wl: Worklist<Id> = Worklist::new();
         wl.enqueue(Id(1));
         let _ = format!("{wl:?}");

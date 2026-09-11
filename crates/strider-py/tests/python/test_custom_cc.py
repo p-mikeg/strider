@@ -1,7 +1,3 @@
-"""`strider.sleigh.CallingConvention.custom(...)`: building a CC from
-runtime register-name lists when no built-in preset matches the ABI.
-"""
-
 from __future__ import annotations
 
 import pytest
@@ -74,7 +70,7 @@ def test_custom_cc_rejects_invariant_violation_lr_not_in_callee_saved():
         strider.sleigh.CallingConvention.custom(
             sleigh=sleigh,
             arg_passing_regs=["x0", "x1"],
-            callee_saved_regs=["x19", "x20"],  # x30 deliberately absent
+            callee_saved_regs=["x19", "x20"],  # the link register x30 belongs here
             ret_val_regs=["x0"],
             ret_val_regs_float=["q0"],
             stack_pointer="sp",
@@ -88,7 +84,7 @@ def test_custom_cc_rejects_invariant_violation_lr_not_in_callee_saved():
 
 def test_custom_cc_preserves_memory_chain():
     """`preserves_memory=True` must suppress memory clobber on Calls,
-    same as the `x86_64_all_preserving` preset."""
+    same as `CallingConvention.<preset>().preserves_all()`."""
     mem, entry = _mem_with_func_bytes()
     arch = strider.sleigh.SleighArch.x86_64()
     sleigh = strider.sleigh.Sleigh(arch, mem)
@@ -111,3 +107,23 @@ def test_custom_cc_preserves_memory_chain():
     lift = strider.lift.lifter(arch, mem)
     _cfg, function, _unresolved = lift.analyze(entry, custom_cc)
     assert function is not None
+
+
+def test_custom_cc_rejects_stack_arch_with_zero_ret_stack_pop():
+    """x86 is stack-pushing (no link register): `call` pushes a 4-byte return
+    address, so ret_stack_pop=0 forgets it and must be rejected. This is the
+    footgun that silently drifts SP after every call."""
+    mem, _ = _mem_with_func_bytes()
+    sleigh = strider.sleigh.Sleigh(strider.sleigh.SleighArch.x86(), mem)
+
+    def build(ret_pop):
+        return strider.sleigh.CallingConvention.custom(
+            sleigh=sleigh, arg_passing_regs=[], callee_saved_regs=[],
+            ret_val_regs=[], ret_val_regs_float=[], stack_pointer="ESP",
+            stack_arg_base=None, stack_arg_increment=4, ret_stack_pop=ret_pop,
+            link_register=None, preserves_memory=True)
+
+    with pytest.raises(Exception, match="ret_stack_pop"):
+        build(0)
+    # The ABI-correct x86 value is accepted.
+    assert build(4).name() == "custom"

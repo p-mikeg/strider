@@ -8,12 +8,15 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use crate::errors::into_strider_err;
+use strider_reader::elf::{ElfSectionLayout, LoadFilter, RegionSource};
 use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory};
 
 pub(crate) struct PyBufferReaderInner {
     pub(crate) regions: Vec<MemRegion>,
     /// Lazily rebuilt; cleared on every region change.
     pub(crate) table: Option<Arc<MemRegionsLookupTable>>,
+    /// Bytes in the largest single region, built with `table`.
+    max_region_len: Option<usize>,
 }
 
 /// Raw byte reader for firmware or custom sources.  Works as both the
@@ -32,6 +35,14 @@ impl PyBufferReader {
         }
         let mut inner = self.inner.borrow_mut();
         let t = Arc::new(MemRegionsLookupTable::new(inner.regions.clone()));
+        inner.max_region_len = Some(
+            inner
+                .regions
+                .iter()
+                .map(|r| (r.end_addr() - r.start_addr()) as usize)
+                .max()
+                .unwrap_or(0),
+        );
         inner.table = Some(Arc::clone(&t));
         t
     }
@@ -43,16 +54,15 @@ impl PyBufferReader {
         PyBufferReaderView { table }
     }
 
-    /// Longest contiguous run mapped from `addr` (`0` when unmapped).
-    fn available_at(&self, addr: u64) -> usize {
-        self.inner
-            .borrow()
-            .regions
-            .iter()
-            .filter(|r| r.contains(addr))
-            .map(|r| (r.end_addr() - addr) as usize)
-            .max()
-            .unwrap_or(0)
+    /// Upper bound on what one `MemRegionsLookupTable::read` can return, from
+    /// the cache built with the table. The table itself publishes no such
+    /// bound, and scanning the regions per call is what this replaces.
+    fn read_bound(&self) -> usize {
+        if let Some(n) = self.inner.borrow().max_region_len {
+            return n;
+        }
+        drop(self.lookup_table());
+        self.inner.borrow().max_region_len.unwrap_or(0)
     }
 
     pub(crate) fn from_regions(regions: Vec<MemRegion>) -> Self {
@@ -60,6 +70,7 @@ impl PyBufferReader {
             inner: Rc::new(RefCell::new(PyBufferReaderInner {
                 regions,
                 table: None,
+                max_region_len: None,
             })),
         }
     }
@@ -75,6 +86,13 @@ impl PyBufferReader {
         Ok(Self::from_regions(vec![region]))
     }
 
+    fn __repr__(&self) -> String {
+        format!(
+            "BufferReader({} region(s))",
+            self.inner.borrow().regions.len()
+        )
+    }
+
     /// Read up to `size` bytes starting at `addr`.  Returns the bytes
     /// (possibly fewer than `size` near a region edge) or `None` when
     /// `addr` is unmapped.
@@ -85,10 +103,9 @@ impl PyBufferReader {
         size: usize,
     ) -> PyResult<Option<Bound<'py, PyBytes>>> {
         let table = self.lookup_table();
-        // `table.read` fills only what is mapped, so a multi-exabyte
-        // `size` would allocate (and OOM) for nothing.
-        let available = self.available_at(addr);
-        let mut buf = vec![0u8; size.min(available)];
+        // `table.read` fills from one region only, so a multi-exabyte `size`
+        // would allocate (and OOM) for nothing.
+        let mut buf = vec![0u8; size.min(self.read_bound())];
         match table.read(addr, &mut buf) {
             Some(n) => {
                 buf.truncate(n);
@@ -99,73 +116,71 @@ impl PyBufferReader {
     }
 }
 
+/// Whether a symbol carries an address of its own. A linked image uses
+/// `st_value == 0` for synthetic linker entries; an object file's `st_value`
+/// is section-relative, so zero is a real address there and definedness is the
+/// test instead.
+fn symbol_is_addressed<'d, S: ObjectSymbol<'d>>(sym: &S, relocatable: bool) -> bool {
+    // A TLS symbol's value is an offset into the per-thread block, so it has
+    // no address in this space whichever kind of object holds it.
+    if sym.kind() == object::SymbolKind::Tls {
+        return false;
+    }
+    if relocatable {
+        matches!(sym.section(), object::SymbolSection::Section(_))
+    } else {
+        sym.address() != 0
+    }
+}
+
 /// `Segments` auto-dispatches: PT_LOAD headers for ET_EXEC / ET_DYN,
 /// falling back to the section walker for ET_REL (no program headers).
-/// `Sections` forces the section walk (first-wins VMA dedup) even on a
-/// linked binary that does carry PT_LOAD segments.
+/// `Sections` forces the section walk even on a linked binary that does
+/// carry PT_LOAD segments.
 #[derive(Clone, Copy)]
 pub(crate) enum ElfRegionSource {
     Segments,
     Sections,
 }
 
+impl From<ElfRegionSource> for RegionSource {
+    fn from(source: ElfRegionSource) -> Self {
+        match source {
+            ElfRegionSource::Segments => RegionSource::Auto,
+            ElfRegionSource::Sections => RegionSource::Sections,
+        }
+    }
+}
+
+/// Instruction fetch / raw reads: writable sections are included only when
+/// relocations are applied, so a relocated `.got` / `.data.rel.ro` is readable.
 fn elf_to_mem_regions(
-    obj: &object::File<'_>,
+    elf: &strider_reader::OwnedElf,
     source: ElfRegionSource,
     apply_relocations: bool,
 ) -> PyResult<Vec<MemRegion>> {
-    match source {
-        ElfRegionSource::Segments => {
-            if apply_relocations {
-                strider_reader::elf::elf_load_with_relocations(obj).map_err(into_strider_err)
-            } else {
-                strider_reader::elf::elf_get_loadable_regions(obj).map_err(into_strider_err)
-            }
-        }
-        ElfRegionSource::Sections => {
-            let mut regions = if apply_relocations {
-                strider_reader::elf::elf_get_loadable_regions_sections_only_including_writable(obj)
-                    .map_err(into_strider_err)?
-            } else {
-                strider_reader::elf::elf_get_loadable_regions_sections_only(obj)
-                    .map_err(into_strider_err)?
-            };
-            if apply_relocations {
-                strider_reader::elf::apply_elf_relocations_autoload(&mut regions, obj)
-                    .map_err(into_strider_err)?;
-            }
-            Ok(regions)
-        }
-    }
+    let filter = if apply_relocations {
+        LoadFilter::AllAllocatable
+    } else {
+        LoadFilter::CodeAndReadOnly
+    };
+    elf.regions(source.into(), filter, apply_relocations)
+        .map_err(into_strider_err)
 }
 
 /// Code + read-only sections only; writable ones (`.data`, `.got`,
 /// `.data.rel.ro`) are EXCLUDED, so every address here is
 /// runtime-immutable.
+///
+/// Shares one backing buffer with [`elf_to_mem_regions`]: the ROM is a filter
+/// over the same bytes.
 fn elf_to_rom_regions(
-    obj: &object::File<'_>,
+    elf: &strider_reader::OwnedElf,
     source: ElfRegionSource,
     apply_relocations: bool,
 ) -> PyResult<Vec<MemRegion>> {
-    match source {
-        ElfRegionSource::Segments => {
-            if apply_relocations {
-                strider_reader::elf::elf_load_readonly_with_relocations(obj)
-                    .map_err(into_strider_err)
-            } else {
-                strider_reader::elf::elf_get_loadable_regions(obj).map_err(into_strider_err)
-            }
-        }
-        ElfRegionSource::Sections => {
-            let mut regions = strider_reader::elf::elf_get_loadable_regions_sections_only(obj)
-                .map_err(into_strider_err)?;
-            if apply_relocations {
-                strider_reader::elf::apply_elf_relocations(&mut regions, obj)
-                    .map_err(into_strider_err)?;
-            }
-            Ok(regions)
-        }
-    }
+    elf.regions(source.into(), LoadFilter::ImmutableOnly, apply_relocations)
+        .map_err(into_strider_err)
 }
 
 /// Parsed ELF binary.  Construct via `strider.lift.load_elf(path)`.
@@ -180,55 +195,244 @@ pub struct PyLoadedElf {
     rom: PyBufferReader,
     /// The region-collection strategy this ELF was loaded with.
     source: ElfRegionSource,
-}
-
-/// A zero ELF `st_size` means "unknown", not "empty".
-fn nonzero_size(s: u64) -> Option<u64> {
-    (s != 0).then_some(s)
+    /// Every symbol of every loaded ELF, built on the first symbol query and
+    /// dropped by `add_elf`.
+    symbol_table: std::cell::RefCell<Option<SymbolTable>>,
 }
 
 fn invalidate_and_extend(reader: &PyBufferReader, regions: Vec<MemRegion>) {
     let mut inner = reader.inner.borrow_mut();
     inner.regions.extend(regions);
     inner.table = None;
+    inner.max_region_len = None;
+}
+
+/// A sub-range where a `new` region overlaps an `existing` one with DIFFERENT
+/// bytes, or `None` if every overlap is byte-identical (a benign re-merge of
+/// the same image). See `add_elf` for why differing overlap is rejected.
+///
+/// `existing` is start-ordered once and each `new` region probes it, so the
+/// cost is `O(E log E + N log E)` plus one byte comparison per genuinely
+/// overlapping pair.
+fn differing_overlap(existing: &[MemRegion], new: &[MemRegion]) -> Option<(u64, u64)> {
+    let mut order: Vec<usize> = (0..existing.len()).collect();
+    order.sort_unstable_by_key(|&i| existing[i].start_addr());
+    // Running maximum end address over the start-ordered prefix: the walk back
+    // from a `new` region's upper bound stops once no earlier region reaches it.
+    let mut max_end: Vec<u64> = Vec::with_capacity(order.len());
+    let mut reach = 0u64;
+    for &i in &order {
+        reach = reach.max(existing[i].end_addr());
+        max_end.push(reach);
+    }
+    for n in new {
+        let (n_lo, n_hi) = (n.start_addr(), n.end_addr());
+        let mut rank = order.partition_point(|&i| existing[i].start_addr() < n_hi);
+        while rank > 0 && max_end[rank - 1] > n_lo {
+            let e = &existing[order[rank - 1]];
+            let lo = n_lo.max(e.start_addr());
+            let hi = n_hi.min(e.end_addr());
+            if lo < hi && !n.same_bytes_in(e, lo, hi) {
+                return Some((lo, hi));
+            }
+            rank -= 1;
+        }
+    }
+    None
+}
+
+/// One ELF symbol: where it is, what the ELF says it spans, and which loaded
+/// region it falls in.
+#[pyclass(name = "Symbol", module = "strider.reader", frozen)]
+#[derive(Clone)]
+pub struct PySymbol {
+    /// The symbol name as spelled in the ELF symbol table.
+    #[pyo3(get)]
+    name: String,
+    /// The symbol's virtual address (`st_value`).
+    #[pyo3(get)]
+    address: u64,
+    /// `None` for `st_size == 0`, which records no extent rather than an
+    /// empty one: a hand-written `.S` entry point with no `.size` directive
+    /// is still a whole function.
+    #[pyo3(get)]
+    size: Option<u64>,
+    is_function: bool,
+    region: Option<(u64, u64)>,
+}
+
+#[pymethods]
+impl PySymbol {
+    /// Whether the ELF types this `STT_FUNC` (or `STT_GNU_IFUNC`), rather
+    /// than inferring it from the section the symbol lives in.
+    #[getter]
+    fn is_function(&self) -> bool {
+        self.is_function
+    }
+
+    /// One past the last byte, or `None` when `size` is.
+    #[getter]
+    fn end(&self) -> Option<u64> {
+        self.size.map(|s| self.address.saturating_add(s))
+    }
+
+    /// The `(start, end)` bounds (end exclusive) of the loaded region this
+    /// symbol maps into, such as the `.text` mapping, or `None` when its
+    /// address falls in no mapped region.
+    #[getter]
+    fn region(&self) -> Option<(u64, u64)> {
+        self.region
+    }
+
+    fn __repr__(&self) -> String {
+        match self.size {
+            Some(size) => format!(
+                "Symbol(name={:?}, address={:#x}, size={})",
+                self.name, self.address, size
+            ),
+            None => format!("Symbol(name={:?}, address={:#x})", self.name, self.address),
+        }
+    }
+}
+
+/// Every named, addressed symbol of every loaded ELF, with a by-name and a
+/// by-address lookup over it.
+struct SymbolTable {
+    /// Load order, then symbol-table order within an ELF.
+    syms: Vec<PySymbol>,
+    /// The winner for each name; two symbols can share one.
+    by_name: HashMap<String, usize>,
+    /// Indices into `syms`, ascending by address, ties in load order.
+    by_addr: Vec<usize>,
+    /// Prefix maximum of the covered end over `by_addr`, so a backward scan
+    /// stops as soon as nothing at or below can still reach the address.
+    by_addr_max_end: Vec<u64>,
 }
 
 impl PyLoadedElf {
-    /// Run `f` on the first symbol named `name`, in ELF load order.
-    fn find_symbol<R>(
-        &self,
-        name: &str,
-        f: impl FnOnce(&object::Symbol<'_, '_>) -> R,
-    ) -> PyResult<R> {
+    fn with_symbols<T>(&self, f: impl FnOnce(&SymbolTable) -> T) -> T {
+        let stale = self.symbol_table.borrow().is_none();
+        if stale {
+            let built = self.build_symbol_table();
+            *self.symbol_table.borrow_mut() = Some(built);
+        }
+        let table = self.symbol_table.borrow();
+        f(table.as_ref().expect("just built"))
+    }
+
+    /// One name can have several symbols: FreeBSD's `model_name` is both an
+    /// STT_FUNC in `.text` and an STT_OBJECT in `.rodata`, so a code symbol
+    /// wins within an ELF, and the first ELF in load order wins across them.
+    fn build_symbol_table(&self) -> SymbolTable {
+        let mem = self.mem.inner.borrow();
+        // Region indices by ascending start, with a prefix maximum of each
+        // region's end.  An `ET_REL` object carries one region per SHF_ALLOC
+        // section, so scanning them per symbol is quadratic in a
+        // `-ffunction-sections` build where both axes grow together.
+        let mut by_start: Vec<usize> = (0..mem.regions.len()).collect();
+        by_start.sort_unstable_by_key(|&i| mem.regions[i].start_addr());
+        let mut reach: Vec<u64> = Vec::with_capacity(by_start.len());
+        let mut furthest = 0u64;
+        for &i in &by_start {
+            furthest = furthest.max(mem.regions[i].end_addr());
+            reach.push(furthest);
+        }
+        // The highest start among the regions covering `address`, which is how
+        // `MemRegionsLookupTable::read` resolves an overlap; taking slice order
+        // could name a region that never serves these bytes.
+        let region_of = |address: u64| -> Option<(u64, u64)> {
+            let hi = by_start.partition_point(|&i| mem.regions[i].start_addr() <= address);
+            for slot in (0..hi).rev() {
+                // Nothing at or below `slot` reaches `address` any more.
+                if reach[slot] <= address {
+                    break;
+                }
+                let r = &mem.regions[by_start[slot]];
+                if r.contains(address) {
+                    return Some((r.start_addr(), r.end_addr()));
+                }
+            }
+            None
+        };
+        let mut syms: Vec<PySymbol> = Vec::new();
+        let mut by_name: HashMap<String, usize> = HashMap::new();
         for obj in self.elfs.iter() {
-            // One name can have several symbols: FreeBSD's `model_name` is
-            // both an STT_FUNC in `.text` and an STT_OBJECT in `.rodata`.
-            // `object::symbol_by_name` returns the first symtab match
-            // regardless of kind, which hands the lifter a data address and
-            // decodes `.rodata` as code. Prefer `Text`, fall back to any
-            // match so pure-data names still resolve for `symbol`/`read`.
-            let mut fallback: Option<object::Symbol<'_, '_>> = None;
             let file = obj.file();
-            for sym in file.symbols() {
-                let Ok(sym_name) = sym.name() else { continue };
-                if sym_name != name {
+            let layout = ElfSectionLayout::new(&file);
+            let relocatable = file.kind() == object::ObjectKind::Relocatable;
+            let mut per_elf: HashMap<String, usize> = HashMap::new();
+            // `.symtab` and `.dynsym` overlap: an exported symbol is in both, and
+            // only `iter_symbols` would show it twice.
+            let mut seen: std::collections::HashSet<(String, u64)> =
+                std::collections::HashSet::new();
+            for sym in file.symbols().chain(file.dynamic_symbols()) {
+                let Ok(name) = sym.name() else { continue };
+                if name.is_empty() || !symbol_is_addressed(&sym, relocatable) {
                     continue;
                 }
-                if sym.kind() == object::SymbolKind::Text {
-                    return Ok(f(&sym));
+                let address = layout.symbol_address(&sym);
+                if !seen.insert((name.to_string(), address)) {
+                    continue;
                 }
-                fallback.get_or_insert(sym);
+                let ix = syms.len();
+                syms.push(PySymbol {
+                    name: name.to_string(),
+                    address,
+                    size: (sym.size() != 0).then(|| sym.size()),
+                    is_function: sym.kind() == object::SymbolKind::Text,
+                    region: region_of(address),
+                });
+                match per_elf.entry(name.to_string()) {
+                    std::collections::hash_map::Entry::Occupied(mut o) => {
+                        if syms[ix].is_function && !syms[*o.get()].is_function {
+                            o.insert(ix);
+                        }
+                    }
+                    std::collections::hash_map::Entry::Vacant(v) => {
+                        v.insert(ix);
+                    }
+                }
             }
-            if let Some(sym) = fallback {
-                return Ok(f(&sym));
+            for (name, ix) in per_elf {
+                by_name.entry(name).or_insert(ix);
             }
         }
-        Err(into_strider_err(anyhow::anyhow!(
-            "symbol {name:?} not found in any ELF loaded into this Program \
-             ({} loaded)",
-            self.elfs.len()
-        )))
+        let mut by_addr: Vec<usize> = (0..syms.len()).collect();
+        by_addr.sort_by_key(|&i| syms[i].address);
+        let mut by_addr_max_end: Vec<u64> = Vec::with_capacity(by_addr.len());
+        let mut running = 0u64;
+        for &i in &by_addr {
+            running = running.max(covered_end(&syms[i]));
+            by_addr_max_end.push(running);
+        }
+        SymbolTable {
+            syms,
+            by_name,
+            by_addr,
+            by_addr_max_end,
+        }
     }
+}
+
+/// One past the last address `sym` covers. A symbol with no recorded size
+/// covers only its own address.
+fn covered_end(sym: &PySymbol) -> u64 {
+    sym.address.saturating_add(sym.size.unwrap_or(1))
+}
+
+/// The symbol of `group` covering `address`. Aliases sharing an address are
+/// ranked by recorded extent first, then by being code, which is the order
+/// `functions()` uses, so the two accessors agree on the same address.
+fn covering<'a>(group: impl Iterator<Item = &'a PySymbol>, address: u64) -> Option<&'a PySymbol> {
+    let rank = |s: &PySymbol| (s.size.is_some(), s.is_function);
+    let mut best: Option<&PySymbol> = None;
+    for sym in group {
+        let covers = sym.address <= address && address < covered_end(sym);
+        if covers && best.is_none_or(|b| rank(sym) > rank(b)) {
+            best = Some(sym);
+        }
+    }
+    best
 }
 
 #[pymethods]
@@ -244,41 +448,108 @@ impl PyLoadedElf {
         self.rom.clone()
     }
 
-    /// Resolve a symbol name to its address (first match in load order).
-    /// Raises `StriderError` when no loaded ELF defines it.
-    fn symbol(&self, name: &str) -> PyResult<u64> {
-        self.find_symbol(name, |sym| sym.address())
+    /// The `Symbol` named `name`, taking the first ELF in load order that
+    /// defines it and preferring a code symbol over a data one of the same
+    /// name.  Raises `StriderError` when no loaded ELF defines it.
+    fn symbol(&self, name: &str) -> PyResult<PySymbol> {
+        self.symbol_opt(name).ok_or_else(|| {
+            into_strider_err(anyhow::anyhow!(
+                "symbol {name:?} not found in any ELF loaded into this Program \
+                 ({} loaded)",
+                self.elfs.len()
+            ))
+        })
     }
 
-    /// The ELF-recorded `st_size` of `name`, or `None` when recorded as 0
-    /// (typical for stripped data symbols and stubs).  Raises
-    /// `StriderError` when the symbol is undefined.
-    fn symbol_size(&self, name: &str) -> PyResult<Option<u64>> {
-        self.find_symbol(name, |sym| nonzero_size(sym.size()))
+    /// `symbol`, but `None` rather than raising when `name` is undefined.
+    fn symbol_opt(&self, name: &str) -> Option<PySymbol> {
+        self.with_symbols(|t| t.by_name.get(name).map(|&ix| t.syms[ix].clone()))
     }
 
-    /// `(symbol(name), symbol_size(name))` in one lookup.  Raises
-    /// `StriderError` when the symbol is undefined.
-    fn symbol_addr_and_size(&self, name: &str) -> PyResult<(u64, Option<u64>)> {
-        self.find_symbol(name, |sym| (sym.address(), nonzero_size(sym.size())))
+    /// The symbol covering `address`: the nearest one at or below it whose
+    /// recorded extent reaches `address`.  A symbol with no recorded size
+    /// covers only its own address, so a size-less one sitting inside a sized
+    /// function (every ARM `$a` / `$d` mapping symbol) does not hide it.
+    /// Aliases sharing an address resolve by recorded extent, then by being
+    /// code.  `None` when nothing covers `address`.
+    fn symbol_at(&self, address: u64) -> Option<PySymbol> {
+        self.with_symbols(|t| {
+            let mut hi = t.by_addr.partition_point(|&i| t.syms[i].address <= address);
+            while hi > 0 {
+                // Nothing at or below this point extends far enough.
+                if t.by_addr_max_end[hi - 1] <= address {
+                    return None;
+                }
+                let base = t.syms[t.by_addr[hi - 1]].address;
+                let lo = t.by_addr[..hi].partition_point(|&i| t.syms[i].address < base);
+                if let Some(hit) = covering(t.by_addr[lo..hi].iter().map(|&i| &t.syms[i]), address)
+                {
+                    return Some(hit.clone());
+                }
+                hi = lo;
+            }
+            None
+        })
     }
 
-    /// All symbols across every loaded ELF as `dict[str, int]`.  Empty
-    /// names and zero addresses (synthetic linker entries) are skipped;
-    /// the earlier-loaded ELF wins a name collision.
-    fn symbols(&self) -> HashMap<String, u64> {
-        let mut out: HashMap<String, u64> = HashMap::new();
-        for obj in self.elfs.iter() {
-            let file = obj.file();
-            for sym in file.symbols() {
-                let Ok(name) = sym.name() else { continue };
-                if name.is_empty() || sym.address() == 0 {
+    /// Whether the first loaded ELF sets ARM's `EF_ARM_BE8`: instructions are
+    /// stored little-endian while data stays big-endian.
+    ///
+    /// `EI_DATA` marks a BE8 image and a BE32 one alike, so the flag is the
+    /// only thing separating them. Reported, not acted on: nothing here selects
+    /// an arch from it. `False` off ARM.
+    #[getter]
+    fn is_arm_be8(&self) -> bool {
+        self.elfs
+            .first()
+            .is_some_and(strider_reader::OwnedElf::is_arm_be8)
+    }
+
+    /// Every symbol across every loaded ELF as `dict[str, Symbol]`, keyed by
+    /// the name each one resolves under.
+    fn symbols(&self) -> HashMap<String, PySymbol> {
+        self.with_symbols(|t| {
+            t.by_name
+                .iter()
+                .map(|(name, &ix)| (name.clone(), t.syms[ix].clone()))
+                .collect()
+        })
+    }
+
+    /// The function symbols in address order, one per address: aliases of an
+    /// address already listed are excluded, preferring the one whose size the
+    /// ELF records.  A function with no recorded size is still yielded, with
+    /// `Symbol.size` `None`.
+    fn functions(&self) -> PySymbolIter {
+        let syms = self.with_symbols(|t| {
+            let mut out: Vec<PySymbol> = Vec::new();
+            for &ix in &t.by_addr {
+                let sym = &t.syms[ix];
+                if !sym.is_function {
                     continue;
                 }
-                out.entry(name.to_string()).or_insert(sym.address());
+                match out.last_mut() {
+                    Some(prev) if prev.address == sym.address => {
+                        if prev.size.is_none() && sym.size.is_some() {
+                            *prev = sym.clone();
+                        }
+                    }
+                    _ => out.push(sym.clone()),
+                }
             }
+            out
+        });
+        PySymbolIter { syms, next: 0 }
+    }
+
+    /// Every symbol pulled one at a time: a `Symbol` is built only when
+    /// pulled, so the Python objects are never all live at once.  The Rust
+    /// table is collected up front.
+    fn iter_symbols(&self) -> PySymbolIter {
+        PySymbolIter {
+            syms: self.with_symbols(|t| t.syms.clone()),
+            next: 0,
         }
-        out
     }
 
     /// ELF entry-point address from the first loaded ELF.
@@ -302,15 +573,27 @@ impl PyLoadedElf {
     /// the regions and symbol set.  The earlier-loaded ELF wins a name
     /// collision.  Set `apply_relocations` for ET_DYN binaries whose
     /// sections ship with unresolved relocations.
+    ///
+    /// Errors if the new ELF maps code over an address already loaded with
+    /// DIFFERENT bytes: `add_elf` places shared objects at distinct addresses,
+    /// so two ELFs linked at the same base cannot share one address space (a
+    /// byte-identical re-merge of the same image is allowed and is a no-op).
     #[pyo3(signature = (path, apply_relocations=false))]
     fn add_elf(&mut self, path: &str, apply_relocations: bool) -> PyResult<()> {
         let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
-        let file = obj.file();
-        let mem_regions = elf_to_mem_regions(&file, self.source, apply_relocations)?;
-        let rom_regions = elf_to_rom_regions(&file, self.source, apply_relocations)?;
+        let mem_regions = elf_to_mem_regions(&obj, self.source, apply_relocations)?;
+        let rom_regions = elf_to_rom_regions(&obj, self.source, apply_relocations)?;
+        if let Some((lo, hi)) = differing_overlap(&self.mem.inner.borrow().regions, &mem_regions) {
+            return Err(into_strider_err(anyhow::anyhow!(
+                "add_elf: {path} maps [{lo:#x}, {hi:#x}) with bytes that differ from what is \
+                 already loaded there; add_elf merges shared objects at DISTINCT addresses, so \
+                 two ELFs linked at the same base cannot be merged into one address space"
+            )));
+        }
         invalidate_and_extend(&self.mem, mem_regions);
         invalidate_and_extend(&self.rom, rom_regions);
         self.elfs.push(obj);
+        self.symbol_table.borrow_mut().take();
         Ok(())
     }
 }
@@ -321,14 +604,14 @@ fn load_elf_impl(
     apply_relocations: bool,
 ) -> PyResult<PyLoadedElf> {
     let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
-    let file = obj.file();
-    let mem = PyBufferReader::from_regions(elf_to_mem_regions(&file, source, apply_relocations)?);
-    let rom = PyBufferReader::from_regions(elf_to_rom_regions(&file, source, apply_relocations)?);
+    let mem = PyBufferReader::from_regions(elf_to_mem_regions(&obj, source, apply_relocations)?);
+    let rom = PyBufferReader::from_regions(elf_to_rom_regions(&obj, source, apply_relocations)?);
     Ok(PyLoadedElf {
         elfs: vec![obj],
         mem,
         rom,
         source,
+        symbol_table: std::cell::RefCell::new(None),
     })
 }
 
@@ -338,7 +621,7 @@ fn load_elf_impl(
 /// Set `apply_relocations` for ET_DYN binaries (kernels, PIE userland)
 /// whose `.text` or function-pointer tables ship with unresolved
 /// relocations: section coverage widens to `.data.rel.ro` / `.got` and
-/// every understood relocation is patched in place.
+/// every understood relocation is applied.
 #[pyfunction]
 #[pyo3(name = "_load_elf_from_segments", signature = (path, apply_relocations=false))]
 pub fn load_elf_from_segments(path: &str, apply_relocations: bool) -> PyResult<PyLoadedElf> {
@@ -346,7 +629,7 @@ pub fn load_elf_from_segments(path: &str, apply_relocations: bool) -> PyResult<P
 }
 
 /// Load the ELF at `path`, collecting regions by walking section headers
-/// (first-wins VMA dedup) even when the binary carries PT_LOAD segments.
+/// even when the binary carries PT_LOAD segments.
 /// Use for section-granular regions (`.text` / `.rodata` / `.plt` as
 /// separate mappings) instead of coalesced PT_LOAD ranges.
 #[pyfunction]
@@ -375,6 +658,9 @@ impl PyMemReader {
 
     /// Override to return up to `size` bytes at `addr`, or `None` for
     /// unmapped.  The base raises `NotImplementedError`.
+    ///
+    /// An exception here fails the whole lift, chained as the `StriderError`'s
+    /// `__cause__`.  `ReadOnlyMemory.read` is the opposite: see its docstring.
     #[allow(unused_variables)]
     fn read<'py>(
         &self,
@@ -386,17 +672,21 @@ impl PyMemReader {
             "MemReader.read must be overridden by subclass",
         ))
     }
+
+    fn __repr__(slf: Bound<'_, Self>) -> PyResult<String> {
+        let name: String = slf.get_type().getattr("__name__")?.extract()?;
+        Ok(format!("{name}()"))
+    }
 }
 
 /// Shared `read`-callback prologue for both Python reader adapters, run
 /// inside the caller's `Python::with_gil`.
 ///
 /// `KeyboardInterrupt` / `SystemExit` are STASHED, not `PyErr::restore`d:
-/// restoring would leave the error indicator set, so the next callback
-/// would trip CPython's "returned a result with an exception set" guard
-/// and destroy the original exception.  A stashed exception also
-/// short-circuits every later call until the outer boundary drains the
-/// cell and surfaces it.
+/// restoring leaves the error indicator set, so the next callback trips
+/// CPython's "returned a result with an exception set" guard and destroys
+/// the original.  A stash short-circuits every later call until the outer
+/// boundary drains the cell.
 fn call_py_read<A>(
     py: Python<'_>,
     py_obj: &Py<PyAny>,
@@ -407,18 +697,20 @@ fn call_py_read<A>(
 where
     A: IntoPy<Py<pyo3::types::PyTuple>>,
 {
-    if crate::pattern::peek_pending_control_flow() {
+    if crate::pattern::peek_pending_query_error() {
         anyhow::bail!("{abort_label} aborted: pending control-flow exception");
     }
+    crate::errors::clear_callback_cause();
     match py_obj.call_method1(py, "read", args) {
         Ok(r) => Ok(r),
         Err(e) => {
             if e.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py)
                 || e.is_instance_of::<pyo3::exceptions::PySystemExit>(py)
             {
-                crate::pattern::stash_pending_control_flow(e);
+                crate::pattern::stash_pending_query_error(e);
                 anyhow::bail!("{abort_label} aborted: control-flow exception stashed");
             }
+            crate::errors::stash_callback_cause(e.clone_ref(py));
             Err(raise_msg(e))
         }
     }
@@ -454,9 +746,19 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
                     addr.off
                 );
             }
-            let bytes = result
-                .extract::<Vec<u8>>(py)
-                .map_err(|e| anyhow::anyhow!("PyMemReader.read must return bytes: {e}"))?;
+            // Every instruction fetch lands here, so `bytes` (the documented
+            // return) is read borrowed; anything else still converts.
+            let bound = result.bind(py);
+            let owned;
+            let bytes: &[u8] = match bound.downcast::<pyo3::types::PyBytes>() {
+                Ok(b) => b.as_bytes(),
+                Err(_) => {
+                    owned = bound
+                        .extract::<Vec<u8>>()
+                        .map_err(|e| anyhow::anyhow!("PyMemReader.read must return bytes: {e}"))?;
+                    &owned
+                }
+            };
             // The `MemReader` contract allows a short read near a region
             // edge, but an over-long return is a Python bug: reject it
             // rather than silently dropping the excess.
@@ -469,7 +771,7 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
                 );
             }
             let n = bytes.len();
-            out_buf[..n].copy_from_slice(&bytes[..n]);
+            out_buf[..n].copy_from_slice(bytes);
             Ok(n)
         })
         .map_err(strider_reader::MemReadError::from)
@@ -499,11 +801,21 @@ impl PyReadOnlyMemory {
     /// Override to return the `size` RAW bytes at `addr`, or `None` for
     /// unmapped.  Bytes are not byte-swapped; the optimizer decodes them
     /// per the run's endianness.  The base raises `NotImplementedError`.
+    ///
+    /// An exception here is swallowed: the constant-load fold declines and
+    /// analysis continues, indistinguishable from `None`.  Unlike
+    /// `MemReader.read`, whose exception fails the lift.  `KeyboardInterrupt`
+    /// and `SystemExit` are the exceptions that still stop the run.
     #[allow(unused_variables)]
     fn read(&self, addr: u64, size: usize) -> PyResult<Option<Vec<u8>>> {
         Err(pyo3::exceptions::PyNotImplementedError::new_err(
             "ReadOnlyMemory.read must be overridden by subclass",
         ))
+    }
+
+    fn __repr__(slf: Bound<'_, Self>) -> PyResult<String> {
+        let name: String = slf.get_type().getattr("__name__")?.extract()?;
+        Ok(format!("{name}()"))
     }
 }
 
@@ -517,25 +829,32 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         let size = buf.len();
         Python::with_gil(|py| -> anyhow::Result<()> {
-            // Control-flow exceptions are stashed for the outer boundary;
-            // any other failure errors here, so `LoadReadOnly` just leaves
-            // the Load intact.
             let result = call_py_read(py, &self.py_obj, (addr, size), "read", |e| {
                 anyhow::anyhow!("ReadOnlyMemory.read({addr:#x}, {size}) raised: {e}")
             })?;
             if result.is_none(py) {
                 anyhow::bail!("ReadOnlyMemory.read({addr:#x}, {size}) returned None (unmapped)");
             }
-            let bytes = result.extract::<Vec<u8>>(py).map_err(|e| {
-                anyhow::anyhow!("ReadOnlyMemory.read({addr:#x}, {size}) did not return bytes: {e}")
-            })?;
+            let bound = result.bind(py);
+            let owned;
+            let bytes: &[u8] = match bound.downcast::<pyo3::types::PyBytes>() {
+                Ok(b) => b.as_bytes(),
+                Err(_) => {
+                    owned = bound.extract::<Vec<u8>>().map_err(|e| {
+                        anyhow::anyhow!(
+                            "ReadOnlyMemory.read({addr:#x}, {size}) did not return bytes: {e}"
+                        )
+                    })?;
+                    &owned
+                }
+            };
             if bytes.len() != size {
                 anyhow::bail!(
                     "ReadOnlyMemory.read({addr:#x}, {size}) returned {} bytes, expected {size}",
                     bytes.len()
                 );
             }
-            buf.copy_from_slice(&bytes);
+            buf.copy_from_slice(bytes);
             Ok(())
         })
     }
@@ -640,10 +959,40 @@ impl MemInput {
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBufferReader>()?;
-    // `_LoadedElf` is deliberately unregistered: its methods are bound on the
-    // type object regardless, so `load_elf_from_*` still hands back a fully
+    // `_LoadedElf` stays out of the module namespace; its methods are bound on
+    // the type object regardless, so `load_elf_from_*` still hands back a fully
     // usable instance.
+    m.add_class::<PySymbol>()?;
+    m.add_class::<PySymbolIter>()?;
     m.add_class::<PyMemReader>()?;
     m.add_class::<PyReadOnlyMemory>()?;
     Ok(())
+}
+
+/// Yields `Symbol`s one at a time.
+#[pyo3::pyclass(name = "SymbolIter", module = "strider.reader")]
+pub struct PySymbolIter {
+    syms: Vec<PySymbol>,
+    next: usize,
+}
+
+#[pyo3::pymethods]
+impl PySymbolIter {
+    fn __iter__(slf: pyo3::PyRef<'_, Self>) -> pyo3::PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self) -> Option<PySymbol> {
+        let out = self.syms.get(self.next).cloned();
+        if out.is_some() {
+            self.next += 1;
+        }
+        out
+    }
+
+    /// What is LEFT, not the total: CPython takes this as a length hint, so a
+    /// partly consumed iterator would over-allocate.
+    fn __len__(&self) -> usize {
+        self.syms.len() - self.next
+    }
 }

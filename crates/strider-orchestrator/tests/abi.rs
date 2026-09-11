@@ -4,13 +4,6 @@
 //! cdecl/MIPS use stack args earlier, ARM/AArch64 use 4/8 arg regs).
 //! `point_sum` and `make_pair` exercise struct decomposition.
 
-#![allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable
-)]
-
 mod common;
 use common::*;
 

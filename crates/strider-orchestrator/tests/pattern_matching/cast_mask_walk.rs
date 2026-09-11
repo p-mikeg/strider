@@ -1,15 +1,12 @@
-//! Walk-through behaviour tests for the matcher's `CastMask` setting.
-//!
-//! Each test builds a tiny IR fixture of shape `Add(<wrapped>, IntConst)`
-//! where `<wrapped>` is a chain of cast nodes around an `InitialVar`, and
-//! runs the pattern `add(initial_var(vn), int_const(_))` under different
-//! `CastMask` settings.
+//! Each test builds `Add(<wrapped>, IntConst)`, where `<wrapped>` is a chain
+//! of cast nodes around an `InitialVar`, and runs
+//! `add(initial_var(vn), int_const(_))` under a different `CastMask`.
 
 use strider_ir::node::{ValueId, ValueType};
 use strider_ir::{ExtendOp, Function, FunctionBuilder, IRBuilderExt, IntBinaryOp};
 use strider_orchestrator::opt::{PhiCollapse, RegionCollapse};
 use strider_pattern::{
-    Capture, CaptureExt, CastMask, MatchPat, Matcher, Pattern, add, any_int_const, initial_var_for,
+    Capture, CastMask, MatchPat, Matcher, Pattern, initial_var_for, int_add, int_const,
 };
 
 use strider_ir_test_utils::RegisterSet;
@@ -69,11 +66,7 @@ where
 
 /// Pattern: `add(initial_var(x_vn), int_const(_))`.
 fn pat() -> Pattern {
-    add(
-        initial_var_for(x_vn()),
-        any_int_const().capture(Capture::new()),
-    )
-    .into_pattern()
+    int_add(initial_var_for(x_vn()), int_const(Capture::new())).into_pattern()
 }
 
 fn count(function: &Function, mask: CastMask) -> usize {
@@ -131,11 +124,7 @@ fn fixture_zext_then_add() -> Function {
 
 /// Pattern asking for the I32 InitialVar at offset 0x40.
 fn pat_u32_initial_var() -> Pattern {
-    add(
-        initial_var_for(x_u32_vn()),
-        any_int_const().capture(Capture::new()),
-    )
-    .into_pattern()
+    int_add(initial_var_for(x_u32_vn()), int_const(Capture::new())).into_pattern()
 }
 
 fn count_u32(function: &Function, mask: CastMask) -> usize {
@@ -206,11 +195,7 @@ fn fixture_truncate_of_zext_then_add() -> Function {
 }
 
 fn pat_u16_initial_var() -> Pattern {
-    add(
-        initial_var_for(x_u16_vn()),
-        any_int_const().capture(Capture::new()),
-    )
-    .into_pattern()
+    int_add(initial_var_for(x_u16_vn()), int_const(Capture::new())).into_pattern()
 }
 
 fn count_u16(function: &Function, mask: CastMask) -> usize {

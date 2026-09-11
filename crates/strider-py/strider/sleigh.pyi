@@ -51,8 +51,8 @@ class SleighArch:
         ...
     @classmethod
     def arm_thumb(cls) -> SleighArch:
-        """32-bit ARM in Thumb mode, little-endian. There is no big-endian
-        Thumb preset."""
+        """32-bit ARM in Thumb mode. The Thumb presets are little-endian
+        only."""
         ...
     @classmethod
     def aarch64(cls) -> SleighArch:
@@ -81,6 +81,9 @@ class SleighArch:
     def name(self) -> str:
         """The preset's short name, e.g. `"x86_64"` or `"arm_thumb"`."""
         ...
+    def endianness(self) -> str:
+        """Byte order of this architecture: `"little"` or `"big"`."""
+        ...
 
 class CallingConvention:
     """How a function receives arguments, returns values, and which
@@ -99,7 +102,13 @@ class CallingConvention:
         ...
     @classmethod
     def arm_aapcs(cls) -> CallingConvention:
-        """The AAPCS ABI for 32-bit ARM."""
+        """The AAPCS ABI for 32-bit ARM, hard-float (VFP) argument
+        variant."""
+        ...
+    @classmethod
+    def arm_aapcs_soft(cls) -> CallingConvention:
+        """The AAPCS ABI for 32-bit ARM built `-mfloat-abi=soft` /
+        `softfp`, where floats pass and return in the core registers."""
         ...
     @classmethod
     def mips_o32(cls) -> CallingConvention:
@@ -127,12 +136,6 @@ class CallingConvention:
         """The 32-bit x86 cdecl convention (all arguments on the stack)."""
         ...
     @classmethod
-    def x86_64_all_preserving(cls) -> CallingConvention:
-        """x86-64 with every register listed callee-saved. Use it as a
-        per-address override for transparent sites like `__fentry__` or
-        `mcount`."""
-        ...
-    @classmethod
     def x86_linux_kernel(cls) -> CallingConvention:
         """32-bit x86 Linux kernel-internal convention (`-mregparm=3`). This
         is the only architecture whose kernel ABI differs from its userland
@@ -152,6 +155,7 @@ class CallingConvention:
         ret_stack_pop: int,
         link_register: Optional[str] = ...,
         preserves_memory: bool = ...,
+        arg_passing_regs_float: list[str] = ...,
     ) -> CallingConvention:
         """Build a convention from register names resolved against `sleigh`.
 
@@ -160,6 +164,9 @@ class CallingConvention:
         advance by `stack_arg_increment`; `ret_stack_pop` is how many bytes
         the callee pops on return. `preserves_memory=True` declares that a
         call through this convention cannot write memory.
+        `arg_passing_regs_float` names the float/vector argument registers;
+        they are appended after `arg_passing_regs`, so the first one is
+        `arg(len(arg_passing_regs))` in a `call()` pattern.
         """
         ...
     def no_return(self) -> CallingConvention:
@@ -173,6 +180,20 @@ class CallingConvention:
         `if (err) panic();` followed by real code.
         """
         ...
+    def preserves_all(self) -> CallingConvention:
+        """A variant that clobbers nothing: every register callee-saved and
+        memory unchanged, with no arguments or return value. Keeps this
+        convention's stack/link-register geometry.
+
+        Use it as a per-address override for a transparent hook that changes
+        no caller state (`__fentry__` / `mcount`), e.g.
+        `CallingConvention.x86_64_systemv().preserves_all()`.
+        """
+        ...
+    def preserves_regs(self) -> CallingConvention:
+        """Like `preserves_all` but leaves memory clobberable: every register
+        is preserved, memory is not."""
+        ...
     def name(self) -> str:
         """The preset's short name, e.g. `"x86_64_systemv"`."""
         ...
@@ -184,7 +205,7 @@ class VnSpace:
     CONST: VnSpace
     UNIQUE: VnSpace
     def name(self) -> str:
-        """The space's name, e.g. `"ram"` or `"register"`."""
+        """The space's name, e.g. `"RAM"` or `"REGISTER"`."""
         ...
     def __eq__(self, other) -> bool: ...
     def __hash__(self) -> int: ...
@@ -236,3 +257,72 @@ class Sleigh:
         (a non-register space, or an offset and size absent from this
         architecture's table)."""
         ...
+
+class CallOtherAbi:
+    """How one Sleigh user-op is lifted: the implicit register footprint,
+    the memory effect, and whether control returns.
+
+    Pass one per user-op name to
+    `strider.cfg.CfgOptions(call_other_abis={name: abi})`, ahead of the
+    built-in table. `Lifter.user_op_names()` lists the names a binary can
+    contain and `Lifter.call_other_abi(name)` reads back the current
+    classification.
+    """
+    @classmethod
+    def noop(cls) -> CallOtherAbi:
+        """The op lifts to nothing: control and memory unchanged, any
+        p-code result ignored."""
+        ...
+    @classmethod
+    def pure(cls) -> CallOtherAbi:
+        """Pure compute: a p-code result, no implicit registers, no memory
+        effect."""
+        ...
+    @classmethod
+    def mem_clobber(cls) -> CallOtherAbi:
+        """No implicit registers, memory conservatively clobbered."""
+        ...
+    @classmethod
+    def no_return(cls) -> CallOtherAbi:
+        """Control does not pass the op, which ends its region. Empty
+        footprint; `custom(..., no_return=True)` carries one."""
+        ...
+    @classmethod
+    def custom(
+        cls,
+        sleigh: Sleigh,
+        implicit_reads: list[str] = ...,
+        implicit_writes: list[str] = ...,
+        clobbers_memory: bool = ...,
+        no_return: bool = ...,
+    ) -> CallOtherAbi:
+        """An ABI naming implicit registers, resolved against `sleigh` here,
+        so an unknown name raises `StriderError` at construction.
+
+        `implicit_reads` are read beyond the p-code-explicit operands and
+        lead the lifted call's argument list; `implicit_writes` are written
+        beyond the p-code-explicit result.
+        """
+        ...
+    @property
+    def implicit_reads(self) -> list[str]:
+        """Register names read beyond the p-code-explicit operands."""
+        ...
+    @property
+    def implicit_writes(self) -> list[str]:
+        """Register names written beyond the p-code-explicit result."""
+        ...
+    @property
+    def clobbers_memory(self) -> bool:
+        """Whether the op advances the IR's memory edge."""
+        ...
+    @property
+    def is_no_return(self) -> bool:
+        """Whether control does not pass the op."""
+        ...
+    @property
+    def is_noop(self) -> bool:
+        """Whether the op lifts to nothing at all."""
+        ...
+    def __eq__(self, other) -> bool: ...
+    def __hash__(self) -> int: ...

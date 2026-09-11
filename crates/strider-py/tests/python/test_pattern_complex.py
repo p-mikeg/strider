@@ -1,7 +1,4 @@
-"""Multi-level pattern integration tests against real fixture binaries:
-multi-level captures, back-references, predicate guards, commutative matching.
-
-Fixture choice:
+"""Fixture choice:
 * `mul_then_add` (patterns.c) is `a * b + c`, for commutative `add`.
 * `chained_xor_mask` (patterns.c) is `((x ^ k1) & m1) ^ k2`, for 3-deep
   capture chains.
@@ -15,13 +12,12 @@ import pytest
 import strider
 from strider.pattern import (
     Capture,
-    add,
+    int_add,
     anything,
-    any_int_const,
     int_const,
     int_xor,
     load,
-    mul,
+    int_mul,
     var,
 )
 
@@ -43,12 +39,12 @@ def _build_graph(elf_path, symbol):
 def test_multi_level_capture_chain(x86_memory_elf):
     """Captures nested two levels deep must both populate.
     `struct_field_load(p)` returns `p->x + p->y`, so the y-field access
-    lifts to a load through `add(base, offset)`.
+    lifts to a load through `int_add(base, offset)`.
     """
     g = _build_graph(x86_memory_elf, "struct_field_load")
     base = Capture()
     off = Capture()
-    pat = load(addr=add(var(base), var(off)))
+    pat = load(addr=int_add(var(base), var(off)))
     hits = g.find_all(pat, ignore_casts=True)
     assert len(hits) >= 1
     for h in hits:
@@ -63,11 +59,11 @@ def test_back_reference_same_capture_twice(x86_memory_elf):
     codegen-dependent, so the subset bound is all this can assert.
     """
     g = _build_graph(x86_memory_elf, "array_sum")
-    pat = int_xor("v", "v")
+    pat = int_xor(Capture("v"), Capture("v"))
     hits = g.find_all(pat)
     assert isinstance(hits, list)
 
-    pat_distinct = int_xor("a", "b")
+    pat_distinct = int_xor(Capture("a"), Capture("b"))
     hits_distinct = g.find_all(pat_distinct)
     assert len(hits) <= len(hits_distinct)
 
@@ -78,24 +74,23 @@ def test_predicate_guard_filters_int_const(x86_memory_elf):
     """
     g = _build_graph(x86_memory_elf, "array_sum")
     c = Capture()
-    pat_unfiltered = any_int_const(c)
-    pat_filtered = any_int_const(c).when(lambda m: (m.const_uint(c) or 0) < 0x100)
+    pat_unfiltered = int_const(c)
+    pat_filtered = int_const(c).when(lambda m: (m.uint(c) or 0) < 0x100)
 
     hits_unfiltered = g.find_all(pat_unfiltered)
     hits_filtered = g.find_all(pat_filtered)
 
     assert len(hits_filtered) <= len(hits_unfiltered)
     for h in hits_filtered:
-        v = h.const_uint(c)
+        v = h.uint(c)
         assert v is not None
         assert v < 0x100
 
 
 def test_predicate_returning_false_yields_zero_matches(x86_memory_elf):
-    """A predicate that always returns False must drop every match."""
     g = _build_graph(x86_memory_elf, "array_sum")
     c = Capture()
-    pat = any_int_const(c).when(lambda m: False)
+    pat = int_const(c).when(lambda m: False)
     hits = g.find_all(pat)
     assert len(hits) == 0
 
@@ -108,7 +103,7 @@ def test_commutative_add_matches_either_order():
     g = _build_graph(elf, "mul_then_add")
 
     a, b = Capture(), Capture()
-    pat_add = add(var(a), var(b))
+    pat_add = int_add(var(a), var(b))
     hits = g.find_all(pat_add, ignore_casts=True)
 
     # `mul_then_add` always has the `+ c`, plus prologue/epilogue stack math.
@@ -123,10 +118,10 @@ def test_commutative_swapping_inner_mul_matches():
     elf = fixture_path("x86", "patterns")
     g = _build_graph(elf, "mul_then_add")
 
-    pat_form1 = add(mul("a", "b"), "c")
+    pat_form1 = int_add(int_mul(Capture("a"), Capture("b")), Capture("c"))
     hits_form1 = g.find_all(pat_form1, ignore_casts=True)
 
-    pat_form2 = add("c", mul("a", "b"))
+    pat_form2 = int_add(Capture("c"), int_mul(Capture("a"), Capture("b")))
     hits_form2 = g.find_all(pat_form2, ignore_casts=True)
 
     assert len(hits_form1) == len(hits_form2)
@@ -139,9 +134,9 @@ def test_chained_xor_mask_pattern_finds_xor():
     elf = fixture_path("x86", "patterns")
     g = _build_graph(elf, "chained_xor_mask")
     k = Capture()
-    pat = int_xor(anything(), any_int_const(k))
+    pat = int_xor(anything(), int_const(k))
     hits = g.find_all(pat, ignore_casts=True)
     assert len(hits) >= 1
     for h in hits:
-        v = h.const_uint(k)
+        v = h.uint(k)
         assert v is not None

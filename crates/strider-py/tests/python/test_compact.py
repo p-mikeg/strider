@@ -1,5 +1,3 @@
-"""`Lifter.analyze(compact=...)`."""
-
 import strider
 from strider.reader import BufferReader
 from strider.sleigh import CallingConvention, SleighArch
@@ -26,14 +24,12 @@ def _run_with(compact: bool):
 
 
 def test_compact_default_true_does_not_grow_graph():
-    """compact=True (default) must not produce more node ids than compact=False."""
     compact_function = _run_with(True)
     noncompact_function = _run_with(False)
     assert compact_function.node_count() <= noncompact_function.node_count()
 
 
 def test_compact_default_is_true():
-    """Omitting compact= applies compaction."""
     arch, cc = _x86_64_strider()
     mem = BufferReader(0x1000, _trivial_function_bytes())
     lift = strider.lift.lifter(arch, mem)

@@ -1,6 +1,6 @@
 //! Detects stack-passed function arguments and records them in
-//! `Function::arg_index_to_values`.  Must run as a post-pass: only the stack
-//! portion needs the optimized memory graph.
+//! `SideTables::arg_index_to_values`.  Must run as a post-pass: it needs the
+//! optimized memory graph.
 //!
 //! A candidate is a `Load[InitialVar(sp) + K]` with `K` in a stack slot and no
 //! shadowing def on its memory chain.  Ordinals start at
@@ -11,11 +11,10 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
+use crate::mem_analysis::{MemAnalyzer, MemExpr, MemOptions};
 use crate::mem_ssa::narrow_load_to;
 use crate::pipeline::PostOptimizer;
-use crate::sp_analysis::{SpAnalyzer, SpExpr, SpOptions};
 
-/// Detects stack-passed function arguments (indices `>= first_stack_arg`).
 #[derive(Clone)]
 pub struct FunctionArgDetect;
 
@@ -29,13 +28,15 @@ impl PostOptimizer for FunctionArgDetect {
         let first_stack_arg = cc.arg_passing_regs.len();
         let maybe_stack_args = cc.stack_args;
         let Some(stack_args) = maybe_stack_args else {
-            // This convention passes no arguments on the stack.
             return Ok(());
         };
         let alias_mode = opt_ctx.options.alias_mode;
-        let arg_alias = opt_ctx.options.arg_alias;
-        let alias_cfg = SpAnalyzer::new(SpOptions::new(alias_mode, arg_alias));
-        detect_stack_args(edit, &alias_cfg, stack_args, first_stack_arg)?;
+        let alias_cfg = MemAnalyzer::new(MemOptions::incoming_args(alias_mode, &opt_ctx.options));
+        // Narrowing rewires the graph, so it may only ever use what a
+        // call-blocking walk proves; `alias_cfg` carries the relaxations and
+        // decides detection alone.
+        let narrow_cfg = MemAnalyzer::new(MemOptions::call_blocking(alias_mode));
+        detect_stack_args(edit, &alias_cfg, &narrow_cfg, stack_args, first_stack_arg)?;
         Ok(())
     }
 }
@@ -46,7 +47,8 @@ impl PostOptimizer for FunctionArgDetect {
 /// the ordinal by one.
 fn detect_stack_args(
     edit: &mut crate::EditFunction<'_>,
-    alias_cfg: &SpAnalyzer,
+    alias_cfg: &MemAnalyzer,
+    narrow_cfg: &MemAnalyzer,
     stack_args: strider_target::StackArgs,
     first_stack_arg: usize,
 ) -> Result<()> {
@@ -63,10 +65,8 @@ fn detect_stack_args(
     let [initial_sp] = edit
         .node_outputs_exact::<1>(sp_node)
         .expect("InitialVar has 1 output per node signature");
-    // A load qualifies when (a) its address decomposes to `initial_sp + K`,
-    // (b) `K` lands in a stack slot, and (c) nothing on its memory chain
-    // clobbers that slot.  `span` records the furthest slot any load anchored at
-    // a start slot reaches.
+    // `span` records the furthest slot any load anchored at a start slot
+    // reaches.
     let mut groups: rustc_hash::FxHashMap<usize, Vec<NodeId>> = rustc_hash::FxHashMap::default();
     let mut span: rustc_hash::FxHashMap<usize, usize> = rustc_hash::FxHashMap::default();
     let mut disqualified: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
@@ -82,7 +82,7 @@ fn detect_stack_args(
             continue;
         };
         let load_size = load_ty.byte_size() as i128;
-        let Some(SpExpr { base, offset }) = alias_cfg.decompose(edit.function(), addr) else {
+        let Some(MemExpr { base, offset, .. }) = alias_cfg.decompose(edit.function(), addr) else {
             continue;
         };
         if base != initial_sp {
@@ -102,7 +102,7 @@ fn detect_stack_args(
         if disqualified.contains(&start_slot) {
             continue;
         }
-        let dirty = mem_chain_is_dirty(edit, alias_cfg, node_id);
+        let dirty = mem_chain_is_dirty(edit, alias_cfg, narrow_cfg, node_id);
         if dirty {
             disqualified.insert(start_slot);
             groups.remove(&start_slot);
@@ -131,7 +131,7 @@ fn detect_stack_args(
         // registration but still consumes the ordinal.
         let first_load = *arg_loads
             .first()
-            .expect("a present span entry always has ≥1 anchored load");
+            .expect("a present span entry always has >=1 anchored load");
         let NodeKind::Load(space) = *edit.node_kind(first_load) else {
             unreachable!("group members are seeded from Load nodes");
         };
@@ -154,17 +154,22 @@ fn detect_stack_args(
 
 /// `true` when any path may overwrite bytes in the load's range, i.e. the
 /// nearest clobber is anything but the clean `InitialMemory` root.
+///
+/// Narrows to `narrow_cfg`'s clobber, never `alias_cfg`'s: the rewire outlives
+/// this pass, and a later run with the relaxations off would inherit an edge
+/// that only holds with them on.
 fn mem_chain_is_dirty(
     edit: &mut crate::EditFunction<'_>,
-    alias_cfg: &SpAnalyzer,
+    alias_cfg: &MemAnalyzer,
+    narrow_cfg: &MemAnalyzer,
     load: NodeId,
 ) -> bool {
     let mem_token = edit
         .memory_input_of(load)
         .expect("a Load has a memory input (slot 0)");
     let clobber = alias_cfg.nearest_clobber(edit.function(), load, mem_token);
-    // Perf only; narrowing never changes which args are detected.
-    narrow_load_to(edit, load, clobber);
+    let sound = narrow_cfg.nearest_clobber(edit.function(), load, mem_token);
+    narrow_load_to(edit, load, sound);
     !matches!(edit.node_kind(clobber), NodeKind::InitialMemory)
 }
 

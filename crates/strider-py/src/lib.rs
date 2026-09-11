@@ -10,6 +10,7 @@
 use pyo3::prelude::*;
 
 mod arch;
+mod call_other_abi;
 mod cc;
 mod cfg;
 mod dot;
@@ -31,16 +32,18 @@ mod template;
 /// Makes anyhow capture a backtrace at every error site.
 fn force_anyhow_backtrace_capture() {
     // Anyhow reads `RUST_LIB_BACKTRACE`, falling back to `RUST_BACKTRACE`.
-    // Seeding only when neither is set honours a deliberate opt-out; seeding
+    // Seeding only when neither is set honours a user's explicit opt-out; seeding
     // only `RUST_LIB_BACKTRACE` leaves panic-time semantics alone.
     if std::env::var_os("RUST_LIB_BACKTRACE").is_none()
         && std::env::var_os("RUST_BACKTRACE").is_none()
     {
-        // SAFETY: runs from `#[pymodule]` init, serialised by Python's import
-        // lock.  A Rust thread from another already-loaded extension could
-        // race (the GIL doesn't gate those), but env-var mutation at import
-        // time is what every native binding does, and the worst case is a
-        // missing backtrace on the racing reader, not unsafety.
+        // SAFETY: glibc `setenv` can free the environ block a concurrent
+        // `getenv` is reading, handing that reader a dangling pointer.  Module
+        // init is serialised against other IMPORTS, not against other threads,
+        // so importing strider from a worker of an already-threaded process
+        // races anything calling `getenv` there.  Accepted, and avoidable:
+        // exporting `RUST_LIB_BACKTRACE` (or `RUST_BACKTRACE`) before the
+        // process starts takes this branch out entirely.
         unsafe {
             std::env::set_var("RUST_LIB_BACKTRACE", "1");
         }
@@ -64,7 +67,7 @@ fn _strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(pyo3::wrap_pyfunction!(viz_standalone_js, m)?)?;
     // Top-level so the pure-Python facade (`_api.py`) can reach them as
-    // `_ext._load_elf_from_segments`; never in `strider.__all__`.
+    // `_ext._load_elf_from_segments`.
     m.add_function(pyo3::wrap_pyfunction!(reader::load_elf_from_segments, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(reader::load_elf_from_sections, m)?)?;
     // StriderError is the one cross-cutting symbol kept at the top level.
@@ -76,6 +79,7 @@ fn _strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     sleigh::register(py, &sleigh)?;
     arch::register(py, &sleigh)?;
     cc::register(py, &sleigh)?;
+    call_other_abi::register(py, &sleigh)?;
     m.add_submodule(&sleigh)?;
 
     let reader = PyModule::new_bound(py, "reader")?;

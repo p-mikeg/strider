@@ -90,7 +90,6 @@ fn ppc_cr_bit_canonicalize_preserves_pack_fingerprints() -> Result<()> {
     let eight = b.build_int_const(8u64, ty)?;
     let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
 
-    // The rest of the pack: these are the addresses that must NOT be dropped.
     b.set_lift_addr(Some(ADDR_PACK));
     let gt = b.build_int_cmp_operation(eight, idx, IntCmpOp::Less, ty)?;
     let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
@@ -241,8 +240,7 @@ fn build_cmp_flags(
 }
 
 /// An `If` whose cond the closure derives from the four AArch64 flags over two
-/// 32-bit register reads.  Returns the leaves `a`, `b` so tests can assert the
-/// rewritten cond points at them.
+/// 32-bit register reads.  Returns the pre-flag leaves `a`, `b`.
 fn build_if_with_flag_cond<F>(
     make_cond: F,
 ) -> Result<(strider_ir::Function, NodeId, ValueId, ValueId)>
@@ -304,10 +302,9 @@ fn assert_if_cond_is_intcmp(
     assert_eq!(rhs, expect_rhs, "rhs of canonicalised cmp");
 }
 
-/// Asserts the If's cond is `Xor(IntCmpOp(op, lhs, rhs), IntConst(1)):I1`, for
-/// the shapes whose canonical form is a negated cmp.  Stripping that Xor and
-/// swapping the branches is `IfCondInversion`'s job, not this pass's, so these
-/// tests stop at the negated form.
+/// Asserts the If's cond is `Xor(IntCmpOp(op, lhs, rhs), IntConst(1)):I1`.
+/// Stripping that Xor and swapping the branches is `IfCondInversion`'s job, so
+/// these tests stop at the negated form.
 fn assert_if_cond_is_neg_intcmp(
     function: &strider_ir::Function,
     if_node: NodeId,
@@ -353,23 +350,6 @@ fn assert_if_cond_is_neg_intcmp(
     assert_eq!(rhs, expect_rhs, "rhs of canonicalised cmp");
 }
 
-#[test]
-fn new_builds_pass_that_canonicalizes() -> Result<()> {
-    let (mut fg, if_node, a, b) = build_if_with_flag_cond(|_fb, zr, _ng, _cy, _ov| Ok(zr))?;
-
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &mut crate::OptCtx::new(None),
-    )?;
-    assert!(
-        r.changed(),
-        "constructed pass should rewrite the EQ flag tree"
-    );
-    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Equal, a, b);
-    Ok(())
-}
-
 /// Pins that the rule table is per-instance, not shared global state.
 #[test]
 fn two_independent_instances_each_canonicalize() -> Result<()> {
@@ -404,7 +384,7 @@ fn flag_cmp_eq_rewrites_to_int_equal() -> Result<()> {
 
 #[test]
 fn flag_cmp_ne_rewrites_to_neg_int_equal() -> Result<()> {
-    // AArch64 `b.ne` cond is `BitNot(ZR)` = `BitNot(Equal(Add(a, Neg(b)), 0))`.
+    // AArch64 `b.ne` cond is `Xor(ZR, 1)` = `Xor(Equal(Add(a, Neg(b)), 0), 1)`.
     let (mut fg, if_node, a, b) =
         build_if_with_flag_cond(|fb, zr, _ng, _cy, _ov| build_i1_xor_with_one(fb, zr))?;
 
@@ -421,7 +401,7 @@ fn flag_cmp_ne_rewrites_to_neg_int_equal() -> Result<()> {
 
 #[test]
 fn flag_cmp_hi_rewrites_to_int_less_swapped() -> Result<()> {
-    // AArch64 `b.hi` cond is `BoolAnd(CY, BitNot(ZR))`, i.e. unsigned `a > b`.
+    // AArch64 `b.hi` cond is `And(CY, Xor(ZR, 1)):I1`, i.e. unsigned `a > b`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, cy, _ov| {
         let neg_zr = build_i1_xor_with_one(fb, zr)?;
         fb.build_int_binary_operation(cy, neg_zr, IntBinaryOp::And, ValueType::I1)
@@ -469,8 +449,9 @@ fn flag_cmp_hi_rewrites_after_constant_fold_runs_first() -> Result<()> {
 
 #[test]
 fn flag_cmp_ls_rewrites_to_neg_int_less_swapped() -> Result<()> {
-    // AArch64 `b.ls` cond is `BoolOr(BitNot(CY), ZR)`.  ConstantFold cancels
-    // the double BitNot over CY, leaving `BoolOr(IntLess(a, b), Equal(a, b))`.
+    // AArch64 `b.ls` cond is `Or(Xor(CY, 1), ZR):I1`.  ConstantFold cancels the
+    // `Xor(Xor(IntLess(a, b), 1), 1)` chain, leaving
+    // `Or(IntLess(a, b), Equal(Add(a, Neg(b)), 0))`, the raw-NZCV LS shape.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, cy, _ov| {
         let neg_cy = build_i1_xor_with_one(fb, cy)?;
         fb.build_int_binary_operation(neg_cy, zr, IntBinaryOp::Or, ValueType::I1)
@@ -494,7 +475,7 @@ fn flag_cmp_ls_rewrites_to_neg_int_less_swapped() -> Result<()> {
 
 #[test]
 fn flag_cmp_lt_rewrites_to_int_sless() -> Result<()> {
-    // AArch64 `b.lt` cond is `BitNot(Equal(NG, OV))`.  The I8 widening mirrors
+    // AArch64 `b.lt` cond is `Xor(Equal(NG, OV), 1)`.  The I8 widening mirrors
     // the real lift, which passes the flag varnode's 1-byte size as the
     // comparison's operand width.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, _zr, ng, _cy, ov| {
@@ -537,7 +518,7 @@ fn flag_cmp_ge_rewrites_to_neg_int_sless() -> Result<()> {
 
 #[test]
 fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
-    // AArch64 `b.gt` cond is `BoolAnd(BitNot(ZR), Equal(NG, OV))`.
+    // AArch64 `b.gt` cond is `And(Xor(ZR, 1), Equal(NG, OV)):I1`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, ng, _cy, ov| {
         let neg_zr = build_i1_xor_with_one(fb, zr)?;
         let ng = fb.convert_to_int_if_needed(ng, ValueType::I8)?;
@@ -559,7 +540,7 @@ fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
 
 #[test]
 fn flag_cmp_le_rewrites_to_neg_int_sless_swapped() -> Result<()> {
-    // AArch64 `b.le` cond is `BoolOr(ZR, BitNot(Equal(NG, OV)))`.
+    // AArch64 `b.le` cond is `Or(ZR, Xor(Equal(NG, OV), 1)):I1`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, ng, _cy, ov| {
         let ng = fb.convert_to_int_if_needed(ng, ValueType::I8)?;
         let ov = fb.convert_to_int_if_needed(ov, ValueType::I8)?;
@@ -581,8 +562,8 @@ fn flag_cmp_le_rewrites_to_neg_int_sless_swapped() -> Result<()> {
 
 #[test]
 fn flag_cmp_cs_is_left_alone_as_bool_neg_int_less() -> Result<()> {
-    // CS is bare CY = `BitNot(IntLess(a, b))`, already in `(a, b)` form;
-    // `IfCondInversion` handles the outer BitNot.
+    // CS is bare CY = `Xor(IntLess(a, b), 1)`, already in `(a, b)` form;
+    // `IfCondInversion` handles the outer Xor.
     let (mut fg, if_node, _a, _b) = build_if_with_flag_cond(|_fb, _zr, _ng, cy, _ov| Ok(cy))?;
 
     let r = crate::pipeline::run_one(
@@ -628,7 +609,7 @@ fn flag_cmp_mi_is_left_alone_as_int_sless_diff() -> Result<()> {
 #[test]
 fn flag_cmp_thumb_beq_reduces_to_int_equal() -> Result<()> {
     // ARM Thumb `B.EQ` lifts as `IntNotEqual(ZR, 0:1)`, canonicalised to
-    // `BitNot(IntEqual(CastToInt(ZR, I8), 0:I8))`.
+    // `Xor(IntEqual(ZeroExtend(ZR):I8, 0:I8), 1)`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, _cy, _ov| {
         let zero = fb.build_int_const(0u64, ValueType::I8)?;
         let zr = fb.convert_to_int_if_needed(zr, ValueType::I8)?;
@@ -637,7 +618,7 @@ fn flag_cmp_thumb_beq_reduces_to_int_equal() -> Result<()> {
     })?;
 
     // Two iterations: the Thumb flag-test rule strips the outer
-    // `BitNot(IntEqual(..., 0))`, then the EQ rule simplifies the inner
+    // `Xor(IntEqual(..., 0), 1)`, then the EQ rule simplifies the inner
     // `Equal(diff, 0)`.  A real pipeline gets this from its fixed-point loop.
     let _ = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
@@ -673,11 +654,10 @@ fn flag_cmp_vs_is_left_alone_as_sborrow() -> Result<()> {
     Ok(())
 }
 
-// ARM/Thumb lift comparison branches with inverted sense, so ConstantFold has
-// already decomposed the flag tree into direct comparisons on `(a, b)` by the
-// time this pass runs.  The following fixtures build that decomposed shape.
+// The decomposed flag shape: the boolean tree's leaves are comparisons on the
+// original `(a, b)` pair, not on the subtraction and its flags.
 
-/// An `If` whose cond comes straight from two register reads, no flag tree.
+/// An `If` whose cond the closure builds from two register reads.
 fn build_if_with_ab_cond<F>(
     make_cond: F,
 ) -> Result<(strider_ir::Function, NodeId, ValueId, ValueId)>
@@ -700,7 +680,7 @@ where
 
 #[test]
 fn flag_cmp_decomposed_gt_rewrites_to_sless_swapped() -> Result<()> {
-    // (a != b) && !(a < b)  ≡  a > b  ≡  b < a  ->  Sless(b, a)
+    // (a != b) && !(a < b)  ==  a > b  ==  b < a  ->  Sless(b, a)
     let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
         let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::I32)?;
         let neq = build_i1_xor_with_one(fb, eq)?;
@@ -767,7 +747,7 @@ fn flag_cmp_incomplete_tree_foreign_leaf_left_alone() -> Result<()> {
 
 #[test]
 fn flag_cmp_decomposed_le_rewrites_to_neg_sless_swapped() -> Result<()> {
-    // (a == b) || (a < b)  ≡  a <= b  ≡  !(b < a)  ->  BitNot(Sless(b, a))
+    // (a == b) || (a < b)  ==  a <= b  ==  !(b < a)  ->  Xor(Sless(b, a), 1)
     let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
         let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::I32)?;
         let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Sless, ValueType::I32)?;
@@ -805,7 +785,7 @@ fn flag_cmp_decomposed_hi_rewrites_to_less_swapped() -> Result<()> {
 
 #[test]
 fn flag_cmp_decomposed_ls_rewrites_to_neg_less_swapped() -> Result<()> {
-    // unsigned: (a == b) || (a < b)  ->  BitNot(Less(b, a))
+    // unsigned: (a == b) || (a < b)  ->  Xor(Less(b, a), 1)
     let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
         let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::I32)?;
         let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, ValueType::I32)?;
@@ -827,7 +807,7 @@ fn flag_cmp_decomposed_ls_rewrites_to_neg_less_swapped() -> Result<()> {
 // decomposed-LS rule matches that, hence the dedicated constant-folded rules.
 
 /// Builds `Or(Less(idx, N), Equal(Add(idx, -N), 0))` at `ty` and asserts it
-/// folds to `¬Less(N, idx)`.
+/// folds to `!Less(N, idx)`.
 fn check_folded_ls_tree(ty: ValueType, n: u64) -> Result<()> {
     let idx_vn = strider_ir_test_utils::reg_vn(0x1000, ty.byte_size() as u32);
     let (mut fg, if_node, idx, n_const) = {
@@ -889,7 +869,7 @@ fn flag_cmp_constant_folded_ls_tree_wrapping_neg() -> Result<()> {
 // non-offset rules cannot bind.
 
 /// Builds `Or(Less(Add(b, C1), N), Equal(Add(b, C1 - N), 0))` and asserts it
-/// folds to `¬Less(N, Add(b, C1))` on the offset index.
+/// folds to `!Less(N, Add(b, C1))` on the offset index.
 fn check_offset_folded_ls_tree(ty: ValueType, c1: u128, n: u64) -> Result<()> {
     let b_vn = strider_ir_test_utils::reg_vn(0x1000, ty.byte_size() as u32);
     let (mut fg, if_node, x_val, n_const) = {
@@ -944,7 +924,7 @@ fn flag_cmp_offset_folded_ls_tree_i64() -> Result<()> {
 // nor the decomposed HI rule matches once the ZF term is folded, since both
 // expect it as `Equal(a, b)`.
 
-/// Builds `And(¬Less(idx, N), ¬Equal(Add(idx, -N), 0))` and asserts it folds to
+/// Builds `And(!Less(idx, N), !Equal(Add(idx, -N), 0))` and asserts it folds to
 /// `Less(N, idx)`.
 fn check_folded_hi_tree(ty: ValueType, n: u64) -> Result<()> {
     let idx_vn = strider_ir_test_utils::reg_vn(0x1000, ty.byte_size() as u32);
@@ -1001,7 +981,7 @@ fn flag_cmp_constant_folded_hi_tree_i64() -> Result<()> {
 // The offset-base HI case: a masked / offset switch, e.g. Thumb
 // `and r0,#7; subs r0,#1; cmp r0,#N-1; bhi`.
 
-/// Builds `And(¬Less(Add(b,C1), N), ¬Equal(Add(b, C1-N), 0))` and asserts it
+/// Builds `And(!Less(Add(b,C1), N), !Equal(Add(b, C1-N), 0))` and asserts it
 /// folds to `Less(N, Add(b,C1))`.
 fn check_offset_folded_hi_tree(ty: ValueType, c1: u128, n: u64) -> Result<()> {
     let b_vn = strider_ir_test_utils::reg_vn(0x1000, ty.byte_size() as u32);
@@ -1072,7 +1052,7 @@ fn flag_cmp_offset_folded_ls_tree_rejects_wrong_offset() -> Result<()> {
             let x = fb.build_int_binary_operation(b, c1_const, IntBinaryOp::Add, ty)?;
             let n_const = fb.build_int_const(u128::from(n), ty)?;
             let less = fb.build_int_cmp_operation(x, n_const, IntCmpOp::Less, ty)?;
-            // Deliberately off by one: C2 should be C1 - N.
+            // C2 is off by one: the fold requires C2 == C1 - N.
             let c2 = c1.wrapping_sub(u128::from(n)).wrapping_add(1);
             let c2_const = fb.build_int_const(c2, ty)?;
             let y = fb.build_int_binary_operation(b, c2_const, IntBinaryOp::Add, ty)?;
@@ -1389,6 +1369,166 @@ fn sless_of_oversized_left_shift_is_not_a_sign_bit_test() -> Result<()> {
             NodeKind::IntCmpOp(IntCmpOp::Sless)
         ),
         "oversized-shift Sless must be left intact"
+    );
+    Ok(())
+}
+
+/// The residue and the sign-bit mask are both computed in `u128`, so a declared
+/// width past that carrier cannot be represented.  All three rules must
+/// decline.
+#[test]
+fn wide_const_rewrites_skip_past_128_bits() -> Result<()> {
+    let ty = ValueType::I256;
+    let shapes: [fn(&mut FunctionBuilder, ValueId) -> Result<ValueId>; 3] = [
+        |b, x| {
+            let c1 = b.build_int_const(1u64, ValueType::I256)?;
+            let add = b.build_int_binary_operation(x, c1, IntBinaryOp::Add, ValueType::I256)?;
+            let c2 = b.build_int_const(0u64, ValueType::I256)?;
+            b.build_int_cmp_operation(add, c2, IntCmpOp::Equal, ValueType::I256)
+        },
+        |b, x| {
+            let neg = b.build_int_unary_operation(x, IntUnaryOp::Neg, ValueType::I256)?;
+            let c = b.build_int_const(1u64, ValueType::I256)?;
+            b.build_int_cmp_operation(neg, c, IntCmpOp::Equal, ValueType::I256)
+        },
+        |b, x| {
+            let c = b.build_int_const(1u64, ValueType::I256)?;
+            let shl =
+                b.build_int_binary_operation(x, c, IntBinaryOp::ShiftLeft, ValueType::I256)?;
+            let zero = b.build_int_const(0u64, ValueType::I256)?;
+            b.build_int_cmp_operation(shl, zero, IntCmpOp::Sless, ValueType::I256)
+        },
+    ];
+
+    for (i, build_cond) in shapes.into_iter().enumerate() {
+        let mut b = RegisterSet::new().build_fn()?;
+        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+        let entry = b.create_region_all()?;
+        let dispatch = b.create_region_all()?;
+        let exit = b.create_region_all()?;
+        b.set_entry_region_all(entry)?;
+        b.set_region(entry);
+        let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
+        let x = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+        let cond = build_cond(&mut b, x)?;
+        b.build_if(cond, dispatch, exit)?;
+        b.set_region(dispatch);
+        b.build_return(Some(x), &[])?;
+        b.set_region(exit);
+        b.build_return(Some(x), &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+
+        let before = fg.producer(cond);
+        let before_inputs: Vec<_> = fg.node_inputs(before).into_iter().collect();
+        let outcome = crate::pipeline::run_one(
+            &FlagCmpCanonicalize::new(),
+            &mut fg,
+            &mut crate::OptCtx::new(None),
+        )?;
+        assert!(
+            !outcome.changed(),
+            "shape {i}: I256 compare must not rewrite"
+        );
+        let if_node = fg
+            .walk()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+            .expect("If");
+        let after = fg.producer(fg.if_cond(if_node));
+        assert_eq!(after, before, "shape {i}: condition node must survive");
+        assert_eq!(
+            fg.node_inputs(after).into_iter().collect::<Vec<_>>(),
+            before_inputs,
+            "shape {i}: condition operands must be untouched"
+        );
+    }
+    Ok(())
+}
+
+/// Every rule root is an `IntCmpOp`, an `And`/`Or`/`Xor`, or the CR-bit
+/// `Truncate`; seeding anything else runs ~20 rooted pattern matches per node
+/// for nothing.
+#[test]
+fn seed_filter_admits_rule_roots_only() {
+    use crate::peephole::PeepholePass;
+    use strider_ir::node::ExtendOp;
+    let pass = FlagCmpCanonicalize::new();
+    for kind in [
+        NodeKind::IntCmpOp(IntCmpOp::Equal),
+        NodeKind::IntCmpOp(IntCmpOp::Less),
+        NodeKind::IntCmpOp(IntCmpOp::Sless),
+        NodeKind::IntCmpOp(IntCmpOp::Sborrow),
+        NodeKind::IntBinaryOp(IntBinaryOp::And),
+        NodeKind::IntBinaryOp(IntBinaryOp::Or),
+        NodeKind::IntBinaryOp(IntBinaryOp::Xor),
+        NodeKind::Truncate,
+    ] {
+        assert!(pass.matches_kind(&kind), "{kind:?} roots a rule");
+    }
+    for kind in [
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        NodeKind::IntBinaryOp(IntBinaryOp::Mul),
+        NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
+        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
+        NodeKind::Extend(ExtendOp::ZeroExtend),
+        NodeKind::Load(rsleigh::VnSpace::RAM),
+        NodeKind::Phi,
+        NodeKind::Region,
+        NodeKind::Return,
+    ] {
+        assert!(!pass.matches_kind(&kind), "{kind:?} roots no rule");
+    }
+}
+
+/// A shift amount at or past the operand width yields 0 under p-code
+/// (`OpBehaviorIntLeft` / `IntRight` guard at `8 * sizeout`), so
+/// `Truncate(ShiftRight(zext(lt):I32 << 35, 35)):I1` is the constant 0, not
+/// `lt`.  Reading the term's bit position as `q + pos` without consulting the
+/// shift's own width claims a bit that does not exist.
+#[test]
+fn cr_bit_test_declines_a_shift_past_the_width() -> Result<()> {
+    use strider_ir::node::ExtendOp;
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn()?;
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let entry = b.create_region_all()?;
+    let dispatch = b.create_region_all()?;
+    let exit = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
+    let idx = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+    let eight = b.build_int_const(8u64, ty)?;
+    let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
+    let z = b.extend_if_needed(lt, ty, ExtendOp::ZeroExtend)?;
+    let p = b.build_int_const(35u64, ty)?;
+    let pack = b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)?;
+    let k = b.build_int_const(35u64, ty)?;
+    let shr = b.build_int_binary_operation(pack, k, IntBinaryOp::ShiftRight, ty)?;
+    let cond = b.truncate_if_needed(shr, ValueType::I1)?;
+    b.build_if(cond, dispatch, exit)?;
+    b.set_region(dispatch);
+    b.build_return(Some(idx), &[])?;
+    b.set_region(exit);
+    b.build_return(Some(idx), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    crate::pipeline::run_one(
+        &FlagCmpCanonicalize::new(),
+        &mut fg,
+        &mut crate::OptCtx::new(None),
+    )?;
+
+    let if_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .expect("If node");
+    let kind = *fg.node_kind(fg.producer(fg.if_cond(if_node)));
+    assert!(
+        !matches!(kind, NodeKind::IntCmpOp(_)),
+        "the packed bit is a hard 0, so the condition must not become the comparison; got {kind:?}",
     );
     Ok(())
 }

@@ -1,5 +1,3 @@
-//! Assertion DSL for pattern-match tests, so failure messages are uniform.
-//!
 //! These take an already-finalised [`Pattern`]: callers pass
 //! `pat.into_pattern()` (value-op structs) or `builder.build()` (control /
 //! memory builders), and set any cast mask on the `Pattern` first.
@@ -9,7 +7,6 @@ use strider_ir::{Function, IRViewer, IRWalker};
 use strider_pattern::matcher::Pattern;
 use strider_pattern::{Capture, Match, Matcher};
 
-/// Panics if the match count differs from `expected`.
 #[track_caller]
 pub(crate) fn matches(function: &Function, pat: Pattern, expected: usize) -> Vec<Match> {
     let hits = Matcher::new(function).find_all(&pat).unwrap();
@@ -22,21 +19,19 @@ pub(crate) fn matches(function: &Function, pat: Pattern, expected: usize) -> Vec
     hits
 }
 
-/// Asserts `pat` matches exactly once and returns that [`Match`].
 #[track_caller]
 pub(crate) fn unique(function: &Function, pat: Pattern) -> Match {
     let mut hits = matches(function, pat, 1);
     hits.pop().expect("unique requires exactly one match")
 }
 
-/// Asserts `pat` produces no matches.
 #[track_caller]
 pub(crate) fn none(function: &Function, pat: Pattern) {
     matches(function, pat, 0);
 }
 
-/// Asserts `pat` matches at least once and returns the first [`Match`].
-/// For graphs that legitimately hold the shape more than once.
+/// For graphs that legitimately hold the shape more than once, where
+/// [`unique`] would over-constrain.
 #[track_caller]
 pub(crate) fn first(function: &Function, pat: Pattern) -> Match {
     let mut hits = Matcher::new(function).find_all(&pat).unwrap();
@@ -60,7 +55,6 @@ pub(crate) fn unique_uint(function: &Function, pat: Pattern, cap: Capture) -> Op
     unique(function, pat).bindings().get_uint(cap, function)
 }
 
-/// First node whose kind satisfies `pred`; panics if there is none.
 #[track_caller]
 pub(crate) fn find_node<F: Fn(&NodeKind) -> bool>(function: &Function, pred: F) -> NodeId {
     function

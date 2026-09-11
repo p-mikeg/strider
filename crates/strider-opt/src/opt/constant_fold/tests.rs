@@ -14,7 +14,6 @@ use crate::test_support::{
 };
 use strider_ir_test_utils::{RegisterSet, reg_vn};
 
-/// A fixture that folds `3 + 4` to `7`.
 fn add_consts_fixture() -> Result<strider_ir::Function> {
     make_fn(|b| {
         let c3 = b.build_int_const(3u64, ValueType::I64).unwrap();
@@ -23,11 +22,8 @@ fn add_consts_fixture() -> Result<strider_ir::Function> {
     })
 }
 
-/// The operand constants are read, not reused, so they die in the fold. The
-/// fresh `IntConst(7)` must absorb their asm-fingerprints or the asm that
-/// produced each operand is lost: they carry addresses distinct from the `Add`,
-/// so without the rewrite engine's interior absorption only the `Add`'s address
-/// would survive.
+/// The operand constants die in the fold, so the fresh `IntConst(7)` must
+/// absorb their asm-fingerprints or their addresses are lost.
 #[test]
 fn const_eval_absorbs_operand_fingerprints() -> Result<()> {
     const A: u64 = 0xC0FF_EE01;
@@ -65,7 +61,6 @@ fn new_builds_pass_that_folds() -> Result<()> {
     Ok(())
 }
 
-/// Pins that the rule set is per-instance, not a shared thread-local.
 #[test]
 fn two_independent_instances_each_fold() -> Result<()> {
     let pass_a = ConstantFold::new();
@@ -120,13 +115,16 @@ fn int_binary_fold_skips_width_mismatched_operands() -> Result<()> {
     Ok(())
 }
 
-/// `eval_int_cmp` masks both operands to the LHS width, so a wider RHS would be
-/// masked down, changing the compared value and possibly flipping the verdict.
+/// `validate` rejects a mixed-width comparison outright, which is what keeps
+/// `eval_int_cmp` (which masks both operands to the LHS width, and so would
+/// silently narrow a wider RHS) from ever seeing one.  Its own width guard
+/// stays as defence against a rewrite minting one mid-pipeline, where no
+/// `validate` runs.
 #[test]
-fn int_cmp_fold_skips_width_mismatched_operands() -> Result<()> {
+fn a_mixed_width_cmp_does_not_validate() {
     use strider_ir::IRBuilder;
     use strider_ir::node::ValueKind;
-    let mut fg = make_fn(|b| {
+    let err = make_fn(|b| {
         let lhs = b.build_int_const(0x80u64, ValueType::I8)?;
         let rhs = b.build_int_const(200u64, ValueType::I32)?;
         let node = b.create_node(
@@ -138,21 +136,12 @@ fn int_cmp_fold_skips_width_mismatched_operands() -> Result<()> {
             .node_outputs_exact::<1>(node)
             .expect("cmp op has 1 output");
         Ok(out)
-    })?;
-    let outcome =
-        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
-    assert!(
-        !outcome.changed(),
-        "width-mismatched cmp fold must skip, not fold"
-    );
-    assert!(
-        matches!(
-            return_kind(fg.graph())?,
-            NodeKind::IntCmpOp(IntCmpOp::Sless)
-        ),
-        "the Sless node must remain (fold skipped)"
-    );
-    Ok(())
+    });
+    let Err(err) = err else {
+        panic!("a mixed-width comparison must not validate");
+    };
+    let msg = format!("{err:#}");
+    assert!(msg.contains("mixes widths"), "got: {msg}");
 }
 
 #[test]
@@ -260,9 +249,7 @@ fn fold_and_and_masks() -> Result<()> {
         let inner = b.build_int_binary_operation(x, c4, IntBinaryOp::And, ValueType::I64)?;
         b.build_int_binary_operation(inner, c7, IntBinaryOp::And, ValueType::I64)
     })?;
-    // Both-const fold and mask-merge may each fire once.
     run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    // 0xFF & 4 = 4, 4 & 7 = 4.
     assert_returns_const(&fg, 4);
     Ok(())
 }
@@ -666,9 +653,52 @@ fn align_or_removal_drops_or_when_set_bits_are_masked_off() -> Result<()> {
     Ok(())
 }
 
+/// `(x | C1) & C2` reuses the LHS-bound `x` and `C2` at the root's width while
+/// its disjointness test masks each constant to its OWN width, so a
+/// width-mismatched shape decides `C1 & C2 == 0` in the wrong modulus.
+/// `validate` rejects such a node on entry, so the shape is minted here the
+/// way a mid-pipeline rewrite would.
+#[test]
+fn align_or_removal_skips_width_mismatched_operands() -> Result<()> {
+    use strider_ir::node::ValueKind;
+    use strider_ir::{EditFunction, IRBuilderExt};
+    let xv = reg_vn(0x1000, 8);
+    let mut b = RegisterSet::new()
+        .tracked(xv)
+        .arg(xv)
+        .build_fn_single_region()?;
+    let x = b.read_variable(&xv)?;
+    let set_bit = b.build_int_const(0x100u64, ValueType::I64)?;
+    let or_value = b.build_int_binary_operation(x, set_bit, IntBinaryOp::Or, ValueType::I64)?;
+    let narrowed = b.truncate_if_needed(or_value, ValueType::I8)?;
+    b.build_return(Some(narrowed), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut edit = EditFunction::new(&mut fg);
+    let mask = edit.build_int_const(0x7Fu64, ValueType::I8)?;
+    let and_node = edit.create_node(
+        NodeKind::IntBinaryOp(IntBinaryOp::And),
+        [or_value, mask],
+        [ValueKind::Typed(ValueType::I8)],
+    );
+    let [and_value] = edit
+        .node_outputs_exact::<1>(and_node)
+        .expect("binary op has 1 output");
+    edit.replace_value(narrowed, and_value)?;
+
+    for (i, rule) in super::rules::build_rules().into_iter().enumerate() {
+        assert!(
+            rule(&mut edit, and_node)?.is_none(),
+            "rule {i} rewrote a width-mismatched `(x | C1) & C2`",
+        );
+    }
+    Ok(())
+}
+
 /// With both products `C1 & C3` and `C2 & C3` non-zero the distribution is pure
 /// churn: it pushes `& C3` inward, neither disjunct collapses, and the factored
-/// shape regenerates. Unguarded, this term re-distributed forever. A second run
+/// shape regenerates. Unguarded, the term re-distributes forever. A second run
 /// reporting no change is the fixed-point proof.
 #[test]
 fn distribution_does_not_churn_when_both_products_nonzero() -> Result<()> {
@@ -762,9 +792,7 @@ fn truncate_int_const_emits_masked_value() -> Result<()> {
 }
 
 // The round-trip rules cover `Truncate(Extend(x))`, the shape `write_reg_vn`
-// leaves behind. They do NOT cover the opposite nesting (Extend outside
-// Truncate), which still defeats the matcher's data-flow walk on x86 IMUL
-// chains.
+// leaves behind.
 
 use strider_ir::ExtendOp;
 
@@ -975,7 +1003,7 @@ fn fold_drop_low_mask_under_truncate() -> Result<()> {
 }
 
 /// The const-on-right And orientation. One rule orientation handles it: `x`
-/// fails `any_int_const` structurally, so the `And`'s commutative retry binds
+/// fails `any_int` structurally, so the `And`'s commutative retry binds
 /// the const on either side.
 #[test]
 fn fold_drop_low_mask_under_truncate_const_on_right() -> Result<()> {
@@ -996,8 +1024,7 @@ fn fold_drop_low_mask_under_truncate_const_on_right() -> Result<()> {
 
 /// The And-term-on-left Or orientation. `low_part` fails the `and(...)`
 /// subpattern structurally, so the `Or`'s commutative retry binds it on either
-/// side. The harder two-`And` form, disambiguated only by the value guard on
-/// the truncate ancestor, lives in `test_narrow_widths::x64`.
+/// side.
 #[test]
 fn fold_drop_high_half_in_or_truncate_and_term_on_left() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -1046,7 +1073,7 @@ fn fold_truncate_of_extend_skips_when_widths_differ() -> Result<()> {
     assert_eq!(
         fg.value_kind(val),
         strider_ir::node::ValueKind::Typed(ValueType::I16),
-        "Truncate_U16(Extend_U64(I32)) must keep I16 typing — round-trip \
+        "Truncate_U16(Extend_U64(I32)) must keep I16 typing: the round-trip \
          rule must not fire when inner width != outer truncate width"
     );
     Ok(())
@@ -1158,12 +1185,12 @@ fn fold_bool_or_true_to_true() -> Result<()> {
     Ok(())
 }
 
-// The Or-absorbing rule is general, not limited to the I1 boolean `true`.
+// The Or-absorbing rule applies at any width, on any all-ones constant.
 #[test]
 fn fold_int_or_all_ones_to_all_ones() -> Result<()> {
     let vn = reg_vn(0x1000, 4); // 4-byte var -> I32
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
-        // `Neg` just makes the value non-const.
+        // `Neg` makes the value non-const.
         let x32 = b.build_int_unary_operation(x, IntUnaryOp::Neg, ValueType::I32)?;
         let all_ones = b.build_int_const(0xFFFF_FFFFu64, ValueType::I32).unwrap();
         b.build_int_binary_operation(x32, all_ones, IntBinaryOp::Or, ValueType::I32)
@@ -1314,8 +1341,8 @@ fn fold_i1_arithmetic_cases() -> Result<()> {
             let b_ = b.build_int_const(1u64, ValueType::I1)?;
             b.build_int_binary_operation(a, b_, op, ValueType::I1)
         })?;
-        // An `op(c, c)` identity may fire instead of the two-const eval; either
-        // way the result must be the masked constant.
+        // An `op(c, c)` identity can fire instead of the two-const eval; the
+        // result is the same masked constant.
         assert!(
             crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
                 .changed(),
@@ -1383,8 +1410,7 @@ fn fold_count_op_const_cases() -> Result<()> {
         Case { case: "fold_popcount_zero", op: CountOp::Popcount, input: 0, ty: ValueType::I64, expected: 0 },
         Case { case: "fold_lzcount_msb_set", op: CountOp::Lzcount, input: 0x80, ty: ValueType::I8, expected: 0 },
         Case { case: "fold_lzcount_one", op: CountOp::Lzcount, input: 1, ty: ValueType::I8, expected: 7 },
-        // A zero input must count the TYPE's bit width, not the host's; the
-        // three rows below pin that at every relevant width.
+        // A zero input counts the TYPE's bit width, not the host's.
         Case { case: "fold_lzcount_zero_u32", op: CountOp::Lzcount, input: 0, ty: ValueType::I32, expected: 32 },
         Case { case: "fold_lzcount_zero_u8", op: CountOp::Lzcount, input: 0, ty: ValueType::I8, expected: 8 },
         Case { case: "fold_lzcount_zero_u64", op: CountOp::Lzcount, input: 0, ty: ValueType::I64, expected: 64 },
@@ -1421,9 +1447,7 @@ fn fold_count_op_const_cases() -> Result<()> {
 ///
 /// The normal unary builders can't produce this: `build_lzcount` /
 /// `build_popcount` would coerce the input down to I64, collapsing the wide
-/// const before the node sees it. So build an I64 skeleton, then graft the wide
-/// const and unary node on via the lower-level `Graph` mutators and rewire the
-/// Return.
+/// const before the node sees it.
 fn build_unary_with_wide_const_input(
     kind: NodeKind,
     wide_ty: ValueType,
@@ -1452,8 +1476,9 @@ fn build_unary_with_wide_const_input(
     Ok(fg)
 }
 
-/// An interner-width `IntConst` can't be counted in u64, so the fold must skip
-/// rather than propagate an error and take down the whole pipeline.
+/// `eval_popcount` / `eval_lzcount` mask through `get_unsigned_int`, which gives
+/// up past 128 bits.  That must be a clean skip, not an error propagated out of
+/// the pass.
 #[test]
 fn fold_count_op_wide_const_input_skips_cleanly_cases() -> Result<()> {
     #[rustfmt::skip]
@@ -1603,18 +1628,16 @@ fn fold_float_unary_const_cases() -> Result<()> {
 }
 
 #[test]
-fn fold_f64_round_uses_ties_to_even_not_away_from_zero() -> Result<()> {
-    // `FloatUnaryOp::Round` is ties-to-even: the IEEE 754 default and what
-    // x86/ARM hardware emits. Rust's `f64::round` is ties-away-from-zero and
-    // would fail half of these rows.
+fn fold_f64_round_is_ties_away_from_zero() -> Result<()> {
     let cases: &[(f64, f64)] = &[
-        (0.5, 0.0),
+        (0.5, 1.0),
+        (-0.5, -1.0),
         (1.5, 2.0),
-        (2.5, 2.0),
-        (3.5, 4.0),
-        (-0.5, -0.0),
         (-1.5, -2.0),
-        (-2.5, -2.0),
+        (2.5, 3.0),
+        (-2.5, -3.0),
+        (3.5, 4.0),
+        (-3.5, -4.0),
     ];
     for &(input, expected) in cases {
         let mut fg = make_fn(|b| {
@@ -1636,13 +1659,16 @@ fn fold_f64_round_uses_ties_to_even_not_away_from_zero() -> Result<()> {
 }
 
 #[test]
-fn fold_f32_round_uses_ties_to_even_not_away_from_zero() -> Result<()> {
+fn fold_f32_round_is_ties_away_from_zero() -> Result<()> {
     let cases: &[(f32, f32)] = &[
-        (0.5, 0.0),
+        (0.5, 1.0),
+        (-0.5, -1.0),
         (1.5, 2.0),
-        (2.5, 2.0),
-        (-0.5, -0.0),
-        (-2.5, -2.0),
+        (-1.5, -2.0),
+        (2.5, 3.0),
+        (-2.5, -3.0),
+        (3.5, 4.0),
+        (-3.5, -4.0),
     ];
     for &(input, expected) in cases {
         let mut fg = make_fn(|b| {
@@ -1824,7 +1850,7 @@ fn eval_int_binary_masking_and_overflow_cases() {
         // the correct 0xFF / 2 = 0x7F.
         Case { case: "eval_int_binary_unsigned_div_unmasked_u8", op: IntBinaryOp::Div, l: 0x1FF, r: 2, ty: ValueType::I8, expected: Some(0x7F) },
         // 7 is chosen to distinguish masked from raw: 0xFFFF % 7 = 1 but
-        // 0x1FFFF % 7 = 5.
+        // 0x1FFFF % 7 = 3.
         Case { case: "eval_int_binary_unsigned_rem_unmasked_u16", op: IntBinaryOp::Rem, l: 0x1FFFF, r: 7, ty: ValueType::I16, expected: Some(1) },
         Case { case: "eval_int_binary_unsigned_shr_unmasked_u8", op: IntBinaryOp::ShiftRight, l: 0x1FF, r: 1, ty: ValueType::I8, expected: Some(0x7F) },
     ];
@@ -1836,6 +1862,27 @@ fn eval_int_binary_masking_and_overflow_cases() {
             c.case,
         );
     }
+}
+
+/// `I1` is the one type whose `bit_width` is not its byte size times 8, so the
+/// shift guard reads 1 where Sleigh's `8 * sizeout` reads 8, and
+/// `get_signed_int` reads the low bit as the sign.  Neither shape is producible
+/// by the lifter; the rows pin what the guard's comment names as its exception.
+#[test]
+fn eval_int_shift_guard_at_i1_diverges_from_sleigh() {
+    use crate::opt::constant_fold::eval_int::{eval_int_binary, eval_int_cmp};
+
+    // Sleigh: `1 < 8` and `signbit_negative(1, 1 byte) == false`, so `1 >> 1`
+    // is 0; strider takes the `r >= bits` branch over a negative `l`.
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::SShiftRight, 1, 1, ValueType::I1),
+        Some(1),
+    );
+    // Sleigh reads both bytes as 1 and 0; strider reads the 1-bit `l` as -1.
+    assert_eq!(
+        eval_int_cmp(IntCmpOp::Sless, 1, 0, ValueType::I1),
+        Some(true),
+    );
 }
 
 /// Input-masking guards, all at I8.
@@ -1905,7 +1952,7 @@ fn eval_int_cmp_i128_overflow_arms_cases() {
     }
 }
 
-/// The value-producing signed arms; the skip cases are covered above.
+/// The value-producing signed arms.
 #[test]
 fn eval_int_binary_signed_value_folds_cases() {
     use crate::opt::constant_fold::eval_int::eval_int_binary;
@@ -1941,7 +1988,6 @@ fn eval_int_binary_signed_value_folds_cases() {
 // `Xor(x, all_ones)` shape. The MVN-based ARM lowering emits the Xor form, so
 // conflating the two would fold `~49` to `-49`.
 
-/// Must fold to two's complement `-50` (0xFFFF_FFCE), not bitwise NOT.
 #[test]
 fn fold_int_unary_not_is_two_complement_u32() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -1981,9 +2027,7 @@ fn fold_int_unary_not_zero_is_zero() -> Result<()> {
 
 // Shifting by the full bit width or beyond zeroes the value in Sleigh
 // (opbehavior.cc:411), and sign-fills for INT_SRIGHT. Reducing the amount
-// modulo the width instead diverges by a factor of 2^bits. A lifter does emit
-// such shifts, e.g. a degenerate unrolled bit-clear iteration, and KnownBits
-// can propagate a shift constant that lands at or past the width.
+// modulo the width instead diverges by a factor of 2^bits.
 
 /// Out-of-range (>= bit-width) shift semantics; each `why` names the Sleigh
 /// rule the row pins.
@@ -2003,13 +2047,13 @@ fn eval_int_binary_out_of_range_shift_cases() {
     #[rustfmt::skip]
     let cases = [
         Case { case: "eval_int_binary_shl_at_bit_width_returns_zero_u32", op: IntBinaryOp::ShiftLeft, l: 1, r: 32, ty: ValueType::I32, expected: Some(0),
-               why: "Sleigh: 1u32 << 32 = 0 (`r >= 8*sizeout` returns 0 per opbehavior.cc:411). Pre-fix fold computed `1 << (32 % 32) = 1 << 0 = 1` -- diverges from Sleigh." },
+               why: "Sleigh: 1u32 << 32 = 0 (`r >= 8*sizeout` returns 0 per opbehavior.cc:411). A modulo-reduced amount computes `1 << (32 % 32) = 1 << 0 = 1`, diverging from Sleigh." },
         Case { case: "eval_int_binary_shl_at_bit_width_returns_zero_u64", op: IntBinaryOp::ShiftLeft, l: 1, r: 64, ty: ValueType::I64, expected: Some(0),
-               why: "Sleigh: 1u64 << 64 = 0.  Pre-fix fold computed `1 << (64 % 64) = 1`." },
+               why: "Sleigh: 1u64 << 64 = 0.  A modulo-reduced amount computes `1 << (64 % 64) = 1`." },
         Case { case: "eval_int_binary_shl_above_bit_width_returns_zero_u32", op: IntBinaryOp::ShiftLeft, l: 0xFF, r: 40, ty: ValueType::I32, expected: Some(0),
-               why: "Sleigh: shift > bit-width still returns 0.  Pre-fix fold computed `0xFF << (40 % 32) = 0xFF << 8 = 0xFF00`." },
+               why: "Sleigh: shift > bit-width still returns 0.  A modulo-reduced amount computes `0xFF << (40 % 32) = 0xFF << 8 = 0xFF00`." },
         Case { case: "eval_int_binary_shr_at_bit_width_returns_zero_u32", op: IntBinaryOp::ShiftRight, l: 0xFFFF_FFFF, r: 32, ty: ValueType::I32, expected: Some(0),
-               why: "Sleigh: 0xFFFFFFFFu32 >> 32 = 0 per opbehavior.cc:432.  Pre-fix fold computed `0xFFFFFFFF >> (32 % 32) = 0xFFFFFFFF`." },
+               why: "Sleigh: 0xFFFFFFFFu32 >> 32 = 0 per opbehavior.cc:432.  A modulo-reduced amount computes `0xFFFFFFFF >> (32 % 32) = 0xFFFFFFFF`." },
         Case { case: "eval_int_binary_sshr_at_bit_width_negative_returns_all_ones_u32", op: IntBinaryOp::SShiftRight, l: 0xFFFF_FFFF, r: 32, ty: ValueType::I32, expected: Some(0xFFFF_FFFF),
                why: "Sleigh: signed-negative >> bit-width fills with the sign bit (= 0xFFFFFFFF) per opbehavior.cc:454-460." },
         Case { case: "eval_int_binary_sshr_at_bit_width_positive_returns_zero_u32", op: IntBinaryOp::SShiftRight, l: 0x7FFF_FFFF, r: 32, ty: ValueType::I32, expected: Some(0),
@@ -2026,11 +2070,10 @@ fn eval_int_binary_out_of_range_shift_cases() {
     }
 }
 
-/// `build_int_const(v, I128)` routes to the wide interner; the fold still
-/// reaches the value through the `int_const_u128` funnel.
+/// An `I128` constant too wide for `u64`: the fold reaches its value through the
+/// `int_const_u128` funnel.
 #[test]
 fn fold_i128_interner_backed_add_round_trip() -> Result<()> {
-    // Values wider than u64, to ensure we exercise the interner path.
     let a: u128 = 1u128 << 100;
     let b_val: u128 = 1u128 << 101;
     let expected = a.wrapping_add(b_val);
@@ -2041,7 +2084,6 @@ fn fold_i128_interner_backed_add_round_trip() -> Result<()> {
         b.build_int_binary_operation(ca, cb, IntBinaryOp::Add, ValueType::I128)
     })?;
 
-    // Fold should fire: both operands are I128 int constants.
     let changed =
         crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed();
@@ -2050,7 +2092,6 @@ fn fold_i128_interner_backed_add_round_trip() -> Result<()> {
         "ConstantFold must fold Add(I128, I128) to a constant"
     );
 
-    // The result is readable through the int_const_u128 funnel.
     let ret_val = return_value(fg.graph())?;
     let folded = fg.int_const_u128(ret_val);
     assert_eq!(
@@ -2059,5 +2100,99 @@ fn fold_i128_interner_backed_add_round_trip() -> Result<()> {
         "int_const_u128 must return the folded I128 sum via the interner funnel; \
          expected {expected:#x}, got {folded:?}",
     );
+    Ok(())
+}
+
+/// The all-ones arm reads `c` through `u128`, where an `I256` all-ones and an
+/// `I256` `2^128` are indistinguishable.  Neither may take it.
+#[test]
+fn all_ones_rules_skip_past_128_bits() -> Result<()> {
+    let wide_cases = [[0, 0, 1, 0], [u64::MAX; 4]];
+    for op in [IntBinaryOp::And, IntBinaryOp::Or] {
+        for limbs in wide_cases {
+            let mut fg = make_fn(|b| {
+                let addr = b.build_int_const(0xF00Du64, ValueType::I64)?;
+                let x = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I256)?;
+                let c = b.build_int_const_limbs(&limbs, ValueType::I256)?;
+                b.build_int_binary_operation(x, c, op, ValueType::I256)
+            })?;
+            let outcome = crate::pipeline::run_one(
+                &ConstantFold::new(),
+                &mut fg,
+                &mut crate::OptCtx::new(None),
+            )?;
+            assert!(
+                !outcome.changed(),
+                "{op:?} with the I256 constant {limbs:?} must not fold"
+            );
+            assert!(
+                matches!(return_kind(fg.graph())?, NodeKind::IntBinaryOp(got) if got == op),
+                "{op:?} node must remain"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The REASSOCIATION rules combine the two constants themselves rather than
+/// through `eval_int_binary`, so its width guard does not cover them. At `I256`
+/// both `2^127` operands fit in `u128` and `int_const_u128` hands them over, but
+/// `wrapping_add` carries out at 128 bits: `2^127 + 2^127` becomes `0` instead
+/// of `2^128`, and `(x + 2^127) + 2^127` folds to `x + 0`, i.e. to `x`.
+#[test]
+fn reassoc_add_skips_past_128_bits() -> Result<()> {
+    // 2^127, as I256 limbs (little-endian u64s).
+    let half = [0u64, 1u64 << 63, 0, 0];
+    let mut fg = make_fn(|b| {
+        let addr = b.build_int_const(0xF00Du64, ValueType::I64)?;
+        let x = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I256)?;
+        let c1 = b.build_int_const_limbs(&half, ValueType::I256)?;
+        let inner = b.build_int_binary_operation(x, c1, IntBinaryOp::Add, ValueType::I256)?;
+        let c2 = b.build_int_const_limbs(&half, ValueType::I256)?;
+        b.build_int_binary_operation(inner, c2, IntBinaryOp::Add, ValueType::I256)
+    })?;
+    let outcome =
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+    assert!(
+        !outcome.changed(),
+        "an I256 add-reassociation must not fold: the combined constant does not \
+         fit the u128 the rule computes in"
+    );
+    Ok(())
+}
+
+/// Int const-eval computes in `u128`: shift amounts reduce modulo 128 and the
+/// overflow arms detect at 128 bits, so no fold may run past that width.
+#[test]
+fn int_const_eval_skips_past_128_bits() -> Result<()> {
+    // `1 << 130` at I256 is 2^130, not `1 << (130 - 128)`.
+    let mut fg = make_fn(|b| {
+        let l = b.build_int_const(1u64, ValueType::I256)?;
+        let r = b.build_int_const(130u64, ValueType::I256)?;
+        b.build_int_binary_operation(l, r, IntBinaryOp::ShiftLeft, ValueType::I256)
+    })?;
+    let outcome =
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+    assert!(!outcome.changed(), "I256 shift must not fold");
+
+    // `Carry(2^128 - 1, 1)` overflows 128 bits but not 256.
+    let mut fg = make_fn(|b| {
+        let l = b.build_int_const_limbs(&[u64::MAX, u64::MAX, 0, 0], ValueType::I256)?;
+        let r = b.build_int_const(1u64, ValueType::I256)?;
+        b.build_int_cmp_operation(l, r, IntCmpOp::Carry, ValueType::I256)
+    })?;
+    let outcome =
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+    assert!(!outcome.changed(), "I256 Carry must not fold");
+
+    // A signed compare past the carrier must SKIP, not abort the pass.
+    let mut fg = make_fn(|b| {
+        let l = b.build_int_const(1u64, ValueType::I256)?;
+        let r = b.build_int_const(2u64, ValueType::I256)?;
+        b.build_int_cmp_operation(l, r, IntCmpOp::Sless, ValueType::I256)
+    })?;
+    let outcome =
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+    assert!(!outcome.changed(), "I256 Sless must not fold");
     Ok(())
 }

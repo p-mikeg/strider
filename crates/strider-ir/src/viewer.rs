@@ -144,13 +144,17 @@ pub trait IRViewer {
     }
 
     /// [`Self::int_const_u128`] sign-extended from its declared width.
+    ///
+    /// `None` above 128 bits, where there is no signed carrier: an `I256` or
+    /// `I512` constant that [`Self::int_const_u128`] reads back still answers
+    /// `None` here.
     fn int_const_i128(&self, value: ValueId) -> Option<i128> {
         let v = self.int_const_u128(value)?;
         self.value_kind(value).as_value()?.get_signed_int(v)
     }
 
-    /// Little-endian bytes of an `I80`/`I128`/`I256`/`I512` constant, widened
-    /// to the output type's byte size. `None` for narrow constants.
+    /// Little-endian bytes of a constant too wide for `u64`, widened to the
+    /// output type's byte size. `None` for narrow constants.
     fn int_const_wide_le_bytes(&self, node: crate::node::NodeId) -> Option<Vec<u8>> {
         let [out] = self.node_outputs_exact::<1>(node).ok()?;
         let ty = self.value_kind(out).as_value()?;
@@ -211,9 +215,6 @@ pub trait IRViewer {
         /// `If` input slot 1 of `[control, cond]`.
         if_cond => 2[1] "If node has [control, cond] inputs";
 
-        /// `IndirectBranch` input slot 2 of `[control, memory, target]`.
-        indirect_branch_target => 3[2] "IndirectBranch node has [control, memory, target] inputs";
-
         /// `Store` input slot 1 of `[memory, addr, data]`.
         store_addr => 3[1] "Store node has [memory, addr, data] inputs";
 
@@ -222,6 +223,31 @@ pub trait IRViewer {
 
         /// `Load` input slot 1 of `[memory, addr]`.
         load_addr => 2[1] "Load node has [memory, addr] inputs";
+    }
+
+    /// `IndirectBranch` dispatch value, slot 2 of `[control, memory, target,
+    /// isa_mode?]` (arity 3 or 4).
+    fn indirect_branch_target(&self, node: NodeId) -> ValueId {
+        assert!(
+            matches!(self.node_kind(node), NodeKind::IndirectBranch),
+            "indirect_branch_target on a non-IndirectBranch node"
+        );
+        self.node_inputs(node)
+            .get(2)
+            .copied()
+            .expect("IndirectBranch has a [control, memory, target] head")
+    }
+
+    /// The interworking ISA-mode value the `IndirectBranch`'s instruction
+    /// commits for its target(s) (slot 3), or `None` for a non-switching branch.
+    /// Carried as a live input so the optimizer maintains its cone; the resolver
+    /// mode-tags each resolved target off it, arch-agnostically.
+    fn indirect_branch_isa_mode(&self, node: NodeId) -> Option<ValueId> {
+        assert!(
+            matches!(self.node_kind(node), NodeKind::IndirectBranch),
+            "indirect_branch_isa_mode on a non-IndirectBranch node"
+        );
+        self.node_inputs(node).get(3).copied()
     }
 
     /// Ascending-`NodeId` order.
@@ -298,23 +324,17 @@ pub trait IRViewer {
         Ok(())
     }
 
-    /// Float values keep their type; integers map by byte size, at most 4 to
-    /// F32, 8 to F64, 10 to F80. Errors on a byte size with no float
-    /// counterpart.
+    /// Float values keep their type; integers map to the float of the same
+    /// byte size, so the result is always bitcastable from `value`. Errors on a
+    /// byte size with no float counterpart.
     fn infer_float_type(&self, value: ValueId) -> crate::Result<ValueType> {
         let ty = self.value_type(value)?;
         if ty.is_float() {
             return Ok(ty);
         }
-        match ty.byte_size() {
-            0..=4 => Ok(ValueType::F32),
-            8 => Ok(ValueType::F64),
-            10 => Ok(ValueType::F80),
-            other => Err(anyhow!(
-                "infer_float_type: integer byte_size {other} has no corresponding \
-                 float type (input type: {ty:?})"
-            )),
-        }
+        #[allow(clippy::cast_possible_truncation)]
+        ValueType::float_for_byte_size(ty.byte_size() as u32)
+            .map_err(|e| anyhow!("infer_float_type of {ty}: {e}"))
     }
 }
 
@@ -399,7 +419,6 @@ fn ensure_value_type(value_id: ValueId, ok: bool, noun: &str) -> crate::Result<(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     //! Fixtures are built inline: `strider_ir_test_utils` links a separate
     //! compilation of strider-ir, so its `Function` is a different type here.

@@ -3,6 +3,9 @@ name = "strider-ir-test-utils"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Function and calling-convention builders shared by strider's test suites."
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 # `test-util` exposes the build_call_cc / build_call_other_abi convenience
@@ -12,6 +15,12 @@ strider-ir = { workspace = true, features = ["test-util"] }
 strider-target = { workspace = true }
 rsleigh.workspace = true
 anyhow.workspace = true
+proptest = { workspace = true, optional = true }
+
+[features]
+# Gates `proptest_gen`. Off by default so `cargo build --workspace`, which
+# builds this crate as a member, does not compile proptest's tree.
+proptest-gen = ["dep:proptest"]
 
 [lints]
 workspace = true

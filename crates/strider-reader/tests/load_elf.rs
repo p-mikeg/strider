@@ -1,5 +1,3 @@
-#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
-
 #[path = "common/mod.rs"]
 mod common;
 

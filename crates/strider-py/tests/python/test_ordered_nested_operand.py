@@ -58,13 +58,13 @@ def test_nested_ordered_actually_enforces_operand_order():
 
     # Canonical IR order for `and edi, 0xf` is And(<value>, IntConst(0xf)).
     canonical = p.store(
-        data=p.int_binary("And", p.anything(), p.any_int_const()).ordered()
+        data=p.int_binary("And", p.anything(), p.int_const()).ordered()
     )
     swapped = p.store(
-        data=p.int_binary("And", p.any_int_const(), p.anything()).ordered()
+        data=p.int_binary("And", p.int_const(), p.anything()).ordered()
     )
     commutative = p.store(
-        data=p.int_binary("And", p.any_int_const(), p.anything())
+        data=p.int_binary("And", p.int_const(), p.anything())
     )
 
     n_canonical = len(fn.find_all(canonical))
@@ -78,7 +78,6 @@ def test_nested_ordered_actually_enforces_operand_order():
 
 
 def test_ordered_at_root_still_works():
-    """Root-level `.ordered()` must keep working after the lazy-builder fix."""
     fn = _shl_add_fn()
     assert len(fn.find_all(p.int_binary("Add", p.anything(), p.anything()).ordered())) >= 1
 

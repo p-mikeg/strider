@@ -1,14 +1,6 @@
-//! Integration tests for
-//! [`strider_orchestrator::opt::classify_target`].
-//!
-//! Builds a CFG from synthetic machine code, lifts it, runs the optimiser
-//! pipeline, then classifies the placeholder target recorded at lift time.
-//! Fixture builders live in `common::indirect_resolve_helpers`.
-//!
-//! Exercises the classifier against optimised IR: the same graph shapes
-//! the orchestrator hands it in production.
-
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+//! `classify_target` against OPTIMISED IR built from synthetic machine code:
+//! the same graph shapes the orchestrator hands it in production. Fixture
+//! builders live in `common::indirect_resolve_helpers`.
 
 mod common;
 
@@ -53,7 +45,7 @@ use common::indirect_resolve_helpers::{
 fn int_const_to_single() {
     let (function, _target) = build_int_const_target_scenario_via_stack(0x0000_0123);
     let result = classify_target_bare(&function).expect("classify");
-    assert_eq!(result, Some(ResolvedTargets::Single(0x0000_0123)));
+    assert_eq!(result, Some(ResolvedTargets::Single(0x0000_0123.into())));
 }
 
 /// ARM `bx lr` lifts to a placeholder IndirectBranch whose value-input is
@@ -78,9 +70,8 @@ fn initial_var_non_lr_returns_none() {
 /// `tmp = load[sp]; sp += 4; bx tmp` (ARM `pop {pc}`): after
 /// `StackOffsetDetect` rewrites the push as a stack store and `LoadForward`
 /// resolves the load against it, the loaded value is structurally
-/// `InitialVar(lr)`, so the LinkRegister arm matches with no special-cased
-/// "load from sp = return" heuristic. Pins the fix for the ARM `pop {pc}`
-/// regressions.
+/// `InitialVar(lr)`, so the LinkRegister arm matches on that structural shape
+/// alone. Pins ARM `pop {pc}`.
 ///
 /// Soundness across iterations rests on the classifier only ever adding
 /// known targets: a later iteration cannot retract an edge an earlier one
@@ -102,11 +93,10 @@ fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
 /// to the stored constant, NOT `InitialVar(lr)`, so this must classify as
 /// `Single(0x1000)` (a tail call), not `LinkRegister`.
 ///
-/// Regression: the prior in-place heuristic pattern-matched
-/// `Load[InitialVar(sp) + K]` directly as a return, which misclassified this
-/// shape as LinkRegister, wiring a return where the program actually
-/// tail-calls. Classifying against the optimised (post-LoadForward) graph
-/// instead of the raw load shape is what fixes it.
+/// Classification runs against the optimised (post-LoadForward) graph rather
+/// than the raw load shape: taking `Load[InitialVar(sp) + K]` for a return
+/// classifies this shape as LinkRegister, wiring a return where the program
+/// tail-calls.
 #[test]
 fn push_target_pop_pc_does_not_resolve_to_link_register() {
     let target = 0x1000u64;
@@ -114,7 +104,7 @@ fn push_target_pop_pc_does_not_resolve_to_link_register() {
     let result = classify_target_bare(&function).expect("classify");
     assert_eq!(
         result,
-        Some(ResolvedTargets::Single(target)),
+        Some(ResolvedTargets::Single(target.into())),
         "push K; pop pc must classify as Single(K), NOT LinkRegister; \
          that's the soundness gate that killed the prior heuristic",
     );
@@ -150,7 +140,12 @@ fn stack_array_two_targets_resolves_to_multiple() {
     );
     let mut expected = targets.to_vec();
     expected.sort_unstable();
-    assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
+    assert_eq!(
+        result,
+        Some(ResolvedTargets::Multiple(
+            expected.into_iter().map(Into::into).collect()
+        ))
+    );
 }
 
 /// 4 targets, wider mask (`idx & 3`), bound 4. Guards against a
@@ -172,19 +167,23 @@ fn stack_array_four_targets_resolves_to_multiple() {
     );
     let mut expected = targets.to_vec();
     expected.sort_unstable();
-    assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
+    assert_eq!(
+        result,
+        Some(ResolvedTargets::Multiple(
+            expected.into_iter().map(Into::into).collect()
+        ))
+    );
 }
 
-/// Opaque target (`InitialVar(rax)`, no lr configured) classifies as `None`:
-/// no panic, no error. The orchestrator, not the classifier, decides what
-/// to do at fixed point.
+/// Opaque target (`InitialVar(rax)`, no lr configured) classifies as `None`.
+/// The orchestrator, not the classifier, decides what to do at fixed point.
 #[test]
 fn opaque_target_returns_none() {
     let (function, _target) = build_initial_var_target_scenario_x86_64();
     let result = classify_target_bare(&function).expect("classify");
     assert_eq!(
         result, None,
-        "opaque target must classify as None — no panic, no error, no \
+        "opaque target must classify as None: no panic, no error, no \
          unsound classification.  The orchestrator decides at fixed point.",
     );
 }
@@ -202,17 +201,15 @@ fn classify_target_is_idempotent_on_unchanged_graph() {
         first, second,
         "two consecutive classify_target calls on an unchanged graph must agree",
     );
-    assert_eq!(first, Some(ResolvedTargets::Single(0x0000_0123)));
+    assert_eq!(first, Some(ResolvedTargets::Single(0x0000_0123.into())));
 }
 
 // Soundness gate: a `br x30` following a `bl` (which clobbers x30 with the
 // return address) must not classify as LinkRegister at the full-function IR
 // level. After the stable optimiser runs, x30's value at the branch site is
-// the Call's clobber output, not `InitialVar(x30)`. The old per-region
-// mini-graph resolver could not see this: it only saw one region's pcode
-// and had no way to know x30 was clobbered by a prior Call elsewhere. The
-// rebuild-driven full-function classifier sees the clobber directly, since
-// it's a value already in the graph.
+// the Call's clobber output, not `InitialVar(x30)`. The rebuild-driven
+// full-function classifier sees that clobber directly, since it is a value
+// already in the graph.
 
 /// AArch64: `bl 0x1010` (clobbers x30 with the return address) followed by
 /// `br x30`. After optimisation, x30's value at the branch site is the
@@ -247,8 +244,8 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
         .link_register_vn
         .expect("AArch64 AAPCS has a link register");
 
-    // cfg builder does no cfg-time indirect-branch resolution, so `br x30`
-    // reaches the IR as an UnresolvedIndirectBranch placeholder.
+    // The cfg builder defers every indirect branch, so `br x30` reaches the
+    // IR as an UnresolvedIndirectBranch placeholder.
     let cfg = strider
         .build_cfg(
             MachineInsnAddr::from(base),
@@ -293,12 +290,12 @@ fn bx_lr_after_call_does_not_classify_as_link_register() {
         result,
         Some(ResolvedTargets::LinkRegister),
         "br x30 after a bl (which clobbers x30) must NOT classify as \
-         LinkRegister — x30 holds the bl's return address, not InitialVar(lr)",
+         LinkRegister: x30 holds the bl's return address, not InitialVar(lr)",
     );
     assert_eq!(
         result,
-        Some(ResolvedTargets::Single(0x1004)),
-        "classify_target must resolve br x30 to Single(0x1004) — the literal \
+        Some(ResolvedTargets::Single(0x1004.into())),
+        "classify_target must resolve br x30 to Single(0x1004), the literal \
          return address that bl wrote into x30",
     );
 }

@@ -66,14 +66,24 @@ fn bit_width_is_eight_times_byte_size_except_i1() {
     for ty in [
         ValueType::I8,
         ValueType::I16,
+        ValueType::I24,
         ValueType::I32,
+        ValueType::I40,
+        ValueType::I48,
+        ValueType::I56,
         ValueType::I64,
+        ValueType::I72,
         ValueType::I80,
+        ValueType::I96,
+        ValueType::I112,
         ValueType::I128,
         ValueType::I256,
+        ValueType::I512,
+        ValueType::F16,
         ValueType::F32,
         ValueType::F64,
         ValueType::F80,
+        ValueType::F128,
     ] {
         assert_eq!(
             ty.bit_width(),
@@ -105,18 +115,32 @@ fn is_integer_for_all_integer_output_types() {
         ValueType::I1,
         ValueType::I8,
         ValueType::I16,
+        ValueType::I24,
         ValueType::I32,
+        ValueType::I40,
+        ValueType::I48,
+        ValueType::I56,
         ValueType::I64,
+        ValueType::I72,
         ValueType::I80,
+        ValueType::I96,
+        ValueType::I112,
         ValueType::I128,
         ValueType::I256,
+        ValueType::I512,
     ] {
         assert!(
             ValueKind::Typed(ty).is_integer(),
             "{ty:?} should be integer"
         );
     }
-    for ty in [ValueType::F32, ValueType::F64, ValueType::F80] {
+    for ty in [
+        ValueType::F16,
+        ValueType::F32,
+        ValueType::F64,
+        ValueType::F80,
+        ValueType::F128,
+    ] {
         assert!(
             !ValueKind::Typed(ty).is_integer(),
             "{ty:?} must not be integer"
@@ -246,14 +270,24 @@ fn type_info_table_matches_variants() {
         (ValueType::I1, "i1", 1, true, true, false),
         (ValueType::I8, "i8", 1, true, false, false),
         (ValueType::I16, "i16", 2, true, false, false),
+        (ValueType::I24, "i24", 3, true, false, false),
         (ValueType::I32, "i32", 4, true, false, false),
+        (ValueType::I40, "i40", 5, true, false, false),
+        (ValueType::I48, "i48", 6, true, false, false),
+        (ValueType::I56, "i56", 7, true, false, false),
         (ValueType::I64, "i64", 8, true, false, false),
+        (ValueType::I72, "i72", 9, true, false, false),
         (ValueType::I80, "i80", 10, true, false, false),
+        (ValueType::I96, "i96", 12, true, false, false),
+        (ValueType::I112, "i112", 14, true, false, false),
         (ValueType::I128, "i128", 16, true, false, false),
         (ValueType::I256, "i256", 32, true, false, false),
+        (ValueType::I512, "i512", 64, true, false, false),
+        (ValueType::F16, "f16", 2, false, false, true),
         (ValueType::F32, "f32", 4, false, false, true),
         (ValueType::F64, "f64", 8, false, false, true),
         (ValueType::F80, "f80", 10, false, false, true),
+        (ValueType::F128, "f128", 16, false, false, true),
     ];
     for (ty, name, size, is_int, is_bool, is_float) in cases {
         assert_eq!(ty.as_str(), *name);
@@ -271,12 +305,16 @@ fn type_info_table_matches_variants() {
 fn int_for_byte_size_to_node_output_type() {
     assert_eq!(ValueType::int_for_byte_size(1).unwrap(), ValueType::I8);
     assert_eq!(ValueType::int_for_byte_size(2).unwrap(), ValueType::I16);
+    assert_eq!(ValueType::int_for_byte_size(3).unwrap(), ValueType::I24);
     assert_eq!(ValueType::int_for_byte_size(4).unwrap(), ValueType::I32);
+    assert_eq!(ValueType::int_for_byte_size(5).unwrap(), ValueType::I40);
+    assert_eq!(ValueType::int_for_byte_size(7).unwrap(), ValueType::I56);
     assert_eq!(ValueType::int_for_byte_size(8).unwrap(), ValueType::I64);
+    assert_eq!(ValueType::int_for_byte_size(9).unwrap(), ValueType::I72);
     assert_eq!(ValueType::int_for_byte_size(16).unwrap(), ValueType::I128);
     assert_eq!(ValueType::int_for_byte_size(32).unwrap(), ValueType::I256);
     assert_eq!(ValueType::int_for_byte_size(64).unwrap(), ValueType::I512);
-    for bad in [0u32, 3, 5, 7, 9, 15, 17, 33, 65] {
+    for bad in [0u32, 11, 13, 15, 17, 33, 65] {
         let err = ValueType::int_for_byte_size(bad).expect_err("invalid size");
         let msg = err.to_string();
         assert!(
@@ -350,7 +388,7 @@ fn legacy_is_cacheable(kind: &NodeKind) -> bool {
     )
 }
 
-/// Independent restatement of `asm_fingerprint_exempt`, same purpose.
+/// Independent restatement of `asm_fingerprint_exempt`.
 fn legacy_asm_fingerprint_exempt(kind: &NodeKind) -> bool {
     matches!(
         kind,

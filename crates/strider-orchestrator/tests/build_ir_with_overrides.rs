@@ -1,10 +1,7 @@
-//! `Lifter::build_ir_with` applies the per-address-cc override at lift time
-//! without going through `strider_orchestrator::Strider::analyze`. Mirrors
-//! `tests/per_address_cc.rs` but exercises the options-bag API directly, so
-//! a strider-py custom pipeline (which calls `build_ir_with` instead of
-//! running the orchestrator) gets the same override behaviour.
-
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+//! `Lifter::build_ir_with` applies the per-address-cc override at lift time,
+//! so a custom pipeline that never goes through `Strider::analyze` still gets
+//! it.  Same fixture as `tests/per_address_cc.rs`, which covers the
+//! orchestrator path.
 
 use rustc_hash::FxHashMap;
 use strider_ir::IRViewer;
@@ -37,12 +34,12 @@ fn build_ir_with_applies_per_address_override() {
         )
         .unwrap();
 
-    // Must be built against the driver's own register table: the same
-    // table the function-default CC below is built against.
+    // Both CCs must be built against the driver's own register table.
     let mut built: FxHashMap<u64, strider_target::BuiltCallingConvention> = FxHashMap::default();
     built.insert(
         call_target,
-        TargetCC::x86_64_all_preserving()
+        TargetCC::x86_64_systemv()
+            .preserves_all()
             .build(strider.sleigh_regs())
             .unwrap(),
     );

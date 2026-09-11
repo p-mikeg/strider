@@ -20,6 +20,14 @@ impl PySleighArch {
         self.preset_name
     }
 
+    /// Byte order of this architecture: `"little"` or `"big"`.
+    fn endianness(&self) -> &'static str {
+        match self.inner.endianness() {
+            strider_target::Endianness::Little => "little",
+            strider_target::Endianness::Big => "big",
+        }
+    }
+
     /// `SleighArch.<preset>()`, the call that produces this arch.
     fn __repr__(&self) -> String {
         format!("SleighArch.{}()", self.preset_name)

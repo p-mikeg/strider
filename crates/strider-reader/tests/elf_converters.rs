@@ -1,5 +1,3 @@
-#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
-
 //! Both loadable-region presets share one section walker, so the propagation /
 //! empty-data / overflow contracts are pinned through whichever preset's filter
 //! accepts the synthetic section under test.
@@ -8,7 +6,7 @@
 mod common;
 
 use common::elf_fixture::{SectionSpec, build_elf_with_sections};
-use strider_reader::elf::{elf_get_loadable_regions, elf_get_loadable_regions_including_writable};
+use strider_reader::elf::{LoadFilter, elf_get_loadable_regions};
 
 fn parse(bytes: &[u8]) -> object::File<'_> {
     object::File::parse(bytes).expect("parse synthetic ELF")
@@ -76,9 +74,7 @@ fn code_and_readonly_preset_propagates_data_error() {
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
-            // A section-only fixture has no PT_LOAD segments, so ET_REL is
-            // what routes the loader down the section-walker path. ET_EXEC
-            // would take the segments path with an empty segment list.
+            // ET_REL is what routes the loader down the section walk.
             e_type: elf::ET_REL,
             e_machine: elf::EM_X86_64,
             e_entry: 0,
@@ -140,9 +136,7 @@ fn code_and_readonly_preset_propagates_region_overflow() {
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
-            // A section-only fixture has no PT_LOAD segments, so ET_REL is
-            // what routes the loader down the section-walker path. ET_EXEC
-            // would take the segments path with an empty segment list.
+            // ET_REL is what routes the loader down the section walk.
             e_type: elf::ET_REL,
             e_machine: elf::EM_X86_64,
             e_entry: 0,
@@ -203,9 +197,7 @@ fn code_and_readonly_preset_skips_rejected_malformed_section() {
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
-            // A section-only fixture has no PT_LOAD segments, so ET_REL is
-            // what routes the loader down the section-walker path. ET_EXEC
-            // would take the segments path with an empty segment list.
+            // ET_REL is what routes the loader down the section walk.
             e_type: elf::ET_REL,
             e_machine: elf::EM_X86_64,
             e_entry: 0,
@@ -237,13 +229,14 @@ fn code_and_readonly_preset_skips_rejected_malformed_section() {
     assert!(regions.is_empty(), "nothing was accepted");
 }
 
-/// Two sections sharing a `sh_addr` resolve first-wins.
+/// Two sections sharing a `sh_addr` are rebased apart, not collapsed.
 ///
 /// A `.o` commonly has `.text`, `.text.startup`, `.text.foo` all at VMA 0
-/// pre-link. Last-wins would pick between them by iteration order, which is
-/// non-deterministic; first-wins is stable.
+/// pre-link. Each gets its own base and serves its own data; collapsing them
+/// leaves every one after the first unreachable, its address answering with
+/// the winner's bytes.
 #[test]
-fn et_rel_sections_same_start_first_wins() {
+fn et_rel_sections_sharing_a_start_are_rebased_apart() {
     let bytes = build_elf_with_sections(&[
         SectionSpec {
             name: b".first",
@@ -252,6 +245,8 @@ fn et_rel_sections_same_start_first_wins() {
             exec: true,
             writable: false,
             nobits: false,
+            tls: false,
+            sh_size: None,
         },
         SectionSpec {
             name: b".second",
@@ -260,20 +255,34 @@ fn et_rel_sections_same_start_first_wins() {
             exec: false,
             writable: false,
             nobits: false,
+            tls: false,
+            sh_size: None,
         },
     ]);
     let obj = parse(&bytes);
+    let layout = strider_reader::elf::ElfSectionLayout::new(&obj);
     let regions = elf_get_loadable_regions(&obj).unwrap();
-    // One region for the shared VMA: dedup happens in the collector, not the
-    // lookup table.
-    assert_eq!(regions.len(), 1);
+    assert_eq!(regions.len(), 2, "both sections stay reachable");
     let table = strider_reader::MemRegionsLookupTable::new(regions);
 
-    let mut buf = [0u8; 1];
-    assert_eq!(table.read(0x1000, &mut buf), Some(1));
+    // `.first` keeps the declared VMA; `.second` follows it, 1-byte aligned.
+    for (name, want) in [(".first", 0xaau8), (".second", 0xbbu8)] {
+        let sec = {
+            use object::Object as _;
+            obj.section_by_name(name).expect(name)
+        };
+        let base = layout.section_base(&sec);
+        let mut buf = [0u8; 1];
+        assert_eq!(table.read(base, &mut buf), Some(1), "{name} at {base:#x}");
+        assert_eq!(buf[0], want, "{name} must serve its own byte");
+    }
     assert_eq!(
-        buf[0], 0xaa,
-        "first section wins on duplicate start_addr (ET_REL)"
+        layout.section_base(&{
+            use object::Object as _;
+            obj.section_by_name(".second").unwrap()
+        }),
+        0x1001,
+        "the loser of the collision is placed just past the winner"
     );
 }
 
@@ -290,8 +299,7 @@ fn allocatable_sections_include_text_rodata_data_and_exclude_bss() {
         SectionSpec::data(0x3000, vec![5, 6]),
         SectionSpec::bss(0x4000, 16),
     ]);
-    let obj = parse(&bytes);
-    let regions = elf_get_loadable_regions_including_writable(&obj).unwrap();
+    let regions = common::regions(&bytes, LoadFilter::AllAllocatable);
 
     let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
     assert!(addrs.contains(&0x1000), ".text must be included");
@@ -308,8 +316,7 @@ fn allocatable_preset_skips_nobits() {
         SectionSpec::text(0x1000, vec![1, 2, 3]),
         SectionSpec::bss(0x2000, 64),
     ]);
-    let obj = parse(&bytes);
-    let regions = elf_get_loadable_regions_including_writable(&obj).unwrap();
+    let regions = common::regions(&bytes, LoadFilter::AllAllocatable);
 
     let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
     assert!(addrs.contains(&0x1000), ".text must be present");
@@ -338,9 +345,7 @@ fn allocatable_preset_propagates_data_error() {
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
-            // A section-only fixture has no PT_LOAD segments, so ET_REL is
-            // what routes the loader down the section-walker path. ET_EXEC
-            // would take the segments path with an empty segment list.
+            // ET_REL is what routes the loader down the section walk.
             e_type: elf::ET_REL,
             e_machine: elf::EM_X86_64,
             e_entry: 0,
@@ -364,8 +369,7 @@ fn allocatable_preset_propagates_data_error() {
         });
         w.write_shstrtab_section_header();
     }
-    let obj = parse(&buf);
-    let err = elf_get_loadable_regions_including_writable(&obj)
+    let err = common::try_regions(&buf, LoadFilter::AllAllocatable)
         .expect_err("malformed accepted section must surface an error");
     assert!(
         err.to_string().contains("failed to parse ELF"),
@@ -397,9 +401,7 @@ fn allocatable_preset_propagates_region_overflow() {
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
-            // A section-only fixture has no PT_LOAD segments, so ET_REL is
-            // what routes the loader down the section-walker path. ET_EXEC
-            // would take the segments path with an empty segment list.
+            // ET_REL is what routes the loader down the section walk.
             e_type: elf::ET_REL,
             e_machine: elf::EM_X86_64,
             e_entry: 0,
@@ -423,8 +425,7 @@ fn allocatable_preset_propagates_region_overflow() {
         });
         w.write_shstrtab_section_header();
     }
-    let obj = parse(&buf);
-    let err = elf_get_loadable_regions_including_writable(&obj)
+    let err = common::try_regions(&buf, LoadFilter::AllAllocatable)
         .expect_err("addr+len overflow must surface as RegionOverflow");
     let msg = err.to_string();
     let expected_addr = format!("{:#x}", u64::MAX - 1);
@@ -434,4 +435,76 @@ fn allocatable_preset_propagates_region_overflow() {
             && msg.contains("length 4"),
         "got: {err}"
     );
+}
+
+/// An RWX mapping is fetchable but is not runtime-immutable, so it belongs in
+/// the fetch image and not in a `ReadOnlyMemory` view: `LoadReadOnly` folds a
+/// constant-address load without consulting the memory chain, and a store then
+/// reload of a mutable global would fold to the file-initial byte.
+#[test]
+fn read_only_presets_exclude_a_writable_executable_mapping() {
+    let bytes = build_elf_with_sections(&[
+        SectionSpec::rwx(0x1000, vec![0x90; 8]),
+        SectionSpec::rodata(0x2000, vec![1, 2, 3, 4]),
+    ]);
+    let obj = parse(&bytes);
+
+    let fetch: Vec<u64> = elf_get_loadable_regions(&obj)
+        .unwrap()
+        .iter()
+        .map(|r| r.start_addr())
+        .collect();
+    assert_eq!(fetch, vec![0x1000, 0x2000], "RWX stays fetchable");
+
+    for (name, regions) in [
+        (
+            "auto-dispatch immutable regions",
+            common::regions(&bytes, LoadFilter::ImmutableOnly),
+        ),
+        (
+            "sections-only immutable regions",
+            strider_reader::OwnedElf::parse(bytes.clone())
+                .unwrap()
+                .regions(
+                    strider_reader::elf::RegionSource::Sections,
+                    strider_reader::elf::LoadFilter::ImmutableOnly,
+                    false,
+                )
+                .unwrap(),
+        ),
+        (
+            "relocated immutable regions",
+            common::load_readonly_with_relocations(&bytes),
+        ),
+    ] {
+        let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
+        assert_eq!(addrs, vec![0x2000], "{name} must exclude the RWX mapping");
+    }
+}
+
+/// Section dedup is on the loaded address, so N headers naming ONE file range
+/// at N addresses each get their own copy and nothing in the file bounds their
+/// sum. A small image would otherwise ask for hundreds of gigabytes and abort.
+#[test]
+fn many_sections_over_one_file_range_are_rejected_not_copied() {
+    let bytes = common::elf_fixture::build_shared_file_range_elf(64, 4096);
+    let obj = parse(&bytes);
+    let err = elf_get_loadable_regions(&obj)
+        .expect_err("copy amplification must be an error, not an allocation");
+    assert!(
+        err.to_string().contains("distinct file bytes"),
+        "got: {err}"
+    );
+}
+
+/// The bound must not fire on an ordinary image, where every section names its
+/// own file range.
+#[test]
+fn distinct_file_ranges_load_untouched_by_the_copy_bound() {
+    let bytes = build_elf_with_sections(&[
+        SectionSpec::text(0x1000, vec![1; 64]),
+        SectionSpec::rodata(0x2000, vec![2; 64]),
+    ]);
+    let obj = parse(&bytes);
+    assert_eq!(elf_get_loadable_regions(&obj).unwrap().len(), 2);
 }

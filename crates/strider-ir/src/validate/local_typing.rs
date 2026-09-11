@@ -20,31 +20,18 @@ pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<Val
 
     // A variadic list with `head_len = 0` (e.g. `Region`) passes at zero
     // inputs; the ">= 1 predecessor" rule lives in graph_invariants.
-    let input_head_len = sig.inputs.head_len();
-    let output_head_len = sig.outputs.head_len();
-
-    let input_arity_ok = if sig.inputs.is_variadic() {
-        actual_inputs.len() >= input_head_len
-    } else {
-        actual_inputs.len() == input_head_len
-    };
-    if !input_arity_ok {
+    if let Some(expected) = sig.inputs.arity_violation(actual_inputs.len()) {
         errs.push(ValidationError::NodeInputCountMismatch {
             node,
-            expected: input_head_len,
+            expected,
             actual: actual_inputs.len(),
         });
     }
 
-    let output_arity_ok = if sig.outputs.is_variadic() {
-        actual_outputs.len() >= output_head_len
-    } else {
-        actual_outputs.len() == output_head_len
-    };
-    if !output_arity_ok {
+    if let Some(expected) = sig.outputs.arity_violation(actual_outputs.len()) {
         errs.push(ValidationError::NodeOutputCountMismatch {
             node,
-            expected: output_head_len,
+            expected,
             actual: actual_outputs.len(),
         });
     }

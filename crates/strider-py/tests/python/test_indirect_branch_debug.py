@@ -1,8 +1,5 @@
-"""Indirect-branch resolution through the Python API.
-
-Mirror of `crates/strider/tests/indirect_branch.rs` for the x86
-`indirect_branch.elf::indirect_branch_resolved` fixture.
-"""
+"""Python-side mirror of `crates/strider-orchestrator/tests/indirect_branch.rs`
+over the x86 `indirect_branch.elf::indirect_branch_resolved` fixture."""
 
 from __future__ import annotations
 
@@ -24,7 +21,7 @@ def test_run_resolves_indirect_branch_x86():
     cc = strider.sleigh.CallingConvention.x86_cdecl()
     loaded = strider.lift.load_elf(str(elf))
     mem = loaded.reader()
-    addr = loaded.symbol("indirect_branch_resolved")
+    addr = loaded.symbol("indirect_branch_resolved").address
     lift = strider.lift.lifter(arch, mem, rom=mem)
     _cfg, function, _unresolved = lift.analyze(
         addr, cc, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))

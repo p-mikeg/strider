@@ -1,3 +1,4 @@
+use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 
 use crate::errors::into_strider_err;
@@ -31,36 +32,21 @@ pub enum CaptureKey<'py> {
     Str(String),
 }
 
+// Hand-written so pyo3-stub-gen emits the union rather than one arm.
+impl pyo3_stub_gen::PyStubType for CaptureKey<'_> {
+    fn type_output() -> pyo3_stub_gen::TypeInfo {
+        pyo3_stub_gen::TypeInfo::with_module("strider.pattern.Capture", "strider.pattern".into())
+            | <String as pyo3_stub_gen::PyStubType>::type_output()
+    }
+}
+
 impl CaptureKey<'_> {
-    fn resolve(self) -> PyResult<strider_pattern::Capture> {
+    pub(crate) fn resolve(self) -> PyResult<strider_pattern::Capture> {
         match self {
             CaptureKey::Capture(c) => Ok(c.borrow().inner),
             CaptureKey::Str(s) => intern_str(s.as_str()),
         }
     }
-}
-
-/// The `m[c]` value precedence: bool, then unsigned int, then raw float bits.
-///
-/// Bool must be probed BEFORE uint: the uint read also matches an `I1` value
-/// (as 0/1), so checking it first would surface a boolean capture as a plain
-/// int.
-pub(crate) fn capture_value_to_py(
-    py: Python<'_>,
-    bool_val: Option<bool>,
-    uint_val: Option<u128>,
-    float_bits: Option<u64>,
-) -> PyObject {
-    if let Some(b) = bool_val {
-        return b.into_py(py);
-    }
-    if let Some(v) = uint_val {
-        return v.into_py(py);
-    }
-    if let Some(f) = float_bits {
-        return f.into_py(py);
-    }
-    py.None()
 }
 
 impl PyMatch {
@@ -78,6 +64,15 @@ impl PyMatch {
         Ok(())
     }
 
+    /// Run `f` only if the arena still has the generation this match was
+    /// built against, so a raw node id never escapes a compaction.
+    fn checked<R>(&self, py: Python<'_>, f: impl FnOnce(&Self) -> R) -> PyResult<R> {
+        let function = self.function.borrow(py);
+        let function = function.read_inner().map_err(into_strider_err)?;
+        self.assert_generation(&function)?;
+        Ok(f(self))
+    }
+
     /// The first sub-match binding `cap`; the join already unified shared
     /// captures, so every such sub-match agrees.
     fn binding_for(&self, cap: strider_pattern::Capture) -> Option<&strider_pattern::Match> {
@@ -86,6 +81,70 @@ impl PyMatch {
 
     fn is_bound(&self, cap: strider_pattern::Capture) -> bool {
         self.inner.iter().any(|m| m.is_bound(cap))
+    }
+
+    /// Resolve `cap` to a node id and read it under a single borrow, skipping
+    /// the `PyNode` round trip's three resolutions and discarded incref.
+    fn read_bound<R>(
+        &self,
+        py: Python<'_>,
+        cap: strider_pattern::Capture,
+        read: impl FnOnce(&strider_ir::Function, u32) -> Option<R>,
+    ) -> PyResult<Option<R>> {
+        let function = self.function.borrow(py);
+        let function = function.read_inner().map_err(into_strider_err)?;
+        self.assert_generation(&function)?;
+        Ok(self
+            .binding_for(cap)
+            .and_then(|m| m.node(cap, function.graph()))
+            .and_then(|nid| read(&function, nid.as_u32())))
+    }
+
+    /// The unsigned constant bound to `cap`, or `None` when `cap` is unbound or
+    /// its node is not an integer constant. For `find_unique_value`.
+    pub(crate) fn uint_for(
+        &self,
+        py: Python<'_>,
+        cap: strider_pattern::Capture,
+    ) -> PyResult<Option<u128>> {
+        self.read_bound(py, cap, crate::node::uint_of)
+    }
+
+    /// The signed (sign-extended from its width) constant bound to `cap`. Like
+    /// [`Self::uint_for`] but reads the value as two's-complement.
+    pub(crate) fn sint_for(
+        &self,
+        py: Python<'_>,
+        cap: strider_pattern::Capture,
+    ) -> PyResult<Option<i128>> {
+        self.read_bound(py, cap, crate::node::sint_of)
+    }
+
+    /// `Capture('x'): BoundCapture(...)` entries for every bound capture, in
+    /// ascending capture-id order. The value mirrors `BoundCapture.__repr__`: a
+    /// hex constant when the node is an integer const, else `<node>`.
+    fn bindings_repr(&self, py: Python<'_>) -> PyResult<String> {
+        let function = self.function.borrow(py);
+        let function = function.read_inner().map_err(into_strider_err)?;
+        self.assert_generation(&function)?;
+        // Distinct captures across sub-matches; `capture_signature` is sorted by
+        // id, so the first node seen per id wins and order is deterministic.
+        let mut seen: std::collections::BTreeMap<u32, u32> = std::collections::BTreeMap::new();
+        for m in &self.inner {
+            for (cap_id, node_id) in m.capture_signature(function.graph()) {
+                seen.entry(cap_id).or_insert(node_id);
+            }
+        }
+        let entries: Vec<String> = seen
+            .into_iter()
+            .map(|(cap_id, node_id)| {
+                let key = crate::pattern::capture_display(cap_id);
+                let value = crate::node::uint_of(&function, node_id)
+                    .map_or_else(|| "<node>".to_string(), |v| format!("{v:#x}"));
+                format!("{key}: BoundCapture({value})")
+            })
+            .collect();
+        Ok(entries.join(", "))
     }
 
     /// Without `ignore_root` the per-pattern roots join the key; with it only
@@ -108,127 +167,95 @@ impl PyMatch {
     }
 }
 
-#[pymethods]
-impl PyMatch {
-    /// The operation variant of the node bound to `key` (`"Add"`, `"Less"`),
-    /// or `None` when `key` is unbound or names a node carrying no operation.
-    fn op(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        match self.node(py, key)? {
-            Some(node) => node.op(py),
-            None => Ok(None),
-        }
-    }
-
-    /// The value-output type of the node bound to `key` (`"I1"`, `"I64"`,
-    /// `"F64"`), or `None` when unbound or the node has no value output.
-    fn value_type(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<String>> {
-        match self.node(py, key)? {
-            Some(node) => node.value_type(py),
-            None => Ok(None),
-        }
-    }
+/// Unwrap a capture read for the raising getters, raising a uniform error when
+/// the `_opt` counterpart would return `None` (unbound, or a node without the
+/// requested aspect).
+fn or_missing<T>(v: Option<T>, what: &str) -> PyResult<T> {
+    v.ok_or_else(|| {
+        into_strider_err(anyhow::anyhow!(
+            "capture has no {what} (unbound, or bound to a node without one); \
+             call {what}_opt for None instead"
+        ))
+    })
 }
 
 #[pymethods]
 impl PyMatch {
+    /// Exposes the `Py<PyFunction>` edge to the cyclic collector.
+    fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        visit.call(&self.function)
+    }
+
     /// Node id where the top-level pattern matched. The root carries no
     /// user-visible capture binding.
     #[getter]
-    fn root(&self) -> u32 {
-        self.inner[0].root().as_u32()
+    fn root(&self, py: Python<'_>) -> PyResult<u32> {
+        self.checked(py, |m| m.inner[0].root().as_u32())
     }
 
     /// One root node id per pattern passed to the query.
     #[getter]
-    fn roots(&self) -> Vec<u32> {
-        self.inner.iter().map(|m| m.root().as_u32()).collect()
+    fn roots(&self, py: Python<'_>) -> PyResult<Vec<u32>> {
+        self.checked(py, |m| m.inner.iter().map(|m| m.root().as_u32()).collect())
     }
 
-    /// Best-effort value of a capture: bool if it is one, else int, else raw
-    /// float bits, else `None`.
-    fn __getitem__(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<PyObject> {
-        let node = match self.node(py, key)? {
-            Some(node) => node,
-            None => return Ok(py.None()),
-        };
-        let b = node.const_bool(py)?;
-        let v = node.const_uint(py)?;
-        let f = node.float_bits(py)?;
-        Ok(capture_value_to_py(py, b, v, f))
+    /// `m[c]` / `m["name"]`: capture `c` bound to THIS match, a `BoundCapture`
+    /// carrying every reader (`.uint`, `.node`, `.op`, ... and their
+    /// `_opt` forms) without repeating the capture. A numeric capture also
+    /// converts and compares directly (`int(m[c])`, `m[c] == 0x10`).
+    fn __getitem__(slf: Bound<'_, Self>, key: CaptureKey<'_>) -> PyResult<PyBoundCapture> {
+        let py = slf.py();
+        let cap = key.resolve()?;
+        slf.borrow().checked(py, |_| ())?;
+        Ok(PyBoundCapture {
+            match_: slf.unbind(),
+            cap: Py::new(py, PyCapture { inner: cap })?,
+        })
     }
 
     /// True when `key` (a `Capture` or string name) is bound in this match.
-    fn __contains__(&self, key: CaptureKey<'_>) -> PyResult<bool> {
+    fn __contains__(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<bool> {
         let cap = key.resolve()?;
-        Ok(self.is_bound(cap))
+        self.checked(py, |m| m.is_bound(cap))
     }
 
-    /// The capture's value as an unsigned `int`, or `None` when it isn't
-    /// bound to an integer-valued node.
-    fn const_uint(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<u128>> {
-        match self.node(py, key)? {
-            Some(node) => node.const_uint(py),
-            None => Ok(None),
-        }
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let roots: Vec<u32> = self.inner.iter().map(|m| m.root().as_u32()).collect();
+        // A repr must not raise; a stale / unreadable function drops the dict.
+        let bindings = self.bindings_repr(py).unwrap_or_default();
+        format!("Match(roots={roots:?}, {{{bindings}}})")
     }
 
-    /// The capture's value as a signed `int`, sign-interpreted at the node's
-    /// width, or `None` when it isn't bound to an integer node.
-    #[pyo3(name = "const_int")]
-    fn int_(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<i128>> {
-        match self.node(py, key)? {
-            Some(node) => node.const_int(py),
-            None => Ok(None),
-        }
-    }
-
-    /// The capture's value as a `bool`, or `None` when it isn't bound to a
-    /// boolean-valued node.
-    #[pyo3(name = "const_bool")]
-    fn bool_(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<bool>> {
-        match self.node(py, key)? {
-            Some(node) => node.const_bool(py),
-            None => Ok(None),
-        }
-    }
-
-    /// The capture's value as raw float bits, or `None` when it isn't bound to
-    /// a float-valued node.
-    fn float_bits(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<u64>> {
-        match self.node(py, key)? {
-            Some(node) => node.float_bits(py),
-            None => Ok(None),
-        }
-    }
-
-    /// True when `key` is bound in this match.
-    fn has(&self, key: CaptureKey<'_>) -> PyResult<bool> {
+    /// True when `key` is bound in this match. Raises once the function has
+    /// been compacted, like every other capture accessor, so `if c in m` and
+    /// `m.node(c)` agree.
+    fn has(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<bool> {
         let cap = key.resolve()?;
-        Ok(self.is_bound(cap))
-    }
-
-    /// The varnode behind a captured `InitialVar` or `Call` / `CallOther`
-    /// clobber output, or `None` when `key` binds neither.
-    fn vn(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<crate::sleigh::PyVn>> {
-        match self.node(py, key)? {
-            Some(node) => node.vn(py),
-            None => Ok(None),
-        }
+        self.checked(py, |m| m.is_bound(cap))
     }
 
     /// Sorted, deduped machine-instruction addresses whose lift or subsequent
     /// rewrite contributed to the value of the node bound to `key`. Empty when
     /// `key` is unbound or binds an exempt structural kind.
     fn asm_fingerprint(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Vec<u64>> {
-        match self.node(py, key)? {
+        match self.node_opt(py, key)? {
             Some(node) => node.asm_fingerprint(py),
             None => Ok(Vec::new()),
         }
     }
 
-    /// A `Node` handle on the node bound to `key`, or `None` when `key` is
-    /// unbound.
-    fn node(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<crate::node::PyNode>> {
+    /// A `Node` handle on the node bound to `key`. Raises when `key` is
+    /// unbound; `node_opt` returns `None`.
+    fn node(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<crate::node::PyNode> {
+        or_missing(self.node_opt(py, key)?, "node")
+    }
+
+    /// A `Node` handle, or `None` when `key` is unbound.
+    fn node_opt(
+        &self,
+        py: Python<'_>,
+        key: CaptureKey<'_>,
+    ) -> PyResult<Option<crate::node::PyNode>> {
         let cap = key.resolve()?;
         // Re-borrow to check the generation before handing out a node id that
         // could point into a stale arena, and to resolve an `Output` binding
@@ -240,17 +267,214 @@ impl PyMatch {
             self.binding_for(cap)
                 .and_then(|m| m.node(cap, function.graph()))
         };
-        match nid {
-            Some(nid) => {
-                let pynode =
-                    crate::node::PyNode::new(py, self.function.clone_ref(py), nid.as_u32())?;
-                Ok(Some(pynode))
-            }
-            None => Ok(None),
+        // Resolved under the borrow just dropped, so `PyNode::new`'s own
+        // re-validation would repeat it.
+        Ok(nid.map(|nid| {
+            crate::node::PyNode::validated(
+                self.function.clone_ref(py),
+                nid.as_u32(),
+                self.generation,
+            )
+        }))
+    }
+}
+
+/// Each row generates the raising getter (`or_missing` over its `_opt` twin,
+/// the error label is the Python name) and the `_opt` getter (delegates to the
+/// `PyNode` aspect accessor, `None` when the capture binds no node carrying it).
+/// `node_opt`, its raising `node`, and `asm_fingerprint` (empty vec, not `None`)
+/// stay hand-written above. Own `#[pymethods]` block (multiple-pymethods).
+macro_rules! match_getters {
+    ($(
+        #[doc = $rdoc:literal] $rpy:literal $rname:ident,
+        #[doc = $odoc:literal] $opy:literal $oname:ident
+            : $ret:ty = $acc:ident
+    );+ $(;)?) => {
+        #[pymethods]
+        impl PyMatch {
+            $(
+                #[doc = $rdoc]
+                #[pyo3(name = $rpy)]
+                fn $rname(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<$ret> {
+                    or_missing(self.$oname(py, key)?, $rpy)
+                }
+
+                #[doc = $odoc]
+                #[pyo3(name = $opy)]
+                fn $oname(
+                    &self,
+                    py: Python<'_>,
+                    key: CaptureKey<'_>,
+                ) -> PyResult<Option<$ret>> {
+                    match self.node_opt(py, key)? {
+                        Some(node) => node.$acc(py),
+                        None => Ok(None),
+                    }
+                }
+            )+
         }
+    };
+}
+
+match_getters! {
+    #[doc = "The operation variant (`\"Add\"`, `\"Less\"`); raises if unbound or the node carries none."]
+    "op" op,
+    #[doc = "The operation variant, or `None`."]
+    "op_opt" op_opt : String = op;
+
+    #[doc = "The value-output type (`\"I1\"`, `\"I64\"`, `\"F64\"`); raises if unbound or the node has none."]
+    "value_type" value_type,
+    #[doc = "The value-output type, or `None`."]
+    "value_type_opt" value_type_opt : String = value_type;
+
+    #[doc = "The capture's value as an unsigned `int`; raises if unbound or not an integer node."]
+    "uint" uint,
+    #[doc = "The unsigned value, or `None`."]
+    "uint_opt" uint_opt : u128 = uint;
+
+    #[doc = "The signed value, sign-interpreted at the node's width; raises if unbound or not an integer node."]
+    "sint" int_,
+    #[doc = "The signed value, or `None`."]
+    "sint_opt" int_opt : i128 = sint;
+
+    #[doc = "The capture's value as a `bool`; raises if unbound or not a boolean node."]
+    "boolean" bool_,
+    #[doc = "The boolean value, or `None`."]
+    "boolean_opt" bool_opt : bool = boolean;
+
+    #[doc = "The capture's value as raw float bits; raises if unbound or not a float node."]
+    "float_bits" float_bits,
+    #[doc = "The raw float bits, or `None`."]
+    "float_bits_opt" float_bits_opt : u64 = float_bits;
+
+    #[doc = "The varnode a captured node names: an `InitialVar`'s entry-read varnode, the register a `Call` returns in, or whatever varnode the sla gives a `CallOther`'s result (a `unique` temporary, a tracked register, or none). Raises for any other kind. A capture binds a NODE, so this answers for a multi-output call's FIRST value output, never for one clobber in particular."]
+    "vn" vn,
+    #[doc = "The varnode, or `None`."]
+    "vn_opt" vn_opt : crate::sleigh::PyVn = vn;
+}
+
+/// Capture `cap` bound to a specific `PyMatch`: `m[c]`. Every reader delegates
+/// to the owning match, so the capture is named once.
+#[pyclass(name = "BoundCapture", module = "strider.pattern", unsendable)]
+pub struct PyBoundCapture {
+    match_: Py<PyMatch>,
+    cap: Py<PyCapture>,
+}
+
+/// Each `BoundCapture` reader forwards to the same-named (or `$delegate`)
+/// `PyMatch` method with this capture's key: `self.match_.borrow(py).$delegate(
+/// py, self.key(py))`.  Stamped as its own `#[pymethods]` block
+/// (multiple-pymethods), so `has` and the dunders stay hand-written below.
+macro_rules! bound_getters {
+    ($( #[doc = $doc:literal] $name:ident -> $ret:ty = $delegate:ident );+ $(;)?) => {
+        #[pymethods]
+        impl PyBoundCapture {
+            $(
+                #[doc = $doc]
+                #[getter]
+                fn $name(&self, py: Python<'_>) -> PyResult<$ret> {
+                    self.match_.borrow(py).$delegate(py, self.key(py))
+                }
+            )+
+        }
+    };
+}
+
+bound_getters! {
+    #[doc = "The unsigned integer constant (raises if unbound or not one)."]
+    uint -> u128 = uint;
+    #[doc = "The unsigned integer constant, or `None` instead of raising."]
+    uint_opt -> Option<u128> = uint_opt;
+    #[doc = "The signed integer constant (raises if unbound or not one)."]
+    sint -> i128 = int_;
+    #[doc = "The signed integer constant, or `None` instead of raising."]
+    sint_opt -> Option<i128> = int_opt;
+    #[doc = "The boolean constant (raises if unbound or not one)."]
+    boolean -> bool = bool_;
+    #[doc = "The boolean constant, or `None` instead of raising."]
+    boolean_opt -> Option<bool> = bool_opt;
+    #[doc = "The raw float bits (raises if unbound or not a float node)."]
+    float_bits -> u64 = float_bits;
+    #[doc = "The raw float bits, or `None` instead of raising."]
+    float_bits_opt -> Option<u64> = float_bits_opt;
+    #[doc = "The operation variant (raises if unbound or the node carries none)."]
+    op -> String = op;
+    #[doc = "The operation variant, or `None` instead of raising."]
+    op_opt -> Option<String> = op_opt;
+    #[doc = "The value-output type (raises if unbound or the node has none)."]
+    value_type -> String = value_type;
+    #[doc = "The value-output type, or `None` instead of raising."]
+    value_type_opt -> Option<String> = value_type_opt;
+    #[doc = "The varnode (raises if the capture binds none)."]
+    vn -> crate::sleigh::PyVn = vn;
+    #[doc = "The varnode, or `None` instead of raising."]
+    vn_opt -> Option<crate::sleigh::PyVn> = vn_opt;
+    #[doc = "The matched `Node` (raises if the capture is unbound)."]
+    node -> crate::node::PyNode = node;
+    #[doc = "The matched `Node`, or `None` instead of raising."]
+    node_opt -> Option<crate::node::PyNode> = node_opt;
+    #[doc = "The machine addresses that produced the bound node (`[]` if unbound)."]
+    asm_fingerprint -> Vec<u64> = asm_fingerprint;
+}
+
+impl PyBoundCapture {
+    fn key<'py>(&self, py: Python<'py>) -> CaptureKey<'py> {
+        CaptureKey::Capture(self.cap.bind(py).clone())
+    }
+}
+
+#[pymethods]
+impl PyBoundCapture {
+    /// Both handles are `Py<...>`, invisible to the GC without this, so a cycle
+    /// through a `BoundCapture` would leak the whole match graph.
+    fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        visit.call(&self.match_)?;
+        visit.call(&self.cap)
+    }
+
+    /// Whether the capture bound in this match.
+    #[getter]
+    fn has(&self, py: Python<'_>) -> PyResult<bool> {
+        self.match_.borrow(py).has(py, self.key(py))
+    }
+
+    fn __int__(&self, py: Python<'_>) -> PyResult<u128> {
+        self.uint(py)
+    }
+    fn __index__(&self, py: Python<'_>) -> PyResult<u128> {
+        self.uint(py)
+    }
+    /// Equal to an int matching the captured constant at its width, in either
+    /// signed or unsigned spelling (so `-8` and `0xFFFFFFF8` both match a
+    /// 32-bit -8). Value-comparing, hence `BoundCapture` is unhashable.
+    fn __richcmp__(
+        &self,
+        py: Python<'_>,
+        other: Bound<'_, PyAny>,
+        op: CompareOp,
+    ) -> PyResult<PyObject> {
+        let equal = self
+            .uint_opt(py)?
+            .is_some_and(|u| other.extract::<u128>().is_ok_and(|o| o == u))
+            || self
+                .sint_opt(py)?
+                .is_some_and(|s| other.extract::<i128>().is_ok_and(|o| o == s));
+        Ok(match op {
+            CompareOp::Eq => equal.into_py(py),
+            CompareOp::Ne => (!equal).into_py(py),
+            _ => py.NotImplemented(),
+        })
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        Ok(match self.uint_opt(py)? {
+            Some(v) => format!("BoundCapture({v:#x})"),
+            None if self.has(py)? => "BoundCapture(<node>)".to_string(),
+            None => "BoundCapture(unbound)".to_string(),
+        })
     }
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyMatch>()
+    m.add_class::<PyMatch>()?;
+    m.add_class::<PyBoundCapture>()
 }

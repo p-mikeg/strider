@@ -4,10 +4,10 @@ fn is_aliasable_space(space: rsleigh::VnSpace) -> bool {
     space == rsleigh::VnSpace::REGISTER || space == rsleigh::VnSpace::UNIQUE
 }
 
-fn end_of(v: &rsleigh::Vn) -> u64 {
-    // Saturating: high-offset CR slices on ppc64 / aarch64be can push
-    // `addr_off + size` past `u64::MAX`.
-    v.addr_off.saturating_add(u64::from(v.size))
+// `u128` so the sum is exact: saturating at `u64::MAX` would report a
+// non-containing pair as contained.
+fn end_of(v: &rsleigh::Vn) -> u128 {
+    u128::from(v.addr_off) + u128::from(v.size)
 }
 
 /// True when `outer` fully encloses `inner` in the same aliasable space.
@@ -28,7 +28,10 @@ pub fn vn_contains(outer: &rsleigh::Vn, inner: &rsleigh::Vn) -> bool {
 ///
 /// Collapsing to the widest varnode is what preserves the data dependency when
 /// a lifter writes a wide unique then copies a narrow slice out of it;
-/// otherwise the two views look like independent SSA variables.
+/// otherwise the two views look like independent SSA variables. Only
+/// CONTAINMENT collapses: two PARTIALLY overlapping varnodes both survive and
+/// are modelled as non-aliasing, so a write to one is invisible to a read of
+/// the other. No register file checked has one -- they all nest exactly.
 pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh::Vn> {
     let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<(usize, rsleigh::Vn)>> = FxHashMap::default();
     for (i, v) in all_used_variables.iter().enumerate() {
@@ -44,12 +47,12 @@ pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsle
         bucket.sort_by_key(|(_, v)| (v.addr_off, std::cmp::Reverse(v.size)));
 
         // Enclosures still extending past the current start, SURVIVORS only.
-        let mut open: Vec<(u64, rsleigh::Vn)> = Vec::new();
+        let mut open: Vec<(u128, rsleigh::Vn)> = Vec::new();
         for (idx, v) in bucket {
             let v_end = end_of(&v);
             // Every remaining entry starts at or after `v.addr_off`, so an open
             // ending before it can enclose neither `v` nor anything later.
-            open.retain(|&(end, _)| end >= v.addr_off);
+            open.retain(|&(end, _)| end >= u128::from(v.addr_off));
             // `off <= v.off` already holds by the sort, so a strictly wider
             // open reaching `v_end` makes `v` a subsumed sub-register view.
             let enclosed = open.iter().any(|&(end, c)| end >= v_end && c.size > v.size);
@@ -70,8 +73,6 @@ pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsle
 
 /// Largest same-space varnode in `vns` containing `vn`, else `vn` itself.
 /// A non-aliasable (CONST / RAM / code) varnode always maps to itself.
-///
-/// The linear-scan fallback behind [`ContainerMap`].
 pub fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::Vn {
     if !is_aliasable_space(vn.addr_space) {
         return *vn;
@@ -79,7 +80,11 @@ pub fn largest_container_in(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::V
     let end = end_of(vn);
     vns.iter()
         .filter(|c| c.addr_space == vn.addr_space && c.addr_off <= vn.addr_off && end_of(c) >= end)
-        .max_by_key(|c| c.size)
+        // `addr_off` breaks an equal-size tie so this agrees with
+        // `ContainerMap`, which scans a differently ordered list. Two resolvers
+        // disagreeing would put a read and a write of one varnode under
+        // different SSA variables.
+        .max_by_key(|c| (c.size, c.addr_off))
         .copied()
         .unwrap_or(*vn)
 }
@@ -124,8 +129,10 @@ impl ContainerMap {
             opens.sort_by_key(|v| (v.addr_off, std::cmp::Reverse(v.size)));
             qs.sort_by_key(|q| (q.addr_off, std::cmp::Reverse(q.size)));
 
-            // Two-pointer sweep over the active enclosure window. `opens` is
-            // register-file sized, so the whole pass is O((t + q) log(t + q)).
+            // Two-pointer sweep over the active enclosure window. Each query
+            // scans `active`, which holds only the containers open at that
+            // address and is register-file sized, so the sweep is O(q) after
+            // the two sorts.
             let mut active: Vec<rsleigh::Vn> = Vec::new();
             let mut ti = 0usize;
             for q in qs {
@@ -135,11 +142,11 @@ impl ContainerMap {
                     active.push(opens[ti]);
                     ti += 1;
                 }
-                active.retain(|c| end_of(c) >= q_start);
+                active.retain(|c| end_of(c) >= u128::from(q_start));
                 let container = active
                     .iter()
                     .filter(|c| end_of(c) >= q_end)
-                    .max_by_key(|c| c.size)
+                    .max_by_key(|c| (c.size, c.addr_off))
                     .copied()
                     .unwrap_or(q);
                 map.insert(q, container);
@@ -207,6 +214,14 @@ mod tests {
         let wide = reg(u64::MAX - 4, 8);
         let narrow = reg(u64::MAX - 4, 2);
         assert_eq!(dedup_overlapping_largest(&[wide, narrow]), vec![wide]);
+    }
+
+    /// Both ends run past `u64::MAX`, so a saturating `end_of` reports them
+    /// equal and calls the WIDER varnode contained in the narrower, which then
+    /// underflows the container-shift arithmetic.
+    #[test]
+    fn vn_contains_does_not_saturate_ends_past_u64_max() {
+        assert!(!vn_contains(&reg(u64::MAX - 1, 2), &reg(u64::MAX - 1, 4)));
     }
 
     #[test]
