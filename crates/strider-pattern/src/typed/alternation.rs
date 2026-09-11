@@ -22,7 +22,24 @@ pub enum AltSlot {
 
 /// One type-erased entry of a [`OneOf`], normally built by the `one_of!` macro.
 /// It keeps both lowerings open until the slot is known.
-pub type BoxedAlt = Box<dyn FnOnce(&mut MatcherBuilder, AltSlot) -> PatValueRef + Send>;
+pub struct BoxedAlt(Option<BoxedAltFn>);
+
+type BoxedAltFn = Box<dyn FnOnce(&mut MatcherBuilder, AltSlot) -> PatValueRef + Send>;
+
+impl BoxedAlt {
+    fn call(mut self, b: &mut MatcherBuilder, slot: AltSlot) -> PatValueRef {
+        let f = self.0.take().expect("a BoxedAlt runs once");
+        f(b, slot)
+    }
+}
+
+impl Drop for BoxedAlt {
+    fn drop(&mut self) {
+        if let Some(f) = self.0.take() {
+            crate::node_builders::defer_drop(f);
+        }
+    }
+}
 
 /// Match-only: a rewrite RHS must build one concrete shape.
 pub struct OneOf {
@@ -63,25 +80,19 @@ impl OneOf {
 
 #[doc(hidden)]
 pub fn boxed_alt<P: MatchPat + 'static>(p: P) -> BoxedAlt {
-    Box::new(move |b, slot| match slot {
+    BoxedAlt(Some(Box::new(move |b, slot| match slot {
         AltSlot::Value => p.compile(b),
         AltSlot::Memory => p.compile_mem(b),
-    })
+    })))
 }
 
 impl OneOf {
     fn lower(self, b: &mut MatcherBuilder, slot: AltSlot) -> PatValueRef {
-        // An arm lowers inside this frame, so nesting is bounded here rather
-        // than by the node cap at seal.
         if !b.enter_nesting() {
             return b.leaf(crate::matcher::KindSpec::Any);
         }
         let first_match = self.first_match;
-        let refs: Vec<PatValueRef> = self
-            .alts
-            .into_iter()
-            .map(|compile| compile(b, slot))
-            .collect();
+        let refs: Vec<PatValueRef> = self.alts.into_iter().map(|alt| alt.call(b, slot)).collect();
         b.leave_nesting();
         if first_match {
             b.first_of(&refs)

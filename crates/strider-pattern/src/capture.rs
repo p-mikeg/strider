@@ -42,7 +42,8 @@ impl Capture {
         }
     }
 
-    /// An opaque hash key; the allocation order carries no meaning.
+    /// Counts up from 0, leaving the top of the range for the sentinel keys
+    /// `find_joined`'s dedup mints for a capture-free pattern.
     pub fn id(self) -> u32 {
         self.id
     }
