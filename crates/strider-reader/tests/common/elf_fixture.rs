@@ -208,7 +208,7 @@ pub(crate) fn build_rel_elf_placed(opts: RelOpts, place: RelPlacement) -> RelFix
         w.reserve_shstrtab();
         w.reserve_section_headers();
 
-        // ET_DYN, the shape `apply_elf_relocations` targets.
+        // ET_DYN, the shape the relocation walk targets.
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
@@ -841,6 +841,79 @@ pub(crate) fn build_equal_vaddr_loads_elf(filesz: &[u64]) -> Vec<u8> {
     buf
 }
 
+/// An x86-64 ET_EXEC with one PT_LOAD per `(p_flags, len, fill)` entry, all at
+/// [`EQUAL_VADDR_LOAD_BASE`] and each over its own file extent of `len` bytes
+/// of `fill`.
+///
+/// A linker never overlaps two PT_LOADs, but nothing in the format forbids it,
+/// and a writable one over a read-only one is the shape that asks whether the
+/// `ReadOnlyMemory` view knows about a mapping it did not load.
+pub(crate) fn build_overlapping_loads_elf(loads: &[(u32, u64, u8)]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    {
+        let mut w = Writer::new(Endianness::Little, true, &mut buf);
+        let _null = w.reserve_null_section_index();
+        let text_name = w.add_section_name(b".text");
+        let _text_idx = w.reserve_section_index();
+        let _shstr = w.reserve_shstrtab_section_index();
+
+        w.reserve_file_header();
+        w.reserve_program_headers(loads.len() as u32);
+        let offsets: Vec<u64> = loads
+            .iter()
+            .map(|&(_, len, _)| w.reserve(len as usize, 1) as u64)
+            .collect();
+        w.reserve_shstrtab();
+        w.reserve_section_headers();
+
+        w.write_file_header(&FileHeader {
+            os_abi: elf::ELFOSABI_SYSV,
+            abi_version: 0,
+            e_type: elf::ET_EXEC,
+            e_machine: elf::EM_X86_64,
+            e_entry: EQUAL_VADDR_LOAD_BASE,
+            e_flags: 0,
+        })
+        .expect("write file header");
+
+        w.write_align_program_headers();
+        for (&(p_flags, len, _), &p_offset) in loads.iter().zip(&offsets) {
+            w.write_program_header(&ProgramHeader {
+                p_type: elf::PT_LOAD,
+                p_flags,
+                p_offset,
+                p_vaddr: EQUAL_VADDR_LOAD_BASE,
+                p_paddr: EQUAL_VADDR_LOAD_BASE,
+                p_filesz: len,
+                p_memsz: len,
+                p_align: 1,
+            });
+        }
+
+        for &(_, len, fill) in loads {
+            w.write(&vec![fill; len as usize]);
+        }
+        w.write_shstrtab();
+
+        w.write_null_section_header();
+        let (_, len, _) = loads[0];
+        w.write_section_header(&SectionHeader {
+            name: Some(text_name),
+            sh_type: elf::SHT_PROGBITS,
+            sh_flags: u64::from(elf::SHF_ALLOC | elf::SHF_EXECINSTR),
+            sh_addr: EQUAL_VADDR_LOAD_BASE,
+            sh_offset: offsets[0],
+            sh_size: len,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        });
+        w.write_shstrtab_section_header();
+    }
+    buf
+}
+
 /// `simple_text_elf` with caller-chosen endianness, for round-trip tests.
 struct OneSectionOpts<'a> {
     addr: u64,
@@ -1230,13 +1303,20 @@ fn build_sections_elf(
     buf
 }
 
-/// An x86-64 ET_REL whose `count` allocatable section headers all name ONE
-/// `blob_len`-byte file range, at addresses `blob_len` apart.
+/// An x86-64 ET_REL whose `count` allocatable section headers each name a
+/// `blob_len`-byte file range over one blob, at addresses `blob_len` apart.
+/// Header `i` starts `i * stagger` bytes into the blob, so `stagger` 0 is the
+/// identical range `count` times and 1 is `count` windows sharing all but a
+/// byte.
 ///
 /// Section dedup is on the loaded address, so every header is its own region
 /// and the copying loader materialises `blob_len` bytes per header while the
-/// file grows by none.
-pub(crate) fn build_shared_file_range_elf(count: usize, blob_len: usize) -> Vec<u8> {
+/// file grows by `stagger` each.
+pub(crate) fn build_shared_file_range_elf(
+    count: usize,
+    blob_len: usize,
+    stagger: usize,
+) -> Vec<u8> {
     let mut buf = Vec::new();
     {
         let mut w = Writer::new(Endianness::Little, true, &mut buf);
@@ -1251,7 +1331,8 @@ pub(crate) fn build_shared_file_range_elf(count: usize, blob_len: usize) -> Vec<
         let _shstrtab = w.reserve_shstrtab_section_index();
 
         w.reserve_file_header();
-        let blob_off = w.reserve(blob_len, 1) as u64;
+        let blob = blob_len + count * stagger;
+        let blob_off = w.reserve(blob, 1) as u64;
         w.reserve_shstrtab();
         w.reserve_section_headers();
 
@@ -1264,7 +1345,7 @@ pub(crate) fn build_shared_file_range_elf(count: usize, blob_len: usize) -> Vec<
             e_flags: 0,
         })
         .expect("write file header");
-        w.write(&vec![0x90u8; blob_len]);
+        w.write(&vec![0x90u8; blob]);
         w.write_shstrtab();
 
         w.write_null_section_header();
@@ -1274,7 +1355,7 @@ pub(crate) fn build_shared_file_range_elf(count: usize, blob_len: usize) -> Vec<
                 sh_type: elf::SHT_PROGBITS,
                 sh_flags: u64::from(elf::SHF_ALLOC | elf::SHF_EXECINSTR),
                 sh_addr: (i as u64 + 1) * blob_len as u64,
-                sh_offset: blob_off,
+                sh_offset: blob_off + (i * stagger) as u64,
                 sh_size: blob_len as u64,
                 sh_link: 0,
                 sh_info: 0,

@@ -3,8 +3,9 @@
 //! `object`'s `dynamic_symbol_table` is the first `SHT_DYNSYM` SECTION in the
 //! file, populated whatever the `e_type`. Preferring it meant an `ET_REL`
 //! carrying any such section resolved every relocation against the wrong
-//! table, patching in an unrelated symbol's `st_value` -- silently, with the
-//! attacker choosing both the value and the section it is rebased against.
+//! table, patching in an unrelated symbol's `st_value`. The patch is silent,
+//! and the attacker chooses both the value and the section it is rebased
+//! against.
 //!
 //! The two objects below are byte-identical but for one section header's
 //! `sh_type` (`SHT_STRTAB` vs `SHT_DYNSYM`). Both hold `.text` =

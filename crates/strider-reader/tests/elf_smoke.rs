@@ -25,15 +25,15 @@ fn assert_smoke(arch: &str) {
         path.display(),
     );
 
-    let obj = strider_reader::load_elf(&path).unwrap();
-    let obj = obj.checked_file().expect("the mapped file is unchanged");
+    let owned = strider_reader::load_elf(&path).unwrap();
+    let obj = owned.checked_file().expect("the mapped file is unchanged");
     assert_eq!(
         obj.endianness(),
         object::Endianness::Little,
         "{arch}: expected little-endian binary",
     );
 
-    let r = ElfFileMemReader::from_path(&path).unwrap();
+    let r = ElfFileMemReader::from_elf(&owned).unwrap();
 
     // Some toolchains (x86 in this fixture set) emit `e_entry == 0` when no
     // entry symbol reached the linker. Fall back to the first executable

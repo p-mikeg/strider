@@ -35,6 +35,9 @@ impl std::fmt::Debug for OwnedElf {
     }
 }
 
+/// First line of a Git LFS pointer file.
+const LFS_POINTER_MAGIC: &[u8] = b"version https://git-lfs.github.com/spec/v1";
+
 impl OwnedElf {
     /// # Errors
     ///
@@ -55,6 +58,13 @@ impl OwnedElf {
     }
 
     fn validated(backing: FileBytes) -> Result<Self> {
+        // A clone without git-lfs leaves pointer text where the image should
+        // be, and "failed to parse ELF" sends the reader hunting a corrupt
+        // binary instead of running `git lfs pull`.
+        anyhow::ensure!(
+            !backing.as_slice().starts_with(LFS_POINTER_MAGIC),
+            "a Git LFS pointer, not an ELF: run `git lfs pull`"
+        );
         object::File::parse(backing.as_slice()).context("failed to parse ELF")?;
         Ok(Self { backing })
     }
@@ -79,7 +89,7 @@ impl OwnedElf {
 
     /// One `stat` of the mapped file, comparing it against what it was when
     /// [`open`](Self::open) mapped it. Call it at the top of an operation on a
-    /// long-lived handle -- a REPL session that outlives a rebuild -- to get an
+    /// long-lived handle (a REPL session that outlives a rebuild) to get an
     /// `Err` rather than bytes from a program that is no longer there.
     ///
     /// Always `Ok` for bytes that were read or handed in rather than mapped,
@@ -89,9 +99,10 @@ impl OwnedElf {
     ///
     /// When the file no longer stats, or no longer looks like the file that
     /// was mapped: a different size or a different modification time, the only
-    /// two fields the recorded identity holds. A rewrite in place that preserves both,
-    /// and a different file moved onto the path, both pass -- the inode is
-    /// pinned by the held fd, so only the contents can move under it.
+    /// two fields the recorded identity holds. A rewrite in place that
+    /// preserves both passes, and so does a different file moved onto the
+    /// path: the held fd pins the inode, so only the contents can move under
+    /// it.
     pub fn check_unchanged(&self) -> Result<()> {
         self.backing.check_unchanged()
     }

@@ -4,7 +4,7 @@
 //! downward, stopping once no earlier region could still reach the address.
 //! That bound is a PREFIX MAXIMUM, so one region spanning the image holds it
 //! above every interior address and the walk never stopped early. Section
-//! count is attacker-chosen -- `SHN_XINDEX` lifts the 65535 header cap -- so a
+//! count is attacker-chosen (`SHN_XINDEX` lifts the 65535 header cap), so a
 //! crafted image made every read linear in it.
 //!
 //! Both halves of the answer now come from the max-end tree: the region fully
@@ -41,7 +41,7 @@ fn micros_per_read(table: &MemRegionsLookupTable, addr: u64) -> f64 {
 #[test]
 fn a_read_under_many_nested_regions_does_not_scale_with_their_count() {
     // Near the TOP of each table, so the number of regions below the address
-    // -- what the old walk visited -- scales with the region count.
+    // (what the old walk visited) scales with the region count.
     let small = nested(1_000);
     let large = nested(64_000);
     // Far enough from the top that the outer region still fully covers the
