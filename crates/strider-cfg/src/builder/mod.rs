@@ -70,7 +70,10 @@ pub(super) struct WorkItem {
 pub struct Builder<'a, R: rsleigh::MemReader> {
     pub(super) sleigh: &'a mut rsleigh::Sleigh<R>,
     pub(super) start_addr: MachineInsnAddr,
-    pub(super) options: CfgOptions,
+    pub(super) options: &'a CfgOptions,
+    /// [`CfgOptions::fn_max_size`] with `Some(0)` read as unbounded: a
+    /// zero-length bound would pin every decode at `start_addr`.
+    pub(super) fn_max_size: Option<u64>,
     pub(super) arch: strider_target::SleighArch,
     pub(super) region_graph: RegionGraph,
     /// One region per start address.
@@ -96,8 +99,7 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// CC overrides for CALL TARGETS, keyed by target machine address.  Only
     /// `no_return` is read here.
     pub(super) per_address_ccs: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
-    /// Snapshotted once at construction and indexed by `user_op_id`.  Empty
-    /// when the Sleigh reports no user ops or the snapshot fails.
+    /// Snapshotted once per [`Self::build`] and indexed by `user_op_id`.
     pub(super) user_op_names: Vec<String>,
     /// The flowing context vars, borrowed from the lift engine (discovered once
     /// per sla); empty by default.
@@ -149,21 +151,13 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         arch: &strider_target::SleighArch,
         sleigh: &'a mut rsleigh::Sleigh<R>,
         start_addr: u64,
-        options: &CfgOptions,
+        options: &'a CfgOptions,
     ) -> Self {
-        // `Some(0)` is unbounded: a zero-length bound would pin every decode
-        // at `start_addr`.
-        let mut options = options.clone();
-        if options.fn_max_size == Some(0) {
-            options.fn_max_size = None;
-        }
-        // A snapshot failure degrades to "no names", leaving CallOthers
-        // unclassified rather than aborting CFG construction.
-        let user_op_names = sleigh.user_op_names().unwrap_or_default();
         Self {
             sleigh,
             start_addr: start_addr.into(),
             options,
+            fn_max_size: options.fn_max_size.filter(|&size| size != 0),
             arch: *arch,
             region_graph: RegionGraph::new(),
             start_addr_to_region_id: BTreeMap::new(),
@@ -182,7 +176,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             link_register_seated: Vec::new(),
             tail_call_seated: Vec::new(),
             per_address_ccs: rustc_hash::FxHashMap::default(),
-            user_op_names,
+            user_op_names: Vec::new(),
             // A single-shot build on a fresh engine has no cross-function
             // context to leak; a reused engine supplies the vars via
             // `with_flow_context`.
@@ -709,6 +703,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     }
 
     pub fn build(mut self) -> Result<Cfg> {
+        // An empty table classifies every `CallOther` as returning, so a
+        // no-return one falls through and the region decodes on into whatever
+        // follows it.
+        self.user_op_names = self.sleigh.user_op_names()?;
         let entry = self.start_pcode_addr();
         self.enqueue(None, entry, entry.machine_addr.addr);
         while let Some(WorkItem {
@@ -1451,9 +1449,9 @@ mod tests {
         let per_snapshot = CONTEXT_READS.with(std::cell::Cell::get);
         assert!(per_snapshot > 1, "premise: the ARM sla flows several vars");
 
-        let mut b =
-            super::Builder::for_arch(&arch, &mut sleigh, 0x1000, &crate::CfgOptions::default())
-                .with_flow_context(&flow, crate::builder::flow::FlowContext::default());
+        let opts = crate::CfgOptions::default();
+        let mut b = super::Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
+            .with_flow_context(&flow, crate::builder::flow::FlowContext::default());
         CONTEXT_READS.with(|n| n.set(0));
         b.enqueue(None, addr(0x1000, 0), 0x1000);
         assert_eq!(

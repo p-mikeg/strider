@@ -57,13 +57,15 @@ pub(crate) fn make_builder<'a>(
     start_addr: u64,
     sleigh: &'a mut rsleigh::Sleigh<TestReader>,
 ) -> Builder<'a, TestReader> {
-    make_builder_opts(start_addr, sleigh, &CfgOptions::default())
+    static DEFAULT_OPTIONS: std::sync::LazyLock<CfgOptions> =
+        std::sync::LazyLock::new(CfgOptions::default);
+    make_builder_opts(start_addr, sleigh, &DEFAULT_OPTIONS)
 }
 
 pub(crate) fn make_builder_opts<'a>(
     start_addr: u64,
     sleigh: &'a mut rsleigh::Sleigh<TestReader>,
-    options: &CfgOptions,
+    options: &'a CfgOptions,
 ) -> Builder<'a, TestReader> {
     let arch = SleighArch::x86_64();
     Builder::for_arch(&arch, sleigh, start_addr, options)

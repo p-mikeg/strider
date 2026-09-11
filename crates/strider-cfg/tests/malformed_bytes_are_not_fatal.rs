@@ -1,5 +1,6 @@
-//! Hostile or malformed bytes must come back as an error. These inputs each
-//! used to take the process down or panic out of a public entry point.
+//! Hostile or malformed bytes must leave the process standing, answering with
+//! a `Cfg` or a clean error. These inputs each used to take the process down
+//! or panic out of a public entry point.
 
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
@@ -12,12 +13,22 @@ fn hex(s: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-/// Builds and discards the outcome: `Ok` and `Err` are both acceptable, a
-/// crash or a panic is not.
-fn build_is_survivable(arch: &SleighArch, bytes: Vec<u8>, start: u64, opts: &CfgOptions) {
+/// Builds and reports whether it succeeded: returning at all is half of every
+/// assertion here, a crash or a panic being what these inputs used to produce.
+fn build_succeeds(arch: &SleighArch, bytes: Vec<u8>, start: u64, opts: &CfgOptions) -> bool {
     let reader = BufMemReader::new(bytes, start);
     let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-    let _ = Builder::for_arch(arch, &mut sleigh, start, opts).build();
+    Builder::for_arch(arch, &mut sleigh, start, opts)
+        .build()
+        .is_ok()
+}
+
+/// Bytes Sleigh rejects, so the build must answer with a clean error.
+fn build_is_an_error(arch: &SleighArch, bytes: Vec<u8>, start: u64, opts: &CfgOptions) {
+    assert!(
+        !build_succeeds(arch, bytes, start, opts),
+        "bytes that do not decode must not build a Cfg"
+    );
 }
 
 #[test]
@@ -32,10 +43,10 @@ fn a_malformed_instruction_in_a_mips_delay_slot_is_an_error() {
     };
     let be = vec![0x14, 0x00, 0x00, 0x00, 0x46, 0xc9, 0x00, 0xac];
     let le = vec![0x00, 0x00, 0x00, 0x14, 0xac, 0x00, 0xc9, 0x46];
-    build_is_survivable(&SleighArch::mipsbe32(), be.clone(), 0, &opts);
-    build_is_survivable(&SleighArch::mipsbe64(), be, 0, &opts);
-    build_is_survivable(&SleighArch::mipsle32(), le.clone(), 0, &opts);
-    build_is_survivable(&SleighArch::mipsle64(), le, 0, &opts);
+    build_is_an_error(&SleighArch::mipsbe32(), be.clone(), 0, &opts);
+    build_is_an_error(&SleighArch::mipsbe64(), be, 0, &opts);
+    build_is_an_error(&SleighArch::mipsle32(), le.clone(), 0, &opts);
+    build_is_an_error(&SleighArch::mipsle64(), le, 0, &opts);
 }
 
 #[test]
@@ -47,13 +58,13 @@ fn an_unparsed_aarch64_operand_is_an_error() {
         fn_max_size: Some(0x40),
         ..CfgOptions::default()
     };
-    build_is_survivable(
+    build_is_an_error(
         &SleighArch::aarch64(),
         hex(b"5ddc2439c5f99a4f3a6f11f5abfc6d71"),
         0,
         &opts,
     );
-    build_is_survivable(
+    build_is_an_error(
         &SleighArch::aarch64be(),
         hex(b"c3f8804f206502ccdccff836a472b5d5"),
         0,
@@ -118,14 +129,14 @@ fn a_by_element_dot_product_reads_the_register_its_encoding_names() {
 }
 
 #[test]
-fn a_region_at_the_top_of_the_address_space_is_an_error() {
+fn a_region_at_the_top_of_the_address_space_does_not_panic() {
     // A stub region seated at an address whose span overflows `u64` gave
     // `BTreeMap::range` two equal excluded bounds, which panics.
     let opts = CfgOptions {
         fn_max_size: Some(0x10),
         ..CfgOptions::default()
     };
-    build_is_survivable(
+    let _ = build_succeeds(
         &SleighArch::x86_64(),
         vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x76, 0x00, 0x76, 0xf6],
         0,
@@ -134,12 +145,12 @@ fn a_region_at_the_top_of_the_address_space_is_an_error() {
 }
 
 #[test]
-fn a_region_based_at_the_top_of_the_address_space_is_an_error() {
+fn a_region_based_at_the_top_of_the_address_space_does_not_panic() {
     // The reader's end offset is `base + len`: seating the buffer so that sum
     // passes 2^64 overflowed it inside the read callback Sleigh calls across
     // the FFI boundary, where a panic cannot unwind and aborts the process.
     for start in [u64::MAX, u64::MAX - 1, u64::MAX - 4] {
-        build_is_survivable(
+        let _ = build_succeeds(
             &SleighArch::x86_64(),
             vec![0xc3, 0x48, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00],
             start,
