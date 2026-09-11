@@ -3,8 +3,8 @@
 //! `FRINTP/M/A/N/Z/X/I` round a float to an integral VALUE, keeping the float
 //! type. Sleigh's `trunc()` is p-code `FLOAT_TRUNC`, which converts a float to
 //! an INTEGER, and one constructor per operand shape carried it for all seven
-//! rounding modes, so `ceil(2.5)` answered `2` rather than `3.0` -- the wrong
-//! domain as well as the wrong direction. Upstream marks these `--status fail
+//! rounding modes, so `ceil(2.5)` answered `2` rather than `3.0`. That is the
+//! wrong domain as well as the wrong direction. Upstream marks these `--status fail
 //! --comment "nofpround"`.
 //!
 //! p-code has no primitive for four of the seven modes (ties-to-even, toward
