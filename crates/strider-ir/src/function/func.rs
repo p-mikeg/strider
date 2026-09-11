@@ -145,7 +145,9 @@ impl Function {
         }
     }
 
-    /// Panics on an id not minted by this function's interner.
+    /// Panics on an OUT-OF-RANGE id. An id minted by another function's
+    /// interner that happens to be in range returns this one's value for that
+    /// index instead, which `validate`'s `DanglingConstId` also cannot see.
     pub(crate) fn const_value(
         &self,
         id: crate::node::const_value::ConstId,
@@ -349,17 +351,21 @@ impl Function {
     pub fn compact(&mut self) -> crate::Result<NodeIdRemap> {
         let entry = self.entry;
         let remap = self.retain_reachable();
-        let new_entry = remap.node_old_to_new(entry).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Function::compact: entry {entry:?} missing from remap (invariant violation)"
-            )
-        })?;
-        self.entry = new_entry;
+        // Settled before the entry check, not after: `retain_reachable` leaves
+        // the cache keyed on PRE-compaction ids, and a `?` out of here would
+        // hand a caller a `Function` whose next deduping create probes the new
+        // arena with an old `NodeId`.
+        let new_entry = remap.node_old_to_new(entry);
         self.side_tables.remap(&remap);
         // The dedup cache keys on `NodeKind`, which carries the `ConstId`, so
         // the const rewrite MUST precede the cache rebuild.
         self.gc_consts();
         self.graph.rebuild_cache();
+        self.entry = new_entry.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Function::compact: entry {entry:?} missing from remap (invariant violation)"
+            )
+        })?;
         Ok(remap)
     }
 
@@ -567,6 +573,54 @@ mod compact_tests {
         let outs: Vec<_> = f.node_outputs(entry_id).to_vec();
         assert_eq!(outs.len(), 1);
         assert!(f.value_kind(outs[0]).is_control());
+    }
+
+    /// `retain_reachable` leaves the dedup cache keyed on PRE-compaction ids,
+    /// so `compact` has to rebuild it on every exit.  An `IntBinaryOp` shows it
+    /// where a bare const cannot: the cache key hashes the input `ValueId`s,
+    /// which compaction renumbers, so a stale table misses the survivor and the
+    /// next create allocates a structural duplicate of it.
+    #[test]
+    fn compact_rekeys_the_dedup_cache_to_the_new_ids() {
+        use crate::node::ValueType;
+
+        let mut f = test_function();
+        let entry = f.entry();
+        let mem_node = test_initial_memory(&f);
+        let mem = f.node_outputs(mem_node)[0];
+        // Allocated FIRST, so dropping them shifts every surviving `ValueId`.
+        for v in 0..4u128 {
+            let _zombie = int_const_node(&mut f, 0xdead_0000 + v, ValueType::I64);
+        }
+        let a_node = int_const_node(&mut f, 7, ValueType::I64);
+        let b_node = int_const_node(&mut f, 9, ValueType::I64);
+        let a = f.node_outputs(a_node)[0];
+        let b = f.node_outputs(b_node)[0];
+        let sum = f.graph_mut().create_node(
+            NodeKind::IntBinaryOp(crate::IntBinaryOp::Add),
+            [a, b],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let sum_value = f.node_outputs(sum)[0];
+        let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+        let _ret = f
+            .graph_mut()
+            .create_node(NodeKind::Return, [entry_ctrl, mem, sum_value], []);
+
+        let remap = f.compact().expect("compact succeeds on a valid function");
+        let sum = remap.node_old_to_new(sum).expect("the sum is reachable");
+        let a = remap.value_old_to_new(a).expect("lhs is reachable");
+        let b = remap.value_old_to_new(b).expect("rhs is reachable");
+
+        let again = f.graph_mut().create_node(
+            NodeKind::IntBinaryOp(crate::IntBinaryOp::Add),
+            [a, b],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        assert_eq!(
+            again, sum,
+            "a deduping create after compact must find the survivor under its NEW ids"
+        );
     }
 
     /// Collecting a wide const held only by a dropped node (interned first, so

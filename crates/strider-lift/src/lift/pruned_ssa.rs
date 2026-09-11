@@ -99,9 +99,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             }
             // A STORE into the REGISTER space writes a register, not memory:
             // the sla addresses one that way when an instruction field picks
-            // it (ARM `vld1.N {dX[i]}`). Mirrors `handle_store` on both of its
-            // paths -- the named register when the address resolves, and the
-            // whole register file when it does not -- so a def is recorded for
+            // it (ARM `vld1.N {dX[i]}`). Mirrors `handle_store` on both of
+            // its paths, the named register when the address resolves and the
+            // whole register file when it does not, so a def is recorded for
             // exactly what is written.
             Opcode::Store => {
                 let declared = self.lifter.declared_reg_vns();

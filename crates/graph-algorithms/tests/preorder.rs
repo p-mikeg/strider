@@ -9,7 +9,7 @@ mod common;
 
 use common::Graph;
 use expect_test::expect;
-use graph_algorithms::walk::entity_preorder;
+use graph_algorithms::walk::PreOrder;
 use itertools::Itertools;
 
 macro_rules! test_preorder {
@@ -23,7 +23,7 @@ macro_rules! test_preorder {
 }
 
 fn collect_preorder(g: &Graph) -> String {
-    let preorder = entity_preorder(g, [g.entry()]);
+    let preorder = PreOrder::new(g, [g.entry()]);
     preorder.map(|node| g.name(node)).format(" ").to_string()
 }
 
@@ -71,13 +71,13 @@ test_preorder! {
 #[test]
 fn empty_roots_yields_nothing() {
     let g = common::graph("a -> b");
-    assert!(entity_preorder(&g, core::iter::empty()).next().is_none());
+    assert!(PreOrder::new(&g, core::iter::empty()).next().is_none());
 }
 
 #[test]
 fn self_loop_visits_node_once() {
     let g = common::graph("a -> a");
-    let order = entity_preorder(&g, [g.entry()])
+    let order = PreOrder::new(&g, [g.entry()])
         .map(|n| g.name(n).to_owned())
         .collect::<Vec<_>>();
     assert_eq!(order, vec!["a".to_owned()]);
@@ -91,7 +91,7 @@ fn multi_root_disjoint_subgraphs_visits_both() {
     );
     let a = g.node("a");
     let x = g.node("x");
-    let order = entity_preorder(&g, [a, x])
+    let order = PreOrder::new(&g, [a, x])
         .map(|n| g.name(n).to_owned())
         .collect::<Vec<_>>();
     assert_eq!(order.len(), 4);
@@ -112,7 +112,7 @@ fn repeated_successor_is_visited_once() {
         "a -> b, b
          b -> c",
     );
-    let order = entity_preorder(&g, [g.entry()])
+    let order = PreOrder::new(&g, [g.entry()])
         .map(|n| g.name(n).to_owned())
         .collect::<Vec<_>>();
     assert_eq!(order.len(), 3);
@@ -130,7 +130,7 @@ fn multi_root_visited_in_reverse_iteration_order() {
     );
     let a = g.node("a");
     let x = g.node("x");
-    let order: Vec<_> = entity_preorder(&g, [a, x])
+    let order: Vec<_> = PreOrder::new(&g, [a, x])
         .map(|n| g.name(n).to_owned())
         .collect();
     let pos_a = order.iter().position(|s| s == "a").unwrap();

@@ -6,6 +6,7 @@ license.workspace = true
 description = "Varnode container geometry shared by strider's IR, lifter, optimizer and matcher."
 repository.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 
 [dependencies]
 rsleigh.workspace = true
