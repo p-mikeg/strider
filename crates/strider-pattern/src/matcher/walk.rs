@@ -197,7 +197,7 @@ fn root_requires_value_output(pat: &Pattern, root: PatNodeId) -> bool {
 /// [`PatValue::match_slot`], which [`output_ok`] then enforces. With several
 /// vertices (`if_else`, `call`, `region`, `entry`, `load`, `phi`, ...) the
 /// slots pick between them.
-fn root_output_vertex_for(
+pub(crate) fn root_output_vertex_for(
     pat: &Pattern,
     root: PatNodeId,
     matcher: &Matcher,
@@ -214,6 +214,39 @@ fn root_output_vertex_for(
     outs.iter()
         .copied()
         .find(|&out_vertex| pat.graph.value_kind_ref(out_vertex).slot as u32 == ir_slot)
+}
+
+/// Whether anchoring `pat`'s root at `out_id` re-runs the attempt already made
+/// at `anchored`.
+///
+/// A root declaring a vertex per output imposes one constraint set whichever of
+/// them anchors: the anchoring vertex is checked against its own output and
+/// carries its captures there, and [`bind_sibling_outputs`] checks every other
+/// at its own slot, so the two attempts differ only in the order they bind.
+/// A vertex shared between the outputs, an `any_slot` one (pinned as an anchor,
+/// enumerated as a sibling), and a differing anchor value type (which a
+/// post-match guard reads) each tell them apart.
+pub(crate) fn anchor_repeats(
+    matcher: &Matcher,
+    pat: &Pattern,
+    root: PatNodeId,
+    anchored: ValueId,
+    out_id: ValueId,
+) -> bool {
+    let (Some(prev), Some(cur)) = (
+        root_output_vertex_for(pat, root, matcher, anchored),
+        root_output_vertex_for(pat, root, matcher, out_id),
+    ) else {
+        return false;
+    };
+    if prev == cur
+        || pat.graph.value_kind_ref(prev).any_slot
+        || pat.graph.value_kind_ref(cur).any_slot
+    {
+        return false;
+    }
+    let f = matcher.function();
+    f.value_kind(anchored).as_value() == f.value_kind(out_id).as_value()
 }
 
 /// Recursive worker, continuation-passing so a guard failure anywhere above can
