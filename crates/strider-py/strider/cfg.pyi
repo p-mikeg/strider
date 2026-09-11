@@ -110,6 +110,19 @@ class Cfg:
         longer carries the edge does not undo what it cost.
         """
         ...
+    def unmapped_branch_targets(self) -> list[int]:
+        """Direct-branch targets no byte of this image backs.
+
+        Each is seated as an empty tail-call stub, so the branch keeps an edge
+        and every region that did decode survives; nothing past the stub is
+        known. A buffer whose window the branch leaves, a partially-mapped
+        image, an unrelocated `jmp`, a ROM built from a symbol subset. A direct
+        edge produces these, so they are reported here rather than in
+        `unresolved`.
+
+        Accumulated over every round `analyze` ran.
+        """
+        ...
     def unverified_seeded_sites(self) -> list[int]:
         """Dispatch addresses nothing verified: a site seated with exactly the
         `known_targets` you supplied and nothing the classifier derived, plus
@@ -125,12 +138,12 @@ class Cfg:
         """
         ...
     def is_complete(self) -> bool:
-        """Whether all four incompleteness channels are empty: the
+        """Whether all five incompleteness channels are empty: the
         `unresolved` of the `AnalyzeResult` this CFG came from,
-        `unverified_seeded_sites`, `isa_mode_conflicts` and
-        `interior_branch_targets`.
+        `unverified_seeded_sites`, `isa_mode_conflicts`,
+        `interior_branch_targets` and `unmapped_branch_targets`.
 
-        The answer to "may this be incomplete?", which none of the four gives
+        The answer to "may this be incomplete?", which none of the five gives
         alone. `False` is not always a loss: `unverified_seeded_sites` holds
         answers that are complete but unverified, so a site consumed as a
         return (an ARM `pop {pc}` epilogue) clears it. Read whichever channel

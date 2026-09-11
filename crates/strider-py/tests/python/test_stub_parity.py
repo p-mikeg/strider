@@ -684,6 +684,10 @@ def test_dunder_all_is_bound_and_declared(mod_name):
     if names is None:
         return
     real, aliases = _declared(_stub_ast(MODULES[mod_name]))
+    assert "__all__" in aliases or "__all__" in real, (
+        f"{mod_name} binds __all__ at runtime but {MODULES[mod_name]} does not "
+        f"declare it, so a checker refuses names it re-exports"
+    )
     unbound = [n for n in names if not hasattr(module, n)]
     assert not unbound, f"{mod_name}.__all__ names unbound {unbound}"
     undeclared = [n for n in names if n not in real and n not in aliases]

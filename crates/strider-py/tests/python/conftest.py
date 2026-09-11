@@ -23,6 +23,9 @@ def fixture_path(arch: str, case: str, ext: str = ".elf") -> pathlib.Path:
     p = FIXTURES_DIR / arch / f"{case}{ext}"
     if not p.exists():
         pytest.skip(f"fixture missing: {p} (run `make` in fixtures/)")
+    with p.open("rb") as f:
+        if f.read(42) == b"version https://git-lfs.github.com/spec/v1":
+            pytest.fail(f"{p} is a Git LFS pointer; run `git lfs pull`")
     return p
 
 

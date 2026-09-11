@@ -19,6 +19,8 @@ from .pattern.constraints import ConstraintLike
 from .sleigh import Vn
 from .template import Template as _Template
 
+__all__: list[str]
+
 #: What `rewrite` accepts as a right-hand side: a `Template`, a build-valid
 #: `Pat`, a `Capture`, or a capture name.
 _ReplaceLike = Union[_Template, _Pat, Capture, str]

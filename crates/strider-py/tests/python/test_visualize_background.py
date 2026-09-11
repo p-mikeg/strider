@@ -95,7 +95,7 @@ def test_rendering_works_while_the_caller_analyses():
 
     Rendering must not borrow the handle `analyze` holds. It holds it mutably
     with the GIL RELEASED, so anything on the render path that reaches for it
-    fails for the entire length of an analysis -- which is exactly when someone
+    fails for the entire length of an analysis, which is exactly when someone
     is watching the page. Hammering with `to_dot` from the main thread does not
     catch this, because a shared borrow is fine; only a concurrent `analyze`
     does."""
@@ -144,8 +144,8 @@ def test_a_connection_that_sends_nothing_does_not_wedge_the_server():
 
     The serve loop is single-threaded, so without a read timeout that one
     connection blocks every later request forever, `shutdown` cannot stop a
-    loop parked in `finish_request`, and the interpreter's own join -- which
-    has no timeout -- inherits the wait. The timeout must also stay under
+    loop parked in `finish_request`, and the interpreter's own join, which
+    has no timeout, inherits the wait. The timeout must also stay under
     `_SHUTDOWN_START_SECONDS`: `serve_forever` sets `started` only after the
     first request completes, so a quiet FIRST connection keeps it clear, and
     `shutdown` giving up on that event leaves the server running."""

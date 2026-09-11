@@ -283,6 +283,10 @@ pub(crate) fn machine_addrs(addrs: &[strider_cfg::PcodeInsnAddr]) -> Vec<u64> {
 /// anything a `.when()` predicate raised) is surfaced here.  Raising it
 /// directly would have been destroyed by the next callback.
 pub(crate) fn check_pending_control_flow() -> PyResult<()> {
+    // Same boundary drops a swallowed callback cause: any `StriderError` that
+    // wanted it was synthesized before this runs, and a survivor would chain
+    // itself onto an unrelated later error and pin its traceback.
+    crate::errors::clear_callback_cause();
     if let Some(err) = crate::pattern::take_pending_query_error() {
         return Err(err);
     }
@@ -334,10 +338,11 @@ fn analyze_result_type(py: Python<'_>) -> PyResult<PyObject> {
                  `unresolved` holds the machine addresses of indirect branches \
                  that could not be resolved, and a non-empty list is not an \
                  error. Empty means fully resolved, NOT that the answer is \
-                 complete: it is one of four incompleteness channels, the \
+                 complete: it is one of five incompleteness channels, the \
                  others being cfg.unverified_seeded_sites(), \
-                 cfg.isa_mode_conflicts() and cfg.interior_branch_targets(). \
-                 cfg.is_complete() tests all four.",
+                 cfg.isa_mode_conflicts(), cfg.interior_branch_targets() and \
+                 cfg.unmapped_branch_targets(). cfg.is_complete() tests all \
+                 five.",
             )?;
             PyResult::Ok(nt.unbind())
         })
@@ -697,7 +702,7 @@ impl PyLifter {
     /// failure.
     ///
     /// An empty `unresolved` is not a complete answer: see `AnalyzeResult`
-    /// for the four channels, and `Cfg.is_complete` to test them all.
+    /// for the five channels, and `Cfg.is_complete` to test them all.
     ///
     /// Runs the fixed-point loop with the GIL released, so other Python
     /// threads keep running. One consequence: a DAEMON thread sitting inside
@@ -752,6 +757,7 @@ impl PyLifter {
         let (arch_name, cc_built, per_address_built) = {
             let lifter = try_borrow_lifter(&slf, py)?;
             crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
+            crate::reader::check_mem_unchanged(py, &lifter.rom_obj)?;
             let regs = lifter.inner.get()?.sleigh_regs();
             let arch_name = lifter.arch_name;
             let cc_built = build_cc(&cc, regs, arch_name)?;
@@ -807,7 +813,7 @@ impl PyLifter {
         // released.
         check_pending_control_flow()?;
 
-        // From the result, not from `cfg`: three of the four accumulate over
+        // From the result, not from `cfg`: four of the five accumulate over
         // the resolver's rounds and `cfg` is only the final one, and
         // `unverified_seeded` is read against the settled seed set, which
         // `cfg` does not carry.
@@ -816,6 +822,7 @@ impl PyLifter {
             unverified_seeded: machine_addrs(&result.unverified_seeded_sites),
             isa_mode_conflicts: machine_addrs(&result.isa_mode_conflicts),
             interior_branch_targets: machine_addrs(&result.interior_branch_targets),
+            unmapped_branch_targets: machine_addrs(&result.unmapped_branch_targets),
         };
         let cfg_obj = Py::new(py, PyCfg::with_reports(py, cfg, slf.clone_ref(py), reports))?;
 
@@ -843,8 +850,9 @@ impl PyLifter {
     /// rom would read a different binary's bytes.  Invalidates outstanding
     /// `Node` / `Match` handles for `function`.
     ///
-    /// Holds the GIL for the whole run, unlike `analyze`: a pipeline may
-    /// contain Python-defined passes, which need it.
+    /// Holds the GIL for the whole run, unlike `analyze`: the run borrows the
+    /// function out of its `RefCell`, and the `RefMut` is `!Send`, so the
+    /// closure cannot satisfy `allow_threads`'s `Ungil` bound.
     #[pyo3(signature = (function, pipeline=None, opts=None))]
     fn optimize(
         slf: &Bound<'_, Self>,
@@ -861,6 +869,10 @@ impl PyLifter {
             )));
         }
         let this = slf.try_borrow().map_err(|_| reentrant_lifter_err())?;
+        // `LoadReadOnly` reads the rom, and a mapping shortened under us takes
+        // a SIGBUS there, which no Python `except` can catch.
+        crate::reader::check_mem_unchanged(py, &this.mem_obj)?;
+        crate::reader::check_mem_unchanged(py, &this.rom_obj)?;
         let opts = match opts {
             Some(o) => o,
             None => Py::new(py, PyLifterOptions::new_default(py)?)?,
@@ -901,7 +913,10 @@ impl PyLifter {
     /// A stand-alone sweep, so it works for an `addr` outside any analysed
     /// CFG.  `addr` must be reachable through the linear instruction stream
     /// from `entry`; raises `StriderError` otherwise.
-    fn pcode_at(&self, entry: u64, addr: u64) -> PyResult<String> {
+    fn pcode_at(&self, py: Python<'_>, entry: u64, addr: u64) -> PyResult<String> {
+        // A mapping shortened under us takes a SIGBUS on the read, which no
+        // Python `except` can catch.
+        crate::reader::check_mem_unchanged(py, &self.mem_obj)?;
         if addr < entry {
             return Err(into_strider_err(anyhow::anyhow!(
                 "pcode_at: addr {addr:#x} is before entry {entry:#x}"

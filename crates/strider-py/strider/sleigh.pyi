@@ -7,6 +7,8 @@ from typing import Optional, Union
 
 from .reader import BufferReader, MemReader
 
+__all__: list[str]
+
 class SleighArch:
     """A target architecture: instruction-set specification plus byte order.
 

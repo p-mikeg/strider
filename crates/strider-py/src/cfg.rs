@@ -40,12 +40,13 @@ pub struct PyCfg {
 /// raised a report and was then rebuilt without the edge that raised it
 /// leaves nothing behind in `inner`.
 ///
-/// `unresolved`, `isa_mode_conflicts` and `interior_branch_targets`
-/// accumulate over the resolver's rounds, so a later round cannot launder an
-/// earlier loss; `unverified_seeded` is derived once from the final CFG.
+/// `unresolved`, `isa_mode_conflicts`, `interior_branch_targets` and
+/// `unmapped_branch_targets` accumulate over the resolver's rounds, so a later
+/// round cannot launder an earlier loss; `unverified_seeded` is derived once
+/// from the final CFG.
 pub(crate) struct CfgReports {
     /// The same list `AnalyzeResult.unresolved` carries, held here so
-    /// `is_complete` can test all four channels from one object. For a
+    /// `is_complete` can test all five channels from one object. For a
     /// `build_cfg` result it is read off the regions instead, since no
     /// resolver ran to report one: every site that build left an
     /// `UnresolvedIndirectBranch`.
@@ -56,6 +57,7 @@ pub(crate) struct CfgReports {
     pub(crate) unverified_seeded: Vec<u64>,
     pub(crate) isa_mode_conflicts: Vec<u64>,
     pub(crate) interior_branch_targets: Vec<u64>,
+    pub(crate) unmapped_branch_targets: Vec<u64>,
 }
 
 /// Region starts in address order, plus the longest span any region covers:
@@ -121,6 +123,7 @@ impl PyCfg {
             unverified_seeded: seeded,
             isa_mode_conflicts: machine_addrs(inner.isa_mode_conflicts()),
             interior_branch_targets: machine_addrs(inner.interior_branch_targets()),
+            unmapped_branch_targets: machine_addrs(inner.unmapped_branch_targets()),
         };
         Self::with_reports(py, inner, lifter, reports)
     }
@@ -339,6 +342,20 @@ impl PyCfg {
         self.reports.interior_branch_targets.clone()
     }
 
+    /// Direct-branch targets no byte of this image backs.
+    ///
+    /// Each is seated as an empty tail-call stub, so the branch keeps an edge
+    /// and every region that did decode survives; nothing past the stub is
+    /// known. A buffer whose window the branch leaves, a partially-mapped
+    /// image, an unrelocated `jmp`, a ROM built from a symbol subset. A direct
+    /// edge produces these, so they are reported here rather than in
+    /// `unresolved`.
+    ///
+    /// Accumulated over every round `analyze` ran.
+    fn unmapped_branch_targets(&self) -> Vec<u64> {
+        self.reports.unmapped_branch_targets.clone()
+    }
+
     /// Dispatch addresses nothing verified: a site seated with exactly the
     /// `known_targets` you supplied and nothing the classifier derived, plus
     /// every site the CFG consumed outright as a return or a tail call,
@@ -353,11 +370,12 @@ impl PyCfg {
         self.reports.unverified_seeded.clone()
     }
 
-    /// Whether all four incompleteness channels are empty: the `unresolved`
+    /// Whether all five incompleteness channels are empty: the `unresolved`
     /// of the `AnalyzeResult` this CFG came from, `unverified_seeded_sites`,
-    /// `isa_mode_conflicts` and `interior_branch_targets`.
+    /// `isa_mode_conflicts`, `interior_branch_targets` and
+    /// `unmapped_branch_targets`.
     ///
-    /// The answer to "may this be incomplete?", which none of the four gives
+    /// The answer to "may this be incomplete?", which none of the five gives
     /// alone. `False` is not always a loss: `unverified_seeded_sites` holds
     /// answers that are complete but unverified, so a site consumed as a
     /// return (an ARM `pop {pc}` epilogue) clears it. Read whichever channel
@@ -372,6 +390,7 @@ impl PyCfg {
             && r.unverified_seeded.is_empty()
             && r.isa_mode_conflicts.is_empty()
             && r.interior_branch_targets.is_empty()
+            && r.unmapped_branch_targets.is_empty()
     }
 
     /// Exposes the strong `lifter` back-reference so the cyclic GC can see a
