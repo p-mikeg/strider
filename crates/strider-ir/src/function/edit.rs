@@ -352,9 +352,9 @@ impl<'g> EditFunction<'g> {
     /// that is actually dead, recursively enqueuing its orphaned operands, and
     /// merge every mutated node into its structural twin.
     ///
-    /// Runs at every pass boundary, so the twins a rewrite leaves behind
-    /// (`PhiCollapse` redirecting two SSA phis to one value) are re-merged
-    /// here.
+    /// Runs after every CHANGING pass of the fixed-point loop and after every
+    /// post-pass, so the twins a rewrite leaves behind (`PhiCollapse`
+    /// redirecting two SSA phis to one value) are re-merged here.
     pub fn clean(&mut self) {
         while let Some(node) = self.dequeue() {
             let flags = self.state.flags[node];
@@ -447,6 +447,17 @@ impl<'g> EditFunction<'g> {
             self.state.roots.remove(node);
         }
         Ok(())
+    }
+
+    /// Drop the variadic tail of a **non-cacheable** node's inputs, keeping the
+    /// first `len`.  A node already that short is untouched.
+    pub fn truncate_node_inputs(&mut self, node: NodeId, len: usize) {
+        let present = self.function.node_inputs(node).len();
+        if present <= len {
+            return;
+        }
+        let indices: smallvec::SmallVec<[u32; 8]> = (len as u32..present as u32).collect();
+        self.remove_node_inputs_batch(node, &indices);
     }
 
     /// Redirect every use of `old` to `new`.  Does NO fingerprint work; use
