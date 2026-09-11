@@ -1,8 +1,8 @@
 //! A file rebuilt under a live `OwnedElf` must surface as an `Err`.
 //!
-//! Every mutation here GROWS the file. The mapping keeps its original length,
-//! so nothing these tests read can fault; shrinking it and then reading is
-//! what SIGBUSes, and is exactly what the guard exists to get ahead of.
+//! No mutation here shortens the file, so nothing these tests read can fault;
+//! shrinking it and then reading is what SIGBUSes, and is exactly what the
+//! guard exists to get ahead of.
 
 #[path = "common/mod.rs"]
 mod common;
@@ -213,4 +213,28 @@ fn a_region_table_over_a_changed_file_is_an_error() {
     ] {
         assert!(err.contains("changed on disk"), "got: {err}");
     }
+}
+
+/// `check_unchanged` compares a size and a truncated mtime, so a same-size
+/// rewrite inside one second passes it. What follows is a parse of bytes that
+/// are no longer an ELF, and every entry point must report that rather than
+/// panic on it.
+#[test]
+fn a_same_size_rewrite_is_an_error_not_a_panic() {
+    if mapping_disabled() {
+        return;
+    }
+    let f = elf_tempfile();
+    let elf = strider_reader::load_elf(f.path()).unwrap();
+    let len = std::fs::metadata(f.path()).unwrap().len() as usize;
+    std::fs::write(f.path(), vec![0xAAu8; len]).unwrap();
+
+    elf.regions(RegionSource::Auto, LoadFilter::CodeAndReadOnly, false)
+        .expect_err("regions over a rewritten mapping");
+    strider_reader::ElfFileMemReader::from_elf(&elf)
+        .expect_err("a reader over a rewritten mapping");
+    elf.checked_file()
+        .expect_err("a parse of a rewritten mapping");
+    elf.function_entry(0x1000)
+        .expect_err("a descriptor lookup over a rewritten mapping");
 }

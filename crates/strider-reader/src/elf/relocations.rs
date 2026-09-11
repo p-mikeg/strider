@@ -18,7 +18,7 @@ use object::{
     RelocationKind, RelocationTarget,
 };
 
-use crate::{MemRegion, Patch, Result};
+use crate::{MemRegion, Patch, RegionIndex, Result};
 
 /// Adds a possibly-negative relocation `addend` to a base address.
 ///
@@ -149,23 +149,27 @@ pub(crate) fn apply_elf_relocations_with(
     let owners = super::sections::loaded_section_indices(obj, layout, loaded_with)?;
     // One lookup per relocation instead of a scan of every region; an ET_REL
     // carries one region per SHF_ALLOC section.
-    let region_index = RegionStartIndex::from_regions(regions);
+    let region_index = RegionIndex::new(regions);
 
     let mut patches: Vec<Vec<Patch>> = vec![Vec::new(); regions.len()];
+    let mut sink = PatchSink {
+        per_region: &mut patches,
+        sites: 0,
+        records: 0,
+    };
     for_each_reloc_site(obj, &owners, layout, |site_addr, avail, reloc| {
         apply_one_relocation(
             obj,
             layout,
             regions,
             &region_index,
-            &mut patches,
+            &mut sink,
             RelocSite {
                 addr: site_addr,
                 avail,
             },
             reloc,
-        );
-        Ok(())
+        )
     })?;
     for (region, patches) in regions.iter_mut().zip(patches) {
         region.set_patches(patches);
@@ -243,29 +247,21 @@ where
 ///
 /// Anything that can't be resolved or patched (weak externs, malformed targets,
 /// unsupported kinds, sites with no backing region) is silently skipped.
+///
+/// # Errors
+///
+/// When the patches would exceed the sink's budget.
 fn apply_one_relocation(
     obj: &object::File<'_>,
     layout: &super::sections::ElfSectionLayout,
     regions: &[MemRegion],
-    region_index: &RegionStartIndex,
-    patches: &mut [Vec<Patch>],
+    region_index: &RegionIndex,
+    sink: &mut PatchSink<'_>,
     site: RelocSite,
     reloc: &object::Relocation,
-) {
-    let RelocSite {
-        addr: site_addr,
-        avail,
-    } = site;
+) -> Result<()> {
+    let site_addr = site.addr;
     let endian_le = matches!(obj.endianness(), object::Endianness::Little);
-    // `avail` is what is left of the section owning the site. A field running
-    // past it belongs to no section and would patch a neighbour's bytes.
-    let covering = |field_addr: u64, size_bytes: usize| {
-        let used = (field_addr - site_addr) + size_bytes as u64;
-        if used > avail {
-            return Vec::new();
-        }
-        region_index.covering_indices(regions, field_addr, size_bytes)
-    };
 
     // Image-relative relocations store `image_base + addend` with no symbol or
     // section reference, so `object` surfaces them as an `Absolute` target with
@@ -276,15 +272,9 @@ fn apply_one_relocation(
     // read-only filters those slots sit in the RW `PT_LOAD` and are not mapped
     // at all, since `PT_GNU_RELRO` is not modelled.
     if let Some((value, size_bytes)) = image_relative_reloc(reloc, obj.architecture(), endian_le) {
-        record_patch(
-            patches,
-            &covering(site_addr, size_bytes),
-            site_addr,
-            value,
-            size_bytes,
-            endian_le,
-        );
-        return;
+        let site_regions = sink.covering(region_index, regions, site, site_addr, size_bytes)?;
+        sink.record(&site_regions, site_addr, value, size_bytes, endian_le);
+        return Ok(());
     }
 
     // Symbol-targeted families `object` reports as `Unknown` with `size = 0`,
@@ -308,9 +298,9 @@ fn apply_one_relocation(
         });
     if let Some((size_bytes, pc_relative, read_implicit_addend)) = word_sized {
         let Some(target_addr) = resolve_symbol_target(obj, layout, reloc, endian_le) else {
-            return;
+            return Ok(());
         };
-        let site_regions = covering(site_addr, size_bytes);
+        let site_regions = sink.covering(region_index, regions, site, site_addr, size_bytes)?;
         let addend = if read_implicit_addend {
             reloc_addend(
                 reloc,
@@ -324,8 +314,7 @@ fn apply_one_relocation(
             reloc.addend()
         };
         let value = apply_addend(target_addr, addend);
-        record_patch(
-            patches,
+        sink.record(
             &site_regions,
             site_addr,
             if pc_relative {
@@ -336,7 +325,7 @@ fn apply_one_relocation(
             size_bytes,
             endian_le,
         );
-        return;
+        return Ok(());
     }
 
     // mips64el `SHT_REL`: `object` reads `r_info` as one little-endian `u64`, so
@@ -344,17 +333,17 @@ fn apply_one_relocation(
     // against `R_MIPS_16` / `R_MIPS_32` / `R_MIPS_64` (symbol index 1, 2, 18).
     // Every MIPS relocation handled here dispatches on the raw `r_type` above.
     if matches!(obj.architecture(), A::Mips64) && endian_le && reloc.has_implicit_addend() {
-        return;
+        return Ok(());
     }
 
     // `object`'s ELF `parse_relocation` yields only `Symbol` or `Absolute`;
     // the latter (an immediate with no symbol) and any future variant fall
     // through as unsupported.
     let RelocationTarget::Symbol(_) = reloc.target() else {
-        return;
+        return Ok(());
     };
     let Some(target_addr) = resolve_symbol_target(obj, layout, reloc, endian_le) else {
-        return;
+        return Ok(());
     };
 
     // `size` is in bits, and 0 nominally means "the kind's default". Absolute /
@@ -364,7 +353,7 @@ fn apply_one_relocation(
     // is read back out of the field.
     let size_bits = reloc.size();
     if size_bits == 0 || !size_bits.is_multiple_of(8) || size_bits > 64 {
-        return;
+        return Ok(());
     }
     let size_bytes = (size_bits / 8) as usize;
 
@@ -377,7 +366,7 @@ fn apply_one_relocation(
         reloc.encoding(),
         object::RelocationEncoding::Generic | object::RelocationEncoding::X86Signed
     ) {
-        return;
+        return Ok(());
     }
 
     // `r_offset` addresses the storage unit, inside which the field can be
@@ -386,10 +375,10 @@ fn apply_one_relocation(
     let Some(field_addr) =
         site_addr.checked_add(mips_half_field_skew(reloc, obj.architecture(), endian_le))
     else {
-        return;
+        return Ok(());
     };
 
-    let site_regions = covering(field_addr, size_bytes);
+    let site_regions = sink.covering(region_index, regions, site, field_addr, size_bytes)?;
     let addend = reloc_addend(
         reloc,
         regions,
@@ -407,99 +396,116 @@ fn apply_one_relocation(
         RelocationKind::Relative | RelocationKind::PltRelative => {
             apply_addend(target_addr, addend).wrapping_sub(site_addr)
         }
-        _ => return,
+        _ => return Ok(()),
     };
 
-    record_patch(
-        patches,
-        &site_regions,
-        field_addr,
-        value,
-        size_bytes,
-        endian_le,
-    );
+    sink.record(&site_regions, field_addr, value, size_bytes, endian_le);
+    Ok(())
 }
 
-/// Start-keyed index over a set of `MemRegion`s, answering which region fully
-/// covers a `[site, site + len)` field: one entry list sorted by `start`,
-/// binary-searched.
+/// Slice indices of every region fully covering `[addr, addr + size_bytes)`,
+/// highest `start` first, at most one per start.
 ///
-/// Same-start collapse (last-insert-wins, mirroring
-/// [`crate::MemRegionsLookupTable`]) applies.
-struct RegionStartIndex {
-    /// Sorted by `start`; equal-start entries hold insertion order, so the
-    /// last-inserted is last within its run.
-    entries: Vec<IndexEntry>,
+/// All of them, because a read is served by whichever region covers the
+/// REQUEST: with overlapping regions a wide read falls through to an outer
+/// one, which would serve unpatched bytes if only the winner were patched.
+///
+/// One per start because equal-start regions collapse in
+/// [`crate::MemRegionsLookupTable`], last-inserted winning, so only that one
+/// is ever read; the walk is in descending slice order within a start, so the
+/// first of a run IS the last-inserted.
+fn covering_regions<'a>(
+    index: &'a RegionIndex,
+    regions: &'a [MemRegion],
+    addr: u64,
+    size_bytes: usize,
+) -> impl Iterator<Item = usize> + 'a {
+    let mut prev: Option<u64> = None;
+    index.covering(addr, size_bytes as u64).filter(move |&i| {
+        let start = regions[i].start_addr();
+        let first_of_run = prev != Some(start);
+        prev = Some(start);
+        first_of_run
+    })
 }
 
-struct IndexEntry {
-    start: u64,
-    /// Highest `end_addr` of this entry and every lower-`start` one.
-    max_end: u64,
-    /// Index into the region slice.
-    index: usize,
+/// Ceiling on recorded patches, as a multiple of the sites recording them.
+const MAX_PATCH_AMPLIFICATION: usize = 4;
+
+/// The per-region patch lists being filled, and what has been charged against
+/// [`MAX_PATCH_AMPLIFICATION`].
+///
+/// A site is patched on EVERY region covering it, so N regions nested over M
+/// relocations record N*M patches out of a file costing O(N + M) bytes, both
+/// counts being the image's to choose.
+struct PatchSink<'a> {
+    per_region: &'a mut [Vec<Patch>],
+    sites: usize,
+    records: usize,
 }
 
-impl RegionStartIndex {
-    /// Equal-start regions keep their slice order, so the higher-index one is
-    /// the only one [`covering_indices`](Self::covering_indices) tests.
-    fn from_regions(regions: &[MemRegion]) -> Self {
-        let mut order: Vec<usize> = (0..regions.len()).collect();
-        order.sort_by_key(|&i| regions[i].start_addr());
-        let mut max_end = 0u64;
-        let entries = order
-            .into_iter()
-            .map(|index| {
-                max_end = max_end.max(regions[index].end_addr());
-                IndexEntry {
-                    start: regions[index].start_addr(),
-                    max_end,
-                    index,
-                }
-            })
+impl PatchSink<'_> {
+    /// The regions covering a field, charged to the budget. Empty when the
+    /// field runs past `site.avail`, what is left of the section owning the
+    /// site: such a field belongs to no section and would patch a neighbour's
+    /// bytes.
+    ///
+    /// # Errors
+    ///
+    /// When the patches recorded would exceed [`MAX_PATCH_AMPLIFICATION`]
+    /// times the sites recording them.
+    fn covering(
+        &mut self,
+        index: &RegionIndex,
+        regions: &[MemRegion],
+        site: RelocSite,
+        field_addr: u64,
+        size_bytes: usize,
+    ) -> Result<Vec<usize>> {
+        if (field_addr - site.addr) + size_bytes as u64 > site.avail {
+            return Ok(Vec::new());
+        }
+        self.sites += 1;
+        let allowance = self
+            .sites
+            .saturating_mul(MAX_PATCH_AMPLIFICATION)
+            .saturating_sub(self.records);
+        // One past the allowance is enough to report the overrun, and is what
+        // keeps a site covered by every region of a crafted image from
+        // materialising that list at all.
+        let covering: Vec<usize> = covering_regions(index, regions, field_addr, size_bytes)
+            .take(allowance + 1)
             .collect();
-        Self { entries }
+        if covering.len() > allowance {
+            anyhow::bail!(
+                "relocation site {field_addr:#x} lands in more overlapping regions than the \
+                 {MAX_PATCH_AMPLIFICATION}x patch budget over {} sites allows",
+                self.sites
+            );
+        }
+        self.records += covering.len();
+        Ok(covering)
     }
 
-    /// Slice indices of EVERY region fully covering
-    /// `[site_addr, site_addr + size_bytes)`, highest `start` first.
+    /// Records the low `size_bytes` of `value` at `site_addr`, on every region
+    /// in `covering`.
     ///
-    /// All of them, because a read is served by whichever region covers the
-    /// REQUEST: with overlapping regions a wide read falls through to an outer
-    /// one, which would serve unpatched bytes if only the winner were patched.
-    ///
-    /// Walks candidates from the highest `start <= site_addr` downward, so a
-    /// field straddling a shorter higher-start region's end still resolves to
-    /// a fully-covering lower-start region. Among entries sharing a `start`
-    /// only the last-inserted is tested. The walk stops once `max_end` drops
-    /// below the field's end, so an uncovered site (every `.got` relocation
-    /// when only the immutable image is loaded) costs the binary search alone.
-    fn covering_indices(
-        &self,
-        regions: &[MemRegion],
+    /// An empty `covering` silently skips: either the site is unmapped, or its
+    /// field width runs past the end of the region its first byte lands in.
+    fn record(
+        &mut self,
+        covering: &[usize],
         site_addr: u64,
+        value: u64,
         size_bytes: usize,
-    ) -> Vec<usize> {
-        let mut out = Vec::new();
-        let Some(site_end) = site_addr.checked_add(size_bytes as u64) else {
-            return out;
+        endian_le: bool,
+    ) {
+        let Some(patch) = Patch::new(site_addr, value, size_bytes, endian_le) else {
+            return;
         };
-        let upper = self.entries.partition_point(|e| e.start <= site_addr);
-        let mut prev_start: Option<u64> = None;
-        for entry in self.entries[..upper].iter().rev() {
-            if entry.max_end < site_end {
-                break;
-            }
-            // Keep only the first (last-inserted) entry of each equal-start run.
-            if prev_start == Some(entry.start) {
-                continue;
-            }
-            prev_start = Some(entry.start);
-            if regions[entry.index].fully_covers(site_addr, size_bytes) {
-                out.push(entry.index);
-            }
+        for &i in covering {
+            self.per_region[i].push(patch);
         }
-        out
     }
 }
 
@@ -829,30 +835,14 @@ fn mips_rel32_symbol_reloc_size(
     (r_type == object::elf::R_MIPS_REL32 && r_sym != 0).then(|| mips_rel32_field_bytes(r_type2))
 }
 
-/// Records the low `size_bytes` of `value` at `site_addr`, on every region in
-/// `covering`.
-///
-/// An empty `covering` silently skips: either the site is unmapped, or its
-/// field width runs past the end of the region its first byte lands in.
-fn record_patch(
-    patches: &mut [Vec<Patch>],
-    covering: &[usize],
-    site_addr: u64,
-    value: u64,
-    size_bytes: usize,
-    endian_le: bool,
-) {
-    let Some(patch) = Patch::new(site_addr, value, size_bytes, endian_le) else {
-        return;
-    };
-    for &i in covering {
-        patches[i].push(patch);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn covering(regions: &[MemRegion], addr: u64, size_bytes: usize) -> Vec<usize> {
+        let index = RegionIndex::new(regions);
+        covering_regions(&index, regions, addr, size_bytes).collect()
+    }
 
     /// A field straddling a shorter higher-start region's end must resolve to
     /// the lower-start region that fully covers it, and a site past every
@@ -863,11 +853,10 @@ mod tests {
             MemRegion::new(0x1000, vec![0u8; 0x100]).unwrap(),
             MemRegion::new(0x1080, vec![0u8; 4]).unwrap(),
         ];
-        let index = RegionStartIndex::from_regions(&regions);
-        assert_eq!(index.covering_indices(&regions, 0x1080, 4), vec![1, 0]);
-        assert_eq!(index.covering_indices(&regions, 0x1080, 8), vec![0]);
-        assert!(index.covering_indices(&regions, 0x10fc, 8).is_empty());
-        assert!(index.covering_indices(&regions, 0x9000, 1).is_empty());
+        assert_eq!(covering(&regions, 0x1080, 4), vec![1, 0]);
+        assert_eq!(covering(&regions, 0x1080, 8), vec![0]);
+        assert!(covering(&regions, 0x10fc, 8).is_empty());
+        assert!(covering(&regions, 0x9000, 1).is_empty());
     }
 
     /// A field two regions both fully cover is patched on both: a read wide
@@ -879,7 +868,17 @@ mod tests {
             MemRegion::new(0x1000, vec![0u8; 0x20]).unwrap(),
             MemRegion::new(0x1010, vec![0u8; 0x08]).unwrap(),
         ];
-        let index = RegionStartIndex::from_regions(&regions);
-        assert_eq!(index.covering_indices(&regions, 0x1014, 4), vec![1, 0]);
+        assert_eq!(covering(&regions, 0x1014, 4), vec![1, 0]);
+    }
+
+    /// Equal starts collapse in `MemRegionsLookupTable`, so only the region a
+    /// read can actually reach is patched.
+    #[test]
+    fn regions_sharing_a_start_are_patched_once() {
+        let regions = vec![
+            MemRegion::new(0x1000, vec![0u8; 0x20]).unwrap(),
+            MemRegion::new(0x1000, vec![0u8; 0x20]).unwrap(),
+        ];
+        assert_eq!(covering(&regions, 0x1000, 4), vec![1]);
     }
 }
