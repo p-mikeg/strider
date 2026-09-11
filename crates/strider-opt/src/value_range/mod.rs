@@ -18,13 +18,30 @@ use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
 
 use petgraph::algo::dominators::Dominators;
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_ir::{IRViewer, IRWalker, IntBinaryOp, IntCmpOp};
 
 use crate::opt::known_bits::{KnownBitsFacts, KnownBitsMap};
 
 #[cfg(test)]
 mod tests;
+
+/// Cast hops [`RangeMap::dominating_guard`] walks before giving up.  A real
+/// index sits one or two casts above its compare; the cap only stops a
+/// pathological chain from making the walk the cost centre.
+const MAX_GUARD_LADDER: u32 = 8;
+
+/// How much of an operand's bound survives one hop up to the value built from
+/// it.
+#[derive(Clone, Copy)]
+enum LadderHop {
+    /// Identical unsigned value: the whole interval carries.
+    SameValue,
+    /// Identical below this mask, which the operand's `hi` must fit.
+    SameValueBelow(u128),
+    /// Only `hi` carries; the low end and the stride do not.
+    UpperBound,
+}
 
 fn gcd(mut a: u128, mut b: u128) -> u128 {
     while b != 0 {
@@ -461,13 +478,56 @@ impl<'f> RangeMap<'f> {
 
     /// Intersection of every guard on `value` whose `guard_node` dominates
     /// `region`, or `None` when none apply.
+    ///
+    /// Also carries up a guard recorded on a value `value` is built from by a
+    /// chain of [`Self::bound_carrying_operand`] hops: a compare on `al` bounds
+    /// the `movzbl %al` an addressing mode scales, and without the walk the
+    /// index falls back to the KnownBits width bound and reads the whole table
+    /// domain.
     fn dominating_guard(&self, value: ValueId, region: NodeId) -> Option<Interval> {
         if let Some(hit) = self.guard_memo.borrow().get(&(value, region)) {
             return *hit;
         }
+        let mut verdict = self.guard_at(value, region);
+
+        // `hi` survives every hop, so one accumulated mask decides all the
+        // `Truncate`s at once.
+        let mut cur = value;
+        let mut trunc_mask = u128::MAX;
+        let mut upper_only = false;
+        for _ in 0..MAX_GUARD_LADDER {
+            let Some((operand, hop)) = self.bound_carrying_operand(cur) else {
+                break;
+            };
+            match hop {
+                LadderHop::SameValue => {}
+                LadderHop::SameValueBelow(mask) => trunc_mask = trunc_mask.min(mask),
+                LadderHop::UpperBound => upper_only = true,
+            }
+            if let Some(below) = self.guard_at(operand, region)
+                && below.hi <= trunc_mask
+            {
+                let lifted = if upper_only {
+                    Interval::dense(0, below.hi)
+                } else {
+                    below
+                };
+                verdict = Some(verdict.map_or(lifted, |v| v.intersect(lifted)));
+            }
+            cur = operand;
+        }
+
+        self.guard_memo
+            .borrow_mut()
+            .insert((value, region), verdict);
+        verdict
+    }
+
+    /// The guards recorded on `value` itself whose node dominates `region`.
+    fn guard_at(&self, value: ValueId, region: NodeId) -> Option<Interval> {
         #[cfg(test)]
         GUARD_SCANS.with(|c| c.set(c.get() + 1));
-        let verdict = self.guards.get(&value).and_then(|by_node| {
+        self.guards.get(&value).and_then(|by_node| {
             match self.doms.dominators(region) {
                 // The chain starts at `region` itself.
                 Some(chain) => chain
@@ -480,11 +540,38 @@ impl<'f> RangeMap<'f> {
                 // Off the dominator tree, `dominates` still holds reflexively.
                 None => by_node.get(&region).copied(),
             }
-        });
-        self.guard_memo
-            .borrow_mut()
-            .insert((value, region), verdict);
-        verdict
+        })
+    }
+
+    /// The operand whose bound `value` inherits, and on what terms.  `None`
+    /// when no hop is sound, which ends the walk.
+    fn bound_carrying_operand(&self, value: ValueId) -> Option<(ValueId, LadderHop)> {
+        let f = self.function;
+        match *f.node_kind(f.producer(value)) {
+            // Zero extension is the identity on the unsigned value.
+            NodeKind::Extend(ExtendOp::ZeroExtend) => {
+                let [x] = f.producer_inputs_exact::<1>(value).ok()?;
+                Some((x, LadderHop::SameValue))
+            }
+            // Truncation is the identity only below the narrower type's mask.
+            NodeKind::Truncate => {
+                let [x] = f.producer_inputs_exact::<1>(value).ok()?;
+                let mask = crate::opt::known_bits::type_mask_u128(f.value_type_opt(value)?)?;
+                Some((x, LadderHop::SameValueBelow(mask)))
+            }
+            // Masking only clears bits, so `x & c <= x` carries the upper bound
+            // while the low end and the stride do not survive.
+            NodeKind::IntBinaryOp(IntBinaryOp::And) => {
+                let [a, b] = f.producer_inputs_exact::<2>(value).ok()?;
+                let x = match (f.int_const_u128(a), f.int_const_u128(b)) {
+                    (None, Some(_)) => a,
+                    (Some(_), None) => b,
+                    _ => return None,
+                };
+                Some((x, LadderHop::UpperBound))
+            }
+            _ => None,
+        }
     }
 
     /// The `Region` whose PhiToken is this Phi's slot-0 input.
