@@ -66,6 +66,72 @@ fn ppc_cr_bit_test_canonicalizes_to_intcmp() -> Result<()> {
     Ok(())
 }
 
+/// The same CR-bit extract as it reaches the optimiser from a `CBRANCH`:
+/// `getCrBit` masks the shifted field with 1, and the branch lowers to
+/// `Xor(IntEqual(cr_bit, 0), 1):I1` because p-code branches on `cond != 0`.
+#[test]
+fn ppc_cr_bit_test_canonicalizes_through_a_ne_zero_branch() -> Result<()> {
+    use strider_ir::node::ExtendOp;
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn()?;
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let entry = b.create_region_all()?;
+    let dispatch = b.create_region_all()?;
+    let exit = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
+    let idx = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+    let eight = b.build_int_const(8u64, ty)?;
+    let cr_bit = |b: &mut FunctionBuilder, cmp, pos: u64| -> Result<ValueId> {
+        let z = b.extend_if_needed(cmp, ty, ExtendOp::ZeroExtend)?;
+        let p = b.build_int_const(pos, ty)?;
+        b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)
+    };
+
+    let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
+    let gt = b.build_int_cmp_operation(eight, idx, IntCmpOp::Less, ty)?;
+    let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
+    let lt_s = cr_bit(&mut b, lt, 3)?;
+    let gt_s = cr_bit(&mut b, gt, 2)?;
+    let eq_s = cr_bit(&mut b, eq, 1)?;
+    let so = b.extend_if_needed(eq, ty, ExtendOp::ZeroExtend)?; // bit 0
+    let or1 = b.build_int_binary_operation(lt_s, gt_s, IntBinaryOp::Or, ty)?;
+    let or2 = b.build_int_binary_operation(or1, eq_s, IntBinaryOp::Or, ty)?;
+    let cr = b.build_int_binary_operation(or2, so, IntBinaryOp::Or, ty)?;
+    let two = b.build_int_const(2u64, ty)?;
+    let shr = b.build_int_binary_operation(cr, two, IntBinaryOp::ShiftRight, ty)?;
+    let one = b.build_int_const(1u64, ty)?;
+    let masked = b.build_int_binary_operation(shr, one, IntBinaryOp::And, ty)?;
+    let zero = b.build_int_const(0u64, ty)?;
+    let is_zero = b.build_int_cmp_operation(masked, zero, IntCmpOp::Equal, ty)?;
+    let true_i1 = b.build_boolean_const(true);
+    let cond = b.build_int_binary_operation(is_zero, true_i1, IntBinaryOp::Xor, ValueType::I1)?;
+    b.build_if(cond, dispatch, exit)?;
+
+    b.set_region(dispatch);
+    b.build_return(Some(idx), &[])?;
+    b.set_region(exit);
+    b.build_return(Some(idx), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    crate::pipeline::run_one(
+        &FlagCmpCanonicalize::new(),
+        &mut fg,
+        &mut crate::OptCtx::new(None),
+    )?;
+
+    let if_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .expect("If node");
+    // Bit 2 (GT) of the CR pack is `Less(8, idx)`.
+    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, eight, idx);
+    Ok(())
+}
+
 /// Superset-only contract: the CR-pack instructions' addresses must survive in
 /// the comparison's fingerprint.  Three distinct addresses, because
 /// `replace_value` alone carries the comparison's own and the `Truncate`'s but
