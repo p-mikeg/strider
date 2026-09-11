@@ -6,6 +6,7 @@ license.workspace = true
 description = "Lifts a strider CFG into the sea-of-nodes IR, handling register aliasing."
 repository.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 
 [dependencies]
 strider-cfg = { workspace = true }
