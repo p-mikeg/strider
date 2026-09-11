@@ -72,6 +72,8 @@ class _ElfHeader:
             raise ValueError(f"{path!r}: not a regular file")
         with open(path, "rb") as f:
             header = f.read(52)
+        if header.startswith(b"version https://git-lfs.github.com/spec/v1"):
+            raise ValueError(f"{path!r}: a Git LFS pointer, not an ELF; run `git lfs pull`")
         if len(header) < 20 or header[:4] != b"\x7fELF":
             raise ValueError(f"{path!r}: not an ELF file (bad magic)")
         ei_class = header[4]
