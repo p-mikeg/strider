@@ -7,7 +7,8 @@ use strider_ir_test_utils::{RegisterSet, Tb};
 
 use strider_opt::{BoxedRule, EditFunction, apply_rules_count, rewrite_rule, rewrite_rule_runtime};
 use strider_pattern::{
-    Capture, Match, MatchPat, Matcher, Pattern, TemplatePat, anything, call, int_add, int_const,
+    Capture, CaptureExt, Match, MatchPat, Matcher, Pattern, TemplatePat, anything, call, int_add,
+    int_const,
     int_sub, is_skip, skip, var,
 };
 
@@ -415,5 +416,63 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
     assert!(
         fp.contains(&SOURCE_ADDR),
         "rewritten producer must absorb source fingerprint, got {fp:?}"
+    );
+}
+
+/// Drives `rule` at every node, surfacing the error instead of asserting on it.
+fn try_fire_anywhere<F>(
+    function: &mut strider_ir::Function,
+    rule: F,
+) -> strider_pattern::Result<usize>
+where
+    F: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> strider_pattern::Result<Option<ValueId>>,
+{
+    let mut ctx = EditFunction::new(function);
+    apply_rules_count(&mut ctx, std::slice::from_ref(&rule))
+}
+
+/// An RHS that consumes the matched ROOT has its own fresh edges redirected
+/// along with everyone else's, so the node becomes its own input.  The rule
+/// must refuse rather than install `x = f(x)`.
+#[test]
+fn rhs_consuming_the_root_is_refused_not_installed() {
+    let mut function = graph_add_x_zero();
+    let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
+    let rule = rewrite_rule(
+        int_add(var(a), var(b)).capture(c),
+        int_add(var(c), var(c)),
+    );
+
+    let result = try_fire_anywhere(&mut function, rule);
+    assert!(
+        result.is_err(),
+        "an RHS reading its own match root must error, got {result:?}"
+    );
+    assert!(
+        strider_ir::validate::validate(&function).is_ok(),
+        "the graph must be left valid"
+    );
+}
+
+/// The same hole without a capture: the RHS rebuilds the LHS shape, so the
+/// dedup cache hands back the matched node itself and the fresh parent ends up
+/// consuming the value it replaces.
+#[test]
+fn rhs_rebuilding_the_lhs_shape_is_refused_not_installed() {
+    let mut function = graph_add_x_zero();
+    let (a, b) = (Capture::new(), Capture::new());
+    let rule = rewrite_rule(
+        int_add(var(a), var(b)),
+        int_add(int_add(var(a), var(b)), int_const(0u128)),
+    );
+
+    let result = try_fire_anywhere(&mut function, rule);
+    assert!(
+        result.is_err(),
+        "an RHS that rebuilds the LHS shape must error, got {result:?}"
+    );
+    assert!(
+        strider_ir::validate::validate(&function).is_ok(),
+        "the graph must be left valid"
     );
 }

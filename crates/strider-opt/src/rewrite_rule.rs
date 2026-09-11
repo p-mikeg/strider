@@ -106,6 +106,18 @@ fn rewrite_rule_impl(
             );
         }
 
+        // `replace_value` redirects EVERY use of the root, the RHS's own fresh
+        // edges included, so an RHS reading the root closes a data cycle: the
+        // node becomes its own input and nothing downstream rejects it.
+        if new_value != root_value && reads_value(edit, new_value, root_value, &matched_nodes) {
+            anyhow::bail!(
+                "rewrite would make the replacement read the value it replaces, \
+                 closing a data cycle; an RHS may not consume its own match root, \
+                 and rebuilding the LHS shape reaches the same node through the \
+                 dedup cache"
+            );
+        }
+
         // Redundant for a fresh-node RHS, but load-bearing for a
         // BARE-CAPTURE RHS such as `add(x, 0) -> x`: that returns the
         // LHS-bound value verbatim, so nothing else carries the culled
@@ -122,6 +134,30 @@ fn rewrite_rule_impl(
         let changed = edit.replace_value(root_value, new_value)?;
         Ok(changed.then_some(new_value))
     }
+}
+
+/// Whether `from`'s cone reads `target`.
+///
+/// Prunes at the matched footprint: every LHS-bound value other than the root
+/// sits strictly below it, so in an acyclic graph none of them reaches it. What
+/// is left to walk is the freshly built RHS, bounded by the template.
+fn reads_value(f: &impl IRViewer, from: ValueId, target: ValueId, matched: &[NodeId]) -> bool {
+    let mut seen = rustc_hash::FxHashSet::default();
+    let mut stack = vec![from];
+    while let Some(v) = stack.pop() {
+        if v == target {
+            return true;
+        }
+        if !seen.insert(v) {
+            continue;
+        }
+        let producer = f.producer(v);
+        if matched.contains(&producer) {
+            continue;
+        }
+        stack.extend(f.node_inputs(producer));
+    }
+    false
 }
 
 /// Asserts every capture the RHS references also appears in the LHS.
