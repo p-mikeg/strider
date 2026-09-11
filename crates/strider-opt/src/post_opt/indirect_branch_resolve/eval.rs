@@ -30,6 +30,20 @@ impl Abs {
     }
 }
 
+/// The memory options the table walk runs under.
+///
+/// The call-boundary relaxations are OFF: this walk decides a decoded branch
+/// target, so a relaxation that is wrong produces a wrong CFG edge rather than
+/// a wrong fold.  What `noalias_allocators` still buys is the allocation
+/// identity `decompose` reads off it, which is not a call boundary.
+pub(crate) fn table_walk_options(assumptions: &crate::AssumptionOptions) -> MemOptions {
+    MemOptions::call_blocking(
+        assumptions.stack_global_disjoint,
+        &assumptions.noalias_allocators,
+    )
+    .without_call_relaxations()
+}
+
 pub(crate) struct Evaluator<'a> {
     function: &'a strider_ir::Function,
     rom: Option<&'a dyn ReadOnlyMemory>,
@@ -54,10 +68,7 @@ impl<'a> Evaluator<'a> {
             rom,
             map: FxHashMap::default(),
             slot_maps: FxHashMap::default(),
-            off_segment: MemAnalyzer::new(MemOptions::call_blocking(
-                assumptions.stack_global_disjoint,
-                &assumptions.noalias_allocators,
-            )),
+            off_segment: MemAnalyzer::new(table_walk_options(assumptions)),
         }
     }
 
@@ -482,9 +493,9 @@ impl graph_algorithms::walk::GraphRef for ValueInputSuccsPruned<'_> {
 }
 
 /// Backward reachability from `root` over value edges, never descending through
-/// `stop`'s own inputs (it is pinned to a constant at eval time).  Makes
-/// evaluation O(index-to-dispatch path) instead of O(backward slice from
-/// `root`).
+/// `stop`'s own inputs (it is pinned to a constant at eval time).  The order is
+/// built once per root and replayed for every enumerated index, so leaving
+/// `stop`'s cone out keeps the index computation off the per-index cost.
 pub(crate) fn cone_order_pruned(
     function: &strider_ir::Function,
     root: ValueId,

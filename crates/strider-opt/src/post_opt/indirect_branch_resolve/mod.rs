@@ -16,7 +16,7 @@ use strider_cfg::ResolvedTargets;
 use crate::pipeline::{OptCtx, PostOptimizer};
 use crate::{EditFunction, ReadOnlyMemory};
 
-mod eval;
+pub(crate) mod eval;
 pub(crate) mod table;
 
 /// Cap on enumerated table slots: a range narrowed only by a KnownBits stride
@@ -33,10 +33,12 @@ pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 /// `pop pc`-style returns stays unclassified: a `push X; pop pc` tail call has
 /// the identical shape and would be misclassified as a return.
 ///
-/// Of `assumptions` only `stack_global_disjoint` reaches the table walk. The
-/// call-boundary relaxations are deliberately not honoured here: this walk
-/// decides a decoded branch target, so a relaxation that is wrong produces a
-/// wrong edge rather than a wrong fold.
+/// Of `assumptions` the table walk honours `stack_global_disjoint` and the
+/// allocation identity `noalias_allocators` gives `decompose`.  The
+/// call-boundary relaxations are deliberately not among them
+/// (`eval::table_walk_options`): this walk decides a decoded branch target,
+/// so a relaxation that is wrong produces a wrong edge rather than a wrong
+/// fold.
 #[must_use]
 pub fn classify_target(
     function: &strider_ir::Function,

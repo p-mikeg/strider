@@ -797,14 +797,14 @@ impl MemWalker<'_> {
                     self.analyzer.options.calls_block
                 }
             }
-            // `preserves_memory` is the per-user-op ABI attribute, read the
-            // same way as a `Call`'s.  Nothing else lets the walk through: an
-            // opaque user-op may write the stack without taking a frame
-            // address, and `calls_block` speaks for a conforming callee's frame
-            // discipline, which a syscall handed a pointer into the
-            // incoming-argument area does not have.
-            NodeKind::CallOther { .. } => !function.get_cc(def).preserves_memory,
-            // No opaque memory producer can be proven disjoint.
+            // No opaque memory producer can be proven disjoint.  This is where
+            // `CallOther` lands: only a user-op whose ABI row declares
+            // `clobbers_memory` is spliced into the chain at all
+            // (`build_call_other`'s `advance_memory`), and no convention
+            // describes a user-op, so `get_cc` on one answers with the analysed
+            // function's own.  An opaque user-op may also write the stack
+            // without taking a frame address, which `calls_block` speaks for
+            // only under a conforming callee's frame discipline.
             _ => true,
         }
     }
@@ -1505,7 +1505,7 @@ impl MemOptions {
         self
     }
 
-    fn without_call_relaxations(&self) -> Self {
+    pub(crate) fn without_call_relaxations(&self) -> Self {
         Self {
             call_relaxations: false,
             ..self.clone()
