@@ -1598,3 +1598,60 @@ fn cr_bit_test_declines_a_shift_past_the_width() -> Result<()> {
     );
     Ok(())
 }
+
+/// `Xor(IntEqual(pack, 0), 1)` is `pack != 0`, the OR of EVERY bit of `pack`,
+/// not bit 0 of it.  A term above the tested bit makes the root true where the
+/// bit-0 comparison is false, so the pack must survive.
+#[test]
+fn cr_bit_test_declines_a_ne_zero_pack_carrying_a_higher_term() -> Result<()> {
+    use strider_ir::node::ExtendOp;
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn()?;
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let entry = b.create_region_all()?;
+    let dispatch = b.create_region_all()?;
+    let exit = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
+    let idx = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+    let eight = b.build_int_const(8u64, ty)?;
+    let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
+    let gt = b.build_int_cmp_operation(eight, idx, IntCmpOp::Less, ty)?;
+    let lt_z = b.extend_if_needed(lt, ty, ExtendOp::ZeroExtend)?;
+    let gt_z = b.extend_if_needed(gt, ty, ExtendOp::ZeroExtend)?;
+    let three = b.build_int_const(3u64, ty)?;
+    let gt_s = b.build_int_binary_operation(gt_z, three, IntBinaryOp::ShiftLeft, ty)?;
+    let pack = b.build_int_binary_operation(lt_z, gt_s, IntBinaryOp::Or, ty)?;
+    let zero = b.build_int_const(0u64, ty)?;
+    let is_zero = b.build_int_cmp_operation(pack, zero, IntCmpOp::Equal, ty)?;
+    let true_i1 = b.build_boolean_const(true);
+    let cond = b.build_int_binary_operation(is_zero, true_i1, IntBinaryOp::Xor, ValueType::I1)?;
+    b.build_if(cond, dispatch, exit)?;
+
+    b.set_region(dispatch);
+    b.build_return(Some(idx), &[])?;
+    b.set_region(exit);
+    b.build_return(Some(idx), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    crate::pipeline::run_one(
+        &FlagCmpCanonicalize::new(),
+        &mut fg,
+        &mut crate::OptCtx::new(None),
+    )?;
+
+    let if_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .expect("If node");
+    let kind = *fg.node_kind(fg.producer(fg.if_cond(if_node)));
+    assert!(
+        !matches!(kind, NodeKind::IntCmpOp(_)),
+        "`pack != 0` also observes the term at bit 3, so the condition must not \
+         become the bit-0 comparison; got {kind:?}",
+    );
+    Ok(())
+}
