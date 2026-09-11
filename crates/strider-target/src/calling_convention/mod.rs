@@ -23,7 +23,11 @@ pub(crate) fn regs_to_vns(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CallingConvention {
     stack_ptr_reg_name: &'static str,
-    /// In positional order.
+    /// In register-positional order, which is not source-argument order: ARM
+    /// AAPCS, MIPS O32 and 32-bit SysV PowerPC all start a 64-bit integer
+    /// argument in an even-numbered register, skipping an odd one, so from the
+    /// first 64-bit argument onward position *n* names a register the caller
+    /// may never have written.
     arg_passing_regs: &'static [&'static str],
     /// Float / vector argument registers, in positional order, from a register
     /// file `arg_passing_regs` never names (`XMM0..7` on x86-64 SysV, `q0..7`
@@ -577,6 +581,12 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
         // `mtcrf` name them, never as the 8-byte `crall` container, which
         // spans the volatile fields too.
         "cr2", "cr3", "cr4",
+        // ELFv2 2.2.1 and the ELFv1 AltiVec supplement make v20-v31
+        // non-volatile in full.  The sla overlays AltiVec onto the top 32 VSX
+        // registers and leaves the `vN` spellings commented out, so v20-v31
+        // are `vs52`-`vs63` (`ppc_common.sinc`).
+        "vs52", "vs53", "vs54", "vs55", "vs56", "vs57", "vs58", "vs59", "vs60", "vs61", "vs62",
+        "vs63",
     ],
     ret_val_regs: &["r3", "r4"],
     // `long double` is IBM double-double and returns in the f1:f2 pair, as
@@ -849,6 +859,11 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
                 // `mfcr` / `mtcrf` name them, never as the 8-byte `crall`
                 // container, which spans the volatile fields too.
                 "cr2", "cr3", "cr4",
+                // The SysV AltiVec supplement makes v20-v31 non-volatile in
+                // full; the sla spells them `vs52`-`vs63` (see
+                // `POWERPC64_ELF_BASE`).
+                "vs52", "vs53", "vs54", "vs55", "vs56", "vs57", "vs58", "vs59", "vs60", "vs61",
+                "vs62", "vs63",
             ],
             ret_val_regs: &["r3", "r4"],
             ret_val_regs_float: &["f1", "f2"],
