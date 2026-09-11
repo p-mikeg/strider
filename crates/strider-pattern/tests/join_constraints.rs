@@ -965,3 +965,25 @@ fn debug_renders_a_nested_tree() {
         format!("Not(Or([And([]), And([Dominates {{ dominator: {a:?}, dominated: {b:?} }}])]))")
     );
 }
+
+/// Dropping the tree is a walk like any other, and the derived glue recurses
+/// one frame per level.  A caller-shaped depth therefore kills the process on
+/// the free, after every query over it has already returned.
+#[test]
+fn a_deeply_nested_constraint_frees_on_a_small_stack() {
+    let (t, c) = (Capture::new(), Capture::new());
+    let deep = deep_negation(
+        20_000,
+        JoinConstraint::Dominates {
+            dominator: t,
+            dominated: c,
+        },
+    );
+
+    std::thread::Builder::new()
+        .stack_size(128 * 1024)
+        .spawn(move || drop(deep))
+        .unwrap()
+        .join()
+        .unwrap();
+}
