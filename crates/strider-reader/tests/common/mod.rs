@@ -17,6 +17,18 @@ pub(crate) fn region_bytes(r: &strider_reader::MemRegion) -> Vec<u8> {
     out
 }
 
+/// Every mapping of the ELF at `path`, under `filter`, relocated or not.
+pub(crate) fn regions_of_file(
+    path: &std::path::Path,
+    filter: strider_reader::elf::LoadFilter,
+    relocate: bool,
+) -> Vec<strider_reader::MemRegion> {
+    strider_reader::load_elf(path)
+        .expect("load_elf")
+        .regions(strider_reader::elf::RegionSource::Auto, filter, relocate)
+        .expect("regions")
+}
+
 /// Every mapping `bytes` loads under `filter`, unrelocated.
 pub(crate) fn regions(
     bytes: &[u8],
@@ -47,7 +59,8 @@ pub(crate) fn load_readonly_with_relocations(bytes: &[u8]) -> Vec<strider_reader
     relocated(bytes, strider_reader::elf::LoadFilter::ImmutableOnly)
 }
 
-fn relocated(
+/// Every mapping `bytes` loads under `filter`, with its relocations applied.
+pub(crate) fn relocated(
     bytes: &[u8],
     filter: strider_reader::elf::LoadFilter,
 ) -> Vec<strider_reader::MemRegion> {

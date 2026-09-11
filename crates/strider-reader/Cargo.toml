@@ -6,6 +6,7 @@ license.workspace = true
 description = "ELF loading and memory service for the strider pipeline."
 repository.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 readme = "README.md"
 
 [dependencies]

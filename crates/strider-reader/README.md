@@ -15,10 +15,9 @@ not read a mapping the program can write.
   max-end tree, whether the regions are disjoint or nest.
 - `ElfFileMemReader`: the ELF backend, built with `ElfFileMemReader::from_elf`
   (shares the ELF's bytes) or `::from_object` (copies them); implements both
-  reader traits. Those, and `::from_bytes` / `::from_path`, serve the
-  file-initial bytes, so an unlinked or not-yet-`ld.so`'d image reads zero at
-  every relocation site; `::from_elf_relocated` is the constructor that applies
-  the relocations.
+  reader traits. Either way it serves the file-initial bytes, so an unlinked or
+  not-yet-`ld.so`'d image reads zero at every relocation site; the relocated
+  view of an image is an `OwnedElf::regions(.., relocate)` load.
 - `load_elf(path)`: memory-map an ELF into an `OwnedElf`.
   `OwnedElf::regions(source, filter, relocate)`: one region set cut from those
   bytes; several sets (a fetch image and its ROM subset) share the one buffer.
@@ -39,14 +38,13 @@ it just mapped and holds the fd, so the check follows that inode rather than the
 path.
 
 Checked at the top of an operation, one `stat` each: `OwnedElf::regions`,
-`OwnedElf::checked_file` and the `ElfFileMemReader` constructors that map a file
-(`from_elf`, `from_elf_relocated`, `from_path`) run it themselves --
-`from_object` and `from_bytes` serve copied bytes and have nothing to stat --
+`OwnedElf::checked_file` and `ElfFileMemReader::from_elf` run it themselves
+(`from_object` serves copied bytes and has nothing to stat),
 and `check_unchanged` on `OwnedElf`, `MemRegion`,
 `MemRegionsLookupTable` and `ElfFileMemReader` runs it on demand, one `stat`
 per mapping rather than per region. A binary rebuilt between two operations is
 then an `Err` naming the file, not bytes from a program that is no longer there.
-A long-lived handle -- a REPL session -- should call `check_unchanged` at the top
+A long-lived handle such as a REPL session should call `check_unchanged` at the top
 of its own operations.
 
 Not checked, and not checkable:

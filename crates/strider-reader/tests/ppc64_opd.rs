@@ -59,6 +59,27 @@ fn an_address_outside_the_opd_is_not_a_descriptor() {
     );
 }
 
+/// An offset inside a descriptor word reads half the entry and half the TOC
+/// pointer as one address, and `function_entry` would hand that to the decoder
+/// as code.
+#[test]
+fn an_unaligned_offset_into_the_opd_is_not_a_descriptor() {
+    let fx = build_ppc64_opd_elf(1);
+    let obj = object::File::parse(&fx.bytes[..]).expect("parse");
+    let opd = OpdTable::new(&obj).expect("an ELFv1 image with an .opd");
+    for skew in [1, 4, 7] {
+        assert_eq!(opd.entry_at(fx.descriptor_addr + skew), None, "skew {skew}");
+    }
+
+    let addr = fx.descriptor_addr + 4;
+    let elf = strider_reader::OwnedElf::parse(fx.bytes).expect("parse");
+    assert_eq!(
+        elf.function_entry(addr).expect("unaligned"),
+        addr,
+        "an address that is not a descriptor word passes through"
+    );
+}
+
 /// The one-call form, for a caller resolving a single address.
 #[test]
 fn function_entry_follows_a_descriptor_and_passes_code_through() {

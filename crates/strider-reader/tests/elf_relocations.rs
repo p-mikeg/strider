@@ -1,7 +1,8 @@
-//! `apply_elf_relocations` against `fixtures/out/<arch>/elf_relocs.elf`, a
-//! `-shared -fPIC` fixture whose `dispatch_table` has one relocation per slot
-//! pointing at `helper_a..helper_d`. Unapplied the slots read zero; applied
-//! they read the helper addresses.
+//! Relocation application, reached through `OwnedElf::regions(.., relocate)`,
+//! against `fixtures/out/<arch>/elf_relocs.elf`, a `-shared -fPIC` fixture
+//! whose `dispatch_table` has one relocation per slot pointing at
+//! `helper_a..helper_d`. Unapplied the slots read zero; applied they read the
+//! helper addresses.
 
 use object::{Object, ObjectSymbol};
 use std::path::PathBuf;
@@ -20,22 +21,15 @@ fn read_u32_be(regions: &[strider_reader::MemRegion], addr: u64) -> Option<u32> 
 }
 
 #[test]
-fn apply_elf_relocations_defined_mips_rel32_writes_symbol_value() {
+fn a_defined_mips_rel32_writes_the_symbol_value() {
     // A defined-symbol REL32 is `S + A`, not addend-only; the addend-only
     // reduction holds only for the undefined / index-0 (STN_UNDEF) case. The
     // fixture uses a `REL` (implicit-addend) section so A = 0, isolating the
     // symbol-value contribution.
     let fx = common::elf_fixture::build_mips32be_rel32_elf();
-    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
     // Include writable sections so `.data.rel.ro` has a region to patch.
-    let mut regions = common::regions(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::AllAllocatable,
-    )
-    .expect("apply");
+    let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
 
     assert_eq!(
         read_u32_be(&regions, fx.slot_addr),
@@ -45,20 +39,13 @@ fn apply_elf_relocations_defined_mips_rel32_writes_symbol_value() {
 }
 
 #[test]
-fn apply_elf_relocations_undefined_mips_rel32_stays_addend_only() {
+fn an_undefined_mips_rel32_stays_addend_only() {
     // The STN_UNDEF case stays addend-only: `S = 0` and the `REL` addend is 0,
     // so the slot reads 0. `object` reports it as `RelocationTarget::Absolute`,
     // routing through `image_relative_reloc`.
     let fx = common::elf_fixture::build_mips32be_rel32_elf_with(false);
-    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
-    let mut regions = common::regions(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::AllAllocatable,
-    )
-    .expect("apply");
+    let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
 
     assert_eq!(
         read_u32_be(&regions, fx.slot_addr),
@@ -82,15 +69,8 @@ fn absolute_rel_keeps_the_implicit_in_field_addend() {
         defined_symbol: true,
         slot_init: addend.to_le_bytes().to_vec(),
     });
-    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
-    let mut regions = common::regions(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::AllAllocatable,
-    )
-    .expect("apply");
+    let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
 
     assert_eq!(
         read_u32_le_at(&regions, fx.slot_addr),
@@ -112,15 +92,8 @@ fn relative_rel_keeps_the_implicit_in_field_addend() {
         defined_symbol: true,
         slot_init: addend.to_le_bytes().to_vec(),
     });
-    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
-    let mut regions = common::regions(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::AllAllocatable,
-    )
-    .expect("apply");
+    let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
 
     let expected = fx
         .sym_addr
@@ -144,15 +117,8 @@ fn defined_mips_rel32_keeps_the_implicit_in_field_addend() {
         defined_symbol: true,
         slot_init: addend.to_be_bytes().to_vec(),
     });
-    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
-    let mut regions = common::regions(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::AllAllocatable,
-    )
-    .expect("apply");
+    let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
 
     assert_eq!(
         read_u32_be(&regions, fx.slot_addr),
@@ -192,15 +158,7 @@ fn mips_r16_addend_and_patch_sit_in_the_low_half_of_the_storage_word() {
             defined_symbol: true,
             slot_init,
         });
-        let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
-        let mut regions =
-            common::regions(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
-        strider_reader::elf::apply_elf_relocations(
-            &mut regions,
-            &obj,
-            strider_reader::elf::LoadFilter::AllAllocatable,
-        )
-        .expect("apply");
+        let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
 
         // S = 0x1000, A = sign-extended 0xabcd, truncated to the 16-bit field.
         let mut got = [0u8; 4];
@@ -229,15 +187,8 @@ fn mips64_composite_rel32_writes_an_eight_byte_field() {
         defined_symbol: true,
         slot_init: vec![0u8; 8],
     });
-    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
-    let mut regions = common::regions(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::AllAllocatable,
-    )
-    .expect("apply");
+    let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
 
     assert_eq!(
         read_u64_be(&regions, fx.slot_addr),
@@ -260,15 +211,8 @@ fn mips64_uncomposed_rel32_leaves_the_trailing_four_bytes_alone() {
         defined_symbol: true,
         slot_init,
     });
-    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
-    let mut regions = common::regions(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::AllAllocatable,
-    )
-    .expect("apply");
+    let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
 
     assert_eq!(
         read_u32_be(&regions, fx.slot_addr),
@@ -288,21 +232,13 @@ fn mips64_uncomposed_rel32_leaves_the_trailing_four_bytes_alone() {
 #[test]
 fn et_rel_relocations_do_not_land_in_a_colliding_sections_bytes() {
     let fx = common::elf_fixture::build_et_rel_vma_collision_elf();
-    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
-    let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).expect("regions");
+    let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::CodeAndReadOnly);
     assert_eq!(
         regions.iter().map(common::region_bytes).collect::<Vec<_>>(),
         vec![fx.text_bytes.clone()],
         "fixture geometry: the code-and-readonly load materialises `.text.f`",
     );
-
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::CodeAndReadOnly,
-    )
-    .expect("apply");
 
     assert_eq!(
         common::region_bytes(&regions[0]),
@@ -317,13 +253,12 @@ fn et_rel_relocations_do_not_land_in_a_colliding_sections_bytes() {
 #[test]
 fn et_rel_relocations_apply_to_each_rebased_section() {
     let fx = common::elf_fixture::build_et_rel_vma_collision_elf();
-    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
     let data_base = common::section_base(&fx.bytes, ".data");
     let text_base = common::section_base(&fx.bytes, ".text.f");
-    let mut regions = common::regions(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
+    let filter = strider_reader::elf::LoadFilter::AllAllocatable;
     assert_eq!(
-        regions
+        common::regions(&fx.bytes, filter)
             .iter()
             .map(|r| (r.start_addr(), common::region_bytes(r)))
             .collect::<Vec<_>>(),
@@ -334,13 +269,7 @@ fn et_rel_relocations_apply_to_each_rebased_section() {
         "fixture geometry: `.data` (index 1) is seated first, `.text.f` follows it",
     );
 
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::AllAllocatable,
-    )
-    .expect("apply");
-
+    let regions = common::relocated(&fx.bytes, filter);
     assert_eq!(read_u64_le(&regions, data_base), Some(fx.sym_value));
     assert_eq!(
         common::region_bytes(&regions[1]),
@@ -350,15 +279,14 @@ fn et_rel_relocations_apply_to_each_rebased_section() {
 }
 
 #[test]
-fn apply_elf_relocations_patches_slot_at_very_end_of_region() {
+fn a_slot_at_the_very_end_of_a_region_is_patched() {
     // The slot segment is exactly the 4-byte site, so the patch's last byte is
     // the region's last byte, where an off-by-one would reject or overrun. The
     // geometry is asserted first so a future fixture reshuffle that pads the
     // segment cannot silently demote this to an interior patch.
     let fx = common::elf_fixture::build_mips32be_rel32_elf();
-    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
-    let mut regions = common::regions(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
+    let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
     {
         let slot_region = regions
             .iter()
@@ -371,12 +299,6 @@ fn apply_elf_relocations_patches_slot_at_very_end_of_region() {
         );
     }
 
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::AllAllocatable,
-    )
-    .expect("apply");
     assert_eq!(
         read_u32_be(&regions, fx.slot_addr),
         Some(fx.sym_addr as u32),
@@ -385,23 +307,15 @@ fn apply_elf_relocations_patches_slot_at_very_end_of_region() {
 }
 
 #[test]
-fn apply_elf_relocations_field_straddling_section_end_is_not_patched() {
+fn a_field_straddling_a_section_end_is_not_patched() {
     // `.data.rel.ro` is 6 bytes with the 4-byte PC32 site at offset 4, so the
     // field `[4, 8)` runs past its file-backed bytes. The site's first byte
     // lands inside the region but the full field straddles its end, so the
     // patch cannot land and the slot stays zeroed.
     let fx =
         common::elf_fixture::build_x86_64_pc32_rela_elf(/* slot_len */ 6, /* off */ 4, 0);
-    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
-    let mut regions = common::regions(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
-
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::AllAllocatable,
-    )
-    .expect("apply");
+    let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
 
     let region = regions
         .iter()
@@ -416,7 +330,7 @@ fn apply_elf_relocations_field_straddling_section_end_is_not_patched() {
 }
 
 #[test]
-fn apply_elf_relocations_negative_addend_pc_relative() {
+fn a_negative_addend_pc_relative_site_wraps() {
     // A PC32 (`S + A - P`) with a negative addend. The applier bitcasts the
     // i64 to u64, wrapping-adds, and truncates to the 4-byte field, giving the
     // correct modular result. Guards against a future "fix" to a checked or
@@ -425,15 +339,8 @@ fn apply_elf_relocations_negative_addend_pc_relative() {
     let fx = common::elf_fixture::build_x86_64_pc32_rela_elf(
         /* slot_len */ 4, /* off */ 0, addend,
     );
-    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
-    let mut regions = common::regions(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::AllAllocatable,
-    )
-    .expect("apply");
+    let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
 
     let expected = fx
         .sym_addr
@@ -490,7 +397,7 @@ fn sym_addr(obj: &object::File<'_>, name: &str) -> u64 {
 }
 
 #[test]
-fn apply_elf_relocations_patches_dispatch_table_x86_64() {
+fn a_dispatch_table_is_patched_on_x86_64() {
     let path = fixture_path("x64", "elf_relocs");
     if !path.exists() {
         panic!("missing {path:?}; run `make -C fixtures CASE=elf_relocs ARCH=x64`");
@@ -546,7 +453,7 @@ fn default_loader_omits_data_rel_ro() {
 }
 
 #[test]
-fn apply_elf_relocations_no_op_on_pre_resolved_binary() {
+fn relocating_a_pre_resolved_binary_changes_nothing() {
     // `control.elf` is a dynamically-linked ET_EXEC whose only two dynamic
     // relocations (`R_386_GLOB_DAT`, `R_386_JUMP_SLOT`) name undefined externs
     // and sit in the writable `.got` the fetch image does not map. Nothing to
@@ -561,60 +468,19 @@ fn apply_elf_relocations_no_op_on_pre_resolved_binary() {
         );
         return; // skip if fixture not built
     }
-    let obj = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = obj.checked_file().expect("the mapped file is unchanged");
-    let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).expect("regions");
-    let before: Vec<Vec<u8>> = regions.iter().map(common::region_bytes).collect();
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::CodeAndReadOnly,
-    )
-    .expect("apply");
-    let after: Vec<Vec<u8>> = regions.iter().map(common::region_bytes).collect();
+    let filter = strider_reader::elf::LoadFilter::CodeAndReadOnly;
+    let before: Vec<Vec<u8>> = common::regions_of_file(&path, filter, false)
+        .iter()
+        .map(common::region_bytes)
+        .collect();
+    let after: Vec<Vec<u8>> = common::regions_of_file(&path, filter, true)
+        .iter()
+        .map(common::region_bytes)
+        .collect();
     assert_eq!(
         before, after,
         "ET_EXEC pre-link-resolved binary must have nothing to apply"
     );
-}
-#[test]
-fn apply_elf_relocations_idempotent() {
-    // Each relocation is a deterministic write, so re-applying overwrites with
-    // the same value.
-    let path = fixture_path("x64", "elf_relocs");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return;
-    }
-    let owned = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = owned.checked_file().expect("the mapped file is unchanged");
-    let mut regions = owned
-        .regions(
-            strider_reader::elf::RegionSource::Auto,
-            strider_reader::elf::LoadFilter::AllAllocatable,
-            false,
-        )
-        .unwrap();
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::AllAllocatable,
-    )
-    .unwrap();
-    let snapshot: Vec<Vec<u8>> = regions.iter().map(common::region_bytes).collect();
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::AllAllocatable,
-    )
-    .unwrap();
-    let after: Vec<Vec<u8>> = regions.iter().map(common::region_bytes).collect();
-    assert_eq!(snapshot, after, "apply_elf_relocations is not idempotent");
 }
 /// The colliding sections hold the SAME bytes, which a zero-initialised or
 /// same-length pair does routinely. Nothing about the region's contents can
@@ -623,16 +489,9 @@ fn apply_elf_relocations_idempotent() {
 #[test]
 fn et_rel_relocations_apply_when_the_colliding_sections_are_byte_identical() {
     let fx = common::elf_fixture::build_et_rel_vma_collision_elf_with(vec![0u8; 8]);
-    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
     assert_eq!(fx.text_bytes, fx.data_bytes, "fixture geometry: bytes tie");
 
-    let mut regions = common::regions(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::AllAllocatable,
-    )
-    .expect("apply");
+    let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
 
     assert_eq!(
         read_u64_le(&regions, common::section_base(&fx.bytes, ".data")),
@@ -647,15 +506,8 @@ fn et_rel_relocations_apply_when_the_colliding_sections_are_byte_identical() {
 #[test]
 fn et_rel_byte_identical_collision_does_not_patch_the_other_section() {
     let fx = common::elf_fixture::build_et_rel_vma_collision_elf_with(vec![0u8; 8]);
-    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
 
-    let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).expect("regions");
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::CodeAndReadOnly,
-    )
-    .expect("apply");
+    let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::CodeAndReadOnly);
 
     assert_eq!(
         common::region_bytes(&regions[0]),
@@ -865,15 +717,10 @@ fn a_read_straddling_a_relocated_site_serves_the_patched_bytes() {
 fn ppc_rel32_patches_a_rodata_jump_table() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/out/ppc32be/switch_masked_loop.o");
+    let filter = strider_reader::elf::LoadFilter::CodeAndReadOnly;
+    let regions = common::regions_of_file(&path, filter, true);
     let owned = strider_reader::load_elf(&path).expect("load_elf");
     let obj = owned.checked_file().expect("the mapped file is unchanged");
-    let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).expect("regions");
-    strider_reader::elf::apply_elf_relocations(
-        &mut regions,
-        &obj,
-        strider_reader::elf::LoadFilter::CodeAndReadOnly,
-    )
-    .expect("apply");
 
     let layout = strider_reader::elf::ElfSectionLayout::new(&obj);
     let base = |name: &str| {
@@ -1013,10 +860,10 @@ fn every_region_covering_a_site_serves_the_patched_bytes() {
     );
 }
 
-/// A patch is filed on EVERY region covering a site, so region count times
-/// relocation count is what the patch lists cost -- a product of two counts a
-/// crafted image sets independently and cheaply. The budget refuses it; the
-/// alternative is an allocation no `Result` can report.
+/// A patch is filed on EVERY region covering a site, so the patch lists cost
+/// region count times relocation count. A crafted image sets both counts
+/// independently and cheaply. The budget refuses it; the alternative is an
+/// allocation no `Result` can report.
 #[test]
 fn a_site_covered_by_many_overlapping_mappings_is_refused() {
     let bytes = common::elf_fixture::build_overlapping_loads_rela_elf(64, 512);

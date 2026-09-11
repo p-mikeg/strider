@@ -9,9 +9,9 @@ use anyhow::Context as _;
 ///
 /// A mapped file must not change on disk while it is mapped; the mapping's
 /// bytes are otherwise not immutable, and a read can observe a torn or
-/// truncated file (SIGBUS past the new end). [`check_unchanged`] turns the
-/// common case of that -- a rebuild between two operations -- into an `Err`,
-/// but a change racing a read in progress still tears.
+/// truncated file (SIGBUS past the new end). The common case is a rebuild
+/// between two operations, which [`check_unchanged`] turns into an `Err`. A
+/// change racing a read in progress still tears.
 ///
 /// [`check_unchanged`]: FileBytes::check_unchanged
 #[derive(Clone)]
@@ -77,13 +77,19 @@ impl FileIdentity {
     }
 }
 
+/// Ceiling on what a `stat` alone buys in reserved capacity. `read_to_end`
+/// grows past it; a sparse or concurrently-truncated file that reports
+/// terabytes must not turn into an allocation abort before a byte is read.
+const MAX_RESERVED_READ: u64 = 64 << 20;
+
 /// The whole of the already-open `file`, `len` being what its `stat` reported.
 ///
 /// Through the fd rather than the path, so the bytes come from the inode the
 /// checks above ran on however the name is rebound meanwhile.
 fn read_all(file: &mut std::fs::File, len: u64) -> std::io::Result<Vec<u8>> {
     use std::io::Read as _;
-    let mut bytes = Vec::with_capacity(usize::try_from(len).unwrap_or(0));
+    let reserve = usize::try_from(len.min(MAX_RESERVED_READ)).unwrap_or(0);
+    let mut bytes = Vec::with_capacity(reserve);
     file.read_to_end(&mut bytes)?;
     Ok(bytes)
 }
