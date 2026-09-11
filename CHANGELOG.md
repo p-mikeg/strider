@@ -269,6 +269,23 @@ The shape each API settled into is in
   `::from_elf(&owned)`; both `from_elf_relocated` and a load-then-apply pair are
   `OwnedElf::regions(source, filter, /* relocate */ true)`, the path that
   windows into the ELF's own bytes instead of copying them.
+- A masked switch index bounded on a loop back edge now resolves. The guard
+  lives on the edge, not on the merge, so `value_range` kept it per edge and
+  maps it up to the phi arm through the cast, mask and scale hops between them.
+  `switch_masked_loop` seats exactly its six table words on x86, x86-64 and
+  MIPS32 where it previously read two slots past the table and abandoned the
+  site.
+- MIPS64 `dsllv` / `dsrlv` / `dsrav` take six count bits, as the ISA says. The
+  vendored spec had no mask, so a count at or above 64 answered zero where the
+  hardware answers the operand unshifted.
+- `CBRANCH` lowers as `cond != 0`, which is the p-code contract, rather than as
+  the condition's low bit. PowerPC's CR-bit extract is a 1-BYTE condition, so
+  the canonicalizer now recognises the `!= 0` root directly and every
+  architecture's branch-condition shape is unchanged.
+- A template comparison operand built fresh takes its operand width, not the
+  comparison's `I1` verdict, so `int_sborrow(int_const(K), var(x))` no longer
+  builds IR `validate` rejects. A width nothing anchors is an error naming the
+  slot instead of a guess.
 - `graph_algorithms::walk::entity_preorder` is gone; call `PreOrder::new`, which
   it only forwarded to. `entity_postorder` stays.
 - A direct branch to an address the image has no bytes for no longer fails the
