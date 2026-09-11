@@ -2,11 +2,11 @@
 //! rather than failing the function.
 //!
 //! The sla builds such an address from constants when an instruction field
-//! picks the register, and it folds -- but only where the p-code is straight
-//! line. ARM's multi-structure `VLD2/3/4` and `VST2/3/4` carry an
-//! INTRA-INSTRUCTION loop whose register pointer is loop-carried, so the CFG
-//! splits the one machine instruction into several regions and the pointer's
-//! definition lands in a different region from its use. The per-region
+//! picks the register, and it folds only where the p-code is straight line.
+//! ARM's multi-structure `VLD2/3/4` and `VST2/3/4` carry an INTRA-INSTRUCTION
+//! loop whose register pointer is loop-carried, so the CFG splits the one
+//! machine instruction into several regions and the pointer's definition lands
+//! in a different region from its use. The per-region
 //! constant folder cannot see across that, and a loop-carried pointer has no
 //! single constant value to see anyway.
 //!
