@@ -85,11 +85,17 @@ merge. So does an intervening call, unless its convention declares
 `per_address_ccs={callee_addr: cc}` buy for a transparent hook such as
 `__fentry__`.
 
-Cost is loads times memory definitions: each load walks the chain from its own
-cursor and its memo is keyed on the probed location, so a long chain of distinct
-stack slots costs roughly 4x per doubling, against about 2x for every other
-pass. Calls and aliasing break such chains, so it is debug builds and firmware
-that hit it; drop `LoadForward` from a custom pipeline if you do.
+Each load walks the chain from its own cursor and the memo is keyed on the
+probed location, so loads at different offsets share nothing, but that does not
+compound: the per-function address-decomposition memos, and `narrow_load_to`
+shortening each load's memory edge onto its clobber for good, hold the marginal
+cost of one more load flat as the chain grows. Measured in `--release` on the
+workspace's own bench shape, N SP-relative stores at distinct offsets read back
+by N loads (`crates/strider-orchestrator/benches/scaling.rs`), the pass grows
+about 2.0x per doubling of N, the same as every other pass, and costs roughly a
+27th of what `ConstantFold` costs on that same shape. That is synthetic IR
+timed on one machine, but the exponent holds across three shape variants and a
+512x range of N.
 
 With `AssumptionOptions(escape_analysis=True)` it also forwards across a call,
 when no stack address escapes to the callee and the slot is not one the call
@@ -131,9 +137,9 @@ it). After optimizing, Strider classifies each unresolved
 indirect branch against the clean IR, feeds any newly discovered targets back in,
 and re-lifts, repeating until the set of edges stops changing. Whatever still
 cannot be resolved comes back as the `unresolved` list from `analyze`, never as
-an exception. That list is one of the four channels a converged CFG reports its
-own incompleteness through, of which `isa_mode_conflicts` can only fire on ARM
-and MIPS; see [python-api.md](python-api.md#12-the-cfg-stridercfg).
+an exception. It is one of the five channels
+[python-api.md](python-api.md#12-the-cfg-stridercfg) describes, which
+`cfg.is_complete()` reads together.
 
 A resolved target carries the ISA mode it decodes in, taken from the mode the
 branch commits or else the one flowing into it, so an ARM/Thumb interworking
@@ -148,15 +154,28 @@ the classifier off and leaves every site for you to answer.
 
 Four shapes come back in `unresolved` rather than as an error:
 
-- AArch64 big-endian stack-array dispatch built through a `bfi` insert against
-  an alignment-masked SP.
-- MIPS64 GOT-indirect dispatch, where the table routes through `gp` even under
-  `-fno-pic`, so the entries lift as `Add(Load[gp+off], const)` rather than a
-  raw constant.
-- PowerPC stack-array dispatch on ppc32le, ppc64be and ppc64le, whose lifted
-  shape is uncharacterised. ppc32be resolves.
-- On any architecture, a masked switch index whose real bound lives on a loop
-  back edge: the over-approximated answer oscillates, so the site is abandoned.
+- AArch64 big-endian stack-array dispatch built through a `bfi` insert. The
+  frame and the table base are plain (`sub sp,sp,#0x30`, `add x8,sp,#0x10`);
+  the mask the SP decomposition cannot spell out is the one Sleigh's lowering
+  of `bfi` puts on the SP-derived value the insert itself makes. The table is a
+  single 16-byte `str q0`, so it also arrives as one `IntConst:I128` that the
+  classifier would have to slice into two entries.
+- MIPS64 GOT-indirect dispatch, where the entries lift as
+  `Add(Load[GOT], const)` rather than a raw constant, the GOT pointer derived
+  from `t9` (`$25`) rather than read out of `gp`.
+- PowerPC stack-array dispatch on ppc32le, ppc64be and ppc64le. The stack base
+  lifts cleanly on all three; it is the entries that do not fold. On ppc32le
+  they are `Load(RAM, 0x100201FC)` and `Load(RAM, 0x10020200)`, addresses in
+  `.data.rel.ro` inside a writable `PT_LOAD`, which the read-only image rejects,
+  so `LoadReadOnly` leaves them alone. On ppc64be and ppc64le, whose IR is
+  identical despite one being clang and one gcc, they are `Load(RAM, r12 + K)`
+  off the ELFv2 TOC prologue `addis r2,r12,2`: an unknown incoming register
+  plus the same writable `.data.rel.ro` / `.got`, which is the MIPS64 shape
+  again. ppc32be resolves.
+- A masked switch index whose real bound lives on a loop back edge, so the
+  over-approximation never settles and the site is abandoned. Nothing in the
+  mechanism is architecture-specific, but x64 and mips32 in both endians are
+  the only ones exercised.
 
 ## Using a different pipeline
 
