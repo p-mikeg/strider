@@ -1305,3 +1305,41 @@ fn rerunning_the_default_pipeline_keeps_one_carrier_per_stack_arg() -> Result<()
     }
     Ok(())
 }
+
+/// The narrowing is permanent, so it may rest on nothing a later run can
+/// disclaim: a default run must leave the global store on the argument load's
+/// memory chain, where an `AssumptionOptions::none()` run also finds it.
+#[test]
+fn narrowing_does_not_bake_in_stack_global_disjoint() -> Result<()> {
+    let sp = stack_vn();
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(8, 8))
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    let eight = b.build_int_const(8u64, ValueType::I64)?;
+    let slot = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I64)?;
+    let global = b.build_int_const(0x4000u64, ValueType::I64)?;
+    let val = b.build_int_const(7u64, ValueType::I64)?;
+    b.build_store(global, val, rsleigh::VnSpace::RAM)?;
+    let loaded = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I64)?;
+    b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    cf_rp_pipeline().run(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    let mut default_run = crate::OptCtx::new(None);
+    assert!(
+        default_run.options.assumptions.stack_global_disjoint,
+        "the claim this rewire must not inherit is on by default"
+    );
+    crate::pipeline::run_post(&FunctionArgDetect, &mut fg, &mut default_run)?;
+
+    let load = fg.producer(loaded);
+    let mem = fg.node_inputs(load)[0];
+    assert!(
+        matches!(fg.node_kind(fg.producer(mem)), NodeKind::Store(_)),
+        "the constant-address store must stay on the chain, got {:?}",
+        fg.node_kind(fg.producer(mem)),
+    );
+    Ok(())
+}
