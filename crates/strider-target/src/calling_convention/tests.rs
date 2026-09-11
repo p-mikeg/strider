@@ -88,6 +88,9 @@ struct Case {
     /// Neither GPR nor float: PowerPC's non-volatile condition fields, which
     /// are 1 byte each and sit after the floats.
     callee_saved_cond_count: usize,
+    /// PowerPC's non-volatile vector registers, 16 bytes each, last in the
+    /// list.
+    callee_saved_vec_count: usize,
     ret_count: usize,
     reg_size_bytes: u32,
     stack_ptr_name: &'static str,
@@ -105,6 +108,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 6,
             callee_saved_float_count: 0,
             callee_saved_cond_count: 0,
+            callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "RSP",
@@ -122,6 +126,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 4,
             callee_saved_float_count: 0,
             callee_saved_cond_count: 0,
+            callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "ESP",
@@ -139,6 +144,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 9,
             callee_saved_float_count: 8,
             callee_saved_cond_count: 0,
+            callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
@@ -156,6 +162,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 12,
             callee_saved_float_count: 8,
             callee_saved_cond_count: 0,
+            callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
@@ -173,6 +180,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 11,
             callee_saved_float_count: 12,
             callee_saved_cond_count: 0,
+            callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
@@ -190,6 +198,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 11,
             callee_saved_float_count: 12,
             callee_saved_cond_count: 0,
+            callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
@@ -207,6 +216,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 11,
             callee_saved_float_count: 8,
             callee_saved_cond_count: 0,
+            callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
@@ -224,6 +234,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 11,
             callee_saved_float_count: 8,
             callee_saved_cond_count: 0,
+            callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
@@ -242,6 +253,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 21,
             callee_saved_float_count: 18,
             callee_saved_cond_count: 3,
+            callee_saved_vec_count: 12,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "r1",
@@ -259,6 +271,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 21,
             callee_saved_float_count: 18,
             callee_saved_cond_count: 3,
+            callee_saved_vec_count: 12,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "r1",
@@ -278,6 +291,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 21,
             callee_saved_float_count: 18,
             callee_saved_cond_count: 3,
+            callee_saved_vec_count: 12,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "r1",
@@ -298,6 +312,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 21,
             callee_saved_float_count: 18,
             callee_saved_cond_count: 3,
+            callee_saved_vec_count: 12,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "r1",
@@ -317,6 +332,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 12,
             callee_saved_float_count: 8,
             callee_saved_cond_count: 0,
+            callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
@@ -334,6 +350,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 9,
             callee_saved_float_count: 8,
             callee_saved_cond_count: 0,
+            callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
@@ -351,6 +368,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 9,
             callee_saved_float_count: 8,
             callee_saved_cond_count: 0,
+            callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
@@ -371,6 +389,7 @@ fn cases() -> Vec<Case> {
             callee_saved_count: 4, // EBX, ESI, EDI, EBP
             callee_saved_float_count: 0,
             callee_saved_cond_count: 0,
+            callee_saved_vec_count: 0,
             ret_count: 2, // EAX, EDX
             reg_size_bytes: 4,
             stack_ptr_name: "ESP",
@@ -433,7 +452,10 @@ fn presets_resolve_correct_register_sets() {
         );
         assert_eq!(
             built.callee_saved_regs.len(),
-            c.callee_saved_count + c.callee_saved_float_count + c.callee_saved_cond_count,
+            c.callee_saved_count
+                + c.callee_saved_float_count
+                + c.callee_saved_cond_count
+                + c.callee_saved_vec_count,
             "{}: callee-saved",
             c.name
         );
@@ -494,10 +516,24 @@ fn presets_resolved_registers_have_expected_size() {
             "{}: callee-saved float registers follow the GPRs",
             c.name,
         );
+        let (saved_cond, saved_vec) = saved_cond.split_at(c.callee_saved_cond_count);
         assert_eq!(
             saved_cond.len(),
             c.callee_saved_cond_count,
             "{}: condition fields follow the floats",
+            c.name,
+        );
+        for vn in saved_vec {
+            assert_eq!(
+                vn.size, 16,
+                "{}: expected a 16-byte vector register, got {vn:?}",
+                c.name,
+            );
+        }
+        assert_eq!(
+            saved_vec.len(),
+            c.callee_saved_vec_count,
+            "{}: vector registers follow the condition fields",
             c.name,
         );
     }
