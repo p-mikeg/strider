@@ -80,5 +80,16 @@ fn a_site_the_loop_abandoned_is_republished_without_its_seat() {
         "the abandoned site is reported unresolved; got {:?}",
         result.unresolved_indirect_branches,
     );
+    // The complement, which `is_complete` cannot see: the unresolved entry
+    // alone already makes it false, so only this pins that an abandoned site
+    // holding no arms never also claims its answer is whole.
+    assert!(
+        !result
+            .unverified_seeded_sites
+            .iter()
+            .any(|a| a.machine_addr.addr == SITE),
+        "an abandoned site holds no arms to be unverified; got {:?}",
+        result.unverified_seeded_sites,
+    );
     assert!(!result.is_complete());
 }
