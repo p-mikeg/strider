@@ -92,8 +92,7 @@ pub struct Matcher<'f> {
     pub(crate) satisfied: std::cell::Cell<u64>,
 }
 
-/// Restores `satisfied` when dropped, so a query nested inside caller-supplied
-/// logic cannot disturb the count an enclosing `first_of` is cutting on.
+/// Restores [`Matcher::satisfied`] when dropped.
 struct CountScope<'a> {
     cell: &'a std::cell::Cell<u64>,
     saved: u64,
@@ -230,9 +229,7 @@ impl<'f> Matcher<'f> {
         root: PatNodeId,
         first_only: bool,
     ) -> Vec<Match> {
-        // One scope per candidate root: a query run by caller-supplied logic
-        // during this walk restores the count on its way out, so an enclosing
-        // `first_of` cuts on its OWN arms and nothing else.
+        // One scope per candidate root; see `Matcher::satisfied`.
         let _count = self.scoped_count();
         let mut hits: Vec<Match> = Vec::new();
         // Keyed on the bindings ALONE, deliberately: an existential

@@ -163,6 +163,12 @@ pub fn instantiate<B: IRBuilder>(
         let kind = match kind {
             NodeKind::FloatConst(bits) => {
                 let ty = node_value_ty(template, vtx, root_ty, &binding_tys);
+                // The payload is a `u64`, so a wider float has no encoding here
+                // and the mask would silently keep 64 of its bits.
+                anyhow::ensure!(
+                    !(ty.is_float() && ty.byte_size() > 8),
+                    "template float const at {ty}: the payload is a u64"
+                );
                 NodeKind::FloatConst(if ty.is_float() {
                     ty.mask_float_bits(bits)
                 } else {

@@ -90,8 +90,9 @@ macro_rules! delegate_node_pat {
         }
     };
     (@m $inner:tt, any_input) => {
-        /// Matches *some* input without pinning a slot. Every input a fixed
-        /// operand has not already pinned is a candidate, and the sub-pattern
+        /// Matches *some* input without pinning a slot. The candidates are the
+        /// inputs no fixed operand pinned, which on a commutative node is every
+        /// input, its fixed operands roaming both slots. The sub-pattern
         /// discriminates: a typed value sub binds only a value input, while
         /// `var` / `anything` also reaches the control and memory edges.
         /// Repeatable, each call adding one constraint; several existentials
@@ -99,7 +100,7 @@ macro_rules! delegate_node_pat {
         ///
         /// # Cost
         ///
-        /// `k` existentials on a node with `n` inputs enumerate all
+        /// `k` existentials over `n` candidate inputs enumerate all
         /// `n * (n-1) * ... * (n-k+1)` injective assignments, whether or not
         /// they capture: uncaptured ones share one binding signature and
         /// collapse to a single reported match, so the cost is in
@@ -118,9 +119,59 @@ macro_rules! delegate_node_pat {
 }
 pub(crate) use delegate_node_pat;
 
+type BoxedCompile = Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef + Send>;
+
 /// Defers a sub-pattern's compilation until `build`, once the shared
 /// [`MatcherBuilder`] exists.
-pub(crate) type SubCompiler = Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef + Send>;
+pub(crate) struct SubCompiler(Option<BoxedCompile>);
+
+impl SubCompiler {
+    pub(crate) fn new(f: impl FnOnce(&mut MatcherBuilder) -> PatValueRef + Send + 'static) -> Self {
+        Self(Some(Box::new(f)))
+    }
+
+    /// Lowers the sub-pattern one nesting level down. Past the nesting cap it
+    /// hands back a wildcard instead: the pattern is refused by then, and
+    /// descending is what would abort the process.
+    pub(crate) fn call(mut self, b: &mut MatcherBuilder) -> PatValueRef {
+        if !b.enter_nesting() {
+            return b.leaf(crate::matcher::KindSpec::Any);
+        }
+        let f = self.0.take().expect("a SubCompiler runs once");
+        let out = f(b);
+        b.leave_nesting();
+        out
+    }
+}
+
+impl Drop for SubCompiler {
+    fn drop(&mut self) {
+        if let Some(f) = self.0.take() {
+            defer_drop(f);
+        }
+    }
+}
+
+thread_local! {
+    static DROP_PIT: std::cell::RefCell<Vec<Box<dyn Send>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    static DRAINING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Drops a deferred sub-pattern iteratively. The tower under one is a chain of
+/// boxed closures one link per nesting level, so dropping it in place unwinds a
+/// frame per level; a nested link's own drop lands back here and is popped by
+/// the outermost call instead.
+pub(crate) fn defer_drop<T: Send + 'static>(tower: T) {
+    DROP_PIT.with_borrow_mut(|pit| pit.push(Box::new(tower)));
+    if DRAINING.replace(true) {
+        return;
+    }
+    while let Some(link) = DROP_PIT.with_borrow_mut(Vec::pop) {
+        drop(link);
+    }
+    DRAINING.set(false);
+}
 
 /// A sub-pattern that produces a memory token, so it can be chained into a
 /// consumer's memory input slot. The lowering itself is
