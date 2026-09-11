@@ -30,7 +30,9 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
     base.wrapping_add(addend as u64)
 }
 
-/// The relocation's `A`, `covering` being the region the field sits in.
+/// The relocation's `A`, read out of the first region `overlapping` names that
+/// holds the WHOLE field: a region serving only part of it cannot answer the
+/// read either, so it would contribute a truncated A.
 ///
 /// `SHT_REL` tables carry no `r_addend` field and store A in the relocation
 /// field itself; `object` reports `r_addend = 0` for them, so it is read back
@@ -42,7 +44,7 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
 fn reloc_addend(
     reloc: &object::Relocation,
     regions: &[MemRegion],
-    covering: Option<usize>,
+    overlapping: &[usize],
     site_addr: u64,
     size_bytes: usize,
     endian_le: bool,
@@ -50,7 +52,14 @@ fn reloc_addend(
     if !reloc.has_implicit_addend() {
         return reloc.addend();
     }
-    let Some(region) = covering.map(|i| &regions[i]) else {
+    let Some(field_end) = site_addr.checked_add(size_bytes as u64) else {
+        return 0;
+    };
+    let Some(region) = overlapping
+        .iter()
+        .map(|&i| &regions[i])
+        .find(|r| r.start_addr() <= site_addr && field_end <= r.end_addr())
+    else {
         return 0;
     };
     let off = (site_addr - region.start_addr()) as usize;
@@ -118,7 +127,11 @@ fn reloc_addend(
 /// Everything unsupported is skipped silently, leaving the site at its
 /// file-initial bytes.
 ///
-/// Any patch list the regions already carry is replaced.
+/// Any patch list the regions already carry is replaced, so re-applying over
+/// one region set is idempotent.
+///
+/// `layout` must be the one built for `obj`, and `loaded_with` the filter the
+/// regions were loaded with.
 ///
 /// # Errors
 ///
@@ -126,20 +139,6 @@ fn reloc_addend(
 /// symbol or section index does not resolve is NOT an error (neither a
 /// legitimate `STN_UNDEF` for an external lib nor a corrupt index); it is
 /// skipped, leaving the site at its file-initial bytes.
-pub fn apply_elf_relocations(
-    regions: &mut [MemRegion],
-    obj: &object::File<'_>,
-    loaded_with: super::sections::LoadFilter,
-) -> Result<()> {
-    let layout = super::sections::ElfSectionLayout::new(obj);
-    apply_elf_relocations_with(regions, obj, loaded_with, &layout)
-}
-
-/// [`apply_elf_relocations`] over the layout built for `obj`.
-///
-/// # Errors
-///
-/// Same as [`apply_elf_relocations`].
 pub(crate) fn apply_elf_relocations_with(
     regions: &mut [MemRegion],
     obj: &object::File<'_>,
@@ -306,7 +305,7 @@ fn apply_one_relocation(
             reloc_addend(
                 reloc,
                 regions,
-                site_regions.first().copied(),
+                &site_regions,
                 site_addr,
                 size_bytes,
                 endian_le,
@@ -392,7 +391,7 @@ fn apply_one_relocation(
     let addend = reloc_addend(
         reloc,
         regions,
-        site_regions.first().copied(),
+        &site_regions,
         field_addr,
         size_bytes,
         endian_le,
@@ -411,25 +410,39 @@ fn apply_one_relocation(
     Ok(())
 }
 
-/// Slice indices of every region fully covering `[addr, addr + size_bytes)`,
-/// highest `start` first, at most one per start.
+/// Slice indices of every region overlapping `[addr, addr + size_bytes)`,
+/// highest `start` first, at most one per start; empty unless some region
+/// holds the WHOLE field.
 ///
-/// All of them, because a read is served by whichever region covers the
-/// REQUEST: with overlapping regions a wide read falls through to an outer
-/// one, which would serve unpatched bytes if only the winner were patched.
+/// OVERLAPPING, not covering, because which region serves a read depends on
+/// the read's width: a narrow read inside a field that straddles an inner
+/// region's end is served by that inner region while a wide one falls through
+/// to the outer, so patching only the coverers answers the two differently.
+/// [`MemRegion::read`] clips a patch to the bytes it serves, so a region
+/// holding part of the field takes just that part.
+///
+/// The whole-field anchor is what keeps that from patching a NEIGHBOUR: a
+/// field no region holds in full has run past the end of the mapping it
+/// started in, and the bytes past that end belong to whatever is mapped next.
 ///
 /// One per start because equal-start regions collapse in
 /// [`crate::MemRegionsLookupTable`], last-inserted winning, so only that one
 /// is ever read; the walk is in descending slice order within a start, so the
 /// first of a run IS the last-inserted.
-fn covering_regions<'a>(
+fn overlapping_regions<'a>(
     index: &'a RegionIndex,
     regions: &'a [MemRegion],
     addr: u64,
     size_bytes: usize,
 ) -> impl Iterator<Item = usize> + 'a {
+    let size = size_bytes as u64;
+    let end = match index.covering(addr, size).next() {
+        Some(_) => addr.saturating_add(size),
+        // An empty range, so the walk yields nothing.
+        None => addr,
+    };
     let mut prev: Option<u64> = None;
-    index.covering(addr, size_bytes as u64).filter(move |&i| {
+    index.overlapping(addr, end).filter(move |&i| {
         let start = regions[i].start_addr();
         let first_of_run = prev != Some(start);
         prev = Some(start);
@@ -443,7 +456,7 @@ const MAX_PATCH_AMPLIFICATION: usize = 4;
 /// The per-region patch lists being filled, and what has been charged against
 /// [`MAX_PATCH_AMPLIFICATION`].
 ///
-/// A site is patched on EVERY region covering it, so N regions nested over M
+/// A site is patched on EVERY region overlapping it, so N regions nested over M
 /// relocations record N*M patches out of a file costing O(N + M) bytes, both
 /// counts being the image's to choose.
 struct PatchSink<'a> {
@@ -457,10 +470,11 @@ struct PatchSink<'a> {
 }
 
 impl PatchSink<'_> {
-    /// The regions covering a field, charged to the budget. Empty when the
+    /// The regions overlapping a field, charged to the budget. Empty when the
     /// field runs past `site.avail`, what is left of the section owning the
     /// site: such a field belongs to no section and would patch a neighbour's
-    /// bytes.
+    /// bytes. [`overlapping_regions`] applies the same rule against the
+    /// mappings.
     ///
     /// # Errors
     ///
@@ -487,8 +501,9 @@ impl PatchSink<'_> {
         // One past the allowance is enough to report the overrun, and is what
         // keeps a site covered by every region of a crafted image from
         // materialising that list at all.
-        covering
-            .extend(covering_regions(index, regions, field_addr, size_bytes).take(allowance + 1));
+        covering.extend(
+            overlapping_regions(index, regions, field_addr, size_bytes).take(allowance + 1),
+        );
         if covering.len() > allowance {
             anyhow::bail!(
                 "relocation site {field_addr:#x} lands in more overlapping regions than the \
@@ -503,8 +518,9 @@ impl PatchSink<'_> {
     /// Records the low `size_bytes` of `value` at `site_addr`, on every region
     /// in `covering`, and takes that buffer back for the next site.
     ///
-    /// An empty `covering` silently skips: either the site is unmapped, or its
-    /// field width runs past the end of the region its first byte lands in.
+    /// An empty `covering` silently skips: the site is unmapped, or its field
+    /// width runs past the end of the section owning it, or past the end of
+    /// every mapping holding its first byte.
     fn record(
         &mut self,
         covering: Vec<usize>,
@@ -563,13 +579,13 @@ fn resolve_symbol_target(
         .map_or_else(|| reloc.target(), RelocationTarget::Symbol)
     {
         RelocationTarget::Symbol(idx) => {
-            // An ET_REL's per-section `SHT_REL`/`SHT_RELA` indexes the table
-            // its `sh_link` names -- `.symtab` -- so it must NOT be resolved
-            // against the dynamic table. `object`'s `dynamic_symbol_table` is
-            // simply the first `SHT_DYNSYM` section in the file, populated
-            // whatever the `e_type`, so an object file carrying one otherwise
-            // sends every relocation to the wrong table and patches in an
-            // unrelated symbol's `st_value`.
+            // An ET_REL's per-section `SHT_REL`/`SHT_RELA` indexes the
+            // `.symtab` its `sh_link` names, never the dynamic table.
+            // `object`'s `dynamic_symbol_table` is simply the first
+            // `SHT_DYNSYM` section in the file, populated whatever the
+            // `e_type`, so an object file carrying one otherwise sends every
+            // relocation to the wrong table and patches in an unrelated
+            // symbol's `st_value`.
             let relocatable = obj.kind() == object::ObjectKind::Relocatable;
             let resolved = obj
                 .dynamic_symbol_table()
@@ -856,36 +872,85 @@ fn mips_rel32_symbol_reloc_size(
 mod tests {
     use super::*;
 
-    fn covering(regions: &[MemRegion], addr: u64, size_bytes: usize) -> Vec<usize> {
-        let index = RegionIndex::new(regions);
-        covering_regions(&index, regions, addr, size_bytes).collect()
+    /// Re-applying over one region set overwrites the patch list rather than
+    /// appending to it, so the bytes a second pass serves are the first pass's.
+    /// Only reachable from inside the crate: a caller gets its relocations
+    /// through [`crate::OwnedElf::regions`], which loads a fresh set each time.
+    #[test]
+    fn applying_twice_serves_what_applying_once_served() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/out/x64/elf_relocs.elf");
+        if !path.exists() {
+            // A missing fixture must be VISIBLE: a silent return reports as a
+            // pass.
+            eprintln!("SKIP {}: {} is not built", module_path!(), path.display());
+            return;
+        }
+        let filter = super::super::sections::LoadFilter::AllAllocatable;
+        let owned = crate::OwnedElf::open(&path).expect("open");
+        let obj = owned.checked_file().expect("the mapped file is unchanged");
+        let layout = super::super::sections::ElfSectionLayout::new(&obj);
+        let mut regions = owned
+            .regions_with(
+                &obj,
+                &layout,
+                super::super::sections::RegionSource::Auto,
+                filter,
+                false,
+            )
+            .expect("regions")
+            .regions;
+
+        let bytes = |regions: &[MemRegion]| -> Vec<Vec<u8>> {
+            regions
+                .iter()
+                .map(|r| {
+                    let mut out = vec![0u8; (r.end_addr() - r.start_addr()) as usize];
+                    r.read(r.start_addr(), &mut out);
+                    out
+                })
+                .collect()
+        };
+        apply_elf_relocations_with(&mut regions, &obj, filter, &layout).expect("apply");
+        let once = bytes(&regions);
+        apply_elf_relocations_with(&mut regions, &obj, filter, &layout).expect("re-apply");
+        assert_eq!(once, bytes(&regions));
     }
 
-    /// A field straddling a shorter higher-start region's end must resolve to
-    /// the lower-start region that fully covers it, and a site past every
-    /// region to nothing.
+    fn overlapping(regions: &[MemRegion], addr: u64, size_bytes: usize) -> Vec<usize> {
+        let index = RegionIndex::new(regions);
+        overlapping_regions(&index, regions, addr, size_bytes).collect()
+    }
+
+    /// A field straddling a shorter higher-start region's end is patched on
+    /// BOTH: the inner region serves a narrow read of it. A site past every
+    /// region resolves to nothing.
     #[test]
-    fn covering_index_falls_through_to_a_fully_covering_lower_start_region() {
+    fn the_patched_set_is_every_region_holding_any_of_the_field() {
         let regions = vec![
             MemRegion::new(0x1000, vec![0u8; 0x100]).unwrap(),
             MemRegion::new(0x1080, vec![0u8; 4]).unwrap(),
         ];
-        assert_eq!(covering(&regions, 0x1080, 4), vec![1, 0]);
-        assert_eq!(covering(&regions, 0x1080, 8), vec![0]);
-        assert!(covering(&regions, 0x10fc, 8).is_empty());
-        assert!(covering(&regions, 0x9000, 1).is_empty());
+        assert_eq!(overlapping(&regions, 0x1080, 4), vec![1, 0]);
+        assert_eq!(overlapping(&regions, 0x1080, 8), vec![1, 0]);
+        assert!(
+            overlapping(&regions, 0x10fc, 8).is_empty(),
+            "no region holds the whole field, so the bytes past the end are a neighbour's"
+        );
+        assert!(overlapping(&regions, 0x1100, 4).is_empty());
+        assert!(overlapping(&regions, 0x9000, 1).is_empty());
     }
 
     /// A field two regions both fully cover is patched on both: a read wide
     /// enough to miss the inner one falls through to the outer, which must
     /// serve the same relocated bytes.
     #[test]
-    fn covering_indices_reports_every_fully_covering_region() {
+    fn every_region_covering_a_field_is_reported() {
         let regions = vec![
             MemRegion::new(0x1000, vec![0u8; 0x20]).unwrap(),
             MemRegion::new(0x1010, vec![0u8; 0x08]).unwrap(),
         ];
-        assert_eq!(covering(&regions, 0x1014, 4), vec![1, 0]);
+        assert_eq!(overlapping(&regions, 0x1014, 4), vec![1, 0]);
     }
 
     /// Equal starts collapse in `MemRegionsLookupTable`, so only the region a
@@ -896,6 +961,36 @@ mod tests {
             MemRegion::new(0x1000, vec![0u8; 0x20]).unwrap(),
             MemRegion::new(0x1000, vec![0u8; 0x20]).unwrap(),
         ];
-        assert_eq!(covering(&regions, 0x1000, 4), vec![1]);
+        assert_eq!(overlapping(&regions, 0x1000, 4), vec![1]);
+    }
+
+    /// Which region serves a read depends on the read's WIDTH, so a field
+    /// straddling an inner region's end has to read back patched at every
+    /// width. Patching only the regions fully covering it left the narrow read
+    /// on the file-initial bytes.
+    #[test]
+    fn a_field_over_an_inner_regions_end_reads_back_patched_at_every_width() {
+        let field = 0x1084;
+        let value = 0xdead_beef_feed_face_u64;
+        let mut regions = vec![
+            MemRegion::new(0x1000, vec![0u8; 0x100]).unwrap(),
+            MemRegion::new(0x1080, vec![0u8; 8]).unwrap(),
+        ];
+        let patch = Patch::new(field, value, 8, true).expect("an 8 byte field");
+        for i in overlapping(&regions, field, 8) {
+            regions[i].set_patches(vec![patch]);
+        }
+
+        let table = crate::MemRegionsLookupTable::new(regions);
+        let mut narrow = [0u8; 4];
+        table
+            .read_exact(field, &mut narrow)
+            .expect("the inner region");
+        let mut wide = [0u8; 8];
+        table
+            .read_exact(field, &mut wide)
+            .expect("the outer region");
+        assert_eq!(wide, value.to_le_bytes());
+        assert_eq!(narrow, wide[..4]);
     }
 }

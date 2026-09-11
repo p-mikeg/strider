@@ -96,8 +96,8 @@ fn building_a_mem_reader_over_a_changed_file_is_an_error() {
     assert!(err.contains("changed on disk"), "got: {err}");
 }
 
-/// A file replaced wholesale -- the `mv` half of a rebuild -- is caught even
-/// when the new file has the same size and, on a coarse clock, the same mtime.
+/// The `mv` half of a rebuild does not disturb the mapping: the new file
+/// takes the name, the held fd keeps the inode.
 #[test]
 fn replacing_the_path_leaves_the_mapping_coherent() {
     if mapping_disabled() {
@@ -154,10 +154,10 @@ fn reapplying_the_files_own_mtime_is_not_a_change() {
         .expect("re-applying the same mtime is not a change");
 }
 
-/// Bytes that were copied rather than mapped -- what `STRIDER_NO_MMAP=1` and
-/// `OwnedElf::parse` produce -- cannot tear, so they never fail the check. The
-/// env var itself is process-global and is not set here, which would race the
-/// other tests in this binary.
+/// `STRIDER_NO_MMAP=1` and `OwnedElf::parse` produce copied rather than mapped
+/// bytes. A copy cannot tear, so it never fails the check. The env var itself
+/// is process-global and is not set here, which would race the other tests in
+/// this binary.
 #[test]
 fn owned_bytes_are_always_coherent() {
     let elf = strider_reader::OwnedElf::parse(simple_text_elf(0x1000, &[0x90; 16])).unwrap();
@@ -173,8 +173,8 @@ fn owned_bytes_are_always_coherent() {
 }
 
 /// Parsing the image reads its headers out of the mapping, so every accessor
-/// built on it -- entry point, symbol table, header flags -- needs the guard
-/// as much as the region build does.
+/// built on it (entry point, symbol table, header flags) needs the guard as
+/// much as the region build does.
 #[test]
 fn parsing_a_changed_file_is_an_error() {
     if mapping_disabled() {
