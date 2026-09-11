@@ -356,11 +356,13 @@ fn is_width_only(function: &strider_ir::Function, v: ValueId, iv: Interval) -> b
             None => break,
         }
     }
+    // Defer, as every other bail here does: with no width there is no cell
+    // count to compare the range against, so nothing disproves table DATA.
     let Some(w) = function.value_type_opt(base).map(|t| t.bit_width()) else {
-        return false;
+        return true;
     };
     if w >= 128 {
-        return false;
+        return true;
     }
     let mut count: u128 = 1u128 << w;
     let mut spacing: u128 = 1;

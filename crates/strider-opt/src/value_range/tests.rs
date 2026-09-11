@@ -7,6 +7,31 @@ use super::compute_value_ranges;
 use crate::analyze_known_bits;
 use crate::value_range::Interval;
 
+/// The AP-join keeps the coarsest spacing every element of both sides obeys: a
+/// constant arm joined with a scaled one must not flatten it to dense, or a
+/// 6-entry table reads as 21 slots.
+#[test]
+fn union_keeps_a_stride_the_join_still_obeys() {
+    let scaled = Interval {
+        lo: 0,
+        hi: 20,
+        stride: 4,
+    };
+    let joined = Interval::dense(0, 0).union(scaled);
+    assert_eq!((joined.lo, joined.hi, joined.stride), (0, 20, 4));
+    assert_eq!(joined.count(), 6);
+    // An offset start is only congruent modulo the gap between the two.
+    let offset = Interval::dense(2, 2).union(scaled);
+    assert_eq!((offset.lo, offset.hi, offset.stride), (0, 20, 2));
+    // Two genuinely different spacings meet at their gcd.
+    let by_six = Interval {
+        lo: 0,
+        hi: 18,
+        stride: 6,
+    };
+    assert_eq!(scaled.union(by_six).stride, 2);
+}
+
 /// The AP-meet must keep the stride phase: intersecting a dense `[5, 40]` with
 /// a multiples-of-8 progression yields `{8, 16, 24, 32, 40}` (lo rounded up to
 /// the stride phase, stride 8), NOT `{5, 13, 21, ...}`.
@@ -1211,6 +1236,69 @@ fn cyclic_phi_is_top() {
         "cyclic phi must yield top, got [{}, {}]",
         iv.lo,
         iv.hi
+    );
+}
+
+// A loop-carried masked index: `idx_phi = Phi(0, raw & 7)` where the back edge
+// is the taken side of `if (raw & 7 < 6)`.  The mask alone admits 0..7 and no
+// guard node dominates the header, so the bound lives on the back edge, where
+// it holds for the arm arriving on it.
+#[test]
+fn back_edge_guard_bounds_a_masked_loop_index() {
+    use rsleigh::VnSpace;
+    use strider_ir_test_utils::reg_vn;
+
+    let idx_vn = reg_vn(0x10, 4);
+    let mut b = RegisterSet::new().tracked(idx_vn).build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region_all().unwrap();
+    let header = b.create_region_all().unwrap();
+    let body = b.create_region_all().unwrap();
+    let loop_exit = b.create_region_all().unwrap();
+
+    b.set_entry_region_all(entry).unwrap();
+
+    b.set_region(entry);
+    let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
+    b.write_variable(&idx_vn, zero).unwrap();
+    b.build_branch(header).unwrap();
+
+    b.set_region(header);
+    let header_ctrl = b.region_cur_ctrl(header);
+    let idx_phi = b.read_variable(&idx_vn).unwrap();
+    b.build_branch(body).unwrap();
+
+    b.set_region(body);
+    let addr = b.build_int_const(0xDEADu64, ValueType::I64).unwrap();
+    let raw = b.build_load(addr, VnSpace::RAM, ValueType::I32).unwrap();
+    let seven = b.build_int_const(7u64, ValueType::I32).unwrap();
+    let masked = b
+        .build_int_binary_operation(raw, seven, IntBinaryOp::And, ValueType::I32)
+        .unwrap();
+    b.write_variable(&idx_vn, masked).unwrap();
+    let six = b.build_int_const(6u64, ValueType::I32).unwrap();
+    let cond = b
+        .build_int_cmp_operation(masked, six, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond, header, loop_exit).unwrap();
+
+    b.set_region(loop_exit);
+    b.build_return(Some(idx_phi), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+    let header_node = f.graph().producer(header_ctrl);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
+
+    let iv = ranges.range_of(idx_phi, header_node);
+    assert_eq!(
+        (iv.lo, iv.hi),
+        (0, 5),
+        "0 on entry, at most 5 on the back edge"
     );
 }
 
