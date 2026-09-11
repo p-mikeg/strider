@@ -1,14 +1,15 @@
 //! A read costs O(log regions), not O(regions below the address).
 //!
-//! `MemRegionsLookupTable` walks candidates from the highest `start <= addr`
-//! downward and stops once no earlier region can still reach the address. That
-//! bound is a PREFIX MAXIMUM, so one region spanning the image holds it above
-//! every interior address and the walk never stops early. Section count is
-//! attacker-chosen -- `SHN_XINDEX` lifts the 65535 header cap -- so a crafted
-//! image made every read linear in it.
+//! Resolution used to walk candidates from the highest `start <= addr`
+//! downward, stopping once no earlier region could still reach the address.
+//! That bound is a PREFIX MAXIMUM, so one region spanning the image holds it
+//! above every interior address and the walk never stopped early. Section
+//! count is attacker-chosen -- `SHN_XINDEX` lifts the 65535 header cap -- so a
+//! crafted image made every read linear in it.
 //!
-//! A region fully covering the request wins outright, which is every
-//! instruction fetch, and that case is now answered through a max-end tree.
+//! Both halves of the answer now come from the max-end tree: the region fully
+//! covering the request, which is every instruction fetch, and the widest
+//! region at the address, which is every read no single region can serve.
 
 use std::time::Instant;
 use strider_reader::{MemRegion, MemRegionsLookupTable};
@@ -79,4 +80,24 @@ fn the_covering_region_still_wins_over_a_shorter_inner_one() {
 
     // Unmapped stays unmapped.
     assert_eq!(table.read(0x900, &mut [0u8; 4]), None);
+}
+
+/// The partial-read fallback: a request no region covers in full. It used to
+/// be the linear walk, since the prefix maximum never falls below an interior
+/// address while an outer region spans the image.
+#[test]
+fn a_partial_read_under_many_nested_regions_does_not_scale_with_their_count() {
+    // The last eight bytes of the outer region: every region starting at or
+    // below it reaches past it, and none of them holds sixteen bytes.
+    let partial_read_addr = |n: u64| 0xFF8 + n * 8;
+    let small = nested(1_000);
+    let large = nested(64_000);
+    let t_small = micros_per_read(&small, partial_read_addr(1_000));
+    let t_large = micros_per_read(&large, partial_read_addr(64_000));
+
+    assert!(
+        t_large < t_small * 8.0 + 5.0,
+        "64x the regions cost {t_large:.2}us/read against {t_small:.2}us: \
+         the partial-read fallback is scaling with region count"
+    );
 }
