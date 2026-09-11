@@ -78,8 +78,7 @@ from strider.pattern import load, int_add, call, var, Capture
 A pattern describes a shape and leaves holes where you do not care. Captures are
 the holes you want to read back, made with `Capture("name")` (or `Capture()`
 for a fresh anonymous one). Two `Capture("off")` intern to one variable, and
-you read a capture back by the object or by its name string. A bare string is
-NOT a capture:
+you read a capture back by the object or by its name string:
 
 ```python
 # Every load of the form `base + offset`; read the offset back.
@@ -273,9 +272,8 @@ removed every one before you saw the function.
 A bare `strider.pattern.Pat` is accepted on the `replace` side for
 compatibility, but only its build-valid subset compiles.
 
-Both the `find` and `replace` sides use `Capture` objects (a bare string is not
-a capture). A rewrite can expose fresh simplifications, so re-run the optimizer
-afterwards to tidy up:
+Both the `find` and `replace` sides use `Capture` objects. A rewrite can expose
+fresh simplifications, so re-run the optimizer afterwards to tidy up:
 
 ```python
 prog.optimize(function)   # collapse phi / dead-branch noise the rewrite exposed
