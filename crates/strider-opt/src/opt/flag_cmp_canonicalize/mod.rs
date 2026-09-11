@@ -27,7 +27,7 @@
 
 use crate::{BoxedRule, rewrite_rule};
 use strider_ir::IRViewer;
-use strider_ir::node::{ExtendOp, IntBinaryOp, NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::node::{ExtendOp, IntBinaryOp, IntCmpOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_pattern::{
     Bindings, Capture, CaptureExt, bool_and, bool_not, bool_or, capture_typed, int_add, int_const,
     int_const_with, int_eq, int_lt, int_neg, int_sborrow, int_shl, int_slt, int_xor,
@@ -61,7 +61,7 @@ impl Default for FlagCmpCanonicalize {
 
 impl PeepholePass for FlagCmpCanonicalize {
     /// Every rule roots at a comparison, at the `And`/`Or`/`Xor` of a boolean
-    /// tree, or at the CR-bit `Truncate`.
+    /// tree, or at the `Truncate` / `Xor` a CR-bit test reaches here as.
     fn matches_kind(&self, kind: &NodeKind) -> bool {
         matches!(
             kind,
@@ -441,20 +441,59 @@ fn absorb_cr_pack_fingerprints(
     }
 }
 
+/// The value whose bit 0 `root` tests, in either spelling a CR-bit condition
+/// reaches here in: the `Truncate(_):I1` narrowing, and the
+/// `Xor(IntEqual(_, 0), 1):I1` that the `cond != 0` branch lowering emits.  A
+/// `And(y, 1)` layer is peeled: it selects exactly the bit both spellings
+/// already expose.
+fn bit_zero_source(f: &impl IRViewer, root: NodeId) -> Option<ValueId> {
+    let src = match f.node_kind(root) {
+        NodeKind::Truncate => {
+            let [inner] = f.node_inputs_exact::<1>(root).ok()?;
+            inner
+        }
+        NodeKind::IntBinaryOp(IntBinaryOp::Xor) => {
+            let [l, r] = f.node_inputs_exact::<2>(root).ok()?;
+            let eq = const_operand_is(f, l, r, 1)?;
+            if !matches!(f.kind_of_value(eq), NodeKind::IntCmpOp(IntCmpOp::Equal)) {
+                return None;
+            }
+            let [a, b] = f.producer_inputs_exact::<2>(eq).ok()?;
+            const_operand_is(f, a, b, 0)?
+        }
+        _ => return None,
+    };
+    let NodeKind::IntBinaryOp(IntBinaryOp::And) = f.kind_of_value(src) else {
+        return Some(src);
+    };
+    let Ok([a, b]) = f.producer_inputs_exact::<2>(src) else {
+        return Some(src);
+    };
+    Some(const_operand_is(f, a, b, 1).unwrap_or(src))
+}
+
+/// The one of `l` / `r` whose sibling is the constant `c`.
+fn const_operand_is(f: &impl IRViewer, l: ValueId, r: ValueId, c: u128) -> Option<ValueId> {
+    if f.int_const_u128(r) == Some(c) {
+        Some(l)
+    } else if f.int_const_u128(l) == Some(c) {
+        Some(r)
+    } else {
+        None
+    }
+}
+
 /// The `(condition-output, comparison)` pair for a CR-bit test.  `Some` only
 /// when every OR term is a provable single-bit value at a DISTINCT position and
 /// the one at the tested bit carries a comparison; only then does that bit equal
 /// the comparison for all inputs.
 fn cr_bit_comparison(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, ValueId)> {
-    if !matches!(f.node_kind(root), NodeKind::Truncate) {
-        return None;
-    }
     let cond_out = *f.node_outputs(root).first()?;
     if f.value_type_opt(cond_out) != Some(ValueType::I1) {
         return None;
     }
-    let [inner] = f.node_inputs_exact::<1>(root).ok()?;
-    // `Truncate(_):I1` exposes bit 0, so a `ShiftRight(x, k)` input means the
+    let inner = bit_zero_source(f, root)?;
+    // Bit 0 of `inner` is under test, so a `ShiftRight(x, k)` there means the
     // tested bit is bit k of `x`.
     let (pack, bit) = match *f.kind_of_value(inner) {
         NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight) => {
