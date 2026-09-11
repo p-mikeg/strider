@@ -1,4 +1,5 @@
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::Function;
+use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntCmpOp, control_dominators};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
 
@@ -2368,5 +2369,138 @@ fn a_guard_lookup_tracks_dominator_depth_not_guard_count() {
     assert_eq!(
         probes[0], probes[1],
         "8x the guards, same dominator chain: {probes:?}"
+    );
+}
+
+/// The x86 shape a `cmp $N,%al` / `movzbl %al,%eax` dispatch builds: the guard
+/// lands on the `I8` truncation, and the index the addressing mode scales sits
+/// three casts above it.  Without the ladder walk the index falls back to the
+/// `I8` KnownBits bound and reads the whole 256-entry domain.
+///
+/// Returns `(function, scaled_value, dispatch_node)`.
+fn build_guarded_cast_ladder(bound: u64, and_mask: Option<u64>) -> (Function, ValueId, NodeId) {
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let entry = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+
+    b.set_region(entry);
+    let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
+    let wide = b
+        .build_load(dummy_addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .unwrap();
+    // `al`, the value the compare names.
+    let al = b.truncate_if_needed(wide, ValueType::I8).unwrap();
+    let bound_c = b.build_int_const(bound, ValueType::I8).unwrap();
+    let cond = b
+        .build_int_cmp_operation(al, bound_c, IntCmpOp::Less, ValueType::I8)
+        .unwrap();
+    b.build_if(cond, dispatch, exit).unwrap();
+
+    b.set_region(dispatch);
+    // zext -> trunc -> zext, then optionally a mask, then the address scale.
+    let z1 = b
+        .extend_if_needed(al, ValueType::I64, ExtendOp::ZeroExtend)
+        .unwrap();
+    let t1 = b.truncate_if_needed(z1, ValueType::I32).unwrap();
+    let z2 = b
+        .extend_if_needed(t1, ValueType::I64, ExtendOp::ZeroExtend)
+        .unwrap();
+    let idx = match and_mask {
+        None => z2,
+        Some(m) => {
+            let mc = b.build_int_const(m, ValueType::I64).unwrap();
+            b.build_int_binary_operation(z2, mc, IntBinaryOp::And, ValueType::I64)
+                .unwrap()
+        }
+    };
+    let four = b.build_int_const(4_u64, ValueType::I64).unwrap();
+    let scaled = b
+        .build_int_binary_operation(idx, four, IntBinaryOp::Mul, ValueType::I64)
+        .unwrap();
+    b.build_return(Some(scaled), &[]).unwrap();
+
+    b.set_region(exit);
+    b.build_return(Some(wide), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+    let (dispatch_node, _exit) = if_edge_consumers(&f);
+    (f, scaled, dispatch_node)
+}
+
+fn cast_ladder_range(bound: u64, and_mask: Option<u64>) -> Interval {
+    let (f, scaled, dispatch) = build_guarded_cast_ladder(bound, and_mask);
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
+    ranges.range_of(scaled, dispatch)
+}
+
+/// `al < 21` bounds `zext(trunc(zext(al))) * 4` to 21 entries, not the 256 the
+/// `I8` width alone allows.
+#[test]
+fn guard_carries_up_a_zext_trunc_ladder() {
+    let iv = cast_ladder_range(21, None);
+    assert_eq!((iv.lo, iv.hi, iv.stride), (0, 80, 4));
+    assert_eq!(iv.count(), 21);
+}
+
+/// `x & c <= x`, so the same guard survives a mask wider than it.
+#[test]
+fn guard_carries_up_through_a_mask() {
+    let iv = cast_ladder_range(21, Some(0x17f));
+    assert_eq!(iv.lo, 0);
+    assert_eq!(iv.hi, 80);
+    assert!(iv.count() <= 21, "count {}", iv.count());
+}
+
+/// The lift each ladder hop performs must contain every concrete result, which
+/// is the property the walk rests on: `zext` is the identity, `trunc` is the
+/// identity only below the narrower mask, and `x & c <= x` keeps the upper end.
+#[test]
+fn ladder_hops_contain_every_concrete_result() {
+    const WIDE: u128 = (1 << 8) - 1;
+    const NARROW_BITS: u32 = 4;
+    const NARROW: u128 = (1 << NARROW_BITS) - 1;
+    let mut fails: Vec<String> = Vec::new();
+
+    for lo in 0..=WIDE {
+        for hi in lo..=WIDE {
+            for stride in 1u128..=4 {
+                let iv = Interval { lo, hi, stride };
+                let set = members(iv, WIDE);
+                if set.is_empty() {
+                    continue;
+                }
+                // `zext` and a fitting `trunc` both carry the interval as is.
+                for &x in &set {
+                    if !contains(iv, x) {
+                        fails.push(format!("zext iv={iv:?} x={x}"));
+                    }
+                    if iv.hi <= NARROW && !contains(iv, x & NARROW) {
+                        fails.push(format!("trunc iv={iv:?} x={x} -> {}", x & NARROW));
+                    }
+                }
+                // A mask keeps only the upper end.
+                for c in [0u128, 1, 3, 0x0f, 0x55, 0xaa, 0xff] {
+                    let out = Interval::dense(0, iv.hi);
+                    for &x in &set {
+                        if !contains(out, x & c) {
+                            fails.push(format!("and iv={iv:?} c={c} x={x} out={out:?}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        fails.is_empty(),
+        "{} failures: {:?}",
+        fails.len(),
+        &fails[..fails.len().min(5)]
     );
 }
