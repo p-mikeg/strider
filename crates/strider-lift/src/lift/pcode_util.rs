@@ -59,6 +59,10 @@ pub(crate) fn ensure_const_space(
 /// so the pointer names a space of an engine the `Lifter` owns and keeps
 /// alive.  This stays `pub(crate)`: outside that gate the precondition is
 /// unestablished.
+///
+/// Matching by pointer value keeps the dereference sound but does not identify
+/// the space: a foreign id at an address this engine reused resolves to
+/// whichever space this engine has there.
 pub(crate) fn decode_space_id(insn: &rsleigh::Insn) -> Result<rsleigh::VnSpace> {
     let space_id_vn = *nth_input_or_err(insn, 0)?;
     ensure_const_space(&space_id_vn, insn.opcode, "input 0")?;

@@ -9,11 +9,12 @@ use crate::lift::pcode_util::{Result, ensure_const_space, nth_input_or_err, requ
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Right-shift by `byte_offset * 8`, then coerce to the output width.
     ///
-    /// P-code DEFINES an offset at or past the input width, as zero
-    /// (`OpBehaviorSubpiece::evaluateBinary`), but Sleigh's `truncation`
-    /// operator keeps offsets in range, so one arriving here means the decode
-    /// is not what this handler models: fail the lift rather than emit a
-    /// constant zero for it.
+    /// Sleigh's `truncation` operator keeps the offset inside the input, so an
+    /// offset at or past the input width means the decode is not what this
+    /// handler models: fail the lift rather than answer it.
+    /// `OpBehaviorSubpiece::evaluateBinary` folds an offset to zero only at or
+    /// past the 8-byte host word (`opbehavior.cc:759-766`), which is its
+    /// emulator's limit on a wider input, not a rule about the input width.
     ///
     /// An output WIDER than the input is accepted and zero-extends, which is
     /// `& calc_mask(sizeout)` over the narrower value (`opbehavior.cc:764`).
