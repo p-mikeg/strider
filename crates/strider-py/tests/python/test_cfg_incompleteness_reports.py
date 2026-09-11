@@ -149,6 +149,6 @@ def test_a_complete_but_unverified_answer_is_not_complete() -> None:
 
 
 def test_build_cfg_has_no_unresolved_channel() -> None:
-    """No resolver runs, so the fourth channel is empty by construction and
-    `is_complete` answers on the three the build itself filled."""
+    """No resolver runs, so the unresolved channel is empty by construction and
+    `is_complete` answers on the four the build itself filled."""
     assert not _x86_lifter().build_cfg(BASE).is_complete()
