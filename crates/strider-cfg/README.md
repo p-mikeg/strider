@@ -81,9 +81,9 @@ the branch jumps to.
 A table's arms are judged at the seal. One arm off every boundary, or one out of
 the function bound, and the WHOLE site defers as `UnresolvedIndirectBranch`: a
 bad arm is evidence the bound the classifier derived is wrong, so the rest of
-the answer is worth no more than that arm. Measured over 155 kernels, dropping
-arms individually instead cost 485 functions, which then failed outright where
-they used to lift with the site unresolved. Only an arm the site learns about
+the answer is worth no more than that arm. Dropping arms individually instead
+costs functions outright, seating the rest to decode whatever else the bound
+over-approximated into. Only an arm the site learns about
 after it was seated is dropped on its own, and a `Switch` left with no arm
 degrades to `UnresolvedIndirectBranch` too. So does one whose bytes turn out to
 be decoded in the other ISA mode: a direct edge proves the mode it carries, a
