@@ -797,28 +797,32 @@ impl PatRepr {
 /// pattern; a machine-generated one can exceed it.
 ///
 /// The cheap bound of the two, and the one calibrated for the main thread's
-/// 8 MiB stack. [`MAX_PATTERN_STACK`] is what holds on a smaller one.
+/// 8 MiB stack. The stack budget below is what holds on a smaller one.
 const MAX_PATTERN_NESTING: u32 = 512;
 
-/// Stack one compile may consume before the guard bails.
+/// Fraction of the stack left below the outermost guard that one compile may
+/// consume. The match walk that follows costs about what the compile did, so a
+/// quarter spends half the headroom and leaves half spare.
+const STACK_BUDGET_SHARE: usize = 4;
+
+/// Stack one compile may consume where the thread's own bounds are not
+/// reported, low enough that the walk after it fits in a 256 KiB thread.
 ///
 /// A count alone cannot bound stack: an unoptimised build's frame here is over
 /// twenty times an optimised one's, and a `threading.stack_size(1 << 20)`
 /// thread is an eighth of the main thread's, so 512 levels that fit in release
 /// on the main thread overflow in debug on a small one. Overflowing is a
 /// SIGSEGV, which no Python `except` sees.
-///
-/// Sized for a 1 MiB thread stack, the smallest a caller realistically asks
-/// for: the match walk that follows costs about what the compile did, so half
-/// of that is the budget. An optimised build reaches 512 levels well inside
-/// it, which is why the count is what a released wheel trips on.
-const MAX_PATTERN_STACK: usize = 512 * 1024;
+const FALLBACK_PATTERN_STACK: usize = 48 * 1024;
 
 thread_local! {
     static COMPILE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     /// A frame address from the outermost live guard on this thread, the zero
     /// the consumption below is measured against.
     static STACK_BASE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// What one compile may consume on this thread, taken from its real stack
+    /// bounds when the outermost guard enters.
+    static STACK_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Address of a local in the calling frame. Stack grows DOWN on every target
@@ -828,6 +832,74 @@ thread_local! {
 fn frame_mark() -> usize {
     let probe = 0u8;
     std::hint::black_box(std::ptr::from_ref(&probe)) as usize
+}
+
+/// Lowest address this thread's stack can reach, from the platform's own
+/// bounds. `None` where they are not queryable.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn stack_bottom() -> Option<usize> {
+    // `pthread_attr_t` is 56 bytes on glibc and musl and smaller on the 32-bit
+    // ABIs; the buffer is well over it and passed only back to pthread.
+    #[repr(C, align(16))]
+    struct AttrBuf([u8; 512]);
+
+    unsafe extern "C" {
+        fn pthread_self() -> usize;
+        fn pthread_getattr_np(thread: usize, attr: *mut u8) -> i32;
+        fn pthread_attr_getstack(attr: *const u8, addr: *mut usize, size: *mut usize) -> i32;
+        fn pthread_attr_destroy(attr: *mut u8) -> i32;
+    }
+
+    let mut attr = AttrBuf([0; 512]);
+    let (mut addr, mut size) = (0usize, 0usize);
+    unsafe {
+        if pthread_getattr_np(pthread_self(), attr.0.as_mut_ptr()) != 0 {
+            return None;
+        }
+        let got = pthread_attr_getstack(attr.0.as_ptr(), &raw mut addr, &raw mut size);
+        pthread_attr_destroy(attr.0.as_mut_ptr());
+        (got == 0 && size > 0).then_some(addr)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn stack_bottom() -> Option<usize> {
+    unsafe extern "C" {
+        fn pthread_self() -> *mut u8;
+        fn pthread_get_stackaddr_np(thread: *mut u8) -> *mut u8;
+        fn pthread_get_stacksize_np(thread: *mut u8) -> usize;
+    }
+
+    // `stackaddr` here is the HIGH end, the opposite of the pthread_attr one.
+    unsafe {
+        let thread = pthread_self();
+        (pthread_get_stackaddr_np(thread) as usize).checked_sub(pthread_get_stacksize_np(thread))
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+fn stack_bottom() -> Option<usize> {
+    None
+}
+
+thread_local! {
+    /// [`stack_bottom`] for this thread, which does not move. The glibc query
+    /// reads `/proc/self/maps` for the main thread, so asking per compile
+    /// would cost more than the compile.
+    static CACHED_STACK_BOTTOM: std::cell::Cell<Option<Option<usize>>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// What one compile entering at `here` may consume.
+fn compile_budget(here: usize) -> usize {
+    let bottom = CACHED_STACK_BOTTOM.with(|c| {
+        let cached = c.get().unwrap_or_else(stack_bottom);
+        c.set(Some(cached));
+        cached
+    });
+    bottom.map_or(FALLBACK_PATTERN_STACK, |bottom| {
+        here.saturating_sub(bottom) / STACK_BUDGET_SHARE
+    })
 }
 
 struct DepthGuard;
@@ -847,15 +919,17 @@ impl DepthGuard {
             }
             if next == 1 {
                 STACK_BASE.set(here);
+                STACK_BUDGET.set(compile_budget(here));
             } else {
                 let used = STACK_BASE.get().saturating_sub(here);
-                if used > MAX_PATTERN_STACK {
+                let budget = STACK_BUDGET.get();
+                if used > budget {
                     return Err(into_strider_err(anyhow::anyhow!(
                         "pattern nesting too deep for this thread's stack ({} KiB \
                          used of a {} KiB compile budget at {next} levels; give the \
                          thread a larger stack_size, or nest less)",
                         used / 1024,
-                        MAX_PATTERN_STACK / 1024,
+                        budget / 1024,
                     )));
                 }
             }
@@ -3602,6 +3676,15 @@ impl ConstraintTree {
             ConstraintNode::Any(cs) => JoinConstraint::Or(all(cs)),
             ConstraintNode::All(cs) => JoinConstraint::And(all(cs)),
         }
+    }
+}
+
+// `operands` holds the nested constraints, so a chain of these drops one
+// native frame per link; see `defer_drop`. `inner`'s own child handles are
+// shared with those operands, so dropping it here only lowers a count.
+impl Drop for PyJoinConstraint {
+    fn drop(&mut self) {
+        defer_drop(std::mem::take(&mut self.operands));
     }
 }
 

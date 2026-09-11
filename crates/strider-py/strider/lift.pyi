@@ -254,6 +254,11 @@ class Lifter:
         A stand-alone sweep, so it works for an address outside any analysed
         CFG. `addr` must be reachable through the linear instruction stream
         from `entry`; raises `StriderError` otherwise.
+
+        The sweep decodes on a copy of the engine, which carries over the
+        decode modes the analyses pinned. Past the engine's commit limit it
+        cannot, and this raises `StriderError` rather than answering `addr` in
+        the pspec default mode: sweep from a fresh `Lifter` instead.
         """
         ...
     def visualize(
@@ -368,8 +373,10 @@ class ElfLifter(Lifter):
     def symbol_at(self, address: int) -> Optional[Symbol]:
         """The symbol covering `address`: the nearest one at or below it whose
         recorded extent reaches `address`. A symbol with no recorded size
-        covers only its own address, and aliases sharing an address resolve to
-        the code symbol among them. `None` when nothing covers `address`."""
+        covers only its own address. Aliases sharing an address are ranked by
+        having a recorded extent first, then by being code, so a sized DATA
+        alias outranks an unsized CODE one; `functions()` filters to code
+        instead. `None` when nothing covers `address`."""
         ...
     def symbols(self) -> Mapping[str, Symbol]:
         """Every symbol, keyed by the name it resolves under."""

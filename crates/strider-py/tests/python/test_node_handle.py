@@ -221,3 +221,18 @@ def test_a_stale_node_is_not_equal_to_a_fresh_one():
     stale, fresh = _stale_and_fresh()
     assert stale != fresh
     assert len({stale, fresh}) == 2
+
+
+def test_node_op_names_the_extension_direction():
+    """`op()` covers every op family, and `Extend` carries one: telling a sign
+    from a zero extension through it must not need the `kind()` string."""
+    # movsx eax, dil ; movzx edx, dil ; ret
+    mem = strider.reader.BufferReader(0x1000, bytes([0x0F, 0xBE, 0xC7, 0x0F, 0xB6, 0xD7, 0xC3]))
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    fn = lift.analyze(0x1000, strider.sleigh.CallingConvention.x86_64_systemv()).function
+    ops = {
+        fn.node(i).op()
+        for i in fn.node_ids()
+        if fn.node(i).kind().startswith("Extend(")
+    }
+    assert ops == {"SignExtend", "ZeroExtend"}

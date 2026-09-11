@@ -68,3 +68,17 @@ def test_an_elf_keeps_a_name_a_later_source_reuses():
     real = lift.symbol("f").address
     lift.add_symbols({"f": real + 0x1000})
     assert lift.symbol("f").address == real
+
+
+def test_aliases_at_one_address_rank_by_extent_before_by_being_code():
+    """`symbol_at` ranks `(has a size, is code)` in that order, so a sized DATA
+    alias outranks an unsized CODE one; `functions()` filters to code instead,
+    which is how the two accessors name different symbols at one address."""
+    lift = strider.lift.load_elf(str(fixture_path("x64", "switch")))
+    at = 0x60_0000
+    lift.add_symbols({"code_alias": at}, is_function=True)
+    lift.add_symbols({"data_alias": (at, 0x20)}, is_function=False)
+
+    hit = lift.symbol_at(at)
+    assert hit is not None and hit.name == "data_alias"
+    assert [s.name for s in lift.functions() if s.address == at] == ["code_alias"]

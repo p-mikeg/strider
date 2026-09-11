@@ -9,6 +9,9 @@ well inside the documented 512 levels used to kill a 2 MiB thread outright.
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
 import threading
 
 import pytest
@@ -20,8 +23,11 @@ from strider import pattern as p
 #: only the stack bound can answer here.
 _NESTED = 255
 
-#: The smallest stack the stack bound is sized for.
+#: The smallest stack a caller realistically asks for.
 _SMALL_STACK = 1 << 20
+
+#: A quarter of that, well under any fixed budget a guard could assume.
+_TINY_STACK = 256 * 1024
 
 
 def _chain(n: int):
@@ -71,6 +77,46 @@ def test_a_deep_query_on_a_small_thread_stack_survives():
         # unoptimised one, the matcher's node cap in an optimised one.
         assert isinstance(value, strider.StriderError), value
         assert "too deep" in str(value) or "nodes, over the" in str(value)
+
+
+@pytest.mark.parametrize("nested", [20, 40])
+def test_a_query_on_a_quarter_megabyte_thread_raises_rather_than_crashing(nested):
+    """The budget comes from the thread's own stack bounds, so a stack smaller
+    than any fixed budget still refuses in time. A SIGSEGV takes the whole
+    process down, so the run is a child and the parent reads its exit code."""
+    body = textwrap.dedent(
+        f"""\
+        import threading
+
+        import strider
+        from strider import pattern as p
+
+        mem = strider.reader.BufferReader(0x1000, bytes([0x48, 0x01, 0xF8, 0xC3]))
+        lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+        fn = lift.analyze(
+            0x1000, strider.sleigh.CallingConvention.x86_64_systemv()
+        ).function
+
+        def run():
+            pat = p.anything()
+            for _ in range({nested}):
+                pat = p.int_add(pat, p.anything())
+            try:
+                print("matches", len(list(fn.find_all(pat))), flush=True)
+            except strider.StriderError as e:
+                print("raised", e, flush=True)
+
+        threading.stack_size({_TINY_STACK})
+        t = threading.Thread(target=run)
+        t.start()
+        t.join()
+        """
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", body], capture_output=True, text=True, timeout=120
+    )
+    assert out.returncode == 0, f"child exited {out.returncode}: stderr={out.stderr!r}"
+    assert out.stdout.startswith(("raised", "matches")), out.stdout
 
 
 def test_the_count_bound_still_answers_for_a_pathological_chain():

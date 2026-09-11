@@ -149,7 +149,7 @@ impl PyNode {
     }
 
     /// The operation variant of an op-carrying node (`"Add"`, `"Less"`,
-    /// `"Sqrt"`), or `None` for kinds carrying no operation.
+    /// `"Sqrt"`, `"SignExtend"`), or `None` for kinds carrying no operation.
     pub(crate) fn op(&self, py: Python<'_>) -> PyResult<Option<String>> {
         self.with_node(py, |function, nid| match function.node_kind(nid) {
             NodeKind::IntBinaryOp(op) => Some(format!("{op:?}")),
@@ -158,6 +158,7 @@ impl PyNode {
             NodeKind::FloatBinaryOp(op) => Some(format!("{op:?}")),
             NodeKind::FloatUnaryOp(op) => Some(format!("{op:?}")),
             NodeKind::FloatCmpOp(op) => Some(format!("{op:?}")),
+            NodeKind::Extend(op) => Some(format!("{op:?}")),
             _ => None,
         })
     }
