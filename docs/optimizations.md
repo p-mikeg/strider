@@ -172,10 +172,12 @@ Four shapes come back in `unresolved` rather than as an error:
   off the ELFv2 TOC prologue `addis r2,r12,2`: an unknown incoming register
   plus the same writable `.data.rel.ro` / `.got`, which is the MIPS64 shape
   again. ppc32be resolves.
-- A masked switch index whose real bound lives on a loop back edge, so the
-  over-approximation never settles and the site is abandoned. Nothing in the
-  mechanism is architecture-specific, but x64 and mips32 in both endians are
-  the only ones exercised.
+- MIPS32 `switch_masked_loop`, where the six real arms ARE seated but the site
+  is still reported. The arms' `Call` clobbers the register holding the table
+  base, so the selector stops deriving once the loop closes and nothing
+  re-proves the seated set; the mode one arm was seated on stays a guess, so
+  the site reaches `unresolved` and `unverified_seeded_sites` at once. A
+  per-`Call` `preserves_regs` override supplies the callee's real clobber set.
 
 ## Using a different pipeline
 
