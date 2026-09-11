@@ -6,6 +6,7 @@ license.workspace = true
 description = "Machine bytes to a control-flow graph of basic-block regions, via Sleigh."
 repository.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 readme = "README.md"
 
 [dependencies]

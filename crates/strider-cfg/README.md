@@ -28,16 +28,16 @@ sea-of-nodes IR `strider-lift` builds from it.
 ## Every address decodes once
 
 Region ownership is by address. A target an existing region owns routes to that
-region -- splitting it in two when the target is one of its instruction
-boundaries, the second half keeping the region id so existing edges need no
-fixup -- and those bytes are never decoded again. The first edge to arrive
+region, splitting it in two when the target is one of its instruction
+boundaries; the second half keeps the region id so existing edges need no
+fixup. Those bytes are never decoded again. The first edge to arrive
 therefore fixes the ISA mode the bytes decode in; a later edge carrying a
 different mode is recorded rather than decoding a second copy of them.
 
 Overlapping code is the exception, and the only one. Sequential decoding steps
-over a region start interior to an instruction it decodes -- the fall-through
-check is by exact start address -- and those bytes then have two owners with two
-different instruction streams. The stepped-over start is reported on
+over a region start interior to an instruction it decodes, the fall-through
+check being by exact start address, and those bytes then have two owners with
+two different instruction streams. The stepped-over start is reported on
 `interior_branch_targets`.
 
 Within a region decoding is strictly sequential. `Sleigh::lift_one` takes
@@ -49,7 +49,7 @@ That state is *flowing* context: as in GHIDRA's `ContextDatabase` a flowing var
 is a value committed per address, holding forward until the next change point.
 Each queued edge captures the context reaching its target and `FlowVars::pin_at`
 commits it back before that target decodes, so a region Sleigh never
-straight-line-flowed into -- a caller-seated indirect target, a backward edge --
+straight-line-flowed into (a caller-seated indirect target, a backward edge)
 still decodes in the mode that reaches it. An interworking branch bakes its own
 ISA-mode bit into the context it hands the target.
 
@@ -65,34 +65,46 @@ dispatch address, and `UnresolvedIndirectBranch`. Only `Unconditional`, `CondBra
 ever have an outgoing edge.
 
 Classifying a `BranchIndirect` needs the IR, which sits above this crate, so a
-site is either seated from `known_targets` -- `LinkRegister` as `Return`, an
-out-of-range `Single` as `TailCall`, anything else as a `Switch`, an in-function
-`Single` included, so a later round can widen the site instead of latching its
-first answer -- or deferred as `UnresolvedIndirectBranch`, whose `target_vn` and
+site is either seated from `known_targets` or deferred as
+`UnresolvedIndirectBranch`. A seat maps `LinkRegister` to `Return`, an
+out-of-range `Single` to `TailCall`, and anything else to a `Switch`, an
+in-function `Single` included, so a later round can widen the site instead of
+latching its first answer. A deferral keeps the `target_vn` and
 address anchor the value a resolver inspects before feeding the answer back.
 
 A target interior to a region but off every pcode boundary is neither: no split
 can express it. It comes from overlapping code, or from a jump-table entry read
-past the end of the table. The edge is wired to the region that owns those
-bytes, whose stream starts earlier, so for a direct branch the arm is not the
-stream the branch jumps to; off a `Switch` the arm is dropped instead, whether
-the site was already decoded when the table was seated or only afterwards, and a
-`Switch` left with no arm degrades to `UnresolvedIndirectBranch`. An arm out of
-the function bound is dropped the same way, leaving the seat short of what
-`known_targets` named.
+past the end of the table. For a direct branch the edge is wired to the region
+that owns those bytes, whose stream starts earlier, so the arm is not the stream
+the branch jumps to.
+
+A table's arms are judged at the seal. One arm off every boundary, or one out of
+the function bound, and the WHOLE site defers as `UnresolvedIndirectBranch`: a
+bad arm is evidence the bound the classifier derived is wrong, so the rest of
+the answer is worth no more than that arm. Measured over 155 kernels, dropping
+arms individually instead cost 485 functions, which then failed outright where
+they used to lift with the site unresolved. Only an arm the site learns about
+after it was seated is dropped on its own, and a `Switch` left with no arm
+degrades to `UnresolvedIndirectBranch` too. So does one whose bytes turn out to
+be decoded in the other ISA mode: a direct edge proves the mode it carries, a
+classifier-committed `isa_bit` only claims one, so the direct decode keeps the
+bytes and the arm goes.
 
 ## Nothing is dropped silently
 
-A completed `Cfg` may be incomplete, and says so through five getters. Read them
+A completed `Cfg` may be incomplete, and says so through six getters. Read them
 all: they overlap in cause and not in content.
 
 - `undecodable_seeded_targets`: a seeded target that would not decode, with the
-  dispatch site it was an arm of. A direct edge that fails is an `Err` on the
-  whole build, a seeded one is a misclassification, so its edge is dropped and
-  reported.
+  dispatch site it was an arm of. A seeded target is a misclassification, so its
+  edge is dropped and reported.
+- `unmapped_branch_targets`: a DIRECT branch to an address the reader has no
+  bytes for. It leaves through an empty `TailCall` stub, so the regions that did
+  decode survive. An unmapped ENTRY is still an `Err` on the whole build.
 - `isa_mode_conflicts`: two edges reached an address carrying different ISA
-  modes, and the losing path decodes in the winner's. Which one wins is
-  work-queue order, so neither decode can be trusted.
+  modes, and the losing path decodes in the winner's. A direct edge always
+  wins; between two direct ones the winner is work-queue order, so neither
+  decode can be trusted.
 - `interior_branch_targets`: the off-boundary targets above, whose edge is
   inexact (a direct branch) or absent (a dropped `Switch` arm), plus a region
   start a later decode stepped over.
