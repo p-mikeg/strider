@@ -7,6 +7,14 @@ use `strider.template` and its `Template` type instead. A bare `Pat` is
 still accepted there for compatibility, but only its build-valid subset
 compiles: a capture reference such as `var(c)`, or a constant, carries over,
 while `.when()`, `.of_width()`, `.value_ty()` and `anything()` are rejected.
+
+Compiling and matching a pattern is native recursion mirroring its nesting,
+so how deep a pattern a query accepts depends on the stack of the thread it
+runs on: the budget is taken from that thread's own bounds, and a pattern
+past it raises `StriderError` instead of overflowing. A `threading.Thread`
+with a reduced `stack_size` therefore answers fewer levels than the main
+thread, and the 512-level count bound is the ceiling only where the stack is
+not the tighter of the two.
 """
 
 from __future__ import annotations
