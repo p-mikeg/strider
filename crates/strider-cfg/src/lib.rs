@@ -18,7 +18,7 @@ pub type Result<T> = anyhow::Result<T>;
 /// region explored later and starting below `addr` paints its own mode over it;
 /// a read after the build answers for that later region.
 /// [`Cfg::flowing_isa_bit_at_site`] carries the seal-time answer out instead.
-pub fn flowing_isa_bit_at<R: rsleigh::MemReader>(
+pub(crate) fn flowing_isa_bit_at<R: rsleigh::MemReader>(
     arch: &strider_target::SleighArch,
     sleigh: &rsleigh::Sleigh<R>,
     addr: u64,
@@ -53,6 +53,7 @@ pub struct Cfg {
     pub(crate) undecodable_seeded: Vec<UndecodableTarget>,
     pub(crate) isa_mode_conflicts: Vec<types::PcodeInsnAddr>,
     pub(crate) interior_branch_targets: Vec<types::PcodeInsnAddr>,
+    pub(crate) unmapped_branch_targets: Vec<types::PcodeInsnAddr>,
     pub(crate) link_register_seated: Vec<types::PcodeInsnAddr>,
     pub(crate) tail_call_seated: Vec<types::PcodeInsnAddr>,
     pub(crate) function_isa_bit: Option<bool>,
@@ -83,8 +84,11 @@ impl Cfg {
 
     /// Addresses two edges reached carrying different ISA modes. One region
     /// owns the bytes, so the losing edge's path decodes in the other's mode.
-    /// Which edge wins is work-queue order, so a caller that cares must treat
-    /// these as unresolved rather than trusting either decode.
+    ///
+    /// A direct edge always wins over a seeded arm, whose arm is then dropped
+    /// (`Builder::drop_refused_switch_arms`). Between two direct edges the
+    /// winner is work-queue order, so a caller that cares must treat those as
+    /// unresolved rather than trusting either decode.
     pub fn isa_mode_conflicts(&self) -> &[types::PcodeInsnAddr] {
         &self.isa_mode_conflicts
     }
@@ -101,6 +105,20 @@ impl Cfg {
     /// two owners with two different instruction streams.
     pub fn interior_branch_targets(&self) -> &[types::PcodeInsnAddr] {
         &self.interior_branch_targets
+    }
+
+    /// Direct-branch targets the reader has no bytes for, each seated as an
+    /// empty `TailCall` stub so the branch keeps an edge and every region that
+    /// did decode survives.
+    ///
+    /// A buffer whose window the branch leaves, a partially-mapped image, an
+    /// unrelocated `jmp`: the callee is real code somewhere, just not here, so
+    /// modelling it as a call out of the function is the closest the CFG can
+    /// come. Nothing was decoded there, so no successor of it is known either.
+    ///
+    /// Failing the whole function stays the answer when the ENTRY is unmapped.
+    pub fn unmapped_branch_targets(&self) -> &[types::PcodeInsnAddr] {
+        &self.unmapped_branch_targets
     }
 
     /// Sites seated as a `Return` because the answer was `LinkRegister`.

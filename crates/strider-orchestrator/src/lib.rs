@@ -122,9 +122,10 @@ where
     /// it cannot appear in `unresolved_indirect_branches` at all; it is named
     /// in [`AnalyzeResult::unverified_seeded_sites`] instead. A CFG-level loss
     /// no indirect site owns comes back in
-    /// [`AnalyzeResult::isa_mode_conflicts`] or
-    /// [`AnalyzeResult::interior_branch_targets`]. A caller asking "may this
-    /// answer be incomplete?" has to read all four.
+    /// [`AnalyzeResult::isa_mode_conflicts`],
+    /// [`AnalyzeResult::interior_branch_targets`] or
+    /// [`AnalyzeResult::unmapped_branch_targets`]. A caller asking "may this
+    /// answer be incomplete?" has to read all five.
     ///
     /// `lift_opts.cfg.known_targets` seeds the loop by plain address union
     /// every round, and the caller's own map is never mutated. The WORKING set
@@ -214,18 +215,26 @@ where
         // rebuilds without the edge that decoded those bytes twice. Reading the
         // final cfg alone launders the round that decoded them.
         let mut isa_conflicts: Vec<PcodeInsnAddr> = cfg.isa_mode_conflicts().to_vec();
+        // Sticky as `interior` is: a stub seated in one round is a target the
+        // classifier then read, whether or not the final cfg still seats it.
+        let mut unmapped: Vec<PcodeInsnAddr> = cfg.unmapped_branch_targets().to_vec();
         // Sites this loop has given up on: their answer never settled, or it
         // named an address that would not decode. Abandoning one leaves its
         // `IndirectBranch` a live placeholder, which is reported as unresolved
         // (a result, the way the contract promises, instead of an error that
         // loses the whole function).
         let mut abandoned: rustc_hash::FxHashSet<PcodeInsnAddr> = rustc_hash::FxHashSet::default();
-        derived_incomplete.extend(abandon_undecodable(
+        let mut dropped_seats = abandon_undecodable(
             cfg.undecodable_seeded_targets(),
             cfg.isa_mode_conflicts(),
             &mut abandoned,
             &mut working.cfg.known_targets,
-        ));
+        );
+        // `cfg` was built from the seats just stripped, so it still carries
+        // them. Converging on it would publish a `Switch` at a site the report
+        // channels call unresolved; one more round rebuilds without it.
+        let mut seats_stale = !dropped_seats.is_empty();
+        derived_incomplete.append(&mut dropped_seats);
         for _ in 0..MAX_RESOLUTION_ITERATIONS {
             // Seated `Switch` sites are re-derived every round, so the loop
             // runs on while either anchor set is non-empty: a table that
@@ -262,7 +271,7 @@ where
             }
             derived_incomplete.extend(progress.derived_incomplete);
             assumed_modes.extend(progress.assumed_modes);
-            if !progress.changed {
+            if !progress.changed && !seats_stale {
                 converged = true;
                 break;
             }
@@ -279,14 +288,17 @@ where
             // arm-loss report, and for a classifier-derived table that is the
             // only channel that fires.
             derived_incomplete.extend(seated_arm_losses(&cfg, &working.cfg.known_targets));
-            derived_incomplete.extend(abandon_undecodable(
+            let mut dropped_seats = abandon_undecodable(
                 cfg.undecodable_seeded_targets(),
                 cfg.isa_mode_conflicts(),
                 &mut abandoned,
                 &mut working.cfg.known_targets,
-            ));
+            );
+            seats_stale = !dropped_seats.is_empty();
+            derived_incomplete.append(&mut dropped_seats);
             interior.extend_from_slice(cfg.interior_branch_targets());
             isa_conflicts.extend_from_slice(cfg.isa_mode_conflicts());
+            unmapped.extend_from_slice(cfg.unmapped_branch_targets());
             live_indirect = resolutions.keys().copied().collect();
             unclassified = unclassified_nodes(&resolutions);
         }
@@ -363,12 +375,16 @@ where
         let mut interior_branch_targets = interior;
         interior_branch_targets.sort_unstable();
         interior_branch_targets.dedup();
+        let mut unmapped_branch_targets = unmapped;
+        unmapped_branch_targets.sort_unstable();
+        unmapped_branch_targets.dedup();
         Ok(AnalyzeResult {
             cfg,
             function,
             unresolved_indirect_branches,
             isa_mode_conflicts,
             interior_branch_targets,
+            unmapped_branch_targets,
             unverified_seeded_sites: unverified_seeded,
         })
     }
@@ -462,6 +478,16 @@ pub struct AnalyzeResult {
     /// Like `isa_mode_conflicts` a direct edge produces these, so they are
     /// reported here rather than in `unresolved_indirect_branches`.
     pub interior_branch_targets: Vec<PcodeInsnAddr>,
+    /// Direct-branch targets ANY round's cfg had no bytes for.
+    ///
+    /// Each is seated as an empty `TailCall` stub, so the branch keeps an edge
+    /// and the regions that did decode survive; nothing past the stub is known.
+    /// A firmware or shellcode buffer the branch leaves, a partially-mapped
+    /// image, an `ET_REL` object with an unrelocated `jmp`, a ROM built from a
+    /// symbol subset. Like `interior_branch_targets` a direct edge produces
+    /// these, so they are reported here rather than in
+    /// `unresolved_indirect_branches`.
+    pub unmapped_branch_targets: Vec<PcodeInsnAddr>,
     /// Sites whose answer nothing verified.
     ///
     /// Three shapes land here. A seated `Switch` holding exactly the caller's
@@ -482,11 +508,11 @@ pub struct AnalyzeResult {
 }
 
 impl AnalyzeResult {
-    /// Whether all four report channels are empty, i.e. the CFG carries no
+    /// Whether all five report channels are empty, i.e. the CFG carries no
     /// caveat at all.
     ///
     /// This is the question "may this result be incomplete?", which needs all
-    /// four and which none of them answers alone. `false` is NOT always a
+    /// five and which none of them answers alone. `false` is NOT always a
     /// loss: `unverified_seeded_sites` holds answers that are complete but
     /// that nothing verified, so a site consumed as a `Return` (an ARM
     /// `pop {pc}` dispatch, say) clears it. Read whichever channel is
@@ -497,6 +523,7 @@ impl AnalyzeResult {
             && self.unverified_seeded_sites.is_empty()
             && self.isa_mode_conflicts.is_empty()
             && self.interior_branch_targets.is_empty()
+            && self.unmapped_branch_targets.is_empty()
     }
 }
 
@@ -636,10 +663,11 @@ fn apply_resolutions(
             .into_iter()
             .flatten()
             .any(|a| !seated.contains(a));
-        // The exact key, where the fold writes: the convergence diff compares
-        // this address's own entry across rounds.
-        let prev = known_targets
-            .get(&addr)
+        // `seed_for` again, for the reason the seat used it: the round that
+        // produced this IR seated through `CfgOptions::seated`, so at a site
+        // whose `BRANCHIND` is not the instruction's first p-code op an exact
+        // lookup reads empty and every unchanged round diffs as growth.
+        let prev = seed_for(known_targets, addr)
             .map(target_keys)
             .unwrap_or_default();
         let next = target_keys(&targets);
@@ -981,9 +1009,9 @@ fn abandon_site(
 ///
 /// A classifier that over-approximates a jump-table bound reaches past the
 /// table and names addresses that are not code. The bound is what is wrong, so
-/// no arm of that answer is trustworthy and the whole seat goes -- the seat of
-/// the SITE that named it. The same address seated from another site decodes in
-/// that site's own committed context, so its failure there is no verdict here.
+/// no arm of that answer is trustworthy and the whole seat of the SITE that
+/// named it goes. The same address seated from another site decodes in that
+/// site's own committed context, so its failure there is no verdict here.
 ///
 /// An address two edges reach in different ISA modes is decoded once, in
 /// whichever mode won the work queue, so the other edge's arm is not the
@@ -1006,7 +1034,9 @@ fn abandon_undecodable(
     };
     // Both keys of each site, since a caller can only spell the machine address
     // ([`seed_for`]) while the cfg reports the `BRANCHIND`'s own p-code address.
-    let mut undecodable: FxHashMap<PcodeInsnAddr, rustc_hash::FxHashSet<u64>> =
+    // The anchor rides along: it is the address every other channel names the
+    // site by, and the machine-start key is not it.
+    let mut undecodable: FxHashMap<PcodeInsnAddr, (PcodeInsnAddr, rustc_hash::FxHashSet<u64>)> =
         FxHashMap::default();
     for bad in undecodable_targets {
         for key in [
@@ -1015,7 +1045,8 @@ fn abandon_undecodable(
         ] {
             undecodable
                 .entry(key)
-                .or_default()
+                .or_insert_with(|| (bad.site, rustc_hash::FxHashSet::default()))
+                .1
                 .insert(bad.target.machine_addr.addr);
         }
     }
@@ -1031,11 +1062,17 @@ fn abandon_undecodable(
     // Keyed on the entry it iterated, not on `abandon_site`'s two keys: one
     // instruction can hold both a caller seed and a fold, and rewriting either
     // through the other's key makes the surviving arms depend on map order.
-    let hit: Vec<(PcodeInsnAddr, Vec<strider_cfg::ResolvedTarget>)> = known_targets
+    let hit: Vec<(
+        PcodeInsnAddr,
+        PcodeInsnAddr,
+        Vec<strider_cfg::ResolvedTarget>,
+    )> = known_targets
         .iter()
         .filter_map(|(site, targets)| {
-            if undecodable.get(site).is_some_and(|bad| names(targets, bad)) {
-                return Some((*site, Vec::new()));
+            if let Some((anchor, bad)) = undecodable.get(site)
+                && names(targets, bad)
+            {
+                return Some((*site, *anchor, Vec::new()));
             }
             names(targets, &clashing).then(|| {
                 let kept = concrete_targets(targets)
@@ -1043,19 +1080,30 @@ fn abandon_undecodable(
                     .filter(|t| !clashing.contains(&t.addr))
                     .copied()
                     .collect();
-                (*site, kept)
+                (*site, *site, kept)
             })
         })
         .collect();
     let mut out = Vec::with_capacity(hit.len());
-    for (site, kept) in hit {
-        abandoned.insert(site);
+    for (site, anchor, kept) in hit {
+        // Every key of the site, the way `abandon_site` marks them:
+        // `apply_resolutions` tests this set with the anchor's own p-code
+        // address, which is not the key a machine-start seed was found under.
+        for key in [
+            site,
+            anchor,
+            PcodeInsnAddr::at_machine_start(site.machine_addr.addr),
+        ] {
+            abandoned.insert(key);
+        }
         if kept.is_empty() {
             known_targets.remove(&site);
         } else {
             known_targets.insert(site, resolved_from(kept));
         }
-        out.push(site);
+        // The anchor, not the entry's key: an address no anchor in this run
+        // uses would ride into `unresolved_indirect_branches` naming nothing.
+        out.push(anchor);
     }
     out
 }
@@ -1120,7 +1168,7 @@ fn seated_arm_losses(
         };
         // `seed_for`, not a bare lookup: a caller can only spell the MACHINE
         // address, so a seed keyed at p-code index 0 counts for the whole
-        // instruction -- which is exactly how `CfgOptions::seated` seated it.
+        // instruction. `CfgOptions::seated` seats it exactly that way.
         // An exact-key lookup skipped every dispatch whose `BRANCHIND` is not
         // the instruction's first p-code op, i.e. ARM `bx`, MIPS `jr` and x86
         // `jmp [mem]`, so this check never ran for them.
@@ -1914,11 +1962,11 @@ mod tests {
     /// A proved mode EQUAL to the flowing one seats identically to no mode at
     /// all, so the set still widens: the drop is for sites that switch ISA.
     ///
-    /// It is still an assumption -- 0x2004's own mode was never evaluated, and
-    /// only the OTHER arms proved the one it is decoded in -- so the site is
-    /// reported. Dropping the arm instead would cost every same-mode dispatch
-    /// its widening; reporting keeps the arm and refuses to call the answer
-    /// settled.
+    /// The site is still reported: 0x2004's own mode was never evaluated, and
+    /// only the OTHER arms proved the one it is decoded in, so seating it stays
+    /// an assumption. Dropping the arm instead would cost every same-mode
+    /// dispatch its widening; reporting keeps the arm and refuses to call the
+    /// answer settled.
     #[test]
     fn apply_resolutions_widens_a_site_whose_proved_mode_is_the_flowing_one() {
         let (progress, folded) = round(

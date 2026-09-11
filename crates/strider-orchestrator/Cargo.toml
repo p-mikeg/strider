@@ -6,6 +6,7 @@ license.workspace = true
 description = "Runs strider's lift, optimize and indirect-branch resolution loop."
 repository.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 
 [dependencies]
 strider-opt = { workspace = true }

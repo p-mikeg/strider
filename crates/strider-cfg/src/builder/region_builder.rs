@@ -42,6 +42,29 @@ fn next_pcode_addr(addr: PcodeInsnAddr, lift_res: &rsleigh::LiftRes) -> Result<P
     })
 }
 
+/// The reader had no bytes at this address, as opposed to Sleigh rejecting the
+/// bytes it did get.
+#[derive(Debug)]
+pub(super) struct UnmappedAddr(pub(super) u64);
+
+impl std::fmt::Display for UnmappedAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#x} is not mapped", self.0)
+    }
+}
+
+impl std::error::Error for UnmappedAddr {}
+
+/// Whether `err` is a decode that never started, `addr` holding no bytes.
+///
+/// A failure further into the region means bytes WERE read and rejected, and
+/// the region under construction is then real code whose extent is unknown; a
+/// stub seated at its start would discard it.
+pub(super) fn is_unmapped_start(err: &anyhow::Error, addr: PcodeInsnAddr) -> bool {
+    err.downcast_ref::<UnmappedAddr>()
+        .is_some_and(|u| u.0 == addr.machine_addr.addr)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum InsnOutcome {
     RegionClosed,
@@ -105,12 +128,20 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// instructions.
     fn lift_one(&mut self, addr: u64) -> Result<rsleigh::LiftRes> {
         self.hold_isa_mode(addr)?;
-        self.builder
-            .sleigh
-            .lift_one(addr)
+        self.builder.sleigh.lift_one(addr).map_err(|e| {
             // Display, not Debug: the error's `Debug` nests its source's, which
             // for a reader error carries a captured backtrace.
-            .map_err(|e| anyhow!("sleigh could not lift {addr:#x}: {e}"))
+            let msg = format!("sleigh could not lift {addr:#x}: {e}");
+            // `DataUnavailErr` is the reader answering a read with zero bytes,
+            // which is the same verdict its own error is.
+            match e {
+                rsleigh::error::GenericError::MemReadErr(_)
+                | rsleigh::error::GenericError::Base(rsleigh::error::BaseError::DataUnavailErr) => {
+                    anyhow::Error::new(UnmappedAddr(addr)).context(msg)
+                }
+                rsleigh::error::GenericError::Base(_) => anyhow!(msg),
+            }
+        })
     }
 
     /// Pcode encodes branch targets two ways: CONST-space is a signed offset
@@ -361,7 +392,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         // function bound is decoded.  Sequential decoding still crosses it by
         // up to one instruction: an instruction starting in range is decoded
         // whole, and its trailing bytes join the region's span.  Nothing looks
-        // those bytes up -- an address at or above the bound classifies as a
+        // those bytes up.  An address at or above the bound classifies as a
         // tail call and is never explored.  When both arms hit the same OOB
         // address this adds two parallel edges to one stub, mirroring the
         // in-range degenerate case: `region_if` reads the second edge as the
