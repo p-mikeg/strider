@@ -7,10 +7,10 @@ def test_module_loads():
 
 def test_error_surface_is_single_class():
     """One `StriderError` class carries every failure, with the caused-by
-    chain in the message.  There is no subclass hierarchy, so assertions
-    on a specific failure kind match on message text."""
+    chain in the message, so assertions on a specific failure kind match on
+    message text."""
     assert hasattr(strider, "StriderError")
-    # Earlier drafts exposed these; catch drift back to a typed hierarchy.
+    # Catches drift toward a typed hierarchy.
     for collapsed in (
         "LiftError",
         "ReaderError",
@@ -20,7 +20,7 @@ def test_error_surface_is_single_class():
         "UnknownCallOtherError",
     ):
         assert not hasattr(strider, collapsed), (
-            f"strider.{collapsed} re-appeared — the API is meant to be a "
+            f"strider.{collapsed} exists; the API is meant to be a "
             "single `StriderError` class.  If a typed hierarchy is being "
             "reintroduced, update this test AND every test that uses "
             "`pytest.raises(strider.StriderError, match=...)` to use the new "

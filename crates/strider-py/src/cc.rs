@@ -20,12 +20,13 @@ pub(crate) enum CcImpl {
 pub struct PyCallingConvention {
     pub(crate) inner: CcImpl,
     pub(crate) preset_name: &'static str,
+    /// The arch a `custom(...)` convention resolved its register names
+    /// against; `None` for a preset, which resolves at consumption time.
+    pub(crate) source_arch: Option<&'static str>,
     /// Only meaningful when this CC is resolved as a per-address override.
     pub(crate) no_return: bool,
 }
 
-// `x86_64_all_preserving` is hand-written below: it needs a Python docstring
-// the macro form can't reproduce.
 forall_preset!(
     cc PyCallingConvention,
     strider_target::CallingConvention,
@@ -33,6 +34,7 @@ forall_preset!(
         x86_64_systemv,
         aarch64_aapcs64,
         arm_aapcs,
+        arm_aapcs_soft,
         mips_o32,
         mips_n64,
         powerpc_sysv32,
@@ -45,16 +47,36 @@ forall_preset!(
 
 #[pymethods]
 impl PyCallingConvention {
-    /// "All-preserving" x86_64 calling convention: every userland
-    /// caller-clobbered register is listed as callee-saved.  Use as a
-    /// per-address CC override for sites that observe no caller state
-    /// changes (e.g. Linux-kernel `__fentry__` / `mcount`).
-    #[classmethod]
-    fn x86_64_all_preserving(_cls: &Bound<'_, PyType>) -> Self {
+    /// A variant of this convention that clobbers nothing: every register
+    /// callee-saved and memory unchanged, with no arguments or return value.
+    /// The stack/link-register geometry of the original is kept.
+    ///
+    /// Use as a per-address CC override for a transparent hook that observes
+    /// no caller state changes (Linux-kernel `__fentry__` / `mcount`), e.g.
+    /// `CallingConvention.x86_64_systemv().preserves_all()`.
+    fn preserves_all(&self) -> Self {
         Self {
-            inner: CcImpl::Preset(strider_target::CallingConvention::x86_64_all_preserving()),
-            preset_name: "x86_64_all_preserving",
-            no_return: false,
+            inner: match &self.inner {
+                CcImpl::Preset(cc) => CcImpl::Preset(cc.preserves_all()),
+                CcImpl::Custom(cc) => CcImpl::Custom(Box::new((**cc).clone().preserves_all())),
+            },
+            preset_name: self.preset_name,
+            source_arch: self.source_arch,
+            no_return: self.no_return,
+        }
+    }
+
+    /// Like `preserves_all` but leaves memory clobberable: registers are all
+    /// preserved, memory is not.
+    fn preserves_regs(&self) -> Self {
+        Self {
+            inner: match &self.inner {
+                CcImpl::Preset(cc) => CcImpl::Preset(cc.preserves_regs()),
+                CcImpl::Custom(cc) => CcImpl::Custom(Box::new((**cc).clone().preserves_regs())),
+            },
+            preset_name: self.preset_name,
+            source_arch: self.source_arch,
+            no_return: self.no_return,
         }
     }
 
@@ -69,6 +91,7 @@ impl PyCallingConvention {
         Self {
             inner: self.inner.clone(),
             preset_name: self.preset_name,
+            source_arch: self.source_arch,
             no_return: true,
         }
     }
@@ -97,6 +120,13 @@ impl PyCallingConvention {
     ///         (ARM/AArch64/MIPS/PowerPC); pass `None` on x86/x86_64.
     ///     preserves_memory: `True` for transparent hooks
     ///         (`__fentry__`/`mcount`-style) that preserve memory.
+    ///     arg_passing_regs_float: Float/vector argument registers, in ABI
+    ///         order.  Appended after `arg_passing_regs` in a `Call`'s
+    ///         argument list, so the first one is `arg(len(arg_passing_regs))`.
+    ///
+    /// The frozen varnodes belong to `sleigh`'s architecture, so the result is
+    /// usable only with a `Lifter` for that same arch; any other raises
+    /// `StriderError` at `analyze` time.
     ///
     /// Chain `.no_return()` on the result to mark the callee as never-returning.
     #[classmethod]
@@ -112,6 +142,7 @@ impl PyCallingConvention {
         ret_stack_pop,
         link_register=None,
         preserves_memory=false,
+        arg_passing_regs_float=Vec::new(),
     ))]
     #[allow(clippy::too_many_arguments)]
     fn custom(
@@ -128,9 +159,11 @@ impl PyCallingConvention {
         ret_stack_pop: i64,
         link_register: Option<String>,
         preserves_memory: bool,
+        arg_passing_regs_float: Vec<String>,
     ) -> PyResult<Self> {
         let sleigh_borrow = sleigh.borrow(py);
         let regs = sleigh_borrow.regs.clone();
+        let source_arch = sleigh_borrow.arch_name;
         drop(sleigh_borrow);
         let resolve = |name: &str| {
             regs.name_to_vn(name).ok_or_else(|| {
@@ -143,34 +176,48 @@ impl PyCallingConvention {
             names.iter().map(|n| resolve(n)).collect()
         };
         let arg_vns = resolve_list(&arg_passing_regs)?;
+        let arg_float_vns = resolve_list(&arg_passing_regs_float)?;
         let callee_vns = resolve_list(&callee_saved_regs)?;
         let ret_vns = resolve_list(&ret_val_regs)?;
         let ret_float_vns = resolve_list(&ret_val_regs_float)?;
         let sp_vn = resolve(&stack_pointer)?;
         let lr_vn = link_register.as_deref().map(resolve).transpose()?;
+        // A stack-pushing convention (no link register) has `call` push a
+        // pointer-size return address; a smaller `ret_stack_pop` drifts SP.
+        let ptr_size = i64::from(sp_vn.size);
+        if lr_vn.is_none() && ret_stack_pop < ptr_size {
+            return Err(crate::errors::into_strider_err(anyhow::anyhow!(
+                "custom(): a stack-pushing convention (link_register=None) needs \
+                 ret_stack_pop >= {ptr_size} to account for the return address \
+                 `call` pushes (x86: 4, x86-64: 8); got {ret_stack_pop}. A \
+                 link-register arch (ARM/MIPS/PPC) uses 0 but must set link_register."
+            )));
+        }
         let stack_args = stack_arg_base.map(|base_offset| strider_target::StackArgs {
             base_offset,
             increment: stack_arg_increment,
         });
-        // The named-field parts struct is what stops this path transposing the
-        // two same-typed return lists.
-        let built = strider_target::BuiltCallingConvention::try_new(
-            strider_target::BuiltCallingConventionParts {
-                arg_passing_regs: arg_vns,
-                callee_saved_regs: callee_vns,
-                ret_val_regs: ret_vns,
-                ret_val_regs_float: ret_float_vns,
-                stack_vn: sp_vn,
-                stack_args,
-                ret_stack_pop,
-                link_register_vn: lr_vn,
-                preserves_memory,
-            },
-        )
-        .map_err(|e| crate::errors::into_strider_err(e.into()))?;
+        let built = strider_target::BuiltCallingConvention {
+            arg_passing_regs: arg_vns,
+            arg_passing_regs_float: arg_float_vns,
+            callee_saved_regs: callee_vns,
+            ret_val_regs: ret_vns,
+            ret_val_regs_float: ret_float_vns,
+            stack_vn: sp_vn,
+            stack_args,
+            ret_stack_pop,
+            link_register_vn: lr_vn,
+            preserves_memory,
+            preserves_all_registers: false,
+            no_return: false,
+        };
+        built
+            .validate()
+            .map_err(|e| crate::errors::into_strider_err(e.into()))?;
         Ok(Self {
             inner: CcImpl::Custom(Box::new(built)),
             preset_name: "custom",
+            source_arch: Some(source_arch),
             no_return: false,
         })
     }
@@ -181,9 +228,14 @@ impl PyCallingConvention {
         self.preset_name
     }
 
-    /// `CallingConvention.<preset>()`, the call that produces this convention.
+    /// `CallingConvention.<preset>()` for a preset.  A `custom(...)` one has
+    /// no argument-free reproduction, so it renders as a plain description
+    /// naming the arch its registers were resolved against.
     fn __repr__(&self) -> String {
-        format!("CallingConvention.{}()", self.preset_name)
+        match self.source_arch {
+            Some(arch) => format!("<CallingConvention custom for {arch}>"),
+            None => format!("CallingConvention.{}()", self.preset_name),
+        }
     }
 }
 

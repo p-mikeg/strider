@@ -1,6 +1,3 @@
-//! `Matcher` API surface: `find_all`, `match_at`, `function_arg*`, walk-through
-//! options, and the kind-prefilter early-out.
-
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_pattern::*;
@@ -18,7 +15,7 @@ fn find_all_on_empty_graph_returns_empty_for_specific_kind() {
     let function = Tb::empty().ret_nothing();
     a::none(&function, load().build());
     a::none(&function, call().build());
-    a::none(&function, add(any(), any()).into_pattern());
+    a::none(&function, int_add(anything(), anything()).into_pattern());
 }
 
 /// The fixture holds only IntConst / IntBinaryOp / Return / Entry, so each
@@ -29,7 +26,7 @@ fn kind_prefilter_skips_incompatible_nodes() {
     a::none(&function, load().build());
     a::none(&function, store().build());
     a::none(&function, call().build());
-    a::none(&function, if_node().build());
+    a::none(&function, if_else().build());
     a::none(&function, phi().build());
 }
 
@@ -46,7 +43,7 @@ fn match_at_hits_correct_node() {
         })
         .expect("add node exists");
 
-    let pat = add(int_const(5u128), int_const(3u128)).into_pattern();
+    let pat = int_add(int_const(5u128), int_const(3u128)).into_pattern();
     let m = Matcher::new(&function)
         .match_at(add_node, &pat)
         .unwrap()
@@ -54,9 +51,9 @@ fn match_at_hits_correct_node() {
     assert_eq!(m.root(), add_node);
 }
 
-/// The footprint is root + interior + captured leaves, not just the captures.
-/// The rewrite engine absorbs fingerprints from it, and a backward-BFS
-/// reconstruction would miss multi-sink / non-cone matched nodes.
+/// The footprint is root + interior + captured leaves, the captures alone
+/// being too narrow. The rewrite engine absorbs fingerprints from it, and a
+/// backward-BFS reconstruction would miss multi-sink / non-cone matched nodes.
 #[test]
 fn matched_nodes_includes_root_and_all_structural_operands() {
     let function = shapes::add_consts(5, 3);
@@ -75,7 +72,7 @@ fn matched_nodes_includes_root_and_all_structural_operands() {
         .collect();
     assert_eq!(const_nodes.len(), 2, "two operand consts");
 
-    let pat = add(int_const(5u128), int_const(3u128)).into_pattern();
+    let pat = int_add(int_const(5u128), int_const(3u128)).into_pattern();
     let m = Matcher::new(&function)
         .match_at(add_node, &pat)
         .unwrap()
@@ -132,7 +129,7 @@ fn match_at_is_scoped_to_that_node_only() {
 fn find_all_is_deterministic() {
     let function = shapes::add_nested_3(1, 2, 3);
     let matcher = Matcher::new(&function);
-    let pat = any_int_const().capture(Capture::new()).into_pattern();
+    let pat = int_const(Capture::new()).into_pattern();
 
     let a1: Vec<_> = matcher
         .find_all(&pat)
@@ -165,7 +162,7 @@ fn kind_index_reused_across_queries() {
     );
 
     // Served after the index is built.
-    let pat_add = add(any(), any()).into_pattern();
+    let pat_add = int_add(anything(), anything()).into_pattern();
     assert_eq!(matcher.find_all(&pat_add).unwrap().len(), 1, "one Add");
 
     // Re-run the first query, now via the cache.
@@ -198,9 +195,9 @@ fn find_all_returns_distinct_matches_with_distinct_roots() {
     let function = graph_three_adds();
     let lhs = Capture::new();
     let rhs = Capture::new();
-    let pat = add(any_int_const().capture(lhs), any_int_const().capture(rhs)).into_pattern();
+    let pat = int_add(int_const(lhs), int_const(rhs)).into_pattern();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
-    // Three roots x two orderings: `add` is commutative and both captures sit
+    // Three roots x two orderings: `int_add` is commutative and both captures sit
     // on operands, so each root matches as (lhs,rhs) and as (rhs,lhs).
     assert_eq!(hits.len(), 6);
 
@@ -217,7 +214,7 @@ fn each_match_has_its_own_bindings() {
     let function = graph_three_adds();
     let lhs = Capture::new();
     let rhs = Capture::new();
-    let pat = add(any_int_const().capture(lhs), any_int_const().capture(rhs)).into_pattern();
+    let pat = int_add(int_const(lhs), int_const(rhs)).into_pattern();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
     // Two operand orderings per root; see
     // `find_all_returns_distinct_matches_with_distinct_roots`.
@@ -239,7 +236,7 @@ fn each_match_has_its_own_bindings() {
         "each match has its own bindings: {raw:?}"
     );
 
-    // Normalised by operand order, the three source `add`s come back, each
+    // Normalised by operand order, the three source `int_add`s come back, each
     // contributing its pair twice, once per ordering.
     let mut got: Vec<(u128, u128)> = raw
         .into_iter()
@@ -266,7 +263,7 @@ fn bindings_clone_outlives_match() {
                         .any(|&o| function.int_const_u128(o) == Some(5))
             })
             .unwrap();
-        let pat = any_int_const().capture(v).into_pattern();
+        let pat = int_const(v).into_pattern();
         let m = matcher.match_at(node, &pat).unwrap().expect("match");
         m.bindings_clone()
     };
@@ -288,7 +285,7 @@ fn get_vn_on_non_mapped_producer_returns_none() {
     let v = Capture::new();
     let m = a::unique(
         &function,
-        add(int_const(5u128), int_const(3u128))
+        int_add(int_const(5u128), int_const(3u128))
             .capture(v)
             .into_pattern(),
     );
@@ -307,7 +304,7 @@ fn get_vn_on_unbound_var_returns_none() {
 #[test]
 fn existing_pattern_unchanged_with_default_options() {
     let function = shapes::add_consts(5, 3);
-    let pat = add(int_const(5u128), int_const(3u128)).into_pattern();
+    let pat = int_add(int_const(5u128), int_const(3u128)).into_pattern();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
 }
@@ -327,7 +324,7 @@ fn graph_add_zext_mul() -> strider_ir::Function {
 #[test]
 fn add_mul_pattern_does_not_match_through_extend_by_default() {
     let function = graph_add_zext_mul();
-    let pat = add(mul(any(), any()), any()).into_pattern();
+    let pat = int_add(int_mul(anything(), anything()), anything()).into_pattern();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert!(hits.is_empty());
 }
@@ -336,7 +333,9 @@ fn add_mul_pattern_does_not_match_through_extend_by_default() {
 fn add_mul_pattern_matches_through_extend_with_ignore_casts() {
     let function = graph_add_zext_mul();
     // The cast mask lives on the pattern, not the matcher.
-    let pat = add(mul(any(), any()), any()).into_pattern().ignore_casts();
+    let pat = int_add(int_mul(anything(), anything()), anything())
+        .into_pattern()
+        .ignore_casts();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
 }
@@ -352,7 +351,9 @@ fn cast_walk_through_records_skipped_cast_in_footprint() {
         .find(|&n| matches!(function.node_kind(n), NodeKind::Extend(_)))
         .expect("graph has a ZeroExt cast");
 
-    let pat = add(mul(any(), any()), any()).into_pattern().ignore_casts();
+    let pat = int_add(int_mul(anything(), anything()), anything())
+        .into_pattern()
+        .ignore_casts();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
     assert!(
@@ -368,14 +369,16 @@ fn add_mul_pattern_matches_through_chained_casts() {
         let mut t = Tb::empty();
         let two = t.u64(2);
         let three = t.u64(3);
-        let mul = t.mul(two, three);
-        let truncated = t.trunc_to(mul, ValueType::I32);
+        let int_mul = t.mul(two, three);
+        let truncated = t.trunc_to(int_mul, ValueType::I32);
         let widened = t.zext_to(truncated, ValueType::I64);
         let four = t.u64(4);
         let total = t.add(widened, four);
         t.ret_val(total)
     };
-    let pat = add(mul(any(), any()), any()).into_pattern().ignore_casts();
+    let pat = int_add(int_mul(anything(), anything()), anything())
+        .into_pattern()
+        .ignore_casts();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
 }
@@ -391,7 +394,7 @@ fn truncate_pattern_still_matches_truncate_with_ignore_casts() {
         t.ret_val(truncated)
     };
     let m = Matcher::new(&function);
-    let pat = truncate(any()).into_pattern().ignore_casts();
+    let pat = int_truncate(anything()).into_pattern().ignore_casts();
     let hits = m.find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
     assert!(matches!(
@@ -406,13 +409,15 @@ fn commutative_add_finds_mul_in_either_operand_through_extend() {
         let mut t = Tb::empty();
         let two = t.u32(2);
         let three = t.u32(3);
-        let mul = t.int_bin_at(two, three, IntBinaryOp::Mul, ValueType::I32);
-        let widened = t.zext_to(mul, ValueType::I64);
+        let int_mul = t.int_bin_at(two, three, IntBinaryOp::Mul, ValueType::I32);
+        let widened = t.zext_to(int_mul, ValueType::I64);
         let four = t.u64(4);
         let total = t.add(four, widened);
         t.ret_val(total)
     };
-    let pat = add(mul(any(), any()), any()).into_pattern().ignore_casts();
+    let pat = int_add(int_mul(anything(), anything()), anything())
+        .into_pattern()
+        .ignore_casts();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
 }
@@ -443,10 +448,10 @@ fn graph_ret_via_region_after_call() -> strider_ir::Function {
 fn ret_call_does_not_match_through_region_by_default() {
     let function = graph_ret_via_region_after_call();
     // "Return preceded by a Call" goes through a node-level filter: there is no
-    // Call-kind value wildcard, and `preceded_by` inspects only the direct ctrl
+    // Call-kind value wildcard, and `ctrl` inspects only the direct ctrl
     // predecessor, which here is the tail Region rather than the Call.
     let pat = ret()
-        .preceded_by(any().filter(|m, node| {
+        .ctrl(anything().filter(|m, node| {
             matches!(
                 m.function().node_kind(node),
                 strider_ir::node::NodeKind::Call
@@ -461,7 +466,7 @@ fn ret_call_does_not_match_through_region_by_default() {
 fn matches_next_concrete_kind_equals_find_all_first() {
     let function = shapes::add_nested_3(2, 3, 5);
     let m = Matcher::new(&function);
-    let p = add(any(), any()).into_pattern();
+    let p = int_add(anything(), anything()).into_pattern();
     let all = m.find_all(&p).unwrap();
     assert!(!all.is_empty(), "fixture has Add nodes");
     let first = m
@@ -476,7 +481,7 @@ fn matches_next_concrete_kind_equals_find_all_first() {
 fn matches_next_wildcard_equals_find_all_first() {
     let function = shapes::add_consts(1, 2);
     let m = Matcher::new(&function);
-    let p = any().into_pattern();
+    let p = anything().into_pattern();
     let all = m.find_all(&p).unwrap();
     assert!(!all.is_empty());
     let first = m
@@ -507,7 +512,7 @@ fn find_joined_empty_input() {
 fn find_joined_single_pattern_equivalent_to_find_all() {
     let function = shapes::add_consts(2, 3);
     let m = Matcher::new(&function);
-    let p = add(any(), any()).into_pattern();
+    let p = int_add(anything(), anything()).into_pattern();
     let req = m.find_joined_constrained(&[&p], &[]).unwrap();
     let direct = m.find_all(&p).unwrap();
     assert_eq!(req.len(), direct.len());
@@ -521,7 +526,7 @@ fn find_joined_single_pattern_equivalent_to_find_all() {
 fn find_joined_no_matches_for_a_pattern_yields_empty() {
     let function = shapes::add_consts(2, 3);
     let m = Matcher::new(&function);
-    let p_add = add(any(), any()).into_pattern();
+    let p_add = int_add(anything(), anything()).into_pattern();
     let p_call = call().build();
     let req = m.find_joined_constrained(&[&p_add, &p_call], &[]).unwrap();
     assert!(req.is_empty());
@@ -549,11 +554,11 @@ fn find_joined_intersects_on_shared_capture_node_id() {
     let shared = Capture::new();
     let k = Capture::new();
     let p_zero = store()
-        .addr(add(var(shared), any_int_const().capture(k)).ordered())
+        .addr(int_add(var(shared), int_const(k)).ordered())
         .data(int_const(0u128))
         .build();
     let p_99 = store()
-        .addr(add(var(shared), any_int_const().capture(Capture::new())).ordered())
+        .addr(int_add(var(shared), int_const(Capture::new())).ordered())
         .data(int_const(99u128))
         .build();
 
@@ -598,7 +603,7 @@ fn find_joined_three_patterns_all_agree_on_shared_capture() {
     let shared = Capture::new();
     let store_pat = |off: u128, data: u128| {
         store()
-            .addr(add(var(shared), int_const(off)).ordered())
+            .addr(int_add(var(shared), int_const(off)).ordered())
             .data(int_const(data))
             .build()
     };
@@ -642,7 +647,7 @@ fn find_joined_three_patterns_one_disagrees_yields_empty() {
     let shared = Capture::new();
     let store_pat = |off: u128, data: u128| {
         store()
-            .addr(add(var(shared), int_const(off)).ordered())
+            .addr(int_add(var(shared), int_const(off)).ordered())
             .data(int_const(data))
             .build()
     };
@@ -655,9 +660,9 @@ fn find_joined_three_patterns_one_disagrees_yields_empty() {
 }
 
 /// Connectivity is ORDER-INDEPENDENT: a pattern bridging to the rest only via a
-/// pattern listed *after* it must not be rejected. The old prefix-only check
-/// rejected e.g. `guard(var(fop))` + `call(var(fv))` +
-/// `load(...).capture(fop, fv)` whenever the bridge wasn't listed first.
+/// pattern listed *after* it must not be rejected. A prefix-only check rejects
+/// `guard(var(fop))` + `call(var(fv))` + `load(...).capture(fop, fv)` whenever
+/// the bridge is not listed first.
 #[test]
 fn find_joined_connectivity_is_order_independent() {
     let mut t = Tb::empty();
@@ -677,11 +682,11 @@ fn find_joined_connectivity_is_order_independent() {
     // `bridge` binds both x and d; `by_base` binds only x, `by_data` only d, so
     // those two share nothing directly and connect ONLY through `bridge`.
     let bridge = store()
-        .addr(add(var(x), int_const(8u128)).ordered())
+        .addr(int_add(var(x), int_const(8u128)).ordered())
         .data(var(d))
         .build();
     let by_base = store()
-        .addr(add(var(x), int_const(16u128)).ordered())
+        .addr(int_add(var(x), int_const(16u128)).ordered())
         .build();
     let by_data = store().data(var(d)).build();
 
@@ -728,7 +733,7 @@ fn find_joined_pattern_without_shared_capture_cross_products() {
     // The store binds `shared` twice over different bases; the Call never
     // mentions it.
     let p_store = store()
-        .addr(add(var(shared), any_int_const().capture(Capture::new())).ordered())
+        .addr(int_add(var(shared), int_const(Capture::new())).ordered())
         .data(int_const(0u128))
         .build();
     let p_call = call().at(0x1234).build();
@@ -754,7 +759,7 @@ fn find_joined_zero_match_first_pattern_yields_empty() {
     let function = shapes::add_consts(2, 3);
     let m = Matcher::new(&function);
     let p_call = call().build(); // no Call in the graph
-    let p_add = add(any(), any()).into_pattern();
+    let p_add = int_add(anything(), anything()).into_pattern();
     let req = m.find_joined_constrained(&[&p_call, &p_add], &[]).unwrap();
     assert!(req.is_empty());
 }
@@ -776,11 +781,11 @@ fn find_joined_disagreement_on_shared_capture_yields_empty() {
     let mr = Matcher::new(&function);
     let shared = Capture::new();
     let p_8 = store()
-        .addr(add(var(shared), int_const(8u128)).ordered())
+        .addr(int_add(var(shared), int_const(8u128)).ordered())
         .data(int_const(0u128))
         .build();
     let p_16 = store()
-        .addr(add(var(shared), int_const(16u128)).ordered())
+        .addr(int_add(var(shared), int_const(16u128)).ordered())
         .data(int_const(0u128))
         .build();
     let req = mr.find_joined_constrained(&[&p_8, &p_16], &[]).unwrap();
@@ -800,8 +805,8 @@ fn find_joined_disjoint_captures_is_rejected() {
     let a1 = Capture::new();
     let b0 = Capture::new();
     let b1 = Capture::new();
-    let p_a = add(any().capture(a0), any().capture(a1)).into_pattern();
-    let p_b = add(any().capture(b0), any().capture(b1)).into_pattern();
+    let p_a = int_add(anything().capture(a0), anything().capture(a1)).into_pattern();
+    let p_b = int_add(anything().capture(b0), anything().capture(b1)).into_pattern();
     let Err(err) = mr.find_joined_constrained(&[&p_a, &p_b], &[]) else {
         panic!("disjoint-capture join must error, not return tuples");
     };
@@ -834,11 +839,11 @@ fn find_joined_dedups_tuples_equivalent_on_shared_captures() {
     // The offset operand is an uncaptured wildcard, so both stores bind
     // identical shared sets.
     let p0 = store()
-        .addr(add(var(shared), any()).ordered())
+        .addr(int_add(var(shared), anything()).ordered())
         .data(int_const(0u128))
         .build();
     let p1 = store()
-        .addr(add(var(shared), any()).ordered())
+        .addr(int_add(var(shared), anything()).ordered())
         .data(int_const(0u128))
         .build();
 
@@ -850,13 +855,13 @@ fn find_joined_dedups_tuples_equivalent_on_shared_captures() {
     );
 }
 
-/// `any()` matches every reachable node of a minimal function, value-less
+/// `anything()` matches every reachable node of a minimal function, value-less
 /// kinds (Entry, Region, MemPhi, InitialMemory) included.
 #[test]
 fn find_all_any_on_minimal_function_pins_node_count() {
     let function = Tb::empty().ret_nothing();
     let m = Matcher::new(&function);
-    let hits = m.find_all(&any().into_pattern()).unwrap();
+    let hits = m.find_all(&anything().into_pattern()).unwrap();
     let walked = function.walk().count();
     assert_eq!(hits.len(), walked, "any() matches every reachable node");
     assert_eq!(
@@ -880,7 +885,7 @@ fn match_at_on_return_node_of_minimal_function() {
         .expect("ret() matches Return");
     assert_eq!(hit.root(), ret_node);
 
-    let wild = m.match_at(ret_node, &any().into_pattern()).unwrap();
+    let wild = m.match_at(ret_node, &anything().into_pattern()).unwrap();
     assert!(
         wild.is_some(),
         "any() matches the value-less Return at match_at"

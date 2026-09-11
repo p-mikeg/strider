@@ -10,15 +10,12 @@
 //! regions (each one `ret`), feeds the BranchIndirect's pcode address into
 //! `known_targets` with a `Multiple` payload, runs `build_ir`, and asserts
 //! the result is a single `NodeKind::Switch` with one `Control` output per
-//! target (in target order) and zero `If` / `IntCmpOp::Equal` nodes: the
-//! old if-ladder lowering was replaced by `handle_switch` emitting one
-//! `Switch` node directly, with case addresses in the `switch_targets` side
-//! table instead of as IR comparison constants.
+//! target (in target order) and zero `If` / `IntCmpOp::Equal` nodes:
+//! `handle_switch` emits one `Switch` node directly, with case addresses in
+//! the `switch_targets` side table rather than as IR comparison constants.
 //!
 //! Unit-level coverage of `build_switch`'s primitive lives in
 //! `crates/strider-lift/src/lift/control.rs::tests`.
-
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use rsleigh::mem_readers::BufMemReader;
 use rustc_hash::FxHashMap;
@@ -68,15 +65,15 @@ fn count_int_consts_eq(function: &Function, want: u64) -> usize {
 }
 
 #[test]
-fn switch_terminator_lifts_to_plain_branch_for_one_target() {
-    // 1-target Switch: handle_switch's degenerate case emits a plain
-    // build_branch, not a 1-arm Switch or a 1-arm If with a dead default.
+fn switch_terminator_lifts_to_one_arm_switch_for_one_target() {
+    // A 1-target dispatch keeps its `Switch`, which retains the selector so
+    // the resolver can widen the site later; it is still not an If-ladder.
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(1);
     let (g, _, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
     assert_eq!(
         count_switches(&g),
-        0,
-        "no Switch node for 1-target dispatch"
+        1,
+        "1-target dispatch keeps a one-arm Switch so its selector survives"
     );
     assert_eq!(common::count_ifs(&g), 0, "no If for 1-target dispatch");
     assert_eq!(
@@ -129,7 +126,7 @@ fn switch_terminator_lifts_to_single_switch_node_for_three_targets() {
 
 #[test]
 fn switch_with_const_index_collapses_through_default_pipeline() {
-    // A Switch's address input is just another value input: when the
+    // A Switch's address input is a value input like any other: when the
     // dispatch value is a compile-time constant (mov rax, K_target; jmp
     // rax), ConstantFold reduces it to an IntConst and
     // DeadBranchElimination collapses the Switch to its single matching
@@ -159,7 +156,7 @@ fn switch_with_const_index_collapses_through_default_pipeline() {
             machine_addr: MachineInsnAddr::from(branch_indirect_addr),
             insn_index: 0,
         },
-        ResolvedTargets::Multiple(target_addrs.clone()),
+        ResolvedTargets::Multiple(target_addrs.clone().into_iter().map(Into::into).collect()),
     );
     let cfg_opts = strider_cfg::CfgOptions {
         known_targets,
@@ -205,7 +202,7 @@ fn switch_with_const_index_collapses_through_default_pipeline() {
 
 #[test]
 fn switch_targets_are_not_double_linked_by_the_region_linker() {
-    // Regression: a Switch region's per-target CFG edges carry the
+    // A Switch region's per-target CFG edges carry the
     // Unconditional edge kind, but the region's IR control flow is wired
     // exclusively by handle_switch's dispatch. The post-loop
     // link_region_edges linker must skip a Switch region's Unconditional
@@ -216,8 +213,8 @@ fn switch_targets_are_not_double_linked_by_the_region_linker() {
     //
     // The synthetic fixture (jmp rax -> N single-ret targets) has no
     // merging control flow, so a correctly-lifted graph is a pure control
-    // tree: every Region node has at most one control predecessor. The
-    // double-link gave each of the N target regions two.
+    // tree: every Region node has at most one control predecessor. A
+    // double-link gives each of the N target regions two.
     for n in [1usize, 2, 3] {
         let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(n);
         let (g, _, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
@@ -241,8 +238,7 @@ fn switch_targets_are_not_double_linked_by_the_region_linker() {
 fn ir_level_multiple_resolution_end_to_end_produces_lifted_switch_in_ir() {
     // End-to-end pin: a CFG with a BranchIndirect resolved to
     // Multiple([t0, t1]) via with_known_targets must produce IR containing
-    // the corresponding Switch node, closing the gap where pre-Switch CFG
-    // edges had no IR encoding for the dispatch.
+    // the corresponding Switch node, which is the dispatch's IR encoding.
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(2);
     let (g, _, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
     assert_eq!(

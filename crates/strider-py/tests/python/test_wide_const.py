@@ -8,7 +8,7 @@ constant-address load, hence the hand-assembled `movdqa` / `fld` against a
 from __future__ import annotations
 
 import strider
-from strider.pattern import Capture, any_int_const, int_const
+from strider.pattern import Capture, int_const
 
 WIDE = 0x0123456789ABCDEF_FEDCBA9876543210  # does not fit in u64
 
@@ -42,21 +42,21 @@ def test_wide_const_match_uint_returns_full_u128():
     # The full 128 bits reach Python's arbitrary-precision int, untruncated.
     f = _wide_const_function()
     c = Capture()
-    hits = f.find_all(any_int_const(c))
+    hits = f.find_all(int_const(c))
     assert len(hits) == 1
-    assert hits[0].const_uint(c) == WIDE
+    assert hits[0].uint(c) == WIDE
 
 
 def test_wide_const_match_int_is_unsigned_below_bit127():
-    # const_int reads the stored u128 as i128; WIDE's bit 127 is clear, so
+    # sint reads the stored u128 as i128; WIDE's bit 127 is clear, so
     # the signed and unsigned readings agree.
     f = _wide_const_function()
     c = Capture()
-    hits = f.find_all(any_int_const(c))
-    assert hits[0].const_int(c) == WIDE
+    hits = f.find_all(int_const(c))
+    assert hits[0].sint(c) == WIDE
 
 
-def test_wide_const_int_const_literal_matches():
+def test_wide_sint_const_literal_matches():
     # `int_const(literal)` accepts a >64-bit Python int and matches the
     # interned wide constant.
     f = _wide_const_function()
@@ -64,18 +64,18 @@ def test_wide_const_int_const_literal_matches():
     assert f.find_all(int_const(WIDE ^ 1)) == []
 
 
-def test_wide_const_node_const_int_returns_full_value():
-    # `Node.const_int()` / `const_uint()` cover every width up to 128 bits,
+def test_wide_const_node_sint_returns_full_value():
+    # `Node.sint()` / `uint()` cover every width up to 128 bits,
     # so a wide constant surfaces its full value rather than None.
     f = _wide_const_function()
     wide_ids = [n for n in f.node_ids() if f.node(n).wide_const_bytes() is not None]
     assert wide_ids
     for nid in wide_ids:
         node = f.node(nid)
-        v = node.const_int()
+        v = node.sint()
         assert isinstance(v, int)
         assert v == WIDE
-        assert node.const_uint() == WIDE
+        assert node.uint() == WIDE
         # Agrees with the raw-bytes escape hatch.
         wb = node.wide_const_bytes()
         assert wb is not None
@@ -109,15 +109,15 @@ def _i80_const_function():
     return function
 
 
-def test_i80_const_node_const_int_returns_full_value():
-    # The 10-byte x87 load folds to an I80 constant; const_int decodes all
+def test_i80_const_node_sint_returns_full_value():
+    # The 10-byte x87 load folds to an I80 constant; sint decodes all
     # 80 bits.
     f = _i80_const_function()
     wide_ids = [n for n in f.node_ids() if f.node(n).wide_const_bytes() is not None]
     assert wide_ids, "expected a wide IntConst node from the 10-byte fold"
     for nid in wide_ids:
         node = f.node(nid)
-        v = node.const_int()
+        v = node.sint()
         assert isinstance(v, int)
         assert v == I80_VALUE
         wb = node.wide_const_bytes()
@@ -127,17 +127,15 @@ def test_i80_const_node_const_int_returns_full_value():
         assert v == int.from_bytes(raw, "little")
 
 
-# There is no I256/I512 test because neither width is reachable with the
-# bundled x86-64 Sleigh spec: `vmovdqa ymm0, [abs]` trips the wide-container
-# guard (ymm0 sits inside the tracked zmm0), and `vmovdqa64 zmm0, [abs]`
-# lifts to an unclassified CallOther, so no 64-byte Load is minted.
-# `const_int()` / `const_uint()` stop at 128 bits and return None above it;
-# use `wide_const_bytes()` there.  The wider byte serialisation is unit
-# tested in strider-ir.
+# I256/I512 are unreachable with the bundled x86-64 Sleigh spec: `vmovdqa
+# ymm0, [abs]` trips the wide-container guard (ymm0 sits inside the tracked
+# zmm0), and `vmovdqa64 zmm0, [abs]` lifts to an unclassified CallOther, so
+# no 64-byte Load is minted. `sint()` / `uint()` stop at 128 bits and return
+# None above it; use `wide_const_bytes()`.
 
 
-def test_small_const_node_const_int_exact_value():
-    # Regression guard: a plain I64 constant still surfaces its exact value.
+def test_small_const_node_sint_exact_value():
+    # A plain I64 constant surfaces its exact value, as the wide ones do.
     # `mov rax, imm64; ret` keeps it live through the return-value register.
     value = 0x1122_3344_5566_7788
     code = bytes([0x48, 0xB8]) + value.to_bytes(8, "little") + bytes([0xC3])
@@ -150,8 +148,15 @@ def test_small_const_node_const_int_exact_value():
     consts = [
         n
         for n in f.node_ids()
-        if f.node(n).kind().startswith("IntConst") and f.node(n).const_int() == value
+        if f.node(n).kind().startswith("IntConst") and f.node(n).sint() == value
     ]
     assert consts, "expected the imm64 IntConst to surface its exact value"
     # Small constants have no wide-bytes representation.
     assert f.node(consts[0]).wide_const_bytes() is None
+
+
+def test_wide_const_bytes_is_bytes():
+    f = _wide_const_function()
+    wide = [f.node(n) for n in f.node_ids() if f.node(n).wide_const_bytes() is not None]
+    assert wide
+    assert isinstance(wide[0].wide_const_bytes(), bytes)

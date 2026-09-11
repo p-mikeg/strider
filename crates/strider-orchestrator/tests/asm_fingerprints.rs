@@ -1,11 +1,6 @@
-//! End-to-end checks for the asm-fingerprint side-table.
-//!
-//! Each test lifts a small fixture through the full strider + optimiser
-//! pipeline and asserts that every reachable node whose kind is *not* in
-//! the documented exempt set carries at least one machine-instruction
-//! address in its fingerprint.
-
-#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
+//! Every reachable node whose kind is not in the exempt set must carry at
+//! least one machine-instruction address in its fingerprint, after the full
+//! lift + optimiser pipeline.
 
 mod common;
 use common::*;

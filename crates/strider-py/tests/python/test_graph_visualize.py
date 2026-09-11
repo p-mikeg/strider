@@ -49,17 +49,30 @@ def test_pretty_to_html_returns_html_str():
     assert "<html" in html.lower() or "svg" in html.lower()
 
 
-def test_style_requires_pretty():
-    """`style` themes the pretty render only.  Accepting and ignoring it
-    on the raw path would be the same silent-success defect as the old
-    unknown-style fallback."""
+def test_pretty_carries_the_theme():
+    """`pretty` is the whole render selector: `False` raw, `True` pretty in the
+    default theme, a theme name pretty in that theme.  Every value means
+    something, so there is no combination to reject and none to ignore."""
     import pytest
 
     g = _build_graph()
-    with pytest.raises(strider.StriderError, match="pretty"):
-        g.to_html(style="dark")
+    assert g.to_html(pretty="dark") == g.to_html(pretty=True)
+    assert g.to_html(pretty="dark") != g.to_html()
+    assert g.to_html(pretty="empty") != g.to_html(pretty="dark")
     with pytest.raises(strider.StriderError, match="unknown dot style"):
-        g.to_html(pretty=True, style="not_a_theme")
+        # Deliberate: an unknown theme name is a runtime error.
+        g.to_html(pretty="not_a_theme")  # type: ignore[arg-type]
+
+
+def test_style_keyword_is_gone():
+    import pytest
+
+    g = _build_graph()
+    with pytest.raises(TypeError):
+        # Deliberate: `style` is the removed keyword this test pins.
+        g.to_html(style="dark")  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        g.to_dot(style="dark")  # type: ignore[call-arg]
 
 
 def test_lifter_render_methods_removed():
@@ -123,6 +136,10 @@ def test_function_to_dot_str_and_file(tmp_path):
     assert fn.to_dot(str(out)) is None and out.read_text()
     assert isinstance(fn.to_html(), str)
     assert isinstance(fn.neighborhood_dot(fn.entry_node()), str)
+    # `pretty` selects the renderer, as on `to_dot` / `to_html`.
+    pretty = fn.neighborhood_dot(fn.entry_node(), pretty=True)
+    assert pretty != fn.neighborhood_dot(fn.entry_node())
+    assert not hasattr(strider.lift.Lifter, "neighborhood_dot")
     for gone in (
         "raw_dot_str",
         "raw_html_str",

@@ -1,8 +1,3 @@
-//! These use [`with_test_lifter_cc`] rather than the default harness, whose
-//! injected `empty_cc` stack_vn would pollute the clobber lists.
-
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
 use rsleigh::{Vn, VnSpace};
 
 use super::handler_tests::with_test_lifter_cc;
@@ -15,8 +10,8 @@ fn reg(off: u64, size: u32) -> Vn {
     }
 }
 
-/// Every other field takes its trivial default.  Struct-literal construction
-/// skips ABI-disjointness validation, fine for a synthetic fixture.
+/// Struct-literal construction skips ABI-disjointness validation, fine for a
+/// synthetic fixture.
 fn make_cc(
     ret_val_regs: Vec<Vn>,
     callee_saved_regs: Vec<Vn>,
@@ -32,7 +27,9 @@ fn make_cc(
         ret_stack_pop: 0,
         link_register_vn: None,
         preserves_memory: false,
+        preserves_all_registers: false,
         no_return: false,
+        ..Default::default()
     }
 }
 
@@ -105,4 +102,240 @@ fn override_cc_yields_smaller_clobber_set() {
             "override cc_B combined ret+clobber ({combined_b}) must be smaller than cc_A ({combined_a})"
         );
     });
+}
+
+/// Both `Call` output groups are drawn from the tracked set, so every entry
+/// is a REGISTER / UNIQUE container `write_variable` reaches whole.
+#[test]
+fn call_outputs_are_tracked_containers() {
+    let rax = reg(0x0, 8);
+    let rcx = reg(0x8, 8);
+    let sp = reg(0x18, 8);
+    let all_vns = vec![rax, rcx, sp];
+    let cc = make_cc(vec![rax], Vec::new(), sp);
+    with_test_lifter_cc(cc.clone(), all_vns.clone(), |d, _rid| {
+        let outputs = [d.call_ret_vals_for(&cc), d.call_clobbered_for(&cc)].concat();
+        assert!(
+            !outputs.is_empty(),
+            "the fixture has a ret val and a clobber"
+        );
+        for vn in outputs {
+            assert!(
+                matches!(vn.addr_space, VnSpace::REGISTER | VnSpace::UNIQUE),
+                "{vn:?} is neither REGISTER nor UNIQUE"
+            );
+            assert!(
+                d.builder.function().all_vns().contains(&vn),
+                "{vn:?} is not a tracked container"
+            );
+        }
+    });
+}
+
+/// AAPCS-VFP `d0` and `d1` collapse into the `q0` container the moment the
+/// function names any NEON register, but they are still float parameters 0
+/// and 1 and must carry distinct incoming values.
+#[test]
+fn aliased_float_arg_regs_keep_their_abi_positions() {
+    let q0 = reg(0x300, 16);
+    let (d0, d1, d2, d3) = (reg(0x300, 8), reg(0x308, 8), reg(0x310, 8), reg(0x318, 8));
+    let sp = reg(0x7000, 4);
+    let mut cc = make_cc(Vec::new(), Vec::new(), sp);
+    cc.arg_passing_regs_float = vec![d0, d1, d2, d3];
+    with_test_lifter_cc(cc, vec![q0, d2, sp], |d, _rid| {
+        d.record_register_arg_carriers().unwrap();
+        let st = d.builder.function().side_tables();
+        let (p0, p1, p2) = (
+            st.float_arg_index_to_values(0),
+            st.float_arg_index_to_values(1),
+            st.float_arg_index_to_values(2),
+        );
+        assert_eq!(p0.len(), 1, "d0 is float param 0");
+        assert_eq!(p1.len(), 1, "d1 is float param 1");
+        assert_ne!(
+            p0[0], p1[0],
+            "d0 and d1 share the q0 container but are distinct float params"
+        );
+        assert_eq!(p2.len(), 1, "d2 is float param 2, not float param 1");
+        assert_eq!(
+            st.float_arg_index_to_values(3).len(),
+            1,
+            "d3 is seeded like every other ABI float register, so it is param 3"
+        );
+    });
+}
+
+/// A float argument register the function never names still carries its
+/// parameter: `arg_passing_regs_float` is seeded into the tracked set the way
+/// the integer list already was, so no position is dropped and none shifts.
+#[test]
+fn every_float_arg_position_has_a_carrier() {
+    let (d0, d1) = (reg(0x300, 8), reg(0x308, 8));
+    let sp = reg(0x7000, 4);
+    let mut cc = make_cc(Vec::new(), Vec::new(), sp);
+    cc.arg_passing_regs_float = vec![d0, d1];
+    with_test_lifter_cc(cc, vec![d1, sp], |d, _rid| {
+        d.record_register_arg_carriers().unwrap();
+        let st = d.builder.function().side_tables();
+        assert_eq!(
+            st.float_arg_index_to_values(0).len(),
+            1,
+            "d0 is float param 0 even though no instruction names it"
+        );
+        assert_eq!(
+            st.float_arg_index_to_values(1).len(),
+            1,
+            "d1 stays float param 1 rather than shifting down to 0",
+        );
+    });
+}
+
+/// The whole shape end to end: a NEON instruction pulls `q0` into the tracked
+/// set, and `d0`/`d1` must still be float parameters 0 and 1 both as carriers
+/// and as `Call` arguments.
+///
+/// `vadd.i32 q0,q0,q0 ; vmov.f64 d0,d2 ; vmov.f64 d1,d3 ; bl g ; bx lr`.
+#[test]
+fn arm_neon_float_args_keep_their_abi_positions_end_to_end() {
+    use strider_ir::IRViewer;
+    use strider_ir::node::NodeKind;
+
+    let bytes = vec![
+        0x40, 0x08, 0x20, 0xf2, // vadd.i32 q0,q0,q0
+        0x42, 0x0b, 0xb0, 0xee, // vmov.f64 d0,d2
+        0x43, 0x1b, 0xb0, 0xee, // vmov.f64 d1,d3
+        0x00, 0x00, 0x00, 0xeb, // bl g
+        0x1e, 0xff, 0x2f, 0xe1, // bx lr
+        0x1e, 0xff, 0x2f, 0xe1, // g: bx lr
+    ];
+    let f = super::handler_tests::lift_bytes(
+        strider_target::SleighArch::arm(),
+        strider_target::CallingConvention::arm_aapcs(),
+        bytes,
+    )
+    .expect("the ARM NEON fixture must lift");
+
+    let q0 = reg(0x300, 16);
+    assert!(
+        f.all_vns().contains(&q0),
+        "the NEON instruction must make q0 the tracked container, got {:?}",
+        f.all_vns(),
+    );
+
+    let carriers: Vec<Vec<strider_ir::node::ValueId>> = (0..4)
+        .map(|j| f.side_tables().float_arg_index_to_values(j).to_vec())
+        .collect();
+    for (j, c) in carriers.iter().enumerate() {
+        assert_eq!(c.len(), 1, "float param {j} must have exactly one carrier");
+    }
+    let flat: Vec<strider_ir::node::ValueId> = carriers.iter().flatten().copied().collect();
+    assert_eq!(
+        distinct_count(&flat),
+        4,
+        "d0..d3 are four distinct float parameters"
+    );
+
+    // The four float arguments follow the four integer ones in the `Call`.
+    let call = f
+        .graph()
+        .all_node_ids()
+        .find(|n| matches!(f.node_kind(*n), NodeKind::Call))
+        .expect("the fixture calls g");
+    let inputs: Vec<strider_ir::node::ValueId> = f.node_inputs(call).into_iter().collect();
+    // [Control, Memory, target, SP, r0..r3, d0..d3].
+    let float_args = &inputs[inputs.len() - 4..];
+    for (j, v) in float_args.iter().enumerate() {
+        assert_eq!(
+            f.value_type(*v).unwrap(),
+            strider_ir::ValueType::I64,
+            "float argument {j} is one 64-bit d register, not a fused q container",
+        );
+    }
+    assert_eq!(
+        distinct_count(float_args),
+        4,
+        "no two float arguments are the same value"
+    );
+}
+
+fn distinct_count(values: &[strider_ir::node::ValueId]) -> usize {
+    let mut seen: Vec<strider_ir::node::ValueId> = Vec::new();
+    for v in values {
+        if !seen.contains(v) {
+            seen.push(*v);
+        }
+    }
+    seen.len()
+}
+
+/// A float argument's index is its ABI POSITION on both sides: the `Call`
+/// slot at `arg_passing_regs.len() + j` and the callee-side carrier for float
+/// parameter `j` name the same register.
+///
+/// `vldr d5,[r0] ; vldr d7,[r0,#8] ; bl g ; bx lr` names d5 and d7 but not
+/// d4 or d6. Every ABI float register is seeded regardless, so d5 and d7 are
+/// arguments 5 and 7 rather than being dropped with the positions below them.
+#[test]
+fn float_call_args_keep_their_abi_positions() {
+    use strider_ir::IRViewer;
+    use strider_ir::node::NodeKind;
+
+    let bytes = vec![
+        0x00, 0x5b, 0x90, 0xed, // vldr d5,[r0]
+        0x02, 0x7b, 0x90, 0xed, // vldr d7,[r0,#8]
+        0x02, 0x00, 0x00, 0xeb, // bl g
+        0x1e, 0xff, 0x2f, 0xe1, // bx lr
+        0x1e, 0xff, 0x2f, 0xe1, // g: bx lr
+    ];
+    let f = super::handler_tests::lift_bytes(
+        strider_target::SleighArch::arm(),
+        strider_target::CallingConvention::arm_aapcs(),
+        bytes,
+    )
+    .expect("the ARM VFP fixture must lift");
+
+    let cc = f.default_cc();
+    let slots = cc.float_arg_slots(f.all_vns(), |v| {
+        vn_container::largest_container_in(f.all_vns(), v)
+    });
+    assert!(
+        slots.iter().all(Option::is_some),
+        "every ABI float register is seeded, so no position gaps, got {slots:?}"
+    );
+
+    let call = f
+        .graph()
+        .all_node_ids()
+        .find(|n| matches!(f.node_kind(*n), NodeKind::Call))
+        .expect("the fixture calls g");
+    let inputs: Vec<strider_ir::node::ValueId> = f.node_inputs(call).into_iter().collect();
+    // [Control, Memory, target, SP] then the integer arguments.
+    let float_args = &inputs[4 + cc.arg_passing_regs.len()..];
+
+    assert_eq!(
+        float_args.len(),
+        slots.len(),
+        "one Call argument per ABI float position; got {} for {} slots",
+        float_args.len(),
+        slots.len(),
+    );
+    // The fixture loads into d5 and d7, so those two carry the loaded value
+    // rather than their entry value; every other position is untouched.
+    for (j, arg) in float_args.iter().enumerate() {
+        let reg = slots[j].expect("every slot is tracked");
+        let initial = f.initial_var_value(&reg);
+        if j == 5 || j == 7 {
+            assert_ne!(
+                initial,
+                Some(*arg),
+                "float argument {j} must carry the value the fixture loaded into {reg:?}"
+            );
+        } else {
+            assert_eq!(
+                initial,
+                Some(*arg),
+                "float argument {j} must carry ABI float register {reg:?}"
+            );
+        }
+    }
 }

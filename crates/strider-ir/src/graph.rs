@@ -206,7 +206,7 @@ mod tests {
         );
         assert_ne!(
             a, b,
-            "IntConst(0):I32 must NOT alias IntConst(0):I64 — output_kinds is \
+            "IntConst(0):I32 must NOT alias IntConst(0):I64; output_kinds is \
          part of the dedup key"
         );
     }
@@ -312,7 +312,7 @@ mod tests {
         let e2 = function
             .graph_mut()
             .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        assert_eq!(e1, e2, "Entry must dedupe — only one per function");
+        assert_eq!(e1, e2, "Entry must dedupe: only one per function");
     }
 
     #[test]
@@ -324,7 +324,7 @@ mod tests {
         let m2 = function
             .graph_mut()
             .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-        assert_eq!(m1, m2, "InitialMemory must dedupe — only one per function");
+        assert_eq!(m1, m2, "InitialMemory must dedupe: only one per function");
     }
 
     /// The `InitialVnId` is part of the node kind, so same-id calls dedup and
@@ -954,7 +954,7 @@ mod tests {
         );
         assert_ne!(
             add_ab, fresh,
-            "the stale cache entry must be evicted — re-creating the original \
+            "the stale cache entry must be evicted: re-creating the original \
          (kind, inputs, outputs) triple after update_input has redirected \
          one of those inputs must produce a fresh NodeId"
         );

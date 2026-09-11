@@ -30,7 +30,6 @@ use strider_pattern::{
 /// # Panics
 ///
 /// Panics if the RHS references a [`Capture`] the LHS does not bind.
-#[allow(clippy::expect_used)]
 pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(lhs: L, rhs: T) -> BoxedRule {
     let lhs_pat = lhs.into_pattern();
     let rhs_tpl = rhs.into_template();
@@ -93,6 +92,20 @@ fn rewrite_rule_impl(
             Err(e) => return Err(e),
         };
 
+        // A replacement of a different width is not a narrower spelling of the
+        // same value, it IS a different value: every use of the root silently
+        // starts reading the wrong number of bits. Reachable whenever the RHS
+        // hands back an LHS-bound value that the match reached THROUGH a cast
+        // (`ignore_casts`), or a template that pins its own root width.
+        let new_ty = edit.function().value_type(new_value)?;
+        if new_ty != root_ty {
+            anyhow::bail!(
+                "rewrite would replace a {root_ty:?} value with a {new_ty:?} one; \
+                 a capture bound through a cast carries the pre-cast width, so the \
+                 replacement has to restate the conversion"
+            );
+        }
+
         // Redundant for a fresh-node RHS, but load-bearing for a
         // BARE-CAPTURE RHS such as `add(x, 0) -> x`: that returns the
         // LHS-bound value verbatim, so nothing else carries the culled
@@ -113,24 +126,48 @@ fn rewrite_rule_impl(
 
 /// Asserts every capture the RHS references also appears in the LHS.
 fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
-    let lhs_caps: rustc_hash::FxHashSet<Capture> = lhs.bound_captures().collect();
+    // GUARANTEED, not merely present: under a `one_of` only one arm fires, so a
+    // capture bound in some arms but not all leaves the RHS with nothing to
+    // instantiate. Accepting it here would defer the failure to the first node
+    // where a non-binding arm happens to match, and `instantiate`'s unbound
+    // -capture error is not a skip, so it aborts the whole pipeline for that
+    // function. Reject at construction instead: deterministic, and independent
+    // of which binary the rule is later run against.
+    let lhs_caps = lhs.guaranteed_captures()?;
+    let present: rustc_hash::FxHashSet<Capture> = lhs.bound_captures().collect();
     for cap in rhs.referenced_captures() {
         if !lhs_caps.contains(&cap) {
-            return Err(anyhow::anyhow!(
-                "RHS references Capture id={} that the LHS does not bind",
-                cap.id()
-            ));
+            return if present.contains(&cap) {
+                Err(anyhow::anyhow!(
+                    "RHS references Capture id={} that the LHS binds only on SOME \
+                     alternation arms; every arm must bind it, since only one arm \
+                     fires per match",
+                    cap.id()
+                ))
+            } else {
+                Err(anyhow::anyhow!(
+                    "RHS references Capture id={} that the LHS does not bind",
+                    cap.id()
+                ))
+            };
         }
     }
     Ok(())
 }
 
 /// Applies `rules` round-robin at every reachable node, returning the total
-/// per-`(node, rule)` fire count.
+/// per-`(node, rule)` fire count.  Backs the scripted-rewrite entry points
+/// (`Function.rewrite` / `rewrite_all` in strider-py).
 ///
-/// Rules are tried in order at each node, and a firing rule redirects the
-/// matched root's uses, so a later rule at that node sees the rewritten
-/// graph.
+/// Rules are tried in order at each node and a fire does not stop the rest.
+/// The first fire is what the graph keeps: it redirects the matched root's
+/// uses, leaving the root itself detached, so a later rule matching that same
+/// root redirects nothing and is not counted.  "First fire wins" is what a
+/// rewrite normally wants; the in-tree peephole driver makes it explicit with
+/// `first_matching_rule`, which skips the wasted later matches.
+///
+/// One call walks the graph once, so a rule whose output its own LHS matches
+/// needs the caller to loop to a fixed point.
 ///
 /// # Errors
 ///
@@ -151,39 +188,10 @@ where
     Ok(applied)
 }
 
-/// Composes rewrite-rule closures into one that tries every rule at the same
-/// root. Once a rule fires the root's uses are redirected, so subsequent
-/// rules see the new graph state and may no longer apply.
-///
-/// `Ok(Some(new_out))` names the output of the LAST rule to fire, whose
-/// redirect won.
-pub fn apply_rules_in_order<R>(
-    rules: &[R],
-) -> impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + '_
-where
-    R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
-{
-    move |edit, node| {
-        let mut last: Option<ValueId> = None;
-        for r in rules {
-            if let Some(out) = r(edit, node)? {
-                last = Some(out);
-            }
-        }
-        Ok(last)
-    }
-}
-
 /// The common trait-object type both rule constructors box into.
 pub type BoxedRule = Box<dyn for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>>;
 
 #[cfg(test)]
-#[allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable
-)]
 mod tests {
     //! Every fixture builds a BUILT `Function` (entry set).
 
@@ -216,7 +224,7 @@ mod tests {
 
         let mut edit = EditFunction::new(&mut function);
         let changed = edit.replace_value(old_value, new_value).unwrap();
-        assert!(changed, "a live use existed → changed");
+        assert!(changed, "a live use existed -> changed");
 
         let fp = function.side_tables().asm_fingerprint(new_node);
         assert!(
@@ -263,7 +271,7 @@ mod tests {
 
         let mut edit = EditFunction::new(&mut function);
         let changed = edit.replace_value(old_value, new_value).unwrap();
-        assert!(!changed, "no uses of old → changed must be false");
+        assert!(!changed, "no uses of old -> changed must be false");
 
         let fp = function.side_tables().asm_fingerprint(new_node);
         assert!(
@@ -388,9 +396,9 @@ mod tests {
         edit.clean();
 
         assert!(!edit.is_live(add_node), "add was killed");
-        assert!(!edit.is_live(neg_node), "neg orphaned → culled");
-        assert!(!edit.is_live(k_node), "k orphaned → culled");
-        assert!(!edit.is_live(k2_node), "k2 orphaned → culled");
+        assert!(!edit.is_live(neg_node), "neg orphaned -> culled");
+        assert!(!edit.is_live(k_node), "k orphaned -> culled");
+        assert!(!edit.is_live(k2_node), "k2 orphaned -> culled");
     }
 
     /// Killing `add(k, k)` must leave `k` with zero uses and get it culled,
@@ -498,7 +506,7 @@ mod tests {
             [ValueKind::Typed(ValueType::I64)],
         );
         assert!(edit.is_live(add), "fresh Add is live");
-        assert!(!edit.is_root(add), "Add has inputs → not a root");
+        assert!(!edit.is_root(add), "Add has inputs -> not a root");
     }
 
     /// `add_node_input` on a previously input-less node drops it from `roots`.
@@ -600,8 +608,71 @@ mod tests {
 
     use super::rewrite_rule;
     use strider_pattern::{
-        Capture, CaptureExt, MatchPat, Matcher, add, any_int_const, int_const_with,
+        Capture, CaptureExt, MatchPat, Matcher, int_add, int_const, int_const_with,
     };
+
+    /// A sub-pattern the match reached THROUGH a cast matches at the pre-cast
+    /// width, so an RHS rebuilt from its captures is narrower than the root it
+    /// replaces. Installing it would redirect every I64 use at an I32 value.
+    #[test]
+    fn a_rewrite_may_not_replace_a_value_with_a_narrower_one() {
+        use strider_ir::ExtendOp;
+        use strider_pattern::{int_const as int_const_match, int_mul, var};
+
+        let vn = reg_vn(0x1000, 8);
+        let a = Capture::new();
+        let bcap = Capture::new();
+
+        let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
+        b.set_region(region);
+        b.set_lift_addr(Some(0x10));
+        // Register-derived, so the cast survives instead of const-folding away.
+        let wide_in = b.read_variable(&vn).unwrap();
+        let n = b.truncate_if_needed(wide_in, ValueType::I32).unwrap();
+        let prod = b
+            .build_int_binary_operation(n, n, IntBinaryOp::Mul, ValueType::I32)
+            .unwrap();
+        let widened = b
+            .extend_if_needed(prod, ValueType::I64, ExtendOp::ZeroExtend)
+            .unwrap();
+        let zero = b.build_int_const(0u64, ValueType::I64).unwrap();
+        let sum = b
+            .build_int_binary_operation(widened, zero, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(sum), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        // `add(mul(a,b), 0) -> a`, written to see through casts. The `mul`
+        // exists only BELOW the zero-extend, so the ladder engages and binds
+        // `a` at the pre-cast width.
+        let lhs = int_add(int_mul(var(a), var(bcap)), int_const_match(0u64))
+            .into_pattern()
+            .ignore_casts();
+        let root = {
+            let m = Matcher::new(&function);
+            let hits = m.find_all(&lhs).unwrap();
+            assert!(
+                !hits.is_empty(),
+                "the add must match through the zero-extend"
+            );
+            hits[0].root()
+        };
+        let rule =
+            super::rewrite_rule_runtime(lhs, strider_pattern::TemplatePat::into_template(var(a)))
+                .unwrap();
+
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
+        let err = rule(&mut edit, root).expect_err("a width-changing replacement must be refused");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("I64") && msg.contains("I32"),
+            "the error must name both widths, got: {msg}"
+        );
+    }
 
     /// An RHS node built directly on the graph by `instantiate` must still
     /// land in the cached live set.
@@ -623,14 +694,14 @@ mod tests {
 
         let add_root = {
             let m = Matcher::new(&function);
-            let pat = add(any_int_const().capture(c1), any_int_const().capture(c2)).into_pattern();
+            let pat = int_add(int_const(c1), int_const(c2)).into_pattern();
             let hits = m.find_all(&pat).unwrap();
             assert!(!hits.is_empty(), "3 + 4 add must match");
             hits[0].root()
         };
 
         let rule = rewrite_rule(
-            add(any_int_const().capture(c1), any_int_const().capture(c2)),
+            int_add(int_const(c1), int_const(c2)),
             int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
         );
 
@@ -728,19 +799,13 @@ mod tests {
         let k1_node = function.producer(k1);
         let outer_node = function.producer(outer);
 
-        let lhs = add(
-            add(var(x), any_int_const().capture(c1)),
-            any_int_const().capture(c2),
-        );
+        let lhs = int_add(int_add(var(x), int_const(c1)), int_const(c2));
         let root = match_root(&function, lhs);
         assert_eq!(root, outer_node, "matched root is the outer Add");
 
         let rule = rewrite_rule(
-            add(
-                add(var(x), any_int_const().capture(c1)),
-                any_int_const().capture(c2),
-            ),
-            template::add(
+            int_add(int_add(var(x), int_const(c1)), int_const(c2)),
+            template::int_add(
                 var(x),
                 int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
             ),
@@ -810,28 +875,28 @@ mod tests {
         let or_node = function.producer(or);
         let k3_node = function.producer(k3);
 
-        use strider_pattern::{and, or as or_pat};
-        let lhs = and(
+        use strider_pattern::{int_and, int_const, int_or as or_pat};
+        let lhs = int_and(
             or_pat(
-                and(var(ca), any_int_const().capture(c1)),
-                and(var(cb), any_int_const().capture(c2)),
+                int_and(var(ca), int_const(c1)),
+                int_and(var(cb), int_const(c2)),
             ),
-            any_int_const().capture(c3),
+            int_const(c3),
         );
         let root = match_root(&function, lhs);
         assert_eq!(root, outer_node, "matched root is the outer And");
 
         let rule = rewrite_rule(
-            and(
+            int_and(
                 or_pat(
-                    and(var(ca), any_int_const().capture(c1)),
-                    and(var(cb), any_int_const().capture(c2)),
+                    int_and(var(ca), int_const(c1)),
+                    int_and(var(cb), int_const(c2)),
                 ),
-                any_int_const().capture(c3),
+                int_const(c3),
             ),
-            template::or(
-                template::and(var(ca), int_const_with!([c1: uint, c3: uint] => c1 & c3)),
-                template::and(var(cb), int_const_with!([c2: uint, c3: uint] => c2 & c3)),
+            template::int_or(
+                template::int_and(var(ca), int_const_with!([c1: uint, c3: uint] => c1 & c3)),
+                template::int_and(var(cb), int_const_with!([c2: uint, c3: uint] => c2 & c3)),
             ),
         );
 
@@ -881,11 +946,11 @@ mod tests {
         let x_node = function.producer(xv);
 
         use strider_pattern::int_const as int_const_match;
-        let lhs = add(var(x), int_const_match(0u64));
+        let lhs = int_add(var(x), int_const_match(0u64));
         let root = match_root(&function, lhs);
         assert_eq!(root, add_node, "matched root is the x+0 Add");
 
-        let rule = rewrite_rule(add(var(x), int_const_match(0u64)), var(x));
+        let rule = rewrite_rule(int_add(var(x), int_const_match(0u64)), var(x));
 
         let mut edit = EditFunction::new(&mut function);
         edit.cull_dead();
@@ -930,8 +995,8 @@ mod tests {
         let x_node = function.producer(xv);
 
         use strider_pattern::int_const as int_const_match;
-        let root = match_root(&function, add(var(x), int_const_match(0u64)));
-        let rule = rewrite_rule(add(var(x), int_const_match(0u64)), var(x));
+        let root = match_root(&function, int_add(var(x), int_const_match(0u64)));
+        let rule = rewrite_rule(int_add(var(x), int_const_match(0u64)), var(x));
 
         let mut edit = EditFunction::new(&mut function);
         edit.cull_dead();
@@ -990,19 +1055,13 @@ mod tests {
 
         let root = match_root(
             &function,
-            add(
-                add(var(x), any_int_const().capture(c1)),
-                any_int_const().capture(c2),
-            ),
+            int_add(int_add(var(x), int_const(c1)), int_const(c2)),
         );
         assert_eq!(root, outer_node);
 
         let rule = rewrite_rule(
-            add(
-                add(var(x), any_int_const().capture(c1)),
-                any_int_const().capture(c2),
-            ),
-            template::add(
+            int_add(int_add(var(x), int_const(c1)), int_const(c2)),
+            template::int_add(
                 var(x),
                 int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
             ),
@@ -1027,6 +1086,53 @@ mod tests {
         assert!(!edit.is_live(inner_node), "old inner Add culled");
 
         assert_live_matches_reachable(&edit);
+    }
+
+    /// Every rule is tried at every node, so a node a rule already rewrote is
+    /// still offered to the rest: the first fire is what the graph keeps, and a
+    /// later rule at the same node redirects nothing.
+    #[test]
+    fn apply_rules_count_keeps_the_first_fire_at_a_node() {
+        let vn = reg_vn(0x1000, 8);
+        let (x1, c1) = (Capture::new(), Capture::new());
+        let (x2, c2) = (Capture::new(), Capture::new());
+
+        let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
+        b.set_region(region);
+        b.set_lift_addr(Some(0x10));
+        let xv = b.read_variable(&vn).unwrap();
+        let k1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let sum = b
+            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(sum), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        // Both match `var + <const>`; only the first may take effect.
+        let first = rewrite_rule(
+            int_add(var(x1), int_const(c1)),
+            int_const_with!([c1: uint] => c1.wrapping_add(10)),
+        );
+        let second = rewrite_rule(
+            int_add(var(x2), int_const(c2)),
+            int_const_with!([c2: uint] => c2.wrapping_add(20)),
+        );
+
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
+        let fired = super::apply_rules_count(&mut edit, &[first, second]).unwrap();
+        edit.clean();
+
+        assert_eq!(fired, 1, "the second rule at that node redirects nothing");
+        let returned = crate::test_support::return_value(edit.function().graph()).unwrap();
+        assert_eq!(
+            edit.function().int_const_u128(returned),
+            Some(11),
+            "the graph keeps the FIRST rule's result"
+        );
     }
 
     /// After `apply_rules_count` plus `clean()`, no accumulated dead cone
@@ -1064,11 +1170,8 @@ mod tests {
         let a2_node = function.producer(a2);
 
         let rule = rewrite_rule(
-            add(
-                add(var(x), any_int_const().capture(c1)),
-                any_int_const().capture(c2),
-            ),
-            template::add(
+            int_add(int_add(var(x), int_const(c1)), int_const(c2)),
+            template::int_add(
                 var(x),
                 int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
             ),
@@ -1117,7 +1220,7 @@ mod tests {
         // Capture the Load's address so the RHS can re-use it.
         let addr_cap = Capture::new();
         let lhs = load()
-            .addr(strider_pattern::any().capture(addr_cap))
+            .addr(strider_pattern::anything().capture(addr_cap))
             .build();
 
         // Raw-builder RHS rooted at the Load, its single value output.
@@ -1153,7 +1256,7 @@ mod tests {
         edit.cull_dead();
 
         let fired = rule(&mut edit, load_node).unwrap();
-        assert!(fired.is_some(), "Load → Load(Store) rewrite must fire");
+        assert!(fired.is_some(), "Load -> Load(Store) rewrite must fire");
         edit.clean();
 
         let new_load = edit.producer(fired.unwrap());
@@ -1275,19 +1378,13 @@ mod tests {
 
         let root = match_root(
             &function,
-            add(
-                add(var(x), any_int_const().capture(c1)),
-                any_int_const().capture(c2),
-            ),
+            int_add(int_add(var(x), int_const(c1)), int_const(c2)),
         );
         assert_eq!(root, outer_node);
 
         let rule = rewrite_rule(
-            add(
-                add(var(x), any_int_const().capture(c1)),
-                any_int_const().capture(c2),
-            ),
-            template::add(
+            int_add(int_add(var(x), int_const(c1)), int_const(c2)),
+            template::int_add(
                 var(x),
                 int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
             ),

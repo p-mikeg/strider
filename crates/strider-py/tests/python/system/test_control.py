@@ -1,5 +1,3 @@
-"""Per-arch control-flow tests: branches, loops, merges."""
-
 from __future__ import annotations
 
 from strider import pattern as pat

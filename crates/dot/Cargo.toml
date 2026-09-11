@@ -3,6 +3,9 @@ name = "dot"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Graphviz and dark-themed HTML rendering for graph structures."
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true

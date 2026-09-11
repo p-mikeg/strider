@@ -39,8 +39,8 @@ def test_moved_names_are_present_on_constraints(name):
 
 @pytest.mark.parametrize("name", _MOVED)
 def test_moved_names_are_gone_from_pattern(name):
-    # No back-compat alias: a name that still resolves in the old namespace
-    # would defeat the separation the move exists to make.
+    # A name that still resolved in the old namespace would defeat the
+    # separation the move makes.
     assert not hasattr(p, name), f"{name} still on strider.pattern"
 
 

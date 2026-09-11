@@ -10,9 +10,8 @@ def test_sleigh_construct_with_buffer_reader():
     assert "Sleigh" in repr(sleigh)
 
 
-# `Vn.__repr__` delegates to rsleigh's own formatter, so there is no
-# Python-side spelling to drift; a formatter change upstream lands here
-# for free (and these expectations move with it).
+# `Vn.__repr__` delegates to rsleigh's own formatter, so a formatter change
+# upstream lands here directly and these expectations move with it.
 
 
 def test_vn_repr_for_register_uses_rsleigh_display():
@@ -45,9 +44,9 @@ def test_vnspace_constants_are_instances_not_callables():
 
 
 def test_vn_space_hash_consistent_with_eq():
-    """Regression: `VnSpace.__hash__` used to hash the object's address,
-    so two separately obtained `VnSpace.RAM` values hashed differently and
-    broke as dict keys / set members.
+    """`VnSpace.__hash__` hashes the underlying Sleigh space identity rather
+    than the wrapper's address, so two separately obtained `VnSpace.RAM`
+    values work as one dict key / set member.
     """
     a = strider.sleigh.VnSpace.RAM
     b = strider.sleigh.VnSpace.RAM
@@ -73,8 +72,8 @@ def test_vn_space_distinct_spaces_compare_unequal():
 
 
 def test_vn_hash_includes_addr_space():
-    """Regression: `Vn.__hash__` omitted addr_space, so `RAM[0x10]:8` and
-    `REGISTER[0x10]:8` collided and hash-table chains degraded to O(n).
+    """`Vn.__hash__` mixes in addr_space, so `RAM[0x10]:8` and
+    `REGISTER[0x10]:8` land in different buckets instead of chaining.
     """
     ram_vn = strider.sleigh.Vn(strider.sleigh.VnSpace.RAM, 0x10, 8)
     reg_vn = strider.sleigh.Vn(strider.sleigh.VnSpace.REGISTER, 0x10, 8)

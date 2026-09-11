@@ -1,5 +1,5 @@
 """`phi().any_input(p)` composes with the query-level cast-transparency
-controls (`ignore_casts` / `ignore_casts_mask`).
+control (`ignore_casts`).
 
 Cast-transparency is a QUERY-level flag, not a per-operand one: it applies to
 the whole pattern, and existential `any_input` candidates go through the same
@@ -64,9 +64,9 @@ def test_any_input_ignore_casts_spans_mixed_sign_and_zero_extends():
 def test_any_input_honours_the_granular_cast_mask():
     fn = _phi_of_extended_loads(_MOVSX_RSI)
     mask = p.CastMask.extend()
-    assert len(fn.find_all(p.phi().any_input(p.load()), ignore_casts_mask=mask)) >= 1
+    assert len(fn.find_all(p.phi().any_input(p.load()), ignore_casts=mask)) >= 1
     # A mask that does not include `extend` must not peel the extend.
-    assert fn.find_all(p.phi().any_input(p.load()), ignore_casts_mask=p.CastMask.truncate()) == []
+    assert fn.find_all(p.phi().any_input(p.load()), ignore_casts=p.CastMask.truncate()) == []
 
 
 def test_any_input_captures_bind_through_the_peeled_cast():

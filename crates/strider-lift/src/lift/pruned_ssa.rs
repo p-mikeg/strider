@@ -1,16 +1,17 @@
 //! Cytron pruned-SSA value-phi placement: per region, the iterated dominance
 //! frontier of each variable's definition sites.
 //!
-//! Def-sites are collected here in the lifter, not in a generic pass, so they
-//! reuse the EXACT write-set logic the lift emits.  Otherwise "where a phi is
-//! placed" could diverge from "what actually gets written".
+//! Def-sites are collected in the lifter so they reuse the EXACT write-set
+//! logic the lift emits: where a phi is placed must match what actually gets
+//! written.
 
+use anyhow::Result;
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::RegionId;
 
 use rsleigh::Opcode;
 use strider_ir::node::InitialVnId;
-use strider_target::call_other_abi::{CallOtherClass, classify};
+use strider_target::call_other_abi::classify_with;
 
 use super::call::decode_user_op;
 use super::function_lifter::FunctionLifter;
@@ -19,8 +20,15 @@ use super::function_lifter::FunctionLifter;
 pub(crate) type PhiPlacement = FxHashMap<RegionId, FxHashSet<InitialVnId>>;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
-    /// Exact, not conservative: mirrors every write path the lift emits.
-    pub(crate) fn collect_def_sites(&self) -> FxHashMap<InitialVnId, FxHashSet<RegionId>> {
+    /// Mirrors every write path the lift emits from a region's PCODE, which is
+    /// what phi placement needs.
+    ///
+    /// One path is deliberately absent: a `TailCall` region is lifted into a
+    /// full CC `Call` writing the return and clobber registers, but its pcode
+    /// is only a `Branch`, so nothing is recorded for it. That is sound because
+    /// such a region terminates in `Return` -- it has no successors, so an
+    /// empty dominance frontier, so no phi anywhere depends on those writes.
+    pub(crate) fn collect_def_sites(&self) -> Result<FxHashMap<InitialVnId, FxHashSet<RegionId>>> {
         let mut defs: FxHashMap<InitialVnId, FxHashSet<RegionId>> = FxHashMap::default();
         for r in self.cfg.region_ids() {
             let region = self
@@ -29,10 +37,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 .node_weight(r)
                 .expect("region id from region_ids() is in the graph");
             for wrapped in &region.insns {
-                self.record_insn_defs(&wrapped.insn, r, &mut defs);
+                self.record_insn_defs(&wrapped.insn, r, &mut defs)?;
             }
         }
-        defs
+        Ok(defs)
     }
 
     fn record_insn_defs(
@@ -40,21 +48,21 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         insn: &rsleigh::Insn,
         r: RegionId,
         defs: &mut FxHashMap<InitialVnId, FxHashSet<RegionId>>,
-    ) {
+    ) -> Result<()> {
         match insn.opcode {
             // A call writes the CC's ret + clobber registers and adjusts SP,
             // none of which appear as pcode outputs, so they come from the CC.
             // Mirrors `build_cc_call`.
             Opcode::Call | Opcode::CallIndirect => {
-                let cc = self.call_cc_for(insn);
-                let (rets, clobbers) = cc
-                    .ret_and_clobber_vns(self.builder.function().all_vns(), |v| {
-                        self.container_of(v)
-                    });
+                let override_cc = self.call_cc_override_for(insn);
+                let (rets, clobbers) = self.call_ret_and_clobber_vns(override_cc);
                 for vn in rets.iter().chain(clobbers.iter()) {
                     self.add_def(vn, r, defs);
                 }
-                self.add_def(&cc.stack_vn, r, defs);
+                let stack_vn = override_cc
+                    .unwrap_or_else(|| self.builder.function().default_cc())
+                    .stack_vn;
+                self.add_def(&stack_vn, r, defs);
             }
             // Mirrors `build_abi_call_other`: pcode output plus the ABI's
             // implicit writes.
@@ -62,14 +70,19 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 if let Some(out) = insn.output.as_ref() {
                     self.add_def(out, r, defs);
                 }
-                if let Ok((_, name)) = decode_user_op(insn, self.lifter.user_op_names())
-                    && let Some(CallOtherClass::Call(abi)) =
-                        classify(self.lifter.arch.preset(), name)
+                // Resolved through the same `built` call the lift uses, so an
+                // unresolvable ABI register name fails here exactly as it does
+                // there instead of silently placing no phi.
+                let class = decode_user_op(insn, self.lifter.user_op_names())
+                    .ok()
+                    .and_then(|(_, name)| {
+                        classify_with(self.call_other_overrides, self.lifter.arch.preset(), name)
+                    });
+                if let Some(class) = class
+                    && let Some(abi) = class.built(self.lifter.sleigh_regs())?
                 {
-                    for wname in abi.implicit_writes {
-                        if let Some(vn) = self.lifter.sleigh_regs().name_to_vn(wname) {
-                            self.add_def(&vn, r, defs);
-                        }
+                    for vn in &abi.implicit_writes {
+                        self.add_def(vn, r, defs);
                     }
                 }
             }
@@ -87,6 +100,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 }
             }
         }
+        Ok(())
     }
 
     /// A write to a non-tracked varnode (a RAM address) resolves to no
@@ -104,14 +118,16 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     }
 
     /// Mirrors `handle_call`'s CC selection: the per-address override for a
-    /// registered direct-call target, else the function default.
-    fn call_cc_for(&self, insn: &rsleigh::Insn) -> &strider_target::BuiltCallingConvention {
+    /// registered direct-call target, `None` for the function default.
+    fn call_cc_override_for(
+        &self,
+        insn: &rsleigh::Insn,
+    ) -> Option<&strider_target::BuiltCallingConvention> {
         if insn.opcode == rsleigh::Opcode::Call
             && let Some(target) = insn.inputs.first().map(|v| v.addr_off)
-            && let Some(cc) = self.per_address_ccs.get(&target)
         {
-            return cc;
+            return self.per_address_ccs.get(&target);
         }
-        self.builder.function().default_cc()
+        None
     }
 }

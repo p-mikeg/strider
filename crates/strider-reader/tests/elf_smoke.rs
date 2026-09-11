@@ -1,5 +1,3 @@
-#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
-
 //! End-to-end against real toolchain-produced ELFs, one test per architecture.
 //!
 //! Requires `make -C fixtures`. Unlike most fixture-backed tests here, these
@@ -23,7 +21,7 @@ fn assert_smoke(arch: &str) {
     let path = binary_path(arch);
     assert!(
         path.exists(),
-        "missing test binary at {} — run `make -C fixtures`",
+        "missing test binary at {}; run `make -C fixtures`",
         path.display(),
     );
 

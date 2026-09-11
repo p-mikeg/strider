@@ -3,6 +3,9 @@ name = "strider-orchestrator"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Runs strider's lift, optimize and indirect-branch resolution loop."
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 strider-opt = { workspace = true }
@@ -23,17 +26,13 @@ strider-reader = { workspace = true }
 strider-pattern = { workspace = true }
 dot.workspace = true
 entity-utils = { workspace = true }
-cranelift-entity.workspace = true
 object.workspace = true
 # Test-only IR helpers (count_kind, has_kind, build_sub_as_add_neg, …).
 strider-ir = { workspace = true, features = ["test-util"] }
 # Test-only single-pass runners (run_one / run_post) used by integration tests.
 strider-opt = { workspace = true, features = ["test-util"] }
-strider-ir-test-utils = { workspace = true }
-expect-test.workspace = true
+strider-ir-test-utils = { workspace = true, features = ["proptest-gen"] }
 paste = "1"
-insta = { version = "1.40", features = ["yaml"] }
-serde = { version = "1", features = ["derive"] }
 criterion = { version = "0.7", features = ["html_reports"] }
 proptest = "1"
 dhat = "0.3"

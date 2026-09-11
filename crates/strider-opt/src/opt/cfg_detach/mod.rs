@@ -25,9 +25,9 @@ impl Optimizer for CfgDetach {
         _ctx: &mut OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let entry = edit.entry();
-        // Two different reachability notions, deliberately. A predecessor edge
-        // is dead iff its control producer is control-unreachable from entry,
-        // but the set we ITERATE is the general graph walk: a join that is only
+        // Two different reachability notions here. A predecessor edge is dead
+        // iff its control producer is control-unreachable from entry, but the
+        // set we ITERATE is the general graph walk: a join that is only
         // data-reachable (an escaping dead branch whose value still feeds a live
         // phi) is still validator-visible and can carry a dead control slot.
         let reachable = cfg_reachable(edit.function().graph(), entry);

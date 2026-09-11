@@ -1,7 +1,3 @@
-//! `strider_pattern::Matcher` micro-benchmarks over large synthetic
-//! functions: plain `find_all` (many hits, and a root kind that never
-//! occurs so only the prefilter runs), plus the join-constraint paths.
-
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -9,8 +5,8 @@ use strider_ir::node::ValueType;
 use strider_ir::{FunctionBuilder, IRBuilderExt};
 use strider_ir_test_utils::{RegisterSet, Tb};
 use strider_pattern::{
-    Capture, CaptureExt, JoinConstraint, MatchPat, Matcher, add, any, any_int_const, call, if_node,
-    int_const, phi, shl,
+    Capture, JoinConstraint, MatchPat, Matcher, any_int_const, anything, call, if_else, int_add,
+    int_const, int_shl, phi,
 };
 
 /// 1000 iterations alternating Add / Mul / Xor from a constant seed. The
@@ -80,11 +76,6 @@ fn build_diamond_chain(n: u64) -> strider_ir::Function {
     b.build().unwrap()
 }
 
-/// The two join shapes the single-tree change trades between:
-/// - `Dominates`-only: can regress (builds the bigger V+E tree instead of the
-///   V one, and walks ~2x longer chains).
-/// - Mixed (`Dominates` node + edge): should improve (one V+E build instead
-///   of two, V then V+E).
 fn join_constraint_benches(c: &mut Criterion) {
     let function = build_diamond_chain(60);
 
@@ -92,7 +83,7 @@ fn join_constraint_benches(c: &mut Criterion) {
 
     // The If dominates every call at or after it.
     {
-        let guard = if_node().capture(g).build();
+        let guard = if_else().capture(g).build();
         let callp = call().capture(cap).build();
         let cons = JoinConstraint::Dominates {
             dominator: g,
@@ -117,7 +108,7 @@ fn join_constraint_benches(c: &mut Criterion) {
 
     // A node-dominance query and an edge-dominance query in one join.
     {
-        let guard = if_node().capture(g).capture_true(t).build();
+        let guard = if_else().capture(g).capture_true(t).build();
         let callp = call().capture(cap).build();
         let dom = JoinConstraint::Dominates {
             dominator: g,
@@ -149,7 +140,7 @@ fn matcher_benches(c: &mut Criterion) {
     let function = build_chain();
 
     // ~334 Add(_, IntConst) nodes in the chain match this 3-node pattern.
-    let add_pat = add(any(), any_int_const()).into_pattern();
+    let add_pat = int_add(anything(), any_int_const()).into_pattern();
     let hits = Matcher::new(&function).find_all(&add_pat).unwrap();
     assert!(!hits.is_empty(), "add pattern must have matches");
     c.bench_function("matcher_find_all_add_const", |b| {
@@ -162,7 +153,7 @@ fn matcher_benches(c: &mut Criterion) {
     });
 
     // No ShiftLeft node exists in the chain, so only the prefilter runs.
-    let no_match_pat = shl(int_const(0xDEAD_BEEFu128), int_const(7u128)).into_pattern();
+    let no_match_pat = int_shl(int_const(0xDEAD_BEEFu128), int_const(7u128)).into_pattern();
     let hits = Matcher::new(&function).find_all(&no_match_pat).unwrap();
     assert!(hits.is_empty(), "shl pattern must never match");
     c.bench_function("matcher_find_all_no_match", |b| {
@@ -233,11 +224,8 @@ fn phi_input_from_edge_benches(c: &mut Criterion) {
     for n in [6u64, 60] {
         let function = build_phi_diamond_chain(n);
         let (t, ph, v) = (Capture::new(), Capture::new(), Capture::new());
-        let guard = if_node().capture_true(t).build();
-        let phi_p = phi()
-            .any_input(any_int_const().capture(v))
-            .capture(ph)
-            .build();
+        let guard = if_else().capture_true(t).build();
+        let phi_p = phi().any_input(int_const(v)).capture(ph).build();
         let cons = JoinConstraint::PhiInputFromEdge {
             phi: ph,
             edge: t,
@@ -264,7 +252,7 @@ fn phi_input_from_edge_benches(c: &mut Criterion) {
         // a cross-product against the phi. `any_input` must stay in the same
         // class as this, or beat it.
         let bare_phi = phi().capture(ph).build();
-        let val_root = any_int_const().capture(v).into_pattern();
+        let val_root = int_const(v).into_pattern();
         c.bench_function(&format!("phi_input_from_edge_floating_root/{n}"), |b| {
             b.iter(|| {
                 let hits = Matcher::new(black_box(&function))

@@ -1,5 +1,3 @@
-#![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
-
 use std::collections::BTreeMap;
 
 use strider_ir::node::{NodeKind, ValueId};
@@ -8,8 +6,7 @@ use strider_ir::{
     ReadOnlyMemory, Result, Value, ValueType,
 };
 
-/// Node-kind assertion vocabulary over entry-reachable nodes. Test-only, so it
-/// lives here rather than on the production [`IRWalker`].
+/// Node-kind assertion vocabulary over entry-reachable nodes.
 pub trait IrWalkerEx: IRWalker {
     fn count_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> usize {
         self.walk_kind(pred).count()
@@ -22,10 +19,9 @@ pub trait IrWalkerEx: IRWalker {
 
 impl<T: IRWalker + ?Sized> IrWalkerEx for T {}
 
-/// Builder shorthands for shapes that aren't primitive in the IR. Test-only.
+/// Builder shorthands for shapes that aren't primitive in the IR.
 pub trait IrBuilderEx: IRBuilderExt {
-    /// `Add(lhs, Neg(rhs))`. There is no `IntBinaryOp::Sub`; the lifter lowers
-    /// `IntSub` to this, and so does this helper.
+    /// `Add(lhs, Neg(rhs))`, the shape the lifter lowers `IntSub` to.
     ///
     /// # Errors
     ///
@@ -43,8 +39,8 @@ pub trait IrBuilderEx: IRBuilderExt {
 
 impl<T: IRBuilderExt + ?Sized> IrBuilderEx for T {}
 
-/// Deliberately unlike any real machine address, so a sentinel-stamped node
-/// leaking into a graph dump or IR snapshot is unmistakable.
+/// Unlike any real machine address, so a sentinel-stamped node leaking into a
+/// graph dump or IR snapshot is unmistakable.
 pub const SENTINEL_LIFT_ADDR: u64 = 0xDEAD_BEEF_0000_0001;
 
 /// Fallback SP when a fixture declares no `stack_vn`. `build_call` reads the
@@ -56,12 +52,8 @@ const DEFAULT_TEST_SP: rsleigh::Vn = rsleigh::Vn {
     size: 8,
 };
 
-/// Fluent description of a mock function's register convention.
-///
-/// [`build_fn`](RegisterSet::build_fn) synthesises a
-/// [`strider_target::BuiltCallingConvention`] from the declared lists and
-/// stamps the sentinel lift address, but creates NO region; use
-/// [`build_fn_single_region`](RegisterSet::build_fn_single_region) for that.
+/// Fluent description of a mock function's register convention, synthesising a
+/// [`strider_target::BuiltCallingConvention`] from the declared lists.
 #[derive(Default, Clone)]
 pub struct RegisterSet {
     tracked: Vec<rsleigh::Vn>,
@@ -70,13 +62,10 @@ pub struct RegisterSet {
     ret_val: Vec<rsleigh::Vn>,
     sp: Option<rsleigh::Vn>,
     ret_stack_pop: i64,
-    /// Baked into the built function's `default_cc`, which is what the
-    /// SP-aware arg passes read.
     stack_args: Option<strider_target::StackArgs>,
     /// `None` defaults to little-endian.
     endianness: Option<strider_target::Endianness>,
-    /// `None` (the default) means no architectural link register, i.e. the
-    /// x86 / x86_64 case. Set it for link-register ISAs (ARM, AArch64, ...).
+    /// `None` for an ISA with no architectural link register (x86).
     link_register: Option<rsleigh::Vn>,
 }
 
@@ -144,11 +133,12 @@ impl RegisterSet {
         if !tracked.contains(&stack_vn) {
             tracked.push(stack_vn);
         }
-        // Struct-literal construction rather than `try_new` deliberately skips
-        // ABI-disjointness validation, so fixtures may declare overlapping or
-        // otherwise degenerate register sets.
+        // Skips `validate`, so fixtures may declare overlapping or otherwise
+        // degenerate register sets. Exhaustive: a new ABI field must be routed
+        // here.
         let cc = strider_target::BuiltCallingConvention {
             arg_passing_regs: self.arg_passing,
+            arg_passing_regs_float: Vec::new(),
             callee_saved_regs: self.callee_saved,
             ret_val_regs: self.ret_val,
             ret_val_regs_float: Vec::new(),
@@ -157,6 +147,7 @@ impl RegisterSet {
             ret_stack_pop: self.ret_stack_pop,
             link_register_vn: self.link_register,
             preserves_memory: false,
+            preserves_all_registers: false,
             no_return: false,
         };
         let endianness = self
@@ -177,9 +168,8 @@ impl RegisterSet {
         let mut b = self.build_fn()?;
         let region = b.create_region_all()?;
         b.set_entry_region_all(region)?;
-        // Mirrors the lifter: recording arg carriers after entry setup is what
-        // gives arg-query tests the same `arg_index_to_values` a lifted
-        // function would have.
+        // Mirrors the lifter: arg carriers recorded after entry setup, so tests
+        // see the same `arg_index_to_values` a lifted function has.
         b.record_register_arg_carriers();
         b.set_region(region);
         Ok(b)
@@ -335,6 +325,9 @@ pub fn empty_builder() -> Result<FunctionBuilder> {
 }
 
 mod tb;
+
+#[cfg(feature = "proptest-gen")]
+pub mod proptest_gen;
 pub use tb::Tb;
 
 pub fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
@@ -360,9 +353,7 @@ pub fn sentinel_node(
     n
 }
 
-/// Test `ReadOnlyMemory` covering the mock-rom shapes the opt-pass suite
-/// needs. `RecordingRom` stays separate: it logs reads to the side and is not
-/// shape-compatible with this.
+/// Test `ReadOnlyMemory` covering the mock-rom shapes the opt-pass suite needs.
 pub struct MockRom {
     shape: MockRomShape,
 }
@@ -378,8 +369,7 @@ enum MockRomShape {
     },
     /// Keyed by exact address; matches any read size.
     FixedTable { entries: BTreeMap<u64, u64> },
-    /// A one-entry `FixedTable` with a size filter, kept distinct because it
-    /// reads better at the call site.
+    /// A one-entry `FixedTable` with a size filter.
     Limited { addr: u64, size: usize, value: u64 },
     /// Serves every `(addr, size)`.
     AlwaysAnswer { value: u64 },
@@ -511,4 +501,42 @@ where
     f(&mut b, sp_val)?;
     b.set_lift_addr(None);
     b.build()
+}
+
+/// `if c == 1 { return 10 } else { return 20 }`, `c` a caller-supplied const.
+pub fn if_cmp_then_return(c: u64) -> Function {
+    let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
+    let entry = t.region();
+    let true_r = t.region();
+    let false_r = t.region();
+    t.set_entry(entry);
+
+    t.enter(true_r);
+    let ten = t.u64(10);
+    t.fb_mut()
+        .build_return(Some(ten), &[])
+        .expect("build_return");
+
+    t.enter(false_r);
+    let twenty = t.u64(20);
+    t.fb_mut()
+        .build_return(Some(twenty), &[])
+        .expect("build_return");
+
+    t.enter(entry);
+    let c_node = t.u64(c);
+    let one = t.u64(1);
+    let cond = t.int_cmp(c_node, one, strider_ir::IntCmpOp::Equal);
+    t.build_if(cond, true_r, false_r);
+    t.finish()
+}
+
+/// `return(reg)` over one tracked register, yielding a single
+/// `InitialVar(reg)`. Returns the register so tests can build `phi_for` /
+/// `initial_var_for` patterns against it.
+pub fn single_initial_var() -> (Function, rsleigh::Vn) {
+    let reg = reg_vn(0x00, 8);
+    let mut t = Tb::with_vars(&[reg]);
+    let v = t.read_var(&reg);
+    (t.ret_val(v), reg)
 }

@@ -1,6 +1,6 @@
-"""Regression: `pattern.mem_phi()` was missing from the union the Python
-boundary coerces Pat-like inputs through, so `find_all(mem_phi())` raised
-`TypeError`.  Match count is irrelevant here; the boundary is the target.
+"""`pattern.mem_phi()` is in the union the Python boundary coerces Pat-like
+inputs through, so `find_all(mem_phi())` type-checks.  Match count is
+irrelevant here; the boundary is the target.
 """
 
 import strider
@@ -20,10 +20,9 @@ def test_find_all_mem_phi_pat_does_not_raise():
 
 
 def test_phi_nests_as_a_value_operand():
-    """Regression: `phi()` produces a value output, so it must nest as a value
-    operand (`store(data=phi())`, `truncate(phi())`, `add(x, phi())`).  It was
-    node-rooted only and raised "PhiPat cannot be nested as a value operand".
-    `mem_phi()` is a memory token and stays correctly value-rejected.
+    """`phi()` produces a value output, so it nests as a value operand
+    (`store(data=phi())`, `truncate(phi())`, `int_add(x, phi())`).
+    `mem_phi()` produces a memory token and is rejected in a value slot.
     """
     arch = strider.sleigh.SleighArch.x86_64()
     cc = strider.sleigh.CallingConvention.x86_64_systemv()
@@ -40,7 +39,7 @@ def test_phi_nests_as_a_value_operand():
     # Nests as a value operand, reaching the stored value through the
     # intervening width cast.
     assert len(g.find_all(pat.store(data=pat.phi()), ignore_casts=True)) == 1
-    assert len(g.find_all(pat.truncate(pat.phi()))) == 1
+    assert len(g.find_all(pat.int_truncate(pat.phi()))) == 1
 
     # A MemPhi is a memory token, not a value, so `data=` still rejects it.
     import pytest

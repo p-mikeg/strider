@@ -109,7 +109,7 @@ impl PyVnSpace {
 
     /// The space's name (`"RAM"`, `"REGISTER"`, `"CONST"`, `"UNIQUE"`,
     /// or `"OTHER"`).
-    fn name(&self) -> &'static str {
+    pub(crate) fn name(&self) -> &'static str {
         if self.inner == rsleigh::VnSpace::RAM {
             "RAM"
         } else if self.inner == rsleigh::VnSpace::REGISTER {
@@ -196,7 +196,6 @@ impl PyVn {
 
     /// rsleigh's `Display` form, e.g. `%[0x20]:8` for a register varnode.
     fn __repr__(&self) -> String {
-        // Delegate to rsleigh's `Display` so the spelling tracks upstream.
         format!("{}", self.inner)
     }
 

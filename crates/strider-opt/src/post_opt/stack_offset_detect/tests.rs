@@ -1,5 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
-
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{Function, IRBuilderExt, IRViewer, IntBinaryOp};
 use strider_ir_test_utils::IrBuilderEx;
@@ -15,7 +13,6 @@ fn stamped_count(function: &Function) -> usize {
         .count()
 }
 
-/// Canonicalize, then run the post-pass.
 fn run(function: &mut Function) {
     // ConstantFold folds the lowered `Add(_, Neg(K))` to `Add(_, IntConst(-K))`
     // and PhiCollapse drops the read_variable(sp) phi, giving the production
@@ -103,7 +100,6 @@ fn alignment_masked_base_store_is_stamped_with_aligned_base() {
     .unwrap();
 
     run(&mut f);
-    // The base is the `And` output, not the canonical `InitialVar(sp)`.
     let store = f
         .graph()
         .all_node_ids()
@@ -210,4 +206,21 @@ fn post_pass_function_validates() {
     let mut f = stack_store_load_return(sp);
     run(&mut f);
     strider_ir::validate::validate(&f).expect("IR must validate");
+}
+
+/// The decomposition memo is the per-node SSoT `pattern`'s `stack_only` /
+/// `heap_only` / `non_stack` filters read, and `run` clears it on entry. A
+/// caller pipeline that registers no post-pass must still leave it filled, or
+/// every region filter silently matches nothing.
+#[test]
+fn a_pipeline_without_post_passes_still_stamps_the_decomposition() {
+    let sp = stack_vn_x86();
+    let mut function = stack_store_load_return(sp);
+    crate::test_support::cf_rp_pipeline()
+        .run(&mut function, &mut crate::OptCtx::new(None))
+        .expect("must not error");
+    assert!(
+        stamped_count(&function) > 0,
+        "no address was stamped, so every stack_only() query would come back empty"
+    );
 }

@@ -65,13 +65,13 @@ impl FunctionBuilder {
         cc: strider_target::BuiltCallingConvention,
         endianness: strider_target::Endianness,
     ) -> Result<Self> {
-        // The stack vn is deliberately NOT seeded here: callers pass it in
-        // `all_used_variables` themselves.
+        // Callers pass the stack vn in `all_used_variables` themselves.
         for v in cc
             .ret_val_regs
             .iter()
             .chain(cc.ret_val_regs_float.iter())
             .chain(cc.arg_passing_regs.iter())
+            .chain(cc.arg_passing_regs_float.iter())
         {
             if !all_used_variables.contains(v) {
                 all_used_variables.push(*v);
@@ -93,6 +93,12 @@ impl FunctionBuilder {
     #[inline]
     pub fn set_lift_addr(&mut self, addr: Option<u64>) {
         self.lift_addr = addr;
+    }
+
+    /// The machine address currently being lifted, if any.
+    #[inline]
+    pub fn lift_addr(&self) -> Option<u64> {
+        self.lift_addr
     }
 
     /// Stamps the current lift address into the node's asm-fingerprint. On a

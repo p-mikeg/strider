@@ -3,9 +3,14 @@ name = "strider-reader"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "ELF loading and memory service for the strider pipeline."
+repository.workspace = true
+rust-version.workspace = true
+readme = "README.md"
 
 [dependencies]
 object.workspace = true
+memmap2.workspace = true
 read-only-memory.workspace = true
 rsleigh.workspace = true
 anyhow.workspace = true

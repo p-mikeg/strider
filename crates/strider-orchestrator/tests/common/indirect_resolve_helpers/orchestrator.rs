@@ -1,12 +1,7 @@
 //! Shared end-to-end pipeline runners + placeholder-target finders for the
 //! IR-level fixture builders.
-//!
-//! Split out from the previous monolithic `indirect_resolve_helpers.rs` so each
-//! sub-module imports only the helpers it actually needs.  This module owns
-//! the lift-and-optimise harness used by every classify / inplace / cache
-//! fixture; it does not build any specific scenario itself.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
+#![allow(dead_code)]
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::MachineInsnAddr;
@@ -94,8 +89,7 @@ pub(crate) fn run_pipeline_x86_64(
     // Resolve the *current* target after the optimiser ran: the original
     // recorded ValueId may be orphaned if any pass `replace_all_uses`-rewrote
     // the placeholder's input slot (e.g. ConstantFold folding an
-    // IntBinaryOp into an IntConst).  See module-level docs for the
-    // full contract.
+    // IntBinaryOp into an IntConst).
     let target = target_value_input(&function)
         .expect("fixture must have one IndirectBranch placeholder after optimisation");
     (function, target, lr_vn)

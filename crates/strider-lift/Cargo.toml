@@ -3,6 +3,9 @@ name = "strider-lift"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Lifts a strider CFG into the sea-of-nodes IR, handling register aliasing."
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 strider-cfg = { workspace = true }
@@ -19,8 +22,6 @@ rustc-hash = "2"
 # Test-only IR helpers (count_kind, has_kind) used in lift unit tests.
 strider-ir = { workspace = true, features = ["test-util"] }
 strider-ir-test-utils.workspace = true
-strider-reader.workspace = true
-object.workspace = true
 
 [lints]
 workspace = true

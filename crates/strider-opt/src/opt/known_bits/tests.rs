@@ -184,8 +184,8 @@ fn known_bits_truncate_preserves_low_bits() -> Result<()> {
         let v = b.build_int_const(0xABCDu64, ValueType::I16).unwrap();
         b.truncate_if_needed(v, ValueType::I8)
     })?;
-    // The builder may already have folded this at construction; either way the
-    // end state must match.
+    // The builder may fold this at construction; the end state is pinned
+    // either way.
     run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
     let semantic = fg.int_const_u128(val);
@@ -195,9 +195,8 @@ fn known_bits_truncate_preserves_low_bits() -> Result<()> {
 
 use crate::test_support::return_value;
 
-/// `analyze` has no contradiction error path: facts are recomputed and
-/// overwritten each visit, never unioned, so the only fallible arm is
-/// malformed IR.
+/// Facts are recomputed and overwritten at each visit, never unioned, so the
+/// only fallible arm is malformed IR.
 #[test]
 fn analyze_returns_populated_map_no_merge_error() -> Result<()> {
     let fg = make_fn(|b| {
@@ -379,10 +378,6 @@ fn known_bits_shift_by_unknown_amount_does_not_fold() -> Result<()> {
     Ok(())
 }
 
-// Sleigh returns 0 for any shift amount >= bit_width.  Masking the amount to
-// the low log2(bit_width) bits instead would wrap it back into range and give
-// wrong known bits, e.g. `0xFFu8 << 8` computed as `0xFF << 0`.
-
 /// Per Sleigh, `1u8 << 8` is 0, not 1.
 #[test]
 fn known_bits_shl_at_bit_width_folds_to_zero_u8() -> Result<()> {
@@ -396,9 +391,9 @@ fn known_bits_shl_at_bit_width_folds_to_zero_u8() -> Result<()> {
     assert_eq!(
         fg.int_const_u128(val),
         Some(0),
-        "Sleigh: 1u8 << 8 = 0 (shift >= bit_width returns 0).  Pre-fix \
-         KnownBits computed `1u8 << (8 & 7) = 1` and left the value \
-         unresolved or folded to 1."
+        "Sleigh: 1u8 << 8 = 0 (shift >= bit_width returns 0).  Masking the \
+         amount to the width instead computes `1u8 << (8 & 7) = 1`, leaving \
+         the value unresolved or folded to 1."
     );
     Ok(())
 }
@@ -416,8 +411,8 @@ fn known_bits_shr_at_bit_width_folds_to_zero_u32() -> Result<()> {
     assert_eq!(
         fg.int_const_u128(val),
         Some(0),
-        "Sleigh: 0xFFu32 >> 32 = 0.  Pre-fix KnownBits computed \
-         `0xFF >> (32 & 31) = 0xFF` and the chain fell through to non-zero."
+        "Sleigh: 0xFFu32 >> 32 = 0.  Masking the amount to the width instead \
+         computes `0xFF >> (32 & 31) = 0xFF`, falling through to non-zero."
     );
     Ok(())
 }
@@ -499,7 +494,7 @@ fn known_bits_zero_extend_upper_known_zero_enables_mask_drop() -> Result<()> {
     assert_eq!(
         fg.int_const_u128(val),
         Some(0),
-        "And(ZeroExtend(I8→I64), 0xFF..00) must fold to 0 — upper 56 bits known zero",
+        "And(ZeroExtend(I8->I64), 0xFF..00) must fold to 0: upper 56 bits known zero",
     );
     Ok(())
 }
@@ -520,14 +515,13 @@ fn known_bits_sign_extend_unknown_msb_does_not_fold() -> Result<()> {
     assert_eq!(
         return_kind(fg.graph())?,
         NodeKind::IntBinaryOp(IntBinaryOp::And),
-        "SignExtend of an unknown-sign value gives no upper-bit facts — no fold",
+        "SignExtend of an unknown-sign value gives no upper-bit facts, so no fold",
     );
     Ok(())
 }
 
-/// There is no `SShiftRight` arm, so an arithmetic shift stays opaque even
-/// when the sign bit is provably zero and the result is mathematically 0.
-/// Flip this to assert the fold if such an arm is ever added.
+/// `SShiftRight` has no transfer, so a chain that is mathematically 0
+/// (`& 0x7F`, `s>> 4`, `& 0xF8`) still survives unfolded.
 #[test]
 fn known_bits_sshift_right_of_known_sign_zero_is_opaque() -> Result<()> {
     let mut fg = make_fn_with_var(|b, var| {
@@ -544,7 +538,7 @@ fn known_bits_sshift_right_of_known_sign_zero_is_opaque() -> Result<()> {
     assert_eq!(
         return_kind(fg.graph())?,
         NodeKind::IntBinaryOp(IntBinaryOp::And),
-        "SShiftRight is not modelled by KnownBits — the chain must survive unfolded",
+        "SShiftRight is not modelled by KnownBits, so the chain must survive unfolded",
     );
     Ok(())
 }
@@ -616,9 +610,73 @@ fn known_bits_fold_absorbs_cone_through_nonfolding_intermediate() -> Result<()> 
         fg.side_tables()
             .asm_fingerprint(folded)
             .contains(&INNER_ADDR),
-        "fold must absorb the full backward cone — including the non-folding \
+        "fold must absorb the full backward cone, including the non-folding \
          inner `x & 1` two levels down, whose addr the fixpoint can never \
          propagate; got {:?}",
+        fg.side_tables().asm_fingerprint(folded)
+    );
+    Ok(())
+}
+
+/// The same cone with a fingerprint-EMPTY intermediate, the transient state a
+/// pass leaves between minting a node and absorbing its match into it.  A
+/// union LINKS `src`'s root under `dst` and is a no-op while `src` has no root,
+/// so linking a cone node to an input that has not yet absorbed its own subtree
+/// would sever that subtree for good.
+#[test]
+fn known_bits_fold_absorbs_cone_through_unstamped_intermediate() -> Result<()> {
+    use strider_ir::node::ValueKind;
+    use strider_ir::{IRBuilderExt, IRViewer};
+    const INNER_ADDR: u64 = 0xC0DE_0004;
+
+    // `(x & 1) & 4`, every node stamped, so the built function validates.
+    let mut fg = make_fn_with_var(|b, var| {
+        let x = b.read_variable(&var)?;
+        b.set_lift_addr(Some(INNER_ADDR));
+        let one = b.build_int_const(1u64, ValueType::I8).unwrap();
+        let x_and_1 = b.build_int_binary_operation(x, one, IntBinaryOp::And, ValueType::I8)?;
+        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+        let four = b.build_int_const(4u64, ValueType::I8).unwrap();
+        b.build_int_binary_operation(x_and_1, four, IntBinaryOp::And, ValueType::I8)
+    })?;
+
+    // Splice an unstamped `| 2` in between: `((x & 1) | 2) & 4`.
+    {
+        let mut edit = crate::EditFunction::new(&mut fg);
+        edit.cull_dead();
+        let root_value = return_value(edit.function().graph())?;
+        let root = edit.producer(root_value);
+        let [x_and_1, four] = edit.producer_inputs_exact::<2>(root_value)?;
+        let two = edit.build_int_const(2u64, ValueType::I8)?;
+        let ored = edit.create_node(
+            NodeKind::IntBinaryOp(IntBinaryOp::Or),
+            [x_and_1, two],
+            [ValueKind::Typed(ValueType::I8)],
+        );
+        assert!(
+            edit.function().side_tables().asm_fingerprint_is_empty(ored),
+            "the spliced intermediate must start with no fingerprint"
+        );
+        let [ored_value] = edit.node_outputs_exact::<1>(ored)?;
+        let new_root = edit.create_node_attributed(
+            NodeKind::IntBinaryOp(IntBinaryOp::And),
+            [ored_value, four],
+            [ValueKind::Typed(ValueType::I8)],
+            &[root],
+        );
+        let [new_root_value] = edit.node_outputs_exact::<1>(new_root)?;
+        edit.replace_value(root_value, new_root_value)?;
+    }
+
+    run_to_fixed_point(&KnownBits, &mut fg)?;
+
+    assert_returns_const(&fg, 0);
+    let folded = fg.producer(return_value(fg.graph())?);
+    assert!(
+        fg.side_tables()
+            .asm_fingerprint(folded)
+            .contains(&INNER_ADDR),
+        "an empty intermediate must not sever the subtree below it; got {:?}",
         fg.side_tables().asm_fingerprint(folded)
     );
     Ok(())
@@ -651,16 +709,16 @@ fn known_bits_fold_does_not_taint_opaque_load_address_cone() -> Result<()> {
         !fg.side_tables()
             .asm_fingerprint(folded)
             .contains(&ADDR_ADDR),
-        "fold must NOT taint the opaque Load's address cone — the address \
+        "fold must NOT taint the opaque Load's address cone: the address \
          did not contribute to the known bits; got {:?}",
         fg.side_tables().asm_fingerprint(folded)
     );
     Ok(())
 }
 
-/// Two folds sharing an upstream cone must EACH absorb it.  A `seen` set
-/// shared across folds would skip nodes the first fold already visited and
-/// under-attribute the second; the memo returns the full set every time.
+/// Two folds sharing an upstream cone must EACH absorb it.  The shared
+/// `linked` set walks every edge once; correctness rests on the union LINKING
+/// rather than copying.
 ///
 /// A shared `(0 | 7)` with a distinct addr feeds `& 4` and `& 1`.  Both
 /// results differ from each other and from 7, so neither folded constant can
@@ -718,8 +776,8 @@ fn known_bits_shared_cone_both_folds_absorb_fingerprint() -> Result<()> {
                 fg.side_tables()
                     .asm_fingerprint(node)
                     .contains(&SHARED_ADDR),
-                "the `& 1` fold must ALSO absorb the shared cone's addr — a \
-                 shared `seen` set would have lost it on the second fold; got {:?}",
+                "the `& 1` fold must ALSO absorb the shared cone's addr; a \
+                 shared `seen` set loses it on the second fold; got {:?}",
                 fg.side_tables().asm_fingerprint(node)
             );
         }
@@ -727,6 +785,183 @@ fn known_bits_shared_cone_both_folds_absorb_fingerprint() -> Result<()> {
     assert!(
         found_4 && found_1,
         "both folded constants (4 and 1) must be present in the graph (top={top:?})"
+    );
+    Ok(())
+}
+
+/// An opaque `x` xored with `depth` distinct constants, topped by one `& 0`
+/// that folds.  Exactly one fold, at the tip of a `depth`-deep propagating
+/// spine, so the cone transfer is the only cost that can scale with `depth`.
+fn cone_steps_for_tip_fold(depth: u64) -> Result<u64> {
+    let v = rsleigh::Vn {
+        addr_off: 0x80,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let mut b = RegisterSet::new().tracked(v).build_fn_single_region()?;
+    let mut acc = b.read_variable(&v)?;
+    for i in 0..depth {
+        let c = b.build_int_const(i + 1, ValueType::I64).unwrap();
+        acc = b.build_int_binary_operation(acc, c, IntBinaryOp::Xor, ValueType::I64)?;
+    }
+    let zero = b.build_int_const(0u64, ValueType::I64).unwrap();
+    let tip = b.build_int_binary_operation(acc, zero, IntBinaryOp::And, ValueType::I64)?;
+    b.build_return(Some(tip), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    super::CONE_STEPS.with(|c| c.set(0));
+    assert!(
+        crate::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::new(None))?.changed(),
+        "the `& 0` tip must fold"
+    );
+    Ok(super::CONE_STEPS.with(std::cell::Cell::get))
+}
+
+/// `t0 = x & 0` then `t(i) = t(i-1) | C(i)`: every level folds, and each cone
+/// contains all the cones below it.
+fn cone_steps_for_nested_folds(depth: u64) -> Result<u64> {
+    let v = rsleigh::Vn {
+        addr_off: 0x40,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let mut b = RegisterSet::new().tracked(v).build_fn_single_region()?;
+    let x = b.read_variable(&v)?;
+    let zero = b.build_int_const(0u64, ValueType::I64)?;
+    let mut acc = b.build_int_binary_operation(x, zero, IntBinaryOp::And, ValueType::I64)?;
+    for i in 0..depth {
+        let c = b.build_int_const(1u64 << (i % 60), ValueType::I64)?;
+        acc = b.build_int_binary_operation(acc, c, IntBinaryOp::Or, ValueType::I64)?;
+    }
+    b.build_return(Some(acc), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    super::CONE_STEPS.with(|c| c.set(0));
+    assert!(
+        crate::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::new(None))?.changed(),
+        "every level is fully known, so the chain folds"
+    );
+    Ok(super::CONE_STEPS.with(std::cell::Cell::get))
+}
+
+#[test]
+fn nested_fold_cone_transfer_is_not_quadratic_in_fold_count() -> Result<()> {
+    let small = cone_steps_for_nested_folds(200)?;
+    let big = cone_steps_for_nested_folds(400)?;
+    assert!(
+        big <= small * 3,
+        "doubling the fold count must not quadruple the cone transfer: 200 \
+         folds took {small} steps, 400 took {big}"
+    );
+    Ok(())
+}
+
+#[test]
+fn tip_fold_cone_transfer_is_not_quadratic_in_spine_depth() -> Result<()> {
+    let small = cone_steps_for_tip_fold(200)?;
+    let big = cone_steps_for_tip_fold(400)?;
+    assert!(
+        big <= small * 3,
+        "doubling the spine must not quadruple the cone transfer: depth 200 \
+         took {small} steps, depth 400 took {big}"
+    );
+    Ok(())
+}
+
+/// Sorted asm-fingerprint of `node`.
+fn fingerprint_of(fg: &strider_ir::Function, node: NodeId) -> Vec<u64> {
+    let mut v: Vec<u64> = fg.side_tables().asm_fingerprint(node).into_iter().collect();
+    v.sort_unstable();
+    v
+}
+
+/// The `((x & 1) | 2) & 0` shape the cone walk exists for, every node stamped
+/// with its own addr.  Pins the exact absorbed set, not just membership.
+#[test]
+fn fold_absorbs_exactly_the_contributor_cone_addrs() -> Result<()> {
+    use strider_ir::IRViewer;
+
+    let mut fg = make_fn_with_var(|b, var| {
+        let x = b.read_variable(&var)?;
+        b.set_lift_addr(Some(0xA1));
+        let one = b.build_int_const(1u64, ValueType::I8).unwrap();
+        b.set_lift_addr(Some(0xA2));
+        let x_and_1 = b.build_int_binary_operation(x, one, IntBinaryOp::And, ValueType::I8)?;
+        b.set_lift_addr(Some(0xA3));
+        let two = b.build_int_const(2u64, ValueType::I8).unwrap();
+        b.set_lift_addr(Some(0xA4));
+        let ored = b.build_int_binary_operation(x_and_1, two, IntBinaryOp::Or, ValueType::I8)?;
+        b.set_lift_addr(Some(0xA5));
+        let zero = b.build_int_const(0u64, ValueType::I8).unwrap();
+        b.set_lift_addr(Some(0xA6));
+        b.build_int_binary_operation(ored, zero, IntBinaryOp::And, ValueType::I8)
+    })?;
+
+    crate::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::new(None))?;
+    let folded = fg.producer(return_value(fg.graph())?);
+    // The sentinel is the `InitialVar` producing `x`: a cone member, not
+    // descended through.
+    assert_eq!(
+        fingerprint_of(&fg, folded),
+        vec![
+            0xA1,
+            0xA2,
+            0xA3,
+            0xA4,
+            0xA5,
+            0xA6,
+            strider_ir_test_utils::SENTINEL_LIFT_ADDR
+        ]
+    );
+    Ok(())
+}
+
+/// A diamond: one shared cone feeding two folds.  Each fold's absorbed set is
+/// pinned exactly, so a lost link shows up as a shrink.
+#[test]
+fn diamond_folds_absorb_exactly_their_shared_cone_addrs() -> Result<()> {
+    use strider_ir::IRViewer;
+
+    let mut fg = make_fn_with_var(|b, var| {
+        let x = b.read_variable(&var)?;
+        b.set_lift_addr(Some(0xB1));
+        let seed = b.build_int_const(0u64, ValueType::I8).unwrap();
+        b.set_lift_addr(Some(0xB2));
+        let c7 = b.build_int_const(7u64, ValueType::I8).unwrap();
+        b.set_lift_addr(Some(0xB3));
+        let shared = b.build_int_binary_operation(seed, c7, IntBinaryOp::Or, ValueType::I8)?;
+        b.set_lift_addr(Some(0xB4));
+        let c4 = b.build_int_const(4u64, ValueType::I8).unwrap();
+        b.set_lift_addr(Some(0xB5));
+        let fold_a = b.build_int_binary_operation(shared, c4, IntBinaryOp::And, ValueType::I8)?;
+        b.set_lift_addr(Some(0xB6));
+        let c1 = b.build_int_const(1u64, ValueType::I8).unwrap();
+        b.set_lift_addr(Some(0xB7));
+        let fold_b = b.build_int_binary_operation(shared, c1, IntBinaryOp::And, ValueType::I8)?;
+        b.set_lift_addr(Some(0xB8));
+        let live_a = b.build_int_binary_operation(fold_a, x, IntBinaryOp::Or, ValueType::I8)?;
+        b.set_lift_addr(Some(0xB9));
+        let live_b = b.build_int_binary_operation(fold_b, x, IntBinaryOp::Or, ValueType::I8)?;
+        b.set_lift_addr(Some(0xBA));
+        b.build_int_binary_operation(live_a, live_b, IntBinaryOp::Or, ValueType::I8)
+    })?;
+
+    crate::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::new(None))?;
+
+    let mut by_value: Vec<(u128, Vec<u64>)> = fg
+        .walk_kind(|k| matches!(k, NodeKind::IntConst(_)))
+        .filter_map(|n| {
+            let v = fg.int_const_u128(fg.node_outputs(n)[0])?;
+            Some((v, fingerprint_of(&fg, n)))
+        })
+        .collect();
+    by_value.sort_unstable();
+    assert_eq!(
+        by_value,
+        vec![
+            (1u128, vec![0xB1, 0xB2, 0xB3, 0xB6, 0xB7]),
+            (4u128, vec![0xB1, 0xB2, 0xB3, 0xB4, 0xB5]),
+        ]
     );
     Ok(())
 }
@@ -761,5 +996,158 @@ fn kb_default_is_fully_unknown_not_all_zero_or_all_one() {
     assert_eq!(
         kb.zeros, 0,
         "KnownBitsFacts::default().zeros must be 0 (no bit known to be 0)"
+    );
+}
+
+/// Nested folds: `t0 = x & 0`, then `t(i) = t(i-1) | C(i)`, so EVERY `t(i)` is
+/// fully known and each one's cone contains all the cones below it.
+///
+/// The constant replacing `t(n)` must carry the fingerprint of every
+/// instruction that proved it constant, several levels down.  Losing one
+/// under-taints silently: the folded VALUE is correct either way.
+#[test]
+fn known_bits_nested_folds_absorb_every_level_of_the_cone() -> Result<()> {
+    use strider_ir::IRViewer;
+    const DEPTH: usize = 6;
+    let addr_of = |i: usize| 0xC0DE_1000u64 + i as u64;
+
+    let mut fg = make_fn_with_var(|b, var| {
+        let x = b.read_variable(&var)?;
+        let zero = b.build_int_const(0u64, ValueType::I8)?;
+        let mut acc = b.build_int_binary_operation(x, zero, IntBinaryOp::And, ValueType::I8)?;
+        for i in 0..DEPTH {
+            // Each level's constant carries its own address, so a dropped
+            // level names itself in the failure.
+            b.set_lift_addr(Some(addr_of(i)));
+            let c = b.build_int_const(1u64 << i, ValueType::I8)?;
+            b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+            acc = b.build_int_binary_operation(acc, c, IntBinaryOp::Or, ValueType::I8)?;
+        }
+        Ok(acc)
+    })?;
+
+    run_to_fixed_point(&KnownBits, &mut fg)?;
+
+    // 1 | 2 | 4 | ... : every level contributed to the value.
+    let expected = (1u64 << DEPTH) - 1;
+    assert_returns_const(&fg, expected);
+
+    let folded = fg.producer(return_value(fg.graph())?);
+    let fp = fg.side_tables().asm_fingerprint(folded);
+    let missing: Vec<u64> = (0..DEPTH)
+        .map(addr_of)
+        .filter(|a| !fp.contains(a))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "the folded constant lost {missing:#x?} from its proof; every level of a \
+         nested-fold cone must be absorbed. Got {fp:#x?}"
+    );
+    Ok(())
+}
+
+/// Sleigh reference: `opbehavior.cc:411/432`, zero at or past the output width.
+fn ref_shift(v: u128, k: u128, left: bool, bits: u32, mask: u128) -> u128 {
+    if k >= u128::from(bits) {
+        return 0;
+    }
+    if left {
+        (v << k) & mask
+    } else {
+        (v & mask) >> k
+    }
+}
+
+/// Builds `((x & free) | ones) shift k` at `I8` and returns `Some(reason)` when
+/// the known-bits verdict claims a bit no concrete input produces.
+fn kb_shift_mismatch(free: u128, ones: u128, k: u64, left: bool) -> Option<String> {
+    let vn = rsleigh::Vn {
+        addr_off: 0x80,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 1,
+    };
+    let mut b = RegisterSet::new()
+        .tracked(vn)
+        .build_fn_single_region()
+        .unwrap();
+    let tracked = b.read_variable(&vn).unwrap();
+    let free_mask = b.build_int_const(free as u64, ValueType::I8).unwrap();
+    let ones_mask = b.build_int_const(ones as u64, ValueType::I8).unwrap();
+    let anded = b
+        .build_int_binary_operation(tracked, free_mask, IntBinaryOp::And, ValueType::I8)
+        .unwrap();
+    let base = b
+        .build_int_binary_operation(anded, ones_mask, IntBinaryOp::Or, ValueType::I8)
+        .unwrap();
+    let count = b.build_int_const(k, ValueType::I8).unwrap();
+    let op = if left {
+        IntBinaryOp::ShiftLeft
+    } else {
+        IntBinaryOp::ShiftRight
+    };
+    let shifted = b
+        .build_int_binary_operation(base, count, op, ValueType::I8)
+        .unwrap();
+    b.build_return(Some(shifted), &[]).unwrap();
+    let f = b.build().unwrap();
+    let kb = analyze(&f).unwrap()[shifted];
+
+    let (mut and_all, mut or_all) = (u128::MAX, 0u128);
+    for concrete in 0u128..256 {
+        let out = ref_shift((concrete & free) | ones, u128::from(k), left, 8, 0xff);
+        and_all &= out;
+        or_all |= out;
+    }
+    let bad_ones = kb.ones & !and_all;
+    let bad_zeros = kb.zeros & or_all;
+    (bad_ones != 0 || bad_zeros != 0).then(|| {
+        format!(
+            "free={free:#x} ones={ones:#x} k={k} left={left} kb={kb:?} \
+             bad_ones={bad_ones:#x} bad_zeros={bad_zeros:#x}"
+        )
+    })
+}
+
+/// Counts at, past and far past the width are the cases `opbehavior.cc`
+/// saturates and a modulo-reducing implementation would wrap.
+#[test]
+fn shift_known_bits_agree_with_a_concrete_reference() {
+    let mut fails: Vec<String> = Vec::new();
+    for &free in &[0x00u128, 0x0f, 0xf0, 0xff, 0x55, 0x81] {
+        for &ones in &[0x00u128, 0x01, 0x80, 0x0f] {
+            if free & ones != 0 {
+                continue;
+            }
+            for left in [true, false] {
+                for k in [0u64, 1, 4, 7, 8, 200, 255] {
+                    fails.extend(kb_shift_mismatch(free, ones, k, left));
+                }
+            }
+        }
+    }
+    assert!(fails.is_empty(), "known-bits shift failures: {fails:#?}");
+}
+
+/// p-code leaves a shift count's width free; `build_int_binary_operation` pins
+/// every operand to the output width, so the lifter coerces the count first.
+#[test]
+fn shift_count_wider_than_the_output_is_refused() {
+    let vn = rsleigh::Vn {
+        addr_off: 0x80,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 1,
+    };
+    let mut b = RegisterSet::new()
+        .tracked(vn)
+        .build_fn_single_region()
+        .unwrap();
+    let base = b.build_int_const(1u64, ValueType::I8).unwrap();
+    let wide_count = b.build_int_const(4u64, ValueType::I16).unwrap();
+    let err = b
+        .build_int_binary_operation(base, wide_count, IntBinaryOp::ShiftLeft, ValueType::I8)
+        .expect_err("a wider count must be refused, not silently truncated");
+    assert!(
+        err.to_string().contains("but the operation requires i8"),
+        "unexpected refusal: {err}"
     );
 }

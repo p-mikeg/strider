@@ -10,9 +10,8 @@ use strider_ir_test_utils::{
 };
 use strider_target::Endianness;
 
-/// Counts anonymous (Vn-untagged) `Phi` nodes, excluding the Vn-tagged phis
-/// the lifter emits for register-aliased reads.  `LoadForward` must never
-/// create one of these.
+/// Counts anonymous `Phi` nodes; the Vn-tagged phis the lifter emits for
+/// register-aliased reads are not among them.
 fn reachable_anonymous_phi_count(function: &strider_ir::Function) -> usize {
     let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
         function.walk().collect();
@@ -37,7 +36,6 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        // The value to forward.
         let zero = b.build_int_const(0u64, ValueType::I32)?;
         let target_addr =
             b.build_int_binary_operation(sp_val, zero, IntBinaryOp::Add, ValueType::I32)?;
@@ -101,6 +99,76 @@ fn non_forwardable_load_is_narrowed_to_initial_memory() -> Result<()> {
         matches!(fg.node_kind(fg.producer(mem)), NodeKind::InitialMemory),
         "non-forwardable load narrowed onto InitialMemory, got {:?}",
         fg.node_kind(fg.producer(mem)),
+    );
+    Ok(())
+}
+
+/// A store through an opaque (`Anchor`) pointer sits between a stack spill and
+/// its reload.  Over a private frame with the knob on, the pointer cannot name
+/// the frame, so the reload forwards past it; without the knob, or when a frame
+/// address escapes, it is a may-alias barrier.
+fn spill_over_opaque_store(knob: bool, escape: bool) -> Result<strider_ir::Function> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        // spill: [sp-8] = 0x99, a local of this frame
+        let zero = b.build_int_const((-8i64) as u64, ValueType::I32)?;
+        let slot = b.build_int_binary_operation(sp_val, zero, IntBinaryOp::Add, ValueType::I32)?;
+        let secret = b.build_int_const(0x99u64, ValueType::I32)?;
+        b.build_store(slot, secret, rsleigh::VnSpace::RAM)?;
+        let pconst = b.build_int_const(0x9000u64, ValueType::I32)?;
+        let ptr = b.build_load(pconst, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        // When `escape`, the stored value is a frame address (`sp+8`), which
+        // makes the frame non-private.
+        let data = if escape {
+            let eight = b.build_int_const(8u64, ValueType::I32)?;
+            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?
+        } else {
+            b.build_int_const(0x11u64, ValueType::I32)?
+        };
+        b.build_store(ptr, data, rsleigh::VnSpace::RAM)?;
+        let reload = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        b.build_return(Some(reload), &[])?;
+        Ok(())
+    })?;
+
+    let mut ctx = crate::OptCtx::new(None);
+    ctx.options.assumptions.escape_analysis = knob;
+    crate::test_support::standard_test().run(&mut fg, &mut ctx)?;
+    Ok(fg)
+}
+
+#[test]
+fn opaque_store_does_not_block_stack_reload_over_private_frame() -> Result<()> {
+    let fg = spill_over_opaque_store(true, false)?;
+    let ret = crate::test_support::return_value(fg.graph())?;
+    assert_eq!(
+        fg.int_const_u128(ret),
+        Some(0x99),
+        "over a private frame with the knob on, the reload forwards past the opaque store"
+    );
+    Ok(())
+}
+
+#[test]
+fn opaque_store_blocks_stack_reload_without_knob() -> Result<()> {
+    let fg = spill_over_opaque_store(false, false)?;
+    let ret = crate::test_support::return_value(fg.graph())?;
+    assert!(
+        matches!(fg.node_kind(fg.producer(ret)), NodeKind::Load(_)),
+        "without the knob an opaque store is a may-alias barrier"
+    );
+    Ok(())
+}
+
+/// Soundness: once a frame address escapes, the opaque store might name the
+/// slot, so even with the knob the reload must not forward.
+#[test]
+fn opaque_store_blocks_stack_reload_when_frame_escapes() -> Result<()> {
+    let fg = spill_over_opaque_store(true, true)?;
+    let ret = crate::test_support::return_value(fg.graph())?;
+    assert!(
+        matches!(fg.node_kind(fg.producer(ret)), NodeKind::Load(_)),
+        "an escaped frame address defeats the relaxation: the reload must not forward"
     );
     Ok(())
 }
@@ -194,7 +262,6 @@ fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
 /// A store at `InitialVar(sp) + 8` and a load at `(sp & -16) + 8` share the
 /// offset but not the base: the aligned base differs from initial SP by
 /// `sp mod 16`, which is caller-dependent, so these are different memory.
-/// Comparing offset alone would wrongly forward.
 #[test]
 fn does_not_forward_across_distinct_sp_bases_at_equal_offset() -> Result<()> {
     let sp = sp32_vn();
@@ -204,7 +271,7 @@ fn does_not_forward_across_distinct_sp_bases_at_equal_offset() -> Result<()> {
             b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
         let data = b.build_int_const(0x11u64, ValueType::I32)?;
         b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
-        // `and rsp, -16`, then + 8.
+        // `and esp, -16`, then + 8.
         let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::I32)?;
         let aligned =
             b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I32)?;
@@ -221,13 +288,12 @@ fn does_not_forward_across_distinct_sp_bases_at_equal_offset() -> Result<()> {
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 1,
-        "load at (sp & -16) + 8 must NOT be forwarded from a store at sp + 8 — \
+        "load at (sp & -16) + 8 must NOT be forwarded from a store at sp + 8: \
          different SP bases are different memory",
     );
     Ok(())
 }
 
-/// The walker must step past an intervening non-aliasing store.
 #[test]
 fn forward_skips_non_aliasing_store() -> Result<()> {
     let sp = sp32_vn();
@@ -305,7 +371,7 @@ fn bail_on_narrower_store_inside_wider_load_range() -> Result<()> {
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 1,
-        "a 4-byte store at sp+2 cannot back an 8-byte load at sp+0 — no forward",
+        "a 4-byte store at sp+2 cannot back an 8-byte load at sp+0, so no forward",
     );
     Ok(())
 }
@@ -381,8 +447,7 @@ fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
     })?;
 
     // Strict is pinned explicitly: the default `StackGlobalDisjoint` assumes
-    // the const-addressed store disjoint and forwards instead (covered by
-    // `permissive_forwards_across_const_intervening_store`).
+    // the const-addressed store disjoint and forwards instead.
     let pipeline = crate::test_support::standard_test();
     pipeline.run(&mut fg, &mut crate::test_support::octx_strict())?;
 
@@ -431,9 +496,9 @@ fn permissive_forwards_across_const_intervening_store() -> Result<()> {
     Ok(())
 }
 
-/// Even under `StackGlobalDisjoint`, an Anchor address (neither SP-rooted nor
-/// an `IntConst`) still bails; closing that gap needs escape analysis we do
-/// not have.
+/// Under `StackGlobalDisjoint` alone, an Anchor address (neither SP-rooted nor
+/// an `IntConst`) still bails; stepping through one takes `escape_analysis`
+/// over a private frame.
 #[test]
 fn permissive_still_bails_on_anchor_intervening_store() -> Result<()> {
     let sp = sp32_vn();
@@ -459,7 +524,7 @@ fn permissive_still_bails_on_anchor_intervening_store() -> Result<()> {
     assert!(
         reachable_loads >= 1,
         "Permissive mode: an Anchor (non-IntConst non-SP) intervening \
-         Store must still block forwarding; expected ≥1 Load remaining, \
+         Store must still block forwarding; expected >=1 Load remaining, \
          got {reachable_loads}"
     );
     Ok(())
@@ -562,7 +627,7 @@ fn does_not_forward_anchor_load_across_different_anchor_interferer() -> Result<(
     assert!(
         reachable_loads >= 3,
         "Anchor-address Load with different-ValueId Anchor interferer \
-         must NOT forward; expected ≥3 Load nodes (2 address-producers + \
+         must NOT forward; expected >=3 Load nodes (2 address-producers + \
          the unforwarded Load(p)), got {reachable_loads}"
     );
     Ok(())
@@ -606,9 +671,47 @@ fn bail_on_call_between() -> Result<()> {
     Ok(())
 }
 
+/// An opaque `CallOther` may write the stack without ever receiving a frame
+/// address, so the private-frame relaxation never covers it.
+#[test]
+fn call_other_blocks_forwarding_even_over_private_frame() -> Result<()> {
+    let sp = sp64_vn();
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .build_fn_single_region()?;
+
+    let sp_val = b.read_variable(&sp)?;
+    let four = b.build_int_const(4u64, ValueType::I64)?;
+    let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I64)?;
+    let data = b.build_int_const(0x11u64, ValueType::I32)?;
+    b.build_store(addr4, data, rsleigh::VnSpace::RAM)?;
+    // An opaque memory-advancing CallOther, no frame-address argument: the
+    // frame is private, yet the CallOther is never relaxed.
+    b.build_call_other(0, &[], &[], true, false)?;
+    let sp_val2 = b.read_variable(&sp)?;
+    let addr4b = b.build_int_binary_operation(sp_val2, four, IntBinaryOp::Add, ValueType::I64)?;
+    let loaded = b.build_load(addr4b, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut ctx = crate::OptCtx::new(None);
+    ctx.options.assumptions.escape_analysis = true;
+    crate::test_support::standard_test().run(&mut fg, &mut ctx)?;
+
+    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
+    assert_eq!(
+        reachable_loads, 1,
+        "a CallOther on the memory chain must block forwarding even over a \
+         private frame with the knob on"
+    );
+    Ok(())
+}
+
 /// Each arm stores a distinct constant at `sp+4`, leaving a non-trivial
-/// `MemPhi` at the merge.  No single stored value backs the load across it,
-/// so the forward bails: the load survives and no value-`Phi` is created.
+/// `MemPhi` at the merge.  No single stored value backs the load across it.
 #[test]
 fn per_branch_stores_same_offset_do_not_forward_and_synthesize_no_phi() -> Result<()> {
     let sp = sp32_vn();
@@ -655,8 +758,8 @@ fn per_branch_stores_same_offset_do_not_forward_and_synthesize_no_phi() -> Resul
 
     let phis_before = reachable_anonymous_phi_count(&fg);
 
-    // No DeadBranchElimination here, so the `If(const true)` diamond (and its
-    // MemPhi) survives instead of collapsing.
+    // `standard_test` leaves the `If(const true)` diamond and its MemPhi
+    // standing; DeadBranchElimination would collapse them.
     let pipeline = crate::test_support::standard_test();
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
@@ -700,7 +803,6 @@ fn three_predecessor_memphi_blocks_forwarding_no_phi() -> Result<()> {
     let cond2 = b.build_boolean_const(false);
     b.build_if(cond2, arm_b, arm_c)?;
 
-    // Each arm stores a distinct constant at sp+4.
     for (region, val) in [(arm_a, 0xAAu64), (arm_b, 0xBB), (arm_c, 0xCC)] {
         b.set_region(region);
         let sp_v = b.read_variable(&sp)?;
@@ -765,7 +867,6 @@ fn dominating_store_across_collapsible_merge_forwards_with_no_phi() -> Result<()
     let cond = b.build_boolean_const(true);
     b.build_if(cond, then_r, else_r)?;
 
-    // Both arms empty: no memory writes.
     b.set_region(then_r);
     b.build_branch(merge)?;
     b.set_region(else_r);
@@ -833,7 +934,6 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
     b.build_store(addr_t, a, rsleigh::VnSpace::RAM)?;
     b.build_branch(merge)?;
 
-    // else: no store, so memory is unchanged.
     b.set_region(else_r);
     b.build_branch(merge)?;
 
@@ -953,7 +1053,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward);
+    pipeline.add(LoadForward::default());
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -971,7 +1071,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     let ret_val = ret_inputs[2];
     assert!(
         fg.int_const_u128(ret_val) == Some(0x4242),
-        "forwarded value must be the stored constant 0x4242 — got {:?}",
+        "forwarded value must be the stored constant 0x4242; got {:?}",
         fg.int_const_u128(ret_val),
     );
     Ok(())
@@ -1019,8 +1119,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     Ok(())
 }
 
-/// The two-byte case, guarded separately from the one-byte case because real
-/// binaries emit both.
+/// A `u16` load out of a `u32` store.
 #[test]
 fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     let sp = sp32_vn();
@@ -1058,8 +1157,9 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
 /// On big-endian the load takes the high bytes, so forwarding must shift
 /// before truncating rather than emit the LE plain `Truncate`.
 ///
-/// `ConstantFold` is deliberately omitted: it would collapse the chain to a
-/// single `IntConst` and the structural assertions would have nothing to see.
+/// The pipeline here is the collapse passes plus `LoadForward`, which leaves
+/// the shift-and-truncate chain standing for the structural assertions;
+/// `ConstantFold` would fold it to a single `IntConst`.
 #[test]
 fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     let sp = sp32_vn();
@@ -1082,7 +1182,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward);
+    pipeline.add(LoadForward::default());
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -1105,7 +1205,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     let outer = fg.producer(val_value);
     assert!(
         matches!(fg.node_kind(outer), NodeKind::Truncate),
-        "BE narrow forward must wrap data in a Truncate — got {:?}",
+        "BE narrow forward must wrap data in a Truncate; got {:?}",
         fg.node_kind(outer),
     );
 
@@ -1117,7 +1217,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
             fg.node_kind(inner),
             NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight),
         ),
-        "BE narrow forward must shift before truncation — got {:?}",
+        "BE narrow forward must shift before truncation; got {:?}",
         fg.node_kind(inner),
     );
 
@@ -1127,7 +1227,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     let shift_val = shr_inputs[1];
     assert!(
         fg.int_const_u128(shift_val) == Some(24),
-        "BE shift amount must be (store_size - load_size) * 8 = 24 — got {:?}",
+        "BE shift amount must be (store_size - load_size) * 8 = 24; got {:?}",
         fg.int_const_u128(shift_val),
     );
     Ok(())
@@ -1161,7 +1261,6 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
     b.build_store(sp_t, wide, rsleigh::VnSpace::RAM)?;
     b.build_branch(merge)?;
 
-    // No store at sp+0 here, so the arms disagree and the forward bails.
     b.set_region(else_r);
     b.build_branch(merge)?;
 
@@ -1195,10 +1294,14 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
         .count();
 
     // In isolation, so any leaked node is attributable to LoadForward.
-    crate::pipeline::run_one(&LoadForward, &mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_one(
+        &LoadForward::default(),
+        &mut fg,
+        &mut crate::OptCtx::new(None),
+    )?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
-    assert_eq!(reachable_loads, 1, "load must remain — bail expected");
+    assert_eq!(reachable_loads, 1, "load must remain: the forward bails");
 
     let total_truncate_after = fg
         .graph()
@@ -1224,9 +1327,8 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
     Ok(())
 }
 
-/// `load_forward` is phi-free: it may only decrease the graph's `Phi` count,
-/// never increase it.  Exercised on the surviving-MemPhi diamond, the shape
-/// most likely to tempt a synthesis.
+/// `load_forward` may only decrease the graph's `Phi` count.  Exercised on the
+/// surviving-MemPhi diamond.
 #[test]
 fn load_forward_never_increases_phi_count() -> Result<()> {
     let sp = sp32_vn();
@@ -1280,7 +1382,11 @@ fn load_forward_never_increases_phi_count() -> Result<()> {
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi))
         .count();
 
-    crate::pipeline::run_one(&LoadForward, &mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_one(
+        &LoadForward::default(),
+        &mut fg,
+        &mut crate::OptCtx::new(None),
+    )?;
 
     let total_phis_after = fg
         .graph()
@@ -1291,6 +1397,558 @@ fn load_forward_never_increases_phi_count() -> Result<()> {
         total_phis_after <= total_phis_before,
         "load_forward must never INCREASE the Phi count (before={total_phis_before}, \
          after={total_phis_after})",
+    );
+    Ok(())
+}
+
+/// A spill straddling a `Call` forwards when the frame is provably private and
+/// the opt-in knob is set.  The slot is a local, below the entry SP and above
+/// the call's own SP, which is what the private-frame proof covers.
+#[test]
+fn forwards_spill_across_call_when_frame_private() -> Result<()> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let eight = b.build_int_const((-8i64) as u64, ValueType::I32)?;
+        let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
+        let val = b.build_int_const(0x42u64, ValueType::I32)?;
+        b.build_store(addr, val, rsleigh::VnSpace::RAM)?;
+        let frame = b.build_int_const((-64i64) as u64, ValueType::I32)?;
+        let call_sp =
+            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::I32)?;
+        b.write_variable(&sp, call_sp)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        b.build_call(target, &[], &[], 0)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let mut octx = crate::OptCtx::new(None);
+    octx.options.assumptions.escape_analysis = true;
+    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
+
+    let val = crate::test_support::return_value(fg.graph())?;
+    assert!(
+        matches!(fg.node_kind(fg.producer(val)), NodeKind::IntConst(_))
+            && fg.int_const_u128(val) == Some(0x42),
+        "the reload must forward to the spilled 0x42 across the call"
+    );
+    Ok(())
+}
+
+#[test]
+fn spill_not_forwarded_across_call_by_default() -> Result<()> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let eight = b.build_int_const(8u64, ValueType::I32)?;
+        let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
+        let val = b.build_int_const(0x42u64, ValueType::I32)?;
+        b.build_store(addr, val, rsleigh::VnSpace::RAM)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        b.build_call(target, &[], &[], 0)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+    crate::test_support::standard_test().run(&mut fg, &mut crate::OptCtx::new(None))?;
+    assert_eq!(
+        fg.count_kind(|k| matches!(k, NodeKind::Load(_))),
+        1,
+        "with the knob off, a Call blocks cross-call forwarding"
+    );
+    Ok(())
+}
+
+#[test]
+fn spill_not_forwarded_across_call_when_frame_escapes() -> Result<()> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let eight = b.build_int_const(8u64, ValueType::I32)?;
+        let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
+        let val = b.build_int_const(0x42u64, ValueType::I32)?;
+        b.build_store(addr, val, rsleigh::VnSpace::RAM)?;
+        // Leak a frame address to a global: *0x4000 = &(sp+16).
+        let sixteen = b.build_int_const(16u64, ValueType::I32)?;
+        let leaked =
+            b.build_int_binary_operation(sp_val, sixteen, IntBinaryOp::Add, ValueType::I32)?;
+        let global = b.build_int_const(0x4000u64, ValueType::I32)?;
+        b.build_store(global, leaked, rsleigh::VnSpace::RAM)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        b.build_call(target, &[], &[], 0)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+    let mut octx = crate::OptCtx::new(None);
+    octx.options.assumptions.escape_analysis = true;
+    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
+    assert_eq!(
+        fg.count_kind(|k| matches!(k, NodeKind::Load(_))),
+        1,
+        "an escaping frame blocks cross-call forwarding even with the knob on"
+    );
+    Ok(())
+}
+
+/// The knob relaxes only SP-rooted probes; a global load still blocks.
+#[test]
+fn global_load_not_forwarded_across_call() -> Result<()> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
+        let global = b.build_int_const(0x4000u64, ValueType::I32)?;
+        let val = b.build_int_const(0x42u64, ValueType::I32)?;
+        b.build_store(global, val, rsleigh::VnSpace::RAM)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        b.build_call(target, &[], &[], 0)?;
+        let loaded = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+    let mut octx = crate::OptCtx::new(None);
+    octx.options.assumptions.escape_analysis = true;
+    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
+    assert_eq!(
+        fg.count_kind(|k| matches!(k, NodeKind::Load(_))),
+        1,
+        "a non-stack probe is never relaxed; the call still blocks it"
+    );
+    Ok(())
+}
+
+/// The relax is `Call`-only; an opaque `CallOther` keeps blocking even with a
+/// private frame and the knob on.
+#[test]
+fn spill_not_forwarded_across_call_other() -> Result<()> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let eight = b.build_int_const(8u64, ValueType::I32)?;
+        let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
+        let val = b.build_int_const(0x42u64, ValueType::I32)?;
+        b.build_store(addr, val, rsleigh::VnSpace::RAM)?;
+        // advance_memory = true puts the CallOther on the memory chain.
+        b.build_call_other(0, &[], &[], true, false)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+    let mut octx = crate::OptCtx::new(None);
+    octx.options.assumptions.escape_analysis = true;
+    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
+    assert_eq!(
+        fg.count_kind(|k| matches!(k, NodeKind::Load(_))),
+        1,
+        "an opaque CallOther is not relaxed even when the frame is private"
+    );
+    Ok(())
+}
+
+/// A private frame does NOT make the outgoing-argument area private: the caller
+/// writes an argument there and the callee, which is handed those slots by the
+/// ABI, may overwrite them. Only slots the callee cannot name are forwardable.
+///
+/// `[sp + base_offset]` at the call is stack-arg slot 0.
+#[test]
+fn spill_in_the_outgoing_arg_area_does_not_forward_across_a_call() -> Result<()> {
+    let sp = sp32_vn();
+    let stack_args = strider_target::StackArgs {
+        base_offset: 0,
+        increment: 4,
+    };
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_args(Some(stack_args))
+        .build_fn_single_region()?;
+
+    let sp_val = b.read_variable(&sp)?;
+    // Stack-arg slot 0 lives at call-time SP + base_offset, and the call's SP
+    // anchor here IS the entry SP, so that is `[sp + 0]`.
+    let zero = b.build_int_const(0u64, ValueType::I32)?;
+    let slot0 = b.build_int_binary_operation(sp_val, zero, IntBinaryOp::Add, ValueType::I32)?;
+    let arg = b.build_int_const(0x42u64, ValueType::I32)?;
+    b.build_store(slot0, arg, rsleigh::VnSpace::RAM)?;
+    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    b.build_call(target, &[], &[], 0)?;
+    let reload = b.build_load(slot0, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    b.build_return(Some(reload), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut octx = crate::OptCtx::new(None);
+    octx.options.assumptions.escape_analysis = true;
+    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
+
+    let val = crate::test_support::return_value(fg.graph())?;
+    assert!(
+        matches!(fg.node_kind(fg.producer(val)), NodeKind::Load(_)),
+        "an outgoing-argument slot must stay a Load across the call, not forward \
+         to the stored 0x42"
+    );
+    Ok(())
+}
+
+/// The argument-window bound must not swallow the whole frame. A spill ABOVE
+/// the outgoing arguments, separated from them by an unwritten slot, is not
+/// reachable by the callee and still forwards across the call.
+#[test]
+fn spill_above_the_outgoing_arg_area_still_forwards_across_a_call() -> Result<()> {
+    let sp = sp32_vn();
+    let stack_args = strider_target::StackArgs {
+        base_offset: 0,
+        increment: 4,
+    };
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_args(Some(stack_args))
+        .build_fn_single_region()?;
+
+    let sp_val = b.read_variable(&sp)?;
+    let slot = |b: &mut strider_ir::FunctionBuilder, off: i64| -> Result<_> {
+        let k = b.build_int_const(off as u64, ValueType::I32)?;
+        b.build_int_binary_operation(sp_val, k, IntBinaryOp::Add, ValueType::I32)
+    };
+    // The call's SP is 16 below the entry SP: arg slots 0 and 1, then slot 2
+    // left unwritten, so the prefix ends there.
+    for off in [-16i64, -12] {
+        let a = slot(&mut b, off)?;
+        let v = b.build_int_const(0x11u64, ValueType::I32)?;
+        b.build_store(a, v, rsleigh::VnSpace::RAM)?;
+    }
+    let spill = slot(&mut b, -4)?;
+    let val = b.build_int_const(0x42u64, ValueType::I32)?;
+    b.build_store(spill, val, rsleigh::VnSpace::RAM)?;
+    let call_sp = slot(&mut b, -16)?;
+    b.write_variable(&sp, call_sp)?;
+    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    b.build_call(target, &[], &[], 0)?;
+    let reload = b.build_load(spill, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    b.build_return(Some(reload), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut octx = crate::OptCtx::new(None);
+    octx.options.assumptions.escape_analysis = true;
+    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
+
+    let out = crate::test_support::return_value(fg.graph())?;
+    assert_eq!(
+        fg.int_const_u128(out),
+        Some(0x42),
+        "a spill separated from the argument prefix by an unwritten slot must \
+         still forward across the call"
+    );
+    Ok(())
+}
+
+/// The callee owns everything below `call_sp + base_offset`: its own frame
+/// below the call's SP, plus the ABI-reserved area between the call's SP and
+/// the first stack-argument slot (x86's return-address slot, PPC64's linkage
+/// area, MIPS o32's 16 bytes, Windows x64's home space).  A spill anywhere in
+/// that region must not forward across the call.
+fn spill_below_the_arg_window(offset: i64) -> Result<strider_ir::Function> {
+    let sp = sp32_vn();
+    let stack_args = strider_target::StackArgs {
+        base_offset: 8,
+        increment: 4,
+    };
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_args(Some(stack_args))
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    let k = b.build_int_const(offset as u64, ValueType::I32)?;
+    let slot = b.build_int_binary_operation(sp_val, k, IntBinaryOp::Add, ValueType::I32)?;
+    let val = b.build_int_const(0x42u64, ValueType::I32)?;
+    b.build_store(slot, val, rsleigh::VnSpace::RAM)?;
+    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    b.build_call(target, &[], &[], 0)?;
+    let reload = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    b.build_return(Some(reload), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    let mut octx = crate::OptCtx::new(None);
+    octx.options.assumptions.escape_analysis = true;
+    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
+    Ok(fg)
+}
+
+#[test]
+fn spill_under_the_call_sp_does_not_forward_across_a_call() -> Result<()> {
+    let fg = spill_below_the_arg_window(-4)?;
+    let val = crate::test_support::return_value(fg.graph())?;
+    assert!(
+        matches!(fg.node_kind(fg.producer(val)), NodeKind::Load(_)),
+        "a slot below the call's SP is the callee's own frame; it must stay a Load"
+    );
+    Ok(())
+}
+
+#[test]
+fn spill_in_the_abi_reserved_area_does_not_forward_across_a_call() -> Result<()> {
+    let fg = spill_below_the_arg_window(4)?;
+    let val = crate::test_support::return_value(fg.graph())?;
+    assert!(
+        matches!(fg.node_kind(fg.producer(val)), NodeKind::Load(_)),
+        "the reserved area between the call's SP and the first argument slot is \
+         the callee's; it must stay a Load"
+    );
+    Ok(())
+}
+
+/// A register value spilled to the stack TOP, exactly where outgoing slot 0
+/// sits, then reloaded after the call and stored.  The spill is
+/// indistinguishable from an argument push, so the reload is pinned unless
+/// `callee_preserves_stack_args` empties the argument window.
+///
+/// ```text
+/// sp' = sp - 64        ; this function's frame
+/// store 0x42 -> sp'+0  ; scratch spill, or f's arg0
+/// call f
+/// store [sp'+0] -> 0x9000
+/// ```
+fn stack_top_spill_across_call(preserves_stack_args: bool) -> Result<u128> {
+    let sp = sp32_vn();
+    let stack_args = strider_target::StackArgs {
+        base_offset: 0,
+        increment: 4,
+    };
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_args(Some(stack_args))
+        .build_fn_single_region()?;
+    let entry_sp = b.read_variable(&sp)?;
+    let frame = b.build_int_const((-64i64) as u64, ValueType::I32)?;
+    let call_sp =
+        b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::I32)?;
+    b.write_variable(&sp, call_sp)?;
+
+    let zero = b.build_int_const(0u64, ValueType::I32)?;
+    let slot0 = b.build_int_binary_operation(call_sp, zero, IntBinaryOp::Add, ValueType::I32)?;
+    let spilled = b.build_int_const(0x42u64, ValueType::I32)?;
+    b.build_store(slot0, spilled, rsleigh::VnSpace::RAM)?;
+    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    b.build_call(target, &[], &[], 0)?;
+    let reload = b.build_load(slot0, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let field = b.build_int_const(0x9000u64, ValueType::I32)?;
+    b.build_store(field, reload, rsleigh::VnSpace::RAM)?;
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut octx = crate::OptCtx::new(None);
+    octx.options.assumptions.escape_analysis = true;
+    octx.options.assumptions.callee_preserves_stack_args = preserves_stack_args;
+    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
+
+    Ok(fg.count_kind(|k| matches!(k, NodeKind::Load(_))) as u128)
+}
+
+#[test]
+fn stack_top_spill_forwards_across_call_only_under_the_relaxation() -> Result<()> {
+    assert_eq!(
+        stack_top_spill_across_call(false)?,
+        1,
+        "with the knob off the spill sits in the callee's argument window, so \
+         the reload survives"
+    );
+    assert_eq!(
+        stack_top_spill_across_call(true)?,
+        0,
+        "with the knob on the window is empty, so the reload forwards to the \
+         spilled 0x42"
+    );
+    Ok(())
+}
+
+/// Two reloads of one call's frame in the same sweep, on opposite sides of the
+/// argument window.  The window is scanned once for the call, so it has to
+/// answer each reload on that reload's own offset.
+///
+/// ```text
+/// store A0 -> sp-16    ; slot 0
+/// store A1 -> sp-12    ; slot 1
+/// store S  -> sp-4     ; a spill, one empty slot above the arguments
+/// call f               ; sp = sp-16
+/// load  sp-12          ; f's own argument slot, pinned
+/// load  sp-4           ; above the window, forwards
+/// ```
+#[test]
+fn one_window_answers_reloads_on_either_side_of_it() -> Result<()> {
+    let sp = sp32_vn();
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }))
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    let mut addrs = Vec::new();
+    for (off, data) in [(-16i64, 0x11u64), (-12, 0x22), (-4, 0x55)] {
+        let k = b.build_int_const(off as u64, ValueType::I32)?;
+        let addr = b.build_int_binary_operation(sp_val, k, IntBinaryOp::Add, ValueType::I32)?;
+        let value = b.build_int_const(data, ValueType::I32)?;
+        b.build_store(addr, value, rsleigh::VnSpace::RAM)?;
+        addrs.push(addr);
+    }
+    let frame = b.build_int_const((-16i64) as u64, ValueType::I32)?;
+    let call_sp = b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::I32)?;
+    b.write_variable(&sp, call_sp)?;
+    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    b.build_call(target, &[], &[], 0)?;
+    let pinned = b.build_load(addrs[1], rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let forwarded = b.build_load(addrs[2], rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let sum = b.build_int_binary_operation(pinned, forwarded, IntBinaryOp::Add, ValueType::I32)?;
+    b.build_return(Some(sum), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut octx = crate::OptCtx::new(None);
+    octx.options.assumptions.escape_analysis = true;
+    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
+
+    assert_eq!(
+        fg.count_kind(|k| matches!(k, NodeKind::Load(_))),
+        1,
+        "sp-4 forwards to the spill, sp-12 is the callee's argument slot"
+    );
+    let ret = crate::test_support::return_value(fg.graph())?;
+    let operands = fg.node_inputs(fg.producer(ret));
+    assert!(
+        operands.iter().any(|v| fg.int_const_u128(v) == Some(0x55)),
+        "the sp-4 reload must carry the spilled 0x55"
+    );
+    Ok(())
+}
+
+/// Grafts a `MemPhi` with `arms` onto `token`, returning its memory output.
+fn graft_mem_phi(
+    fg: &mut strider_ir::Function,
+    token: strider_ir::node::ValueId,
+    arms: &[strider_ir::node::ValueId],
+) -> strider_ir::node::ValueId {
+    let inputs: Vec<strider_ir::node::ValueId> = core::iter::once(token)
+        .chain(arms.iter().copied())
+        .collect();
+    let n = strider_ir_test_utils::sentinel_node(
+        fg,
+        NodeKind::MemPhi,
+        inputs,
+        [strider_ir::node::ValueKind::Memory],
+    );
+    fg.node_outputs(n)[0]
+}
+
+fn find_kind(fg: &strider_ir::Function, want: &NodeKind) -> strider_ir::node::NodeId {
+    fg.walk()
+        .find(|&n| std::mem::discriminant(fg.node_kind(n)) == std::mem::discriminant(want))
+        .expect("node kind must exist")
+}
+
+/// Two nested loops with no memory def in either body, whose exits merge above
+/// the load: `merge[inner_header, exit_merge[store, outer_header]]`.
+///
+/// Resolving the `exit_merge` arm first walks the outer header, which reaches
+/// the inner one; resolving `merge`'s other arm then reads the inner header
+/// again from outside the outer loop.  The store reaches the load on one arm
+/// and nothing does on the other, so `merge` is the load's boundary.
+fn nested_loop_exit_merge_graph() -> Result<(
+    strider_ir::Function,
+    strider_ir::node::ValueId,
+    strider_ir::node::ValueId,
+)> {
+    let mut fg = strider_ir_test_utils::make_empty_fn(|b| {
+        let addr = b.build_int_const(0x10u64, ValueType::I64)?;
+        let data = b.build_int_const(0x42u64, ValueType::I64)?;
+        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        b.build_int_const(7u64, ValueType::I64)
+    })?;
+
+    let im = find_kind(&fg, &NodeKind::InitialMemory);
+    let store = find_kind(&fg, &NodeKind::Store(rsleigh::VnSpace::RAM));
+    let region = find_kind(&fg, &NodeKind::Region);
+    let ret = find_kind(&fg, &NodeKind::Return);
+    let im_mem = fg.node_outputs(im)[0];
+    let store_mem = fg.node_outputs(store)[0];
+    let store_addr = fg.node_inputs(store)[1];
+    let token = fg.node_outputs(region)[1];
+
+    // Placeholder back-edge arms, closed below.
+    let outer = graft_mem_phi(&mut fg, token, &[im_mem, im_mem]);
+    let inner = graft_mem_phi(&mut fg, token, &[outer, outer]);
+    for (phi, arm) in [(inner, inner), (outer, inner)] {
+        let node = fg.producer(phi);
+        let use_id = fg
+            .node_input_id_at(node, 2)
+            .expect("a two-armed MemPhi has a second arm");
+        fg.graph_mut().update_input(use_id, arm);
+    }
+    let exit_merge = graft_mem_phi(&mut fg, token, &[store_mem, outer]);
+    let merge = graft_mem_phi(&mut fg, token, &[inner, exit_merge]);
+
+    let load = strider_ir_test_utils::sentinel_node(
+        &mut fg,
+        NodeKind::Load(rsleigh::VnSpace::RAM),
+        [merge, store_addr],
+        [strider_ir::node::ValueKind::Typed(ValueType::I64)],
+    );
+    let loaded = fg.node_outputs(load)[0];
+    let ret_value = fg
+        .node_input_id_at(ret, 2)
+        .expect("Return carries a value input");
+    fg.graph_mut().update_input(ret_value, loaded);
+    Ok((fg, merge, loaded))
+}
+
+/// The load's memory edge must stay on the exit merge: the inner header is
+/// reached on only one of its arms, so narrowing onto it drops the store the
+/// other arm carries.
+#[test]
+fn load_below_nested_loops_is_not_narrowed_past_the_exit_merge() -> Result<()> {
+    let (mut fg, merge, _loaded) = nested_loop_exit_merge_graph()?;
+
+    crate::pipeline::run_one(
+        &crate::LoadForward::default(),
+        &mut fg,
+        &mut crate::OptCtx::new(None),
+    )?;
+
+    let load = find_kind(&fg, &NodeKind::Load(rsleigh::VnSpace::RAM));
+    let mem = fg.node_inputs(load)[0];
+    assert_eq!(
+        mem,
+        merge,
+        "the load must keep the exit merge as its memory edge, got a {:?}",
+        fg.node_kind(fg.producer(mem)),
+    );
+    Ok(())
+}
+
+/// The narrowed edge outlives the pass, so a later `PhiCollapse` reads it: no
+/// sequence of the two may end with the store forwarded into the load.
+#[test]
+fn nested_loop_exit_merge_never_forwards_the_store_after_phi_collapse() -> Result<()> {
+    let (mut fg, _merge, loaded) = nested_loop_exit_merge_graph()?;
+
+    let mut ctx = crate::OptCtx::new(None);
+    for _ in 0..3 {
+        crate::pipeline::run_one(&crate::LoadForward::default(), &mut fg, &mut ctx)?;
+        crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut ctx)?;
+    }
+
+    assert!(
+        matches!(fg.node_kind(fg.producer(loaded)), NodeKind::Load(_)),
+        "the load must not take the store's value across the merge, got {:?}",
+        fg.node_kind(fg.producer(loaded)),
     );
     Ok(())
 }

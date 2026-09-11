@@ -1,8 +1,6 @@
 //! The `build_*` vocabulary must behave the same through every [`IRBuilder`]
 //! implementor.
 
-#![allow(clippy::unwrap_used, clippy::expect_used)]
-
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{EditFunction, IRBuilderExt, IRViewer, IntBinaryOp};
 use strider_ir_test_utils::{RegisterSet, make_empty_fn};

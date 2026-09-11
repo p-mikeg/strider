@@ -4,6 +4,14 @@ pub trait MatchPat: Sized {
     /// Lower into `b`, returning the value-output handle of the root node.
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef;
 
+    /// Lower into a memory slot, returning the memory-token handle. A node
+    /// producing both a token and values (`Call`, `CallOther`) anchors on the
+    /// token here and on a value in [`compile`](Self::compile); for everything
+    /// else the two coincide.
+    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.compile(b)
+    }
+
     fn into_pattern(self) -> Pattern {
         let mut b = MatcherBuilder::new();
         self.compile(&mut b);
@@ -24,9 +32,18 @@ pub struct Captured<P> {
     inner: P,
     pub(crate) cap: crate::capture::Capture,
 }
+
 impl<P: MatchPat> MatchPat for Captured<P> {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = self.inner.compile(b);
+        b.capture_output(o, self.cap);
+        o
+    }
+
+    // The trait default would route back through `compile`, lowering the inner
+    // pattern as a value operand in a memory slot.
+    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
+        let o = self.inner.compile_mem(b);
         b.capture_output(o, self.cap);
         o
     }
@@ -57,6 +74,12 @@ macro_rules! decorator {
                 $body
                 $o
             }
+
+            fn compile_mem($me, $b: &mut MatcherBuilder) -> PatValueRef {
+                let $o = $me.inner.compile_mem($b);
+                $body
+                $o
+            }
         }
     };
 }
@@ -70,12 +93,17 @@ decorator! {
 }
 
 decorator! {
-    /// Post-match guard, with bindings visibility, on the inner root.
+    /// Post-match guard, with bindings visibility, on the inner root. A root
+    /// with no value output fails it: the guard is typed, and there is no type
+    /// to hand it.
     Guarded<P, F>
     [ where F: Fn(&crate::Matcher, strider_ir::node::ValueType, &crate::Bindings) -> bool + 'static ]
     { f: F }
     |b, o, self| {
-        b.set_post_match(o, Box::new(move |m, _node, ty, bnd| (self.f)(m, ty, bnd)));
+        b.set_post_match(
+            o,
+            Box::new(move |m, _node, ty, bnd| ty.is_some_and(|ty| (self.f)(m, ty, bnd))),
+        );
     }
 }
 
@@ -109,6 +137,10 @@ pub trait CaptureExt: MatchPat {
         }
     }
     /// Run `f` after the whole sub-pattern matches; `false` fails the match.
+    /// `f` is typed, so a root with no value output -- a control, memory or
+    /// `PhiToken` edge, or a zero-output node -- fails it. Guard those through
+    /// [`Pattern::with_root_post_match`](crate::Pattern::with_root_post_match),
+    /// which sees the missing type.
     fn when_match<F>(self, f: F) -> Guarded<Self, F>
     where
         F: Fn(&crate::Matcher, strider_ir::node::ValueType, &crate::Bindings) -> bool + 'static,

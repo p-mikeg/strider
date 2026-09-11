@@ -22,6 +22,16 @@ pub struct PyNode {
 }
 
 impl PyNode {
+    /// For a caller that has already resolved `node_id` against `generation`
+    /// under its own read borrow.
+    pub(crate) fn validated(function: Py<PyFunction>, node_id: u32, generation: u64) -> Self {
+        Self {
+            function,
+            id: node_id,
+            generation,
+        }
+    }
+
     /// `StriderError` when `node_id` is not a live node in the function.
     pub(crate) fn new(py: Python<'_>, function: Py<PyFunction>, node_id: u32) -> PyResult<Self> {
         let generation = {
@@ -80,28 +90,60 @@ impl PyNode {
     }
 }
 
+/// The unsigned integer constant a node's value output holds, if any. For
+/// reading a bound capture without constructing a `PyNode`.
+pub(crate) fn uint_of(function: &strider_ir::Function, node_id: u32) -> Option<u128> {
+    let nid = function.graph().node_id_from_u32(node_id)?;
+    let value = PyNode::value_output(function, nid)?;
+    function.int_const_u128(value)
+}
+
+/// [`uint_of`] read as two's-complement at the declared width.
+pub(crate) fn sint_of(function: &strider_ir::Function, node_id: u32) -> Option<i128> {
+    let nid = function.graph().node_id_from_u32(node_id)?;
+    let value = PyNode::value_output(function, nid)?;
+    function.int_const_i128(value)
+}
+
 #[pymethods]
 impl PyNode {
     /// Exposes the strong `function` back-reference so the cyclic GC can see a
-    /// cycle routed through a `Node`. No `__clear__`: the cycle is broken at
-    /// the reader's `__dict__` / `PyLifter::__clear__`, and `function` is
-    /// load-bearing for as long as the `Node` lives.
+    /// cycle routed through a `Node`. The cycle is broken at the reader's
+    /// `__dict__` / `PyLifter::__clear__`, and `function` is load-bearing for
+    /// as long as the `Node` lives.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         visit.call(&self.function)
     }
 
-    /// The node's raw integer id in the graph. Stable until `compact` /
-    /// `optimize` invalidates every outstanding id.
+    /// The node's raw integer id in the graph. Raises once `compact` /
+    /// `optimize` has invalidated every outstanding id.
     #[getter]
-    fn id(&self) -> u32 {
-        self.id
+    fn id(&self, py: Python<'_>) -> PyResult<u32> {
+        self.with_node(py, |_, _| self.id)
     }
 
     /// The node's kind as a string. Payload-carrying kinds render with their
-    /// payload (`"IntBinaryOp(Add)"`, `"Load(Ram)"`), others render bare
+    /// payload (`"IntBinaryOp(Add)"`, `"Load(RAM)"`), others render bare
     /// (`"Region"`, `"Phi"`).
     fn kind(&self, py: Python<'_>) -> PyResult<String> {
-        self.with_node(py, |function, nid| format!("{:?}", function.node_kind(nid)))
+        // `Load` / `Store` carry an `rsleigh::VnSpace`, whose `Debug` is its
+        // internal shortcut byte. Render the space by the name `VnSpace`
+        // exposes, so the string a caller matches on is one they can write.
+        self.with_node(py, |function, nid| match function.node_kind(nid) {
+            NodeKind::Load(space) => {
+                format!(
+                    "Load({})",
+                    crate::sleigh::PyVnSpace { inner: *space }.name()
+                )
+            }
+            NodeKind::Store(space) => {
+                format!(
+                    "Store({})",
+                    crate::sleigh::PyVnSpace { inner: *space }.name()
+                )
+            }
+            other => format!("{other:?}"),
+        })
     }
 
     /// The operation variant of an op-carrying node (`"Add"`, `"Less"`,
@@ -173,7 +215,7 @@ impl PyNode {
     /// when the value output isn't an integer `IntConst` or exceeds 128 bits
     /// (use `wide_const_bytes()` for I256/I512). Booleans are 1-bit integers,
     /// so a bool constant surfaces as `0` / `-1`.
-    pub(crate) fn const_int(&self, py: Python<'_>) -> PyResult<Option<i128>> {
+    pub(crate) fn sint(&self, py: Python<'_>) -> PyResult<Option<i128>> {
         self.with_node(py, |function, nid| {
             Self::value_output(function, nid).and_then(|value| function.int_const_i128(value))
         })
@@ -181,7 +223,7 @@ impl PyNode {
 
     /// Integer constant value, masked to the declared width. `None` when the
     /// value output isn't an integer `IntConst` or exceeds 128 bits.
-    pub(crate) fn const_uint(&self, py: Python<'_>) -> PyResult<Option<u128>> {
+    pub(crate) fn uint(&self, py: Python<'_>) -> PyResult<Option<u128>> {
         self.with_node(py, |function, nid| {
             Self::value_output(function, nid).and_then(|value| function.int_const_u128(value))
         })
@@ -189,7 +231,7 @@ impl PyNode {
 
     /// Boolean constant value, or `None` when the value output isn't an
     /// `I1`-typed `IntConst`.
-    pub(crate) fn const_bool(&self, py: Python<'_>) -> PyResult<Option<bool>> {
+    pub(crate) fn boolean(&self, py: Python<'_>) -> PyResult<Option<bool>> {
         self.with_node(py, |function, nid| {
             Self::value_output(function, nid).and_then(|value| function.bool_const_val(value))
         })
@@ -203,9 +245,14 @@ impl PyNode {
         })
     }
 
-    /// The varnode this node reads or clobbers. Defined for `InitialVar` (the
-    /// varnode whose entry value is read) and for a `Call` / `CallOther`
-    /// clobber output; `None` for every other kind.
+    /// The varnode this node names, else `None`: for `InitialVar` the varnode
+    /// read at entry, for a `Call` the register it returns in, and for a
+    /// `CallOther` whatever varnode the sla assigns its result to -- a
+    /// `unique` temporary (x86 `cpuid`), a tracked register (AArch64
+    /// `popcount32` writes `q0`), or nothing at all (MIPS `udiv`).
+    ///
+    /// A `Node` names a node, not one of its outputs, so a multi-output `Call`
+    /// answers for its FIRST value output, never for one clobber in particular.
     pub(crate) fn vn(&self, py: Python<'_>) -> PyResult<Option<crate::sleigh::PyVn>> {
         let vn = self.with_node(py, |function, nid| {
             if matches!(
@@ -241,11 +288,16 @@ impl PyNode {
         })
     }
 
-    /// Raw little-endian bytes of a wide integer constant (10 for I80, 16 for
+    /// Raw little-endian bytes of a wide integer constant, one per byte of the
+    /// declared width (9 for I72, 10 for I80, 12 for I96, 14 for I112, 16 for
     /// I128, 32 for I256, 64 for I512), or `None` for a narrow constant and
     /// any non-const kind.
-    fn wide_const_bytes(&self, py: Python<'_>) -> PyResult<Option<Vec<u8>>> {
-        self.with_node(py, |function, nid| function.int_const_wide_le_bytes(nid))
+    fn wide_const_bytes<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Option<Bound<'py, pyo3::types::PyBytes>>> {
+        let raw = self.with_node(py, |function, nid| function.int_const_wide_le_bytes(nid))?;
+        Ok(raw.map(|b| pyo3::types::PyBytes::new_bound(py, &b)))
     }
 
     /// Sleigh user-op name on a `CallOther` node, else `None`.
@@ -258,14 +310,21 @@ impl PyNode {
         })
     }
 
-    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
-        let kind = self.kind(py)?;
-        Ok(format!("Node(#{} {})", self.id, kind))
+    /// A repr must not raise; a stale handle renders as such.
+    fn __repr__(&self, py: Python<'_>) -> String {
+        match self.kind(py) {
+            Ok(kind) => format!("Node(#{} {})", self.id, kind),
+            Err(_) => format!("Node(#{} stale)", self.id),
+        }
     }
 
-    /// Equal when both reference the same function object and the same id.
+    /// Equal when both reference the same function object, the same id AND the
+    /// same graph generation: a stale handle raises on every accessor, so it is
+    /// not the node a re-fetched handle names.
     fn __richcmp__(&self, py: Python<'_>, other: &PyNode, op: CompareOp) -> PyResult<PyObject> {
-        let same = self.id == other.id && self.function.as_ptr() == other.function.as_ptr();
+        let same = self.id == other.id
+            && self.generation == other.generation
+            && self.function.as_ptr() == other.function.as_ptr();
         match op {
             CompareOp::Eq => Ok(same.into_py(py)),
             CompareOp::Ne => Ok((!same).into_py(py)),
@@ -274,11 +333,13 @@ impl PyNode {
         }
     }
 
-    /// Hashes `(function identity, id)` to stay consistent with `__eq__`.
+    /// Hashes `(function identity, id, generation)` to stay consistent with
+    /// `__eq__`.
     fn __hash__(&self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         (self.function.as_ptr() as usize).hash(&mut hasher);
         self.id.hash(&mut hasher);
+        self.generation.hash(&mut hasher);
         hasher.finish()
     }
 }

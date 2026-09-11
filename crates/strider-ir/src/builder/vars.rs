@@ -35,8 +35,10 @@ impl FunctionBuilder {
     pub fn set_entry_region(&mut self, region_id: RegionId) -> Result<()> {
         let initial_variables = self.wire_entry_and_build_initial_vars(region_id)?;
         self.set_region_variables(region_id, initial_variables.clone());
-        // The entry normally carries no phis, but it can also be a join (a
-        // loop header), and any phi placed there still needs wiring.
+        // The entry carries phis when it is also a join (a loop header). Each
+        // `InitialVar` is then that phi's entry-edge operand, appended by
+        // `link_region_variables` below.
+        self.seed_phi_vars_from_phis(region_id);
         self.link_region_variables(region_id, &initial_variables)
     }
 

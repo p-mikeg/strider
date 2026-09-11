@@ -1,7 +1,7 @@
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
-use crate::peephole::{PeepholePass, PeepholeRewrite};
+use crate::peephole::{PeepholePass, PeepholeRewrite, first_matching_rule};
 
 pub(crate) mod eval_float;
 pub(crate) mod eval_int;
@@ -17,10 +17,15 @@ pub struct ConstantFold {
     rules: Rc<Vec<crate::BoxedRule>>,
 }
 
+thread_local! {
+    /// Rebuilding the rule set costs about as much as one run of the pass.
+    static RULES: Rc<Vec<crate::BoxedRule>> = Rc::new(rules::build_rules());
+}
+
 impl ConstantFold {
     pub fn new() -> Self {
         Self {
-            rules: Rc::new(rules::build_rules()),
+            rules: RULES.with(Rc::clone),
         }
     }
 }
@@ -59,7 +64,7 @@ impl PeepholePass for ConstantFold {
         _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
-        let opt = crate::apply_rules_in_order(&self.rules)(edit, root)?;
+        let opt = first_matching_rule(&self.rules, edit, root)?;
         Ok(PeepholeRewrite::from_new_value(edit, opt))
     }
 }

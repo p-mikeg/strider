@@ -1,24 +1,14 @@
-//! A wildcard / predicate / control RHS is a compile-time error, since
-//! `rewrite_rule`'s RHS requires `TemplatePat`.
-
-#![allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable
-)]
+//! Rewrite rules over a built `Function`: LHS matching at a root, consumer
+//! redirection, and `apply_rules_count` driving rules across the graph.
 
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
 
-use strider_opt::{
-    BoxedRule, EditFunction, apply_rules_count, apply_rules_in_order, rewrite_rule,
-    rewrite_rule_runtime,
-};
+use strider_opt::{BoxedRule, EditFunction, apply_rules_count, rewrite_rule, rewrite_rule_runtime};
 use strider_pattern::{
-    Capture, Match, MatchPat, Matcher, Pattern, TemplatePat, add, any, call, int_const, is_skip,
-    skip, sub, var,
+    Capture, Match, MatchPat, Matcher, Pattern, TemplatePat, anything, call, int_add, int_const,
+    int_sub, is_skip, skip, var,
 };
 
 /// Wraps a `FunctionBuilder` with a single entry region pre-created,
@@ -151,7 +141,6 @@ fn return_data_input_kind(function: &strider_ir::Function) -> NodeKind {
     *function.kind_of_value(data_value)
 }
 
-/// Runs `rule` on every node, reporting whether it fired anywhere.
 fn fire_anywhere<F>(function: &mut strider_ir::Function, rule: F) -> bool
 where
     F: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> strider_pattern::Result<Option<ValueId>>,
@@ -164,7 +153,7 @@ where
 fn identity_rule_redirects_consumers_and_returns_true() {
     let mut function = graph_add_x_zero();
     let x = Capture::new();
-    let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
+    let rule = rewrite_rule(int_add(var(x), int_const(0u128)), var(x));
 
     let fired = fire_anywhere(&mut function, rule);
     assert!(fired, "rule should have fired on the outer Add");
@@ -178,7 +167,7 @@ fn identity_rule_redirects_consumers_and_returns_true() {
 fn rule_returns_false_when_lhs_does_not_match() {
     let mut function = graph_add_const_const(5, 3);
     let x = Capture::new();
-    let rule = rewrite_rule(sub(var(x), var(x)), int_const(0u128));
+    let rule = rewrite_rule(int_sub(var(x), var(x)), int_const(0u128));
     let add_node = find_add(&function);
     let fired = {
         let mut ctx = EditFunction::new(&mut function);
@@ -196,7 +185,7 @@ fn rule_returns_false_when_lhs_does_not_match() {
 fn sub_x_x_to_zero_rule() {
     let mut function = graph_sub_x_x();
     let x = Capture::new();
-    let rule = rewrite_rule(sub(var(x), var(x)), int_const(0u128));
+    let rule = rewrite_rule(int_sub(var(x), var(x)), int_const(0u128));
 
     let sub_node = find_sub(&function);
     let fired = {
@@ -263,8 +252,8 @@ fn rewrite_rule_results_collect_into_heterogeneous_vec() {
     let x = Capture::new();
     let y = Capture::new();
     let rules: Vec<BoxedRule> = vec![
-        rewrite_rule(add(var(x), int_const(0u128)), var(x)),
-        rewrite_rule(sub(var(y), var(y)), int_const(0u128)),
+        rewrite_rule(int_add(var(x), int_const(0u128)), var(x)),
+        rewrite_rule(int_sub(var(y), var(y)), int_const(0u128)),
     ];
     assert_eq!(rules.len(), 2);
 }
@@ -278,7 +267,7 @@ fn rewrite_returns_false_when_no_matching_node() {
     let mut function = t.ret_val(other);
 
     let x = Capture::new();
-    let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
+    let rule = rewrite_rule(int_add(var(x), int_const(0u128)), var(x));
     let fired = fire_anywhere(&mut function, rule);
     assert!(!fired);
 }
@@ -286,17 +275,20 @@ fn rewrite_returns_false_when_no_matching_node() {
 #[test]
 fn pattern_match_before_and_after_rewrite() {
     let mut function = graph_add_x_zero();
-    match_count(&function, add(any(), int_const(0u128)).into_pattern(), 1);
+    match_count(
+        &function,
+        int_add(anything(), int_const(0u128)).into_pattern(),
+        1,
+    );
 
     let x = Capture::new();
-    let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
+    let rule = rewrite_rule(int_add(var(x), int_const(0u128)), var(x));
     fire_anywhere(&mut function, rule);
 
     let ret_kind = return_data_input_kind(&function);
     assert!(matches!(ret_kind, NodeKind::IntBinaryOp(IntBinaryOp::Add)));
 }
 
-/// Counts reachable Add nodes.
 fn count_adds(function: &strider_ir::Function) -> usize {
     function
         .walk()
@@ -315,7 +307,7 @@ fn apply_count_with_no_match_returns_zero() {
     let v = t.u64(7);
     let mut function = t.ret_val(v);
     let x = Capture::new();
-    let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
+    let rule = rewrite_rule(int_add(var(x), int_const(0u128)), var(x));
     let mut ctx = EditFunction::new(&mut function);
     let n = apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).unwrap();
     assert_eq!(n, 0, "rule must not fire on a graph without any Add node");
@@ -337,7 +329,7 @@ fn apply_count_with_one_match_returns_one() {
     );
 
     let x = Capture::new();
-    let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
+    let rule = rewrite_rule(int_add(var(x), int_const(0u128)), var(x));
     let n = {
         let mut ctx = EditFunction::new(&mut function);
         apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).unwrap()
@@ -369,8 +361,8 @@ fn apply_rules_count_round_robin_reaches_fixed_point() {
     let y = Capture::new();
     let z_cap = Capture::new();
     let rules: Vec<BoxedRule> = vec![
-        rewrite_rule(add(var(y), int_const(0u128)), var(y)),
-        rewrite_rule(sub(var(z_cap), var(z_cap)), int_const(0u128)),
+        rewrite_rule(int_add(var(y), int_const(0u128)), var(y)),
+        rewrite_rule(int_sub(var(z_cap), var(z_cap)), int_const(0u128)),
     ];
 
     let mut total: usize = 0;
@@ -404,7 +396,7 @@ fn apply_count_preserves_use_list_integrity() {
     let sum = t.add(a, z);
     let mut function = t.ret_val(sum);
     let x = Capture::new();
-    let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
+    let rule = rewrite_rule(int_add(var(x), int_const(0u128)), var(x));
     {
         let mut ctx = EditFunction::new(&mut function);
         apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).unwrap();
@@ -412,8 +404,8 @@ fn apply_count_preserves_use_list_integrity() {
     strider_ir::validate::validate(&function).expect("validate must pass after rewrite");
 }
 
-/// An unrelated instantiation error must not be mistaken for a deliberate
-/// `skip()` opt-out.
+/// An unrelated instantiation error must not be mistaken for a `skip()`
+/// opt-out.
 #[test]
 fn skip_sentinel_round_trips_through_is_skip() {
     let e = skip();
@@ -430,7 +422,7 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
     // Locate the outer `Add(_, 0)` root (not the inner `Add(7, 1)`).
     let add_node = {
         let m = Matcher::new(&function);
-        let pat = add(var(x), int_const(0u128)).into_pattern();
+        let pat = int_add(var(x), int_const(0u128)).into_pattern();
         let hits = m.find_all(&pat).unwrap();
         assert_eq!(hits.len(), 1);
         hits[0].root()
@@ -446,7 +438,7 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
             .contains(&SOURCE_ADDR)
     );
 
-    let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
+    let rule = rewrite_rule(int_add(var(x), int_const(0u128)), var(x));
     let mut ctx = EditFunction::new(&mut function);
     let changed = rule(&mut ctx, add_node).unwrap().is_some();
     assert!(changed);
@@ -463,32 +455,4 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
         fp.contains(&SOURCE_ADDR),
         "rewritten producer must absorb source fingerprint, got {fp:?}"
     );
-}
-
-/// `apply_rules_in_order` OR-s the per-rule results: only the second rule
-/// fires on the fixture, yet the composed result is `true`.
-#[test]
-fn apply_rules_in_order_or_composes_results() {
-    let mut function = graph_add_x_zero();
-    let x = Capture::new();
-    let y = Capture::new();
-    // The outer `Add(_, 0)` is the rule's target.
-    let add_node = {
-        let m = Matcher::new(&function);
-        let pat = add(var(y), int_const(0u128)).into_pattern();
-        let hits = m.find_all(&pat).unwrap();
-        assert_eq!(hits.len(), 1);
-        hits[0].root()
-    };
-    let rules: Vec<BoxedRule> = vec![
-        // Looks for Add(_, IntConst(7)), which is absent.
-        rewrite_rule(add(var(x), int_const(7u128)), var(x)),
-        // Second rule matches the actual fixture (Add(_, 0)).
-        rewrite_rule(add(var(y), int_const(0u128)), var(y)),
-    ];
-    let mut ctx = EditFunction::new(&mut function);
-    let fired = apply_rules_in_order(&rules)(&mut ctx, add_node)
-        .unwrap()
-        .is_some();
-    assert!(fired, "second rule must have fired");
 }

@@ -1,6 +1,3 @@
-//! `bit_width(n)` on load / store filters by value-output or data-input
-//! width, and is type-agnostic: `bit_width(32)` matches both I32 and F32.
-
 use strider_ir::node::ValueType;
 use strider_ir::{FunctionBuilder, IRBuilderExt};
 use strider_ir_test_utils::RegisterSet;
@@ -76,14 +73,14 @@ fn bit_width_filters_store_by_data_width() {
     assert_eq!(h64_wrong.len(), 0);
 }
 
-/// Output width and input width are different questions. `bool_value()`
+/// Output width and input width are different questions. `any_bool()`
 /// (output width 1) catches anything producing a bool, comparisons included;
 /// `bool_inputs(..)` (input width 1) catches only ops over booleans, so it
 /// skips comparisons whose operands are 32-bit.
 #[test]
 fn output_width_and_input_width_distinguish_bool_ops_from_comparisons() {
     use strider_ir::{IntBinaryOp, IntCmpOp};
-    use strider_pattern::{any, bool_and, bool_inputs, bool_value, value_of_width};
+    use strider_pattern::{any_bool, anything, bool_and, bool_inputs, value_of_width};
 
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
@@ -109,7 +106,7 @@ fn output_width_and_input_width_distinguish_bool_ops_from_comparisons() {
 
     // Produces a bool: both comparisons plus the AND.
     assert_eq!(
-        m.find_all(&bool_value().into_pattern()).unwrap().len(),
+        m.find_all(&any_bool().into_pattern()).unwrap().len(),
         3,
         "two comparisons and the boolean AND all produce I1"
     );
@@ -117,7 +114,7 @@ fn output_width_and_input_width_distinguish_bool_ops_from_comparisons() {
     // Operates on booleans: only the AND. Comparisons take I32 operands and
     // the consts have no value inputs at all.
     assert_eq!(
-        m.find_all(&bool_inputs(any()).into_pattern())
+        m.find_all(&bool_inputs(anything()).into_pattern())
             .unwrap()
             .len(),
         1,
@@ -126,7 +123,7 @@ fn output_width_and_input_width_distinguish_bool_ops_from_comparisons() {
 
     // The two queries compose.
     assert_eq!(
-        m.find_all(&bool_inputs(bool_and(any(), any())).into_pattern())
+        m.find_all(&bool_inputs(bool_and(anything(), anything())).into_pattern())
             .unwrap()
             .len(),
         1
@@ -144,7 +141,7 @@ fn output_width_and_input_width_distinguish_bool_ops_from_comparisons() {
 #[test]
 fn bool_ctors_require_i1_output() {
     use strider_ir::IntBinaryOp;
-    use strider_pattern::{any, bool_and, bool_const};
+    use strider_pattern::{anything, bool_and, bool_const};
 
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
@@ -160,7 +157,7 @@ fn bool_ctors_require_i1_output() {
 
     let m = Matcher::new(&function);
     assert_eq!(
-        m.find_all(&bool_and(any(), any()).into_pattern())
+        m.find_all(&bool_and(anything(), anything()).into_pattern())
             .unwrap()
             .len(),
         0,

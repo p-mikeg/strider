@@ -1,26 +1,13 @@
-//! Regression: `function_max_size` must define the function's exact
-//! extent, so the cfg builder never reaches back into an adjacent
-//! function via a backward direct branch, even with
-//! `allow_code_before_start_addr=true`.
+//! `is_addr_tail_call` honours `fn_max_size` as the function's exact extent
+//! regardless of `allow_code_before_start_addr`, so a backward `jmp` below
+//! `start_addr` is a `RegionTerminator::TailCall` and the lift stays inside
+//! `[start_addr, start_addr + fn_max_size)`.  Following it instead pulls the
+//! previous function's body in, which on real binaries surfaces as a live
+//! `IndirectBranch` placeholder from a branch in the NEIGHBOUR.
 //!
-//! Pre-fix: with `allow_code_before_start_addr=true` and
-//! `function_max_size` set, the cfg builder followed a backward `jmp`
-//! whose target lay below `start_addr` into the previous function's body.
-//! On real binaries this surfaced as `UnresolvedIndirectBranchError` from
-//! an indirect branch inside the neighbouring function, unrelated to the
-//! function the user asked to lift.
-//!
-//! Post-fix: `is_addr_tail_call` honours `fn_max_size` as the exact
-//! extent regardless of the legacy reach-back flag, so the backward `jmp`
-//! is classified as a `RegionTerminator::TailCall` and the lift stays
-//! inside `[start_addr, start_addr + fn_max_size)`.
-//!
-//! The companion test in `bounded_lift_tail_call.rs` asserts the positive
-//! shape (the backward jmp becomes a `Call + Return`); this test asserts
-//! the negative invariant: no node in the lifted graph carries an
+//! The negative half of the invariant: no node in the lifted graph carries an
 //! asm-fingerprint address from the previous function's range.
-
-#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
+//! `bounded_lift_tail_call.rs` covers the positive shape.
 
 mod common;
 
@@ -72,13 +59,13 @@ fn make_sleigh() -> Sleigh<BufMemReader<Vec<u8>>> {
 }
 
 /// The cfg builder must not decode any `prev_fn` byte when lifting
-/// `target_fn` under `function_max_size`, even with the reach-back flag
+/// `target_fn` under `fn_max_size`, even with the reach-back flag
 /// on. Proved by walking the lifted graph's asm-fingerprint addresses and
 /// asserting every contributor address lies in `[TARGET_FN, TARGET_FN_END)`.
 #[test]
 fn bounded_lift_does_not_walk_backward_into_prev_fn() {
-    // The bug only surfaced with the reach-back flag ON; without it the
-    // lower-bound check alone would have blocked the backward jmp.
+    // Reach-back ON, or the lower-bound check alone blocks the backward jmp
+    // and the extent rule is never exercised.
     let sleigh = make_sleigh();
     let regs = sleigh.regs().expect("regs");
     let cc = CallingConvention::x86_64_systemv()

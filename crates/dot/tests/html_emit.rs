@@ -1,11 +1,3 @@
-#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
-
-//! End-to-end checks for `GraphDot::as_html_from_dot`.
-//!
-//! `as_html_from_dot` is the single place responsible for substituting every
-//! placeholder in `graph_template_dot.html`; a template revision that adds one
-//! without wiring up its replacement shows up here as a leaked token.
-
 use dot::{DotEmitter, DotStyle, GraphDot, GraphDotDumper};
 
 struct TestDumper {
@@ -89,26 +81,35 @@ fn dumper_error_propagates_wrapped() {
     );
 }
 
+const TEMPLATE: &str = include_str!("../assets/graph_template_dot.html");
+
+/// Every `__NAME__` run the template carries, so a template revision adding a
+/// placeholder is covered without editing this file.
+fn template_placeholders() -> Vec<String> {
+    TEMPLATE
+        .split("__")
+        .filter(|seg| {
+            !seg.is_empty()
+                && seg
+                    .bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+        })
+        .map(|seg| format!("__{seg}__"))
+        .collect()
+}
+
 #[test]
 fn html_emit_substitutes_every_placeholder() {
+    let names = template_placeholders();
+    assert!(
+        !names.is_empty(),
+        "no placeholder found in the template: the scan is broken"
+    );
     let html = render_html(3);
-    // One leaked token means a broken page: no Viz, no JS, or no DOT source.
-    assert!(
-        !html.contains("__DEFAULT_ENGINE__"),
-        "__DEFAULT_ENGINE__ leaked into the emitted HTML"
-    );
-    assert!(
-        !html.contains("__VIZ_STANDALONE_JS__"),
-        "__VIZ_STANDALONE_JS__ leaked into the emitted HTML"
-    );
-    assert!(
-        !html.contains("__SVG_PAN_ZOOM_JS__"),
-        "__SVG_PAN_ZOOM_JS__ leaked into the emitted HTML"
-    );
-    assert!(
-        !html.contains("__DOT_JSON__"),
-        "__DOT_JSON__ leaked into the emitted HTML"
-    );
+    for name in names {
+        // One leaked token means a broken page: no Viz, no JS, or no DOT source.
+        assert!(!html.contains(&name), "{name} leaked into the emitted HTML");
+    }
 }
 
 #[test]
@@ -155,8 +156,8 @@ fn html_emit_inlines_vendored_payloads() {
     let html = render_html(3);
     assert!(
         html.len() > 100_000,
-        "emitted HTML suspiciously small ({} bytes) — vendored JS payloads \
-         may not have been inlined",
+        "emitted HTML suspiciously small ({} bytes); the vendored JS payloads \
+         were probably not inlined",
         html.len()
     );
 }

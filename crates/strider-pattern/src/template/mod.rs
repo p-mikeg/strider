@@ -1,11 +1,6 @@
-//! Materialising a [`Template`] as fresh IR.
-//!
-//! [`instantiate`] walks the bipartite store in topological order, resolves
-//! each capture leaf's `ValueCapture` through the LHS [`Bindings`], reusing
-//! the captured value verbatim, synthesises every `Build` node through the
-//! [`strider_ir::IRBuilder::create_node_attributed`] seam so each implementor
-//! keeps its own attribution and liveness policy, and returns the root's
-//! materialised value output.
+//! [`instantiate`] synthesises every `Build` node through the
+//! [`strider_ir::IRBuilder::create_node_attributed`] seam, so each implementor
+//! keeps its own attribution and liveness policy.
 
 mod builder;
 mod ctx;
@@ -117,7 +112,7 @@ pub fn instantiate<B: IRBuilder>(
 
         // A `Capture` leaf has no build kind: it IS the materialisation. Its
         // `ValueCapture` output resolves to the LHS binding, reusing that
-        // value verbatim as in `add(x, 0) -> x`, and is never synthesised.
+        // value verbatim as in `int_add(x, 0) -> x`, and is never synthesised.
         // The capture id lives on the output, not the marker node.
         let kind = match &nd.kind {
             TmplNodeKind::Capture => {
@@ -159,8 +154,22 @@ pub fn instantiate<B: IRBuilder>(
                     root_ty: value_ty,
                 };
                 let v = f(&ctx)?;
-                intern_fn_int_const(builder, value_ty, v)
+                intern_fn_int_const(builder, value_ty, v)?
             }
+        };
+
+        // A template `FloatConst` carries raw IEEE bits with no width; the
+        // width is resolved here, so bits above it are dropped here.
+        let kind = match kind {
+            NodeKind::FloatConst(bits) => {
+                let ty = node_value_ty(template, vtx, root_ty, &binding_tys);
+                NodeKind::FloatConst(if ty.is_float() {
+                    ty.mask_float_bits(bits)
+                } else {
+                    bits
+                })
+            }
+            other => other,
         };
 
         let inputs = collect_inputs(template, vtx, &materialised)?;
@@ -243,8 +252,21 @@ fn resolve_binding_tys(
 }
 
 /// Masks `v` to `value_ty`'s width and stores it.
-fn intern_fn_int_const<B: IRBuilder>(builder: &mut B, value_ty: ValueType, v: u128) -> NodeKind {
-    NodeKind::IntConst(builder.function_mut().intern_int_const(v, value_ty))
+/// The closure computed `v` in `u128`, so a carry or borrow out of bit 127 is
+/// lost. That is the declared width's own modulus up to `I128`, and the WRONG
+/// one past it: `2^127 + 2^127` reads back as `0` rather than `2^128`. Skip the
+/// rewrite instead of interning a truncated constant.
+fn intern_fn_int_const<B: IRBuilder>(
+    builder: &mut B,
+    value_ty: ValueType,
+    v: u128,
+) -> anyhow::Result<NodeKind> {
+    if value_ty.bit_width() > 128 {
+        return Err(crate::skip());
+    }
+    Ok(NodeKind::IntConst(
+        builder.function_mut().intern_int_const(v, value_ty),
+    ))
 }
 
 /// In slot order, reading each producer's already-materialised IR output from
@@ -258,7 +280,7 @@ fn collect_inputs(
     let mut inputs_by_slot: BTreeMap<usize, ValueId> = BTreeMap::new();
     for (slot, producer_out_vtx) in template.graph.consumed_inputs(node_vtx) {
         let producer_value = *materialised.get(&producer_out_vtx).ok_or_else(|| {
-            anyhow!("producer output not materialised before consumer — topo order bug")
+            anyhow!("producer output not materialised before consumer (topo order bug)")
         })?;
         if inputs_by_slot.insert(slot, producer_value).is_some() {
             return Err(anyhow!(
@@ -276,8 +298,8 @@ fn collect_inputs(
     {
         let slots: Vec<usize> = inputs_by_slot.keys().copied().collect();
         return Err(anyhow!(
-            "template node has non-contiguous input slots {slots:?} \
-             (expected 0..{}) — raw-builder mis-wire",
+            "template node has non-contiguous input slots {slots:?}, \
+             expected 0..{} (raw-builder mis-wire)",
             inputs_by_slot.len()
         ));
     }

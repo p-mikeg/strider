@@ -117,7 +117,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let value = self.read_input(insn, 0)?;
         let out_vn = require_output_vn(insn)?;
         // `is_nan(x)` is `x != x` under IEEE 754, built directly in the
-        // lowered form since there is no `FloatCmpOp::NotEqual`.
+        // lowered `Xor(FloatEqual, 1)` form.
         let result = self.build_float_eq_negated(value, value)?;
         self.write_vn(out_vn, result)
     }

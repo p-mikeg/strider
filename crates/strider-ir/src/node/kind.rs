@@ -59,7 +59,8 @@ pub enum NodeKind {
     /// Resolved jump table. Inputs: `(control, address)`. Outputs: one
     /// `Control` per target, output `i` taken when `address ==
     /// switch_targets[i]` (case addresses live in the `switch_targets` side-table).
-    /// Exhaustive: no default arm.
+    /// No default arm: a target the resolver could not prove is reported in
+    /// `unresolved_indirect_branches`, not modelled as an arm.
     Switch,
 
     /// Clobbers caller-saved registers and the memory token.
@@ -67,11 +68,14 @@ pub enum NodeKind {
     /// Consumes the outgoing control edge plus any return values.
     Return,
     /// Placeholder for a branch the CFG could not resolve. Inputs:
-    /// `[control, memory, target_value]`. Outputs: `[]`. Surviving the
-    /// pipeline just means classification failed; the IR stays valid.
+    /// `[control, memory, target_value]`, plus the optional interworking
+    /// ISA-mode bit at slot 3. Outputs: `[]`. Surviving the pipeline means
+    /// classification failed; the IR stays valid.
     IndirectBranch,
     /// Control sink for a no-return trap (`ud2`, `int3`, `abort`, `BUG_ON`).
-    /// Inputs: `[control]`. Outputs: `[]`.
+    /// Inputs: `[control]`, plus the optional memory chain at slot 1, which an
+    /// exit-free-cycle sink carries so its stores survive compaction.
+    /// Outputs: `[]`.
     Unreachable,
 
     Load(rsleigh::VnSpace),
@@ -93,7 +97,8 @@ pub enum NodeKind {
     Lzcount,
     Extend(crate::node::ExtendOp),
 
-    /// Raw IEEE 754 bit pattern; upper 32 bits are zero for `F32`.
+    /// Raw IEEE 754 bit pattern, masked to the declared output width: upper 32
+    /// bits are zero for `F32`. `build_float_const` masks, `validate` re-checks.
     FloatConst(u64),
     FloatBinaryOp(crate::node::FloatBinaryOp),
     FloatUnaryOp(crate::node::FloatUnaryOp),
@@ -116,8 +121,9 @@ pub enum NodeKind {
     /// x87 transcendentals.
     ///
     /// Inputs: `[control, memory, arg0, arg1, ...]`. Outputs:
-    /// `[Control, Memory]`, plus a `Typed` slot when the instruction has an
-    /// output varnode. Memory is always clobbered.
+    /// `[Control, Memory]`, then a `Typed` slot for the result when the
+    /// instruction has an output varnode, then one per implicit-write clobber.
+    /// Memory is always clobbered.
     CallOther {
         user_op_id: u64,
     },

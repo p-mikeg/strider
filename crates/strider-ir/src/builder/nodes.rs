@@ -42,8 +42,8 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Control sink for a no-return direct `Call`. The memory edge is left
-    /// dangling: `Unreachable` consumes control only. Terminates the current
+    /// Control sink for a no-return direct `Call`, consuming control only:
+    /// the region's memory token is left unanchored. Terminates the current
     /// region.
     pub fn build_unreachable(&mut self) -> Result<()> {
         let res = self.terminate_cur_region()?;
@@ -55,14 +55,28 @@ impl FunctionBuilder {
     /// Anchors `target_value` on an `IndirectBranch` placeholder. Terminates
     /// the current region.
     pub fn build_indirect_branch(&mut self, target_value: ValueId) -> Result<NodeId> {
-        let res = self.terminate_cur_region()?;
+        self.build_indirect_branch_with_mode(target_value, None)
+    }
 
+    /// [`Self::build_indirect_branch`] carrying the interworking ISA-mode bit
+    /// `isa_mode` the branch's instruction commits (slot 3), so the resolver can
+    /// decode each resolved target in it. `None` for a non-switching branch.
+    pub fn build_indirect_branch_with_mode(
+        &mut self,
+        target_value: ValueId,
+        isa_mode: Option<ValueId>,
+    ) -> Result<NodeId> {
+        let mut values: SmallVec<[ValueId; 2]> = SmallVec::new();
+        values.push(target_value);
+        values.extend(isa_mode);
+
+        let res = self.terminate_cur_region()?;
         self.require_terminator_kinds(&res)?;
-        self.validate_value_inputs(std::slice::from_ref(&target_value))?;
+        self.validate_value_inputs(&values)?;
 
         let node = self.create_node(
             NodeKind::IndirectBranch,
-            [res.control, res.memory, target_value],
+            [res.control, res.memory].into_iter().chain(values),
             [],
         );
         Ok(node)
@@ -102,7 +116,7 @@ impl FunctionBuilder {
     /// the case addresses recorded in `switch_targets`. Output `i` is taken
     /// when `address == arms[i].1`. Requires `arms` non-empty, and terminates
     /// the current region.
-    pub fn build_switch(&mut self, address: ValueId, arms: &[(RegionId, u64)]) -> Result<()> {
+    pub fn build_switch(&mut self, address: ValueId, arms: &[(RegionId, u64)]) -> Result<NodeId> {
         debug_assert!(!arms.is_empty(), "build_switch requires at least one arm");
         let res = self.terminate_cur_region()?;
         self.require_value_kind(address)?;
@@ -121,7 +135,7 @@ impl FunctionBuilder {
         self.function_mut()
             .side_tables_mut()
             .set_switch_targets(sw, targets);
-        Ok(())
+        Ok(sw)
     }
 
     /// Advances the region's memory token.
@@ -159,7 +173,7 @@ impl FunctionBuilder {
 
     /// `phi_token` must be the owning `Region`'s `PhiToken` output.
     /// `incoming_values` holds one value per predecessor, and may be empty at
-    /// first: `add_region_predecessor` fills them in later.
+    /// first: `link_region_variables` appends them later.
     pub(crate) fn build_vn_phi(
         &mut self,
         var: rsleigh::Vn,

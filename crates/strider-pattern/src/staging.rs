@@ -103,7 +103,6 @@ impl<N, V> StagedGraph<N, V> {
     /// # Errors
     /// On a cyclic staged graph, which is a builder bug: pattern and template
     /// graphs are always DAGs.
-    #[allow(clippy::expect_used)]
     pub(crate) fn seal(self) -> anyhow::Result<Graph<N::Sealed, V, NeverCacheable>>
     where
         N: SealNode,

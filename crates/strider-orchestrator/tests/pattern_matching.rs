@@ -1,18 +1,9 @@
-//! Integration tests for `strider_pattern` that exercise optimizer-pass
-//! interactions specific to strider-orchestrator.
-//!
-//! The bulk of pattern-only tests now live in `crates/strider-pattern/tests/`.
-//! What remains here are pattern queries whose fixtures need a
-//! strider-opt optimizer pass (PhiCollapse, IfCondInversion,
-//! FunctionArgDetect) applied before the pattern runs; moving them out
-//! would require strider-pattern to depend on strider-orchestrator and
-//! invert the crate graph.
+//! Pattern queries whose fixtures need a strider-opt pass (`PhiCollapse`,
+//! `IfCondInversion`, `FunctionArgDetect`) applied first.  They cannot live in
+//! `crates/strider-pattern/tests/` with the rest: strider-pattern would have to
+//! depend on strider-opt, inverting the crate graph.
 
 #![allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable,
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss,

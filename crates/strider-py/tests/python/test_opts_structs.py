@@ -1,7 +1,3 @@
-"""`CfgOptions` / `LifterOptions` and the per-function
-`LifterOptions.pipeline` override.
-"""
-
 from __future__ import annotations
 
 import pytest
@@ -24,13 +20,12 @@ def test_build_cfg_takes_cfg_options():
     fixture = fixture_path("x64", "arithmetic")
     lift = strider.lift.load_elf(str(fixture))
     cfg = lift.build_cfg(
-        lift.symbol("add"), strider.cfg.CfgOptions(allow_code_before_start_addr=True)
+        lift.symbol("add").address, strider.cfg.CfgOptions(allow_code_before_start_addr=True)
     )
     assert cfg is not None
 
 
 def test_analyze_default_opts_when_omitted():
-    """Omitting `opts` entirely behaves like the all-defaults struct."""
     fixture = fixture_path("x64", "arithmetic")
     lift = strider.lift.load_elf(str(fixture))
     _cfg, g, unresolved = lift.analyze("add")
@@ -40,7 +35,7 @@ def test_analyze_default_opts_when_omitted():
 def test_build_cfg_default_opts_when_omitted():
     fixture = fixture_path("x64", "arithmetic")
     lift = strider.lift.load_elf(str(fixture))
-    cfg = lift.build_cfg(lift.symbol("add"))
+    cfg = lift.build_cfg(lift.symbol("add").address)
     assert cfg is not None
 
 
@@ -51,7 +46,8 @@ def test_cfg_options_rejects_zero_function_max_size():
 
 def test_lifter_options_rejects_bad_alias_mode():
     with pytest.raises(ValueError, match="alias_mode"):
-        strider.lift.LifterOptions(alias_mode="nonsense")
+        # Deliberate: an unknown alias_mode is a runtime error.
+        strider.lift.LifterOptions(alias_mode="nonsense")  # type: ignore[arg-type]
 
 
 def test_lifter_options_defaults_are_not_shared_mutable():
@@ -60,6 +56,47 @@ def test_lifter_options_defaults_are_not_shared_mutable():
     a = strider.lift.LifterOptions()
     b = strider.lift.LifterOptions()
     assert a.cfg is not b.cfg
+
+
+def test_escape_analysis_defaults_false_and_round_trips():
+    assert strider.lift.LifterOptions().assumptions.escape_analysis is False
+    opts = strider.lift.LifterOptions(
+        assumptions=strider.lift.AssumptionOptions(escape_analysis=True)
+    )
+    assert opts.assumptions.escape_analysis is True
+    assert "escape_analysis=True" in repr(opts)
+
+
+def test_assumptions_default_to_a_fresh_all_off_group():
+    a = strider.lift.LifterOptions()
+    b = strider.lift.LifterOptions()
+    assert a.assumptions is not b.assumptions
+    for name in (
+        "distinct_sp_bases_disjoint",
+        "callee_preserves_stack_args",
+        "escape_analysis",
+    ):
+        assert getattr(a.assumptions, name) is False
+    assert a.assumptions.noalias_allocators == []
+
+
+def test_incoming_args_survive_calls_defaults_true():
+    assert strider.lift.LifterOptions().assume_incoming_args_survive_calls is True
+    opts = strider.lift.LifterOptions(assume_incoming_args_survive_calls=False)
+    assert opts.assume_incoming_args_survive_calls is False
+    assert "assume_incoming_args_survive_calls=False" in repr(opts)
+
+
+def test_analyze_with_escape_analysis():
+    fixture = fixture_path("x64", "arithmetic")
+    lift = strider.lift.load_elf(str(fixture))
+    _cfg, g, _unresolved = lift.analyze(
+        "add",
+        opts=strider.lift.LifterOptions(
+            assumptions=strider.lift.AssumptionOptions(escape_analysis=True)
+        ),
+    )
+    assert g.node_count() > 0
 
 
 def test_pipeline_override_runs_custom_pipeline():
@@ -83,17 +120,23 @@ def test_with_cfg_carries_over_every_other_field():
     """`with_cfg` replaces only `cfg`.
 
     Fields are read-only, so overriding the nested `CfgOptions` once meant
-    re-listing all seven; anything forgotten silently reverted to its
+    re-listing every field; anything forgotten silently reverted to its
     default.  Every non-cfg field here is set away from its default, so a
     dropped carry-over fails loudly.
     """
     pipeline = strider.opt.OptimizerPipeline.empty()
+    assumptions = strider.lift.AssumptionOptions(
+        distinct_sp_bases_disjoint=True,
+        callee_preserves_stack_args=True,
+        noalias_allocators=[0x2000],
+        escape_analysis=True,
+    )
     opts = strider.lift.LifterOptions(
         cfg=strider.cfg.CfgOptions(function_max_size=64),
         compact=False,
         per_address_ccs={0x1000: strider.sleigh.CallingConvention.x86_64_systemv()},
-        calls_clobber=True,
-        assume_distinct_sp_bases_disjoint=True,
+        assume_incoming_args_survive_calls=False,
+        assumptions=assumptions,
         alias_mode="strict",
         pipeline=pipeline,
     )
@@ -103,8 +146,8 @@ def test_with_cfg_carries_over_every_other_field():
     assert out.cfg.function_max_size == 128
     assert out.compact is False
     assert out.per_address_ccs is not None and 0x1000 in out.per_address_ccs
-    assert out.calls_clobber is True
-    assert out.assume_distinct_sp_bases_disjoint is True
+    assert out.assume_incoming_args_survive_calls is False
+    assert out.assumptions is assumptions
     assert out.alias_mode == "strict"
     # Identity, not just presence: the carried-over pipeline must be the
     # SAME object, matching what passing `pipeline=opts.pipeline` did.

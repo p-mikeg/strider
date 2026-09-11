@@ -10,29 +10,26 @@
 //! swaps in `pyo3/auto-initialize` so `Python::with_gil(...)` works here.
 //!
 //! Output lands in the gitignored `crates/strider-py/strider/_generated/`.
-//! The hand-written `strider/pattern.pyi` is what ships with the wheel;
-//! the generated `.pyi` is only the test oracle consumed by
-//! `tests/python/test_reference_pyi.py` (mypy --strict).
+//! The hand-written stubs under `strider/` are what ship with the wheel and
+//! what `uv run pyright` gates; the generated `.pyi` is a reference to read
+//! them against, consumed by nothing.
 //!
-//! This is an `[example]`, not a `[bin]`: examples build only on demand,
-//! so the target doesn't change the default `cargo build` / `cargo test`
-//! flow the snapshot baselines depend on. A `[bin]` would pull in
-//! unconditional dependency reachability, dead-code lints, and binary
-//! linkage on `cargo build --workspace`.
+//! An `[example]`, so it builds only on demand and leaves the default
+//! `cargo build` / `cargo test` flow the snapshot baselines depend on alone.
 
 use std::fs;
 use std::path::PathBuf;
 
 use pyo3_stub_gen::Result;
 
-/// Sibling of the hand-written `pattern.pyi`, so re-running `stub_gen`
-/// can never overwrite the stubs that ship with the wheel.
+/// Sibling of the hand-written stubs, so re-running `stub_gen` can never
+/// overwrite what ships with the wheel.
 const OUT_DIR: &str = "strider/_generated";
 
 fn main() -> Result<()> {
     // `StubInfo`'s own writer emits straight to `strider/*.pyi`, clobbering
-    // the hand-written stubs, so we walk its `modules` map and write to a
-    // sibling directory ourselves.
+    // the hand-written stubs, so walk its `modules` map and write to a
+    // sibling directory instead.
     let stub = strider_py::stub_info()?;
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

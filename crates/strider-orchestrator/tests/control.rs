@@ -1,14 +1,3 @@
-//! Branches, loops, and merge points.
-//!
-//! 9 functions × 6 archs = 54 tests.
-
-#![allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable
-)]
-
 mod common;
 use common::*;
 
@@ -36,10 +25,10 @@ per_arch_test!(
 );
 
 fn abs_has_one_if(function: &strider_ir::Function) {
-    assert!(count_ifs(function) >= 1, "abs_val must have ≥1 If");
+    assert!(count_ifs(function) >= 1, "abs_val must have >=1 If");
 }
 fn max_has_one_if(function: &strider_ir::Function) {
-    assert!(count_ifs(function) >= 1, "max_val must have ≥1 If");
+    assert!(count_ifs(function) >= 1, "max_val must have >=1 If");
 }
 fn clamp_has_two_ifs(function: &strider_ir::Function) {
     assert!(
@@ -77,7 +66,7 @@ fn count_bits_has_loop_and_shr(function: &strider_ir::Function) {
 fn nested_loops_has_two_loops(function: &strider_ir::Function) {
     assert!(
         count_loops(function) >= 2,
-        "nested_loops expected ≥2 VarPhi; got {}",
+        "nested_loops expected >=2 VarPhi; got {}",
         count_loops(function)
     );
 }

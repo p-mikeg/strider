@@ -4,10 +4,9 @@ pub enum ExtendOp {
     SignExtend,
 }
 
-/// Every variant outputs `I1`.
-///
-/// `LessEqual` / `SlessEqual` are absent: the lifter lowers them to
-/// `Xor(Less(b, a), IntConst(1)):I1` and `Xor(Sless(b, a), IntConst(1)):I1`.
+/// Every variant outputs `I1`. The lifter lowers `IntLessEqual(a, b)` to
+/// `Xor(Less(b, a), IntConst(1)):I1` and `IntSlessEqual` likewise through
+/// `Sless`, so both arrive as this set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IntCmpOp {
     Equal,
@@ -15,7 +14,6 @@ pub enum IntCmpOp {
     Sless,
     /// Unsigned less-than, and equally the unsigned-subtraction borrow
     /// predicate (`l - r` borrows iff `l < r`), matching rsleigh's `IntLess`.
-    /// There is no separate `Borrow` variant.
     Less,
     /// `l + r` overflows the unsigned range.
     Carry,
@@ -25,8 +23,7 @@ pub enum IntCmpOp {
     Sborrow,
 }
 
-/// Arithmetic wraps. `Sub` is absent: the lifter lowers `IntSub(a, b)` to
-/// `Add(a, Neg(b))`.
+/// Arithmetic wraps. `IntSub(a, b)` arrives lowered to `Add(a, Neg(b))`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IntBinaryOp {
     Add,
@@ -55,7 +52,7 @@ pub enum IntUnaryOp {
     Neg,
 }
 
-/// `Sub` is absent: the lifter lowers `FloatSub(a, b)` to `Add(a, Neg(b))`.
+/// `FloatSub(a, b)` arrives lowered to `Add(a, Neg(b))`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FloatBinaryOp {
     Add,
@@ -73,12 +70,12 @@ pub enum FloatUnaryOp {
     Ceil,
     /// Round toward negative infinity.
     Floor,
-    /// Round to nearest, ties to even.
+    /// Round to nearest, ties AWAY FROM ZERO, matching GHIDRA's
+    /// `FloatFormat::opRound`.
     Round,
 }
 
-/// Every variant outputs `I1`. `NotEqual` / `LessEqual` are absent, the lifter
-/// lowers them:
+/// Every variant outputs `I1`. The other two comparisons arrive lowered:
 ///
 /// - `FloatNotEqual(a, b)` -> `Xor(FloatEqual(a, b), IntConst(1)):I1`.
 /// - `FloatLessEqual(a, b)` -> `Or(FloatLess(a, b), FloatEqual(a, b))`.

@@ -2,11 +2,23 @@
 resolver = "2"
 members = ["crates/*"]
 default-members = ["crates/*"]
+# A path dependency under the workspace root is a member by default, which puts
+# the vendored rsleigh fork into `--workspace` builds, tests and lints.
+exclude = ["externals/rsleigh"]
 
 [workspace.package]
 edition = "2024"
-version = "0.1.0"
+version = "0.2.0"
 license = "MIT"
+repository = "https://github.com/p-mikeg/strider"
+# Above edition 2024's own 1.85 floor: `u32::is_multiple_of` needs 1.87 and
+# `pyo3-stub-gen`'s generated code needs 1.91. Naming it turns a syntax
+# explosion on an older toolchain into a real error message.
+rust-version = "1.91"
+# Publishing needs every workspace dependency to carry a version, and rsleigh is
+# a path dependency on a fork that is not on crates.io. Lift this per crate if
+# that ever changes.
+publish = false
 
 [workspace.dependencies]
 strider-reader = { path = "crates/strider-reader" }
@@ -24,7 +36,7 @@ strider-opt = { path = "crates/strider-opt" }
 strider-orchestrator = { path = "crates/strider-orchestrator" }
 strider-pattern = { path = "crates/strider-pattern" }
 vn-container = { path = "crates/vn-container" }
-rsleigh = { path = "../rsleigh" }
+rsleigh = { path = "externals/rsleigh" }
 
 cranelift-bitset = "0.112.2"
 cranelift-entity = "0.112.2"
@@ -32,6 +44,7 @@ smallvec = { version = "1.13.2", default-features = false, features = [
     "const_new",
 ] }
 object = "0.38.1"
+memmap2 = "0.9.11"
 
 petgraph = "0.8.3"
 rustc-hash = "2"
@@ -48,13 +61,9 @@ criterion = { version = "0.5", default-features = false, features = [
 ] }
 
 [workspace.lints.clippy]
-# Panicking on a structural invariant that pre-optimization IR validation
-# already guarantees (e.g. a `Store` always having its 3 input slots) is the
-# honest, preferred behaviour — a hard crash beats threading a defensive
-# `Result` through code that can only fail if the validator is broken. So
-# `panic!`/`unwrap`/`expect`/`unreachable!`/direct indexing are permitted; use
-# them for invariants, keep `Result` for genuinely-fallible operations (IO,
-# parsing, untrusted input).
+# `panic!`/`unwrap`/`expect`/`unreachable!`/indexing are for invariants
+# pre-optimization IR validation already guarantees; `Result` is for
+# genuinely-fallible operations (IO, parsing, untrusted input).
 unwrap_used      = "allow"
 expect_used      = "allow"
 panic            = "allow"

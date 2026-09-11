@@ -1,9 +1,3 @@
-"""The single lift handle: `strider.lift.lifter(arch, mem, rom=None)`.
-
-One object with `build_cfg(entry, ...)` and `analyze(entry, cc, ...)`,
-replacing the four former entry points.
-"""
-
 import strider
 
 from .conftest import symbol_addr
@@ -45,3 +39,16 @@ def test_lifter_analyze_accepts_rom(x86_memory_elf):
     )
     assert graph.node_count() > 0
     assert unresolved == []
+
+
+def test_lifter_rom_returns_the_rom_or_none(x86_memory_elf):
+    arch = strider.sleigh.SleighArch.x86()
+    mem = strider.lift.load_elf(str(x86_memory_elf)).reader()
+
+    with_rom = strider.lift.lifter(arch, mem, rom=mem)
+    # The exact object passed, mirroring reader().
+    assert with_rom.rom() is mem
+    assert with_rom.reader() is mem
+
+    without_rom = strider.lift.lifter(arch, mem)
+    assert without_rom.rom() is None

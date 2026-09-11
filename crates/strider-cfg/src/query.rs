@@ -54,10 +54,10 @@ impl Cfg {
     /// degenerate `if (c) goto L else goto L` reports that region for both;
     /// a non-`CondBranch` region reports `None` for both.
     ///
-    /// Containment, not start-address equality, is the correct test: a
-    /// region's `start_addr` can sit BELOW its first instruction once a target
-    /// in a zero-pcode-op hole makes `split_region` round down, so
-    /// `true_target` may be the first instruction instead.
+    /// Containment, not a start compare: a `true_target` off an instruction
+    /// boundary is seated as an edge to the region that OWNS it, which starts
+    /// elsewhere.  It also covers an intra-machine-instruction target at a
+    /// non-zero pcode index.
     pub fn region_if(&self, region_id: RegionId) -> Result<IfRegionSuccessors> {
         let region = self
             .region_graph
@@ -117,49 +117,40 @@ impl Cfg {
         self.region_graph.node_indices()
     }
 
-    /// Content-keyed and therefore stable across CFG rebuilds, unlike a
-    /// `NodeIndex`.
+    /// Every arm of `switch_region`, keyed by the address it starts at: the
+    /// regions the CFG builder wired for that jump-table's targets.  One pass,
+    /// for a caller resolving all of a table's targets at once.
     ///
-    /// A region entry is EITHER the exact `start_addr.machine_addr` OR the
-    /// first materialised instruction's address.  Those differ when the entry
-    /// machine insn lifts to zero pcode ops (alignment `nop` / `pause` /
-    /// `endbr64` / `paciasp`): the builder keys the region at the zero-op
-    /// address, but a branch or switch TARGET lands on the first real
-    /// instruction, which is equally a valid entry.
-    ///
-    /// Genuine interior addresses still return `None`; they signal a missing
-    /// `split_region`.
-    pub fn region_id_at_start(&self, addr: super::types::MachineInsnAddr) -> Option<RegionId> {
-        // O(log R) range query rather than an O(R) graph scan: the greatest
-        // start_addr at or below (addr, u64::MAX) is the only region that
-        // could own `addr` as its entry, so confirm against just that one.
-        let upper = super::types::PcodeInsnAddr {
-            machine_addr: addr,
-            insn_index: u64::MAX,
-        };
-        let (_, &rid) = self.start_addr_to_region_id.range(..=upper).next_back()?;
-        let region = self.region_graph.node_weight(rid)?;
-        let is_entry = region.start_addr.machine_addr == addr
-            || region
-                .insns
-                .first()
-                .is_some_and(|i| i.addr.machine_addr == addr);
-        is_entry.then_some(rid)
+    /// Keyed by successor edge rather than a global start-address lookup, which
+    /// stays correct across a later `split_region` that re-targets the incoming
+    /// edge.  Keyed on the full `start_addr`: a target landing inside an
+    /// already-decoded region splits it, so a wired arm always begins exactly at
+    /// the target, and a target is always a machine-instruction start.  A
+    /// successor beginning MID-pcode at the same machine address (a `CondBranch`
+    /// into a pcode sequence) is a different region and does not answer for it.
+    pub fn switch_arm_regions(
+        &self,
+        switch_region: RegionId,
+    ) -> rustc_hash::FxHashMap<super::types::PcodeInsnAddr, RegionId> {
+        self.region_graph
+            .neighbors(switch_region)
+            .filter_map(|s| {
+                self.region_graph
+                    .node_weight(s)
+                    .map(|region| (region.start_addr, s))
+            })
+            .collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
-
-    use std::collections::BTreeMap;
-
     use petgraph::stable_graph::StableDiGraph;
     use strider_target::SleighArch;
 
     use super::*;
     use crate::test_support::*;
-    use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
+    use crate::types::{PcodeInsnAddr, Region};
     use crate::{Builder, CfgOptions};
 
     #[test]
@@ -262,7 +253,12 @@ mod tests {
         let cfg = Cfg {
             region_graph: graph,
             entry: src,
-            start_addr_to_region_id: BTreeMap::new(),
+            undecodable_seeded: Vec::new(),
+            isa_mode_conflicts: Vec::new(),
+            interior_branch_targets: Vec::new(),
+            link_register_seated: Vec::new(),
+            tail_call_seated: Vec::new(),
+            function_isa_bit: None,
         };
 
         let s = cfg.region_if(src).unwrap();
@@ -276,10 +272,9 @@ mod tests {
 
     #[test]
     fn region_if_matches_taken_successor_by_containment_not_start() {
-        // A region's `start_addr` can sit below its first instruction after a
-        // zero-pcode-op hole rounds `split_region` down, so `true_target` may
-        // be an INTERIOR address of the taken successor.  Here that region
-        // spans [0x3000, 0x3010] and the branch targets 0x3008.
+        // A hand-built region spanning [0x3000, 0x3010] with the branch
+        // targeting the interior 0x3008, to pin that region_if matches the taken
+        // arm by containment rather than start-address equality.
         let mut graph: StableDiGraph<Region, ()> = StableDiGraph::new();
         let src = graph.add_node(make_cond_region(0x1000, addr(0x3008, 0)));
         let fallthrough = graph.add_node(make_region(&[(0x2000, 0)]));
@@ -290,7 +285,12 @@ mod tests {
         let cfg = Cfg {
             region_graph: graph,
             entry: src,
-            start_addr_to_region_id: BTreeMap::new(),
+            undecodable_seeded: Vec::new(),
+            isa_mode_conflicts: Vec::new(),
+            interior_branch_targets: Vec::new(),
+            link_register_seated: Vec::new(),
+            tail_call_seated: Vec::new(),
+            function_isa_bit: None,
         };
 
         let s = cfg.region_if(src).unwrap();
@@ -315,7 +315,12 @@ mod tests {
         let cfg = Cfg {
             region_graph: graph,
             entry: src,
-            start_addr_to_region_id: BTreeMap::new(),
+            undecodable_seeded: Vec::new(),
+            isa_mode_conflicts: Vec::new(),
+            interior_branch_targets: Vec::new(),
+            link_register_seated: Vec::new(),
+            tail_call_seated: Vec::new(),
+            function_isa_bit: None,
         };
 
         let s = cfg.region_if(src).unwrap();
@@ -324,73 +329,73 @@ mod tests {
     }
 
     #[test]
-    fn region_id_at_start_returns_some_for_real_function_entry() {
-        let cfg = real_cfg("arithmetic", "add");
-        let entry_region = cfg
-            .region_graph
-            .node_weight(cfg.entry)
-            .expect("entry region exists");
-        let entry_addr = entry_region.start_addr.machine_addr;
-        let rid = cfg.region_id_at_start(entry_addr);
-        assert_eq!(
-            rid,
-            Some(cfg.entry),
-            "region_id_at_start must locate the entry region by its start addr"
-        );
-    }
-
-    #[test]
-    fn region_id_at_start_returns_none_for_unknown_machine_addr() {
-        let cfg = real_cfg("arithmetic", "add");
-        let rid = cfg.region_id_at_start(MachineInsnAddr { addr: 0xdead_beef });
-        assert!(rid.is_none(), "unknown addr must return None, got {rid:?}");
-    }
-
-    /// From an AcpiDsLoad2EndOp switch target: when the entry machine insn
-    /// lifts to zero pcode ops, a region's `start_addr` sits below its first
-    /// materialised instruction, and BOTH must resolve as entries since a
-    /// jump-table case label lands on the latter.  An address strictly between
-    /// them is not an entry and would signal a missing split.
-    #[test]
-    fn region_id_at_start_accepts_first_insn_of_phantom_span_region() {
+    fn switch_arm_regions_keys_each_arm_by_its_own_start() {
+        // Three switch arms; each keys to its own successor, and an address no
+        // arm starts at is absent. The map is built from outgoing edges, so
+        // only successors of `src` are considered.
         let mut graph: StableDiGraph<Region, ()> = StableDiGraph::new();
-        // 0x1000 is the zero-pcode entry insn; 0x1004 the first real one.
-        let region = Region {
-            start_addr: addr(0x1000, 0),
-            insns: vec![RegionInstruction {
-                addr: addr(0x1004, 0),
-                insn: fake_insn(),
-            }],
-            terminator: crate::RegionTerminator::Unconditional,
-        };
-        let rid = graph.add_node(region);
-        let mut start_map = BTreeMap::new();
-        start_map.insert(addr(0x1000, 0), rid);
+        let src = graph.add_node(make_region(&[(0x1000, 0)]));
+        let arm_a = graph.add_node(make_region(&[(0x2000, 0)]));
+        let arm_b = graph.add_node(make_region(&[(0x3000, 0)]));
+        let arm_c = graph.add_node(make_region(&[(0x4000, 0)]));
+        // A non-successor region starting at a would-be target, to prove the
+        // lookup is edge-scoped rather than global.
+        let stranger = graph.add_node(make_region(&[(0x5000, 0)]));
+        graph.add_edge(src, arm_a, ());
+        graph.add_edge(src, arm_b, ());
+        graph.add_edge(src, arm_c, ());
+
         let cfg = Cfg {
             region_graph: graph,
-            entry: rid,
-            start_addr_to_region_id: start_map,
+            entry: src,
+            undecodable_seeded: Vec::new(),
+            isa_mode_conflicts: Vec::new(),
+            interior_branch_targets: Vec::new(),
+            link_register_seated: Vec::new(),
+            tail_call_seated: Vec::new(),
+            function_isa_bit: None,
+        };
+
+        let arms = cfg.switch_arm_regions(src);
+        assert_eq!(arms.get(&addr(0x3000, 0)), Some(&arm_b));
+        assert_eq!(arms.get(&addr(0x2000, 0)), Some(&arm_a));
+        assert_eq!(arms.get(&addr(0x4000, 0)), Some(&arm_c));
+        assert_eq!(
+            arms.get(&addr(0x5000, 0)),
+            None,
+            "a region not wired as a successor of `src` is not an arm"
+        );
+        let _ = stranger;
+    }
+
+    /// A switch target is always a machine-instruction START
+    /// (`PcodeInsnAddr::at_machine_start`), so an arm is the successor whose own
+    /// start is that address at pcode index 0. A successor starting MID-pcode at
+    /// the same machine address (a `CondBranch` into a pcode sequence) is a
+    /// different region and must not answer for it.
+    #[test]
+    fn switch_arm_regions_does_not_key_a_mid_pcode_successor_at_the_machine_start() {
+        let mut graph: StableDiGraph<Region, ()> = StableDiGraph::new();
+        let src = graph.add_node(make_region(&[(0x1000, 0)]));
+        let mid_pcode = graph.add_node(make_region(&[(0x2000, 3)]));
+        graph.add_edge(src, mid_pcode, ());
+
+        let cfg = Cfg {
+            region_graph: graph,
+            entry: src,
+            undecodable_seeded: Vec::new(),
+            isa_mode_conflicts: Vec::new(),
+            interior_branch_targets: Vec::new(),
+            link_register_seated: Vec::new(),
+            tail_call_seated: Vec::new(),
+            function_isa_bit: None,
         };
 
         assert_eq!(
-            cfg.region_id_at_start(MachineInsnAddr { addr: 0x1000 }),
-            Some(rid),
-            "exact start_addr resolves"
+            cfg.switch_arm_regions(src).get(&addr(0x2000, 0)),
+            None,
+            "no successor starts at 0x2000's pcode index 0, so the site has no arm"
         );
-        assert_eq!(
-            cfg.region_id_at_start(MachineInsnAddr { addr: 0x1004 }),
-            Some(rid),
-            "first materialised instruction (phantom-span head) resolves"
-        );
-        assert!(
-            cfg.region_id_at_start(MachineInsnAddr { addr: 0x1002 })
-                .is_none(),
-            "an address between start and first insn is not a region entry"
-        );
-        assert!(
-            cfg.region_id_at_start(MachineInsnAddr { addr: 0x1008 })
-                .is_none(),
-            "an address past the region is unknown"
-        );
+        let _ = mid_pcode;
     }
 }

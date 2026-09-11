@@ -1,16 +1,5 @@
-//! LoadReadOnly fold against .rodata constants.
-//!
-//! After the optimiser pipeline runs (with LoadReadOnly enabled), reads of
-//! `static const` data should fold to IntConst nodes instead of remaining
-//! as Loads.  Tests verify: (a) the constant value materialises in the IR,
-//! (b) the corresponding read no longer appears as a Load.
-
-#![allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable
-)]
+//! `LoadReadOnly` folds a read of `static const` data into an `IntConst`, so
+//! the constant materialises in the IR and the read stops being a `Load`.
 
 mod common;
 use common::*;
@@ -50,6 +39,6 @@ fn string_branch_folds_one_arm(function: &strider_ir::Function) {
 }
 fn runtime_idx_keeps_load(function: &strider_ir::Function) {
     // Index isn't constant, so the Load survives.  Two ifs gate the bounds.
-    assert!(count_loads(function) >= 1, "runtime index → Load survives");
+    assert!(count_loads(function) >= 1, "runtime index -> Load survives");
     assert!(count_ifs(function) >= 1, "bounds-check If(s) survive");
 }

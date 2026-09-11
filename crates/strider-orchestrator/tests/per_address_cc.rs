@@ -1,8 +1,6 @@
-//! End-to-end: a Call whose target is in `per_address_ccs` is built
-//! with the override CC end-to-end (zero clobber outputs for an
-//! all-preserving override).
-
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+//! A Call whose target is in `per_address_ccs` is built with the override CC.
+//! An all-preserving override still leaves clobber outputs behind: Sleigh
+//! temporaries (UNIQUE / RAM) survive the by-name `callee_saved` filter.
 
 use rustc_hash::FxHashMap;
 use strider_ir::IRViewer;
@@ -15,8 +13,8 @@ use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
 
-/// x86_64: `call $fentry; ret`.  Encoded with the call target near
-/// the function entry so we control the absolute address.
+/// The call target sits near the function entry so the absolute address is
+/// known.
 ///
 /// Layout at base 0x1000:
 ///   0x1000  e8 fb 0f 00 00     call 0x2000
@@ -41,7 +39,10 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
         FxHashMap::default();
     overrides.insert(
         call_target,
-        TargetCC::x86_64_all_preserving().build(&regs).unwrap(),
+        TargetCC::x86_64_systemv()
+            .preserves_all()
+            .build(&regs)
+            .unwrap(),
     );
     let lift_opts = LiftOptions {
         per_address_ccs: overrides,
@@ -125,7 +126,7 @@ fn call_without_override_uses_function_default_clobber_set() {
     assert_eq!(
         bfg.get_cc(call_id),
         bfg.default_cc(),
-        "no override → effective CC is the function default"
+        "no override -> effective CC is the function default"
     );
     let outs = bfg.node_outputs(call_id);
     let (rv, clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.default_cc());

@@ -12,11 +12,12 @@ import pytest
 
 import strider
 from strider import pattern as p
+from .conftest import fixture_path
 
 
 @pytest.fixture(scope="module")
 def add_fn():
-    lift = strider.lift.load_elf("fixtures/out/x64/arithmetic.elf")
+    lift = strider.lift.load_elf(str(fixture_path("x64", "arithmetic")))
     _cfg, fn, _unresolved = lift.analyze("add")
     return fn
 
@@ -26,12 +27,11 @@ def _add_node(fn):
 
 
 def test_capture_on_commutative_operand_reports_both_bindings(add_fn):
-    """add(anything().capture(k), anything()) binds k to EACH operand."""
     operands = add_fn.node(_add_node(add_fn)).inputs()
     assert len(operands) == 2
 
     k = p.Capture()
-    hits = add_fn.find_all(p.add(p.anything().capture(k), p.anything()))
+    hits = add_fn.find_all(p.int_add(p.anything().capture(k), p.anything()))
     assert len(hits) == 2, "both operands are valid bindings for k"
 
     bound = [h.node(k) for h in hits]
@@ -42,20 +42,19 @@ def test_capture_on_commutative_operand_reports_both_bindings(add_fn):
 
 def test_no_captures_on_commutative_operands_does_not_duplicate(add_fn):
     """A capture-free commutative pattern yields the SAME map both ways => 1."""
-    hits = add_fn.find_all(p.add(p.anything(), p.anything()))
+    hits = add_fn.find_all(p.int_add(p.anything(), p.anything()))
     assert len(hits) == 1
 
 
 def test_identical_operand_binding_dedups_to_one(add_fn):
-    """add(var(x), var(x))-shaped: the swap yields an identical map => 1 hit."""
+    """int_add(var(x), var(x))-shaped: the swap yields an identical map => 1 hit."""
     x = p.Capture()
-    hits = add_fn.find_all(p.add(p.var(x), p.var(x)))
+    hits = add_fn.find_all(p.int_add(p.var(x), p.var(x)))
     # The two operands of this `add` are distinct, so identity binding fails.
     assert hits == []
 
 
 def test_ordered_suppresses_commutative_retry(add_fn):
-    """`.ordered()` pins the operand slots => exactly one ordering."""
     k = p.Capture()
     hits = add_fn.find_all(
         p.int_binary("Add", p.anything().capture(k), p.anything()).ordered()
@@ -71,7 +70,7 @@ def test_find_all_first_hit_is_the_natural_ordering(add_fn):
     binding lands at index 0 is part of the contract, not an accident.
     """
     k = p.Capture()
-    hits = add_fn.find_all(p.add(p.anything().capture(k), p.anything()))
+    hits = add_fn.find_all(p.int_add(p.anything().capture(k), p.anything()))
     assert hits
     assert hits[0].node(k) == add_fn.node(_add_node(add_fn)).inputs()[0]
 
@@ -80,10 +79,9 @@ def test_find_unique_raises_on_genuine_ambiguity(add_fn):
     """`find_unique` is fail-closed: a second DISTINCT binding must raise."""
     k = p.Capture()
     with pytest.raises(strider.StriderError, match="exactly one match"):
-        add_fn.find_unique(p.add(p.anything().capture(k), p.anything()))
+        add_fn.find_unique(p.int_add(p.anything().capture(k), p.anything()))
 
 
 def test_find_unique_still_accepts_a_genuinely_unique_match(add_fn):
-    """The capture-free pattern is still unambiguous => find_unique succeeds."""
-    hit = add_fn.find_unique(p.add(p.anything(), p.anything()))
+    hit = add_fn.find_unique(p.int_add(p.anything(), p.anything()))
     assert hit is not None

@@ -1,11 +1,4 @@
-//! Integration tests for `strider_pattern`, organised by semantic concern
-//! rather than by IR node kind.
-
 #![allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable,
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss,
@@ -60,6 +53,9 @@ mod call_other_value_operand;
 #[path = "pattern_matching/one_of_alternation.rs"]
 mod one_of_alternation;
 
+#[path = "pattern_matching/alternation_output_constraints.rs"]
+mod alternation_output_constraints;
+
 #[path = "pattern_matching/memory_chain.rs"]
 mod memory_chain;
 
@@ -71,3 +67,12 @@ mod get_vn_call_other_clobber;
 
 #[path = "pattern_matching/load_store_stack_only.rs"]
 mod load_store_stack_only;
+
+#[path = "pattern_matching/first_of_alternation.rs"]
+mod first_of_alternation;
+
+#[path = "pattern_matching/memory_alternation.rs"]
+mod memory_alternation;
+
+#[path = "pattern_matching/if_branch_captures.rs"]
+mod if_branch_captures;

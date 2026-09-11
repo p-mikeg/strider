@@ -1,8 +1,6 @@
 //! `x86_linux_kernel` (`-mregparm=3`) is the one Linux calling convention
 //! that diverges from a userland ABI.
 
-#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
-
 use strider_target::{CallingConvention, SleighArch};
 
 /// No real binary needed: the register table is fixed by the `.sla` spec.

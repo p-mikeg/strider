@@ -15,20 +15,47 @@ fn next_id() -> u32 {
 /// The same `Capture` may appear in several pattern positions; the matcher
 /// then requires every occurrence to bind the **same** node (and the same
 /// value output, where applicable).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Capture(u32);
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Capture {
+    id: u32,
+    internal: bool,
+}
 
-// No `Default`: minting a fresh global id from `.default()` means a
-// `#[derive(Default)]` on any containing struct silently allocates ids.
+// Every `Capture` is minted explicitly: a `.default()` would let a
+// `#[derive(Default)]` on any containing struct silently allocate ids.
 #[allow(clippy::new_without_default)]
 impl Capture {
     pub fn new() -> Self {
-        Self(next_id())
+        Self {
+            id: next_id(),
+            internal: false,
+        }
+    }
+
+    /// Minted by a builder, never by a caller: it holds an identity the
+    /// pattern graph cannot express, and is filtered out of everything a
+    /// caller sees. See [`PatValue::identity`](crate::matcher::PatValue).
+    pub(crate) fn internal() -> Self {
+        Self {
+            id: next_id(),
+            internal: true,
+        }
     }
 
     /// An opaque hash key. The id space is neither dense nor sequential.
     pub fn id(self) -> u32 {
-        self.0
+        self.id
+    }
+
+    pub(crate) fn is_internal(self) -> bool {
+        self.internal
+    }
+}
+
+// The flag is bookkeeping; error messages name a capture by its id alone.
+impl std::fmt::Debug for Capture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Capture({})", self.id)
     }
 }
 

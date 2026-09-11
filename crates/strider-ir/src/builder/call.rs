@@ -55,7 +55,6 @@ impl FunctionBuilder {
 
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;
-        // Inputs: [ctrl, mem, target, sp] then args.
         let inputs = [ctrl, memory, call_address, sp_value]
             .into_iter()
             .chain(args.iter().copied());
@@ -142,10 +141,28 @@ impl FunctionBuilder {
         let (ret_val_vars, clobber_vars) = crate::cc_ret_and_clobber_vns(self.function(), cc);
 
         let arg_vns: SmallVec<[rsleigh::Vn; 4]> = cc.arg_passing_regs.iter().copied().collect();
+        // Float argument registers come from a register file the integer list
+        // never names, and are APPENDED so an integer argument keeps its slot.
+        // By ABI POSITION, truncated at the first untracked one, so float
+        // position `j` lands at `arg_vns.len() + j`; registers sharing a
+        // container (AAPCS-VFP `d0`/`d1` inside `q0`) each pass their own
+        // slice of it.
+        let float_arg_vns: SmallVec<[rsleigh::Vn; 4]> = cc
+            .float_arg_slots(self.function().all_vns(), |v| {
+                vn_container::largest_container_in(self.function().all_vns(), v)
+            })
+            .into_iter()
+            .take_while(Option::is_some)
+            .flatten()
+            .collect();
         let mut arg_passing: SmallVec<[ValueId; 4]> = SmallVec::new();
         for vn in &arg_vns {
             let c = vn_container::largest_container_in(self.function().all_vns(), vn);
             arg_passing.push(self.read_variable(&c)?);
+        }
+        for vn in &float_arg_vns {
+            let v = self.read_arg_slice(vn)?;
+            arg_passing.push(v);
         }
 
         let mut output_vns: SmallVec<[rsleigh::Vn; 8]> = ret_val_vars.iter().copied().collect();
@@ -167,6 +184,29 @@ impl FunctionBuilder {
                 .set_call_cc(call, cc.clone());
         }
         Ok(call)
+    }
+
+    /// The lifter's sub-register read: shift the slice out of its container
+    /// and truncate. Register endianness, which differs from the data
+    /// endianness only on ARM BE8, is not reachable through a mock convention.
+    #[cfg(any(test, feature = "test-util"))]
+    fn read_arg_slice(&mut self, vn: &rsleigh::Vn) -> Result<ValueId> {
+        let container = vn_container::largest_container_in(self.function().all_vns(), vn);
+        if container == *vn {
+            return self.read_variable(&container);
+        }
+        let offset_bytes = vn.addr_off - container.addr_off;
+        let shift_bits = 8 * match self.function().endianness() {
+            strider_target::Endianness::Little => offset_bytes,
+            strider_target::Endianness::Big => {
+                u64::from(container.size) - u64::from(vn.size) - offset_bytes
+            }
+        };
+        let container_ty = container.int_type()?;
+        let whole = self.read_variable(&container)?;
+        let shifted =
+            self.build_shift_by_const(whole, shift_bits, IntBinaryOp::ShiftRight, container_ty)?;
+        self.truncate_if_needed(shifted, vn.int_type()?)
     }
 
     /// Test-only: terminates the region with a `Return` reading exactly the
@@ -196,7 +236,9 @@ impl FunctionBuilder {
         output: Option<rsleigh::Vn>,
         terminate: bool,
     ) -> Result<(NodeId, Option<ValueId>)> {
-        for vn in &abi.implicit_reads {
+        // Both footprints, so a RAM or const-space varnode is named as such
+        // rather than surfacing later as "variable not found".
+        for vn in abi.implicit_reads.iter().chain(abi.implicit_writes.iter()) {
             require_reg_or_unique(vn)?;
         }
         // Implicit reads first, then the explicit pcode operands.

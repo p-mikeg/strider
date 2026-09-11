@@ -29,9 +29,15 @@ pub struct CfgDotDumper<'a, R: rsleigh::MemReader> {
 impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
     type Node = NodeIndex;
     type Error = anyhow::Error;
-    type State = ();
+    /// Resolving `regs` walks the arch's register table over FFI, and
+    /// `GraphDot` calls [`Self::dump_as_dot`] once per region, so it is built
+    /// once per dump here.  The failure is carried as text: creating the state
+    /// cannot fail.
+    type State = std::result::Result<rsleigh::SleighRegs, String>;
 
-    fn create_initial_state(&self) -> Self::State {}
+    fn create_initial_state(&self) -> Self::State {
+        self.sleigh.regs().map_err(|e| e.to_string())
+    }
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
         self.cfg.region_graph.node_indices()
@@ -41,7 +47,7 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         &self,
         node_id: Self::Node,
         out: &mut dot::DotEmitter,
-        _state: &mut Self::State,
+        state: &mut Self::State,
     ) -> Result<()> {
         let dot_id = node_id.index().to_string();
         let node = self
@@ -54,12 +60,12 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
 
         let mut label = format!("Instruction(addr={start_addr:#x}, idx={first_insn_index})\n");
 
-        // Resolving `regs` walks the arch's register table over FFI, so hoist
-        // it out of the per-instruction loop.
-        let regs = self.sleigh.regs()?;
+        let regs = state
+            .as_ref()
+            .map_err(|e| anyhow!("sleigh register table unavailable: {e}"))?;
         for insn in &node.insns {
             let insn_addr = insn.addr.machine_addr.addr;
-            let pretty = insn.insn.ctx_fmt(self.sleigh, &regs);
+            let pretty = insn.insn.ctx_fmt(self.sleigh, regs);
             write!(&mut label, "\\l{insn_addr:#x}: {pretty}").map_err(anyhow::Error::from)?;
         }
         write!(&mut label, "\\l").map_err(anyhow::Error::from)?;
@@ -116,8 +122,6 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
-
     use dot::{DotStyle, GraphDot};
     use rsleigh::mem_readers::BufMemReader;
     use strider_target::SleighArch;

@@ -123,13 +123,13 @@ def test_phi_input_from_edge_ties_value_to_its_branch():
     t, f, ph, v = p.Capture(), p.Capture(), p.Capture(), p.Capture()
     guard = p.if_else().capture_true(t).capture_false(f)
     phi = p.phi().capture(ph)
-    val = p.any_int_const(v)
+    val = p.int_const(v)
 
     th = fn.find_all([guard, phi, val], constraints=[cons.phi_input_from_edge(ph, t, v)])
     fh = fn.find_all([guard, phi, val], constraints=[cons.phi_input_from_edge(ph, f, v)])
 
     assert len(th) == 1 and len(fh) == 1
-    true_val, false_val = th[0].const_uint(v), fh[0].const_uint(v)
+    true_val, false_val = th[0].uint(v), fh[0].uint(v)
     assert {true_val, false_val} == {1, 2}
     assert true_val != false_val
 
@@ -169,7 +169,7 @@ def test_any_input_capture_is_readable():
     fn = _const_diamond()
     t, f, ph, v = p.Capture(), p.Capture(), p.Capture(), p.Capture()
     guard = p.if_else().capture_true(t).capture_false(f)
-    phi = p.phi().any_input(p.any_int_const(v)).capture(ph)
+    phi = p.phi().any_input(p.int_const(v)).capture(ph)
 
     def read(edge):
         hits = fn.find_all(
@@ -177,7 +177,7 @@ def test_any_input_capture_is_readable():
             constraints=[cons.phi_input_from_edge(ph, edge, v)],
         )
         assert len(hits) == 1, f"expected one arm value, got {len(hits)}"
-        return hits[0].const_uint(v)
+        return hits[0].uint(v)
 
     true_val, false_val = read(t), read(f)
     assert {true_val, false_val} == {1, 2}
@@ -206,22 +206,22 @@ def test_any_input_equivalent_to_floating_root_spelling():
         guard = p.if_else().capture_true(t).capture_false(f)
         edge = t if pick_true else f
         hits = fn.find_all(
-            [guard, p.phi().capture(ph), p.any_int_const(v)],
+            [guard, p.phi().capture(ph), p.int_const(v)],
             constraints=[cons.phi_input_from_edge(ph, edge, v)],
         )
         assert len(hits) == 1
-        return hits[0].const_uint(v)
+        return hits[0].uint(v)
 
     def via_any_input(pick_true):
         t, f, ph, v = p.Capture(), p.Capture(), p.Capture(), p.Capture()
         guard = p.if_else().capture_true(t).capture_false(f)
         edge = t if pick_true else f
         hits = fn.find_all(
-            [guard, p.phi().any_input(p.any_int_const(v)).capture(ph)],
+            [guard, p.phi().any_input(p.int_const(v)).capture(ph)],
             constraints=[cons.phi_input_from_edge(ph, edge, v)],
         )
         assert len(hits) == 1
-        return hits[0].const_uint(v)
+        return hits[0].uint(v)
 
     assert via_floating_root(True) == via_any_input(True)
     assert via_floating_root(False) == via_any_input(False)
@@ -233,8 +233,8 @@ def test_any_input_capture_unifies_with_tuple_binding():
     fn = _const_diamond()
     t, f, ph, v = p.Capture(), p.Capture(), p.Capture(), p.Capture()
     guard = p.if_else().capture_true(t).capture_false(f)
-    phi = p.phi().any_input(p.any_int_const(v)).capture(ph)
-    val_root = p.any_int_const(v)
+    phi = p.phi().any_input(p.int_const(v)).capture(ph)
+    val_root = p.int_const(v)
 
     def count(edge):
         return len(fn.find_all(
@@ -281,13 +281,13 @@ def test_phi_input_from_edge_reaches_through_intervening_call():
     t, f, ph, v = p.Capture(), p.Capture(), p.Capture(), p.Capture()
     guard = p.if_else().capture_true(t).capture_false(f)
     phi = p.phi().capture(ph)
-    val = p.any_int_const(v)
+    val = p.int_const(v)
 
     th = fn.find_all([guard, phi, val], constraints=[cons.phi_input_from_edge(ph, t, v)])
     fh = fn.find_all([guard, phi, val], constraints=[cons.phi_input_from_edge(ph, f, v)])
 
     assert len(th) == 1 and len(fh) == 1
-    assert {th[0].const_uint(v), fh[0].const_uint(v)} == {1, 2}
+    assert {th[0].uint(v), fh[0].uint(v)} == {1, 2}
 
 
 def test_phi_input_from_edge_wildcard_probe_discriminates_blind_from_mismatch():
@@ -382,7 +382,7 @@ def test_negate_over_an_unbound_capture_drops_every_row():
     fn = _const_diamond()
     ph, v = p.Capture(), p.Capture()
     operand = p.one_of(
-        [p.phi().any_input(p.any_int_const(v)).capture(ph), p.any_int_const(v)]
+        [p.phi().any_input(p.int_const(v)).capture(ph), p.int_const(v)]
     )
     unconstrained = fn.find_all([operand])
     assert len(unconstrained) > 0, "some rows exist, including ph-unbound ones"
@@ -395,12 +395,10 @@ def test_negate_over_an_unbound_capture_drops_every_row():
 
 
 def test_empty_any_of_passes_nothing_empty_all_of_passes_everything():
-    """Connective identities: `any_of([])` is never-true, `all_of([])` is
-    always-true."""
     fn = _const_diamond()
     t, ph, v = p.Capture(), p.Capture(), p.Capture()
     guard = p.if_else().capture_true(t)
-    phi = p.phi().any_input(p.any_int_const(v)).capture(ph)
+    phi = p.phi().any_input(p.int_const(v)).capture(ph)
     # A capture-free connective correlates nothing, so pair it with a real
     # relation to keep the two patterns joined.
     linked = cons.phi_input_from_edge(ph, t, v)

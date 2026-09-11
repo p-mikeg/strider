@@ -1,10 +1,10 @@
-"""Regression: a reference cycle through a custom Python reader and its
-`Lifter` must be collectable by the cyclic GC.
+"""A reference cycle through a custom Python reader and its `Lifter` must be
+collectable by the cyclic GC.
 
 A Lifter holds its reader internally, so a reader that points back at the
-Lifter closes a cycle whose second edge is invisible to Python. Until the
-Lifter exposed that edge to the GC, both objects leaked for the process
-lifetime.
+Lifter closes a cycle whose second edge is invisible to Python. The Lifter
+reports that edge through `__traverse__`; unreported, both objects live for
+the process lifetime.
 """
 
 from __future__ import annotations
@@ -18,6 +18,8 @@ _CODE = bytes([0x31, 0xC0, 0xC3])  # xor eax,eax; ret
 
 
 class _Reader:
+    back: object
+
     def read(self, addr, size):
         off = addr - 0x1000
         return bytes(_CODE[off : off + size]).ljust(size, b"\x00")
@@ -28,7 +30,9 @@ def test_custom_reader_lifter_cycle_is_collectable():
         pass
 
     r = _Reader()
-    lift = L(strider.sleigh.SleighArch.x86_64(), r)
+    # `MemLike` names the declared bases; the binding takes any object
+    # with a `read(...)` method, which is what this reader is.
+    lift = L(strider.sleigh.SleighArch.x86_64(), r)  # type: ignore[arg-type]
     r.back = lift  # cycle: reader -> lifter -> (held internally) -> reader
 
     wl, wr = weakref.ref(lift), weakref.ref(r)
@@ -44,12 +48,15 @@ def test_custom_rom_lifter_cycle_is_collectable():
         pass
 
     class _Rom:
+        back: object
+
         def read(self, addr, size):
             return bytes(size)
 
     mem = strider.reader.BufferReader(0x1000, _CODE)
     rom = _Rom()
-    lift = L(strider.sleigh.SleighArch.x86_64(), mem, rom=rom)
+    # `RomLike` names the declared bases; a duck-typed rom is accepted too.
+    lift = L(strider.sleigh.SleighArch.x86_64(), mem, rom=rom)  # type: ignore[arg-type]
     rom.back = lift  # cycle through the rom callback
 
     wl, wr = weakref.ref(lift), weakref.ref(rom)
@@ -58,3 +65,4 @@ def test_custom_rom_lifter_cycle_is_collectable():
 
     assert wl() is None, "lifter leaked: cycle through custom rom not collected"
     assert wr() is None, "rom leaked: cycle through custom rom not collected"
+

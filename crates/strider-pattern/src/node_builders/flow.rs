@@ -18,15 +18,22 @@ use strider_ir::node::{NodeId, NodeKind, ValueType};
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
-use crate::typed::{int_const, int_const_any_of};
+use crate::matcher::{KindSpec, MatcherBuilder, PatNodeRef, PatValueRef, Pattern, WalkCaptures};
+use crate::typed::int_const;
 
 use super::MemPat;
 use super::node_pat::{NodePat, variant_kind};
 
 /// Walks from a matched If to a control output's single consumer and matches
 /// a sub-pattern there.
-type BranchWalk = Box<dyn Fn(&crate::Matcher, NodeId) -> bool>;
+type BranchWalk = Box<
+    dyn Fn(
+        &crate::Matcher,
+        NodeId,
+        &mut crate::Bindings,
+        &mut dyn FnMut(&mut crate::Bindings) -> bool,
+    ) -> bool,
+>;
 
 /// A `Call` clobbers caller-saved registers and the memory token.
 pub struct CallPat(NodePat);
@@ -39,14 +46,6 @@ impl CallPat {
 
     pub fn at(self, addr: u64) -> Self {
         self.target(int_const(u128::from(addr)))
-    }
-
-    /// An empty iterator vacuously fails.
-    pub fn at_any<I>(self, addrs: I) -> Self
-    where
-        I: IntoIterator<Item = u64>,
-    {
-        self.target(int_const_any_of(addrs))
     }
 
     /// 0-based past `ctrl` / `mem` / `target` / `sp`, so raw input slot
@@ -66,15 +65,12 @@ impl CallPat {
         Self(self.0.input_mem(1, p))
     }
 
-    /// Matches *some* input without pinning a slot. Every input is a
-    /// candidate, and the sub-pattern discriminates: a typed value sub binds
-    /// only a value input, while `var` / `anything` also reaches the control
-    /// and memory edges. Repeatable, each call adding one constraint.
-    ///
-    /// QUIRK: the existential is NOT excluded from a slot a fixed operand
-    /// already pinned (only other `any_input`s are mutually exclusive), so it
-    /// can bind the same input as a fixed operand -- an extra, surprising
-    /// binding, never a wrong node match. A distinctness option is deferred.
+    /// Matches *some* input without pinning a slot. Every input a fixed
+    /// operand has not already pinned is a candidate, and the sub-pattern
+    /// discriminates: a typed value sub binds only a value input, while
+    /// `var` / `anything` also reaches the control and memory edges.
+    /// Repeatable, each call adding one constraint; several existentials on
+    /// one node take distinct slots.
     pub fn any_input<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_any(p))
     }
@@ -91,7 +87,20 @@ impl CallPat {
     /// value. A leaf, naming the output value itself rather than recursing
     /// into what it feeds.
     pub fn output(self, slot: usize) -> OutputPat<Self> {
-        OutputPat { parent: self, slot }
+        OutputPat::at(self, Some(slot))
+    }
+
+    /// Some output rather than a fixed slot; otherwise
+    /// [`output`](Self::output).
+    pub fn any_output(self) -> OutputPat<Self> {
+        OutputPat::at(self, None)
+    }
+
+    /// Raw input slot `slot`, unshifted. Slot numbering is per node kind, laid
+    /// out by the IR's `expected_signature`; the named accessors above are the
+    /// intended surface and this is the escape hatch beneath them.
+    pub fn input<P: MatchPat + 'static>(self, slot: usize, p: P) -> Self {
+        Self(self.0.input(slot, p))
     }
 
     pub fn capture(self, c: Capture) -> Self {
@@ -105,9 +114,9 @@ impl CallPat {
 
 /// Commits a sibling-output constraint onto a multi-output family builder.
 pub trait WithOutput {
-    fn capture_output(self, slot: usize, c: Capture) -> Self;
-    fn output_width(self, slot: usize, bits: u32) -> Self;
-    fn output_ty(self, slot: usize, ty: ValueType) -> Self;
+    fn capture_output(self, slot: Option<usize>, c: Capture) -> Self;
+    fn output_width(self, slot: Option<usize>, bits: u32) -> Self;
+    fn output_ty(self, slot: Option<usize>, ty: ValueType) -> Self;
 }
 
 /// Commits one sibling-output constraint, then returns the family builder so
@@ -115,12 +124,18 @@ pub trait WithOutput {
 ///
 /// One `.output(slot)` call carries exactly one aspect: capture, width or
 /// type. Call it again on the same slot for a second vertex.
+///
+/// `slot` is `None` for the existential `.any_output()`.
 pub struct OutputPat<B: WithOutput> {
     parent: B,
-    slot: usize,
+    slot: Option<usize>,
 }
 
 impl<B: WithOutput> OutputPat<B> {
+    pub(crate) fn at(parent: B, slot: Option<usize>) -> Self {
+        Self { parent, slot }
+    }
+
     pub fn capture(self, c: Capture) -> B {
         self.parent.capture_output(self.slot, c)
     }
@@ -135,20 +150,14 @@ impl<B: WithOutput> OutputPat<B> {
 }
 
 impl WithOutput for CallPat {
-    fn capture_output(self, slot: usize, c: Capture) -> Self {
+    fn capture_output(self, slot: Option<usize>, c: Capture) -> Self {
         Self(self.0.capture_output(slot, c))
     }
-    fn output_width(self, slot: usize, bits: u32) -> Self {
+    fn output_width(self, slot: Option<usize>, bits: u32) -> Self {
         Self(self.0.output_width(slot, bits))
     }
-    fn output_ty(self, slot: usize, ty: ValueType) -> Self {
+    fn output_ty(self, slot: Option<usize>, ty: ValueType) -> Self {
         Self(self.0.output_ty(slot, ty))
-    }
-}
-
-impl MemPat for CallPat {
-    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.compile_anchored(b)
     }
 }
 
@@ -160,14 +169,19 @@ impl MatchPat for CallPat {
             .with_value_anchor(FIRST_VALUE_OUT_SLOT)
             .compile_anchored(b)
     }
+
+    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.0.compile_anchored(b)
+    }
 }
+
+impl MemPat for CallPat {}
 
 /// `Call` / `CallOther` outputs are `[Control(0), Memory(1), value...(2)]`,
 /// so return and clobber values start at slot 2.
 const FIRST_VALUE_OUT_SLOT: usize = 2;
 
 pub fn call() -> CallPat {
-    // A Call clobbers memory; the token is output slot 1.
     CallPat(NodePat::node(KindSpec::Exact(NodeKind::Call)).with_mem_value(1))
 }
 
@@ -191,7 +205,7 @@ impl CallOtherPat {
         self
     }
 
-    /// Filters on `Function::call_other_name`.
+    /// Filters on `SideTables::call_other_name`.
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name_filter = Some(name.into());
         self
@@ -231,7 +245,21 @@ impl CallOtherPat {
 
     /// See [`CallPat::output`].
     pub fn output(self, slot: usize) -> OutputPat<Self> {
-        OutputPat { parent: self, slot }
+        OutputPat::at(self, Some(slot))
+    }
+
+    /// Some output rather than a fixed slot; otherwise
+    /// [`output`](Self::output).
+    pub fn any_output(self) -> OutputPat<Self> {
+        OutputPat::at(self, None)
+    }
+
+    /// Raw input slot `slot`, unshifted. Slot numbering is per node kind, laid
+    /// out by the IR's `expected_signature`; the named accessors above are the
+    /// intended surface and this is the escape hatch beneath them.
+    pub fn input<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
+        self.inner = self.inner.input(slot, p);
+        self
     }
 
     pub fn capture(mut self, c: Capture) -> Self {
@@ -259,23 +287,17 @@ impl CallOtherPat {
 }
 
 impl WithOutput for CallOtherPat {
-    fn capture_output(mut self, slot: usize, c: Capture) -> Self {
+    fn capture_output(mut self, slot: Option<usize>, c: Capture) -> Self {
         self.inner = self.inner.capture_output(slot, c);
         self
     }
-    fn output_width(mut self, slot: usize, bits: u32) -> Self {
+    fn output_width(mut self, slot: Option<usize>, bits: u32) -> Self {
         self.inner = self.inner.output_width(slot, bits);
         self
     }
-    fn output_ty(mut self, slot: usize, ty: ValueType) -> Self {
+    fn output_ty(mut self, slot: Option<usize>, ty: ValueType) -> Self {
         self.inner = self.inner.output_ty(slot, ty);
         self
-    }
-}
-
-impl MemPat for CallOtherPat {
-    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.configured().compile_anchored(b)
     }
 }
 
@@ -286,12 +308,17 @@ impl MatchPat for CallOtherPat {
             .with_value_anchor(FIRST_VALUE_OUT_SLOT)
             .compile_anchored(b)
     }
+
+    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.configured().compile_anchored(b)
+    }
 }
+
+impl MemPat for CallOtherPat {}
 
 pub fn call_other() -> CallOtherPat {
     let exemplar = NodeKind::CallOther { user_op_id: 0 };
     let kind = variant_kind(std::mem::discriminant(&exemplar), None);
-    // CallOther also produces a memory token at output slot 1.
     CallOtherPat {
         inner: NodePat::node(kind).with_mem_value(1),
         name_filter: None,
@@ -304,7 +331,7 @@ pub struct RetPat(NodePat);
 
 impl RetPat {
     /// `inputs[0]`. The sub-pattern's root produces a control edge.
-    pub fn preceded_by<P: MatchPat + 'static>(self, p: P) -> Self {
+    pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_control(0, p))
     }
 
@@ -318,6 +345,13 @@ impl RetPat {
         Self(self.0.input_any(p))
     }
 
+    /// Raw input slot `slot`, unshifted. Slot numbering is per node kind, laid
+    /// out by the IR's `expected_signature`; the named accessors above are the
+    /// intended surface and this is the escape hatch beneath them.
+    pub fn input<P: MatchPat + 'static>(self, slot: usize, p: P) -> Self {
+        Self(self.0.input(slot, p))
+    }
+
     pub fn capture(self, c: Capture) -> Self {
         Self(self.0.capture(c))
     }
@@ -327,12 +361,21 @@ impl RetPat {
     }
 }
 
+impl MatchPat for RetPat {
+    /// Node-rooted: the synthesized `Any` output is what an alternation or an
+    /// existential slot wires; no value slot can bind it.
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.0.compile_alt_arm(b)
+    }
+}
+
 pub fn ret() -> RetPat {
     RetPat(NodePat::node(KindSpec::Exact(NodeKind::Return)))
 }
 
-/// Inputs `[ctrl(0), mem(1), target(2)]`, no outputs, so the pattern is
-/// rooted on the node itself.
+/// Inputs `[ctrl(0), mem(1), target(2)]` plus the optional interworking ISA
+/// mode at `3`, no outputs, so the pattern is rooted on the node itself.
+/// [`any_input`](Self::any_input) reaches the mode input too.
 pub struct IndirectBranchPat(NodePat);
 
 impl IndirectBranchPat {
@@ -341,8 +384,14 @@ impl IndirectBranchPat {
         Self(self.0.input(2, p))
     }
 
+    /// `inputs[3]`, the interworking ISA-mode bit. Present only on a
+    /// mode-switching branch, so pinning it rejects every other one.
+    pub fn isa_mode<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input(3, p))
+    }
+
     /// `inputs[0]`. The sub-pattern's root produces a control edge.
-    pub fn preceded_by<P: MatchPat + 'static>(self, p: P) -> Self {
+    pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_control(0, p))
     }
 
@@ -356,6 +405,13 @@ impl IndirectBranchPat {
         Self(self.0.input_any(p))
     }
 
+    /// Raw input slot `slot`, unshifted. Slot numbering is per node kind, laid
+    /// out by the IR's `expected_signature`; the named accessors above are the
+    /// intended surface and this is the escape hatch beneath them.
+    pub fn input<P: MatchPat + 'static>(self, slot: usize, p: P) -> Self {
+        Self(self.0.input(slot, p))
+    }
+
     pub fn capture(self, c: Capture) -> Self {
         Self(self.0.capture(c))
     }
@@ -365,16 +421,25 @@ impl IndirectBranchPat {
     }
 }
 
+impl MatchPat for IndirectBranchPat {
+    /// Node-rooted: the synthesized `Any` output is what an alternation or an
+    /// existential slot wires; no value slot can bind it.
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.0.compile_alt_arm(b)
+    }
+}
+
 pub fn indirect_branch() -> IndirectBranchPat {
     IndirectBranchPat(NodePat::node(KindSpec::Exact(NodeKind::IndirectBranch)))
 }
 
-/// Inputs `[ctrl(0)]`, no outputs.
+/// Inputs `[ctrl(0)]` plus the optional memory slot 1 an exit-free-cycle
+/// sink carries; no outputs.
 pub struct UnreachablePat(NodePat);
 
 impl UnreachablePat {
     /// `inputs[0]`. The sub-pattern's root produces a control edge.
-    pub fn preceded_by<P: MatchPat + 'static>(self, p: P) -> Self {
+    pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_control(0, p))
     }
 
@@ -383,12 +448,27 @@ impl UnreachablePat {
         Self(self.0.input_any(p))
     }
 
+    /// Raw input slot `slot`, unshifted. Slot numbering is per node kind, laid
+    /// out by the IR's `expected_signature`; the named accessors above are the
+    /// intended surface and this is the escape hatch beneath them.
+    pub fn input<P: MatchPat + 'static>(self, slot: usize, p: P) -> Self {
+        Self(self.0.input(slot, p))
+    }
+
     pub fn capture(self, c: Capture) -> Self {
         Self(self.0.capture(c))
     }
 
     pub fn build(self) -> Pattern {
         self.0.build()
+    }
+}
+
+impl MatchPat for UnreachablePat {
+    /// Node-rooted: the synthesized `Any` output is what an alternation or an
+    /// existential slot wires; no value slot can bind it.
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.0.compile_alt_arm(b)
     }
 }
 
@@ -402,6 +482,19 @@ pub fn unreachable() -> UnreachablePat {
 pub struct EntryPat(NodePat);
 
 impl EntryPat {
+    /// A sibling output at raw slot `slot`. Numbering is per node kind, laid
+    /// out by the IR's `expected_signature`. Returns a terminal taking one of
+    /// `.capture(c)`, `.of_width(w)`, `.of_type(ty)`.
+    pub fn output(self, slot: usize) -> OutputPat<Self> {
+        OutputPat::at(self, Some(slot))
+    }
+
+    /// Some output rather than a fixed slot; otherwise
+    /// [`output`](Self::output).
+    pub fn any_output(self) -> OutputPat<Self> {
+        OutputPat::at(self, None)
+    }
+
     /// Binds the control output.
     pub fn capture(self, c: Capture) -> Self {
         Self(self.0.capture(c))
@@ -424,9 +517,22 @@ pub fn entry() -> EntryPat {
     EntryPat(NodePat::node(KindSpec::Exact(NodeKind::Entry)).with_control_value(0))
 }
 
+impl WithOutput for EntryPat {
+    fn capture_output(self, slot: Option<usize>, c: Capture) -> Self {
+        Self(self.0.capture_output(slot, c))
+    }
+    fn output_width(self, slot: Option<usize>, bits: u32) -> Self {
+        Self(self.0.output_width(slot, bits))
+    }
+    fn output_ty(self, slot: Option<usize>, ty: ValueType) -> Self {
+        Self(self.0.output_ty(slot, ty))
+    }
+}
+
 /// Joins control edges at a CFG merge: one variadic Control input per
 /// predecessor at raw slots `0..N`, no fixed prefix. Anchored on the control
-/// output at slot 0. Its `PhiToken` output at slot 1 is not modelled here.
+/// output at slot 0; the `PhiToken` output at slot 1 is reachable through
+/// [`output`](Self::output).
 pub struct RegionPat(NodePat);
 
 impl RegionPat {
@@ -443,6 +549,18 @@ impl RegionPat {
         Self(self.0.input_any(p))
     }
 
+    /// A sibling output at raw slot `slot`. Numbering is per node kind, laid
+    /// out by the IR's `expected_signature`. Returns a terminal taking one of
+    /// `.capture(c)`, `.of_width(w)`, `.of_type(ty)`.
+    pub fn output(self, slot: usize) -> OutputPat<Self> {
+        OutputPat::at(self, Some(slot))
+    }
+
+    /// Some output rather than a fixed slot; otherwise
+    /// [`output`](Self::output).
+    pub fn any_output(self) -> OutputPat<Self> {
+        OutputPat::at(self, None)
+    }
     /// Binds the control output.
     pub fn capture(self, c: Capture) -> Self {
         Self(self.0.capture(c))
@@ -465,24 +583,58 @@ pub fn region() -> RegionPat {
     RegionPat(NodePat::node(KindSpec::Exact(NodeKind::Region)).with_control_value(0))
 }
 
-/// Inputs `[ctrl(0), address(1)]`. The one control output per arm is not
-/// modelled, so the pattern is rooted on the node itself.
+impl WithOutput for RegionPat {
+    fn capture_output(self, slot: Option<usize>, c: Capture) -> Self {
+        Self(self.0.capture_output(slot, c))
+    }
+    fn output_width(self, slot: Option<usize>, bits: u32) -> Self {
+        Self(self.0.output_width(slot, bits))
+    }
+    fn output_ty(self, slot: Option<usize>, ty: ValueType) -> Self {
+        Self(self.0.output_ty(slot, ty))
+    }
+}
+
+/// Inputs `[ctrl(0), selector(1)]`, one control output per arm. No anchor
+/// output, so the pattern is rooted on the node itself; `output` /
+/// `any_output` reach the arm edges.
 pub struct SwitchPat(NodePat);
 
 impl SwitchPat {
-    /// `inputs[1]`.
-    pub fn address<P: MatchPat + 'static>(self, p: P) -> Self {
+    /// `inputs[1]`, the value the switch dispatches on. The arms' addresses
+    /// are the control outputs, not this slot.
+    pub fn selector<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input(1, p))
     }
 
     /// `inputs[0]`. The sub-pattern's root produces a control edge.
-    pub fn preceded_by<P: MatchPat + 'static>(self, p: P) -> Self {
+    pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_control(0, p))
     }
 
     /// See [`CallPat::any_input`].
     pub fn any_input<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_any(p))
+    }
+
+    /// Raw input slot `slot`, unshifted. Slot numbering is per node kind, laid
+    /// out by the IR's `expected_signature`; the named accessors above are the
+    /// intended surface and this is the escape hatch beneath them.
+    pub fn input<P: MatchPat + 'static>(self, slot: usize, p: P) -> Self {
+        Self(self.0.input(slot, p))
+    }
+
+    /// A sibling output at raw slot `slot`. Numbering is per node kind, laid
+    /// out by the IR's `expected_signature`. Returns a terminal taking one of
+    /// `.capture(c)`, `.of_width(w)`, `.of_type(ty)`.
+    pub fn output(self, slot: usize) -> OutputPat<Self> {
+        OutputPat::at(self, Some(slot))
+    }
+
+    /// Some output rather than a fixed slot; otherwise
+    /// [`output`](Self::output).
+    pub fn any_output(self) -> OutputPat<Self> {
+        OutputPat::at(self, None)
     }
 
     pub fn capture(self, c: Capture) -> Self {
@@ -494,8 +646,28 @@ impl SwitchPat {
     }
 }
 
+impl MatchPat for SwitchPat {
+    /// Node-rooted: the synthesized `Any` output is what an alternation or an
+    /// existential slot wires; no value slot can bind it.
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.0.compile_alt_arm(b)
+    }
+}
+
 pub fn switch() -> SwitchPat {
     SwitchPat(NodePat::node(KindSpec::Exact(NodeKind::Switch)))
+}
+
+impl WithOutput for SwitchPat {
+    fn capture_output(self, slot: Option<usize>, c: Capture) -> Self {
+        Self(self.0.capture_output(slot, c))
+    }
+    fn output_width(self, slot: Option<usize>, bits: u32) -> Self {
+        Self(self.0.output_width(slot, bits))
+    }
+    fn output_ty(self, slot: Option<usize>, ty: ValueType) -> Self {
+        Self(self.0.output_ty(slot, ty))
+    }
 }
 
 /// An `If` carries two control-output vertices, true at slot 0 and false at
@@ -507,11 +679,23 @@ pub fn switch() -> SwitchPat {
 #[derive(Default)]
 pub struct IfPat {
     cond: Option<crate::node_builders::SubCompiler>,
+    ctrl: Option<crate::node_builders::SubCompiler>,
+    /// Sparse raw input slots, `ANY_INPUT_SLOT` for the existentials.
+    inputs: Vec<(usize, crate::node_builders::SubCompiler)>,
+    outputs: Vec<(Option<usize>, IfOutput)>,
     true_branch: Option<BranchWalk>,
     false_branch: Option<BranchWalk>,
     capture: Option<Capture>,
     capture_true: Option<Capture>,
     capture_false: Option<Capture>,
+    branch_captures: WalkCaptures,
+}
+
+/// The one aspect a single `.output(slot)` / `.any_output()` call commits.
+enum IfOutput {
+    Capture(Capture),
+    Width(u32),
+    Ty(ValueType),
 }
 
 impl IfPat {
@@ -519,6 +703,43 @@ impl IfPat {
     pub fn cond<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.cond = Some(Box::new(move |b| p.compile(b)));
         self
+    }
+
+    /// `inputs[0]`. The sub-pattern's root produces a control edge.
+    pub fn ctrl<P: MatchPat + 'static>(mut self, p: P) -> Self {
+        self.ctrl = Some(super::node_pat::control_compiler(p));
+        self
+    }
+
+    /// Raw input slot `slot`, unshifted. Slot numbering is per node kind, laid
+    /// out by the IR's `expected_signature`; the named accessors above are the
+    /// intended surface and this is the escape hatch beneath them.
+    pub fn input<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
+        self.inputs.push((slot, Box::new(move |b| p.compile(b))));
+        self
+    }
+
+    /// See [`CallPat::any_input`]. An `If` has two inputs, the control
+    /// predecessor and the condition.
+    pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
+        self.inputs.push((
+            crate::matcher::ANY_INPUT_SLOT,
+            Box::new(move |b| p.compile(b)),
+        ));
+        self
+    }
+
+    /// A sibling output at raw slot `slot`: `0` is the true control edge, `1`
+    /// the false one. Returns a terminal taking one of `.capture(c)`,
+    /// `.of_width(w)`, `.of_type(ty)`.
+    pub fn output(self, slot: usize) -> OutputPat<Self> {
+        OutputPat::at(self, Some(slot))
+    }
+
+    /// Some output rather than a fixed slot; otherwise
+    /// [`output`](Self::output).
+    pub fn any_output(self) -> OutputPat<Self> {
+        OutputPat::at(self, None)
     }
 
     /// Matches `pat` against the single consumer of control output slot 0.
@@ -529,10 +750,19 @@ impl IfPat {
     ///
     /// # Captures
     ///
-    /// A capture bound inside `pat` matches against an *isolated* `Bindings`,
-    /// observable to `pat`'s own `when_match` predicates but not propagated
-    /// into the outer `Match`. Match the branch separately if you need its
-    /// bindings.
+    /// `pat` matches against the enclosing match's live `Bindings`: what it
+    /// binds reaches the outer `Match`, and a capture it shares with the
+    /// condition or the other branch must bind the same thing in both or the
+    /// match is rejected.
+    ///
+    /// # Every binding per branch
+    ///
+    /// `pat` enumerates: every commutative ordering and every existential slot
+    /// it can bind produces its own outer match, exactly as it would standalone,
+    /// and the two branches combine, so `N` true bindings against `M` false ones
+    /// are `N * M` matches. Enumerating is what lets a binding rejected by the
+    /// other branch or by a guard above fall through to the next one instead of
+    /// losing the match.
     ///
     /// # Panics
     ///
@@ -542,7 +772,7 @@ impl IfPat {
     }
 
     /// Control output slot 1. See [`with_true`](Self::with_true), which also
-    /// documents the panic and branch-capture isolation.
+    /// documents the panic and the branch-capture agreement rule.
     pub fn with_false(self, pat: Pattern) -> Self {
         self.with_branch(1, pat)
     }
@@ -550,9 +780,19 @@ impl IfPat {
     /// `slot` 0 is true, 1 is false.
     fn with_branch(mut self, slot: usize, pat: Pattern) -> Self {
         validate_branch_pattern(&pat);
-        let walk = Box::new(move |m: &crate::Matcher, if_node| {
-            match_branch_consumer(m, if_node, slot, &pat)
-        });
+        self.branch_captures.bound.extend(pat.bound_captures());
+        // Both branches must match, so each one's guarantees carry over whole.
+        self.branch_captures
+            .guaranteed
+            .extend(pat.guaranteed_captures().unwrap_or_default());
+        let walk = Box::new(
+            move |m: &crate::Matcher,
+                  if_node,
+                  b: &mut crate::Bindings,
+                  k: &mut dyn FnMut(&mut crate::Bindings) -> bool| {
+                match_branch_consumer(m, if_node, slot, &pat, b, k)
+            },
+        );
         if slot == 0 {
             self.true_branch = Some(walk);
         } else {
@@ -581,17 +821,25 @@ impl IfPat {
     }
 
     pub fn build(self) -> Pattern {
+        let mut b = MatcherBuilder::new();
+        self.lower(&mut b);
+        b.finish()
+    }
+
+    fn lower(self, b: &mut MatcherBuilder) -> PatNodeRef {
         let IfPat {
             cond,
+            ctrl,
+            inputs,
+            outputs,
             true_branch,
             false_branch,
             capture,
             capture_true,
             capture_false,
+            branch_captures,
         } = self;
-        let mut b = MatcherBuilder::new();
         let node = b.node(KindSpec::Exact(NodeKind::If));
-        // Two genuine control-output vertices: true at 0, false at 1.
         let true_out = b.control_output(node, 0);
         let false_out = b.control_output(node, 1);
         if let Some(c) = capture_true {
@@ -602,62 +850,112 @@ impl IfPat {
         }
 
         if let Some(cond) = cond {
-            let c = cond(&mut b);
+            let c = cond(&mut *b);
             b.input(node, 1, c);
         }
-        // The forward-walks inspect the If's control outputs and their use
-        // lists, not the outer match bindings, so both ride one node
-        // predicate anchored on the true control output.
+        if let Some(ctrl) = ctrl {
+            let c = ctrl(&mut *b);
+            b.input(node, 0, c);
+        }
+        for (slot, compile) in inputs {
+            let o = compile(&mut *b);
+            b.input(node, slot, o);
+        }
+        for (slot, aspect) in outputs {
+            let out = match slot {
+                Some(slot) => b.value_output(node, slot),
+                None => b.any_slot_value_output(node),
+            };
+            match aspect {
+                IfOutput::Capture(c) => {
+                    b.set_output_any(out);
+                    b.capture_output(out, c);
+                }
+                IfOutput::Width(bits) => {
+                    b.set_output_any(out);
+                    b.set_value_width(out, bits);
+                }
+                IfOutput::Ty(ty) => b.set_value_ty(out, ty),
+            }
+        }
+        // The forward-walks bind into the enclosing match, so they ride the
+        // binding walk rather than the node predicate, which runs before the
+        // condition's own captures exist.
         if true_branch.is_some() || false_branch.is_some() {
-            b.set_node_predicate(
+            b.set_binding_walk(
                 true_out,
-                Box::new(move |m, if_node| {
-                    if let Some(tb) = &true_branch
-                        && !tb(m, if_node)
-                    {
-                        return false;
-                    }
-                    if let Some(fb) = &false_branch
-                        && !fb(m, if_node)
-                    {
-                        return false;
-                    }
-                    true
-                }),
+                // Nested, not sequential: the false walk runs inside each true
+                // configuration, so a false rejection re-drives the true branch.
+                Box::new(
+                    move |m, if_node, bnd, k| match (&true_branch, &false_branch) {
+                        (Some(tb), Some(fb)) => tb(m, if_node, bnd, &mut |b| fb(m, if_node, b, k)),
+                        (Some(w), None) | (None, Some(w)) => w(m, if_node, bnd, k),
+                        (None, None) => k(bnd),
+                    },
+                ),
+                branch_captures,
             );
         }
         if let Some(c) = capture {
             b.capture_node(node, c);
         }
-        b.finish()
+        node
+    }
+}
+
+impl WithOutput for IfPat {
+    fn capture_output(mut self, slot: Option<usize>, c: Capture) -> Self {
+        self.outputs.push((slot, IfOutput::Capture(c)));
+        self
+    }
+    fn output_width(mut self, slot: Option<usize>, bits: u32) -> Self {
+        self.outputs.push((slot, IfOutput::Width(bits)));
+        self
+    }
+    fn output_ty(mut self, slot: Option<usize>, ty: ValueType) -> Self {
+        self.outputs.push((slot, IfOutput::Ty(ty)));
+        self
+    }
+}
+
+impl MatchPat for IfPat {
+    /// Node-rooted: the two control outputs stay sibling vertices and an `Any`
+    /// output is synthesized for an alternation or existential slot to wire.
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        let node = self.lower(b);
+        b.any_value_output(node)
     }
 }
 
 /// Rejects a branch pattern that is not single-rooted and matchable, so a
 /// multi-sink / rootless / cyclic one fails eagerly at build time instead of
-/// reading as a silent "branch did not match" at match time. Branch captures
-/// are deliberately NOT rejected.
+/// reading as a silent "branch did not match" at match time.
 ///
 /// # Panics
 ///
 /// If `pat` has no derivable match root.
-#[allow(clippy::panic)]
 fn validate_branch_pattern(pat: &Pattern) {
     if let Err(e) = pat.root() {
         panic!("If branch pattern is not matchable ({e})");
     }
 }
 
-/// `false` when the output has zero or several consumers, or when `pat` does
-/// not match.
+/// `false` when the output has zero or several consumers, or when no
+/// configuration of `pat` against `bindings` is accepted.
 ///
 /// The consumer may be value-producing, such as a `Region`, or a zero-output
-/// kind such as `Return`; `match_at` dispatches through both shapes.
+/// kind such as `Return`; the match dispatches through both shapes.
+///
+/// [`crate::Matcher`]'s node-rooted entry enumerates, so `k` runs once per way
+/// `pat` binds;
+/// see [`IfPat::with_true`].
 fn match_branch_consumer(
     matcher: &crate::Matcher,
     if_node: NodeId,
     output_index: usize,
     pat: &Pattern,
+    bindings: &mut crate::Bindings,
+    k: &mut dyn FnMut(&mut crate::Bindings) -> bool,
 ) -> bool {
     let f = matcher.function();
     let outputs = f.node_outputs(if_node);
@@ -669,23 +967,23 @@ fn match_branch_consumer(
     };
     // `validate_branch_pattern` proved `pat` single-rooted at build time, so
     // an `Err` here is a real bug and is surfaced rather than swallowed.
-    match matcher.match_at(first, pat) {
-        Ok(opt) => opt.is_some(),
+    match matcher.match_at_into(first, pat, bindings, k) {
+        Ok(hit) => hit,
         Err(e) => unreachable!("validated branch pattern failed to match: {e}"),
     }
 }
 
-pub fn if_node() -> IfPat {
+pub fn if_else() -> IfPat {
     IfPat::default()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::if_node;
+    use super::if_else;
 
     #[test]
     fn if_pattern_has_two_control_output_vertices() {
-        let pat = if_node().build();
+        let pat = if_else().build();
         assert_eq!(
             pat.control_output_count(),
             2,

@@ -1,6 +1,3 @@
-//! `CallOtherPat::name(s)` matches on the `call_other_name` side-table, not
-//! the `user_op_id` payload. Combinable with `user_op_id` / `arg`.
-
 use strider_ir::FunctionBuilder;
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{Matcher, call_other};

@@ -1,15 +1,7 @@
-#![allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable
-)]
-
 use object::{Object, ObjectSymbol};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Build via `make -C fixtures` if this fixture isn't present yet
-    // (the example expects it pre-built; see CLAUDE.md).
+    // Pre-built by `make -C fixtures`.
     let binary_path = "fixtures/out/x86/arithmetic.elf";
     let symbol = "add";
 
@@ -20,7 +12,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let arch = strider_target::SleighArch::x86();
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem_reader)?;
-    // The driver OWNS the Sleigh and builds the CFG itself.
     let mut strider = strider_orchestrator::Lifter::new(arch, sleigh)?;
     let cc = strider_target::CallingConvention::x86_cdecl().build(strider.sleigh_regs())?;
 

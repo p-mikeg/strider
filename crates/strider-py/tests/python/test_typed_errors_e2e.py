@@ -15,7 +15,6 @@ import strider
 
 
 def test_reader_error_on_overflowing_region_addr():
-    """`BufferReader` rejects a base_addr + len that overflows u64."""
     with pytest.raises(strider.StriderError, match=r"(?i)overflow"):
         # 0xFFFFFFFFFFFFFFFE + 4 bytes overflows u64.
         strider.reader.BufferReader(0xFFFF_FFFF_FFFF_FFFE, b"\x00\x00\x00\x00")
@@ -37,23 +36,23 @@ def test_reader_error_on_unknown_symbol(x86_memory_elf):
 
 def test_pattern_error_on_reserved_capture_name():
     """`"_"` and `"any_"` are reserved for the free constructors, so they
-    are rejected as `.cap(name)` strings."""
+    are rejected as `.capture(name)` strings."""
     from strider.pattern import anything
     p = anything()
     with pytest.raises(strider.StriderError):
-        p.cap("_")
+        p.capture("_")
     with pytest.raises(strider.StriderError):
-        p.cap("any_")
+        p.capture("any_")
 
 
-def test_pattern_error_on_ordered_finalized_pat():
-    """`.ordered()` on an already-finalized `Pat` would silently no-op, so
-    it raises instead."""
-    from strider.pattern import add, var, Capture
+def test_pattern_error_on_ordered_without_an_operand_pair():
+    """`.ordered()` has nothing to pin on a wildcard, so it raises there
+    rather than no-opping; on a binary op it is a real constraint."""
+    from strider.pattern import anything, int_add, var, Capture
     x, y = Capture(), Capture()
-    pat = add(var(x), var(y))
+    assert int_add(var(x), var(y)).ordered() is not None
     with pytest.raises(strider.StriderError):
-        pat.ordered()
+        anything().ordered()
 
 
 def test_lift_error_on_unmapped_entry_address():
@@ -108,8 +107,8 @@ def test_unknown_call_other_via_x86_clflushopt_instruction():
 
 
 def test_unresolved_indirect_branch_via_jmp_rax():
-    """Regression: an unresolvable indirect branch used to raise StriderError.
-    It is now reported through `analyze`'s third return value.
+    """An unresolvable indirect branch is reported through `analyze`'s third
+    return value rather than raised.
 
     `FF E0` = `jmp rax`, where rax is the function-entry value, so no
     classifier arm can resolve it.

@@ -1,8 +1,6 @@
 //! Indirect branch that resolves to `Single(fentry_addr)` as a tail
 //! call: the spliced Call must be built with the per-address override.
 
-#![allow(clippy::unwrap_used, clippy::expect_used)]
-
 use rustc_hash::FxHashMap;
 use strider_ir::IRViewer;
 
@@ -14,7 +12,7 @@ use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
 
-/// Lift + optimise the function at `entry` over `sleigh` with the standard
+/// Lift and optimise the function at `entry` over `sleigh` with the standard
 /// SystemV-x86_64 convention, the given `fn_max_size`, and the per-address
 /// CC overrides (preset CCs, built against `sleigh`'s register table).
 fn run_at(
@@ -66,12 +64,11 @@ fn x86_64_indirect_jmp_to_const_bytes() -> (Vec<u8>, u64, u64) {
     (bs, 0x1000, 0x9000)
 }
 
-/// Regression: `SpecialTerm::TailCall::skips_opcode` only skipped
-/// `Branch`/`CondBranch`, so the `BranchIndirect` insn was lifted by the
-/// per-insn loop (emitting `IndirectBranch` + terminating the region) and
-/// `handle_tail_call` crashed with "attempted to insert into terminated
-/// region 0". Fixed by extending the skip-set to include
-/// `BranchIndirect`.
+/// `SpecialTerm::TailCall::skips_opcode` covers `BranchIndirect` alongside
+/// `Branch`/`CondBranch`: lifting a `BranchIndirect` insn in the per-insn loop
+/// emits an `IndirectBranch` and terminates the region, after which
+/// `handle_tail_call` panics with "attempted to insert into terminated
+/// region 0".
 #[test]
 fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list() {
     let (bytes, entry, call_target) = x86_64_indirect_jmp_to_const_bytes();
@@ -80,7 +77,7 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
     let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
-    overrides.insert(call_target, TargetCC::x86_64_all_preserving());
+    overrides.insert(call_target, TargetCC::x86_64_systemv().preserves_all());
 
     // 9 bytes covers `mov rax, imm` + `jmp rax` exactly.
     let bfg = run_at(sleigh, entry, 9, overrides);
@@ -103,10 +100,13 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
             .all(|&v| bfg.get_vn_for_value(v).is_some()),
         "every spliced ret-val / clobber output must carry its varnode tag"
     );
+    // Against the OVERRIDE's own lists: `2 + outs.len() - 2` would hold for
+    // any arity, including a splice that emitted no ret-val group at all.
+    let (ret, clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.get_cc(call_id));
     assert_eq!(
         outs.len(),
-        2 + tagged_outputs,
-        "Call output count = 2 (ctrl + mem) + tagged ret-val/clobber count"
+        2 + ret.len() + clob.len(),
+        "Call output count = 2 (ctrl + mem) + the override's ret-val/clobber count"
     );
     let (default_ret, default_clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.default_cc());
     let default_total = default_ret.len() + default_clob.len();
@@ -121,10 +121,9 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
     );
 }
 
-/// The other in-place-edit tests exercise the editor in isolation and
-/// deliberately skip `validate`; this one runs the full validator on the
-/// resolved function, pinning that the spliced Call+Return shape (arity,
-/// vn-tagged outputs, fingerprints) is well-formed end-to-end.
+/// Runs the full validator on the resolved function, pinning that the spliced
+/// Call+Return shape (arity, vn-tagged outputs, fingerprints) is well-formed
+/// end-to-end; the other in-place-edit tests exercise the editor in isolation.
 ///
 /// Also documents the SSoT split `target_calling_context_for` encodes: the
 /// spliced **Return** returns from the *current* function to *its*
@@ -145,7 +144,7 @@ fn resolved_override_tail_call_passes_whole_graph_validate() {
     // all_preserving differs from SystemV in its (empty) clobber set but
     // keeps the same ret-val regs, so the spliced Call's clobber group
     // shrinks while the Return's ret-val arity stays at the function default.
-    overrides.insert(call_target, TargetCC::x86_64_all_preserving());
+    overrides.insert(call_target, TargetCC::x86_64_systemv().preserves_all());
 
     let bfg = run_at(sleigh, entry, 9, overrides);
 
@@ -172,9 +171,8 @@ fn resolved_override_tail_call_passes_whole_graph_validate() {
     );
 }
 
-/// Regression for the **no-override** path: with no per-address CC,
-/// `for_target` derives the effective convention from
-/// `Function::default_cc()` (the SSoT) instead of a threaded `&Lifter`.
+/// The **no-override** path: with no per-address CC, `build_cc_call` falls back
+/// to `Function::default_cc()`, the SSoT.
 /// Pins that the default-CC spliced Call passes `validate` and does not
 /// double-count its ret regs; the other end-to-end tail-call test
 /// discards the `run` result, so this is the one that checks the default
@@ -199,12 +197,23 @@ fn indirect_default_cc_tail_call_runs_and_does_not_double_count_ret_regs() {
         .all_node_ids()
         .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
         .expect("orchestrator must splice a Call for the default-CC tail call");
-    let tagged: Vec<rsleigh::Vn> = bfg
-        .node_outputs(call_id)
+    let outs = bfg.node_outputs(call_id);
+    let (ret, clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.default_cc());
+    assert_eq!(
+        outs.len(),
+        2 + ret.len() + clob.len(),
+        "post-edit Call arity = 2 (ctrl + mem) + the default CC's ret-val/clobber count"
+    );
+    let tagged: Vec<rsleigh::Vn> = outs
         .iter()
         .skip(2)
         .filter_map(|&v| bfg.get_vn_for_value(v))
         .collect();
+    assert_eq!(
+        tagged.len(),
+        outs.len() - 2,
+        "an untagged output would silently drop out of the duplicate check",
+    );
     let distinct: std::collections::HashSet<rsleigh::Vn> = tagged.iter().copied().collect();
     assert_eq!(
         tagged.len(),
@@ -242,12 +251,21 @@ fn indirect_override_with_ret_regs_does_not_double_count_them() {
         .expect("orchestrator must splice a Call for the override tail call");
 
     // Register tags for outputs past [Control, Memory].
-    let tagged: Vec<rsleigh::Vn> = bfg
-        .node_outputs(call_id)
+    let outs = bfg.node_outputs(call_id);
+    let tagged: Vec<rsleigh::Vn> = outs
         .iter()
         .skip(2)
         .filter_map(|&v| bfg.get_vn_for_value(v))
         .collect();
+    assert_eq!(
+        tagged.len(),
+        outs.len() - 2,
+        "an untagged output would silently drop out of the duplicate check",
+    );
+    assert!(
+        !tagged.is_empty(),
+        "SystemV declares ret regs, so the group cannot be empty",
+    );
     let distinct: std::collections::HashSet<rsleigh::Vn> = tagged.iter().copied().collect();
     assert_eq!(
         tagged.len(),
@@ -265,7 +283,7 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
     let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
-    overrides.insert(call_target, TargetCC::x86_64_all_preserving());
+    overrides.insert(call_target, TargetCC::x86_64_systemv().preserves_all());
 
     let bfg = run_at(sleigh, entry, 10, overrides);
 
@@ -287,7 +305,12 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
             .all(|&v| bfg.get_vn_for_value(v).is_some()),
         "every spliced ret-val / clobber output must carry its varnode tag"
     );
-    assert_eq!(outs.len(), 2 + tagged_outputs);
+    let (ret, clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.get_cc(call_id));
+    assert_eq!(
+        outs.len(),
+        2 + ret.len() + clob.len(),
+        "Call output count = 2 (ctrl + mem) + the override's ret-val/clobber count"
+    );
     let (default_ret, default_clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.default_cc());
     let default_total = default_ret.len() + default_clob.len();
     assert!(

@@ -1,12 +1,14 @@
-//! Reusable graph fixtures. A shape lives here iff two or more test modules
-//! need it; single-use shapes stay inline in the test.
+//! A shape lives here iff two or more test modules need it; single-use shapes
+//! stay inline in the test.
 
 use strider_ir::node::ValueType;
 use strider_ir::{FloatBinaryOp, Function, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
-use strider_ir_test_utils::{Tb, reg_vn, stack_vn_x86_64 as stack_vn};
+use strider_ir_test_utils::Tb;
 
-// Op-rooted graphs, parameterised so a test can drive the whole op enum.
+// Shared with the other crate's copy of this module, so they live in the
+// dev-dependency both already use.
+pub(crate) use strider_ir_test_utils::{if_cmp_then_return, single_initial_var};
 
 pub(crate) fn int_bin_5_3(op: IntBinaryOp) -> Function {
     let mut t = Tb::empty();
@@ -116,75 +118,6 @@ pub(crate) fn store_then_load_ram(addr: u64, data: u64) -> Function {
     t.store_ram(a, d);
     let v = t.load_ram(a, ValueType::I64);
     t.ret_val(v)
-}
-
-/// `if c == 1 { return 10 } else { return 20 }`, `c` a caller-supplied const.
-pub(crate) fn if_cmp_then_return(c: u64) -> Function {
-    let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
-    let entry = t.region();
-    let true_r = t.region();
-    let false_r = t.region();
-    t.set_entry(entry);
-
-    t.enter(true_r);
-    let ten = t.u64(10);
-    t.fb_mut()
-        .build_return(Some(ten), &[])
-        .expect("build_return");
-
-    t.enter(false_r);
-    let twenty = t.u64(20);
-    t.fb_mut()
-        .build_return(Some(twenty), &[])
-        .expect("build_return");
-
-    t.enter(entry);
-    let c_node = t.u64(c);
-    let one = t.u64(1);
-    let cond = t.int_cmp(c_node, one, IntCmpOp::Equal);
-    t.build_if(cond, true_r, false_r);
-    t.finish()
-}
-
-/// Compiler-inverted [`if_cmp_then_return`]: same source program, but the IR
-/// wraps the cond in `Not(..)` and swaps the branches, giving the literal
-/// shape `if !(c == 1) { return 20 } else { return 10 }`.
-pub(crate) fn if_cmp_then_return_inverted(c: u64) -> Function {
-    let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
-    let entry = t.region();
-    let true_r = t.region();
-    let false_r = t.region();
-    t.set_entry(entry);
-
-    t.enter(true_r);
-    let twenty = t.u64(20);
-    t.fb_mut()
-        .build_return(Some(twenty), &[])
-        .expect("build_return");
-
-    t.enter(false_r);
-    let ten = t.u64(10);
-    t.fb_mut()
-        .build_return(Some(ten), &[])
-        .expect("build_return");
-
-    t.enter(entry);
-    let c_node = t.u64(c);
-    let one = t.u64(1);
-    let inner = t.int_cmp(c_node, one, IntCmpOp::Equal);
-    let cond = t.bool_not(inner);
-    t.build_if(cond, true_r, false_r);
-    t.finish()
-}
-
-/// `return(reg)` over one tracked register, yielding a single
-/// `InitialVar(reg)`. Returns the register so tests can build `phi_for` /
-/// `initial_var_for` patterns against it.
-pub(crate) fn single_initial_var() -> (Function, rsleigh::Vn) {
-    let reg = reg_vn(0x00, 8);
-    let mut t = Tb::with_vars(&[reg]);
-    let v = t.read_var(&reg);
-    (t.ret_val(v), reg)
 }
 
 // `function_arg_reg` lives in the strider-orchestrator copy of this file: it

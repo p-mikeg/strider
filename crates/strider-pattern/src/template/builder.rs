@@ -1,13 +1,6 @@
-//! Exposes construction verbs only, and deliberately no match verbs
-//! (`set_node_predicate`, `set_value_width`, `set_force_ordered`,
-//! `set_post_match`, predicate kindspecs): a [`Template`] is a build recipe,
-//! not a query.
-//!
-//! Every node it creates is either a [`TmplNodeKind::Build`] carrying a
-//! [`TemplateKind`], exact by default and overwritable at rewrite time via
-//! [`set_template_kind`](TemplateBuilder::set_template_kind), or a
-//! [`TmplNodeKind::Capture`] leaf. A finished [`Template`] is therefore
-//! materialisable by construction.
+//! Construction verbs for a [`Template`]. A [`TmplNodeKind::Build`] node's
+//! [`TemplateKind`] is exact by default and overwritable at rewrite time via
+//! [`set_template_kind`](TemplateBuilder::set_template_kind).
 
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{ConstId, IntBinaryOp};
@@ -49,6 +42,7 @@ impl SealNode for TmplNodeKind {
 /// duplicate slots error out.
 pub struct TemplateBuilder {
     core: StagedGraph<TmplNodeKind, TmplValue>,
+    declared_captures: Vec<crate::Capture>,
 }
 
 impl Default for TemplateBuilder {
@@ -61,7 +55,15 @@ impl TemplateBuilder {
     pub fn new() -> Self {
         Self {
             core: StagedGraph::new(),
+            declared_captures: Vec::new(),
         }
+    }
+
+    /// Declares a capture a dynamic-kind closure reads at instantiation. It has
+    /// no vertex, so without this the construction-time coverage check cannot
+    /// see it and an LHS that never binds it errors mid-rewrite instead.
+    pub fn declare_capture(&mut self, c: crate::Capture) {
+        self.declared_captures.push(c);
     }
 
     /// One value output at slot 0.
@@ -127,16 +129,15 @@ impl TemplateBuilder {
         self.add_value(n, TmplValue::ValueCapture(c))
     }
 
-    /// Materialises every staged node in producer-before-consumer order,
-    /// with no structural validation: a multi-sink template surfaces as an
-    /// [`instantiate`](crate::template::instantiate) error, not here.
+    /// Materialises every staged node in producer-before-consumer order. A
+    /// multi-sink template surfaces as an
+    /// [`instantiate`](crate::template::instantiate) error.
     ///
     /// # Panics
     /// On a cyclic staged graph (a builder bug).
-    #[allow(clippy::expect_used)]
     pub fn finish(self) -> Template {
         let graph = self.core.seal().expect("cyclic staged template graph");
-        Template::from_graph(graph)
+        Template::from_graph(graph, self.declared_captures)
     }
 
     fn add_built_output(&mut self, node: TmplNodeRef, out: TmplOutput) -> TmplValueRef {
@@ -159,14 +160,11 @@ impl TemplateBuilder {
         // `Variant`-shaped placeholder from `node()`.
         let spec = match kind {
             KindSpec::Exact(k) => TemplateKind::Exact(k),
-            // Overwritten by `set_template_kind` before sealing. Captures go
-            // through `capture`, not through overwriting a build node.
             _ => TemplateKind::Exact(NodeKind::IntConst(ConstId::from_u32(0))),
         };
         TmplNodeRef(self.core.add_node(TmplNodeKind::Build(spec)))
     }
 
-    #[allow(clippy::unreachable)]
     fn out_data_of(&mut self, out: TmplValueRef) -> &mut TmplOutput {
         match self.core.output_mut(out.node, out.output) {
             TmplValue::TmplOutput(o) => o,

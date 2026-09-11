@@ -34,10 +34,12 @@ fn raw_builder(
         ret_stack_pop,
         link_register_vn: None,
         preserves_memory: false,
+        preserves_all_registers: false,
         no_return: false,
+        ..Default::default()
     };
-    // `FunctionBuilder::new` does not seed the stack vn, so mirror the lifter
-    // and add it: `build_call` reads SP and needs it tracked.
+    // Mirror the lifter and track the stack vn: `build_call` reads SP from the
+    // variable table.
     let mut tracked = tracked;
     if !tracked.contains(&cc.stack_vn) {
         tracked.push(cc.stack_vn);
@@ -257,8 +259,10 @@ fn build_int_binary_op_produces_binary_op_node() -> Result<()> {
     Ok(())
 }
 
+/// Builders do not auto-coerce, so the caller widens the narrow operand
+/// itself and the build then takes it.
 #[test]
-fn build_int_binary_op_coerces_narrower_operand() -> Result<()> {
+fn build_int_binary_op_takes_an_explicitly_widened_operand() -> Result<()> {
     let mut b = empty_builder()?;
     let lhs = b.build_int_const(1u64, ValueType::I8)?;
     let rhs = b.build_int_const(2u64, ValueType::I64)?;
@@ -280,7 +284,7 @@ fn build_int_cmp_produces_bool_output() -> Result<()> {
     Ok(())
 }
 
-/// Boolean AND is a bitwise `IntBinaryOp(And)` at `I1`, not a distinct op.
+/// Boolean AND is a bitwise `IntBinaryOp(And)` at `I1`.
 #[test]
 fn build_boolean_operation_produces_bool_binary_node() -> Result<()> {
     let mut b = empty_builder()?;
@@ -345,6 +349,20 @@ fn build_float_const_has_correct_bits() -> Result<()> {
             "{label}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn build_float_const_masks_bits_above_the_declared_width() -> Result<()> {
+    let mut b = empty_builder()?;
+    let bits = 1.0f32.to_bits() as u64;
+    let clean = b.build_float_const(bits, ValueType::F32);
+    let garbage = b.build_float_const(bits | 0xDEAD_BEEF_0000_0000, ValueType::F32);
+    assert_eq!(producer_kind(&b, clean), NodeKind::FloatConst(bits));
+    assert_eq!(
+        clean, garbage,
+        "an F32 pattern with garbage upper bits must dedup onto the masked node"
+    );
     Ok(())
 }
 
@@ -441,9 +459,97 @@ fn cast_to_float_of_int_is_int_bits_to_float() -> Result<()> {
     let raw = b.build_int_const(42u64, ValueType::I64)?;
     let opaque = b.build_int_unary_operation(raw, crate::node::IntUnaryOp::Neg, ValueType::I64)?;
     let cast = b.cast_to_float_if_needed(opaque, ValueType::F64)?;
-    // No CastToFloat node exists; a same-width conversion is a bitcast.
+    // A same-width conversion is a bitcast.
     assert_eq!(*b.function().kind_of_value(cast), NodeKind::IntBitsToFloat);
     assert_eq!(b.value_type(cast)?, ValueType::F64);
+    Ok(())
+}
+
+/// Mirrors the lifter's `build_cc_call`: float arguments are appended at their
+/// ABI position, a container shared by two registers passes one slice each,
+/// and the list stops at the first untracked position.
+#[test]
+fn build_call_cc_float_args_are_positional_slices() -> Result<()> {
+    use strider_ir_test_utils::reg_vn;
+    let sp = strider_ir_test_utils::stack_vn_x86_64();
+    let q0 = reg_vn(0x100, 16);
+    let (d0, d1) = (reg_vn(0x100, 8), reg_vn(0x108, 8));
+    // Outside q0, and seeded by `FunctionBuilder::new` like every other ABI
+    // argument register, so it is its own tracked container.
+    let d2 = reg_vn(0x110, 8);
+    let r0 = reg_vn(0x0, 8);
+
+    let cc = strider_target::BuiltCallingConvention {
+        arg_passing_regs: vec![r0],
+        arg_passing_regs_float: vec![d0, d1, d2],
+        callee_saved_regs: vec![q0, r0, sp],
+        ret_val_regs: vec![],
+        ret_val_regs_float: vec![],
+        stack_vn: sp,
+        stack_args: None,
+        ret_stack_pop: 0,
+        link_register_vn: None,
+        preserves_memory: false,
+        preserves_all_registers: false,
+        no_return: false,
+    };
+    let mut b = FunctionBuilder::new(vec![q0, r0, sp], cc, strider_target::Endianness::Little)?;
+    let region = b.create_region_all()?;
+    b.set_entry_region_all(region)?;
+    b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let addr = b.build_int_const(0xdead_beefu64, ValueType::I64)?;
+    let call = b.build_call_cc(addr, None)?;
+
+    let f = b.function();
+    let inputs: Vec<_> = f.node_inputs(call).into_iter().collect();
+    // [ctrl, mem, target, sp, r0, float 0, float 1, float 2].
+    assert_eq!(inputs.len(), 8, "one argument per ABI float position");
+    let (float0, float1) = (inputs[5], inputs[6]);
+    assert_eq!(
+        f.value_type(float0)?,
+        ValueType::I64,
+        "d0 passes its own 8-byte slice, not the 16-byte q0"
+    );
+    assert_eq!(f.value_type(float1)?, ValueType::I64);
+    assert_ne!(float0, float1, "one argument is never two");
+    Ok(())
+}
+
+/// A 9-byte varnode is `is_wide_int`, yet its constants still fit the `u128`
+/// carrier, so they intern as `Bits`.
+#[test]
+fn i72_const_round_trips_through_the_interner() -> Result<()> {
+    let mut b = empty_builder()?;
+    assert!(ValueType::I72.is_wide_int());
+    let v: u128 = (1u128 << 72) - 1;
+    let c = b.build_int_const(v, ValueType::I72)?;
+    assert_eq!(b.function().int_const_u128(c), Some(v));
+    assert_eq!(b.function().int_const_i128(c), Some(-1));
+    // Masking to the declared width drops the carry out of bit 71.
+    let over = b.build_int_const(v + 1, ValueType::I72)?;
+    assert_eq!(b.function().int_const_u128(over), Some(0));
+    Ok(())
+}
+
+/// The inferred type must be bitcastable from the integer it was inferred for.
+#[test]
+fn infer_float_type_matches_input_width() -> Result<()> {
+    let mut b = empty_builder()?;
+    for (int_ty, float_ty) in [
+        (ValueType::I16, ValueType::F16),
+        (ValueType::I32, ValueType::F32),
+        (ValueType::I64, ValueType::F64),
+        (ValueType::I80, ValueType::F80),
+        (ValueType::I128, ValueType::F128),
+    ] {
+        let raw = b.build_int_const(1u64, int_ty)?;
+        let opaque = b.build_int_unary_operation(raw, crate::node::IntUnaryOp::Neg, int_ty)?;
+        assert_eq!(b.infer_float_type(opaque)?, float_ty, "for {int_ty}");
+        let cast = b.cast_to_float_if_needed(opaque, float_ty)?;
+        assert_eq!(b.value_type(cast)?, float_ty);
+    }
     Ok(())
 }
 
@@ -549,7 +655,7 @@ fn build_call_other_with_result_returns_typed_value() -> Result<()> {
         Some(out_vn),
         false,
     )?;
-    let val = result.ok_or_else(|| anyhow!("output vn = Some → ret-val output"))?;
+    let val = result.ok_or_else(|| anyhow!("output vn = Some -> ret-val output"))?;
     assert_eq!(
         b.function().value_kind(val),
         ValueKind::Typed(ValueType::I32)
@@ -717,7 +823,6 @@ fn fitting_values_intern_as_bits() -> Result<()> {
 /// `all_vns` comes out sorted whatever order the caller passed.
 #[test]
 fn function_builder_sorts_all_vns_deterministically() -> Result<()> {
-    // Handed in out of sorted order.
     let r_hi = reg_vn(0x40, 8);
     let r_lo = reg_vn(0x10, 8);
     let r_mid = reg_vn(0x20, 8);
@@ -844,7 +949,7 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
         b.function().value_kind(outs[1]),
         ValueKind::Memory
     ));
-    let result_val = result.ok_or_else(|| anyhow!("output vn → a result value"))?;
+    let result_val = result.ok_or_else(|| anyhow!("output vn -> a result value"))?;
     assert_eq!(outs[2], result_val, "slot 2 is the returned result value");
     assert_eq!(
         b.function().value_kind(result_val),
@@ -871,7 +976,7 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
     assert_eq!(rax_after, outs[3], "RAX rebound to its clobber output");
 
     let mem_after = b.cur_region_memory()?;
-    assert_ne!(mem_before, mem_after, "clobbers_memory → memory advances");
+    assert_ne!(mem_before, mem_after, "clobbers_memory -> memory advances");
 
     assert_eq!(
         b.function().side_tables().call_other_name(node),
@@ -1035,7 +1140,7 @@ fn build_segment_op_is_cacheable_across_identical_calls() -> Result<()> {
     let off = b.build_int_const(0x100u64, ValueType::I32)?;
     let a = b.build_segment_op(1, seg, off, ValueType::I64)?;
     let c = b.build_segment_op(1, seg, off, ValueType::I64)?;
-    assert_eq!(a, c, "SegmentOp is pure → identical calls must dedup");
+    assert_eq!(a, c, "SegmentOp is pure -> identical calls must dedup");
     Ok(())
 }
 
@@ -1058,7 +1163,7 @@ fn build_cpool_ref_is_not_deduplicated() -> Result<()> {
     let c = b.build_cpool_ref(&[r0], ValueType::I64)?;
     assert_ne!(
         a, c,
-        "CPoolRef is non-cacheable → must yield distinct nodes"
+        "CPoolRef is non-cacheable -> must yield distinct nodes"
     );
     Ok(())
 }
@@ -1083,8 +1188,8 @@ fn build_new_is_not_deduplicated() -> Result<()> {
     Ok(())
 }
 
-/// Widening an I1 emits a real `ZeroExtend`; being an ordinary 1-bit integer,
-/// it needs no separate bool-to-int cast.
+/// An I1 is an ordinary 1-bit integer, so widening it emits a real
+/// `ZeroExtend`.
 #[test]
 fn extend_if_needed_with_bool_input_inserts_cast_to_int() -> Result<()> {
     let mut b = empty_builder()?;
@@ -1112,7 +1217,7 @@ fn extend_if_needed_with_bool_input_inserts_cast_to_int() -> Result<()> {
     assert_eq!(
         *b.function().node_kind(extended_node),
         NodeKind::Extend(ExtendOp::ZeroExtend),
-        "I1 → wider int must be a ZeroExtend"
+        "I1 -> wider int must be a ZeroExtend"
     );
     let first_value = b
         .function()
@@ -1152,10 +1257,26 @@ fn int_bits_to_float_f80_emits_node_not_const() -> Result<()> {
     Ok(())
 }
 
+/// A `FloatConst` wider than the `u64` payload, which `build_float_const`
+/// refuses. Built directly so the fold guards below still see the shape they
+/// exist for.
+fn unrepresentable_float_const(
+    b: &mut impl crate::IRBuilder,
+    bits: u64,
+    ty: ValueType,
+) -> crate::node::ValueId {
+    let node = b.create_node(
+        NodeKind::FloatConst(bits),
+        [],
+        [crate::node::ValueKind::Typed(ty)],
+    );
+    b.function().node_outputs(node)[0]
+}
+
 #[test]
 fn float_bits_to_int_f80_emits_node_not_const() -> Result<()> {
     let mut b = empty_builder()?;
-    let float_const = b.build_float_const(0xBEEFu64, ValueType::F80);
+    let float_const = unrepresentable_float_const(&mut b, 0xBEEFu64, ValueType::F80);
     let result = b.build_float_bits_to_int(float_const, ValueType::I80)?;
     let node = b.function().producer(result);
     assert_eq!(
@@ -1169,6 +1290,40 @@ fn float_bits_to_int_f80_emits_node_not_const() -> Result<()> {
     assert!(
         matches!(b.function().node_kind(node_u64), NodeKind::IntConst(_)),
         "F64 path must still fold to IntConst (regression check)"
+    );
+    Ok(())
+}
+
+/// `FloatConst`'s u64 payload cannot carry a 128-bit pattern, so the fold must
+/// be skipped for F128 as it is for F80. F16 fits and still folds.
+#[test]
+fn bits_casts_fold_by_payload_width() -> Result<()> {
+    let mut b = empty_builder()?;
+
+    let wide = b.build_int_const(u128::MAX, ValueType::I128)?;
+    let f128 = b.build_int_bits_to_float(wide, ValueType::F128)?;
+    assert_eq!(
+        b.function().node_kind(b.function().producer(f128)),
+        &NodeKind::IntBitsToFloat,
+        "F128 must not fold through a u64 payload"
+    );
+
+    let f128_const = unrepresentable_float_const(&mut b, 0xBEEF, ValueType::F128);
+    let back = b.build_float_bits_to_int(f128_const, ValueType::I128)?;
+    assert_eq!(
+        b.function().node_kind(b.function().producer(back)),
+        &NodeKind::FloatBitsToInt,
+        "F128 input must not fold through a u64 payload"
+    );
+
+    let half = b.build_int_const(0x3C00u64, ValueType::I16)?;
+    let f16 = b.build_int_bits_to_float(half, ValueType::F16)?;
+    assert!(
+        matches!(
+            b.function().node_kind(b.function().producer(f16)),
+            NodeKind::FloatConst(_)
+        ),
+        "F16 fits the payload and folds"
     );
     Ok(())
 }
@@ -1268,15 +1423,15 @@ fn unique_vn(off: u64, size: u32) -> rsleigh::Vn {
 /// Only the container is tracked, whether the contained varnode starts at the
 /// container's offset or mid-container, mirroring `ah` inside `ax`.
 #[test]
-fn new_raw_filters_contained_unique_varnodes() -> Result<()> {
+fn raw_builder_filters_contained_unique_varnodes() -> Result<()> {
     let cases: [(&str, rsleigh::Vn, rsleigh::Vn); 2] = [
         (
-            "new_raw_filters_overlapping_unique_varnodes",
+            "raw_builder_filters_overlapping_unique_varnodes",
             unique_vn(0x100, 8),
             unique_vn(0x100, 4), // same offset, narrower
         ),
         (
-            "new_raw_filters_mid_offset_unique_subvarnode",
+            "raw_builder_filters_mid_offset_unique_subvarnode",
             unique_vn(0x200, 8),
             unique_vn(0x204, 4), // upper 4 bytes of outer
         ),
@@ -1306,7 +1461,7 @@ fn new_raw_filters_contained_unique_varnodes() -> Result<()> {
 
 /// The filter must not over-reach: disjoint varnodes both stay tracked.
 #[test]
-fn new_raw_keeps_disjoint_unique_varnodes() -> Result<()> {
+fn raw_builder_keeps_disjoint_unique_varnodes() -> Result<()> {
     let a = unique_vn(0x300, 4);
     let b_vn = unique_vn(0x400, 4); // different offset, disjoint
     let b = raw_builder(
@@ -1363,7 +1518,7 @@ fn convert_to_int_if_needed_coerces_bool_to_int() -> Result<()> {
     assert_eq!(
         b.function().int_const_u128(coerced),
         Some(1),
-        "constant I1 → I8 must fold to IntConst(1) typed I8"
+        "constant I1 -> I8 must fold to IntConst(1) typed I8"
     );
     Ok(())
 }
@@ -1946,7 +2101,135 @@ mod build_call_with_cc {
         assert_eq!(
             function.get_cc(call_node),
             function.default_cc(),
-            "no override → effective CC is the function default"
+            "no override -> effective CC is the function default"
+        );
+    }
+
+    /// Float argument registers are APPENDED to the integer ones, so an
+    /// existing `call().arg(N)` query over integer arguments keeps its index.
+    #[test]
+    fn float_args_follow_integer_args_in_call_inputs() {
+        let regs = x86_64_regs();
+        let rdi = regs.name_to_vn("RDI").unwrap();
+        let rsi = regs.name_to_vn("RSI").unwrap();
+        let xmm0 = regs.name_to_vn("XMM0").unwrap();
+        let xmm1 = regs.name_to_vn("XMM1").unwrap();
+        let rsp = regs.name_to_vn("RSP").unwrap();
+        let cc = BuiltCallingConvention {
+            arg_passing_regs: vec![rdi, rsi],
+            arg_passing_regs_float: vec![xmm0, xmm1],
+            stack_vn: rsp,
+            ..Default::default()
+        };
+        let mut b = FunctionBuilder::new(
+            vec![rdi, rsi, xmm0, xmm1, rsp],
+            cc,
+            strider_target::Endianness::Little,
+        )
+        .unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
+        b.set_region(region);
+        let addr = b.build_int_const(0xdead_beef_u64, ValueType::I64).unwrap();
+        // Snapshot the pre-call value of each argument register, so the
+        // assertion names registers rather than value ids.
+        let expected: Vec<ValueId> = [rdi, rsi, xmm0, xmm1]
+            .iter()
+            .map(|vn| b.read_variable(vn).unwrap())
+            .collect();
+        let call = b.build_call_cc(addr, None).unwrap();
+
+        let function = b.function();
+        let inputs: Vec<_> = function.node_inputs(call).into_iter().collect();
+        assert_eq!(
+            inputs.len(),
+            8,
+            "ctrl, mem, target, sp, 2 int args, 2 float args"
+        );
+        assert_eq!(
+            &inputs[4..],
+            expected.as_slice(),
+            "argument slots must read RDI, RSI, XMM0, XMM1 in that order",
+        );
+    }
+
+    /// Registers sharing one container each pass their own slice, so one
+    /// argument is never two, and a register the caller never listed is seeded
+    /// rather than dropped.
+    #[test]
+    fn float_args_slice_shared_containers_and_cover_every_abi_position() {
+        let regs = x86_64_regs();
+        let rsp = regs.name_to_vn("RSP").unwrap();
+        let xmm0 = regs.name_to_vn("XMM0").unwrap();
+        let xmm1 = regs.name_to_vn("XMM1").unwrap();
+        // A narrow view of XMM0: the low 8 bytes, as a `movsd` argument sees it.
+        let xmm0_lo = rsleigh::Vn {
+            addr_space: xmm0.addr_space,
+            addr_off: xmm0.addr_off,
+            size: 8,
+        };
+        let cc = BuiltCallingConvention {
+            arg_passing_regs_float: vec![xmm0, xmm0_lo, xmm1],
+            stack_vn: rsp,
+            ..Default::default()
+        };
+        let mut b =
+            FunctionBuilder::new(vec![xmm0, rsp], cc, strider_target::Endianness::Little).unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
+        b.set_region(region);
+        let addr = b.build_int_const(0xdead_beef_u64, ValueType::I64).unwrap();
+        let expected_xmm0 = b.read_variable(&xmm0).unwrap();
+        let call = b.build_call_cc(addr, None).unwrap();
+
+        let function = b.function();
+        let inputs: Vec<_> = function.node_inputs(call).into_iter().collect();
+        assert_eq!(
+            inputs.len(),
+            7,
+            "ctrl, mem, target, sp, then float ABI positions 0, 1 and 2"
+        );
+        assert_eq!(inputs[4], expected_xmm0, "position 0 is the whole XMM0");
+        assert_eq!(
+            function.value_type(inputs[5]).unwrap(),
+            ValueType::I64,
+            "position 1 is XMM0's low half, sliced out of the container"
+        );
+    }
+
+    /// An override convention is not the one the function was built against, so
+    /// its float argument registers may be untracked. Emitting the prefix before
+    /// the first gap keeps index `j` meaning ABI position `j`.
+    #[test]
+    fn override_cc_float_args_stop_at_an_untracked_position() {
+        let regs = x86_64_regs();
+        let rsp = regs.name_to_vn("RSP").unwrap();
+        let xmm0 = regs.name_to_vn("XMM0").unwrap();
+        let xmm1 = regs.name_to_vn("XMM1").unwrap();
+        let cc = BuiltCallingConvention {
+            stack_vn: rsp,
+            ..Default::default()
+        };
+        let mut b =
+            FunctionBuilder::new(vec![xmm0, rsp], cc, strider_target::Endianness::Little).unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
+        b.set_region(region);
+        let addr = b.build_int_const(0xdead_beef_u64, ValueType::I64).unwrap();
+        // XMM1 was never seeded, so ABI float position 1 has no SSA slot.
+        let override_cc = BuiltCallingConvention {
+            arg_passing_regs_float: vec![xmm0, xmm1, xmm0],
+            stack_vn: rsp,
+            ..Default::default()
+        };
+        let call = b.build_call_cc(addr, Some(&override_cc)).unwrap();
+
+        let function = b.function();
+        let inputs: Vec<_> = function.node_inputs(call).into_iter().collect();
+        assert_eq!(
+            inputs.len(),
+            5,
+            "ctrl, mem, target, sp, then float ABI position 0 alone"
         );
     }
 
@@ -1961,18 +2244,21 @@ mod build_call_with_cc {
         // registers into the tracked set even when the caller does not list
         // them, so an all-preserving override must mark each one callee-saved
         // or it shows up as a clobber output.
-        let rdx = regs.name_to_vn("RDX").unwrap();
-        let xmm0 = regs.name_to_vn("XMM0").unwrap();
-        let xmm1 = regs.name_to_vn("XMM1").unwrap();
         let _ = rdi;
+        // Every tracked variable callee-saved means zero clobbers.
+        let mut callee_saved = vec![rax];
+        callee_saved.extend(
+            cc.ret_val_regs
+                .iter()
+                .chain(cc.ret_val_regs_float.iter())
+                .chain(cc.arg_passing_regs_float.iter()),
+        );
         let mut b =
             FunctionBuilder::new(vec![rax, rsp], cc, strider_target::Endianness::Little).unwrap();
         let region = b.create_region_all().unwrap();
         b.set_entry_region_all(region).unwrap();
         b.set_region(region);
 
-        // Every tracked variable callee-saved means zero clobbers.
-        let mut callee_saved = vec![rax, rdx, xmm0, xmm1];
         callee_saved.extend(x86_64_arg_regs(&regs));
         let override_cc = BuiltCallingConvention {
             arg_passing_regs: vec![],
@@ -1984,7 +2270,9 @@ mod build_call_with_cc {
             ret_stack_pop: 0,
             link_register_vn: None,
             preserves_memory: false,
+            preserves_all_registers: false,
             no_return: false,
+            ..Default::default()
         };
 
         let addr = b.build_int_const(0xdead_beef_u64, ValueType::I64).unwrap();
@@ -2368,7 +2656,9 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
         ret_stack_pop: 0,
         link_register_vn: None,
         preserves_memory: false,
+        preserves_all_registers: false,
         no_return: false,
+        ..Default::default()
     };
     let mut b = FunctionBuilder::new(vec![rdi, rsi, sp], cc, strider_target::Endianness::Little)?;
     let region = b.create_region_all()?;
@@ -2409,7 +2699,9 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
         ret_stack_pop: 0,
         link_register_vn: None,
         preserves_memory: false,
+        preserves_all_registers: false,
         no_return: false,
+        ..Default::default()
     };
     // `FunctionBuilder::new` seeds edi then drops it as enclosed by rdi, so
     // the var table is keyed by rdi.
@@ -2461,5 +2753,35 @@ fn build_switch_makes_n_control_outputs_and_records_targets() -> Result<()> {
     assert_eq!(f.node_inputs(sw).len(), 2, "[ctrl, address]");
     assert_eq!(f.node_outputs(sw).len(), 2, "one control output per arm");
     assert_eq!(f.side_tables().switch_targets(sw), &[0x1000, 0x1020]);
+    Ok(())
+}
+
+/// x86-64 declares `GDTR`/`IDTR` at 12 bytes and `LDTR`/`TR` at 14, and
+/// `wire_entry_and_build_initial_vars` maps EVERY tracked varnode, so one
+/// unmappable width fails the whole function.
+#[test]
+fn twelve_and_fourteen_byte_tracked_varnodes_build_initial_vars() -> Result<()> {
+    for size in [12u32, 14] {
+        let vn = rsleigh::Vn {
+            addr_off: 0x2220,
+            addr_space: rsleigh::VnSpace::REGISTER,
+            size,
+        };
+        let mut b = raw_builder(
+            vec![vn],
+            &[],
+            &[],
+            &[],
+            None,
+            0,
+            strider_target::Endianness::Little,
+        )?;
+        let region = b.create_region_all()?;
+        b.set_entry_region_all(region)?;
+        assert!(
+            b.function().initial_var_value(&vn).is_some(),
+            "a {size}-byte tracked varnode must get an InitialVar"
+        );
+    }
     Ok(())
 }

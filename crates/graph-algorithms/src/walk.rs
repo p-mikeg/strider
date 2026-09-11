@@ -1,6 +1,3 @@
-//! Depth-first pre-order and post-order walks over any [`GraphRef`], with a
-//! pluggable [`VisitTracker`].
-
 use alloc::vec::Vec;
 use core::ops::ControlFlow;
 
@@ -60,8 +57,7 @@ impl<N: EntityRef> VisitTracker<N> for DenseEntitySet<N> {
     }
 }
 
-/// Stack state for a pre-order DFS, split out so callers can drive a walk
-/// without owning the graph.
+/// Stack state for a pre-order DFS, split out from [`PreOrder`].
 #[derive(Debug)]
 pub struct PreOrderContext<N> {
     stack: Vec<N>,
@@ -113,7 +109,10 @@ impl<N: Copy> Default for PreOrderContext<N> {
     }
 }
 
-/// Yields each node exactly once, before its successors.
+/// Yields each node exactly once, roots first. A DFS preorder, which is NOT a
+/// topological order: successors are explored LIFO, so at a join the node is
+/// emitted from the successor explored first and precedes the earlier sibling
+/// that also reaches it.
 pub struct PreOrder<G: GraphRef, V> {
     graph: G,
     visited: V,
@@ -131,8 +130,7 @@ impl<G: GraphRef, V: VisitTracker<G::NodeId>> PreOrder<G, V> {
         }
     }
 
-    /// Recovers the reached-node set after draining the walk, without
-    /// re-collecting the yielded ids.
+    /// The reached-node set, once the walk is drained.
     pub fn into_visited(self) -> V {
         self.visited
     }
@@ -156,8 +154,7 @@ where
     PreOrder::new(graph, roots)
 }
 
-/// Stack state for a post-order DFS, split out so callers can drive a walk
-/// without owning the graph.
+/// Stack state for a post-order DFS, split out from [`PostOrder`].
 #[derive(Debug)]
 pub struct PostOrderContext<N> {
     stack: Vec<(WalkPhase, N)>,
@@ -171,9 +168,7 @@ impl<N: Copy> PostOrderContext<N> {
     /// Roots go on the stack in source order, which (LIFO) visits them
     /// backwards and so preserves source order in any derived RPO: if `u`
     /// precedes `v` in `roots` and no path runs `v -> u`, `u` precedes `v` in
-    /// the RPO. Callers rely on this: a function's live-node RPO must start at
-    /// its entry, and scheduling's topological sort must keep block headers
-    /// and terminators in place.
+    /// the RPO.
     pub fn reset(&mut self, roots: impl IntoIterator<Item = N>) {
         self.stack.clear();
         self.stack
@@ -193,8 +188,8 @@ impl<N: Copy> PostOrderContext<N> {
         }
     }
 
-    /// Exposes both pre- and post-visit events, unlike
-    /// [`next`](Self::next), which filters down to the post-visits.
+    /// Exposes both pre- and post-visit events; [`next`](Self::next) filters
+    /// down to the post-visits.
     pub fn next_event(
         &mut self,
         graph: impl GraphRef<NodeId = N>,
@@ -233,7 +228,9 @@ impl<N: Copy> Default for PostOrderContext<N> {
     }
 }
 
-/// Yields each node exactly once, after all of its successors.
+/// Yields each node exactly once, after every successor that is not a DFS
+/// ancestor of it. On a cycle the back edge's target is already on the stack,
+/// so it is yielded after the successor that closes the cycle.
 pub struct PostOrder<G: GraphRef, V> {
     graph: G,
     visited: V,
@@ -254,12 +251,6 @@ impl<G: GraphRef, V: VisitTracker<G::NodeId>> PostOrder<G, V> {
     /// See [`PostOrderContext::next_event`].
     pub fn next_event(&mut self) -> Option<(WalkPhase, G::NodeId)> {
         self.ctx.next_event(&self.graph, &mut self.visited)
-    }
-
-    /// Recovers the reached-node set after draining the walk, without
-    /// re-collecting the yielded ids.
-    pub fn into_visited(self) -> V {
-        self.visited
     }
 }
 

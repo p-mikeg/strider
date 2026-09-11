@@ -1,7 +1,3 @@
-//! Variant-agnostic `*_any` constructors: match any variant in an op family,
-//! bind the node to a [`Capture`], then recover the variant afterwards via
-//! `Match::get_*_op(c, &graph)`.
-
 use strider_ir::node::ValueType;
 use strider_ir::{
     FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp,
@@ -11,7 +7,7 @@ use strider_pattern::*;
 use super::support::{Tb, assertions as a};
 
 #[test]
-fn int_binary_any_captures_each_variant() {
+fn any_int_binary_captures_each_variant() {
     for op in [
         IntBinaryOp::Add,
         IntBinaryOp::Mul,
@@ -27,7 +23,7 @@ fn int_binary_any_captures_each_variant() {
         let ov = Capture::new();
         let m = a::unique(
             &function,
-            int_binary_any(int_const(5u128), int_const(3u128))
+            any_int_binary(int_const(5u128), int_const(3u128))
                 .capture(ov)
                 .into_pattern(),
         );
@@ -39,7 +35,7 @@ fn int_binary_any_captures_each_variant() {
 }
 
 #[test]
-fn int_binary_any_retries_swap_only_for_commutative() {
+fn any_int_binary_retries_swap_only_for_commutative() {
     // Add is commutative, so the swapped pattern still matches.
     let mut t = Tb::empty();
     let l = t.u64(5);
@@ -49,7 +45,7 @@ fn int_binary_any_retries_swap_only_for_commutative() {
     let ov = Capture::new();
     a::matches(
         &function,
-        int_binary_any(int_const(3u128), int_const(5u128))
+        any_int_binary(int_const(3u128), int_const(5u128))
             .capture(ov)
             .into_pattern(),
         1,
@@ -64,14 +60,14 @@ fn int_binary_any_retries_swap_only_for_commutative() {
     let ov = Capture::new();
     a::none(
         &function,
-        int_binary_any(int_const(3u128), int_const(5u128))
+        any_int_binary(int_const(3u128), int_const(5u128))
             .capture(ov)
             .into_pattern(),
     );
 }
 
 #[test]
-fn int_unary_any_captures_variant() {
+fn any_int_unary_captures_variant() {
     // Neg is the only IntUnaryOp; complement is Xor(x, all_ones).
     let op = IntUnaryOp::Neg;
     let mut t = Tb::empty();
@@ -82,7 +78,7 @@ fn int_unary_any_captures_variant() {
     let ov = Capture::new();
     let m = a::unique(
         &function,
-        int_unary_any(int_const(42u128)).capture(ov).into_pattern(),
+        any_int_unary(int_const(42u128)).capture(ov).into_pattern(),
     );
     assert_eq!(
         m.bindings().get_int_unary_op(ov, function.graph()),
@@ -91,7 +87,7 @@ fn int_unary_any_captures_variant() {
 }
 
 #[test]
-fn int_cmp_any_captures_variant() {
+fn any_int_cmp_captures_variant() {
     for op in [
         IntCmpOp::Equal,
         IntCmpOp::Less,
@@ -108,7 +104,7 @@ fn int_cmp_any_captures_variant() {
         let ov = Capture::new();
         let m = a::unique(
             &function,
-            int_cmp_any(int_const(5u128), int_const(3u128))
+            any_int_cmp(int_const(5u128), int_const(3u128))
                 .capture(ov)
                 .into_pattern(),
         );
@@ -117,7 +113,7 @@ fn int_cmp_any_captures_variant() {
 }
 
 #[test]
-fn int_cmp_any_retries_swap_only_for_commutative_cmp() {
+fn any_int_cmp_retries_swap_only_for_commutative_cmp() {
     // Equal is symmetric.
     let mut t = Tb::empty();
     let l = t.u64(5);
@@ -128,7 +124,7 @@ fn int_cmp_any_retries_swap_only_for_commutative_cmp() {
     let ov = Capture::new();
     a::matches(
         &function,
-        int_cmp_any(int_const(3u128), int_const(5u128))
+        any_int_cmp(int_const(3u128), int_const(5u128))
             .capture(ov)
             .into_pattern(),
         1,
@@ -144,14 +140,14 @@ fn int_cmp_any_retries_swap_only_for_commutative_cmp() {
     let ov = Capture::new();
     a::none(
         &function,
-        int_cmp_any(int_const(3u128), int_const(5u128))
+        any_int_cmp(int_const(3u128), int_const(5u128))
             .capture(ov)
             .into_pattern(),
     );
 }
 
 #[test]
-fn float_cmp_any_retries_swap_only_for_commutative_cmp() {
+fn any_float_cmp_retries_swap_only_for_commutative_cmp() {
     // Equal is symmetric.
     let mut t = Tb::empty();
     let l = t.f64(1.0);
@@ -163,7 +159,7 @@ fn float_cmp_any_retries_swap_only_for_commutative_cmp() {
     let ov = Capture::new();
     a::matches(
         &function,
-        float_cmp_any(float_const(2.0f64.to_bits()), float_const(1.0f64.to_bits()))
+        any_float_cmp(float_const(2.0f64.to_bits()), float_const(1.0f64.to_bits()))
             .capture(ov)
             .into_pattern(),
         1,
@@ -179,14 +175,14 @@ fn float_cmp_any_retries_swap_only_for_commutative_cmp() {
     let ov2 = Capture::new();
     a::none(
         &g2,
-        float_cmp_any(float_const(2.0f64.to_bits()), float_const(1.0f64.to_bits()))
+        any_float_cmp(float_const(2.0f64.to_bits()), float_const(1.0f64.to_bits()))
             .capture(ov2)
             .into_pattern(),
     );
 }
 
 #[test]
-fn bool_bin_any_captures_variant() {
+fn any_bool_binary_captures_variant() {
     // Booleans are 1-bit ints, so a boolean binary op is an IntBinaryOp at I1.
     for op in [IntBinaryOp::And, IntBinaryOp::Or, IntBinaryOp::Xor] {
         let mut t = Tb::empty();
@@ -199,7 +195,7 @@ fn bool_bin_any_captures_variant() {
         let ov = Capture::new();
         let m = a::unique(
             &function,
-            bool_bin_any(bool_const(true), bool_const(false))
+            any_bool_binary(bool_const(true), bool_const(false))
                 .capture(ov)
                 .into_pattern(),
         );
@@ -210,14 +206,11 @@ fn bool_bin_any_captures_variant() {
     }
 }
 
-// There are no bool-unary tests: with BitNot gone, a "bool unary op" is
-// Xor(_, IntConst(1)):I1, covered by bool_bin_any with an all-ones operand.
-
 /// After the bool-to-I1 collapse a wide 64-bit `And` shares its `NodeKind`
-/// with a boolean one, so `bool_bin_any` must gate on the `I1` output and
+/// with a boolean one, so `any_bool_binary` must gate on the `I1` output and
 /// reject the wide op.
 #[test]
-fn bool_bin_any_rejects_wide_int_op() {
+fn any_bool_binary_rejects_wide_int_op() {
     let mut t = Tb::empty();
     let bt = t.boolean(true);
     let bf = t.boolean(false);
@@ -233,7 +226,9 @@ fn bool_bin_any_rejects_wide_int_op() {
     let ob = Capture::new();
     let hits = a::matches(
         &function,
-        bool_bin_any(any(), any()).capture(ob).into_pattern(),
+        any_bool_binary(anything(), anything())
+            .capture(ob)
+            .into_pattern(),
         1,
     );
     let value = hits[0].value(ob).expect("matched value output");
@@ -243,12 +238,12 @@ fn bool_bin_any_rejects_wide_int_op() {
             .as_value()
             .map(|ty| ty.bit_width()),
         Some(1),
-        "bool_bin_any must match only the I1-output op, not a wide one",
+        "any_bool_binary must match only the I1-output op, not a wide one",
     );
 }
 
 #[test]
-fn float_binary_any_captures_variant() {
+fn any_float_binary_captures_variant() {
     for op in [FloatBinaryOp::Add, FloatBinaryOp::Mul, FloatBinaryOp::Div] {
         let mut t = Tb::empty();
         let l = t.f64(1.0);
@@ -260,7 +255,7 @@ fn float_binary_any_captures_variant() {
         let ov = Capture::new();
         let m = a::unique(
             &function,
-            float_binary_any(float_const(1.0f64.to_bits()), float_const(2.0f64.to_bits()))
+            any_float_binary(float_const(1.0f64.to_bits()), float_const(2.0f64.to_bits()))
                 .capture(ov)
                 .into_pattern(),
         );
@@ -272,7 +267,7 @@ fn float_binary_any_captures_variant() {
 }
 
 #[test]
-fn float_unary_any_captures_variant() {
+fn any_float_unary_captures_variant() {
     for op in [
         FloatUnaryOp::Neg,
         FloatUnaryOp::Abs,
@@ -288,7 +283,7 @@ fn float_unary_any_captures_variant() {
         let ov = Capture::new();
         let m = a::unique(
             &function,
-            float_unary_any(float_const(9.0f64.to_bits()))
+            any_float_unary(float_const(9.0f64.to_bits()))
                 .capture(ov)
                 .into_pattern(),
         );
@@ -300,7 +295,7 @@ fn float_unary_any_captures_variant() {
 }
 
 #[test]
-fn float_cmp_any_captures_variant() {
+fn any_float_cmp_captures_variant() {
     for op in [FloatCmpOp::Equal, FloatCmpOp::Less] {
         let mut t = Tb::empty();
         let l = t.f64(1.0);
@@ -312,7 +307,7 @@ fn float_cmp_any_captures_variant() {
         let ov = Capture::new();
         let m = a::unique(
             &function,
-            float_cmp_any(float_const(1.0f64.to_bits()), float_const(2.0f64.to_bits()))
+            any_float_cmp(float_const(1.0f64.to_bits()), float_const(2.0f64.to_bits()))
                 .capture(ov)
                 .into_pattern(),
         );
@@ -338,7 +333,7 @@ fn variant_any_composes_with_value_capture() {
     // orderings are two distinct bindings, natural order first.
     let hits = a::matches(
         &function,
-        int_binary_any(any_int_const().capture(lv), any_int_const().capture(rv))
+        any_int_binary(int_const(lv), int_const(rv))
             .capture(ov)
             .into_pattern(),
         2,

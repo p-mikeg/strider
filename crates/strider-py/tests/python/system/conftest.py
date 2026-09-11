@@ -1,9 +1,3 @@
-"""Per-arch system-test parametrisation.
-
-Every test taking the `arch_id` fixture runs once per supported
-architecture; missing fixture binaries skip cleanly.
-"""
-
 from __future__ import annotations
 
 import pathlib
