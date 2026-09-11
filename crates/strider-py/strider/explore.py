@@ -477,8 +477,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         the stop flag cuts a write that has none.
 
         Three deadlines, because the re-arming one is not an aggregate bound:
-        `total` is what stops a client that takes a trickle forever from
-        owning the single-threaded loop.
+        `total` is what stops ONE client that takes a trickle forever from
+        owning the single-threaded loop. It bounds that connection, not the
+        server: N connections that stall on a large body each own the loop for
+        their own `total` in turn, so the wait a healthy request sees grows
+        with N (measured: ~22 s for one staller, ~67 s for three). `shutdown`
+        and interpreter exit stay bounded by `stopping` either way.
         """
         stopping = cast("_Server", self.server).stopping
         view = memoryview(b)
