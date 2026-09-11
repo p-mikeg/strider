@@ -508,15 +508,46 @@ fn read_only_presets_exclude_a_writable_executable_mapping() {
 /// Section dedup is on the loaded address, so N headers naming ONE file range
 /// at N addresses each get their own copy and nothing in the file bounds their
 /// sum. A small image would otherwise ask for hundreds of gigabytes and abort.
+///
+/// The staggered shape is the same attack with every header's window shifted
+/// one byte on: distinct `(offset, size)` pairs, so a budget keyed on those
+/// grows its own denominator in lockstep with the copies and never fires. The
+/// bytes COVERED grow by one per header, which is what has to be counted.
 #[test]
 fn many_sections_over_one_file_range_are_rejected_not_copied() {
-    let bytes = common::elf_fixture::build_shared_file_range_elf(64, 4096);
-    let obj = parse(&bytes);
-    let err = elf_get_loadable_regions(&obj)
-        .expect_err("copy amplification must be an error, not an allocation");
+    for stagger in [0, 1] {
+        let bytes = common::elf_fixture::build_shared_file_range_elf(64, 4096, stagger);
+        let obj = parse(&bytes);
+        let err = elf_get_loadable_regions(&obj)
+            .expect_err("copy amplification must be an error, not an allocation");
+        assert!(
+            err.to_string().contains("distinct file bytes"),
+            "stagger {stagger}: {err}"
+        );
+    }
+}
+
+/// The staggered shape scales with `e_shnum`, so the refusal must come before
+/// the copies, not after: 200 sections over a 1 MB blob is 200 MB of `Vec`s,
+/// and 65k sections is hundreds of gigabytes.
+#[test]
+fn staggered_windows_are_refused_before_the_copies_are_made() {
+    let bytes = common::elf_fixture::build_shared_file_range_elf(200, 0x10_0000, 1);
     assert!(
-        err.to_string().contains("distinct file bytes"),
-        "got: {err}"
+        bytes.len() < 2 << 20,
+        "fixture geometry: the file itself stays small"
+    );
+    let obj = parse(&bytes);
+    let err = elf_get_loadable_regions(&obj).expect_err("copy amplification must be an error");
+    let copied: u64 = err
+        .to_string()
+        .split_whitespace()
+        .nth(3)
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("copied byte count in: {err}"));
+    assert!(
+        copied <= 5 * 0x10_0000,
+        "at most the ceiling plus the mapping that broke it, got {copied}"
     );
 }
 
