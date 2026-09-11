@@ -86,9 +86,8 @@ pub struct SideTables {
     /// (`StaleInitialVarIndex`).
     pub(crate) initial_var_index: FxHashMap<crate::node::InitialVnId, NodeId>,
     /// Whole-function frame-escape verdict, or `None` when not computed.
-    /// Cleared by every changing pass of the optimizer's fixed-point loop and
-    /// on compaction, NOT between post-passes: a post-pass that adds a `Call`
-    /// input must clear it itself.
+    /// Cleared after every changing pass of the optimizer's fixed-point loop,
+    /// after every post-pass, and on compaction.
     frame_escape: Cell<Option<bool>>,
 }
 
@@ -143,6 +142,14 @@ impl SideTables {
             .entry((ArgClass::Integer, index))
             .or_default()
             .push(value);
+    }
+
+    /// Drops the integer-class carriers at `first_index` and above, keeping the
+    /// register-passed ones below it.
+    #[inline]
+    pub fn clear_arg_values_from(&mut self, first_index: u32) {
+        self.arg_index_to_values
+            .retain(|(class, index), _| *class != ArgClass::Integer || *index < first_index);
     }
 
     /// Appends `value` to the carriers recorded for float-class `index`.
@@ -241,8 +248,8 @@ impl SideTables {
         self.frame_escape.set(Some(escapes));
     }
 
-    /// Invalidates the memo. The fixed-point loop calls it after every changing
-    /// pass; a post-pass that changes a `Call`'s inputs must call it itself.
+    /// Invalidates the memo. The pipeline calls it after every changing pass of
+    /// the fixed-point loop and after every post-pass.
     #[inline]
     pub fn clear_frame_escape(&self) {
         self.frame_escape.set(None);
