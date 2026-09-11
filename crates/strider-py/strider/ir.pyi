@@ -100,8 +100,8 @@ class Node:
         ...
     def op(self) -> Optional[str]:
         """The operation variant of an op-carrying node (`"Add"`, `"Less"`,
-        `"Neg"`, `"Sqrt"`), or `None` for a node carrying no operation
-        (`Region`, `Load`, `IntConst`, `Call`).
+        `"Neg"`, `"Sqrt"`, `"SignExtend"`), or `None` for a node carrying no
+        operation (`Region`, `Load`, `IntConst`, `Call`).
 
         One accessor covers every op family; the family itself is already in
         `kind()`, so `kind() == "IntBinaryOp(Xor)"` and `op() == "Xor"` name
