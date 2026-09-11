@@ -49,18 +49,25 @@ pub struct IfRegionSuccessors {
 }
 
 impl Cfg {
-    /// The outgoing edge whose target region CONTAINS the terminator's
-    /// `true_target` is the taken side, the other the fall-through.  A
-    /// degenerate `if (c) goto L else goto L` reports that region for both;
-    /// a non-`CondBranch` region reports `None` for both.
+    /// The outgoing edge to the region that STARTS at the terminator's
+    /// `true_target` is the taken side, failing that the one that merely
+    /// CONTAINS it; the remaining edge is the fall-through.  A degenerate
+    /// `if (c) goto L else goto L` reports that region for both; a
+    /// non-`CondBranch` region reports `None` for both.
     ///
-    /// Containment, not a start compare: a `true_target` off an instruction
-    /// boundary is seated as an edge to the region that OWNS it, which starts
-    /// elsewhere.  It also covers an intra-machine-instruction target at a
-    /// non-zero pcode index.  That seating can also make both arms answer one
-    /// region; such a target is reported on `interior_branch_targets`, so a
-    /// caller that needs to tell it from a real `goto L` / `goto L` reads that
-    /// channel.
+    /// Containment is the fallback, not the test: a `true_target` off an
+    /// instruction boundary is seated as an edge to the region that OWNS it,
+    /// which starts elsewhere.  It also covers an intra-machine-instruction
+    /// target at a non-zero pcode index.  That seating can also make both arms
+    /// answer one region; such a target is reported on
+    /// `interior_branch_targets`, so a caller that needs to tell it from a real
+    /// `goto L` / `goto L` reads that channel.
+    ///
+    /// A start compare has to win over containment because the two can name
+    /// different successors: `fn_max_size` cutting through the last instruction
+    /// leaves the fall-through region's span overhanging the bound, and an
+    /// out-of-bounds `true_target` inside that overhang is owned both by that
+    /// region and by the stub that starts at it.
     pub fn region_if(&self, region_id: RegionId) -> Result<IfRegionSuccessors> {
         let region = self
             .region_graph
@@ -73,29 +80,32 @@ impl Cfg {
             });
         };
         let true_target = *true_target;
-        let mut if_true_region = None;
-        let mut if_false_region = None;
+        let mut starts_at_taken = None;
+        let mut contains_taken = None;
+        let mut rest = None;
         for edge in self
             .region_graph
             .edges_directed(region_id, petgraph::Outgoing)
         {
             let target = edge.target();
-            let contains_taken = self
-                .region_graph
-                .node_weight(target)
-                .ok_or_else(|| {
-                    anyhow!("dangling edge target {target:?} from region {region_id:?}")
-                })?
-                .contains_addr(true_target);
-            // Guarding on `if_true_region.is_none()` keeps the degenerate
-            // both-arms-same-region case sane: the second edge falls through
-            // to `if_false_region` instead of overwriting the taken side.
-            if contains_taken && if_true_region.is_none() {
-                if_true_region = Some(target);
+            let successor = self.region_graph.node_weight(target).ok_or_else(|| {
+                anyhow!("dangling edge target {target:?} from region {region_id:?}")
+            })?;
+            // Each bucket takes at most one edge, so the degenerate
+            // both-arms-same-region case stays sane: the second edge falls
+            // through to a later bucket instead of overwriting the taken side.
+            if successor.start_addr == true_target && starts_at_taken.is_none() {
+                starts_at_taken = Some(target);
+            } else if successor.contains_addr(true_target) && contains_taken.is_none() {
+                contains_taken = Some(target);
             } else {
-                if_false_region = Some(target);
+                rest = Some(target);
             }
         }
+        let (if_true_region, if_false_region) = match starts_at_taken {
+            Some(taken) => (Some(taken), contains_taken.or(rest)),
+            None => (contains_taken, rest),
+        };
         Ok(IfRegionSuccessors {
             if_true_region,
             if_false_region,
