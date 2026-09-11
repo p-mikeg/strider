@@ -19,7 +19,7 @@ single arch you have a toolchain for.
 | `x86`, `x86_kernel` | `i686-linux-gnu-gcc`, else host `gcc` with `gcc-multilib` |
 | `x64` | host `gcc` |
 | `aarch64` | `gcc-aarch64-linux-gnu` |
-| `arm`, `arm_thumb` | `gcc-arm-linux-gnueabihf` |
+| `arm`, `arm_thumb`, `arm_be8` | `gcc-arm-linux-gnueabihf` |
 | `mips32be` | `gcc-mips-linux-gnu` |
 | `mips32le` | `gcc-mipsel-linux-gnu` |
 | `mips64be` | `gcc-mips64-linux-gnuabi64` |

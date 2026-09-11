@@ -19,7 +19,7 @@
 # to a skip, for building the one arch you have a toolchain for.
 
 OUTDIR := out
-ARCHES := x86 x86_kernel x64 aarch64 aarch64be arm arm_be arm_thumb \
+ARCHES := x86 x86_kernel x64 aarch64 aarch64be arm arm_be arm_be8 arm_thumb \
           mips32le mips32be mips64le mips64be \
           ppc32be ppc32le ppc64be ppc64le
 CASES  := $(notdir $(basename $(wildcard cases/*.c) $(wildcard cases/*.S)))
