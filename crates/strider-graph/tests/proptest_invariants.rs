@@ -970,12 +970,12 @@ fn out_of_bounds_remove_node_input_leaves_dedup_intact() {
     assert_use_list_consistent(&g);
 }
 
-/// A repeated id must be rejected: unchecked it would push the node twice, the
-/// remap would keep the second copy, and the relink would splice the orphaned
-/// first into the same values' use-lists, so `value_uses` reported consumers no
-/// live node owns.
+/// A repeated id must be rejected: unchecked it would build two input batches
+/// for one surviving node, the second replacing the first in its input list,
+/// and the blanket relink would splice the orphaned first batch into the same
+/// values' use-lists, so `value_uses` reported consumers no live node owns.
 #[test]
-#[should_panic(expected = "the second copy orphans")]
+#[should_panic(expected = "the second input batch")]
 fn retain_reachable_rejects_a_duplicate_node_id() {
     let mut g = TestGraph::new();
     let x = const_node(&mut g, 1);

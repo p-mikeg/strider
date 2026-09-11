@@ -4,9 +4,15 @@ use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
+    /// Sleigh contracts equal input and output sizes (`OpBehaviorCopy::
+    /// evaluateUnary` returns `in1` unchanged), so a mismatch is a malformed
+    /// decode.  Unchecked, `write_vn`'s `convert_to_int_if_needed` would
+    /// truncate a wider operand and zero-extend a narrower one, the second
+    /// being wrong for a signed carrier.
     pub(super) fn handle_copy(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let value = self.read_input(insn, 0)?;
         let out_vn = require_output_vn(insn)?;
+        super::arithmetic::require_equal_input_output_width(nth_input_or_err(insn, 0)?, out_vn)?;
+        let value = self.read_input(insn, 0)?;
         self.write_vn(out_vn, value)
     }
 

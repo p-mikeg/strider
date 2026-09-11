@@ -1341,6 +1341,38 @@ fn unsigned_div_rem_with_wider_lhs_does_not_silently_truncate() {
     }
 }
 
+/// `OpBehaviorCopy::evaluateUnary` returns `in1` unchanged, so Sleigh contracts
+/// equal input and output sizes.  Unguarded, `write_vn` truncates a wider
+/// operand and zero-extends a narrower one, which is wrong for a signed
+/// carrier.
+#[test]
+fn copy_input_width_must_match_the_output() {
+    let wide = Vn {
+        size: 8,
+        addr_off: 0x200,
+        addr_space: VnSpace::REGISTER,
+    };
+    for (label, input, output) in [
+        ("narrower input", reg(0), wide),
+        ("wider input", wide, reg(0)),
+    ] {
+        with_test_lifter_tracking(vec![wide, reg(0), reg(8)], |d, rid| {
+            let insn = Insn {
+                opcode: Opcode::Copy,
+                output: Some(output),
+                inputs: vec![input].into(),
+            };
+            let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
+            assert!(res.is_err(), "{label} must error");
+            let msg = format!("{:#}", res.unwrap_err());
+            assert!(
+                msg.contains("width mismatch"),
+                "{label}: error must name the width mismatch; got: {msg}"
+            );
+        });
+    }
+}
+
 /// `OpBehaviorIntSright` computes the sign fill at the INPUT width, this
 /// lowering at the OUTPUT width, so the two agree only at equal widths: with
 /// sizein=4, sizeout=8 and in1=0xFFFFFFFF GHIDRA yields 0x00000000FFFFFFFF and
