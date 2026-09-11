@@ -493,11 +493,10 @@ fn classify_table_dispatch_with_if_guard_bound_returns_multiple() {
 }
 
 #[test]
-fn classify_table_dispatch_diamond_both_paths_guarded_defers() {
-    // Both paths guard `idx < 4`, but both true edges feed the SAME 2-pred
-    // merge, and the soundness gate skips a guard whose consumer is a merge
-    // (one edge does not dominate it; other predecessors bypass).  So the
-    // dispatch defers even though both paths happen to agree.
+fn classify_table_dispatch_diamond_both_paths_guarded_resolves() {
+    // Both paths guard `idx < 4` and both true edges feed the SAME 2-pred
+    // merge, so no single guard node dominates the dispatch.  The bound is
+    // still proven: each edge carries it for the arm arriving on it.
     //
     //   entry  -> if (dummy)   -> path_a, path_b
     //   path_a -> if (idx < 4) -> dispatch, exit_a
@@ -555,11 +554,14 @@ fn classify_table_dispatch_diamond_both_paths_guarded_defers() {
     let function = b.build().unwrap();
 
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
-    let result = classify(&function, Some(&rom));
-    assert_eq!(
-        result, None,
-        "diamond merge guard is conservatively dropped by the soundness gate -> defers"
-    );
+    match classify(&function, Some(&rom)) {
+        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(
+            ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
+            vec![0x10, 0x20, 0x30, 0x40],
+            "exactly the four table entries, not a fifth read past them",
+        ),
+        other => panic!("both edges bound the index, so the site resolves; got {other:?}"),
+    }
 }
 
 #[test]

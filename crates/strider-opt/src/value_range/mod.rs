@@ -1,12 +1,14 @@
 //! Dominator-scoped per-`(value, region)` integer range analysis.
 //!
-//! Interval lattice with four seeds:
+//! Interval lattice with five seeds:
 //!
 //! - `If(IntCmp(v, const))` guards, edge-sensitive, propagated via the control
 //!   dominator tree, and back-propagated through an `Add(X, const)` spine.
 //! - `KnownBits` upper bounds and strides.
 //! - Guard recovery at a `Region` every predecessor of which bounds the same
 //!   value.
+//! - Per phi arm, the guard on the edge that arm arrives by, which is the only
+//!   channel for a bound sitting below the loop header it re-enters.
 //! - Forward propagation through a monotone constant scaling.
 //!
 //! Fail-closed: anything uncertain returns the full type range (top).
@@ -41,6 +43,31 @@ enum LadderHop {
     SameValueBelow(u128),
     /// Only `hi` carries; the low end and the stride do not.
     UpperBound,
+}
+
+/// One hop from an operand up to the value built from it, as the map it puts on
+/// the operand's interval.  Where [`LadderHop`] says how much of a bound
+/// survives, this applies it.
+#[derive(Clone, Copy)]
+enum ArmHop {
+    SameValue,
+    /// Identical below this mask, which the operand's `hi` must fit.
+    TruncateTo(u128),
+    /// Only `hi` carries; the low end and the stride do not.
+    UpperBound,
+    /// A monotone constant scaling, at the result's width mask.
+    Scaled(ScaleOp, u128),
+}
+
+impl ArmHop {
+    fn lift(self, iv: Interval) -> Option<Interval> {
+        match self {
+            ArmHop::SameValue => Some(iv),
+            ArmHop::TruncateTo(mask) => (iv.hi <= mask).then_some(iv),
+            ArmHop::UpperBound => Some(Interval::dense(0, iv.hi)),
+            ArmHop::Scaled(scale, mask) => Some(scale.apply(iv, mask)),
+        }
+    }
 }
 
 fn gcd(mut a: u128, mut b: u128) -> u128 {
@@ -200,11 +227,17 @@ impl Interval {
         EMPTY
     }
 
+    /// Join of two arithmetic progressions.  The stride survives as the gcd of
+    /// both strides and the gap between their starts, which is what every
+    /// element of either side is congruent to.  A side holding at most one
+    /// element constrains no spacing and takes the other's: a phi arm pinned to
+    /// a constant must not flatten the strided arm it joins.
     fn union(self, other: Self) -> Self {
+        let step = |iv: Self| if iv.count() <= 1 { 0 } else { iv.stride.max(1) };
         Self {
             lo: self.lo.min(other.lo),
             hi: self.hi.max(other.hi),
-            stride: 1, // sound over-approximation for a join
+            stride: gcd(gcd(step(self), step(other)), self.lo.abs_diff(other.lo)),
         }
     }
 
@@ -324,6 +357,12 @@ pub struct RangeMap<'f> {
     kb_bounds: SecondaryMap<ValueId, Option<Interval>>,
     /// Resolved intervals, with `InProgress` cutting resolution cycles.
     memo: FxHashMap<(ValueId, NodeId), MemoSlot>,
+    /// Per `If`-controlled edge, what taking it proves and about which value.
+    ///
+    /// Distinct from `guards`, which is keyed by the node a guard holds AT and
+    /// so cannot record one whose edge lands on a merge. An edge fact holds
+    /// only for the value ARRIVING on that edge, which is what a phi arm is.
+    edge_guards: FxHashMap<ValueId, (ValueId, Interval)>,
     /// `dominating_guard` is a pure function of `guards` and `doms`, both
     /// fixed here, and every `range_of` frame asks it at least once.
     guard_memo: std::cell::RefCell<FxHashMap<(ValueId, NodeId), Option<Interval>>>,
@@ -488,7 +527,7 @@ impl<'f> RangeMap<'f> {
         if let Some(hit) = self.guard_memo.borrow().get(&(value, region)) {
             return *hit;
         }
-        let mut verdict = self.guard_at(value, region);
+        let mut verdict = self.bound_at(value, region);
 
         // `hi` survives every hop, so one accumulated mask decides all the
         // `Truncate`s at once.
@@ -504,7 +543,7 @@ impl<'f> RangeMap<'f> {
                 LadderHop::SameValueBelow(mask) => trunc_mask = trunc_mask.min(mask),
                 LadderHop::UpperBound => upper_only = true,
             }
-            if let Some(below) = self.guard_at(operand, region)
+            if let Some(below) = self.bound_at(operand, region)
                 && below.hi <= trunc_mask
             {
                 let lifted = if upper_only {
@@ -521,6 +560,106 @@ impl<'f> RangeMap<'f> {
             .borrow_mut()
             .insert((value, region), verdict);
         verdict
+    }
+
+    /// What holds on `value` itself at `region`: the guards recorded on it, met
+    /// with what its incoming edges prove if it is a phi.
+    fn bound_at(&self, value: ValueId, region: NodeId) -> Option<Interval> {
+        match (
+            self.guard_at(value, region),
+            self.phi_arm_bound(value, region),
+        ) {
+            (Some(a), Some(b)) => Some(a.intersect(b)),
+            (hit, None) | (None, hit) => hit,
+        }
+    }
+
+    /// The union over a phi's arms of what reaching it by that arm's edge
+    /// proves: a constant arm is its own value, and a guarded one is the
+    /// interval its `If` edge establishes on exactly that arm value.  `None`
+    /// unless every arm is one of the two.
+    ///
+    /// An edge fact is not a node fact: the merge the edge lands on is reached
+    /// by the other predecessors too, so the interval bounds only the value
+    /// arriving along that one edge, which is the arm.  A loop back edge is the
+    /// case the mask alone loses, its guard sitting below the header it
+    /// re-enters.
+    fn phi_arm_bound(&self, value: ValueId, region: NodeId) -> Option<Interval> {
+        let f = self.function;
+        let phi_node = f.producer(value);
+        if !matches!(f.node_kind(phi_node), NodeKind::Phi) {
+            return None;
+        }
+        let joining = self.find_joining_region(phi_node)?;
+        if !self.dominates(joining, region) {
+            return None;
+        }
+        let data: Vec<ValueId> = f.phi_data_inputs(phi_node).collect();
+        let ctrl: Vec<ValueId> = f
+            .graph()
+            .node_inputs(joining)
+            .iter()
+            .filter(|&v| f.value_kind(v).is_control())
+            .collect();
+        if ctrl.len() != data.len() || data.len() < 2 {
+            return None;
+        }
+        ctrl.iter()
+            .zip(data.iter())
+            .map(|(&edge, &arm)| match f.int_const_u128(arm) {
+                Some(k) => Some(Interval::dense(k, k)),
+                None => self.edge_bound_on(edge, arm),
+            })
+            .collect::<Option<Vec<_>>>()?
+            .into_iter()
+            .reduce(Interval::union)
+    }
+
+    /// What taking `edge` proves about the value `arm` arriving on it, mapped up
+    /// the hops between the compared value and the arm: the compare is on the
+    /// register, the arm on a widened, masked or already-scaled copy of it.
+    ///
+    /// The hops are collected downward and replayed upward, so each one sees
+    /// the interval its own operand really carries.
+    fn edge_bound_on(&self, edge: ValueId, arm: ValueId) -> Option<Interval> {
+        let (guarded, iv) = *self.edge_guards.get(&edge)?;
+        let mut hops: Vec<ArmHop> = Vec::new();
+        let mut cur = arm;
+        for _ in 0..=MAX_GUARD_LADDER {
+            if cur == guarded {
+                return hops.iter().rev().try_fold(iv, |acc, hop| hop.lift(acc));
+            }
+            let (operand, hop) = self.arm_carrying_operand(cur)?;
+            hops.push(hop);
+            cur = operand;
+        }
+        None
+    }
+
+    /// [`Self::bound_carrying_operand`] plus the monotone constant scalings, which
+    /// a bound survives as a mapped interval rather than unchanged.
+    fn arm_carrying_operand(&self, value: ValueId) -> Option<(ValueId, ArmHop)> {
+        if let Some((operand, hop)) = self.bound_carrying_operand(value) {
+            return Some((
+                operand,
+                match hop {
+                    LadderHop::SameValue => ArmHop::SameValue,
+                    LadderHop::SameValueBelow(mask) => ArmHop::TruncateTo(mask),
+                    LadderHop::UpperBound => ArmHop::UpperBound,
+                },
+            ));
+        }
+        let (operand, scale) = self.const_scale(value)?;
+        let mask = type_mask_or_top(self.function.value_type_opt(value));
+        Some((operand, ArmHop::Scaled(scale, mask)))
+    }
+
+    /// Reflexive: a node dominates itself.
+    fn dominates(&self, node: NodeId, region: NodeId) -> bool {
+        match self.doms.dominators(region) {
+            Some(mut chain) => chain.any(|d| d == node),
+            None => node == region,
+        }
     }
 
     /// The guards recorded on `value` itself whose node dominates `region`.
@@ -769,6 +908,7 @@ pub fn compute_value_ranges<'f>(
     }
 
     let mut guards: FxHashMap<ValueId, FxHashMap<NodeId, Interval>> = FxHashMap::default();
+    let mut edge_guards: FxHashMap<ValueId, (ValueId, Interval)> = FxHashMap::default();
 
     for if_node in function.walk_kind(|k| matches!(k, NodeKind::If)) {
         let if_outputs = function.node_outputs(if_node);
@@ -786,6 +926,8 @@ pub fn compute_value_ranges<'f>(
             else {
                 continue;
             };
+
+            edge_guards.insert(edge_ctrl, (guarded_value, guard_interval));
 
             // Soundness gate: attach the guard only where the consumer is
             // reached EXCLUSIVELY via this edge.  A `Region` still consuming an
@@ -857,6 +999,7 @@ pub fn compute_value_ranges<'f>(
         function,
         doms,
         guards,
+        edge_guards,
         kb_bounds,
         memo: FxHashMap::default(),
         guard_memo: std::cell::RefCell::new(FxHashMap::default()),
