@@ -91,3 +91,42 @@ def test_an_analysis_between_sweeps_does_not_stale_the_answer():
     lift.analyze(BASE, strider.sleigh.CallingConvention.arm_aapcs())
     after = lift.pcode_at(BASE, BASE)
     assert _norm(after) == _norm(_fresh(code).pcode_at(BASE, BASE))
+
+
+def _interworking_with_spare_entries(count: int) -> bytes:
+    """`_arm_interworking` followed by `count` ARM `bx lr` words, each of which
+    is also a legal Thumb entry, so a sweep of entries at both ISA modes pins a
+    fresh decode mode per address."""
+    return _arm_interworking() + struct.pack("<I", 0xE12FFF1E) * count
+
+
+#: Enough alternating entries to pass the engine's context-commit log limit.
+_ENTRIES = 1000
+
+
+def test_a_sweep_past_the_context_commit_limit_refuses_rather_than_guesses():
+    """The sweep engine is a clone, and a clone carries the pinned decode modes
+    only while the engine still holds its commit log. Past that the clone
+    starts from the pspec defaults, which for an interworking binary decodes
+    the Thumb address as ARM: that answer must be refused, never returned.
+    """
+    code = _interworking_with_spare_entries(_ENTRIES)
+    lift = _fresh(code)
+    cc = strider.sleigh.CallingConvention.arm_aapcs()
+    lift.analyze(BASE, cc)
+    thumb = _norm(lift.pcode_at(BASE, 0x1020))
+
+    spare = BASE + 0x40
+    for i in range(_ENTRIES):
+        for entry in (spare + 4 * i, spare + 4 * i + 1):
+            try:
+                lift.build_cfg(entry)
+            except strider.StriderError:
+                pass  # a mode this address does not decode in still pins one
+        if (i + 1) % 200:
+            continue
+        try:
+            after = _norm(lift.pcode_at(BASE, 0x1020))
+        except strider.StriderError:
+            return
+        assert after == thumb, f"sweep changed ISA mode after {i + 1} entries"
