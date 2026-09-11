@@ -259,10 +259,11 @@ value.
   an unstable answer: it is abandoned and reported, never an `Err`. Exhausting
   `MAX_RESOLUTION_ITERATIONS` while every site still grows is the discovery
   depth limit, and those sites come back as unresolved too.
-- A converged CFG is never silently incomplete, but it reports through FOUR
+- A converged CFG is never silently incomplete, but it reports through FIVE
   fields on `AnalyzeResult` (`unresolved_indirect_branches`,
-  `unverified_seeded_sites`, `isa_mode_conflicts`, `interior_branch_targets`),
-  and a consumer asking "may this be incomplete?" reads all four. Each field's
+  `unverified_seeded_sites`, `isa_mode_conflicts`, `interior_branch_targets`,
+  `unmapped_branch_targets`), and a consumer asking "may this be incomplete?"
+  reads all five, which is what `AnalyzeResult::is_complete` does. Each field's
   contract is on the struct (`crates/strider-orchestrator/src/lib.rs`).
   `interior_branch_targets` also carries a region start a later decode stepped
   over (`RegionBuilder::note_stepped_over_region_starts`): those bytes have two

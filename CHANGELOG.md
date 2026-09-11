@@ -72,7 +72,10 @@ The shape each API settled into is in
   the branch. `const_uint` / `const_int` / `const_bool` are `uint` / `sint` /
   `boolean`.
 
-- Pattern builders renamed `add` -> `int_add` to follow the convention; const
+- Pattern and template builders take the `int_` prefix the convention asks
+  for, on both surfaces: `add`, `sub`, `mul`, `div`, `sdiv`, `rem`, `srem`,
+  `neg`, `shl`, `shr`, `sshr`, `popcount`, `lzcount`, `extend`, `truncate`,
+  `sign_extend` and `zero_extend` become `int_add` ... `int_zero_extend`. Const
   readers shortened. The settled vocabulary is in
   [docs/python-api.md](docs/python-api.md#4-patterns).
 - A bare string is no longer a capture operand; use `Capture(name)`.
