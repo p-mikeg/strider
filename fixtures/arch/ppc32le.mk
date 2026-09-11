@@ -2,13 +2,13 @@
 # directly and inlines libgcc helpers (`__popcountsi2` etc.) as bit-
 # twiddling code, so the BE-only-libgcc problem that the gcc cross
 # toolchain has on this target doesn't apply here.
-CC     := clang
-# `-O1` (instead of `-O2`): see ppc32be.mk — preserves structural shape.
+CC     := $(shell command -v clang 2>/dev/null || echo false)
+# `-O0`: see ppc32be.mk, preserves structural shape.
 # `--unresolved-symbols=ignore-all`: 32-bit clang emits `memset` calls
 # for the large stack-array fixture; without a libc the link needs stub
 # relocations.
-# `-ffp-contract=off`: prevent FMA fusion at -O2 so float-arithmetic
-# tests see all 4 separate FloatBinaryOps.
+# `-ffp-contract=off`: prevents FMA fusion so float-arithmetic tests see
+# all 4 separate FloatBinaryOps.
 CFLAGS := --target=powerpcle-linux-gnu -fuse-ld=lld -O0 -g \
           -fno-stack-protector -fno-pic -static -nostdlib -ffreestanding \
           -ffp-contract=off \
