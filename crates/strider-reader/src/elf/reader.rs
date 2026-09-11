@@ -1,5 +1,3 @@
-use anyhow::Context as _;
-
 use crate::{MemRegionsLookupTable, Result};
 
 use super::sections::{ElfSectionLayout, LoadFilter, RegionSource, collect_regions};
@@ -13,15 +11,17 @@ use super::sections::{ElfSectionLayout, LoadFilter, RegionSource, collect_region
 /// from a parsed `object::File` alone it copies them, borrowing neither the
 /// file nor its buffer.
 ///
-/// Every constructor but [`from_elf_relocated`](Self::from_elf_relocated)
-/// serves the file-initial bytes: an unlinked or not-yet-`ld.so`'d image reads
-/// zero at each relocation site.
+/// Either way the bytes are file-initial: an unlinked or not-yet-`ld.so`'d
+/// image reads zero at each relocation site. A relocated image is a region set
+/// from [`super::OwnedElf::regions`], which this reader does not wrap.
 #[derive(Debug)]
 pub struct ElfFileMemReader {
     lookup: MemRegionsLookupTable,
-    /// `[start, end)` of the fetch mappings that are writable, i.e. RWX. The
-    /// `ReadOnlyMemory` view is the fetch image minus these, expressed as
-    /// ranges rather than a second table so the bytes are stored once.
+    /// Ascending, disjoint `[start, end)` of every writable mapping the image
+    /// declares, the fetchable RWX ones and the ones the fetch filter dropped
+    /// alike. The `ReadOnlyMemory` view is the fetch image minus these,
+    /// expressed as ranges rather than a second table so the bytes are stored
+    /// once.
     writable: Vec<(u64, u64)>,
 }
 
@@ -49,29 +49,13 @@ impl ElfFileMemReader {
     }
 
     /// [`from_object`](Self::from_object) over an ELF whose bytes are already
-    /// owned, serving them file-initial.
+    /// owned, windowing into them instead of copying.
     ///
     /// # Errors
     ///
-    /// Same as [`from_object`](Self::from_object).
+    /// Same as [`from_object`](Self::from_object), plus a file rebuilt since
+    /// it was mapped.
     pub fn from_elf(elf: &super::OwnedElf) -> Result<Self> {
-        Self::from_elf_maybe_relocated(elf, false)
-    }
-
-    /// [`from_elf`](Self::from_elf) with the ELF's relocations applied, so a
-    /// site reads what the linker or `ld.so` would have written there rather
-    /// than its file-initial zero. See [`super::apply_elf_relocations`] for
-    /// which kinds are modelled.
-    ///
-    /// # Errors
-    ///
-    /// Same as [`from_object`](Self::from_object), plus an unreadable
-    /// relocation table.
-    pub fn from_elf_relocated(elf: &super::OwnedElf) -> Result<Self> {
-        Self::from_elf_maybe_relocated(elf, true)
-    }
-
-    fn from_elf_maybe_relocated(elf: &super::OwnedElf, relocate: bool) -> Result<Self> {
         // Building a reader is where an analysis starts reading the mapping,
         // so it is where a file rebuilt under a live handle must surface as an
         // `Err` instead of as bytes from a different program.
@@ -82,26 +66,28 @@ impl ElfFileMemReader {
             &layout,
             RegionSource::Auto,
             LoadFilter::CodeAndReadOnly,
-            relocate,
+            false,
         )?))
     }
 
     fn over(image: super::sections::LoadedImage) -> Self {
         Self {
             lookup: MemRegionsLookupTable::new(image.regions),
-            writable: image.writable,
+            writable: merged(image.writable),
         }
     }
 
-    /// Whether `[addr, addr + len)` touches a writable fetch mapping, i.e. is
-    /// outside the immutable image. Usually a scan of an empty list, a normal
-    /// ELF's fetch mappings all being read-only.
+    /// Whether `[addr, addr + len)` touches a writable mapping, i.e. is outside
+    /// the immutable image.
     fn touches_writable(&self, addr: u64, len: usize) -> bool {
         if len == 0 {
             return false;
         }
         let end = addr.saturating_add(len as u64);
-        self.writable.iter().any(|&(lo, hi)| addr < hi && lo < end)
+        // The ranges are disjoint and ascending, so the first one reaching past
+        // `addr` is the only candidate.
+        let first = self.writable.partition_point(|&(_, hi)| hi <= addr);
+        self.writable.get(first).is_some_and(|&(lo, _)| lo < end)
     }
 
     /// Re-stat the mapping this reader serves. Call it at the top of an
@@ -114,28 +100,19 @@ impl ElfFileMemReader {
     pub fn check_unchanged(&self) -> Result<()> {
         self.lookup.check_unchanged()
     }
+}
 
-    /// # Errors
-    ///
-    /// When the bytes do not parse as ELF, plus anything
-    /// [`from_object`](Self::from_object) reports.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let obj = object::File::parse(bytes).context("failed to parse ELF")?;
-        Self::from_object(&obj)
+/// `ranges` sorted, with everything that overlaps or touches merged.
+fn merged(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
+    ranges.sort_unstable();
+    let mut out: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
+    for (lo, hi) in ranges {
+        match out.last_mut() {
+            Some(last) if lo <= last.1 => last.1 = last.1.max(hi),
+            _ => out.push((lo, hi)),
+        }
     }
-
-    /// Maps the file: it must not change on disk while the reader lives, or a
-    /// read can observe torn bytes or SIGBUS past a shorter end. Construction
-    /// checks the file's `stat` identity, which catches a rebuild between two
-    /// operations but not one racing a read.
-    ///
-    /// # Errors
-    ///
-    /// When the file cannot be read from disk, plus anything
-    /// [`from_elf`](Self::from_elf) reports.
-    pub fn from_path<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
-        Self::from_elf(&super::OwnedElf::open(path)?)
-    }
+    out
 }
 
 impl rsleigh::MemReader for ElfFileMemReader {

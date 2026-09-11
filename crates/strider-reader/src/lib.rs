@@ -359,9 +359,9 @@ impl RegionIndex {
     /// Slice indices of every region fully covering `[addr, addr + len)`,
     /// highest `start` first; a `len` of 0 asks only that `addr` be mapped.
     ///
-    /// One O(log n) descent per index yielded, so a read a region fully covers
-    /// costs one and a partial read two -- the miss here, then the
-    /// widest-serving fallback -- however deeply the image nests.
+    /// One O(log n) descent per index yielded, however deeply the image nests.
+    /// A read a region fully covers costs one descent. A partial read costs
+    /// two: the miss here, then the widest-serving fallback.
     pub fn covering(&self, addr: u64, len: u64) -> Covering<'_> {
         // Without the floor a region ENDING at `addr` would answer a
         // zero-length request, which it does not contain.
