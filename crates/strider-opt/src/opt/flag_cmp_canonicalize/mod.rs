@@ -441,16 +441,18 @@ fn absorb_cr_pack_fingerprints(
     }
 }
 
-/// The value whose bit 0 `root` tests, in either spelling a CR-bit condition
-/// reaches here in: the `Truncate(_):I1` narrowing, and the
-/// `Xor(IntEqual(_, 0), 1):I1` that the `cond != 0` branch lowering emits.  A
-/// `And(y, 1)` layer is peeled: it selects exactly the bit both spellings
-/// already expose.
-fn bit_zero_source(f: &impl IRViewer, root: NodeId) -> Option<ValueId> {
-    let src = match f.node_kind(root) {
+/// The value `root` tests, paired with whether it observes EVERY bit of that
+/// value rather than bit 0 alone.
+///
+/// Two spellings reach here: the `Truncate(_):I1` narrowing, which is bit 0,
+/// and the `Xor(IntEqual(_, 0), 1):I1` that the `cond != 0` branch lowering
+/// emits, which is the OR of every bit.  A peeled `And(y, 1)` layer selects
+/// bit 0 under both, so it settles the flag either way.
+fn bit_zero_source(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, bool)> {
+    let (src, whole_value) = match f.node_kind(root) {
         NodeKind::Truncate => {
             let [inner] = f.node_inputs_exact::<1>(root).ok()?;
-            inner
+            (inner, false)
         }
         NodeKind::IntBinaryOp(IntBinaryOp::Xor) => {
             let [l, r] = f.node_inputs_exact::<2>(root).ok()?;
@@ -459,17 +461,17 @@ fn bit_zero_source(f: &impl IRViewer, root: NodeId) -> Option<ValueId> {
                 return None;
             }
             let [a, b] = f.producer_inputs_exact::<2>(eq).ok()?;
-            const_operand_is(f, a, b, 0)?
+            (const_operand_is(f, a, b, 0)?, true)
         }
         _ => return None,
     };
-    let NodeKind::IntBinaryOp(IntBinaryOp::And) = f.kind_of_value(src) else {
-        return Some(src);
-    };
-    let Ok([a, b]) = f.producer_inputs_exact::<2>(src) else {
-        return Some(src);
-    };
-    Some(const_operand_is(f, a, b, 1).unwrap_or(src))
+    if let NodeKind::IntBinaryOp(IntBinaryOp::And) = f.kind_of_value(src)
+        && let Ok([a, b]) = f.producer_inputs_exact::<2>(src)
+        && let Some(y) = const_operand_is(f, a, b, 1)
+    {
+        return Some((y, false));
+    }
+    Some((src, whole_value))
 }
 
 /// The one of `l` / `r` whose sibling is the constant `c`.
@@ -492,7 +494,7 @@ fn cr_bit_comparison(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, ValueI
     if f.value_type_opt(cond_out) != Some(ValueType::I1) {
         return None;
     }
-    let inner = bit_zero_source(f, root)?;
+    let (inner, whole_value) = bit_zero_source(f, root)?;
     // Bit 0 of `inner` is under test, so a `ShiftRight(x, k)` there means the
     // tested bit is bit k of `x`.
     let (pack, bit) = match *f.kind_of_value(inner) {
@@ -527,6 +529,11 @@ fn cr_bit_comparison(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, ValueI
             // The tested bit must carry a comparison, not an opaque masked bit.
             found = Some(cmp?);
         }
+    }
+    // `src != 0` is true for a bit ABOVE the tested one too, where the
+    // comparison is false; a shift has already dropped everything below it.
+    if whole_value && positions.iter().any(|&p| p > bit) {
+        return None;
     }
     found.map(|cmp| (cond_out, cmp))
 }
