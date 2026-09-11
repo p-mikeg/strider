@@ -417,18 +417,17 @@ fn resolution_off_still_reports_the_surviving_placeholders() {
 
 /// A masked switch index carried around a loop through a phi.
 ///
-/// The `& 7` admits 0..7 while the table gcc emitted holds six entries: the
-/// tighter bound lives on the back edge, which does not dominate the loop
-/// header, so the classifier over-approximates and names addresses past the
-/// table. Those poison the next round's derivation, and the site's answer
-/// alternates between one target and eight.
+/// The `& 7` alone admits 0..7 while the table gcc emitted holds six entries,
+/// so the mask on its own names two addresses read past the table. The tighter
+/// `i <= 5` lives on the loop back edge, below the header it re-enters, so no
+/// guard node dominates the dispatch; the bound is carried by the edge instead,
+/// for the phi arm arriving on it.
 ///
-/// The requirement is that an answer which never settles is REPORTED, not
-/// fatal: `analyze` returns the CFG it has and names the site, the same way an
-/// unresolvable branch is named. Before this was handled the whole function
-/// came back `Err`, losing every other query about it.
+/// The arm set is spelled out because an EXTRA arm is an edge to code the
+/// hardware never reaches: these six are `.rodata` 0x402008..0x402038 read off
+/// the fixture.
 #[test]
-fn a_switch_whose_bound_never_settles_is_reported_not_fatal() {
+fn a_masked_loop_index_is_bounded_by_its_back_edge() {
     let result = analyze_with_opts(
         common::Arch::X64,
         "switch_masked_loop",
@@ -436,11 +435,44 @@ fn a_switch_whose_bound_never_settles_is_reported_not_fatal() {
         Default::default(),
         true,
     )
-    .expect("an unsettleable site is a result, not an error");
-    assert!(
-        !result.unresolved_indirect_branches.is_empty(),
-        "the site must be reported, or the CFG is silently short its arms",
+    .expect("converges");
+    assert_eq!(
+        switch_arms(&result.cfg),
+        vec![vec![
+            0x40_1170, 0x40_1190, 0x40_1198, 0x40_11a0, 0x40_11a8, 0x40_11ad
+        ]],
     );
+    assert!(
+        result.unresolved_indirect_branches.is_empty(),
+        "every arm is proven, so nothing is left to report",
+    );
+}
+
+/// The same fixture on mips32, where the delay slot puts the ALREADY-SCALED
+/// `(i & 7) << 2` on the back edge rather than the index.  The bound has to
+/// cross the scaling, and the join with the entry arm's constant 0 has to keep
+/// the spacing, or the six table slots read as twenty-one.
+///
+/// The site is still reported: the table base sits in a register the arms'
+/// `Call` clobbers, so the selector stops deriving once the loop closes and
+/// nothing re-proves the seated arms.
+#[test]
+fn a_scaled_masked_loop_index_seats_only_the_real_slots() {
+    let result = analyze_with_opts(
+        common::Arch::Mips32le,
+        "switch_masked_loop",
+        "masked_loop_switch",
+        Default::default(),
+        true,
+    )
+    .expect("converges");
+    assert_eq!(
+        switch_arms(&result.cfg),
+        vec![vec![
+            0x40_0734, 0x40_0760, 0x40_0768, 0x40_0770, 0x40_0778, 0x40_0780
+        ]],
+    );
+    assert!(!result.unresolved_indirect_branches.is_empty());
 }
 
 /// The same shape WITHOUT the mask resolves completely, which is what isolates
