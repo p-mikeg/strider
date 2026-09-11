@@ -1,4 +1,6 @@
 /target
+# `maturin build --out dist` in CI.
+/dist
 fixtures/out/**/*.o
 # The object files the tests name ARE committed, through Git LFS: without them
 # the ET_REL loader tests skip and `ppc_rel32_patches_a_rodata_jump_table`
