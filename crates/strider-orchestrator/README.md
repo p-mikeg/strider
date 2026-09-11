@@ -66,10 +66,10 @@ successor set. It stops for three other reasons, none of them an error:
   it while sites are still growing is that limit being hit, not an oscillation.
   Those sites are reported.
 
-## Four channels, and all four must be read
+## Five channels, and all five must be read
 
-A converged CFG may be incomplete, and `AnalyzeResult` says so four ways.
-`is_complete()` is the question "may this be incomplete?" and needs all four;
+A converged CFG may be incomplete, and `AnalyzeResult` says so five ways.
+`is_complete()` is the question "may this be incomplete?" and needs all five;
 none of them answers it alone.
 
 - `unresolved_indirect_branches`: a live `IndirectBranch` placeholder, a seated
@@ -81,10 +81,13 @@ none of them answers it alone.
   out-of-function target became a `TailCall`, leaving no placeholder and no
   anchor to report through; and an arm seated on the mode its siblings proved,
   which nobody evaluated for that arm.
-- `isa_mode_conflicts` and `interior_branch_targets`: losses no indirect site
-  owns, since a direct edge produces them too. Both are accumulated across
-  rounds, not read off the final CFG: the round that decoded an address twice
-  fed the classifier whether or not a later rebuild still carries that edge.
+- `isa_mode_conflicts`, `interior_branch_targets` and
+  `unmapped_branch_targets`: losses no indirect site owns, since a direct edge
+  produces them too. An address two edges reached in different modes, a target
+  off every instruction boundary, and a target the image had no bytes for,
+  seated as an empty `TailCall` stub. All three are accumulated across rounds,
+  not read off the final CFG: the round that decoded an address twice fed the
+  classifier whether or not a later rebuild still carries that edge.
 
 A caller seed asserts the site is settled, which suppresses the unclassifiable
 seated `Switch` report until the site outgrows the seed. It suppresses nothing
