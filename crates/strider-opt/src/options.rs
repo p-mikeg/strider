@@ -25,8 +25,9 @@ impl Default for OptOptions {
 /// Assertions about the code being analysed, none of which the analysis can
 /// check.  Every field's risky value is the positive one, and each one turned
 /// on can make the answer wrong on valid input; the miscompile is then the
-/// caller's.  [`AssumptionOptions::none`] is the only configuration sound
-/// under any input program.
+/// caller's.  [`AssumptionOptions::none`] is the only configuration of THESE
+/// fields sound under any input program;
+/// [`OptOptions::resolve_indirect_branches`] defaults on and is outside it.
 ///
 /// Two default ON, both of which every compiler whose output this analyses
 /// honours and without which the alias oracle answers may-alias almost
@@ -87,8 +88,12 @@ pub struct AssumptionOptions {
     /// [`escape_analysis`](Self::escape_analysis) documents, without that knob
     /// being set.
     ///
-    /// A shared handle: every `MemOptions` built for one run clones the same
-    /// set, so no analyzer walking a `Function` sees a different one.
+    /// A shared handle, but not a uniform one: `MemOptions::structural` holds
+    /// an EMPTY set alongside the configured analyzer in the same run, and the
+    /// `decompose` memo is keyed by `ValueId` alone, so a walk under the empty
+    /// set reads back a heap base the other one cached.  What keeps that sound
+    /// is `classify_addr`, which drops every heap class when the set is empty,
+    /// leaving the address a may-alias `Anchor`.
     pub noalias_allocators: std::sync::Arc<rustc_hash::FxHashSet<u64>>,
     /// When the function's frame is provably private (no stack address escapes
     /// to any callee), forward a spill `Load` across a `Call` and step it past
@@ -104,8 +109,8 @@ pub struct AssumptionOptions {
 }
 
 impl AssumptionOptions {
-    /// Every claim cleared: the only configuration sound under any input
-    /// program, forwarding solely what the IR structurally proves.
+    /// Every claim cleared: the only configuration of these fields sound under
+    /// any input program, forwarding solely what the IR structurally proves.
     #[must_use]
     pub fn none() -> Self {
         // Spelled out, not `..Self::default()`: a field added default-on
