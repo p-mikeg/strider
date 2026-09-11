@@ -913,6 +913,10 @@ impl PyLifter {
     /// A stand-alone sweep, so it works for an `addr` outside any analysed
     /// CFG.  `addr` must be reachable through the linear instruction stream
     /// from `entry`; raises `StriderError` otherwise.
+    ///
+    /// Also raises once this `Lifter` has committed more decode modes than the
+    /// sweep engine can carry over, which on an ISA-mode arch is the only
+    /// alternative to answering in the wrong mode.
     fn pcode_at(&self, py: Python<'_>, entry: u64, addr: u64) -> PyResult<String> {
         // A mapping shortened under us takes a SIGBUS on the read, which no
         // Python `except` can catch.
@@ -928,9 +932,11 @@ impl PyLifter {
         // a clean engine, and must not be one. `Sleigh::clone` replays the
         // pinned `set_context_at` commits, which is what makes this sweep decode
         // an address in the ISA mode the CFG decoded it in rather than in the
-        // pspec default. Past `MAX_CONTEXT_COMMITS` the replay is dropped and
-        // the sweep falls back to those defaults, the same best-effort answer
-        // `pcode_at` gives for an address no analysis has ever reached.
+        // pspec default. Past `MAX_CONTEXT_COMMITS` the log is gone and the
+        // clone would pin nothing, so the sweep would answer in the pspec
+        // default for an address the analysis decoded in another mode:
+        // `clone_would_replay_context` is what tells the two apart, and the
+        // answer it cannot vouch for is refused rather than returned.
         self.inner.check()?;
         let context_gen = self.context_gen.get();
         // Taken OUT of the cell for the sweep: `lift_one` reaches a Python
@@ -944,16 +950,34 @@ impl PyLifter {
             .filter(|s| s.context_gen == context_gen && s.entry == entry);
         let mut sweep = match cached {
             Some(s) => s,
-            None => SweepSleigh {
-                context_gen,
-                entry,
-                sleigh: self.sleigh()?.clone(),
-            },
+            None => {
+                let sleigh = self.sleigh()?;
+                if !sleigh.clone_would_replay_context() {
+                    return Err(into_strider_err(anyhow::anyhow!(
+                        "pcode_at: this Lifter has pinned more decode modes than a sweep \
+                         engine can carry over, so {addr:#x} would decode in the pspec \
+                         default mode rather than the one the analysis used; build a \
+                         fresh Lifter to sweep from"
+                    )));
+                }
+                SweepSleigh {
+                    context_gen,
+                    entry,
+                    sleigh: sleigh.clone(),
+                }
+            }
         };
         let out = with_pending_control_flow(|| {
             let sleigh = &mut sweep.sleigh;
             let mut cur = entry;
+            let mut decoded: u64 = 0;
             loop {
+                // The sweep holds the GIL for its whole run, so Ctrl-C reaches
+                // the caller only where this asks for it.
+                decoded += 1;
+                if decoded.is_multiple_of(1024) {
+                    py.check_signals()?;
+                }
                 let (text, len) = crate::pcode::lift_one_text(sleigh, cur)?;
                 if cur == addr {
                     return Ok(text);
