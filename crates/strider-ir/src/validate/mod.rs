@@ -214,6 +214,13 @@ pub enum ValidationError {
     FloatConstWidthMismatch { node: NodeId, bits: u64 },
 
     #[error(
+        "node {node:?} is a `FloatConst` declared {ty:?}, wider than the `u64` \
+         payload: past 8 bytes the node carries only the low 64 bits of the \
+         IEEE 754 pattern, which no mask can distinguish from the whole of it"
+    )]
+    FloatConstUnrepresentableType { node: NodeId, ty: ValueType },
+
+    #[error(
         "node {node:?} (kind {kind:?}) is its own transitive data producer; only a \
          Phi / MemPhi may close a data cycle, and reverse post-order otherwise \
          yields the node before its own producer"

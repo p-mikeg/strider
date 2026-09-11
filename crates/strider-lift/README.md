@@ -18,8 +18,8 @@ register modelled as an SSA variable.
   `switch_anchors` (each seated `Switch`, so a resolver can re-derive and WIDEN
   a table that resolved before the CFG finished growing).
 - `LiftOptions`: the `CfgOptions` to decode with, `per_address_ccs` for direct
-  call targets, and `compact`, which this crate only carries -- the orchestrator
-  reads it after the pipeline.
+  call targets, and `compact`, which this crate only carries for the
+  orchestrator to read after the pipeline.
 - `FunctionLifter`, internal: the per-function context holding the
   `FunctionBuilder`, the varnode-to-container map, and the per-instruction
   constant tracker.
@@ -32,7 +32,7 @@ starts and comes from four places, because a register missing from it has no
 `InitialVar` and a write to it fails the whole function:
 
 - every REGISTER / UNIQUE varnode the decoded pcode names,
-- the convention -- the stack pointer above all, which a function may never name
+- the convention, above all the stack pointer, which a function may never name
   yet the stack analysis still needs, plus each `per_address_ccs` override's
   argument registers,
 - each `CallOther`'s ABI footprint, whose implicit reads and writes appear in no
@@ -63,7 +63,7 @@ back to `I1` on the way out.
 The REGISTER space is addressable, and a sla uses it when an instruction field
 picks the register (ARM `vld1.N {dX[i]}`). When the address resolves against the
 declared register file the access becomes an ordinary read or write of that
-register -- not a memory operation. When it does not resolve, the STORE lands in
+register, not a memory operation. When it does not resolve, the STORE lands in
 the REGISTER space AND every tracked register is re-read out of it, so no
 register keeps a value the write may have destroyed and the optimizer cannot
 forward one across it. An unresolved LOAD reads the space, so two accesses at
@@ -87,7 +87,7 @@ fallthrough edges are wired afterwards, from each source region's final map.
 Reading a variable no definition reaches is an error, not a default value. The
 walk covers only the regions reachable from the entry, so an unreachable region
 branching into one that carries phis fails the lift rather than seating
-`ValueId(0)` -- the `Entry` node's control output -- as a phi operand.
+`ValueId(0)`, the `Entry` node's control output, as a phi operand.
 
 ## Lift-time canonicalisations
 
@@ -125,7 +125,7 @@ The CFG's dedicated terminators are lifted after a region's instruction loop,
 from the region's last machine address: a resolved `Switch` with one control
 output per arm and its selector kept live, a `TailCall` as `Call` + `Return`, and
 an unresolved indirect branch as an `IndirectBranch` placeholder anchoring the
-dispatch varnode -- plus, on ARM and MIPS, the ISA-mode bit the branch's
+dispatch varnode plus, on ARM and MIPS, the ISA-mode bit the branch's
 instruction committed, so a resolver can decode each target in the right mode.
 
 A control cycle that never exits (`while (1)`, a spin loop, x86's `hlt`) roots
@@ -142,7 +142,7 @@ over `rsleigh::Opcode`, so a new opcode is a compile error here.
 
 A width no `ValueType` carries, a `Subpiece` offset at or past its input's
 width, a signed shift whose operand and output widths disagree, an ABI register
-name outside the arch's table -- each fails the whole function's lift rather
+name outside the arch's table: each fails the whole function's lift rather
 than producing an approximation.
 
 Depends on `strider-cfg`, `strider-ir`, `strider-target`, `graph-algorithms`,

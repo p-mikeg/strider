@@ -6,6 +6,7 @@ license.workspace = true
 description = "Strider's optimization passes and indirect-branch classifiers."
 repository.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 
 [features]
 # Exposes the single-pass test runners (`run_one` / `run_post`) to downstream
@@ -21,7 +22,7 @@ entity-utils = { workspace = true }
 graph-algorithms = { workspace = true }
 # strider-cfg forward dep: the `indirect_branch_resolve` classifiers
 # produce `strider_cfg::ResolvedTargets` to seed the CFG-rebuild feedback
-# loop (the type only — the resolver implementation lives in
+# loop (the type only; the resolver implementation lives in
 # strider-orchestrator).
 strider-cfg = { workspace = true }
 rsleigh.workspace = true

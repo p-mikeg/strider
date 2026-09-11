@@ -30,9 +30,9 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     /// The FIRST value committed to `ISAModeSwitch` at a machine address (ARM's
     /// `setISAMode` reads it, MIPS's `JXWritePC` writes it) and that address:
     /// the mode the instruction decodes its branch target(s) in. First, not
-    /// last, because the ARMv7/v8 sla writes it twice for `mov pc, rN` and the
-    /// second write re-derives it from an already-masked value; see
-    /// `vn_io::write_vn`. The region's terminating `IndirectBranch` takes it as
+    /// last, because the ARM sla writes it twice for the call-shaped
+    /// `ldr pc,addrmode2` and the second write is a constant 0 after the call;
+    /// see `vn_io::write_vn`. The region's terminating `IndirectBranch` takes it as
     /// its mode input iff they share that address.
     pub(crate) pending_isa_mode: Option<(strider_ir::node::ValueId, u64)>,
     /// The `ISAModeSwitch` register vn (the ISA-mode commit target on ARM/MIPS),

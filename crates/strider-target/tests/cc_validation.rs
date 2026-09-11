@@ -121,10 +121,10 @@ fn build_routes_through_validator_no_false_positives() {
         .expect("x86_64_systemv must build cleanly (build routes through validate)");
 }
 
-/// A wider container holding a narrower one is not a distinct register: ARM's
-/// `q8` occupies the same bytes as `d8` plus eight more, so `d8` callee-saved
-/// alongside `q8` argument-passing is the same contradiction as naming one
-/// varnode twice.  `preserves_all_bytes_of` is byte-accurate at run time and
+/// A wider container holding a narrower one is not a distinct register:
+/// AArch64's `q8` occupies the same bytes as `d8` plus eight more, so `d8`
+/// callee-saved alongside `q8` argument-passing is the same contradiction as
+/// naming one varnode twice.  `preserves_all_bytes_of` is byte-accurate at run time and
 /// the doc says "disjoint", so the validator has to be byte-accurate too.
 #[test]
 fn validate_rejects_container_overlap_not_only_exact_equality() {

@@ -1200,6 +1200,29 @@ fn graph_invariants_float_const_bits_above_declared_width_detected() {
     });
 }
 
+/// `mask_float_bits` is the identity at 64 bits and wider, so the bits-above-
+/// width rule cannot see an F80 / F128 `FloatConst`: the payload is a `u64` and
+/// the declared width is what has to be rejected.
+#[test]
+fn graph_invariants_float_const_wider_than_its_payload_detected() {
+    for ty in [ValueType::F80, ValueType::F128] {
+        let mut s = spine();
+        let bad =
+            s.f.graph_mut()
+                .create_node(NodeKind::FloatConst(0xBEEF), [], [ValueKind::Typed(ty)]);
+        let bad_value = s.f.node_outputs(bad).iter().copied().next().unwrap();
+        let _ret = s.f.graph_mut().create_node(
+            NodeKind::Return,
+            [s.entry_ctrl, s.mem_value, bad_value],
+            [],
+        );
+
+        assert_validation_err(&s.f, |e| {
+            matches!(e, ValidationError::FloatConstUnrepresentableType { .. })
+        });
+    }
+}
+
 /// A non-phi node reachable from its own output. The walk terminates on it, so
 /// nothing else notices, and reverse post-order then yields the node before its
 /// own producer.

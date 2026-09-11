@@ -6,6 +6,7 @@ license.workspace = true
 description = "Graphviz and dark-themed HTML rendering for graph structures."
 repository.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true

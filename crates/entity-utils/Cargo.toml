@@ -6,6 +6,7 @@ license.workspace = true
 description = "cranelift-entity helpers: dense entity sets, worklists, interners and union DAGs."
 repository.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 
 [dependencies]
 cranelift-bitset.workspace = true

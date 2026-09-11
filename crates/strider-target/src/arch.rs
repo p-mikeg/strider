@@ -249,8 +249,10 @@ impl SleighArch {
     /// `lwl`/`swl`/`ldl`/`sdl` constructor that does the whole unaligned access
     /// against the one that does half, and `ext_delay` (`mips.sinc:450`) is
     /// subtracted from the PC-relative address MIPS16e `OFF_M16PC` computes
-    /// (`mips16.sinc:164`). Each is committed by `globalset(inst_next, ...)`,
-    /// so a commit outlives the function that made it.
+    /// (`mips16.sinc:164`). `LRset`, `PAIR_INSTRUCTION_FLAG` and `ext_delay`
+    /// are committed by `globalset`, so a commit outlives the function that
+    /// made it. `REToverride` / `CALLoverride` are only ever read; clearing
+    /// them costs nothing and keeps the list one rule.
     #[must_use]
     pub fn transient_decode_vars(&self) -> &'static [&'static str] {
         match self.preset {

@@ -61,10 +61,15 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         region_map: &super::RegionMap,
     ) -> Result<()> {
         let cond_raw = self.read_input(insn, 1)?;
-        // Real, not a no-op: a 1-byte flag varnode reads back as `I8`, because
-        // `write_reg_vn` coerces every register write to `reg.int_type()` and
-        // `int_for_byte_size(1)` is `I8`.  Narrowing to the low bit is exact
-        // for a p-code condition, which is 0 or 1.
+        // NARROWED to the low bit, where p-code branches on `cond != 0`
+        // (`EmulateMemory::executeCbranch`, `emulate.cc:265`) and the SLEIGH
+        // compiler passes an `if` expression through without normalising it to
+        // 0/1 (`slghparse.y:375`).  Exact for every shipped sla: no
+        // non-comparison `if (...) goto` across ARM, AArch64, x86, MIPS and
+        // PowerPC produces a condition outside 0/1.  Real, not a no-op: a
+        // 1-byte flag varnode reads back as `I8`, because `write_reg_vn`
+        // coerces every register write to `reg.int_type()` and
+        // `int_for_byte_size(1)` is `I8`.
         let cond = self
             .builder
             .truncate_if_needed(cond_raw, strider_ir::ValueType::I1)?;
