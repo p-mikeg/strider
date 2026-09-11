@@ -28,9 +28,10 @@ use crate::opt::known_bits::{KnownBitsFacts, KnownBitsMap};
 #[cfg(test)]
 mod tests;
 
-/// Cast hops [`RangeMap::dominating_guard`] walks before giving up.  A real
-/// index sits one or two casts above its compare; the cap only stops a
-/// pathological chain from making the walk the cost centre.
+/// Cast hops either guard ladder ([`RangeMap::dominating_guard`],
+/// [`RangeMap::edge_bound_on`]) walks before giving up.  A real index sits one
+/// or two casts above its compare; the cap only stops a pathological chain from
+/// making the walk the cost centre.
 const MAX_GUARD_LADDER: u32 = 8;
 
 /// How much of an operand's bound survives one hop up to the value built from
@@ -70,11 +71,14 @@ impl ArmHop {
     }
 }
 
+/// `gcd(0, x) == x` and `gcd(0, 0) == 0`, the identity: a side contributing no
+/// spacing must take the other's, not flatten it.  Every caller clamps the
+/// result where a divisor of zero would be meaningless.
 fn gcd(mut a: u128, mut b: u128) -> u128 {
     while b != 0 {
         (a, b) = (b, a % b);
     }
-    a.max(1)
+    a
 }
 
 /// The inclusive value set `{ lo, lo+stride, lo+2*stride, ... hi }`.
@@ -231,13 +235,15 @@ impl Interval {
     /// both strides and the gap between their starts, which is what every
     /// element of either side is congruent to.  A side holding at most one
     /// element constrains no spacing and takes the other's: a phi arm pinned to
-    /// a constant must not flatten the strided arm it joins.
+    /// a constant must not flatten the strided arm it joins, and two of them
+    /// keep the gap between their starts.  Zero survives only where the join is
+    /// one point, where 1 is as tight.
     fn union(self, other: Self) -> Self {
         let step = |iv: Self| if iv.count() <= 1 { 0 } else { iv.stride.max(1) };
         Self {
             lo: self.lo.min(other.lo),
             hi: self.hi.max(other.hi),
-            stride: gcd(gcd(step(self), step(other)), self.lo.abs_diff(other.lo)),
+            stride: gcd(gcd(step(self), step(other)), self.lo.abs_diff(other.lo)).max(1),
         }
     }
 
@@ -625,13 +631,16 @@ impl<'f> RangeMap<'f> {
         let (guarded, iv) = *self.edge_guards.get(&edge)?;
         let mut hops: Vec<ArmHop> = Vec::new();
         let mut cur = arm;
-        for _ in 0..=MAX_GUARD_LADDER {
+        for _ in 0..MAX_GUARD_LADDER {
             if cur == guarded {
-                return hops.iter().rev().try_fold(iv, |acc, hop| hop.lift(acc));
+                break;
             }
             let (operand, hop) = self.arm_carrying_operand(cur)?;
             hops.push(hop);
             cur = operand;
+        }
+        if cur == guarded {
+            return hops.iter().rev().try_fold(iv, |acc, hop| hop.lift(acc));
         }
         None
     }
@@ -1064,7 +1073,9 @@ fn guard_from_compare(
     if op == IntCmpOp::Sless && !is_sign_bit_known_zero(function, guarded, known) {
         return None;
     }
-    let type_mask = ty.bit_mask_u128();
+    // The module's gate, not `bit_mask_u128`, which saturates past 128 bits and
+    // stops being a bound the value is inside.
+    let type_mask = crate::opt::known_bits::type_mask_u128(ty)?;
     // `n` is raw bits, read below as an unsigned endpoint. A NEGATIVE `Sless`
     // constant against a known-non-negative value carries no bound at all: the
     // compare is decided, and reading its two's-complement bits unsigned would

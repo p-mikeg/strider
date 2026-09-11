@@ -92,8 +92,8 @@ pub trait Optimizer: OptimizerClone {
     }
 }
 
-/// Runs one pass through a throwaway `EditFunction`, culling dead nodes
-/// before and draining after.
+/// Runs one pass through a throwaway `EditFunction`, clearing the
+/// assumption-derived memos and culling dead nodes before, draining after.
 ///
 /// `function` must be built (`function.entry()` is a valid `NodeId`).
 ///
@@ -106,6 +106,10 @@ pub fn run_one(
     function: &mut strider_ir::Function,
     octx: &mut OptCtx<'_>,
 ) -> crate::Result<OptimizationResult> {
+    // Same reason `run` clears them: a memo left by an earlier run was derived
+    // against that run's assumptions, this one's may differ.
+    function.side_tables().clear_memory_slots();
+    function.side_tables().clear_frame_escape();
     let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
     let result = pass.apply(&mut edit, octx)?;
@@ -128,6 +132,10 @@ pub fn run_post(
     edit.cull_dead();
     pass.apply(&mut edit, octx)?;
     edit.clean();
+    // One iteration of `run`'s post-pass loop, `memory_slots` included: that
+    // loop keeps the filled slots as the user-facing per-node SSoT and clears
+    // only the frame-escape memo, which `CallStackArgCollect` invalidates.
+    edit.function().side_tables().clear_frame_escape();
     Ok(())
 }
 
@@ -233,13 +241,20 @@ impl OptimizerPipeline {
     /// # Errors
     ///
     /// Returns the first error from any pass, or from the final validation. A
-    /// pass error skips the final validation step and wins.
+    /// pass error skips the final validation step and wins, leaving `function`
+    /// mutated up to the failing rewrite.
+    ///
+    /// Exhausting the iteration cap also leaves `function` mutated, but drained
+    /// and validated: the caller keeps the graph, so it is handed back in the
+    /// shape every other exit hands it back in, and a validation failure there
+    /// is reported ahead of the non-convergence.  The post-passes do not run.
     pub fn run(
         &self,
         function: &mut strider_ir::Function,
         ctx: &mut OptCtx<'_>,
     ) -> crate::Result<()> {
         const MAX_ITERS: u32 = 1024;
+        let capped;
         // A memo left by an earlier run was derived against that run's
         // assumptions, this one's may differ.
         function.side_tables().clear_memory_slots();
@@ -250,7 +265,7 @@ impl OptimizerPipeline {
             let mut edit = crate::EditFunction::new(function);
             edit.cull_dead();
             let mut iters: u32 = 0;
-            loop {
+            let converged = loop {
                 let mut changed = false;
                 for opt in &self.passes {
                     if opt.apply(&mut edit, ctx)?.changed() {
@@ -266,35 +281,43 @@ impl OptimizerPipeline {
                     }
                 }
                 if !changed {
-                    break;
+                    break true;
                 }
                 iters += 1;
                 if iters >= MAX_ITERS {
-                    anyhow::bail!(
-                        "optimizer pipeline did not converge after {MAX_ITERS} iterations"
-                    );
+                    break false;
                 }
+            };
+            // The caller keeps a capped graph, so drain it; the post-passes
+            // read a converged one and are skipped.
+            edit.clean();
+            if converged {
+                for opt in &self.post_passes {
+                    // `memory_offsets` survives between post-passes: no
+                    // post-pass mutation changes an address value's
+                    // decomposition, so the filled slots stay valid as the
+                    // user-facing per-node SSoT.
+                    opt.apply(&mut edit, ctx)?;
+                    edit.clean();
+                    // `CallStackArgCollect` rewrites `Call` inputs, which is
+                    // what the frame-escape walk reads.
+                    edit.function().side_tables().clear_frame_escape();
+                }
+                // That SSoT is what `pattern`'s region filters read, and every
+                // changing pass above drained it.  A caller pipeline need not
+                // register `StackOffsetDetect`, so refill it here or
+                // `stack_only` matches nothing and says nothing.
+                crate::post_opt::stack_offset_detect::stamp_all(
+                    &mut edit,
+                    &ctx.options.assumptions.noalias_allocators,
+                );
             }
-            for opt in &self.post_passes {
-                // `memory_offsets` survives between post-passes: no post-pass
-                // mutation changes an address value's decomposition, so the
-                // filled slots stay valid as the user-facing per-node SSoT.
-                opt.apply(&mut edit, ctx)?;
-                edit.clean();
-                // `CallStackArgCollect` rewrites `Call` inputs, which is what
-                // the frame-escape walk reads.
-                edit.function().side_tables().clear_frame_escape();
-            }
-            // That SSoT is what `pattern`'s region filters read, and every
-            // changing pass above drained it.  A caller pipeline need not
-            // register `StackOffsetDetect`, so refill it here or `stack_only`
-            // matches nothing and says nothing.
-            crate::post_opt::stack_offset_detect::stamp_all(
-                &mut edit,
-                &ctx.options.assumptions.noalias_allocators,
-            );
+            capped = !converged;
         }
         strider_ir::validate::validate(function)?;
+        if capped {
+            anyhow::bail!("optimizer pipeline did not converge after {MAX_ITERS} iterations");
+        }
         Ok(())
     }
 }
@@ -367,6 +390,85 @@ mod tests {
             err.to_string().contains("did not converge"),
             "expected 'did not converge' error, got {err:?}"
         );
+    }
+
+    /// The caller keeps the graph a capped run mutated, so it must not be one
+    /// the crate's own validator rejects: the cap runs the final validation
+    /// and reports its failure ahead of the non-convergence.
+    #[test]
+    fn fixed_point_limit_still_validates() {
+        use super::{OptimizationResult, Optimizer, OptimizerPipeline};
+        use strider_ir::node::NodeKind;
+        /// Never converges, and leaves a reachable node with no
+        /// asm-fingerprint, which `validate` refuses.
+        #[derive(Clone)]
+        struct AlwaysChangedUnattributed;
+        impl Optimizer for AlwaysChangedUnattributed {
+            fn apply(
+                &self,
+                edit: &mut crate::EditFunction<'_>,
+                _ctx: &mut OptCtx<'_>,
+            ) -> crate::Result<OptimizationResult> {
+                let ret = edit
+                    .live_of_kind(|k| matches!(k, NodeKind::Return))
+                    .next()
+                    .expect("the fixture returns");
+                // Return inputs are [ctrl, mem, value]; a fourth is this
+                // pass's own, added once.
+                if edit.node_inputs(ret).len() == 3 {
+                    // `build_int_const` carries no contributor stamp.
+                    let value = edit.build_int_const(7u64, ValueType::I64)?;
+                    edit.add_node_input(ret, value)?;
+                }
+                Ok(OptimizationResult::Changed)
+            }
+        }
+
+        let mut function = one_const_fn(0);
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(AlwaysChangedUnattributed);
+        let err = pipeline
+            .run(&mut function, &mut OptCtx::new(None))
+            .expect_err("the pass never converges");
+        assert!(
+            err.to_string().contains("asm-fingerprint"),
+            "a capped run must validate the graph it hands back, got {err:?}"
+        );
+    }
+
+    /// `run_one` stands in for one pass of `run`'s fixed-point loop, which
+    /// clears the assumption-derived memos: a decomposition cached under one
+    /// configuration must not be read back under another.
+    #[test]
+    fn run_one_clears_the_assumption_derived_memos() -> crate::Result<()> {
+        use super::{OptimizationResult, Optimizer};
+        #[derive(Clone)]
+        struct NoOp;
+        impl Optimizer for NoOp {
+            fn apply(
+                &self,
+                _edit: &mut crate::EditFunction<'_>,
+                _ctx: &mut OptCtx<'_>,
+            ) -> crate::Result<OptimizationResult> {
+                Ok(OptimizationResult::NoChange)
+            }
+        }
+
+        let mut function = one_const_fn(5);
+        let returned = crate::test_support::return_value(function.graph())?;
+        function
+            .side_tables()
+            .set_stack_slot(returned, returned, 16);
+        assert!(
+            function.side_tables().memory_decomp(returned).1.is_some(),
+            "the memo is installed"
+        );
+        crate::pipeline::run_one(&NoOp, &mut function, &mut OptCtx::new(None))?;
+        assert!(
+            function.side_tables().memory_decomp(returned).1.is_none(),
+            "run_one must clear a memo derived under another configuration"
+        );
+        Ok(())
     }
 
     /// Pins that the validate-on-finish step is wired and accepts a clean

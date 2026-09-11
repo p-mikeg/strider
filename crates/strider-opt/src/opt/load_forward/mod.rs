@@ -7,8 +7,10 @@
 //! Anything else blocks: a non-exact overlapping store, a `MemPhi`
 //! (control merge, arms may disagree), or `InitialMemory`.
 //!
-//! A `Call` or `CallOther` blocks unless its convention declares
-//! `preserves_memory`.  A `Call` also steps through when `escape_analysis`
+//! A `Call` blocks unless its convention declares `preserves_memory`; a
+//! `CallOther` always blocks, since only a user-op its ABI row declares
+//! `clobbers_memory` reaches the chain.  A `Call` also steps through when
+//! `escape_analysis`
 //! proves the frame private and the slot is outside the call's
 //! outgoing-argument window, and when it is a listed `noalias_allocators`
 //! callee and the probed location is a stack slot or a different allocation.
@@ -96,14 +98,16 @@ impl crate::peephole::PeepholePass for LoadForward {
     }
 }
 
-/// Linear in practice. The walk is per load and its memo is keyed on the
-/// probed location, so loads at different offsets share nothing, but that does
-/// not compound: the per-function address-decomposition memos plus
-/// `narrow_load_to` shortening each load's edge onto its relaxation-free
-/// clobber hold the marginal cost of one more load flat as the chain grows.
-/// Measured in `--release` on `benches/scaling.rs`'s `build_stack_store_chain`,
-/// N stack stores read back by N loads at distinct offsets: about 2x per
-/// doubling over N = 64..32768, the same exponent as every other pass.
+/// QUADRATIC on the FIRST sweep: `nearest_clobber` is an unmemoised reverse
+/// walk as long as the distance from the load to its defining store, it runs
+/// twice per load, and its memo is keyed on the probed location, so loads at
+/// different offsets share nothing.  The cost is loads x memory-chain length.
+/// Later sweeps are near-free, because `narrow_load_to` has already shortened
+/// every load's edge onto its relaxation-free clobber.
+///
+/// What bounds it in practice is that a `Call` ends the chain, so optimised
+/// input never builds a long one.  A call-free run of frame traffic does:
+/// `-O0` output, large leaf functions, big register-spill regions.
 ///
 /// Answering in one pass needs a per-location def index, which a `MemPhi` DAG
 /// has no linear order to build one over; that is a MemorySSA redesign, not a

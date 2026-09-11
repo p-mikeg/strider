@@ -32,6 +32,25 @@ fn union_keeps_a_stride_the_join_still_obeys() {
     assert_eq!(scaled.union(by_six).stride, 2);
 }
 
+/// Two single-element sides carry no spacing of their own, so the gap between
+/// their starts is the whole answer: `phi(4, 8, 12, 16)` is four indices, not
+/// the thirteen a flattened join enumerates.
+#[test]
+fn union_of_single_elements_keeps_the_gap_as_the_stride() {
+    let joined = [4u128, 8, 12, 16]
+        .into_iter()
+        .map(|k| Interval::dense(k, k))
+        .reduce(Interval::union)
+        .expect("four arms");
+    assert_eq!((joined.lo, joined.hi, joined.stride), (4, 16, 4));
+    assert_eq!(joined.count(), 4);
+    // One point joined with itself has no gap and no spacing; the stride still
+    // has to be a usable divisor.
+    let point = Interval::dense(7, 7).union(Interval::dense(7, 7));
+    assert_eq!((point.lo, point.hi, point.stride), (7, 7, 1));
+    assert_eq!(point.count(), 1);
+}
+
 /// The AP-meet must keep the stride phase: intersecting a dense `[5, 40]` with
 /// a multiples-of-8 progression yields `{8, 16, 24, 32, 40}` (lo rounded up to
 /// the stride phase, stride 8), NOT `{5, 13, 21, ...}`.
@@ -1612,6 +1631,68 @@ fn two_sibling_guard_regions_give_independent_bounds() {
     let iv_b = ranges.range_of(idx, db_node);
     assert_eq!(iv_b.lo, 0, "dispatch_b lo must be 0");
     assert_eq!(iv_b.hi, 15, "dispatch_b hi must be 15 (idx < 16)");
+}
+
+/// The join of four constant arms is an arithmetic progression, not the dense
+/// span: `table.rs` enumerates `(lo..=hi).step_by(stride)`, so a flattened join
+/// offers sixteen indices where the phi holds four, and one surplus index that
+/// fails to fold defers the whole site.  The arms share no low zero bits, so
+/// the spacing can only come from the join.
+#[test]
+fn multi_input_phi_of_constants_keeps_the_arm_spacing() {
+    use strider_ir_test_utils::reg_vn;
+
+    let idx_vn = reg_vn(0x10, 4);
+    let mut b = RegisterSet::new().tracked(idx_vn).build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region_all().unwrap();
+    let outer_a = b.create_region_all().unwrap();
+    let outer_b = b.create_region_all().unwrap();
+    let join = b.create_region_all().unwrap();
+    let arms: Vec<_> = (0..4).map(|_| b.create_region_all().unwrap()).collect();
+    b.set_entry_region_all(entry).unwrap();
+
+    b.set_region(entry);
+    let flag = b.build_boolean_const(true);
+    b.build_if(flag, outer_a, outer_b).unwrap();
+    for (region, [t, f]) in [(outer_a, [arms[0], arms[1]]), (outer_b, [arms[2], arms[3]])] {
+        b.set_region(region);
+        let flag = b.build_boolean_const(true);
+        b.build_if(flag, t, f).unwrap();
+    }
+    for (i, &arm) in arms.iter().enumerate() {
+        b.set_region(arm);
+        let k = b.build_int_const(3 + 5 * i as u64, ValueType::I32).unwrap();
+        b.write_variable(&idx_vn, k).unwrap();
+        b.build_branch(join).unwrap();
+    }
+
+    b.set_region(join);
+    let phi_idx = b.read_variable(&idx_vn).unwrap();
+    b.build_return(Some(phi_idx), &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+
+    let phi_producer = f
+        .walk()
+        .find(|&n| matches!(f.node_kind(n), NodeKind::Phi) && f.phi_data_inputs(n).count() >= 4)
+        .expect("the four-arm join phi");
+    let phi_idx = f.node_outputs(phi_producer)[0];
+    let phi_token = f.graph().nth_input(phi_producer, 0).unwrap();
+    let join_region = f.graph().producer(phi_token);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
+    let iv = ranges.range_of(phi_idx, join_region);
+    assert_eq!(
+        (iv.lo, iv.hi, iv.stride),
+        (3, 18, 5),
+        "phi(3, 8, 13, 18) is a stride-5 progression"
+    );
+    assert_eq!(iv.count(), 4, "four arms, four candidate indices");
 }
 
 // Two arms with distinct finite KnownBits bounds, `& 7` and `& 15`, must

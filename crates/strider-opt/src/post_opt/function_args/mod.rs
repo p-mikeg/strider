@@ -35,17 +35,13 @@ impl PostOptimizer for FunctionArgDetect {
         edit.function_mut()
             .side_tables_mut()
             .clear_arg_values_from(first_stack_arg as u32);
-        let stack_global_disjoint = opt_ctx.options.assumptions.stack_global_disjoint;
         let alias_cfg = MemAnalyzer::new(MemOptions::incoming_args(
-            stack_global_disjoint,
+            opt_ctx.options.assumptions.stack_global_disjoint,
             &opt_ctx.options,
         ));
         // Detection reads `alias_cfg`; only the rewire reads this one (see
         // `mem_chain_is_dirty`).
-        let narrow_cfg = MemAnalyzer::new(MemOptions::call_blocking(
-            stack_global_disjoint,
-            &opt_ctx.options.assumptions.noalias_allocators,
-        ));
+        let narrow_cfg = MemAnalyzer::new(MemOptions::structural());
         detect_stack_args(edit, &alias_cfg, &narrow_cfg, stack_args, first_stack_arg);
         Ok(())
     }
@@ -172,12 +168,10 @@ fn detect_stack_args(
 /// nearest clobber is anything but the clean `InitialMemory` root.
 ///
 /// Narrows to `narrow_cfg`'s clobber, never `alias_cfg`'s, which piles the
-/// incoming-arg relaxations on top.  `narrow_cfg` still carries
-/// `stack_global_disjoint`, `noalias_allocators` and the call relaxations, so
-/// the rewire is exactly as sound as the assumptions in force when it was made
-/// and outlives them: re-optimising the same `Function` under
-/// `AssumptionOptions::none()` inherits the edge.  `LoadForward` pins its
-/// narrowing walk to `MemOptions::structural()` instead.
+/// incoming-arg relaxations on top.  The rewire outlives the run that made it,
+/// so `narrow_cfg` claims nothing at all ([`MemOptions::structural`]): an edge
+/// justified by an assumption would be inherited by a later
+/// [`crate::AssumptionOptions::none`] run that disclaims it.
 fn mem_chain_is_dirty(
     edit: &mut crate::EditFunction<'_>,
     alias_cfg: &MemAnalyzer,
