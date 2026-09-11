@@ -339,7 +339,7 @@ impl PyLoadedElf {
     /// Refuses a symbol file that describes a different binary.
     ///
     /// The whole point of attaching one is a stripped image, where every name
-    /// comes from the symbol file alone -- so a wrong-build file yields a
+    /// comes from the symbol file alone. A wrong-build file therefore yields a
     /// complete, silently wrong name-to-address map rather than an obviously
     /// empty one. `.note.gnu.build-id` settles it when both carry one, since a
     /// debug file keeps the build id of the image it was split from.

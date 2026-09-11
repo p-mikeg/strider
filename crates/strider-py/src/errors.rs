@@ -16,7 +16,9 @@ create_exception!(
 thread_local! {
     /// The Python exception a user callback raised, kept so the synthesized
     /// `StriderError` can chain it as `__cause__`.  Cleared on entry to every
-    /// callback so a swallowed failure cannot attach to a later error.
+    /// callback and again when the call that ran the callback drains its
+    /// control-flow cell, so a swallowed failure neither outlives that call nor
+    /// pins the callback frame's traceback.
     static CALLBACK_CAUSE: std::cell::RefCell<Option<PyErr>> =
         const { std::cell::RefCell::new(None) };
 }
