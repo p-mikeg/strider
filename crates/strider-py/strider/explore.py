@@ -376,17 +376,26 @@ class _CfgVisualizer:
 
 
 #: How long a response write may make NO progress before the connection is
-#: given up on. Progress re-arms it, so a client on a slow link still receives a
-#: whole 1.4 MB body however long that takes, which a fixed total budget cannot
-#: promise. Well above what flow control alone produces: a client draining 4 KiB
-#: every 50 ms measured an 11 s window with no send accepted, so a deadline in
-#: that range cuts off a healthy transfer.
+#: given up on. Progress re-arms it, so it is the idle half of the pair and
+#: binds only where the total budget is the looser of the two, on a body past
+#: about 20 MB. Well above what flow control alone produces: a client draining
+#: 4 KiB every 50 ms measured an 11 s window with no send accepted, so a
+#: deadline in that range cuts off a healthy transfer.
 _WRITE_STALL_SECONDS = 60.0
 
 #: Longest one blocked `send` waits before the write loop re-checks
 #: `_Server.stopping`. This, not the stall deadline, is what bounds `shutdown`
 #: and interpreter exit with a body in flight.
 _WRITE_POLL_SECONDS = 0.5
+
+#: Total budget for one response, `_RESPONSE_START_SECONDS` plus a byte
+#: allowance at `_MIN_BODY_RATE`. The no-progress window bounds nothing in
+#: aggregate: a client accepting a trickle re-arms it forever and holds the
+#: single-threaded loop, and re-issuing denies service to everyone else.
+#: Against a healthy slow reader (4 KiB every 50 ms, ~80 KiB/s) the 1.4 MB
+#: `/viz.js` needs 17 s of the 22.6 s this allows it.
+_RESPONSE_START_SECONDS = 20.0
+_MIN_BODY_RATE = 512 * 1024
 
 
 class _DeadlineReader(io.RawIOBase):
@@ -466,15 +475,21 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         syscall, so a timeout means nothing was sent and `sent` stays exact,
         which is what separates the two: the deadline re-arms on progress, and
         the stop flag cuts a write that has none.
+
+        Three deadlines, because the re-arming one is not an aggregate bound:
+        `total` is what stops a client that takes a trickle forever from
+        owning the single-threaded loop.
         """
         stopping = cast("_Server", self.server).stopping
         view = memoryview(b)
         sent = 0
-        deadline = time.monotonic() + _WRITE_STALL_SECONDS
+        now = time.monotonic()
+        deadline = now + _WRITE_STALL_SECONDS
+        total = now + _RESPONSE_START_SECONDS + len(view) / _MIN_BODY_RATE
         while sent < len(view):
             if stopping.is_set():
                 raise TimeoutError("server is stopping")
-            left = deadline - time.monotonic()
+            left = min(deadline, total) - time.monotonic()
             if left <= 0:
                 raise TimeoutError("client stopped reading the response")
             self.connection.settimeout(min(_WRITE_POLL_SECONDS, left))
@@ -498,6 +513,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(b)))
+            # `/dot` and `/pattern` echo binary-derived text back; without this
+            # a browser may sniff one as HTML and run it.
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             self._write_body(b)
         except (BrokenPipeError, ConnectionError, TimeoutError, socket.timeout):
@@ -522,7 +540,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         bound = str(parts[0]) if parts else ""
         if bound not in ("127.0.0.1", "::1", "localhost"):
             return True
-        name = host.rsplit(":", 1)[0].strip("[]")
+        # An IPv6 literal is bracketed and holds colons of its own, so the port
+        # is whatever follows `]`, not whatever follows the last colon.
+        name = host.strip()
+        name = (
+            name[1:].split("]", 1)[0]
+            if name.startswith("[")
+            else name.rsplit(":", 1)[0]
+        )
         return name in ("127.0.0.1", "::1", "localhost")
 
     def do_GET(self) -> None:
@@ -607,6 +632,24 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 
+def _address_family(host: str) -> int:
+    """`AF_INET6` for a literal IPv6 host, else `AF_INET`.
+
+    `TCPServer` is AF_INET, so a caller passing `::1` otherwise gets a
+    `gaierror` out of `bind` rather than a loopback server.
+    """
+    try:
+        socket.inet_pton(socket.AF_INET6, host)
+    except OSError:
+        return socket.AF_INET
+    return socket.AF_INET6
+
+
+def _url(host: str, port: int) -> str:
+    """The explorer URL, bracketing an IPv6 host as RFC 3986 requires."""
+    return f"http://[{host}]:{port}/" if ":" in host else f"http://{host}:{port}/"
+
+
 class _Server(socketserver.TCPServer):
     """Carries the visualizer, its entry node and its render controls for
     `_Handler` to read.
@@ -647,6 +690,7 @@ class _Server(socketserver.TCPServer):
             for ctl in self.controls:
                 if ctl["name"] == "depth":
                     ctl["default"] = _parse_control(ctl, str(depth))
+        self.address_family = _address_family(address[0])
         super().__init__(address, _Handler)
 
     def serve_forever(self, poll_interval: float = 0.5) -> None:
@@ -667,10 +711,16 @@ class _Server(socketserver.TCPServer):
 _RUNNING: dict[int, tuple[_Server, threading.Thread]] = {}
 
 
-#: Bound so a wedged handler cannot hang interpreter exit; the thread is out of
+#: Bound on the join that follows a drained serve loop; the thread is out of
 #: the Rust frame long before this, and exceeding it only risks the abort that
 #: was the status quo.
 _SHUTDOWN_JOIN_SECONDS = 5.0
+
+#: How long `shutdown` waits for a stopped serve loop to drain. A render
+#: already inside a handler cannot be preempted, so past this the loop is left
+#: to exit on its own rather than holding the caller, and interpreter exit,
+#: for the whole of it.
+_SHUTDOWN_STOP_SECONDS = 5.0
 
 #: How long `shutdown` waits for a server registered but not yet inside
 #: `serve_forever`. Exceeding it means the serve loop never started, so there
@@ -687,9 +737,13 @@ def shutdown(port: int | None = None) -> list[int]:
     serving.
 
     Joins the serving thread as well as stopping the server. Stopping alone is
-    not enough: `_Server.shutdown` returns as soon as the serve loop exits,
-    while the thread is still unwinding out of the Rust frame, and an
-    interpreter that finalizes with a thread in that state aborts the process.
+    not enough: the serve loop exits while the thread is still unwinding out of
+    the Rust frame, and an interpreter that finalizes with a thread in that
+    state aborts the process.
+
+    Every wait here is bounded, so a render already inside a handler does not
+    hold this call for its whole duration; such a port is not reported as
+    stopped, and its loop exits once the render returns.
 
     Registered with `threading._register_atexit`, NOT `atexit`: CPython's
     `Py_FinalizeEx` joins non-daemon threads BEFORE running `atexit` handlers,
@@ -697,9 +751,10 @@ def shutdown(port: int | None = None) -> list[int]:
     `atexit` hook would never get to run and the process would hang on the join
     instead.
     """
-    targets = list(_RUNNING.items()) if port is None else [
-        (p, s) for p, s in _RUNNING.items() if p == port
-    ]
+    # A snapshot either way: a serving thread pops its own entry as its loop
+    # exits, which is a mutation under both iterations.
+    running = list(_RUNNING.items())
+    targets = running if port is None else [(p, s) for p, s in running if p == port]
     current = threading.current_thread()
     stopped = []
     # Every server first, before waiting on any: a handler writing a body polls
@@ -710,23 +765,27 @@ def shutdown(port: int | None = None) -> list[int]:
         # `BaseServer.shutdown` waits on an event `serve_forever` clears on
         # entry and sets on exit, so calling it before the loop starts blocks
         # forever.
-        if srv.started.wait(_SHUTDOWN_START_SECONDS):
-            srv.shutdown()  # returns once the serve loop has exited
+        if not srv.started.wait(_SHUTDOWN_START_SECONDS):
+            continue
+        # Not `BaseServer.shutdown`: that waits on its own event with no
+        # timeout, so a handler mid-render holds this call for the whole
+        # render. Setting the request flag is the half of it that stops the
+        # loop; `serve_forever` clears the flag again as it leaves. `finished`
+        # is the same drain point, under a bound.
+        srv._BaseServer__shutdown_request = True  # type: ignore[attr-defined]
+        if srv.finished.wait(_SHUTDOWN_STOP_SECONDS):
             stopped.append(p)
     for p, (srv, thread) in targets:
         # Nothing to drain out of a loop that never ran, and nothing will ever
         # signal one; joining the thread serving us would deadlock, and that
-        # caller is already past the frame this exists to drain.
-        if p not in stopped or thread is current:
+        # caller is already past the frame this exists to drain. A foreground
+        # `visualize` registered its CALLER's thread, which goes on running
+        # after the serve loop returns, so a join there can only burn the whole
+        # timeout, and `finished` above already drained it.
+        if p not in stopped or thread is current or not srv.owns_thread:
             continue
-        if srv.owns_thread:
-            if thread.is_alive():
-                thread.join(timeout=_SHUTDOWN_JOIN_SECONDS)
-        else:
-            # A foreground `visualize` registered its CALLER's thread, which
-            # goes on running after the serve loop returns, so a join can only
-            # burn the whole timeout. `finished` is the same drain point.
-            srv.finished.wait(_SHUTDOWN_JOIN_SECONDS)
+        if thread.is_alive():
+            thread.join(timeout=_SHUTDOWN_JOIN_SECONDS)
     # Only what was really stopped: giving up on `started` leaves the server
     # serving, and saying otherwise would report a shutdown that did not happen.
     return stopped
@@ -810,7 +869,7 @@ def _serve_background(
     on the worker, which is why the visualizer needs a decoder of its own."""
     srv = _Server((host, port), visualizer, depth)
     bound_port: int = srv.server_address[1]
-    url = f"http://{host}:{bound_port}/"
+    url = _url(host, bound_port)
 
     def run() -> None:
         try:
@@ -830,7 +889,14 @@ def _serve_background(
     # ENTERED hangs, and the error meant to report that never raises.
     srv.owns_thread = True
     _RUNNING[bound_port] = (srv, thread)
-    thread.start()
+    try:
+        thread.start()
+    except BaseException:
+        # Nothing will ever drain a registration whose thread never ran, and
+        # the listening socket has no other owner.
+        _RUNNING.pop(bound_port, None)
+        srv.server_close()
+        raise
     print(f"strider explorer -> {url}  (strider.explore.shutdown({bound_port}) to stop)")
     print("  drag or arrows pan, ctrl+wheel or +/- zooms, f fits, 0 is 100%")
     return bound_port
@@ -848,7 +914,7 @@ def _serve(
     interrupted, then returns the port it had bound."""
     srv = _Server((host, port), visualizer, depth)
     bound_port: int = srv.server_address[1]
-    url = f"http://{host}:{bound_port}/"
+    url = _url(host, bound_port)
     print(f"strider explorer -> {url}  (Ctrl-C to stop)")
     print("  drag or arrows pan, ctrl+wheel or +/- zooms, f fits, 0 is 100%")
     _RUNNING[bound_port] = (srv, threading.current_thread())

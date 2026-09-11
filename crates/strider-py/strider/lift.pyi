@@ -38,10 +38,11 @@ class AnalyzeResult(NamedTuple):
     not be resolved, and a non-empty list is not an error.
 
     Empty means fully resolved, NOT that the answer is complete: it is one of
-    four incompleteness channels, and a dispatch the CFG consumed as a return
+    five incompleteness channels, and a dispatch the CFG consumed as a return
     or a tail call is reported only through `cfg.unverified_seeded_sites()`.
-    The other two are `cfg.isa_mode_conflicts()` and
-    `cfg.interior_branch_targets()`; `cfg.is_complete()` tests all four.
+    The other three are `cfg.isa_mode_conflicts()`,
+    `cfg.interior_branch_targets()` and `cfg.unmapped_branch_targets()`;
+    `cfg.is_complete()` tests all five.
     """
 
     cfg: Cfg
@@ -212,7 +213,7 @@ class Lifter:
         and supplies a default `cc`.
 
         An empty `unresolved` is not a complete answer: see `AnalyzeResult`
-        for the four channels, and `Cfg.is_complete` to test them all.
+        for the five channels, and `Cfg.is_complete` to test them all.
 
         Runs the fixed-point loop with the GIL released, so other Python
         threads keep running. One consequence: a DAEMON thread sitting inside
