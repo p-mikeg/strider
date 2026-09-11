@@ -703,6 +703,32 @@ pub enum JoinConstraint {
     },
 }
 
+/// The tree is caller-shaped, so the derived glue would recurse one frame per
+/// level and abort on the free, after every walk over it has already returned.
+impl Drop for JoinConstraint {
+    fn drop(&mut self) {
+        let mut stack = Vec::new();
+        take_children(self, &mut stack);
+        while let Some(mut child) = stack.pop() {
+            take_children(&mut child, &mut stack);
+        }
+    }
+}
+
+/// Steals `c`'s sub-constraints, leaving a leaf whose own drop is trivial.
+fn take_children(c: &mut JoinConstraint, out: &mut Vec<JoinConstraint>) {
+    match c {
+        JoinConstraint::Not(inner) => {
+            out.push(core::mem::replace(
+                &mut **inner,
+                JoinConstraint::And(Vec::new()),
+            ));
+        }
+        JoinConstraint::Or(list) | JoinConstraint::And(list) => out.append(list),
+        _ => {}
+    }
+}
+
 impl std::fmt::Debug for JoinConstraint {
     /// The tree's depth is the caller's, so the walk carries its own stack
     /// rather than the machine's.
