@@ -3,7 +3,7 @@ use anyhow::Context as _;
 use crate::{FileBytes, MemRegion, Result};
 
 use super::relocations::apply_elf_relocations_with;
-use super::sections::{ElfSectionLayout, LoadFilter, RegionSource};
+use super::sections::{ElfSectionLayout, LoadFilter, OpdTable, RegionSource};
 
 /// Maps the file: it must not change on disk while the returned `OwnedElf`
 /// lives. [`OwnedElf::check_unchanged`] catches a file rebuilt between two
@@ -21,7 +21,7 @@ pub fn load_elf<P: AsRef<std::path::Path>>(path: P) -> Result<OwnedElf> {
 ///
 /// Only the bytes are stored. [`object::File`] is a borrowing view with no
 /// owned variant, so holding one alongside its bytes would make this
-/// self-referential; [`file`](Self::file) re-parses instead.
+/// self-referential; [`checked_file`](Self::checked_file) re-parses instead.
 pub struct OwnedElf {
     backing: FileBytes,
 }
@@ -55,44 +55,22 @@ impl OwnedElf {
     }
 
     fn validated(backing: FileBytes) -> Result<Self> {
-        // Validate now so `file()` can re-parse the identical bytes infallibly.
         object::File::parse(backing.as_slice()).context("failed to parse ELF")?;
         Ok(Self { backing })
     }
 
-    /// Re-parses each call; see the type docs.
-    ///
-    /// Reads the mapping, so a file SHORTENED under a live handle faults here
-    /// rather than returning. Crate-private for that reason: a `File` is not a
-    /// `Result`, so this has no way to report it, and the fault is a SIGBUS no
-    /// caller can catch. [`checked_file`](Self::checked_file) is the way in
-    /// from outside, and every internal use sits behind a
-    /// [`check_unchanged`](Self::check_unchanged).
-    ///
-    /// # Panics
-    ///
-    /// When the bytes no longer parse as ELF. [`parse`](Self::parse) validated
-    /// them, and holding the mapping still is the caller's half of the contract
-    /// [`load_elf`] states; rebuilding the file under a live `OwnedElf` breaks
-    /// it, as reading with `STRIDER_NO_MMAP=1` does not.
-    #[inline]
-    pub(crate) fn file(&self) -> object::File<'_> {
-        object::File::parse(self.backing.as_slice())
-            .expect("bytes were validated as ELF at construction")
-    }
-
-    /// [`file`](Self::file) behind [`check_unchanged`](Self::check_unchanged):
-    /// the guarded way in for anything that parses the image (entry point,
-    /// symbol table, header flags), where an unguarded parse of a shortened
-    /// mapping is a SIGBUS.
+    /// Re-parses the mapping, behind
+    /// [`check_unchanged`](Self::check_unchanged): the only way in for
+    /// anything that parses the image (regions, entry point, symbol table,
+    /// header flags), since an unguarded parse of a shortened mapping is a
+    /// SIGBUS no caller can catch.
     ///
     /// # Errors
     ///
     /// When the file changed on disk since it was mapped, or when the mapped
     /// bytes no longer parse. The guard reads a truncated mtime and a size, so
-    /// a same-length rewrite within one second passes it; parsing fallibly here
-    /// is what keeps that case an error rather than the panic
-    /// [`file`](Self::file) documents.
+    /// a same-length rewrite within one second passes it; parsing fallibly
+    /// here is what keeps that case an error rather than a panic.
     pub fn checked_file(&self) -> Result<object::File<'_>> {
         self.check_unchanged()?;
         object::File::parse(self.backing.as_slice())
@@ -147,6 +125,22 @@ impl OwnedElf {
         ))
     }
 
+    /// The code entry at `addr`, following a ppc64 ELFv1 `.opd` descriptor
+    /// when `addr` is one; `addr` itself otherwise. See [`OpdTable`].
+    ///
+    /// One parse per call: a caller resolving many symbols builds an
+    /// [`OpdTable`] over its own [`checked_file`](Self::checked_file) instead.
+    ///
+    /// # Errors
+    ///
+    /// Anything [`checked_file`](Self::checked_file) reports.
+    pub fn function_entry(&self, addr: u64) -> Result<u64> {
+        let obj = self.checked_file()?;
+        Ok(OpdTable::new(&obj)
+            .and_then(|opd| opd.entry_at(addr))
+            .unwrap_or(addr))
+    }
+
     /// The mappings `source` and `filter` select, as windows into this ELF's
     /// bytes: no copy, and with `relocate` the relocations land as a patch list
     /// rather than as writes into a materialised image.
@@ -157,45 +151,43 @@ impl OwnedElf {
     /// # Errors
     ///
     /// When a mapping's data can't be read, or its `address + length` would
-    /// exceed `u64::MAX`.
+    /// exceed `u64::MAX`, plus anything
+    /// [`checked_file`](Self::checked_file) reports.
     pub fn regions(
         &self,
         source: RegionSource,
         filter: LoadFilter,
         relocate: bool,
     ) -> Result<Vec<MemRegion>> {
-        // Guarded here rather than in `regions_with`, whose other caller
-        // (`ElfFileMemReader`) guards its own entry.
-        self.check_unchanged()?;
+        let obj = self.checked_file()?;
         Ok(self
-            .regions_with(
-                &ElfSectionLayout::new(&self.file()),
-                source,
-                filter,
-                relocate,
-            )?
+            .regions_with(&obj, &ElfSectionLayout::new(&obj), source, filter, relocate)?
             .regions)
     }
 
-    /// [`regions`](Self::regions) over a layout the caller already built. It
-    /// is a pure function of the bytes, so one built from any parse of them
-    /// serves every later parse.
+    /// [`regions`](Self::regions) over a parse and a layout the caller already
+    /// holds, both of which must be of these bytes. The layout is a pure
+    /// function of them, so one built from any parse serves every later parse.
+    ///
+    /// Takes the parse rather than making its own, so the
+    /// [`checked_file`](Self::checked_file) guard is the caller's and cannot
+    /// be skipped here.
     ///
     /// # Errors
     ///
     /// Same as [`regions`](Self::regions).
     pub(crate) fn regions_with(
         &self,
+        obj: &object::File<'_>,
         layout: &ElfSectionLayout,
         source: RegionSource,
         filter: LoadFilter,
         relocate: bool,
     ) -> Result<super::sections::LoadedImage> {
-        let obj = self.file();
         let mut image =
-            super::sections::collect_regions(&obj, Some(&self.backing), source, filter, layout)?;
+            super::sections::collect_regions(obj, Some(&self.backing), source, filter, layout)?;
         if relocate {
-            apply_elf_relocations_with(&mut image.regions, &obj, filter, layout)?;
+            apply_elf_relocations_with(&mut image.regions, obj, filter, layout)?;
         }
         Ok(image)
     }

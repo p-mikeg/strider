@@ -975,3 +975,37 @@ fn every_region_covering_a_site_serves_the_patched_bytes() {
         "a read served by the outer mapping must see the same relocated bytes"
     );
 }
+
+/// A patch is filed on EVERY region covering a site, so region count times
+/// relocation count is what the patch lists cost -- a product of two counts a
+/// crafted image sets independently and cheaply. The budget refuses it; the
+/// alternative is an allocation no `Result` can report.
+#[test]
+fn a_site_covered_by_many_overlapping_mappings_is_refused() {
+    let bytes = common::elf_fixture::build_overlapping_loads_rela_elf(64, 512);
+    let elf = strider_reader::OwnedElf::parse(bytes).expect("parse");
+    let err = elf
+        .regions(
+            strider_reader::elf::RegionSource::Auto,
+            strider_reader::elf::LoadFilter::AllAllocatable,
+            true,
+        )
+        .expect_err("32768 patch records out of a 17 KB image must be refused")
+        .to_string();
+    assert!(err.contains("patch budget"), "got: {err}");
+}
+
+/// The refusal is the relocation applier's alone: the same image loads.
+#[test]
+fn overlapping_mappings_load_unrelocated() {
+    let bytes = common::elf_fixture::build_overlapping_loads_rela_elf(64, 512);
+    let elf = strider_reader::OwnedElf::parse(bytes).expect("parse");
+    let regions = elf
+        .regions(
+            strider_reader::elf::RegionSource::Auto,
+            strider_reader::elf::LoadFilter::AllAllocatable,
+            false,
+        )
+        .expect("regions");
+    assert_eq!(regions.len(), 64);
+}

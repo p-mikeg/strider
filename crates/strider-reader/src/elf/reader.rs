@@ -73,10 +73,10 @@ impl ElfFileMemReader {
         // Building a reader is where an analysis starts reading the mapping,
         // so it is where a file rebuilt under a live handle must surface as an
         // `Err` instead of as bytes from a different program.
-        elf.check_unchanged()?;
-        let obj = elf.file();
+        let obj = elf.checked_file()?;
         let layout = ElfSectionLayout::new(&obj);
         Ok(Self::over(elf.regions_with(
+            &obj,
             &layout,
             RegionSource::Auto,
             LoadFilter::CodeAndReadOnly,

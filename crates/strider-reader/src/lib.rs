@@ -272,15 +272,6 @@ impl MemRegion {
         (available != 0).then_some((offset, available))
     }
 
-    /// This region covers all of `[addr, addr + len)`. An `addr + len` that
-    /// overflows `u64` counts as not covered.
-    pub(crate) fn fully_covers(&self, addr: u64, len: usize) -> bool {
-        match addr.checked_add(len as u64) {
-            Some(end) => self.contains(addr) && end <= self.end_addr(),
-            None => false,
-        }
-    }
-
     /// Both regions serve the same bytes across `[lo, hi)`, patches included.
     /// Any part of the range either region fails to serve in full, whether
     /// unmapped or short of the request, counts as differing.
@@ -306,30 +297,151 @@ impl MemRegion {
 
 /// Lookup table over a set of possibly-overlapping [`MemRegion`]s.
 ///
-/// Keyed by start address, so candidate lookup is an O(log n) range query.
-/// Regions sharing a start address collapse, last-inserted wins. Overlapping
-/// regions at distinct starts resolve by walking candidates from the highest
-/// `start_addr <= addr` downward: O(log n) on the usual disjoint set, O(n)
-/// worst case.
+/// Regions sharing a start address collapse, last-inserted wins. A read is
+/// resolved through a [`RegionIndex`], so it costs O(log n) whether the set is
+/// disjoint or nests.
 #[derive(Debug)]
 pub struct MemRegionsLookupTable {
-    /// Each region with the greatest `end_addr` among it and everything
-    /// starting at or below it, so a descending walk can stop once no earlier
-    /// region can still reach the address.
-    regions: BTreeMap<u64, (MemRegion, u64)>,
-    /// Ascending starts, and a max-end tree over the matching ends: the
-    /// fully-covering lookup in O(log n) rather than a walk down every region
-    /// with a lower start.
-    starts: Vec<u64>,
-    covers: MaxEnd,
+    /// Ascending by start address, one region per start.
+    regions: Vec<MemRegion>,
+    index: RegionIndex,
+}
+
+/// Ascending-start index over a slice of [`MemRegion`]s: which of them cover a
+/// request, answered through a max-end tree instead of a walk down every lower
+/// start.
+///
+/// The indices it yields are into that slice, which must not be reordered
+/// while the index is held. Equal-start regions are all indexed, the highest
+/// slice index among them first.
+#[derive(Debug)]
+pub struct RegionIndex {
+    /// Ascending by `start`, equal starts in slice order.
+    entries: Vec<IndexEntry>,
+    /// Each entry's `end_addr`, in the same order.
+    ends: MaxEnd,
+}
+
+#[derive(Debug)]
+struct IndexEntry {
+    start: u64,
+    /// Greatest `end_addr` of this entry and every lower-start one: nothing at
+    /// or below this start reaches past it.
+    reach: u64,
+    /// Index into the indexed slice.
+    index: usize,
+}
+
+impl RegionIndex {
+    pub fn new(regions: &[MemRegion]) -> Self {
+        let mut order: Vec<usize> = (0..regions.len()).collect();
+        // Stable, so equal starts keep slice order.
+        order.sort_by_key(|&i| regions[i].start_addr());
+        let mut reach = 0u64;
+        let entries: Vec<IndexEntry> = order
+            .iter()
+            .map(|&index| {
+                reach = reach.max(regions[index].end_addr());
+                IndexEntry {
+                    start: regions[index].start_addr(),
+                    reach,
+                    index,
+                }
+            })
+            .collect();
+        let ends: Vec<u64> = order.iter().map(|&i| regions[i].end_addr()).collect();
+        Self {
+            entries,
+            ends: MaxEnd::new(&ends),
+        }
+    }
+
+    /// Slice indices of every region fully covering `[addr, addr + len)`,
+    /// highest `start` first; a `len` of 0 asks only that `addr` be mapped.
+    ///
+    /// One O(log n) descent per index yielded, so a covered site costs two and
+    /// an uncovered one costs a single descent however deeply the image nests.
+    pub fn covering(&self, addr: u64, len: u64) -> Covering<'_> {
+        // Without the floor a region ENDING at `addr` would answer a
+        // zero-length request, which it does not contain.
+        self.walk(
+            self.entries.partition_point(|e| e.start <= addr),
+            addr.checked_add(len.max(1)),
+        )
+    }
+
+    /// Slice indices of every region overlapping `[lo, hi)`, highest `start`
+    /// first; none at all for an empty range.
+    pub fn overlapping(&self, lo: u64, hi: u64) -> Covering<'_> {
+        self.walk(
+            self.entries.partition_point(|e| e.start < hi),
+            (lo < hi).then_some(lo + 1),
+        )
+    }
+
+    /// Slice index of the region serving the most bytes from `addr`, ties
+    /// going to the highest `start`; `None` when nothing maps `addr`.
+    pub fn widest_at(&self, addr: u64) -> Option<usize> {
+        let hi = self
+            .entries
+            .partition_point(|e| e.start <= addr)
+            .checked_sub(1)?;
+        // Bytes served grow with the end address, so the widest region is the
+        // one attaining the prefix maximum, and the rightmost such entry is
+        // the highest start among ties.
+        let reach = self.entries[hi].reach;
+        if reach <= addr {
+            return None;
+        }
+        Some(self.entries[self.ends.rightmost(hi, reach)?].index)
+    }
+
+    fn walk(&self, upper: usize, want: Option<u64>) -> Covering<'_> {
+        match want {
+            Some(want) => Covering {
+                index: self,
+                upper,
+                want,
+            },
+            // An end past `u64::MAX`, or an empty range.
+            None => Covering {
+                index: self,
+                upper: 0,
+                want: 0,
+            },
+        }
+    }
+}
+
+/// The regions a [`RegionIndex`] query matched, highest `start` first.
+pub struct Covering<'a> {
+    index: &'a RegionIndex,
+    /// One past the highest entry left to consider.
+    upper: usize,
+    /// The end address a match has to reach.
+    want: u64,
+}
+
+impl Iterator for Covering<'_> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        let slot = self
+            .index
+            .ends
+            .rightmost(self.upper.checked_sub(1)?, self.want)?;
+        self.upper = slot;
+        Some(self.index.entries[slot].index)
+    }
 }
 
 /// Max-end segment tree over `ends`, which is in ascending-start order.
 ///
 /// One question: "is there a region whose start is at or below `addr` and
-/// whose end reaches `addr + len`, and which is the LAST such?" That is the
-/// fully-covering case, so every instruction fetch, and answering it by
-/// walking starts downward is O(n) on an image that nests regions.
+/// whose end reaches `want`, and which is the LAST such?" That is the
+/// fully-covering case, so every instruction fetch, and repeating it walks
+/// every region covering a relocation site; answering it by walking starts
+/// downward is O(n) on an image that nests regions.
 #[derive(Debug)]
 struct MaxEnd {
     /// `1`-rooted, leaves at `size..size * 2`.
@@ -386,27 +498,14 @@ impl MaxEnd {
 impl MemRegionsLookupTable {
     /// Two regions sharing a start address collapse to the later one.
     pub fn new<I: IntoIterator<Item = MemRegion>>(regions: I) -> Self {
-        let mut regions: BTreeMap<u64, (MemRegion, u64)> = regions
+        let regions: Vec<MemRegion> = regions
             .into_iter()
-            .map(|r| {
-                let end = r.end_addr();
-                (r.start_addr(), (r, end))
-            })
+            .map(|r| (r.start_addr(), r))
+            .collect::<BTreeMap<u64, MemRegion>>()
+            .into_values()
             .collect();
-        // Prefix maximum in ascending start order.
-        let mut running = 0u64;
-        for (_, reach) in regions.values_mut() {
-            running = running.max(*reach);
-            *reach = running;
-        }
-        let starts: Vec<u64> = regions.keys().copied().collect();
-        let ends: Vec<u64> = regions.values().map(|(r, _)| r.end_addr()).collect();
-        let covers = MaxEnd::new(&ends);
-        Self {
-            regions,
-            starts,
-            covers,
-        }
+        let index = RegionIndex::new(&regions);
+        Self { regions, index }
     }
 
     /// [`MemRegion::check_unchanged`] over the table, one `stat` per distinct
@@ -417,7 +516,7 @@ impl MemRegionsLookupTable {
     /// When any mapped file behind the table changed since it was mapped.
     pub fn check_unchanged(&self) -> Result<()> {
         let mut stat_ed: Vec<usize> = Vec::new();
-        for (region, _) in self.regions.values() {
+        for region in &self.regions {
             let Some(id) = region.mapping_id() else {
                 continue;
             };
@@ -434,9 +533,8 @@ impl MemRegionsLookupTable {
     /// contains `addr`. Partial reads are possible, see [`MemRegion::read`].
     ///
     /// Resolution is **all-or-most**, never a per-byte merge: `out` is filled
-    /// from exactly one region, so it is never a cross-region byte mix.
-    /// Candidates are walked from the highest `start_addr <= addr` downward.
-    /// A region fully covering the request wins outright (highest start among
+    /// from exactly one region, so it is never a cross-region byte mix. A
+    /// region fully covering the request wins outright (highest start among
     /// those); otherwise the region covering the most of it wins, ties going to
     /// the highest start.
     ///
@@ -444,51 +542,12 @@ impl MemRegionsLookupTable {
     /// to the fully-covering outer region rather than returning the inner
     /// region's truncated prefix.
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
-        // A region fully covering the request wins outright, and that is every
-        // instruction fetch, so it is answered in O(log n) instead of by the
-        // walk below. `want` saturates because a region's end cannot exceed
-        // `u64::MAX` either, so an overflowing request covers nothing.
-        let want = addr.saturating_add(out.len() as u64);
-        let below = self.starts.partition_point(|&s| s <= addr);
-        if below > 0
-            && let Some(i) = self.covers.rightmost(below - 1, want)
-            && let Some((_, (region, _))) = self.regions.range(..=self.starts[i]).next_back()
-            && region.fully_covers(addr, out.len())
-        {
-            return region.read(addr, out);
-        }
-        let mut best: Option<(&MemRegion, usize)> = None;
-        for (_, (region, reach)) in self.regions.range(..=addr).rev() {
-            // Nothing at or below this start reaches `addr`, so neither will
-            // anything further down. Without this an UNMAPPED read scans every
-            // region with a lower start, which is O(n) per read.
-            //
-            // `reach` is a PREFIX MAXIMUM, so one region spanning the image
-            // holds it above every interior address and this never fires: the
-            // scan is then O(regions below `addr`). Sections are one region
-            // each and `SHN_XINDEX` lifts the 65535 cap, so a crafted image
-            // can make that large.
-            //
-            // Only PARTIAL reads reach here: a fully-covering region, which is
-            // every instruction fetch, was answered by `covers` above. The
-            // remaining linear case needs a read that no single region
-            // satisfies, and it returns a short fill, so it cannot be repeated
-            // to walk a function.
-            if *reach <= addr {
-                break;
-            }
-            if region.fully_covers(addr, out.len()) {
-                return region.read(addr, out);
-            }
-            let Some((_, available)) = region.available_at(addr) else {
-                continue;
-            };
-            let n = available.min(out.len());
-            if best.is_none_or(|(_, best_n)| n > best_n) {
-                best = Some((region, n));
-            }
-        }
-        best.and_then(|(region, _)| region.read(addr, out))
+        let winner = self
+            .index
+            .covering(addr, out.len() as u64)
+            .next()
+            .or_else(|| self.index.widest_at(addr))?;
+        self.regions[winner].read(addr, out)
     }
 
     /// Fill-all-or-error read: copies the mapped bytes into `buf` **raw**, with
