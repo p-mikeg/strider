@@ -63,11 +63,11 @@ impl Pattern {
     }
 
     /// A build-time refusal, reported through the same channel as an
-    /// unmatchable graph. The first one recorded wins.
+    /// unmatchable graph and preferred over it: a refusal names the spelling,
+    /// while the structural verdict describes whatever the refused lowering
+    /// left staged.
     pub(crate) fn reject(&mut self, why: String) {
-        if self.root.is_ok() {
-            self.root = Err(why);
-        }
+        self.root = Err(why);
     }
 
     /// O(1) read of the verdict memoized at construction.

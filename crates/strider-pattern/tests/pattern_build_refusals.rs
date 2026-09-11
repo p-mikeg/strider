@@ -165,3 +165,52 @@ fn a_deeply_nested_alternation_is_refused() {
     }
     assert!(!error_of(&nest(4000).into_pattern()).is_empty());
 }
+
+/// A `call` per level, each nested in the previous one's arg slot.
+fn deep_call_chain(depth: usize) -> strider_pattern::CallPat {
+    let mut p = strider_pattern::call();
+    for _ in 0..depth {
+        p = strider_pattern::call().arg(0, p);
+    }
+    p
+}
+
+/// A `one_of` per level, each the sole arm of the previous one.
+fn deep_alternation(depth: usize) -> strider_pattern::OneOf {
+    let mut p = one_of![anything()];
+    for _ in 0..depth {
+        p = one_of![p];
+    }
+    p
+}
+
+/// Every operand slot is one lowering frame, so an unbounded chain aborted the
+/// process before a node count existed to refuse it by.
+#[test]
+fn a_deep_operand_chain_is_refused_not_aborted() {
+    for depth in [6_000, 12_000, 200_000] {
+        assert!(
+            error_of(&deep_call_chain(depth).into_pattern()).contains("nests"),
+            "depth {depth} must be refused for nesting",
+        );
+        assert!(
+            error_of(&deep_alternation(depth).into_pattern()).contains("nests"),
+            "depth {depth} must be refused for nesting",
+        );
+    }
+}
+
+/// The tower under an uncompiled builder is a chain of boxed closures, one link
+/// per level, so dropping it unwinds a frame per level unless the drop defers.
+#[test]
+fn an_uncompiled_deep_tower_drops_without_recursing() {
+    drop(deep_call_chain(200_000));
+    drop(deep_alternation(200_000));
+}
+
+/// The nesting cap refuses nothing the node cap accepts: 255 nested calls are
+/// 256 nodes, exactly the node budget.
+#[test]
+fn a_chain_at_the_nesting_cap_still_builds() {
+    assert!(deep_call_chain(255).into_pattern().root().is_ok());
+}
