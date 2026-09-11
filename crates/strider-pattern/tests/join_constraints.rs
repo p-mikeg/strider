@@ -900,3 +900,68 @@ fn phi_input_from_edge_over_a_non_control_edge_answers_neither_way() {
         "the negation of an unanswerable relation is still unanswerable"
     );
 }
+
+/// `Not` nested `depth` deep over one `Dominates`.
+fn deep_negation(depth: usize, inner: JoinConstraint) -> JoinConstraint {
+    (0..depth).fold(inner, |c, _| JoinConstraint::Not(Box::new(c)))
+}
+
+/// The constraint tree is caller-shaped, so nothing bounds its depth. Every
+/// walk over it has to survive one far past what a builder admits, on a stack
+/// far smaller than the default: an overflow is a process kill no caller can
+/// catch. The tree is built and dropped on the test thread, whose stack takes
+/// it; only a borrow crosses into the small one.
+#[test]
+fn a_deeply_nested_constraint_walks_on_a_small_stack() {
+    let (t, c) = (Capture::new(), Capture::new());
+    let deep = deep_negation(
+        5_000,
+        JoinConstraint::Dominates {
+            dominator: t,
+            dominated: c,
+        },
+    );
+
+    std::thread::scope(|s| {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn_scoped(s, || {
+                assert!(format!("{deep:?}").ends_with(')'));
+                let (function, _) = diamond_with_calls();
+                let guard = if_else().capture_true(t).build();
+                let callp = call().capture(c).build();
+                let m = Matcher::new(&function);
+                let tuples = m
+                    .find_joined_constrained(&[&guard, &callp], std::slice::from_ref(&deep))
+                    .unwrap();
+                // An even nesting is the identity over `Dominates`.
+                let addrs: Vec<u64> = tuples
+                    .iter()
+                    .map(|tp| call_addr(tp, c, &function))
+                    .collect();
+                assert_eq!(addrs, vec![0xAAAA]);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    });
+}
+
+/// The rendering the explicit-stack walk owes: nested, comma-separated arms,
+/// each leaf as its own struct.
+#[test]
+fn debug_renders_a_nested_tree() {
+    let (a, b) = (Capture::new(), Capture::new());
+    let tree = JoinConstraint::Not(Box::new(JoinConstraint::Or(vec![
+        JoinConstraint::And(vec![]),
+        JoinConstraint::And(vec![JoinConstraint::Dominates {
+            dominator: a,
+            dominated: b,
+        }]),
+    ])));
+
+    assert_eq!(
+        format!("{tree:?}"),
+        format!("Not(Or([And([]), And([Dominates {{ dominator: {a:?}, dominated: {b:?} }}])]))")
+    );
+}
