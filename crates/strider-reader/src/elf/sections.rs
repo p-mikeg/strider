@@ -290,6 +290,67 @@ impl ElfSectionLayout {
     }
 }
 
+/// ppc64 ELFv1 function descriptors.
+///
+/// On that ABI `st_value` of an `STT_FUNC` symbol addresses an 8-byte-aligned
+/// {entry, TOC, env} triple in `.opd` rather than code, and the first
+/// doubleword is the address to decode from. ELFv2 has no descriptors, and no
+/// other architecture defines them.
+pub struct OpdTable<'d> {
+    base: u64,
+    data: &'d [u8],
+    endian_le: bool,
+}
+
+impl<'d> OpdTable<'d> {
+    /// `None` unless `obj` is a linked ppc64 image whose `e_flags` ABI level
+    /// is not ELFv2 and which carries an `.opd`.
+    ///
+    /// The descriptor CONTENTS are the section's file bytes, which is why
+    /// ET_REL is excluded: an unlinked `.opd` holds zeros until its
+    /// `R_PPC64_ADDR64` relocations are applied.
+    pub fn new(obj: &object::File<'d>) -> Option<Self> {
+        if obj.architecture() != object::Architecture::PowerPc64
+            || obj.kind() == ObjectKind::Relocatable
+        {
+            return None;
+        }
+        // `e_flags` bits 0..1 are the ABI level. 2 is ELFv2; 1 is ELFv1, and
+        // so is the 0 that means "unspecified", which is what a toolchain
+        // emitting an `.opd` at all has to mean.
+        let object::FileFlags::Elf { e_flags, .. } = obj.flags() else {
+            return None;
+        };
+        if e_flags & 0x3 == 2 {
+            return None;
+        }
+        let opd = obj.section_by_name(".opd")?;
+        let data = opd.data().ok()?;
+        (data.len() >= 8).then(|| Self {
+            base: opd.address(),
+            data,
+            endian_le: matches!(obj.endianness(), object::Endianness::Little),
+        })
+    }
+
+    /// The code entry the descriptor at `addr` names, or `None` when `addr` is
+    /// not a whole descriptor word in this table, or when the word reads zero.
+    ///
+    /// Zero because an ET_DYN's `.opd` is file-initially zero under its
+    /// `R_PPC64_RELATIVE`s: address 0 is never the entry, and passing `addr`
+    /// through unfollowed at least leaves the descriptor visible.
+    pub fn entry_at(&self, addr: u64) -> Option<u64> {
+        let off = usize::try_from(addr.checked_sub(self.base)?).ok()?;
+        let word: [u8; 8] = self.data.get(off..off.checked_add(8)?)?.try_into().ok()?;
+        let entry = if self.endian_le {
+            u64::from_le_bytes(word)
+        } else {
+            u64::from_be_bytes(word)
+        };
+        (entry != 0).then_some(entry)
+    }
+}
+
 /// `value` rounded up to a multiple of `align`; `align` 0 or 1, or a round-up
 /// that would exceed `u64::MAX`, leaves `value` alone.
 fn align_up(value: u64, align: u64) -> u64 {
