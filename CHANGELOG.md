@@ -246,9 +246,13 @@ The shape each API settled into is in
   `graph_algorithms::dominance::DefSites` are gone, each having had one
   implementation. `PreOrder` / `PostOrder` take one type parameter, the graph,
   and own a `DenseEntitySet`; `phi_placement` takes the `HashMap` directly.
-- `AnalyzeResult` gained `unverified_seeded_sites`, `interior_branch_targets`
-  and `isa_mode_conflicts`. The struct has no `#[non_exhaustive]`, so a
-  struct-literal construction must name them.
+- `AnalyzeResult` gained `unverified_seeded_sites`, `interior_branch_targets`,
+  `isa_mode_conflicts` and `unmapped_branch_targets`. The struct has no
+  `#[non_exhaustive]`, so a struct-literal construction must name them.
+- `ValidationError` gains `FloatConstUnrepresentableType`, carried by a
+  `FloatConst` declared past 8 bytes, which no mask over the node's `u64`
+  payload can tell from a representable one. The enum has no
+  `#[non_exhaustive]`, so an exhaustive match must name it.
 - `strider-ir-test-utils`' `proptest_gen` module is behind a `proptest-gen`
   feature, so `proptest` no longer builds for consumers that do not ask for it.
 - The ARM processor-mode `CallOther` rows (`setUserMode`, `setStackMode`, ...)
@@ -269,31 +273,8 @@ The shape each API settled into is in
   `::from_elf(&owned)`; both `from_elf_relocated` and a load-then-apply pair are
   `OwnedElf::regions(source, filter, /* relocate */ true)`, the path that
   windows into the ELF's own bytes instead of copying them.
-- A masked switch index bounded on a loop back edge now resolves. The guard
-  lives on the edge, not on the merge, so `value_range` kept it per edge and
-  maps it up to the phi arm through the cast, mask and scale hops between them.
-  `switch_masked_loop` seats exactly its six table words on x86, x86-64 and
-  MIPS32 where it previously read two slots past the table and abandoned the
-  site.
-- MIPS64 `dsllv` / `dsrlv` / `dsrav` take six count bits, as the ISA says. The
-  vendored spec had no mask, so a count at or above 64 answered zero where the
-  hardware answers the operand unshifted.
-- `CBRANCH` lowers as `cond != 0`, which is the p-code contract, rather than as
-  the condition's low bit. PowerPC's CR-bit extract is a 1-BYTE condition, so
-  the canonicalizer now recognises the `!= 0` root directly and every
-  architecture's branch-condition shape is unchanged.
-- A template comparison operand built fresh takes its operand width, not the
-  comparison's `I1` verdict, so `int_sborrow(int_const(K), var(x))` no longer
-  builds IR `validate` rejects. A width nothing anchors is an error naming the
-  slot instead of a guess.
 - `graph_algorithms::walk::entity_preorder` is gone; call `PreOrder::new`, which
   it only forwarded to. `entity_postorder` stays.
-- A direct branch to an address the image has no bytes for no longer fails the
-  whole function. The edge is seated as an empty tail-call stub and reported on
-  the new `Cfg::unmapped_branch_targets` / `AnalyzeResult::unmapped_branch_targets`,
-  bound in Python as `cfg.unmapped_branch_targets()`. That is a FIFTH
-  incompleteness channel, and `is_complete()` now folds five. An unmapped ENTRY
-  is still an error.
 - `Cfg::region_id_at_start` is gone.
 - Every pattern builder spells its name the way `strider.pattern` does, so one
   query reads the same in either language. The 21 integer builders take an
@@ -400,14 +381,20 @@ The shape each API settled into is in
   instead of wrapping into a silently wrong slot or address.
   `debug-assertions` stays off: the debug and `cargo test --release` runs
   already gate on those.
+- All sixteen crates inherit `publish = false`. The key sat in
+  `[workspace.package]` with no member opting in, so every crate reported
+  publishable and nothing stopped `cargo publish -p dot` from taking the name.
 
-- A converged CFG reports incompleteness through four channels on
+- A converged CFG reports incompleteness through five channels on
   `AnalyzeResult`, not one: `unresolved_indirect_branches`,
-  `unverified_seeded_sites`, `isa_mode_conflicts` and
-  `interior_branch_targets`. A consumer asking whether a result may be
-  incomplete reads all four;
+  `unverified_seeded_sites`, `isa_mode_conflicts`, `interior_branch_targets`
+  and `unmapped_branch_targets`. A consumer asking whether a result may be
+  incomplete reads all five, and `is_complete()` folds them;
   [docs/python-api.md](docs/python-api.md#12-the-cfg-stridercfg) says what each
   one carries.
+- `Cfg::unmapped_branch_targets()` and `AnalyzeResult::unmapped_branch_targets`
+  (Python: `cfg.unmapped_branch_targets()`): direct-branch targets no byte of
+  the image backs, whose edge is seated as an empty stub.
 - `Cfg.isa_mode_conflicts()` (Rust: `AnalyzeResult::isa_mode_conflicts`):
   addresses reached carrying two different ISA modes, where one region owns the
   bytes and the losing path's arm is not the stream it believes.
@@ -658,6 +645,130 @@ The shape each API settled into is in
   addresses instead of with node creations.
 
 ### Fixed
+
+- `Lifter.pcode_at` and `Lifter.optimize` check the mapped image for staleness,
+  as `analyze` and `build_cfg` already did. Decoding past the end of a file
+  truncated under the mapping raised SIGBUS, uncatchable from Python and fatal
+  to the interpreter. `analyze` checks the rom too, which a hand-built lifter
+  can map separately.
+
+- Lifting a `Cfg` through a `Lifter` other than the one that built it is an
+  error. `Cfg` carries no lifetime and stores p-code whose LOAD / STORE space is
+  a raw pointer into the engine that decoded it, so building a CFG with one
+  lifter, dropping it, and calling `build_ir` on another dereferenced freed C++
+  memory from safe Rust. Each space id is resolved against the engine's own
+  pointers by comparison, never by a read, which also refuses a hand-built
+  `Insn` carrying an id no engine minted. A panic inside a `MemReader::read`
+  callback lands in the same error channel rather than aborting across the FFI
+  boundary, and `Lifter::new` reports a `user_op_names` failure instead of
+  swallowing it into an empty table, which turned every later `CallOther` into a
+  misleading "not in Sleigh's user_op table".
+
+- `CallStackArgCollect` and `FunctionArgDetect` replace what an earlier run of
+  the same pass wrote rather than appending to it. Both appended, and `validate`
+  accepts the result, so `Lifter.optimize` on a function `analyze` had already
+  optimized, which the docs call for, grew a `Call`'s argument list unboundedly:
+  `calls.elf::main` went 5,5,5,7,5,7 to 6,6,6,10,6,10 to 7,7,7,13,7,13 across
+  two calls. `CallStackArgCollect` re-derives the pre-collection arity from the
+  calling convention and truncates to it; `FunctionArgDetect` clears the
+  ordinals it owns, leaving the lifter's register carriers alone.
+
+- The relocation copy budget charges the merged union of the file bytes it
+  copies, not each `(sh_offset, sh_size)` pair it is handed. Sections naming
+  one-byte-shifted windows over one blob grew the denominator in lockstep with
+  the numerator, so the 4x amplification ceiling never fired: 200 sections over
+  a 1 MB file materialised 209 MB, and `e_shnum` being a `u16`, the shape scales
+  to hundreds of GB.
+
+- A pattern too deep to lower is refused through the reject channel rather than
+  aborting the process. `MAX_PATTERN_NODES` was checked at seal, after lowering
+  had already recursed once per nesting level, so an operand chain 6000 deep
+  overflowed the stack in both profiles, against the crate's own rule that
+  refusing a pattern is a `Result`; dropping such a tower uncompiled, which is
+  the path a refusal itself takes, aborted too. Every deferred operand lowers
+  through one guarded entry, bounded by nesting level and by a measured frame
+  address, and a drop defers into a pit the outermost caller drains, so a nested
+  link adds no frame. A refusal names itself rather than the node count of the
+  truncated graph, which was not the pattern's.
+
+- A direct branch to an address the image has no bytes for costs the edge, not
+  the function. The read error propagated out of exploration, so `analyze`
+  failed and every region that did decode was discarded; a firmware window, a
+  partially mapped image, an unrelocated `ET_REL` jump and a symbol-subset
+  kernel ROM all reach it in the default configuration, since nothing derives a
+  function bound from a symbol's size. The edge is seated as an empty tail-call
+  stub and reported on `unmapped_branch_targets`. An unmapped ENTRY is still an
+  error, and so is a read that fails after bytes were decoded: that region is
+  real code.
+
+- A direct edge outranks a seeded arm where both reach one address in different
+  ISA modes, where arrival order used to decide it. A direct edge switches no
+  mode, so its mode is proved where an arm's is a claim; the queue drains every
+  direct edge first and a clashing arm is dropped rather than wired. The loop no
+  longer converges on a CFG whose seats were stripped after it was built, so the
+  published CFG matches what the report channels say.
+
+- A guard recorded on a sub-register bounds the index scaled out of it.
+  `cmp $0x14,%al` followed by `movzbl %al,%eax` records the bound on the `I8`
+  truncation while the addressing mode scales a value three casts above it, so
+  the index fell back to the `I8` KnownBits bound, the whole 256-entry domain:
+  libc's `_nl_load_domain` read 235 entries past a 21-entry table and seated 28
+  arms the hardware never reaches, seven of them mid-instruction. The lookup
+  walks the hops a bound carries through, so `_nl_load_domain` seats exactly its
+  six arms and sites abandoned for exceeding the entry cap resolve.
+
+- The read-only view no longer answers for an address a writable mapping
+  claimed, and a relocation field straddling an inner region's end is patched on
+  every region overlapping it. Only accepted mappings were recorded, so a
+  writable `PT_LOAD` overlapping an accepted one left no trace and
+  `LoadReadOnly` could fold a store-then-reload to the stale file byte; the
+  straddling field was patched on the outer region alone while a narrow read was
+  served by the inner one, so one address read back differently at two widths.
+  Patching is anchored on a region holding all of the field, so a field running
+  past its mapping still fails closed.
+
+- `OpdTable::entry_at` rejects an unaligned offset, where it returned half an
+  entry spliced to half a TOC pointer as a code address; reading a file whole
+  reserves a bounded capacity, so a sparse file is an error rather than an
+  allocation abort; and a Git LFS pointer is named as one instead of parsing as
+  a bad-magic ELF.
+
+- `explore.shutdown` waits under a deadline, so its stated bound caps something
+  and a render in flight no longer holds interpreter exit for its whole
+  duration. A client that requested a large body and never read it blocked every
+  other request for a minute, `/viz.js` being 1.4 MB. A swallowed
+  reader-callback error stayed in its thread-local and attached itself as
+  `__cause__` to the next unrelated failure, pinning the user's frames for the
+  life of the thread.
+
+- The `strider.ir` and `strider.sleigh` stubs declare the `__all__` both bind at
+  runtime, so a type checker no longer rejects correct code. The parity test
+  compared contents only and could not see it.
+
+- `Function::compact` rebuilds the dedup cache before it can return early.
+  `retain_reachable` leaves the cache keyed on pre-compaction ids, so a failing
+  entry check handed the caller a `Function` whose next deduping create probed
+  the new arena with an old `NodeId`. A `Copy` whose input and output widths
+  disagree fails the lift, as every sibling handler already required: unguarded,
+  `write_vn` truncated a wider operand and zero-extended a narrower one, which
+  is wrong for a signed carrier.
+
+- `CBRANCH` lowers as `cond != 0`, which is the p-code contract, rather than as
+  the condition's low bit. PowerPC's CR-bit extract is a 1-BYTE condition, so
+  the canonicalizer now recognises the `!= 0` root directly and every
+  architecture's branch-condition shape is unchanged.
+
+- A masked switch index bounded on a loop back edge now resolves. The guard
+  lives on the edge, not on the merge, so `value_range` kept it per edge and
+  maps it up to the phi arm through the cast, mask and scale hops between them.
+  `switch_masked_loop` seats exactly its six table words on x86, x86-64 and
+  MIPS32 where it previously read two slots past the table and abandoned the
+  site.
+
+- A template comparison operand built fresh takes its operand width, not the
+  comparison's `I1` verdict, so `int_sborrow(int_const(K), var(x))` no longer
+  builds IR `validate` rejects. A width nothing anchors is an error naming the
+  slot instead of a guess.
 
 - A `Function` or `Cfg` that crossed to a worker thread leaked the `Lifter` it
   transitively owned, 21 MB a drop, with an unraisable error to stderr: PyO3
@@ -1197,6 +1308,9 @@ mnemonic group. A caller sees these only in the lift of the named instructions.
 - MIPS64 `clz` / `clo` counted the whole 64-bit register rather than the word.
 - MIPS64 `drotrv` rotated by `32 - shift` on a 64-bit value, degrading to a
   plain logical shift right for counts above 32.
+- MIPS64 `dsllv` / `dsrlv` / `dsrav` take six count bits, as the ISA says. The
+  spec had no mask, so a count at or above 64 answered zero where the hardware
+  answers the operand unshifted.
 - x86 `PSLLD` / `PSLLQ` shifted each vector lane by its own count instead of the
   one count the ISA reads from `SRC[63:0]`, and `PSRAD` took its count from the
   whole 128-bit operand, so a nonzero upper half saturated every lane.
