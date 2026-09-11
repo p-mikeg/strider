@@ -51,10 +51,7 @@ use crate::matcher::{KindSpec, Matcher, OutputKindSpec, PatNode, PatValue, Patte
 struct Ctx<'a> {
     matcher: &'a Matcher<'a>,
     pat: &'a Pattern,
-    /// Times the root continuation was reached, i.e. fully guard-satisfying
-    /// configurations produced so far. `first_of` cuts on it: under `find_all`
-    /// the continuation always returns `false`, so its return value cannot tell
-    /// "no configuration satisfied the guards above" from "one did".
+    /// [`Matcher::satisfied`], borrowed for the walk.
     satisfied: &'a Cell<u64>,
 }
 
@@ -84,9 +81,7 @@ pub(crate) fn try_match(
 
 /// [`try_match`] for a sub-pattern matched INSIDE another walk, such as an
 /// `IfPat` branch. `k` is the enclosing continuation, not a root, so reaching
-/// it produces no match of its own and must not bump `satisfied`; counting it
-/// would make a `first_of` in the sub-pattern cut on the hand-off and discard
-/// the arms a later rejection needs.
+/// it is no match of its own and must not bump `satisfied`.
 pub(crate) fn try_match_nested(
     matcher: &Matcher,
     pat: &Pattern,
@@ -284,6 +279,9 @@ fn try_match_at(
     // enumerates every matching arm; `first_of` cuts to the first.
     if nd.alternation {
         let mark = bindings.mark();
+        // Bound before any arm runs, where every other kind binds in
+        // `finalize` once its inputs have matched, so an arm rebinding this
+        // node's capture conflicts rather than shadows.
         if !bind_all_captures(bindings, nd, out_weight, ir_node, root_value) {
             return false;
         }
@@ -346,9 +344,10 @@ fn try_match_at(
             .all(|e| e.consumer_slot < COMM_ORDER.len())
         && ctx.function().node_kind(ir_node).is_commutative();
 
-    // The existential candidate set: every input slot of `ir_node` a fixed
-    // operand has not pinned. `k` existentials enumerate every injective
-    // assignment over it, which is what `any_input`'s documented cost is.
+    // The existential candidate set: every input slot of `ir_node`, less the
+    // ones a fixed operand pinned, which on a commutative node is none, its
+    // fixed operands reaching both slots. `k` existentials enumerate every
+    // injective assignment over it, which is what `any_input`'s cost is.
     // Invariant across the search, so collected once here rather than per
     // recursion level (and empty in the common no-`any_input` case).
     // `Candidates::Only` never extends the `Claimed` chain, so a pinned slot is
@@ -417,11 +416,6 @@ fn try_match_at(
 /// The constraints a pat node owes once its operands, or its alternation arm,
 /// have matched: its sibling output vertices and its guard. Restores `b` to
 /// entry on rejection; [`continue_node`] carries on from here.
-///
-/// A sibling vertex with no IR output at its slot is vacuously satisfied only
-/// while it constrains nothing, which is what lets a bare `anything()` match a
-/// value-less `Return`; one carrying a capture or a filter rejects instead of
-/// leaving that capture unbound.
 #[allow(clippy::too_many_arguments)]
 fn finish_node(
     ctx: &Ctx,
@@ -576,10 +570,6 @@ fn try_operand(
 ) -> bool {
     let mark = bindings.mark();
     let producer_ir = ctx.function().producer(value);
-    // The cast walk-through is a fallback, so it runs only when the operand
-    // itself produced no match. That has to mean a match was PRODUCED, not
-    // merely that the continuation was reached: a guard above can reject the
-    // configuration, and then the chain below is still worth trying.
     let before = ctx.satisfied.get();
     if try_match_at(
         ctx,
@@ -614,10 +604,6 @@ fn try_operand(
             bindings.record_matched(cast);
         }
         let unwrapped_ir = ctx.function().producer(unwrapped);
-        // Cut on a match this level actually PRODUCED, not merely on reaching
-        // the continuation: a guard above can reject the configuration, and
-        // then a deeper level may still match. `satisfied` counts full matches
-        // for exactly this reason; it is what `first_of` cuts on.
         let before = ctx.satisfied.get();
         if try_match_at(
             ctx,

@@ -91,6 +91,44 @@ impl RegionFilter {
     }
 }
 
+/// The region filter every builder that holds a `RegionFilter` exposes
+/// verbatim. `$region` names the field.
+macro_rules! delegate_region_filter {
+    ($ty:ty, $region:ident) => {
+        impl $ty {
+            /// Requires the address to decompose to exactly `sp + k`. Replaces any
+            /// region filter set before it.
+            pub fn stack_offset(mut self, k: i128) -> Self {
+                self.$region.set_stack_offset(k);
+                self
+            }
+
+            /// Keeps only accesses whose address decomposes to a stack base, keeping an
+            /// offset a preceding [`stack_offset`](Self::stack_offset) pinned. The one
+            /// region filter that does not discard what came before.
+            pub fn stack_only(mut self) -> Self {
+                self.$region.set_stack_only();
+                self
+            }
+
+            /// Keeps only accesses proven to be heap-rooted or not memory-rooted.
+            /// An address with no decomposition verdict is rejected. Replaces any
+            /// region filter set before it.
+            pub fn non_stack(mut self) -> Self {
+                self.$region.set_non_stack();
+                self
+            }
+
+            /// Keeps only accesses whose address decomposes to a heap base (a pure
+            /// allocator's return pointer). Replaces any region filter set before it.
+            pub fn heap_only(mut self) -> Self {
+                self.$region.set_heap_only();
+                self
+            }
+        }
+    };
+}
+
 /// The address of a `Load` / `Store`, per the slot conventions above.
 fn access_address(function: &strider_ir::Function, node: NodeId) -> Option<ValueId> {
     if !matches!(
@@ -156,36 +194,6 @@ impl LoadPat {
         self
     }
 
-    /// Requires the address to decompose to exactly `sp + k`. Replaces any
-    /// region filter set before it.
-    pub fn stack_offset(mut self, k: i128) -> Self {
-        self.region.set_stack_offset(k);
-        self
-    }
-
-    /// Keeps only accesses whose address decomposes to a stack base, keeping an
-    /// offset a preceding [`stack_offset`](Self::stack_offset) pinned. The one
-    /// region filter that does not discard what came before.
-    pub fn stack_only(mut self) -> Self {
-        self.region.set_stack_only();
-        self
-    }
-
-    /// Keeps only accesses proven to be heap-rooted or not memory-rooted.
-    /// An address with no decomposition verdict is rejected. Replaces any
-    /// region filter set before it.
-    pub fn non_stack(mut self) -> Self {
-        self.region.set_non_stack();
-        self
-    }
-
-    /// Keeps only accesses whose address decomposes to a heap base (a pure
-    /// allocator's return pointer). Replaces any region filter set before it.
-    pub fn heap_only(mut self) -> Self {
-        self.region.set_heap_only();
-        self
-    }
-
     fn configured(self) -> NodePat {
         let LoadPat {
             mut inner,
@@ -223,6 +231,7 @@ pub fn load() -> LoadPat {
 
 delegate_with_output!(LoadPat, inner);
 delegate_node_pat!(LoadPat, inner, [capture, input, any_input]);
+delegate_region_filter!(LoadPat, region);
 
 /// Inputs `[mem(0), addr(1), data(2)]`, single output the new memory token.
 pub struct StorePat {
@@ -265,36 +274,6 @@ impl StorePat {
     /// Pins the width of the data input, `inputs[2]`.
     pub fn bit_width(mut self, n: u32) -> Self {
         self.bit_width = Some(n);
-        self
-    }
-
-    /// Requires the address to decompose to exactly `sp + k`. Replaces any
-    /// region filter set before it.
-    pub fn stack_offset(mut self, k: i128) -> Self {
-        self.region.set_stack_offset(k);
-        self
-    }
-
-    /// Keeps only accesses whose address decomposes to a stack base, keeping an
-    /// offset a preceding [`stack_offset`](Self::stack_offset) pinned. The one
-    /// region filter that does not discard what came before.
-    pub fn stack_only(mut self) -> Self {
-        self.region.set_stack_only();
-        self
-    }
-
-    /// Keeps only accesses proven to be heap-rooted or not memory-rooted.
-    /// An address with no decomposition verdict is rejected. Replaces any
-    /// region filter set before it.
-    pub fn non_stack(mut self) -> Self {
-        self.region.set_non_stack();
-        self
-    }
-
-    /// Keeps only accesses whose address decomposes to a heap base (a pure
-    /// allocator's return pointer). Replaces any region filter set before it.
-    pub fn heap_only(mut self) -> Self {
-        self.region.set_heap_only();
         self
     }
 
@@ -345,3 +324,4 @@ pub fn store() -> StorePat {
 
 delegate_with_output!(StorePat, inner);
 delegate_node_pat!(StorePat, inner, [capture, input, any_input]);
+delegate_region_filter!(StorePat, region);

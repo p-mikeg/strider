@@ -113,9 +113,9 @@ impl Bindings {
 
     /// A match's identity, keying [`crate::Matcher::find_all`]'s dedup: two
     /// configurations binding the same captures to the same things are one
-    /// match (`int_add(x, x)` swapped is one, not two). Keyed on the bindings
-    /// alone, not the root, so a capture-free pattern collapses to the empty
-    /// key and can never duplicate.
+    /// match (`int_add(x, x)` swapped is one, not two). The root is the
+    /// enclosing key, the dedup set being per candidate node, so a
+    /// capture-free pattern reports one match per root.
     ///
     /// Sorted by capture id, making the key independent of bind order.
     pub(crate) fn binding_signature(&self) -> Vec<(u32, Binding)> {

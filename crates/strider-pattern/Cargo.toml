@@ -6,6 +6,7 @@ license.workspace = true
 description = "Graph pattern matching and rewriting over strider's IR."
 repository.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 
 [features]
 # Exposes `Match::get_vn`, used only by this crate's integration tests. Off in
