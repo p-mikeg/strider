@@ -30,7 +30,10 @@ where
 {
     /// # Errors
     ///
-    /// Returns `Err` if `Sleigh::regs()` fails.
+    /// Returns `Err` from [`Lifter::new`]: `Sleigh::regs()` or
+    /// `Sleigh::user_op_names()` failing, the arch declaring no address space
+    /// with shortcut `'r'` or naming that space something other than `"ram"`,
+    /// and `FlowVars::discover` failing.
     pub fn new(
         arch: strider_target::SleighArch,
         sleigh: rsleigh::Sleigh<R>,
@@ -119,8 +122,10 @@ where
     /// That is not the only incompleteness channel. A site the CFG CONSUMED
     /// (a `LinkRegister` answer seated as a `Return`, a single out-of-function
     /// target seated as a `TailCall`) leaves no placeholder and no anchor, so
-    /// it cannot appear in `unresolved_indirect_branches` at all; it is named
-    /// in [`AnalyzeResult::unverified_seeded_sites`] instead. A CFG-level loss
+    /// the anchor-keyed half of `unresolved_indirect_branches` cannot see it;
+    /// it is named in [`AnalyzeResult::unverified_seeded_sites`] instead. The
+    /// address-keyed half still reaches it: a site that grew and then narrowed
+    /// to `LinkRegister` is reported through both. A CFG-level loss
     /// no indirect site owns comes back in
     /// [`AnalyzeResult::isa_mode_conflicts`],
     /// [`AnalyzeResult::interior_branch_targets`] or
@@ -227,6 +232,7 @@ where
         let mut dropped_seats = abandon_undecodable(
             cfg.undecodable_seeded_targets(),
             cfg.isa_mode_conflicts(),
+            &dispatch_anchors(&cfg),
             &mut abandoned,
             &mut working.cfg.known_targets,
         );
@@ -235,6 +241,11 @@ where
         // channels call unresolved; one more round rebuilds without it.
         let mut seats_stale = !dropped_seats.is_empty();
         derived_incomplete.append(&mut dropped_seats);
+        // Every round rebuilds the whole function from `known_targets`: cfg,
+        // lift and pipeline. Seating one level per round therefore costs
+        // O(depth^2) on a trampoline chain, bounded by the cap. Carrying a
+        // round's work forward would make the cfg a function of more than
+        // `known_targets`, which is what convergence rests on.
         for _ in 0..MAX_RESOLUTION_ITERATIONS {
             // Seated `Switch` sites are re-derived every round, so the loop
             // runs on while either anchor set is non-empty: a table that
@@ -275,11 +286,6 @@ where
                 converged = true;
                 break;
             }
-            // Only this round's growth: a site that settled earlier is not
-            // "still growing when the cap ran out", which is what the report
-            // means.
-            still_growing.clear();
-            still_growing.extend(progress.grew);
             (cfg, function, unresolved, switch_anchors, resolutions) =
                 self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
             // BEFORE `abandon_undecodable`, which drops the site or its bad
@@ -291,6 +297,7 @@ where
             let mut dropped_seats = abandon_undecodable(
                 cfg.undecodable_seeded_targets(),
                 cfg.isa_mode_conflicts(),
+                &dispatch_anchors(&cfg),
                 &mut abandoned,
                 &mut working.cfg.known_targets,
             );
@@ -327,8 +334,10 @@ where
             // `apply_resolutions` already pushes every narrowed address here.
             derived_incomplete.extend(progress.derived_incomplete);
             assumed_modes.extend(progress.assumed_modes);
-            still_growing.clear();
-            still_growing.extend(progress.grew);
+            // Only the LAST round's growth: a site that settled earlier is not
+            // "still growing when the cap ran out", which is what the report
+            // means.
+            still_growing = progress.grew;
             final_targets = Some(folded);
         }
 
@@ -1002,6 +1011,34 @@ fn abandon_site(
     }
 }
 
+/// Every `BranchIndirect` anchor a cfg carries, seated or deferred.
+fn dispatch_anchors(cfg: &strider_cfg::Cfg) -> Vec<PcodeInsnAddr> {
+    cfg.regions()
+        .filter_map(|region| match &region.terminator {
+            strider_cfg::RegionTerminator::Switch { addr, .. }
+            | strider_cfg::RegionTerminator::UnresolvedIndirectBranch { addr, .. } => Some(*addr),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The `BranchIndirect` address a `known_targets` key stands for.
+///
+/// A caller can only spell the machine address ([`seed_for`]), so its key is
+/// the instruction's, not the dispatch's. Falls back to the key itself for a
+/// seat the cfg CONSUMED, which leaves no anchor to name.
+fn anchor_of(anchors: &[PcodeInsnAddr], site: PcodeInsnAddr) -> PcodeInsnAddr {
+    if anchors.contains(&site) {
+        return site;
+    }
+    anchors
+        .iter()
+        .filter(|a| a.machine_addr.addr == site.machine_addr.addr)
+        .min()
+        .copied()
+        .unwrap_or(site)
+}
+
 /// Abandons every site naming a target the round's cfg could not trust,
 /// returning those sites so the caller can report them.
 ///
@@ -1026,6 +1063,7 @@ fn abandon_site(
 fn abandon_undecodable(
     undecodable_targets: &[strider_cfg::UndecodableTarget],
     clashing_targets: &[PcodeInsnAddr],
+    dispatch_anchors: &[PcodeInsnAddr],
     abandoned: &mut rustc_hash::FxHashSet<PcodeInsnAddr>,
     known_targets: &mut FxHashMap<PcodeInsnAddr, ResolvedTargets>,
 ) -> Vec<PcodeInsnAddr> {
@@ -1080,7 +1118,7 @@ fn abandon_undecodable(
                     .filter(|t| !clashing.contains(&t.addr))
                     .copied()
                     .collect();
-                (*site, *site, kept)
+                (*site, anchor_of(dispatch_anchors, *site), kept)
             })
         })
         .collect();
@@ -2474,6 +2512,7 @@ mod tests {
         let hit = abandon_undecodable(
             &[undecodable(site, 0x9000)],
             &[],
+            &[],
             &mut abandoned,
             &mut known,
         );
@@ -2498,7 +2537,13 @@ mod tests {
         known.insert(other, multiple(&[(0x9000, None)]));
         let mut abandoned = rustc_hash::FxHashSet::default();
 
-        let hit = abandon_undecodable(&[undecodable(bad, 0x9000)], &[], &mut abandoned, &mut known);
+        let hit = abandon_undecodable(
+            &[undecodable(bad, 0x9000)],
+            &[],
+            &[],
+            &mut abandoned,
+            &mut known,
+        );
 
         assert_eq!(hit, vec![bad]);
         assert!(!known.contains_key(&bad));
@@ -2521,7 +2566,7 @@ mod tests {
         );
         let mut abandoned = rustc_hash::FxHashSet::default();
 
-        let hit = abandon_undecodable(&[], &[pcode_addr(0x3000)], &mut abandoned, &mut known);
+        let hit = abandon_undecodable(&[], &[pcode_addr(0x3000)], &[], &mut abandoned, &mut known);
 
         assert_eq!(hit, vec![site]);
         assert_eq!(
@@ -2535,6 +2580,33 @@ mod tests {
         );
     }
 
+    /// A caller can only spell the machine address, so a clash on its seat has
+    /// to be reported and frozen under the `BRANCHIND`'s own anchor.
+    #[test]
+    fn an_isa_clash_on_a_machine_start_seed_is_keyed_to_the_anchor() {
+        let start = pcode_addr(0x1000);
+        let anchor = mid_insn_addr(0x1000);
+        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        known.insert(start, multiple(&[(0x2000, None), (0x3000, None)]));
+        let mut abandoned = rustc_hash::FxHashSet::default();
+
+        let hit = abandon_undecodable(
+            &[],
+            &[pcode_addr(0x3000)],
+            &[anchor],
+            &mut abandoned,
+            &mut known,
+        );
+
+        assert_eq!(hit, vec![anchor]);
+        assert!(
+            abandoned.contains(&anchor),
+            "`apply_resolutions` tests this set with the anchor, so a site \
+             frozen only under the seed key takes the next round's fold",
+        );
+        assert!(abandoned.contains(&start));
+    }
+
     #[test]
     fn an_isa_clash_on_every_arm_abandons_the_site() {
         let site = pcode_addr(0x1000);
@@ -2545,7 +2617,7 @@ mod tests {
         );
         let mut abandoned = rustc_hash::FxHashSet::default();
 
-        let hit = abandon_undecodable(&[], &[pcode_addr(0x3000)], &mut abandoned, &mut known);
+        let hit = abandon_undecodable(&[], &[pcode_addr(0x3000)], &[], &mut abandoned, &mut known);
 
         assert_eq!(hit, vec![site]);
         assert!(!known.contains_key(&site));
@@ -2562,6 +2634,7 @@ mod tests {
         let hit = abandon_undecodable(
             &[undecodable(pcode_addr(0x7000), 0x9000)],
             &[pcode_addr(0x8000)],
+            &[],
             &mut abandoned,
             &mut known,
         );
