@@ -23,7 +23,7 @@ use anyhow::anyhow;
 use rustc_hash::FxHashMap;
 use strider_graph::ValueId as TmplValueId;
 use strider_ir::node::{ExpectedValueKind, NodeId, NodeKind, ValueId, ValueKind, ValueType};
-use strider_ir::{Function, IRBuilder, IRViewer};
+use strider_ir::{Function, IRBuilder, IRViewer, IntBinaryOp};
 
 use crate::bindings::Bindings;
 use crate::graph_ext::{consumed_inputs, reachable_topo};
@@ -50,7 +50,8 @@ pub enum TemplateKind {
 /// resolve at instantiation time.
 #[derive(Clone, Copy)]
 pub enum TemplateTy {
-    /// The rewrite root's output type.
+    /// No width of its own: the one the node is evaluated at, which is the
+    /// rewrite root's output type unless an operand group pins another.
     InheritRoot,
     /// The width of the value a bound LHS capture matched, for an interior
     /// node whose width comes from a captured operand the root does not
@@ -64,8 +65,9 @@ pub enum TemplateTy {
 /// Materialises `template` as an IR sub-graph rooted at the returned output.
 ///
 /// `root_ty` types any node whose [`TemplateTy`] is
-/// [`TemplateTy::InheritRoot`]. `lhs_root` reaches [`TemplateKind::Fn`]
-/// closures as [`TemplateCtx::root`]; a pure-`Exact` template ignores it.
+/// [`TemplateTy::InheritRoot`] and whose width no operand group pins.
+/// `lhs_root` reaches [`TemplateKind::Fn`] closures as [`TemplateCtx::root`];
+/// a pure-`Exact` template ignores it.
 ///
 /// `proof_nodes` is unioned into the asm-fingerprint of every node created
 /// here.
@@ -84,7 +86,8 @@ pub enum TemplateTy {
 ///
 /// If the template is rootless, references an unbound capture, has a
 /// [`TemplateKind::Fn`] closure that itself errors, has gapped or duplicate
-/// input slots, or if node creation yields no value output.
+/// input slots, has a node no width reaches, or if node creation yields no
+/// value output.
 pub fn instantiate<B: IRBuilder>(
     template: &Template,
     builder: &mut B,
@@ -98,7 +101,14 @@ pub fn instantiate<B: IRBuilder>(
 
     // Scanned before the mutating build loop, which is what the immutable
     // `function` borrow requires.
-    let binding_tys = resolve_binding_tys(template, bindings, builder.function());
+    let value_tys = resolve_value_tys(
+        template,
+        &order,
+        bindings,
+        builder.function(),
+        root,
+        root_ty,
+    )?;
 
     // Keyed on the output VERTEX rather than the producer node, so a
     // multi-output interior node feeds the right slot to each consumer: a
@@ -136,7 +146,7 @@ pub fn instantiate<B: IRBuilder>(
             TmplNodeKind::Build(TemplateKind::Fn(f)) => {
                 // The closure computes its constant against this node's own
                 // declared output type, not the rewrite root's.
-                let value_ty = node_value_ty(template, vtx, root_ty, &binding_tys);
+                let value_ty = node_value_ty(template, vtx, &value_tys);
                 let ctx = TemplateCtx {
                     function: builder.function(),
                     bindings,
@@ -146,7 +156,7 @@ pub fn instantiate<B: IRBuilder>(
                 f(&ctx)?
             }
             TmplNodeKind::Build(TemplateKind::FnIntConst(f)) => {
-                let value_ty = node_value_ty(template, vtx, root_ty, &binding_tys);
+                let value_ty = node_value_ty(template, vtx, &value_tys);
                 let ctx = TemplateCtx {
                     function: builder.function(),
                     bindings,
@@ -162,7 +172,7 @@ pub fn instantiate<B: IRBuilder>(
         // width is resolved here, so bits above it are dropped here.
         let kind = match kind {
             NodeKind::FloatConst(bits) => {
-                let ty = node_value_ty(template, vtx, root_ty, &binding_tys);
+                let ty = node_value_ty(template, vtx, &value_tys);
                 // The payload is a `u64`, so a wider float has no encoding here
                 // and the mask would silently keep 64 of its bits.
                 anyhow::ensure!(
@@ -182,7 +192,7 @@ pub fn instantiate<B: IRBuilder>(
 
         // Usually a single value output; a multi-output node such as a
         // `Store` declares its memory output here too.
-        let outputs = output_kinds_for(template, vtx, root_ty, &binding_tys)?;
+        let outputs = output_kinds_for(template, vtx, &value_tys)?;
         for (slot, got) in outputs.iter().enumerate() {
             let want = kind.expected_output_kind(slot).ok_or_else(|| {
                 anyhow::anyhow!(
@@ -230,18 +240,238 @@ pub fn instantiate<B: IRBuilder>(
     root_value.ok_or_else(|| anyhow!("root template node never materialised"))
 }
 
-/// An `InheritBinding` whose capture never resolved to a typed value falls
-/// back to `root_ty`.
-fn resolve_ty(
-    ty: TemplateTy,
+/// Every value output's type, keyed on the output vertex.
+struct ValueTys {
+    by_vertex: FxHashMap<TmplValueId, ValueType>,
     root_ty: ValueType,
-    binding_tys: &FxHashMap<crate::Capture, ValueType>,
-) -> ValueType {
-    match ty {
-        TemplateTy::Fixed(t) => t,
-        TemplateTy::InheritRoot => root_ty,
-        TemplateTy::InheritBinding(cap) => binding_tys.get(&cap).copied().unwrap_or(root_ty),
+}
+
+impl ValueTys {
+    /// A vertex outside the root's cone never reaches the build loop, so the
+    /// root's type stands in for it.
+    fn of(&self, vtx: TmplValueId) -> ValueType {
+        self.by_vertex.get(&vtx).copied().unwrap_or(self.root_ty)
     }
+}
+
+/// How input `slot` of `kind` relates to the widths around it, mirroring the
+/// arithmetic-width agreement `strider_ir::validate` enforces.
+#[derive(Clone, Copy)]
+enum WidthRelation {
+    /// Evaluated at the node's own output width.
+    OfOutput,
+    /// Evaluated at input slot 0's width, the output being the `I1` verdict.
+    OfFirstOperand,
+    /// A width the node pins apart from its output, so neither the output nor
+    /// a sibling operand carries it.
+    Foreign,
+    /// Tied to no other slot.
+    Free,
+}
+
+fn input_width_relation(kind: &NodeKind, slot: usize) -> WidthRelation {
+    match kind {
+        // p-code leaves a shift COUNT any width; only the shifted operand
+        // carries the output's.
+        NodeKind::IntBinaryOp(
+            IntBinaryOp::ShiftLeft | IntBinaryOp::ShiftRight | IntBinaryOp::SShiftRight,
+        ) if slot > 0 => WidthRelation::Free,
+        NodeKind::IntBinaryOp(_)
+        | NodeKind::IntUnaryOp(_)
+        | NodeKind::FloatBinaryOp(_)
+        | NodeKind::FloatUnaryOp(_) => WidthRelation::OfOutput,
+        NodeKind::IntCmpOp(_) | NodeKind::FloatCmpOp(_) => WidthRelation::OfFirstOperand,
+        // `Extend` / `Truncate` must strictly widen / narrow, and a bitcast
+        // reinterprets the same bits as the other kind of value.
+        NodeKind::Extend(_)
+        | NodeKind::Truncate
+        | NodeKind::IntBitsToFloat
+        | NodeKind::FloatBitsToInt => WidthRelation::Foreign,
+        _ => WidthRelation::Free,
+    }
+}
+
+/// Union-find over value vertices, grouping the ones a node evaluates at one
+/// width.
+struct WidthGroups {
+    parent: Vec<u32>,
+}
+
+impl WidthGroups {
+    fn new(len: usize) -> Self {
+        Self {
+            parent: (0..len as u32).collect(),
+        }
+    }
+
+    fn find(&mut self, v: TmplValueId) -> usize {
+        let mut i = v.as_u32() as usize;
+        while self.parent[i] as usize != i {
+            let grandparent = self.parent[self.parent[i] as usize];
+            self.parent[i] = grandparent;
+            i = grandparent as usize;
+        }
+        i
+    }
+
+    fn union(&mut self, a: TmplValueId, b: TmplValueId) {
+        let (ra, rb) = (self.find(a), self.find(b));
+        if ra != rb {
+            self.parent[rb] = ra as u32;
+        }
+    }
+}
+
+/// Whether the slot carries a value, and so a width.
+fn is_value_output(kind: &OutputKindSpec) -> bool {
+    matches!(
+        kind,
+        OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any
+    )
+}
+
+/// The node's first value-output vertex.
+fn first_value_output_vtx(template: &Template, node_vtx: NodeId) -> Option<TmplValueId> {
+    template
+        .graph
+        .node_outputs(node_vtx)
+        .iter()
+        .copied()
+        .find(|&v| match template.graph.value_kind_ref(v) {
+            TmplValue::TmplOutput(o) => is_value_output(&o.kind),
+            TmplValue::ValueCapture(_) => true,
+        })
+}
+
+/// The build kind a node declares up front. A `Fn` closure picks its kind at
+/// instantiation, so its slots relate no widths here.
+fn exact_kind(template: &Template, node_vtx: NodeId) -> Option<NodeKind> {
+    match &template.graph.node_kind(node_vtx).kind {
+        TmplNodeKind::Build(TemplateKind::Exact(k)) => Some(*k),
+        _ => None,
+    }
+}
+
+/// Each value output's type. A node built with no declared type
+/// ([`TemplateTy::InheritRoot`]) takes the width of the group it is evaluated
+/// in, so a fresh constant in a comparison operand gets the OPERAND width and
+/// not the `I1` verdict the root carries. The rewrite root itself is what
+/// replaces the matched value, so its group takes `root_ty`.
+///
+/// # Errors
+///
+/// If a group a node's width is tied to carries no width at all: every member
+/// is built fresh with no declared type, so any width picked here is arbitrary
+/// and the pick shows up as IR `strider_ir::validate` rejects.
+fn resolve_value_tys(
+    template: &Template,
+    order: &[NodeId],
+    bindings: &Bindings,
+    function: &Function,
+    root: NodeId,
+    root_ty: ValueType,
+) -> anyhow::Result<ValueTys> {
+    let binding_tys = resolve_binding_tys(template, bindings, function);
+    let len = template
+        .graph
+        .all_value_ids()
+        .map(|v| v.as_u32() as usize + 1)
+        .max()
+        .unwrap_or(0);
+    let mut groups = WidthGroups::new(len);
+    // The consumer that ties each vertex to a group, for the error naming it.
+    let mut tied_by: FxHashMap<TmplValueId, (NodeKind, usize)> = FxHashMap::default();
+
+    for &node_vtx in order {
+        let Some(kind) = exact_kind(template, node_vtx) else {
+            continue;
+        };
+        let inputs = consumed_inputs(&template.graph, node_vtx);
+        let first_operand = inputs.iter().find(|&&(slot, _)| slot == 0).map(|&(_, v)| v);
+        for &(slot, producer) in &inputs {
+            let head = match input_width_relation(&kind, slot) {
+                WidthRelation::OfOutput => first_value_output_vtx(template, node_vtx),
+                WidthRelation::OfFirstOperand => first_operand,
+                WidthRelation::Foreign => {
+                    tied_by.entry(producer).or_insert((kind, slot));
+                    continue;
+                }
+                WidthRelation::Free => continue,
+            };
+            let Some(head) = head.filter(|&h| h != producer) else {
+                continue;
+            };
+            groups.union(head, producer);
+            tied_by.entry(producer).or_insert((kind, slot));
+            tied_by.entry(head).or_insert((kind, slot));
+        }
+    }
+
+    let mut group_ty: FxHashMap<usize, ValueType> = FxHashMap::default();
+    let mut anchor = |groups: &mut WidthGroups, vtx: TmplValueId, ty: ValueType| {
+        group_ty.entry(groups.find(vtx)).or_insert(ty);
+    };
+    for &node_vtx in order {
+        for vtx in template.graph.node_outputs(node_vtx).iter().copied() {
+            match template.graph.value_kind_ref(vtx) {
+                TmplValue::ValueCapture(cap) => {
+                    if let Some(v) = bindings.get_value(*cap)
+                        && let ValueKind::Typed(t) = function.value_kind(v)
+                    {
+                        anchor(&mut groups, vtx, t);
+                    }
+                }
+                TmplValue::TmplOutput(o) if is_value_output(&o.kind) => match o.ty {
+                    TemplateTy::Fixed(t) => anchor(&mut groups, vtx, t),
+                    TemplateTy::InheritBinding(cap) => {
+                        if let Some(&t) = binding_tys.get(&cap) {
+                            anchor(&mut groups, vtx, t);
+                        }
+                    }
+                    TemplateTy::InheritRoot => {}
+                },
+                TmplValue::TmplOutput(_) => {}
+            }
+        }
+    }
+    // Overrides whatever else the root's group holds, so a template that
+    // already types its nodes builds exactly what it built before.
+    if let Some(vtx) = first_value_output_vtx(template, root) {
+        let g = groups.find(vtx);
+        group_ty.insert(g, root_ty);
+    }
+
+    let mut by_vertex: FxHashMap<TmplValueId, ValueType> = FxHashMap::default();
+    for &node_vtx in order {
+        for vtx in template.graph.node_outputs(node_vtx).iter().copied() {
+            let TmplValue::TmplOutput(o) = template.graph.value_kind_ref(vtx) else {
+                continue;
+            };
+            if !is_value_output(&o.kind) {
+                continue;
+            }
+            let ty = match o.ty {
+                TemplateTy::Fixed(t) => t,
+                TemplateTy::InheritBinding(cap) => {
+                    binding_tys.get(&cap).copied().unwrap_or(root_ty)
+                }
+                TemplateTy::InheritRoot => match group_ty.get(&groups.find(vtx)).copied() {
+                    Some(t) => t,
+                    None => match tied_by.get(&vtx) {
+                        Some((kind, slot)) => anyhow::bail!(
+                            "template node feeding {kind:?} input {slot} has no width: it is \
+                             built fresh with no declared type, and nothing it is evaluated \
+                             against carries one either. Type it, or type an operand it is \
+                             evaluated against"
+                        ),
+                        None => root_ty,
+                    },
+                },
+            };
+            by_vertex.insert(vtx, ty);
+        }
+    }
+    Ok(ValueTys { by_vertex, root_ty })
 }
 
 /// Resolves every `InheritBinding(cap)` width, from the value each capture
@@ -330,11 +560,7 @@ fn collect_inputs(
 }
 
 /// Maps an `OutputKindSpec` to its [`ValueKind`].
-fn resolved_output_kind(
-    o: &TmplOutput,
-    root_ty: ValueType,
-    binding_tys: &FxHashMap<crate::Capture, ValueType>,
-) -> ValueKind {
+fn resolved_output_kind(o: &TmplOutput, vtx: TmplValueId, value_tys: &ValueTys) -> ValueKind {
     match o.kind {
         OutputKindSpec::Memory => ValueKind::Memory,
         OutputKindSpec::Control => ValueKind::Control,
@@ -342,20 +568,14 @@ fn resolved_output_kind(
         // Every value shape uses this output's own resolved type. `Any` is
         // match-only and no template builder emits it; resolved defensively.
         OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any => {
-            ValueKind::Typed(resolve_ty(o.ty, root_ty, binding_tys))
+            ValueKind::Typed(value_tys.of(vtx))
         }
     }
 }
 
-/// The [`TemplateTy`] of the node's first value output vertex, resolved
-/// against `root_ty`. A node with no value output vertex falls back to
-/// `root_ty`.
-fn node_value_ty(
-    template: &Template,
-    node_vtx: NodeId,
-    root_ty: ValueType,
-    binding_tys: &FxHashMap<crate::Capture, ValueType>,
-) -> ValueType {
+/// The resolved type of the node's first value output vertex. A node with no
+/// value output vertex falls back to the root's type.
+fn node_value_ty(template: &Template, node_vtx: NodeId, value_tys: &ValueTys) -> ValueType {
     template
         .graph
         .node_outputs(node_vtx)
@@ -365,12 +585,12 @@ fn node_value_ty(
             let TmplValue::TmplOutput(o) = template.graph.value_kind_ref(out_vtx) else {
                 return None;
             };
-            match resolved_output_kind(o, root_ty, binding_tys) {
+            match resolved_output_kind(o, out_vtx, value_tys) {
                 ValueKind::Typed(t) => Some(t),
                 _ => None,
             }
         })
-        .unwrap_or(root_ty)
+        .unwrap_or(value_tys.root_ty)
 }
 
 /// Whether `got` is admissible where the node signature expects `want`.
@@ -392,23 +612,21 @@ fn output_kind_admissible(want: ExpectedValueKind, got: ValueKind) -> bool {
     }
 }
 
-/// Each value output resolves its own [`TemplateTy`] against `root_ty`. A
-/// node with no explicit output vertex falls back to a single value output of
-/// the root's type.
+/// Each value output takes its own resolved type. A node with no explicit
+/// output vertex falls back to a single value output of the root's type.
 fn output_kinds_for(
     template: &Template,
     node_vtx: NodeId,
-    root_ty: ValueType,
-    binding_tys: &FxHashMap<crate::Capture, ValueType>,
+    value_tys: &ValueTys,
 ) -> anyhow::Result<Vec<ValueKind>> {
     let mut by_slot: BTreeMap<usize, ValueKind> = BTreeMap::new();
     for out_vtx in template.graph.node_outputs(node_vtx).iter().copied() {
         if let TmplValue::TmplOutput(o) = template.graph.value_kind_ref(out_vtx) {
-            by_slot.insert(o.slot, resolved_output_kind(o, root_ty, binding_tys));
+            by_slot.insert(o.slot, resolved_output_kind(o, out_vtx, value_tys));
         }
     }
     if by_slot.is_empty() {
-        return Ok(vec![ValueKind::Typed(root_ty)]);
+        return Ok(vec![ValueKind::Typed(value_tys.root_ty)]);
     }
     // As in `collect_inputs`: the dense `into_values()` would shift a later
     // slot down onto the wrong IR output index, and the signature check above
@@ -422,4 +640,161 @@ fn output_kinds_for(
         ));
     }
     Ok(by_slot.into_values().collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use strider_ir::node::{NodeId, NodeKind, ValueType as T, ValueType};
+    use strider_ir::{
+        EditFunction, FloatCmpOp, Function, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp,
+    };
+    use strider_ir_test_utils::make_empty_fn;
+
+    use crate::matcher::Pattern;
+    use crate::{Bindings, Capture, MatchPat, Matcher, Template, TemplatePat, var};
+
+    /// The one match of `lhs`: its root node, bindings, and root value type.
+    #[track_caller]
+    fn match_once(fx: &Function, lhs: &Pattern) -> (NodeId, Bindings, ValueType) {
+        let hits = Matcher::new(fx).find_all(lhs).unwrap();
+        assert_eq!(hits.len(), 1, "the LHS must match exactly once");
+        let root = hits[0].root();
+        let [root_value] = fx.node_outputs_exact::<1>(root).unwrap();
+        let root_ty = fx.value_kind(root_value).as_value().unwrap();
+        (root, hits[0].bindings_clone(), root_ty)
+    }
+
+    /// Instantiates `rhs` over the one match of `lhs` and splices it in, so
+    /// `validate` sees the fresh nodes.
+    #[track_caller]
+    fn rewrite(fx: &mut Function, lhs: &Pattern, rhs: &Template) -> anyhow::Result<NodeId> {
+        let (root, bindings, root_ty) = match_once(fx, lhs);
+        let new_value = {
+            let mut ef = EditFunction::new(fx);
+            super::instantiate(rhs, &mut ef, &bindings, root, &[root], root_ty)?
+        };
+        let [old_value] = fx.node_outputs_exact::<1>(root).unwrap();
+        EditFunction::new(fx).replace_all_uses(old_value, new_value)?;
+        strider_ir::validate::validate(fx).expect("a rewritten function must be valid IR");
+        Ok(fx.producer(new_value))
+    }
+
+    /// The type of the one constant operand `node` consumes.
+    #[track_caller]
+    fn const_operand_ty(fx: &Function, node: NodeId) -> ValueType {
+        fx.node_inputs(node)
+            .into_iter()
+            .find(|&v| fx.node_kind(fx.producer(v)).is_const())
+            .map(|v| fx.value_type(v).unwrap())
+            .expect("the RHS mints one constant operand")
+    }
+
+    /// `Equal(5:I64, 1:I64):I1` returned; `int_eq(var(x), int_const(1))` binds
+    /// `x` to the `I64` `5`.
+    fn cmp_over_i64() -> Function {
+        make_empty_fn(|b| {
+            let a = b.build_int_const(5u64, T::I64)?;
+            let k = b.build_int_const(1u64, T::I64)?;
+            b.build_int_cmp_operation(a, k, IntCmpOp::Equal, T::I64)
+        })
+        .unwrap()
+    }
+
+    /// The reported shape: a fresh constant at a comparison's operand 0, whose
+    /// width is the operand's and not the `I1` the root carries.
+    #[test]
+    fn a_fresh_const_at_a_comparison_operand_takes_the_operand_width() {
+        let x = Capture::new();
+        let mut fx = cmp_over_i64();
+        let lhs = crate::int_eq(var(x), crate::int_const(1u128)).into_pattern();
+        let rhs = super::int_sborrow(crate::int_const(7u128), var(x)).into_template();
+
+        let node = rewrite(&mut fx, &lhs, &rhs).unwrap();
+        assert_eq!(const_operand_ty(&fx, node), T::I64);
+    }
+
+    /// The same at operand 1, where the width comes from the operand the
+    /// comparison heads with.
+    #[test]
+    fn a_fresh_const_at_the_second_comparison_operand_takes_the_first_ones_width() {
+        let x = Capture::new();
+        let mut fx = cmp_over_i64();
+        let lhs = crate::int_eq(var(x), crate::int_const(1u128)).into_pattern();
+        let rhs = super::int_lt(var(x), crate::int_const(7u128)).into_template();
+
+        let node = rewrite(&mut fx, &lhs, &rhs).unwrap();
+        assert_eq!(const_operand_ty(&fx, node), T::I64);
+    }
+
+    /// A float comparison is the same shape: the fresh `FloatConst` is `F64`,
+    /// which is also what makes its bits mask at the right width.
+    #[test]
+    fn a_fresh_float_const_at_a_comparison_operand_takes_the_operand_width() {
+        let one = f64::to_bits(1.0);
+        let two = f64::to_bits(2.0);
+        let f = Capture::new();
+        let mut fx = make_empty_fn(|b| {
+            let a = b.build_float_const(one, T::F64);
+            let c = b.build_float_const(two, T::F64);
+            b.build_float_cmp_op(a, c, FloatCmpOp::Equal)
+        })
+        .unwrap();
+        let lhs = crate::float_eq(var(f), crate::float_const(two)).into_pattern();
+        let rhs = super::float_lt(var(f), crate::float_const(two)).into_template();
+
+        let node = rewrite(&mut fx, &lhs, &rhs).unwrap();
+        assert_eq!(const_operand_ty(&fx, node), T::F64);
+    }
+
+    /// `Extend` pins its input APART from its output, so the root's width is
+    /// the one width the operand cannot have. Nothing else offers one.
+    #[test]
+    fn a_fresh_const_under_an_extend_is_refused() {
+        let x = Capture::new();
+        let mut fx = cmp_over_i64();
+        let lhs = crate::int_eq(var(x), crate::int_const(1u128)).into_pattern();
+        // `var(x)` types the comparison, so the extend's operand is the one
+        // unanchored node left.
+        let rhs =
+            super::int_eq(super::int_zero_extend(crate::int_const(7u128)), var(x)).into_template();
+
+        let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err().to_string();
+        assert!(err.contains("Extend"), "got: {err}");
+        assert!(err.contains("has no width"), "got: {err}");
+    }
+
+    /// Two fresh constants compared against each other anchor nothing, so the
+    /// width would be a guess.
+    #[test]
+    fn a_comparison_of_two_fresh_consts_is_refused() {
+        let x = Capture::new();
+        let mut fx = cmp_over_i64();
+        let lhs = crate::int_eq(var(x), crate::int_const(1u128)).into_pattern();
+        let rhs = super::int_eq(crate::int_const(1u128), crate::int_const(2u128)).into_template();
+
+        let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err().to_string();
+        assert!(err.contains("has no width"), "got: {err}");
+    }
+
+    /// An arithmetic root is evaluated at its own output width, so a fresh
+    /// operand there still inherits the rewrite root's type.
+    #[test]
+    fn a_fresh_const_under_an_arithmetic_root_still_inherits_the_root() {
+        let x = Capture::new();
+        let mut fx = make_empty_fn(|b| {
+            let a = b.build_int_const(5u64, T::I64)?;
+            let k = b.build_int_const(1u64, T::I64)?;
+            b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::I64)
+        })
+        .unwrap();
+        let lhs = crate::int_add(var(x), crate::int_const(1u128)).into_pattern();
+        let rhs = super::int_add(var(x), crate::int_const(2u128)).into_template();
+
+        let node = rewrite(&mut fx, &lhs, &rhs).unwrap();
+        assert_eq!(const_operand_ty(&fx, node), T::I64);
+        assert!(matches!(
+            fx.node_kind(node),
+            NodeKind::IntBinaryOp(IntBinaryOp::Add)
+        ));
+    }
 }
