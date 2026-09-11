@@ -143,6 +143,9 @@ dependency of `strider-cfg`, `strider-graph`, `strider-ir`, `strider-lift`,
 
 Dev-dependencies are not in that graph, and are not a DAG:
 `strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it.
+`strider-graph` and `strider-pattern` also dev-depend on THEMSELVES, which is
+how their `tests/` integration targets get a feature (`test-injectors`,
+`test-util`) that `cfg(test)` cannot reach.
 
 ## IR node model
 
@@ -257,8 +260,8 @@ value.
   `MAX_RESOLUTION_ITERATIONS` while every site still grows is the discovery
   depth limit, and those sites come back as unresolved too.
 - A converged CFG is never silently incomplete, but it reports through FOUR
-  fields on `AnalyzeResult` — `unresolved_indirect_branches`,
-  `unverified_seeded_sites`, `isa_mode_conflicts`, `interior_branch_targets` —
+  fields on `AnalyzeResult` (`unresolved_indirect_branches`,
+  `unverified_seeded_sites`, `isa_mode_conflicts`, `interior_branch_targets`),
   and a consumer asking "may this be incomplete?" reads all four. Each field's
   contract is on the struct (`crates/strider-orchestrator/src/lib.rs`).
   `interior_branch_targets` also carries a region start a later decode stepped

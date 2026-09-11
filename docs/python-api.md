@@ -318,8 +318,7 @@ from strider import pattern as p
 
 ```python
 p.anything()                   # matches any value
-p.var(p.Capture("x"))          # a wildcard that captures (var takes a Capture object,
-                               # not a bare string)
+p.var(p.Capture("x"))          # a wildcard that captures
 p.int_const(8)                 # the integer constant 8 (any width)
 p.int_const([0x10, 0x20])      # any constant from a set
 p.any_int()                    # any integer-typed node, constant or not
@@ -773,10 +772,11 @@ you need it without a lifter, and resolves the names both `custom` constructors
 take. `crates/strider-py/examples/python/17_custom_abis.py` uses each of them.
 
 ARM32 hard-float passes arguments in one bank of 16 single-precision slots
-`s0..s15`, aliased as `d0..d7`. The convention names the double carriers, so a
-function taking `float` arguments reports the wrong varnode at every odd
-position and `function_arg_float(n)` is a candidate there rather than an
-answer.
+`s0..s15`, aliased as `d0..d7`. The convention names the double carriers, so for
+`float` arguments only position 0 lands right: float argument n is really in
+`s_n`, inside `d_{n/2}`, while `function_arg_float(n)` reports `d_n`. It is a
+candidate rather than an answer at every position past the first, and positions
+8..15 have no entry at all.
 
 ---
 
@@ -797,24 +797,28 @@ cfg.interior_branch_targets()          # branch targets off every instruction bo
 cfg.unverified_seeded_sites()          # sites nothing verified: a seed the classifier
                                        # never confirmed, or a site the CFG consumed
                                        # as a Return / TailCall (seeded or derived)
+cfg.unmapped_branch_targets()          # direct-branch targets no byte of this image backs,
+                                       # each seated as an empty tail-call stub
 ```
 
-A converged CFG is never silently incomplete, but it says so through FOUR
-channels, and a consumer asking "may this be incomplete?" reads all four.
+A converged CFG is never silently incomplete, but it says so through FIVE
+channels, and a consumer asking "may this be incomplete?" reads all five.
 `unresolved`, the third field of `analyze`'s result, holds a site that lost a
 successor, one whose re-derived widening could not be seated, one whose answer
 oscillated, and one still growing when the iteration cap ran out; empty means
 fully resolved. `unverified_seeded_sites()` holds a dispatch the CFG consumed as
 a `Return` or a `TailCall`, which is a complete answer that cannot be verified
 rather than a loss, so an ARM `pop {pc}` epilogue lands here and not in
-`unresolved`. `isa_mode_conflicts()` and `interior_branch_targets()` carry the
-other two; `isa_mode_conflicts()` is structurally always empty outside the four
-ARM and four MIPS presets, the only ones with an ISA-mode context variable to
-disagree about. `unresolved`, `isa_mode_conflicts` and
-`interior_branch_targets` accumulate across resolution rounds, so a later round
+`unresolved`. `isa_mode_conflicts()`, `interior_branch_targets()` and
+`unmapped_branch_targets()` carry the other three; `isa_mode_conflicts()` is
+structurally always empty outside the four ARM and four MIPS presets, the only
+ones with an ISA-mode context variable to disagree about, and
+`unmapped_branch_targets()` names a DIRECT branch the image has no bytes for,
+seated as an empty tail-call stub so the regions that did decode survive.
+`unresolved`, `isa_mode_conflicts`, `interior_branch_targets` and
+`unmapped_branch_targets` accumulate across resolution rounds, so a later round
 cannot launder an earlier loss; `unverified_seeded_sites` is derived once from
-the final CFG. `is_complete()`
-folds all four into one answer.
+the final CFG. `is_complete()` folds all five into one answer.
 
 `CfgOptions` (passed via `LifterOptions.cfg` or `Lifter.build_cfg`) tunes CFG
 construction:
