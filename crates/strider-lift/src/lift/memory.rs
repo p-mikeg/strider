@@ -45,19 +45,33 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         self.builder.build_store(addr, data, space)
     }
 
-    /// A register-space LOAD whose address names no register.
+    /// A register-space LOAD whose address names no register (ppc `mfsrin`).
     ///
     /// The value comes out of the REGISTER space as memory, so two accesses at
-    /// the SAME address value forward to each other: re-reading a slot an
-    /// earlier opaque store wrote gives that store's data back, rather than a
-    /// second unrelated unknown. Reading a slot nothing wrote reaches the
-    /// space's `InitialMemory`, which is the honest answer: named register
-    /// writes are not mirrored into the space, so this is an unknown, never a
-    /// claim about a particular register's value.
+    /// the SAME address value forward to each other. A named register write is
+    /// an SSA-variable write that never advances the memory chain, so the space
+    /// is stale at every register written since the last store into it and two
+    /// loads either side of one would forward to the same value, claiming the
+    /// machine read the same thing twice. Every tracked register is therefore
+    /// mirrored into its slot first, which both breaks that forwarding and
+    /// makes the load's answer the register's own value when the address does
+    /// name it.
+    ///
+    /// O(tracked registers), the price `opaque_register_store` pays in the
+    /// other direction.
     fn opaque_register_load(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let addr = self.read_input(insn, 1)?;
         let out_vn = require_output_vn(insn)?;
         let out_ty = out_vn.int_type()?;
+        let mirrored: Vec<rsleigh::Vn> =
+            opaque_clobber_set(self.builder.function().all_vns()).collect();
+        for vn in mirrored {
+            let slot =
+                self.build_addr_const(rsleigh::VnSpace::REGISTER, vn.addr_off, "REGISTER space")?;
+            let value = self.read_vn(&vn)?;
+            self.builder
+                .build_store(slot, value, rsleigh::VnSpace::REGISTER)?;
+        }
         let value = self
             .builder
             .build_load(addr, rsleigh::VnSpace::REGISTER, out_ty)?;
