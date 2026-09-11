@@ -117,9 +117,10 @@ impl Match {
     /// bound node's value: the proof-of-correctness aid for a query.
     ///
     /// Empty when the capture is unbound or the match is stale, and
-    /// legitimately empty for the region / phi / initial-state kinds
-    /// `SideTables::asm_fingerprint` exempts. The contract is superset-only: passes may grow a fingerprint
-    /// but never shrink it, so these addresses always cover every contributor.
+    /// legitimately empty for the kinds `NodeKind` marks
+    /// [`asm_fingerprint_exempt`](strider_ir::node::NodeKind::asm_fingerprint_exempt).
+    /// The contract is superset-only: passes may grow a fingerprint but never
+    /// shrink it, so these addresses always cover every contributor.
     pub fn asm_fingerprint(&self, c: Capture, graph: &strider_ir::Function) -> FxHashSet<u64> {
         match self.node(c, graph.graph()) {
             Some(node) => graph.side_tables().asm_fingerprint(node),

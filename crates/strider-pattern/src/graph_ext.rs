@@ -1,5 +1,3 @@
-//! # The sparse-slot bridge
-//!
 //! Pattern inputs are **sparse**: `call().arg(0, ...)` wires only raw input
 //! slot 4. The generic graph stores inputs densely, so each input's original
 //! consumer slot rides on the node payload ([`HasInputSlots::input_slots`]),

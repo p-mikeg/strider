@@ -41,8 +41,33 @@ pub struct MatcherBuilder {
     /// [`Pattern::root`]. A pattern is untrusted input, so refusing one is a
     /// `Result`, never a panic.
     refusals: Vec<String>,
-    /// Alternation arms currently being lowered; see [`Self::enter_nesting`].
+    /// Nesting levels currently being lowered; see [`Self::enter_nesting`].
     nesting: usize,
+    /// Frame address of the outermost live nesting level, the zero the stack
+    /// consumption in [`Self::enter_nesting`] is measured against.
+    stack_base: usize,
+}
+
+/// Stack one lowering may consume before [`MatcherBuilder::enter_nesting`]
+/// bails. A level count alone does not bound stack: a level costs one frame per
+/// builder and decorator it passes through, and an unoptimised frame is several
+/// times an optimised one.
+///
+/// The fattest shape measured, an unoptimised alternation of a decorated call,
+/// reaches [`MAX_PATTERN_NODES`](crate::matcher::graph::MAX_PATTERN_NODES)
+/// levels inside 0.75 MiB, so the level cap stays the bound a normal pattern
+/// trips on; this catches a fatter one before the 2 MiB a spawned thread gets
+/// by default runs out.
+const MAX_PATTERN_STACK: usize = 1024 * 1024;
+
+/// Address of a local in the calling frame. The stack grows DOWN on every
+/// target this ships to, so a deeper frame reads lower; `saturating_sub` is
+/// what makes the other direction read as no consumption rather than as a huge
+/// one.
+#[inline(never)]
+fn frame_mark() -> usize {
+    let probe = 0u8;
+    std::hint::black_box(std::ptr::from_ref(&probe)) as usize
 }
 
 impl Default for MatcherBuilder {
@@ -57,14 +82,17 @@ impl MatcherBuilder {
             core: StagedGraph::new(),
             refusals: Vec::new(),
             nesting: 0,
+            stack_base: 0,
         }
     }
 
     /// Opens one level of nested lowering, refusing past `MAX_PATTERN_NODES`.
-    /// An alternation arm lowers before its own node is staged, so the node cap
-    /// at seal comes too late for this recursion. `false` means the caller must
-    /// not descend.
+    /// Lowering recurses once per level before any node exists to count, so the
+    /// cap at seal comes too late to keep the recursion off the stack; a level
+    /// past it is over the node cap anyway. `false` means the caller must not
+    /// descend.
     pub(crate) fn enter_nesting(&mut self) -> bool {
+        let here = frame_mark();
         if self.nesting >= crate::matcher::graph::MAX_PATTERN_NODES {
             self.reject(format!(
                 "pattern nests more than {} levels deep, over what lowering can \
@@ -72,6 +100,22 @@ impl MatcherBuilder {
                 crate::matcher::graph::MAX_PATTERN_NODES
             ));
             return false;
+        }
+        if self.nesting == 0 {
+            self.stack_base = here;
+        } else {
+            let used = self.stack_base.saturating_sub(here);
+            if used > MAX_PATTERN_STACK {
+                self.reject(format!(
+                    "pattern nests too deep for this thread's stack ({} KiB used of a \
+                     {} KiB lowering budget at {} levels); nest less, or lower it on a \
+                     thread with a larger stack",
+                    used / 1024,
+                    MAX_PATTERN_STACK / 1024,
+                    self.nesting,
+                ));
+                return false;
+            }
         }
         self.nesting += 1;
         true
@@ -388,8 +432,9 @@ impl MatcherBuilder {
     }
 }
 
-/// Node kinds producing no value output, so nothing can hand a typed guard a
-/// [`ValueType`].
+/// The value-less kinds whose anchor output does not already say so. A `Store`
+/// or `Region` is value-less too; its memory or control anchor is what the
+/// caller's output check catches.
 fn valueless_kind(spec: &KindSpec) -> bool {
     spec.discriminant().is_some_and(|d| {
         [

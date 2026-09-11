@@ -119,7 +119,8 @@ impl NodePat {
 
     /// Wires `p` into raw input `slot`.
     pub(crate) fn input<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
-        self.inputs.push((slot, Box::new(move |b| p.compile(b))));
+        self.inputs
+            .push((slot, SubCompiler::new(move |b| p.compile(b))));
         self
     }
 
@@ -127,7 +128,7 @@ impl NodePat {
     pub(crate) fn input_any<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.inputs.push((
             crate::matcher::ANY_INPUT_SLOT,
-            Box::new(move |b| p.compile(b)),
+            SubCompiler::new(move |b| p.compile(b)),
         ));
         self
     }
@@ -141,7 +142,7 @@ impl NodePat {
     /// The sub-pattern's memory-token output feeds the slot.
     pub(crate) fn input_mem<M: MemPat + 'static>(mut self, slot: usize, p: M) -> Self {
         self.inputs
-            .push((slot, Box::new(move |b| p.compile_mem(b))));
+            .push((slot, SubCompiler::new(move |b| p.compile_mem(b))));
         self
     }
 
@@ -243,7 +244,7 @@ impl NodePat {
             b.set_value_width(out, bits);
         }
         for (slot, compile) in inputs {
-            let o = compile(b);
+            let o = compile.call(b);
             if let Some((_, bits)) = input_widths.iter().find(|(s, _)| *s == slot) {
                 b.set_value_width(o, *bits);
             }
@@ -317,7 +318,7 @@ impl NodePat {
 /// For control-predecessor slots (`ctrl`), where the producer output is
 /// `Control` rather than a value.
 pub(crate) fn control_compiler<P: MatchPat + 'static>(p: P) -> SubCompiler {
-    Box::new(move |b| {
+    SubCompiler::new(move |b| {
         let o = p.compile(b);
         b.set_output_control(o);
         o
