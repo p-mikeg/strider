@@ -61,6 +61,8 @@ pub struct Lifter<R: rsleigh::MemReader> {
     /// queries in [`pcode_consts`]. `SleighRegs` only hands out an iterator.
     declared_reg_vns: Vec<rsleigh::Vn>,
     user_op_names: Vec<String>,
+    /// This engine's address spaces, for [`Self::check_cfg_space_ids`].
+    space_ids: rsleigh::SpaceIds,
     /// Flowing context vars, discovered once (constant per sla) and lent to
     /// every `build_cfg` so decode mode propagates along CFG edges.
     flow_vars: strider_cfg::FlowVars,
@@ -78,7 +80,25 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     pub fn new(arch: strider_target::SleighArch, sleigh: rsleigh::Sleigh<R>) -> Result<Self> {
         let sleigh_regs = sleigh.regs()?;
         let declared_reg_vns = sleigh_regs.vns().collect();
-        let user_op_names = sleigh.user_op_names().unwrap_or_default();
+        // Not `unwrap_or_default`: an empty table lifts every CALLOTHER into
+        // "user-op id N not in Sleigh's user_op table" and drops every
+        // `CallOther` ABI footprint.
+        let user_op_names = sleigh.user_op_names()?;
+        // `VnSpace::RAM` is the shortcut byte `b'r'`, which Sleigh derives from
+        // the first character of a space's name, bumping on collision.  A
+        // second processor space named with an `r` would take a bumped
+        // shortcut and leave `RAM` naming whichever of the two was declared
+        // first, silently retargeting every Load / Store the lift emits.
+        let ram = sleigh.space_info(rsleigh::VnSpace::RAM).ok_or_else(|| {
+            anyhow!("{arch:?}: sleigh declares no address space with shortcut 'r'")
+        })?;
+        let ram_name = ram.name()?;
+        if ram_name != "ram" {
+            return Err(anyhow!(
+                "{arch:?}: the address space with shortcut 'r' is named {ram_name:?}, not \"ram\""
+            ));
+        }
+        let space_ids = sleigh.space_ids();
         let flow_vars = strider_cfg::FlowVars::discover(&sleigh)?;
         // Read on the still-fresh engine, so this is the pspec default, not a
         // leak.  The address is immaterial: a flowing var's default is committed
@@ -95,6 +115,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             sleigh_regs,
             declared_reg_vns,
             user_op_names,
+            space_ids,
             flow_vars,
             entry_defaults,
             transient_defaults,
@@ -210,7 +231,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// The ENCLOSING declared register is seeded, not the resolved slice. A
     /// computed offset need not land on a declared boundary, and seeding a
     /// partially-overlapping slice would break the nesting the tracked set
-    /// relies on -- see [`pcode_consts::register_slot`].
+    /// relies on; see [`pcode_consts::register_slot`].
     fn register_space_vns(&self, cfg: &strider_cfg::Cfg) -> Vec<rsleigh::Vn> {
         let declared = self.declared_reg_vns();
         let mut found: rustc_hash::FxHashSet<rsleigh::Vn> = rustc_hash::FxHashSet::default();
@@ -290,6 +311,43 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             .collect()
     }
 
+    /// Rejects a `Cfg` whose Load / Store space ids were not produced by this
+    /// engine, which is what discharges the safety precondition of
+    /// [`pcode_util::decode_space_id`].
+    ///
+    /// A `Cfg` holds cloned `rsleigh::Insn`s and carries no lifetime, so it
+    /// outlives the engine that decoded it; the space id in a Load / Store's
+    /// `inputs[0]` is that engine's raw `AddrSpace` pointer.  The comparison
+    /// here never dereferences it.
+    fn check_cfg_space_ids(&self, cfg: &strider_cfg::Cfg) -> Result<()> {
+        for wrapped in cfg.regions().flat_map(|region| region.insns.iter()) {
+            if !matches!(
+                wrapped.insn.opcode,
+                rsleigh::Opcode::Load | rsleigh::Opcode::Store
+            ) {
+                continue;
+            }
+            // A missing or non-CONST slot is a malformed encoding rather than a
+            // foreign one; `decode_space_id` names it precisely at lift time.
+            let Some(space_id) = wrapped.insn.inputs.first() else {
+                continue;
+            };
+            if space_id.addr_space != rsleigh::VnSpace::CONST {
+                continue;
+            }
+            if self.space_ids.resolve(*space_id).is_none() {
+                return Err(anyhow!(
+                    "{:?} at {:#x} names an address space this Sleigh engine did not declare: \
+                     the CFG was built by a different engine, and lifting it would read that \
+                     engine's memory",
+                    wrapped.insn.opcode,
+                    wrapped.addr.machine_addr.addr,
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// [`Self::build_ir_with`] under default [`LiftOptions`].
     pub fn build_ir(
         &self,
@@ -319,6 +377,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         cc: strider_target::BuiltCallingConvention,
         opts: &LiftOptions,
     ) -> Result<(LiftOutcome, usize)> {
+        self.check_cfg_space_ids(cfg)?;
         // The CFG is rebuilt from scratch each lift, so the tracked set is
         // always scanned fresh.  `FunctionLifter::new` adds the stack vn; the
         // lifter is the SSoT for that.
@@ -986,5 +1045,74 @@ mod tests {
             stray.is_empty(),
             "only REGISTER/UNIQUE may be tracked; got {stray:?}"
         );
+    }
+
+    /// A `Cfg` carries no lifetime but holds each Load / Store's space id as a
+    /// raw `AddrSpace` pointer into the engine that decoded it, so lifting one
+    /// on a second engine reads that engine's memory, and lifting one whose
+    /// engine is gone reads freed memory.  Both are the same missing check.
+    #[test]
+    fn a_cfg_from_another_engine_is_rejected_before_its_space_ids_are_read() {
+        let arch = strider_target::SleighArch::x86_64();
+        let regs = strider_target::SleighArch::x86_64()
+            .probe_regs()
+            .expect("probe regs");
+        let cc = strider_target::CallingConvention::x86_64_systemv()
+            .build(&regs)
+            .expect("build cc");
+        // `mov rax, [rbx]` then `ret`: the load is what carries a space id.
+        let code = vec![0x48u8, 0x8b, 0x03, 0xc3];
+        let empty = rustc_hash::FxHashMap::default();
+        let opts = strider_cfg::CfgOptions::default();
+        let new_lifter = || {
+            let reader = rsleigh::mem_readers::BufMemReader::new(code.clone(), 0x1000);
+            let sleigh =
+                rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+            super::Lifter::new(arch, sleigh).expect("lifter")
+        };
+
+        let mut owner = new_lifter();
+        let cfg = owner
+            .build_cfg(0x1000u64.into(), &opts, &empty)
+            .expect("cfg");
+        assert!(
+            cfg.regions()
+                .flat_map(|region| region.insns.iter())
+                .any(|wrapped| wrapped.insn.opcode == rsleigh::Opcode::Load),
+            "the fixture must decode to a LOAD, or the check under test never runs"
+        );
+
+        let foreign = new_lifter();
+        let Err(err) = foreign.build_ir(&cfg, cc.clone()) else {
+            panic!("a CFG from another engine must not lift")
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("did not declare"),
+            "the error must name the foreign space id; got: {msg}"
+        );
+
+        owner
+            .build_ir(&cfg, cc)
+            .expect("the same CFG must still lift on the engine that built it");
+    }
+
+    /// `Lifter::new` fails rather than lifting every CALLOTHER against an empty
+    /// user-op table, and pins `VnSpace::RAM` to the space actually named
+    /// `ram`.  Both checks run for every shipped preset.
+    #[test]
+    fn every_preset_has_a_user_op_table_and_an_ram_named_ram() {
+        for preset in strider_target::ArchPreset::ALL {
+            let arch = preset.arch();
+            let reader = rsleigh::mem_readers::BufMemReader::new(vec![0u8; 0x10], 0x1000);
+            let sleigh =
+                rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+            let lifter = super::Lifter::new(arch, sleigh)
+                .unwrap_or_else(|e| panic!("{preset:?}: Lifter::new must succeed; got {e}"));
+            assert!(
+                !lifter.user_op_names().is_empty(),
+                "{preset:?}: an empty user-op table makes every CALLOTHER fail"
+            );
+        }
     }
 }
