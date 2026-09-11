@@ -57,9 +57,12 @@ impl std::error::Error for UnmappedAddr {}
 
 /// Whether `err` is a decode that never started, `addr` holding no bytes.
 ///
-/// A failure further into the region means bytes WERE read and rejected, and
-/// the region under construction is then real code whose extent is unknown; a
-/// stub seated at its start would discard it.
+/// Read at both ends of a failed decode: [`RegionBuilder::build`] seals its
+/// region and seats a stub when a sequential fall-through lands on unmapped
+/// bytes, and [`super::Builder::build`] does the same for a branch target.
+/// Any other failure is Sleigh rejecting bytes it did read, and the region
+/// under construction is then real code whose extent is unknown; a stub seated
+/// at its start would discard it.
 pub(super) fn is_unmapped_start(err: &anyhow::Error, addr: PcodeInsnAddr) -> bool {
     err.downcast_ref::<UnmappedAddr>()
         .is_some_and(|u| u.0 == addr.machine_addr.addr)
@@ -235,7 +238,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         crate::is_addr_tail_call(
             branch_target_addr.machine_addr.addr,
             self.builder.start_addr.addr,
-            self.builder.options.fn_max_size,
+            self.builder.fn_max_size,
             self.builder.options.allow_code_before_start_addr,
         )
     }
@@ -536,9 +539,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // time.  Deferring beats failing the whole function over one
                 // over-approximated table entry: a bad arm is evidence the whole
                 // bound is wrong, and seating the rest decodes whatever else it
-                // over-approximated into. Measured over 155 kernels, dropping
-                // arms individually instead cost 485 functions, which then fail
-                // outright where they used to lift with the site unresolved.
+                // over-approximated into, which fails the function outright
+                // where deferring leaves it lifting with the site unresolved.
                 //
                 // The off-boundary arm is reported the way
                 // `Builder::seat_non_boundary_target` reports the one discovered
@@ -673,7 +675,16 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     pub(super) fn build(mut self) -> Result<()> {
         let mut cur_addr = self.start_addr;
         loop {
-            let lift_res = self.lift_one(cur_addr.machine_addr.addr)?;
+            let lift_res = match self.lift_one(cur_addr.machine_addr.addr) {
+                Ok(lift_res) => lift_res,
+                Err(e)
+                    if cur_addr.machine_addr != self.start_addr.machine_addr
+                        && is_unmapped_start(&e, cur_addr) =>
+                {
+                    return self.seal_at_unmapped_fallthrough(cur_addr);
+                }
+                Err(e) => return Err(e),
+            };
             // `skip` needs a usize.  Pcode count per machine instruction is
             // bounded by Sleigh's per-insn output (<= 256) and usize >= u32
             // everywhere we support, so this cannot truncate.
@@ -789,6 +800,30 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         self.builder.interior_branch_targets.extend(stepped_over);
     }
 
+    /// Seals the region at a fall-through into bytes the reader has none of,
+    /// wiring the [`Builder::tail_call_stub`] a direct branch to the same
+    /// address gets and reporting it on [`crate::Cfg::unmapped_branch_targets`].
+    ///
+    /// The decode never started, so everything behind `cur_addr` is a whole
+    /// region; a function abutting the end of the mapped image costs its
+    /// trailing edge rather than the whole lift.
+    fn seal_at_unmapped_fallthrough(&mut self, cur_addr: PcodeInsnAddr) -> Result<()> {
+        if self.insns.is_empty() {
+            self.empty_span_len = u32::try_from(
+                cur_addr
+                    .machine_addr
+                    .addr
+                    .saturating_sub(self.start_addr.machine_addr.addr),
+            )
+            .unwrap_or(0);
+        }
+        let region = self.finish_current_region(RegionTerminator::Unconditional)?;
+        let stub = self.builder.tail_call_stub(cur_addr)?;
+        self.builder.region_graph.add_edge(region, stub, ());
+        self.builder.unmapped_branch_targets.push(cur_addr);
+        Ok(())
+    }
+
     /// Sequential decoding running off the recorded function extent is a
     /// function-boundary error, NOT a tail call: a real tail call has an
     /// explicit `jmp`/`je` opcode, so reaching the bound by falling through
@@ -805,7 +840,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             return Ok(());
         }
         let start = self.builder.start_addr.addr;
-        let fn_max_size = self.builder.options.fn_max_size;
+        let fn_max_size = self.builder.fn_max_size;
         anyhow::bail!(
             "function-boundary error at {cur_addr:?}: sequential decoding overflowed past \
              [start={start:#x}, start + fn_max_size={fn_max_size:?}); function is unterminated \

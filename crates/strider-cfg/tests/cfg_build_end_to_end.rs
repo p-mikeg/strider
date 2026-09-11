@@ -1156,3 +1156,88 @@ fn thumb_coproc_bytes_that_once_overran_the_parse_state_do_not_crash() {
         drop(sleigh.lift_one(0x1000));
     }
 }
+
+/// `fn_max_size` cutting through the last instruction leaves the fall-through
+/// region's span overhanging the bound, and an OOB taken target landing in that
+/// overhang is owned by two regions: the stub that starts at it, and the
+/// fall-through region whose last instruction covers it.  Polarity must name
+/// the stub, so the two runs below differ only in the last instruction's byte
+/// length and must report the SAME arms.
+#[test]
+fn oob_taken_target_inside_the_fallthrough_overhang_keeps_its_polarity() {
+    // 0x1000: je 0x1011      (0f 84 0b 00 00 00), out of bounds at 0x1010
+    // 0x1006: xor rax,rax x3 (48 31 c0)
+    // 0x100f: the trailing instruction, 3 bytes or 1
+    let prefix = [
+        0x0fu8, 0x84, 0x0b, 0x00, 0x00, 0x00, 0x48, 0x31, 0xc0, 0x48, 0x31, 0xc0, 0x48, 0x31, 0xc0,
+    ];
+    let opts = CfgOptions {
+        fn_max_size: Some(0x10),
+        ..CfgOptions::default()
+    };
+    // `ret 0x12` spans 0x100f..0x1012 and overhangs; `ret` spans one byte.
+    for (tail, what) in [
+        ([0xc2u8, 0x12, 0x00], "overhanging last instruction"),
+        ([0xc3u8, 0x90, 0x90], "last instruction inside the bound"),
+    ] {
+        let bytes: Vec<u8> = prefix.iter().chain(tail.iter()).copied().collect();
+        let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
+        let succ = cfg.region_if(cfg.entry()).expect("entry is a CondBranch");
+        let start_of = |id: Option<petgraph::graph::NodeIndex>| {
+            cfg.region_graph()[id.expect("both arms are wired")]
+                .start_addr
+                .machine_addr
+                .addr
+        };
+        assert_eq!(
+            start_of(succ.if_true_region),
+            0x1011,
+            "{what}: the taken arm is the stub at the branch target"
+        );
+        assert_eq!(
+            start_of(succ.if_false_region),
+            0x1006,
+            "{what}: the fall-through arm is the region after the branch"
+        );
+    }
+}
+
+/// A region whose sequential decode walks off the end of the mapped image
+/// seals at its last decoded instruction and seats the same stub a direct
+/// branch to those bytes gets, rather than failing the whole function.
+#[test]
+fn fallthrough_off_the_end_of_the_mapped_image_seats_a_stub() {
+    // 0x1000: xor rax,rax (48 31 c0); the fall-through 0x1003 has no bytes.
+    let cfg = build_from_bytes(vec![0x48u8, 0x31, 0xc0], 0x1000);
+
+    assert_eq!(
+        cfg.unmapped_branch_targets(),
+        &[PcodeInsnAddr::at_machine_start(0x1003)],
+        "the unmapped fall-through is reported, not silently dropped"
+    );
+    assert_eq!(
+        cfg.region_graph()[cfg.entry()].terminator,
+        RegionTerminator::Unconditional,
+        "the decoded instructions are kept as a sealed region"
+    );
+    assert_tail_call_stub_at(&cfg, 0x1003);
+    assert_eq!(cfg.region_graph().edge_count(), 1);
+}
+
+/// `fn_max_size: Some(0)` reads as unbounded.  A zero-length bound taken
+/// literally puts `start_addr` itself out of range, and the first fall-through
+/// then fails the function.
+#[test]
+fn a_zero_fn_max_size_is_unbounded() {
+    // 0x1000: xor rax,rax (48 31 c0) ; 0x1003: ret (c3)
+    let opts = CfgOptions {
+        fn_max_size: Some(0),
+        ..CfgOptions::default()
+    };
+    let cfg = build_from_bytes_opts(vec![0x48u8, 0x31, 0xc0, 0xc3], 0x1000, &opts);
+    assert_eq!(
+        cfg.region_graph()[cfg.entry()].terminator,
+        RegionTerminator::Return
+    );
+    assert_eq!(cfg.region_graph().node_count(), 1);
+}
