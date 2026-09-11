@@ -76,3 +76,6 @@ mod memory_alternation;
 
 #[path = "pattern_matching/if_branch_captures.rs"]
 mod if_branch_captures;
+
+#[path = "pattern_matching/if_branch_anchor.rs"]
+mod if_branch_anchor;
