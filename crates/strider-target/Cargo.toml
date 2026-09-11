@@ -6,6 +6,7 @@ license.workspace = true
 description = "Target descriptions: architectures, calling conventions and CallOther ABIs."
 repository.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 readme = "README.md"
 
 [dependencies]

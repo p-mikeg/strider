@@ -46,7 +46,9 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
     }
 
     /// O(1) amortised: the first value fills `n`'s own node, later ones become
-    /// absorbed leaves. Re-adding a value already in `n`'s set is a no-op.
+    /// absorbed leaves. Re-adding a value already held on `n`'s OWN root is a
+    /// no-op; one `n` reaches only through a union is allocated again, and
+    /// [`Self::for_each`] then yields it twice.
     pub fn extend(&mut self, n: N, v: V) {
         let root = self.ensure(n);
         // Same reason `union` keeps `linked`: re-adding one value would grow
@@ -98,8 +100,7 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
     ///
     /// Costs the transitive closure reached from `n`, not the count of values
     /// yielded. On a chain of unions each key reaches the whole chain below it,
-    /// so sweeping every key is quadratic in the chain length; no caller does
-    /// that.
+    /// so sweeping every key is quadratic in the chain length.
     pub fn for_each(&self, n: N, mut f: impl FnMut(V)) {
         let Some(root) = self.roots[n].expand() else {
             return;
@@ -130,7 +131,8 @@ impl<N: EntityRef, V: Copy + Eq + Hash> UnionDag<N, V> {
     /// `f` returning `None` culls a key's entry point, so a direct lookup of
     /// it is empty. Its DAG node survives: a surviving key that unioned from
     /// it still reaches those values. Only the key->root map is rebuilt; the
-    /// DAG arena is untouched.
+    /// DAG arena is untouched, which is why `held` / `linked` need no pruning:
+    /// a `UnionId` is never reused, so a stale pair can never match a new one.
     pub fn remap(&mut self, f: impl Fn(N) -> Option<N>) {
         let mut roots: SecondaryMap<N, PackedOption<UnionId>> = SecondaryMap::new();
         for (key, root) in self.roots.iter() {

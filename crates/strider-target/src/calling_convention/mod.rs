@@ -129,13 +129,18 @@ fn vns_overlap(a: &rsleigh::Vn, b: &rsleigh::Vn) -> bool {
 }
 
 /// First entry of `a` sharing a byte with any entry of `b`.  Overlap rather
-/// than equality: `d8` and ARM's `q8` that contains it are one register file
-/// location under two names, so a rule saying "disjoint" has to see it.
+/// than equality: AArch64's `q8` starts where `d8` does and contains it
+/// (`AARCH64instructions.sinc:638`/`:673`, both banks at `offset=0x5000`), so
+/// a rule saying "disjoint" has to see the containment.
 fn first_overlapping<'a>(a: &'a [rsleigh::Vn], b: &[rsleigh::Vn]) -> Option<&'a rsleigh::Vn> {
     a.iter()
         .find(|vn| b.iter().any(|other| vns_overlap(vn, other)))
 }
 
+/// First entry of `list` appearing twice.  EXACT equality, unlike the
+/// cross-list [`first_overlapping`]: ARM's `ret_val_regs_float` is `d0..d3`,
+/// four registers inside two `q` containers, which an overlap rule would
+/// reject.
 fn first_dup(list: &[rsleigh::Vn]) -> Option<&rsleigh::Vn> {
     list.iter()
         .enumerate()
@@ -569,7 +574,7 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
         "f26", "f27", "f28", "f29", "f30", "f31",
         // CR2-CR4 are the non-volatile condition fields; CR0/CR1 and CR5-CR7
         // are volatile. Named individually because that is how `mfcr` /
-        // `mtcrf` name them -- never as the 8-byte `crall` container, which
+        // `mtcrf` name them, never as the 8-byte `crall` container, which
         // spans the volatile fields too.
         "cr2", "cr3", "cr4",
     ],
@@ -602,11 +607,12 @@ const ARM_AAPCS_VFP_BASE: CallingConvention = CallingConvention {
     // slots s0..s15, aliased as d0..d7. A `double` at float position j lands in
     // dj, a `float` in sj: `sf(1.f, 2.f)` puts the second argument in s1, the
     // upper half of d0. Which rule applies depends on the callee's signature,
-    // which the IR does not carry, so this lists the double carriers and a
-    // float-argument function reports the wrong varnode at every odd position
-    // and cannot see positions 8..15 at all. Same approximation as MIPS o32
-    // below, and the reason `function_arg_float` is a candidate rather than an
-    // answer on this arch.
+    // which the IR does not carry, so this lists the double carriers. Float
+    // argument n is in `s_n`, inside container `d_{n/2}`, while slot n names
+    // `d_n`: they coincide only at n = 0, and positions 8..15 have no entry.
+    // Same approximation as MIPS o32 below, and the reason
+    // `function_arg_float` is a candidate rather than an answer past the first
+    // position on this arch.
     arg_passing_regs_float: &["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"],
     callee_saved_regs: &[
         "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "lr",
@@ -840,7 +846,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
                 "f26", "f27", "f28", "f29", "f30", "f31",
                 // CR2-CR4 are the non-volatile condition fields; CR0/CR1 and
                 // CR5-CR7 are volatile. Named individually because that is how
-                // `mfcr` / `mtcrf` name them -- never as the 8-byte `crall`
+                // `mfcr` / `mtcrf` name them, never as the 8-byte `crall`
                 // container, which spans the volatile fields too.
                 "cr2", "cr3", "cr4",
             ],
