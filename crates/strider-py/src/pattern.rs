@@ -2570,9 +2570,10 @@ macro_rules! builder_slot_methods {
 //   * `mem_value` produces both, so it nests in either position.
 //   * `node` is node-rooted only: same build as `mem`, no nestable compile.
 //
-// Field kinds: `pat` / `mem` (one operand slot), `multi_match` / `multi_mem`
-// (indexed operand vectors), `scalar` (Copy), `scalar_clone`, `scalar_inner`
-// (a Py wrapper stored via `.inner`), and `flag` (no-arg bool setter).
+// Field kinds: `pat` / `mem` (one operand slot), `multi` (an indexed operand
+// vector, the named compile fn deciding value or memory operand), `scalar`
+// (Copy), `scalar_clone`, `scalar_inner` (a Py wrapper stored via `.inner`),
+// and `flag` (no-arg bool setter).
 
 macro_rules! node_builder {
     // A macro call cannot sit in struct-field position, so the field decls
@@ -2596,10 +2597,7 @@ macro_rules! node_builder {
     (@members $inner:ident [ $($acc:tt)* ] { mem $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
         node_builder!(@members $inner [ $($acc)* $name: Option<Py<PyAny>>, ] $($rest)*);
     };
-    (@members $inner:ident [ $($acc:tt)* ] { multi_match $name:ident($idx:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
-        node_builder!(@members $inner [ $($acc)* $name: Vec<($idx, Py<PyAny>)>, ] $($rest)*);
-    };
-    (@members $inner:ident [ $($acc:tt)* ] { multi_mem $name:ident($idx:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
+    (@members $inner:ident [ $($acc:tt)* ] { multi $name:ident($idx:ty): $m:ident($compile:ident) = $doc:literal } $($rest:tt)*) => {
         node_builder!(@members $inner [ $($acc)* $name: Vec<($idx, Py<PyAny>)>, ] $($rest)*);
     };
     (@members $inner:ident [ $($acc:tt)* ] { scalar $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal } $($rest:tt)*) => {
@@ -2644,7 +2642,7 @@ macro_rules! node_builder {
             $b = $b.$m(compile_operand_mem(__p.bind($py))?);
         }
     };
-    (@apply $self:ident, $py:ident, $b:ident, { multi_match $name:ident($idx:ty): $m:ident = $doc:literal }) => {
+    (@apply $self:ident, $py:ident, $b:ident, { multi $name:ident($idx:ty): $m:ident($compile:ident) = $doc:literal }) => {
         let __items: Vec<($idx, Py<PyAny>)> = $self
             .inner
             .borrow()
@@ -2653,19 +2651,7 @@ macro_rules! node_builder {
             .map(|(i, p)| (*i, p.clone_ref($py)))
             .collect();
         for (__idx, __p) in __items {
-            $b = $b.$m(__idx, compile_operand_match(__p.bind($py))?);
-        }
-    };
-    (@apply $self:ident, $py:ident, $b:ident, { multi_mem $name:ident($idx:ty): $m:ident = $doc:literal }) => {
-        let __items: Vec<($idx, Py<PyAny>)> = $self
-            .inner
-            .borrow()
-            .$name
-            .iter()
-            .map(|(i, p)| (*i, p.clone_ref($py)))
-            .collect();
-        for (__idx, __p) in __items {
-            $b = $b.$m(__idx, compile_operand_mem(__p.bind($py))?);
+            $b = $b.$m(__idx, $compile(__p.bind($py))?);
         }
     };
     (@apply $self:ident, $py:ident, $b:ident, { scalar $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {
@@ -2743,10 +2729,7 @@ macro_rules! node_builder {
     (@traverse $inner:ident, $visit:ident, { mem $name:ident: $m:ident = $doc:literal }) => {
         if let Some(__p) = $inner.$name.as_ref() { $visit.call(__p)?; }
     };
-    (@traverse $inner:ident, $visit:ident, { multi_match $name:ident($idx:ty): $m:ident = $doc:literal }) => {
-        for (_, __p) in &$inner.$name { $visit.call(__p)?; }
-    };
-    (@traverse $inner:ident, $visit:ident, { multi_mem $name:ident($idx:ty): $m:ident = $doc:literal }) => {
+    (@traverse $inner:ident, $visit:ident, { multi $name:ident($idx:ty): $m:ident($compile:ident) = $doc:literal }) => {
         for (_, __p) in &$inner.$name { $visit.call(__p)?; }
     };
     (@traverse $inner:ident, $visit:ident, { scalar $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {};
@@ -2768,10 +2751,7 @@ macro_rules! node_builder {
     (@clear $inner:ident, { mem $name:ident: $m:ident = $doc:literal }) => {
         $inner.$name = None;
     };
-    (@clear $inner:ident, { multi_match $name:ident($idx:ty): $m:ident = $doc:literal }) => {
-        $inner.$name.clear();
-    };
-    (@clear $inner:ident, { multi_mem $name:ident($idx:ty): $m:ident = $doc:literal }) => {
+    (@clear $inner:ident, { multi $name:ident($idx:ty): $m:ident($compile:ident) = $doc:literal }) => {
         $inner.$name.clear();
     };
     (@clear $inner:ident, { scalar $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {};
@@ -2829,21 +2809,7 @@ macro_rules! node_builder {
             }
         ] $($rest)*);
     };
-    (@setters $ty:ident [ $($acc:tt)* ] { multi_match $name:ident($idx:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
-        node_builder!(@setters $ty [ $($acc)*
-            #[doc = $doc]
-            fn $m<'py>(
-                slf: PyRef<'py, Self>,
-                idx: $idx,
-                p: Py<PyAny>,
-            ) -> PyResult<PyRef<'py, Self>> {
-                check_operand_index(idx)?;
-                slf.inner.borrow_mut().$name.push((idx, p));
-                Ok(slf)
-            }
-        ] $($rest)*);
-    };
-    (@setters $ty:ident [ $($acc:tt)* ] { multi_mem $name:ident($idx:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
+    (@setters $ty:ident [ $($acc:tt)* ] { multi $name:ident($idx:ty): $m:ident($compile:ident) = $doc:literal } $($rest:tt)*) => {
         node_builder!(@setters $ty [ $($acc)*
             #[doc = $doc]
             fn $m<'py>(
@@ -3402,7 +3368,7 @@ node_builder! {
         { mem mem: mem
             = "Match the CallOther's memory predecessor (`inputs[1]`); \
                takes a memory producer (store / mem_phi / call / call_other)." },
-        { multi_match args(usize): arg
+        { multi args(usize): arg(compile_operand_match)
             = "Constrain raw `inputs[idx]` of the matched CallOther." },
         { flag res: res
             = "When nested as a value operand, pin it to the declared result \
@@ -3428,7 +3394,7 @@ node_builder! {
     fields: [
         { pat ctrl: ctrl
             = "Match `p` against the Return's direct ctrl predecessor (`inputs[0]`)." },
-        { multi_match ret_vals(usize): ret_val
+        { multi ret_vals(usize): ret_val(compile_operand_match)
             = "Constrain the return value at position `idx`, raw input slot `idx + 2`." },
     ],
 }
@@ -3892,7 +3858,7 @@ node_builder! {
         { scalar_inner for_vn(crate::sleigh::PyVn => rsleigh::Vn): for_vn(vn)
             = "Restrict the match to phi nodes tagged `vn` or a register containing \
                it, so `eax` matches a phi tagged `rax`." },
-        { multi_match inputs(usize): phi_input
+        { multi inputs(usize): phi_input(compile_operand_match)
             = "Constrain the value arriving from predecessor `idx`, raw input \
                slot `idx + 1`. `.input(i, p)` addresses the raw slot instead." },
         { pat phi_token: phi_token
@@ -3928,7 +3894,7 @@ node_builder! {
     root: mem,
     slots: [any_input, input, output],
     fields: [
-        { multi_mem inputs(usize): phi_input
+        { multi inputs(usize): phi_input(compile_operand_mem)
             = "Constrain the memory token arriving from predecessor `idx`, raw \
                input slot `idx + 1`. `.input(i, p)` addresses the raw slot \
                instead, and takes a value operand." },
