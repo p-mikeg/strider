@@ -69,8 +69,8 @@ impl DomTree for WideJoin {
 }
 
 /// The climb's dedup bookkeeping must not accumulate across the whole call:
-/// held globally it grows to the size of the frontier output, which a wide
-/// join makes quadratic in node count.
+/// held globally it grows to the whole `2 * JOINS`-entry frontier output,
+/// where one climb needs room for a single node's frontier.
 #[test]
 fn frontier_build_peak_memory_is_near_its_output() {
     LIVE.with(|c| c.set(0));

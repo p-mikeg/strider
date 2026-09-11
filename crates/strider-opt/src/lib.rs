@@ -52,9 +52,9 @@ pub fn default_pipeline() -> OptimizerPipeline {
     // After ConstantFold, so a doubled `Xor(Xor(_,1),1)` at `I1` has already
     // collapsed.
     p.add(FlagCmpCanonicalize::new());
-    // After both, so the cond is at most one `Xor(_,1)` deep and a
-    // constant-cond `If` is already simplified. Swapping branches under a
-    // constant cond would make `DeadBranchElimination` strip the wrong arm.
+    // After both, so the cond a match sees is at most one `Xor(_,1)` deep:
+    // ConstantFold collapses the doubled xor and FlagCmpCanonicalize rewrites
+    // the flag trees that would otherwise bury one.
     p.add(IfCondInversion::new());
     p.add(PhiCollapse);
     p.add(RegionCollapse);

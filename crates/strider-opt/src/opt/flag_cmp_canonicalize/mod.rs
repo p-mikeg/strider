@@ -375,10 +375,11 @@ fn build_rules() -> Vec<BoxedRule> {
                     var(x),
                     capture_typed(
                         x,
-                        int_const_with!([n: uint, in_ty] => {
-                            let w = in_ty.ok_or_else(strider_pattern::skip)?.bit_width() as u128;
-                            1u128 << (w - 1 - n)
-                        }),
+                        // `ty` is this const's own width, `x`'s, which is the
+                        // width the guard bounds `n` against; the `Sless`
+                        // slot-0 type is a second width that only a validated
+                        // graph agrees with.
+                        int_const_with!([n: uint, ty] => 1u128 << (ty.bit_width() as u128 - 1 - n)),
                     ),
                 ),
             ),

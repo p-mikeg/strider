@@ -1570,7 +1570,7 @@ fn arm_tracked_q4_stays_preserved() {
 /// `container_of` is an O(|tracked|) scan under
 /// `strider_ir::cc_ret_and_clobber_vns`, and `ret_and_clobber_vns` runs per
 /// `Call` node built.  Mapping the callee-saved list through it makes that
-/// |callee_saved| * |tracked| per call, 39 * |tracked| on PPC64.
+/// |callee_saved| * |tracked| per call, 42 * |tracked| on PPC64.
 #[test]
 fn ret_and_clobber_vns_does_not_map_the_callee_saved_list() {
     let regs = regs_for(crate::arch::SleighArch::ppc64be());

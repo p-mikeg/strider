@@ -165,6 +165,7 @@ pub struct FunctionDotDumperState {
     pub(super) virtual_nodes: FxHashMap<ValueId, String>,
     /// Every emitted DOT id that stands for an IR node, mapped back to it.
     /// Many-to-one: a per-use constant's boxes all map to the same `NodeId`.
+    #[cfg(test)]
     pub(super) dot_to_node: FxHashMap<String, NodeId>,
     pub(super) next_unique_id: u32,
     /// Focus of a neighbourhood render.
@@ -210,6 +211,7 @@ impl FunctionDotDumperState {
         } else {
             node_id.as_u32().to_string()
         };
+        #[cfg(test)]
         self.dot_to_node.insert(s.clone(), node_id);
         s
     }

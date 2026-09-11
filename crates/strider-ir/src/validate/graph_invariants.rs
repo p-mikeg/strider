@@ -498,7 +498,8 @@ pub(super) fn check_function_invariants_side_indices(
 
 /// Every reachable `IntConst(id)` references a live const-interner entry whose
 /// value fits the node's declared output width, and every reachable
-/// `FloatConst` carries no bits above its width.
+/// `FloatConst` is declared at most 8 bytes wide and carries no bits above
+/// that width.
 pub(super) fn check_function_invariants_consts(
     function: &Function,
     reachable: &NodeIdSet,
@@ -513,8 +514,12 @@ pub(super) fn check_function_invariants_consts(
             let ValueKind::Typed(ty) = graph.value_kind(out) else {
                 continue;
             };
-            if ty.is_float() && ty.mask_float_bits(bits) != bits {
-                errs.push(ValidationError::FloatConstWidthMismatch { node, bits });
+            if ty.is_float() {
+                if ty.byte_size() > 8 {
+                    errs.push(ValidationError::FloatConstUnrepresentableType { node, ty });
+                } else if ty.mask_float_bits(bits) != bits {
+                    errs.push(ValidationError::FloatConstWidthMismatch { node, bits });
+                }
             }
             continue;
         }

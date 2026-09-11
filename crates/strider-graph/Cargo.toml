@@ -6,6 +6,7 @@ license.workspace = true
 description = "The payload-agnostic bipartite sea-of-nodes graph strider builds on."
 repository.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
@@ -16,9 +17,9 @@ smallvec.workspace = true
 rustc-hash.workspace = true
 
 [features]
-# Test-only use-list corruption injectors (`Graph::corrupt_*`). Gated so
-# normal consumers never see these inconsistency-injecting methods; enabled
-# by strider-ir's validator consistency tests.
+# Test-only graph internals: `Graph::corrupt_clear_first_use`, which breaks a
+# use-list on purpose for strider-ir's validator tests, and
+# `Graph::next_node_id`, the arena's next unallocated key.
 test-injectors = []
 
 [dev-dependencies]

@@ -50,7 +50,8 @@ impl crate::peephole::PeepholePass for LoadReadOnly {
         matches!(kind, NodeKind::Load(s) if *s == rsleigh::VnSpace::RAM)
     }
 
-    // A folded `Load` becomes a constant, never another load's operand.
+    // RPO seeding puts the inner load of a `Load(Load(c))` before the outer
+    // one, so it has already folded when the outer is dequeued.
     fn propagate_to_consumers(&self) -> bool {
         false
     }

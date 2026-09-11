@@ -2967,9 +2967,9 @@ mod modular_offset_tests {
 
 /// An alignment mask rounds an address DOWN, so its 1-run has to reach the top
 /// of the width it is applied at. A run that stops short is a bit-extraction
-/// or a truncation, and neither yields a stack address -- but both used to
-/// anchor a stack base, which `stack_global_disjoint` then called disjoint
-/// from a constant address it may equal.
+/// or a truncation, and neither yields a stack address. Both used to anchor a
+/// stack base, which `stack_global_disjoint` then called disjoint from a
+/// constant address it may equal.
 #[test]
 fn only_a_top_reaching_run_is_an_alignment_mask() {
     use super::is_alignment_mask;

@@ -122,9 +122,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         {
             // FIRST write per machine address wins. MIPS writes ISAModeSwitch
             // a second time AFTER its `BranchIndirect`, a delay-slot artefact
-            // the branch never reads. No shipped ARM sla writes it twice --
-            // `ALUWritePC` IS `BXWritePC` under VERSION_7, so `mov pc, rN`
-            // expands to one `SetThumbMode`.
+            // the branch never reads. ARM's call-shaped `ldr pc,addrmode2`
+            // commits the loaded target's low bit, calls, then commits a
+            // constant 0, all at one address
+            // (`ARMinstructions.sinc:2788`-`:2791`).
             if !matches!(self.pending_isa_mode, Some((_, prev)) if prev == addr) {
                 self.pending_isa_mode = Some((val, addr));
             }

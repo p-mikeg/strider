@@ -198,8 +198,10 @@ pub trait IRViewer {
         found.ok_or_else(|| anyhow!("node {node_id:?} has no Memory output"))
     }
 
-    /// The incoming memory token of a memory-chain node. `None` elsewhere,
-    /// including `MemPhi` and `InitialMemory`.
+    /// The incoming memory token of a memory-chain node. `None` for the chain
+    /// ends (`MemPhi`, `InitialMemory`) and for the exit sinks `Return` and
+    /// `Unreachable`, which take a memory token at slot 1 but produce none, so
+    /// no backward walk off a memory value reaches them.
     fn memory_input_of(&self, node: NodeId) -> Option<ValueId> {
         let inputs = self.node_inputs(node);
         match *self.node_kind(node) {

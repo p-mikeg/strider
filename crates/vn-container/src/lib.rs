@@ -64,6 +64,9 @@ pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsle
             let v_end = end_of(&v);
             let enclosed =
                 max_end > v_end || (max_end == v_end && earliest_at_max_end < v.addr_off);
+            // `earliest_at_max_end` advances on STRICT growth only: it has to
+            // stay the earliest start reaching `max_end`, or byte-identical
+            // varnodes drop each other.
             if enclosed {
                 dropped[idx] = true;
             } else if v_end > max_end {

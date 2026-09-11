@@ -6,6 +6,7 @@ license.workspace = true
 description = "Strider's sea-of-nodes intermediate representation."
 repository.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 
 [features]
 # Exposes builder/inspection helpers used only by downstream crates' tests

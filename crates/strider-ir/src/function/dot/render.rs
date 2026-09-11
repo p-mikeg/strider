@@ -23,6 +23,7 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
     fn create_initial_state(&self) -> Self::State {
         Self::State {
             virtual_nodes: FxHashMap::default(),
+            #[cfg(test)]
             dot_to_node: FxHashMap::default(),
             next_unique_id: 0,
             center: self.center,

@@ -106,9 +106,10 @@ impl DotStyle {
 ///
 /// Every other control character becomes the printable text `\xNN`: a NUL ends
 /// the quoted string mid-label for Graphviz's lexer, and the rest survive into
-/// the rendered SVG, where C0 outside tab / newline / return is not a legal XML
-/// character and fails the parse. Tab is left alone, being legal in both and
-/// meaningful whitespace in disassembly.
+/// the rendered SVG, where C0 outside tab, newline and return is not a legal
+/// XML character and fails the parse. Carriage return is escaped too, leaving
+/// tab the one control character passed through, being meaningful whitespace in
+/// disassembly.
 fn escape_dot_label(s: &str) -> String {
     escape_label_inner(s, false)
 }

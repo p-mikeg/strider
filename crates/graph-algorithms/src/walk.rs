@@ -139,16 +139,6 @@ where
     }
 }
 
-pub fn entity_preorder<G: GraphRef>(
-    graph: G,
-    roots: impl IntoIterator<Item = G::NodeId>,
-) -> PreOrder<G>
-where
-    G::NodeId: EntityRef,
-{
-    PreOrder::new(graph, roots)
-}
-
 /// Stack state for a post-order DFS.
 #[derive(Debug)]
 pub(crate) struct PostOrderContext<N> {

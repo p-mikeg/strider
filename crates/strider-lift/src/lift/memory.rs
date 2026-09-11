@@ -51,7 +51,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// the SAME address value forward to each other: re-reading a slot an
     /// earlier opaque store wrote gives that store's data back, rather than a
     /// second unrelated unknown. Reading a slot nothing wrote reaches the
-    /// space's `InitialMemory`, which is the honest answer -- named register
+    /// space's `InitialMemory`, which is the honest answer: named register
     /// writes are not mirrored into the space, so this is an unknown, never a
     /// claim about a particular register's value.
     fn opaque_register_load(&mut self, insn: &rsleigh::Insn) -> Result<()> {

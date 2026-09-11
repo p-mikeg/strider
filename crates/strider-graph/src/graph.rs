@@ -426,9 +426,10 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     ///
     /// `reachable` MUST be backward-input-closed, i.e. every input's producing
     /// node is present, and duplicate-free. Both violations panic; unchecked, a
-    /// repeated id would push two new nodes, the remap would keep the second,
-    /// and the relink would splice the orphaned first into its values'
-    /// use-lists, so `value_uses` reported consumers no node owns.
+    /// repeated id would build two input batches for one surviving node, the
+    /// second replacing the first in its input list, and the blanket relink
+    /// would splice the orphaned first batch into its values' use-lists too, so
+    /// `value_uses` reported consumers no node owns.
     ///
     /// Invalidates every pre-compaction `NodeId` / `ValueId` / `UseId`, and
     /// bumps the generation counter. The cache is left keyed on the
@@ -459,11 +460,12 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         // NodeId / ValueId exists before the second pass rewrites edges.
         for &old_node_id in &reachable {
             // Not a `debug_assert`: violating it corrupts the arena silently, and
-            // the slot this reads is written on the next line either way.
+            // the slot this reads is written below either way.
             assert!(
                 remap.nodes[old_node_id].is_none(),
-                "`reachable` repeated {old_node_id:?}: the second copy orphans \
-                 the first, whose outputs stay spliced into the use-lists"
+                "`reachable` repeated {old_node_id:?}: the second input batch \
+                 orphans the first, which the relink still splices into the \
+                 use-lists"
             );
             let new_kind = self.store.nodes[old_node_id].kind.clone();
             let new_node_id = new_nodes.push(Node::new(new_kind));
