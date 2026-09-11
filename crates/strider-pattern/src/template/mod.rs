@@ -75,18 +75,21 @@ pub enum TemplateTy {
 /// Interior nodes may be multi-output; the returned value is the root node's
 /// first value output.
 ///
-/// # Author-owned output-signature validity
+/// # Signature checking
 ///
-/// Nodes are created with their **declared** output signature, and
-/// [`strider_ir::validate`] is not run: matching each declared signature to
-/// its `NodeKind`'s `expected_signature` is the author's responsibility.
-/// Input-slot wiring IS checked here: a gap or a duplicate errors out.
+/// [`strider_ir::validate`] is not run, so each node is checked here against
+/// its `NodeKind`'s `expected_signature`: the declared output kinds, and the
+/// operand class and width relation of the arithmetic and conversion kinds.
+/// Input-slot wiring is checked too: a gap or a duplicate errors out. What the
+/// signature leaves open, such as which value a `Call` takes at an argument
+/// slot, is the author's.
 ///
 /// # Errors
 ///
 /// If the template is rootless, references an unbound capture, has a
 /// [`TemplateKind::Fn`] closure that itself errors, has gapped or duplicate
-/// input slots, has a node no width reaches, or if node creation yields no
+/// input slots, has a node no width reaches, declares a kind its node
+/// signature refuses at an output or an operand, or if node creation yields no
 /// value output.
 pub fn instantiate<B: IRBuilder>(
     template: &Template,
@@ -200,13 +203,15 @@ pub fn instantiate<B: IRBuilder>(
                      its node signature admits"
                 )
             })?;
-            if !output_kind_admissible(want, *got) {
+            if !kind_admissible(want, *got) {
                 anyhow::bail!(
                     "template node {kind:?} declares {got:?} at output slot {slot}, \
                      where its node signature expects {want:?}"
                 );
             }
         }
+
+        check_operand_types(&kind, &inputs, &outputs, builder.function())?;
 
         let node = builder.create_node_attributed(kind, inputs, outputs, proof_nodes);
 
@@ -595,11 +600,11 @@ fn node_value_ty(template: &Template, node_vtx: NodeId, value_tys: &ValueTys) ->
 
 /// Whether `got` is admissible where the node signature expects `want`.
 ///
-/// `expected_output_kind` is `strider-ir`'s single source of truth; without
-/// this the author's declaration stands unchecked, so a `Store` built with no
+/// The node signature is `strider-ir`'s single source of truth; without this
+/// the author's declaration stands unchecked, so a `Store` built with no
 /// explicit output vertex silently takes a value output where `[Memory]` is
 /// required and the malformed node reaches the graph.
-fn output_kind_admissible(want: ExpectedValueKind, got: ValueKind) -> bool {
+fn kind_admissible(want: ExpectedValueKind, got: ValueKind) -> bool {
     match (want, got) {
         (ExpectedValueKind::Control, ValueKind::Control)
         | (ExpectedValueKind::Memory, ValueKind::Memory)
@@ -610,6 +615,118 @@ fn output_kind_admissible(want: ExpectedValueKind, got: ValueKind) -> bool {
         (ExpectedValueKind::AnyFloat, ValueKind::Typed(t)) => t.is_float(),
         _ => false,
     }
+}
+
+/// The value class an arithmetic or conversion kind's operands carry, from the
+/// operand slots of `strider_ir`'s node signature. `None` for a kind whose
+/// operands it leaves open, which also covers every kind
+/// [`input_width_relation`] relates nothing for.
+fn operand_class(kind: &NodeKind) -> Option<ExpectedValueKind> {
+    match kind {
+        NodeKind::IntUnaryOp(_)
+        | NodeKind::IntBinaryOp(_)
+        | NodeKind::IntCmpOp(_)
+        | NodeKind::Truncate
+        | NodeKind::Extend(_)
+        | NodeKind::Popcount
+        | NodeKind::Lzcount
+        | NodeKind::IntToFloat
+        | NodeKind::IntBitsToFloat => Some(ExpectedValueKind::AnyInt),
+        NodeKind::FloatUnaryOp(_)
+        | NodeKind::FloatBinaryOp(_)
+        | NodeKind::FloatCmpOp(_)
+        | NodeKind::FloatToFloat
+        | NodeKind::FloatToInt
+        | NodeKind::FloatBitsToInt => Some(ExpectedValueKind::AnyFloat),
+        _ => None,
+    }
+}
+
+/// The operand-side counterpart of [`kind_admissible`]: the class each
+/// input owes its node, and the width relation it stands in to the output or
+/// to the operand the node is evaluated at, as `strider_ir::validate` enforces
+/// both. A kind naming no operand class is the author's to get right.
+fn check_operand_types(
+    kind: &NodeKind,
+    inputs: &[ValueId],
+    outputs: &[ValueKind],
+    function: &Function,
+) -> anyhow::Result<()> {
+    let Some(class) = operand_class(kind) else {
+        return Ok(());
+    };
+    let out_ty = match outputs.first() {
+        Some(ValueKind::Typed(t)) => Some(*t),
+        _ => None,
+    };
+    let mut first_ty = None;
+    for (slot, &value) in inputs.iter().enumerate() {
+        let got = function.value_kind(value);
+        let ValueKind::Typed(got) = got else {
+            anyhow::bail!(
+                "template node {kind:?} takes {got:?} at input slot {slot}, \
+                 where its node signature expects {class:?}"
+            );
+        };
+        if slot == 0 {
+            first_ty = Some(got);
+        }
+        if !kind_admissible(class, ValueKind::Typed(got)) {
+            anyhow::bail!(
+                "template node {kind:?} takes {got} at input slot {slot}, \
+                 where its node signature expects {class:?}"
+            );
+        }
+        let want = match input_width_relation(kind, slot) {
+            WidthRelation::OfOutput => out_ty,
+            WidthRelation::OfFirstOperand => first_ty,
+            WidthRelation::Foreign => {
+                check_conversion_width(kind, got, out_ty)?;
+                continue;
+            }
+            WidthRelation::Free => continue,
+        };
+        if let Some(want) = want
+            && want.bit_width() != got.bit_width()
+        {
+            anyhow::bail!(
+                "template node {kind:?} takes a {got} operand at input slot {slot}, \
+                 where it is evaluated at {want}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The width a conversion pins apart from its output: `Extend` strictly
+/// widens, `Truncate` strictly narrows, and a bitcast reinterprets the same
+/// bytes.
+fn check_conversion_width(
+    kind: &NodeKind,
+    in_ty: ValueType,
+    out_ty: Option<ValueType>,
+) -> anyhow::Result<()> {
+    let Some(out_ty) = out_ty else {
+        return Ok(());
+    };
+    match kind {
+        NodeKind::Extend(_) | NodeKind::Truncate => anyhow::ensure!(
+            match kind {
+                NodeKind::Extend(_) => out_ty.bit_width() > in_ty.bit_width(),
+                _ => out_ty.bit_width() < in_ty.bit_width(),
+            },
+            "template node {kind:?} has input width {} and output width {}; \
+             `Extend` must strictly widen and `Truncate` must strictly narrow",
+            in_ty.bit_width(),
+            out_ty.bit_width()
+        ),
+        _ => anyhow::ensure!(
+            in_ty.byte_size() == out_ty.byte_size(),
+            "template node {kind:?} reinterprets {in_ty} as {out_ty}, \
+             which is a different size"
+        ),
+    }
+    Ok(())
 }
 
 /// Each value output takes its own resolved type. A node with no explicit
@@ -700,6 +817,16 @@ mod tests {
         .unwrap()
     }
 
+    /// `Add(5:I64, 1:I64):I64` returned; `int_add(var(x), var(y))` binds both.
+    fn add_over_i64() -> Function {
+        make_empty_fn(|b| {
+            let a = b.build_int_const(5u64, T::I64)?;
+            let k = b.build_int_const(1u64, T::I64)?;
+            b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::I64)
+        })
+        .unwrap()
+    }
+
     /// The reported shape: a fresh constant at a comparison's operand 0, whose
     /// width is the operand's and not the `I1` the root carries.
     #[test]
@@ -774,6 +901,34 @@ mod tests {
 
         let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err().to_string();
         assert!(err.contains("has no width"), "got: {err}");
+    }
+
+    /// A `Truncate` that narrows nothing: the operand and the root share the
+    /// width the operand group resolves to.
+    #[test]
+    fn a_truncate_that_does_not_narrow_is_refused() {
+        let x = Capture::new();
+        let mut fx = add_over_i64();
+        let lhs = crate::int_add(var(x), crate::int_const(1u128)).into_pattern();
+        let rhs = super::int_truncate(var(x)).into_template();
+
+        let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err().to_string();
+        assert!(err.contains("Truncate"), "got: {err}");
+        assert!(err.contains("strictly"), "got: {err}");
+    }
+
+    /// The operand side of the output-kind check: an integer where the node
+    /// signature names a float.
+    #[test]
+    fn a_bitcast_over_the_wrong_operand_class_is_refused() {
+        let x = Capture::new();
+        let mut fx = add_over_i64();
+        let lhs = crate::int_add(var(x), crate::int_const(1u128)).into_pattern();
+        let rhs = super::float_bits_to_int(var(x)).into_template();
+
+        let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err().to_string();
+        assert!(err.contains("FloatBitsToInt"), "got: {err}");
+        assert!(err.contains("input slot 0"), "got: {err}");
     }
 
     /// An arithmetic root is evaluated at its own output width, so a fresh
