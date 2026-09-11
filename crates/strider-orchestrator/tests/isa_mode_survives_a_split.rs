@@ -94,12 +94,11 @@ fn a_split_carries_the_isa_mode_to_the_first_half() {
     };
 
     let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
-    let result = strider
-        .analyze(BASE, &cc, &lift_opts, &OptOptions::default(), None)
-        .expect("a mode clash is a result, not an error");
-
-    let starts: Vec<u64> = result
-        .cfg
+    // The seeds alone, before the resolve loop drops the clashing arm and
+    // rebuilds: this is the build the clash is raised in, so it is the one the
+    // split has to be visible in.
+    let seeded = strider.build_cfg(BASE, &lift_opts.cfg).expect("build_cfg");
+    let starts: Vec<u64> = seeded
         .regions()
         .map(|r| r.start_addr.machine_addr.addr)
         .collect();
@@ -108,6 +107,10 @@ fn a_split_carries_the_isa_mode_to_the_first_half() {
         "precondition: both halves must be present or no split happened; \
          got {starts:#x?}",
     );
+
+    let result = strider
+        .analyze(BASE, &cc, &lift_opts, &OptOptions::default(), None)
+        .expect("a mode clash is a result, not an error");
     assert!(
         result
             .isa_mode_conflicts
