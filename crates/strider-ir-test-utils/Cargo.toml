@@ -6,6 +6,7 @@ license.workspace = true
 description = "Function and calling-convention builders shared by strider's test suites."
 repository.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 
 [dependencies]
 # `test-util` exposes the build_call_cc / build_branch convenience

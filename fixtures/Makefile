@@ -14,6 +14,9 @@
 #   make ARCH=x64 CASE=memory
 #                      — build cases/memory.c for x64 only
 #   make clean         — remove out/
+#
+# A missing cross compiler is a hard error.  ALLOW_MISSING_CC=1 downgrades it
+# to a skip, for building the one arch you have a toolchain for.
 
 OUTDIR := out
 ARCHES := x86 x86_kernel x64 aarch64 aarch64be arm arm_be arm_thumb \
@@ -89,12 +92,22 @@ comma := ,
 # flag out keeps the filter conservative.  Add new tokens here when
 # an arch's CFLAGS picks up a fresh linker-only option; flags that
 # only affect link-time but trip `-Werror,-Wunused-command-line-argument`
-# during `clang -c` need to be in this list.
-CFLAGS_OBJ := $(filter-out -fuse-ld=lld -static -nostdlib --ld-path=/usr/arm-linux-gnueabihf/bin/ld -Wl$(comma)--unresolved-symbols=ignore-all -shared -fPIC,$(CFLAGS_BASE))
+# during `clang -c` need to be in this list.  An arch whose link-only
+# flag carries a value it also needs elsewhere sets `LINK_ONLY_CFLAGS`
+# in its own `.mk` instead, so the value is written once.
+CFLAGS_OBJ := $(filter-out -fuse-ld=lld -static -nostdlib $(LINK_ONLY_CFLAGS) -Wl$(comma)--unresolved-symbols=ignore-all -shared -fPIC,$(CFLAGS_BASE))
+
+# `make` reporting success with nothing built is the failure mode this
+# guards: a missing toolchain fails the build unless ALLOW_MISSING_CC=1.
+ifdef ALLOW_MISSING_CC
+NO_CC = echo "WARNING: compiler for '$(ARCH)' not found; skipping $@"
+else
+NO_CC = echo "ERROR: compiler for '$(ARCH)' not found (ALLOW_MISSING_CC=1 to skip)" >&2; exit 1
+endif
 
 $(OUTDIR)/$(ARCH)/%.elf: cases/%.c | $(OUTDIR)/$(ARCH)
 	@if [ "$(CC)" = "false" ]; then \
-		echo "WARNING: compiler for '$(ARCH)' not found; skipping $@"; \
+		$(NO_CC); \
 	elif echo "$(SHARED_CASES)" | tr ' ' '\n' | grep -qx "$(basename $(notdir $@))"; then \
 		$(CC) $(CFLAGS_BASE) $(COMMON_CFLAGS) -shared -fPIC -nostdlib $< -o $@ && echo "  Built $@ (shared)"; \
 	else \
@@ -110,7 +123,7 @@ $(OUTDIR)/$(ARCH)/%.elf: cases/%.c | $(OUTDIR)/$(ARCH)
 # argument warnings (`-Werror` would otherwise fail the build).
 $(OUTDIR)/$(ARCH)/%.o: cases/%.c | $(OUTDIR)/$(ARCH)
 	@if [ "$(CC)" = "false" ]; then \
-		echo "WARNING: compiler for '$(ARCH)' not found; skipping $@"; \
+		$(NO_CC); \
 	else \
 		$(CC) $(CFLAGS_OBJ) $(COMMON_CFLAGS) -c $< -o $@ && echo "  Built $@ (object)"; \
 	fi
@@ -124,9 +137,9 @@ $(OUTDIR)/$(ARCH)/%.o: cases/%.c | $(OUTDIR)/$(ARCH)
 # case, and tests skip cleanly because the fixture won't exist.
 $(OUTDIR)/$(ARCH)/%.elf: cases/%.S | $(OUTDIR)/$(ARCH)
 	@if [ "$(CC)" = "false" ]; then \
-		echo "WARNING: compiler for '$(ARCH)' not found; skipping $@"; \
+		$(NO_CC); \
 	else \
-		$(CC) $(CFLAGS) -nostdlib -static $< -o $@ 2>/dev/null && echo "  Built $@ (asm)" \
+		$(CC) $(CFLAGS) -nostdlib -static $< -o $@ && echo "  Built $@ (asm)" \
 			|| echo "  Skipped $@ (asm doesn't build for $(ARCH))"; \
 	fi
 

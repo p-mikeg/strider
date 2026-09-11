@@ -35,9 +35,15 @@
 # ARMv7-A with movw/movt — which the v4/v5 SLA cannot decode
 # ("Unable to resolve constructor"). VFPv2 supplies the float ops the
 # hard-float ABI promises while staying within the v45 instruction set.
-CC     := clang
+CC     := $(shell command -v clang 2>/dev/null || echo false)
+# The GNU cross `ld` clang is pointed at; Debian's cross-package location
+# is the fallback when it is not on PATH.  Exported as LINK_ONLY_CFLAGS so
+# the Makefile's `-c` rule drops it without naming the path a second time.
+ARM_BE_LD := $(shell command -v arm-linux-gnueabihf-ld 2>/dev/null \
+                  || echo /usr/arm-linux-gnueabihf/bin/ld)
+LINK_ONLY_CFLAGS := --ld-path=$(ARM_BE_LD)
 CFLAGS := --target=armeb-linux-gnueabihf -march=armv5te -mfpu=vfp2 -mno-thumb \
-          --ld-path=/usr/arm-linux-gnueabihf/bin/ld \
+          $(LINK_ONLY_CFLAGS) \
           -static -nostdlib -ffreestanding \
           -O0 -g -fno-stack-protector -fno-pic \
           -ffp-contract=off \
