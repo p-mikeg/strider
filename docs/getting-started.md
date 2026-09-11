@@ -1,10 +1,10 @@
 # Getting started with Strider
 
-Strider reads a compiled program and lets you ask precise questions about what a
-function does: what offset it reads off a pointer, what value it passes to
-`malloc`, what it returns when the input looks a certain way. No source code and
-no debug symbols needed. You write those questions as small patterns in Python,
-and Strider finds every place in the function that matches.
+Strider answers precise questions about a compiled function with no source and
+no debug symbols: you write the question as a small pattern in Python and get
+back every place in the function that matches. The
+[README](../README.md#quickstart) has that end to end; this page is the map of
+the pipeline behind it.
 
 ## How it works
 
@@ -13,25 +13,19 @@ binary -> CFG -> IR -> optimizations -> pattern queries
 ```
 
 1. **Read** the bytes of a function out of the binary. An executable, a shared
-   library, or an unlinked object file all load, with relocations applied as the
-   bytes are read. The image is mapped rather than copied, so it must not change
-   on disk while a handle over it lives;
-   [python-api.md](python-api.md#1-loading-a-binary) has that and the knobs over
-   it. Sections of an object file that shared an address are rebased apart,
-   which moves every `ET_REL` symbol address, and a ppc64 ELFv1 function symbol
-   is followed through its `.opd` descriptor to the code it names. A stripped
-   binary can borrow names from elsewhere: `add_symbol_file` takes a debug file,
-   `add_symbols` takes a dict, so a `System.map` you have parsed into one.
-2. **Lift** each machine instruction into a simpler, CPU-independent form
-   (using GHIDRA's Sleigh engine). An instruction Sleigh leaves opaque, like a
-   syscall or a trap, is classified by a built-in ABI table saying whether it
-   returns and what it clobbers; `CfgOptions(call_other_abis=...)` overrides an
-   entry.
+   library, or an unlinked object file all load, mapped rather than copied,
+   with relocations applied as the bytes are read.
+   [python-api.md](python-api.md#1-loading-a-binary) has the loaders, the
+   symbol sources for a stripped image (`add_symbol_file`, `add_symbols`), and
+   the knobs over the mapping.
+2. **Lift** each machine instruction into p-code, GHIDRA's Sleigh engine's
+   CPU-independent form. An instruction Sleigh leaves opaque, like a syscall or
+   a trap, is classified by a built-in ABI table saying whether it returns and
+   what it clobbers; `CfgOptions(call_other_abis=...)` overrides an entry.
 3. Build a **CFG**, the map of which regions (straight runs of instructions)
    can jump to which. Each address decodes once, in the ISA mode carried by the
    edge that reached it, so ARM and Thumb code in one binary each decode
-   correctly. Two edges reaching one address in different modes is reported by
-   `cfg.isa_mode_conflicts()`, since only one of them can win.
+   correctly.
 4. Build the **IR**, a graph where every value the function computes is a node
    and every dependency is an edge. Values carry their exact width, from the
    1-bit `I1` up to `I512`, so the odd widths SIMD and long-double code produce
@@ -39,32 +33,20 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    thing you query.
 5. **Optimize** the IR so equivalent code always looks the same, which makes
    patterns simple to write. Equivalent shapes really do collapse, so a pattern
-   written against the source shape often will not match: `x + x*2` arrives as
-   `x*3`, and [optimizations.md](optimizations.md) lists what each pass
-   reshapes. How far it goes is set by
-   `LifterOptions(assumptions=AssumptionOptions(...))`, six claims the IR cannot
-   check, of which `AssumptionOptions.none()` is the sound floor;
-   [python-api.md](python-api.md#2-analyzing-a-function) says what each buys.
-   `LifterOptions(pipeline=...)` takes a `strider.opt.OptimizerPipeline` and
-   replaces the pass list outright.
+   written against the source shape often will not match.
+   [optimizations.md](optimizations.md) lists what each pass reshapes;
+   [python-api.md](python-api.md#2-analyzing-a-function) says what
+   `LifterOptions(assumptions=...)` buys and what it costs, and
+   `LifterOptions(pipeline=...)` replaces the pass list outright.
 6. **Resolve** the indirect branches: classify each one against the optimized
    IR, feed the targets back, re-lift, and repeat until the edge set stops
-   changing. What is left over is reported, never raised; it arrives through
-   four channels, described in
-   [python-api.md](python-api.md#12-the-cfg-stridercfg). `cfg.is_complete()`
-   tests all four at once.
-7. **Query** it: describe a shape, get back every match with the values you
-   asked to capture. `one_of` and `first_of` spell alternatives inside one
-   pattern, over an empty list too, which matches nothing rather than raising;
-   a list of patterns joins on the captures they share, and `constraints=`
-   relates the halves by control flow (`dominates`) or by your own
-   `JoinPredicate`. Arguments index by ABI position with floats in a space of
-   their own, so `function_arg(0)` and `function_arg_float(0)` name different
-   registers.
-8. **Rewrite** it, if you want the graph changed rather than read.
-   `function.rewrite(find=, replace=)` matches with the same pattern language
-   and rebuilds with `strider.template`; `function.rewrite_all` stages several
-   rules in one walk. Both return how many sites fired.
+   changing. What is left over is reported, never raised. `cfg.is_complete()`
+   is the one-call question;
+   [python-api.md](python-api.md#12-the-cfg-stridercfg) describes the five
+   channels it reads.
+7. **Query** it, or **rewrite** it if you want the graph changed rather than
+   read. [python-api.md](python-api.md#4-patterns) is the reference for both
+   sides and [python-guide.md](python-guide.md) the walkthrough.
 
 ## Where the API lives
 
@@ -75,8 +57,8 @@ home submodule is the supported spelling:
 strider.lift      # the entry point: load_elf and lifter, plus LifterOptions,
                   # AssumptionOptions and the AnalyzeResult they produce
 strider.ir        # Function and Node: the graph you query
-strider.cfg       # Cfg, CfgOptions, and three of the four incompleteness
-                  # channels; the fourth, unresolved, rides on AnalyzeResult
+strider.cfg       # Cfg, CfgOptions, and four of the five incompleteness
+                  # channels; the fifth, unresolved, rides on AnalyzeResult
 strider.pattern   # the query DSL, plus .pattern.constraints for joins
 strider.template  # the build side of a rewrite
 strider.opt       # OptimizerPipeline and the passes it runs
