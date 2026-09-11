@@ -191,10 +191,15 @@ function wire(){
 }
 
 const NONE='<div style="color:var(--text2);font-size:11px">none</div>';
+let searchCtrl=null;
 async function search(){
   const q=qEl.value.trim(); msg.className=""; msg.textContent="";
+  if(searchCtrl) searchCtrl.abort();         // a slow pattern otherwise wedges the page (single-threaded server)
+  searchCtrl=new AbortController();
   if(!q){ matches=new Set(); highlight(); hits.innerHTML=NONE; pushHist(); return; }
-  const r=await fetch("/pattern?q="+encodeURIComponent(q));
+  let r;
+  try{ r=await fetch("/pattern?q="+encodeURIComponent(q),{signal:searchCtrl.signal}); }
+  catch(e){ if(e.name==="AbortError") return; throw e; }
   if(!r.ok){ msg.className="err"; msg.textContent=await r.text(); return; }
   const res=await r.json();
   if(res && typeof res==="object" && !Array.isArray(res) && "center" in res){
