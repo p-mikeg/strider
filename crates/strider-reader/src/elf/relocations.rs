@@ -135,10 +135,13 @@ fn reloc_addend(
 ///
 /// # Errors
 ///
-/// Only when a loaded section's bytes cannot be read. A relocation whose target
-/// symbol or section index does not resolve is NOT an error (neither a
-/// legitimate `STN_UNDEF` for an external lib nor a corrupt index); it is
-/// skipped, leaving the site at its file-initial bytes.
+/// When a loaded section's bytes cannot be read, or when a site lands in more
+/// overlapping regions than the [`MAX_PATCH_AMPLIFICATION`] budget allows: the
+/// patch lists are the memory an image chooses the size of, so exhausting the
+/// budget fails the load rather than serving some sites unpatched. A
+/// relocation whose target symbol or section index does not resolve is NOT an
+/// error (neither a legitimate `STN_UNDEF` for an external lib nor a corrupt
+/// index); it is skipped, leaving the site at its file-initial bytes.
 pub(crate) fn apply_elf_relocations_with(
     regions: &mut [MemRegion],
     obj: &object::File<'_>,

@@ -266,7 +266,8 @@ fn mem_region_new_rejects_overflow() {
 }
 
 /// An exact fit at the top of the address space is legal: `end_addr` lands on
-/// `u64::MAX`, which is still representable.
+/// `u64::MAX`, which is still representable. The byte AT `u64::MAX` is not:
+/// covering it needs an exclusive end of `2^64`, so no region can hold it.
 #[test]
 fn mem_region_new_accepts_exact_fit_at_top_of_address_space() {
     let start = u64::MAX - 3;
@@ -275,6 +276,8 @@ fn mem_region_new_accepts_exact_fit_at_top_of_address_space() {
     assert!(r.contains(start));
     assert!(r.contains(u64::MAX - 1));
     assert!(!r.contains(u64::MAX), "end_addr is exclusive");
+
+    MemRegion::new(u64::MAX, vec![0u8; 1]).expect_err("the last byte is unmappable");
 }
 
 #[test]

@@ -19,8 +19,12 @@ fn mapping_disabled() -> bool {
 }
 
 fn elf_tempfile() -> NamedTempFile {
+    elf_tempfile_at(0x1000)
+}
+
+fn elf_tempfile_at(addr: u64) -> NamedTempFile {
     let mut f = NamedTempFile::new().unwrap();
-    f.write_all(&simple_text_elf(0x1000, &[0x90; 16])).unwrap();
+    f.write_all(&simple_text_elf(addr, &[0x90; 16])).unwrap();
     f.flush().unwrap();
     f
 }
@@ -237,4 +241,35 @@ fn a_same_size_rewrite_is_an_error_not_a_panic() {
         .expect_err("a parse of a rewritten mapping");
     elf.function_entry(0x1000)
         .expect_err("a descriptor lookup over a rewritten mapping");
+}
+
+/// One table can hold the regions of several images, and the check stats every
+/// mapping behind it, not just the first.
+#[test]
+fn a_table_over_two_mappings_checks_both_of_them() {
+    if mapping_disabled() {
+        return;
+    }
+    for changed in 0..2 {
+        let files = [elf_tempfile_at(0x1000), elf_tempfile_at(0x2000)];
+        let mut regions = Vec::new();
+        for f in &files {
+            let elf = strider_reader::load_elf(f.path()).unwrap();
+            regions.extend(
+                elf.regions(RegionSource::Auto, LoadFilter::CodeAndReadOnly, false)
+                    .unwrap(),
+            );
+        }
+        let table = strider_reader::MemRegionsLookupTable::new(regions);
+        table
+            .check_unchanged()
+            .expect("both mappings are untouched");
+
+        append_junk(&files[changed]);
+        let err = table.check_unchanged().unwrap_err().to_string();
+        assert!(
+            err.contains(&files[changed].path().display().to_string()),
+            "the changed mapping must be the one reported, got: {err}"
+        );
+    }
 }
