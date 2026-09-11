@@ -1246,3 +1246,330 @@ pub(crate) fn build_mips64el_transposed_kind_elf() -> RelFixture {
         slot_init: vec![0u8; 8],
     })
 }
+
+/// An x86-64 ET_EXEC whose `loads` PT_LOADs all map ONE file extent at
+/// distinct, overlapping addresses, with `relocs` `R_X86_64_64` sites inside
+/// the range every one of them covers.
+///
+/// Both counts are cheap in file bytes and independent, so a patch list per
+/// covering region is quadratic in what the file spends: 8192 loads over
+/// 41,000 relocations is a 1.5 MB image asking for 8 GB.
+pub(crate) fn build_overlapping_loads_rela_elf(loads: usize, relocs: usize) -> Vec<u8> {
+    let sym_addr: u64 = 0x1000;
+    let slot_base: u64 = 0x2000;
+    // Every mapping is the same extent staggered down one byte per load, so
+    // all of them cover `[slot_base, slot_base + 8 * relocs + 8)`.
+    let slot_len = 8 * relocs + loads + 8;
+
+    let mut dynstr = vec![0u8];
+    let func_name_off = dynstr.len() as u32;
+    dynstr.extend_from_slice(b"func\0");
+
+    // Elf64_Sym: name(4) info(1) other(1) shndx(2) value(8) size(8).
+    let mut dynsym = vec![0u8; 24];
+    dynsym.extend_from_slice(&func_name_off.to_le_bytes());
+    dynsym.push((elf::STB_GLOBAL << 4) | elf::STT_FUNC);
+    dynsym.push(0);
+    dynsym.extend_from_slice(&1u16.to_le_bytes()); // .text
+    dynsym.extend_from_slice(&sym_addr.to_le_bytes());
+    dynsym.extend_from_slice(&0u64.to_le_bytes());
+
+    // Elf64_Rela: r_offset(8) r_info(8) r_addend(8).
+    let mut rela = Vec::with_capacity(relocs * 24);
+    for k in 0..relocs as u64 {
+        rela.extend_from_slice(&(slot_base + 8 * k).to_le_bytes());
+        rela.extend_from_slice(&((1u64 << 32) | u64::from(elf::R_X86_64_64)).to_le_bytes());
+        rela.extend_from_slice(&0u64.to_le_bytes());
+    }
+
+    let text = vec![0u8; 4];
+    let slot = vec![0u8; slot_len];
+
+    let mut buf = Vec::new();
+    {
+        let mut w = Writer::new(Endianness::Little, true, &mut buf);
+        let _null = w.reserve_null_section_index();
+        let text_name = w.add_section_name(b".text");
+        let text_idx = w.reserve_section_index();
+        let slot_name = w.add_section_name(b".data.rel.ro");
+        let _slot_idx = w.reserve_section_index();
+        let dynsym_name = w.add_section_name(b".dynsym");
+        let dynsym_idx = w.reserve_section_index();
+        let dynstr_name = w.add_section_name(b".dynstr");
+        let dynstr_idx = w.reserve_section_index();
+        let rela_name = w.add_section_name(b".rela.dyn");
+        let _rela_idx = w.reserve_section_index();
+        let _shstr = w.reserve_shstrtab_section_index();
+        assert_eq!(text_idx.0, 1);
+
+        w.reserve_file_header();
+        w.reserve_program_headers(loads as u32);
+        let text_off = w.reserve(text.len(), 1);
+        let slot_off = w.reserve(slot.len(), 1);
+        let dynsym_off = w.reserve(dynsym.len(), 1);
+        let dynstr_off = w.reserve(dynstr.len(), 1);
+        let rela_off = w.reserve(rela.len(), 1);
+        w.reserve_shstrtab();
+        w.reserve_section_headers();
+
+        w.write_file_header(&FileHeader {
+            os_abi: elf::ELFOSABI_SYSV,
+            abi_version: 0,
+            e_type: elf::ET_EXEC,
+            e_machine: elf::EM_X86_64,
+            e_entry: sym_addr,
+            e_flags: 0,
+        })
+        .expect("write file header");
+
+        w.write_align_program_headers();
+        for i in 0..loads as u64 {
+            w.write_program_header(&ProgramHeader {
+                p_type: elf::PT_LOAD,
+                p_flags: elf::PF_R,
+                p_offset: slot_off as u64,
+                p_vaddr: slot_base - i,
+                p_paddr: slot_base - i,
+                p_filesz: slot.len() as u64,
+                p_memsz: slot.len() as u64,
+                p_align: 1,
+            });
+        }
+
+        w.write(&text);
+        w.write(&slot);
+        w.write(&dynsym);
+        w.write(&dynstr);
+        w.write(&rela);
+        w.write_shstrtab();
+
+        w.write_null_section_header();
+        w.write_section_header(&SectionHeader {
+            name: Some(text_name),
+            sh_type: elf::SHT_PROGBITS,
+            sh_flags: u64::from(elf::SHF_ALLOC | elf::SHF_EXECINSTR),
+            sh_addr: sym_addr,
+            sh_offset: text_off as u64,
+            sh_size: text.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 4,
+            sh_entsize: 0,
+        });
+        w.write_section_header(&SectionHeader {
+            name: Some(slot_name),
+            sh_type: elf::SHT_PROGBITS,
+            sh_flags: u64::from(elf::SHF_ALLOC),
+            sh_addr: slot_base,
+            sh_offset: slot_off as u64,
+            sh_size: slot.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 8,
+            sh_entsize: 0,
+        });
+        w.write_section_header(&SectionHeader {
+            name: Some(dynsym_name),
+            sh_type: elf::SHT_DYNSYM,
+            sh_flags: u64::from(elf::SHF_ALLOC),
+            sh_addr: 0,
+            sh_offset: dynsym_off as u64,
+            sh_size: dynsym.len() as u64,
+            sh_link: dynstr_idx.0,
+            sh_info: 1,
+            sh_addralign: 8,
+            sh_entsize: 24,
+        });
+        w.write_section_header(&SectionHeader {
+            name: Some(dynstr_name),
+            sh_type: elf::SHT_STRTAB,
+            sh_flags: u64::from(elf::SHF_ALLOC),
+            sh_addr: 0,
+            sh_offset: dynstr_off as u64,
+            sh_size: dynstr.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        });
+        // sh_link = .dynsym is what makes `dynamic_relocations()` pick this up.
+        w.write_section_header(&SectionHeader {
+            name: Some(rela_name),
+            sh_type: elf::SHT_RELA,
+            sh_flags: u64::from(elf::SHF_ALLOC),
+            sh_addr: 0,
+            sh_offset: rela_off as u64,
+            sh_size: rela.len() as u64,
+            sh_link: dynsym_idx.0,
+            sh_info: 0,
+            sh_addralign: 8,
+            sh_entsize: 24,
+        });
+        w.write_shstrtab_section_header();
+    }
+    buf
+}
+
+/// A ppc64 ELFv1 ET_EXEC: `func`'s `st_value` is an `.opd` descriptor whose
+/// first doubleword is the code entry, which is the indirection the symbol
+/// resolver has to follow.
+pub(crate) struct Ppc64OpdFixture {
+    pub bytes: Vec<u8>,
+    /// `st_value` of `func`: the descriptor, not code.
+    pub descriptor_addr: u64,
+    /// The code address that descriptor names.
+    pub entry_addr: u64,
+    /// A descriptor whose entry word is still zero.
+    pub unrelocated_addr: u64,
+}
+
+/// `e_flags` picks the ABI level: 1 is ELFv1, 2 ELFv2 (which has no
+/// descriptors at all), 0 the unspecified value binutils reads as ELFv1.
+pub(crate) fn build_ppc64_opd_elf(e_flags: u32) -> Ppc64OpdFixture {
+    let entry_addr: u64 = 0x1000_08c4;
+    let opd_addr: u64 = 0x1001_0000;
+    let descriptor_addr = opd_addr + 24; // the second descriptor, not the first
+    let toc: u64 = 0x1002_0000;
+
+    let text = vec![0x60, 0x00, 0x00, 0x00]; // ppc `nop`
+    // Two {entry, TOC, env} triples, big-endian doublewords. The first is
+    // left at zero, the shape an ET_DYN's `.opd` has before `ld.so` applies
+    // its `R_PPC64_RELATIVE`s.
+    let mut opd = Vec::new();
+    for entry in [0, entry_addr] {
+        opd.extend_from_slice(&entry.to_be_bytes());
+        opd.extend_from_slice(&toc.to_be_bytes());
+        opd.extend_from_slice(&0u64.to_be_bytes());
+    }
+
+    let mut strtab = vec![0u8];
+    let func_name_off = strtab.len() as u32;
+    strtab.extend_from_slice(b"func\0");
+
+    // Elf64_Sym, big-endian: name(4) info(1) other(1) shndx(2) value(8)
+    // size(8). `st_value` is the DESCRIPTOR, which is what the ABI says an
+    // ELFv1 STT_FUNC symbol carries.
+    let mut symtab = vec![0u8; 24];
+    symtab.extend_from_slice(&func_name_off.to_be_bytes());
+    symtab.push((elf::STB_GLOBAL << 4) | elf::STT_FUNC);
+    symtab.push(0);
+    symtab.extend_from_slice(&2u16.to_be_bytes()); // .opd
+    symtab.extend_from_slice(&descriptor_addr.to_be_bytes());
+    symtab.extend_from_slice(&24u64.to_be_bytes());
+
+    let mut buf = Vec::new();
+    {
+        let mut w = Writer::new(Endianness::Big, true, &mut buf);
+        let _null = w.reserve_null_section_index();
+        let text_name = w.add_section_name(b".text");
+        let text_idx = w.reserve_section_index();
+        let opd_name = w.add_section_name(b".opd");
+        let opd_idx = w.reserve_section_index();
+        let symtab_name = w.add_section_name(b".symtab");
+        let _symtab_idx = w.reserve_section_index();
+        let strtab_name = w.add_section_name(b".strtab");
+        let strtab_idx = w.reserve_section_index();
+        let _shstr = w.reserve_shstrtab_section_index();
+        assert_eq!((text_idx.0, opd_idx.0), (1, 2));
+
+        w.reserve_file_header();
+        w.reserve_program_headers(2);
+        let text_off = w.reserve(text.len(), 1);
+        let opd_off = w.reserve(opd.len(), 1);
+        let symtab_off = w.reserve(symtab.len(), 1);
+        let strtab_off = w.reserve(strtab.len(), 1);
+        w.reserve_shstrtab();
+        w.reserve_section_headers();
+
+        w.write_file_header(&FileHeader {
+            os_abi: elf::ELFOSABI_SYSV,
+            abi_version: 0,
+            e_type: elf::ET_EXEC,
+            e_machine: elf::EM_PPC64,
+            e_entry: descriptor_addr,
+            e_flags,
+        })
+        .expect("write file header");
+
+        w.write_align_program_headers();
+        for (off, addr, len, flags) in [
+            (text_off, entry_addr - 4, text.len(), elf::PF_R | elf::PF_X),
+            (opd_off, opd_addr, opd.len(), elf::PF_R),
+        ] {
+            w.write_program_header(&ProgramHeader {
+                p_type: elf::PT_LOAD,
+                p_flags: flags,
+                p_offset: off as u64,
+                p_vaddr: addr,
+                p_paddr: addr,
+                p_filesz: len as u64,
+                p_memsz: len as u64,
+                p_align: 1,
+            });
+        }
+
+        w.write(&text);
+        w.write(&opd);
+        w.write(&symtab);
+        w.write(&strtab);
+        w.write_shstrtab();
+
+        w.write_null_section_header();
+        w.write_section_header(&SectionHeader {
+            name: Some(text_name),
+            sh_type: elf::SHT_PROGBITS,
+            sh_flags: u64::from(elf::SHF_ALLOC | elf::SHF_EXECINSTR),
+            sh_addr: entry_addr - 4,
+            sh_offset: text_off as u64,
+            sh_size: text.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 4,
+            sh_entsize: 0,
+        });
+        w.write_section_header(&SectionHeader {
+            name: Some(opd_name),
+            sh_type: elf::SHT_PROGBITS,
+            sh_flags: u64::from(elf::SHF_ALLOC | elf::SHF_WRITE),
+            sh_addr: opd_addr,
+            sh_offset: opd_off as u64,
+            sh_size: opd.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 8,
+            sh_entsize: 0,
+        });
+        w.write_section_header(&SectionHeader {
+            name: Some(symtab_name),
+            sh_type: elf::SHT_SYMTAB,
+            sh_flags: 0,
+            sh_addr: 0,
+            sh_offset: symtab_off as u64,
+            sh_size: symtab.len() as u64,
+            sh_link: strtab_idx.0,
+            sh_info: 1,
+            sh_addralign: 8,
+            sh_entsize: 24,
+        });
+        w.write_section_header(&SectionHeader {
+            name: Some(strtab_name),
+            sh_type: elf::SHT_STRTAB,
+            sh_flags: 0,
+            sh_addr: 0,
+            sh_offset: strtab_off as u64,
+            sh_size: strtab.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        });
+        w.write_shstrtab_section_header();
+    }
+
+    Ppc64OpdFixture {
+        bytes: buf,
+        descriptor_addr,
+        entry_addr,
+        unrelocated_addr: opd_addr,
+    }
+}

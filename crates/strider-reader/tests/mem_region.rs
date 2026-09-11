@@ -1,4 +1,4 @@
-use strider_reader::{MemRegion, MemRegionsLookupTable};
+use strider_reader::{MemRegion, MemRegionsLookupTable, RegionIndex};
 
 /// Byte `i` of the region holds `i as u8`, so a read's contents identify the
 /// offset it came from.
@@ -458,4 +458,67 @@ fn same_bytes_in_compares_only_the_overlap() {
         !a.same_bytes_in(&c, 0x104, 0x10a),
         "a range neither fully covers differs"
     );
+}
+
+/// The three overlap questions every reader in the workspace asks, on one
+/// index: which regions cover a request, which regions a range touches, and
+/// which region serves the most from an address.
+#[test]
+fn region_index_covering_reports_every_covering_region_highest_start_first() {
+    let regions = [
+        make_region(0x1000, 0x40),
+        make_region(0x1010, 0x10),
+        make_region(0x2000, 8),
+    ];
+    let index = RegionIndex::new(&regions);
+    assert_eq!(index.covering(0x1014, 4).collect::<Vec<_>>(), vec![1, 0]);
+    assert_eq!(
+        index.covering(0x1014, 0x20).collect::<Vec<_>>(),
+        vec![0],
+        "a request the inner region cannot hold falls through to the outer"
+    );
+    assert!(index.covering(0x1030, 0x20).next().is_none());
+    assert_eq!(
+        index.covering(0x103f, 0).collect::<Vec<_>>(),
+        vec![0],
+        "a zero-length request asks only that the address be mapped"
+    );
+    assert!(
+        index.covering(0x1040, 0).next().is_none(),
+        "the end address is not mapped"
+    );
+}
+
+#[test]
+fn region_index_overlapping_reports_the_regions_a_range_touches() {
+    let regions = [
+        make_region(0x1000, 0x40),
+        make_region(0x1010, 0x10),
+        make_region(0x2000, 8),
+    ];
+    let index = RegionIndex::new(&regions);
+    assert_eq!(
+        index.overlapping(0x1018, 0x1019).collect::<Vec<_>>(),
+        vec![1, 0]
+    );
+    assert_eq!(
+        index.overlapping(0x1030, 0x2001).collect::<Vec<_>>(),
+        vec![2, 0]
+    );
+    assert!(index.overlapping(0x1500, 0x1600).next().is_none());
+    assert!(index.overlapping(0x1000, 0x1000).next().is_none());
+}
+
+#[test]
+fn region_index_widest_at_picks_the_region_serving_the_most() {
+    let regions = [make_region(0x1000, 0x40), make_region(0x1010, 0x10)];
+    let index = RegionIndex::new(&regions);
+    assert_eq!(
+        index.widest_at(0x1010),
+        Some(0),
+        "the higher start serves fewer bytes from here"
+    );
+    assert_eq!(index.widest_at(0x1030), Some(0));
+    assert_eq!(index.widest_at(0x0fff), None);
+    assert_eq!(index.widest_at(0x1040), None);
 }
