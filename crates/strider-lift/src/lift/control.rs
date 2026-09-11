@@ -1,6 +1,6 @@
 use crate::lift::pcode_util::nth_input_or_err;
 use anyhow::{Result, anyhow, bail};
-use strider_ir::IRBuilderExt;
+use strider_ir::{IRBuilderExt, IRViewer};
 
 use super::FunctionLifter;
 
@@ -54,6 +54,27 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         Ok(())
     }
 
+    /// `cond != 0` at the condition varnode's own width, in the canonical
+    /// `Xor(Equal(cond, 0), 1):I1` spelling.  p-code branches on `cond != 0`
+    /// (`EmulateMemory::executeCbranch`, `emulate.cc:265`) and the SLEIGH
+    /// compiler passes an `if` expression through without normalising it to 0/1
+    /// (`slghparse.y:375`), so a wider condition must not be narrowed to its low
+    /// bit.  An `I1` condition already IS that test.
+    fn build_branch_condition(&mut self, cond_raw: strider_ir::Value) -> Result<strider_ir::Value> {
+        let ty = self.builder.value_type(cond_raw)?;
+        if ty == strider_ir::ValueType::I1 {
+            return Ok(cond_raw);
+        }
+        let zero = self.builder.build_int_const(0u128, ty)?;
+        let is_zero = self.builder.build_int_cmp_operation(
+            cond_raw,
+            zero,
+            strider_ir::IntCmpOp::Equal,
+            ty,
+        )?;
+        self.build_logical_not(is_zero)
+    }
+
     pub(super) fn handle_cond_branch(
         &mut self,
         region_id: strider_cfg::RegionId,
@@ -61,18 +82,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         region_map: &super::RegionMap,
     ) -> Result<()> {
         let cond_raw = self.read_input(insn, 1)?;
-        // NARROWED to the low bit, where p-code branches on `cond != 0`
-        // (`EmulateMemory::executeCbranch`, `emulate.cc:265`) and the SLEIGH
-        // compiler passes an `if` expression through without normalising it to
-        // 0/1 (`slghparse.y:375`).  Exact for every shipped sla: no
-        // non-comparison `if (...) goto` across ARM, AArch64, x86, MIPS and
-        // PowerPC produces a condition outside 0/1.  Real, not a no-op: a
-        // 1-byte flag varnode reads back as `I8`, because `write_reg_vn`
-        // coerces every register write to `reg.int_type()` and
-        // `int_for_byte_size(1)` is `I8`.
-        let cond = self
-            .builder
-            .truncate_if_needed(cond_raw, strider_ir::ValueType::I1)?;
+        let cond = self.build_branch_condition(cond_raw)?;
         // `region_if` validated the index, so a missing arm means no successor
         // of this region owns the address that arm branches to.
         let res = self.cfg.region_if(region_id)?;
