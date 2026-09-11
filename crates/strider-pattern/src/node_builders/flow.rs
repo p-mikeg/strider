@@ -471,7 +471,9 @@ enum IfOutput {
 impl IfPat {
     /// `inputs[1]`; `inputs[0]` is the ctrl predecessor.
     pub fn cond<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.cond = Some(Box::new(move |b| p.compile(b)));
+        self.cond = Some(crate::node_builders::SubCompiler::new(move |b| {
+            p.compile(b)
+        }));
         self
     }
 
@@ -485,7 +487,10 @@ impl IfPat {
     /// out by the IR's `expected_signature`; the named accessors above are the
     /// intended surface and this is the escape hatch beneath them.
     pub fn input<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
-        self.inputs.push((slot, Box::new(move |b| p.compile(b))));
+        self.inputs.push((
+            slot,
+            crate::node_builders::SubCompiler::new(move |b| p.compile(b)),
+        ));
         self
     }
 
@@ -494,7 +499,7 @@ impl IfPat {
     pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.inputs.push((
             crate::matcher::ANY_INPUT_SLOT,
-            Box::new(move |b| p.compile(b)),
+            crate::node_builders::SubCompiler::new(move |b| p.compile(b)),
         ));
         self
     }
@@ -621,15 +626,15 @@ impl IfPat {
         }
 
         if let Some(cond) = cond {
-            let c = cond(&mut *b);
+            let c = cond.call(&mut *b);
             b.input(node, 1, c);
         }
         if let Some(ctrl) = ctrl {
-            let c = ctrl(&mut *b);
+            let c = ctrl.call(&mut *b);
             b.input(node, 0, c);
         }
         for (slot, compile) in inputs {
-            let o = compile(&mut *b);
+            let o = compile.call(&mut *b);
             b.input(node, slot, o);
         }
         for (slot, aspect) in outputs {
