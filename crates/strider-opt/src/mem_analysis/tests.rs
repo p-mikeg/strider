@@ -1045,6 +1045,49 @@ mod heap_tests {
         Ok(())
     }
 
+    /// The same shape under the options the jump-table walk runs in: that walk
+    /// decides a CFG edge, so a mis-listed allocator must not be able to open
+    /// the chain there.
+    #[test]
+    fn allocator_call_is_opaque_to_the_table_walk() -> crate::Result<()> {
+        let mut b = builder()?;
+        let sp_val = b.read_variable(&sp())?;
+        let slot_off = b.build_int_const((-8i64) as u64, ValueType::I64)?;
+        let store_addr =
+            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
+        let x = b.build_int_const(0x11u64, ValueType::I64)?;
+        b.build_store(store_addr, x, rsleigh::VnSpace::RAM)?;
+        lower_sp(&mut b, sp_val, 64)?;
+        let _p = alloc_call(&mut b, MALLOC)?;
+        let load_addr =
+            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
+        let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        b.build_return(Some(loaded), &[])?;
+        let (fg, na) = built_collapsed(b, &[MALLOC])?;
+
+        let load = fg
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+            .expect("load");
+        let mem = fg.node_inputs(load)[0];
+        let assumptions = crate::AssumptionOptions {
+            noalias_allocators: Arc::clone(&na),
+            ..Default::default()
+        };
+        let cfg = MemAnalyzer::new(
+            crate::post_opt::indirect_branch_resolve::eval::table_walk_options(&assumptions),
+        );
+        assert!(
+            matches!(
+                fg.node_kind(cfg.nearest_clobber(&fg, load, mem)),
+                NodeKind::Call
+            ),
+            "the table walk must stop at a listed allocator, not step through it"
+        );
+        Ok(())
+    }
+
     /// Symmetric: a load *of the freshly allocated object* must stop at the
     /// allocator call; the call is that region's definition point.
     #[test]
@@ -1301,44 +1344,59 @@ mod heap_tests {
         Ok(())
     }
 
-    /// `preserves_memory` is a per-`CallOther` ABI attribute, so an opaque
-    /// user-op declared transparent to memory must not stop the walk either.
+    /// A `CallOther` reaches the memory chain only when its user-op ABI row
+    /// declared `clobbers_memory`, and no convention describes that op:
+    /// `get_cc` on one answers with the ANALYSED function's own convention.
+    /// So a `preserves_memory` convention must not open the walk.
     #[test]
-    fn preserves_memory_call_other_does_not_clobber() -> crate::Result<()> {
+    fn call_other_clobbers_under_a_preserves_memory_convention() -> crate::Result<()> {
         let load_across_call_other = |preserves_memory: bool| -> crate::Result<bool> {
-            let mut b = builder()?;
+            let cc = strider_target::BuiltCallingConvention {
+                arg_passing_regs: vec![sp()],
+                arg_passing_regs_float: Vec::new(),
+                callee_saved_regs: Vec::new(),
+                ret_val_regs: vec![ret_reg()],
+                ret_val_regs_float: Vec::new(),
+                stack_vn: sp(),
+                stack_args: None,
+                ret_stack_pop: 0,
+                link_register_vn: None,
+                preserves_memory,
+                preserves_all_registers: false,
+                no_return: false,
+            };
+            let mut b = FunctionBuilder::new(
+                vec![sp(), ret_reg()],
+                cc,
+                strider_target::Endianness::Little,
+            )?;
+            b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+            let region = b.create_region_all()?;
+            b.set_entry_region_all(region)?;
+            b.set_region(region);
+
             let global = b.build_int_const(0x3000u64, ValueType::I64)?;
             let stored = b.build_int_const(7u64, ValueType::I64)?;
             b.build_store(global, stored, rsleigh::VnSpace::RAM)?;
-            let (call_other, _rets) = b.build_call_other(0, &[], &[], true, false)?;
+            b.build_call_other(0, &[], &[], true, false)?;
             let loaded = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::I64)?;
             b.build_return(Some(loaded), &[])?;
-            let (mut fg, na) = built(b, &[])?;
-
-            let cc = fg.default_cc().clone();
-            fg.side_tables_mut().set_call_cc(
-                call_other,
-                strider_target::BuiltCallingConvention {
-                    preserves_memory,
-                    ..cc
-                },
-            );
+            let (fg, na) = built(b, &[])?;
 
             let load = fg.producer(loaded);
             let mem = fg.node_inputs(load)[0];
             let analyzer = MemAnalyzer::new(MemOptions::call_blocking(true, &na));
             let clobber = analyzer.nearest_clobber(&fg, load, mem);
-            Ok(matches!(fg.node_kind(clobber), NodeKind::Store(_)))
+            Ok(matches!(fg.node_kind(clobber), NodeKind::CallOther { .. }))
         };
 
-        assert!(
-            !load_across_call_other(false)?,
-            "a plain CallOther must stop the walk (call_blocking)"
-        );
-        assert!(
-            load_across_call_other(true)?,
-            "preserves_memory must let the walk step through the CallOther"
-        );
+        for preserves_memory in [false, true] {
+            assert!(
+                load_across_call_other(preserves_memory)?,
+                "a memory-clobbering user-op must stop the walk \
+                 (preserves_memory={preserves_memory})"
+            );
+        }
         Ok(())
     }
 

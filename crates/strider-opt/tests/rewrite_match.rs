@@ -8,8 +8,7 @@ use strider_ir_test_utils::{RegisterSet, Tb};
 use strider_opt::{BoxedRule, EditFunction, apply_rules_count, rewrite_rule, rewrite_rule_runtime};
 use strider_pattern::{
     Capture, CaptureExt, Match, MatchPat, Matcher, Pattern, TemplatePat, anything, call, int_add,
-    int_const,
-    int_sub, is_skip, skip, var,
+    int_const, int_sub, is_skip, skip, var,
 };
 
 #[track_caller]
@@ -438,10 +437,7 @@ where
 fn rhs_consuming_the_root_is_refused_not_installed() {
     let mut function = graph_add_x_zero();
     let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
-    let rule = rewrite_rule(
-        int_add(var(a), var(b)).capture(c),
-        int_add(var(c), var(c)),
-    );
+    let rule = rewrite_rule(int_add(var(a), var(b)).capture(c), int_add(var(c), var(c)));
 
     let result = try_fire_anywhere(&mut function, rule);
     assert!(
