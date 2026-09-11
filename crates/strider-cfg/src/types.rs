@@ -36,6 +36,10 @@ impl PcodeInsnAddr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegionInstruction {
     pub addr: PcodeInsnAddr,
+    /// A LOAD / STORE's `inputs[0]` encodes its target space as a raw pointer
+    /// into the engine that decoded it, and this type carries no lifetime tying
+    /// it to that engine.  `Lifter::check_cfg_space_ids` is the gate; nothing
+    /// else may decode that pointer.
     pub insn: rsleigh::Insn,
     /// Byte length of the MACHINE instruction this pcode op came from, so a
     /// region's span can end past its last instruction's start address.  Every

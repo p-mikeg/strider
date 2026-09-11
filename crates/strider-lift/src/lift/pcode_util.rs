@@ -48,16 +48,22 @@ pub(crate) fn ensure_const_space(
 /// # Safety
 ///
 /// `VnSpace::by_id` reinterprets `addr_off` as a raw `AddrSpace` pointer, so
-/// the precondition is that pointer's validity, NOT the CONST tag.
-/// The `ensure_const_space` call in the body is a structural gate only and
-/// establishes nothing about the pointer.  This stays `pub(crate)` because every in-crate
-/// caller passes an `Insn` from `Sleigh::lift_one`, which always emits a valid
-/// space-pointer encoding.  Do not widen the visibility, and never call it
-/// with a hand-built `Insn`.
+/// the precondition is that pointer's validity, NOT the CONST tag that
+/// `ensure_const_space` checks.
+///
+/// A `Cfg` carries no lifetime, so nothing in its type ties the pointer to a
+/// live engine.  `Lifter::check_cfg_space_ids` is what does: it runs before
+/// any lift and rejects a `Cfg` holding a space id outside the lifting
+/// engine's own `rsleigh::SpaceIds` table, comparing pointer values without
+/// dereferencing them.  Every in-crate caller is reached only from that lift,
+/// so the pointer names a space of an engine the `Lifter` owns and keeps
+/// alive.  This stays `pub(crate)`: outside that gate the precondition is
+/// unestablished.
 pub(crate) fn decode_space_id(insn: &rsleigh::Insn) -> Result<rsleigh::VnSpace> {
     let space_id_vn = *nth_input_or_err(insn, 0)?;
     ensure_const_space(&space_id_vn, insn.opcode, "input 0")?;
-    // SAFETY: the pcode comes from `Sleigh::lift_one`, so the space pointer is
-    // valid.  See the precondition above.
+    // SAFETY: `Lifter::check_cfg_space_ids` has already matched this pointer
+    // against the lifting engine's space table, so it names a live `AddrSpace`
+    // of an engine the `Lifter` owns.
     Ok(unsafe { rsleigh::VnSpace::by_id(space_id_vn) })
 }
