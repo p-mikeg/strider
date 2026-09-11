@@ -563,9 +563,8 @@ fn a_linked_image_symbol_address_is_its_st_value() {
 /// and a saturating one then seats every later section at `u64::MAX`, failing
 /// the whole load over one malformed header.
 ///
-/// The overflowing section has still claimed its own base, so the next
-/// allocatable section must not be seated on top of it: its symbols would then
-/// resolve into that section's mapped bytes.
+/// The second one is seated nowhere, so its symbols have no address, and the
+/// `.text` after it keeps the watermark the first one left.
 #[test]
 fn a_nobits_section_overrunning_the_address_space_does_not_move_the_watermark() {
     let half = 0x8000_0000_0000_0000u64;
@@ -584,22 +583,18 @@ fn a_nobits_section_overrunning_the_address_space_does_not_move_the_watermark() 
     );
     let obj = object::File::parse(&bytes[..]).expect("parse");
     let layout = ElfSectionLayout::new(&obj);
-    let base = |i| layout.section_base(&obj.section_by_index(object::SectionIndex(i)).unwrap());
-    let (overflowing, text) = (base(2), base(3));
-    assert_ne!(
-        overflowing, text,
-        "the overflowing .bss already claimed its base"
-    );
+    let sym = obj.symbol_by_name("overflowing_bss").unwrap();
     assert_eq!(
-        layout.symbol_address(&obj.symbol_by_name("overflowing_bss").unwrap()),
-        overflowing
+        layout.try_symbol_address(&sym),
+        None,
+        "a section the address space cannot hold addresses nothing"
     );
 
     let regions = elf::elf_get_loadable_regions(&obj).expect("the load must survive the .bss");
     assert_eq!(regions.len(), 1, "only `.text` has bytes to load");
     assert_eq!(common::region_bytes(&regions[0]), vec![0x90; 4]);
     assert_eq!(
-        MemRegionsLookupTable::new(regions).read(overflowing, &mut [0u8; 4]),
+        MemRegionsLookupTable::new(regions).read(layout.symbol_address(&sym), &mut [0u8; 4]),
         None,
         "a .bss symbol must not read back .text"
     );
@@ -660,4 +655,40 @@ fn an_object_file_leaves_address_zero_unmapped() {
             );
         }
     }
+}
+
+/// A `.bss` the address space cannot hold addresses none of its symbols. The
+/// sections after it take the space it claims, and a symbol resolving in there
+/// would read their bytes: a ROM view would then serve `.text` for an address
+/// that is writable at runtime.
+#[test]
+fn a_section_overrunning_the_address_space_seats_none_of_its_symbols() {
+    let bytes = build_elf_with_sections_and_symbols(
+        &[
+            SectionSpec::bss_declaring(0, u64::MAX - 0xf),
+            SectionSpec::text(0, vec![0xcc; 0x20]),
+        ],
+        &[SymbolSpec {
+            name: b"bssvar",
+            section: 0,
+            value: 0x10,
+            size: 4,
+        }],
+    );
+    let obj = object::File::parse(&bytes[..]).expect("parse");
+    let layout = ElfSectionLayout::new(&obj);
+    let bssvar = obj.symbol_by_name("bssvar").expect("bssvar");
+    assert_eq!(
+        layout.try_symbol_address(&bssvar),
+        None,
+        "a symbol of a section seated nowhere has no address"
+    );
+
+    let regions = elf::elf_get_loadable_regions(&obj).expect("the .text still loads");
+    let table = MemRegionsLookupTable::new(regions);
+    assert_eq!(
+        table.read(layout.symbol_address(&bssvar), &mut [0u8; 4]),
+        None,
+        "a writable .bss symbol must not read back the .text"
+    );
 }

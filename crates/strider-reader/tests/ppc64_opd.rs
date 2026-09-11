@@ -117,3 +117,19 @@ fn an_unrelocated_descriptor_is_not_an_entry() {
     let elf = strider_reader::OwnedElf::parse(fx.bytes).expect("parse");
     assert_eq!(elf.function_entry(addr).expect("unrelocated"), addr);
 }
+
+/// The descriptor's TOC word is 8-byte aligned like its entry word, and a
+/// symbol landing on one is followed the same way: the section carries no
+/// stride saying which words start a descriptor.
+#[test]
+fn a_descriptors_toc_word_is_followed_like_an_entry() {
+    let fx = build_ppc64_opd_elf(1);
+    let obj = object::File::parse(&fx.bytes[..]).expect("parse");
+    let opd = OpdTable::new(&obj).expect("an ELFv1 image with an .opd");
+    assert_eq!(opd.entry_at(fx.descriptor_addr + 8), Some(fx.toc_addr));
+    assert_eq!(
+        opd.entry_at(fx.descriptor_addr + 16),
+        None,
+        "the environment word reads zero, which is not an entry"
+    );
+}
