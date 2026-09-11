@@ -3,9 +3,9 @@ name: ci
 on:
   push:
     branches: [master, develop, 'fix/**', 'release/**']
-    # Without this a release tag runs nothing: a branch filter does not match
-    # a tag push, so `v0.2.0` would ship ungated.
-    tags: ['v*']
+    # A branch filter never matches a tag push, so without this a release tag
+    # ships ungated. Both spellings: the 0.1.0 tag is `release/v0.1.0`.
+    tags: ['v*', 'release/v*']
   pull_request:
 
 env:
@@ -25,7 +25,11 @@ jobs:
           # The fixture binaries are LFS-backed; without this they check out as
           # pointer text and every test that loads one fails.
           lfs: true
+      # `@stable` installs the minimal profile: without this `cargo fmt` and
+      # `cargo clippy` below exist only by grace of the runner image.
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -68,6 +72,17 @@ jobs:
 
   python:
     runs-on: ubuntu-latest
+    strategy:
+      # `requires-python = ">=3.9"` and the `cp39-abi3` wheel tag are claims,
+      # and `.python-version` pins 3.10, so without a matrix neither end of the
+      # supported range is ever run. Not fail-fast: which end broke is the
+      # answer wanted.
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.13']
+    env:
+      # Outranks the `.python-version` file for `uv sync` and `uv run`.
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -82,6 +97,18 @@ jobs:
       - run: uv run maturin develop
       - run: uv run pyright
       - run: uv run pytest
+      # `pyright` type-checks the examples, it never runs them. They write only
+      # under /tmp and none needs an argument (`09` serves only on `--serve`).
+      - name: the shipped examples still run
+        run: |
+          for f in crates/strider-py/examples/python/*.py; do
+            echo "== $f"
+            uv run python "$f"
+          done
+      - name: the examples leave the tree clean
+        run: |
+          git status --porcelain
+          test -z "$(git status --porcelain)"
 
   # `maturin develop` builds debug. The wheel that ships is a release build,
   # where a different codegen path and `[profile.release] overflow-checks`
@@ -102,3 +129,51 @@ jobs:
       - run: uv sync --group dev
       - run: uv run maturin develop --release
       - run: uv run pytest
+
+  # `maturin develop` drops the extension into the source tree and builds no
+  # wheel, so `[tool.maturin] include` is never exercised: the stubs,
+  # `py.typed` and `explore.html` (which `explore.py` opens at runtime) reach
+  # an installed copy only through it, and the suites above pass off the source
+  # tree either way.
+  wheel:
+    runs-on: ubuntu-latest
+    steps:
+      # No `lfs`: nothing here loads a fixture, and the sdist ships
+      # `externals/rsleigh` from the submodule rather than the fixtures.
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --group dev
+      - run: uv run maturin build --release --out dist
+      - run: uv run maturin sdist --out dist
+      - name: the wheel carries every stub and data file
+        run: |
+          python3 - <<'EOF'
+          import glob, pathlib, sys, zipfile
+
+          wheels = glob.glob("dist/*.whl")
+          if len(wheels) != 1:
+              sys.exit(f"expected exactly one wheel, found {wheels}")
+          have = set(zipfile.ZipFile(wheels[0]).namelist())
+
+          pkg = pathlib.Path("crates/strider-py/strider")
+          stubs = sorted(p.relative_to(pkg.parent).as_posix()
+                         for p in pkg.rglob("*.pyi"))
+          # A glob that matches nothing must not pass vacuously.
+          if len(stubs) < 10:
+              sys.exit(f"expected at least 10 stubs in the source tree, got {stubs}")
+
+          want = stubs + ["strider/py.typed", "strider/explore.html",
+                          "strider/_strider.abi3.so"]
+          missing = [n for n in want if n not in have]
+          if missing:
+              sys.exit(f"{wheels[0]} is missing {missing}")
+          print(f"{wheels[0]}: all {len(want)} required members present")
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
