@@ -73,6 +73,28 @@ fn collect_stack_args(
     args
 }
 
+/// The inputs a `Call` carries before any collection: `[control, memory,
+/// target, sp]` plus one per register-passed argument, integer then float, the
+/// layout the lifter builds.  Re-derived per run rather than remembered, so a
+/// second run over the same `Function` replaces the first run's tail instead of
+/// appending a duplicate of it.
+fn register_arity(
+    function: &strider_ir::Function,
+    cc: &strider_target::BuiltCallingConvention,
+) -> usize {
+    const FIXED_INPUTS: usize = 4;
+    let tracked = function.all_vns();
+    // A `None` slot means the function was not lifted against this convention;
+    // the lifter passes the prefix before the first one, so nothing after it is
+    // an input either.
+    let float_args = cc
+        .float_arg_slots(tracked, |v| vn_container::largest_container_in(tracked, v))
+        .into_iter()
+        .take_while(Option::is_some)
+        .count();
+    FIXED_INPUTS + cc.arg_passing_regs.len() + float_args
+}
+
 /// Wires positional stack args into each `Call`.  A per-`Call` CC override
 /// wins over the convention default.
 #[derive(Clone)]
@@ -92,11 +114,27 @@ impl PostOptimizer for CallStackArgCollect {
             assumptions.stack_global_disjoint,
             &assumptions.noalias_allocators,
         ));
+        // `float_arg_slots` scans the tracked set per float register, so the
+        // unoverridden calls share one scan.
+        let default_arity = register_arity(edit.function(), edit.function().default_cc());
         for call_id in calls {
-            let Some(stack_args) = edit.function().get_cc(call_id).stack_args else {
-                continue;
+            let (stack_args, arity) = {
+                let function = edit.function();
+                let cc = function.get_cc(call_id);
+                let Some(stack_args) = cc.stack_args else {
+                    continue;
+                };
+                // `get_cc` hands back the default itself when the call carries
+                // no override.
+                let arity = if std::ptr::eq(cc, function.default_cc()) {
+                    default_arity
+                } else {
+                    register_arity(function, cc)
+                };
+                (stack_args, arity)
             };
             let args = collect_stack_args(edit.function(), call_id, stack_args, &alias_cfg);
+            edit.truncate_node_inputs(call_id, arity);
             for arg_value in &args {
                 edit.add_node_input(call_id, *arg_value)?;
             }

@@ -1268,3 +1268,40 @@ fn memory_clobbering_call_other_blocks_regardless_of_the_survival_flag() -> Resu
     );
     Ok(())
 }
+
+/// The stack-arg half of `rerunning_pass_is_idempotent_no_duplicate_carriers`:
+/// index 0 there is a register arg the lifter recorded, which this pass never
+/// writes, so only a stack ordinal can catch an appending re-run.
+#[test]
+fn rerunning_the_default_pipeline_keeps_one_carrier_per_stack_arg() -> Result<()> {
+    let sp = sp32_vn();
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 8))
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    {
+        let four = b.build_int_const(4u64, ValueType::I32)?;
+        let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        b.build_return(Some(loaded), &[])?;
+    }
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let pipeline = crate::default_pipeline();
+    let mut previous: Option<Vec<ValueId>> = None;
+    for run in 1..=3 {
+        pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        let carriers = fg.side_tables().arg_index_to_values(0).to_vec();
+        assert_eq!(
+            carriers.len(),
+            1,
+            "run {run}: one Load at sp+4, one carrier"
+        );
+        if let Some(previous) = &previous {
+            assert_eq!(*previous, carriers, "run {run}: carrier set changed");
+        }
+        previous = Some(carriers);
+    }
+    Ok(())
+}

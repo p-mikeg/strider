@@ -30,14 +30,18 @@ impl PostOptimizer for FunctionArgDetect {
         let Some(stack_args) = maybe_stack_args else {
             return Ok(());
         };
+        // A second run over the same `Function` re-detects from scratch; the
+        // register carriers the lifter recorded sit below `first_stack_arg`.
+        edit.function_mut()
+            .side_tables_mut()
+            .clear_arg_values_from(first_stack_arg as u32);
         let stack_global_disjoint = opt_ctx.options.assumptions.stack_global_disjoint;
         let alias_cfg = MemAnalyzer::new(MemOptions::incoming_args(
             stack_global_disjoint,
             &opt_ctx.options,
         ));
-        // Narrowing rewires the graph, so it may only ever use what a
-        // call-blocking walk proves; `alias_cfg` carries the relaxations and
-        // decides detection alone.
+        // Detection reads `alias_cfg`; only the rewire reads this one (see
+        // `mem_chain_is_dirty`).
         let narrow_cfg = MemAnalyzer::new(MemOptions::call_blocking(
             stack_global_disjoint,
             &opt_ctx.options.assumptions.noalias_allocators,
@@ -167,9 +171,13 @@ fn detect_stack_args(
 /// `true` when any path may overwrite bytes in the load's range, i.e. the
 /// nearest clobber is anything but the clean `InitialMemory` root.
 ///
-/// Narrows to `narrow_cfg`'s clobber, never `alias_cfg`'s: the rewire outlives
-/// this pass, and a later run with the relaxations off would inherit an edge
-/// that only holds with them on.
+/// Narrows to `narrow_cfg`'s clobber, never `alias_cfg`'s, which piles the
+/// incoming-arg relaxations on top.  `narrow_cfg` still carries
+/// `stack_global_disjoint`, `noalias_allocators` and the call relaxations, so
+/// the rewire is exactly as sound as the assumptions in force when it was made
+/// and outlives them: re-optimising the same `Function` under
+/// `AssumptionOptions::none()` inherits the edge.  `LoadForward` pins its
+/// narrowing walk to `MemOptions::structural()` instead.
 fn mem_chain_is_dirty(
     edit: &mut crate::EditFunction<'_>,
     alias_cfg: &MemAnalyzer,
