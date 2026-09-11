@@ -118,7 +118,9 @@ impl std::fmt::Debug for MemRegion {
 impl MemRegion {
     /// # Errors
     ///
-    /// Errors when `start_addr + data.len()` would exceed `u64::MAX`.
+    /// Errors when `start_addr + data.len()` would exceed `u64::MAX`, which
+    /// leaves the byte at `u64::MAX` unmappable: covering it takes an
+    /// exclusive end of `2^64`.
     pub fn new(start_addr: u64, data: Vec<u8>) -> Result<Self> {
         let len = data.len();
         Self::check_end(start_addr, len)?;
@@ -161,6 +163,11 @@ impl MemRegion {
         })
     }
 
+    /// The exclusive end has to fit a `u64`, which every half-open range over
+    /// a region is typed on, [`end_addr`] first. The byte at `u64::MAX` is
+    /// therefore unmappable: a region covering it ends at `2^64`.
+    ///
+    /// [`end_addr`]: Self::end_addr
     fn check_end(start_addr: u64, len: usize) -> Result<()> {
         start_addr.checked_add(len as u64).ok_or_else(|| {
             anyhow::anyhow!("region at {start_addr:#x} with length {len} would overflow u64")
@@ -305,6 +312,11 @@ pub struct MemRegionsLookupTable {
     /// Ascending by start address, one region per start.
     regions: Vec<MemRegion>,
     index: RegionIndex,
+    /// One `regions` index per distinct mapping behind them, so
+    /// [`check_unchanged`] costs a stat per mapping and no scan at all.
+    ///
+    /// [`check_unchanged`]: Self::check_unchanged
+    mappings: Vec<usize>,
 }
 
 /// Ascending-start index over a slice of [`MemRegion`]s: which of them cover a
@@ -503,24 +515,34 @@ impl MemRegionsLookupTable {
             .into_values()
             .collect();
         let index = RegionIndex::new(&regions);
-        Self { regions, index }
+        let mut seen: BTreeSet<usize> = BTreeSet::new();
+        let mappings = regions
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.mapping_id().is_some_and(|id| seen.insert(id)))
+            .map(|(i, _)| i)
+            .collect();
+        Self {
+            regions,
+            index,
+            mappings,
+        }
     }
 
     /// [`MemRegion::check_unchanged`] over the table, one `stat` per distinct
     /// mapping rather than per region: an image's regions all share one.
     ///
+    /// The mappings are the ones the regions carried at construction, which
+    /// are every mapping the table can serve a byte from, so a changed file
+    /// is caught wherever it backs the table. Which changes a `stat` can see
+    /// at all is [`MemRegion::check_unchanged`]'s.
+    ///
     /// # Errors
     ///
     /// When any mapped file behind the table changed since it was mapped.
     pub fn check_unchanged(&self) -> Result<()> {
-        let mut stat_ed: BTreeSet<usize> = BTreeSet::new();
-        for region in &self.regions {
-            let Some(id) = region.mapping_id() else {
-                continue;
-            };
-            if stat_ed.insert(id) {
-                region.check_unchanged()?;
-            }
+        for &i in &self.mappings {
+            self.regions[i].check_unchanged()?;
         }
         Ok(())
     }

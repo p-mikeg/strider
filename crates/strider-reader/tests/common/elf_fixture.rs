@@ -1572,6 +1572,8 @@ pub(crate) struct Ppc64OpdFixture {
     pub descriptor_addr: u64,
     /// The code address that descriptor names.
     pub entry_addr: u64,
+    /// The TOC pointer, the descriptor's second word.
+    pub toc_addr: u64,
     /// A descriptor whose entry word is still zero.
     pub unrelocated_addr: u64,
 }
@@ -1723,6 +1725,7 @@ pub(crate) fn build_ppc64_opd_elf(e_flags: u32) -> Ppc64OpdFixture {
         bytes: buf,
         descriptor_addr,
         entry_addr,
+        toc_addr: toc,
         unrelocated_addr: opd_addr,
     }
 }
