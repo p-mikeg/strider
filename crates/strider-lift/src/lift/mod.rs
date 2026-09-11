@@ -74,6 +74,9 @@ pub struct Lifter<R: rsleigh::MemReader> {
     /// ([`SleighArch::transient_decode_vars`]).  They are outside `flow_vars`
     /// by construction, so `pin_at` cannot reach them.
     transient_defaults: Vec<(&'static str, u32)>,
+    /// The entry context each ISA mode last pinned, keyed by the mode value
+    /// ([`SleighArch::entry_mode_context`]), `None` for an arch without one.
+    entry_contexts: rustc_hash::FxHashMap<Option<u32>, strider_cfg::FlowContext>,
 }
 
 impl<R: rsleigh::MemReader> Lifter<R> {
@@ -119,6 +122,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             flow_vars,
             entry_defaults,
             transient_defaults,
+            entry_contexts: rustc_hash::FxHashMap::default(),
         })
     }
 
@@ -167,8 +171,19 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         } else {
             entry.addr
         };
-        self.flow_vars
-            .pin_at(&mut self.sleigh, decode_addr, &self.entry_defaults)?;
+        // The pin target is the context this mode last produced, not the bare
+        // defaults: several sla vars view the ISA-mode bit (ARM `TMode`, `T`,
+        // `LowBitCodeMode`, `ISA_MODE`), so defaults-then-mode-bit ends on a
+        // context the defaults do not describe, and re-pinning the defaults
+        // rewrites every view of the bit on every call.  A `set_context_at` is
+        // logged for `Sleigh::clone` to replay and the log is bounded, so
+        // re-analysing one entry must cost no commit.
+        let mode_key = entry_mode.map(|(_, value)| value);
+        let want = self
+            .entry_contexts
+            .get(&mode_key)
+            .unwrap_or(&self.entry_defaults);
+        self.flow_vars.pin_at(&mut self.sleigh, decode_addr, want)?;
         // A `noflow` commit holds at exactly the address it was made for, so a
         // prior function's `mov lr,pc` leaves `LRset` set at THIS entry and its
         // `bx` would decode as an indirect call. `pin_at` covers the flowing
@@ -178,14 +193,17 @@ impl<R: rsleigh::MemReader> Lifter<R> {
                 self.sleigh.set_context_at(decode_addr, name, *default)?;
             }
         }
-        // Take the entry mode from the address low bit (ARM Thumb via `TMode`,
-        // MIPS16 via `ISA_MODE`), overriding the default reset above.
-        if let Some((var, value)) = entry_mode {
+        // The pin misses a mode var a sla does not declare flowing, and its
+        // diff can write an alias of the mode bit last, flipping it back.
+        if let Some((var, value)) = entry_mode
+            && self.sleigh.get_context_at(decode_addr, var)? != value
+        {
             self.sleigh.set_context_at(decode_addr, var, value)?;
         }
         // The function's now-committed ISA mode, the base context the builder
         // decodes a strider-resolved target in.
         let function_mode = self.flow_vars.snapshot(&self.sleigh, decode_addr);
+        self.entry_contexts.insert(mode_key, function_mode.clone());
         strider_cfg::Builder::for_arch(&self.arch, &mut self.sleigh, decode_addr, cfg_opts)
             .with_flow_context(&self.flow_vars, function_mode)
             .with_per_address_ccs(per_address_ccs.clone())
@@ -319,6 +337,13 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// outlives the engine that decoded it; the space id in a Load / Store's
     /// `inputs[0]` is that engine's raw `AddrSpace` pointer.  The comparison
     /// here never dereferences it.
+    ///
+    /// What it establishes is that the id is one of THIS engine's live space
+    /// pointers, which is the whole safety precondition; it is not proof of
+    /// origin.  A dropped engine's id whose address this engine's allocator
+    /// handed back names a live space of this engine, so it passes and the
+    /// Load / Store silently takes that space.  Distinguishing the two needs
+    /// an id rsleigh derives from the space rather than from its address.
     fn check_cfg_space_ids(&self, cfg: &strider_cfg::Cfg) -> Result<()> {
         for wrapped in cfg.regions().flat_map(|region| region.insns.iter()) {
             if !matches!(
@@ -338,8 +363,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             if self.space_ids.resolve(*space_id).is_none() {
                 return Err(anyhow!(
                     "{:?} at {:#x} names an address space this Sleigh engine did not declare: \
-                     the CFG was built by a different engine, and lifting it would read that \
-                     engine's memory",
+                     the CFG was built by a different engine, whose spaces this one cannot \
+                     resolve",
                     wrapped.insn.opcode,
                     wrapped.addr.machine_addr.addr,
                 ));
