@@ -333,7 +333,19 @@ impl<'f> Matcher<'f> {
         // output the pattern reaches `k` through is that node's answer, so the
         // rest are not tried and a bare wildcard does not report the consumer's
         // control and memory edges as two.
+        //
+        // A later output whose anchor repeats the one already tried is skipped:
+        // the tried one did not reach `k`, so neither can its repeat, and
+        // without the skip one nesting level of branch patterns doubles the
+        // failure cost of everything below it.
+        let mut anchored: Option<ValueId> = None;
         for &out_id in outputs {
+            if let Some(prev) = anchored
+                && walk::anchor_repeats(self, pat, root, prev, out_id)
+            {
+                continue;
+            }
+            anchored = Some(out_id);
             let mut reached = false;
             let mut counting = |b: &mut Bindings| {
                 reached = true;
@@ -692,30 +704,64 @@ pub enum JoinConstraint {
 }
 
 impl std::fmt::Debug for JoinConstraint {
+    /// The tree's depth is the caller's, so the walk carries its own stack
+    /// rather than the machine's.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Dominates {
-                dominator,
-                dominated,
-            } => f
-                .debug_struct("Dominates")
-                .field("dominator", dominator)
-                .field("dominated", dominated)
-                .finish(),
-            Self::PhiInputFromEdge { phi, edge, value } => f
-                .debug_struct("PhiInputFromEdge")
-                .field("phi", phi)
-                .field("edge", edge)
-                .field("value", value)
-                .finish(),
-            Self::Not(inner) => f.debug_tuple("Not").field(inner).finish(),
-            Self::Or(cs) => f.debug_tuple("Or").field(cs).finish(),
-            Self::And(cs) => f.debug_tuple("And").field(cs).finish(),
-            Self::Where { captures, .. } => f
-                .debug_struct("Where")
-                .field("captures", captures)
-                .finish_non_exhaustive(),
+        enum DebugItem<'a> {
+            Node(&'a JoinConstraint),
+            Text(&'static str),
         }
+
+        let mut stack = vec![DebugItem::Node(self)];
+        while let Some(item) = stack.pop() {
+            let c = match item {
+                DebugItem::Text(t) => {
+                    f.write_str(t)?;
+                    continue;
+                }
+                DebugItem::Node(c) => c,
+            };
+            match c {
+                Self::Dominates {
+                    dominator,
+                    dominated,
+                } => f
+                    .debug_struct("Dominates")
+                    .field("dominator", dominator)
+                    .field("dominated", dominated)
+                    .finish()?,
+                Self::PhiInputFromEdge { phi, edge, value } => f
+                    .debug_struct("PhiInputFromEdge")
+                    .field("phi", phi)
+                    .field("edge", edge)
+                    .field("value", value)
+                    .finish()?,
+                Self::Where { captures, .. } => f
+                    .debug_struct("Where")
+                    .field("captures", captures)
+                    .finish_non_exhaustive()?,
+                Self::Not(inner) => {
+                    f.write_str("Not(")?;
+                    stack.push(DebugItem::Text(")"));
+                    stack.push(DebugItem::Node(inner));
+                }
+                Self::Or(cs) | Self::And(cs) => {
+                    f.write_str(if matches!(c, Self::Or(_)) {
+                        "Or(["
+                    } else {
+                        "And(["
+                    })?;
+                    stack.push(DebugItem::Text("])"));
+                    for (i, arm) in cs.iter().enumerate().rev() {
+                        stack.push(DebugItem::Node(arm));
+                        if i > 0 {
+                            stack.push(DebugItem::Text(", "));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -753,30 +799,37 @@ impl JoinConstraint {
     /// Whether any part of it reads the tuple beyond the captures it names,
     /// which pins it to a complete row.
     fn reads_whole_tuple(&self) -> bool {
-        match self {
-            JoinConstraint::Where { .. } => true,
-            JoinConstraint::Not(inner) => inner.reads_whole_tuple(),
-            JoinConstraint::Or(cs) | JoinConstraint::And(cs) => {
-                cs.iter().any(JoinConstraint::reads_whole_tuple)
+        let mut stack = vec![self];
+        while let Some(c) = stack.pop() {
+            match c {
+                JoinConstraint::Where { .. } => return true,
+                JoinConstraint::Not(inner) => stack.push(inner),
+                JoinConstraint::Or(cs) | JoinConstraint::And(cs) => stack.extend(cs.iter().rev()),
+                JoinConstraint::Dominates { .. } | JoinConstraint::PhiInputFromEdge { .. } => {}
             }
-            JoinConstraint::Dominates { .. } | JoinConstraint::PhiInputFromEdge { .. } => false,
         }
+        false
     }
 
-    /// Every capture this constraint correlates.
+    /// Every capture this constraint correlates, in the order it names them.
     fn captures(&self) -> Vec<crate::Capture> {
-        match self {
-            JoinConstraint::Dominates {
-                dominator,
-                dominated,
-            } => vec![*dominator, *dominated],
-            JoinConstraint::PhiInputFromEdge { phi, edge, value } => vec![*phi, *edge, *value],
-            JoinConstraint::Not(inner) => inner.captures(),
-            JoinConstraint::Or(cs) | JoinConstraint::And(cs) => {
-                cs.iter().flat_map(JoinConstraint::captures).collect()
+        let mut out = Vec::new();
+        let mut stack = vec![self];
+        while let Some(c) = stack.pop() {
+            match c {
+                JoinConstraint::Dominates {
+                    dominator,
+                    dominated,
+                } => out.extend([*dominator, *dominated]),
+                JoinConstraint::PhiInputFromEdge { phi, edge, value } => {
+                    out.extend([*phi, *edge, *value]);
+                }
+                JoinConstraint::Not(inner) => stack.push(inner),
+                JoinConstraint::Or(cs) | JoinConstraint::And(cs) => stack.extend(cs.iter().rev()),
+                JoinConstraint::Where { captures, .. } => out.extend(captures.iter().copied()),
             }
-            JoinConstraint::Where { captures, .. } => captures.clone(),
         }
+        out
     }
 }
 
@@ -787,34 +840,48 @@ pub type JoinedMatch = Vec<Match>;
 pub type JoinPredicateFn =
     std::sync::Arc<dyn Fn(&Function, &JoinedMatch) -> Option<bool> + Send + Sync>;
 
-/// Kleene OR: `Some(true)` if any input is (truth dominates and
-/// short-circuits), else `None` if any is `None` (unknown poisons a would-be
-/// `false`), else `Some(false)`. Empty yields `Some(false)`.
-fn kleene_or(it: impl Iterator<Item = Option<bool>>) -> Option<bool> {
-    let mut saw_unknown = false;
-    for v in it {
-        match v {
-            Some(true) => return Some(true),
-            None => saw_unknown = true,
-            Some(false) => {}
-        }
-    }
-    (!saw_unknown).then_some(false)
+/// Kleene fold over one connective's arms, one arm at a time. `dominant` is
+/// the verdict that settles it on sight and short-circuits the rest: `true`
+/// for OR, `false` for AND. An unknown arm poisons what would otherwise be
+/// `!dominant`; no arm at all yields `!dominant`, the connective's identity.
+#[derive(Clone, Copy)]
+struct Kleene {
+    dominant: bool,
+    saw_unknown: bool,
 }
 
-/// Kleene AND: `Some(false)` if any input is (falsity dominates and
-/// short-circuits), else `None` if any is `None` (unknown poisons a would-be
-/// `true`), else `Some(true)`. Empty yields `Some(true)`.
-fn kleene_and(it: impl Iterator<Item = Option<bool>>) -> Option<bool> {
-    let mut saw_unknown = false;
-    for v in it {
-        match v {
-            Some(false) => return Some(false),
-            None => saw_unknown = true,
-            Some(true) => {}
+impl Kleene {
+    fn or() -> Self {
+        Self {
+            dominant: true,
+            saw_unknown: false,
         }
     }
-    (!saw_unknown).then_some(true)
+
+    fn and() -> Self {
+        Self {
+            dominant: false,
+            saw_unknown: false,
+        }
+    }
+
+    /// `Some` once the arms folded in settle the connective, whatever the
+    /// remaining ones say.
+    fn arm(&mut self, verdict: Option<bool>) -> Option<Option<bool>> {
+        match verdict {
+            Some(b) if b == self.dominant => Some(Some(self.dominant)),
+            None => {
+                self.saw_unknown = true;
+                None
+            }
+            Some(_) => None,
+        }
+    }
+
+    /// The verdict with every arm folded in.
+    fn finish(self) -> Option<bool> {
+        (!self.saw_unknown).then_some(!self.dominant)
+    }
 }
 
 /// Evaluates [`JoinConstraint`]s against joined tuples, memoising both
@@ -876,7 +943,76 @@ impl<'f> ConstraintEval<'f> {
 
     /// Three-valued verdict: `Some(b)` is real, `None` means a referenced
     /// capture was unbound in this row so the relation is unanswerable.
+    ///
+    /// The connectives are unwound on an explicit stack: the tree's depth is
+    /// the caller's, and recursing it deep enough overflows.
     fn passes(&self, c: &JoinConstraint, tuple: Row<'_>) -> Option<bool> {
+        /// A connective waiting on the arm being evaluated.
+        enum Frame<'a> {
+            Not,
+            Fold {
+                acc: Kleene,
+                rest: std::slice::Iter<'a, JoinConstraint>,
+            },
+        }
+
+        let mut stack: Vec<Frame<'_>> = Vec::new();
+        let mut next = c;
+        loop {
+            // Down to the next leaf, stacking the connectives above it.
+            let mut verdict = loop {
+                let (acc, cs) = match next {
+                    JoinConstraint::Not(inner) => {
+                        stack.push(Frame::Not);
+                        next = &**inner;
+                        continue;
+                    }
+                    JoinConstraint::Or(cs) => (Kleene::or(), cs),
+                    JoinConstraint::And(cs) => (Kleene::and(), cs),
+                    leaf => break self.leaf_passes(leaf, tuple),
+                };
+                let mut rest = cs.iter();
+                match rest.next() {
+                    Some(first) => {
+                        stack.push(Frame::Fold { acc, rest });
+                        next = first;
+                    }
+                    None => break acc.finish(),
+                }
+            };
+            // Back up through the connectives the leaf settled.
+            loop {
+                let Some(frame) = stack.last_mut() else {
+                    return verdict;
+                };
+                match frame {
+                    Frame::Not => {
+                        verdict = verdict.map(|b| !b);
+                        stack.pop();
+                    }
+                    Frame::Fold { acc, rest } => match acc.arm(verdict) {
+                        Some(settled) => {
+                            verdict = settled;
+                            stack.pop();
+                        }
+                        None => match rest.next() {
+                            Some(arm) => {
+                                next = arm;
+                                break;
+                            }
+                            None => {
+                                verdict = acc.finish();
+                                stack.pop();
+                            }
+                        },
+                    },
+                }
+            }
+        }
+    }
+
+    /// One constraint that names its own captures, with no arms below it.
+    fn leaf_passes(&self, c: &JoinConstraint, tuple: Row<'_>) -> Option<bool> {
         match *c {
             JoinConstraint::PhiInputFromEdge { phi, edge, value } => {
                 let (Some(phi_v), Some(edge_v), Some(val_v)) = (
@@ -920,11 +1056,10 @@ impl<'f> ConstraintEval<'f> {
                     (ka, kb) => strider_ir::dominance_verdict(self.split_doms(), ka, kb),
                 }
             }
-            // `Not(None) == None`: the negation of an unanswerable constraint
-            // is itself unanswerable, so an unbound capture drops the row.
-            JoinConstraint::Not(ref inner) => self.passes(inner, tuple).map(|b| !b),
-            JoinConstraint::Or(ref cs) => kleene_or(cs.iter().map(|c| self.passes(c, tuple))),
-            JoinConstraint::And(ref cs) => kleene_and(cs.iter().map(|c| self.passes(c, tuple))),
+            // `passes` unwinds these, so a leaf walk never sees one.
+            JoinConstraint::Not(_) | JoinConstraint::Or(_) | JoinConstraint::And(_) => {
+                unreachable!("a connective reached the leaf walk")
+            }
             JoinConstraint::Where {
                 ref captures,
                 ref pred,
@@ -1137,11 +1272,21 @@ fn row_agrees(prefix: Row<'_>, m: &Match, graph: &Graph) -> bool {
 
 #[cfg(test)]
 mod kleene_tests {
-    use super::{kleene_and, kleene_or};
+    use super::Kleene;
 
     const T: Option<bool> = Some(true);
     const F: Option<bool> = Some(false);
     const U: Option<bool> = None;
+
+    /// Every arm folded in, short-circuiting as [`Kleene::arm`] says.
+    fn fold(mut acc: Kleene, arms: impl IntoIterator<Item = Option<bool>>) -> Option<bool> {
+        for a in arms {
+            if let Some(settled) = acc.arm(a) {
+                return settled;
+            }
+        }
+        acc.finish()
+    }
 
     #[test]
     fn not_of_unknown_is_unknown() {
@@ -1153,22 +1298,22 @@ mod kleene_tests {
     }
 
     #[test]
-    fn kleene_or_truth_dominates_then_unknown_poisons() {
-        assert_eq!(kleene_or([U, T, F].into_iter()), T);
+    fn or_truth_dominates_then_unknown_poisons() {
+        assert_eq!(fold(Kleene::or(), [U, T, F]), T);
         // Unknown poisons a would-be `false`.
-        assert_eq!(kleene_or([F, U, F].into_iter()), U);
-        assert_eq!(kleene_or([F, F].into_iter()), F);
+        assert_eq!(fold(Kleene::or(), [F, U, F]), U);
+        assert_eq!(fold(Kleene::or(), [F, F]), F);
         // Identity of `Or`.
-        assert_eq!(kleene_or(std::iter::empty()), F);
+        assert_eq!(fold(Kleene::or(), []), F);
     }
 
     #[test]
-    fn kleene_and_falsity_dominates_then_unknown_poisons() {
-        assert_eq!(kleene_and([U, F, T].into_iter()), F);
+    fn and_falsity_dominates_then_unknown_poisons() {
+        assert_eq!(fold(Kleene::and(), [U, F, T]), F);
         // Unknown poisons a would-be `true`.
-        assert_eq!(kleene_and([T, U, T].into_iter()), U);
-        assert_eq!(kleene_and([T, T].into_iter()), T);
+        assert_eq!(fold(Kleene::and(), [T, U, T]), U);
+        assert_eq!(fold(Kleene::and(), [T, T]), T);
         // Identity of `And`.
-        assert_eq!(kleene_and(std::iter::empty()), T);
+        assert_eq!(fold(Kleene::and(), []), T);
     }
 }
