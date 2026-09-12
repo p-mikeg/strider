@@ -70,25 +70,6 @@ fn bytes() -> Vec<u8> {
     b
 }
 
-/// The whole image, standing in for the ELF read-only view the classifier folds
-/// table loads through.
-struct BufRom(Vec<u8>);
-
-impl strider_orchestrator::opt::ReadOnlyMemory for BufRom {
-    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        let at = usize::try_from(
-            addr.checked_sub(BASE)
-                .ok_or_else(|| anyhow::anyhow!("BufRom: {addr:#x} below base"))?,
-        )?;
-        let src = self
-            .0
-            .get(at..at + buf.len())
-            .ok_or_else(|| anyhow::anyhow!("BufRom: {addr:#x} unmapped"))?;
-        buf.copy_from_slice(src);
-        Ok(())
-    }
-}
-
 #[test]
 fn a_direct_flow_clash_costs_one_arm_and_leaves_the_table_seated() {
     let arch = strider_target::SleighArch::arm();
@@ -101,7 +82,8 @@ fn a_direct_flow_clash_costs_one_arm_and_leaves_the_table_seated() {
     let cc = strider_target::CallingConvention::arm_aapcs()
         .build(&sleigh.regs().expect("regs"))
         .expect("cc");
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(BufRom(bytes()));
+    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
+        Box::new(strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes()));
     let mut strider = Strider::new(arch, sleigh, Some(rom)).expect("Strider::new");
     let result = strider
         .analyze(BASE, &cc, &Default::default(), &Default::default(), None)
