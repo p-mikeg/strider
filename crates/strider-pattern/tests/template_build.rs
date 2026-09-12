@@ -590,3 +590,39 @@ fn leaf_capture_is_the_binding_it_names() {
     let caps: Vec<_> = t.referenced_captures().collect();
     assert_eq!(caps, vec![c]);
 }
+
+/// `instantiate` checks the operand side, not only the declared outputs: a
+/// `Truncate` that does not narrow and a bitcast over the wrong operand class
+/// both build IR the validator rejects, so they are refused at the build.
+#[test]
+fn instantiate_refuses_an_ill_typed_operand() {
+    let x = Capture::new();
+    let build = |b: &mut strider_ir::FunctionBuilder| {
+        let a = b.build_int_const(5u64, T::I64)?;
+        let k = b.build_int_const(1u64, T::I64)?;
+        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::I64)
+    };
+    let lhs = int_add(var(x), int_const(1u128)).into_pattern();
+
+    for (rhs, kind, detail) in [
+        (
+            template::int_truncate(var(x)).into_template(),
+            "Truncate",
+            "strictly",
+        ),
+        (
+            template::float_bits_to_int(var(x)).into_template(),
+            "FloatBitsToInt",
+            "input slot 0",
+        ),
+    ] {
+        let mut fx = make_empty_fn(build).unwrap();
+        let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
+        let mut ef = EditFunction::new(&mut fx);
+        let err = instantiate(&rhs, &mut ef, &bindings, root_node, &[root_node], root_ty)
+            .expect_err("an ill-typed operand must be refused")
+            .to_string();
+        assert!(err.contains(kind), "got: {err}");
+        assert!(err.contains(detail), "got: {err}");
+    }
+}
