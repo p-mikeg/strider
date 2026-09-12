@@ -7,10 +7,13 @@
 //! the ABI split: `f0` is one 8-byte register, not o32's `f0_1` pair, and `f13`
 //! is a float argument slot of its own rather than the odd half of `f12`.
 
+mod common;
+
+use common::{returned, words_image};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::{NodeKind, ValueId};
-use strider_ir::{Function, IRViewer, IRWalker, IntBinaryOp, ValueType};
+use strider_ir::{Function, IRViewer, IntBinaryOp, ValueType};
 use strider_target::{CallingConvention, Endianness, SleighArch};
 
 const BASE: u64 = 0x1000;
@@ -69,17 +72,6 @@ impl Vns {
     }
 }
 
-fn image(endian: Endianness) -> Vec<u8> {
-    let mut v = Vec::with_capacity(WORDS.len() * 4);
-    for w in WORDS {
-        match endian {
-            Endianness::Big => v.extend_from_slice(&w.to_be_bytes()),
-            Endianness::Little => v.extend_from_slice(&w.to_le_bytes()),
-        }
-    }
-    v
-}
-
 fn analyze(endian: Endianness, offset: u64) -> (Function, Vns) {
     let arch = match endian {
         Endianness::Big => SleighArch::mipsbe64(),
@@ -88,7 +80,7 @@ fn analyze(endian: Endianness, offset: u64) -> (Function, Vns) {
     let sleigh = Sleigh::new(
         arch.sla_spec(),
         arch.pspec(),
-        BufMemReader::new(image(endian), BASE),
+        BufMemReader::new(words_image(WORDS, endian), BASE),
     )
     .expect("sleigh");
     let mut strider = strider_orchestrator::Strider::new(arch, sleigh, None).expect("strider");
@@ -121,14 +113,6 @@ fn analyze(endian: Endianness, offset: u64) -> (Function, Vns) {
 /// The `Return` node's value inputs, in `ret_val_regs` then
 /// `ret_val_regs_float` order. Inputs 0 and 1 are the `Control` predecessor and
 /// the memory state.
-fn returned(f: &Function) -> Vec<ValueId> {
-    let ret = f
-        .walk()
-        .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
-        .expect("one Return");
-    f.node_inputs(ret).into_iter().skip(2).collect()
-}
-
 fn producer_kind(f: &Function, v: ValueId) -> &NodeKind {
     f.node_kind(f.producer(v))
 }

@@ -662,7 +662,7 @@ fn apply_resolutions(
         // only if the caller built one, and filtering it against a mode-bearing
         // classification would delete the whole caller answer.
         let targets = match seed_for(caller_seed, addr) {
-            Some(seed) => union_resolved(seed, &targets),
+            Some(seed) => combine_resolved(seed, &targets, None),
             None => targets,
         };
         let seated: rustc_hash::FxHashSet<Option<u64>> =
@@ -880,13 +880,6 @@ fn merge_resolved(
     flowing_isa_bit: bool,
 ) -> ResolvedTargets {
     combine_resolved(a, b, Some(flowing_isa_bit))
-}
-
-/// [`merge_resolved`] by plain address union, for a caller's `known_targets`
-/// seed. The mode filter would delete a mode-less seed outright whenever the
-/// classifier proves a mode, so the seed is unioned without it.
-fn union_resolved(a: &ResolvedTargets, b: &ResolvedTargets) -> ResolvedTargets {
-    combine_resolved(a, b, None)
 }
 
 /// Two `LinkRegister`s stay `LinkRegister`; anything else widens to `Single` or

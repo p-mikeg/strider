@@ -2,6 +2,9 @@
 //! `rs`. Unmasked, a count of 64 shifts a 64-bit p-code operand to zero instead
 //! of leaving the operand alone.
 
+mod common;
+
+use common::words_image;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::{NodeKind, ValueId};
@@ -25,17 +28,6 @@ const DSLLV: u64 = 0x00;
 const DSRLV: u64 = 0x08;
 const DSRAV: u64 = 0x10;
 
-fn image(endian: Endianness) -> Vec<u8> {
-    let mut v = Vec::with_capacity(WORDS.len() * 4);
-    for w in WORDS {
-        match endian {
-            Endianness::Big => v.extend_from_slice(&w.to_be_bytes()),
-            Endianness::Little => v.extend_from_slice(&w.to_le_bytes()),
-        }
-    }
-    v
-}
-
 fn analyze(endian: Endianness, offset: u64) -> Function {
     let arch = match endian {
         Endianness::Big => SleighArch::mipsbe64(),
@@ -44,7 +36,7 @@ fn analyze(endian: Endianness, offset: u64) -> Function {
     let sleigh = Sleigh::new(
         arch.sla_spec(),
         arch.pspec(),
-        BufMemReader::new(image(endian), BASE),
+        BufMemReader::new(words_image(WORDS, endian), BASE),
     )
     .expect("sleigh");
     let mut strider = strider_orchestrator::Strider::new(arch, sleigh, None).expect("strider");
