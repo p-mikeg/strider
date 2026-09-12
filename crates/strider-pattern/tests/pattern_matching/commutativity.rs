@@ -5,46 +5,35 @@ use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
 
+/// The two-operand graph over `$op` matches the pattern written either way
+/// round. A macro, not a table: `int_add` and friends are distinct free
+/// functions, not values.
+macro_rules! commutes {
+    ($ctor:ident, $l:literal, $r:literal, $op:expr) => {{
+        let function = shapes::int_bin($l, $r, $op);
+        a::matches_both_orders(
+            &function,
+            $ctor(int_const($l as u128), int_const($r as u128)).into_pattern(),
+            $ctor(int_const($r as u128), int_const($l as u128)).into_pattern(),
+        );
+    }};
+}
+
 #[test]
 fn add_commutes() {
-    let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
-    a::matches_both_orders(
-        &function,
-        int_add(int_const(5u128), int_const(3u128)).into_pattern(),
-        int_add(int_const(3u128), int_const(5u128)).into_pattern(),
-    );
+    commutes!(int_add, 5, 3, IntBinaryOp::Add);
 }
 
 #[test]
 fn mul_commutes() {
-    let function = shapes::int_bin(7, 9, IntBinaryOp::Mul);
-    a::matches_both_orders(
-        &function,
-        int_mul(int_const(7u128), int_const(9u128)).into_pattern(),
-        int_mul(int_const(9u128), int_const(7u128)).into_pattern(),
-    );
+    commutes!(int_mul, 7, 9, IntBinaryOp::Mul);
 }
 
 #[test]
 fn and_or_xor_commute() {
-    let g_and = shapes::int_bin(0xF0, 0x0F, IntBinaryOp::And);
-    let g_or = shapes::int_bin(0xF0, 0x0F, IntBinaryOp::Or);
-    let g_xor = shapes::int_bin(0xF0, 0x0F, IntBinaryOp::Xor);
-    a::matches_both_orders(
-        &g_and,
-        int_and(int_const(0xF0u128), int_const(0x0Fu128)).into_pattern(),
-        int_and(int_const(0x0Fu128), int_const(0xF0u128)).into_pattern(),
-    );
-    a::matches_both_orders(
-        &g_or,
-        int_or(int_const(0xF0u128), int_const(0x0Fu128)).into_pattern(),
-        int_or(int_const(0x0Fu128), int_const(0xF0u128)).into_pattern(),
-    );
-    a::matches_both_orders(
-        &g_xor,
-        int_xor(int_const(0xF0u128), int_const(0x0Fu128)).into_pattern(),
-        int_xor(int_const(0x0Fu128), int_const(0xF0u128)).into_pattern(),
-    );
+    commutes!(int_and, 0xF0, 0x0F, IntBinaryOp::And);
+    commutes!(int_or, 0xF0, 0x0F, IntBinaryOp::Or);
+    commutes!(int_xor, 0xF0, 0x0F, IntBinaryOp::Xor);
 }
 
 #[test]

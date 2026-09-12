@@ -6,10 +6,13 @@
 //! optimiser's float evaluator declines every type but F32 / F64, so an x87
 //! expression survives the pipeline rather than collapsing to a double.
 
+mod common;
+
+use common::returned;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::{NodeKind, ValueId};
-use strider_ir::{Function, IRViewer, IRWalker, ValueType};
+use strider_ir::{Function, IRViewer, ValueType};
 use strider_target::{CallingConvention, SleighArch};
 
 const BASE: u64 = 0x1000;
@@ -52,23 +55,6 @@ fn image() -> Vec<u8> {
     v
 }
 
-struct ByteRom(Vec<u8>);
-
-impl strider_orchestrator::opt::ReadOnlyMemory for ByteRom {
-    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        let off = usize::try_from(
-            addr.checked_sub(BASE)
-                .ok_or_else(|| anyhow::anyhow!("address {addr:#x} below the image base"))?,
-        )?;
-        let end = off
-            .checked_add(buf.len())
-            .filter(|&e| e <= self.0.len())
-            .ok_or_else(|| anyhow::anyhow!("read past the image"))?;
-        buf.copy_from_slice(&self.0[off..end]);
-        Ok(())
-    }
-}
-
 fn analyze(offset: u64) -> (Function, strider_target::BuiltCallingConvention) {
     let arch = SleighArch::x86();
     let bytes = image();
@@ -78,7 +64,8 @@ fn analyze(offset: u64) -> (Function, strider_target::BuiltCallingConvention) {
         BufMemReader::new(bytes.clone(), BASE),
     )
     .expect("sleigh");
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(ByteRom(bytes));
+    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
+        Box::new(strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes));
     let mut strider = strider_orchestrator::Strider::new(arch, sleigh, Some(rom)).expect("strider");
     let cc = CallingConvention::x86_cdecl()
         .build(strider.sleigh_regs())
@@ -97,14 +84,6 @@ fn analyze(offset: u64) -> (Function, strider_target::BuiltCallingConvention) {
 }
 
 /// The `Return` node's value inputs: `EAX`, `EDX`, then `ST0`, `ST1`, `XMM0`.
-fn returned(f: &Function) -> Vec<ValueId> {
-    let ret = f
-        .walk()
-        .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
-        .expect("one Return");
-    f.node_inputs(ret).into_iter().skip(2).collect()
-}
-
 /// The value cdecl returns a `long double` in.
 fn st0(f: &Function) -> ValueId {
     returned(f)[2]

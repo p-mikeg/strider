@@ -10,24 +10,6 @@ use rsleigh::mem_readers::BufMemReader;
 use strider_ir::IRViewer;
 use strider_target::{CallingConvention, SleighArch};
 
-/// The same image served as read-only memory, so the operands fold.
-struct ByteRom(Vec<u8>);
-
-impl strider_orchestrator::opt::ReadOnlyMemory for ByteRom {
-    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        let off = usize::try_from(
-            addr.checked_sub(BASE)
-                .ok_or_else(|| anyhow::anyhow!("address {addr:#x} below the image base"))?,
-        )?;
-        let end = off
-            .checked_add(buf.len())
-            .filter(|&e| e <= self.0.len())
-            .ok_or_else(|| anyhow::anyhow!("read past the image"))?;
-        buf.copy_from_slice(&self.0[off..end]);
-        Ok(())
-    }
-}
-
 const BASE: u64 = 0x1000;
 
 /// `movdqa xmm0,[rip+0x18]` / `movdqa xmm1,[rip+0x20]` / `psrad xmm0,xmm1` /
@@ -60,7 +42,8 @@ fn an_over_wide_shift_count_saturates_rather_than_truncating() {
         BufMemReader::new(bytes.clone(), BASE),
     )
     .expect("sleigh");
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(ByteRom(bytes));
+    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
+        Box::new(strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes));
     let mut strider = strider_orchestrator::Strider::new(arch, sleigh, Some(rom)).expect("new");
     let cc = CallingConvention::x86_64_systemv()
         .build(strider.sleigh_regs())

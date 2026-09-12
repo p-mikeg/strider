@@ -27,23 +27,6 @@ const PSLLQ: u8 = 0xf3;
 const SIGN_LANES: u128 = 0x8000_0000_8000_0000_8000_0000_8000_0000;
 const ALL_ONES: u128 = u128::MAX;
 
-struct ByteRom(Vec<u8>);
-
-impl strider_orchestrator::opt::ReadOnlyMemory for ByteRom {
-    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        let off = usize::try_from(
-            addr.checked_sub(BASE)
-                .ok_or_else(|| anyhow::anyhow!("address {addr:#x} below the image base"))?,
-        )?;
-        let end = off
-            .checked_add(buf.len())
-            .filter(|&e| e <= self.0.len())
-            .ok_or_else(|| anyhow::anyhow!("read past the image"))?;
-        buf.copy_from_slice(&self.0[off..end]);
-        Ok(())
-    }
-}
-
 /// How the shifted lane is copied into the return register.
 #[derive(Clone, Copy)]
 enum Extract {
@@ -105,7 +88,8 @@ fn returned_rax(bytes: Vec<u8>) -> u128 {
         BufMemReader::new(bytes.clone(), BASE),
     )
     .expect("sleigh");
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(ByteRom(bytes));
+    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
+        Box::new(strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes));
     let mut strider = strider_orchestrator::Strider::new(arch, sleigh, Some(rom)).expect("strider");
     let cc = CallingConvention::x86_64_systemv()
         .build(strider.sleigh_regs())

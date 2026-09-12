@@ -226,9 +226,4 @@ mod tests {
     fn bare_value_output_is_any_value() {
         assert!(matches!(PatValue::value(0).kind, OutputKindSpec::AnyValue));
     }
-
-    #[test]
-    fn predicates_are_keyed_by_their_entity_no_value_type_arg() {
-        let _node: NodePredicate = Box::new(|_m, _node| true);
-    }
 }
