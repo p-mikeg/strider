@@ -8,6 +8,26 @@ The shape each API settled into is in
 
 ### Breaking, Python
 
+- `Function.rewrite` / `rewrite_all` raise where a replacement reads the value
+  it replaces. They returned a fire count and installed a node that was its own
+  input, an uncomputable `x = f(x)` that `find_all` then handed back. An RHS
+  naming a capture bound to the match root does it, and so does one that merely
+  rebuilds the LHS shape, since the dedup cache answers with the matched node.
+
+- A pattern query refuses at a depth set by the thread's real stack rather than
+  a fixed 512 KiB budget. Below a 1 MiB stack the old budget was larger than the
+  stack itself, so the documented catchable refusal arrived as SIGSEGV: a
+  256 KiB thread died at nesting depth 20. A small thread now refuses earlier
+  than it did, and the main thread allows about four times deeper.
+
+- Building a `Cfg` raises when the architecture reports no user-op names, where
+  it used to fall back to an empty table. Every `CallOther` then classified as
+  returning, so a no-return one decoded on into whatever followed it.
+
+- `Node.op()` returns `ExtendOp` for `Extend`, where it answered `None` for both
+  directions and nothing could tell sign- from zero-extension through the
+  accessor the stubs call universal.
+
 - `add_elf` applies relocations by default (`apply_relocations=True`), as
   `load_elf` already did. The flag also selects what is mapped -- `True` every
   allocatable section, `False` code and read-only data only -- so the two
@@ -194,6 +214,12 @@ The shape each API settled into is in
   compare equal or collide in a dict while being mutually unusable.
 
 ### Breaking, Rust
+
+- `strider_cfg::Builder::for_arch` takes `options: &'a CfgOptions`, tying it to
+  the builder's own lifetime. It cloned the whole of `CfgOptions` on every CFG
+  build to normalise one field, and the resolution loop repeats that every
+  round: 433 us per `build_cfg` with no seeds against 69 ms with 100,000. A
+  caller holding a shorter-lived `CfgOptions` than the builder needs to hoist it.
 
 - `TemplatePat` is implemented for `Captured<Var>` alone, so `.capture()` on a
   composite template is a compile error. The blanket impl let
@@ -555,6 +581,25 @@ The shape each API settled into is in
 
 ### Performance
 
+- A failing branch query costs one walk per consumer, not one per `If` output.
+  The success short-circuit did not fire on failure, so nesting doubled the cost
+  per level: the innermost pattern's visit count ran 80, 156, 304, 1152, 4352,
+  16384, 61440, 229376, and a 40-`If` graph with no match took 14.6 s at depth
+  18 against 0.001 s now. The match set is unchanged, checked against an
+  independent reference matcher.
+
+- `MemRegionsLookupTable::check_unchanged` caches one region per mapping instead
+  of scanning every region per call. It sits at the top of every `analyze`,
+  `build_cfg` and `BufferReader.read`: 240 us at 20,000 regions against 260 ns,
+  stat-ing the same set of files.
+
+- `LoadForward`'s first sweep is quadratic in loads times memory-chain length
+  and stays that way. Its note claimed "linear in practice" and cited a bench
+  that forwards one load out of N and never walks; the real cost is stated at
+  the code site instead. Later sweeps are near-free, since the narrowing has
+  already shortened the edges, and `-O2` input escapes it because a call ends
+  the chain.
+
 - Reading `CfgOptions.known_targets` or `.call_other_abis` no longer copies the
   table. Both are cached `mappingproxy` views over one `Arc`-shared map, where a
   `#[pyo3(get)]` deep-copied the whole table on every read and `_api` read them
@@ -648,6 +693,83 @@ The shape each API settled into is in
   addresses instead of with node creations.
 
 ### Fixed
+
+- A value tested for non-zero is no longer read as bit 0 of itself.
+  `Xor(IntEqual(y, 0), 1)` is `y != 0`, the OR of every bit of `y`, and the
+  CR-bit rule proved only that the packed terms sat at distinct positions, never
+  that none sat ABOVE the tested bit. One that did was deleted with the rest:
+  `(a < b) | ((c < d) << 3)` tested for non-zero optimized to `zext(a < b)` on
+  stock `gcc -O2` x86-64, losing the `Or`, the shift and the second comparison
+  while the survivor kept their fingerprints.
+
+- A conditional's arms are told apart by where its successors START, not by
+  which of them contains the taken target. `Region::contains_addr` owns every
+  byte of the region's last instruction without clipping to `fn_max_size`, so
+  when that bound cuts through an instruction the fall-through region's overhang
+  and the out-of-bounds arm's stub both own the target byte and the arms came
+  back swapped, with `is_complete()` true and every channel empty. The lifted
+  `If` inherited the swap.
+
+- A user-op is opaque to the memory walk whatever the analysed function's ABI
+  says. The gate read `preserves_memory` off the FUNCTION's convention under a
+  comment calling it the per-user-op attribute; nothing ever attaches a
+  convention to a `CallOther`, so under `cc.preserves_all()` every `syscall`,
+  `INT` and `sc` on the chain became transparent and a store forwarded across
+  it.
+
+- A `JoinConstraint` at the documented nesting limit frees without recursing.
+  The interpreter died with SIGSEGV on the DROP, after the query over it had
+  already returned: 450 levels killed a 512 KiB thread, and 511 is inside the
+  published 512 maximum. The four walks over the tree, and its own destructor,
+  are iterative.
+
+- `Lifter.pcode_at` refuses rather than decoding in the wrong ISA. Re-analysing
+  one entry appended five context commits each time on ARM, where the sla
+  declares four flow vars over bit 0 and the mode write was unguarded behind
+  them, so `MAX_CONTEXT_COMMITS` ran out after about 820 builds and a clone
+  decoded a Thumb address as ARM. Repeating an entry now costs no commits, and
+  `pcode_at` consults `clone_would_replay_context` before trusting a clone.
+
+- An opaque REGISTER-space `Load` observes an intervening named register write.
+  Only an opaque store advanced the memory chain, so PowerPC
+  `mfsrin / mtsr / mfsrin` lifted to a single `Load` asserting the two machine
+  reads are equal. The load mirrors the tracked registers into their slots
+  first, as the store path already did in the other direction.
+
+- An `ET_REL` section whose `base + sh_size` overruns the address space seats
+  none of its symbols. The seating watermark advanced by one instead of
+  wrapping, so the next section was seated inside a `.bss` range and a writable
+  symbol's address was served by the ROM-mapped `.text`.
+
+- `FunctionArgDetect`'s permanent load narrowing is pinned to the structural
+  memory options, so a default run no longer bakes `stack_global_disjoint` into
+  an edge a later `AssumptionOptions.none()` run inherits. The jump-table walk
+  likewise runs without the call-boundary relaxations its own note said it did
+  not honour, where a mis-listed allocator could have produced a wrong CFG edge.
+
+- An abandoned dispatch site is reported at its `BRANCHIND` anchor rather than
+  at the map key, which named an address no other channel used and left the
+  caller's clashing arm to be re-unioned the next round.
+
+- A union of two single-element ranges keeps the gap as its stride, where
+  `gcd(0, 0)` returned 1 and flattened it, and one surplus index deferred a
+  whole jump-table site.
+
+- The optimizer's iteration cap drains and validates before reporting, where it
+  returned a mutated, un-drained, unvalidated `Function`.
+
+- A template refuses an ill-typed operand at the build. It checked declared
+  output kinds only, so a `Truncate` that does not narrow and a bitcast over the
+  wrong operand class both reported success and installed IR the validator
+  rejects.
+
+- The vendored `svg-pan-zoom` bundle carries its BSD-2-Clause notice, and
+  `THIRD-PARTY.md` lists both vendored bundles. Every emitted HTML graph inlines
+  them, so each one redistributed the minified code with no copyright line.
+
+- PowerPC v20-v31 (`vs52`..`vs63`) are callee-saved on all four presets,
+  verified against `powerpc-linux-gnu-gcc`, `powerpc64-linux-gnu-gcc -maltivec`
+  and `powerpc64le-linux-gnu-gcc`, each of which saves exactly those twelve.
 
 - `Lifter.pcode_at` and `Lifter.optimize` check the mapped image for staleness,
   as `analyze` and `build_cfg` already did. Decoding past the end of a file
