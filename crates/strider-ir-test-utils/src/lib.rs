@@ -373,6 +373,9 @@ enum MockRomShape {
     Limited { addr: u64, size: usize, value: u64 },
     /// Serves every `(addr, size)`.
     AlwaysAnswer { value: u64 },
+    /// A byte run starting at `base`, served with no endianness swap and no
+    /// size cap.
+    RawBytes { base: u64, bytes: Vec<u8> },
 }
 
 impl MockRom {
@@ -408,6 +411,13 @@ impl MockRom {
     pub fn always_answer(value: u64) -> Self {
         Self {
             shape: MockRomShape::AlwaysAnswer { value },
+        }
+    }
+
+    /// `bytes` verbatim from `base`; a read straying outside the run errors.
+    pub fn raw_bytes(base: u64, bytes: Vec<u8>) -> Self {
+        Self {
+            shape: MockRomShape::RawBytes { base, bytes },
         }
     }
 }
@@ -449,12 +459,28 @@ impl MockRom {
                 value,
             } => (addr == *a && size == *s).then_some(*value),
             MockRomShape::AlwaysAnswer { value } => Some(*value),
+            // Served bytewise by `read`.
+            MockRomShape::RawBytes { .. } => None,
         }
     }
 }
 
 impl ReadOnlyMemory for MockRom {
     fn read(&self, addr: u64, buf: &mut [u8]) -> Result<()> {
+        if let MockRomShape::RawBytes { base, bytes } = &self.shape {
+            let start =
+                usize::try_from(addr.checked_sub(*base).ok_or_else(|| {
+                    anyhow::anyhow!("MockRom: {addr:#x} below the base {base:#x}")
+                })?)?;
+            let end = start
+                .checked_add(buf.len())
+                .ok_or_else(|| anyhow::anyhow!("MockRom: read length overflow"))?;
+            let src = bytes
+                .get(start..end)
+                .ok_or_else(|| anyhow::anyhow!("MockRom: {addr:#x} unmapped"))?;
+            buf.copy_from_slice(src);
+            return Ok(());
+        }
         let size = buf.len();
         // Every shape resolves to a `u64`, so a wider read is unserviceable.
         if size > 8 {
@@ -579,6 +605,46 @@ pub fn make_if_fn(cond_val: bool) -> Result<Function> {
     b.set_lift_addr(None);
 
     b.build()
+}
+
+/// A store on each branch of an if/else plus a load at the join, forcing a
+/// genuine `MemPhi` whose variadic tail past the one-slot `[PhiToken]` prefix
+/// is two `Memory` predecessors.
+///
+/// # Panics
+///
+/// If any builder step fails.
+pub fn mem_phi_with_two_stores() -> Function {
+    let var_vn = reg_vn(0x10, 8);
+    let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
+
+    let entry = b.create_region_all().unwrap();
+    let region_t = b.create_region_all().unwrap();
+    let region_f = b.create_region_all().unwrap();
+    let join = b.create_region_all().unwrap();
+
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, region_t, region_f).unwrap();
+
+    for (region, val) in [(region_t, 1u64), (region_f, 2u64)] {
+        b.set_region(region);
+        let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
+        let data = b.build_int_const(val, ValueType::I64).unwrap();
+        b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
+        b.build_branch(join).unwrap();
+    }
+
+    b.set_region(join);
+    let addr = b.build_int_const(0x48u64, ValueType::I64).unwrap();
+    let loaded = b
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .unwrap();
+    b.build_return(Some(loaded), &[]).unwrap();
+    b.set_lift_addr(None);
+    b.build().unwrap()
 }
 
 /// `return(reg)` over one tracked register, yielding a single

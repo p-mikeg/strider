@@ -355,7 +355,7 @@ mod tests {
     use crate::{Matcher, int_const};
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IRViewer};
-    use strider_ir_test_utils::RegisterSet;
+    use strider_ir_test_utils::{RegisterSet, mem_phi_with_two_stores};
 
     /// Target `IntConst(0xABCD)` at fixed-prefix slot 2, arg0 `IntConst(42)`
     /// in the variadic tail at slot 4.
@@ -445,42 +445,6 @@ mod tests {
                 .any(|k| matches!(k, strider_ir::node::ValueKind::Memory)),
             "wildcard any_input binds the memory input",
         );
-    }
-
-    /// Two real memory predecessors, a store on each side of a joined
-    /// if/else, so the variadic tail past the one-slot `[PhiToken]` prefix is
-    /// `Memory`.
-    fn mem_phi_with_two_stores() -> strider_ir::Function {
-        let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
-        let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
-
-        let entry = b.create_region_all().unwrap();
-        let region_t = b.create_region_all().unwrap();
-        let region_f = b.create_region_all().unwrap();
-        let join = b.create_region_all().unwrap();
-
-        b.set_entry_region_all(entry).unwrap();
-        b.set_region(entry);
-        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-        let cond = b.build_boolean_const(true);
-        b.build_if(cond, region_t, region_f).unwrap();
-
-        for (region, val) in [(region_t, 1u64), (region_f, 2u64)] {
-            b.set_region(region);
-            let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
-            let data = b.build_int_const(val, ValueType::I64).unwrap();
-            b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
-            b.build_branch(join).unwrap();
-        }
-
-        b.set_region(join);
-        let addr = b.build_int_const(0x48u64, ValueType::I64).unwrap();
-        let loaded = b
-            .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
-            .unwrap();
-        b.build_return(Some(loaded), &[]).unwrap();
-        b.set_lift_addr(None);
-        b.build().unwrap()
     }
 
     fn mem_phi_any_input<P: MatchPat + 'static>(p: P) -> Pattern {
