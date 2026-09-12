@@ -359,28 +359,6 @@ mod interworking_table {
     }
 }
 
-/// The whole image, standing in for the ELF read-only view the classifier
-/// folds table loads through.
-struct BufRom {
-    base: u64,
-    bytes: Vec<u8>,
-}
-
-impl strider_orchestrator::opt::ReadOnlyMemory for BufRom {
-    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        let at = usize::try_from(
-            addr.checked_sub(self.base)
-                .ok_or_else(|| anyhow::anyhow!("BufRom: {addr:#x} below base"))?,
-        )?;
-        let src = self
-            .bytes
-            .get(at..at + buf.len())
-            .ok_or_else(|| anyhow::anyhow!("BufRom: {addr:#x} unmapped"))?;
-        buf.copy_from_slice(src);
-        Ok(())
-    }
-}
-
 /// The whole resolve/re-lift loop over the interworking table: the arms must
 /// come back with the mode the `bx` proved for each, and the Thumb ones must
 /// then DECODE as Thumb.
@@ -400,10 +378,9 @@ fn analyze_resolves_an_interworking_table_in_each_arm_mode() {
         .cc()
         .build(&sleigh.regs().expect("regs"))
         .expect("cc");
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(BufRom {
-        base: BASE,
-        bytes: bytes.clone(),
-    });
+    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
+        strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes.clone()),
+    );
     let mut strider =
         strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(rom)).expect("Strider::new");
     let result = strider

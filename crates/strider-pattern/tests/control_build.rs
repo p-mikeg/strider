@@ -7,7 +7,7 @@ use support::assertions as a;
 
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{ExtendOp, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker};
-use strider_ir_test_utils::RegisterSet;
+use strider_ir_test_utils::{RegisterSet, mem_phi_with_two_stores};
 use strider_pattern::{
     Capture, CaptureExt, CastMask, MatchPat, Matcher, WithOutput, any_int_const, anything, call,
     call_other, entry, if_else, indirect_branch, int_add, int_const, load, mem_phi, phi, region,
@@ -744,41 +744,6 @@ fn phi_token_wildcard_binds_the_phi_token_edge() {
         1,
         "phi_input(0, _) must reach predecessor 0's data value, not the PhiToken"
     );
-}
-
-/// A store on each branch of an if/else plus a load at the join, forcing a
-/// genuine `MemPhi` with two memory predecessors.
-fn mem_phi_with_two_stores() -> strider_ir::Function {
-    let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
-    let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
-
-    let entry = b.create_region_all().unwrap();
-    let region_t = b.create_region_all().unwrap();
-    let region_f = b.create_region_all().unwrap();
-    let join = b.create_region_all().unwrap();
-
-    b.set_entry_region_all(entry).unwrap();
-    b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let cond = b.build_boolean_const(true);
-    b.build_if(cond, region_t, region_f).unwrap();
-
-    for (region, val) in [(region_t, 1u64), (region_f, 2u64)] {
-        b.set_region(region);
-        let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
-        let data = b.build_int_const(val, ValueType::I64).unwrap();
-        b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
-        b.build_branch(join).unwrap();
-    }
-
-    b.set_region(join);
-    let addr = b.build_int_const(0x48u64, ValueType::I64).unwrap();
-    let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
-        .unwrap();
-    b.build_return(Some(loaded), &[]).unwrap();
-    b.set_lift_addr(None);
-    b.build().unwrap()
 }
 
 /// A wildcard reaches the memory predecessors AND the `PhiToken` slot; a typed

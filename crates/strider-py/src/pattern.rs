@@ -21,7 +21,7 @@ use strider_pattern::{
 };
 
 use crate::errors::into_strider_err;
-use crate::value_ops::value_ops;
+use crate::value_ops::{value_op, value_ops};
 use strider_pattern::WithOutput;
 
 /// Binds a matched node so its value, op variant or fingerprint can be read
@@ -2353,41 +2353,19 @@ pub(crate) fn checked_signed_i64(value: i128) -> PyResult<i64> {
 
 value_ops!(PyPat, "Pattern", " Commutative.");
 
-/// Pattern: integer `a != b`.
-#[pyfunction]
-pub fn int_ne(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::IntNe(l, r))
-}
-
-/// Pattern: unsigned `a <= b`.
-#[pyfunction]
-pub fn int_le(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::IntLe(l, r))
-}
-
-/// Pattern: signed `a <= b`.
-#[pyfunction]
-pub fn int_sle(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::IntSle(l, r))
-}
-
-/// Pattern: `x` is NaN, the IEEE 754 self-inequality `x != x`.
-#[pyfunction]
-pub fn float_is_nan(operand: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::FloatIsNan(operand))
-}
-
-/// Pattern: float `a != b`.
-#[pyfunction]
-pub fn float_ne(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::FloatNe(l, r))
-}
-
-/// Pattern: float `a <= b`, NaN-aware.
-#[pyfunction]
-pub fn float_le(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::FloatLe(l, r))
-}
+// The lowered comparisons, which only the matching side names.
+value_op!(PyPat, "Pattern", "", binary_bare int_ne, IntNe, "integer `a != b`.");
+value_op!(PyPat, "Pattern", "", binary_bare int_le, IntLe, "unsigned `a <= b`.");
+value_op!(PyPat, "Pattern", "", binary_bare int_sle, IntSle, "signed `a <= b`.");
+value_op!(
+    PyPat, "Pattern", "", unary_bare float_is_nan, FloatIsNan,
+    "`x` is NaN, the IEEE 754 self-inequality `x != x`."
+);
+value_op!(PyPat, "Pattern", "", binary_bare float_ne, FloatNe, "float `a != b`.");
+value_op!(
+    PyPat, "Pattern", "", binary_bare float_le, FloatLe,
+    "float `a <= b`, NaN-aware."
+);
 
 /// Match any `IntBinaryOp` over `(l, r)` and bind the op variant to `c`.
 #[pyfunction]
@@ -3000,9 +2978,20 @@ macro_rules! node_builder {
         core_ty: $core_ty:ty,
         root: $root:ident,
         slots: [ $( $slot:ident ),* $(,)? ],
-        fields: [ $( $field:tt ),* $(,)? ] $(,)?
+        fields: [ $( $field:tt ),* $(,)? ],
+        // The zero-argument module-level constructor, for builders that need
+        // no pre-set operand.
+        $( ctor: $ctor:ident = $ctor_doc:literal, )?
     ) => {
         node_builder!(@members $inner [] $($field)*);
+
+        $(
+            #[doc = $ctor_doc]
+            #[pyfunction]
+            pub fn $ctor() -> $ty {
+                $ty::new()
+            }
+        )?
 
         #[doc = $doc]
         #[pyclass(name = $py_name, module = "strider.pattern")]
@@ -3448,12 +3437,7 @@ node_builder! {
             = "When nested as a value operand, pin it to the declared result \
                output (excludes implicit-write clobber outputs)." },
     ],
-}
-
-/// Start a `CallOther` pattern builder.
-#[pyfunction]
-pub fn call_other() -> PyCallOtherPat {
-    PyCallOtherPat::new()
+    ctor: call_other = "Start a `CallOther` pattern builder.",
 }
 
 node_builder! {
@@ -3471,12 +3455,7 @@ node_builder! {
         { multi ret_vals(usize): ret_val(compile_operand_match)
             = "Constrain the return value at position `idx`, raw input slot `idx + 2`." },
     ],
-}
-
-/// Start a `Return` pattern builder.
-#[pyfunction]
-pub fn ret() -> PyRetPat {
-    PyRetPat::new()
+    ctor: ret = "Start a `Return` pattern builder.",
 }
 
 node_builder! {
@@ -3499,12 +3478,7 @@ node_builder! {
         { mem mem: mem
             = "Constrain the node's memory predecessor (`inputs[1]`)." },
     ],
-}
-
-/// Start an `IndirectBranch` pattern builder.
-#[pyfunction]
-pub fn indirect_branch() -> PyIndirectBranchPat {
-    PyIndirectBranchPat::new()
+    ctor: indirect_branch = "Start an `IndirectBranch` pattern builder.",
 }
 
 node_builder! {
@@ -3520,12 +3494,7 @@ node_builder! {
         { pat ctrl: ctrl
             = "Match `p` against the node's direct ctrl predecessor (`inputs[0]`)." },
     ],
-}
-
-/// Start an `Unreachable` pattern builder.
-#[pyfunction]
-pub fn unreachable() -> PyUnreachablePat {
-    PyUnreachablePat::new()
+    ctor: unreachable = "Start an `Unreachable` pattern builder.",
 }
 
 node_builder! {
@@ -3547,12 +3516,7 @@ node_builder! {
         { pat ctrl: ctrl
             = "Match `p` against the node's direct ctrl predecessor (`inputs[0]`)." },
     ],
-}
-
-/// Start a `Switch` pattern builder.
-#[pyfunction]
-pub fn switch() -> PySwitchPat {
-    PySwitchPat::new()
+    ctor: switch = "Start a `Switch` pattern builder.",
 }
 
 node_builder! {
@@ -3951,12 +3915,7 @@ node_builder! {
                (PhiToken falls outside the value domain a typed sub matches); \
                use var()/anything() to bind the edge." },
     ],
-}
-
-/// Start a tagged-`Phi` pattern builder.
-#[pyfunction]
-pub fn phi() -> PyPhiPat {
-    PyPhiPat::new()
+    ctor: phi = "Start a tagged-`Phi` pattern builder.",
 }
 
 /// Match a `Phi` tagged `vn` or a register containing it.
@@ -3987,12 +3946,7 @@ node_builder! {
                `.input(0, p)` also names. See PhiPat.phi_token for the \
                value-phi analogue." },
     ],
-}
-
-/// Start a `MemPhi` pattern builder.
-#[pyfunction]
-pub fn mem_phi() -> PyMemPhiPat {
-    PyMemPhiPat::new()
+    ctor: mem_phi = "Start a `MemPhi` pattern builder.",
 }
 
 node_builder! {
@@ -4008,12 +3962,7 @@ node_builder! {
     root: value,
     slots: [output],
     fields: [],
-}
-
-/// Matches the function's unique `Entry` node.
-#[pyfunction]
-pub fn entry() -> PyEntryPat {
-    PyEntryPat::new()
+    ctor: entry = "Matches the function's unique `Entry` node.",
 }
 
 node_builder! {
@@ -4031,12 +3980,7 @@ node_builder! {
     root: value,
     slots: [any_input, input, output],
     fields: [],
-}
-
-/// Matches any CFG-merge `Region` node.
-#[pyfunction]
-pub fn region() -> PyRegionPat {
-    PyRegionPat::new()
+    ctor: region = "Matches any CFG-merge `Region` node.",
 }
 
 /// Typed builder for `FunctionArg` carrier patterns. Chain `.index(i)`,

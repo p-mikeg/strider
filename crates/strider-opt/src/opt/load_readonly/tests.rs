@@ -9,32 +9,6 @@ use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::{MockRom, make_empty_fn_endian};
 use strider_target::Endianness;
 
-/// Serves a fixed run of RAW bytes from `base`, with no endianness swap;
-/// decoding is the optimizer's job.  Errors if any requested byte falls
-/// outside the run (the all-or-nothing read contract).
-struct RawBytesRom {
-    base: u64,
-    bytes: Vec<u8>,
-}
-
-impl ReadOnlyMemory for RawBytesRom {
-    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        let start = addr
-            .checked_sub(self.base)
-            .and_then(|o| usize::try_from(o).ok())
-            .ok_or_else(|| anyhow::anyhow!("addr {addr:#x} below base"))?;
-        let end = start
-            .checked_add(buf.len())
-            .ok_or_else(|| anyhow::anyhow!("read length overflow"))?;
-        let src = self
-            .bytes
-            .get(start..end)
-            .ok_or_else(|| anyhow::anyhow!("read past end of mapped bytes"))?;
-        buf.copy_from_slice(src);
-        Ok(())
-    }
-}
-
 fn test_rom() -> MockRom {
     MockRom::fixed_table(&[(0x1000, 42), (0x2000, 0xFF)])
 }
@@ -130,10 +104,7 @@ fn load_non_const_addr_no_change() -> Result<()> {
 /// `Function::endianness`, not the reader.
 #[test]
 fn const_load_decodes_per_context_endianness() -> Result<()> {
-    let rom = RawBytesRom {
-        base: 0x1000,
-        bytes: vec![0x01, 0x02, 0x03, 0x04],
-    };
+    let rom = MockRom::raw_bytes(0x1000, vec![0x01, 0x02, 0x03, 0x04]);
 
     let build = |endian| {
         make_empty_fn_endian(endian, |b| {
@@ -166,10 +137,7 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
         0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
         0xff,
     ];
-    let rom = RawBytesRom {
-        base: 0x1000,
-        bytes: raw.clone(),
-    };
+    let rom = MockRom::raw_bytes(0x1000, raw.clone());
 
     let build = |endian| {
         make_empty_fn_endian(endian, |b| {
@@ -223,10 +191,7 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
 fn const_load_wider_than_16_bytes_does_not_fold() -> Result<()> {
     use strider_ir::IRViewer;
 
-    let rom = RawBytesRom {
-        base: 0x1000,
-        bytes: (0..64u8).collect(),
-    };
+    let rom = MockRom::raw_bytes(0x1000, (0..64u8).collect());
 
     for ty in [ValueType::I256, ValueType::I512] {
         let mut fg = make_fn(|b| {

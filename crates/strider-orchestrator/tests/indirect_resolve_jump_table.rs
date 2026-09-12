@@ -8,7 +8,7 @@
 //! shapes anyway.  `indirect_branch.rs` and `jump_table_lifting.rs` cover the
 //! real-binary side.
 //!
-//! The rom is a toy `TableRom` that returns successive 4-byte values at
+//! The rom is a `MockRom::strided` that returns successive 4-byte values at
 //! fixed offsets, standing in for the ELF `.rodata` view production callers
 //! wire into `OptCtx` for `LoadReadOnly`.
 
@@ -17,6 +17,7 @@ mod common;
 use strider_cfg::ResolvedTargets;
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
+use strider_ir_test_utils::MockRom;
 use strider_orchestrator::opt::value_range::compute_value_ranges;
 use strider_orchestrator::opt::{analyze_known_bits, classify_target};
 
@@ -45,62 +46,24 @@ use common::indirect_resolve_helpers::{
     build_jump_table_unbounded_scenario, build_non_jump_table_load_scenario,
 };
 
-/// Returns successive 4-byte values at `base + i * stride`, capped at
-/// `entries.len()`; reads outside the configured range return `None`.
-struct TableRom {
+/// Like [`MockRom::strided`] but only the first `cutoff` entries are readable.
+struct PartialRom {
+    inner: MockRom,
     base: u64,
     stride: u64,
-    entries: Vec<u64>,
-    size: usize,
-}
-
-impl TableRom {
-    fn resolve(&self, addr: u64, size: usize) -> Option<u64> {
-        if size != self.size {
-            return None;
-        }
-        if addr < self.base {
-            return None;
-        }
-        let offset = addr - self.base;
-        if self.stride == 0 {
-            return None;
-        }
-        if !offset.is_multiple_of(self.stride) {
-            return None;
-        }
-        let idx = (offset / self.stride) as usize;
-        self.entries.get(idx).copied()
-    }
-}
-
-impl strider_orchestrator::opt::ReadOnlyMemory for TableRom {
-    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        let size = buf.len();
-        let value = self
-            .resolve(addr, size)
-            .ok_or_else(|| anyhow::anyhow!("TableRom: unmapped {addr:#x}"))?;
-        buf.copy_from_slice(&value.to_le_bytes()[..size]);
-        Ok(())
-    }
-}
-
-/// Like `TableRom` but only the first `cutoff` entries are readable.
-struct PartialRom {
-    inner: TableRom,
     cutoff: usize,
 }
 
 impl strider_orchestrator::opt::ReadOnlyMemory for PartialRom {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        if addr < self.inner.base {
+        if addr < self.base {
             anyhow::bail!("PartialRom: below base");
         }
-        let offset = addr - self.inner.base;
-        if self.inner.stride == 0 {
+        let offset = addr - self.base;
+        if self.stride == 0 {
             anyhow::bail!("PartialRom: zero stride");
         }
-        let idx = (offset / self.inner.stride) as usize;
+        let idx = (offset / self.stride) as usize;
         if idx >= self.cutoff {
             anyhow::bail!("PartialRom: past cutoff");
         }
@@ -118,12 +81,7 @@ fn jump_table_known_bits_bound_resolves_to_multiple() {
     let stride = 4;
     let idx_mask = 0x7u64;
     let entries = vec![0x100, 0x200, 0x300, 0x400, 0x500, 0x600, 0x700, 0x800];
-    let rom = TableRom {
-        base,
-        stride,
-        entries: entries.clone(),
-        size: 4,
-    };
+    let rom = MockRom::strided(base, stride, entries.clone(), 4);
     let (function, _target) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
     let result = classify_target_with_rom(&function, Some(&rom)).expect("classify_target_with_rom");
     match result {
@@ -146,12 +104,7 @@ fn jump_table_predecessor_if_bound_resolves_to_multiple() {
     let stride = 4;
     let bound = 4u64;
     let entries = vec![0x100, 0x200, 0x300, 0x400];
-    let rom = TableRom {
-        base,
-        stride,
-        entries: entries.clone(),
-        size: 4,
-    };
+    let rom = MockRom::strided(base, stride, entries.clone(), 4);
     let (function, _target) = build_jump_table_predecessor_if_scenario(base, stride, bound);
     let result = classify_target_with_rom(&function, Some(&rom)).expect("classify_target_with_rom");
     match result {
@@ -170,12 +123,7 @@ fn jump_table_predecessor_if_bound_resolves_to_multiple() {
 fn jump_table_unbounded_idx_returns_none() {
     let base = 0x6000;
     let stride = 4;
-    let rom = TableRom {
-        base,
-        stride,
-        entries: vec![0x100, 0x200, 0x300, 0x400],
-        size: 4,
-    };
+    let rom = MockRom::strided(base, stride, vec![0x100, 0x200, 0x300, 0x400], 4);
     let (function, _target) = build_jump_table_unbounded_scenario(base, stride);
     let result = classify_target_with_rom(&function, Some(&rom)).expect("classify_target_with_rom");
     assert_eq!(
@@ -205,12 +153,14 @@ fn jump_table_partial_rom_returns_none() {
     let stride = 4;
     let idx_mask = 0x7u64; // bound = 8
     let rom = PartialRom {
-        inner: TableRom {
+        inner: MockRom::strided(
             base,
             stride,
-            entries: vec![0x100, 0x200, 0x300, 0x400, 0x500, 0x600, 0x700, 0x800],
-            size: 4,
-        },
+            vec![0x100, 0x200, 0x300, 0x400, 0x500, 0x600, 0x700, 0x800],
+            4,
+        ),
+        base,
+        stride,
         cutoff: 4, // rom serves the first 4 of 8 entries
     };
     let (function, _target) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
@@ -237,12 +187,7 @@ fn jump_table_zero_bound_returns_none() {
     let base = 0xa000;
     let stride = 4;
     let bound = 0u64;
-    let rom = TableRom {
-        base,
-        stride,
-        entries: vec![0x100, 0x200, 0x300, 0x400],
-        size: 4,
-    };
+    let rom = MockRom::strided(base, stride, vec![0x100, 0x200, 0x300, 0x400], 4);
     let (function, _target) = build_jump_table_predecessor_if_scenario(base, stride, bound);
     let result = classify_target_with_rom(&function, Some(&rom)).expect("classify_target_with_rom");
     assert_eq!(
@@ -285,7 +230,7 @@ fn jump_table_zero_bound_returns_none() {
 fn analyze_x64_snippet_with_rom(
     bytes: Vec<u8>,
     base: u64,
-    rom: TableRom,
+    rom: MockRom,
 ) -> strider_orchestrator::AnalyzeResult {
     let arch = strider_target::SleighArch::x86_64();
     let reader = rsleigh::mem_readers::BufMemReader::new(bytes, base);
@@ -357,13 +302,8 @@ const SNIPPET_BASE: u64 = 0x1000;
 const TABLE_BASE: u64 = 0x2000;
 const TABLE_TARGETS: [u64; 4] = [0x1010, 0x1011, 0x1012, 0x1013];
 
-fn table_rom() -> TableRom {
-    TableRom {
-        base: TABLE_BASE,
-        stride: 8,
-        entries: TABLE_TARGETS.to_vec(),
-        size: 8,
-    }
+fn table_rom() -> MockRom {
+    MockRom::strided(TABLE_BASE, 8, TABLE_TARGETS.to_vec(), 8)
 }
 
 /// Control: guard branches toward the dispatch on true.
@@ -429,12 +369,7 @@ fn non_jump_table_load_shape_falls_through() {
     let (function, _target) = build_non_jump_table_load_scenario();
     // Rom is provided anyway, to pin that the fallthrough is structural,
     // not rom-driven.
-    let rom = TableRom {
-        base: 0,
-        stride: 4,
-        entries: vec![0x100, 0x200],
-        size: 4,
-    };
+    let rom = MockRom::strided(0, 4, vec![0x100, 0x200], 4);
     let result = classify_target_with_rom(&function, Some(&rom)).expect("classify_target_with_rom");
     assert_eq!(
         result, None,

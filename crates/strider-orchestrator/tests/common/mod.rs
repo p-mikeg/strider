@@ -417,6 +417,27 @@ pub(crate) fn count_returns(function: &strider_ir::Function) -> usize {
     function.count_kind(|k| matches!(k, NodeKind::Return))
 }
 
+/// The returned values, past the `Return`'s control and memory inputs.
+pub(crate) fn returned(f: &strider_ir::Function) -> Vec<strider_ir::node::ValueId> {
+    let ret = f
+        .walk()
+        .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
+        .expect("one Return");
+    f.node_inputs(ret).into_iter().skip(2).collect()
+}
+
+/// A byte image of 32-bit instruction words in `endian` order.
+pub(crate) fn words_image(words: &[u32], endian: strider_target::Endianness) -> Vec<u8> {
+    let mut v = Vec::with_capacity(words.len() * 4);
+    for w in words {
+        match endian {
+            strider_target::Endianness::Big => v.extend_from_slice(&w.to_be_bytes()),
+            strider_target::Endianness::Little => v.extend_from_slice(&w.to_le_bytes()),
+        }
+    }
+    v
+}
+
 /// Counts the distinct control-flow paths converging at any `Return` node.
 ///
 /// Some ABIs (PPC, aarch64) share the function epilogue: at `-O0` the
