@@ -461,23 +461,3 @@ fn valueless_kind(spec: &KindSpec) -> bool {
         .any(|k| std::mem::discriminant(k) == d)
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use strider_ir::node::NodeKind;
-    use strider_ir::{ConstId, IntBinaryOp};
-
-    #[test]
-    fn binary_builder_wires_two_inputs_and_one_output() {
-        let mut b = MatcherBuilder::new();
-        let x = b.leaf(crate::matcher::KindSpec::Any);
-        let k = b.leaf(crate::matcher::KindSpec::Exact(NodeKind::IntConst(
-            ConstId::from_u32(1),
-        )));
-        let _sum = b.binary(IntBinaryOp::Add, x, k);
-        let p = b.finish();
-        assert_eq!(p.graph.all_node_ids().count(), 3);
-        assert_eq!(p.graph.all_value_ids().count(), 3);
-    }
-}

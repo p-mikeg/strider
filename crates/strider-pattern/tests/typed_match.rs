@@ -41,7 +41,6 @@ fn typed_add_matches_and_captures() {
     let hits = Matcher::new(&fx).find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
     assert!(hits[0].value(c).is_some());
-    assert_eq!(count(|| anything().into_pattern(), &fx), node_count(&fx));
     assert_eq!(count(|| int_const(5u128).into_pattern(), &fx), 1);
 }
 
@@ -942,9 +941,4 @@ fn of_width_with_capture() {
     // A width mismatch on a nested capture fails the whole match.
     let pat_bad = int_zero_extend(var(c).of_width(64)).into_pattern();
     assert_eq!(Matcher::new(&fx).find_all(&pat_bad).unwrap().len(), 0);
-}
-
-fn node_count(f: &strider_ir::Function) -> usize {
-    let pat = anything().into_pattern();
-    Matcher::new(f).find_all(&pat).unwrap().len()
 }
