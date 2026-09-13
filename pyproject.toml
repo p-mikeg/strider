@@ -33,7 +33,6 @@ dev = [
     "pytest>=7",
     "pyelftools>=0.30",
     "pyright>=1.1.400",
-    "ipython",
 ]
 
 # Type-check gate: `uv run pyright` from the workspace root checks the shipped
