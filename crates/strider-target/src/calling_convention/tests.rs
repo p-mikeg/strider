@@ -1,11 +1,7 @@
 use super::*;
 
 fn regs_for(arch: crate::arch::SleighArch) -> rsleigh::SleighRegs {
-    let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-    rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
-        .unwrap()
-        .regs()
-        .unwrap()
+    arch.probe_regs().unwrap()
 }
 
 /// PPC System V (32-bit) and PPC64 ELFv1 return `long double` (IBM
