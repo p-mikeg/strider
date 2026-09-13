@@ -39,8 +39,9 @@ jobs:
       - run: cargo test --workspace --release
       # `clippy --all-targets` compiles the examples, it never runs them.
       # `analyze_kernel` and `dhat_analyze` need an external kernel image
-      # (argv[1] / $STRIDER_KERNEL) and panic without one, so they stay
-      # build-only; these three are self-contained. All of them resolve
+      # (argv[1] / $STRIDER_KERNEL) and panic without one, and `opt_identity`
+      # digests every fixture function for a by-hand A/B diff, so those three
+      # stay build-only; these three are self-contained. All of them resolve
       # `fixtures/` relative to the working directory, which must be the
       # workspace root.
       - run: cargo run --release -p strider-orchestrator --example dump_arch_cmps
