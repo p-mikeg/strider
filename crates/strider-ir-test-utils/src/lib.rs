@@ -246,12 +246,9 @@ where
 {
     // No declared registers, so the trivial convention: only the synthetic SP
     // is tracked, as an unreferenced `InitialVar`.
-    let mut b = RegisterSet::new().endianness(endianness).build_fn()?;
-    let region = b.create_region_all()?;
-    b.set_entry_region_all(region)?;
-    b.record_register_arg_carriers();
-    b.set_region(region);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let mut b = RegisterSet::new()
+        .endianness(endianness)
+        .build_fn_single_region()?;
     let val = f(&mut b)?;
     // Re-stamp so the trailing `build_return` is attributed even when `f`
     // cleared the lift address, as fingerprint-propagation tests do when they
@@ -538,11 +535,7 @@ pub fn make_sp_fn<F>(stack_vn: rsleigh::Vn, f: F) -> Result<Function>
 where
     F: FnOnce(&mut FunctionBuilder, Value) -> Result<()>,
 {
-    let mut b = RegisterSet::new()
-        .tracked(stack_vn)
-        .callee_saved(stack_vn)
-        .stack_vn(stack_vn)
-        .build_fn_single_region()?;
+    let mut b = sp_frame(stack_vn).build_fn_single_region()?;
     let sp_val = b.read_variable(&stack_vn)?;
     f(&mut b, sp_val)?;
     b.set_lift_addr(None);
@@ -584,27 +577,9 @@ pub fn if_cmp_then_return(c: u64) -> Function {
 ///
 /// Propagates any error from the builder or from `FunctionBuilder::build`.
 pub fn make_if_fn(cond_val: bool) -> Result<Function> {
-    let mut b = empty_builder()?;
-    let entry = b.create_region_all()?;
-    let true_region = b.create_region_all()?;
-    let false_region = b.create_region_all()?;
-
-    b.set_entry_region_all(entry)?;
-    b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let cond = b.build_boolean_const(cond_val);
-    b.build_if(cond, true_region, false_region)?;
-
-    b.set_region(true_region);
-    let true_val = b.build_int_const(1u64, strider_ir::ValueType::I64)?;
-    b.build_return(Some(true_val), &[])?;
-
-    b.set_region(false_region);
-    let false_val = b.build_int_const(2u64, strider_ir::ValueType::I64)?;
-    b.build_return(Some(false_val), &[])?;
-    b.set_lift_addr(None);
-
-    b.build()
+    RegisterSet::new()
+        .build_if_then_else_returns(|b| Ok((b.build_boolean_const(cond_val), ())))
+        .map(|(function, _, ())| function)
 }
 
 /// A store on each branch of an if/else plus a load at the join, forcing a
