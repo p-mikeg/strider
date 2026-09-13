@@ -74,39 +74,8 @@ pub fn control_dominators(function: &Function) -> petgraph::algo::dominators::Do
     petgraph::algo::dominators::simple_fast(&ControlFlowView::new(function), entry)
 }
 
-/// True when every path from `doms`'s entry to `b` passes through `a`; a node
-/// trivially dominates itself. `false` when `b` is absent from the tree, where
-/// the claim is vacuously true; use [`dominance_verdict`] to tell the two
-/// apart.
-pub fn dominates<N: Copy + Eq + std::hash::Hash>(
-    doms: &petgraph::algo::dominators::Dominators<N>,
-    a: N,
-    b: N,
-) -> bool {
-    if a == b {
-        return true;
-    }
-    doms.dominators(b).is_some_and(|mut it| it.any(|d| d == a))
-}
-
-/// [`dominates`], three-valued: `None` when either vertex is absent from
-/// `doms`, so a caller negating the answer does not turn "cannot say" into
-/// "yes". Kinds with no control edge (`Load`, `Store`, arithmetic) are never in
-/// the tree.
-pub fn dominance_verdict<N: Copy + Eq + std::hash::Hash>(
-    doms: &petgraph::algo::dominators::Dominators<N>,
-    a: N,
-    b: N,
-) -> Option<bool> {
-    if doms.dominators(a).is_none() || doms.dominators(b).is_none() {
-        return None;
-    }
-    Some(dominates(doms, a, b))
-}
-
 /// A dominator tree numbered by pre/post interval, so [`Self::dominates`] is
-/// O(1). Answers exactly as [`dominates`] and [`dominance_verdict`] over the
-/// same graph.
+/// O(1).
 pub struct DominatorTree<K: EntityRef> {
     /// `(0, 0)` for a vertex outside the tree.
     span: SecondaryMap<K, (u32, u32)>,
@@ -163,13 +132,17 @@ impl<K: EntityRef + Hash> DominatorTree<K> {
         self.span[v].0 != 0
     }
 
-    /// [`dominates`]: reflexive, and `false` when either vertex is absent.
+    /// True when every path from the root to `b` passes through `a`: reflexive,
+    /// and `false` when either vertex is absent.
     pub fn dominates(&self, a: K, b: K) -> bool {
         let ((a_pre, a_post), (b_pre, b_post)) = (self.span[a], self.span[b]);
         a == b || (a_pre != 0 && b_pre != 0 && a_pre <= b_pre && b_post <= a_post)
     }
 
-    /// [`dominance_verdict`]: `None` when either vertex is absent.
+    /// [`Self::dominates`], three-valued: `None` when either vertex is absent,
+    /// so a caller negating the answer does not turn "cannot say" into "yes".
+    /// Kinds with no control edge (`Load`, `Store`, arithmetic) are never in
+    /// the tree.
     pub fn dominance_verdict(&self, a: K, b: K) -> Option<bool> {
         (self.contains(a) && self.contains(b)).then(|| self.dominates(a, b))
     }
@@ -180,8 +153,12 @@ pub fn control_dominator_tree(function: &Function) -> DominatorTree<NodeId> {
     DominatorTree::compute(&ControlFlowView::new(function), function.entry())
 }
 
-/// [`control_edge_dominators`] as a [`DominatorTree`].
+/// Dominators of the edge-split control graph. Querying with
+/// [`CtrlKey::Node`] keys answers node dominance identically to
+/// [`control_dominator_tree`].
 pub fn control_edge_dominator_tree(function: &Function) -> DominatorTree<CtrlKey> {
+    // The entry key must be `CtrlKey::Node(function.entry())`; a mismatch
+    // yields an empty tree that silently answers `false` to every query.
     DominatorTree::compute(
         &ControlSplitView::new(function),
         CtrlKey::Node(function.entry()),
@@ -282,20 +259,6 @@ impl Visitable for ControlSplitView<'_> {
     }
 }
 
-/// Dominators of the edge-split control graph. Querying with
-/// [`CtrlKey::Node`] keys answers node dominance identically to
-/// [`control_dominators`].
-pub fn control_edge_dominators(
-    function: &Function,
-) -> petgraph::algo::dominators::Dominators<CtrlKey> {
-    // The entry key must be `CtrlKey::Node(function.entry())`; a mismatch
-    // yields an empty tree that silently answers `false` to every query.
-    petgraph::algo::dominators::simple_fast(
-        &ControlSplitView::new(function),
-        CtrlKey::Node(function.entry()),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,6 +267,33 @@ mod tests {
     use crate::{FunctionBuilder, IRViewer};
     use cranelift_entity::EntityRef;
     use petgraph::visit::IntoNeighbors;
+
+    /// The idom chain-walk answer [`DominatorTree::dominates`] must match.
+    fn dominates<N: Copy + Eq + std::hash::Hash>(
+        doms: &petgraph::algo::dominators::Dominators<N>,
+        a: N,
+        b: N,
+    ) -> bool {
+        a == b || doms.dominators(b).is_some_and(|mut it| it.any(|d| d == a))
+    }
+
+    fn dominance_verdict<N: Copy + Eq + std::hash::Hash>(
+        doms: &petgraph::algo::dominators::Dominators<N>,
+        a: N,
+        b: N,
+    ) -> Option<bool> {
+        (doms.dominators(a).is_some() && doms.dominators(b).is_some())
+            .then(|| dominates(doms, a, b))
+    }
+
+    fn control_edge_dominators(
+        function: &Function,
+    ) -> petgraph::algo::dominators::Dominators<CtrlKey> {
+        petgraph::algo::dominators::simple_fast(
+            &ControlSplitView::new(function),
+            CtrlKey::Node(function.entry()),
+        )
+    }
 
     fn empty_builder() -> crate::error::Result<FunctionBuilder> {
         FunctionBuilder::new(
