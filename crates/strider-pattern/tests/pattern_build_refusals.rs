@@ -214,3 +214,104 @@ fn an_uncompiled_deep_tower_drops_without_recursing() {
 fn a_chain_at_the_nesting_cap_still_builds() {
     assert!(deep_call_chain(255).into_pattern().root().is_ok());
 }
+
+/// A node wired to its own output is a cycle; `MatcherBuilder` takes untrusted
+/// wiring, so the seal refuses it rather than panicking.
+#[test]
+fn a_cyclic_builder_wiring_is_refused_not_panicked() {
+    let mut b = MatcherBuilder::new();
+    let n = b.node(KindSpec::Any);
+    let out = b.value_output(n, 0);
+    b.input(n, 0, out);
+    assert!(error_of(&b.finish()).contains("cycle"));
+}
+
+/// `n` Ifs, each true edge feeding the next If's control input directly, every
+/// false edge running to one exit.
+fn if_chain(n: usize) -> strider_ir::Function {
+    use strider_ir::node::{NodeKind, ValueType};
+    use strider_ir::{EditFunction, IRBuilderExt, IRViewer, IntCmpOp};
+
+    let mut b = strider_ir_test_utils::RegisterSet::new()
+        .build_fn()
+        .unwrap();
+    let regions: Vec<_> = (0..=n).map(|_| b.create_region_all().unwrap()).collect();
+    let exit = b.create_region_all().unwrap();
+    b.set_entry_region_all(regions[0]).unwrap();
+    for (i, pair) in regions.windows(2).enumerate() {
+        b.set_region(pair[0]);
+        let c = b.build_int_const(i as u64, ValueType::I8).unwrap();
+        let z = b.build_int_const(0u64, ValueType::I8).unwrap();
+        let cond = b
+            .build_int_cmp_operation(c, z, IntCmpOp::Equal, ValueType::I8)
+            .unwrap();
+        b.build_if(cond, pair[1], exit).unwrap();
+    }
+    b.set_region(regions[n]);
+    b.build_branch(exit).unwrap();
+    b.set_region(exit);
+    b.build_return(None, &[]).unwrap();
+    let mut f = b.build().unwrap();
+
+    let singles: Vec<_> = f
+        .graph()
+        .all_node_ids()
+        .filter(|&r| matches!(f.node_kind(r), NodeKind::Region))
+        .filter(|&r| {
+            let inputs = f.node_inputs(r);
+            inputs.len() == 1 && matches!(f.node_kind(f.producer(inputs[0])), NodeKind::If)
+        })
+        .collect();
+    let mut e = EditFunction::new(&mut f);
+    for r in singles {
+        let token = e.function().node_outputs(r)[1];
+        let phis: Vec<_> = e
+            .function()
+            .graph()
+            .value_uses(token)
+            .map(|(n, _)| n)
+            .collect();
+        for phi in phis {
+            let out = e.function().node_outputs(phi)[0];
+            let only = e.function().node_inputs(phi)[1];
+            e.replace_all_uses(out, only).unwrap();
+        }
+        let pred = e.function().node_inputs(r)[0];
+        let ctrl = e.function().node_outputs(r)[0];
+        e.replace_all_uses(ctrl, pred).unwrap();
+        e.kill_node(r);
+    }
+    e.clean();
+    strider_ir::validate::validate(&f).expect("collapsed chain is valid IR");
+    f
+}
+
+/// `depth` Ifs, each the true branch of the one above.
+fn nested_if_branches(depth: usize) -> Pattern {
+    let mut p = if_else().build();
+    for _ in 0..depth {
+        p = if_else().with_true(p).build();
+    }
+    p
+}
+
+/// Every branch is its own sealed pattern, but the matcher recurses through
+/// all of them on one stack, so the node cap counts the nested ones too.
+#[test]
+fn nested_if_branches_over_the_node_cap_are_refused() {
+    assert!(error_of(&nested_if_branches(256)).contains("nodes"));
+    assert!(error_of(&nested_if_branches(3_000)).contains("nodes"));
+}
+
+/// 255 nested branches are 256 If nodes, exactly the budget, and match on the
+/// 2 MiB stack a spawned thread gets by default.
+#[test]
+fn nested_if_branches_at_the_node_cap_match() {
+    std::thread::spawn(|| {
+        let function = if_chain(256);
+        let pat = nested_if_branches(255);
+        assert_eq!(Matcher::new(&function).find_all(&pat).unwrap().len(), 1);
+    })
+    .join()
+    .unwrap();
+}
