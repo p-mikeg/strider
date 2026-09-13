@@ -214,3 +214,42 @@ fn a_filtered_out_writable_mapping_still_bars_the_read_only_view() {
         "past the writable mapping's end the image is read-only again"
     );
 }
+
+/// The read-only region set, which strider-py's `ReadOnlyMemory` is a lookup
+/// table over, must bar a writable PT_LOAD over a read-only one exactly as
+/// `ElfFileMemReader`'s view does, relocated or not.
+#[test]
+fn a_read_only_region_set_leaves_out_a_writable_mapping_over_it() {
+    use object::elf::{PF_R, PF_W, PF_X};
+    let base = common::elf_fixture::EQUAL_VADDR_LOAD_BASE;
+    let elf = common::elf_fixture::build_overlapping_loads_elf(&[
+        (PF_R | PF_X, 0x100, 0xaa),
+        (PF_R | PF_W, 0x80, 0xbb),
+    ]);
+    let owned = strider_reader::OwnedElf::parse(elf.clone()).expect("parse");
+    let rust_rom = reader(&elf);
+    for relocate in [false, true] {
+        let table = strider_reader::MemRegionsLookupTable::new(
+            owned
+                .regions(
+                    strider_reader::elf::RegionSource::Auto,
+                    strider_reader::elf::LoadFilter::ImmutableOnly,
+                    relocate,
+                )
+                .expect("regions"),
+        );
+        for addr in (base..base + 0x100).step_by(4) {
+            let mut buf = [0u8; 4];
+            assert_eq!(
+                table.read_exact(addr, &mut buf).is_ok(),
+                ReadOnlyMemory::read(&rust_rom, addr, &mut buf).is_ok(),
+                "{addr:#x}, relocate={relocate}: the two read-only views disagree"
+            );
+        }
+        let mut buf = [0u8; 4];
+        table
+            .read_exact(base + 0x80, &mut buf)
+            .expect("past the writable mapping");
+        assert_eq!(buf, [0xaa; 4]);
+    }
+}
