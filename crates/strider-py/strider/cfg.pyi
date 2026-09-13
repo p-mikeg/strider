@@ -195,6 +195,7 @@ class CfgOptions:
     `data_ranges` lists `(start, end)` address ranges, end exclusive, that are
     data rather than code (an ARM literal pool): a branch or fall-through into
     one is reported through `Cfg.undecodable_branch_targets`, never decoded.
+    The instruction at the entry address decodes even inside one.
     `ElfLifter.analyze` fills it from the ELF's mapping symbols when empty.
     """
 
