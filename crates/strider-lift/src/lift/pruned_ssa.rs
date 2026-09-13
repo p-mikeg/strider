@@ -3,10 +3,11 @@
 //!
 //! Def-sites are collected in the lifter, but `record_insn_defs` is a
 //! HAND-WRITTEN mirror of the lift's write paths, not a shared code path with
-//! them: nothing cross-checks the two, so a change to what the lift writes has
-//! to be made here as well. A def recorded that the lift never writes only
-//! costs a dead phi; one the lift writes and this misses loses the phi and
-//! miscompiles.
+//! them, so a change to what the lift writes has to be made here as well. A
+//! def recorded that the lift never writes only costs a dead phi; one the lift
+//! writes and this misses loses the phi and miscompiles. Debug builds catch
+//! that half: every write routes through
+//! [`FunctionLifter::write_variable`], which asserts the mirror covers it.
 
 use anyhow::Result;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -25,12 +26,6 @@ pub(crate) type PhiPlacement = FxHashMap<RegionId, FxHashSet<InitialVnId>>;
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// Every write the lift emits from a region's PCODE, which is what phi
     /// placement needs.
-    ///
-    /// One path is deliberately absent: a `TailCall` region is lifted into a
-    /// full CC `Call` writing the return and clobber registers, but its pcode
-    /// is only a `Branch`, so nothing is recorded for it. That is sound because
-    /// such a region terminates in `Return`: it has no successors, so an
-    /// empty dominance frontier, so no phi anywhere depends on those writes.
     pub(crate) fn collect_def_sites(&self) -> Result<FxHashMap<InitialVnId, FxHashSet<RegionId>>> {
         let mut defs: FxHashMap<InitialVnId, FxHashSet<RegionId>> = FxHashMap::default();
         for r in self.cfg.region_ids() {
@@ -47,8 +42,57 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 consts.observe(wrapped.addr, &wrapped.insn);
                 self.record_insn_defs(&wrapped.insn, r, &mut defs, &consts)?;
             }
+            // A `TailCall` region's pcode is only a `Branch`, yet
+            // `handle_tail_call` lifts it into a full CC `Call`. These defs
+            // place no phi (the region has no successors, so an empty
+            // dominance frontier); they are recorded so the mirror is total
+            // and `write_variable`'s check needs no exemption.
+            if let strider_cfg::RegionTerminator::TailCall { target } = region.terminator {
+                self.record_cc_call_defs(self.per_address_ccs.get(&target.addr), r, &mut defs);
+            }
         }
         Ok(defs)
+    }
+
+    /// Mirrors `build_cc_call`: the CC's return and clobber registers, plus SP.
+    /// Over-records SP, which `build_call` only writes back for a nonzero
+    /// `ret_stack_pop`.
+    fn record_cc_call_defs(
+        &self,
+        override_cc: Option<&strider_target::BuiltCallingConvention>,
+        r: RegionId,
+        defs: &mut FxHashMap<InitialVnId, FxHashSet<RegionId>>,
+    ) {
+        let (rets, clobbers) = self.call_ret_and_clobber_vns(override_cc);
+        for vn in rets.iter().chain(clobbers.iter()) {
+            self.add_def(vn, r, defs);
+        }
+        let stack_vn = override_cc
+            .unwrap_or_else(|| self.builder.function().default_cc())
+            .stack_vn;
+        self.add_def(&stack_vn, r, defs);
+    }
+
+    /// The lift's single write funnel, so the hand-written mirror above can be
+    /// checked against it. A variable written in a region the mirror did not
+    /// record loses its phi at every join the region reaches.
+    pub(crate) fn write_variable(
+        &mut self,
+        vn: &rsleigh::Vn,
+        val: strider_ir::Value,
+    ) -> Result<()> {
+        #[cfg(debug_assertions)]
+        if let Some(region) = self.current_cfg_region
+            && let Some(id) = self.builder.function().vn_id_of(&self.container_of(vn))
+        {
+            debug_assert!(
+                self.def_sites
+                    .get(&id)
+                    .is_some_and(|rs| rs.contains(&region)),
+                "{vn:?} is written in {region:?}, which `record_insn_defs` did not record",
+            );
+        }
+        self.builder.write_variable(vn, val)
     }
 
     fn record_insn_defs(
@@ -61,18 +105,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         match insn.opcode {
             // A call writes the CC's ret + clobber registers and adjusts SP,
             // none of which appear as pcode outputs, so they come from the CC.
-            // Mirrors `build_cc_call`, over-recording SP: `build_call` reads it
-            // and only writes it back for a nonzero `ret_stack_pop`.
             Opcode::Call | Opcode::CallIndirect => {
-                let override_cc = self.call_cc_override_for(insn);
-                let (rets, clobbers) = self.call_ret_and_clobber_vns(override_cc);
-                for vn in rets.iter().chain(clobbers.iter()) {
-                    self.add_def(vn, r, defs);
-                }
-                let stack_vn = override_cc
-                    .unwrap_or_else(|| self.builder.function().default_cc())
-                    .stack_vn;
-                self.add_def(&stack_vn, r, defs);
+                self.record_cc_call_defs(self.call_cc_override_for(insn), r, defs);
             }
             // Mirrors `build_abi_call_other`: pcode output plus the ABI's
             // implicit writes. Over-records the output for the NoOp class,

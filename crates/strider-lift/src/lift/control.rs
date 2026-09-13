@@ -170,7 +170,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // value.  Both groups are drawn from `all_vns()`, so every entry is
         // already a tracked container with no slice to insert.
         for (vn, v) in core::iter::zip(&clobber_vns, clobbers) {
-            self.builder.write_variable(vn, *v)?;
+            self.write_variable(vn, *v)?;
         }
         for (vn, v) in core::iter::zip(&ret_vns, ret_vals) {
             self.write_vn(vn, *v)?;
