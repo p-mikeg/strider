@@ -6,12 +6,12 @@ use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, Graph, IRWalker, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
 
-/// PowerPC `cmpwi` packs LT/GT/EQ/SO into a CR field; the branch extracts one
-/// bit via `Truncate(ShiftRight(cr_pack, k)):I1`.
-#[test]
-fn ppc_cr_bit_test_canonicalizes_to_intcmp() -> Result<()> {
-    use strider_ir::node::ExtendOp;
-    let ty = ValueType::I32;
+/// `if cond { return x } else { return x }` over `x`, a `ty` load from a
+/// constant address, with `cond` built from `x` by `make_cond`.
+fn build_if_over_load<T>(
+    ty: ValueType,
+    make_cond: impl FnOnce(&mut FunctionBuilder, ValueId) -> Result<(ValueId, T)>,
+) -> Result<(strider_ir::Function, ValueId, T)> {
     let mut b = RegisterSet::new().build_fn()?;
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let entry = b.create_region_all()?;
@@ -19,37 +19,47 @@ fn ppc_cr_bit_test_canonicalizes_to_intcmp() -> Result<()> {
     let exit = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
     b.set_region(entry);
-
     let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
-    let idx = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
-    let eight = b.build_int_const(8u64, ty)?;
-    let cr_bit = |b: &mut FunctionBuilder, cmp, pos: u64| -> Result<ValueId> {
-        let z = b.extend_if_needed(cmp, ty, ExtendOp::ZeroExtend)?;
-        let p = b.build_int_const(pos, ty)?;
-        b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)
-    };
-
-    let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
-    let gt = b.build_int_cmp_operation(eight, idx, IntCmpOp::Less, ty)?;
-    let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
-    let lt_s = cr_bit(&mut b, lt, 3)?;
-    let gt_s = cr_bit(&mut b, gt, 2)?;
-    let eq_s = cr_bit(&mut b, eq, 1)?;
-    let so = b.extend_if_needed(eq, ty, ExtendOp::ZeroExtend)?; // bit 0
-    let or1 = b.build_int_binary_operation(lt_s, gt_s, IntBinaryOp::Or, ty)?;
-    let or2 = b.build_int_binary_operation(or1, eq_s, IntBinaryOp::Or, ty)?;
-    let cr = b.build_int_binary_operation(or2, so, IntBinaryOp::Or, ty)?;
-    let three = b.build_int_const(3u64, ty)?;
-    let shr = b.build_int_binary_operation(cr, three, IntBinaryOp::ShiftRight, ty)?;
-    let cond = b.truncate_if_needed(shr, ValueType::I1)?;
+    let x = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+    let (cond, extra) = make_cond(&mut b, x)?;
     b.build_if(cond, dispatch, exit)?;
-
     b.set_region(dispatch);
-    b.build_return(Some(idx), &[])?;
+    b.build_return(Some(x), &[])?;
     b.set_region(exit);
-    b.build_return(Some(idx), &[])?;
+    b.build_return(Some(x), &[])?;
     b.set_lift_addr(None);
-    let mut fg = b.build()?;
+    Ok((b.build()?, x, extra))
+}
+
+/// PowerPC `cmpwi` packs LT/GT/EQ/SO into a CR field; the branch extracts one
+/// bit via `Truncate(ShiftRight(cr_pack, k)):I1`.
+#[test]
+fn ppc_cr_bit_test_canonicalizes_to_intcmp() -> Result<()> {
+    use strider_ir::node::ExtendOp;
+    let ty = ValueType::I32;
+    let (mut fg, idx, eight) = build_if_over_load(ty, |b, idx| {
+        let eight = b.build_int_const(8u64, ty)?;
+        let cr_bit = |b: &mut FunctionBuilder, cmp, pos: u64| -> Result<ValueId> {
+            let z = b.extend_if_needed(cmp, ty, ExtendOp::ZeroExtend)?;
+            let p = b.build_int_const(pos, ty)?;
+            b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)
+        };
+
+        let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
+        let gt = b.build_int_cmp_operation(eight, idx, IntCmpOp::Less, ty)?;
+        let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
+        let lt_s = cr_bit(b, lt, 3)?;
+        let gt_s = cr_bit(b, gt, 2)?;
+        let eq_s = cr_bit(b, eq, 1)?;
+        let so = b.extend_if_needed(eq, ty, ExtendOp::ZeroExtend)?; // bit 0
+        let or1 = b.build_int_binary_operation(lt_s, gt_s, IntBinaryOp::Or, ty)?;
+        let or2 = b.build_int_binary_operation(or1, eq_s, IntBinaryOp::Or, ty)?;
+        let cr = b.build_int_binary_operation(or2, so, IntBinaryOp::Or, ty)?;
+        let three = b.build_int_const(3u64, ty)?;
+        let shr = b.build_int_binary_operation(cr, three, IntBinaryOp::ShiftRight, ty)?;
+        let cond = b.truncate_if_needed(shr, ValueType::I1)?;
+        Ok((cond, eight))
+    })?;
 
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
@@ -73,49 +83,35 @@ fn ppc_cr_bit_test_canonicalizes_to_intcmp() -> Result<()> {
 fn ppc_cr_bit_test_canonicalizes_through_a_ne_zero_branch() -> Result<()> {
     use strider_ir::node::ExtendOp;
     let ty = ValueType::I32;
-    let mut b = RegisterSet::new().build_fn()?;
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let entry = b.create_region_all()?;
-    let dispatch = b.create_region_all()?;
-    let exit = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-    b.set_region(entry);
+    let (mut fg, idx, eight) = build_if_over_load(ty, |b, idx| {
+        let eight = b.build_int_const(8u64, ty)?;
+        let cr_bit = |b: &mut FunctionBuilder, cmp, pos: u64| -> Result<ValueId> {
+            let z = b.extend_if_needed(cmp, ty, ExtendOp::ZeroExtend)?;
+            let p = b.build_int_const(pos, ty)?;
+            b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)
+        };
 
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
-    let idx = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
-    let eight = b.build_int_const(8u64, ty)?;
-    let cr_bit = |b: &mut FunctionBuilder, cmp, pos: u64| -> Result<ValueId> {
-        let z = b.extend_if_needed(cmp, ty, ExtendOp::ZeroExtend)?;
-        let p = b.build_int_const(pos, ty)?;
-        b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)
-    };
-
-    let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
-    let gt = b.build_int_cmp_operation(eight, idx, IntCmpOp::Less, ty)?;
-    let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
-    let lt_s = cr_bit(&mut b, lt, 3)?;
-    let gt_s = cr_bit(&mut b, gt, 2)?;
-    let eq_s = cr_bit(&mut b, eq, 1)?;
-    let so = b.extend_if_needed(eq, ty, ExtendOp::ZeroExtend)?; // bit 0
-    let or1 = b.build_int_binary_operation(lt_s, gt_s, IntBinaryOp::Or, ty)?;
-    let or2 = b.build_int_binary_operation(or1, eq_s, IntBinaryOp::Or, ty)?;
-    let cr = b.build_int_binary_operation(or2, so, IntBinaryOp::Or, ty)?;
-    let two = b.build_int_const(2u64, ty)?;
-    let shr = b.build_int_binary_operation(cr, two, IntBinaryOp::ShiftRight, ty)?;
-    let one = b.build_int_const(1u64, ty)?;
-    let masked = b.build_int_binary_operation(shr, one, IntBinaryOp::And, ty)?;
-    let zero = b.build_int_const(0u64, ty)?;
-    let is_zero = b.build_int_cmp_operation(masked, zero, IntCmpOp::Equal, ty)?;
-    let true_i1 = b.build_boolean_const(true);
-    let cond = b.build_int_binary_operation(is_zero, true_i1, IntBinaryOp::Xor, ValueType::I1)?;
-    b.build_if(cond, dispatch, exit)?;
-
-    b.set_region(dispatch);
-    b.build_return(Some(idx), &[])?;
-    b.set_region(exit);
-    b.build_return(Some(idx), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
+        let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
+        let gt = b.build_int_cmp_operation(eight, idx, IntCmpOp::Less, ty)?;
+        let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
+        let lt_s = cr_bit(b, lt, 3)?;
+        let gt_s = cr_bit(b, gt, 2)?;
+        let eq_s = cr_bit(b, eq, 1)?;
+        let so = b.extend_if_needed(eq, ty, ExtendOp::ZeroExtend)?; // bit 0
+        let or1 = b.build_int_binary_operation(lt_s, gt_s, IntBinaryOp::Or, ty)?;
+        let or2 = b.build_int_binary_operation(or1, eq_s, IntBinaryOp::Or, ty)?;
+        let cr = b.build_int_binary_operation(or2, so, IntBinaryOp::Or, ty)?;
+        let two = b.build_int_const(2u64, ty)?;
+        let shr = b.build_int_binary_operation(cr, two, IntBinaryOp::ShiftRight, ty)?;
+        let one = b.build_int_const(1u64, ty)?;
+        let masked = b.build_int_binary_operation(shr, one, IntBinaryOp::And, ty)?;
+        let zero = b.build_int_const(0u64, ty)?;
+        let is_zero = b.build_int_cmp_operation(masked, zero, IntCmpOp::Equal, ty)?;
+        let true_i1 = b.build_boolean_const(true);
+        let cond =
+            b.build_int_binary_operation(is_zero, true_i1, IntBinaryOp::Xor, ValueType::I1)?;
+        Ok((cond, eight))
+    })?;
 
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
@@ -215,38 +211,23 @@ fn ppc_cr_bit_canonicalize_preserves_pack_fingerprints() -> Result<()> {
 fn ppc_cr_bit_test_selects_middle_eq_bit() -> Result<()> {
     use strider_ir::node::ExtendOp;
     let ty = ValueType::I32;
-    let mut b = RegisterSet::new().build_fn()?;
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let entry = b.create_region_all()?;
-    let dispatch = b.create_region_all()?;
-    let exit = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-    b.set_region(entry);
-
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
-    let idx = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
-    let eight = b.build_int_const(8u64, ty)?;
-    let cr_bit = |b: &mut FunctionBuilder, cmp, pos: u64| -> Result<ValueId> {
-        let z = b.extend_if_needed(cmp, ty, ExtendOp::ZeroExtend)?;
-        let p = b.build_int_const(pos, ty)?;
-        b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)
-    };
-    let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
-    let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
-    let lt_s = cr_bit(&mut b, lt, 3)?;
-    let eq_s = cr_bit(&mut b, eq, 1)?;
-    let cr = b.build_int_binary_operation(lt_s, eq_s, IntBinaryOp::Or, ty)?;
-    let one = b.build_int_const(1u64, ty)?;
-    let shr = b.build_int_binary_operation(cr, one, IntBinaryOp::ShiftRight, ty)?;
-    let cond = b.truncate_if_needed(shr, ValueType::I1)?;
-    b.build_if(cond, dispatch, exit)?;
-
-    b.set_region(dispatch);
-    b.build_return(Some(idx), &[])?;
-    b.set_region(exit);
-    b.build_return(Some(idx), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
+    let (mut fg, idx, eight) = build_if_over_load(ty, |b, idx| {
+        let eight = b.build_int_const(8u64, ty)?;
+        let cr_bit = |b: &mut FunctionBuilder, cmp, pos: u64| -> Result<ValueId> {
+            let z = b.extend_if_needed(cmp, ty, ExtendOp::ZeroExtend)?;
+            let p = b.build_int_const(pos, ty)?;
+            b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)
+        };
+        let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
+        let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
+        let lt_s = cr_bit(b, lt, 3)?;
+        let eq_s = cr_bit(b, eq, 1)?;
+        let cr = b.build_int_binary_operation(lt_s, eq_s, IntBinaryOp::Or, ty)?;
+        let one = b.build_int_const(1u64, ty)?;
+        let shr = b.build_int_binary_operation(cr, one, IntBinaryOp::ShiftRight, ty)?;
+        let cond = b.truncate_if_needed(shr, ValueType::I1)?;
+        Ok((cond, eight))
+    })?;
 
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
@@ -429,22 +410,6 @@ fn two_independent_instances_each_canonicalize() -> Result<()> {
     let (mut fg_b, if_b, a_b, b_b) = build_if_with_flag_cond(|_fb, zr, _ng, _cy, _ov| Ok(zr))?;
     assert!(crate::pipeline::run_one(&pass_b, &mut fg_b, &mut crate::OptCtx::new(None))?.changed());
     assert_if_cond_is_intcmp(fg_b.graph(), if_b, IntCmpOp::Equal, a_b, b_b);
-    Ok(())
-}
-
-#[test]
-fn flag_cmp_eq_rewrites_to_int_equal() -> Result<()> {
-    // AArch64 `b.eq` cond is the bare ZR flag = `Equal(Add(a, Neg(b)), 0)`.
-    let (mut fg, if_node, a, b) = build_if_with_flag_cond(|_fb, zr, _ng, _cy, _ov| Ok(zr))?;
-
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &mut crate::OptCtx::new(None),
-    )?;
-    assert!(r.changed(), "pass should rewrite the EQ flag tree");
-
-    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Equal, a, b);
     Ok(())
 }
 
@@ -1159,27 +1124,13 @@ fn flag_cmp_offset_folded_ls_tree_rejects_wrong_offset() -> Result<()> {
 #[test]
 fn eq_add_const_solves_for_x() -> Result<()> {
     let ty = ValueType::I32;
-    let mut b = RegisterSet::new().build_fn()?;
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let entry = b.create_region_all()?;
-    let dispatch = b.create_region_all()?;
-    let exit = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-    b.set_region(entry);
-
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
-    let x = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
-    let c3 = b.build_int_const(3u64, ty)?;
-    let c4 = b.build_int_const(4u64, ty)?;
-    let add = b.build_int_binary_operation(x, c3, IntBinaryOp::Add, ty)?;
-    let eq = b.build_int_cmp_operation(add, c4, IntCmpOp::Equal, ty)?;
-    b.build_if(eq, dispatch, exit)?;
-    b.set_region(dispatch);
-    b.build_return(Some(x), &[])?;
-    b.set_region(exit);
-    b.build_return(Some(x), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
+    let (mut fg, x, ()) = build_if_over_load(ty, |b, x| {
+        let c3 = b.build_int_const(3u64, ty)?;
+        let c4 = b.build_int_const(4u64, ty)?;
+        let add = b.build_int_binary_operation(x, c3, IntBinaryOp::Add, ty)?;
+        let eq = b.build_int_cmp_operation(add, c4, IntCmpOp::Equal, ty)?;
+        Ok((eq, ()))
+    })?;
 
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
@@ -1220,27 +1171,13 @@ fn eq_add_const_solves_for_x() -> Result<()> {
 #[test]
 fn eq_xor_const_solves_for_x() -> Result<()> {
     let ty = ValueType::I32;
-    let mut b = RegisterSet::new().build_fn()?;
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let entry = b.create_region_all()?;
-    let dispatch = b.create_region_all()?;
-    let exit = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-    b.set_region(entry);
-
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
-    let x = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
-    let c3 = b.build_int_const(3u64, ty)?;
-    let c5 = b.build_int_const(5u64, ty)?;
-    let xored = b.build_int_binary_operation(x, c3, IntBinaryOp::Xor, ty)?;
-    let eq = b.build_int_cmp_operation(xored, c5, IntCmpOp::Equal, ty)?;
-    b.build_if(eq, dispatch, exit)?;
-    b.set_region(dispatch);
-    b.build_return(Some(x), &[])?;
-    b.set_region(exit);
-    b.build_return(Some(x), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
+    let (mut fg, x, ()) = build_if_over_load(ty, |b, x| {
+        let c3 = b.build_int_const(3u64, ty)?;
+        let c5 = b.build_int_const(5u64, ty)?;
+        let xored = b.build_int_binary_operation(x, c3, IntBinaryOp::Xor, ty)?;
+        let eq = b.build_int_cmp_operation(xored, c5, IntCmpOp::Equal, ty)?;
+        Ok((eq, ()))
+    })?;
 
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
@@ -1271,26 +1208,12 @@ fn eq_xor_const_solves_for_x() -> Result<()> {
 #[test]
 fn eq_neg_solves_for_x() -> Result<()> {
     let ty = ValueType::I32;
-    let mut b = RegisterSet::new().build_fn()?;
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let entry = b.create_region_all()?;
-    let dispatch = b.create_region_all()?;
-    let exit = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-    b.set_region(entry);
-
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
-    let x = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
-    let c5 = b.build_int_const(5u64, ty)?;
-    let negated = b.build_int_unary_operation(x, IntUnaryOp::Neg, ty)?;
-    let eq = b.build_int_cmp_operation(negated, c5, IntCmpOp::Equal, ty)?;
-    b.build_if(eq, dispatch, exit)?;
-    b.set_region(dispatch);
-    b.build_return(Some(x), &[])?;
-    b.set_region(exit);
-    b.build_return(Some(x), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
+    let (mut fg, x, ()) = build_if_over_load(ty, |b, x| {
+        let c5 = b.build_int_const(5u64, ty)?;
+        let negated = b.build_int_unary_operation(x, IntUnaryOp::Neg, ty)?;
+        let eq = b.build_int_cmp_operation(negated, c5, IntCmpOp::Equal, ty)?;
+        Ok((eq, ()))
+    })?;
 
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
@@ -1320,27 +1243,13 @@ fn eq_neg_solves_for_x() -> Result<()> {
 #[test]
 fn sless_of_left_shift_is_a_sign_bit_test() -> Result<()> {
     let ty = ValueType::I32;
-    let mut b = RegisterSet::new().build_fn()?;
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let entry = b.create_region_all()?;
-    let dispatch = b.create_region_all()?;
-    let exit = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-    b.set_region(entry);
-
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
-    let x = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
-    let c3 = b.build_int_const(3u64, ty)?;
-    let shl = b.build_int_binary_operation(x, c3, IntBinaryOp::ShiftLeft, ty)?;
-    let zero = b.build_int_const(0u64, ty)?;
-    let sless = b.build_int_cmp_operation(shl, zero, IntCmpOp::Sless, ty)?;
-    b.build_if(sless, dispatch, exit)?;
-    b.set_region(dispatch);
-    b.build_return(Some(x), &[])?;
-    b.set_region(exit);
-    b.build_return(Some(x), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
+    let (mut fg, x, ()) = build_if_over_load(ty, |b, x| {
+        let c3 = b.build_int_const(3u64, ty)?;
+        let shl = b.build_int_binary_operation(x, c3, IntBinaryOp::ShiftLeft, ty)?;
+        let zero = b.build_int_const(0u64, ty)?;
+        let sless = b.build_int_cmp_operation(shl, zero, IntCmpOp::Sless, ty)?;
+        Ok((sless, ()))
+    })?;
 
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
@@ -1399,26 +1308,13 @@ fn sless_of_left_shift_is_a_sign_bit_test() -> Result<()> {
 #[test]
 fn sless_of_oversized_left_shift_is_not_a_sign_bit_test() -> Result<()> {
     let ty = ValueType::I32;
-    let mut b = RegisterSet::new().build_fn()?;
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let entry = b.create_region_all()?;
-    let dispatch = b.create_region_all()?;
-    let exit = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-    b.set_region(entry);
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
-    let x = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
-    let c40 = b.build_int_const(40u64, ty)?;
-    let shl = b.build_int_binary_operation(x, c40, IntBinaryOp::ShiftLeft, ty)?;
-    let zero = b.build_int_const(0u64, ty)?;
-    let sless = b.build_int_cmp_operation(shl, zero, IntCmpOp::Sless, ty)?;
-    b.build_if(sless, dispatch, exit)?;
-    b.set_region(dispatch);
-    b.build_return(Some(x), &[])?;
-    b.set_region(exit);
-    b.build_return(Some(x), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
+    let (mut fg, _, ()) = build_if_over_load(ty, |b, x| {
+        let c40 = b.build_int_const(40u64, ty)?;
+        let shl = b.build_int_binary_operation(x, c40, IntBinaryOp::ShiftLeft, ty)?;
+        let zero = b.build_int_const(0u64, ty)?;
+        let sless = b.build_int_cmp_operation(shl, zero, IntCmpOp::Sless, ty)?;
+        Ok((sless, ()))
+    })?;
 
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
@@ -1467,23 +1363,10 @@ fn wide_const_rewrites_skip_past_128_bits() -> Result<()> {
     ];
 
     for (i, build_cond) in shapes.into_iter().enumerate() {
-        let mut b = RegisterSet::new().build_fn()?;
-        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-        let entry = b.create_region_all()?;
-        let dispatch = b.create_region_all()?;
-        let exit = b.create_region_all()?;
-        b.set_entry_region_all(entry)?;
-        b.set_region(entry);
-        let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
-        let x = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
-        let cond = build_cond(&mut b, x)?;
-        b.build_if(cond, dispatch, exit)?;
-        b.set_region(dispatch);
-        b.build_return(Some(x), &[])?;
-        b.set_region(exit);
-        b.build_return(Some(x), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
+        let (mut fg, _, cond) = build_if_over_load(ty, |b, x| {
+            let cond = build_cond(b, x)?;
+            Ok((cond, cond))
+        })?;
 
         let before = fg.producer(cond);
         let before_inputs: Vec<_> = fg.node_inputs(before).into_iter().collect();
@@ -1555,31 +1438,17 @@ fn seed_filter_admits_rule_roots_only() {
 fn cr_bit_test_declines_a_shift_past_the_width() -> Result<()> {
     use strider_ir::node::ExtendOp;
     let ty = ValueType::I32;
-    let mut b = RegisterSet::new().build_fn()?;
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let entry = b.create_region_all()?;
-    let dispatch = b.create_region_all()?;
-    let exit = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-    b.set_region(entry);
-
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
-    let idx = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
-    let eight = b.build_int_const(8u64, ty)?;
-    let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
-    let z = b.extend_if_needed(lt, ty, ExtendOp::ZeroExtend)?;
-    let p = b.build_int_const(35u64, ty)?;
-    let pack = b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)?;
-    let k = b.build_int_const(35u64, ty)?;
-    let shr = b.build_int_binary_operation(pack, k, IntBinaryOp::ShiftRight, ty)?;
-    let cond = b.truncate_if_needed(shr, ValueType::I1)?;
-    b.build_if(cond, dispatch, exit)?;
-    b.set_region(dispatch);
-    b.build_return(Some(idx), &[])?;
-    b.set_region(exit);
-    b.build_return(Some(idx), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
+    let (mut fg, _, ()) = build_if_over_load(ty, |b, idx| {
+        let eight = b.build_int_const(8u64, ty)?;
+        let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
+        let z = b.extend_if_needed(lt, ty, ExtendOp::ZeroExtend)?;
+        let p = b.build_int_const(35u64, ty)?;
+        let pack = b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)?;
+        let k = b.build_int_const(35u64, ty)?;
+        let shr = b.build_int_binary_operation(pack, k, IntBinaryOp::ShiftRight, ty)?;
+        let cond = b.truncate_if_needed(shr, ValueType::I1)?;
+        Ok((cond, ()))
+    })?;
 
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
@@ -1606,36 +1475,22 @@ fn cr_bit_test_declines_a_shift_past_the_width() -> Result<()> {
 fn cr_bit_test_declines_a_ne_zero_pack_carrying_a_higher_term() -> Result<()> {
     use strider_ir::node::ExtendOp;
     let ty = ValueType::I32;
-    let mut b = RegisterSet::new().build_fn()?;
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let entry = b.create_region_all()?;
-    let dispatch = b.create_region_all()?;
-    let exit = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-    b.set_region(entry);
-
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
-    let idx = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
-    let eight = b.build_int_const(8u64, ty)?;
-    let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
-    let gt = b.build_int_cmp_operation(eight, idx, IntCmpOp::Less, ty)?;
-    let lt_z = b.extend_if_needed(lt, ty, ExtendOp::ZeroExtend)?;
-    let gt_z = b.extend_if_needed(gt, ty, ExtendOp::ZeroExtend)?;
-    let three = b.build_int_const(3u64, ty)?;
-    let gt_s = b.build_int_binary_operation(gt_z, three, IntBinaryOp::ShiftLeft, ty)?;
-    let pack = b.build_int_binary_operation(lt_z, gt_s, IntBinaryOp::Or, ty)?;
-    let zero = b.build_int_const(0u64, ty)?;
-    let is_zero = b.build_int_cmp_operation(pack, zero, IntCmpOp::Equal, ty)?;
-    let true_i1 = b.build_boolean_const(true);
-    let cond = b.build_int_binary_operation(is_zero, true_i1, IntBinaryOp::Xor, ValueType::I1)?;
-    b.build_if(cond, dispatch, exit)?;
-
-    b.set_region(dispatch);
-    b.build_return(Some(idx), &[])?;
-    b.set_region(exit);
-    b.build_return(Some(idx), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
+    let (mut fg, _, ()) = build_if_over_load(ty, |b, idx| {
+        let eight = b.build_int_const(8u64, ty)?;
+        let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
+        let gt = b.build_int_cmp_operation(eight, idx, IntCmpOp::Less, ty)?;
+        let lt_z = b.extend_if_needed(lt, ty, ExtendOp::ZeroExtend)?;
+        let gt_z = b.extend_if_needed(gt, ty, ExtendOp::ZeroExtend)?;
+        let three = b.build_int_const(3u64, ty)?;
+        let gt_s = b.build_int_binary_operation(gt_z, three, IntBinaryOp::ShiftLeft, ty)?;
+        let pack = b.build_int_binary_operation(lt_z, gt_s, IntBinaryOp::Or, ty)?;
+        let zero = b.build_int_const(0u64, ty)?;
+        let is_zero = b.build_int_cmp_operation(pack, zero, IntCmpOp::Equal, ty)?;
+        let true_i1 = b.build_boolean_const(true);
+        let cond =
+            b.build_int_binary_operation(is_zero, true_i1, IntBinaryOp::Xor, ValueType::I1)?;
+        Ok((cond, ()))
+    })?;
 
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
