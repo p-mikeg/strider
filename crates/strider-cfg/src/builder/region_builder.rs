@@ -430,7 +430,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let name = self
             .builder
             .user_op_names
-            .get(id_u32 as usize)
+            .as_deref()
+            .and_then(|names| names.get(id_u32 as usize))
             .map(String::as_str);
         let overridden = name.and_then(|n| self.builder.options.call_other_overrides.get(n));
         let terminates = match overridden {
