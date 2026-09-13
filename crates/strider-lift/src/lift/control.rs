@@ -127,10 +127,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     }
 
     /// Resolves the call's CC register lists and emits the `Call` node.
+    /// `stack_pop`, when given, replaces the CC's `ret_stack_pop`.
     fn build_cc_call(
         &mut self,
         call_address: strider_ir::Value,
         override_cc: Option<&strider_target::BuiltCallingConvention>,
+        stack_pop: Option<i64>,
     ) -> Result<()> {
         // Snapshot the CC-derived pieces so the immutable borrow of the
         // function ends before the &mut read / build / write path below.
@@ -145,7 +147,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 clobber_vns,
                 cc.arg_passing_regs.clone(),
                 float_arg_vns,
-                cc.ret_stack_pop,
+                stack_pop.unwrap_or(cc.ret_stack_pop),
             )
         };
 
@@ -191,7 +193,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let call_address = self.build_addr_const(space, target_addr, "call target space")?;
         // Cloned so the `per_address_ccs` borrow ends before the &mut call.
         let override_cc = self.per_address_ccs.get(&target_addr).cloned();
-        self.build_cc_call(call_address, override_cc.as_ref())?;
+        self.build_cc_call(call_address, override_cc.as_ref(), None)?;
         Ok(())
     }
 
@@ -203,13 +205,19 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let call_address =
             self.build_addr_const(default_code_space, target, "default code space")?;
         let override_cc = self.per_address_ccs.get(&target).cloned();
-        self.build_cc_call(call_address, override_cc.as_ref())?;
+        self.build_cc_call(call_address, override_cc.as_ref(), None)?;
         self.build_cc_return()
     }
 
+    /// A call through a vector a `CallOther` produced (x86 `int imm8`, `into`)
+    /// pushed no return address, so it pops none.
     pub(super) fn handle_call_indirect(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let call_address = self.read_vn(nth_input_or_err(insn, 0)?)?;
-        self.build_cc_call(call_address, None)?;
+        let trap_vector = matches!(
+            self.builder.node_kind(self.builder.producer(call_address)),
+            strider_ir::node::NodeKind::CallOther { .. }
+        );
+        self.build_cc_call(call_address, None, trap_vector.then_some(0))?;
         Ok(())
     }
 
