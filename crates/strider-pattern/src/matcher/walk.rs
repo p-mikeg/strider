@@ -93,6 +93,7 @@ pub(crate) fn try_match_nested(
     try_match_rooted(matcher, pat, root, root_value, bindings, k, false)
 }
 
+// The continuation-passing frame, not a refactorable cluster.
 #[allow(clippy::too_many_arguments)]
 fn try_match_rooted(
     matcher: &Matcher,
@@ -449,6 +450,7 @@ fn try_match_at(
 /// The constraints a pat node owes once its operands, or its alternation arm,
 /// have matched: its sibling output vertices and its guard. Restores `b` to
 /// entry on rejection; [`continue_node`] carries on from here.
+// The continuation-passing frame, not a refactorable cluster.
 #[allow(clippy::too_many_arguments)]
 fn finish_node(
     ctx: &Ctx,
@@ -473,6 +475,7 @@ fn finish_node(
 /// post-match predicate, then `k`. An `any_slot` vertex enumerates the node's
 /// outputs, so a capture on it binds each in turn and a rejection anywhere
 /// above re-drives it; every other vertex is checked at its own slot.
+// The continuation-passing frame, not a refactorable cluster.
 #[allow(clippy::too_many_arguments)]
 fn bind_sibling_outputs(
     ctx: &Ctx,

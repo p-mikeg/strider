@@ -43,7 +43,7 @@ impl Capture {
     }
 
     /// Counts up from 0, leaving the top of the range for the sentinel keys
-    /// `find_joined`'s dedup mints for a capture-free pattern.
+    /// `find_joined_constrained`'s dedup mints for a capture-free pattern.
     pub fn id(self) -> u32 {
         self.id
     }
