@@ -37,13 +37,16 @@ impl From<anyhow::Error> for MemReadError {
 pub use read_only_memory::ReadOnlyMemory;
 
 /// A relocation site's patched value, applied over the file-initial bytes when
-/// a read crosses it.
+/// a read crosses it, or a field the loader could not compute, which then
+/// serves no bytes at all.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Patch {
     addr: u64,
     len: u8,
     /// `len` target-endian bytes of the field value.
     value: [u8; 8],
+    /// `r_type` of a relocation with no computed value: the field is a hole.
+    unmodelled: Option<u32>,
 }
 
 /// Widest field any [`Patch`] covers, so a read's first candidate patch is the
@@ -80,7 +83,19 @@ impl Patch {
             addr,
             len: size_bytes as u8,
             value: bytes,
+            unmodelled: None,
         })
+    }
+
+    /// `size_bytes` at `addr` that no read may serve: a relocation of type
+    /// `r_type` lands there and its value was not computed.
+    pub(crate) fn hole(addr: u64, size_bytes: usize, r_type: u32) -> Self {
+        Self {
+            addr,
+            len: size_bytes.min(MAX_PATCH_LEN as usize) as u8,
+            value: [0; 8],
+            unmodelled: Some(r_type),
+        }
     }
 
     fn end(&self) -> u64 {
@@ -234,34 +249,61 @@ impl MemRegion {
     /// Reads bytes at `addr` into `out`, possibly partially.
     ///
     /// `Some(n)` when [`contains(addr)`](Self::contains); `n < out.len()` when
-    /// the request runs past the region's end. `None` otherwise, including a
-    /// zero-length read at exactly `end_addr` (the end is exclusive even for a
-    /// zero-byte request). An empty region has `start_addr == end_addr`, so it
-    /// contains nothing and always returns `None`.
+    /// the request runs past the region's end or into a relocation field the
+    /// loader could not compute. `None` otherwise, including an `addr` inside
+    /// such a field and a zero-length read at exactly `end_addr` (the end is
+    /// exclusive even for a zero-byte request). An empty region has
+    /// `start_addr == end_addr`, so it contains nothing and always returns
+    /// `None`.
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
         let (offset, available) = self.available_at(addr)?;
-        let to_copy = available.min(out.len());
+        let mut to_copy = available.min(out.len());
+        if let Some(hole) = self.first_hole_in(addr, to_copy) {
+            if hole.addr <= addr {
+                return None;
+            }
+            to_copy = (hole.addr - addr) as usize;
+        }
         out[..to_copy].copy_from_slice(&self.raw()[offset..offset + to_copy]);
         self.apply_patches(addr, &mut out[..to_copy]);
         Some(to_copy)
     }
 
+    /// The `r_type` of the uncomputed relocation field covering `addr`, if any.
+    pub fn unmodelled_relocation_at(&self, addr: u64) -> Option<u32> {
+        self.contains(addr)
+            .then(|| self.first_hole_in(addr, 1))
+            .flatten()
+            .filter(|h| h.addr <= addr)
+            .and_then(|h| h.unmodelled)
+    }
+
+    /// The patches that may overlap `[addr, addr + len)`, in address order.
+    fn patches_near(&self, addr: u64, len: usize) -> impl Iterator<Item = &Patch> {
+        let patches = self.patches.as_deref().unwrap_or(&[]);
+        let end = addr.saturating_add(len as u64);
+        let first = patches.partition_point(|p| p.addr < addr.saturating_sub(MAX_PATCH_LEN - 1));
+        patches[first..]
+            .iter()
+            .take_while(move |p| p.addr < end)
+            .filter(move |p| p.end() > addr)
+    }
+
+    /// The lowest uncomputed field overlapping `[addr, addr + len)`.
+    fn first_hole_in(&self, addr: u64, len: usize) -> Option<&Patch> {
+        self.patches_near(addr, len)
+            .find(|p| p.unmodelled.is_some())
+    }
+
     /// Overwrites the parts of `buf` (holding the bytes at `addr`) that a
     /// relocation patch covers.
     fn apply_patches(&self, addr: u64, buf: &mut [u8]) {
-        let Some(patches) = self.patches.as_ref() else {
-            return;
-        };
         let end = addr.saturating_add(buf.len() as u64);
-        let first = patches.partition_point(|p| p.addr < addr.saturating_sub(MAX_PATCH_LEN - 1));
-        for p in &patches[first..] {
-            if p.addr >= end {
-                break;
-            }
-            let (lo, hi) = (p.addr.max(addr), p.end().min(end));
-            if lo >= hi {
+        for p in self.patches_near(addr, buf.len()) {
+            if p.unmodelled.is_some() {
                 continue;
             }
+            let (lo, hi) = (p.addr.max(addr), p.end().min(end));
             let (dst, src, n) = (
                 (lo - addr) as usize,
                 (lo - p.addr) as usize,
@@ -346,22 +388,32 @@ struct IndexEntry {
 
 impl RegionIndex {
     pub fn new(regions: &[MemRegion]) -> Self {
-        let mut order: Vec<usize> = (0..regions.len()).collect();
+        let ranges: Vec<(u64, u64)> = regions
+            .iter()
+            .map(|r| (r.start_addr(), r.end_addr()))
+            .collect();
+        Self::from_ranges(&ranges)
+    }
+
+    /// The index over `[start, end)` ranges, yielding indices into `ranges`
+    /// exactly as [`new`](Self::new) yields them into a region slice.
+    pub fn from_ranges(ranges: &[(u64, u64)]) -> Self {
+        let mut order: Vec<usize> = (0..ranges.len()).collect();
         // Stable, so equal starts keep slice order.
-        order.sort_by_key(|&i| regions[i].start_addr());
+        order.sort_by_key(|&i| ranges[i].0);
         let mut reach = 0u64;
         let entries: Vec<IndexEntry> = order
             .iter()
             .map(|&index| {
-                reach = reach.max(regions[index].end_addr());
+                reach = reach.max(ranges[index].1);
                 IndexEntry {
-                    start: regions[index].start_addr(),
+                    start: ranges[index].0,
                     reach,
                     index,
                 }
             })
             .collect();
-        let ends: Vec<u64> = order.iter().map(|&i| regions[i].end_addr()).collect();
+        let ends: Vec<u64> = order.iter().map(|&i| ranges[i].1).collect();
         Self {
             entries,
             ends: MaxEnd::new(&ends),
@@ -574,17 +626,40 @@ impl MemRegionsLookupTable {
     ///
     /// # Errors
     ///
-    /// When `addr` is unmapped, or the request straddles a region's end so
-    /// fewer than `buf.len()` bytes are available.
+    /// When `addr` is unmapped, or the request straddles a region's end or a
+    /// relocation field the loader could not compute, so fewer than
+    /// `buf.len()` bytes are available.
     pub fn read_exact(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         let want = buf.len();
-        let got = self
-            .read(addr, buf)
-            .ok_or_else(|| anyhow::anyhow!("address {addr:#x} is not mapped"))?;
+        let got = self.read(addr, buf).ok_or_else(|| self.unmapped(addr))?;
         if got != want {
+            let stop = addr + got as u64;
+            if let Some(r_type) = self.unmodelled_relocation_at(stop) {
+                anyhow::bail!(
+                    "read at {addr:#x} runs into {stop:#x}, a relocation of type {r_type} \
+                     this loader does not compute"
+                );
+            }
             anyhow::bail!("read at {addr:#x} spans past mapped memory: got {got} of {want} bytes");
         }
         Ok(())
+    }
+
+    /// The `r_type` of the uncomputed relocation field covering `addr` in the
+    /// region a one-byte read there would be served by.
+    pub fn unmodelled_relocation_at(&self, addr: u64) -> Option<u32> {
+        let i = self.index.covering(addr, 1).next()?;
+        self.regions[i].unmodelled_relocation_at(addr)
+    }
+
+    /// Why a read at `addr` served nothing.
+    pub fn unmapped(&self, addr: u64) -> anyhow::Error {
+        match self.unmodelled_relocation_at(addr) {
+            Some(r_type) => anyhow::anyhow!(
+                "address {addr:#x} holds a relocation of type {r_type} this loader does not compute"
+            ),
+            None => anyhow::anyhow!("address {addr:#x} is not mapped"),
+        }
     }
 }
 

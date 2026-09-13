@@ -619,16 +619,22 @@ fn et_rel_sections_colliding_at_vma_zero_get_bases_of_their_own() {
 }
 
 /// A `SHN_COMMON` symbol stores its ALIGNMENT in `st_value`; the address only
-/// exists once the link allocates it in `.bss`. Applying a relocation against
-/// that value patches a site with a fabricated target, so an unallocated
-/// common must be skipped exactly as an undefined extern is.
+/// exists once the link allocates it in `.bss`. It resolves to room of its own
+/// past the image, never to the alignment as an address, nor to the site's
+/// file-initial zero.
 #[test]
-fn a_common_symbol_relocation_is_skipped_not_applied() {
+fn a_common_symbol_resolves_past_the_image_not_to_its_alignment() {
+    use object::{Object as _, ObjectSymbol as _};
     let fx = common::elf_fixture::build_et_rel_vma_collision_elf_full(
         vec![0u8; 8],
         object::elf::SHN_COMMON,
         4, // the alignment, not an address
     );
+    let obj = object::File::parse(&fx.bytes[..]).expect("parse");
+    let common_sym = obj.symbols().find(|s| s.is_common()).expect("the common");
+    let expected = strider_reader::elf::ElfSectionLayout::new(&obj)
+        .extern_address(common_sym.index().0)
+        .expect("a common symbol gets an address");
     let site = common::section_base(&fx.bytes, ".data");
     let regions = common::load_with_relocations(&fx.bytes);
     let table = strider_reader::MemRegionsLookupTable::new(regions);
@@ -636,10 +642,10 @@ fn a_common_symbol_relocation_is_skipped_not_applied() {
     table
         .read_exact(site, &mut got)
         .expect("read the relocated site");
-    assert_eq!(
-        got, [0u8; 8],
-        "a SHN_COMMON symbol's st_value is its alignment; the relocation must \
-         be skipped, not applied with 4 as the address",
+    assert_eq!(u64::from_le_bytes(got), expected);
+    assert!(
+        table.read(expected, &mut [0u8; 1]).is_none(),
+        "the common's address maps nothing"
     );
 }
 
