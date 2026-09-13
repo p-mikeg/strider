@@ -876,3 +876,42 @@ fn sibling_output_capture_joins_like_the_anchor() {
         1,
     );
 }
+
+/// `v_{i+1} = v_i + v_i`: both slots of every add hold one value, so the
+/// swapped ordering assigns every operand what the natural one did. Retrying
+/// it anyway doubles the work per nested level for a single match.
+#[test]
+fn identical_operand_slots_are_not_retried_swapped() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const LEVELS: usize = 16;
+    let mut t = Tb::empty();
+    let mut acc = t.u64(1);
+    for _ in 0..LEVELS {
+        acc = t.add(acc, acc);
+    }
+    let function = t.ret_val(acc);
+
+    let mut b = MatcherBuilder::new();
+    let mut o = b.leaf(KindSpec::Any);
+    b.set_output_any(o);
+    for _ in 0..LEVELS {
+        let leaf = b.leaf(KindSpec::Any);
+        b.set_output_any(leaf);
+        o = b.binary(IntBinaryOp::Add, o, leaf);
+    }
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&calls);
+    let pat = b.finish().with_root_post_match(Box::new(move |_, _, _, _| {
+        counter.fetch_add(1, Ordering::Relaxed);
+        true
+    }));
+
+    a::matches(&function, pat, 1);
+    assert_eq!(
+        calls.load(Ordering::Relaxed),
+        1,
+        "one configuration per match"
+    );
+}
