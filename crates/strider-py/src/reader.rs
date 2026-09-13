@@ -1159,12 +1159,9 @@ impl rsleigh::MemReader for PyBufferReaderView {
     type Err = strider_reader::MemReadError;
 
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
-        self.table.read(addr.off, out_buf).ok_or_else(|| {
-            strider_reader::MemReadError::from(anyhow::anyhow!(
-                "address {:#x} is not mapped",
-                addr.off
-            ))
-        })
+        self.table
+            .read(addr.off, out_buf)
+            .ok_or_else(|| strider_reader::MemReadError::from(self.table.unmapped(addr.off)))
     }
 }
 
