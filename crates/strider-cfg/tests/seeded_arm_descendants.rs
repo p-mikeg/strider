@@ -159,3 +159,62 @@ fn undecodable_bytes_reached_without_an_arm_still_fail_the_function() {
             .is_err()
     );
 }
+
+/// A direct edge found while decoding an arm is only as certain as that arm,
+/// and an earlier arm may already own its target in the other ISA mode: the
+/// first decode keeps the bytes and the clash is reported.
+///
+/// ```text
+/// 10000  bx r0                ; ARM, arms 0x10004 (Thumb) and 0x10008
+/// 10004  movs r0, #1          ; Thumb
+/// 10006  bx lr                ; Thumb
+/// 10008  b 0x10004            ; ARM
+/// ```
+#[test]
+fn an_edge_decoded_off_an_arm_does_not_take_bytes_an_earlier_arm_decoded() {
+    use strider_cfg::{FlowVars, ResolvedTarget};
+    let base = 0x10000u64;
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&0xe12f_ff10u32.to_le_bytes());
+    bytes.extend_from_slice(&0x2001u16.to_le_bytes());
+    bytes.extend_from_slice(&0x4770u16.to_le_bytes());
+    bytes.extend_from_slice(&0xeaff_fffdu32.to_le_bytes());
+    bytes.extend_from_slice(&[0; 16]);
+
+    let arch = SleighArch::arm();
+    let mut sleigh = rsleigh::Sleigh::new(
+        arch.sla_spec(),
+        arch.pspec(),
+        BufMemReader::new(bytes, base),
+    )
+    .unwrap();
+    let flow = FlowVars::discover(&sleigh).unwrap();
+    sleigh.set_context_at(base, "TMode", 0).unwrap();
+    let mode = flow.snapshot(&sleigh, base);
+    let mut opts = CfgOptions {
+        fn_max_size: Some(0x20),
+        ..CfgOptions::default()
+    };
+    opts.known_targets.insert(
+        PcodeInsnAddr::at_machine_start(base),
+        ResolvedTargets::Multiple(vec![
+            ResolvedTarget::new(0x10004, Some(true)),
+            ResolvedTarget::new(0x10008, None),
+        ]),
+    );
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
+        .with_flow_context(&flow, mode)
+        .build()
+        .expect("build");
+
+    assert_eq!(switch_arms(&cfg), [0x10004, 0x10008]);
+    assert_eq!(
+        cfg.isa_mode_conflicts(),
+        [PcodeInsnAddr::at_machine_start(0x10004)]
+    );
+    let thumb = cfg
+        .regions()
+        .find(|r| r.start_addr.machine_addr.addr == 0x10004)
+        .expect("region at 0x10004");
+    assert_eq!(thumb.insns.first().map(|i| i.len), Some(2));
+}
