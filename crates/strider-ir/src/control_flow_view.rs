@@ -1,8 +1,30 @@
-use petgraph::visit::{GraphBase, IntoNeighbors, Visitable};
+use entity_utils::DenseEntitySet;
+use petgraph::visit::{GraphBase, IntoNeighbors, VisitMap, Visitable};
 use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 
 use crate::function::Function;
 use crate::node::{NodeId, ValueId};
+
+/// [`DenseEntitySet`] as a petgraph visit map; the trait is foreign to both.
+#[derive(Default)]
+pub(crate) struct NodeVisitMap(DenseEntitySet<NodeId>);
+
+impl VisitMap<NodeId> for NodeVisitMap {
+    fn visit(&mut self, a: NodeId) -> bool {
+        self.0.insert(a)
+    }
+
+    fn is_visited(&self, a: &NodeId) -> bool {
+        self.0.contains(*a)
+    }
+
+    fn unvisit(&mut self, a: NodeId) -> bool {
+        let was = self.0.contains(a);
+        self.0.remove(a);
+        was
+    }
+}
 
 /// Only `Control`-kind edges are visible.
 #[derive(Clone, Copy)]
@@ -23,24 +45,25 @@ impl GraphBase for ControlFlowView<'_> {
 
 // petgraph requires the impl on `&G` so the receiver is Copy.
 impl<'a> IntoNeighbors for &'a ControlFlowView<'a> {
-    type Neighbors = std::vec::IntoIter<NodeId>;
+    // Every control node but `Switch` fans out to at most two.
+    type Neighbors = smallvec::IntoIter<[NodeId; 2]>;
 
     fn neighbors(self, a: NodeId) -> Self::Neighbors {
         crate::walk::cfg_succs(self.function.graph(), a)
-            .collect::<Vec<_>>()
+            .collect::<SmallVec<[NodeId; 2]>>()
             .into_iter()
     }
 }
 
 impl Visitable for ControlFlowView<'_> {
-    type Map = FxHashSet<NodeId>;
+    type Map = NodeVisitMap;
 
     fn visit_map(&self) -> Self::Map {
-        FxHashSet::default()
+        NodeVisitMap::default()
     }
 
     fn reset_map(&self, map: &mut Self::Map) {
-        map.clear();
+        map.0 = DenseEntitySet::new();
     }
 }
 
@@ -51,7 +74,9 @@ pub fn control_dominators(function: &Function) -> petgraph::algo::dominators::Do
 }
 
 /// True when every path from `doms`'s entry to `b` passes through `a`; a node
-/// trivially dominates itself.
+/// trivially dominates itself. `false` when `b` is absent from the tree, where
+/// the claim is vacuously true; use [`dominance_verdict`] to tell the two
+/// apart.
 pub fn dominates<N: Copy + Eq + std::hash::Hash>(
     doms: &petgraph::algo::dominators::Dominators<N>,
     a: N,
@@ -107,7 +132,7 @@ impl GraphBase for ControlSplitView<'_> {
 }
 
 impl<'a> IntoNeighbors for &'a ControlSplitView<'a> {
-    type Neighbors = std::vec::IntoIter<CtrlKey>;
+    type Neighbors = smallvec::IntoIter<[CtrlKey; 2]>;
 
     fn neighbors(self, a: CtrlKey) -> Self::Neighbors {
         let graph = self.function.graph();
@@ -115,11 +140,11 @@ impl<'a> IntoNeighbors for &'a ControlSplitView<'a> {
             // Stage 1, stopping at the output.
             CtrlKey::Node(node) => crate::walk::cfg_outputs(graph, node)
                 .map(CtrlKey::Edge)
-                .collect::<Vec<_>>()
+                .collect::<SmallVec<[CtrlKey; 2]>>()
                 .into_iter(),
             // Stage 2, resuming from the output.
             CtrlKey::Edge(value) => {
-                let succs: Vec<CtrlKey> = graph
+                let succs: SmallVec<[CtrlKey; 2]> = graph
                     .value_uses(value)
                     .map(|(succ, _)| CtrlKey::Node(succ))
                     .collect();
