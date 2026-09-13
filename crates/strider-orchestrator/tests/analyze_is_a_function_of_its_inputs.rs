@@ -74,7 +74,7 @@ fn fingerprint(
         result.isa_mode_conflicts,
         result.interior_branch_targets,
         result.unmapped_branch_targets,
-        result.function.to_text(),
+        result.function.to_text(true),
     )
 }
 
