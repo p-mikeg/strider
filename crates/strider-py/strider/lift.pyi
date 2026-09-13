@@ -364,8 +364,10 @@ class ElfLifter(Lifter):
         what is LEFT to pull, so a consumed cursor shrinks."""
         ...
     def symbol(self, name: str) -> Symbol:
-        """The `Symbol` named `name`. Raises `StriderError` when it is not
-        defined."""
+        """The `Symbol` named `name`: its definition in the first ELF that
+        defines it, else an undefined symbol that still has an address (a PLT
+        stub, or an object file's extern). Raises `StriderError` when there is
+        neither."""
         ...
     def symbol_opt(self, name: str) -> Optional[Symbol]:
         """`symbol`, but `None` rather than raising when `name` is
