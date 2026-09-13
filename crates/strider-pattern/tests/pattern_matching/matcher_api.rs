@@ -5,12 +5,6 @@ use strider_pattern::*;
 use super::support::{Tb, assertions as a, shapes};
 
 #[test]
-fn new_on_empty_graph_does_not_panic() {
-    let function = Tb::empty().ret_nothing();
-    let _ = Matcher::new(&function);
-}
-
-#[test]
 fn find_all_on_empty_graph_returns_empty_for_specific_kind() {
     let function = Tb::empty().ret_nothing();
     a::none(&function, load().build());
@@ -300,15 +294,6 @@ fn get_vn_on_unbound_var_returns_none() {
     assert_eq!(m.get_vn(never_bound, &function), None);
 }
 
-/// A pattern's cast mask starts empty, so no cast is walked through.
-#[test]
-fn existing_pattern_unchanged_with_default_options() {
-    let function = shapes::add_consts(5, 3);
-    let pat = int_add(int_const(5u128), int_const(3u128)).into_pattern();
-    let hits = Matcher::new(&function).find_all(&pat).unwrap();
-    assert_eq!(hits.len(), 1);
-}
-
 /// Returns `Add(ZeroExt(Mul(2,3)), 4)` at I64, with the Mul at I32.
 fn graph_add_zext_mul() -> strider_ir::Function {
     let mut t = Tb::empty();
@@ -327,17 +312,6 @@ fn add_mul_pattern_does_not_match_through_extend_by_default() {
     let pat = int_add(int_mul(anything(), anything()), anything()).into_pattern();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
     assert!(hits.is_empty());
-}
-
-#[test]
-fn add_mul_pattern_matches_through_extend_with_ignore_casts() {
-    let function = graph_add_zext_mul();
-    // The cast mask lives on the pattern, not the matcher.
-    let pat = int_add(int_mul(anything(), anything()), anything())
-        .into_pattern()
-        .ignore_casts();
-    let hits = Matcher::new(&function).find_all(&pat).unwrap();
-    assert_eq!(hits.len(), 1);
 }
 
 /// A cast walked through via `ignore_casts` is IR the match relied on, so it

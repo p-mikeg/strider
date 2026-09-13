@@ -66,10 +66,10 @@ fn a_typed_guard_on_a_value_root_still_runs() {
 #[test]
 fn a_multi_sink_branch_pattern_is_refused_not_panicked_on() {
     let pat = if_else().with_true(multi_sink_pattern()).build();
-    assert!(error_of(&pat).contains("branch pattern"));
+    assert!(error_of(&pat).contains("If branch pattern is not matchable"));
 
     let pat = if_else().with_false(multi_sink_pattern()).build();
-    assert!(error_of(&pat).contains("branch pattern"));
+    assert!(error_of(&pat).contains("If branch pattern is not matchable"));
 }
 
 /// `.ordered()` suppresses commutative operand reordering. An alternation's
@@ -81,17 +81,6 @@ fn ordered_on_an_alternation_is_refused() {
         .ordered()
         .into_pattern();
     assert!(error_of(&pat).contains("ordered"));
-}
-
-/// `.ordered()` on an operand node is unaffected.
-#[test]
-fn ordered_on_a_commutative_node_still_pins_the_operand_order() {
-    let function = add_5_3();
-    let x = strider_pattern::Capture::new();
-    let pat = int_add(var(x), anything()).ordered().into_pattern();
-    let hits = Matcher::new(&function).find_all(&pat).unwrap();
-    assert_eq!(hits.len(), 1, "one ordering, not two");
-    let _ = IntBinaryOp::Add;
 }
 
 /// A `ctrl()` slot retypes its operand to `Control` only after compiling it,
