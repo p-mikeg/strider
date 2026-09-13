@@ -22,7 +22,8 @@ pub struct CfgOptions {
     /// emitted node.
     pub call_other_overrides: strider_target::call_other_abi::CallOtherOverrides,
     /// Bytes the image marks as data (ELF `$d` mapping symbols), which the
-    /// builder never decodes; see [`crate::Cfg::undecodable_branch_targets`].
+    /// builder decodes only for the instruction at the start address; see
+    /// [`crate::Cfg::undecodable_branch_targets`].
     pub data_ranges: DataRanges,
 }
 
