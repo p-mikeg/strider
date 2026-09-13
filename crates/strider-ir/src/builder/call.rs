@@ -58,7 +58,8 @@ impl FunctionBuilder {
         let inputs = [ctrl, memory, call_address, sp_value]
             .into_iter()
             .chain(args.iter().copied());
-        let (node, outputs) = self.emit_call_node(NodeKind::Call, inputs, output_vns)?;
+        let (node, outputs) =
+            self.emit_call_node(NodeKind::Call { cc: None }, inputs, output_vns)?;
 
         // The region stays open.
         self.advance_cur_region_ctrl(outputs[0])?;
@@ -184,9 +185,7 @@ impl FunctionBuilder {
         }
 
         if let Some(cc) = override_cc {
-            self.function_mut()
-                .side_tables_mut()
-                .set_call_cc(call, cc.clone());
+            self.function_mut().set_call_cc(call, cc.clone());
         }
         Ok(call)
     }

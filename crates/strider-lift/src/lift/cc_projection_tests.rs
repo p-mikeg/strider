@@ -232,7 +232,7 @@ fn arm_neon_float_args_keep_their_abi_positions_end_to_end() {
     let call = f
         .graph()
         .all_node_ids()
-        .find(|n| matches!(f.node_kind(*n), NodeKind::Call))
+        .find(|n| matches!(f.node_kind(*n), NodeKind::Call { .. }))
         .expect("the fixture calls g");
     let inputs: Vec<strider_ir::node::ValueId> = f.node_inputs(call).into_iter().collect();
     // [Control, Memory, target, SP, r0..r3, d0..d3].
@@ -300,7 +300,7 @@ fn float_call_args_keep_their_abi_positions() {
     let call = f
         .graph()
         .all_node_ids()
-        .find(|n| matches!(f.node_kind(*n), NodeKind::Call))
+        .find(|n| matches!(f.node_kind(*n), NodeKind::Call { .. }))
         .expect("the fixture calls g");
     let inputs: Vec<strider_ir::node::ValueId> = f.node_inputs(call).into_iter().collect();
     // [Control, Memory, target, SP] then the integer arguments.

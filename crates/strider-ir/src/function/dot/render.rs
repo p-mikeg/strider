@@ -197,7 +197,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             let maybe_virt = state.virtual_nodes.get(&parent_value).cloned();
             if let Some(virt_id) = maybe_virt {
                 virt_id
-            } else if parent_kind == NodeKind::Call {
+            } else if matches!(parent_kind, NodeKind::Call { .. }) {
                 let (_, output_index) = self.function.value_definition(parent_value);
                 if output_index >= 2 {
                     let name = self.call_clobbered_name(parent_value);
@@ -239,9 +239,9 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
 
         // Call inputs are [ctrl, mem, target, sp, args...], so arg N is at
         // 4 + N.  CallOther has no target slot, so its args start at 2.
-        let owned_label: Option<String> = if matches!(kind, NodeKind::Call) && idx == 3 {
+        let owned_label: Option<String> = if matches!(kind, NodeKind::Call { .. }) && idx == 3 {
             Some("sp".to_owned())
-        } else if matches!(kind, NodeKind::Call) && idx >= 4 {
+        } else if matches!(kind, NodeKind::Call { .. }) && idx >= 4 {
             Some(format!("arg{}", idx - 4))
         } else if matches!(kind, NodeKind::CallOther { .. }) && idx >= 2 {
             Some(format!("arg{}", idx - 2))

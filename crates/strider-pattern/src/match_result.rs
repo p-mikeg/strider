@@ -100,7 +100,7 @@ impl Match {
             let kind = function.node_kind(node);
             // Control / Memory / value outputs are absent from `value_vn`,
             // so a missing entry correctly falls through.
-            if matches!(kind, NodeKind::Call | NodeKind::CallOther { .. })
+            if matches!(kind, NodeKind::Call { .. } | NodeKind::CallOther { .. })
                 && let Some(vn) = function.get_vn_for_value(value)
             {
                 return Some(vn);

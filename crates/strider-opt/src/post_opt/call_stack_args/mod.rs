@@ -115,7 +115,9 @@ impl PostOptimizer for CallStackArgCollect {
         let assumptions = &opt_ctx.options.assumptions;
         // The owned `Vec` lets the immutable borrow end before the mutation loop
         // takes `edit` mutably.
-        let calls: Vec<NodeId> = edit.live_of_kind(|k| matches!(k, NodeKind::Call)).collect();
+        let calls: Vec<NodeId> = edit
+            .live_of_kind(|k| matches!(k, NodeKind::Call { .. }))
+            .collect();
         let alias_cfg = MemAnalyzer::new(MemOptions::call_blocking(
             assumptions.stack_global_disjoint,
             &assumptions.noalias_allocators,

@@ -81,7 +81,7 @@ fn call_captures_node() {
     let node = m.node(n, function.graph()).expect("node capture");
     assert!(matches!(
         function.node_kind(node),
-        strider_ir::node::NodeKind::Call
+        strider_ir::node::NodeKind::Call { .. }
     ));
 }
 
@@ -177,7 +177,7 @@ fn with_root_post_match_sees_root_node() {
         .with_root_post_match(Box::new(|m, node, _ty, _b| {
             matches!(
                 m.function().node_kind(node),
-                strider_ir::node::NodeKind::Call
+                strider_ir::node::NodeKind::Call { .. }
             )
         }));
     a::matches(&function, guarded, 1);

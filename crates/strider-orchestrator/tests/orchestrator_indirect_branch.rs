@@ -216,7 +216,7 @@ fn assert_loop_carried_switch_reaches_every_arm(arch: common::Arch, arms: usize)
     assert!(
         result
             .function
-            .has_kind(|k| *k == strider_ir::node::NodeKind::Call),
+            .has_kind(|k| matches!(k, strider_ir::node::NodeKind::Call { .. })),
         "{arch:?}/switch/main: `f` is called from one switch arm, so a missing Call \
          means arms were never decoded: the table resolved to a single target",
     );

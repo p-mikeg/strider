@@ -207,7 +207,7 @@ pub trait IRViewer {
         let inputs = self.node_inputs(node);
         match *self.node_kind(node) {
             NodeKind::Store(_) | NodeKind::Load(_) => inputs.into_iter().next(),
-            NodeKind::Call | NodeKind::CallOther { .. } => inputs.into_iter().nth(1),
+            NodeKind::Call { .. } | NodeKind::CallOther { .. } => inputs.into_iter().nth(1),
             _ => None,
         }
     }

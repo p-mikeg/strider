@@ -1225,7 +1225,7 @@ fn arg_detection_does_not_narrow_a_load_past_a_call() -> Result<()> {
     let mem_in = fg.node_inputs(fg.producer(loaded))[0];
     let kind = fg.node_kind(fg.producer(mem_in));
     assert!(
-        matches!(kind, NodeKind::Call),
+        matches!(kind, NodeKind::Call { .. }),
         "the load's memory predecessor must still be the Call, got {kind:?}"
     );
     Ok(())

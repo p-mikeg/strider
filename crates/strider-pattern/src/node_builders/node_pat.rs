@@ -376,7 +376,7 @@ mod tests {
 
     /// Mirrors the raw shape the public `call()` builder lowers to.
     fn call_any_input<P: MatchPat + 'static>(p: P) -> Pattern {
-        NodePat::node(KindSpec::Exact(NodeKind::Call))
+        NodePat::node(KindSpec::variant_of(&NodeKind::Call { cc: None }))
             .with_mem_value(1)
             .input_any(p)
             .build()
