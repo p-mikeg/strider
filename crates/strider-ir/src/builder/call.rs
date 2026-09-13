@@ -52,6 +52,18 @@ impl FunctionBuilder {
 
         let sp_vn = self.function.stack_vn();
         let sp_value = self.read_variable(&sp_vn)?;
+        // A callee can read a register its convention neither passes nor
+        // preserves (i386 `regparm`, a static chain, AArch64's indirect-result
+        // register), and the call node carries no such value.  A Sleigh
+        // temporary is scratch no callee sees.
+        let reaches_callee = |vn: &&rsleigh::Vn| {
+            vn.addr_space == rsleigh::VnSpace::REGISTER && vn.size == sp_vn.size
+        };
+        for vn in output_vns.iter().filter(reaches_callee) {
+            if let Ok(held) = self.read_variable(vn) {
+                self.call_register_values.push(held);
+            }
+        }
 
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;

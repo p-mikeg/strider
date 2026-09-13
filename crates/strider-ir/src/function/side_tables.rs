@@ -83,6 +83,10 @@ pub struct SideTables {
     /// Cleared after every changing pass of the optimizer's fixed-point loop,
     /// after every post-pass, and on compaction.
     frame_escape: Cell<Option<bool>>,
+    /// A stack address was held, at some `Call`, in a register the call
+    /// clobbers.  The call node carries no such value, so this is the only
+    /// record that a callee may have received it.
+    frame_address_in_call_register: bool,
 }
 
 impl SideTables {
@@ -231,6 +235,17 @@ impl SideTables {
     #[inline]
     pub fn clear_frame_escape(&self) {
         self.frame_escape.set(None);
+    }
+
+    /// Whether some `Call` saw a stack address in a register it clobbers.
+    #[inline]
+    pub fn frame_address_in_call_register(&self) -> bool {
+        self.frame_address_in_call_register
+    }
+
+    #[inline]
+    pub fn set_frame_address_in_call_register(&mut self) {
+        self.frame_address_in_call_register = true;
     }
 
     /// Unordered.
