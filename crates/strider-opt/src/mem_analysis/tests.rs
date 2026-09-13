@@ -762,6 +762,41 @@ mod heap_tests {
         Ok(())
     }
 
+    /// The memo is the verdict `strider-pattern`'s region filters read, so an
+    /// address rooted at a call the configured set does not list is committed
+    /// `NotMemory`: `store().non_stack()` keeps the store, which it drops for an
+    /// address left unanswered.
+    #[test]
+    fn an_unlisted_call_return_is_committed_not_memory_for_non_stack() -> crate::Result<()> {
+        const UNLISTED: u64 = 0x2000;
+        let mut b = builder()?;
+        let p = alloc_call(&mut b, UNLISTED)?;
+        let eight = b.build_int_const(8u64, ValueType::I64)?;
+        let addr = b.build_int_binary_operation(p, eight, IntBinaryOp::Add, ValueType::I64)?;
+        let data = b.build_int_const(0x2au64, ValueType::I64)?;
+        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        b.build_return(None, &[])?;
+        let (fg, na) = built(b, &[MALLOC])?;
+
+        assert!(decompose(&fg, addr, &na).is_none());
+        assert!(
+            matches!(
+                fg.side_tables().memory_class(addr),
+                strider_ir::MemDecomp::NotMemory
+            ),
+            "the negative verdict must reach the memo"
+        );
+        let hits = strider_pattern::Matcher::new(&fg)
+            .find_all(&strider_pattern::store().non_stack().build())
+            .expect("the query compiles");
+        assert_eq!(
+            hits.len(),
+            1,
+            "non_stack keeps a store through an unlisted call return"
+        );
+        Ok(())
+    }
+
     /// SOUNDNESS: `(malloc() + 15) & -16`, the manual aligned-allocation idiom,
     /// leaves the masked pointer's offset to its base unknown.  The And/terminal
     /// path would hand back a Stack-kinded anchor, making an aligned heap
@@ -1847,8 +1882,8 @@ mod arg_window_bounds {
         let _ = sp_val;
 
         let call = fg
-            .walk()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Call))
+            .walk_kind(|k| matches!(k, NodeKind::Call))
+            .next()
             .expect("the fixture has one call");
         let analyzer = MemAnalyzer::new(MemOptions::call_blocking(false, &Default::default()));
         let MemExpr {
@@ -2841,8 +2876,8 @@ mod own_frame_tests {
 
         // A float-armed `Phi`: no arm is an integer, so the walk reads none.
         let region = fg
-            .walk()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+            .walk_kind(|k| matches!(k, NodeKind::Region))
+            .next()
             .expect("the fixture has one region");
         let token = fg.node_outputs(region)[1];
         let arms: Vec<_> = [0u64, 1u64]
@@ -3016,8 +3051,8 @@ mod modular_offset_tests {
 
         let load_node = fg.producer(loaded);
         let store_node = fg
-            .walk()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
+            .walk_kind(|k| matches!(k, NodeKind::Store(_)))
+            .next()
             .expect("store");
         let analyzer = MemAnalyzer::new(MemOptions::call_blocking(false, &Default::default()));
         assert_ne!(
