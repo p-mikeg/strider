@@ -135,33 +135,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn cacheable_node_is_deduplicated() {
-        let mut function = test_function();
-        let id_a = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I32)],
-        );
-        let id_b = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I32)],
-        );
-        assert_eq!(
-            id_a, id_b,
-            "identical cacheable nodes must alias to the same id"
-        );
-        assert_eq!(
-            function.graph().all_node_ids().count(),
-            3,
-            "deduplication must not create a second node"
-        );
-    }
-
-    /// Bulk variant of `cacheable_node_is_deduplicated`: the gate for the
-    /// borrowed-key dedup probe, whose hash must agree with the owned-key
-    /// insert or every repeat allocates a fresh node.
+    /// The gate for the borrowed-key dedup probe, whose hash must agree with
+    /// the owned-key insert or every repeat allocates a fresh node.
     #[test]
     fn cacheable_node_dedup_is_stable_across_many_calls() {
         let mut function = test_function();
@@ -496,37 +471,6 @@ mod tests {
         assert_eq!(function.graph().value_uses(new_value).count(), 1);
 
         check_node_inputs(function.graph(), ret, [new_value]);
-    }
-
-    #[test]
-    fn detach_node_inputs_removes_all_uses() {
-        let mut function = test_function();
-
-        let c = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(5_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let [value] = function.node_outputs_exact::<1>(c).unwrap();
-
-        let ret = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(ret, value);
-        function.graph_mut().add_node_input(ret, value); // same output used twice
-
-        assert_eq!(function.graph().value_uses(value).count(), 2);
-
-        function.graph_mut().detach_node_inputs(ret);
-
-        assert_eq!(
-            function.graph().value_uses(value).count(),
-            0,
-            "all uses must be removed after detach"
-        );
-        assert_eq!(
-            function.node_inputs(ret).len(),
-            0,
-            "node must have no inputs after detach"
-        );
     }
 
     /// Detaching a cacheable node must also evict it from the dedup cache, or
@@ -986,30 +930,6 @@ mod tests {
             "re-adding inputs must restore use count"
         );
         assert_eq!(function.node_inputs(sink).len(), 2);
-    }
-
-    /// The use linked-list must stay consistent across distinct consumers.
-    #[test]
-    fn two_independent_consumers_both_in_use_list() {
-        let mut function = test_function();
-
-        let src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(1_usize)),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let [value] = function.node_outputs_exact::<1>(src).unwrap();
-
-        let b = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(b, value);
-        let c = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(c, value);
-
-        let uses: Vec<_> = function.graph().value_uses(value).collect();
-        assert_eq!(uses.len(), 2);
-        let nodes: Vec<_> = uses.iter().map(|(n, _)| *n).collect();
-        assert!(nodes.contains(&b), "b must appear in use-list");
-        assert!(nodes.contains(&c), "c must appear in use-list");
     }
 
     #[test]

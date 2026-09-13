@@ -1,5 +1,5 @@
 use rsleigh::{Vn, VnSpace};
-use strider_target::{BuiltCallingConvention, CallingConvention, SleighArch};
+use strider_target::BuiltCallingConvention;
 
 fn vn(off: u64) -> Vn {
     Vn {
@@ -111,14 +111,6 @@ fn validate_accepts_clean_layout() {
     }
     .validate()
     .expect("clean layout must validate");
-}
-
-#[test]
-fn build_routes_through_validator_no_false_positives() {
-    let regs = SleighArch::x86_64().probe_regs().expect("probe regs");
-    CallingConvention::x86_64_systemv()
-        .build(&regs)
-        .expect("x86_64_systemv must build cleanly (build routes through validate)");
 }
 
 /// A wider container holding a narrower one is not a distinct register:

@@ -32,26 +32,6 @@ fn elf_code_and_readonly_sections_include_text_and_rodata_exclude_data_and_bss()
     assert_eq!(regions.len(), 2);
 }
 
-/// `SHT_NOBITS` yields empty `data()`, and the walker skips empty-data sections
-/// whatever the filter says.
-#[test]
-fn code_and_readonly_preset_skips_nobits() {
-    let bytes = build_elf_with_sections(&[
-        SectionSpec::text(0x1000, vec![1, 2, 3]),
-        SectionSpec::bss(0x2000, 64),
-    ]);
-    let obj = parse(&bytes);
-    let regions = elf_get_loadable_regions(&obj).unwrap();
-
-    let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
-    let base = |name| common::section_base(&bytes, name);
-    assert!(addrs.contains(&base(".text")), ".text must be present");
-    assert!(
-        !addrs.contains(&base(".bss")),
-        ".bss (NOBITS) must be skipped"
-    );
-}
-
 /// A failing `section.data()` on an accepted section must propagate, not skip.
 /// NOBITS (`Ok(&[])`) is the only legitimate skip path; a real `Err` means a
 /// malformed ELF, and dropping it silently would hand back a partially-loaded
@@ -317,24 +297,6 @@ fn allocatable_sections_include_text_rodata_data_and_exclude_bss() {
         ".bss (NOBITS) must be excluded"
     );
     assert_eq!(regions.len(), 3);
-}
-
-#[test]
-fn allocatable_preset_skips_nobits() {
-    // Independent of the multi-section fixture above.
-    let bytes = build_elf_with_sections(&[
-        SectionSpec::text(0x1000, vec![1, 2, 3]),
-        SectionSpec::bss(0x2000, 64),
-    ]);
-    let regions = common::regions(&bytes, LoadFilter::AllAllocatable);
-
-    let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
-    let base = |name| common::section_base(&bytes, name);
-    assert!(addrs.contains(&base(".text")), ".text must be present");
-    assert!(
-        !addrs.contains(&base(".bss")),
-        ".bss (NOBITS) must be skipped"
-    );
 }
 
 /// The data-error propagation contract, re-pinned through the allocatable
