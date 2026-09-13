@@ -47,8 +47,12 @@ pub(crate) fn find_nearest_clobber(
 /// Sound only for a `Load`: it is a pure consumer with no memory output, so
 /// moving its single incoming memory edge is invisible to every other node.
 /// Idempotent, and monotone across fixed-point iterations (verdicts only ever
-/// move MayAlias to Disjoint).
-pub(crate) fn narrow_load_to(edit: &mut crate::EditFunction<'_>, load: NodeId, clobber: NodeId) {
+/// move MayAlias to Disjoint).  Returns whether the edge moved.
+pub(crate) fn narrow_load_to(
+    edit: &mut crate::EditFunction<'_>,
+    load: NodeId,
+    clobber: NodeId,
+) -> bool {
     let rewire = {
         let function = edit.function();
         if matches!(function.node_kind(load), NodeKind::Load(_)) {
@@ -67,6 +71,7 @@ pub(crate) fn narrow_load_to(edit: &mut crate::EditFunction<'_>, load: NodeId, c
     if let Some((mem_use, target_mem)) = rewire {
         edit.update_input(mem_use, target_mem);
     }
+    rewire.is_some()
 }
 
 /// The resolution of one memory node for the probed slot.
