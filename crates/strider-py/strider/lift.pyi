@@ -220,7 +220,7 @@ class Lifter:
         and supplies a default `cc`.
 
         An empty `unresolved` is not a complete answer: see `AnalyzeResult`
-        for the five channels, and `Cfg.is_complete` to test them all.
+        for the six channels, and `Cfg.is_complete` to test them all.
 
         Runs the fixed-point loop with the GIL released, so other Python
         threads keep running. One consequence: a DAEMON thread sitting inside
@@ -289,8 +289,8 @@ class Lifter:
         `depth` is the neighborhood radius, used only when `whole=False`.
 
         Opens on the WHOLE graph: a neighborhood view hides nodes without
-        saying so. `whole=False` opens on the neighborhood around a node you
-        pick instead (inputs and outputs out to `depth` hops), which is what
+        saying so. `whole=False` opens on the neighborhood around the entry
+        instead (inputs and outputs out to `depth` hops), which is what
         scales to large functions; the toolbar's `whole` toggle switches
         between them either way. The neighborhood knobs open uncapped and are
         set from the page, where 0 means no limit on each.
