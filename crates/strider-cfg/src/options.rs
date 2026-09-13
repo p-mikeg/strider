@@ -69,6 +69,25 @@ mod tests {
     }
 
     #[test]
+    fn default_knobs() {
+        let d = CfgOptions::default();
+        assert_eq!(d.fn_max_size, None);
+        assert!(!d.allow_code_before_start_addr);
+        assert!(d.known_targets.is_empty());
+    }
+
+    #[test]
+    fn fn_max_size_and_allow_code_before_start_addr_are_independent() {
+        let both = CfgOptions {
+            fn_max_size: Some(0x1000),
+            allow_code_before_start_addr: true,
+            ..CfgOptions::default()
+        };
+        assert_eq!(both.fn_max_size, Some(0x1000));
+        assert!(both.allow_code_before_start_addr);
+    }
+
+    #[test]
     fn seated_falls_back_to_the_machine_start_key() {
         let opts = seated_over(&[(PcodeInsnAddr::at_machine_start(0x1000), 0x2000)]);
         let mid = PcodeInsnAddr {
