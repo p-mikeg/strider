@@ -206,6 +206,10 @@ impl<'a> Evaluator<'a> {
         match reaching {
             Reaching::Store(store) => Some(f.store_data(store)),
             Reaching::Absent => None,
+            // A map that ran out of budget answers `OffSegment` for everything
+            // past where it stopped, and the fallback below is uncapped.  Defer
+            // the site rather than pay a chain walk per index.
+            Reaching::OffSegment if map.exhausted => None,
             Reaching::OffSegment => {
                 let hit = self
                     .off_segment
@@ -216,7 +220,8 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    /// Equal widths pass through; a load wider than the store gives `None`.
+    /// Equal widths pass through.  `None` for a load wider than the store, a
+    /// same-size type mismatch, and any non-integer pair.
     fn reshape(&self, v: u128, data_ty: ValueType, load_ty: ValueType) -> Option<u128> {
         if data_ty == load_ty {
             return Some(v);
@@ -269,9 +274,11 @@ struct Claim {
 
 /// Chain steps one [`SlotMap`] build may spend across its whole arm tree, and
 /// how deep the arms may nest: a join under a join multiplies the arms, and a
-/// loop's back-edge arm re-enters the token it came from.  Exhausting either
-/// leaves that arm incomplete, which falls its probes back to a real walk.
-const SLOT_MAP_BUDGET: u32 = 4096;
+/// loop's back-edge arm re-enters the token it came from.  Exhausting the step
+/// budget marks the map [`SlotMap::exhausted`] and defers the site; exhausting
+/// the depth leaves that arm incomplete, which falls its probes back to a real
+/// walk.
+pub(crate) const SLOT_MAP_BUDGET: u32 = 4096;
 const MAX_JOIN_DEPTH: u32 = 8;
 
 /// Which store an SP-relative probe at one memory token reaches, for every
@@ -296,6 +303,10 @@ struct SlotMap {
     complete: bool,
     /// Per-arm maps of the `MemPhi` the segment ended at, empty otherwise.
     arms: Vec<SlotMap>,
+    /// The build ran out of [`SLOT_MAP_BUDGET`], so the map stops short of a
+    /// chain it cannot summarize.  Every unmapped probe would fall back to an
+    /// uncapped walk, once per index, so the site defers instead.
+    exhausted: bool,
 }
 
 enum Reaching {
@@ -331,8 +342,10 @@ impl SlotMap {
         let mut rank = 0u32;
         let mut complete = false;
         let mut arms: Vec<SlotMap> = Vec::new();
+        let mut exhausted = false;
         while let Some(v) = cur {
             let Some(left) = budget.checked_sub(1) else {
+                exhausted = true;
                 break;
             };
             *budget = left;
@@ -399,10 +412,12 @@ impl SlotMap {
             }
             cur = function.memory_input_of(node);
         }
+        exhausted |= arms.iter().any(|arm| arm.exhausted);
         Self {
             claims,
             complete,
             arms,
+            exhausted,
         }
     }
 
