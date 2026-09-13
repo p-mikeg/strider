@@ -1260,3 +1260,44 @@ fn repeated_pipeline_runs_leave_the_collected_tail_alone() -> Result<()> {
     }
     Ok(())
 }
+
+/// A frame at the top of an `I128` stack pointer's signed range, with the
+/// first probe (`first_slot`) or the one after a collected arg past `i128::MAX`.
+fn collect_at_the_offset_carrier_top(first_slot: i128, frame: i128) -> Result<usize> {
+    let sp = rsleigh::Vn {
+        addr_off: 0x100,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 16,
+    };
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(first_slot, 4))
+        .build_fn_single_region()?;
+    let sp0 = b.read_variable(&sp)?;
+    let top = b.build_int_const(frame as u128, ValueType::I128)?;
+    let sp1 = b.build_int_binary_operation(sp0, top, IntBinaryOp::Add, ValueType::I128)?;
+    b.write_variable(&sp, sp1)?;
+    let arg = b.build_int_const(7u64, ValueType::I32)?;
+    b.build_store(sp1, arg, rsleigh::VnSpace::RAM)?;
+    let target = b.build_int_const(0x1000u64, ValueType::I128)?;
+    b.build_call_cc(target, None)?;
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(CallStackArgCollect);
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    Ok(fg.node_inputs(find_call(fg.graph())?).len())
+}
+
+#[test]
+fn a_probe_past_the_offset_carrier_collects_nothing() -> Result<()> {
+    assert_eq!(collect_at_the_offset_carrier_top(4, i128::MAX)?, 4);
+    Ok(())
+}
+
+#[test]
+fn the_slot_after_the_offset_carrier_ends_collection() -> Result<()> {
+    assert_eq!(collect_at_the_offset_carrier_top(0, i128::MAX - 3)?, 5);
+    Ok(())
+}
