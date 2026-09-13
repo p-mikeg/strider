@@ -97,63 +97,37 @@ where
 
     /// Lift, optimise, and resolve indirect branches at `entry`.
     ///
-    /// Resolution is a fixed-point loop: each iteration classifies indirect
-    /// branches against the optimised IR and folds resolved targets into
-    /// `known_targets` (keys are only added, but a re-classified site's target
-    /// set is overwritten, and may narrow), then re-lifts. It converges when
-    /// the induced edge set stops changing. A site NARROWS when its address
-    /// projection stops being a superset of the previous round's, or when a
-    /// target's proved ISA mode flips; a mode-less target taking a proved mode
-    /// at an unchanged address set is growth.
-    /// `MAX_RESOLUTION_ITERATIONS` caps the loop and, since one iteration
-    /// seats one level of discovery, chain depth. A site that narrows twice has
-    /// an answer that depends on what the previous round seated, so no member
-    /// of the cycle is trustworthy: it is abandoned and reported.
+    /// Resolution is a fixed-point re-lift loop: each round classifies indirect
+    /// branches against the optimised IR, folds the targets into
+    /// `known_targets` and re-lifts, until the induced edge set stops changing.
+    /// `MAX_RESOLUTION_ITERATIONS` caps the rounds and so the discovery depth.
+    /// A site that narrows twice has an unstable answer: it is abandoned and
+    /// reported.
     ///
-    /// Unresolvable branches are a RESULT, not an error: they come back in
-    /// [`AnalyzeResult::unresolved_indirect_branches`] with their
-    /// placeholder nodes still in the function. So does a site whose fold
-    /// could not seat every successor a round proved: it is seated on the arms
-    /// it could take, and reported rather than passed off as complete. So does
-    /// a site whose answer never settles (resolving it is abandoned rather than
-    /// failing the function), and one naming a target that will not decode,
-    /// which a misclassified table bound produces.
+    /// Unresolvable branches are a result, not an error: they come back in
+    /// [`AnalyzeResult::unresolved_indirect_branches`] with their placeholder
+    /// nodes still in the function. So does an abandoned site, one seated on
+    /// only the arms of a proved answer its fold could take, and one naming a
+    /// target that will not decode. A site the CFG consumed as a `Return` or
+    /// `TailCall` leaves no placeholder and is named in
+    /// [`AnalyzeResult::unverified_seeded_sites`], and in both if it grew before
+    /// narrowing to `LinkRegister`. Only [`AnalyzeResult::is_complete`], which
+    /// reads all five channels, answers "may this be incomplete?".
     ///
-    /// That is not the only incompleteness channel. A site the CFG CONSUMED
-    /// (a `LinkRegister` answer seated as a `Return`, a single out-of-function
-    /// target seated as a `TailCall`) leaves no placeholder and no anchor, so
-    /// the anchor-keyed half of `unresolved_indirect_branches` cannot see it;
-    /// it is named in [`AnalyzeResult::unverified_seeded_sites`] instead. The
-    /// address-keyed half still reaches it: a site that grew and then narrowed
-    /// to `LinkRegister` is reported through both. A CFG-level loss
-    /// no indirect site owns comes back in
-    /// [`AnalyzeResult::isa_mode_conflicts`],
-    /// [`AnalyzeResult::interior_branch_targets`] or
-    /// [`AnalyzeResult::unmapped_branch_targets`]. A caller asking "may this
-    /// answer be incomplete?" has to read all five.
+    /// `lift_opts.cfg.known_targets` is re-unioned into the working set every
+    /// round and never mutated; a seed at an abandoned site is dropped from the
+    /// working set. A seed suppresses the unresolved report of an unclassifiable
+    /// seated `Switch` at its address only while the settled answer names
+    /// nothing the seed did not; it never suppresses what the classifier
+    /// derives. `lift_opts.compact` applies once, after the loop.
     ///
-    /// `lift_opts.cfg.known_targets` seeds the loop by plain address union
-    /// every round, and the caller's own map is never mutated. The WORKING set
-    /// it feeds is not monotone: a site whose answer narrows twice, and one
-    /// naming a target the CFG could not decode, are dropped from it. The CFG
-    /// can lose ground for a second reason: seating changes what the
-    /// classifier reads, so a wrong seed can stop the selector deriving and
-    /// take the site's real arms with it, which is what
-    /// `unverified_seeded_sites` reports. A seed asserts the site is complete,
-    /// which suppresses the unresolved report of an unclassifiable seated
-    /// `Switch` at that address, but only while the settled answer holds
-    /// nothing the seed did not name; it never suppresses what the classifier
-    /// derives.
-    /// `lift_opts.compact` applies once at finalize, after the loop.
-    ///
-    /// `pipeline` picks the optimisations ([`strider_opt::default_pipeline`]
-    /// when `None`); the [`strider_opt::IndirectBranchClassify`] post-pass is
-    /// appended unless the pipeline already runs it.
+    /// `pipeline` defaults to [`strider_opt::default_pipeline`];
+    /// [`strider_opt::IndirectBranchClassify`] is appended unless it already
+    /// runs.
     ///
     /// # Errors
     ///
-    /// Genuine lift / cfg / opt / validation failures only. Never an
-    /// indirect branch: every site the loop cannot settle is reported.
+    /// Lift / cfg / opt / validation failures only, never an indirect branch.
     pub fn analyze(
         &mut self,
         entry: u64,
@@ -461,7 +435,8 @@ pub struct AnalyzeResult {
     pub function: strider_ir::Function,
     /// Sorted and deduplicated. Empty means fully resolved, but not that the
     /// answer is complete: a site the CFG consumed as a `Return` or `TailCall`
-    /// can only be reported through `unverified_seeded_sites`.
+    /// leaves no placeholder and is reported through `unverified_seeded_sites`,
+    /// and here as well when its answer narrowed to get there.
     pub unresolved_indirect_branches: Vec<PcodeInsnAddr>,
     /// Addresses ANY round's cfg reached carrying two different ISA modes.
     ///
@@ -567,7 +542,9 @@ struct Progress {
     /// Some address's successor set differs from the previous round's: the
     /// loop's progress signal.
     changed: bool,
-    /// Addresses whose successor set strictly GREW.
+    /// Addresses whose successor set changed without losing ground, which
+    /// includes a target taking a proved mode at an unchanged address set
+    /// ([`narrows`]).
     grew: Vec<PcodeInsnAddr>,
     /// Addresses that LOST a successor, so the signal is not monotone there.
     narrowed: Vec<PcodeInsnAddr>,
