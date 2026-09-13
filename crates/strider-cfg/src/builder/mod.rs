@@ -36,11 +36,29 @@ pub(super) struct WorkItem {
     /// direct edge, else the function mode carrying the resolved branch's
     /// ISA-mode bit. Pinned before decode, undoing a forward-hold clobber.
     pub(super) carried: FlowContext,
-    /// The indirect-branch site this target was seated from, `None` for a
-    /// direct edge. A direct edge that will not decode is a real error; a
-    /// seeded one may be a misclassified jump-table entry, so it is dropped and
-    /// reported against its own site instead.
-    pub(super) seeded_by: Option<PcodeInsnAddr>,
+    /// The seeded arm this target descends from, `None` when the entry reaches
+    /// it through direct edges alone. Such a target that will not decode is a
+    /// real error; one under an arm may be the tail of a misclassified
+    /// jump-table entry, so the arm is dropped and reported instead.
+    pub(super) seeded_by: Option<ArmSeed>,
+}
+
+/// A seeded `Switch` arm, carried down every edge decoded off it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ArmSeed {
+    /// The indirect branch the arm was seated from.
+    pub(super) site: PcodeInsnAddr,
+    /// The region the site sealed as a `Switch`.
+    pub(super) switch: Option<NodeIndex>,
+    pub(super) arm: PcodeInsnAddr,
+}
+
+impl ArmSeed {
+    /// Whether the item at `addr` off `parent` is the arm itself rather than
+    /// code decoded off it.
+    fn is_arm(&self, parent: Option<NodeIndex>, addr: PcodeInsnAddr) -> bool {
+        self.switch == parent && self.arm == addr
+    }
 }
 
 /// Incrementally constructs a [`Cfg`] from a binary entry point.
@@ -112,11 +130,14 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// The pspec default of each `noflow` var that changes a decode; see
     /// [`Self::with_transient_defaults`].
     pub(super) transient_defaults: &'a [(&'static str, u32)],
-    /// Seeded targets whose region would not decode, each with the region that
-    /// seeded it; see [`Cfg::undecodable_seeded_targets`].  Keyed on the SITE,
-    /// not the address alone: two explorations of one address decode in
-    /// different contexts by construction, so a failure at one site says
-    /// nothing about the same address reached from another.
+    /// The seeded arm the region under construction descends from, which every
+    /// edge it enqueues inherits.
+    pub(super) descent: Option<ArmSeed>,
+    /// Seeded arms that, or whose code, would not decode, each with the
+    /// `Switch` region that seated it; see [`Cfg::undecodable_seeded_targets`].
+    /// Keyed on the SITE, not the address alone: two explorations of one
+    /// address decode in different contexts by construction, so a failure at
+    /// one site says nothing about the same address reached from another.
     pub(super) undecodable_seeded: Vec<(Option<NodeIndex>, crate::UndecodableTarget)>,
     /// The ISA mode each region was decoded in.  Read by the conflict checks
     /// in [`Self::explore`] and `RegionBuilder::note_isa_mode_clash` (the
@@ -188,6 +209,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             flow_vars: &NO_FLOW_VARS,
             function_mode: FlowContext::default(),
             transient_defaults: &[],
+            descent: None,
         }
     }
 
@@ -254,12 +276,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// Enqueue `addr` as a *direct* successor of the region at `source_addr`
     /// (branch or fall-through), capturing the context Sleigh flowed to it.
     ///
-    /// Never seeded: a direct edge is written in the instruction stream, so an
-    /// address it names is code and a decode failure there is a real error.
-    /// The taint belongs only to [`Self::enqueue_resolved`]'s targets, which
-    /// the classifier may have over-approximated. Propagating it down direct
-    /// edges instead swallows genuine failures and leaves the region that lost
-    /// its successor with no terminator.
+    /// The item inherits the region's [`Self::descent`]: an address a direct
+    /// edge names is code only when that region is, and a region decoded off a
+    /// seeded arm is only as certain as the arm.
     pub(super) fn enqueue(
         &mut self,
         parent: Option<NodeIndex>,
@@ -281,7 +300,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             parent,
             addr,
             carried,
-            seeded_by: None,
+            seeded_by: self.descent,
         });
     }
 
@@ -308,7 +327,11 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             parent,
             addr,
             carried,
-            seeded_by: Some(branch_site),
+            seeded_by: Some(ArmSeed {
+                site: branch_site,
+                switch: parent,
+                arm: addr,
+            }),
         });
     }
 
@@ -593,7 +616,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         parent_region: Option<NodeIndex>,
         addr: PcodeInsnAddr,
         carried: FlowContext,
-        seeded_by: Option<PcodeInsnAddr>,
+        seeded_by: Option<ArmSeed>,
     ) -> Result<()> {
         if let Some((region_id, region)) = self.find_region_containing_addr(addr) {
             // An address an existing region owns is reused and this edge's
@@ -616,7 +639,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             }
             let parent_region_id = parent_region
                 .ok_or_else(|| anyhow!("non-entry work-queue item has no parent edge"))?;
-            if mode_clash && seeded_by.is_some() {
+            if mode_clash && seeded_by.is_some_and(|s| s.is_arm(parent_region, addr)) {
                 // The bytes decoded in another mode, so this arm names a stream
                 // that is not there. Wiring the edge anyway would leave the seat
                 // disagreeing with `isa_mode_conflicts` inside one build.
@@ -649,8 +672,43 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 .pin_at(self.sleigh, addr.machine_addr.addr, &carried)?;
         }
         let isa_mode = self.isa_mode_of(&carried);
-        RegionBuilder::new(self, addr, parent_region, isa_mode).build()?;
-        Ok(())
+        self.descent = seeded_by;
+        let built = RegionBuilder::new(self, addr, parent_region, isa_mode).build();
+        self.descent = None;
+        built
+    }
+
+    /// Refuses every `Switch` arm from which one of `regions` is reachable.
+    ///
+    /// Each of `regions` was decoded off a seeded arm and lost a successor
+    /// that would not decode. Every direct edge is explored before any arm, so
+    /// the entry reaches such a region only through arms, and each of those
+    /// arms leads into the same undecodable bytes.
+    fn refuse_arms_reaching(&mut self, regions: impl Iterator<Item = NodeIndex>) {
+        let reversed = petgraph::visit::Reversed(&self.region_graph);
+        let mut dfs = petgraph::visit::Dfs::empty(reversed);
+        for region in regions {
+            dfs.move_to(region);
+            while dfs.next(reversed).is_some() {}
+        }
+        for switch in self.region_graph.node_indices() {
+            let crate::RegionTerminator::Switch { addr: site, .. } =
+                self.region_graph[switch].terminator
+            else {
+                continue;
+            };
+            for arm in self.region_graph.neighbors(switch) {
+                if dfs.discovered.contains(arm.index()) {
+                    self.undecodable_seeded.push((
+                        Some(switch),
+                        crate::UndecodableTarget {
+                            site,
+                            target: self.region_graph[arm].start_addr,
+                        },
+                    ));
+                }
+            }
+        }
     }
 
     /// Removes the `Switch` arm behind each target this build refused: one that
@@ -752,6 +810,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         }
         let entry = self.start_pcode_addr();
         self.enqueue(None, entry, entry.machine_addr.addr);
+        // Regions decoded off an arm whose successor would not decode.
+        let mut lost_successor: Vec<(NodeIndex, anyhow::Error)> = Vec::new();
         while let Some(WorkItem {
             parent: parent_region,
             addr: address,
@@ -759,42 +819,45 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             seeded_by,
         }) = self.next_work_item()
         {
-            match (
-                self.explore(parent_region, address, carried, seeded_by),
-                seeded_by,
-            ) {
-                (Ok(()), _) => {}
-                // A seeded target that will not decode is a misclassification,
-                // not a broken function: drop the edge and report the address
-                // against the site that named it, so the caller freezes that
-                // site alone.
-                (Err(_), Some(site)) => self.undecodable_seeded.push((
-                    parent_region,
-                    crate::UndecodableTarget {
-                        site,
-                        target: address,
-                    },
-                )),
-                (Err(e), None) => {
-                    // A direct branch out of the mapped image (a firmware window,
-                    // a partially-mapped file, an unrelocated `jmp`) names bytes
-                    // nobody can supply. The function is not broken by it, so the
-                    // edge leaves through a `TailCall` stub and the address is
-                    // reported; every region that did decode survives.
-                    //
-                    // The ENTRY has no parent to hang the stub off, and a
-                    // function whose first byte is unmapped has nothing to
-                    // analyse, so it stays an `Err`.
-                    let Some(parent) = parent_region.filter(|_| is_unmapped_start(&e, address))
-                    else {
-                        return Err(e);
-                    };
-                    let stub = self.tail_call_stub(address)?;
-                    self.region_graph.add_edge(parent, stub, ());
-                    self.unmapped_branch_targets.push(address);
-                }
+            let Err(e) = self.explore(parent_region, address, carried, seeded_by) else {
+                continue;
+            };
+            let is_arm = seeded_by.is_some_and(|s| s.is_arm(parent_region, address));
+            // A direct branch out of the mapped image (a firmware window, a
+            // partially-mapped file, an unrelocated `jmp`) names bytes nobody
+            // can supply. The function is not broken by it, so the edge leaves
+            // through a `TailCall` stub and the address is reported; every
+            // region that did decode survives.
+            //
+            // The ENTRY has no parent to hang the stub off, and a function
+            // whose first byte is unmapped has nothing to analyse, so it stays
+            // an `Err`.
+            if !is_arm
+                && let Some(parent) = parent_region.filter(|_| is_unmapped_start(&e, address))
+            {
+                let stub = self.tail_call_stub(address)?;
+                self.region_graph.add_edge(parent, stub, ());
+                self.unmapped_branch_targets.push(address);
+                continue;
+            }
+            // Under a seeded arm it is a misclassification, not a broken
+            // function: drop the arm and report it against the site that named
+            // it, so the caller freezes that site alone.
+            let Some(seed) = seeded_by else {
+                return Err(e);
+            };
+            self.undecodable_seeded.push((
+                seed.switch,
+                crate::UndecodableTarget {
+                    site: seed.site,
+                    target: seed.arm,
+                },
+            ));
+            if let Some(parent) = parent_region.filter(|_| !is_arm) {
+                lost_successor.push((parent, e));
             }
         }
+        self.refuse_arms_reaching(lost_successor.iter().map(|(region, _)| *region));
         self.drop_refused_switch_arms();
         let start_addr = self.start_pcode_addr();
         let (starting_region, _) = self.find_region_containing_addr(start_addr).ok_or_else(
@@ -806,6 +869,16 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             },
         )?;
         self.remove_unreachable_regions(starting_region);
+        // Defence: every path to such a region runs through a refused arm.
+        if let Some((_, e)) = lost_successor
+            .into_iter()
+            .find(|(region, _)| self.region_graph.contains_node(*region))
+        {
+            return Err(e);
+        }
+        let mut reported = rustc_hash::FxHashSet::default();
+        self.undecodable_seeded
+            .retain(|&(_, bad)| reported.insert(bad));
         self.interior_branch_targets.sort_unstable();
         self.interior_branch_targets.dedup();
 
