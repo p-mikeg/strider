@@ -834,6 +834,7 @@ impl PyMemReader {
     ///
     /// An exception here fails the whole lift, chained as the `StriderError`'s
     /// `__cause__`.  `ReadOnlyMemory.read` is the opposite: see its docstring.
+    // The raising base reads no parameter; the names are the subclass keywords.
     #[allow(unused_variables)]
     fn read<'py>(
         &self,
@@ -981,6 +982,7 @@ impl PyReadOnlyMemory {
     /// analysis continues, indistinguishable from `None`.  Unlike
     /// `MemReader.read`, whose exception fails the lift.  `KeyboardInterrupt`
     /// and `SystemExit` are the exceptions that still stop the run.
+    // The raising base reads no parameter; the names are the subclass keywords.
     #[allow(unused_variables)]
     fn read(&self, addr: u64, size: usize) -> PyResult<Option<Vec<u8>>> {
         Err(pyo3::exceptions::PyNotImplementedError::new_err(
