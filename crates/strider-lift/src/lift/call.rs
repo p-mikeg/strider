@@ -141,10 +141,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let result = ret_vals.first().copied();
         if !terminate {
             for (vn, v) in core::iter::zip(&clobber_vns, clobbers) {
-                self.builder.write_variable(vn, *v)?;
+                self.write_variable(vn, *v)?;
             }
             if let (Some(c), Some(v)) = (result_vn, result) {
-                self.builder.write_variable(&c, v)?;
+                self.write_variable(&c, v)?;
             }
         }
         Ok(result)

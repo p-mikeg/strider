@@ -450,6 +450,10 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         let dom = dominance::DomInfo::compute(cfg);
         let def_sites = driver.collect_def_sites()?;
         let placement = dom.iterated_frontier(&def_sites);
+        #[cfg(debug_assertions)]
+        {
+            driver.def_sites = def_sites;
+        }
 
         let region_map = driver.build_region_map(&placement)?;
 
@@ -608,6 +612,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 self.builder.inherit_variables(ir_region, idom_ir);
             }
             self.builder.set_region(ir_region);
+            #[cfg(debug_assertions)]
+            {
+                self.current_cfg_region = Some(cfg_rid);
+            }
             let region = cfg
                 .region_graph()
                 .node_weight(cfg_rid)
