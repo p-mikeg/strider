@@ -7,8 +7,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 /// empty frontier.
 pub type Frontiers<N> = FxHashMap<N, Vec<N>>;
 
-/// The immediate-dominator relation as an INPUT: this crate consumes it and
-/// never computes it. `strider-lift` supplies petgraph's `simple_fast`.
+/// The immediate-dominator relation as an INPUT to the frontier and preorder
+/// algorithms below; [`dominators`] computes one.
 pub trait DomTree {
     type Node: Copy + Eq + Hash;
 
@@ -164,6 +164,126 @@ where
         }
     }
     placement
+}
+
+/// Immediate dominators of the vertices reachable from a root.
+pub struct Dominators<N> {
+    /// Reachable vertices in depth-first preorder, the root first.
+    vertices: Vec<N>,
+    /// Each vertex's position in `vertices`.
+    number: FxHashMap<N, u32>,
+    /// By position; the root's is itself.
+    idom: Vec<u32>,
+}
+
+impl<N: Copy + Eq + Hash> Dominators<N> {
+    /// Every vertex reachable from the root, the root first.
+    pub fn vertices(&self) -> &[N] {
+        &self.vertices
+    }
+
+    /// `None` for the root and for any vertex it does not reach.
+    pub fn immediate_dominator(&self, n: N) -> Option<N> {
+        let &at = self.number.get(&n)?;
+        (at != 0).then(|| self.vertices[self.idom[at as usize] as usize])
+    }
+}
+
+const UNLINKED: u32 = u32::MAX;
+
+/// Lengauer-Tarjan with path compression, O(m log n) over the `m` edges
+/// `successors` yields from the vertices `root` reaches.
+pub fn dominators<N, I>(root: N, mut successors: impl FnMut(N) -> I) -> Dominators<N>
+where
+    N: Copy + Eq + Hash,
+    I: IntoIterator<Item = N>,
+{
+    let mut vertices = vec![root];
+    let mut number: FxHashMap<N, u32> = FxHashMap::default();
+    number.insert(root, 0);
+    let mut parent = vec![0u32];
+    let mut preds: Vec<Vec<u32>> = vec![Vec::new()];
+    // Iterative DFS: each frame holds a vertex's successors and the next one
+    // to try, so `parent` is a true depth-first spanning tree.
+    let mut stack: Vec<(u32, Vec<N>, usize)> = vec![(0, successors(root).into_iter().collect(), 0)];
+    while let Some((at, succs, next)) = stack.last_mut() {
+        let Some(&succ) = succs.get(*next) else {
+            stack.pop();
+            continue;
+        };
+        *next += 1;
+        let at = *at;
+        if let Some(&seen) = number.get(&succ) {
+            preds[seen as usize].push(at);
+            continue;
+        }
+        let fresh = u32::try_from(vertices.len()).expect("vertex count fits u32");
+        number.insert(succ, fresh);
+        vertices.push(succ);
+        parent.push(at);
+        preds.push(vec![at]);
+        stack.push((fresh, successors(succ).into_iter().collect(), 0));
+    }
+
+    let n = vertices.len();
+    let mut semi: Vec<u32> = (0..n as u32).collect();
+    let mut label: Vec<u32> = (0..n as u32).collect();
+    let mut ancestor = vec![UNLINKED; n];
+    let mut idom = vec![0u32; n];
+    let mut bucket: Vec<Vec<u32>> = vec![Vec::new(); n];
+    let mut path: Vec<u32> = Vec::new();
+
+    for w in (1..n).rev() {
+        for &v in &preds[w] {
+            let u = eval(v, &mut ancestor, &mut label, &semi, &mut path);
+            semi[w] = semi[w].min(semi[u as usize]);
+        }
+        bucket[semi[w] as usize].push(w as u32);
+        let p = parent[w];
+        ancestor[w] = p;
+        for v in std::mem::take(&mut bucket[p as usize]) {
+            let u = eval(v, &mut ancestor, &mut label, &semi, &mut path);
+            idom[v as usize] = if semi[u as usize] < semi[v as usize] {
+                u
+            } else {
+                p
+            };
+        }
+    }
+    for w in 1..n {
+        if idom[w] != semi[w] {
+            idom[w] = idom[idom[w] as usize];
+        }
+    }
+    Dominators {
+        vertices,
+        number,
+        idom,
+    }
+}
+
+/// The vertex of least semidominator on `v`'s linked ancestor path,
+/// compressing that path.
+fn eval(v: u32, ancestor: &mut [u32], label: &mut [u32], semi: &[u32], path: &mut Vec<u32>) -> u32 {
+    if ancestor[v as usize] == UNLINKED {
+        return v;
+    }
+    // Iterative compress: the path runs up to the vertex whose ancestor is the
+    // forest root.
+    path.clear();
+    let mut at = v;
+    while ancestor[ancestor[at as usize] as usize] != UNLINKED {
+        path.push(at);
+        at = ancestor[at as usize];
+    }
+    for &x in path.iter().rev() {
+        let up = ancestor[x as usize] as usize;
+        if semi[label[up] as usize] < semi[label[x as usize] as usize] {
+            label[x as usize] = label[up];
+        }
+        ancestor[x as usize] = ancestor[up];
+    }
+    label[v as usize]
 }
 
 #[cfg(test)]
