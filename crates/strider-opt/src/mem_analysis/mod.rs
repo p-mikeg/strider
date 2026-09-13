@@ -15,7 +15,6 @@ use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType, low_bits_mask_u128}
 use strider_ir::{Function, IRViewer, IntBinaryOp, MemDecomp};
 use strider_target::Endianness;
 
-use crate::OptOptions;
 use AddrClass::*;
 
 mod frame_escape;
@@ -815,14 +814,9 @@ impl MemWalker<'_> {
                     self.options.calls_block
                 }
             }
-            // No opaque memory producer can be proven disjoint.  This is where
-            // `CallOther` lands: only a user-op whose ABI row declares
-            // `clobbers_memory` is spliced into the chain at all
-            // (`build_call_other`'s `advance_memory`), and no convention
-            // describes a user-op, so `get_cc` on one answers with the analysed
-            // function's own.  An opaque user-op may also write the stack
-            // without taking a frame address, which `calls_block` speaks for
-            // only under a conforming callee's frame discipline.
+            // A `CallOther` on the chain is a user-op whose ABI row declares
+            // `clobbers_memory`, and it may write the stack without taking a
+            // frame address, which no relaxation above speaks for.
             _ => true,
         }
     }
@@ -1509,14 +1503,13 @@ impl MemOptions {
 
     /// The incoming-stack-argument probe: the knobs scoped to argument
     /// detection, and no private-frame relaxation.
-    pub(crate) fn incoming_args(stack_global_disjoint: bool, options: &OptOptions) -> Self {
+    pub(crate) fn incoming_args(assumptions: &crate::AssumptionOptions) -> Self {
         Self {
-            calls_block: !options.assumptions.assume_incoming_args_survive_calls,
-            distinct_sp_bases_disjoint: options.assumptions.distinct_sp_bases_disjoint,
-            callee_preserves_stack_args: options.assumptions.callee_preserves_stack_args,
+            calls_block: !assumptions.assume_incoming_args_survive_calls,
+            distinct_sp_bases_disjoint: assumptions.distinct_sp_bases_disjoint,
             ..Self::call_blocking(
-                stack_global_disjoint,
-                &options.assumptions.noalias_allocators,
+                assumptions.stack_global_disjoint,
+                &assumptions.noalias_allocators,
             )
         }
     }
