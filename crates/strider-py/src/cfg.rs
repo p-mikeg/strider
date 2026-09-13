@@ -258,10 +258,10 @@ impl PyCfg {
             let mut grouped: HashMap<u64, Vec<(u64, String)>> = HashMap::new();
             for region in self.inner.regions() {
                 for ri in &region.insns {
-                    grouped
-                        .entry(ri.addr.machine_addr.addr)
-                        .or_default()
-                        .push((ri.addr.insn_index, ri.insn.to_string()));
+                    grouped.entry(ri.addr.machine_addr.addr).or_default().push((
+                        ri.addr.insn_index,
+                        strider_cfg::insn_plain_text(&ri.insn, self.inner.space_ids()).to_string(),
+                    ));
                 }
             }
             grouped
@@ -540,7 +540,10 @@ impl PyCfg {
                 let text = region
                     .insns
                     .iter()
-                    .map(|ri| ri.insn.ctx_fmt(sleigh, &regs).to_string())
+                    .map(|ri| {
+                        strider_cfg::insn_text(&ri.insn, self.inner.space_ids(), sleigh, &regs)
+                            .to_string()
+                    })
                     .collect::<Vec<_>>()
                     .join("\n");
                 out.insert(idx.index() as u32, text);

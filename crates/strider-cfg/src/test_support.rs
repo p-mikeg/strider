@@ -59,6 +59,7 @@ pub(crate) fn make_cfg(
         tail_call_seated: Vec::new(),
         function_isa_bit: None,
         flowing_isa_bits: std::collections::BTreeMap::new(),
+        space_ids: rsleigh::SpaceIds::default(),
     }
 }
 
