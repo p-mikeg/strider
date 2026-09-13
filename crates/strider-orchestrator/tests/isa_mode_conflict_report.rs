@@ -4,10 +4,11 @@
 //! classifier, so a later round rebuilt without that edge must not launder the
 //! report away.
 
-use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{CfgOptions, PcodeInsnAddr, ResolvedTarget, ResolvedTargets};
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+
+mod common;
 
 const BASE: u64 = 0x1000;
 /// Reached as ARM by one seeded arm and as Thumb by the other.
@@ -51,18 +52,6 @@ fn bytes() -> Vec<u8> {
 /// cfg no longer carries the clashing edge at all.
 #[test]
 fn a_conflict_one_round_raised_survives_a_later_round_that_does_not() {
-    let arch = strider_target::SleighArch::arm();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes(), BASE),
-    )
-    .expect("sleigh");
-    let regs = sleigh.regs().expect("regs");
-    let cc = strider_target::CallingConvention::arm_aapcs()
-        .build(&regs)
-        .expect("cc");
-
     let mut known = rustc_hash::FxHashMap::default();
     known.insert(
         PcodeInsnAddr::at_machine_start(0x1008),
@@ -79,7 +68,7 @@ fn a_conflict_one_round_raised_survives_a_later_round_that_does_not() {
         ..LiftOptions::default()
     };
 
-    let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::Arm, bytes(), BASE, None);
     let result = strider
         .analyze(BASE, &cc, &lift_opts, &OptOptions::default(), None)
         .expect("a mode clash is a result, not an error");
