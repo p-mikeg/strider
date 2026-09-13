@@ -167,6 +167,8 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
 
     /// One edge from an input's producer to `node`, materialising whatever
     /// producer-side helper it needs.
+    // The arguments are one render cursor; a struct for them would only be
+    // filled and read at this one call site.
     #[allow(clippy::too_many_arguments)]
     fn emit_input_edge(
         &self,

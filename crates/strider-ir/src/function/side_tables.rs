@@ -229,8 +229,8 @@ impl SideTables {
     }
 
     /// Drops every memoized decomposition, invalidating all [`MemoryId`]s.
-    /// The fixed-point loop calls it after every changing pass; a post-pass
-    /// that changes a `Call`'s inputs must call it itself.
+    /// A caller that rewires an address value's producers owes the call; the
+    /// fixed-point loop makes it after every changing pass.
     #[inline]
     pub fn clear_memory_slots(&self) {
         self.memory_offsets.borrow_mut().clear();

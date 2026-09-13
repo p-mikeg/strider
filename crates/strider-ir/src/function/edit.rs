@@ -100,8 +100,9 @@ impl<'g> EditFunction<'g> {
     /// ESCAPE HATCH: bypasses the cached live/roots bookkeeping.  Structural
     /// mutation through this handle leaves a later `postorder()` /
     /// `reverse_postorder()` / `roots` read STALE; call `resync_live_set`
-    /// before relying on one.  Payload-only edits (e.g. `node_kind_mut`) are
-    /// safe.
+    /// before relying on one.  Payload edits are safe only when the payload is
+    /// outside the dedup key; `NodeKind` is its first component, so rewriting a
+    /// cacheable node's kind needs `graph.rebuild_cache()` after.
     pub fn function_mut(&mut self) -> &mut Function {
         self.function
     }
@@ -325,6 +326,10 @@ impl<'g> EditFunction<'g> {
     /// Detach `node`'s inputs, evict it from the live set and `roots`, clear its
     /// flags.  `detach_node_inputs` also evicts the dedup-cache entry.
     ///
+    /// The outputs keep their `ValueId`s but the node is now structurally
+    /// invalid.  Attaching one to a new consumer marks the gutted producer live
+    /// again, and `validate` reports its arity.
+    ///
     /// Operand deadness is checked AFTER the detach, not per-edge before it.
     /// With the same value in two or more input slots (`Add(k, k)`), a per-edge
     /// pre-check sees all N uses on every edge and never fires the last-use
@@ -460,8 +465,10 @@ impl<'g> EditFunction<'g> {
         self.remove_node_inputs_batch(node, &indices);
     }
 
-    /// Redirect every use of `old` to `new`.  Does NO fingerprint work; use
-    /// [`Self::replace_value`] for that.  Returns `true` iff a use moved.
+    /// Redirect every use of `old` to `new`.  Does NO fingerprint work and no
+    /// orphan enqueue, so `old`'s producer stays in the cached live set at zero
+    /// uses until the next `resync_live_set`; use [`Self::replace_value`] for
+    /// both.  Returns `true` iff a use moved.
     ///
     /// # Errors
     /// Never; the `Result` keeps the edit-verb surface uniform.
