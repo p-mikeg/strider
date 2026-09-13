@@ -223,9 +223,9 @@ impl PyCallOtherAbi {
     }
 
     /// Equality on the footprint, memory effect, no-return flag and the arch a
-    /// `custom` froze its varnodes against: a preset and a `custom` spelling
-    /// the same thing compare equal, two `custom`s frozen on different arches
-    /// do not, since neither is usable where the other is.
+    /// `custom` froze its varnodes against.  A `custom` never equals a preset,
+    /// and two `custom`s frozen on different arches never equal each other,
+    /// since neither is usable where the other is.
     fn __eq__(&self, other: &Self) -> bool {
         self.source_arch == other.source_arch
             && self.is_noop() == other.is_noop()

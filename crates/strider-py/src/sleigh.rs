@@ -71,6 +71,7 @@ pub struct PyVnSpace {
 
 #[pymethods]
 impl PyVnSpace {
+    // Python class constants, hence the four `non_snake_case` allows.
     /// The RAM (main memory) address space.
     #[classattr]
     #[allow(non_snake_case)]
