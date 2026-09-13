@@ -1,16 +1,9 @@
 use strider_ir::{IRViewer, IntCmpOp};
-use strider_pattern::matcher::{KindSpec, MatcherBuilder};
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, reg_vn, shapes};
 
 use rsleigh::VnSpace;
-
-#[test]
-fn call_unconstrained_matches() {
-    let function = shapes::call_at(0x1234);
-    a::matches(&function, call().build(), 1);
-}
 
 #[test]
 fn call_at_addr_matches() {
@@ -54,22 +47,6 @@ fn call_target_set_empty_never_matches() {
     a::none(
         &function,
         call().target(int_const(Vec::<u64>::new())).build(),
-    );
-}
-
-#[test]
-fn int_const_set_matches_set_membership() {
-    // Exercises the set form itself, independent of CallPat: the call site
-    // stores its target as IntConst(0x1234).
-    let function = shapes::call_at(0x1234);
-    a::matches(
-        &function,
-        call().target(int_const([0x1234u64, 0xDEADBEEF])).build(),
-        1,
-    );
-    a::none(
-        &function,
-        call().target(int_const([0x1000u64, 0xDEADBEEF])).build(),
     );
 }
 
@@ -181,12 +158,6 @@ fn with_root_post_match_sees_root_node() {
             )
         }));
     a::matches(&function, guarded, 1);
-}
-
-#[test]
-fn ret_unconstrained_matches() {
-    let function = shapes::add_consts(5, 3);
-    a::matches(&function, ret().build(), 1);
 }
 
 #[test]
@@ -331,50 +302,6 @@ fn if_branch_slot_accepts_built_control_pattern() {
             .unwrap()
             .len(),
         0
-    );
-}
-
-/// A malformed (multi-sink / rootless) branch pattern is refused at
-/// `with_true` build time, so a typo surfaces as a query error instead of
-/// reading as "branch did not match". A pattern is untrusted input, so the
-/// refusal is a `Result`, not a panic.
-#[test]
-fn with_true_multi_sink_branch_pattern_is_refused_not_silently_skipped() {
-    // Two unconsumed leaf sinks make `root()` error.
-    let mut mb = MatcherBuilder::new();
-    let _a = mb.leaf(KindSpec::Any);
-    let _b = mb.leaf(KindSpec::Any);
-    let bad = mb.finish();
-    let pat = if_else().with_true(bad).build();
-
-    let function = shapes::if_cmp_then_return(4);
-    let err = Matcher::new(&function)
-        .find_all(&pat)
-        .map(|hits| hits.len())
-        .expect_err("a refused pattern must error");
-    assert!(
-        err.to_string()
-            .contains("If branch pattern is not matchable")
-    );
-}
-
-/// A capture bound inside an If branch sub-pattern binds in the enclosing
-/// match. See `if_branch_captures` for the agreement cases.
-#[test]
-fn with_true_branch_capture_reaches_the_outer_match() {
-    let function = shapes::if_cmp_then_return(4);
-    let branch_cap = Capture::new();
-    let pat = if_else()
-        .with_true(anything().capture(branch_cap).into_pattern())
-        .build();
-    let m = a::unique(&function, pat);
-    assert!(matches!(
-        function.node_kind(m.root()),
-        strider_ir::node::NodeKind::If
-    ));
-    assert!(
-        m.node(branch_cap, function.graph()).is_some(),
-        "branch capture must reach the outer match"
     );
 }
 

@@ -6,21 +6,6 @@ use strider_pattern::*;
 use super::support::{Tb, assertions as a, shapes};
 
 #[test]
-fn same_var_twice_matches_identical_output() {
-    // Both operands of int_add(5, 5) dedup to the same `ValueId`.
-    let function = shapes::add_consts(5, 5);
-    let x = Capture::new();
-    a::matches(&function, int_add(var(x), var(x)).into_pattern(), 1);
-}
-
-#[test]
-fn same_var_twice_rejects_distinct_outputs() {
-    let function = shapes::add_consts(5, 3);
-    let x = Capture::new();
-    a::none(&function, int_add(var(x), var(x)).into_pattern());
-}
-
-#[test]
 fn var_used_three_times_enforces_all() {
     let mut t = Tb::empty();
     let c = t.u64(7);

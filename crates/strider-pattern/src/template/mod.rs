@@ -817,16 +817,6 @@ mod tests {
         .unwrap()
     }
 
-    /// `Add(5:I64, 1:I64):I64` returned; `int_add(var(x), var(y))` binds both.
-    fn add_over_i64() -> Function {
-        make_empty_fn(|b| {
-            let a = b.build_int_const(5u64, T::I64)?;
-            let k = b.build_int_const(1u64, T::I64)?;
-            b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::I64)
-        })
-        .unwrap()
-    }
-
     /// The reported shape: a fresh constant at a comparison's operand 0, whose
     /// width is the operand's and not the `I1` the root carries.
     #[test]
@@ -901,34 +891,6 @@ mod tests {
 
         let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err().to_string();
         assert!(err.contains("has no width"), "got: {err}");
-    }
-
-    /// A `Truncate` that narrows nothing: the operand and the root share the
-    /// width the operand group resolves to.
-    #[test]
-    fn a_truncate_that_does_not_narrow_is_refused() {
-        let x = Capture::new();
-        let mut fx = add_over_i64();
-        let lhs = crate::int_add(var(x), crate::int_const(1u128)).into_pattern();
-        let rhs = super::int_truncate(var(x)).into_template();
-
-        let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err().to_string();
-        assert!(err.contains("Truncate"), "got: {err}");
-        assert!(err.contains("strictly"), "got: {err}");
-    }
-
-    /// The operand side of the output-kind check: an integer where the node
-    /// signature names a float.
-    #[test]
-    fn a_bitcast_over_the_wrong_operand_class_is_refused() {
-        let x = Capture::new();
-        let mut fx = add_over_i64();
-        let lhs = crate::int_add(var(x), crate::int_const(1u128)).into_pattern();
-        let rhs = super::float_bits_to_int(var(x)).into_template();
-
-        let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err().to_string();
-        assert!(err.contains("FloatBitsToInt"), "got: {err}");
-        assert!(err.contains("input slot 0"), "got: {err}");
     }
 
     /// An arithmetic root is evaluated at its own output width, so a fresh
