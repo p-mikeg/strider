@@ -49,6 +49,10 @@ fn reloc_addend(
     size_bytes: usize,
     endian_le: bool,
 ) -> i64 {
+    debug_assert!(
+        (1..=8).contains(&size_bytes),
+        "field width {size_bytes} is outside the sign-extend shift's range",
+    );
     if !reloc.has_implicit_addend() {
         return reloc.addend();
     }
@@ -493,7 +497,14 @@ impl PatchSink<'_> {
     ) -> Result<Vec<usize>> {
         let mut covering = std::mem::take(&mut self.scratch);
         covering.clear();
-        if (field_addr - site.addr) + size_bytes as u64 > site.avail {
+        // `field_addr` is `site.addr` plus a non-negative `mips_half_field_skew`
+        // and `size_bytes` is at most 8, so neither wraps; saturating anyway
+        // keeps a malformed pair on the empty-covering path.
+        if field_addr
+            .wrapping_sub(site.addr)
+            .saturating_add(size_bytes as u64)
+            > site.avail
+        {
             return Ok(covering);
         }
         self.sites += 1;
@@ -658,6 +669,11 @@ fn image_relative_reloc(
     // addend-only, which is the case handled here; the `Symbol`-target gate
     // bails out to the defined-symbol path in the main loop. MIPS defines no
     // separate IRELATIVE.
+    //
+    // Only an `SHT_RELA` MIPS table reaches this: the early return above takes
+    // every `SHT_REL` one, which is what all three MIPS fixtures and the o32 /
+    // n64 toolchains emit for `.rel.dyn`. An `SHT_REL` site needs no patch
+    // anyway, its field already holding `A`.
     if let Some((r_sym, mips_type, mips_type2)) = mips_reloc_parts(reloc, arch, endian_le)
         && mips_type == object::elf::R_MIPS_REL32
         && r_sym == 0
