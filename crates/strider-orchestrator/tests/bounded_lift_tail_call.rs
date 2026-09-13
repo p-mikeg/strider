@@ -16,8 +16,8 @@ mod common;
 
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
+use strider_ir::IRWalker;
 use strider_ir::node::NodeKind;
-use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::IrWalkerEx;
 use strider_orchestrator::opt::OptOptions;
 use strider_orchestrator::{LiftOptions, Strider};
@@ -67,51 +67,14 @@ fn bounded_lift_handles_tail_call_terminator() {
     let function = run_at(make_sleigh(), BASE, &lift_opts)
         .expect("orchestrator must lift TailCall as Call+Return");
 
-    let mut had_call_with_target = false;
-    let mut had_return = false;
-    for nid in function.walk() {
-        match function.node_kind(nid) {
-            NodeKind::Call { .. } => {
-                // Call inputs: [ctrl, mem, target, sp, args...].  Slot 2 is the target.
-                let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
-                if let Some(&target_value) = inputs.get(2)
-                    && function.int_const_u128(target_value) == Some(u128::from(TAIL_TARGET))
-                {
-                    had_call_with_target = true;
-                }
-            }
-            NodeKind::Return => had_return = true,
-            _ => {}
-        }
-    }
     assert!(
-        had_call_with_target,
+        common::find_call_to(&function, TAIL_TARGET).is_some(),
         "expected a Call(IntConst({TAIL_TARGET:#x})) node from the lifted tail call"
     );
     assert!(
-        had_return,
+        function.has_kind(|k| matches!(k, NodeKind::Return)),
         "expected a Return node downstream of the tail-call Call"
     );
-}
-
-fn graph_has_tail_call_to(function: &strider_ir::Function, target: u64) -> bool {
-    let mut had_call = false;
-    let mut had_return = false;
-    for nid in function.walk() {
-        match function.node_kind(nid) {
-            NodeKind::Call { .. } => {
-                let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
-                if let Some(&target_value) = inputs.get(2)
-                    && function.int_const_u128(target_value) == Some(u128::from(target))
-                {
-                    had_call = true;
-                }
-            }
-            NodeKind::Return => had_return = true,
-            _ => {}
-        }
-    }
-    had_call && had_return
 }
 
 /// Synthetic vmspace_exitfree shape: a small function ending with a backward
@@ -151,7 +114,8 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
     );
 
     assert!(
-        graph_has_tail_call_to(&function, TAIL_TARGET),
+        common::find_call_to(&function, TAIL_TARGET).is_some()
+            && function.has_kind(|k| matches!(k, NodeKind::Return)),
         "expected Call(IntConst({TAIL_TARGET:#x})) + Return from the backward-jmp tail call"
     );
     // A 10-byte function tail-calling out stays tight.
@@ -209,21 +173,6 @@ fn bounded_lift_fall_through_past_fn_max_size_is_function_boundary_error() {
     );
 }
 
-/// Call input slots per `node_signature`: [control, memory, target, sp,
-/// args...]; the target sits at slot 2.
-fn find_call_to(function: &strider_ir::Function, target: u64) -> Option<strider_ir::node::NodeId> {
-    function.walk().find(|&nid| {
-        matches!(function.node_kind(nid), NodeKind::Call { .. })
-            && function
-                .node_inputs(nid)
-                .into_iter()
-                .nth(2)
-                .is_some_and(|target_value| {
-                    function.int_const_u128(target_value) == Some(u128::from(target))
-                })
-    })
-}
-
 /// Conditional branch whose taken AND fall-through targets both lie past
 /// `start + fn_max_size`. The conditional must SURVIVE: the cfg builder
 /// lowers each OOB arm as a synthetic tail-call stub, so the IR carries
@@ -259,9 +208,9 @@ fn bounded_lift_keeps_cond_branch_with_both_targets_oob_as_two_tail_call_arms() 
         function.has_kind(|k| matches!(k, NodeKind::If)),
         "the conditional must survive as an If node"
     );
-    let taken_call =
-        find_call_to(&function, TAKEN_TARGET).expect("taken arm must carry Call(IntConst(0x1080))");
-    let fallthrough_call = find_call_to(&function, FALLTHROUGH_TARGET)
+    let taken_call = common::find_call_to(&function, TAKEN_TARGET)
+        .expect("taken arm must carry Call(IntConst(0x1080))");
+    let fallthrough_call = common::find_call_to(&function, FALLTHROUGH_TARGET)
         .expect("fall-through arm must carry Call(IntConst(0x1002))");
     for call in [taken_call, fallthrough_call] {
         assert!(
@@ -314,8 +263,8 @@ fn bounded_lift_oob_taken_arm_lifts_as_conditional_tail_call() {
         function.has_kind(|k| matches!(k, NodeKind::If)),
         "the conditional must survive as an If node"
     );
-    let call =
-        find_call_to(&function, OOB_TARGET).expect("the OOB arm must carry Call(IntConst(0x1080))");
+    let call = common::find_call_to(&function, OOB_TARGET)
+        .expect("the OOB arm must carry Call(IntConst(0x1080))");
     assert!(
         function
             .side_tables()
