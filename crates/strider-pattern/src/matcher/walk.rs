@@ -768,6 +768,18 @@ fn node_interchangeable(
     {
         return false;
     }
+    // Every output vertex, not just the consumed anchor: a capture or filter
+    // `.output(slot)` / `.any_output()` put on a sibling vertex still lands on
+    // the other operand when swapped. Compared as values only, since their
+    // producers are the pair under test.
+    let (oa, ob) = (graph.node_outputs(a), graph.node_outputs(b));
+    if oa.len() != ob.len()
+        || !oa.iter().zip(ob).all(|(&va, &vb)| {
+            value_interchangeable(graph.value_kind_ref(va), graph.value_kind_ref(vb))
+        })
+    {
+        return false;
+    }
     let (ia, ib) = (
         crate::graph_ext::consumed_inputs(graph, a),
         crate::graph_ext::consumed_inputs(graph, b),
