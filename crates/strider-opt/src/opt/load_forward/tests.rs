@@ -1996,3 +1996,61 @@ fn narrowing_across_an_allocator_never_outlives_noalias_allocators() -> Result<(
     );
     Ok(())
 }
+
+/// Each arm spills to its own stack slot and reloads a third, so narrowing
+/// moves both loads past their arm's store onto one memory value and leaves
+/// them structural twins under a phi.  Reporting the narrowing as no change let
+/// the fixed point exit before that merge, leaving `Phi[x, x]` behind.
+#[test]
+fn narrowing_that_makes_twin_loads_reruns_the_fixed_point() -> Result<()> {
+    let sp = sp32_vn();
+    let var = strider_ir_test_utils::reg_vn(0x1000, 4);
+    let mut b = sp_frame(sp).tracked(var).arg(var).build_fn()?;
+    let entry = b.create_region_all()?;
+    let then_r = b.create_region_all()?;
+    let else_r = b.create_region_all()?;
+    let merge = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    b.set_region(entry);
+    let sp_val = b.read_variable(&sp)?;
+    let slot = |b: &mut strider_ir::FunctionBuilder, off: i64| -> Result<_> {
+        let k = b.build_int_const(off as u64, ValueType::I32)?;
+        b.build_int_binary_operation(sp_val, k, IntBinaryOp::Add, ValueType::I32)
+    };
+    let reloaded = slot(&mut b, -12)?;
+    let arg = b.read_variable(&var)?;
+    let zero = b.build_int_const(0u64, ValueType::I32)?;
+    let cond = b.build_int_cmp_operation(arg, zero, strider_ir::IntCmpOp::Equal, ValueType::I32)?;
+    b.build_if(cond, then_r, else_r)?;
+
+    for (region, off) in [(then_r, -4), (else_r, -8)] {
+        b.set_region(region);
+        let spill = slot(&mut b, off)?;
+        let data = b.build_int_const(7u64, ValueType::I32)?;
+        b.build_store(spill, data, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(reloaded, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        b.write_variable(&var, loaded)?;
+        b.build_branch(merge)?;
+    }
+
+    b.set_region(merge);
+    let merged = b.read_variable(&var)?;
+    b.build_return(Some(merged), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut p = OptimizerPipeline::new();
+    p.add(PhiCollapse);
+    p.add(LoadForward::default());
+    p.run(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    let ret = crate::test_support::return_value(fg.graph())?;
+    assert!(
+        matches!(fg.node_kind(fg.producer(ret)), NodeKind::Load(_)),
+        "the merged twins make the phi trivial, got {:?}",
+        fg.node_kind(fg.producer(ret))
+    );
+    Ok(())
+}

@@ -57,13 +57,25 @@ impl FunctionState {
 pub struct EditFunction<'g> {
     pub(crate) function: &'g mut Function,
     state: FunctionState,
+    generation: u64,
 }
 
 impl<'g> EditFunction<'g> {
     /// Does NOT cull pre-existing dead nodes; call [`Self::cull_dead`] for that.
     pub fn new(function: &'g mut Function) -> Self {
         let state = FunctionState::populate(function);
-        Self { function, state }
+        Self {
+            function,
+            state,
+            generation: 0,
+        }
+    }
+
+    /// Counts the edits that moved, added or removed a use, or killed a node.
+    /// Creating a node is not one, since it rewires nothing, and neither is a
+    /// write through [`Self::function_mut`] such as an asm-fingerprint union.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Kills everything outside `state.live_nodes`, walking the **raw** forward
@@ -341,6 +353,7 @@ impl<'g> EditFunction<'g> {
         let inputs: Vec<ValueId> = self.function.node_inputs(node).into_iter().collect();
         self.function.graph_mut().detach_node_inputs(node);
         self.mark_node_dead(node);
+        self.generation += 1;
         self.enqueue_orphaned_producers(inputs);
     }
 
@@ -436,6 +449,7 @@ impl<'g> EditFunction<'g> {
         self.will_attach_value(output_id);
         self.function.graph_mut().update_input(input_id, output_id);
         self.enqueue_for_recanon(consumer);
+        self.generation += 1;
     }
 
     /// Append an input to a **non-cacheable** node.
@@ -449,6 +463,7 @@ impl<'g> EditFunction<'g> {
         if was_input_less {
             self.state.roots.remove(node);
         }
+        self.generation += 1;
         Ok(())
     }
 
@@ -489,6 +504,7 @@ impl<'g> EditFunction<'g> {
         for consumer in consumers {
             self.enqueue_for_recanon(consumer);
         }
+        self.generation += u64::from(changed);
         Ok(changed)
     }
 
@@ -608,6 +624,7 @@ impl<'g> EditFunction<'g> {
         self.function
             .graph_mut()
             .remove_node_inputs_batch(node, indices.iter().map(|&i| i as usize));
+        self.generation += u64::from(!displaced.is_empty());
         // Deadness checked AFTER the removal (as in `kill_node`): a value in
         // several removed slots only reaches zero uses once ALL its edges are
         // gone, so a pre-removal per-slot check would miss it.
@@ -706,6 +723,38 @@ mod tests {
         ctx.kill_node(node);
         assert!(!ctx.is_live(node), "killed node is no longer live");
         assert!(!ctx.is_root(node), "killed node dropped from roots");
+    }
+
+    /// A use moved or a node killed advances the generation; creating a node,
+    /// or redirecting an edge onto the value it already reads, does not.
+    #[test]
+    fn generation_counts_rewires_and_kills_but_not_creation() {
+        let mut b = single_region_builder();
+        let one = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let two = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let sum = b
+            .build_int_binary_operation(one, two, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(sum), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        let add = function.producer(sum);
+
+        let mut ctx = EditFunction::new(&mut function);
+        let three = ctx.build_int_const(3u64, ValueType::I64).unwrap();
+        assert_eq!(ctx.generation(), 0, "creating a node rewires nothing");
+
+        let slot = ctx.function().node_input_id_at(add, 1).unwrap();
+        ctx.update_input(slot, two);
+        assert_eq!(ctx.generation(), 0, "a self-redirect moves nothing");
+        ctx.update_input(slot, three);
+        assert_eq!(ctx.generation(), 1);
+
+        assert!(!ctx.replace_all_uses(two, one).unwrap());
+        assert_eq!(ctx.generation(), 1, "a value with no uses moves nothing");
+
+        ctx.kill_node(ctx.producer(two));
+        assert_eq!(ctx.generation(), 2);
     }
 
     /// Modelled with an off-spine data cone that no entry-reachable node
