@@ -299,15 +299,17 @@ opt_passes! {
              ops whose result bits are statically determined.";
         "PhiCollapse" => PyPhiCollapse = strider_orchestrator::opt::PhiCollapse,
             "Braun trivial-phi elimination: collapses a `Phi` / `MemPhi` whose \
-             non-self-referential value inputs all resolve to a single value \
-             (destructive).";
+             non-self-referential value inputs all resolve to a single value, and \
+             a strongly connected group of phis whose only outside input is one \
+             value (destructive).";
         "RegionCollapse" => PyRegionCollapse = strider_orchestrator::opt::RegionCollapse,
             "Collapses a single-control-input `Region` join, rewiring its control \
              consumers to its lone predecessor (destructive).";
         "DeadBranchElimination" => PyDeadBranchElimination =
             strider_orchestrator::opt::DeadBranchElimination,
-            "Folds `If(const)` branches: redirects the live successor past the `If` \
-             and detaches the folded `If` (destructive).";
+            "Folds a branch with a constant selector (an `If` on a constant `I1`, \
+             a `Switch` on a constant dispatch address), wiring the live successor \
+             past it and killing the branch node (destructive).";
         "CfgDetach" => PyCfgDetach = strider_orchestrator::opt::CfgDetach,
             "Removes dead `Region`-predecessor slots (and the matching `Phi` / \
              `MemPhi` value slots) once a folded `If` makes a predecessor \
@@ -331,8 +333,8 @@ opt_passes! {
         "StackOffsetDetect" => PyStackOffsetDetect = strider_orchestrator::opt::StackOffsetDetect,
             "Stamps every SP-relative Store/Load with its concrete offset.";
         "FunctionArgDetect" => PyFunctionArgDetect = strider_orchestrator::opt::FunctionArgDetect,
-            "Post-pass that canonicalises register / stack argument reads into the \
-             function's argument-index table.";
+            "Post-pass that records which values carry each incoming stack-passed \
+             argument. Register arguments are recorded at lift time.";
         "CallStackArgCollect" => PyCallStackArgCollect =
             strider_orchestrator::opt::CallStackArgCollect,
             "Post-pass that wires positional stack arguments into `Call` nodes per \
