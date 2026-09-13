@@ -501,6 +501,7 @@ impl Function {
             node_to_arg_indices,
             nodes: None,
             center: None,
+            errors: FxHashMap::default(),
         })
     }
 }
