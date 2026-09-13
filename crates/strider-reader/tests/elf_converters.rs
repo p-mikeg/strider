@@ -587,3 +587,28 @@ fn equal_vaddr_pt_loads_collapse_to_the_widest() {
         .expect("every mapped byte is fetchable");
     assert_eq!(got, std::array::from_fn::<u8, 0x20, _>(|i| i as u8));
 }
+
+/// A mapping ending exactly at 2^64 cannot map its last byte, whose exclusive
+/// end no `u64` holds. It loses that byte; the rest of the image still loads.
+#[test]
+fn a_mapping_ending_at_the_top_of_the_address_space_loads_all_but_its_last_byte() {
+    let top = u64::MAX - 3;
+    let bytes = common::elf_fixture::simple_text_elf(top, &[0x11, 0x22, 0x33, 0x44]);
+    for relocate in [false, true] {
+        let regions = strider_reader::OwnedElf::parse(bytes.clone())
+            .expect("parse")
+            .regions(
+                strider_reader::elf::RegionSource::Sections,
+                LoadFilter::CodeAndReadOnly,
+                relocate,
+            )
+            .expect("the image loads");
+        let table = strider_reader::MemRegionsLookupTable::new(regions);
+        let mut buf = [0u8; 3];
+        table
+            .read_exact(top, &mut buf)
+            .expect("the first three bytes");
+        assert_eq!(buf, [0x11, 0x22, 0x33]);
+        assert_eq!(table.read(u64::MAX, &mut [0u8; 1]), None);
+    }
+}
