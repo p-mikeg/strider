@@ -107,9 +107,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // none of which appear as pcode outputs, so they come from the CC.
             Opcode::Call | Opcode::CallIndirect => {
                 self.record_cc_call_defs(self.call_cc_override_for(insn), r, defs);
-                if let Some(vn) = super::call_return_address_reg(self.cfg, insn) {
-                    self.add_def(&vn, r, defs);
-                }
             }
             // Mirrors `build_abi_call_other`: pcode output plus the ABI's
             // implicit writes. Over-records the output for the NoOp class,

@@ -1,6 +1,6 @@
 use crate::lift::pcode_util::nth_input_or_err;
 use anyhow::{Result, anyhow, bail};
-use strider_ir::{IRBuilderExt, IRViewer, VnTypeExt};
+use strider_ir::{IRBuilderExt, IRViewer};
 
 use super::FunctionLifter;
 
@@ -184,15 +184,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         Ok(())
     }
 
-    /// The callee's own code, when the cfg read an effect off it, sets the SP
-    /// pop unless a `per_address_ccs` override names the target, and a
-    /// register it hands the return address back in.
-    pub(super) fn handle_call(
-        &mut self,
-        insn: &rsleigh::Insn,
-        region_id: strider_cfg::RegionId,
-        addr: strider_cfg::PcodeInsnAddr,
-    ) -> Result<()> {
+    pub(super) fn handle_call(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         // The target varnode is in the code space and its offset IS the target
         // address, not a pointer to dereference.
         let target_vn = nth_input_or_err(insn, 0)?;
@@ -201,37 +193,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let call_address = self.build_addr_const(space, target_addr, "call target space")?;
         // Cloned so the `per_address_ccs` borrow ends before the &mut call.
         let override_cc = self.per_address_ccs.get(&target_addr).cloned();
-        let effect = self.cfg.callee_effect(target_addr).copied();
-        let stack_pop = effect
-            .and_then(|e| e.stack_pop)
-            .filter(|_| override_cc.is_none());
-        self.build_cc_call(call_address, override_cc.as_ref(), stack_pop)?;
-        if let Some(reg) = effect.and_then(|e| e.return_address_reg) {
-            let return_address = self.return_address(region_id, addr)?;
-            let value = self
-                .builder
-                .build_int_const(u128::from(return_address), reg.int_type()?)?;
-            self.write_vn(&reg, value)?;
-        }
+        self.build_cc_call(call_address, override_cc.as_ref(), None)?;
         Ok(())
-    }
-
-    /// The address after the machine instruction holding the op at `addr`.
-    fn return_address(
-        &self,
-        region_id: strider_cfg::RegionId,
-        addr: strider_cfg::PcodeInsnAddr,
-    ) -> Result<u64> {
-        let insns = &self
-            .cfg
-            .region_graph()
-            .node_weight(region_id)
-            .ok_or_else(|| anyhow!("no region {region_id:?} in cfg"))?
-            .insns;
-        let at = insns
-            .binary_search_by_key(&addr, |w| w.addr)
-            .map_err(|_| anyhow!("region {region_id:?} holds no op at {addr:?}"))?;
-        Ok(addr.machine_addr.addr + u64::from(insns[at].len))
     }
 
     /// A direct branch out of the function range is semantically a tail call,

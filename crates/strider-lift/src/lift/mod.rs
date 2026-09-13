@@ -435,17 +435,6 @@ impl<R: rsleigh::MemReader> Lifter<R> {
                 all_vns.push(vn);
             }
         }
-        // A callee that hands back its return address writes a register no
-        // pcode operand of this function names.
-        let return_address_regs = cfg
-            .regions()
-            .flat_map(|region| &region.insns)
-            .filter_map(|wrapped| call_return_address_reg(cfg, &wrapped.insn));
-        for vn in return_address_regs {
-            if seen.insert(vn) {
-                all_vns.push(vn);
-            }
-        }
         let mut driver = FunctionLifter::new(
             self,
             cc,
@@ -487,18 +476,6 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             sink_visits,
         ))
     }
-}
-
-/// The register a direct `Call`'s callee leaves its return address in.
-pub(crate) fn call_return_address_reg(
-    cfg: &strider_cfg::Cfg,
-    insn: &rsleigh::Insn,
-) -> Option<rsleigh::Vn> {
-    if insn.opcode != rsleigh::Opcode::Call {
-        return None;
-    }
-    cfg.callee_effect(insn.inputs.first()?.addr_off)?
-        .return_address_reg
 }
 
 pub(crate) type RegionMap = rustc_hash::FxHashMap<strider_cfg::RegionId, strider_ir::RegionId>;

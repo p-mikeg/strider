@@ -60,7 +60,6 @@ pub(crate) fn make_cfg(
         function_isa_bit: None,
         flowing_isa_bits: std::collections::BTreeMap::new(),
         space_ids: rsleigh::SpaceIds::default(),
-        callee_effects: rustc_hash::FxHashMap::default(),
     }
 }
 

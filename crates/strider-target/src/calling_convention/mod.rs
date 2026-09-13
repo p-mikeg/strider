@@ -526,9 +526,7 @@ const X86_CDECL_BASE: CallingConvention = CallingConvention {
         base_offset: 4,
         increment: 4,
     }),
-    // The plain `ret`. A callee returning a struct or union also pops the
-    // caller's hidden result pointer (Intel386 psABI, `ret $0x4`), which the
-    // lift reads off a direct callee's code; see `x86_cdecl`.
+    // The plain `ret`; see `x86_cdecl` for callees that pop more.
     ret_stack_pop: 4,
     // `call` pushes the return address.
     link_register_reg_name: None,
@@ -924,11 +922,12 @@ impl CallingConvention {
     /// Returns the x86 cdecl calling convention.
     ///
     /// Its `ret_stack_pop` of 4 is a plain `ret`. A callee that also pops
-    /// arguments (a struct return's `ret $4`) is accounted for only at a
-    /// direct call whose callee's returns all decode to one pop, with no path
-    /// leaving it another way. An indirect call, a target under a per-address
-    /// override, and any other callee keep 4, and SP-relative accesses after
-    /// such a call are off by the callee's operand.
+    /// its caller's stack (`ret $imm16`: a struct return's hidden pointer,
+    /// stdcall, fastcall, thiscall) needs a per-address convention with
+    /// `ret_stack_pop` of `4 + imm16`; without one, SP-relative accesses after
+    /// the call are off by `imm16`. A PC thunk (`__x86.get_pc_thunk.bx`) needs
+    /// one that does not preserve its register; without one, the register
+    /// keeps the caller's value across the call.
     #[must_use]
     pub const fn x86_cdecl() -> Self {
         // x86 cdecl: all arguments on the stack, so `arg_passing_regs` is empty.
