@@ -316,7 +316,7 @@ impl PyFunction {
     fn validate(&self) -> PyResult<Option<String>> {
         self.with_read(|function| match strider_ir::validate::validate(function) {
             Ok(()) => Ok(None),
-            Err(e) => Ok(Some(format!("{e}"))),
+            Err(e) => Ok(Some(e.report(function).to_string())),
         })
     }
 
