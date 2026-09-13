@@ -103,7 +103,9 @@ impl Bindings {
         self.index.get(&c).map(|&i| self.entries[i].1)
     }
 
-    /// `None` for an unbound capture or a control-flow binding.
+    /// `None` for an unbound capture or one bound to a NODE (`Binding::Node`,
+    /// the value-less roots). A captured control edge is a `Binding::Value`
+    /// and comes back.
     pub fn get_value(&self, c: Capture) -> Option<ValueId> {
         match self.get_binding(c)? {
             Binding::Value(out) => Some(out),
