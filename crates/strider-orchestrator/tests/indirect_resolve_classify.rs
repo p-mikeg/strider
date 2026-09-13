@@ -21,7 +21,7 @@ fn sole_branch(f: &strider_ir::Function) -> strider_ir::node::NodeId {
 
 fn classify_target_bare(view: &strider_ir::Function) -> anyhow::Result<Option<ResolvedTargets>> {
     let known = analyze_known_bits(view)?;
-    let doms = strider_ir::control_dominators(view);
+    let doms = strider_ir::control_dominator_tree(view);
     let mut ranges = compute_value_ranges(view, &doms, &known);
     Ok(classify_target(
         view,
@@ -129,7 +129,7 @@ fn stack_array_two_targets_resolves_to_multiple() {
     let (function, _target, _sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
     let view: &strider_ir::Function = &function;
     let known = analyze_known_bits(view).expect("analyze_known_bits");
-    let doms = strider_ir::control_dominators(view);
+    let doms = strider_ir::control_dominator_tree(view);
     let mut ranges = compute_value_ranges(view, &doms, &known);
     let result = classify_target(
         view,
@@ -156,7 +156,7 @@ fn stack_array_four_targets_resolves_to_multiple() {
     let (function, _target, _sp) = build_stack_array_dispatch_scenario(&targets, -32, 8);
     let view: &strider_ir::Function = &function;
     let known = analyze_known_bits(view).expect("analyze_known_bits");
-    let doms = strider_ir::control_dominators(view);
+    let doms = strider_ir::control_dominator_tree(view);
     let mut ranges = compute_value_ranges(view, &doms, &known);
     let result = classify_target(
         view,
