@@ -15,7 +15,8 @@ the binary is x86, ARM, or MIPS.
 
 **Varnode.** Sleigh's name for a storage location: a register, a slice of
 memory, or a constant. It is a triple of (space, offset, size). `RAX` is a
-varnode; so is `[rsp + 8]`.
+varnode; a memory read such as `[rsp + 8]` is a `LOAD` through an address
+computed at runtime.
 
 **Calling convention.** The rules for how arguments are passed to a function
 and how the result comes back (which registers, which stack slots). Strider
@@ -25,9 +26,9 @@ ELF header.
 **ISA mode.** Some architectures encode two instruction sets in one binary and
 switch between them at runtime: ARM and Thumb, MIPS32 and MIPS16. Which one an
 address decodes as is not in the bytes, it is carried by the branch that
-reached it, so the CFG tracks a mode per edge. `cfg.isa_mode_conflicts()`
-reports an address two edges reached in different modes, which only one of them
-can win.
+reached it, so each region is decoded in the mode of an edge that reached it.
+`cfg.isa_mode_conflicts()` reports an address two edges reached in different
+modes, which only one of them can win.
 
 ## Control flow
 
@@ -57,8 +58,9 @@ node never links straight to another node. A **NodeId** names a node (a
 computation); a **ValueId** names one output that a node produces. A node reads
 other nodes' outputs through its input slots, so the wires run
 `node -> value -> node`. In Python you mostly hold `Node` handles
-(`function.node(id)`, `node.inputs()`, `node.outputs()`); the ids are the stable
-integer names underneath, and `function.node_ids()` lists them all.
+(`function.node(id)`, `node.inputs()`, `node.outputs()`); the ids are the
+integer names underneath, valid until the graph is compacted, optimized or
+rewritten, and `function.node_ids()` lists them all.
 
 **What edges carry (control, memory, phi token, data).** Not every wire carries a
 computed number. Each edge carries one of four things:
@@ -69,31 +71,18 @@ computed number. Each edge carries one of four things:
 - **Memory token (mem).** One token standing for the whole state of memory. Loads,
   stores, and calls chain through it so their ordering stays explicit, and a
   MemPhi merges it at a region. One token covers every address.
-- **Phi token.** The token a region hands to each of its phis. It encodes the
-  region's predecessor order, so a phi knows which incoming value goes with which
-  edge (see the `phi(region, ...)` shape below).
+- **Phi token.** The edge from a region to each of its phis. It ties a phi to
+  its region; the phi's value inputs follow that region's predecessors in order
+  (see the `phi(token, ...)` shape below).
 - **Data value.** An actual computed value, and the only kind that carries a
   *type*.
 
 **Value type.** The width of a data value and whether it is integer or float.
 Integers are `I1, I8, I16, I24, I32, I40, I48, I56, I64, I72, I80, I96, I112,
 I128, I256, I512`; floats are `F16, F32, F64, F80, F128`. A boolean is the
-1-bit integer `I1`. The odd sizes come from hardware registers and from
-Sleigh's intermediate temporaries, and
-`crates/strider-ir/src/node/value_type.rs` names a source for most of them:
-`I24` is the x86 `SegmentLimit` result, `I40` and `I72` the 32- and 64-bit
-`adcx` / `adox` carry accumulators (`I72` also the AArch64 fixed-point `ucvtf`
-temporary), `I48` a 6-byte varnode, on ARM temporaries and on x86 far-pointer
-loads (the only true 6-byte registers in any spec are 32-bit x86's `GDTR` /
-`IDTR` / `LDTR` / `TR`), `I56` the AArch64 tagged-pointer `cmpp` / `subp`
-temporaries, `I80` and `F80` the x87 extended-precision registers, `I256` an
-x86 `YMM` and the AArch64 SVE temporaries, `I512` an AVX-512 `zmm`, `F16` an
-AArch64 `FPR16` or an ARM `vcvt.f16`, and `F128` the 16-byte float destination
-ARM's `vcvt.f32.f16 Qd,Dm` writes. `I96` and `I112` are the odd ones out: x86
-declares those same four registers at 12 and 14 bytes behind a debugger-only
-guard, but every instruction naming them routes through a pcodeop, so no lifted
-p-code carries a value of either width. Read a node's type in Python with
-`node.value_type()`.
+1-bit integer `I1`. The odd widths exist because some Sleigh register or
+temporary has that size; `crates/strider-ir/src/node/value_type.rs` names the
+source of each. Read a node's type in Python with `node.value_type()`.
 
 **Walks (cfg, data, memory).** Ways to traverse the graph from the entry. A
 **cfg walk** follows control edges only, giving the region skeleton
@@ -114,12 +103,12 @@ nodes live.
 
 **Phi.** Where control can reach a region by more than one path, a phi node
 chooses the value belonging to the path actually taken. It is written
-`phi(region, a, b, ...)`: the first input ties it to the merge region, and the
-rest are one candidate value per incoming edge, in the same order as that
-region's predecessors. So `x = cond ? a : b` becomes `phi(region, a, b)`, which
-yields `a` when control arrived on the first edge and `b` on the second. A phi
-the lifter emitted for a register-aliased read also carries a tag naming that
-register, which `phi_for(vn)` matches on; a phi with no tag is anonymous.
+`phi(token, a, b, ...)`: the first input is the phi token from the merge
+region, and the rest are one candidate value per incoming edge, in the same
+order as that region's predecessors. So `x = cond ? a : b` becomes
+`phi(token, a, b)`, which yields `a` when control arrived on the first edge and
+`b` on the second. A phi the lifter placed for a register carries a tag naming
+it, which `phi_for(vn)` matches on; a phi with no tag is anonymous.
 
 **MemPhi.** The same idea as a phi, but for memory instead of a register value:
 it merges the state of memory coming from different paths.
@@ -150,17 +139,20 @@ which values are sound.
 
 **Noalias allocator.** A function you name as returning storage nothing else
 points at, `malloc` being the usual one. Its return value becomes a base
-distinct from every other, which is what lets a load step through a call to it.
+distinct from every other, so a load from a different allocation, or from a
+stack slot of a frame no stack address escapes, steps through a call to it. A
+load from a global does not.
 
 **Stack offset.** When a load or store addresses memory as "stack pointer plus
 a fixed amount", Strider records that amount. It lets you ask for stack accesses
 specifically, or for one exact slot.
 
-**Asm-fingerprint.** An IR node that a machine instruction produced remembers
-that instruction's address, so given a match you can map the value back to the
-exact assembly it came from. It is empty on the six kinds the lifter
-synthesises rather than lifts: `Entry`, `InitialMemory`, `InitialVar`,
-`Region`, `Phi` and `MemPhi`.
+**Asm-fingerprint.** The addresses of the machine instructions whose lift, or a
+later rewrite, contributed to an IR node, so given a match you can map the
+value back to the assembly it came from. Every reachable node carries at least
+one, except the six kinds the lifter synthesises rather than lifts (`Entry`,
+`InitialMemory`, `InitialVar`, `Region`, `Phi`, `MemPhi`). Those may carry
+none, and pick addresses up when a rewrite replaces another node with them.
 
 ## Querying
 
@@ -170,8 +162,8 @@ without pinning down the parts you do not care about.
 
 **Capture.** A named hole in a pattern. Where you write a capture, the pattern
 matches anything and remembers what it matched, so you can read it back. Write
-it as a `Capture("name")` object; a bare string is only the read-back key on a
-`Match`.
+it as a `Capture("name")` object. A bare string is not a match-pattern operand;
+it names a capture in a rewrite template or on a `Match`.
 
 **Alternation.** One pattern standing for several shapes: `one_of` matches any
 of them and reports every hit, `first_of` takes the first that matches and
@@ -180,9 +172,9 @@ still one query.
 
 **Join / constraint.** Two patterns searched together, matched up on the
 captures they share, so you can ask about a relationship rather than a single
-shape. A `constraints=` entry narrows which pairings count: `dominates` keeps
-only those where one half's control reaches the other, and a `JoinPredicate`
-runs your own test over the pair.
+shape. A `constraints=` entry narrows which pairings count: `dominates(a, b)`
+keeps only those where every control path from entry to `b` passes through `a`
+(see **Dominator**), and a `JoinPredicate` runs your own test over the pair.
 
 **Match.** One result of a query. It carries every capture's value: index it
 with the capture and read the aspect you want, `hit[off].uint`,
