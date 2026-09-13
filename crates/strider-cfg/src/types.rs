@@ -228,3 +228,101 @@ impl Region {
 /// inside the loop, which a plain `Graph` would invalidate by swap-removing.
 /// No region is ever removed.
 pub(crate) type RegionGraph = StableDiGraph<Region, ()>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{addr, make_region};
+
+    #[test]
+    fn machine_insn_addr_from_u64() {
+        let a: MachineInsnAddr = 0x1000u64.into();
+        assert_eq!(a.addr, 0x1000);
+    }
+
+    #[test]
+    fn pcode_addr_orders_by_machine_addr_first() {
+        // A larger insn_index never outranks a smaller machine address.
+        assert!(addr(200, 0) > addr(100, 99));
+        assert!(addr(100, 99) < addr(200, 0));
+    }
+
+    #[test]
+    fn pcode_addr_orders_by_insn_index_when_machine_addr_equal() {
+        assert!(addr(100, 1) > addr(100, 0));
+        assert!(addr(100, 5) > addr(100, 4));
+    }
+
+    #[test]
+    fn pcode_addr_at_machine_start_zero_index() {
+        let a = PcodeInsnAddr::at_machine_start(0x2000);
+        assert_eq!(a.machine_addr.addr, 0x2000);
+        assert_eq!(a.insn_index, 0);
+    }
+
+    #[test]
+    fn contains_addr_spans_the_region_and_nothing_outside_it() {
+        const SPAN: &[(u64, u64)] = &[(0x1000, 0), (0x1010, 0)];
+        const PCODE: &[(u64, u64)] = &[(0x1000, 0), (0x1000, 3)];
+        for (insns, (machine, index), want) in [
+            (SPAN, (0x1000u64, 0u64), true), // start
+            (SPAN, (0x1010, 0), true),       // end
+            (SPAN, (0x1008, 0), true),       // interior
+            (PCODE, (0x1000, 1), true),      // interior of one machine insn's pcode
+            (SPAN, (0x0ff8, 0), false),      // before start
+            (SPAN, (0x1014, 0), false),      // after end
+        ] {
+            let r = make_region(insns);
+            assert_eq!(
+                r.contains_addr(addr(machine, index)),
+                want,
+                "{machine:#x}+{index} in {insns:x?}"
+            );
+        }
+    }
+
+    #[test]
+    fn contains_addr_covers_the_last_instructions_bytes_not_just_its_start() {
+        // A region is a hole-free run, so no other region owns the bytes of its
+        // last instruction either.
+        let mut r = make_region(&[(0x1000, 0), (0x1010, 0)]);
+        r.insns.last_mut().unwrap().len = 10;
+        assert!(r.contains_addr(addr(0x1015, 0)));
+        assert!(r.contains_addr(addr(0x1019, 0)));
+        assert!(!r.contains_addr(addr(0x101a, 0)), "the end is exclusive");
+        // At the last instruction's own machine address the pcode index still
+        // bounds the span: a region can end mid-pcode-sequence.
+        assert!(!r.contains_addr(addr(0x1010, 1)));
+    }
+
+    #[test]
+    fn contains_addr_returns_true_for_empty_region_at_start_addr() {
+        // A tail-call stub owns its start address and no byte past it.
+        let r = Region {
+            start_addr: addr(0x1000, 0),
+            insns: Vec::new(),
+            empty_span_len: 0,
+            terminator: RegionTerminator::Unconditional,
+        };
+        assert!(r.contains_addr(addr(0x1000, 0)));
+        assert!(!r.contains_addr(addr(0x1000, 1)));
+        assert!(!r.contains_addr(addr(0x1001, 0)));
+    }
+
+    #[test]
+    fn contains_addr_covers_an_empty_regions_zero_pcode_op_instruction() {
+        // A region sealed at a four-byte `endbr64` owns all four bytes; they
+        // carry no pcode, so only their machine addresses are owned.
+        let r = Region {
+            start_addr: addr(0x1000, 0),
+            insns: Vec::new(),
+            empty_span_len: 4,
+            terminator: RegionTerminator::Unconditional,
+        };
+        assert!(r.contains_addr(addr(0x1000, 0)));
+        assert!(r.contains_addr(addr(0x1003, 0)));
+        assert!(!r.contains_addr(addr(0x1004, 0)));
+        assert!(!r.contains_addr(addr(0x1000, 1)));
+        assert!(!r.contains_addr(addr(0x0fff, 0)));
+    }
+}

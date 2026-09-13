@@ -42,6 +42,26 @@ pub(crate) fn make_region(addrs: &[(u64, u64)]) -> Region {
     }
 }
 
+/// A [`crate::Cfg`] over a hand-built region graph, every incompleteness
+/// channel empty and no ISA mode.
+pub(crate) fn make_cfg(
+    region_graph: crate::types::RegionGraph,
+    entry: petgraph::graph::NodeIndex,
+) -> crate::Cfg {
+    crate::Cfg {
+        region_graph,
+        entry,
+        undecodable_seeded: Vec::new(),
+        isa_mode_conflicts: Vec::new(),
+        interior_branch_targets: Vec::new(),
+        unmapped_branch_targets: Vec::new(),
+        link_register_seated: Vec::new(),
+        tail_call_seated: Vec::new(),
+        function_isa_bit: None,
+        flowing_isa_bits: std::collections::BTreeMap::new(),
+    }
+}
+
 /// An x86-64 Sleigh reading `bytes` mapped at `base`.
 pub(crate) fn make_sleigh_over(bytes: Vec<u8>, base: u64) -> rsleigh::Sleigh<TestReader> {
     let arch = SleighArch::x86_64();
