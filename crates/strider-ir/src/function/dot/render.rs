@@ -107,7 +107,10 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         if is_arg_node {
             extra.push(("peripheries", "2"));
         }
-        extra.extend(self.highlight(node));
+        if self.center == Some(node) {
+            extra.push(("color", "#ffcc00"));
+            extra.push(("penwidth", "2.5"));
+        }
 
         out.node(&cur_id, &label, node_shape(&kind), &extra);
         Some(cur_id)
