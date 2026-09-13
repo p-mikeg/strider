@@ -66,6 +66,8 @@ impl CallPat {
         Self(self.0.input(2, p))
     }
 
+    /// [`int_const`]`(addr)` on the target, so `addr` is truncated to the
+    /// target's width like any `int_const` query.
     pub fn at(self, addr: u64) -> Self {
         self.target(int_const(u128::from(addr)))
     }
