@@ -213,6 +213,12 @@ The shape each API settled into is in
   frozen against, so two `custom(...)` ABIs from different arches no longer
   compare equal or collide in a dict while being mutually unusable.
 
+- `Function.to_dot` / `to_html` quote every attribute value, so the DOT text
+  reads `shape="box"` where it read `shape=box`. Only `label` was escaped, and a
+  tooltip or other free text reaching another attribute broke the file.
+- `Function.validate()` names each node's kind and lowest instruction address
+  after the error, as in `[node12 Store(..) @ 0x401000]`.
+
 ### Breaking, Rust
 
 - `strider_cfg::Builder::for_arch` takes `options: &'a CfgOptions`, tying it to
@@ -407,6 +413,18 @@ The shape each API settled into is in
   forward-painted, so an unset one decoded the next function's entry against
   the paired form on a reused engine.
 
+- `NodeKind::Switch(SwitchTableId)` and `NodeKind::Call { cc: Option<CcId> }`
+  carry their case table and override convention, owned by the `Function`.
+  `SideTables::{switch_targets, set_switch_targets, set_call_cc,
+  call_other_name, set_call_other_name}` are gone; the readers moved to
+  `Function` under the same names, and `set_call_other_name` takes the
+  `user_op_id`. Keyed by `NodeId`, a node rebuilt under a new id lost its entry,
+  and a lost convention silently fell back to the function default.
+- `FunctionBuilder::build` fails with a `ValidationReport`, the
+  `ValidationErrors` in its `errors` field.
+- `Graph::update_input` panics on a `UseId` its node no longer holds. It relinked
+  the removed use into the new value's use list.
+
 ### Added
 
 - `strider.pattern.field(base, offset=None)` and `FieldPat`: a struct field at
@@ -596,6 +614,20 @@ The shape each API settled into is in
 - The seventeen example scripts run in CI. They were type-checked and never
   executed, so a script that imported cleanly and then raised passed the gate.
 
+- `Function::to_text(fingerprints)` and Python `Function.to_text()`: the IR as
+  canonical text, one line per node, values named in print order. The order
+  follows control flow and input slots only, so two builds of the same graph
+  print the same text and two runs diff line by line.
+- `validate` reports `LostStore`: a `Store` whose write no `Return`, branch,
+  `Unreachable`, call or later store takes, only a `Load`. It runs, with the
+  availability check, only on a graph that passed the structural checks.
+- `PhiCollapse` folds a cycle of phis whose inputs from outside it are one
+  value, not only a single phi (Braun et al. 2013, section 3.2). On every fourth
+  function of the FreeBSD 14.2 kernels that is 331 phis on i386 and 1,481 on
+  aarch64, and two aarch64 jump tables resolve.
+- `FunctionDotDumper::with_validation_errors` outlines the nodes a validation
+  error names and lists the errors in their tooltip.
+
 ### Performance
 
 - `Function::validate` is linear. The data-cycle walk kept its DFS path in a
@@ -709,6 +741,13 @@ The shape each API settled into is in
 - Stamping the same lift address on a node the dedup cache returned adds one
   leaf rather than one per call, so an asm fingerprint grows with distinct
   addresses instead of with node creations.
+
+- The optimizer pipeline skips a pass whose last run changed nothing until the
+  graph changes: 4.5% and 2.3% of `analyze` time on the FreeBSD 14.2 i386 and
+  aarch64 kernels, with identical output on 16,835 functions.
+- Join `dominates` constraints and `phi_input_from_edge` answer from pre/post
+  intervals instead of walking the dominator chain: 3.6 ms to 1.2 ms and
+  7.2 ms to 0.7 ms on the 60-diamond join benches.
 
 ### Fixed
 
@@ -1449,6 +1488,10 @@ The shape each API settled into is in
   None` for the climb to pass through the root, and a tree encoding
   root-as-own-idom silently loses `DF(root)` containing root, which
   `phi_placement` then reports no error for.
+
+- `LoadForward` reports a change when it narrows a load's memory edge without
+  forwarding it. Two loads could become twins after the fixed point had already
+  exited, merge in the final drain, and leave a `Phi[x, x]` in the result.
 
 ### Fixed - decoder and sla
 
