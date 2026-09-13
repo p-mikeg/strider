@@ -346,8 +346,9 @@ impl SleighArch {
     }
 
     arch_ctor! {
-        /// `powerpc64le-linux-gnu-gcc`, ELFv2 ABI: no function descriptors,
-        /// dot-prefixed symbols.  Power ISA + Altivec sla spec, see `ppc64be`.
+        /// `powerpc64le-linux-gnu-gcc`, ELFv2 ABI: no function descriptors and
+        /// no dot-prefixed symbols.  Power ISA + Altivec sla spec, see
+        /// `ppc64be`.
         ppc64le => SLA_SPEC_PPC_64_ISA_ALTIVEC_LE, PSPEC_PPC_64, Little, Ppc64Le
     }
 
