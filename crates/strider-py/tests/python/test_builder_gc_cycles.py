@@ -6,8 +6,11 @@ garbage, cannot clear it, and promotes it to the old generation forever.
 """
 
 import gc
+from typing import NamedTuple, Optional
 
+import strider
 from strider import pattern as p
+from strider import template as tpl
 from .conftest import fixture_path
 
 
@@ -51,6 +54,51 @@ def test_builder_holding_a_when_closure_cycle_is_collected():
     gc.collect()
     gc.collect()
     assert _live("LoadPat") == base
+
+
+class _Marker:
+    pass
+
+
+def test_pat_and_template_cycles_are_collected():
+    """`Pat` and `Template` have no `tp_clear`, but they are immutable, so a
+    cycle through one also runs through a container that has one."""
+    base = _live("_Marker")
+    for _ in range(50):
+        held: list = [_Marker()]
+        held.append(p.anything().when(lambda _m, _h=held: True))
+        # Deliberate: an operand is stored unchecked until the pattern compiles.
+        held.append(p.int_add(held, p.anything()))  # type: ignore[arg-type]
+        held.append(tpl.int_add(held, tpl.int_const(1)))  # type: ignore[arg-type]
+        del held
+    gc.collect()
+    gc.collect()
+    assert _live("_Marker") == base
+
+
+class _TupleReader(NamedTuple):
+    """A reader with no `tp_clear` of its own to break a cycle."""
+
+    lifter: object
+    marker: _Marker
+
+    def read(self, addr: int, size: int) -> Optional[bytes]:
+        return b"\xc3" * size
+
+
+def test_a_cleared_lifter_releases_its_reader():
+    """The engine's adapters hold the reader too, so a `__clear__` that drops
+    only its own handles leaves the edge alive and the cycle uncollectable."""
+    base = _live("_Marker")
+    arch = strider.sleigh.SleighArch.x86_64()
+    for _ in range(20):
+        lift = strider.lift.lifter(arch, strider.reader.BufferReader(0x1000, b"\xc3"))
+        # Deliberate: a duck-typed reader, not a `MemReader` subclass.
+        lift._rebuild(arch, _TupleReader(lift, _Marker()))  # type: ignore[arg-type]
+        del lift
+    gc.collect()
+    gc.collect()
+    assert _live("_Marker") == base
 
 
 def test_raw_int_operand_spans_the_whole_u128_carrier():

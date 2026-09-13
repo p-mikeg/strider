@@ -30,15 +30,22 @@ use crate::reader::{AnyMemReader, MemInput};
 /// something this cannot.
 pub(crate) struct ThreadPinned {
     owner: std::thread::ThreadId,
-    value: strider_orchestrator::Strider<AnyMemReader>,
+    /// `None` once `PyLifter::__clear__` has released it.
+    value: Option<strider_orchestrator::Strider<AnyMemReader>>,
 }
 
 impl ThreadPinned {
     fn new(value: strider_orchestrator::Strider<AnyMemReader>) -> Self {
         Self {
             owner: std::thread::current().id(),
-            value,
+            value: Some(value),
         }
+    }
+
+    fn cleared() -> PyErr {
+        into_strider_err(anyhow::anyhow!(
+            "this Lifter was cleared by the garbage collector and holds no engine"
+        ))
     }
 
     pub(crate) fn check(&self) -> PyResult<()> {
@@ -54,12 +61,12 @@ impl ThreadPinned {
 
     pub(crate) fn get(&self) -> PyResult<&strider_orchestrator::Strider<AnyMemReader>> {
         self.check()?;
-        Ok(&self.value)
+        self.value.as_ref().ok_or_else(Self::cleared)
     }
 
     pub(crate) fn get_mut(&mut self) -> PyResult<&mut strider_orchestrator::Strider<AnyMemReader>> {
         self.check()?;
-        Ok(&mut self.value)
+        self.value.as_mut().ok_or_else(Self::cleared)
     }
 }
 
@@ -598,12 +605,14 @@ impl PyLifter {
     }
 
     fn __clear__(&mut self) {
+        // The engine's adapters and the sweep engine's reader clone share the
+        // `Arc<Py<PyAny>>`s in `py_deps`, so the reference drops only with all
+        // three.
         self.py_deps.clear();
+        self.inner.value = None;
+        self.sweep_sleigh.get_mut().take();
         self.mem_obj = None;
         self.rom_obj = None;
-        // Holds a reader clone, which shares the `Arc<Py<PyAny>>` the deps
-        // above traverse rather than a reference of its own.
-        self.sweep_sleigh.get_mut().take();
     }
 
     /// INTERNAL. Rebuild this handle's Sleigh and orchestrator state from
