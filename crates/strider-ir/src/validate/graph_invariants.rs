@@ -2,11 +2,12 @@ use core::ops::ControlFlow;
 
 use cranelift_entity::SecondaryMap;
 
+use crate::DominatorTree;
 use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
 use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind};
-use crate::schedule::{DomTree, ScheduleContext, schedule_early};
+use crate::schedule::{ScheduleContext, schedule_early};
 use crate::walk::{NodeIdSet, PostOrder, WalkPhase};
 
 use super::ValidationError;
@@ -656,7 +657,7 @@ pub(super) fn check_function_invariants_memory_linearity(
 /// A phi's value inputs on edges from a node of `tree`.
 fn live_arms<'a>(
     graph: &'a Graph,
-    tree: &'a DomTree,
+    tree: &'a DominatorTree<NodeId>,
     phi: NodeId,
 ) -> impl Iterator<Item = ValueId> + 'a {
     let token = graph.nth_input(phi, 0).expect("a phi has a token");
@@ -731,7 +732,7 @@ pub(super) fn check_function_invariants_availability(
 /// inputs lie on, is reported; the latter ends the scan.
 fn latest_input(
     graph: &Graph,
-    tree: &DomTree,
+    tree: &DominatorTree<NodeId>,
     at: &SecondaryMap<NodeId, Option<NodeId>>,
     node: NodeId,
     errs: &mut Vec<ValidationError>,
