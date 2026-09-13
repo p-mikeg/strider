@@ -55,12 +55,13 @@ impl std::fmt::Display for UnmappedAddr {
 
 impl std::error::Error for UnmappedAddr {}
 
-/// Whether `err` is a decode that never started, `addr` holding no bytes.
+/// Whether `err` is a decode the reader could not supply the bytes for, at
+/// `addr` or partway into the instruction there.
 ///
 /// Read at both ends of a failed decode: [`RegionBuilder::build`] seals its
 /// region and seats a stub when a sequential fall-through lands on unmapped
 /// bytes, and [`super::Builder::build`] does the same for a branch target.
-/// Any other failure is Sleigh rejecting bytes it did read, and the region
+/// Any other failure is Sleigh rejecting bytes it fully read, and the region
 /// under construction is then real code whose extent is unknown; a stub seated
 /// at its start would discard it.
 pub(super) fn is_unmapped_start(err: &anyhow::Error, addr: PcodeInsnAddr) -> bool {
@@ -137,11 +138,14 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             let msg = format!("sleigh could not lift {addr:#x}: {e}");
             // `DataUnavailErr` is the reader answering a read with zero bytes,
             // which is the same verdict its own error is.
+            // `PartiallyInitializedInsn` is the same window ending mid
+            // instruction: the missing bytes were never read either.
             match e {
                 rsleigh::error::GenericError::MemReadErr(_)
-                | rsleigh::error::GenericError::Base(rsleigh::error::BaseError::DataUnavailErr) => {
-                    anyhow::Error::new(UnmappedAddr(addr)).context(msg)
-                }
+                | rsleigh::error::GenericError::Base(
+                    rsleigh::error::BaseError::DataUnavailErr
+                    | rsleigh::error::BaseError::PartiallyInitializedInsn,
+                ) => anyhow::Error::new(UnmappedAddr(addr)).context(msg),
                 rsleigh::error::GenericError::Base(_) => anyhow!(msg),
             }
         })
