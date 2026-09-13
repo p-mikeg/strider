@@ -33,7 +33,7 @@ RUSTDOCFLAGS='-D rustdoc::broken_intra_doc_links' cargo doc --workspace --no-dep
 cargo +1.91.0 check --workspace --all-targets   # the declared MSRV
 cargo +1.91.0 check -p <crate> --all-targets    # every package on its own
 cargo run --release -p strider-orchestrator --example dump_arch_cmps  # and
-                                   # orchestrator_demo, memory_demo; the tree
+                                   # orchestrator_demo (plain and -- memory); the tree
                                    # must stay clean afterwards
 
 # Main demo: reads the committed fixtures/out/x86/arithmetic.elf::add and dumps
