@@ -184,8 +184,9 @@ impl BuiltCallingConvention {
     /// the ret-val group and the non-ret caller-clobbered group.  These are
     /// exactly the two output groups a `Call` emits past `[Control, Memory]`.
     ///
-    /// A register is *clobbered* iff it is not the stack pointer and
-    /// `callee_saved_regs` leaves at least one of its bytes free.  `ret_vals`
+    /// A register is *clobbered* iff `preserves_all_registers` is unset, it is
+    /// not the stack pointer, and `callee_saved_regs` leaves at least one of
+    /// its bytes free.  `ret_vals`
     /// holds the tracked clobbered containers of `ret_val_regs` then
     /// `ret_val_regs_float` in ABI order; `clobbers` holds every other
     /// clobbered REGISTER/UNIQUE entry in `tracked_vns` order.
@@ -779,8 +780,9 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
     },
     // ARM 32-bit AAPCS, hard-float (VFP) argument variant.  A binary built
     // `-mfloat-abi=soft` / `softfp` wants `arm_aapcs_soft`; EABI `e_flags`
-    // records which, and `load_elf` reads it.  A relocatable object carries no
-    // float-ABI bit, and an image setting neither falls to this one.
+    // records which, and the Python `load_elf` wrapper reads it.  A Rust caller
+    // picks the preset itself.  A relocatable object carries no float-ABI bit,
+    // and an image setting neither falls to this one.
     CcPresetRow {
         name: "arm_aapcs",
         cc: ARM_AAPCS_VFP_BASE,
