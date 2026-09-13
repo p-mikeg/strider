@@ -47,31 +47,15 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 
     /// A register-space LOAD whose address names no register (ppc `mfsrin`).
     ///
-    /// The value comes out of the REGISTER space as memory, so two accesses at
-    /// the SAME address value forward to each other. A named register write is
-    /// an SSA-variable write that never advances the memory chain, so the space
-    /// is stale at every register written since the last store into it and two
-    /// loads either side of one would forward to the same value, claiming the
-    /// machine read the same thing twice. Every tracked register is therefore
-    /// mirrored into its slot first, which both breaks that forwarding and
-    /// makes the load's answer the register's own value when the address does
-    /// name it.
-    ///
-    /// O(tracked registers), the price `opaque_register_store` pays in the
-    /// other direction.
+    /// Reads the REGISTER space as memory after mirroring the registers into
+    /// it, so the load answers a register's current value when the address
+    /// names one, and two loads either side of a named register write do not
+    /// forward to one value.
     fn opaque_register_load(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let addr = self.read_input(insn, 1)?;
         let out_vn = require_output_vn(insn)?;
         let out_ty = out_vn.int_type()?;
-        let mirrored: Vec<rsleigh::Vn> =
-            opaque_clobber_set(self.builder.function().all_vns()).collect();
-        for vn in mirrored {
-            let slot =
-                self.build_addr_const(rsleigh::VnSpace::REGISTER, vn.addr_off, "REGISTER space")?;
-            let value = self.read_vn(&vn)?;
-            self.builder
-                .build_store(slot, value, rsleigh::VnSpace::REGISTER)?;
-        }
+        self.mirror_registers_into_space()?;
         let value = self
             .builder
             .build_load(addr, rsleigh::VnSpace::REGISTER, out_ty)?;
@@ -80,13 +64,11 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 
     /// A register-space STORE whose address names no register.
     ///
-    /// Two halves, and both are needed. The STORE itself lands in the REGISTER
-    /// space so the data stays live and a later opaque load at the same address
-    /// forwards from it. Then every tracked register is re-read out of that
-    /// space, which is what carries the aliasing: the write went SOMEWHERE in
-    /// the register file, so no register may keep the value it held. The
-    /// re-read depends on the store, so the optimizer cannot forward the old
-    /// value across it, and a register read repeatedly after the store sees one
+    /// The registers are mirrored into the space, the STORE lands there, and
+    /// every tracked register is re-read out of it. A register the write
+    /// misses reads back its current value; the re-read depends on the store,
+    /// so the old value forwards only where the optimizer proves the address
+    /// misses that slot. A register read repeatedly after the store sees one
     /// value rather than a fresh unknown each time.
     ///
     /// O(tracked registers), and again in `collect_def_sites`, where a def site
@@ -95,6 +77,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     fn opaque_register_store(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let addr = self.read_input(insn, 1)?;
         let data = self.read_input(insn, 2)?;
+        self.mirror_registers_into_space()?;
         self.builder
             .build_store(addr, data, rsleigh::VnSpace::REGISTER)?;
 
@@ -111,6 +94,23 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 .builder
                 .build_load(slot, rsleigh::VnSpace::REGISTER, ty)?;
             self.write_vn(&vn, value)?;
+        }
+        Ok(())
+    }
+
+    /// Stores every tracked register's current value into its REGISTER-space
+    /// slot. A named register write is an SSA-variable write that leaves the
+    /// memory chain alone, so the space is otherwise stale at every register
+    /// written since the last opaque access.
+    fn mirror_registers_into_space(&mut self) -> Result<()> {
+        let mirrored: Vec<rsleigh::Vn> =
+            opaque_clobber_set(self.builder.function().all_vns()).collect();
+        for vn in mirrored {
+            let slot =
+                self.build_addr_const(rsleigh::VnSpace::REGISTER, vn.addr_off, "REGISTER space")?;
+            let value = self.read_vn(&vn)?;
+            self.builder
+                .build_store(slot, value, rsleigh::VnSpace::REGISTER)?;
         }
         Ok(())
     }
