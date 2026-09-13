@@ -446,14 +446,6 @@ mod alias_tests {
 
     /// Leaves SP addresses as the bare `InitialVar(sp) + k` terminals the
     /// decomposer recognises.
-    fn collapse(f: &mut Function) {
-        let mut p = crate::OptimizerPipeline::new();
-        p.add(crate::PhiCollapse);
-        p.add(crate::RegionCollapse);
-        p.run(f, &mut crate::OptCtx::new(None))
-            .expect("phi collapse");
-    }
-
     /// `store [base + 8]` plus a load from the same address, so the store and
     /// its SP-rooted address stay reachable.  `align` masks the base to 8
     /// bytes first, giving a base the decomposer cannot offset-compare with
@@ -476,7 +468,7 @@ mod alias_tests {
             Ok(())
         })
         .unwrap();
-        collapse(&mut f);
+        collapse_phis(&mut f);
         f
     }
 
@@ -665,7 +657,7 @@ mod heap_tests {
     use std::sync::Arc;
     use strider_ir::node::{ValueId, ValueType};
     use strider_ir::{Function, FunctionBuilder, IRBuilderExt, IntBinaryOp};
-    use strider_ir_test_utils::RegisterSet;
+    use strider_ir_test_utils::{RegisterSet, stack_args_at};
 
     fn sp() -> rsleigh::Vn {
         rsleigh::Vn {
@@ -1270,17 +1262,13 @@ mod heap_tests {
     #[test]
     fn allocator_does_not_forward_its_own_stack_argument_slot() -> crate::Result<()> {
         let sp = sp();
-        let stack_args = strider_target::StackArgs {
-            base_offset: 0,
-            increment: 8,
-        };
         let mut b = RegisterSet::new()
             .tracked(sp)
             .tracked(ret_reg())
             .arg(sp)
             .ret(ret_reg())
             .stack_vn(sp)
-            .stack_args(Some(stack_args))
+            .stack_args(stack_args_at(0, 8))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let zero = b.build_int_const(0u64, ValueType::I64)?;
@@ -1446,17 +1434,13 @@ mod heap_tests {
     #[test]
     fn incoming_stack_arg_does_not_forward_across_a_call() -> crate::Result<()> {
         let sp_vn = sp();
-        let stack_args = strider_target::StackArgs {
-            base_offset: 8,
-            increment: 8,
-        };
         let mut b = RegisterSet::new()
             .tracked(sp_vn)
             .tracked(ret_reg())
             .arg(sp_vn)
             .ret(ret_reg())
             .stack_vn(sp_vn)
-            .stack_args(Some(stack_args))
+            .stack_args(stack_args_at(8, 8))
             .build_fn_single_region()?;
         let sp = b.read_variable(&sp_vn)?;
         // +16: the second incoming stack argument, above the entry SP, so in
@@ -1961,7 +1945,7 @@ mod arg_window_complexity {
     use crate::mem_analysis::*;
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
-    use strider_ir_test_utils::sp_frame;
+    use strider_ir_test_utils::{sp_frame, stack_args_at};
 
     /// A spill at `sp - 8`, `calls` back-to-back calls under a lowered SP, then
     /// its reload.  The nearest call's window scan runs into the call before
@@ -1969,12 +1953,8 @@ mod arg_window_complexity {
     /// grow with the call count.
     fn walk_steps_for(calls: usize) -> crate::Result<u64> {
         let sp = strider_ir_test_utils::stack_vn_x86();
-        let stack_args = strider_target::StackArgs {
-            base_offset: 0,
-            increment: 4,
-        };
         let mut b = sp_frame(sp)
-            .stack_args(Some(stack_args))
+            .stack_args(stack_args_at(0, 4))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let k = b.build_int_const((-8i64) as u64, ValueType::I32)?;
@@ -2032,12 +2012,8 @@ mod arg_window_complexity {
     /// window computation is measured against the number of slots in it.
     fn walk_steps_for_arg_slots(slots: usize) -> crate::Result<u64> {
         let sp = strider_ir_test_utils::stack_vn_x86();
-        let stack_args = strider_target::StackArgs {
-            base_offset: 0,
-            increment: 4,
-        };
         let mut b = sp_frame(sp)
-            .stack_args(Some(stack_args))
+            .stack_args(stack_args_at(0, 4))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         // The frame is one slot deeper than the arguments need, so the spill at
@@ -2105,12 +2081,8 @@ mod arg_window_complexity {
     /// call the same question, so the whole prefix walk must be paid once.
     fn walk_steps_for_loads(loads: usize, slots: usize) -> crate::Result<u64> {
         let sp = strider_ir_test_utils::stack_vn_x86();
-        let stack_args = strider_target::StackArgs {
-            base_offset: 0,
-            increment: 4,
-        };
         let mut b = sp_frame(sp)
-            .stack_args(Some(stack_args))
+            .stack_args(stack_args_at(0, 4))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         // Blinds the prefix at the first slot with no store, so the window
@@ -2172,12 +2144,8 @@ mod arg_window_complexity {
     /// cost of the run is what this measures.
     fn walk_steps_for_ascending_probes(slots: usize) -> crate::Result<u64> {
         let sp = strider_ir_test_utils::stack_vn_x86();
-        let stack_args = strider_target::StackArgs {
-            base_offset: 0,
-            increment: 4,
-        };
         let mut b = sp_frame(sp)
-            .stack_args(Some(stack_args))
+            .stack_args(stack_args_at(0, 4))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let frame_bytes = 4 * slots as i64;
@@ -2332,7 +2300,7 @@ mod arg_window_visibility {
     use crate::mem_analysis::*;
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
-    use strider_ir_test_utils::sp_frame;
+    use strider_ir_test_utils::{sp_frame, stack_args_at};
 
     /// ```text
     /// store P -> sp+0     ; f's arg0
@@ -2344,12 +2312,8 @@ mod arg_window_visibility {
     #[test]
     fn a_slot_hidden_behind_an_earlier_call_stays_in_the_window() -> crate::Result<()> {
         let sp = strider_ir_test_utils::stack_vn_x86();
-        let stack_args = strider_target::StackArgs {
-            base_offset: 0,
-            increment: 4,
-        };
         let mut b = sp_frame(sp)
-            .stack_args(Some(stack_args))
+            .stack_args(stack_args_at(0, 4))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
 
@@ -2407,12 +2371,8 @@ mod arg_window_visibility {
     #[test]
     fn a_slot_reached_by_a_store_anchored_below_it_ends_the_prefix() -> crate::Result<()> {
         let sp = strider_ir_test_utils::stack_vn_x86();
-        let stack_args = strider_target::StackArgs {
-            base_offset: 0,
-            increment: 4,
-        };
         let mut b = sp_frame(sp)
-            .stack_args(Some(stack_args))
+            .stack_args(stack_args_at(0, 4))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         let mut addrs = Vec::new();
@@ -2474,12 +2434,8 @@ mod arg_window_visibility {
     #[test]
     fn a_frame_relative_slot_behind_an_earlier_call_stays_in_the_window() -> crate::Result<()> {
         let sp = strider_ir_test_utils::stack_vn_x86();
-        let stack_args = strider_target::StackArgs {
-            base_offset: 4,
-            increment: 4,
-        };
         let mut b = sp_frame(sp)
-            .stack_args(Some(stack_args))
+            .stack_args(stack_args_at(4, 4))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
         let frame = b.build_int_const((-64i64) as u64, ValueType::I32)?;
@@ -2541,12 +2497,8 @@ mod arg_window_visibility {
     /// ```
     fn spill_at_the_stack_top_forwards(relaxed: bool) -> crate::Result<bool> {
         let sp = strider_ir_test_utils::stack_vn_x86();
-        let stack_args = strider_target::StackArgs {
-            base_offset: 0,
-            increment: 4,
-        };
         let mut b = sp_frame(sp)
-            .stack_args(Some(stack_args))
+            .stack_args(stack_args_at(0, 4))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
         let frame = b.build_int_const((-64i64) as u64, ValueType::I32)?;
@@ -2603,12 +2555,8 @@ mod arg_window_visibility {
     #[test]
     fn a_local_below_the_argument_bound_still_forwards_across_a_call() -> crate::Result<()> {
         let sp = strider_ir_test_utils::stack_vn_x86();
-        let stack_args = strider_target::StackArgs {
-            base_offset: 4,
-            increment: 4,
-        };
         let mut b = sp_frame(sp)
-            .stack_args(Some(stack_args))
+            .stack_args(stack_args_at(4, 4))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
         let minus_eight = b.build_int_const((-8i64) as u64, ValueType::I32)?;
@@ -2665,12 +2613,8 @@ mod arg_window_visibility {
     #[test]
     fn an_unplaceable_store_does_not_end_the_argument_window() -> crate::Result<()> {
         let sp = strider_ir_test_utils::stack_vn_x86();
-        let stack_args = strider_target::StackArgs {
-            base_offset: 0,
-            increment: 4,
-        };
         let mut b = sp_frame(sp)
-            .stack_args(Some(stack_args))
+            .stack_args(stack_args_at(0, 4))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
 
@@ -2739,12 +2683,8 @@ mod arg_window_visibility {
     #[test]
     fn a_sub_slot_argument_owns_its_whole_slot() -> crate::Result<()> {
         let sp = strider_ir_test_utils::stack_vn_x86_64();
-        let stack_args = strider_target::StackArgs {
-            base_offset: 8,
-            increment: 8,
-        };
         let mut b = sp_frame(sp)
-            .stack_args(Some(stack_args))
+            .stack_args(stack_args_at(8, 8))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
         let frame = b.build_int_const((-32i64) as u64, ValueType::I64)?;

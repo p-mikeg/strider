@@ -226,6 +226,20 @@ mod tests {
         cascade_forever: bool,
     }
 
+    impl ScriptedPass {
+        fn new(match_kind: fn(&NodeKind) -> bool, do_rewrite: bool, propagate: bool) -> Self {
+            Self {
+                match_kind,
+                do_rewrite,
+                propagate,
+                return_error: false,
+                visit_log: RefCell::default(),
+                create_matching_once: RefCell::new(false),
+                cascade_forever: false,
+            }
+        }
+    }
+
     const REPLACEMENT_K: u64 = 0xABCD_1234;
 
     impl PeepholePass for ScriptedPass {
@@ -281,11 +295,6 @@ mod tests {
         }
     }
 
-    /// `fn() -> u64 { return 7; }`, the minimal reachable graph.
-    fn one_const_fn() -> strider_ir::Function {
-        make_empty_fn(|b| b.build_int_const(7u64, ValueType::I64)).unwrap()
-    }
-
     /// `fn() -> u64 { return Add(11, 13); }`.
     fn add_two_consts() -> strider_ir::Function {
         make_empty_fn(|b| {
@@ -304,37 +313,10 @@ mod tests {
     }
 
     #[test]
-    fn run_peephole_on_minimal_graph_no_match() {
-        let mut fg = one_const_fn();
-        let pass = ScriptedPass {
-            match_kind: match_nothing,
-            do_rewrite: false,
-            propagate: false,
-            return_error: false,
-            visit_log: RefCell::new(Vec::new()),
-            create_matching_once: RefCell::new(false),
-            cascade_forever: false,
-        };
-        let mut edit = crate::EditFunction::new(&mut fg);
-        let mut octx = crate::pipeline::OptCtx::new(None);
-        let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
-        assert_eq!(r, OptimizationResult::NoChange);
-        assert!(pass.visit_log.borrow().is_empty());
-    }
-
-    #[test]
     fn run_peephole_pass_never_matches_returns_nochange() {
         // The graph has an Add but the kind filter rejects everything.
         let mut fg = add_two_consts();
-        let pass = ScriptedPass {
-            match_kind: match_nothing,
-            do_rewrite: true,
-            propagate: true,
-            return_error: false,
-            visit_log: RefCell::new(Vec::new()),
-            create_matching_once: RefCell::new(false),
-            cascade_forever: false,
-        };
+        let pass = ScriptedPass::new(match_nothing, true, true);
         let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
         let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
@@ -345,15 +327,7 @@ mod tests {
     #[test]
     fn run_peephole_rewrites_and_reports_changed() {
         let mut fg = add_two_consts();
-        let pass = ScriptedPass {
-            match_kind: match_add,
-            do_rewrite: true,
-            propagate: false,
-            return_error: false,
-            visit_log: RefCell::new(Vec::new()),
-            create_matching_once: RefCell::new(false),
-            cascade_forever: false,
-        };
+        let pass = ScriptedPass::new(match_add, true, false);
         let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
         let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
@@ -380,15 +354,7 @@ mod tests {
             b.build_int_binary_operation(inner, c, IntBinaryOp::Add, ValueType::I64)
         })
         .unwrap();
-        let pass = ScriptedPass {
-            match_kind: match_add,
-            do_rewrite: true,
-            propagate: false,
-            return_error: false,
-            visit_log: RefCell::new(Vec::new()),
-            create_matching_once: RefCell::new(false),
-            cascade_forever: false,
-        };
+        let pass = ScriptedPass::new(match_add, true, false);
         let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
         let _ = run_peephole(&pass, &mut edit, &mut octx).unwrap();
@@ -406,15 +372,7 @@ mod tests {
             b.build_int_binary_operation(inner, c, IntBinaryOp::Add, ValueType::I64)
         })
         .unwrap();
-        let pass = ScriptedPass {
-            match_kind: match_add,
-            do_rewrite: true,
-            propagate: true,
-            return_error: false,
-            visit_log: RefCell::new(Vec::new()),
-            create_matching_once: RefCell::new(false),
-            cascade_forever: false,
-        };
+        let pass = ScriptedPass::new(match_add, true, true);
         let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
         let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
@@ -436,13 +394,8 @@ mod tests {
         use cranelift_entity::EntityRef;
         let mut fg = add_two_consts();
         let pass = ScriptedPass {
-            match_kind: match_add,
-            do_rewrite: true,
-            propagate: true,
-            return_error: false,
-            visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(true),
-            cascade_forever: false,
+            ..ScriptedPass::new(match_add, true, true)
         };
         let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
@@ -491,13 +444,8 @@ mod tests {
     fn run_peephole_propagates_pass_internal_error() {
         let mut fg = add_two_consts();
         let pass = ScriptedPass {
-            match_kind: match_add,
-            do_rewrite: false,
-            propagate: false,
             return_error: true,
-            visit_log: RefCell::new(Vec::new()),
-            create_matching_once: RefCell::new(false),
-            cascade_forever: false,
+            ..ScriptedPass::new(match_add, false, false)
         };
         let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);
@@ -517,13 +465,9 @@ mod tests {
     fn run_peephole_bails_out_instead_of_spinning_forever() {
         let mut fg = add_two_consts();
         let pass = ScriptedPass {
-            match_kind: match_add,
-            do_rewrite: true,
-            propagate: true,
-            return_error: false,
-            visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(true),
             cascade_forever: true,
+            ..ScriptedPass::new(match_add, true, true)
         };
         let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::new(None);

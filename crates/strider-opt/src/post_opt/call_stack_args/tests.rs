@@ -78,12 +78,7 @@ fn local_inits_in_arg_window_are_collected_too() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
-
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs = collect_call_inputs(&mut fg)?;
     // ctrl + mem + target + sp + 7 collected args = 11 inputs.
     let collected: Vec<u128> = inputs[4..]
         .iter()
@@ -122,12 +117,7 @@ fn outgoing_wide_arg_store_collected_as_one_arg() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
-
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs = collect_call_inputs(&mut fg)?;
     assert_eq!(
         inputs.len(),
         6,
@@ -182,12 +172,7 @@ fn outgoing_span_four_wide_arg_store_collected_as_one_arg() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
-
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs = collect_call_inputs(&mut fg)?;
     assert_eq!(
         inputs.len(),
         6,
@@ -242,12 +227,7 @@ fn outgoing_span_three_wide_arg_store_collected_as_one_arg() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
-
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs = collect_call_inputs(&mut fg)?;
     assert_eq!(
         inputs.len(),
         6,
@@ -265,6 +245,16 @@ fn outgoing_span_three_wide_arg_store_collected_as_one_arg() -> Result<()> {
         fg.kind_of_value(inputs[5])
     );
     Ok(())
+}
+
+/// Runs `cf_rp_pipeline` plus `CallStackArgCollect` and returns the sole
+/// Call's inputs.
+fn collect_call_inputs(fg: &mut strider_ir::Function) -> Result<Vec<ValueId>> {
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(CallStackArgCollect);
+    pipeline.run(fg, &mut crate::OptCtx::new(None))?;
+    let call_id = find_call(fg.graph())?;
+    Ok(fg.node_inputs(call_id).into_iter().collect())
 }
 
 fn find_call(graph: &Graph) -> Result<NodeId> {
@@ -300,12 +290,7 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
-
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs = collect_call_inputs(&mut fg)?;
     // cdecl has no arg-passing registers, so indices 4 and 5 are the stack args.
     assert_eq!(
         inputs.len(),
@@ -352,12 +337,7 @@ fn collects_ten_stack_args() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
-
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs = collect_call_inputs(&mut fg)?;
     assert_eq!(
         inputs.len(),
         4 + N,
@@ -398,12 +378,7 @@ fn slot_hole_truncates_collection_to_dense_prefix() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
-
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs = collect_call_inputs(&mut fg)?;
     assert_eq!(
         inputs.len(),
         5,
@@ -438,12 +413,7 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
-
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs = collect_call_inputs(&mut fg)?;
     assert_eq!(inputs.len(), 5, "only one stack arg could be collected");
     Ok(())
 }
@@ -551,12 +521,7 @@ fn disjoint_in_window_store_is_collected_not_a_terminator() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
-
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs = collect_call_inputs(&mut fg)?;
     // ctrl + mem + target + sp + 3 collected args at slots 0,1,2.
     let collected: Vec<u128> = inputs[4..]
         .iter()
@@ -711,12 +676,7 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
-
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs = collect_call_inputs(&mut fg)?;
     assert_eq!(
         inputs.len(),
         6,
@@ -770,12 +730,7 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
-
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs = collect_call_inputs(&mut fg)?;
     assert_eq!(
         inputs.len(),
         7,
@@ -826,12 +781,7 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
-
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs = collect_call_inputs(&mut fg)?;
     assert_eq!(
         inputs.len(),
         6,
@@ -886,12 +836,7 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
-
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs = collect_call_inputs(&mut fg)?;
     let collected: Vec<u128> = inputs[3..]
         .iter()
         .filter_map(|&out| {
@@ -948,12 +893,7 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
-
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs = collect_call_inputs(&mut fg)?;
     // ctrl + mem + target + sp + arg0 = 5 inputs.
     assert_eq!(
         inputs.len(),
@@ -1204,12 +1144,7 @@ fn partly_overwritten_wide_store_supplies_no_arg() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
-
-    let call_id = find_call(fg.graph())?;
-    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs = collect_call_inputs(&mut fg)?;
     assert_eq!(
         inputs.len(),
         4,
