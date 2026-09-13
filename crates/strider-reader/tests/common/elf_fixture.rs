@@ -49,6 +49,8 @@ pub(crate) struct RelPlacement {
     /// Map the slot PF_R | PF_X rather than PF_R | PF_W, putting it in the
     /// instruction-fetch image.
     pub slot_exec: bool,
+    /// The encoding of `.rel.dyn`.
+    pub table: RelTable,
 }
 
 impl Default for RelPlacement {
@@ -57,8 +59,67 @@ impl Default for RelPlacement {
             slot_addr: 0x2000,
             outer_load: false,
             slot_exec: false,
+            table: RelTable::Rel,
         }
     }
+}
+
+/// The relocation table's section type.
+#[derive(Clone, Copy)]
+pub(crate) enum RelTable {
+    Rel,
+    /// `SHT_CREL`; `Some` sets the header's addend bit and carries the one
+    /// entry's explicit addend, `None` leaves A in the field as `SHT_REL` does.
+    Crel(Option<i64>),
+}
+
+fn uleb128(out: &mut Vec<u8>, mut v: u64) {
+    loop {
+        let byte = (v & 0x7f) as u8;
+        v >>= 7;
+        if v == 0 {
+            out.push(byte);
+            return;
+        }
+        out.push(byte | 0x80);
+    }
+}
+
+fn sleb128(out: &mut Vec<u8>, mut v: i64) {
+    loop {
+        let byte = (v & 0x7f) as u8;
+        v >>= 7;
+        if (v == 0 && byte & 0x40 == 0) || (v == -1 && byte & 0x40 != 0) {
+            out.push(byte);
+            return;
+        }
+        out.push(byte | 0x80);
+    }
+}
+
+/// A one-entry `SHT_CREL` body at shift 0: header, then the offset delta with
+/// the flag bits folded into its first byte, then the symbol, type and addend
+/// deltas.
+fn crel_one(offset: u64, r_sym: u32, r_type: u32, addend: Option<i64>) -> Vec<u8> {
+    let flag_bits = if addend.is_some() { 3 } else { 2 };
+    let mut out = Vec::new();
+    uleb128(
+        &mut out,
+        (1 << 3) | if addend.is_some() { 1 << 2 } else { 0 },
+    );
+    let flags = 0b011 | if addend.is_some() { 0b100 } else { 0 };
+    let rest = offset >> (7 - flag_bits);
+    let first = (((offset << flag_bits) | flags) & 0x7f) as u8;
+    out.push(if rest != 0 { first | 0x80 } else { first });
+    if rest != 0 {
+        uleb128(&mut out, rest);
+    }
+    sleb128(&mut out, i64::from(r_sym));
+    sleb128(&mut out, i64::from(r_type));
+    if let Some(a) = addend {
+        sleb128(&mut out, a);
+    }
+    out
 }
 
 pub(crate) fn build_mips32be_rel32_elf() -> RelFixture {
@@ -149,7 +210,9 @@ pub(crate) fn build_rel_elf_placed(opts: RelOpts, place: RelPlacement) -> RelFix
     let r_sym = if defined_symbol { sym_index } else { 0 };
     let rel_entsize = if is_64 { 16 } else { 8 };
     let mut reldyn = Vec::with_capacity(rel_entsize);
-    if is_64 && e_machine == elf::EM_MIPS {
+    if let RelTable::Crel(addend) = place.table {
+        reldyn = crel_one(slot_addr, r_sym, r_type, addend);
+    } else if is_64 && e_machine == elf::EM_MIPS {
         // MIPS64 lays `r_info` out as an `r_sym` word in target endianness
         // followed by four single bytes, so the type half is NOT byte-swapped
         // on a little-endian target.
@@ -326,7 +389,10 @@ pub(crate) fn build_rel_elf_placed(opts: RelOpts, place: RelPlacement) -> RelFix
         // sh_link = .dynsym is what makes `dynamic_relocations()` pick this up.
         w.write_section_header(&SectionHeader {
             name: Some(reldyn_name),
-            sh_type: elf::SHT_REL,
+            sh_type: match place.table {
+                RelTable::Rel => elf::SHT_REL,
+                RelTable::Crel(_) => elf::SHT_CREL,
+            },
             sh_flags: u64::from(elf::SHF_ALLOC),
             sh_addr: 0,
             sh_offset: reldyn_off as u64,
@@ -334,7 +400,10 @@ pub(crate) fn build_rel_elf_placed(opts: RelOpts, place: RelPlacement) -> RelFix
             sh_link: dynsym_idx.0,
             sh_info: 0,
             sh_addralign: 4,
-            sh_entsize: rel_entsize as u64,
+            sh_entsize: match place.table {
+                RelTable::Rel => rel_entsize as u64,
+                RelTable::Crel(_) => 1,
+            },
         });
         w.write_shstrtab_section_header();
     }
