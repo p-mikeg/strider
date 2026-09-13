@@ -18,8 +18,9 @@ rustc-hash.workspace = true
 
 [features]
 # Test-only graph internals: `Graph::corrupt_clear_first_use`, which breaks a
-# use-list on purpose for strider-ir's validator tests, and
-# `Graph::next_node_id`, the arena's next unallocated key.
+# use-list on purpose for strider-ir's validator tests,
+# `Graph::next_node_id`, the arena's next unallocated key, and
+# `Graph::remove_node_input`, the single-slot removal.
 test-injectors = []
 
 [dev-dependencies]
