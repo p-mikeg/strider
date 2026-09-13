@@ -1343,3 +1343,23 @@ fn narrowing_does_not_bake_in_stack_global_disjoint() -> Result<()> {
     );
     Ok(())
 }
+
+/// Doubling the calls between argument reads may only double the detection
+/// work.
+#[test]
+fn detecting_across_call_diamonds_costs_near_linear_work() -> Result<()> {
+    let work = |n: usize| -> Result<u64> {
+        let mut fg = crate::test_support::memory_shapes::argument_reads_between_calls(n)?;
+        crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
+        crate::mem_ssa::CLIMB_STEPS.with(|c| c.set(0));
+        crate::pipeline::run_post(&FunctionArgDetect, &mut fg, &mut crate::OptCtx::new(None))?;
+        Ok(crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get)
+            + crate::mem_ssa::CLIMB_STEPS.with(std::cell::Cell::get))
+    };
+    let (small, big) = (work(100)?, work(200)?);
+    assert!(
+        big * 100 <= small * 260,
+        "doubling the call diamonds took {small} steps to {big}"
+    );
+    Ok(())
+}
