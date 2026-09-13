@@ -341,3 +341,46 @@ fn collapse_then_validates() -> crate::Result<()> {
         .map_err(|e| anyhow::anyhow!("post-PhiCollapse validation failed: {e:?}"))?;
     Ok(())
 }
+
+/// The pipeline loop over a chain of trivial phis, each a consumer of the one
+/// before: the first sweep collapses them all, so the second reports nothing.
+#[test]
+fn a_cascading_sweep_converges_in_one_iteration() -> crate::Result<()> {
+    use crate::pipeline::Optimizer;
+    use strider_ir_test_utils::IrWalkerEx;
+    let var = reg_vn(0x1000, 8);
+    let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
+    let regions = (0..6)
+        .map(|_| b.create_region_all())
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    b.set_entry_region_all(regions[0])?;
+    for pair in regions.windows(2) {
+        b.set_region(pair[0]);
+        b.build_branch(pair[1])?;
+        b.set_region(pair[1]);
+        let _ = b.read_variable(&var)?;
+    }
+    let read_back = b.read_variable(&var)?;
+    b.build_return(Some(read_back), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    let phis = |fg: &strider_ir::Function| fg.count_kind(|k| matches!(k, NodeKind::Phi));
+    assert!(phis(&fg) >= 5, "setup expects a phi per join");
+
+    let mut ctx = crate::OptCtx::new(None);
+    let mut edit = crate::EditFunction::new(&mut fg);
+    edit.cull_dead();
+    let mut sweeps = Vec::new();
+    loop {
+        let changed = PhiCollapse.apply(&mut edit, &mut ctx)?.changed();
+        sweeps.push(changed);
+        edit.clean();
+        if !changed || sweeps.len() > 8 {
+            break;
+        }
+    }
+    drop(edit);
+    assert_eq!(sweeps, [true, false]);
+    assert_eq!(phis(&fg), 0);
+    Ok(())
+}

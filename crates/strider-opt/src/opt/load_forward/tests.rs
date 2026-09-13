@@ -92,8 +92,8 @@ fn non_forwardable_load_is_narrowed_to_initial_memory() -> Result<()> {
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let load = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+        .walk_kind(|k| matches!(k, NodeKind::Load(_)))
+        .next()
         .expect("the sp+0 load is not forwardable and must survive");
     let mem = fg.node_inputs(load)[0];
     assert!(
@@ -193,8 +193,8 @@ fn forward_does_not_cross_address_spaces() -> Result<()> {
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let load = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+        .walk_kind(|k| matches!(k, NodeKind::Load(_)))
+        .next()
         .expect("RAM load must survive: a REGISTER store cannot forward into it");
     let mem = fg.node_inputs(load)[0];
     assert!(
@@ -1764,12 +1764,6 @@ fn graft_mem_phi(
     fg.node_outputs(n)[0]
 }
 
-fn find_kind(fg: &strider_ir::Function, want: &NodeKind) -> strider_ir::node::NodeId {
-    fg.walk()
-        .find(|&n| std::mem::discriminant(fg.node_kind(n)) == std::mem::discriminant(want))
-        .expect("node kind must exist")
-}
-
 /// Two nested loops with no memory def in either body, whose exits merge above
 /// the load: `merge[inner_header, exit_merge[store, outer_header]]`.
 ///
@@ -1789,10 +1783,22 @@ fn nested_loop_exit_merge_graph() -> Result<(
         b.build_int_const(7u64, ValueType::I64)
     })?;
 
-    let im = find_kind(&fg, &NodeKind::InitialMemory);
-    let store = find_kind(&fg, &NodeKind::Store(rsleigh::VnSpace::RAM));
-    let region = find_kind(&fg, &NodeKind::Region);
-    let ret = find_kind(&fg, &NodeKind::Return);
+    let im = fg
+        .walk_kind(|k| matches!(k, NodeKind::InitialMemory))
+        .next()
+        .expect("node kind must exist");
+    let store = fg
+        .walk_kind(|k| matches!(k, NodeKind::Store(_)))
+        .next()
+        .expect("node kind must exist");
+    let region = fg
+        .walk_kind(|k| matches!(k, NodeKind::Region))
+        .next()
+        .expect("node kind must exist");
+    let ret = fg
+        .walk_kind(|k| matches!(k, NodeKind::Return))
+        .next()
+        .expect("node kind must exist");
     let im_mem = fg.node_outputs(im)[0];
     let store_mem = fg.node_outputs(store)[0];
     let store_addr = fg.node_inputs(store)[1];
@@ -1838,7 +1844,10 @@ fn load_below_nested_loops_is_not_narrowed_past_the_exit_merge() -> Result<()> {
         &mut crate::OptCtx::new(None),
     )?;
 
-    let load = find_kind(&fg, &NodeKind::Load(rsleigh::VnSpace::RAM));
+    let load = fg
+        .walk_kind(|k| matches!(k, NodeKind::Load(_)))
+        .next()
+        .expect("node kind must exist");
     let mem = fg.node_inputs(load)[0];
     assert_eq!(
         mem,
@@ -1899,8 +1908,8 @@ fn narrowing_across_a_call_never_outlives_escape_analysis() -> Result<()> {
     crate::test_support::standard_test().run(&mut fg, &mut sound)?;
 
     let load = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+        .walk_kind(|k| matches!(k, NodeKind::Load(_)))
+        .next()
         .expect("nothing stores to the slot, so the load survives");
     let mem = fg.node_inputs(load)[0];
     assert!(
@@ -1936,8 +1945,8 @@ fn narrowing_past_a_global_store_never_outlives_stack_global_disjoint() -> Resul
     crate::test_support::standard_test().run(&mut fg, &mut sound)?;
 
     let load = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+        .walk_kind(|k| matches!(k, NodeKind::Load(_)))
+        .next()
         .expect("nothing stores to the slot, so the load survives");
     let mem = fg.node_inputs(load)[0];
     assert!(
@@ -1996,8 +2005,8 @@ fn narrowing_across_an_allocator_never_outlives_noalias_allocators() -> Result<(
     crate::test_support::standard_test().run(&mut fg, &mut sound)?;
 
     let load = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+        .walk_kind(|k| matches!(k, NodeKind::Load(_)))
+        .next()
         .expect("nothing stores to the slot, so the load survives");
     let mem = fg.node_inputs(load)[0];
     assert!(

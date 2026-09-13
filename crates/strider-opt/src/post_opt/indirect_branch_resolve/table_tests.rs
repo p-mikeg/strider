@@ -1112,19 +1112,7 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
         .unwrap();
     b.build_indirect_branch(loaded).unwrap();
     b.set_lift_addr(None);
-    let mut fg = b.build().unwrap();
-    let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold::new());
-    p.add(KnownBits);
-    p.add(PhiCollapse);
-    p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
-    let load = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-        .expect("dispatch Load survives; LoadForward is out of this pipeline");
-    let _load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
+    let (fg, _load_value) = finish_stack_array(b.build().unwrap());
 
     // The default assumptions prove the global store disjoint.
     let mut expected = targets.to_vec();
@@ -1223,19 +1211,7 @@ fn classify_table_dispatch_returns_none_when_call_clobbers_between_stores_and_lo
         .unwrap();
     b.build_indirect_branch(loaded).unwrap();
     b.set_lift_addr(None);
-    let mut fg = b.build().unwrap();
-    let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold::new());
-    p.add(KnownBits);
-    p.add(PhiCollapse);
-    p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
-    let load = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-        .expect("dispatch Load survives");
-    let _load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
+    let (fg, _load_value) = finish_stack_array(b.build().unwrap());
     assert_eq!(
         classify(&fg, None),
         None,
@@ -1262,19 +1238,7 @@ fn classify_table_dispatch_returns_none_on_non_indexed_load() {
         .unwrap();
     b.build_indirect_branch(loaded).unwrap();
     b.set_lift_addr(None);
-    let mut fg = b.build().unwrap();
-    let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold::new());
-    p.add(KnownBits);
-    p.add(PhiCollapse);
-    p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
-    let load = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-        .unwrap();
-    let _load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
+    let (fg, _load_value) = finish_stack_array(b.build().unwrap());
     assert_eq!(classify(&fg, None), None);
 }
 
@@ -1314,19 +1278,7 @@ fn classify_table_dispatch_returns_none_on_unbounded_stack_idx() {
         .unwrap();
     b.build_indirect_branch(loaded).unwrap();
     b.set_lift_addr(None);
-    let mut fg = b.build().unwrap();
-    let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold::new());
-    p.add(KnownBits);
-    p.add(PhiCollapse);
-    p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
-    let load = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-        .unwrap();
-    let _load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
+    let (fg, _load_value) = finish_stack_array(b.build().unwrap());
     assert_eq!(classify(&fg, None), None);
 }
 
@@ -1422,20 +1374,7 @@ fn build_one_target_array(
         .unwrap();
     b.build_indirect_branch(loaded).unwrap();
     b.set_lift_addr(None);
-    let mut fg = b.build().unwrap();
-    let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold::new());
-    p.add(KnownBits);
-    p.add(PhiCollapse);
-    p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
-    let load = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-        .expect("Load survives; LoadForward is out of this pipeline");
-    let load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
-    (fg, load_value)
+    finish_stack_array(b.build().unwrap())
 }
 
 #[test]
@@ -1486,60 +1425,6 @@ fn index_bound_ok_rejects_types_past_the_u128_carrier() {
     assert!(index_bound_ok(ValueType::I32, iv));
     assert!(!index_bound_ok(ValueType::I256, iv));
     assert!(!index_bound_ok(ValueType::I512, iv));
-}
-
-#[test]
-fn classify_table_dispatch_resolves_a_bitfield_index_under_its_guard() {
-    // ARM `ubfx r3, r0, #27, #2; cmp r3, #3; ldrls pc, [pc, r3, lsl #2]`
-    // (linux 6.1 `arch_bp_generic_fields`): the index lifts as
-    // `(r0 << 3) >> 30`, four values of a register, not a table cell.
-    use strider_ir::IntCmpOp;
-    let r0 = strider_ir_test_utils::reg_vn(0x20, 4);
-    let mut b = RegisterSet::new().tracked(r0).arg(r0).build_fn().unwrap();
-    let entry = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit = b.create_region_all().unwrap();
-    b.set_entry_region_all(entry).unwrap();
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-
-    b.set_region(entry);
-    let arg = b.read_variable(&r0).unwrap();
-    let three = b.build_int_const(3u64, ValueType::I32).unwrap();
-    let up = b
-        .build_int_binary_operation(arg, three, IntBinaryOp::ShiftLeft, ValueType::I32)
-        .unwrap();
-    let thirty = b.build_int_const(30u64, ValueType::I32).unwrap();
-    let idx = b
-        .build_int_binary_operation(up, thirty, IntBinaryOp::ShiftRight, ValueType::I32)
-        .unwrap();
-    let cond = b
-        .build_int_cmp_operation(three, idx, IntCmpOp::Less, ValueType::I32)
-        .unwrap();
-    b.build_if(cond, exit, dispatch).unwrap();
-
-    b.set_region(dispatch);
-    let loaded = table_target(&mut b, idx, 4u64, 0x4000u64);
-    b.build_indirect_branch(loaded).unwrap();
-
-    b.set_region(exit);
-    b.build_return(None, &[]).unwrap();
-    b.set_lift_addr(None);
-    let mut g = b.build().unwrap();
-    // `value_range` assumes converged IR.
-    {
-        let mut p = crate::OptimizerPipeline::new();
-        p.add(crate::PhiCollapse);
-        p.add(crate::RegionCollapse);
-        p.run(&mut g, &mut crate::OptCtx::new(None)).unwrap();
-    }
-
-    let rom = MockRom::strided(0x4000, 4, (0..32).map(|i| 0x5000 + 0x10 * i).collect(), 4);
-    assert_eq!(
-        classify(&g, Some(&rom)),
-        Some(ResolvedTargets::Multiple(
-            [0x5000u64, 0x5010, 0x5020, 0x5030].map(Into::into).to_vec()
-        )),
-    );
 }
 
 #[test]
@@ -1602,6 +1487,60 @@ fn classify_table_dispatch_excludes_widened_then_shifted_table_entry_as_index() 
     assert_eq!(
         result, None,
         "a widened-then-shifted table entry must be excluded as the index"
+    );
+}
+
+#[test]
+fn classify_table_dispatch_resolves_a_bitfield_index_under_its_guard() {
+    // ARM `ubfx r3, r0, #27, #2; cmp r3, #3; ldrls pc, [pc, r3, lsl #2]`
+    // (linux 6.1 `arch_bp_generic_fields`): the index lifts as
+    // `(r0 << 3) >> 30`, four values of a register, not a table cell.
+    use strider_ir::IntCmpOp;
+    let r0 = strider_ir_test_utils::reg_vn(0x20, 4);
+    let mut b = RegisterSet::new().tracked(r0).arg(r0).build_fn().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+
+    b.set_region(entry);
+    let arg = b.read_variable(&r0).unwrap();
+    let three = b.build_int_const(3u64, ValueType::I32).unwrap();
+    let up = b
+        .build_int_binary_operation(arg, three, IntBinaryOp::ShiftLeft, ValueType::I32)
+        .unwrap();
+    let thirty = b.build_int_const(30u64, ValueType::I32).unwrap();
+    let idx = b
+        .build_int_binary_operation(up, thirty, IntBinaryOp::ShiftRight, ValueType::I32)
+        .unwrap();
+    let cond = b
+        .build_int_cmp_operation(three, idx, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond, exit, dispatch).unwrap();
+
+    b.set_region(dispatch);
+    let loaded = table_target(&mut b, idx, 4u64, 0x4000u64);
+    b.build_indirect_branch(loaded).unwrap();
+
+    b.set_region(exit);
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut g = b.build().unwrap();
+    // `value_range` assumes converged IR.
+    {
+        let mut p = crate::OptimizerPipeline::new();
+        p.add(crate::PhiCollapse);
+        p.add(crate::RegionCollapse);
+        p.run(&mut g, &mut crate::OptCtx::new(None)).unwrap();
+    }
+
+    let rom = MockRom::strided(0x4000, 4, (0..32).map(|i| 0x5000 + 0x10 * i).collect(), 4);
+    assert_eq!(
+        classify(&g, Some(&rom)),
+        Some(ResolvedTargets::Multiple(
+            [0x5000u64, 0x5010, 0x5020, 0x5030].map(Into::into).to_vec()
+        )),
     );
 }
 
@@ -1984,4 +1923,67 @@ fn seated_switch_rederives_when_the_table_base_survives_the_merge() {
 fn seated_switch_defers_when_a_call_clobbers_the_table_base() {
     let (g, switch) = seated_switch_over_merged_base(true);
     assert_eq!(rederive_seated_switch(g, switch), None);
+}
+
+/// A stack label array with a store through a fresh allocation between the
+/// labels and the dispatch.
+fn stack_array_behind_a_heap_store(allocator: u64, targets: &[u64]) -> Function {
+    let sp = sp64();
+    let ret = rsleigh::Vn {
+        addr_off: 0x00,
+        addr_space: VnSpace::REGISTER,
+        size: 8,
+    };
+    let arg_vn = rsleigh::Vn {
+        addr_off: 0x38,
+        addr_space: VnSpace::REGISTER,
+        size: 8,
+    };
+    let mut b = sp_frame(sp)
+        .tracked(ret)
+        .ret(ret)
+        .tracked(arg_vn)
+        .build_fn_single_region()
+        .unwrap();
+    let target = b.build_int_const(allocator, ValueType::I64).unwrap();
+    let (_call, rets) = b.build_call(target, &[], &[ret], 0).unwrap();
+    let sp_val = b.read_variable(&sp).unwrap();
+    wire_stack_stores(targets, -24, 8, sp_val, &mut b);
+    let junk = b.build_int_const(0x55u64, ValueType::I64).unwrap();
+    b.build_store(rets[0], junk, VnSpace::RAM).unwrap();
+    wire_stack_dispatch(targets.len(), -24, 8, sp_val, &mut b, arg_vn);
+    b.build().unwrap()
+}
+
+/// The `decompose` memo a run under a listed allocator leaves behind does not
+/// answer a later run over the same function without one: there the store
+/// through the allocation is an opaque pointer that may overwrite a label.
+#[test]
+fn a_heap_verdict_from_an_earlier_run_does_not_open_the_slot_map() {
+    const MALLOC: u64 = 0x1000;
+    let targets = [0x401190u64, 0x401180u64];
+    let mut fg = stack_array_behind_a_heap_store(MALLOC, &targets);
+    let mut p = OptimizerPipeline::new();
+    p.add(ConstantFold::new());
+    p.add(KnownBits);
+    p.add(PhiCollapse);
+    p.add(RegionCollapse);
+    p.add_post_pass(super::super::IndirectBranchClassify);
+    let site = sole_indirect_branch(&fg);
+    let resolve = |fg: &mut Function, allocators: &[u64]| {
+        let mut ctx = crate::OptCtx::new(None);
+        ctx.options.assumptions.noalias_allocators =
+            std::sync::Arc::new(allocators.iter().copied().collect());
+        p.run(fg, &mut ctx).unwrap();
+        ctx.indirect_resolutions.get(&site).cloned().flatten()
+    };
+    assert_eq!(
+        resolve(&mut fg, &[MALLOC]),
+        Some(ResolvedTargets::Multiple(vec![
+            0x401180u64.into(),
+            0x401190u64.into()
+        ])),
+        "a listed allocator's store is disjoint from the labels"
+    );
+    assert_eq!(resolve(&mut fg, &[]), None);
 }
