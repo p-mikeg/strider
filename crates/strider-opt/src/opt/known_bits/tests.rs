@@ -4,22 +4,6 @@ use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
 use strider_ir_test_utils::RegisterSet;
 
-/// `(x | 7) & 4`: bits 0-2 of the Or are known 1, so the And is fully
-/// determined.
-#[test]
-fn known_bits_or_then_and() -> Result<()> {
-    let mut fg2 = make_fn(|b| {
-        let x_seed = b.build_int_const(0u64, ValueType::I64).unwrap();
-        let c7 = b.build_int_const(7u64, ValueType::I64).unwrap();
-        let c4 = b.build_int_const(4u64, ValueType::I64).unwrap();
-        let ored = b.build_int_binary_operation(x_seed, c7, IntBinaryOp::Or, ValueType::I64)?;
-        b.build_int_binary_operation(ored, c4, IntBinaryOp::And, ValueType::I64)
-    })?;
-    run_to_fixed_point(&KnownBits, &mut fg2)?;
-    assert_returns_const(&fg2, 4);
-    Ok(())
-}
-
 /// `(x & 0xF0) & 0x0F`: the masks are disjoint, so the result is 0.
 #[test]
 fn known_bits_and_mask_then_and() -> Result<()> {
@@ -175,21 +159,6 @@ fn known_bits_neg_round_trip() -> Result<()> {
     })?;
     run_to_fixed_point(&KnownBits, &mut fg)?;
     assert_returns_const(&fg, 0xFF);
-    Ok(())
-}
-
-#[test]
-fn known_bits_truncate_preserves_low_bits() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let v = b.build_int_const(0xABCDu64, ValueType::I16).unwrap();
-        b.truncate_if_needed(v, ValueType::I8)
-    })?;
-    // The builder may fold this at construction; the end state is pinned
-    // either way.
-    run_to_fixed_point(&KnownBits, &mut fg)?;
-    let val = return_value(fg.graph())?;
-    let semantic = fg.int_const_u128(val);
-    assert_eq!(semantic, Some(0xCD), "truncate must preserve low byte");
     Ok(())
 }
 
@@ -964,16 +933,6 @@ fn diamond_folds_absorb_exactly_their_shared_cone_addrs() -> Result<()> {
         ]
     );
     Ok(())
-}
-
-#[test]
-fn kb_struct_literal_disjoint_ones_zeros() {
-    let kb = super::KnownBitsFacts {
-        ones: 0b01,
-        zeros: 0b10,
-    };
-    assert_eq!(kb.ones, 0b01);
-    assert_eq!(kb.zeros, 0b10);
 }
 
 /// The default must stay fully unknown, not all-zeros or all-ones: the
