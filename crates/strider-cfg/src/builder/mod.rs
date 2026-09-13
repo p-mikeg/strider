@@ -713,6 +713,17 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         }
     }
 
+    /// Removes every region no path from `entry` reaches.
+    ///
+    /// A dropped arm edge can orphan the region its arm decoded, and the
+    /// lifter translates only the regions the entry reaches.
+    fn remove_unreachable_regions(&mut self, entry: NodeIndex) {
+        let mut dfs = petgraph::visit::Dfs::new(&self.region_graph, entry);
+        while dfs.next(&self.region_graph).is_some() {}
+        self.region_graph
+            .retain_nodes(|_, region| dfs.discovered.contains(region.index()));
+    }
+
     pub fn build(mut self) -> Result<Cfg> {
         // An empty table classifies every `CallOther` as returning, so a
         // no-return one falls through and the region decodes on into whatever
@@ -775,6 +786,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 )
             },
         )?;
+        self.remove_unreachable_regions(starting_region);
+        self.interior_branch_targets.sort_unstable();
+        self.interior_branch_targets.dedup();
 
         let function_isa_bit = self.isa_mode_of(&self.function_mode).map(|mode| mode != 0);
         Ok(Cfg {
@@ -1236,6 +1250,30 @@ mod tests {
             "the overlap this pins must actually happen",
         );
         assert_eq!(cfg.interior_branch_targets(), &[addr(0x1014, 0)]);
+    }
+
+    /// ```text
+    /// 1000  mov eax, 0xc3000000 ; the immediate byte at 0x1004 is `ret`
+    /// 1005  je 0x1004
+    /// 1007  je 0x1004
+    /// 1009  ret
+    /// ```
+    ///
+    /// Both branches seat on the `mov` region, which owns 0x1004 but has no
+    /// instruction there.
+    #[test]
+    fn two_branches_into_one_interior_address_report_it_once() {
+        let base = 0x1000u64;
+        let bytes = vec![
+            0xb8, 0x00, 0x00, 0x00, 0xc3, // 0x1000: mov eax, 0xc3000000
+            0x74, 0xfd, // 0x1005: je 0x1004
+            0x74, 0xfb, // 0x1007: je 0x1004
+            0xc3, // 0x1009: ret
+        ];
+
+        let cfg = build_cfg(bytes, base, &crate::CfgOptions::default()).expect("build");
+
+        assert_eq!(cfg.interior_branch_targets(), &[addr(0x1004, 0)]);
     }
 
     /// A seeded arm that will not decode is reported against the site that
