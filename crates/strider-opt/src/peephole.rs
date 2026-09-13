@@ -21,9 +21,10 @@ pub(crate) fn input_producers_iter<V: IRViewer>(
 /// Outcome of one [`PeepholePass::try_rewrite`] attempt.
 pub(crate) enum PeepholeRewrite {
     NoChange,
-    /// `new_node` is `Some(n)` when the rewrite built a FRESH node worth
-    /// re-examining for cascading folds; `None` for a pure redirect to an
-    /// already-existing value.
+    /// `new_node` is the producer of the value the root was redirected to, to
+    /// re-examine for cascading folds; `None` when there is nothing to revisit.
+    /// [`Self::from_new_value`] reports it for every rule output, fresh or
+    /// already existing.
     Changed {
         new_node: Option<NodeId>,
     },
