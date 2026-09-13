@@ -13,12 +13,13 @@ you were looking for.
 There are two kinds:
 
 - **Rewriting passes** run together in a loop until nothing changes anymore (a
-  fixed point). Each can expose work for the others. The loop is capped at 1024
-  iterations and raises if it has not settled by then.
+  fixed point). Each can expose work for the others. A pass whose last run
+  changed nothing is skipped until another pass changes the graph. The loop is
+  capped at 1024 iterations and raises if it has not settled by then.
 - **Post-passes** run once, after the loop has settled. They mostly record facts,
   but two of them edit: `CallStackArgCollect` wires a call's stack arguments in
-  as extra `Call` inputs, and `FunctionArgDetect` shortens a load's memory edge
-  onto the store it proved reaches it.
+  as extra `Call` inputs, and `FunctionArgDetect` moves an argument load's
+  memory edge past the memory definitions that cannot overwrite it.
 
 ## Rewriting passes
 
@@ -26,8 +27,7 @@ In the order the default pipeline runs them:
 
 **ConstantFold.** Computes anything whose inputs are all constant, applies
 algebraic identities (`x + 0`, `x * 1`, and so on), and folds constant
-truncations and extensions. `LoadReadOnly`, `FlagCmpCanonicalize` and
-`IfCondInversion` are ordered after it and say so.
+truncations and extensions.
 
 It also collects a value against itself: `x + x*2` becomes `x*3`, and the same
 for a shift standing in for a multiply, so `x + (x<<1)` folds too. Thirteen
@@ -59,18 +59,22 @@ comparison like `a < b`. The signed relations need the overflow bit: `a < b` is
 condition is a logical NOT, it drops the NOT and swaps the two branches. So you
 only ever have to match the positive form.
 
-**PhiCollapse.** A phi whose incoming paths all carry the same value, or that has
-only one live path, is not a real choice. It is replaced by that single value. A
-phi that refers to itself counts as agreeing, so a loop-carried `[x, itself]`
-collapses to `x`.
+**PhiCollapse.** A phi or memory phi whose inputs other than itself are all one
+value is replaced by that value, so a loop-carried `[x, itself]` collapses to
+`x`. A strongly connected group of phis whose only input from outside the group
+is one value folds to that value too, such as two loop phis feeding each other
+plus `x`.
 
-**RegionCollapse.** Likewise a region (or memory phi) with a single live
-predecessor is not a real merge, so it is removed and folded away.
+**RegionCollapse.** A region with exactly one control input is removed, and each
+phi or memory phi over it is replaced by its single value input.
 
-**DeadBranchElimination.** When an `if`'s or `switch`'s selector is a constant,
-only one arm can ever run. The branch is removed and the unreachable arms go with
-it. It declines when folding would strand a loop with no path to a terminator,
-which would leave the loop body unanchored.
+**DeadBranchElimination.** An `if` on a constant condition, or a `switch` whose
+dispatch address is a constant naming one of its arms, can only take one arm.
+The branch is removed, and the arms no longer reached go with it. It declines
+when the surviving arm would reach no terminator, as for a loop whose only exit
+was the dead arm. It also declines an `if` whose dead arm feeds an `Unreachable`
+directly. A dead arm that calls a no-return function still folds, since it
+reaches its `Unreachable` through the call.
 
 **CfgDetach.** Removes control edges into a merge region that can never be taken,
 along with the matching phi and memory-phi inputs.
@@ -79,44 +83,46 @@ along with the matching phi and memory-phi inputs.
 constant address, a heap object) and later loaded back from exactly that
 location with nothing overwriting it in between, the stored value is handed
 straight to the load. A wider store is narrowed to the load's range; anything
-short of an exact base-and-offset match blocks, as does an intervening control
-merge. So does an intervening call, unless its convention declares
-`preserves_memory`, which is what `cc.preserves_all()` and
+short of an exact base-and-offset match blocks, as does a control merge whose
+paths reach different definitions. So does an intervening call, unless its
+convention declares `preserves_memory`, which is what `cc.preserves_all()` and
 `per_address_ccs={callee_addr: cc}` buy for a transparent hook such as
 `__fentry__`.
 
-Each load walks the chain from its own cursor and the memo is keyed on the
-probed location, so loads at different offsets share nothing: the first sweep
-costs loads times memory-chain length. Later sweeps are near-free, because
-`narrow_load_to` has shortened every load's memory edge onto its clobber for
-good. What bounds the first one in practice is that a `Call` ends the chain, so
-optimised input never builds a long one; a call-free run of frame traffic does,
-which is `-O0` output, large leaf functions and big register-spill regions.
-Measured in `--release` on the workspace's own bench shape, N SP-relative
-stores at distinct offsets read back by N loads
-(`crates/strider-orchestrator/benches/scaling.rs`), the first sweep grows 4x
-per doubling of N: about 85 ms at N = 1000 and 1.4 s at N = 4000, where
-`ConstantFold` takes 4 ms and 21 ms on the same shape and a second
-`LoadForward` sweep under 1 ms. That is synthetic IR timed on one machine.
+Memory is taken to be RAM under every option: a load reads back the last value
+the function stored there, so a memory-mapped register polled after a write
+folds to the value written.
+
+Each load it examines also has its memory edge moved past the memory
+definitions that cannot overwrite it. That move uses none of the
+`AssumptionOptions`, so re-optimising under `AssumptionOptions.none()` inherits
+no assumption from an earlier run.
 
 With `AssumptionOptions(escape_analysis=True)` it also forwards across a call,
-when no stack address escapes to the callee and the slot is not one the call
-hands it as an argument. With `noalias_allocators=[addr, ...]` naming pure
-allocators, a load also steps through such a call, whose result is a fresh
-object disjoint from everything else. Under either of those two, and only then,
-`callee_preserves_stack_args=True` empties the outgoing-argument window, so a
-spill at the stack top, indistinguishable from a pushed argument once lowered
-to memory, forwards too. Set on its own it changes nothing.
+when no stack address escapes the frame anywhere in the function (as a call
+argument, a stored value, a return value, an input to pointer arithmetic, or a
+value in a register a call clobbers) and the slot is not one the call hands its
+callee as an argument. With `noalias_allocators=[addr, ...]` naming pure
+allocators, a load steps through a call to one when it reads a different
+allocation, or a slot of a frame no stack address escapes that lies outside
+that call's argument window; a load from a global does not. Under either of
+those two, and only then, `callee_preserves_stack_args=True` empties the
+outgoing-argument window, so a spill at the stack top, indistinguishable from a
+pushed argument once lowered to memory, forwards too. Set on its own it changes
+nothing.
 
 ## Post-passes
 
 In the order the default pipeline runs them:
 
-**StackOffsetDetect.** For every load and store whose address reduces to a stack
-terminal plus a fixed amount, it records the pair. Offsets are comparable only
-against another access sharing the same terminal: an alignment-masked `sp & -16`
-is its own base, since its distance from the entry stack pointer depends on the
-caller. This is what lets a query ask for stack accesses, or for one exact slot.
+**StackOffsetDetect.** For every load and store whose address reduces to a base
+plus a constant, it records the pair. The base is a stack pointer, or the result
+of a call to a `noalias_allocators` entry. Offsets are comparable only against
+another access sharing the same base: an alignment-masked `sp & -16` is its own
+base, since its distance from the entry stack pointer depends on the caller.
+These pairs are what a query for stack accesses, or for one exact slot, reads.
+A pipeline run records them after its post-passes even when this pass is not
+in the pipeline.
 
 **CallStackArgCollect.** At each call, gathers the stores into the outgoing
 argument window that reach it and attaches them to the call node, so they read
@@ -126,26 +132,35 @@ errs wide: a spill just above the arguments can come along.
 
 **FunctionArgDetect.** Finds where the function reads its incoming *stack-passed*
 arguments (loads off the entry stack pointer) and records which value carries
-each one. It also shortens each such load's memory edge onto the store it
-proved reaches it. Register-passed arguments are recorded at lift time, so they
-are already in place before this pass runs.
+each one. It also moves the memory edge of each load it examines in an
+incoming-argument slot past the memory definitions that cannot overwrite it,
+using none of the `AssumptionOptions`. Register-passed arguments are recorded
+at lift time, so they are already in place before this pass runs.
 
 ## Indirect-branch resolution
 
 Jump tables, computed calls and returns are resolved by their own post-pass,
 `IndirectBranchClassify`, which `analyze` appends to the pipeline it runs unless
 that pipeline already lists it (the Rust API can; `strider.opt` does not expose
-it). After optimizing, Strider classifies each unresolved
-indirect branch against the clean IR, feeds any newly discovered targets back in,
-and re-lifts, repeating until the set of edges stops changing. Whatever still
-cannot be resolved comes back as the `unresolved` list from `analyze`, never as
-an exception. It is one of the five channels
+it). After optimizing, Strider classifies each unresolved indirect branch
+against the clean IR, feeds any newly discovered targets back in, and re-lifts,
+repeating until the set of edges stops changing. Whatever still cannot be
+resolved comes back as the `unresolved` list from `analyze`, never as an
+exception. It is one of the six channels
 [python-api.md](python-api.md#12-the-cfg-stridercfg) describes, which
 `cfg.is_complete()` reads together.
 
+A return instruction lands in `unresolved` too when its folded target is not
+provably the address the function was entered with: the entry link register,
+or the entry-SP slot the call pushed it into, followed back through the store
+that saved it.
+
 A resolved target carries the ISA mode it decodes in, taken from the mode the
 branch commits or else the one flowing into it, so an ARM/Thumb interworking
-dispatch or a MIPS16 entry reaches the right decoder.
+dispatch or a MIPS16 entry reaches the right decoder. A seated `switch` keeps
+the mode its instruction commits, so arms found when its table is derived again
+decode in that mode too.
+
 `CfgOptions(known_targets={dispatch_addr: [target, ...]})` seats answers of your
 own, which the loop then grows from; a site that ends up holding nothing but
 your seed is reported by `cfg.unverified_seeded_sites()`, since seating can stop
@@ -154,37 +169,29 @@ the classifier off and leaves every site for you to answer.
 
 ### Dispatch shapes that do not resolve
 
-Four shapes come back in `unresolved` rather than as an error:
+These shapes come back in `unresolved` rather than as an error:
 
-- AArch64 big-endian stack-array dispatch built through a `bfi` insert. The
-  frame and the table base are plain (`sub sp,sp,#0x30`, `add x8,sp,#0x10`);
-  the mask the SP decomposition cannot spell out is the one Sleigh's lowering
-  of `bfi` puts on the SP-derived value the insert itself makes. The table is a
-  single 16-byte `str q0`, so it also arrives as one `IntConst:I128` that the
-  classifier would have to slice into two entries.
-- MIPS64 GOT-indirect dispatch, where the entries lift as
-  `Add(Load[GOT], const)` rather than a raw constant, the GOT pointer derived
-  from `t9` (`$25`) rather than read out of `gp`.
-- PowerPC stack-array dispatch on ppc32le, ppc64be and ppc64le. The stack base
-  lifts cleanly on all three; it is the entries that do not fold. On ppc32le
-  they are `Load(RAM, 0x100201FC)` and `Load(RAM, 0x10020200)`, addresses in
-  `.data.rel.ro` inside a writable `PT_LOAD`, which the read-only image rejects,
-  so `LoadReadOnly` leaves them alone. On ppc64be and ppc64le, whose IR is
-  identical despite one being clang and one gcc, they are `Load(RAM, r12 + K)`
-  off the ELFv2 TOC prologue `addis r2,r12,2`: an unknown incoming register
-  plus the same writable `.data.rel.ro` / `.got`, which is the MIPS64 shape
-  again. ppc32be resolves.
-- MIPS32 `switch_masked_loop`, where the six real arms ARE seated but the site
-  is still reported. The arms' `Call` clobbers the register holding the table
-  base, so the selector stops deriving once the loop closes and nothing
-  re-proves the seated set; the mode one arm was seated on stays a guess, so
-  the site reaches `unresolved` and `unverified_seeded_sites` at once. A
-  per-`Call` `preserves_regs` override supplies the callee's real clobber set.
+- AArch64 big-endian stack-array dispatch whose table base is built through a
+  `bfi` insert. Sleigh's lowering of `bfi` masks the SP-derived value, and the
+  stack decomposition cannot see through that mask. The table is also written
+  by one 16-byte `str q0`, so it arrives as one 128-bit constant holding two
+  entries.
+- MIPS64 GOT-indirect dispatch: the entries lift as `Add(Load[GOT], const)`
+  rather than constants, with the GOT pointer derived from `t9`.
+- PowerPC stack-array dispatch on ppc32le, ppc64be and ppc64le, where the
+  entries are loaded from `.data.rel.ro` in a writable segment, which the
+  read-only image leaves out. On ppc64 the address is also relative to the
+  incoming `r12`, an unknown register as in the MIPS64 shape.
+- A table index formed by a constant offset that takes a bounded value below
+  zero, such as `(x & 7) - 2`. Enumerating `x` would name slots before the
+  table that only the guards on the offset value exclude, so the site is left
+  unresolved.
+- A dispatch in a loop whose arms call a function that clobbers the register
+  holding the table base. The arms are seated, but once the loop closes the
+  selector no longer derives, so nothing re-proves the set. Overriding the
+  callee with `per_address_ccs={callee: cc.preserves_regs()}` resolves it.
 
 ## Using a different pipeline
 
 Build a custom set of passes with the `strider.opt` builders and pass it through
-`LifterOptions(pipeline=...)`. `analyze` appends `IndirectBranchClassify` unless
-the pipeline already lists it, which `strider.opt` gives you no way to do;
-`resolve_indirect_branches=False` turns it off rather than leaving it out, and
-it still records its report.
+`LifterOptions(pipeline=...)`.
