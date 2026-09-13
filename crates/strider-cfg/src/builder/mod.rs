@@ -139,7 +139,8 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     pub(super) link_register_seated: Vec<PcodeInsnAddr>,
     /// Sites seated as a `TailCall` from a single resolved target.
     pub(super) tail_call_seated: Vec<PcodeInsnAddr>,
-    /// Direct-branch targets no byte backs; see [`Cfg::unmapped_branch_targets`].
+    /// Branch targets and fall-throughs no byte backs; see
+    /// [`Cfg::unmapped_branch_targets`].
     pub(super) unmapped_branch_targets: Vec<PcodeInsnAddr>,
     /// Seeded arms whose address a direct edge already decoded in the other ISA
     /// mode, with the region that seated them. The arm goes: a direct edge
@@ -310,9 +311,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
 
     /// An empty region is rejected unless its terminator is `Unconditional` (a
     /// region sealed at a zero-pcode-op instruction, which `build` segments at
-    /// every one of) or `TailCall` (the [`Self::tail_call_stub`] for a
-    /// CondBranch arm leaving the function bound, whose bytes are never
-    /// decoded).
+    /// every one of) or `TailCall` (a [`Self::tail_call_stub`], whose bytes are
+    /// never decoded).
     pub(super) fn add_region(&mut self, region: Region) -> Result<NodeIndex> {
         if region.insns.is_empty()
             && !matches!(
@@ -415,13 +415,15 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         Some(bit)
     }
 
-    /// Lowers the out-of-function arm of a conditional branch, creating the
-    /// stub on first use.  It is wired as a regular CondBranch successor but
-    /// never enqueued, so no TARGET outside `[start, start + fn_max_size)` is
-    /// decoded.
+    /// The empty region an edge leaving this function's decoded bytes hangs
+    /// off, created on first use.  Three producers: the out-of-function arm of
+    /// a conditional branch, an unmapped direct branch target, and an unmapped
+    /// sequential fall-through.  It is wired as a regular successor but never
+    /// enqueued, so no address outside `[start, start + fn_max_size)` and no
+    /// unmapped address is decoded.
     ///
-    /// Keyed through `start_addr_to_region_id` like any region, so two
-    /// branches to the same OOB address share one stub.
+    /// Keyed through `start_addr_to_region_id` like any region, so two edges
+    /// to the same address share one stub.
     pub(super) fn tail_call_stub(&mut self, addr: PcodeInsnAddr) -> Result<NodeIndex> {
         if let Some(&existing) = self.start_addr_to_region_id.get(&addr) {
             return Ok(existing);
@@ -1309,8 +1311,9 @@ mod tests {
         assert_every_switch_target_has_an_arm(&cfg);
     }
 
-    /// One out-of-range arm (a `switch` case that tail-calls) costs itself, not
-    /// the table: the site stays a `Switch` on the arms that are in range.
+    /// An out-of-range arm (a `switch` case that tail-calls) is evidence the
+    /// bound is wrong, so the whole site defers rather than seating a `Switch`
+    /// on the arms that are in range.
     #[test]
     fn an_out_of_range_switch_arm_defers_the_whole_table() {
         let base = 0x1000u64;
