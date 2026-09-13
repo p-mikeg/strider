@@ -106,6 +106,23 @@ fn carrier_mask(binds: &Bindings, func: &strider_ir::Function, width_src: Captur
     crate::opt::known_bits::type_mask_u128(binds.get_type(width_src, func)?)
 }
 
+/// Whether every listed capture carries one bit width.
+///
+/// The rules that move a constant across an operator boundary are an identity
+/// only when the whole shape evaluates at one width; the `Equal` root is `I1`,
+/// so the width to agree on is the compared value's.  `validate` rejects a
+/// mismatched node, but a rewrite can mint one mid-pipeline, where nothing has
+/// validated yet.
+fn same_width(binds: &Bindings, func: &strider_ir::Function, caps: &[Capture]) -> bool {
+    let mut widths = caps
+        .iter()
+        .map(|&c| binds.get_type(c, func).map(|t| t.bit_width()));
+    match widths.next() {
+        Some(Some(first)) => widths.all(|w| w == Some(first)),
+        _ => false,
+    }
+}
+
 /// `M == -N` at `width_src`'s width.  `false` unless all bindings resolve.
 fn neg_relation(
     binds: &Bindings,
@@ -323,8 +340,10 @@ fn build_rules() -> Vec<BoxedRule> {
     // term it would consume.  Outermost-first seeding gives that: the `Or` root
     // folds before this rule can reach the inner `Equal`.
     rules.push(rewrite_rule(
-        int_eq(int_add(var(a), int_const(n)), int_const(m))
-            .when_match(move |edit, _ty, binds| carrier_mask(binds, edit.function(), a).is_some()),
+        int_eq(int_add(var(a), int_const(n)), int_const(m)).when_match(move |edit, _ty, binds| {
+            carrier_mask(binds, edit.function(), a).is_some()
+                && same_width(binds, edit.function(), &[a, n, m])
+        }),
         template::int_eq(
             var(a),
             // The fresh const takes `a`'s width, not the `Equal` root's `I1`.
@@ -335,7 +354,8 @@ fn build_rules() -> Vec<BoxedRule> {
     // `Equal(Xor(x, C1), C2) -> Equal(x, C1 ^ C2)`: xor-with-C1 is a bijection,
     // so applying it to both sides is value-preserving.
     rules.push(rewrite_rule(
-        int_eq(int_xor(var(a), int_const(n)), int_const(m)),
+        int_eq(int_xor(var(a), int_const(n)), int_const(m))
+            .when_match(move |edit, _ty, binds| same_width(binds, edit.function(), &[a, n, m])),
         template::int_eq(
             var(a),
             capture_typed(a, int_const_with!([n: uint, m: uint] => n ^ m)),
@@ -345,8 +365,10 @@ fn build_rules() -> Vec<BoxedRule> {
     // `Equal(Neg(x), C) -> Equal(x, -C)`: two's-complement negation is a
     // bijection, so it moves across `Equal` value-preservingly.
     rules.push(rewrite_rule(
-        int_eq(int_neg(var(a)), int_const(m))
-            .when_match(move |edit, _ty, binds| carrier_mask(binds, edit.function(), a).is_some()),
+        int_eq(int_neg(var(a)), int_const(m)).when_match(move |edit, _ty, binds| {
+            carrier_mask(binds, edit.function(), a).is_some()
+                && same_width(binds, edit.function(), &[a, m])
+        }),
         template::int_eq(
             var(a),
             capture_typed(a, int_const_with!([m: uint] => m.wrapping_neg())),
