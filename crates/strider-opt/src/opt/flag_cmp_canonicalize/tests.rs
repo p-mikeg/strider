@@ -1655,3 +1655,53 @@ fn cr_bit_test_declines_a_ne_zero_pack_carrying_a_higher_term() -> Result<()> {
     );
     Ok(())
 }
+
+/// `n` stacked `ZeroExtend(Xor(Equal(x, 0), 1))` layers: from the second on,
+/// each `Xor` is the Thumb true-flag test over the layer below.
+fn flag_test_chain(n: usize) -> Result<strider_ir::Function> {
+    use strider_ir::node::ExtendOp;
+    let r = strider_ir_test_utils::reg_vn(0, 8);
+    let mut b = RegisterSet::new()
+        .tracked(r)
+        .arg(r)
+        .build_fn_single_region()?;
+    let mut acc = b.read_variable(&r)?;
+    for _ in 0..n {
+        let zero = b.build_int_const(0u64, ValueType::I64)?;
+        let eq = b.build_int_cmp_operation(acc, zero, IntCmpOp::Equal, ValueType::I64)?;
+        let not = build_i1_xor_with_one(&mut b, eq)?;
+        acc = b.extend_if_needed(not, ValueType::I64, ExtendOp::ZeroExtend)?;
+    }
+    b.build_return(Some(acc), &[])?;
+    b.set_lift_addr(None);
+    b.build()
+}
+
+#[test]
+fn a_chain_of_flag_tests_collapses_in_linear_time() -> Result<()> {
+    fn collapse(n: usize) -> Result<std::time::Duration> {
+        let mut fg = flag_test_chain(n)?;
+        let start = std::time::Instant::now();
+        crate::pipeline::run_one(
+            &FlagCmpCanonicalize::new(),
+            &mut fg,
+            &mut crate::OptCtx::new(None),
+        )?;
+        let elapsed = start.elapsed();
+        let xors = fg
+            .walk_kind(|k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Xor)))
+            .count();
+        assert_eq!(xors, 1, "the chain collapses onto its innermost test");
+        Ok(elapsed)
+    }
+    collapse(100)?;
+    let small = collapse(500)?;
+    let large = collapse(4_000)?;
+    // Linear would be 8x; quadratic 64x.
+    assert!(
+        large.as_secs_f64() < small.as_secs_f64() * 24.0,
+        "8x the chain cost {:.1}x the collapse ({small:?} -> {large:?})",
+        large.as_secs_f64() / small.as_secs_f64(),
+    );
+    Ok(())
+}
