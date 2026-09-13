@@ -266,12 +266,11 @@ pub(crate) fn py_bool(b: bool) -> &'static str {
 /// Claims about the code being analysed, keyword-only. None is checked, and
 /// each one's risky value is the positive one, so any of them can make the
 /// answer wrong on valid input. Clearing all six leaves only what the IR
-/// structurally proves.
+/// structurally proves, which still takes memory to be RAM.
 ///
 /// Two default `True`: `stack_global_disjoint` and
 /// `assume_incoming_args_survive_calls`, both of which every compiler this
-/// analyses honours and without which the alias oracle answers may-alias
-/// almost everywhere.
+/// analyses honours.
 #[pyclass(name = "AssumptionOptions", module = "strider.lift")]
 #[derive(Clone)]
 pub struct PyAssumptionOptions {
@@ -370,7 +369,9 @@ impl PyAssumptionOptions {
     }
 
     /// Every claim cleared: the only configuration sound under any input
-    /// program, forwarding solely what the IR structurally proves.
+    /// program whose memory behaves as RAM, forwarding solely what the IR
+    /// structurally proves. A memory-mapped register polled after a write
+    /// still reads as the value written.
     #[staticmethod]
     fn none() -> Self {
         // Spelled out, not the `#[new]` defaults: two of those are `True`, and
