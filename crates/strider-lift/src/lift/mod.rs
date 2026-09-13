@@ -206,6 +206,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         self.entry_contexts.insert(mode_key, function_mode.clone());
         strider_cfg::Builder::for_arch(&self.arch, &mut self.sleigh, decode_addr, cfg_opts)
             .with_flow_context(&self.flow_vars, function_mode)
+            .with_user_op_names(&self.user_op_names)
             .with_per_address_ccs(per_address_ccs.clone())
             .build()
     }
