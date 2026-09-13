@@ -69,6 +69,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.91.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets
+      # A test feature one package enables is unified into every other
+      # package's build on a workspace run, so a package that forgot to
+      # enable it for itself only breaks when built alone.
+      - name: each package builds on its own
+        run: |
+          for p in $(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name'); do
+            cargo check -p "$p" --all-targets
+          done
 
   python:
     runs-on: ubuntu-latest
