@@ -1454,7 +1454,11 @@ mod heap_tests {
     /// `if (c) p = malloc() else p = kmem_cache_alloc()`, leaving `p` a `Phi`
     /// of two allocator returns in the join, with the join region open.
     /// Returns the phi and both arms.
-    fn alloc_phi_diamond() -> crate::Result<(FunctionBuilder, ValueId, ValueId, ValueId)> {
+    /// `store_a` stores that constant through arm `a`'s allocation, where it is
+    /// defined.
+    fn alloc_phi_diamond(
+        store_a: Option<u64>,
+    ) -> crate::Result<(FunctionBuilder, ValueId, ValueId, ValueId)> {
         let sp = sp();
         let mut b = RegisterSet::new()
             .tracked(sp)
@@ -1479,6 +1483,10 @@ mod heap_tests {
 
         b.set_region(a);
         let pa = alloc_call(&mut b, MALLOC)?;
+        if let Some(v) = store_a {
+            let x = b.build_int_const(v, ValueType::I64)?;
+            b.build_store(pa, x, rsleigh::VnSpace::RAM)?;
+        }
         b.write_variable(&ret_reg(), pa)?;
         b.build_branch(join)?;
 
@@ -1497,7 +1505,7 @@ mod heap_tests {
     /// not disqualify the incoming stack-argument slots.
     #[test]
     fn phi_of_two_allocations_is_disjoint_from_the_stack() -> crate::Result<()> {
-        let (mut b, phi, _pa, _pc) = alloc_phi_diamond()?;
+        let (mut b, phi, _pa, _pc) = alloc_phi_diamond(None)?;
         let x = b.build_int_const(0x11u64, ValueType::I64)?;
         b.build_store(phi, x, rsleigh::VnSpace::RAM)?;
         let sp_val = b.read_variable(&sp())?;
@@ -1527,9 +1535,7 @@ mod heap_tests {
     /// make it Disjoint from the very allocation it holds.
     #[test]
     fn phi_of_allocations_may_alias_its_own_arm() -> crate::Result<()> {
-        let (mut b, phi, pa, _pc) = alloc_phi_diamond()?;
-        let x = b.build_int_const(0x11u64, ValueType::I64)?;
-        b.build_store(pa, x, rsleigh::VnSpace::RAM)?;
+        let (mut b, phi, _pa, _pc) = alloc_phi_diamond(Some(0x11))?;
         let loaded = b.build_load(phi, rsleigh::VnSpace::RAM, ValueType::I64)?;
         b.build_return(Some(loaded), &[])?;
         let (fg, na) = built_collapsed(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
