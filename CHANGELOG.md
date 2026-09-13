@@ -214,8 +214,8 @@ The shape each API settled into is in
   compare equal or collide in a dict while being mutually unusable.
 
 - `Function.to_dot` / `to_html` quote every attribute value, so the DOT text
-  reads `shape="box"` where it read `shape=box`. Only `label` was escaped, and a
-  tooltip or other free text reaching another attribute broke the file.
+  reads `shape="box"` where it read `shape=box`. Only `label` was escaped, so
+  free text reaching another attribute would have broken the file.
 - `Function.validate()` names each node's kind and lowest instruction address
   after the error, as in `[node12 Store(..) @ 0x401000]`.
 
@@ -625,8 +625,6 @@ The shape each API settled into is in
   value, not only a single phi (Braun et al. 2013, section 3.2). On every fourth
   function of the FreeBSD 14.2 kernels that is 331 phis on i386 and 1,481 on
   aarch64, and two aarch64 jump tables resolve.
-- `FunctionDotDumper::with_validation_errors` outlines the nodes a validation
-  error names and lists the errors in their tooltip.
 
 ### Performance
 
