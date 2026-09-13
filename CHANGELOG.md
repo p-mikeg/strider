@@ -250,7 +250,6 @@ Rendering:
 - `LifterOptions(assumptions=AssumptionOptions(...))` tunes memory precision;
   [docs/python-api.md](docs/python-api.md#2-analyzing-a-function) says what
   each claim buys. `AssumptionOptions.none()` makes none of them.
-- `AnalyzeResult` is a `NamedTuple` (`.cfg` / `.function` / `.unresolved`).
 - `cfg.is_complete()` and six incompleteness channels:
   `unresolved`, `cfg.unverified_seeded_sites()` (answers exactly the caller's
   `known_targets`, and sites consumed as a return or tail call),
