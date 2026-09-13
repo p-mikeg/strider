@@ -61,8 +61,8 @@ fn dead_branch_absorbs_condition_fingerprint() -> Result<()> {
 
     // Capture the survivor before the fold; DBE kills the If itself.
     let if_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .next()
         .expect("if");
     let survivor = fg.producer(fg.node_inputs(if_node)[0]);
     assert!(
