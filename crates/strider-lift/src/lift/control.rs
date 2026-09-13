@@ -118,6 +118,30 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.build_cc_return()
     }
 
+    /// [`Self::handle_return`] for a Sleigh `RETURN` op, recording the address
+    /// it jumps to against the `Return` node in [`super::LiftOutcome::return_sites`].
+    /// Nothing in the CFG checked that address is the caller's.
+    pub(super) fn handle_sleigh_return(
+        &mut self,
+        region_id: strider_cfg::RegionId,
+        insn: &rsleigh::Insn,
+        addr: strider_cfg::PcodeInsnAddr,
+        region_map: &super::RegionMap,
+    ) -> Result<()> {
+        let target = self.read_vn(nth_input_or_err(insn, 0)?)?;
+        let ir_region = super::ir_region_of(region_map, region_id)?;
+        self.build_cc_return()?;
+        let control = self.builder.region_cur_ctrl(ir_region);
+        let function = self.builder.function();
+        let ret = function
+            .value_uses(control)
+            .map(|(node, _)| node)
+            .find(|&node| matches!(function.node_kind(node), strider_ir::node::NodeKind::Return))
+            .ok_or_else(|| anyhow!("the Return at {addr:?} consumes no region control"))?;
+        self.return_sites.push((addr, ret, target));
+        Ok(())
+    }
+
     /// Reads each CC return register through the aliasing-aware `read_vn`, so a
     /// sub-register ret reg is sliced out of its container.
     fn build_cc_return(&mut self) -> Result<()> {
