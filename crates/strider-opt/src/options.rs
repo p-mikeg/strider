@@ -26,13 +26,16 @@ impl Default for OptOptions {
 /// check.  Every field's risky value is the positive one, and each one turned
 /// on can make the answer wrong on valid input; the miscompile is then the
 /// caller's.  [`AssumptionOptions::none`] is the only configuration of THESE
-/// fields sound under any input program;
-/// [`OptOptions::resolve_indirect_branches`] defaults on and is outside it.
+/// fields sound under any input program whose memory behaves as RAM (see
+/// there); [`OptOptions::resolve_indirect_branches`] defaults on and is outside
+/// it.
 ///
 /// Two default ON, both of which every compiler whose output this analyses
-/// honours and without which the alias oracle answers may-alias almost
-/// everywhere: [`stack_global_disjoint`](Self::stack_global_disjoint) and
-/// [`assume_incoming_args_survive_calls`](Self::assume_incoming_args_survive_calls).
+/// honours: [`stack_global_disjoint`](Self::stack_global_disjoint), without
+/// which no stack store is disjoint from a global load nor global store from a
+/// stack load, and
+/// [`assume_incoming_args_survive_calls`](Self::assume_incoming_args_survive_calls),
+/// without which a stack argument read after a call is not detected as one.
 #[derive(Debug, Clone)]
 pub struct AssumptionOptions {
     /// The stack and the global / constant-address regions (`.data`,
@@ -116,8 +119,14 @@ pub struct AssumptionOptions {
 }
 
 impl AssumptionOptions {
-    /// Every claim cleared: the only configuration of these fields sound under
-    /// any input program, forwarding solely what the IR structurally proves.
+    /// Every claim cleared: forwards solely what the IR structurally proves,
+    /// the only configuration of these fields sound under any input program.
+    ///
+    /// The proof still takes memory to be RAM: a load reads back the last value the
+    /// analysed code stored at its address, and nothing outside that code (a
+    /// device, another thread, a signal handler) changes it in between.  A
+    /// memory-mapped register polled after a write reads as the value written.
+    /// No field lifts the premise.
     #[must_use]
     pub fn none() -> Self {
         // Spelled out, not `..Self::default()`: a field added default-on
