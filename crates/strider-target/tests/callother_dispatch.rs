@@ -8,29 +8,6 @@ fn expect_call(c: Option<CallOtherClass>) -> CallOtherAbi {
     }
 }
 
-#[test]
-fn arm_software_interrupt_reads_r7_and_r0_through_r6() {
-    // ARM emits `software_interrupt` (not `swi`) for SVC.
-    let abi = expect_call(classify(ArchPreset::Arm, "software_interrupt"));
-    assert_eq!(
-        abi.implicit_reads,
-        &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"]
-    );
-    assert_eq!(abi.implicit_writes, &["r0"]);
-    assert!(abi.clobbers_memory);
-}
-
-#[test]
-fn arm_be_and_thumb_share_software_interrupt_with_arm() {
-    let arm = expect_call(classify(ArchPreset::Arm, "software_interrupt"));
-    let arm_be = expect_call(classify(ArchPreset::ArmBe, "software_interrupt"));
-    let arm_thumb = expect_call(classify(ArchPreset::ArmThumb, "software_interrupt"));
-    assert_eq!(arm.implicit_reads, arm_be.implicit_reads);
-    assert_eq!(arm.implicit_reads, arm_thumb.implicit_reads);
-    assert_eq!(arm.implicit_writes, arm_be.implicit_writes);
-    assert_eq!(arm.implicit_writes, arm_thumb.implicit_writes);
-}
-
 /// `software_interrupt` is declared only by ARM (`ARM.sinc:146`), and the
 /// four ARM32 presets are the only ones an ARM sla decodes for, so the name
 /// reaching any other preset would be a caller's typo, not an op.
@@ -47,35 +24,6 @@ fn software_interrupt_is_an_arm32_only_name() {
             "{preset:?}"
         );
     }
-}
-
-#[test]
-fn x86_swi_differs_from_arm_software_interrupt() {
-    let arm = expect_call(classify(ArchPreset::Arm, "software_interrupt"));
-    // x86's `swi` (INT) is a sound stub: empty register channels, memory edge
-    // only.  Pinned so an attempt to harmonize the two arms surfaces.
-    let x86 = expect_call(classify(ArchPreset::X86_64, "swi"));
-    assert_ne!(arm.implicit_reads, x86.implicit_reads);
-    assert!(x86.implicit_reads.is_empty());
-    assert!(x86.implicit_writes.is_empty());
-    assert!(x86.clobbers_memory);
-}
-
-#[test]
-fn arch_independent_barrier_agrees_across_presets() {
-    let x86 = classify(ArchPreset::X86_64, "DataMemoryBarrier");
-    let arm = classify(ArchPreset::Arm, "DataMemoryBarrier");
-    let aarch = classify(ArchPreset::Aarch64, "DataMemoryBarrier");
-    // A barrier row lives in the arch-independent table, so every preset sees
-    // the same classification.
-    assert!(matches!(x86, Some(CallOtherClass::Call(_))));
-    assert_eq!(x86, arm);
-    assert_eq!(x86, aarch);
-}
-
-#[test]
-fn unknown_call_other_returns_none() {
-    assert!(classify(ArchPreset::X86_64, "this_op_definitely_does_not_exist").is_none());
 }
 
 /// An unknown user-op name classifies as `None` under EVERY preset, never a

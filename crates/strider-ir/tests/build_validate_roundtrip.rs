@@ -250,11 +250,8 @@ fn switch_target_arity_mismatch_is_rejected() {
     b.build_return(None, &[]).unwrap();
     b.set_region(c);
     b.build_return(None, &[]).unwrap();
+    // `build` validates the well-formed switch.
     let mut f = b.build().unwrap();
-    assert!(
-        strider_ir::validate::validate(&f).is_ok(),
-        "well-formed switch validates"
-    );
     let sw = f
         .graph()
         .all_node_ids()
@@ -262,9 +259,17 @@ fn switch_target_arity_mismatch_is_rejected() {
         .unwrap();
     let short = f.add_switch_table(vec![0x1000]); // now 1 addr, 2 outputs
     *f.graph_mut().node_kind_mut(sw) = strider_ir::node::NodeKind::Switch(short);
+    let errs = strider_ir::validate::validate(&f).unwrap_err();
     assert!(
-        strider_ir::validate::validate(&f).is_err(),
-        "arity mismatch rejected"
+        errs.0.iter().any(|e| matches!(
+            e,
+            strider_ir::validate::ValidationError::SwitchTargetArityMismatch {
+                outputs: 2,
+                targets: 1,
+                ..
+            }
+        )),
+        "arity mismatch rejected: {errs:?}"
     );
 }
 
@@ -303,8 +308,8 @@ fn unreachable_terminator_validates() {
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_unreachable().expect("build_unreachable");
-    let f = b.build().expect("build");
-    strider_ir::validate::validate(&f).expect("Unreachable-terminated function must validate");
+    b.build()
+        .expect("Unreachable-terminated function must validate");
 }
 
 #[test]
@@ -321,8 +326,7 @@ fn indirect_branch_placeholder_validates() {
         .expect("build_int_const");
     b.build_indirect_branch(target)
         .expect("build_indirect_branch");
-    let f = b.build().expect("build");
-    strider_ir::validate::validate(&f).expect("IndirectBranch placeholder must validate");
+    b.build().expect("IndirectBranch placeholder must validate");
 }
 
 #[test]
