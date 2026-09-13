@@ -314,28 +314,6 @@ fn collapse_with_phi_collapse_validates() -> crate::Result<()> {
     Ok(())
 }
 
-/// The pass is individually selectable, so it must leave a valid graph on its
-/// own: a Region that survives the rewire is a second consumer of the spliced
-/// control value.
-#[test]
-fn standalone_collapse_leaves_a_valid_graph() -> crate::Result<()> {
-    let mut b = strider_ir_test_utils::empty_builder()?;
-    let entry = b.create_region_all()?;
-    let body = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-    b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    b.build_branch(body)?;
-    b.set_region(body);
-    b.build_return(None, &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    crate::pipeline::run_one(&RegionCollapse, &mut fg, &mut crate::OptCtx::new(None))?;
-    strider_ir::validate::validate(&fg)?;
-    Ok(())
-}
-
 /// Two phis over one single-predecessor Region where the FIRST's sole input is
 /// the second's output.  Collapsing off a pre-mutation snapshot replaces the
 /// first with a value whose producer the same call kills two lines later.

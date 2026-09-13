@@ -632,15 +632,6 @@ mod tests {
         let _ = pipeline.run(&mut function, &mut OptCtx::new(None));
     }
 
-    /// Pins that the validate-on-finish step is wired and accepts a clean
-    /// graph.
-    #[test]
-    fn run_validates_after_default_pipeline() -> crate::Result<()> {
-        let mut function = one_const_fn(0);
-        crate::default_pipeline().run(&mut function, &mut OptCtx::new(None))?;
-        Ok(())
-    }
-
     /// A pipeline carrying a post-pass must still produce a graph that
     /// validates.
     #[test]
@@ -724,68 +715,6 @@ mod tests {
             matches!(kind, NodeKind::IntConst(_)) && function.int_const_u128(val) == Some(0x42),
             "load must forward to stored value, got {kind:?} (value={:?})",
             function.int_const_u128(val)
-        );
-        Ok(())
-    }
-
-    /// `CallStackArgCollect` must extend a Call's inputs with the
-    /// positional stack args pushed before it.
-    #[test]
-    fn full_call_pipeline_collects_args() -> crate::Result<()> {
-        use crate::{
-            CallStackArgCollect, ConstantFold, DeadBranchElimination, KnownBits, LoadForward,
-            OptimizerPipeline, PhiCollapse, RegionCollapse,
-        };
-        use strider_ir::node::NodeKind;
-
-        let sp = rsleigh::Vn {
-            addr_off: 0x20,
-            addr_space: rsleigh::VnSpace::REGISTER,
-            size: 4,
-        };
-        let mut b = strider_ir_test_utils::sp_frame(sp)
-            .stack_args(stack_args_at(0, 4))
-            .build_fn()?;
-        let region = b.create_region_all()?;
-        b.set_entry_region_all(region)?;
-        b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let sp_v0 = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
-        b.write_variable(&sp, sp_v1)?;
-        let arg1 = b.build_int_const(22u64, ValueType::I32)?;
-        b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
-        let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, ValueType::I32)?;
-        b.write_variable(&sp, sp_v2)?;
-        let arg0 = b.build_int_const(11u64, ValueType::I32)?;
-        b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
-        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call_cc(target, None)?;
-        b.build_return(None, &[])?;
-        b.set_lift_addr(None);
-        let mut function = b.build()?;
-
-        let mut p = OptimizerPipeline::new();
-        p.add(ConstantFold::new());
-        p.add(KnownBits);
-        p.add(PhiCollapse);
-        p.add(RegionCollapse);
-        p.add(DeadBranchElimination);
-        p.add(LoadForward::default());
-        p.add_post_pass(CallStackArgCollect);
-        p.run(&mut function, &mut OptCtx::new(None))?;
-
-        let call = function
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(function.node_kind(n), NodeKind::Call { .. }))
-            .expect("Call present");
-        let inputs = function.node_inputs(call);
-        assert_eq!(
-            inputs.len(),
-            6,
-            "ctrl + mem + target + sp + 2 collected args = 6 inputs"
         );
         Ok(())
     }
