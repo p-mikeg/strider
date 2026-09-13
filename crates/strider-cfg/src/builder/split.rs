@@ -43,17 +43,23 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
         if split_index == 0 {
             return Ok(region_id);
         }
-        // `split_off` returns the at-and-after elements, leaving the earlier
-        // ones behind, so swap to keep `second_region`'s identity while giving
-        // it the second half of the stream.
-        let upper = second_region.insns.split_off(split_index);
+        // Only the smaller half moves into a fresh allocation; the larger one
+        // keeps the buffer. Copying the tail out every time makes repeated
+        // lowest-first splits of one region hold the whole region once per
+        // split.
+        let insns = &mut second_region.insns;
+        let first_region_insns: Vec<_> = if split_index <= insns.len() / 2 {
+            insns.drain(..split_index).collect()
+        } else {
+            let upper = insns.split_off(split_index);
+            std::mem::replace(insns, upper)
+        };
         // This mutates in place, bypassing `add_region`'s empty-region guard.
         debug_assert!(
-            !upper.is_empty(),
+            !second_region.insns.is_empty(),
             "split_region produced an empty second half (split_index={split_index}): \
              would bypass add_region's empty-region invariant"
         );
-        let first_region_insns = std::mem::replace(&mut second_region.insns, upper);
         // The second half never reaches `add_region`, which is where the other
         // regions get this checked.
         debug_assert!(
