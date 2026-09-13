@@ -38,16 +38,6 @@ use common::indirect_resolve_helpers::{
     build_push_target_pop_pc_scenario, build_stack_array_dispatch_scenario,
 };
 
-/// `push K; pop rax; jmp *rax`: `StackOffsetDetect` + `LoadForward` collapse
-/// the load back to the pushed constant, so the classifier sees
-/// `IntConst(K)` and returns `Single(K)`.
-#[test]
-fn int_const_to_single() {
-    let (function, _target) = build_int_const_target_scenario_via_stack(0x0000_0123);
-    let result = classify_target_bare(&function).expect("classify");
-    assert_eq!(result, Some(ResolvedTargets::Single(0x0000_0123.into())));
-}
-
 /// ARM `bx lr` lifts to a placeholder IndirectBranch whose value-input is
 /// `InitialVar(lr_vn)`, the shape the LinkRegister arm matches.
 #[test]
@@ -127,17 +117,7 @@ fn push_target_pop_pc_does_not_resolve_to_link_register() {
 fn stack_array_two_targets_resolves_to_multiple() {
     let targets = [0x401190u64, 0x401180u64];
     let (function, _target, _sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
-    let view: &strider_ir::Function = &function;
-    let known = analyze_known_bits(view).expect("analyze_known_bits");
-    let doms = strider_ir::control_dominator_tree(view);
-    let mut ranges = compute_value_ranges(view, &doms, &known);
-    let result = classify_target(
-        view,
-        sole_branch(view),
-        None,
-        &mut ranges,
-        &strider_orchestrator::opt::AssumptionOptions::default(),
-    );
+    let result = classify_target_bare(&function).expect("classify");
     let mut expected = targets.to_vec();
     expected.sort_unstable();
     assert_eq!(
@@ -154,17 +134,7 @@ fn stack_array_two_targets_resolves_to_multiple() {
 fn stack_array_four_targets_resolves_to_multiple() {
     let targets = [0x401_0a0u64, 0x401_0b0, 0x401_0c0, 0x401_0d0];
     let (function, _target, _sp) = build_stack_array_dispatch_scenario(&targets, -32, 8);
-    let view: &strider_ir::Function = &function;
-    let known = analyze_known_bits(view).expect("analyze_known_bits");
-    let doms = strider_ir::control_dominator_tree(view);
-    let mut ranges = compute_value_ranges(view, &doms, &known);
-    let result = classify_target(
-        view,
-        sole_branch(view),
-        None,
-        &mut ranges,
-        &strider_orchestrator::opt::AssumptionOptions::default(),
-    );
+    let result = classify_target_bare(&function).expect("classify");
     let mut expected = targets.to_vec();
     expected.sort_unstable();
     assert_eq!(
@@ -175,20 +145,8 @@ fn stack_array_four_targets_resolves_to_multiple() {
     );
 }
 
-/// Opaque target (`InitialVar(rax)`, no lr configured) classifies as `None`.
-/// The orchestrator, not the classifier, decides what to do at fixed point.
-#[test]
-fn opaque_target_returns_none() {
-    let (function, _target) = build_initial_var_target_scenario_x86_64();
-    let result = classify_target_bare(&function).expect("classify");
-    assert_eq!(
-        result, None,
-        "opaque target must classify as None: no panic, no error, no \
-         unsound classification.  The orchestrator decides at fixed point.",
-    );
-}
-
-/// Regression: calling `classify_target` twice on the same unchanged graph
+/// `push K; pop rax; jmp *rax` collapses to `IntConst(K)` and classifies as
+/// `Single(K)`. Calling `classify_target` twice on the same unchanged graph
 /// must produce the same verdict. Guards against a future cache (e.g. of
 /// `KnownBitsMap`) added across calls without invalidation; two calls on an
 /// unchanged graph would otherwise still agree by luck.

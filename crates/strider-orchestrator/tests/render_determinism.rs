@@ -5,8 +5,7 @@
 mod common;
 
 use dot::{DotStyle, GraphDot};
-use object::{Object, ObjectSymbol};
-use strider_orchestrator::opt::{OptOptions, ReadOnlyMemory};
+use strider_orchestrator::opt::OptOptions;
 use strider_orchestrator::{AnalyzeResult, LiftOptions, Strider};
 
 fn renders<R: rsleigh::MemReader>(
@@ -54,18 +53,8 @@ fn renders<R: rsleigh::MemReader>(
 }
 
 fn assert_renders_identical_across_engines(arch: common::Arch, case: &str, fn_name: &str) {
-    let path = common::binary_path(arch, case);
-    let owned = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = owned.checked_file().expect("the mapped file is unchanged");
-    let addr = obj.symbol_by_name(fn_name).expect("symbol").address();
     let analyse = || {
-        let sa = arch.sleigh();
-        let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem");
-        let sleigh = rsleigh::Sleigh::new(sa.sla_spec(), sa.pspec(), mem).expect("sleigh");
-        let cc = arch.cc().build(&sleigh.regs().expect("regs")).expect("cc");
-        let rom: Box<dyn ReadOnlyMemory> =
-            Box::new(strider_reader::ElfFileMemReader::from_object(&obj).expect("rom"));
-        let mut strider = Strider::new(sa, sleigh, Some(rom)).expect("Strider::new");
+        let (mut strider, cc, addr) = common::fixture_strider(arch, case, fn_name);
         let result = strider
             .analyze(
                 addr,

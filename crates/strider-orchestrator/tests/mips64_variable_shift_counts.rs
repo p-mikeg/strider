@@ -4,9 +4,9 @@
 
 mod common;
 
-use common::words_image;
+use common::{inputs_of, producer_kind, returned, words_image};
 use strider_ir::node::{NodeKind, ValueId};
-use strider_ir::{Function, IRViewer, IRWalker, IntBinaryOp, ValueType};
+use strider_ir::{Function, IRViewer, IntBinaryOp, ValueType};
 use strider_target::Endianness;
 
 const BASE: u64 = 0x1000;
@@ -45,24 +45,6 @@ fn analyze(endian: Endianness, offset: u64) -> Function {
         .function
 }
 
-/// The value returned in `v0`: inputs 0 and 1 of `Return` are control and
-/// memory, so the first return-value register follows them.
-fn returned_v0(f: &Function) -> ValueId {
-    let ret = f
-        .walk()
-        .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
-        .expect("one Return");
-    f.node_inputs(ret)[2]
-}
-
-fn producer_kind(f: &Function, v: ValueId) -> &NodeKind {
-    f.node_kind(f.producer(v))
-}
-
-fn inputs_of(f: &Function, v: ValueId) -> Vec<ValueId> {
-    f.node_inputs(f.producer(v)).into_iter().collect()
-}
-
 fn initial_vn_size(f: &Function, v: ValueId) -> Option<u32> {
     match producer_kind(f, v) {
         NodeKind::InitialVar(id) => Some(f.initial_vn(*id).size),
@@ -79,7 +61,7 @@ fn a_doubleword_variable_shift_masks_its_count_to_six_bits() {
             (DSRAV, IntBinaryOp::SShiftRight),
         ] {
             let f = analyze(endian, offset);
-            let v0 = returned_v0(&f);
+            let v0 = returned(&f)[0];
             let where_ = format!("{endian:?} at {offset:#x}");
 
             assert_eq!(

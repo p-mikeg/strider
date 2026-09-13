@@ -9,7 +9,7 @@
 
 mod common;
 
-use common::{returned, words_image};
+use common::{inputs_of, producer_kind, returned, words_image};
 use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{Function, IRViewer, IntBinaryOp, ValueType};
 use strider_target::Endianness;
@@ -98,17 +98,6 @@ fn analyze(endian: Endianness, offset: u64) -> (Function, Vns) {
         .expect("analyze")
         .function;
     (function, vns)
-}
-
-/// The `Return` node's value inputs, in `ret_val_regs` then
-/// `ret_val_regs_float` order. Inputs 0 and 1 are the `Control` predecessor and
-/// the memory state.
-fn producer_kind(f: &Function, v: ValueId) -> &NodeKind {
-    f.node_kind(f.producer(v))
-}
-
-fn inputs_of(f: &Function, v: ValueId) -> Vec<ValueId> {
-    f.node_inputs(f.producer(v)).into_iter().collect()
 }
 
 /// The entry-value varnode behind `v`, or `None` when `v` is computed.

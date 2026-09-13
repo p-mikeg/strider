@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::returned;
+use common::{inputs_of, producer_kind, returned};
 use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{Function, IRViewer, ValueType};
 
@@ -75,14 +75,6 @@ fn analyze(offset: u64) -> (Function, strider_target::BuiltCallingConvention) {
 /// The value cdecl returns a `long double` in.
 fn st0(f: &Function) -> ValueId {
     returned(f)[2]
-}
-
-fn producer_kind(f: &Function, v: ValueId) -> &NodeKind {
-    f.node_kind(f.producer(v))
-}
-
-fn inputs_of(f: &Function, v: ValueId) -> Vec<ValueId> {
-    f.node_inputs(f.producer(v)).into_iter().collect()
 }
 
 /// Both operands of the F80 add behind `v`, as raw bit patterns.

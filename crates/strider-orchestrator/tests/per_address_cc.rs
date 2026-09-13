@@ -65,10 +65,11 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
             .all(|&v| bfg.get_vn_for_value(v).is_some()),
         "every ret-val / clobber output must carry its varnode tag"
     );
+    let (ret, clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.get_cc(call_id));
     assert_eq!(
         outs.len(),
-        2 + tagged_outputs,
-        "Call's outputs = Control + Memory + tagged ret-val/clobber slots"
+        2 + ret.len() + clob.len(),
+        "Call's outputs = Control + Memory + the override's ret-val/clobber slots"
     );
     let (default_ret, default_clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.default_cc());
     let default_total = default_ret.len() + default_clob.len();

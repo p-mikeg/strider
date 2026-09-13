@@ -14,19 +14,10 @@
 
 mod common;
 
-use common::{ALL_ARCHES, Arch};
+use common::{ALL_ARCHES, strider_over_object};
 use object::{Object, ObjectSymbol, SymbolKind};
 use strider_orchestrator::Strider;
 use strider_reader::ElfFileMemReader;
-
-fn strider_for(arch: Arch, obj: &object::File<'_>) -> Strider<ElfFileMemReader> {
-    let sleigh_arch = arch.sleigh();
-    let mem = ElfFileMemReader::from_object(obj).expect("mem reader");
-    let rom = ElfFileMemReader::from_object(obj).expect("rom reader");
-    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
-        .expect("create sleigh");
-    Strider::new(sleigh_arch, sleigh, Some(Box::new(rom))).expect("Strider::new")
-}
 
 fn fingerprint(
     strider: &mut Strider<ElfFileMemReader>,
@@ -108,11 +99,11 @@ fn a_reused_strider_analyses_every_fixture_function_as_a_fresh_one_does() {
                 .collect();
             addrs.sort_unstable();
             addrs.dedup();
-            let mut shared = strider_for(arch, &obj);
+            let mut shared = strider_over_object(arch, &obj);
             let cc = arch.cc().build(shared.sleigh_regs()).expect("cc");
             let fresh: Vec<String> = addrs
                 .iter()
-                .map(|&a| fingerprint(&mut strider_for(arch, &obj), &cc, a))
+                .map(|&a| fingerprint(&mut strider_over_object(arch, &obj), &cc, a))
                 .collect();
             for pass in 1..=2 {
                 for (&addr, want) in addrs.iter().zip(&fresh) {
