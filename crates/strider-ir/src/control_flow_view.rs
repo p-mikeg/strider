@@ -132,8 +132,9 @@ impl<K: EntityRef + Hash> DominatorTree<K> {
         self.span[v].0 != 0
     }
 
-    /// True when every path from the root to `b` passes through `a`: reflexive,
-    /// and `false` when either vertex is absent.
+    /// True when every path from the root to `b` passes through `a`. Reflexive
+    /// for every vertex, one absent from the tree included; otherwise `false`
+    /// when either vertex is absent.
     pub fn dominates(&self, a: K, b: K) -> bool {
         let ((a_pre, a_post), (b_pre, b_post)) = (self.span[a], self.span[b]);
         a == b || (a_pre != 0 && b_pre != 0 && a_pre <= b_pre && b_post <= a_post)
