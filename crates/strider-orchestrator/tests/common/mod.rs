@@ -365,7 +365,7 @@ pub(crate) fn count_float_cmp(
 }
 
 pub(crate) fn count_switches(function: &strider_ir::Function) -> usize {
-    function.count_kind(|k| matches!(k, NodeKind::Switch))
+    function.count_kind(|k| matches!(k, NodeKind::Switch(_)))
 }
 
 /// Panics if zero or more than one `Switch` node is present; either case
@@ -373,7 +373,7 @@ pub(crate) fn count_switches(function: &strider_ir::Function) -> usize {
 pub(crate) fn find_unique_switch(function: &strider_ir::Function) -> strider_ir::node::NodeId {
     let mut iter = function
         .walk()
-        .filter(|&nid| matches!(function.node_kind(nid), NodeKind::Switch));
+        .filter(|&nid| matches!(function.node_kind(nid), NodeKind::Switch(_)));
     let first = iter
         .next()
         .expect("fixture must contain exactly one Switch node");
@@ -406,7 +406,7 @@ pub(crate) fn x86_64_call_then_ret() -> (Vec<u8>, u64, u64) {
 }
 
 pub(crate) fn count_calls(function: &strider_ir::Function) -> usize {
-    function.count_kind(|k| matches!(k, NodeKind::Call))
+    function.count_kind(|k| matches!(k, NodeKind::Call { .. }))
 }
 pub(crate) fn count_ifs(function: &strider_ir::Function) -> usize {
     function.count_kind(|k| matches!(k, NodeKind::If))
@@ -474,7 +474,7 @@ pub(crate) fn count_return_paths(function: &strider_ir::Function) -> usize {
                     total += function.node_inputs(pred).len();
                     break;
                 }
-                NodeKind::Call | NodeKind::CallOther { .. } => {
+                NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
                     match function.node_inputs(pred).get(0).copied() {
                         Some(ctrl) => pred = function.producer(ctrl),
                         None => {

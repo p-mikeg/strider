@@ -142,7 +142,7 @@ impl PostOptimizer for IndirectBranchClassify {
         // one walk collects both kinds and the KnownBits / dominator /
         // value-range setup below is skipped when it finds nothing.
         let sites: Vec<NodeId> = function
-            .walk_kind(|k| matches!(k, NodeKind::IndirectBranch | NodeKind::Switch))
+            .walk_kind(|k| matches!(k, NodeKind::IndirectBranch | NodeKind::Switch(_)))
             .collect();
 
         // Off leaves every site a placeholder, but each one still has to be
@@ -182,7 +182,7 @@ impl PostOptimizer for IndirectBranchClassify {
                 // constant there. `mips32le/switch.elf::main` is that case; a
                 // per-`Call` `preserves_regs` override supplies the callee's
                 // real clobber set.
-                let resolved = if matches!(function.node_kind(node), NodeKind::Switch) {
+                let resolved = if matches!(function.node_kind(node), NodeKind::Switch(_)) {
                     // Fail closed like every other bail on this path: an absent
                     // node is not an unresolved one, so `continue` here would
                     // leave the seated arms unreported.

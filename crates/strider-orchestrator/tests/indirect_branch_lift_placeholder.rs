@@ -168,7 +168,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
         .expect("build_ir with TailCall terminator from known_targets must succeed")
         .function;
 
-    let call_count = function.count_kind(|k| matches!(k, NodeKind::Call));
+    let call_count = function.count_kind(|k| matches!(k, NodeKind::Call { .. }));
     assert_eq!(
         call_count, 1,
         "TailCall terminator must lift to exactly one Call node"
@@ -290,7 +290,7 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
         "intra-function resolved jump must lift to exactly one Return (the real `ret`), \
          not a spurious extra Return from the leftover BranchIndirect"
     );
-    let call_count = function.count_kind(|k| matches!(k, NodeKind::Call));
+    let call_count = function.count_kind(|k| matches!(k, NodeKind::Call { .. }));
     assert_eq!(call_count, 0, "intra-function jump must not lift to a Call");
 }
 

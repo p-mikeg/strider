@@ -236,7 +236,7 @@ fn switch_target_arity_mismatch_is_rejected() {
     use strider_ir::IRViewer;
     use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, empty_builder};
 
-    // Build a valid switch, then corrupt its side table to N-1 addresses.
+    // Build a valid switch, then point it at a table of N-1 addresses.
     let mut b = empty_builder().unwrap();
     let entry = b.create_region_all().unwrap();
     let a = b.create_region_all().unwrap();
@@ -258,9 +258,10 @@ fn switch_target_arity_mismatch_is_rejected() {
     let sw = f
         .graph()
         .all_node_ids()
-        .find(|&n| matches!(f.node_kind(n), strider_ir::node::NodeKind::Switch))
+        .find(|&n| matches!(f.node_kind(n), strider_ir::node::NodeKind::Switch(_)))
         .unwrap();
-    f.side_tables_mut().set_switch_targets(sw, vec![0x1000]); // now 1 addr, 2 outputs
+    let short = f.add_switch_table(vec![0x1000]); // now 1 addr, 2 outputs
+    *f.graph_mut().node_kind_mut(sw) = strider_ir::node::NodeKind::Switch(short);
     assert!(
         strider_ir::validate::validate(&f).is_err(),
         "arity mismatch rejected"

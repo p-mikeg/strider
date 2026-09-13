@@ -592,7 +592,7 @@ fn call_uses_call_return_assertions(function: &strider_ir::Function) {
     // Call->Call dataflow.
     let calls: Vec<NodeId> = function
         .walk()
-        .filter(|&n| matches!(function.node_kind(n), NodeKind::Call))
+        .filter(|&n| matches!(function.node_kind(n), NodeKind::Call { .. }))
         .collect();
     let chained = calls.iter().any(|&outer| {
         let outer_inputs: Vec<_> = function.node_inputs(outer).into_iter().collect();
@@ -602,7 +602,7 @@ fn call_uses_call_return_assertions(function: &strider_ir::Function) {
             // more than any reasonable spill round-trip.
             for _ in 0..16 {
                 match function.node_kind(producer) {
-                    NodeKind::Call if producer != outer => return true,
+                    NodeKind::Call { .. } if producer != outer => return true,
                     // Walk through plumbing that doesn't change the value
                     // identity, following the node's first (most-likely
                     // value-producing) input slot.

@@ -85,7 +85,7 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
     let call_id = bfg
         .graph()
         .all_node_ids()
-        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
+        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call { .. }))
         .expect("orchestrator must splice a Call after resolving jmp rax to Single(0x9000)");
     assert_ne!(
         bfg.get_cc(call_id),
@@ -195,7 +195,7 @@ fn indirect_default_cc_tail_call_runs_and_does_not_double_count_ret_regs() {
     let call_id = bfg
         .graph()
         .all_node_ids()
-        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
+        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call { .. }))
         .expect("orchestrator must splice a Call for the default-CC tail call");
     let outs = bfg.node_outputs(call_id);
     let (ret, clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.default_cc());
@@ -247,7 +247,7 @@ fn indirect_override_with_ret_regs_does_not_double_count_them() {
     let call_id = bfg
         .graph()
         .all_node_ids()
-        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
+        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call { .. }))
         .expect("orchestrator must splice a Call for the override tail call");
 
     // Register tags for outputs past [Control, Memory].
@@ -290,7 +290,7 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     let call_id = bfg
         .graph()
         .all_node_ids()
-        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
+        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call { .. }))
         .expect("in-place tail call splices in a Call node");
     assert_ne!(
         bfg.get_cc(call_id),

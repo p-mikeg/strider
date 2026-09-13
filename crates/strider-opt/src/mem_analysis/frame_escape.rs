@@ -71,7 +71,7 @@ fn frame_address_escapes(function: &Function, noalias_allocators: &FxHashSet<u64
         let kind = *function.node_kind(node);
         // A Call's inputs are [ctrl, mem, target, sp, ...args]; slot 3 is the
         // structural SP anchor every callee has, not an argument.
-        let sp_anchor_slot = matches!(kind, NodeKind::Call).then_some(3usize);
+        let sp_anchor_slot = matches!(kind, NodeKind::Call { .. }).then_some(3usize);
         for (idx, v) in function.node_inputs(node).into_iter().enumerate() {
             if sp_anchor_slot == Some(idx) {
                 continue;

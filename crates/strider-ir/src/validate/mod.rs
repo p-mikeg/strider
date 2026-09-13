@@ -14,12 +14,13 @@ mod tests;
 
 use graph_invariants::{
     check_function_invariants_arith_widths, check_function_invariants_asm_fingerprints,
-    check_function_invariants_availability, check_function_invariants_consts,
-    check_function_invariants_control_single_use, check_function_invariants_data_cycles,
-    check_function_invariants_extend_truncate, check_function_invariants_memory_chain,
-    check_function_invariants_phis, check_function_invariants_region,
-    check_function_invariants_side_indices, check_function_invariants_switch,
-    check_function_invariants_terminator_reachable, check_function_invariants_uniqueness,
+    check_function_invariants_availability, check_function_invariants_call_cc,
+    check_function_invariants_consts, check_function_invariants_control_single_use,
+    check_function_invariants_data_cycles, check_function_invariants_extend_truncate,
+    check_function_invariants_memory_chain, check_function_invariants_phis,
+    check_function_invariants_region, check_function_invariants_side_indices,
+    check_function_invariants_switch, check_function_invariants_terminator_reachable,
+    check_function_invariants_uniqueness,
 };
 use local_typing::check_local_typing;
 
@@ -49,6 +50,7 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     check_function_invariants_extend_truncate(function, &reachable, &mut errs);
     check_function_invariants_arith_widths(function, &reachable, &mut errs);
     check_function_invariants_switch(function, &reachable, &mut errs);
+    check_function_invariants_call_cc(function, &reachable, &mut errs);
     check_function_invariants_asm_fingerprints(function, &reachable, &mut errs);
     check_function_invariants_memory_chain(function, &reachable, &mut errs);
     check_function_invariants_data_cycles(function, &reachable, &mut errs);
@@ -295,6 +297,18 @@ pub enum ValidationError {
 
     #[error("Switch {node:?} has no control outputs")]
     EmptySwitchTargets { node: NodeId },
+
+    #[error("node {node:?} is `Switch({id:?})` but the function has no table for that id")]
+    DanglingSwitchTableId {
+        node: NodeId,
+        id: crate::node::SwitchTableId,
+    },
+
+    #[error(
+        "node {node:?} is `Call {{ cc: Some({id:?}) }}` but the function has no \
+         convention for that id"
+    )]
+    DanglingCcId { node: NodeId, id: crate::node::CcId },
 
     #[error(
         "Switch {node:?} has {outputs} control outputs but {targets} recorded target addresses"

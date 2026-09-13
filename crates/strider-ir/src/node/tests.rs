@@ -102,7 +102,7 @@ fn non_cacheable_kinds_are_not_cacheable() {
         NodeKind::Region,
         NodeKind::MemPhi,
         NodeKind::Phi,
-        NodeKind::Call,
+        NodeKind::Call { cc: None },
         NodeKind::If,
     ];
     for kind in non_cacheable {
@@ -241,8 +241,8 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         NodeKind::MemPhi,
         NodeKind::Phi,
         NodeKind::If,
-        NodeKind::Switch,
-        NodeKind::Call,
+        NodeKind::Switch(crate::node::SwitchTableId::from_u32(0)),
+        NodeKind::Call { cc: None },
         NodeKind::Return,
         NodeKind::IndirectBranch,
         NodeKind::Unreachable,
@@ -279,11 +279,11 @@ fn legacy_is_cacheable(kind: &NodeKind) -> bool {
             | NodeKind::Return
             | NodeKind::IndirectBranch
             | NodeKind::Unreachable
-            | NodeKind::Switch
+            | NodeKind::Switch(_)
             | NodeKind::Region
             | NodeKind::MemPhi
             | NodeKind::Phi
-            | NodeKind::Call
+            | NodeKind::Call { .. }
             | NodeKind::CallOther { .. }
             | NodeKind::CPoolRef
             | NodeKind::New

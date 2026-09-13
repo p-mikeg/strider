@@ -270,8 +270,8 @@ fn outgoing_span_three_wide_arg_store_collected_as_one_arg() -> Result<()> {
 fn find_call(graph: &Graph) -> Result<NodeId> {
     graph
         .all_node_ids()
-        .find(|&n| matches!(graph.node_kind(n), NodeKind::Call))
-        .ok_or_else(|| anyhow!("expected Call node, got {:?}", NodeKind::Call))
+        .find(|&n| matches!(graph.node_kind(n), NodeKind::Call { .. }))
+        .ok_or_else(|| anyhow!("expected Call node, got {:?}", NodeKind::Call { cc: None }))
 }
 
 /// `push arg1=22; push arg0=11; call 0x1000` must extend the Call's inputs
@@ -1008,17 +1008,17 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
     };
     override_cc.validate().unwrap();
     let call_id = fg
-        .walk_kind(|k| matches!(k, NodeKind::Call))
+        .walk_kind(|k| matches!(k, NodeKind::Call { .. }))
         .next()
         .expect("Call node must exist");
-    fg.side_tables_mut().set_call_cc(call_id, override_cc);
+    fg.set_call_cc(call_id, override_cc);
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let call_id_post = fg
-        .walk_kind(|k| matches!(k, NodeKind::Call))
+        .walk_kind(|k| matches!(k, NodeKind::Call { .. }))
         .next()
         .expect("Call node must still exist");
     let inputs: Vec<ValueId> = fg.node_inputs(call_id_post).into_iter().collect();

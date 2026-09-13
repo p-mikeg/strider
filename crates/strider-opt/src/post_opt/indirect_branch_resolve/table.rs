@@ -181,7 +181,7 @@ fn decompose_index(
                 .collect(),
             NodeKind::InitialVar(_)
             | NodeKind::Phi
-            | NodeKind::Call
+            | NodeKind::Call { .. }
             | NodeKind::CallOther { .. }
             | NodeKind::New
             | NodeKind::CPoolRef => Vec::new(),

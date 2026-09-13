@@ -16,7 +16,7 @@ use super::delegate_node_pat;
 use crate::node_builders::delegate_with_output;
 use itertools::Itertools;
 use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind, ValueType};
+use strider_ir::node::{NodeId, NodeKind, SwitchTableId, ValueType};
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
@@ -74,7 +74,10 @@ impl CallPat {
     /// 0-based past `ctrl` / `mem` / `target` / `sp`, so raw input slot
     /// `idx + 4`.
     pub fn arg<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
-        Self(self.0.input(NodeKind::Call.input_head_len() + idx, p))
+        Self(
+            self.0
+                .input(NodeKind::Call { cc: None }.input_head_len() + idx, p),
+        )
     }
 
     /// `inputs[0]`. The sub-pattern's root produces a control edge, not a
@@ -173,7 +176,7 @@ impl MemPat for CallPat {}
 const FIRST_VALUE_OUT_SLOT: usize = 2;
 
 pub fn call() -> CallPat {
-    CallPat(NodePat::node(KindSpec::Exact(NodeKind::Call)).with_mem_value(1))
+    CallPat(NodePat::node(KindSpec::variant_of(&NodeKind::Call { cc: None })).with_mem_value(1))
 }
 
 /// A `CallOther` is a Sleigh `CALLOTHER` user-op: an opaque
@@ -196,7 +199,7 @@ impl CallOtherPat {
         self
     }
 
-    /// Filters on `SideTables::call_other_name`.
+    /// Filters on `Function::call_other_name`.
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name_filter = Some(name.into());
         self
@@ -235,7 +238,7 @@ impl CallOtherPat {
             // Node-only, so it short-circuits before child recursion.
             Some(want) => inner.with_node_predicate(move || {
                 Box::new(move |matcher, n| {
-                    matcher.function().side_tables().call_other_name(n) == Some(want.as_str())
+                    matcher.function().call_other_name(n) == Some(want.as_str())
                 })
             }),
             None => inner,
@@ -450,7 +453,9 @@ impl MatchPat for SwitchPat {
 }
 
 pub fn switch() -> SwitchPat {
-    SwitchPat(NodePat::node(KindSpec::Exact(NodeKind::Switch)))
+    SwitchPat(NodePat::node(KindSpec::variant_of(&NodeKind::Switch(
+        SwitchTableId::from_u32(0),
+    ))))
 }
 
 delegate_with_output!(SwitchPat, 0);

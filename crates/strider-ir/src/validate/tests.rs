@@ -441,7 +441,7 @@ fn local_typing_call_accepts_arbitrarily_many_argument_inputs() {
     let mut inputs = vec![s.entry_ctrl, s.mem_value, target, sp];
     inputs.extend(std::iter::repeat_n(sp, 9));
     let call = s.f.graph_mut().create_node(
-        NodeKind::Call,
+        NodeKind::Call { cc: None },
         inputs,
         [ValueKind::Control, ValueKind::Memory],
     );
@@ -820,6 +820,45 @@ fn graph_invariants_dangling_const_id_detected() {
 }
 
 #[test]
+fn graph_invariants_dangling_switch_table_id_detected() {
+    let mut s = spine();
+    let (_, addr) = int_const(&mut s.f, 0x1000, ValueType::I64);
+    let sw = s.f.graph_mut().create_node(
+        NodeKind::Switch(crate::node::SwitchTableId::from_u32(9)),
+        [s.entry_ctrl, addr],
+        [ValueKind::Control],
+    );
+    let [arm] = s.f.node_outputs_exact::<1>(sw).unwrap();
+    let _ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [arm, s.mem_value], []);
+
+    assert_validation_err(&s.f, |e| {
+        matches!(e, ValidationError::DanglingSwitchTableId { .. })
+    });
+}
+
+#[test]
+fn graph_invariants_dangling_cc_id_detected() {
+    let mut s = spine();
+    let (_, target) = int_const(&mut s.f, 0x1000, ValueType::I64);
+    let (_, sp) = int_const(&mut s.f, 0x8000, ValueType::I64);
+    let call = s.f.graph_mut().create_node(
+        NodeKind::Call {
+            cc: Some(crate::node::CcId::from_u32(9)),
+        },
+        [s.entry_ctrl, s.mem_value, target, sp],
+        [ValueKind::Control, ValueKind::Memory],
+    );
+    let [ctrl, mem] = s.f.node_outputs_exact::<2>(call).unwrap();
+    let _ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [ctrl, mem], []);
+
+    assert_validation_err(&s.f, |e| matches!(e, ValidationError::DanglingCcId { .. }));
+}
+
+#[test]
 fn graph_invariants_wide_const_width_mismatch_detected() {
     use crate::node::const_value::ConstValue;
     let mut s = spine();
@@ -1001,7 +1040,7 @@ fn memory_chain_preserving_call_unconsumed_memory_output_not_flagged() {
 
     // The Memory output is left unconsumed.
     let call = s.f.graph_mut().create_node(
-        NodeKind::Call,
+        NodeKind::Call { cc: None },
         [s.entry_ctrl, s.mem_value, target, sp],
         [ValueKind::Control, ValueKind::Memory],
     );
