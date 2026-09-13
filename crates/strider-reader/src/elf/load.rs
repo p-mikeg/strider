@@ -198,7 +198,14 @@ impl OwnedElf {
         let mut image =
             super::sections::collect_regions(obj, Some(&self.backing), source, filter, layout)?;
         if relocate {
-            apply_elf_relocations_with(&mut image.regions, obj, filter, layout)?;
+            let got = apply_elf_relocations_with(
+                &mut image.regions,
+                obj,
+                filter,
+                layout,
+                &image.writable,
+            )?;
+            image.regions.extend(got);
         }
         Ok(image)
     }

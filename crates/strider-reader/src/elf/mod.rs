@@ -1,3 +1,4 @@
+pub(crate) mod encodings;
 pub mod load;
 pub mod reader;
 pub(crate) mod relocations;
