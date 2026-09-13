@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 
 use crate::errors::into_strider_err;
-use strider_reader::elf::{ElfSectionLayout, LoadFilter, OpdTable, RegionSource};
+use strider_reader::elf::{ElfSectionLayout, LoadFilter, OpdTable, RegionSource, without_ranges};
 use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory, RegionIndex};
 
 /// The GIL already serialises every access; `Mutex` is here so a wrapper
@@ -219,6 +219,9 @@ fn elf_to_rom_regions(
 pub struct PyLoadedElf {
     /// Load order; the first wins on symbol-name collisions.
     elfs: Vec<strider_reader::OwnedElf>,
+    /// Every address a loaded ELF maps writable, which no ELF's read-only
+    /// view may serve.
+    writable: Vec<(u64, u64)>,
     /// Instruction fetch / raw reads; includes writable sections when
     /// relocations were applied.
     mem: PyBufferReader,
@@ -246,23 +249,48 @@ fn invalidate_and_extend(reader: &PyBufferReader, regions: Vec<MemRegion>) {
     inner.max_region_len = None;
 }
 
-/// A sub-range where a `new` region overlaps an `existing` one with DIFFERENT
-/// bytes, or `None` if every overlap is byte-identical (a benign re-merge of
-/// the same image). See `add_elf` for why differing overlap is rejected.
+/// A sub-range where `new` serves different bytes than `existing` at an
+/// address both map, or `None` if every such address reads the same (a benign
+/// re-merge of the same image). See `add_elf` for why differing overlap is
+/// rejected.
+///
+/// Each address is compared as a one-byte read resolves it, through the
+/// highest-start region covering it on each side. Which region that is only
+/// changes at a region boundary, so the comparison walks the intervals between
+/// boundaries rather than every overlapping pair of regions.
 fn differing_overlap(existing: &[MemRegion], new: &[MemRegion]) -> Option<(u64, u64)> {
-    let index = RegionIndex::new(existing);
-    for n in new {
-        let (n_lo, n_hi) = (n.start_addr(), n.end_addr());
-        for i in index.overlapping(n_lo, n_hi) {
-            let e = &existing[i];
-            let lo = n_lo.max(e.start_addr());
-            let hi = n_hi.min(e.end_addr());
-            if !n.same_bytes_in(e, lo, hi) {
-                return Some((lo, hi));
-            }
+    let (old_index, new_index) = (RegionIndex::new(existing), RegionIndex::new(new));
+    let mut old_bounds: Vec<u64> = existing
+        .iter()
+        .flat_map(|r| [r.start_addr(), r.end_addr()])
+        .collect();
+    old_bounds.sort_unstable();
+    let mut spans: Vec<(u64, u64)> = new.iter().map(|r| (r.start_addr(), r.end_addr())).collect();
+    spans.sort_unstable();
+    let mut cuts: Vec<u64> = Vec::new();
+    let mut covered_to = 0u64;
+    for (lo, hi) in spans {
+        cuts.extend([lo, hi]);
+        // Each old boundary is taken by the first span reaching it.
+        let from = lo.max(covered_to);
+        if from < hi {
+            let first = old_bounds.partition_point(|&b| b <= from);
+            let last = old_bounds.partition_point(|&b| b < hi);
+            cuts.extend(&old_bounds[first..last.max(first)]);
+            covered_to = hi;
         }
     }
-    None
+    cuts.sort_unstable();
+    cuts.dedup();
+    cuts.windows(2).map(|w| (w[0], w[1])).find(|&(lo, hi)| {
+        match (
+            old_index.covering(lo, 1).next(),
+            new_index.covering(lo, 1).next(),
+        ) {
+            (Some(o), Some(n)) => !new[n].same_bytes_in(&existing[o], lo, hi),
+            _ => false,
+        }
+    })
 }
 
 /// One ELF symbol: where it is, what the ELF says it spans, and which loaded
@@ -705,7 +733,13 @@ impl PyLoadedElf {
     fn add_elf(&mut self, path: &str, apply_relocations: bool) -> PyResult<()> {
         let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
         let mem_regions = elf_to_mem_regions(&obj, self.source, apply_relocations)?;
-        let rom_regions = elf_to_rom_regions(&obj, self.source, apply_relocations)?;
+        let writable = obj
+            .writable_ranges(self.source.into())
+            .map_err(into_strider_err)?;
+        let rom_regions = without_ranges(
+            elf_to_rom_regions(&obj, self.source, apply_relocations)?,
+            &self.writable,
+        );
         if let Some((lo, hi)) =
             differing_overlap(&self.mem.inner.lock_shared().regions, &mem_regions)
         {
@@ -716,7 +750,13 @@ impl PyLoadedElf {
             )));
         }
         invalidate_and_extend(&self.mem, mem_regions);
+        {
+            let mut rom = self.rom.inner.lock_shared();
+            let kept = without_ranges(std::mem::take(&mut rom.regions), &writable);
+            rom.regions = kept;
+        }
         invalidate_and_extend(&self.rom, rom_regions);
+        self.writable.extend(writable);
         self.elfs.push(obj);
         self.symbol_table.lock_shared().take();
         Ok(())
@@ -783,8 +823,12 @@ fn load_elf_impl(
     let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
     let mem = PyBufferReader::from_regions(elf_to_mem_regions(&obj, source, apply_relocations)?);
     let rom = PyBufferReader::from_regions(elf_to_rom_regions(&obj, source, apply_relocations)?);
+    let writable = obj
+        .writable_ranges(source.into())
+        .map_err(into_strider_err)?;
     Ok(PyLoadedElf {
         elfs: vec![obj],
+        writable,
         symbol_elfs: Vec::new(),
         extra_symbols: Vec::new(),
         mem,
