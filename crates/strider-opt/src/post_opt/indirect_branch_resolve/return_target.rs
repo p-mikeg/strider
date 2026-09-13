@@ -1,8 +1,8 @@
 //! Whether a return instruction jumps back to the address the function was
 //! entered with.
 
-use rustc_hash::{FxHashMap, FxHashSet};
-use strider_ir::node::{NodeId, NodeKind, ValueId};
+use rustc_hash::FxHashMap;
+use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{Function, IRViewer};
 
 use crate::mem_analysis::{MemExpr, MemKind, decompose, store_value_byte_size};
@@ -23,13 +23,23 @@ use crate::mem_analysis::{MemExpr, MemKind, decompose, store_value_byte_size};
 pub struct ReturnTargets<'f> {
     function: &'f Function,
     assumptions: &'f crate::AssumptionOptions,
-    /// Per `(offset, size)` slot off the entry SP, the memory values every path
-    /// below which leaves that slot holding the return address. Shared by the
-    /// function's return sites, which mostly probe the same slot.
-    clean: FxHashMap<(i128, i128), FxHashSet<ValueId>>,
-    /// Phis being checked further up the value chain; meeting one again is a
-    /// cycle, which brings in no value of its own.
-    open_phis: FxHashSet<NodeId>,
+    /// Every claim a query has decided. Return sites mostly share their
+    /// claims, and each is explored once.
+    settled: FxHashMap<Claim, bool>,
+}
+
+/// One fact a return target's verification rests on.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Claim {
+    /// The value is the address the function was entered with.
+    Target(ValueId),
+    /// In memory state `mem`, `[offset, offset + size)` off the entry SP holds
+    /// that address.
+    Slot {
+        mem: ValueId,
+        offset: i128,
+        size: i128,
+    },
 }
 
 impl<'f> ReturnTargets<'f> {
@@ -38,98 +48,137 @@ impl<'f> ReturnTargets<'f> {
         Self {
             function,
             assumptions,
-            clean: FxHashMap::default(),
-            open_phis: FxHashSet::default(),
+            settled: FxHashMap::default(),
         }
     }
 
     /// Whether `target` is the address the function was entered with.
+    ///
+    /// A claim holds unless one it rests on fails outright, so a cycle of
+    /// claims (a loop rewriting a slot with its own value, a phi of itself)
+    /// brings in no value of its own. Linear in the claims reached.
     pub fn returns_to_caller(&mut self, target: ValueId) -> bool {
-        let function = self.function;
-        let value = super::strip_isa_mode_mask(function, target);
-        let producer = function.producer(value);
-        match *function.node_kind(producer) {
-            NodeKind::InitialVar(id) => {
-                function.default_cc().link_register_vn == Some(function.initial_vn(id))
-            }
-            NodeKind::Phi => {
-                if !self.open_phis.insert(producer) {
-                    return true;
-                }
-                let inputs: Vec<ValueId> = function.phi_data_inputs(producer).collect();
-                let all = inputs.into_iter().all(|v| self.returns_to_caller(v));
-                self.open_phis.remove(&producer);
-                all
-            }
-            NodeKind::Load(space) if space == rsleigh::VnSpace::RAM => {
-                self.is_saved_return_address(producer, value)
-            }
-            _ => false,
+        let root = Claim::Target(target);
+        if let Some(&holds) = self.settled.get(&root) {
+            return holds;
         }
-    }
-
-    /// A `Load` of an entry-SP slot holding the return address.
-    fn is_saved_return_address(&mut self, load: NodeId, value: ValueId) -> bool {
-        let function = self.function;
-        let Some(offset) = self.entry_sp_offset(function.load_addr(load)) else {
-            return false;
-        };
-        let (Ok(ty), Some(mem)) = (function.value_type(value), function.memory_input_of(load))
-        else {
-            return false;
-        };
-        self.slot_holds_return_address(mem, offset, ty.byte_size() as i128)
-    }
-
-    /// Whether every path back from `start` finds `[offset, offset + size)`
-    /// holding the return address: untouched since entry on a stack-push ISA,
-    /// or last written, exactly, with a value that is one.
-    fn slot_holds_return_address(&mut self, start: ValueId, offset: i128, size: i128) -> bool {
-        let function = self.function;
-        let key = (offset, size);
-        let entry_slot = offset == 0 && function.default_cc().link_register_vn.is_none();
-        let mut visited: FxHashSet<ValueId> = FxHashSet::default();
-        let mut saves: Vec<NodeId> = Vec::new();
-        let mut work = vec![start];
-        while let Some(mem) = work.pop() {
-            if self.clean.get(&key).is_some_and(|c| c.contains(&mem)) || !visited.insert(mem) {
-                continue;
+        let mut index: FxHashMap<Claim, usize> = FxHashMap::default();
+        index.insert(root, 0);
+        let mut claims = vec![root];
+        // Per claim, the claims resting on it.
+        let mut dependents: Vec<Vec<usize>> = vec![Vec::new()];
+        let mut failed: Vec<usize> = Vec::new();
+        let mut premises = Vec::new();
+        let mut next = 0;
+        while let Some(&claim) = claims.get(next) {
+            premises.clear();
+            if !self.premises(claim, &mut premises) {
+                failed.push(next);
             }
-            let node = function.producer(mem);
-            match *function.node_kind(node) {
-                NodeKind::InitialMemory if entry_slot => {}
-                NodeKind::MemPhi => work.extend(function.phi_data_inputs(node)),
-                NodeKind::Store(space) => {
-                    let written = (space == rsleigh::VnSpace::RAM)
-                        .then(|| self.entry_sp_offset(function.store_addr(node)))
-                        .flatten()
-                        .map(|at| {
-                            (
-                                at,
-                                store_value_byte_size(function, function.store_data(node)),
-                            )
+            for &premise in &premises {
+                match self.settled.get(&premise) {
+                    Some(true) => {}
+                    Some(false) => failed.push(next),
+                    None => {
+                        let at = *index.entry(premise).or_insert_with(|| {
+                            claims.push(premise);
+                            dependents.push(Vec::new());
+                            claims.len() - 1
                         });
-                    match written {
-                        Some((at, len)) if at == offset && len == size => saves.push(node),
-                        Some((at, len)) if at < offset + size && offset < at + len => return false,
-                        _ => work.extend(function.memory_input_of(node)),
+                        dependents[at].push(next);
                     }
                 }
-                NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
-                    work.extend(function.memory_input_of(node));
-                }
-                _ => return false,
+            }
+            next += 1;
+        }
+        let mut holds = vec![true; claims.len()];
+        while let Some(at) = failed.pop() {
+            if std::mem::replace(&mut holds[at], false) {
+                failed.extend_from_slice(&dependents[at]);
             }
         }
-        if !saves
-            .into_iter()
-            .all(|save| self.returns_to_caller(function.store_data(save)))
-        {
-            return false;
+        self.settled.extend(claims.into_iter().zip(holds));
+        self.settled[&root]
+    }
+
+    /// Pushes what `claim` rests on onto `out`; `false` when it fails outright.
+    fn premises(&self, claim: Claim, out: &mut Vec<Claim>) -> bool {
+        let function = self.function;
+        match claim {
+            Claim::Target(target) => {
+                let value = super::strip_isa_mode_mask(function, target);
+                let producer = function.producer(value);
+                match *function.node_kind(producer) {
+                    NodeKind::InitialVar(id) => {
+                        function.default_cc().link_register_vn == Some(function.initial_vn(id))
+                    }
+                    NodeKind::Phi => {
+                        out.extend(function.phi_data_inputs(producer).map(Claim::Target));
+                        true
+                    }
+                    NodeKind::Load(space) if space == rsleigh::VnSpace::RAM => {
+                        let Some(offset) = self.entry_sp_offset(function.load_addr(producer))
+                        else {
+                            return false;
+                        };
+                        let (Ok(ty), Some(mem)) = (
+                            function.value_type(value),
+                            function.memory_input_of(producer),
+                        ) else {
+                            return false;
+                        };
+                        out.push(Claim::Slot {
+                            mem,
+                            offset,
+                            size: ty.byte_size() as i128,
+                        });
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            Claim::Slot { mem, offset, size } => {
+                let node = function.producer(mem);
+                let below = |mem| Claim::Slot { mem, offset, size };
+                match *function.node_kind(node) {
+                    // Untouched since entry: a stack-push ISA's return slot.
+                    NodeKind::InitialMemory => {
+                        offset == 0 && function.default_cc().link_register_vn.is_none()
+                    }
+                    NodeKind::MemPhi => {
+                        out.extend(function.phi_data_inputs(node).map(below));
+                        true
+                    }
+                    NodeKind::Store(space) => {
+                        let written = (space == rsleigh::VnSpace::RAM)
+                            .then(|| self.entry_sp_offset(function.store_addr(node)))
+                            .flatten()
+                            .map(|at| {
+                                (
+                                    at,
+                                    store_value_byte_size(function, function.store_data(node)),
+                                )
+                            });
+                        match written {
+                            Some((at, len)) if at == offset && len == size => {
+                                out.push(Claim::Target(function.store_data(node)));
+                                true
+                            }
+                            Some((at, len)) if at < offset + size && offset < at + len => false,
+                            _ => {
+                                out.extend(function.memory_input_of(node).map(below));
+                                true
+                            }
+                        }
+                    }
+                    NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
+                        out.extend(function.memory_input_of(node).map(below));
+                        true
+                    }
+                    _ => false,
+                }
+            }
         }
-        // Every value reached leads only to what was just accepted.
-        self.clean.entry(key).or_default().extend(visited);
-        true
     }
 
     /// The offset of `addr` from the entry SP, `None` for any other address.
