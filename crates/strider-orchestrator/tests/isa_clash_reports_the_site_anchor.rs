@@ -4,10 +4,11 @@
 //! index 0 while ARM `bx` puts the `BRANCHIND` later in the instruction. The
 //! channels have to agree on one spelling of the site.
 
-use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{CfgOptions, PcodeInsnAddr, ResolvedTarget, ResolvedTargets};
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+
+mod common;
 
 const BASE: u64 = 0x1000;
 /// The `bx r0`.
@@ -64,17 +65,6 @@ fn bytes() -> Vec<u8> {
 
 #[test]
 fn a_clash_on_a_machine_start_seed_is_reported_at_the_branchind_anchor() {
-    let arch = strider_target::SleighArch::arm();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes(), BASE),
-    )
-    .expect("sleigh");
-    let cc = strider_target::CallingConvention::arm_aapcs()
-        .build(&sleigh.regs().expect("regs"))
-        .expect("cc");
-
     let mut known = rustc_hash::FxHashMap::default();
     known.insert(
         PcodeInsnAddr::at_machine_start(DISPATCH),
@@ -95,7 +85,7 @@ fn a_clash_on_a_machine_start_seed_is_reported_at_the_branchind_anchor() {
 
     // No rom: the table load does not fold, so the classifier stays silent and
     // the seed is the site's only answer.
-    let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::Arm, bytes(), BASE, None);
     let result = strider
         .analyze(BASE, &cc, &lift_opts, &OptOptions::default(), None)
         .expect("a mode clash is a result, not an error");

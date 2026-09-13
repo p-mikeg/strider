@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code)] // a shape or assertion serves one of the sibling modules
 
 pub(crate) mod assertions;
 pub(crate) mod shapes;

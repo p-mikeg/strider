@@ -10,11 +10,12 @@
 //! `sub sp,#16; str r0,[sp]; vld1.32 {d0[0]},[sp]; vmov.32 r0,d0[0]; add
 //! sp,#16; bx lr` is the round trip: it must return the `r0` it was given.
 
-use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+
+mod common;
 
 const BASE: u64 = 0x1000;
 
@@ -29,18 +30,8 @@ const ROUND_TRIP: [u8; 24] = [
 
 #[test]
 fn a_neon_lane_round_trip_returns_its_argument() {
-    let arch = strider_target::SleighArch::arm();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(ROUND_TRIP.to_vec(), BASE),
-    )
-    .expect("sleigh");
-    let regs = sleigh.regs().expect("regs");
-    let cc = strider_target::CallingConvention::arm_aapcs()
-        .build(&regs)
-        .expect("cc");
-    let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
+    let (mut strider, cc) =
+        common::strider_over_bytes(common::Arch::Arm, ROUND_TRIP.to_vec(), BASE, None);
     let result = strider
         .analyze(
             BASE,
@@ -66,7 +57,7 @@ fn a_neon_lane_round_trip_returns_its_argument() {
 
     // r0 in, r0 out: with the lane write missing the read saw an unwritten
     // register, and the argument never reached the return.
-    let r0 = regs.name_to_vn("r0").expect("r0");
+    let r0 = strider.sleigh_regs().name_to_vn("r0").expect("r0");
     let ret = f
         .walk()
         .find(|&n| matches!(f.node_kind(n), NodeKind::Return))

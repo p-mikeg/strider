@@ -42,7 +42,7 @@ fn narrow_alias_read_lifts_with_truncate_or_mask_shape() {
     // container must insert a Truncate (or an And mask); that shape is
     // the register-aliasing dispatch's signature.
     let reader = BufMemReader::new(snippet_bytes(), BASE);
-    let (mut driver, cc) = common::strider_x86_64(reader);
+    let (mut driver, cc) = common::driver_for_reader(common::Arch::X64, reader);
     let cfg = driver
         .build_cfg(
             MachineInsnAddr::from(BASE),

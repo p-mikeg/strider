@@ -16,13 +16,12 @@
 //! expected  eax = Phi(InitialVar(eax), Add(phi, 1))
 //! ```
 
-use rsleigh::Sleigh;
-use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
-use strider_target::{CallingConvention, SleighArch};
+
+mod common;
 
 /// ```text
 /// 0x1000: 83 C0 01   add eax, 1     <- entry, and the loop header
@@ -38,13 +37,6 @@ fn synthetic_bytes() -> Vec<u8> {
 }
 
 fn analyze() -> strider_ir::Function {
-    let arch = SleighArch::x86_64();
-    let reader = BufMemReader::new(synthetic_bytes(), BASE);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
-    let regs = sleigh.regs().expect("regs");
-    let cc = CallingConvention::x86_64_systemv()
-        .build(&regs)
-        .expect("build cc");
     let lift_opts = LiftOptions {
         cfg: strider_cfg::CfgOptions {
             fn_max_size: Some(FN_SIZE),
@@ -52,7 +44,8 @@ fn analyze() -> strider_ir::Function {
         },
         ..LiftOptions::default()
     };
-    let mut strider = Strider::new(arch, sleigh, None).unwrap();
+    let (mut strider, cc) =
+        common::strider_over_bytes(common::Arch::X64, synthetic_bytes(), BASE, None);
     strider
         .analyze(BASE, &cc, &lift_opts, &OptOptions::default(), None)
         .expect("self-loop at the entry must lift")

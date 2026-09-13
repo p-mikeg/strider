@@ -5,8 +5,7 @@
 //! table also names. Nothing about the dispatch produced the clash, so it is no
 //! verdict on the table's other arms.
 
-use rsleigh::mem_readers::BufMemReader;
-use strider_orchestrator::Strider;
+mod common;
 
 const BASE: u64 = 0x1000;
 /// The `bx r0`, and the start of the region that seals it.
@@ -72,19 +71,9 @@ fn bytes() -> Vec<u8> {
 
 #[test]
 fn a_direct_flow_clash_costs_one_arm_and_leaves_the_table_seated() {
-    let arch = strider_target::SleighArch::arm();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes(), BASE),
-    )
-    .expect("sleigh");
-    let cc = strider_target::CallingConvention::arm_aapcs()
-        .build(&sleigh.regs().expect("regs"))
-        .expect("cc");
     let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
         Box::new(strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes()));
-    let mut strider = Strider::new(arch, sleigh, Some(rom)).expect("Strider::new");
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::Arm, bytes(), BASE, Some(rom));
     let result = strider
         .analyze(BASE, &cc, &Default::default(), &Default::default(), None)
         .expect("a mode clash is a result, not an error");

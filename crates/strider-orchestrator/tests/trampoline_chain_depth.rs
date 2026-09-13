@@ -4,9 +4,10 @@
 //! Pins both halves of that: a chain within the cap converges on every link,
 //! and one past it comes back as a report rather than an error.
 
-use rsleigh::mem_readers::BufMemReader;
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+
+mod common;
 
 const BASE: u64 = 0x40_0000;
 /// `mov eax, <next>` (5) + `jmp rax` (2).
@@ -38,17 +39,7 @@ fn caveats(result: &strider_orchestrator::AnalyzeResult) -> String {
 }
 
 fn analyze(links: u64) -> strider_orchestrator::AnalyzeResult {
-    let arch = strider_target::SleighArch::x86_64();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(chain(links), BASE),
-    )
-    .expect("sleigh");
-    let cc = strider_target::CallingConvention::x86_64_systemv()
-        .build(&sleigh.regs().expect("regs"))
-        .expect("cc");
-    let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, chain(links), BASE, None);
     strider
         .analyze(
             BASE,

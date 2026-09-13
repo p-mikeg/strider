@@ -5,10 +5,9 @@
 //! x86 SIMD shift-by-register is exactly this shape: a 4-byte lane shifted by
 //! the 8-byte count the ISA reads from `SRC[63:0]`.
 
-use rsleigh::Sleigh;
-use rsleigh::mem_readers::BufMemReader;
 use strider_ir::IRViewer;
-use strider_target::{CallingConvention, SleighArch};
+
+mod common;
 
 const BASE: u64 = 0x1000;
 
@@ -34,20 +33,11 @@ fn image() -> Vec<u8> {
 
 #[test]
 fn an_over_wide_shift_count_saturates_rather_than_truncating() {
-    let arch = SleighArch::x86_64();
     let bytes = image();
-    let sleigh = Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes.clone(), BASE),
-    )
-    .expect("sleigh");
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
-        Box::new(strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes));
-    let mut strider = strider_orchestrator::Strider::new(arch, sleigh, Some(rom)).expect("new");
-    let cc = CallingConvention::x86_64_systemv()
-        .build(strider.sleigh_regs())
-        .expect("cc");
+    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
+        strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes.clone()),
+    );
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, Some(rom));
     let out = strider
         .analyze(BASE, &cc, &Default::default(), &Default::default(), None)
         .expect("analyze");

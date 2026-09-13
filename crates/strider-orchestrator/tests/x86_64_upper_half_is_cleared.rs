@@ -6,28 +6,18 @@
 //! from a temporary without them, so the container kept the CALLER's bits and
 //! the result also carried a false dependency on the incoming register.
 
-use rsleigh::mem_readers::BufMemReader;
 use strider_ir::IRViewer;
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+
+mod common;
 
 const BASE: u64 = 0x10000;
 /// The mask a read-modify-write of the low half leaves behind.
 const STALE_UPPER_HALF: u128 = 0xFFFF_FFFF_0000_0000;
 
 fn keeps_the_callers_high_half(bytes: Vec<u8>) -> bool {
-    let arch = strider_target::SleighArch::x86_64();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes, BASE),
-    )
-    .expect("sleigh");
-    let regs = sleigh.regs().expect("regs");
-    let cc = strider_target::CallingConvention::x86_64_systemv()
-        .build(&regs)
-        .expect("cc");
-    let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
     let result = strider
         .analyze(
             BASE,

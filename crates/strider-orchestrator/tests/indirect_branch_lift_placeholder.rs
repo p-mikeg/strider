@@ -36,7 +36,7 @@ fn make_unresolved_indirect_branch_cfg() -> (
     // No link register on x86-64 (cdecl-family conventions push the return
     // address onto the stack), so the LinkRegister classifier arm can't
     // classify this either.
-    let (mut driver, cc) = common::strider_x86_64(reader);
+    let (mut driver, cc) = common::driver_for_reader(common::Arch::X64, reader);
     let cfg = driver
         .build_cfg(
             MachineInsnAddr::from(base),
@@ -117,7 +117,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
 
     let reader = rsleigh::mem_readers::BufMemReader::new(bytes, base);
     // The driver OWNS the Sleigh and rebuilds the CFG across both passes.
-    let (mut strider, cc) = common::strider_x86_64(reader);
+    let (mut strider, cc) = common::driver_for_reader(common::Arch::X64, reader);
 
     let unresolved_addr = {
         let cfg_opts = strider_cfg::CfgOptions {
@@ -220,7 +220,7 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
 
     let reader = rsleigh::mem_readers::BufMemReader::new(bytes, base);
-    let (mut strider, cc) = common::strider_x86_64(reader);
+    let (mut strider, cc) = common::driver_for_reader(common::Arch::X64, reader);
 
     let unresolved_addr = {
         let cfg_opts = strider_cfg::CfgOptions {

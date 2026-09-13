@@ -1,10 +1,11 @@
 //! A jump-table arm the cfg cannot express is dropped from the seated table.
 //! `analyze` must report the site rather than converge on the smaller answer.
 
-use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{CfgOptions, PcodeInsnAddr, ResolvedTargets};
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+
+mod common;
 
 /// `jmp rax` at 0x1000, then a `movabs rax, imm64` at 0x1002 whose immediate
 /// byte at 0x1005 decodes cleanly as `ret`. Seating 0x1005 as an arm would put
@@ -20,14 +21,6 @@ fn an_arm_the_cfg_cannot_seat_is_reported_unresolved() {
     bytes.push(0x90); // 0x100c: nop, sealing the movabs region
     bytes.push(0xc3); // 0x100d: ret
 
-    let arch = strider_target::SleighArch::x86_64();
-    let reader = BufMemReader::new(bytes, base);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let regs = sleigh.regs().expect("regs");
-    let cc = strider_target::CallingConvention::x86_64_systemv()
-        .build(&regs)
-        .expect("build cc");
-
     let branch = PcodeInsnAddr::at_machine_start(base);
     let mut known = rustc_hash::FxHashMap::default();
     known.insert(
@@ -42,7 +35,7 @@ fn an_arm_the_cfg_cannot_seat_is_reported_unresolved() {
         ..LiftOptions::default()
     };
 
-    let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, base, None);
     let result = strider
         .analyze(base, &cc, &lift_opts, &OptOptions::default(), None)
         .expect("a dropped arm is a result, not an error");

@@ -6,10 +6,11 @@
 //! rest; converging on that publishes a `Switch` at a site the report channels
 //! call unresolved.
 
-use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{CfgOptions, PcodeInsnAddr, RegionTerminator, ResolvedTarget, ResolvedTargets};
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+
+mod common;
 
 const BASE: u64 = 0x1000;
 /// `jmp rax`, seeded with one arm that decodes and one that cannot.
@@ -19,19 +20,9 @@ const UNMAPPED_ARM: u64 = 0x4000_1000;
 
 #[test]
 fn a_site_the_loop_abandoned_is_republished_without_its_seat() {
-    let arch = strider_target::SleighArch::x86_64();
     let mut bytes = vec![0xc3u8; 0x20];
     bytes[0] = 0xff; // 0x1000: jmp rax
     bytes[1] = 0xe0;
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes, BASE),
-    )
-    .expect("sleigh");
-    let cc = strider_target::CallingConvention::x86_64_systemv()
-        .build(&sleigh.regs().expect("regs"))
-        .expect("cc");
 
     let mut known = rustc_hash::FxHashMap::default();
     known.insert(
@@ -49,7 +40,7 @@ fn a_site_the_loop_abandoned_is_republished_without_its_seat() {
         ..LiftOptions::default()
     };
 
-    let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
 
     // The build the abandon is decided from still seats the arm that decoded.
     let seeded = strider.build_cfg(BASE, &lift_opts.cfg).expect("build_cfg");
