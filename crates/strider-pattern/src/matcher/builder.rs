@@ -46,6 +46,9 @@ pub struct MatcherBuilder {
     /// Frame address of the outermost live nesting level, the zero the stack
     /// consumption in [`Self::enter_nesting`] is measured against.
     stack_base: usize,
+    /// Nodes of the sealed patterns a binding walk matches inside this one,
+    /// which the matcher recurses through on the same stack.
+    nested_nodes: usize,
 }
 
 /// Stack one lowering may consume before [`MatcherBuilder::enter_nesting`]
@@ -83,6 +86,7 @@ impl MatcherBuilder {
             refusals: Vec::new(),
             nesting: 0,
             stack_base: 0,
+            nested_nodes: 0,
         }
     }
 
@@ -119,6 +123,11 @@ impl MatcherBuilder {
         }
         self.nesting += 1;
         true
+    }
+
+    /// Counts `nodes` matched by a binding walk against the seal's node cap.
+    pub(crate) fn add_nested_nodes(&mut self, nodes: usize) {
+        self.nested_nodes = self.nested_nodes.saturating_add(nodes);
     }
 
     pub(crate) fn leave_nesting(&mut self) {
@@ -401,14 +410,18 @@ impl MatcherBuilder {
     }
 
     /// Materialises every staged node in producer-before-consumer order.
-    /// Single-rootedness is resolved here and reported at match time.
-    ///
-    /// # Panics
-    /// On a cyclic staged graph (a builder bug).
+    /// Single-rootedness and acyclicity are resolved here and reported at
+    /// match time.
     pub fn finish(self) -> Pattern {
         let refusals = self.refusals;
-        let graph = self.core.seal().expect("cyclic staged pattern graph");
-        let mut pat = Pattern::from_graph(graph);
+        let mut pat = match self.core.seal() {
+            Ok(graph) => Pattern::from_graph(graph, self.nested_nodes),
+            Err(cycle) => {
+                let mut empty = Pattern::from_graph(crate::matcher::graph::PatGraph::new(), 0);
+                empty.reject(cycle.to_string());
+                empty
+            }
+        };
         if let Some(why) = refusals.into_iter().next() {
             pat.reject(why);
         }

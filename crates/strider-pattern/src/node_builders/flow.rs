@@ -38,10 +38,9 @@ type BranchWalk = Box<
         + Send,
 >;
 
-/// The branch `Pattern` a [`BranchWalk`] holds. Nesting these is unbounded
-/// (`with_branch` takes an already built pattern, so no builder cap sees it)
-/// and the derived glue frees one frame per level, so the free goes through
-/// the drop pit.
+/// The branch `Pattern` a [`BranchWalk`] holds. The node cap refuses a deep
+/// nesting of these, but a refused one still exists and the derived glue frees
+/// one frame per level, so the free goes through the drop pit.
 struct BranchPattern(Option<Pattern>);
 
 impl BranchPattern {
@@ -482,6 +481,8 @@ pub struct IfPat {
     /// Per branch slot, so replacing a branch drops the captures the
     /// discarded walk declared.
     branch_captures: [WalkCaptures; 2],
+    /// Per branch slot, [`Pattern::total_nodes`] of the branch pattern.
+    branch_nodes: [usize; 2],
     /// An unmatchable branch pattern, replayed onto the builder at `lower`.
     branch_refusal: Option<String>,
 }
@@ -555,7 +556,9 @@ impl IfPat {
     ///
     /// A `pat` that is not a single-rooted acyclic graph the matcher can
     /// handle is refused at build time: every query on the resulting pattern
-    /// errors, rather than reading as a silent "branch did not match".
+    /// errors, rather than reading as a silent "branch did not match". `pat`'s
+    /// nodes count against the enclosing pattern's node cap, since the matcher
+    /// recurses through them on the same stack.
     pub fn with_true(self, pat: Pattern) -> Self {
         self.with_branch(0, pat)
     }
@@ -581,6 +584,7 @@ impl IfPat {
                 .into_iter()
                 .collect(),
         };
+        self.branch_nodes[slot] = pat.total_nodes();
         let pat = BranchPattern(Some(pat));
         let walk = Box::new(
             move |m: &crate::Matcher,
@@ -636,11 +640,13 @@ impl IfPat {
             capture_true,
             capture_false,
             branch_captures,
+            branch_nodes,
             branch_refusal,
         } = self;
         if let Some(why) = branch_refusal {
             b.reject(why);
         }
+        b.add_nested_nodes(branch_nodes[0].saturating_add(branch_nodes[1]));
         let node = b.node(KindSpec::Exact(NodeKind::If));
         let true_out = b.control_output(node, 0);
         let false_out = b.control_output(node, 1);
