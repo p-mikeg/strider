@@ -37,6 +37,7 @@ thiserror.workspace = true
 rustc-hash.workspace = true
 
 [dev-dependencies]
+expect-test.workspace = true
 proptest.workspace = true
 # Dev-dep cycle is fine: cargo only links dev-deps for `cargo test`, never for
 # the regular `cargo build`, so the cycle (test-utils -> ir, ir [dev] ->
