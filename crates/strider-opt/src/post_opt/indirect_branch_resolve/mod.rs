@@ -161,7 +161,7 @@ impl PostOptimizer for IndirectBranchClassify {
         if !sites.is_empty() {
             // Computed once, since the graph does not change during this pass.
             let known = crate::opt::known_bits::analyze(function)?;
-            let doms = strider_ir::control_dominators(function);
+            let doms = strider_ir::control_dominator_tree(function);
             let mut ranges = crate::value_range::compute_value_ranges(function, &doms, &known);
 
             for node in sites {
