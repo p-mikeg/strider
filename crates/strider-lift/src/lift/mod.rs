@@ -160,7 +160,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// The declared register file, for containment queries against a computed
     /// REGISTER-space address.
     #[must_use]
-    pub fn declared_reg_vns(&self) -> &[rsleigh::Vn] {
+    pub(crate) fn declared_reg_vns(&self) -> &[rsleigh::Vn] {
         &self.declared_reg_vns
     }
 
@@ -401,18 +401,6 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         cc: strider_target::BuiltCallingConvention,
         opts: &LiftOptions,
     ) -> Result<LiftOutcome> {
-        self.build_ir_counting_sink_visits(cfg, cc, opts)
-            .map(|(outcome, _)| outcome)
-    }
-
-    /// Also reports the node visits exit-free-sink seating performed, which
-    /// the scaling test pins against the number of cycles.
-    pub(crate) fn build_ir_counting_sink_visits(
-        &self,
-        cfg: &strider_cfg::Cfg,
-        cc: strider_target::BuiltCallingConvention,
-        opts: &LiftOptions,
-    ) -> Result<(LiftOutcome, usize)> {
         self.check_cfg_space_ids(cfg)?;
         // The CFG is rebuilt from scratch each lift, so the tracked set is
         // always scanned fresh.  `FunctionLifter::new` adds the stack vn; the
@@ -462,19 +450,16 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // fallthrough edges the per-insn loop didn't reach.
         driver.translate_regions(&region_map, &dom)?;
         driver.link_region_edges(&region_map)?;
-        let sink_visits = driver.seat_exit_free_sinks()?;
+        driver.seat_exit_free_sinks()?;
 
         let unresolved_branches = std::mem::take(&mut driver.unresolved_branches);
         let switch_anchors = std::mem::take(&mut driver.switch_anchors);
         let function = driver.builder.build()?;
-        Ok((
-            LiftOutcome {
-                function,
-                unresolved_branches,
-                switch_anchors,
-            },
-            sink_visits,
-        ))
+        Ok(LiftOutcome {
+            function,
+            unresolved_branches,
+            switch_anchors,
+        })
     }
 }
 
