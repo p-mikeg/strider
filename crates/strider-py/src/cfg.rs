@@ -40,13 +40,13 @@ pub struct PyCfg {
 /// raised a report and was then rebuilt without the edge that raised it
 /// leaves nothing behind in `inner`.
 ///
-/// `unresolved`, `isa_mode_conflicts`, `interior_branch_targets` and
-/// `unmapped_branch_targets` accumulate over the resolver's rounds, so a later
+/// `unresolved`, `isa_mode_conflicts`, `interior_branch_targets`,
+/// `unmapped_branch_targets` and `undecodable_branch_targets` accumulate over the resolver's rounds, so a later
 /// round cannot launder an earlier loss; `unverified_seeded` is derived once
 /// from the final CFG.
 pub(crate) struct CfgReports {
     /// The same list `AnalyzeResult.unresolved` carries, held here so
-    /// `is_complete` can test all five channels from one object. For a
+    /// `is_complete` can test all six channels from one object. For a
     /// `build_cfg` result it is read off the regions instead, since no
     /// resolver ran to report one: every site that build left an
     /// `UnresolvedIndirectBranch`.
@@ -58,6 +58,7 @@ pub(crate) struct CfgReports {
     pub(crate) isa_mode_conflicts: Vec<u64>,
     pub(crate) interior_branch_targets: Vec<u64>,
     pub(crate) unmapped_branch_targets: Vec<u64>,
+    pub(crate) undecodable_branch_targets: Vec<u64>,
 }
 
 /// Region starts in address order, plus the longest span any region covers:
@@ -124,6 +125,7 @@ impl PyCfg {
             isa_mode_conflicts: machine_addrs(inner.isa_mode_conflicts()),
             interior_branch_targets: machine_addrs(inner.interior_branch_targets()),
             unmapped_branch_targets: machine_addrs(inner.unmapped_branch_targets()),
+            undecodable_branch_targets: machine_addrs(inner.undecodable_branch_targets()),
         };
         Self::with_reports(py, inner, lifter, reports)
     }
@@ -356,6 +358,21 @@ impl PyCfg {
         self.reports.unmapped_branch_targets.clone()
     }
 
+    /// Addresses a direct branch or a fall-through past a call reached that
+    /// hold no instruction: bytes Sleigh rejects, or a range
+    /// `CfgOptions.data_ranges` marks as data.
+    ///
+    /// A direct branch there keeps an edge to an empty tail-call stub. A
+    /// fall-through past a call ends that call as no-return, which is what a
+    /// callee nobody marked no-return leaves behind (a literal pool, a
+    /// traceback table, a deliberately invalid word), though nothing proves it
+    /// never returns.
+    ///
+    /// Accumulated over every round `analyze` ran.
+    fn undecodable_branch_targets(&self) -> Vec<u64> {
+        self.reports.undecodable_branch_targets.clone()
+    }
+
     /// Dispatch addresses nothing verified: a site seated with exactly the
     /// `known_targets` you supplied and nothing the classifier derived, plus
     /// every site the CFG consumed outright as a return or a tail call,
@@ -370,12 +387,12 @@ impl PyCfg {
         self.reports.unverified_seeded.clone()
     }
 
-    /// Whether all five incompleteness channels are empty: the `unresolved`
+    /// Whether all six incompleteness channels are empty: the `unresolved`
     /// of the `AnalyzeResult` this CFG came from, `unverified_seeded_sites`,
-    /// `isa_mode_conflicts`, `interior_branch_targets` and
-    /// `unmapped_branch_targets`.
+    /// `isa_mode_conflicts`, `interior_branch_targets`,
+    /// `unmapped_branch_targets` and `undecodable_branch_targets`.
     ///
-    /// The answer to "may this be incomplete?", which none of the five gives
+    /// The answer to "may this be incomplete?", which none of the six gives
     /// alone. `False` is not always a loss: `unverified_seeded_sites` holds
     /// answers that are complete but unverified, so a site consumed as a
     /// return (an ARM `pop {pc}` epilogue) clears it. Read whichever channel
@@ -391,6 +408,7 @@ impl PyCfg {
             && r.isa_mode_conflicts.is_empty()
             && r.interior_branch_targets.is_empty()
             && r.unmapped_branch_targets.is_empty()
+            && r.undecodable_branch_targets.is_empty()
     }
 
     /// Exposes the strong `lifter` back-reference so the cyclic GC can see a

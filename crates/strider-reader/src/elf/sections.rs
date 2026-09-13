@@ -524,6 +524,71 @@ impl ElfSectionLayout {
     }
 }
 
+/// The spans of executable sections that ARM / AArch64 mapping symbols mark as
+/// data: each `$d` runs to the next `$a` / `$t` / `$x` in its section, or to
+/// the section's end. Sorted by start; empty for an image with no `$d`.
+///
+/// A literal pool sits inside a function's extent and decodes as plausible
+/// instructions, so these are the only record that those bytes are not code.
+pub fn mapping_symbol_data_ranges(obj: &object::File<'_>) -> Vec<std::ops::Range<u64>> {
+    use object::{ObjectSymbol, SymbolKind};
+    let layout = ElfSectionLayout::new(obj);
+    // Per executable section: (address, is data) for every mapping symbol.
+    let mut marks: BTreeMap<usize, Vec<(u64, bool)>> = BTreeMap::new();
+    for sym in obj.symbols() {
+        let (Ok(name), Some(index)) = (sym.name(), sym.section_index()) else {
+            continue;
+        };
+        if sym.kind() == SymbolKind::Section {
+            continue;
+        }
+        // `$d`, `$a`, `$t`, `$x`, optionally suffixed `.<anything>`.
+        let kind = match name.as_bytes() {
+            [b'$', k] | [b'$', k, b'.', ..] => *k,
+            _ => continue,
+        };
+        let is_data = match kind {
+            b'd' => true,
+            b'a' | b't' | b'x' => false,
+            _ => continue,
+        };
+        let Some(address) = layout.try_symbol_address(&sym) else {
+            continue;
+        };
+        marks.entry(index.0).or_default().push((address, is_data));
+    }
+    let mut out = Vec::new();
+    for (index, mut section_marks) in marks {
+        let Ok(section) = obj.section_by_index(object::SectionIndex(index)) else {
+            continue;
+        };
+        // By flag, not kind: a debug companion's `.text` is `SHT_NOBITS`.
+        let executable = matches!(
+            section.flags(),
+            object::SectionFlags::Elf { sh_flags } if sh_flags & u64::from(object::elf::SHF_EXECINSTR) != 0
+        );
+        if !executable {
+            continue;
+        }
+        let end = layout.section_base(&section).saturating_add(section.size());
+        section_marks.sort_unstable();
+        for (i, &(start, is_data)) in section_marks.iter().enumerate() {
+            if !is_data {
+                continue;
+            }
+            let stop = section_marks[i + 1..]
+                .iter()
+                .find(|(_, data)| !data)
+                .map_or(end, |&(at, _)| at);
+            if start < stop {
+                out.push(start..stop);
+            }
+        }
+    }
+    out.sort_unstable_by_key(|r| r.start);
+    out
+}
+
 /// ppc64 ELFv1 function descriptors.
 ///
 /// On that ABI `st_value` of an `STT_FUNC` symbol addresses an 8-byte-aligned
