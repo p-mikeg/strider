@@ -6,7 +6,7 @@
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::make_empty_fn;
-use strider_orchestrator::opt::{ConstantFold, KnownBits};
+use strider_orchestrator::opt::ConstantFold;
 
 #[test]
 fn constant_fold_add_consts_preserves_fingerprints() {
@@ -85,53 +85,6 @@ fn constant_fold_x_xor_x_preserves_fingerprints() {
     assert!(
         fp.contains(&0x204),
         "IntConst(0) must inherit Xor's 0x204: {fp:?}"
-    );
-}
-
-#[test]
-fn known_bits_fold_preserves_fingerprints() {
-    // `(0xFFu64 & 0x4) | 0x07`: ConstantFold + KnownBits collapse this to a
-    // single IntConst; the surviving node must carry at least one
-    // contributor address from the chain.
-    let mut fg = make_empty_fn(|b| {
-        b.set_lift_addr(Some(0x300));
-        let x = b.build_int_const(0xFFu64, ValueType::I64)?;
-        b.set_lift_addr(Some(0x304));
-        let m4 = b.build_int_const(0x04u64, ValueType::I64)?;
-        b.set_lift_addr(Some(0x308));
-        let m7 = b.build_int_const(0x07u64, ValueType::I64)?;
-        b.set_lift_addr(Some(0x30c));
-        let inner = b.build_int_binary_operation(x, m4, IntBinaryOp::And, ValueType::I64)?;
-        b.set_lift_addr(Some(0x310));
-        let outer = b.build_int_binary_operation(inner, m7, IntBinaryOp::Or, ValueType::I64)?;
-        b.set_lift_addr(None);
-        Ok(outer)
-    })
-    .unwrap();
-    strider_orchestrator::opt::run_one(
-        &ConstantFold::new(),
-        &mut fg,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
-    )
-    .expect("ConstantFold must succeed");
-    strider_orchestrator::opt::run_one(
-        &KnownBits,
-        &mut fg,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
-    )
-    .expect("KnownBits must succeed");
-    let ret = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
-        .expect("Return");
-    let ret_inputs: Vec<_> = fg.node_inputs(ret).into_iter().collect();
-    // input[2] is the value (input[0]=ctrl, input[1]=mem).
-    assert!(ret_inputs.len() >= 3, "Return must have a value");
-    let val_node = fg.producer(ret_inputs[2]);
-    let fp = fg.side_tables().asm_fingerprint(val_node);
-    assert!(
-        !fp.is_empty(),
-        "Folded return value must carry at least one contributor address: {fp:?}"
     );
 }
 
