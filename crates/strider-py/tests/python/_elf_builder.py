@@ -1,6 +1,6 @@
 """A minimal little-endian x86-64 ELF writer for tests that need a shape no
 toolchain emits on purpose: overlapping PT_LOADs, a symbol at address 0, an
-undefined symbol carrying a PLT address."""
+undefined symbol carrying a PLT address, a relocation type nothing models."""
 
 from __future__ import annotations
 
@@ -40,6 +40,9 @@ class Elf:
     loads: list[tuple[int, int, int]] = field(default_factory=list)
     sections: list[Section] = field(default_factory=list)
     symbols: list[Sym] = field(default_factory=list)
+    #: `(section index, r_offset, symbol index into symbols, r_type, addend)`,
+    #: all in one `SHT_RELA` per section.
+    relocs: list[tuple[int, int, int, int, int]] = field(default_factory=list)
 
     def write(self, path) -> None:
         ehsize, phentsize, shentsize = 64, 56, 64
@@ -61,7 +64,20 @@ class Elf:
             info = (STB_GLOBAL << 4) | sym.kind
             symtab += struct.pack("<IBBHQQ", name_off, info, 0, shndx, sym.value, sym.size)
 
-        names = [s.name for s in self.sections] + [".symtab", ".strtab", ".shstrtab"]
+        rela_secs = sorted({r[0] for r in self.relocs})
+        rela = {
+            s: b"".join(
+                struct.pack("<QQq", off, ((sym + 1) << 32) | r_type, addend)
+                for sec, off, sym, r_type, addend in self.relocs
+                if sec == s
+            )
+            for s in rela_secs
+        }
+        names = (
+            [s.name for s in self.sections]
+            + [".symtab", ".strtab", ".shstrtab"]
+            + [".rela" + self.sections[s].name for s in rela_secs]
+        )
         shstrtab = b"\0"
         name_offs = []
         for n in names:
@@ -72,23 +88,27 @@ class Elf:
         symtab_off = tail_start
         strtab_off = symtab_off + len(symtab)
         shstrtab_off = strtab_off + len(strtab)
-        shoff = shstrtab_off + len(shstrtab)
-        shoff += (-shoff) % 8
+        rela_off = {}
+        cursor = shstrtab_off + len(shstrtab)
+        for s in rela_secs:
+            rela_off[s] = cursor
+            cursor += len(rela[s])
+        shoff = cursor + (-cursor) % 8
         nsec = len(self.sections)
-        shnum = nsec + 4
+        shnum = nsec + 4 + len(rela_secs)
 
         out = b"\x7fELF" + bytes([2, 1, 1, 0]) + bytes(8)
         out += struct.pack(
             "<HHIQQQIHHHHHH",
             self.e_type, 62, 1, 0, ehsize if self.loads else 0, shoff, 0,
-            ehsize, phentsize, len(self.loads), shentsize, shnum, shnum - 1,
+            ehsize, phentsize, len(self.loads), shentsize, shnum, nsec + 3,
         )
         for flags, vaddr, sec_index in self.loads:
             size = len(self.sections[sec_index].data)
             out += struct.pack(
                 "<IIQQQQQQ", 1, flags, sec_offsets[sec_index], vaddr, vaddr, size, size, 1
             )
-        out += blobs + symtab + strtab + shstrtab
+        out += blobs + symtab + strtab + shstrtab + b"".join(rela[s] for s in rela_secs)
         out += b"\0" * (shoff - len(out))
         out += bytes(shentsize)
         for i, sec in enumerate(self.sections):
@@ -107,5 +127,10 @@ class Elf:
             "<IIQQQQIIQQ", name_offs[nsec + 2], 3, 0, 0, shstrtab_off, len(shstrtab),
             0, 0, 1, 0,
         )
+        for k, s in enumerate(rela_secs):
+            out += struct.pack(
+                "<IIQQQQIIQQ", name_offs[nsec + 3 + k], 4, 0, 0, rela_off[s], len(rela[s]),
+                nsec + 1, s + 1, 8, 24,
+            )
         with open(path, "wb") as f:
             f.write(out)
