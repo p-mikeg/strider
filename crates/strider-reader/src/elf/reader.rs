@@ -1,6 +1,6 @@
 use crate::{MemRegionsLookupTable, Result};
 
-use super::sections::{ElfSectionLayout, LoadFilter, RegionSource, collect_regions};
+use super::sections::{AddressRanges, ElfSectionLayout, LoadFilter, RegionSource, collect_regions};
 
 /// An [`rsleigh::MemReader`] over an ELF's fetch image, and a
 /// [`crate::ReadOnlyMemory`] over that image minus its writable (RWX) mappings.
@@ -12,17 +12,17 @@ use super::sections::{ElfSectionLayout, LoadFilter, RegionSource, collect_region
 /// file nor its buffer.
 ///
 /// Either way the bytes are file-initial: an unlinked or not-yet-`ld.so`'d
-/// image reads zero at each relocation site. A relocated image is a region set
+/// image serves each relocation site's unrelocated field, an addend or a
+/// link-time value rather than the target. A relocated image is a region set
 /// from [`super::OwnedElf::regions`], which this reader does not wrap.
 #[derive(Debug)]
 pub struct ElfFileMemReader {
     lookup: MemRegionsLookupTable,
-    /// Ascending, disjoint `[start, end)` of every writable mapping the image
-    /// declares, the fetchable RWX ones and the ones the fetch filter dropped
-    /// alike. The `ReadOnlyMemory` view is the fetch image minus these,
-    /// expressed as ranges rather than a second table so the bytes are stored
-    /// once.
-    writable: Vec<(u64, u64)>,
+    /// Every writable mapping the image declares, the fetchable RWX ones and
+    /// the ones the fetch filter dropped alike. The `ReadOnlyMemory` view is
+    /// the fetch image minus these, expressed as ranges rather than a second
+    /// table so the bytes are stored once.
+    writable: AddressRanges,
 }
 
 impl ElfFileMemReader {
@@ -73,21 +73,8 @@ impl ElfFileMemReader {
     fn over(image: super::sections::LoadedImage) -> Self {
         Self {
             lookup: MemRegionsLookupTable::new(image.regions),
-            writable: merged(image.writable),
+            writable: image.writable,
         }
-    }
-
-    /// Whether `[addr, addr + len)` touches a writable mapping, i.e. is outside
-    /// the immutable image.
-    fn touches_writable(&self, addr: u64, len: usize) -> bool {
-        if len == 0 {
-            return false;
-        }
-        let end = addr.saturating_add(len as u64);
-        // The ranges are disjoint and ascending, so the first one reaching past
-        // `addr` is the only candidate.
-        let first = self.writable.partition_point(|&(_, hi)| hi <= addr);
-        self.writable.get(first).is_some_and(|&(lo, _)| lo < end)
     }
 
     /// Re-stat the mapping this reader serves. Call it at the top of an
@@ -100,19 +87,6 @@ impl ElfFileMemReader {
     pub fn check_unchanged(&self) -> Result<()> {
         self.lookup.check_unchanged()
     }
-}
-
-/// `ranges` sorted, with everything that overlaps or touches merged.
-fn merged(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
-    ranges.sort_unstable();
-    let mut out: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
-    for (lo, hi) in ranges {
-        match out.last_mut() {
-            Some(last) if lo <= last.1 => last.1 = last.1.max(hi),
-            _ => out.push((lo, hi)),
-        }
-    }
-    out
 }
 
 impl rsleigh::MemReader for ElfFileMemReader {
@@ -133,7 +107,7 @@ impl crate::ReadOnlyMemory for ElfFileMemReader {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         // A writable-but-executable mapping is fetchable and NOT immutable, so
         // it is not ROM even though it is in the fetch table.
-        if self.touches_writable(addr, buf.len()) {
+        if self.writable.touches(addr, buf.len()) {
             anyhow::bail!("address {addr:#x} is in a writable mapping, not read-only memory");
         }
         self.lookup.read_exact(addr, buf)
