@@ -133,9 +133,9 @@ const ANY_VAL: Slot = slot(AnyValue, "val", R::Val);
 const ADDR: Slot = slot(AnyInt, "addr", R::Addr);
 const DATA: Slot = slot(AnyInt, "data", R::Data);
 const TARGET: Slot = slot(AnyInt, "target", R::Target);
-// Optional trailing `IndirectBranch` input: the ISA-mode bit the branch
-// instruction commits, taken from the write to the `ISAModeSwitch` register
-// (ARM `SetThumbMode`, MIPS `JXWritePC`).
+// Optional trailing `IndirectBranch` / `Switch` input: the ISA-mode bit the
+// branch instruction commits, taken from the write to the `ISAModeSwitch`
+// register (ARM `SetThumbMode`, MIPS `JXWritePC`).
 const ISA_MODE: Slot = slot(AnyInt, "isa", R::Cond);
 const SP: Slot = slot(AnyInt, "sp", R::Sp);
 // Argument and return registers hold floats as well as integers, as do the
@@ -172,6 +172,12 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
                 outputs: SlotList::variadic(&[$($o),*], $ot),
             }
         };
+        (inputs: [$($i:expr),* $(,)?]; in_opt: $it:expr, outputs: [$($o:expr),* $(,)?]; out_tail: $ot:expr $(,)?) => {
+            Signature {
+                inputs: SlotList::optional(&[$($i),*], $it),
+                outputs: SlotList::variadic(&[$($o),*], $ot),
+            }
+        };
         (inputs: [$($i:expr),* $(,)?], outputs: [$($o:expr),* $(,)?]; out_tail: $ot:expr $(,)?) => {
             Signature {
                 inputs: SlotList::fixed(&[$($i),*]),
@@ -195,7 +201,9 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // One Control output per target region, in target order. No default
         // arm, and the arms need not cover every dispatch value: a site the
         // resolver seated early can hold one arm and widen later.
-        NodeKind::Switch(_) => sig!(inputs: [CTRL, INT_VAL], outputs: [CTRL]; out_tail: CTRL),
+        NodeKind::Switch(_) => {
+            sig!(inputs: [CTRL, INT_VAL]; in_opt: ISA_MODE, outputs: [CTRL]; out_tail: CTRL)
+        }
 
         // SP is an input-only anchor; the outputs are the clobbered varnodes.
         NodeKind::Call { .. } => sig!(
@@ -624,7 +632,11 @@ mod tests {
     fn expected_signature_switch_is_ctrl_val_in_variadic_ctrl_out() {
         let sig = expected_signature(&NodeKind::Switch(crate::node::SwitchTableId::from_u32(0)));
         assert_eq!(sig.inputs.head.len(), 2);
-        assert!(sig.inputs.tail.is_none(), "switch inputs are fixed-arity");
+        assert_eq!(sig.inputs.at(2).map(|slot| slot.name), Some("isa"));
+        assert!(
+            sig.inputs.at(3).is_none(),
+            "switch takes at most an ISA-mode input past its head"
+        );
         assert!(
             sig.outputs.tail.is_some(),
             "switch has variadic control outputs"
