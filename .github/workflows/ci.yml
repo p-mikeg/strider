@@ -41,13 +41,13 @@ jobs:
       # `analyze_kernel` and `dhat_analyze` need an external kernel image
       # (argv[1] / $STRIDER_KERNEL) and panic without one, and `opt_identity`
       # digests every fixture function for a by-hand A/B diff, so those three
-      # stay build-only; these three are self-contained. All of them resolve
+      # stay build-only; these two are self-contained. All of them resolve
       # `fixtures/` relative to the working directory, which must be the
       # workspace root.
       - run: cargo run --release -p strider-orchestrator --example dump_arch_cmps
       - run: cargo run --release -p strider-orchestrator --example orchestrator_demo
-      - run: cargo run --release -p strider-orchestrator --example memory_demo
-      # The two demos write .dot/.html into the working directory. `.gitignore`
+      - run: cargo run --release -p strider-orchestrator --example orchestrator_demo -- memory
+      # Both demo runs write .dot/.html into the working directory. `.gitignore`
       # covers those names; a new output name that it does not cover fails here
       # rather than being committed by someone later.
       - name: the examples leave the tree clean
