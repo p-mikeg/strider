@@ -21,7 +21,7 @@ test-util = []
 
 [dependencies]
 anyhow.workspace = true
-bitflags = "2"
+bitflags.workspace = true
 dot.workspace = true
 entity-utils.workspace = true
 graph-algorithms.workspace = true
@@ -37,7 +37,7 @@ thiserror.workspace = true
 rustc-hash.workspace = true
 
 [dev-dependencies]
-proptest = "1"
+proptest.workspace = true
 # Dev-dep cycle is fine: cargo only links dev-deps for `cargo test`, never for
 # the regular `cargo build`, so the cycle (test-utils -> ir, ir [dev] ->
 # test-utils) is acceptable.  strider-ir's own `#[cfg(test)] mod tests` blocks

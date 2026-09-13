@@ -4,8 +4,8 @@
 //! gets a clean target.  Run under samply:
 //!
 //! ```text
-//! cargo build --release --example analyze_kernel
-//! samply record ./target/release/examples/analyze_kernel /path/to/kernel
+//! cargo build --profile profiling --example analyze_kernel
+//! samply record ./target/profiling/examples/analyze_kernel /path/to/kernel
 //! ```
 
 use object::{Object, ObjectSymbol};

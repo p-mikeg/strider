@@ -45,12 +45,16 @@ impl<E: EntityRef> DenseEntitySet<E> {
         self.bitset.insert(entity.index())
     }
 
-    /// NOT O(1) when `entity` is the set's current maximum: the backing
+    /// `true` when it was present. NOT O(1) when `entity` is the set's current maximum: the backing
     /// bitset then rescans down for the new maximum, so O(max_index / 64).
     /// A path-stack that empties repeatedly wants a
     /// `SecondaryMap<_, bool>` instead.
-    pub fn remove(&mut self, entity: E) {
-        self.bitset.remove(entity.index());
+    pub fn remove(&mut self, entity: E) -> bool {
+        self.bitset.remove(entity.index())
+    }
+
+    pub fn clear(&mut self) {
+        self.bitset.clear();
     }
 
     /// Ascending entity-index order. A full pass steps through every backing
