@@ -8,6 +8,7 @@ use crate::call_other_abi::PyCallOtherAbi;
 use crate::cc::PyCallingConvention;
 use crate::opt::PyOptimizerPipeline;
 use crate::strider_cls::reject_zero_max_size;
+use strider_orchestrator::opt::AssumptionOptions;
 
 /// One caller-supplied indirect-branch answer: concrete targets, or a return.
 #[derive(Clone, Debug)]
@@ -325,13 +326,34 @@ pub struct PyAssumptionOptions {
 
 impl Default for PyAssumptionOptions {
     fn default() -> Self {
+        Self::from(&AssumptionOptions::default())
+    }
+}
+
+impl From<&AssumptionOptions> for PyAssumptionOptions {
+    fn from(a: &AssumptionOptions) -> Self {
+        let mut noalias_allocators: Vec<u64> = a.noalias_allocators.iter().copied().collect();
+        noalias_allocators.sort_unstable();
         Self {
-            stack_global_disjoint: true,
-            assume_incoming_args_survive_calls: true,
-            distinct_sp_bases_disjoint: false,
-            callee_preserves_stack_args: false,
-            noalias_allocators: Vec::new(),
-            escape_analysis: false,
+            stack_global_disjoint: a.stack_global_disjoint,
+            assume_incoming_args_survive_calls: a.assume_incoming_args_survive_calls,
+            distinct_sp_bases_disjoint: a.distinct_sp_bases_disjoint,
+            callee_preserves_stack_args: a.callee_preserves_stack_args,
+            noalias_allocators,
+            escape_analysis: a.escape_analysis,
+        }
+    }
+}
+
+impl From<&PyAssumptionOptions> for AssumptionOptions {
+    fn from(a: &PyAssumptionOptions) -> Self {
+        Self {
+            stack_global_disjoint: a.stack_global_disjoint,
+            assume_incoming_args_survive_calls: a.assume_incoming_args_survive_calls,
+            distinct_sp_bases_disjoint: a.distinct_sp_bases_disjoint,
+            callee_preserves_stack_args: a.callee_preserves_stack_args,
+            noalias_allocators: Arc::new(a.noalias_allocators.iter().copied().collect()),
+            escape_analysis: a.escape_analysis,
         }
     }
 }
@@ -374,16 +396,7 @@ impl PyAssumptionOptions {
     /// still reads as the value written.
     #[staticmethod]
     fn none() -> Self {
-        // Spelled out, not the `#[new]` defaults: two of those are `True`, and
-        // a field added default-on would otherwise survive `none`.
-        Self {
-            stack_global_disjoint: false,
-            assume_incoming_args_survive_calls: false,
-            distinct_sp_bases_disjoint: false,
-            callee_preserves_stack_args: false,
-            noalias_allocators: Vec::new(),
-            escape_analysis: false,
-        }
+        Self::from(&AssumptionOptions::none())
     }
 
     /// Reads back as the constructor call that produces it.
