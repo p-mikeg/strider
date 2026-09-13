@@ -1,8 +1,15 @@
-//! MemPhi join rule: resolve each predecessor independently.  If all arms
-//! agree (all clean, or all naming the same definition) the merge is
-//! transparent and the shared result passes through.  If they disagree there
-//! is no single live definition across the merge, so the `MemPhi` itself
-//! becomes the clobber boundary.
+//! Nearest-clobber queries over the memory graph.
+//!
+//! [`layout`] answers by climbing the memory dominator tree over an index built
+//! once per graph state.  [`find_nearest_clobber`] answers the same question
+//! with no index, by walking the paths back from the start; it is what a caller
+//! without a layout, or a graph the layout does not cover, gets.
+//!
+//! The walk's MemPhi join rule: resolve each predecessor independently.  If all
+//! arms agree (all clean, or all naming the same definition) the merge is
+//! transparent and the shared result passes through.  If they disagree there is
+//! no single live definition across the merge, so the `MemPhi` itself becomes
+//! the clobber boundary.
 //!
 //! Results are memoized per memory-output rather than guarded by a visited
 //! set: two phi arms can share a subchain, and a visited set would let only
@@ -14,6 +21,12 @@
 //! Dropping a `Cycle` is sound only under the ancestor it cycled to, so every
 //! memo entry carries that ancestor and a reader outside it takes the
 //! conservative answer instead.
+
+mod layout;
+
+#[cfg(test)]
+pub(crate) use layout::CLIMB_STEPS;
+pub(crate) use layout::{Answers, ClobberProbe, MemLayout, Shape};
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -175,7 +188,8 @@ impl MemSsaWalk<'_, '_> {
         }
     }
 
-    /// The memo is per-call, so every query re-walks from its own cursor.
+    /// The memo is per-call, so every query re-walks from its own cursor: a
+    /// cost of the chain length per query.
     fn walk_from(
         &mut self,
         start_mem: ValueId,

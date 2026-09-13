@@ -68,7 +68,7 @@ impl<'a> Evaluator<'a> {
             rom,
             map: FxHashMap::default(),
             slot_maps: FxHashMap::default(),
-            off_segment: MemAnalyzer::new(table_walk_options(assumptions)),
+            off_segment: MemAnalyzer::walking(table_walk_options(assumptions)),
         }
     }
 
