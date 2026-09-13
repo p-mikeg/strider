@@ -99,8 +99,9 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// CC overrides for CALL TARGETS, keyed by target machine address.  Only
     /// `no_return` is read here.
     pub(super) per_address_ccs: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
-    /// Snapshotted once per [`Self::build`] and indexed by `user_op_id`.
-    pub(super) user_op_names: Vec<String>,
+    /// Indexed by `user_op_id`.  `None` until [`Self::build`] fetches the
+    /// table off the engine, which [`Self::with_user_op_names`] pre-empts.
+    pub(super) user_op_names: Option<std::borrow::Cow<'a, [String]>>,
     /// The flowing context vars, borrowed from the lift engine (discovered once
     /// per sla); empty by default.
     pub(super) flow_vars: &'a FlowVars,
@@ -176,7 +177,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             link_register_seated: Vec::new(),
             tail_call_seated: Vec::new(),
             per_address_ccs: rustc_hash::FxHashMap::default(),
-            user_op_names: Vec::new(),
+            user_op_names: None,
             // A single-shot build on a fresh engine has no cross-function
             // context to leak; a reused engine supplies the vars via
             // `with_flow_context`.
@@ -210,6 +211,16 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         );
         self.flow_vars = flow_vars;
         self.function_mode = function_mode;
+        self
+    }
+
+    /// Lends the `Sleigh::user_op_names()` table a caller already holds.
+    /// Fetching it is expensive and its answer is one per engine, so a caller
+    /// building a CFG per function should never make [`Self::build`] fetch its
+    /// own.
+    #[must_use]
+    pub fn with_user_op_names(mut self, user_op_names: &'a [String]) -> Self {
+        self.user_op_names = Some(std::borrow::Cow::Borrowed(user_op_names));
         self
     }
 
@@ -706,7 +717,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // An empty table classifies every `CallOther` as returning, so a
         // no-return one falls through and the region decodes on into whatever
         // follows it.
-        self.user_op_names = self.sleigh.user_op_names()?;
+        if self.user_op_names.is_none() {
+            self.user_op_names = Some(std::borrow::Cow::Owned(self.sleigh.user_op_names()?));
+        }
         let entry = self.start_pcode_addr();
         self.enqueue(None, entry, entry.machine_addr.addr);
         while let Some(WorkItem {
