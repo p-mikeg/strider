@@ -101,8 +101,8 @@ where
     /// branches against the optimised IR, folds the targets into
     /// `known_targets` and re-lifts, until the induced edge set stops changing.
     /// `MAX_RESOLUTION_ITERATIONS` caps the rounds and so the discovery depth.
-    /// A site that narrows twice has an unstable answer: it is abandoned and
-    /// reported.
+    /// Every narrowing is reported, and a site that narrows twice has an
+    /// unstable answer: it is abandoned.
     ///
     /// Unresolvable branches are a result, not an error: they come back in
     /// [`AnalyzeResult::unresolved_indirect_branches`] with their placeholder
@@ -171,9 +171,9 @@ where
         let mut unclassified = unclassified_nodes(&live_indirect, &resolutions);
         let mut converged = false;
         // A round that only ever ADDED successors cannot cycle, so exhausting
-        // the budget on one is the depth limit, not an oscillation. One
-        // narrowing at a site is a refinement: the classifier over-approximates
-        // an index bound, then proves the tighter answer once the loop closes.
+        // the budget on one is the depth limit, not an oscillation. Every
+        // narrowing is reported through `derived_incomplete`, since nothing
+        // tells a tighter proof of an over-approximated bound from a lost arm.
         // A site narrowing TWICE has an unstable answer, which is the cycle.
         let mut narrow_rounds: FxHashMap<PcodeInsnAddr, u32> = FxHashMap::default();
         // Sticky: a site that lost ground in ANY round cannot be claimed
@@ -253,10 +253,10 @@ where
             for addr in &progress.narrowed {
                 let seen = narrow_rounds.entry(*addr).or_default();
                 *seen += 1;
-                // One narrowing is a refinement. A second means the answer
-                // depends on what the previous round seated, so no member of
-                // the cycle is trustworthy: stop resolving the site and report
-                // it, rather than failing the function.
+                // `apply_resolutions` already reported this narrowing. A second
+                // means the answer depends on what the previous round seated,
+                // so no member of the cycle is trustworthy: stop resolving the
+                // site, rather than failing the function.
                 if *seen > 1 && !abandoned.contains(addr) {
                     abandon_site(&mut working.cfg.known_targets, &mut abandoned, *addr);
                     derived_incomplete.push(*addr);
@@ -472,10 +472,15 @@ pub struct AnalyzeResult {
     /// May still contain `IndirectBranch` placeholders for any site in
     /// `unresolved_indirect_branches`.
     pub function: strider_ir::Function,
-    /// Sorted and deduplicated. Empty means fully resolved, but not that the
-    /// answer is complete: a site the CFG consumed as a `Return` or `TailCall`
-    /// leaves no placeholder and is reported through `unverified_seeded_sites`,
-    /// and here as well when its answer narrowed to get there.
+    /// Sorted and deduplicated: live placeholders, seated `Switch`es whose
+    /// selector stopped deriving, sites still growing when the cap ran out, and
+    /// sites whose answer lost a proved successor, narrowed in any round, or
+    /// was abandoned.
+    ///
+    /// Empty means fully resolved, but not that the answer is complete: a site
+    /// the CFG consumed as a `Return` or `TailCall` leaves no placeholder and is
+    /// reported through `unverified_seeded_sites`, and here as well when its
+    /// answer narrowed to get there.
     pub unresolved_indirect_branches: Vec<PcodeInsnAddr>,
     /// Addresses ANY round's cfg reached carrying two different ISA modes.
     ///
