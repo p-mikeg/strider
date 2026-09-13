@@ -249,8 +249,10 @@ where
         for _ in 0..MAX_RESOLUTION_ITERATIONS {
             // Seated `Switch` sites are re-derived every round, so the loop
             // runs on while either anchor set is non-empty: a table that
-            // resolved before its loop closed widens here.
-            if unresolved.is_empty() && switch_anchors.is_empty() {
+            // resolved before its loop closed widens here. `seats_stale` runs
+            // on for the reason the other break honours it: the cfg in hand
+            // still carries a seat `known_targets` has lost.
+            if unresolved.is_empty() && switch_anchors.is_empty() && !seats_stale {
                 converged = true;
                 break;
             }
