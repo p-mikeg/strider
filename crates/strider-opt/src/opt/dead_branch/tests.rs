@@ -427,7 +427,7 @@ fn dead_switch_const_address_keeps_matching_arm() -> Result<()> {
     let n_switch_before = fg
         .graph()
         .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Switch))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Switch(_)))
         .count();
     assert_eq!(n_switch_before, 1);
     let result = crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?;
@@ -436,7 +436,7 @@ fn dead_switch_const_address_keeps_matching_arm() -> Result<()> {
     // unreachability via `walk()` rather than an arena-wide count.
     let n_switch_after = fg
         .walk()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Switch))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Switch(_)))
         .count();
     assert_eq!(n_switch_after, 0, "switch unreachable after fold");
     Ok(())
@@ -466,7 +466,7 @@ fn dead_switch_non_const_address_no_change() -> Result<()> {
     let n_switch_after = fg
         .graph()
         .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Switch))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Switch(_)))
         .count();
     assert_eq!(n_switch_after, 1, "switch must survive");
     Ok(())

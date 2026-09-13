@@ -134,8 +134,8 @@ fn cast_mask_of_returns_empty_for_non_cast_kinds() {
         NodeKind::Region,
         NodeKind::MemPhi,
         NodeKind::If,
-        NodeKind::Switch,
-        NodeKind::Call,
+        NodeKind::Switch(crate::node::SwitchTableId::from_u32(0)),
+        NodeKind::Call { cc: None },
     ];
     for k in non_casts {
         assert_eq!(

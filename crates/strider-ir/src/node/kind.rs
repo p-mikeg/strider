@@ -1,5 +1,6 @@
 use crate::node::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
 use crate::node_signature::ExpectedValueKind;
+use cranelift_entity::entity_impl;
 
 /// Where a function argument is passed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -32,6 +33,18 @@ impl InitialVnId {
     }
 }
 
+/// A `Switch`'s case-address table. Resolve via
+/// [`crate::Function::switch_targets`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SwitchTableId(u32);
+entity_impl!(SwitchTableId, "switch_table");
+
+/// A `Call`'s override calling convention, deduped by value. Resolve via
+/// [`crate::Function::get_cc`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct CcId(u32);
+entity_impl!(CcId, "cc");
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeKind {
     /// Outputs `[Control]`.
@@ -58,14 +71,17 @@ pub enum NodeKind {
     /// true, index 1 false.
     If,
     /// Resolved jump table. Inputs: `(control, address)`. Outputs: one
-    /// `Control` per target, output `i` taken when `address ==
-    /// switch_targets[i]` (case addresses live in the `switch_targets` side-table).
+    /// `Control` per target, output `i` taken when `address == targets[i]` of
+    /// the table this carries.
     /// No default arm: a target the resolver could not prove is reported in
     /// `unresolved_indirect_branches`, not modelled as an arm.
-    Switch,
+    Switch(SwitchTableId),
 
-    /// Clobbers caller-saved registers and the memory token.
-    Call,
+    /// Clobbers caller-saved registers and the memory token. `cc` is `None`
+    /// under the function's default convention.
+    Call {
+        cc: Option<CcId>,
+    },
     /// Consumes the outgoing control and memory edges plus any return values.
     Return,
     /// Placeholder for a branch the CFG could not resolve. Inputs:
@@ -217,8 +233,8 @@ impl NodeKind {
             | Self::Return
             | Self::IndirectBranch
             | Self::Unreachable
-            | Self::Switch
-            | Self::Call
+            | Self::Switch(_)
+            | Self::Call { .. }
             | Self::CallOther { .. }
             // Opaque per-occurrence identity.
             | Self::CPoolRef
@@ -240,7 +256,7 @@ impl NodeKind {
             | Self::MemPhi => true,
 
             Self::If
-            | Self::Switch
+            | Self::Switch(_)
             | Self::Load(..)
             | Self::Store(..)
             | Self::IntConst(..)
@@ -263,7 +279,7 @@ impl NodeKind {
             | Self::Return
             | Self::IndirectBranch
             | Self::Unreachable
-            | Self::Call
+            | Self::Call { .. }
             | Self::CallOther { .. }
             | Self::CPoolRef
             | Self::New => false,
@@ -277,9 +293,9 @@ impl NodeKind {
             Self::Entry
             | Self::Region
             | Self::If
-            | Self::Switch
+            | Self::Switch(_)
             | Self::Return
-            | Self::Call
+            | Self::Call { .. }
             | Self::CallOther { .. }
             | Self::IndirectBranch
             | Self::Unreachable => true,
@@ -359,7 +375,7 @@ const _: () = assert!(
 
 #[cfg(test)]
 mod tests {
-    use super::NodeKind;
+    use super::{NodeKind, SwitchTableId};
     use crate::node::const_value::ConstId;
     use cranelift_entity::EntityRef;
 
@@ -369,9 +385,9 @@ mod tests {
             NodeKind::Entry,
             NodeKind::Region,
             NodeKind::If,
-            NodeKind::Switch,
+            NodeKind::Switch(SwitchTableId::new(0)),
             NodeKind::Return,
-            NodeKind::Call,
+            NodeKind::Call { cc: None },
             NodeKind::CallOther { user_op_id: 0 },
             NodeKind::IndirectBranch,
         ] {

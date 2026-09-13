@@ -25,7 +25,7 @@ pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
 
         NodeKind::Load(_) | NodeKind::Store(_) => "box3d",
 
-        NodeKind::Call => "rarrow",
+        NodeKind::Call { .. } => "rarrow",
         NodeKind::CallOther { .. } => "doubleoctagon",
         NodeKind::CPoolRef => "folder",
         NodeKind::New => "component",
@@ -51,7 +51,7 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
 
         NodeKind::Load(_) | NodeKind::Store(_) => "\"#102030\"",
 
-        NodeKind::Call => "\"#3a1010\"",
+        NodeKind::Call { .. } => "\"#3a1010\"",
         NodeKind::CallOther { .. } => "\"#3a2810\"", // amber: opaque intrinsic
         NodeKind::CPoolRef => "\"#2a1a3a\"",         // violet: JVM metadata
         NodeKind::New => "\"#103a2a\"",              // dark green: allocation

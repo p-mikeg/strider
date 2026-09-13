@@ -144,6 +144,8 @@ impl PyNode {
                     crate::sleigh::PyVnSpace { inner: *space }.name()
                 )
             }
+            NodeKind::Switch(_) => "Switch".to_string(),
+            NodeKind::Call { .. } => "Call".to_string(),
             other => format!("{other:?}"),
         })
     }
@@ -263,7 +265,7 @@ impl PyNode {
         let vn = self.with_node(py, |function, nid| {
             if matches!(
                 function.node_kind(nid),
-                NodeKind::Call | NodeKind::CallOther { .. }
+                NodeKind::Call { .. } | NodeKind::CallOther { .. }
             ) && let Some(value) = Self::value_output(function, nid)
                 && let Some(vn) = function.get_vn_for_value(value)
             {
@@ -309,10 +311,7 @@ impl PyNode {
     /// Sleigh user-op name on a `CallOther` node, else `None`.
     fn call_other_name(&self, py: Python<'_>) -> PyResult<Option<String>> {
         self.with_node(py, |function, nid| {
-            function
-                .side_tables()
-                .call_other_name(nid)
-                .map(str::to_owned)
+            function.call_other_name(nid).map(str::to_owned)
         })
     }
 
