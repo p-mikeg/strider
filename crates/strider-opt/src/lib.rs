@@ -35,7 +35,7 @@ pub use opt::phi_collapse::PhiCollapse;
 pub use opt::region_collapse::RegionCollapse;
 pub use pipeline::{OptCtx, OptimizationResult, Optimizer, OptimizerPipeline, PostOptimizer};
 #[cfg(any(test, feature = "test-util"))]
-pub use pipeline::{run_one, run_post};
+pub use pipeline::{run_one, run_one_unvalidated, run_post};
 pub use post_opt::call_stack_args::CallStackArgCollect;
 pub use post_opt::function_args::FunctionArgDetect;
 pub use post_opt::indirect_branch_resolve::{IndirectBranchClassify, classify_target};
