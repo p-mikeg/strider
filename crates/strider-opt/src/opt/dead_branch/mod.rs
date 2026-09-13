@@ -97,10 +97,8 @@ impl PeepholePass for DeadBranchElimination {
                 Ok(PeepholeRewrite::Changed { new_node: None })
             }
             NodeKind::Switch(_) => {
-                let [ctrl_value, addr_value] = edit
-                    .graph_ref()
-                    .node_inputs_exact::<2>(root)
-                    .expect("Switch has 2 inputs per node signature");
+                let inputs = edit.graph_ref().node_inputs(root);
+                let (ctrl_value, addr_value) = (inputs[0], inputs[1]);
 
                 let Some(k) = edit.function().int_const_u128(addr_value) else {
                     return Ok(PeepholeRewrite::NoChange);
@@ -470,9 +468,7 @@ fn dead_arm_values(edit: &crate::EditFunction<'_>, node: NodeId) -> Vec<ValueId>
             vec![if cond { ctrl_false } else { ctrl_true }]
         }
         NodeKind::Switch(_) => {
-            let [_, addr_value] = edit
-                .node_inputs_exact::<2>(node)
-                .expect("Switch has 2 inputs per node signature");
+            let addr_value = edit.node_inputs(node)[1];
             let Some(k) = edit.int_const_u128(addr_value) else {
                 return Vec::new();
             };
