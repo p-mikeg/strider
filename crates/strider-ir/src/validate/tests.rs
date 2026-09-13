@@ -1478,7 +1478,7 @@ fn memory_linearity_store_merged_into_a_mem_phi_only_a_load_reads_is_lost() {
     let (mut f, _, token, ctrl) = diamond_with_arm_phis();
     let (seed_node, seed) = int_const(&mut f, 0x2000, ValueType::I64);
     stamp(&mut f, seed_node);
-    let mem = crate::function::test_initial_memory(&mut f);
+    let mem = crate::function::test_initial_memory(&f);
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     let (st, st_mem) = store(&mut f, mem_value, seed, seed);
     let mem_phi = f.graph_mut().create_node(
