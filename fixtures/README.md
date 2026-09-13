@@ -1,9 +1,12 @@
 # Fixtures
 
-`out/<arch>/<case>.elf` (and a `.o` twin for every C case) is built from
-`cases/<case>.{c,S}` by `make`, one target per (arch, case). The binaries are
-committed through Git LFS, so a clone without `git-lfs` gets 129-byte pointer
-text where an ELF should be; run `git lfs pull` before running the test suite.
+`out/<arch>/<case>.elf` is built from `cases/<case>.{c,S}` by `make`, one
+target per (arch, case); every C case also builds an unlinked `.o` twin.
+Only the `.o` files the tests load are committed (the `!` entries in the root
+`.gitignore`): four or five each on `x86`, `x64`, `arm`, `aarch64`, `mips64le`
+and `ppc64le`, one on `ppc32be`, none elsewhere. The binaries are committed
+through Git LFS, so a clone without `git-lfs` gets 129- or 130-byte pointer text
+where an ELF should be; run `git lfs pull` before running the test suite.
 
 Rebuilding is only needed when a case or an arch's flags change. See the header
 of `Makefile` for the `ARCH=` / `CASE=` selectors.
