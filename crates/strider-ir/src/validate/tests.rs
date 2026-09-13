@@ -1486,3 +1486,43 @@ fn a_dead_edge_into_a_phi_is_not_judged() {
         matches!(e, ValidationError::InputNotAvailable { .. })
     });
 }
+
+/// A floating value used only on an unreachable edge into a phi is never
+/// computed on a live path, so nothing about it is judged.
+#[test]
+fn a_floating_value_on_a_dead_edge_into_a_phi_is_not_judged() {
+    let mut s = spine();
+    let (seed_node, seed) = int_const(&mut s.f, 7, ValueType::I64);
+    stamp(&mut s.f, seed_node);
+    let live = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [s.entry_ctrl],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let [live_ctrl, _] = s.f.node_outputs_exact::<2>(live).unwrap();
+    let (dead_ctrl, dead) = unreachable_region_value(&mut s.f, seed);
+    let add = s.f.graph_mut().create_node(
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        [dead, seed],
+        [ValueKind::Typed(ValueType::I64)],
+    );
+    stamp(&mut s.f, add);
+    let [sum] = s.f.node_outputs_exact::<1>(add).unwrap();
+    let merge = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [live_ctrl, dead_ctrl],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let [merge_ctrl, merge_token] = s.f.node_outputs_exact::<2>(merge).unwrap();
+    let merge_phi = s.f.graph_mut().create_node(
+        NodeKind::Phi,
+        [merge_token, seed, sum],
+        [ValueKind::Typed(ValueType::I64)],
+    );
+    let [merged] = s.f.node_outputs_exact::<1>(merge_phi).unwrap();
+    close_with_return(&mut s.f, merge_ctrl, &[merged]);
+
+    assert_no_validation_err(&s.f, |e| {
+        matches!(e, ValidationError::InputNotAvailable { .. })
+    });
+}
