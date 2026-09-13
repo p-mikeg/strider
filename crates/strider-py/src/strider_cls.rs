@@ -190,17 +190,7 @@ fn opt_options_from(
     py: Python<'_>,
     opts: &PyLifterOptions,
 ) -> PyResult<strider_orchestrator::opt::OptOptions> {
-    let assumptions = {
-        let a = opts.assumptions.borrow(py);
-        strider_orchestrator::opt::AssumptionOptions {
-            stack_global_disjoint: a.stack_global_disjoint,
-            assume_incoming_args_survive_calls: a.assume_incoming_args_survive_calls,
-            distinct_sp_bases_disjoint: a.distinct_sp_bases_disjoint,
-            callee_preserves_stack_args: a.callee_preserves_stack_args,
-            noalias_allocators: std::sync::Arc::new(a.noalias_allocators.iter().copied().collect()),
-            escape_analysis: a.escape_analysis,
-        }
-    };
+    let assumptions = (&*opts.assumptions.borrow(py)).into();
     Ok(strider_orchestrator::opt::OptOptions {
         assumptions,
         resolve_indirect_branches: opts.resolve_indirect_branches,
