@@ -2778,10 +2778,12 @@ fn twelve_and_fourteen_byte_tracked_varnodes_build_initial_vars() -> Result<()> 
     Ok(())
 }
 
-/// `rax` volatile, `rbx` callee-saved; `held` is written to `reg` before a call
-/// built the way the lifter builds one, then the function is built.
+/// `rax` volatile, `rbx` callee-saved, `rax` sla-internal when `internal`;
+/// `held` is written to one of them before a call built the way the lifter
+/// builds one, then the function is built.
 fn call_with_register_holding(
     reg_is_volatile: bool,
+    internal: bool,
     held: impl FnOnce(&mut FunctionBuilder, ValueId) -> Result<ValueId>,
 ) -> Result<crate::Function> {
     use strider_ir_test_utils::reg_vn;
@@ -2793,6 +2795,9 @@ fn call_with_register_holding(
         ..Default::default()
     };
     let mut b = FunctionBuilder::new(vec![rax, rbx, sp], cc, strider_target::Endianness::Little)?;
+    if internal {
+        b.set_internal_registers(vec![rax]);
+    }
     let region = b.create_region_all()?;
     b.set_entry_region_all(region)?;
     b.set_region(region);
@@ -2808,7 +2813,7 @@ fn call_with_register_holding(
 
 #[test]
 fn a_stack_address_in_a_clobbered_register_at_a_call_is_recorded() -> Result<()> {
-    let f = call_with_register_holding(true, |b, sp| {
+    let f = call_with_register_holding(true, false, |b, sp| {
         let k = b.build_int_const((-16i64) as u64, ValueType::I64)?;
         let slot = b.build_int_binary_operation(sp, k, IntBinaryOp::Add, ValueType::I64)?;
         // A width round trip is still the address.
@@ -2821,7 +2826,9 @@ fn a_stack_address_in_a_clobbered_register_at_a_call_is_recorded() -> Result<()>
 
 #[test]
 fn a_clobbered_register_holding_no_stack_address_is_not_recorded() -> Result<()> {
-    let f = call_with_register_holding(true, |b, _| b.build_int_const(0x1234u64, ValueType::I64))?;
+    let f = call_with_register_holding(true, false, |b, _| {
+        b.build_int_const(0x1234u64, ValueType::I64)
+    })?;
     assert!(!f.side_tables().frame_address_in_call_register());
     Ok(())
 }
@@ -2830,7 +2837,18 @@ fn a_clobbered_register_holding_no_stack_address_is_not_recorded() -> Result<()>
 /// restores without reading through.
 #[test]
 fn a_stack_address_in_a_preserved_register_is_not_recorded() -> Result<()> {
-    let f = call_with_register_holding(false, |b, sp| {
+    let f = call_with_register_holding(false, false, |b, sp| {
+        let k = b.build_int_const((-16i64) as u64, ValueType::I64)?;
+        b.build_int_binary_operation(sp, k, IntBinaryOp::Add, ValueType::I64)
+    })?;
+    assert!(!f.side_tables().frame_address_in_call_register());
+    Ok(())
+}
+
+/// A register the sla keeps for its own semantics is not one a callee reads.
+#[test]
+fn a_stack_address_in_an_internal_register_is_not_recorded() -> Result<()> {
+    let f = call_with_register_holding(true, true, |b, sp| {
         let k = b.build_int_const((-16i64) as u64, ValueType::I64)?;
         b.build_int_binary_operation(sp, k, IntBinaryOp::Add, ValueType::I64)
     })?;

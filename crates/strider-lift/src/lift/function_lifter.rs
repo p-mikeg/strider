@@ -123,8 +123,16 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .chain(std::iter::once(&cc.stack_vn))
             .copied()
             .collect();
-        let builder =
+        let mut builder =
             strider_ir::FunctionBuilder::new(all_vns.clone(), cc, lifter.arch.endianness())?;
+        builder.set_internal_registers(
+            lifter
+                .arch
+                .internal_registers()
+                .iter()
+                .filter_map(|name| lifter.sleigh_regs().name_to_vn(name))
+                .collect(),
+        );
         let queries = all_vns.iter().copied().chain(cc_regs);
         let container_map =
             vn_container::ContainerMap::build(builder.function().all_vns(), queries);
