@@ -46,10 +46,16 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             arms.push((ir_region, target));
         }
         let idx = self.read_vn(target_vn)?;
+        // The same mode `handle_unresolved_indirect_branch` carries: a table
+        // that widens is re-derived through this node, and its new arms need
+        // their own modes.
+        let isa_mode = self.pending_isa_mode.and_then(|(mode, mode_addr)| {
+            (mode_addr == switch_addr.machine_addr.addr).then_some(mode)
+        });
         // A one-arm table stays a `Switch`, which holds the dispatch selector
         // the resolver re-reads to widen a site that seated early.  A plain
         // branch drops the selector as dead and latches the first answer.
-        let node = self.builder.build_switch(idx, &arms)?;
+        let node = self.builder.build_switch_with_mode(idx, isa_mode, &arms)?;
         self.switch_anchors.push((switch_addr, node));
         Ok(())
     }

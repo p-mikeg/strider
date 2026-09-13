@@ -253,6 +253,17 @@ pub trait IRViewer {
         self.node_inputs(node).get(3).copied()
     }
 
+    /// The ISA-mode value a `Switch`'s instruction commits for its arms (slot
+    /// 2), as [`Self::indirect_branch_isa_mode`] is for the placeholder it
+    /// replaced.
+    fn switch_isa_mode(&self, node: NodeId) -> Option<ValueId> {
+        assert!(
+            matches!(self.node_kind(node), NodeKind::Switch(_)),
+            "switch_isa_mode on a non-Switch node"
+        );
+        self.node_inputs(node).get(2).copied()
+    }
+
     /// Ascending-`NodeId` order.
     fn reachable_kind_iter<'a>(
         &'a self,
