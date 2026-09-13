@@ -432,9 +432,29 @@ fn canonicalize_cr_bit_test(
     Ok(Some(cmp))
 }
 
+/// The kinds [`cr_bit_comparison`] traverses between the tested bit and the
+/// comparisons at the pack's terms.  Everything else is a leaf: an `IntCmpOp`
+/// because below one are the compared values, and any other producer because
+/// `input_producers_iter` follows memory and control edges, which from the
+/// opaque operand of an `And(v, 2^p)` term reach `InitialMemory` / `Entry`.
+fn builds_a_cr_pack(kind: &NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::IntConst(_)
+            | NodeKind::Truncate
+            | NodeKind::Extend(_)
+            | NodeKind::IntBinaryOp(
+                IntBinaryOp::Or
+                    | IntBinaryOp::And
+                    | IntBinaryOp::Xor
+                    | IntBinaryOp::ShiftLeft
+                    | IntBinaryOp::ShiftRight
+            )
+    )
+}
+
 /// Folds every CR-pack interior node's asm-fingerprint into the surviving
-/// comparison.  The descent stops at each `IntCmpOp`; below one are the compared
-/// values themselves, not pack-building instructions.
+/// comparison.  The descent is confined to [`builds_a_cr_pack`].
 fn absorb_cr_pack_fingerprints(
     edit: &mut crate::EditFunction<'_>,
     cond_out: ValueId,
@@ -449,10 +469,9 @@ fn absorb_cr_pack_fingerprints(
             continue;
         }
         interior.push(n);
-        if matches!(edit.node_kind(n), NodeKind::IntCmpOp(_)) {
-            continue;
+        if builds_a_cr_pack(edit.node_kind(n)) {
+            stack.extend(crate::peephole::input_producers_iter(edit, n));
         }
-        stack.extend(crate::peephole::input_producers_iter(edit, n));
     }
     for n in interior {
         if n != into {
