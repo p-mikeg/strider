@@ -362,6 +362,38 @@ fn if_else_capture_and_control_output_captures_coexist() {
     assert!(hits[0].value(f).is_some(), "false output still binds");
 }
 
+/// The cast ladder is a fallback inside a branch walk too: the enclosing
+/// continuation reaches the root counter, so a direct hit still cuts it.
+#[test]
+fn a_branch_walk_cast_ladder_is_a_fallback_not_an_alternative() {
+    let (function, _, (trunc, wide)) = RegisterSet::new()
+        .build_if_then_else_returns(|b| {
+            let x = b.build_int_const(1u64, ValueType::I8)?;
+            let y = b.build_int_const(2u64, ValueType::I8)?;
+            let wide =
+                b.build_int_binary_operation(x, y, strider_ir::IntBinaryOp::Add, ValueType::I8)?;
+            let trunc = b.truncate_if_needed(wide, ValueType::I1)?;
+            Ok((trunc, (trunc, wide)))
+        })
+        .unwrap();
+    let c = Capture::new();
+    let cond = || if_else().cond(anything().capture(c));
+    let top = cond().build().ignore_casts_mask(CastMask::TRUNCATE);
+    let nested = if_else()
+        .with_true(
+            region()
+                .input(0, cond())
+                .into_pattern()
+                .ignore_casts_mask(CastMask::TRUNCATE),
+        )
+        .build();
+    for pat in [top, nested] {
+        let hits = a::matches(&function, pat, 1);
+        assert_eq!(hits[0].value(c), Some(trunc));
+        assert_ne!(hits[0].value(c), Some(wide));
+    }
+}
+
 #[test]
 fn mem_phi_matches_region_head() {
     // A freshly created region carries one MemPhi at its head.
@@ -1428,4 +1460,19 @@ fn indirect_branch_isa_mode_matches_only_a_switching_branch() {
 
     let plain = indirect_branch_to(0x4000);
     a::none(&plain, indirect_branch().isa_mode(anything()).build());
+}
+
+/// `with_true` takes an already built `Pattern`, so no builder cap bounds the
+/// nesting and the free is a walk of caller-shaped depth. Built iteratively on
+/// the test thread; only the drop runs on the small one.
+#[test]
+fn a_deeply_nested_branch_tower_frees_on_a_small_stack() {
+    let tower = (0..8_000).fold(ret().build(), |p, _| if_else().with_true(p).build());
+
+    std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(move || drop(tower))
+        .unwrap()
+        .join()
+        .unwrap();
 }
