@@ -38,6 +38,7 @@ fn make_dumper<'a>(
         node_to_arg_indices: build_arg_reverse_map(function),
         nodes: None,
         center: None,
+        errors: FxHashMap::default(),
     }
 }
 
@@ -1186,4 +1187,43 @@ fn function_float_arg_node_label_is_distinct_from_the_integer_index() {
         1,
         "exactly one node carries the integer arg 0 label:\n{dot}",
     );
+}
+
+/// A node a validation error names draws a red border and carries the error
+/// text as its tooltip; a node no error names draws neither.
+#[test]
+fn validation_error_overlay_marks_the_named_node() {
+    let mut f = test_function();
+    let entry = f.entry();
+    let mem = crate::function::test_initial_memory(&f);
+    let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+    let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+    // Unstamped, so `validate` names it `MissingAsmFingerprint`.
+    let ret = f
+        .graph_mut()
+        .create_node(NodeKind::Return, [entry_ctrl, mem_value], []);
+    let errors = crate::validate::validate(&f).unwrap_err();
+    assert!(errors.0.iter().all(|e| e.nodes().as_slice() == [ret]));
+
+    let sleigh = probe_sleigh();
+    let dumper = make_dumper(&f, entry, &sleigh).with_validation_errors(&errors);
+    let dot = ::dot::GraphDot::new(dumper, ::dot::DotStyle::empty())
+        .as_dot()
+        .expect("render must succeed");
+    let line_of = |node: NodeId| {
+        let prefix = format!("  \"{}\" [", node.as_u32());
+        dot.lines()
+            .find(|l| l.starts_with(&prefix))
+            .unwrap_or_else(|| panic!("no box for {node:?}:\n{dot}"))
+            .to_owned()
+    };
+    let ret_line = line_of(ret);
+    assert!(
+        ret_line.contains("color=\"#ff3333\"")
+            && ret_line.contains("penwidth=\"3\"")
+            && ret_line.contains("tooltip=\"node")
+            && ret_line.contains("asm-fingerprint"),
+        "{ret_line}"
+    );
+    assert!(!line_of(entry).contains("tooltip="), "{dot}");
 }

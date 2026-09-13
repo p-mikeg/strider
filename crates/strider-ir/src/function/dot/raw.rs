@@ -117,7 +117,7 @@ impl<'a> RawFunctionDumper<'a> {
         for &node in &set {
             let dot_id = format!("n{}", node.as_u32());
             let extra: &[(&str, &str)] = if node == center {
-                &[("color", "\"#ffcc00\""), ("penwidth", "2.5")]
+                &[("color", "#ffcc00"), ("penwidth", "2.5")]
             } else {
                 &[]
             };
