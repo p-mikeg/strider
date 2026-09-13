@@ -375,7 +375,8 @@ fn chained_phis_over_one_region_do_not_dangle() -> crate::Result<()> {
     let slot = fg.graph().node_input_id_at(phi1, 1)?;
     fg.graph_mut().update_input(slot, read2);
 
-    crate::pipeline::run_one(&RegionCollapse, &mut fg, &mut crate::OptCtx::new(None))?;
+    // Malformed on purpose, so the runner's own validation is skipped.
+    crate::pipeline::run_one_unvalidated(&RegionCollapse, &mut fg, &mut crate::OptCtx::new(None))?;
 
     // The hand-chained phi input is unavailable on its edge before the pass
     // runs; what the pass must not add is anything else, a dangling input first.

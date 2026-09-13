@@ -100,8 +100,32 @@ pub trait Optimizer: OptimizerClone {
 /// # Errors
 ///
 /// Returns the first error from [`Optimizer::apply`].
+///
+/// # Panics
+///
+/// Panics with the rendered errors if the pass leaves `function` invalid.
 #[cfg(any(test, feature = "test-util"))]
 pub fn run_one(
+    pass: &dyn Optimizer,
+    function: &mut strider_ir::Function,
+    octx: &mut OptCtx<'_>,
+) -> crate::Result<OptimizationResult> {
+    let result = run_one_unvalidated(pass, function, octx)?;
+    if let Err(errors) = strider_ir::validate::validate(function) {
+        panic!("{} left invalid IR: {errors}", pass.name());
+    }
+    Ok(result)
+}
+
+/// [`run_one`] without the validation, for the shape `DeadBranchElimination`
+/// leaves until `CfgDetach` strips the dead arm's predecessor slots, and for a
+/// bench timing the pass alone.
+///
+/// # Errors
+///
+/// Returns the first error from [`Optimizer::apply`].
+#[cfg(any(test, feature = "test-util"))]
+pub fn run_one_unvalidated(
     pass: &dyn Optimizer,
     function: &mut strider_ir::Function,
     octx: &mut OptCtx<'_>,
