@@ -34,8 +34,8 @@ strider-ir = { workspace = true, features = ["test-util"] }
 strider-opt = { workspace = true, features = ["test-util"] }
 strider-ir-test-utils = { workspace = true, features = ["proptest-gen"] }
 paste = "1"
-criterion = { version = "0.7", features = ["html_reports"] }
-proptest = "1"
+criterion.workspace = true
+proptest.workspace = true
 dhat = "0.3"
 
 [[bench]]
