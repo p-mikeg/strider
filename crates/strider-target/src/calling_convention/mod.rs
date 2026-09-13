@@ -504,14 +504,6 @@ fn clamp_to_usize(n: i128) -> usize {
     usize::try_from(n).unwrap_or(usize::MAX)
 }
 
-/// One row of `CC_PRESETS`.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct CcPresetRow {
-    /// The Rust factory name, also the Python classmethod name.
-    name: &'static str,
-    cc: CallingConvention,
-}
-
 /// Base for `x86_cdecl` and `x86_linux_kernel`, which differ only in
 /// `arg_passing_regs`.
 const X86_CDECL_BASE: CallingConvention = CallingConvention {
@@ -534,12 +526,7 @@ const X86_CDECL_BASE: CallingConvention = CallingConvention {
         base_offset: 4,
         increment: 4,
     }),
-    // A callee returning a struct or union also pops the caller's hidden
-    // result pointer (Intel386 psABI), so the caller observes SP advanced by
-    // 8 and `gcc -m32` emits `ret $0x4`.  `ret_stack_pop` is one constant per
-    // convention and the IR carries no callee return class, so that call site
-    // needs a per-address CC override with `ret_stack_pop: 8`; without one
-    // every later SP-relative access there is misattributed by one slot.
+    // The plain `ret`; see `x86_cdecl` for callees that pop more.
     ret_stack_pop: 4,
     // `call` pushes the return address.
     link_register_reg_name: None,
@@ -695,13 +682,13 @@ const MIPS_O32_BASE: CallingConvention = CallingConvention {
     preserves_all_registers: false,
 };
 
-/// Every supported calling-convention preset.
-pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
-    // x86-64 System V.  RSP is not listed callee-saved: `ret` pops the return
-    // address, so the caller observes SP shifted by `ret_stack_pop`.
-    CcPresetRow {
-        name: "x86_64_systemv",
-        cc: CallingConvention {
+impl CallingConvention {
+    /// Returns the x86-64 System V ABI calling convention.
+    #[must_use]
+    pub const fn x86_64_systemv() -> Self {
+        // x86-64 System V.  RSP is not listed callee-saved: `ret` pops the return
+        // address, so the caller observes SP shifted by `ret_stack_pop`.
+        CallingConvention {
             stack_ptr_reg_name: "RSP",
             arg_passing_regs: &["RDI", "RSI", "RDX", "RCX", "R8", "R9"],
             // psABI 3.2.3: SSE-class arguments in XMM0..XMM7.  X87-class
@@ -733,23 +720,25 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             link_register_reg_name: None,
             preserves_memory: false,
             preserves_all_registers: false,
-        },
-    },
-    // AArch64 AAPCS64.  `ret_stack_pop` is 0 because `bl` writes the return
-    // address to `lr` rather than pushing it.  Register conventions are
-    // byte-order independent, so this pairs with both `aarch64` and
-    // `aarch64be`.
-    //
-    // AAPCS64 6.9's indirect result location register `x8` is NOT listed: it
-    // carries the destination address for a large aggregate return, not an
-    // argument, and listing it would renumber every `arg(n)`.  The cost is that
-    // a caller passing a stack slot there has an escape `frame_escape` cannot
-    // see, so `assumptions.escape_analysis` (off by default) could forward a
-    // spill across such a call.  `x8` is still a `Call` clobber, so the
-    // register itself is never stale.
-    CcPresetRow {
-        name: "aarch64_aapcs64",
-        cc: CallingConvention {
+        }
+    }
+
+    /// Returns the AArch64 AAPCS64 calling convention.
+    #[must_use]
+    pub const fn aarch64_aapcs64() -> Self {
+        // AArch64 AAPCS64.  `ret_stack_pop` is 0 because `bl` writes the return
+        // address to `lr` rather than pushing it.  Register conventions are
+        // byte-order independent, so this pairs with both `aarch64` and
+        // `aarch64be`.
+        //
+        // AAPCS64 6.9's indirect result location register `x8` is NOT listed: it
+        // carries the destination address for a large aggregate return, not an
+        // argument, and listing it would renumber every `arg(n)`.  The cost is that
+        // a caller passing a stack slot there has an escape `frame_escape` cannot
+        // see, so `assumptions.escape_analysis` (off by default) could forward a
+        // spill across such a call.  `x8` is still a `Call` clobber, so the
+        // register itself is never stale.
+        CallingConvention {
             stack_ptr_reg_name: "sp",
             arg_passing_regs: &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
             // AAPCS64 6.4.1: SIMD/FP arguments in v0..v7, listed in their
@@ -776,48 +765,57 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             link_register_reg_name: Some("x30"),
             preserves_memory: false,
             preserves_all_registers: false,
-        },
-    },
-    // ARM 32-bit AAPCS, hard-float (VFP) argument variant.  A binary built
-    // `-mfloat-abi=soft` / `softfp` wants `arm_aapcs_soft`; EABI `e_flags`
-    // records which, and the Python `load_elf` wrapper reads it.  A Rust caller
-    // picks the preset itself.  A relocatable object carries no float-ABI bit,
-    // and an image setting neither falls to this one.
-    CcPresetRow {
-        name: "arm_aapcs",
-        cc: ARM_AAPCS_VFP_BASE,
-    },
-    // ARM 32-bit AAPCS base standard: floats pass and return in the core
-    // registers (`-mfloat-abi=soft` and `softfp` alike), so the VFP bank
-    // carries no arguments.  d8-d15 stay callee-saved, which is a property of
-    // the register file rather than of the float variant.
-    CcPresetRow {
-        name: "arm_aapcs_soft",
-        cc: CallingConvention {
+        }
+    }
+
+    /// Returns the ARM 32-bit AAPCS hard-float (VFP) calling convention.
+    #[must_use]
+    pub const fn arm_aapcs() -> Self {
+        // ARM 32-bit AAPCS, hard-float (VFP) argument variant.  A binary built
+        // `-mfloat-abi=soft` / `softfp` wants `arm_aapcs_soft`; EABI `e_flags`
+        // records which, and the Python `load_elf` wrapper reads it.  A Rust caller
+        // picks the preset itself.  A relocatable object carries no float-ABI bit,
+        // and an image setting neither falls to this one.
+        ARM_AAPCS_VFP_BASE
+    }
+
+    /// Returns the ARM 32-bit AAPCS calling convention for a
+    /// `-mfloat-abi=soft` / `softfp` binary.
+    #[must_use]
+    pub const fn arm_aapcs_soft() -> Self {
+        // ARM 32-bit AAPCS base standard: floats pass and return in the core
+        // registers (`-mfloat-abi=soft` and `softfp` alike), so the VFP bank
+        // carries no arguments.  d8-d15 stay callee-saved, which is a property of
+        // the register file rather than of the float variant.
+        CallingConvention {
             arg_passing_regs_float: &[],
             ret_val_regs_float: &[],
             ..ARM_AAPCS_VFP_BASE
-        },
-    },
-    // MIPS O32, byte-order independent: pairs with both `mipsle32` and
-    // `mipsbe32`.  `ret_stack_pop` is 0 because `jal`/`jalr` writes the return
-    // address to `$ra` rather than pushing it.  Offsets 0..16 are MIPS's
-    // reserved shadow space for the four register args, so positional stack
-    // args start at 16.
-    //
-    // Sleigh's MIPS spec uses lowercase names and calls the frame pointer
-    // `s8`; `fp` does not resolve in its register table.
-    CcPresetRow {
-        name: "mips_o32",
-        cc: MIPS_O32_BASE,
-    },
-    // MIPS N64 (`mips64-linux-gnuabi64-gcc`, LE and BE).  Extends O32's 4
-    // register args to 8 (`$4`..`$11`) and drops the shadow space, so stack
-    // args start at SP+0.  Sleigh's `mips64` spec uses the older naming where
-    // `$8`..`$11` are `t0`..`t3`, so they are listed under those names.
-    CcPresetRow {
-        name: "mips_n64",
-        cc: CallingConvention {
+        }
+    }
+
+    /// Returns the MIPS O32 calling convention.
+    #[must_use]
+    pub const fn mips_o32() -> Self {
+        // MIPS O32, byte-order independent: pairs with both `mipsle32` and
+        // `mipsbe32`.  `ret_stack_pop` is 0 because `jal`/`jalr` writes the return
+        // address to `$ra` rather than pushing it.  Offsets 0..16 are MIPS's
+        // reserved shadow space for the four register args, so positional stack
+        // args start at 16.
+        //
+        // Sleigh's MIPS spec uses lowercase names and calls the frame pointer
+        // `s8`; `fp` does not resolve in its register table.
+        MIPS_O32_BASE
+    }
+
+    /// Returns the MIPS N64 calling convention.
+    #[must_use]
+    pub const fn mips_n64() -> Self {
+        // MIPS N64 (`mips64-linux-gnuabi64-gcc`, LE and BE).  Extends O32's 4
+        // register args to 8 (`$4`..`$11`) and drops the shadow space, so stack
+        // args start at SP+0.  Sleigh's `mips64` spec uses the older naming where
+        // `$8`..`$11` are `t0`..`t3`, so they are listed under those names.
+        CallingConvention {
             arg_passing_regs: &["a0", "a1", "a2", "a3", "t0", "t1", "t2", "t3"],
             // N64 widens the float argument bank to eight, $f12..$f19.
             arg_passing_regs_float: &["f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19"],
@@ -835,15 +833,17 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
                 increment: 8,
             }),
             ..MIPS_O32_BASE
-        },
-    },
-    // PowerPC 32-bit System V, byte-order independent (`powerpc-linux-gnu-gcc`
-    // with either `-mbig-endian` or `-mlittle-endian`).  `r1` is the SP by
-    // PowerPC convention.  Stack args start at 8: a 4-byte back-chain plus a
-    // 4-byte LR save.  r3/r4 double as the pair for 64-bit returns.
-    CcPresetRow {
-        name: "powerpc_sysv32",
-        cc: CallingConvention {
+        }
+    }
+
+    /// Returns the PowerPC 32-bit System V ABI calling convention.
+    #[must_use]
+    pub const fn powerpc_sysv32() -> Self {
+        // PowerPC 32-bit System V, byte-order independent (`powerpc-linux-gnu-gcc`
+        // with either `-mbig-endian` or `-mlittle-endian`).  `r1` is the SP by
+        // PowerPC convention.  Stack args start at 8: a 4-byte back-chain plus a
+        // 4-byte LR save.  r3/r4 double as the pair for 64-bit returns.
+        CallingConvention {
             stack_ptr_reg_name: "r1",
             arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
             // SysV PPC32: floating-point arguments in f1..f8.
@@ -879,24 +879,28 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             link_register_reg_name: Some("LR"),
             preserves_memory: false,
             preserves_all_registers: false,
-        },
-    },
-    // PowerPC 64-bit ELFv1, BE (`powerpc64-linux-gnu-gcc`).  Stack args start
-    // at 112: the 48-byte linkage area plus the 64-byte parameter save area.
-    //
-    // ELFv1 has function descriptors: an external function symbol resolves to
-    // a 3-pointer descriptor (entry, TOC, env), not the entry itself.  Only
-    // the register-level ABI is modelled here.
-    CcPresetRow {
-        name: "powerpc64_elf_v1",
-        cc: POWERPC64_ELF_BASE,
-    },
-    // PowerPC 64-bit ELFv2, LE (`powerpc64le-linux-gnu-gcc`).  Drops function
-    // descriptors, so symbols point straight at the entry point, and shrinks
-    // the linkage area from 48 to 32 bytes.  Register usage matches ELFv1.
-    CcPresetRow {
-        name: "powerpc64_elf_v2",
-        cc: CallingConvention {
+        }
+    }
+
+    /// Returns the PowerPC 64-bit ELFv1 calling convention.
+    #[must_use]
+    pub const fn powerpc64_elf_v1() -> Self {
+        // PowerPC 64-bit ELFv1, BE (`powerpc64-linux-gnu-gcc`).  Stack args start
+        // at 112: the 48-byte linkage area plus the 64-byte parameter save area.
+        //
+        // ELFv1 has function descriptors: an external function symbol resolves to
+        // a 3-pointer descriptor (entry, TOC, env), not the entry itself.  Only
+        // the register-level ABI is modelled here.
+        POWERPC64_ELF_BASE
+    }
+
+    /// Returns the PowerPC 64-bit ELFv2 calling convention.
+    #[must_use]
+    pub const fn powerpc64_elf_v2() -> Self {
+        // PowerPC 64-bit ELFv2, LE (`powerpc64le-linux-gnu-gcc`).  Drops function
+        // descriptors, so symbols point straight at the entry point, and shrinks
+        // the linkage area from 48 to 32 bytes.  Register usage matches ELFv1.
+        CallingConvention {
             // 32-byte linkage area plus the same 8-doubleword parameter save
             // area.  Measured against `powerpc64le-linux-gnu-gcc`: a 16-argument
             // call stores arguments 9..16 at r1+96..152.  GHIDRA's
@@ -912,85 +916,25 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             // (`long double`, `_Complex double`) is the whole story there.
             ret_val_regs_float: &["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"],
             ..POWERPC64_ELF_BASE
-        },
-    },
-    // x86 cdecl: all arguments on the stack, so `arg_passing_regs` is empty.
-    // ESP is not listed callee-saved: `ret` pops the 4-byte return address, so
-    // the caller observes SP shifted by `ret_stack_pop`.
-    CcPresetRow {
-        name: "x86_cdecl",
-        cc: X86_CDECL_BASE,
-    },
-    // The only kernel-internal preset: every other supported arch's kernel CC
-    // is byte-identical to its userland preset, so callers pick that directly.
-    // A syscall ABI lives in `call_other_abi`: the `syscall` / `int 0x80` /
-    // `svc` traps lift to `CallOther`.
-    //
-    // x86 32-bit `-mregparm=3`: first three integer args in EAX, EDX, ECX, the
-    // rest on the stack at the same cdecl offsets.
-    CcPresetRow {
-        name: "x86_linux_kernel",
-        cc: CallingConvention {
-            arg_passing_regs: &["EAX", "EDX", "ECX"],
-            ..X86_CDECL_BASE
-        },
-    },
-];
-
-pub(crate) fn lookup_preset(name: &str) -> Option<&'static CcPresetRow> {
-    CC_PRESETS.iter().find(|row| row.name == name)
-}
-
-fn cc_from_table(name: &'static str) -> CallingConvention {
-    lookup_preset(name)
-        .unwrap_or_else(|| panic!("calling-convention preset not registered: {name}"))
-        .cc
-}
-
-/// Emits a named factory wrapper around [`cc_from_table`], with `$desc` as
-/// the first rustdoc paragraph.
-macro_rules! cc_factory {
-    ($name:ident, $desc:expr) => {
-        #[doc = concat!($desc, "  See `CC_PRESETS` for the full field table.")]
-        pub fn $name() -> CallingConvention {
-            cc_from_table(stringify!($name))
         }
-    };
-}
+    }
 
-impl CallingConvention {
-    cc_factory!(
-        x86_64_systemv,
-        "Returns the x86-64 System V ABI calling convention."
-    );
-    cc_factory!(
-        aarch64_aapcs64,
-        "Returns the AArch64 AAPCS64 calling convention."
-    );
-    cc_factory!(
-        arm_aapcs,
-        "Returns the ARM 32-bit AAPCS hard-float (VFP) calling convention."
-    );
-    cc_factory!(
-        arm_aapcs_soft,
-        "Returns the ARM 32-bit AAPCS calling convention for a \
-         `-mfloat-abi=soft` / `softfp` binary."
-    );
-    cc_factory!(mips_o32, "Returns the MIPS O32 calling convention.");
-    cc_factory!(mips_n64, "Returns the MIPS N64 calling convention.");
-    cc_factory!(
-        powerpc_sysv32,
-        "Returns the PowerPC 32-bit System V ABI calling convention."
-    );
-    cc_factory!(
-        powerpc64_elf_v1,
-        "Returns the PowerPC 64-bit ELFv1 calling convention."
-    );
-    cc_factory!(
-        powerpc64_elf_v2,
-        "Returns the PowerPC 64-bit ELFv2 calling convention."
-    );
-    cc_factory!(x86_cdecl, "Returns the x86 cdecl calling convention.");
+    /// Returns the x86 cdecl calling convention.
+    ///
+    /// Its `ret_stack_pop` of 4 is a plain `ret`. A callee that also pops
+    /// its caller's stack (`ret $imm16`: a struct return's hidden pointer,
+    /// stdcall, fastcall, thiscall) needs a per-address convention with
+    /// `ret_stack_pop` of `4 + imm16`; without one, SP-relative accesses after
+    /// the call are off by `imm16`. A PC thunk (`__x86.get_pc_thunk.bx`) needs
+    /// one that does not preserve its register; without one, the register
+    /// keeps the caller's value across the call.
+    #[must_use]
+    pub const fn x86_cdecl() -> Self {
+        // x86 cdecl: all arguments on the stack, so `arg_passing_regs` is empty.
+        // ESP is not listed callee-saved: `ret` pops the 4-byte return address, so
+        // the caller observes SP shifted by `ret_stack_pop`.
+        X86_CDECL_BASE
+    }
 
     /// Resolves every register name in this convention against `sleigh_regs`.
     ///
@@ -1062,10 +1006,21 @@ impl CallingConvention {
         }
     }
 
-    cc_factory!(
-        x86_linux_kernel,
-        "Returns the Linux kernel-internal CC for x86 32-bit (`-mregparm=3`)."
-    );
+    /// Returns the Linux kernel-internal CC for x86 32-bit (`-mregparm=3`).
+    #[must_use]
+    pub const fn x86_linux_kernel() -> Self {
+        // The only kernel-internal preset: every other supported arch's kernel CC
+        // is byte-identical to its userland preset, so callers pick that directly.
+        // A syscall ABI lives in `call_other_abi`: the `syscall` / `int 0x80` /
+        // `svc` traps lift to `CallOther`.
+        //
+        // x86 32-bit `-mregparm=3`: first three integer args in EAX, EDX, ECX, the
+        // rest on the stack at the same cdecl offsets.
+        CallingConvention {
+            arg_passing_regs: &["EAX", "EDX", "ECX"],
+            ..X86_CDECL_BASE
+        }
+    }
 }
 
 #[cfg(test)]
