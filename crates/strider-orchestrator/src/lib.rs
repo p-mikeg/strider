@@ -448,23 +448,26 @@ pub struct AnalyzeResult {
     /// decode was in a mode a path into it disagreed with; the classifier ran
     /// on that decode whether or not the final cfg still carries the edge.
     pub isa_mode_conflicts: Vec<PcodeInsnAddr>,
-    /// Branch targets interior to a region but off every instruction boundary.
+    /// Branch targets interior to a region but off every boundary a region can
+    /// start at.
     ///
     /// No region can start there: decoding from inside an instruction yields a
-    /// different stream. What `cfg` does about it depends on the branch. A
-    /// direct one keeps its edge, seated on the region that OWNS the bytes,
-    /// whose instructions start earlier, so `cfg` claims a successor the branch
-    /// does not enter at. A `Switch` arm is dropped and no edge is wired, so
-    /// `cfg` claims FEWER successors than the table named, and a table left with
-    /// no arm degrades to an unresolved site. Overlapping code puts an
-    /// already-decoded region's start inside an instruction a later region
-    /// decodes, and reports that start here too: two regions then own those
-    /// bytes with two different instruction streams.
+    /// different stream. A branch into a MIPS delay slot is one too, since the
+    /// slot decodes as part of its branch. What `cfg` does about it depends on
+    /// the branch. A direct one keeps its edge, seated on the region that OWNS
+    /// the bytes, whose instructions start earlier, so `cfg` claims a successor
+    /// the branch does not enter at. A `Switch` arm is dropped and no edge is
+    /// wired, so `cfg` claims FEWER successors than the table named, and a
+    /// table left with no arm degrades to an unresolved site. Overlapping code
+    /// puts an already-decoded region's start inside an instruction a later
+    /// region decodes, and reports that start here too: two regions then own
+    /// those bytes with two different instruction streams.
     ///
     /// Like `isa_mode_conflicts` a direct edge produces these, so they are
     /// reported here rather than in `unresolved_indirect_branches`.
     pub interior_branch_targets: Vec<PcodeInsnAddr>,
-    /// Direct-branch targets ANY round's cfg had no bytes for.
+    /// Direct-branch targets and fall-throughs ANY round's cfg had no bytes
+    /// for.
     ///
     /// Each is seated as an empty `TailCall` stub, so the branch keeps an edge
     /// and the regions that did decode survive; nothing past the stub is known.
