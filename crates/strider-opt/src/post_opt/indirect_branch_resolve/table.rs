@@ -24,8 +24,10 @@
 //! Any failure returns `None`, because a `Multiple` omitting a real runtime
 //! target would wire a CFG with missing edges.
 //!
-//! Over-approximating the bound is sound, since surplus targets become dead CFG
-//! edges.  Under-approximating is not.
+//! Over-approximating the bound never drops a real edge, but a surplus arm is a
+//! live edge whose bytes are decoded like any other, so the range enumerated
+//! must be one proven for the index the address scales.  Under-approximating
+//! is unsound.
 
 use super::MAX_TABLE_ENTRIES;
 use crate::ReadOnlyMemory;
@@ -215,10 +217,66 @@ fn decompose_index(
     // `dominators` yields the chain from the target up to the entry, which is
     // the target-rooted shallow-to-deep above, so the first bounded hit IS the
     // shallowest.
-    doms.dominators(target_idx)?
+    let chain: Vec<ValueId> = doms
+        .dominators(target_idx)?
         .filter_map(|di| *g.node_weight(di).expect("dominator is a graph node"))
         .filter(|&v| v != target)
-        .find_map(|v| bounded_index(function, ranges, site, v))
+        .collect();
+    let (depth, (index, range)) = chain
+        .iter()
+        .enumerate()
+        .find_map(|(depth, &v)| bounded_index(function, ranges, site, v).map(|hit| (depth, hit)))?;
+    offsets_keep_range(function, &chain[..depth], index, range).then_some((index, range))
+}
+
+/// Whether the constant offsets applied to `index` on its way to the address
+/// keep `range` a contiguous unsigned interval.
+///
+/// `shallower` is the dominator chain above `index`, target-rooted. An offset
+/// that wraps `range` past zero (`(x & 7) - 2`) names slots below the table
+/// that no guard excludes, since the guards the classifier could not read are
+/// the ones on the offset value; enumerating `x` would seat them.
+fn offsets_keep_range(
+    function: &strider_ir::Function,
+    shallower: &[ValueId],
+    index: ValueId,
+    mut range: Interval,
+) -> bool {
+    let mut below = index;
+    for &value in shallower.iter().rev() {
+        let producer = function.producer(value);
+        match *function.node_kind(producer) {
+            NodeKind::Extend(ExtendOp::ZeroExtend)
+                if function.int_inputs(value).next() == Some(below) => {}
+            NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
+                let Ok([a, b]) = function.producer_inputs_exact::<2>(value) else {
+                    return true;
+                };
+                let offset = match (a == below, b == below) {
+                    (true, false) => function.int_const_u128(b),
+                    (false, true) => function.int_const_u128(a),
+                    _ => None,
+                };
+                let (Some(offset), Some(mask)) = (
+                    offset,
+                    function
+                        .value_type_opt(value)
+                        .and_then(crate::opt::known_bits::type_mask_u128),
+                ) else {
+                    return true;
+                };
+                let lo = range.lo.wrapping_add(offset) & mask;
+                let hi = range.hi.wrapping_add(offset) & mask;
+                if lo > hi || hi - lo != range.hi - range.lo {
+                    return false;
+                }
+                range = Interval { lo, hi, ..range };
+            }
+            _ => return true,
+        }
+        below = value;
+    }
+    true
 }
 
 /// The address of a load the evaluator can fold, or `None` for a reg/GOT-based
