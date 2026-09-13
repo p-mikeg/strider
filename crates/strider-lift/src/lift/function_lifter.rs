@@ -13,6 +13,8 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     pub(crate) unresolved_branches: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
     /// Seated `Switch` sites, so the resolver can re-derive and widen one.
     pub(crate) switch_anchors: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
+    /// See [`super::LiftOutcome::return_sites`].
+    pub(crate) return_sites: Vec<super::ReturnSite>,
     pub(crate) per_address_ccs:
         &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     /// Caller classifications for user-op names, from
@@ -170,6 +172,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             builder,
             cfg,
             unresolved_branches: Vec::new(),
+            return_sites: Vec::new(),
             switch_anchors: Vec::new(),
             per_address_ccs,
             call_other_overrides,
