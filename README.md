@@ -167,7 +167,8 @@ drag and by the arrow keys and zooms with ctrl+wheel or `+` / `-`, `f` fits the
 graph to the window and `0` is 100%. The neighborhood knobs open uncapped, `0`
 meaning no limit on depth, hub cap or node count. `Cfg.to_dot(style=)` matches
 `Cfg.to_html(style=)`, and `lifter=` on the four renderers draws through a
-handle other than the one that built the graph.
+handle other than the one that built the graph. `Function.to_text()` prints the IR as canonical
+text, one line per node, so two runs diff line by line.
 
 **Run faster.** The wins a script feels: `pcode_at` decodes through one cached
 engine instead of cloning the whole `Sleigh` per call, 0.8 ms against 30.6 ms;
