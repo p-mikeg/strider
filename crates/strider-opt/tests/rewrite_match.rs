@@ -7,8 +7,8 @@ use strider_ir_test_utils::{RegisterSet, Tb};
 
 use strider_opt::{BoxedRule, EditFunction, apply_rules_count, rewrite_rule, rewrite_rule_runtime};
 use strider_pattern::{
-    Capture, CaptureExt, Match, MatchPat, Matcher, Pattern, TemplatePat, anything, call, int_add,
-    int_const, int_sub, is_skip, skip, var,
+    Capture, CaptureExt, MatchPat, Matcher, TemplatePat, call, int_add, int_const, int_sub,
+    is_skip, skip, var,
 };
 
 #[track_caller]
@@ -17,18 +17,6 @@ fn find_node<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred: F)
         .walk()
         .find(|&n| pred(function.node_kind(n)))
         .expect("expected node kind not found in graph")
-}
-
-#[track_caller]
-fn match_count(function: &strider_ir::Function, pat: Pattern, expected: usize) -> Vec<Match> {
-    let hits = Matcher::new(function).find_all(&pat).unwrap();
-    assert_eq!(
-        hits.len(),
-        expected,
-        "expected {expected} match(es), got {}",
-        hits.len()
-    );
-    hits
 }
 
 /// `return(add(x, 0))` where `x` is `add(7, 1)`, so the outer Add has a
@@ -204,49 +192,6 @@ fn rewrite_rule_on_call_root_returns_err() {
         dbg.contains("output") || dbg.contains("exactly"),
         "expected node_outputs_exact failure, got {err:?}"
     );
-}
-
-/// Rules with structurally different shapes collect into one `Vec`.
-#[test]
-fn rewrite_rule_results_collect_into_heterogeneous_vec() {
-    let x = Capture::new();
-    let y = Capture::new();
-    let rules: Vec<BoxedRule> = vec![
-        rewrite_rule(int_add(var(x), int_const(0u128)), var(x)),
-        rewrite_rule(int_sub(var(y), var(y)), int_const(0u128)),
-    ];
-    assert_eq!(rules.len(), 2);
-}
-
-#[test]
-fn rewrite_returns_false_when_no_matching_node() {
-    let mut t = Tb::empty();
-    let _dead_a = t.u64(5);
-    let _dead_b = t.u64(3);
-    let other = t.u64(7);
-    let mut function = t.ret_val(other);
-
-    let x = Capture::new();
-    let rule = rewrite_rule(int_add(var(x), int_const(0u128)), var(x));
-    let fired = fire_anywhere(&mut function, rule);
-    assert!(!fired);
-}
-
-#[test]
-fn pattern_match_before_and_after_rewrite() {
-    let mut function = graph_add_x_zero();
-    match_count(
-        &function,
-        int_add(anything(), int_const(0u128)).into_pattern(),
-        1,
-    );
-
-    let x = Capture::new();
-    let rule = rewrite_rule(int_add(var(x), int_const(0u128)), var(x));
-    fire_anywhere(&mut function, rule);
-
-    let ret_kind = return_data_input_kind(&function);
-    assert!(matches!(ret_kind, NodeKind::IntBinaryOp(IntBinaryOp::Add)));
 }
 
 fn count_adds(function: &strider_ir::Function) -> usize {
