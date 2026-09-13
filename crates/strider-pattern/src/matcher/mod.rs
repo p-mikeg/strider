@@ -29,8 +29,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::NodeId as PatNodeId;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{
-    CtrlKey, Function, Graph, IRViewer, IRWalker, control_dominators, control_edge_dominators,
-    dominates,
+    CtrlKey, DominatorTree, Function, Graph, IRViewer, IRWalker, control_dominator_tree,
+    control_edge_dominator_tree,
 };
 
 use crate::bindings::{Binding, Bindings};
@@ -915,9 +915,9 @@ impl Kleene {
 /// dominator trees for the whole `find_joined_constrained` call.
 struct ConstraintEval<'f> {
     function: &'f Function,
-    doms: OnceCell<petgraph::algo::dominators::Dominators<NodeId>>,
+    doms: OnceCell<DominatorTree<NodeId>>,
     /// Edge-split control subgraph.
-    split_doms: OnceCell<petgraph::algo::dominators::Dominators<CtrlKey>>,
+    split_doms: OnceCell<DominatorTree<CtrlKey>>,
 }
 
 impl<'f> ConstraintEval<'f> {
@@ -930,17 +930,17 @@ impl<'f> ConstraintEval<'f> {
     }
 
     // `split_doms` subsumes this tree, so it is redundant for correctness and
-    // kept on measured grounds alone: `Edge` vertices interleave, making a
-    // node-dominance chain in the split tree longer to walk, and `Dominates` is
-    // re-evaluated per tuple. `benches/matcher.rs`'s `join_dominates_only`
-    // measures it.
-    fn doms(&self) -> &petgraph::algo::dominators::Dominators<NodeId> {
-        self.doms.get_or_init(|| control_dominators(self.function))
+    // kept on measured grounds alone: a node-only join skips building the split
+    // tree, which has a vertex per control edge as well. `benches/matcher.rs`'s
+    // `join_dominates_only` measures it.
+    fn doms(&self) -> &DominatorTree<NodeId> {
+        self.doms
+            .get_or_init(|| control_dominator_tree(self.function))
     }
 
-    fn split_doms(&self) -> &petgraph::algo::dominators::Dominators<CtrlKey> {
+    fn split_doms(&self) -> &DominatorTree<CtrlKey> {
         self.split_doms
-            .get_or_init(|| control_edge_dominators(self.function))
+            .get_or_init(|| control_edge_dominator_tree(self.function))
     }
 
     /// Resolve a capture to a [`CtrlKey`] by what it bound:
@@ -1077,10 +1077,8 @@ impl<'f> ConstraintEval<'f> {
                 // in either tree, and saying "does not dominate" there would
                 // hand `Not` the rows it was asked to exclude.
                 match (key_a, key_b) {
-                    (CtrlKey::Node(na), CtrlKey::Node(nb)) => {
-                        strider_ir::dominance_verdict(self.doms(), na, nb)
-                    }
-                    (ka, kb) => strider_ir::dominance_verdict(self.split_doms(), ka, kb),
+                    (CtrlKey::Node(na), CtrlKey::Node(nb)) => self.doms().dominance_verdict(na, nb),
+                    (ka, kb) => self.split_doms().dominance_verdict(ka, kb),
                 }
             }
             // `passes` unwinds these, so a leaf walk never sees one.
@@ -1141,7 +1139,8 @@ impl<'f> ConstraintEval<'f> {
                     // Edge against EDGE. Do NOT rewrite the right operand
                     // as `producer(*c)`: that is the `If`, which PRECEDES
                     // the edge, so the direct `c == edge_v` case breaks.
-                    dominates(self.split_doms(), CtrlKey::Edge(edge_v), CtrlKey::Edge(*c))
+                    self.split_doms()
+                        .dominates(CtrlKey::Edge(edge_v), CtrlKey::Edge(*c))
                 })
                 // Region control input `i` maps to phi data input `i + 1`.
                 .filter_map(move |(i, _)| phi_inputs.get(i + 1).copied()),

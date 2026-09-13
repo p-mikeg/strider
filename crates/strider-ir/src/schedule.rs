@@ -7,74 +7,11 @@
 
 use core::ops::ControlFlow;
 
-use cranelift_entity::{EntityRef, SecondaryMap};
-
+use crate::DominatorTree;
 use crate::function::Function;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, ValueKind};
 use crate::walk::{NodeIdSet, PostOrder, WalkPhase};
-
-/// The control dominator tree, numbered by pre/post interval so
-/// [`Self::dominates`] is O(1).
-pub(crate) struct DomTree {
-    /// `(0, 0)` for a node outside the tree.
-    span: SecondaryMap<NodeId, (u32, u32)>,
-    preorder: Vec<NodeId>,
-}
-
-impl DomTree {
-    /// Over the control nodes reachable from `function`'s entry; `live` is the
-    /// universe the tree's children are read from.
-    pub(crate) fn compute(function: &Function, live: &NodeIdSet) -> Self {
-        let doms = crate::control_flow_view::control_dominators(function);
-        let mut edges: Vec<(NodeId, NodeId)> = live
-            .iter()
-            .filter_map(|n| doms.immediate_dominator(n).map(|d| (d, n)))
-            .collect();
-        edges.sort_unstable_by_key(|&(d, _)| d.index());
-        let mut span: SecondaryMap<NodeId, (u32, u32)> = SecondaryMap::new();
-        let mut preorder = Vec::new();
-        let mut clock = 1u32;
-        let mut stack = vec![(function.entry(), false)];
-        while let Some((node, done)) = stack.pop() {
-            if done {
-                span[node].1 = clock;
-            } else {
-                span[node].0 = clock;
-                preorder.push(node);
-                stack.push((node, true));
-                let lo = edges.partition_point(|&(d, _)| d.index() < node.index());
-                stack.extend(
-                    edges[lo..]
-                        .iter()
-                        .take_while(|&&(d, _)| d == node)
-                        .map(|&(_, child)| (child, false)),
-                );
-            }
-            clock += 1;
-        }
-        Self { span, preorder }
-    }
-
-    pub(crate) fn root(&self) -> NodeId {
-        self.preorder[0]
-    }
-
-    /// Control nodes in dominator-tree pre-order, so a node follows every node
-    /// that dominates it.
-    pub(crate) fn preorder(&self) -> &[NodeId] {
-        &self.preorder
-    }
-
-    pub(crate) fn contains(&self, node: NodeId) -> bool {
-        self.span[node].0 != 0
-    }
-
-    pub(crate) fn dominates(&self, a: NodeId, b: NodeId) -> bool {
-        let ((a_pre, a_post), (b_pre, b_post)) = (self.span[a], self.span[b]);
-        a_pre != 0 && b_pre != 0 && a_pre <= b_pre && b_post <= a_post
-    }
-}
 
 /// A node with a control input or output, or a phi: its position is fixed by
 /// the control flow rather than chosen from its inputs.
@@ -96,13 +33,13 @@ pub(crate) struct ScheduleContext<'a> {
     /// its data producers and its phis', transitively, except a phi input on an
     /// edge from a node outside the tree, which is never selected.
     pub(crate) live: NodeIdSet,
-    pub(crate) domtree: DomTree,
+    pub(crate) domtree: DominatorTree<NodeId>,
 }
 
 impl<'a> ScheduleContext<'a> {
     /// Over `reachable`, the nodes a walk from the entry reaches.
     pub(crate) fn new(function: &'a Function, reachable: &NodeIdSet) -> Self {
-        let domtree = DomTree::compute(function, reachable);
+        let domtree = crate::control_dominator_tree(function);
         let live = cfg_live(function.graph(), reachable, &domtree);
         Self {
             function,
@@ -140,7 +77,7 @@ fn region_phis(graph: &Graph, cfg_node: NodeId) -> impl Iterator<Item = NodeId> 
 /// [`ScheduleContext::live`]: seeded with every tree node and its reachable
 /// phis, closed over data inputs, a phi's input `i` followed only when its
 /// region's control input `i - 1` comes from a tree node.
-fn cfg_live(graph: &Graph, reachable: &NodeIdSet, tree: &DomTree) -> NodeIdSet {
+fn cfg_live(graph: &Graph, reachable: &NodeIdSet, tree: &DominatorTree<NodeId>) -> NodeIdSet {
     let mut live = NodeIdSet::new();
     let mut stack: Vec<NodeId> = Vec::new();
     for &cfg_node in tree.preorder() {
