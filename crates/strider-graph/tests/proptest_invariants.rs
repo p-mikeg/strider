@@ -530,6 +530,23 @@ fn remove_node_input_compacts_indices() {
     assert_use_list_consistent(&g);
 }
 
+/// The removed use's old slot now holds the next input's use, so the stale id
+/// would relink into `x`'s use-list with no node owning it.
+#[test]
+#[should_panic(expected = "stale")]
+fn update_input_rejects_a_removed_use() {
+    let mut g = TestGraph::new();
+    let a = const_node(&mut g, 1);
+    let b = const_node(&mut g, 2);
+    let x = const_node(&mut g, 3);
+    let region = region_node(&mut g);
+    g.add_node_input(region, a);
+    g.add_node_input(region, b);
+    let stale = g.node_input_id_at(region, 0).unwrap();
+    assert!(g.remove_node_input(region, 0));
+    g.update_input(stale, x);
+}
+
 #[test]
 fn remove_node_inputs_batch_removes_many_in_one_pass() {
     let mut g = TestGraph::new();
