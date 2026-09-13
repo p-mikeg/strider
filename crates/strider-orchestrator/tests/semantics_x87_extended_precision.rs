@@ -9,11 +9,8 @@
 mod common;
 
 use common::returned;
-use rsleigh::Sleigh;
-use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{Function, IRViewer, ValueType};
-use strider_target::{CallingConvention, SleighArch};
 
 const BASE: u64 = 0x1000;
 
@@ -56,20 +53,11 @@ fn image() -> Vec<u8> {
 }
 
 fn analyze(offset: u64) -> (Function, strider_target::BuiltCallingConvention) {
-    let arch = SleighArch::x86();
     let bytes = image();
-    let sleigh = Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes.clone(), BASE),
-    )
-    .expect("sleigh");
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
-        Box::new(strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes));
-    let mut strider = strider_orchestrator::Strider::new(arch, sleigh, Some(rom)).expect("strider");
-    let cc = CallingConvention::x86_cdecl()
-        .build(strider.sleigh_regs())
-        .expect("cdecl cc");
+    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
+        strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes.clone()),
+    );
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X86, bytes, BASE, Some(rom));
     let function = strider
         .analyze(
             BASE + offset,

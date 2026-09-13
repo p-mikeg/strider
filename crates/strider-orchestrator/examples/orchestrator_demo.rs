@@ -12,8 +12,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let arch = strider_target::SleighArch::x86();
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem_reader)?;
-    let mut strider = strider_orchestrator::Lifter::new(arch, sleigh)?;
-    let cc = strider_target::CallingConvention::x86_cdecl().build(strider.sleigh_regs())?;
+    let mut lifter = strider_orchestrator::Lifter::new(arch, sleigh)?;
+    let cc = strider_target::CallingConvention::x86_cdecl().build(lifter.sleigh_regs())?;
 
     let cfg_options = strider_cfg::CfgOptions {
         allow_code_before_start_addr: true,
@@ -25,22 +25,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or_else(|| format!("'{symbol}' symbol not found in binary {binary_path}"))?
         .address();
 
-    let cfg = strider.build_cfg(
+    let cfg = lifter.build_cfg(
         strider_cfg::MachineInsnAddr::from(addr),
         &cfg_options,
         &rustc_hash::FxHashMap::default(),
     )?;
 
-    let dot = dot::GraphDot::new(cfg.dot_dumper(strider.sleigh()), dot::DotStyle::dark_cfg());
+    let dot = dot::GraphDot::new(cfg.dot_dumper(lifter.sleigh()), dot::DotStyle::dark_cfg());
     dot.dump_as_html("cfg.html")?;
     dot.dump_as_dot("cfg.dot")?;
 
-    let mut function = strider.build_ir(&cfg, cc)?.function;
+    let mut function = lifter.build_ir(&cfg, cc)?.function;
 
-    let dot = dot::GraphDot::new(
-        function.dot_dumper(strider.sleigh())?,
-        dot::DotStyle::dark(),
-    );
+    let dot = dot::GraphDot::new(function.dot_dumper(lifter.sleigh())?, dot::DotStyle::dark());
     println!("dumping IR graph...");
     std::fs::write("graph.html", dot.as_html_from_dot()?)?;
     dot.dump_as_dot("graph.dot")?;
@@ -52,10 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     println!("dumping opt IR graph...");
 
-    let dot = dot::GraphDot::new(
-        function.dot_dumper(strider.sleigh())?,
-        dot::DotStyle::dark(),
-    );
+    let dot = dot::GraphDot::new(function.dot_dumper(lifter.sleigh())?, dot::DotStyle::dark());
     std::fs::write("graph-opt.html", dot.as_html_from_dot()?)?;
     dot.dump_as_dot("graph-opt.dot")?;
 

@@ -5,7 +5,6 @@
 //! resulting `Function` to the assertion.
 
 #![allow(
-    clippy::todo,
     clippy::crate_in_macro_def,
     dead_code  // category test files won't use every helper
 )]
@@ -153,32 +152,31 @@ pub(crate) fn driver_for_reader<R: rsleigh::MemReader>(
     (driver, cc)
 }
 
-pub(crate) fn strider_x86_64<R: rsleigh::MemReader>(
-    reader: R,
+/// A [`strider_orchestrator::Strider`] over `bytes` mapped at `base`, with
+/// `arch`'s calling convention built against the `Sleigh` it owns.
+pub(crate) fn strider_over_bytes(
+    arch: Arch,
+    bytes: Vec<u8>,
+    base: u64,
+    rom: Option<Box<dyn strider_orchestrator::opt::ReadOnlyMemory>>,
 ) -> (
-    strider_orchestrator::Lifter<R>,
+    strider_orchestrator::Strider<rsleigh::mem_readers::BufMemReader<Vec<u8>>>,
     strider_target::BuiltCallingConvention,
 ) {
-    driver_for_reader(Arch::X64, reader)
-}
-
-/// AAPCS64, the CC used by synthetic fixtures that need a link register.
-pub(crate) fn strider_aarch64<R: rsleigh::MemReader>(
-    reader: R,
-) -> (
-    strider_orchestrator::Lifter<R>,
-    strider_target::BuiltCallingConvention,
-) {
-    driver_for_reader(Arch::Aarch64, reader)
-}
-
-pub(crate) fn strider_mips32le<R: rsleigh::MemReader>(
-    reader: R,
-) -> (
-    strider_orchestrator::Lifter<R>,
-    strider_target::BuiltCallingConvention,
-) {
-    driver_for_reader(Arch::Mips32le, reader)
+    let sleigh_arch = arch.sleigh();
+    let sleigh = rsleigh::Sleigh::new(
+        sleigh_arch.sla_spec(),
+        sleigh_arch.pspec(),
+        rsleigh::mem_readers::BufMemReader::new(bytes, base),
+    )
+    .expect("create sleigh");
+    let cc = arch
+        .cc()
+        .build(&sleigh.regs().expect("sleigh regs"))
+        .expect("build cc against sleigh regs");
+    let strider =
+        strider_orchestrator::Strider::new(sleigh_arch, sleigh, rom).expect("Strider::new");
+    (strider, cc)
 }
 
 /// Build a synthetic x86-64 binary: `jmp rax` (2 bytes at `0x1000`)
@@ -221,7 +219,7 @@ pub(crate) fn analyze_with_known_targets(
     use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 
     let reader = rsleigh::mem_readers::BufMemReader::new(bytes.to_vec(), base);
-    let (mut driver, cc) = strider_x86_64(reader);
+    let (mut driver, cc) = driver_for_reader(Arch::X64, reader);
 
     let mut known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known_targets.insert(

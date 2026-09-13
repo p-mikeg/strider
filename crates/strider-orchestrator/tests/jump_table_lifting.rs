@@ -130,7 +130,7 @@ fn switch_with_const_index_collapses_through_default_pipeline() {
     let branch_indirect_addr = 0x1007u64; // jmp rax sits right after the mov
 
     let reader = BufMemReader::new(bytes, base);
-    let (mut strider, cc) = common::strider_x86_64(reader);
+    let (mut strider, cc) = common::driver_for_reader(common::Arch::X64, reader);
     let mut known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known_targets.insert(
         PcodeInsnAddr {

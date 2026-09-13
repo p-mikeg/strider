@@ -12,10 +12,11 @@
 //! its region's start, a single site clashes before it ever splits. Only a
 //! later site can arrive after the split has happened.
 
-use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{CfgOptions, PcodeInsnAddr, ResolvedTarget, ResolvedTargets};
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+
+mod common;
 
 const BASE: u64 = 0x1000;
 /// Decoded as ARM, split by `INTERIOR`, then reached as Thumb from the third
@@ -54,18 +55,6 @@ fn arm(addr: u64) -> ResolvedTarget {
 
 #[test]
 fn a_split_carries_the_isa_mode_to_the_first_half() {
-    let arch = strider_target::SleighArch::arm();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes(), BASE),
-    )
-    .expect("sleigh");
-    let regs = sleigh.regs().expect("regs");
-    let cc = strider_target::CallingConvention::arm_aapcs()
-        .build(&regs)
-        .expect("cc");
-
     let mut known = rustc_hash::FxHashMap::default();
     // Decode SPLIT_REGION as ARM, and reach the site that splits it.
     known.insert(
@@ -93,7 +82,7 @@ fn a_split_carries_the_isa_mode_to_the_first_half() {
         ..LiftOptions::default()
     };
 
-    let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::Arm, bytes(), BASE, None);
     // The seeds alone, before the resolve loop drops the clashing arm and
     // rebuilds: this is the build the clash is raised in, so it is the one the
     // split has to be visible in.

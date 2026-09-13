@@ -10,11 +10,9 @@
 mod common;
 
 use common::{returned, words_image};
-use rsleigh::Sleigh;
-use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{Function, IRViewer, IntBinaryOp, ValueType};
-use strider_target::{CallingConvention, Endianness, SleighArch};
+use strider_target::Endianness;
 
 const BASE: u64 = 0x1000;
 
@@ -74,16 +72,11 @@ impl Vns {
 
 fn analyze(endian: Endianness, offset: u64) -> (Function, Vns) {
     let arch = match endian {
-        Endianness::Big => SleighArch::mipsbe64(),
-        Endianness::Little => SleighArch::mipsle64(),
+        Endianness::Big => common::Arch::Mips64be,
+        Endianness::Little => common::Arch::Mips64le,
     };
-    let sleigh = Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(words_image(WORDS, endian), BASE),
-    )
-    .expect("sleigh");
-    let mut strider = strider_orchestrator::Strider::new(arch, sleigh, None).expect("strider");
+    let (mut strider, cc) =
+        common::strider_over_bytes(arch, words_image(WORDS, endian), BASE, None);
     let vns = Vns(NAMED
         .iter()
         .map(|&n| {
@@ -94,9 +87,6 @@ fn analyze(endian: Endianness, offset: u64) -> (Function, Vns) {
             (n, vn)
         })
         .collect());
-    let cc = CallingConvention::mips_n64()
-        .build(strider.sleigh_regs())
-        .expect("n64 cc");
     let function = strider
         .analyze(
             BASE + offset,
