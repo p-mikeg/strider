@@ -56,8 +56,26 @@ def test_float_binary_ops_return_pat(ctor):
     assert isinstance(ctor(var(a), var(b)), Pat)
 
 
-@pytest.mark.parametrize("ctor", [float_neg, float_abs, float_sqrt, float_floor])
-def test_float_unary_ops_return_pat(ctor):
+@pytest.mark.parametrize(
+    "ctor",
+    [
+        float_neg,
+        float_abs,
+        float_sqrt,
+        float_floor,
+        int_to_float,
+        float_to_int,
+        float_to_float,
+        int_bits_to_float,
+        float_bits_to_int,
+        int_truncate,
+        int_popcount,
+        int_lzcount,
+        int_neg,
+        int_not,
+    ],
+)
+def test_unary_ctors_return_pat(ctor):
     assert isinstance(ctor(var(Capture())), Pat)
 
 
@@ -71,21 +89,6 @@ def test_float_is_nan_returns_pat():
 @pytest.mark.parametrize("ctor", [float_eq, float_ne, float_lt, float_le])
 def test_float_cmp_returns_pat(ctor):
     assert isinstance(ctor(var(Capture()), var(Capture())), Pat)
-
-
-@pytest.mark.parametrize(
-    "ctor",
-    [int_to_float, float_to_int, float_to_float, int_bits_to_float, float_bits_to_int],
-)
-def test_conversion_ops_return_pat(ctor):
-    assert isinstance(ctor(var(Capture())), Pat)
-
-
-@pytest.mark.parametrize(
-    "ctor", [int_truncate, int_popcount, int_lzcount]
-)
-def test_cast_ops_return_pat(ctor):
-    assert isinstance(ctor(var(Capture())), Pat)
 
 
 def test_zero_and_sign_extend_return_pat():
@@ -102,11 +105,6 @@ def test_extend_with_invalid_op_raises():
     with pytest.raises(strider.StriderError):
         # Deliberate: not an ExtendOp name.
         int_extend("nope", var(Capture()))  # type: ignore[arg-type]
-
-
-@pytest.mark.parametrize("ctor", [int_neg, int_not])
-def test_int_unary_ops_return_pat(ctor):
-    assert isinstance(ctor(var(Capture())), Pat)
 
 
 def test_bool_not_returns_pat():
