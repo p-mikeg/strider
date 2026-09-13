@@ -376,8 +376,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// # Panics
     ///
     /// If `input_id` is stale: removed from its node by
-    /// [`Self::remove_node_input`], [`Self::remove_node_inputs_batch`] or
-    /// [`Self::detach_node_inputs`].
+    /// [`Self::remove_node_inputs_batch`] or [`Self::detach_node_inputs`].
     pub fn update_input(&mut self, input_id: UseId, value_id: ValueId) {
         let UseData {
             node_id,
