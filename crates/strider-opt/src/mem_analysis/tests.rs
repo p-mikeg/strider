@@ -419,9 +419,12 @@ mod alias_tests {
         let store_size = store_value_byte_size(f, f.store_data(store));
         let store_class =
             crate::mem_analysis::classify_addr(f, f.store_addr(store), &no_allocators());
-        let mut opt_options = crate::OptOptions::default();
-        opt_options.assumptions.distinct_sp_bases_disjoint = distinct_sp_bases_disjoint;
-        let options = MemOptions::incoming_args(mode, &opt_options);
+        let assumptions = crate::AssumptionOptions {
+            stack_global_disjoint: mode,
+            distinct_sp_bases_disjoint,
+            ..crate::AssumptionOptions::default()
+        };
+        let options = MemOptions::incoming_args(&assumptions);
         // The real width the store's own address carries. Passing `None` would
         // model IR the lifter cannot produce, and the wrap guard would then
         // never be exercised by any of these cases.
