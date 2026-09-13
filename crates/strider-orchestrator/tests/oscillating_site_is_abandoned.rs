@@ -7,8 +7,8 @@
 //!
 //! Oscillation needs a classifier that contradicts itself, which no real
 //! binary is known to produce here, so the pass that answers is a double. It
-//! takes [`strider_opt::IndirectBranchClassify`]'s name, which is what keeps
-//! `Strider::analyze` from appending the real one alongside it.
+//! runs after the real [`strider_opt::IndirectBranchClassify`], whose presence
+//! keeps `Strider::analyze` from appending another, and overwrites its answers.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -62,10 +62,6 @@ impl PostOptimizer for FlappingClassify {
         }
         Ok(())
     }
-
-    fn name(&self) -> &'static str {
-        PostOptimizer::name(&strider_opt::IndirectBranchClassify)
-    }
 }
 
 #[test]
@@ -77,6 +73,7 @@ fn a_site_that_narrows_twice_is_abandoned_and_reported() {
 
     let round = Arc::new(AtomicUsize::new(0));
     let mut pipeline = default_pipeline();
+    pipeline.add_post_pass(strider_opt::IndirectBranchClassify);
     pipeline.add_post_pass(FlappingClassify {
         round: Arc::clone(&round),
     });
