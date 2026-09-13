@@ -2,6 +2,7 @@ pub(crate) mod dot;
 mod edit;
 mod func;
 mod side_tables;
+mod text;
 pub use side_tables::{MemDecomp, MemoryId, SideTables};
 
 pub use edit::EditFunction;
