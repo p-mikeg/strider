@@ -63,11 +63,14 @@ back to `I1` on the way out.
 The REGISTER space is addressable, and a sla uses it when an instruction field
 picks the register (ARM `vld1.N {dX[i]}`). When the address resolves against the
 declared register file the access becomes an ordinary read or write of that
-register, not a memory operation. When it does not resolve, the STORE lands in
-the REGISTER space AND every tracked register is re-read out of it, so no
-register keeps a value the write may have destroyed and the optimizer cannot
-forward one across it. An unresolved LOAD reads the space, so two accesses at
-the same address forward to each other instead of each yielding a fresh unknown.
+register, not a memory operation. When it does not resolve, every tracked
+register's current value is first stored into its slot, since a named write
+never reaches the space. An unresolved STORE then lands in the space and every
+tracked register is re-read out of it: a register the write misses reads back
+its own value, and one it may hit reads a value that depends on the store, so
+the optimizer forwards the old value only where it proves the address misses
+that slot. An unresolved LOAD reads the space, answering a register's current
+value when the address names one.
 
 ## SSA construction
 
