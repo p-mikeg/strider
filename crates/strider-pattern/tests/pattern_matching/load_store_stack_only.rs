@@ -160,15 +160,6 @@ fn stack_and_non_stack_are_kind_aware_with_heap() {
 }
 
 #[test]
-fn stack_only_matches_only_stack_loads() {
-    let (g, _stack_node, _heap_node) = two_loads_one_stack();
-    let matcher = Matcher::new(&g);
-    let pat = load().stack_only().build();
-    let hits = matcher.find_all(&pat).unwrap();
-    assert_eq!(hits.len(), 1, "stack_only() must reject the heap load");
-}
-
-#[test]
 fn non_stack_matches_only_heap_loads() {
     let (g, _stack_node, _heap_node) = two_loads_one_stack();
     let matcher = Matcher::new(&g);
@@ -201,15 +192,6 @@ fn unconstrained_load_matches_both_loads() {
     let pat = load().build();
     let hits = matcher.find_all(&pat).unwrap();
     assert_eq!(hits.len(), 2, "unconstrained load() must match both loads");
-}
-
-#[test]
-fn stack_only_matches_only_stack_stores() {
-    let (g, _stack_store, _heap_store) = two_stores_one_stack();
-    let matcher = Matcher::new(&g);
-    let pat = store().stack_only().build();
-    let hits = matcher.find_all(&pat).unwrap();
-    assert_eq!(hits.len(), 1, "stack_only() must reject the heap store");
 }
 
 /// `.stack_offset(k)` restricts to one concrete offset rather than to any

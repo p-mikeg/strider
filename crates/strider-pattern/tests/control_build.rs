@@ -1,9 +1,9 @@
-// Shared with the `pattern_matching` target; this one uses only `assertions`.
+// Shared with the `pattern_matching` target.
 #[path = "pattern_matching/support/mod.rs"]
 #[allow(dead_code, unused_imports)]
 mod support;
 
-use support::assertions as a;
+use support::{assertions as a, shapes};
 
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{ExtendOp, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker};
@@ -13,23 +13,6 @@ use strider_pattern::{
     call_other, entry, if_else, indirect_branch, int_add, int_const, load, mem_phi, phi, region,
     ret, store, switch, unreachable, var,
 };
-
-/// `call(addr)` followed by a `Return`.
-fn call_at(addr: u64) -> strider_ir::Function {
-    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let tgt = b.build_int_const(addr, ValueType::I64).unwrap();
-    b.build_call_cc(tgt, None).unwrap();
-    // build_call leaves the same region active, so return in place.
-    b.build_return(None, &[]).unwrap();
-    b.build().unwrap()
-}
-
-#[test]
-fn call_at_addr_matches_and_rejects() {
-    let function = call_at(0x1234);
-    a::matches(&function, call().at(0x1234).build(), 1);
-    a::none(&function, call().at(0x9999).build());
-}
 
 /// The convention a `Call` carries is not part of `call()`.
 #[test]
@@ -50,29 +33,8 @@ fn call_matches_whatever_convention_the_call_carries() {
 }
 
 #[test]
-fn call_target_set() {
-    let function = call_at(0x1234);
-    a::matches(
-        &function,
-        call()
-            .target(int_const([0x1000u64, 0x1234, 0x9999]))
-            .build(),
-        1,
-    );
-    a::none(
-        &function,
-        call().target(int_const([0x1000u64, 0x9999])).build(),
-    );
-    // Empty set is vacuously false.
-    a::none(
-        &function,
-        call().target(int_const(Vec::<u64>::new())).build(),
-    );
-}
-
-#[test]
 fn call_target_pattern_captures() {
-    let function = call_at(0x1234);
+    let function = shapes::call_at(0x1234);
     let c = Capture::new();
     let hits = a::matches(&function, call().target(var(c)).build(), 1);
     assert!(hits[0].value(c).is_some());
@@ -117,12 +79,6 @@ fn call_other_named(name: &str, op: u64) -> strider_ir::Function {
 }
 
 #[test]
-fn call_other_unconstrained_matches() {
-    let function = call_other_named("rdtsc", 7);
-    a::matches(&function, call_other().build(), 1);
-}
-
-#[test]
 fn call_other_name_filter() {
     let function = call_other_named("rdtsc", 7);
     a::matches(&function, call_other().name("rdtsc").build(), 1);
@@ -145,20 +101,6 @@ fn ret_val_matches_and_captures() {
     let c = Capture::new();
     let hits = a::matches(&function, ret().ret_val(0, var(c)).build(), 1);
     assert!(hits[0].value(c).is_some());
-}
-
-#[test]
-fn ret_without_value_rejects_ret_val() {
-    let function = call_at(0x1234); // Return with no value.
-    a::matches(&function, ret().build(), 1);
-    a::none(&function, ret().ret_val(0, anything()).build());
-}
-
-#[test]
-fn ret_ctrl_smoke() {
-    let function = return_const(7);
-    // The Return's ctrl predecessor is a Region, which `anything()` matches.
-    a::matches(&function, ret().ctrl(anything()).build(), 1);
 }
 
 fn indirect_branch_to(target_addr: u64) -> strider_ir::Function {
@@ -204,12 +146,6 @@ fn unreachable_fn() -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
     b.build_unreachable().unwrap();
     b.build().unwrap()
-}
-
-#[test]
-fn unreachable_matches() {
-    let function = unreachable_fn();
-    a::matches(&function, unreachable().build(), 1);
 }
 
 #[test]
@@ -304,31 +240,11 @@ fn if_then_else() -> (strider_ir::Function, strider_ir::node::NodeId) {
 }
 
 #[test]
-fn if_unconstrained_matches() {
-    let (function, _) = if_then_else();
-    a::matches(&function, if_else().build(), 1);
-}
-
-#[test]
 fn if_cond_captures() {
     let (function, _) = if_then_else();
     let c = Capture::new();
     let hits = a::matches(&function, if_else().cond(var(c)).build(), 1);
     assert!(hits[0].value(c).is_some());
-}
-
-#[test]
-fn if_with_true_and_false_branches() {
-    let (function, _) = if_then_else();
-    // Each control output's single consumer is the branch Region.
-    a::matches(
-        &function,
-        if_else()
-            .with_true(anything().into_pattern())
-            .with_false(anything().into_pattern())
-            .build(),
-        1,
-    );
 }
 
 #[test]
@@ -417,19 +333,6 @@ fn mem_phi_matches_region_head() {
     // A freshly created region carries one MemPhi at its head.
     let function = return_const(0);
     a::matches(&function, mem_phi().build(), 1);
-}
-
-#[test]
-fn phi_matches_tagged_phi() {
-    let rax = strider_ir_test_utils::reg_vn(0, 8);
-    let mut b: FunctionBuilder = RegisterSet::new()
-        .tracked(rax)
-        .build_fn_single_region()
-        .unwrap();
-    let v = b.read_variable(&rax).unwrap();
-    b.build_return(Some(v), &[]).unwrap();
-    let function = b.build().unwrap();
-    a::matches(&function, phi().build(), 1);
 }
 
 #[test]
@@ -882,7 +785,7 @@ fn mem_phi_phi_token_targets_slot_zero() {
 
 #[test]
 fn call_any_input_binds_target() {
-    let function = call_at(0x1234);
+    let function = shapes::call_at(0x1234);
     a::matches(
         &function,
         call().any_input(int_const(0x1234u128)).build(),

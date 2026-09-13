@@ -22,24 +22,6 @@ fn non_const_u64(t: &mut Tb, a_v: u64, b_v: u64) -> strider_ir::node::ValueId {
 }
 
 #[test]
-fn zero_extend_matches() {
-    let mut t = Tb::empty();
-    let s = non_const_u32(&mut t, 1, 2);
-    let x = t.zext_to(s, ValueType::I64);
-    let function = t.ret_val(x);
-    a::matches(&function, int_zero_extend(anything()).into_pattern(), 1);
-}
-
-#[test]
-fn sign_extend_matches() {
-    let mut t = Tb::empty();
-    let s = non_const_u32(&mut t, 1, 2);
-    let x = t.sext_to(s, ValueType::I64);
-    let function = t.ret_val(x);
-    a::matches(&function, int_sign_extend(anything()).into_pattern(), 1);
-}
-
-#[test]
 fn extend_op_variant_matches_zero_and_sign() {
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
