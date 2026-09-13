@@ -139,7 +139,8 @@ prog.analyze("dispatch_value", opts=opts)
 Everything in `AssumptionOptions` is a claim about the code being analyzed that
 strider cannot check, so a wrong one can make the answer wrong. Every field's
 risky value is the positive one; clearing all six is the only configuration
-sound under any input. Two default on:
+sound under any input, and `AssumptionOptions.none()` is that one call, where
+`AssumptionOptions()` is not. Two default on:
 `stack_global_disjoint` assumes no constant address equals `sp + K` at runtime,
 and `assume_incoming_args_survive_calls` assumes a callee leaves an incoming
 stack-argument slot as it found it.
