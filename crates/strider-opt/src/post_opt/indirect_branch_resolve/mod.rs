@@ -15,7 +15,10 @@ use crate::pipeline::{OptCtx, PostOptimizer};
 use crate::{EditFunction, ReadOnlyMemory};
 
 pub(crate) mod eval;
+mod return_target;
 pub(crate) mod table;
+
+pub use return_target::ReturnTargets;
 
 /// Cap on enumerated table slots: a range narrowed only by a KnownBits stride
 /// still spans billions of them.

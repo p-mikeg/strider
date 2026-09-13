@@ -911,8 +911,8 @@ fn process_insn_no_operand_dispatch_routing() {
         ),
         (
             Opcode::Return,
-            true,
-            "Return dispatches to the CC return handler",
+            false,
+            "Return reads its target operand and errors when absent",
         ),
         (
             Opcode::Call,

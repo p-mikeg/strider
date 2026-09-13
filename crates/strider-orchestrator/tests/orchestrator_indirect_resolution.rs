@@ -89,7 +89,9 @@ fn analyze_seats_pre_seeded_known_targets_from_lift_options() {
     // real arms (`known_targets_union.rs`). Here `jmp rax` is unresolvable, so
     // the seed is the only answer the site has.
     let mut bytes = vec![0xff, 0xe0u8]; // jmp rax at 0x1000
-    bytes.extend(std::iter::repeat_n(0xccu8, 16));
+    // `ret`, not `int3`: an `int3` ends in a Sleigh return to address 0, which
+    // is reported as the indirect branch it is.
+    bytes.extend(std::iter::repeat_n(0xc3u8, 16));
 
     let site = strider_cfg::PcodeInsnAddr {
         machine_addr: strider_cfg::MachineInsnAddr::from(0x1000u64),
