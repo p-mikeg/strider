@@ -5,7 +5,8 @@
 //! the pspec defaults and every later one from its `entry_contexts` memo, and
 //! the engine keeps every context commit a prior function or round made. Every
 //! fixture function is analysed on a fresh `Strider`, then twice more on one
-//! shared across the whole image, and the three cfgs and reports must agree.
+//! shared across the whole image, and the three cfgs, reports and optimized
+//! functions' text must agree.
 //!
 //! ```text
 //! cargo test --release -p strider-orchestrator --test analyze_is_a_function_of_its_inputs -- --ignored --nocapture
@@ -67,12 +68,13 @@ fn fingerprint(
         .collect();
     regions.sort_unstable();
     format!(
-        "{regions:#?}\nunresolved {:?}\nunverified {:?}\nisa {:?}\ninterior {:?}\nunmapped {:?}",
+        "{regions:#?}\nunresolved {:?}\nunverified {:?}\nisa {:?}\ninterior {:?}\nunmapped {:?}\n{}",
         result.unresolved_indirect_branches,
         result.unverified_seeded_sites,
         result.isa_mode_conflicts,
         result.interior_branch_targets,
         result.unmapped_branch_targets,
+        result.function.to_text(),
     )
 }
 
