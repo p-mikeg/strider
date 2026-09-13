@@ -35,10 +35,7 @@ impl PostOptimizer for FunctionArgDetect {
         edit.function_mut()
             .side_tables_mut()
             .clear_arg_values_from(first_stack_arg as u32);
-        let alias_cfg = MemAnalyzer::new(MemOptions::incoming_args(
-            opt_ctx.options.assumptions.stack_global_disjoint,
-            &opt_ctx.options,
-        ));
+        let alias_cfg = MemAnalyzer::new(MemOptions::incoming_args(&opt_ctx.options.assumptions));
         // Detection reads `alias_cfg`; only the rewire reads this one (see
         // `mem_chain_is_dirty`).
         let narrow_cfg = MemAnalyzer::new(MemOptions::structural());
