@@ -104,9 +104,6 @@ impl Tb {
     pub fn u32(&mut self, v: u64) -> ValueId {
         self.fb.build_int_const(v, ValueType::I32).unwrap()
     }
-    pub fn u8(&mut self, v: u64) -> ValueId {
-        self.fb.build_int_const(v, ValueType::I8).unwrap()
-    }
     pub fn int_of(&mut self, v: u64, ty: ValueType) -> ValueId {
         self.fb.build_int_const(v, ty).unwrap()
     }
