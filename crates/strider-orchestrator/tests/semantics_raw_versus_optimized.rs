@@ -388,7 +388,7 @@ fn run(f: &Function, stack_vn: rsleigh::Vn) -> Eval<Outcome> {
 /// `Ok(true)` when both graphs ran and agreed, `Ok(false)` when neither could
 /// run, and `Err` on a real divergence.
 fn compare(arch: Arch, case: &str, name: &str) -> Result<bool, String> {
-    let (outcome, _lifter, cc, _sleigh_arch, _rom) = lift_for_pipeline(arch, case, name);
+    let (outcome, cc, _rom) = lift_for_pipeline(arch, case, name);
     let raw = outcome.function;
     let opt = optimized(arch, case, name);
     let stack_vn = cc.stack_vn;
@@ -500,7 +500,7 @@ fn memory_effects_survive_the_pipeline() {
 /// different functions must come out different.
 #[test]
 fn the_comparison_can_tell_two_functions_apart() {
-    let (outcome, _lifter, cc, _arch, _rom) = lift_for_pipeline(Arch::X64, "arithmetic", "add");
+    let (outcome, cc, _rom) = lift_for_pipeline(Arch::X64, "arithmetic", "add");
     let add = run(&outcome.function, cc.stack_vn).expect("add runs");
     let sub = run(&optimized(Arch::X64, "arithmetic", "sub"), cc.stack_vn).expect("sub runs");
     assert_ne!(add.returns, sub.returns);

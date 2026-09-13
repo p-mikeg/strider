@@ -13,14 +13,11 @@ use strider_orchestrator::opt::OptOptions;
 
 mod common;
 
+use common::put_le32;
+
 const BASE: u64 = 0x1000;
 const SITE: u64 = 0x1008;
 const SHARED: u64 = 0x1010;
-
-fn put(bytes: &mut [u8], at: u64, word: u32) {
-    let off = (at - BASE) as usize;
-    bytes[off..off + 4].copy_from_slice(&word.to_le_bytes());
-}
 
 /// ```text
 /// 1000  add r3, pc, #9      ; r3 = 0x1011, the Thumb tag on 0x1010
@@ -32,13 +29,13 @@ fn put(bytes: &mut [u8], at: u64, word: u32) {
 fn bytes() -> Vec<u8> {
     let mut bytes = vec![0u8; 0x40];
     for i in 0..0x10 {
-        put(&mut bytes, BASE + i * 4, 0xe12f_ff1e); // bx lr
+        put_le32(&mut bytes, BASE, BASE + i * 4, 0xe12f_ff1e); // bx lr
     }
-    put(&mut bytes, 0x1000, 0xe28f_3009); // add r3, pc, #9
-    put(&mut bytes, 0x1004, 0xe350_0000); // cmp r0, #0
-    put(&mut bytes, SITE, 0x012f_ff13); // bxeq r3
-    put(&mut bytes, 0x100c, 0xeaff_ffff); // b 0x1010
-    put(&mut bytes, SHARED, 0xe1a0_4770); // mov r4, r0, ror #14
+    put_le32(&mut bytes, BASE, 0x1000, 0xe28f_3009); // add r3, pc, #9
+    put_le32(&mut bytes, BASE, 0x1004, 0xe350_0000); // cmp r0, #0
+    put_le32(&mut bytes, BASE, SITE, 0x012f_ff13); // bxeq r3
+    put_le32(&mut bytes, BASE, 0x100c, 0xeaff_ffff); // b 0x1010
+    put_le32(&mut bytes, BASE, SHARED, 0xe1a0_4770); // mov r4, r0, ror #14
     bytes
 }
 

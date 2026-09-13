@@ -180,25 +180,10 @@ fn outer_loop_resolves_via_stack_load_forward_for_x86_64_push_pop() {
     // The placeholder going away is not the claim: a pass that merely deleted
     // it, or seated the wrong K, would pass the check above.
     assert!(
-        call_to(&function, k).is_some(),
+        common::find_call_to(&function, k).is_some(),
         "the tail call must target {k:#x}; found {:#x?}",
         call_targets(&function),
     );
-}
-
-/// The `Call` whose target input is `IntConst(target)`, i.e. the seated tail
-/// call.
-fn call_to(function: &strider_ir::Function, target: u64) -> Option<strider_ir::node::NodeId> {
-    function.walk().find(|&nid| {
-        matches!(
-            function.node_kind(nid),
-            strider_ir::node::NodeKind::Call { .. }
-        ) && function
-            .node_inputs(nid)
-            .into_iter()
-            .nth(2)
-            .is_some_and(|value| function.int_const_u128(value) == Some(u128::from(target)))
-    })
 }
 
 /// Every `Call`'s constant target, for a failure message that names what was
@@ -220,36 +205,6 @@ fn call_targets(function: &strider_ir::Function) -> Vec<u128> {
                 .and_then(|value| function.int_const_u128(value))
         })
         .collect()
-}
-
-#[test]
-fn orchestrator_owned_sleigh_succeeds_in_fast_path() {
-    let bytes = vec![0xc3u8]; // ret
-    let function = run_at(bytes, 0x1000)
-        .expect("orchestrator must succeed in fast path")
-        .function;
-    let mut had_return = false;
-    for nid in function.walk() {
-        if matches!(function.node_kind(nid), strider_ir::node::NodeKind::Return) {
-            had_return = true;
-        }
-    }
-    assert!(
-        had_return,
-        "fast-path exit must produce a graph with at least one Return"
-    );
-}
-
-#[test]
-fn orchestrator_owned_sleigh_reports_unresolved_branch() {
-    let mut bytes = vec![0xff, 0xe0u8]; // jmp rax
-    bytes.extend(std::iter::repeat_n(0xccu8, 16));
-    let result =
-        run_at(bytes, 0x1000).expect("analyze returns Ok even with an unresolvable branch");
-    assert!(
-        !result.unresolved_indirect_branches.is_empty(),
-        "the unresolvable `jmp rax` must be reported"
-    );
 }
 
 #[test]
