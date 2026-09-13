@@ -109,18 +109,30 @@ const INT_WIDTHS: [usize; 15] = [
     8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 96, 112, 128, 256, 512,
 ];
 
-/// True when `stored`, an `out_ty`-wide constant, equals `v` at `out_ty`, or is
-/// `v` held at one of [`INT_WIDTHS`] and widened to `out_ty` by zero extension
-/// or by sign extension. Every `ValueType` width is a candidate rather than only
-/// the powers of two: an `I40` constant is not reachable through an `I32` or
-/// `I64` probe.
+/// True when `v` is the zero or sign extension of its own low `w` bits, i.e.
+/// a `w`-wide value.
+fn fits_width(v: u128, w: usize) -> bool {
+    if w >= 128 {
+        return true;
+    }
+    let above = v & !low_bits_mask_u128(w);
+    above == 0 || ((v >> (w - 1)) & 1 == 1 && above == !low_bits_mask_u128(w))
+}
+
+/// True when `v` is a value at `out_ty` that `stored`, an `out_ty`-wide
+/// constant, equals, or is `v` held at one of [`INT_WIDTHS`] and widened to
+/// `out_ty` by zero extension or by sign extension. Every `ValueType` width is
+/// a candidate rather than only the powers of two: an `I40` constant is not
+/// reachable through an `I32` or `I64` probe.
 fn value_at_some_width(stored: u128, out_ty: ValueType, v: u128) -> bool {
     let output_width = out_ty.bit_width();
     if output_width == 0 {
         return false;
     }
     let output_mask = out_ty.bit_mask_u128();
-    if (stored & output_mask) == (v & output_mask) {
+    // `v` must itself BE a value at the width it is compared at, or a search
+    // for `0x1234` matches a stored `0x34` on the low bits they share.
+    if (stored & output_mask) == (v & output_mask) && fits_width(v, output_width) {
         return true;
     }
     for &w in &INT_WIDTHS {
@@ -129,19 +141,10 @@ fn value_at_some_width(stored: u128, out_ty: ValueType, v: u128) -> bool {
         }
         let w_mask = low_bits_mask_u128(w);
         let low = stored & w_mask;
-        if low != (v & w_mask) {
+        if low != (v & w_mask) || !fits_width(v, w) {
             continue;
         }
         let sign_bit_w = if w >= 128 { 0 } else { 1u128 << (w - 1) };
-        // `v` must itself BE a `w`-wide value, or "held at `w`" says nothing.
-        // Comparing only the low `w` bits accepts any query sharing them, so a
-        // search for `0x1234` matched a stored `0x34`.
-        let v_above = v & !w_mask;
-        let v_is_w_wide =
-            v_above == 0 || (sign_bit_w != 0 && (low & sign_bit_w) != 0 && v_above == !w_mask);
-        if !v_is_w_wide {
-            continue;
-        }
         let above_w_mask = output_mask & !w_mask;
         let above = stored & above_w_mask;
         if above == 0 {
@@ -239,8 +242,9 @@ impl<T: Into<i64> + Copy> IntConstAnyWidthArg for &[T] {
 }
 
 /// Match `value` however it was width-extended into the constant it is stored
-/// in; given a collection, any member of it. An empty collection matches
-/// nothing.
+/// in; given a collection, any member of it. `value` must fit the width it is
+/// matched at, so `0x1234` never matches `0x34` at `I8`. An empty collection
+/// matches nothing.
 pub fn int_const_any_width<A: IntConstAnyWidthArg>(value: A) -> A::Pat {
     value.into_int_const_any_width()
 }
@@ -468,9 +472,10 @@ impl<T: Into<u128> + Copy> IntConstArg for &[T] {
     }
 }
 
-/// Match an `IntConst` whose stored value, masked to the output width, equals
-/// `value`; given a collection, any member of it; given a [`Capture`], any
-/// integer constant, bound to it. An I256/I512 value too wide for `u128` never
+/// Match an `IntConst` whose stored value equals `value`, both masked to the
+/// output width; given a collection, any member of it; given a [`Capture`], any
+/// integer constant, bound to it. The query is truncated too, so `0x1234`
+/// matches `0x34` at `I8`. An I256/I512 value too wide for `u128` never
 /// matches, and an empty collection matches nothing.
 ///
 /// The collection form stays one pattern vertex carrying a set-membership
