@@ -264,7 +264,7 @@ fn bounded_index(
         .value_type_opt(v)
         .filter(|t| t.is_integer() && function.int_const_u128(v).is_none())?;
     let iv = ranges.range_of(v, site);
-    (index_bound_ok(ty, iv) && !is_width_only(function, v, iv)).then_some((v, iv))
+    (index_bound_ok(ty, iv) && !is_width_only(function, ranges, v, iv)).then_some((v, iv))
 }
 
 /// Is `iv` a non-empty, enumerable, genuinely-narrowed range at `ty`?
@@ -319,11 +319,11 @@ const MAX_SCALE_STRIP: u32 = 64;
 /// guarded raw load, `if (Load < N) switch(Load)`, is a genuine index even
 /// though it strips to a `Load`.
 ///
-/// Zero-extends and constant scalings are stripped first, then replayed
-/// innermost-first over the cell's `1 << w` consecutive values, tracking their
-/// spacing: a divide collapses the set only by however much it outruns the
-/// spacing a preceding multiply built up, so `(cell << 2) >> 1` keeps all
-/// `1 << w`.  The count is then capped by what the OUTPUT width can hold at
+/// Zero-extends, masks clearing only known-zero bits and constant scalings are
+/// stripped first, then replayed innermost-first over the cell's `1 << w`
+/// consecutive values, tracking their spacing: a divide collapses the set only
+/// by however much it outruns the spacing a preceding multiply built up, so
+/// `(cell << 2) >> 1` keeps all `1 << w`.  The count is then capped by what the OUTPUT width can hold at
 /// that spacing, since a widening scale wraps: `zext(i8) << 25` at `I32` has
 /// 128 distinct values, not 256.  A scale past the `u128` carrier, a floor
 /// over an unrelated spacing, and a strip longer than [`MAX_SCALE_STRIP`] all
@@ -331,7 +331,12 @@ const MAX_SCALE_STRIP: u32 = 64;
 /// An unrecognised producer is not a failure: the strip ends there and the
 /// count is taken at that value's own width.  `w < 128` keeps the shift
 /// well-defined.
-fn is_width_only(function: &strider_ir::Function, v: ValueId, iv: Interval) -> bool {
+fn is_width_only(
+    function: &strider_ir::Function,
+    ranges: &crate::value_range::RangeMap<'_>,
+    v: ValueId,
+    iv: Interval,
+) -> bool {
     let mut base = v;
     let mut chain: Vec<Scale> = Vec::new();
     let mut steps = MAX_SCALE_STRIP;
@@ -345,6 +350,9 @@ fn is_width_only(function: &strider_ir::Function, v: ValueId, iv: Interval) -> b
             // Preserves the integer value while widening the type.
             NodeKind::Extend(ExtendOp::ZeroExtend) => {
                 function.int_inputs(base).next().map(|next| (next, None))
+            }
+            NodeKind::IntBinaryOp(IntBinaryOp::And) => {
+                ranges.identity_mask_operand(base).map(|next| (next, None))
             }
             NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => strip_const_scale(function, base)
                 .and_then(|(next, k)| Some((next, Some(Scale::Widen(pow2(k)?))))),
