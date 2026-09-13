@@ -2116,3 +2116,20 @@ mod scaling {
         assert_near_linear("nested loops", shapes::nested_loops)
     }
 }
+
+/// The claims-free configuration still reads memory as RAM: a status register
+/// polled after a write reads back as the value written.
+#[test]
+fn no_assumption_lifts_the_ram_premise() -> Result<()> {
+    let mut fg = strider_ir_test_utils::make_empty_fn(|b| {
+        let register = b.build_int_const(0x4000_1000u64, ValueType::I32)?;
+        let one = b.build_int_const(1u64, ValueType::I32)?;
+        b.build_store(register, one, rsleigh::VnSpace::RAM)?;
+        b.build_load(register, rsleigh::VnSpace::RAM, ValueType::I32)
+    })?;
+    let mut ctx = crate::OptCtx::new(None);
+    ctx.options.assumptions = crate::AssumptionOptions::none();
+    crate::test_support::standard_test().run(&mut fg, &mut ctx)?;
+    crate::test_support::assert_returns_const(&fg, 1);
+    Ok(())
+}
