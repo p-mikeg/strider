@@ -25,9 +25,9 @@ pub struct CallingConvention {
     stack_ptr_reg_name: &'static str,
     /// In register-positional order, which is not source-argument order: ARM
     /// AAPCS, MIPS O32 and 32-bit SysV PowerPC all start a 64-bit integer
-    /// argument in an even-numbered register, skipping an odd one, so from the
-    /// first 64-bit argument onward position *n* names a register the caller
-    /// may never have written.
+    /// argument at an even position of this list, skipping an odd one (PPC32
+    /// pairs r5:r6, leaving r4), so from the first 64-bit argument onward
+    /// position *n* names a register the caller may never have written.
     arg_passing_regs: &'static [&'static str],
     /// Float / vector argument registers, in positional order, from a register
     /// file `arg_passing_regs` never names (`XMM0..7` on x86-64 SysV, `q0..7`

@@ -65,7 +65,7 @@ pub enum CallOtherClass {
 
 impl CallOtherClass {
     /// Bare trap: an empty-footprint, non-returning `Call` (`BUG_ON`,
-    /// `sysret`, `UndefinedInstruction`).
+    /// `sysret`, `UndefinedInstructionException`).
     pub const NO_RETURN: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
         implicit_reads: &[],
         implicit_writes: &[],
@@ -652,7 +652,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             no_return: false,
         }),
     },
-    // 32-bit MONITOR / MONITORX take an EAX-relative address.
+    // 32-bit MONITOR / MONITORX take the address in EAX.
     CallOtherRow {
         preset_arches: &[crate::ArchPreset::X86],
         op_names: &["monitor", "monitorx"],
