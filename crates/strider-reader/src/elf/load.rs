@@ -176,6 +176,24 @@ impl OwnedElf {
             .regions)
     }
 
+    /// `[start, end)` of every address a mapping `source` walks declares
+    /// writable, loaded or not, ascending and merged.
+    ///
+    /// # Errors
+    ///
+    /// Anything [`regions`](Self::regions) reports.
+    pub fn writable_ranges(&self, source: RegionSource) -> Result<Vec<(u64, u64)>> {
+        let obj = self.checked_file()?;
+        let image = super::sections::collect_regions(
+            &obj,
+            Some(&self.backing),
+            source,
+            LoadFilter::AllAllocatable,
+            &ElfSectionLayout::new(&obj),
+        )?;
+        Ok(image.writable.as_slice().to_vec())
+    }
+
     /// [`regions`](Self::regions) over a parse and a layout the caller already
     /// holds, both of which must be of these bytes. The layout is a pure
     /// function of them, so one built from any parse serves every later parse.
