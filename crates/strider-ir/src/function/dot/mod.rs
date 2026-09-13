@@ -117,39 +117,6 @@ pub struct FunctionDotDumper<'a, R: MemReader> {
     pub(crate) nodes: Option<FxHashSet<NodeId>>,
     /// Focus of a neighbourhood render, drawn with a highlight border.
     pub(crate) center: Option<NodeId>,
-    /// Newline-joined texts of the validation errors naming each node, drawn
-    /// with a red border and shown as its tooltip.
-    pub(crate) errors: FxHashMap<NodeId, String>,
-}
-
-impl<R: MemReader> FunctionDotDumper<'_, R> {
-    /// Marks every node `errors` names.
-    #[must_use]
-    pub fn with_validation_errors(mut self, errors: &crate::validate::ValidationErrors) -> Self {
-        for err in &errors.0 {
-            let text = err.to_string();
-            for node in err.nodes() {
-                let tooltip = self.errors.entry(node).or_default();
-                if !tooltip.is_empty() {
-                    tooltip.push('\n');
-                }
-                tooltip.push_str(&text);
-            }
-        }
-        self
-    }
-
-    /// Border and tooltip attributes for `node`: red for an error, else the
-    /// neighbourhood highlight.
-    pub(super) fn highlight(&self, node: NodeId) -> Vec<(&'static str, &str)> {
-        if let Some(text) = self.errors.get(&node) {
-            vec![("color", "#ff3333"), ("penwidth", "3"), ("tooltip", text)]
-        } else if self.center == Some(node) {
-            vec![("color", "#ffcc00"), ("penwidth", "2.5")]
-        } else {
-            Vec::new()
-        }
-    }
 }
 
 /// A carrier's argument annotation. The integer and float index spaces are
