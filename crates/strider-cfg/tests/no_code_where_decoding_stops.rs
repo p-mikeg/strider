@@ -189,6 +189,51 @@ fn a_seeded_arm_into_a_data_range_is_an_undecodable_seeded_target() {
     );
 }
 
+// ARM kernel entries written as `.word` under a `$d` mapping symbol.
+const ARM_UDF_BUG: u32 = 0xe7f0_01f2;
+const ARM_HVC_0: u32 = 0xe140_0070;
+const ARM_BX_LR: u32 = 0xe12f_ff1e;
+const ARM_NOP: u32 = 0xe1a0_0000;
+
+#[test]
+fn an_entry_instruction_inside_a_data_range_is_decoded() {
+    let mut opts = bounded(0x8);
+    opts.data_ranges = DataRanges::new(std::iter::once(0x1000..0x1004));
+    let cfg = build(
+        &SleighArch::arm(),
+        le_words(&[ARM_UDF_BUG, ARM_NOP]),
+        0x1000,
+        &opts,
+    )
+    .expect("the entry instruction decodes whatever the data ranges say");
+    assert_eq!(decoded_addrs(&cfg), vec![0x1000]);
+    assert!(cfg.undecodable_branch_targets().is_empty());
+
+    let cfg = build(
+        &SleighArch::arm(),
+        le_words(&[ARM_HVC_0, ARM_BX_LR]),
+        0x1000,
+        &opts,
+    )
+    .expect("the instruction after a data-marked entry is ordinary code");
+    assert_eq!(decoded_addrs(&cfg), vec![0x1000, 0x1004]);
+}
+
+#[test]
+fn a_data_range_past_the_entry_instruction_still_governs_its_fall_through() {
+    let mut opts = bounded(0x8);
+    opts.data_ranges = DataRanges::new(std::iter::once(0x1000..0x1008));
+    let cfg = build(
+        &SleighArch::arm(),
+        le_words(&[ARM_NOP, ARM_BX_LR]),
+        0x1000,
+        &opts,
+    )
+    .expect("build");
+    assert_eq!(decoded_addrs(&cfg), vec![0x1000]);
+    assert_eq!(cfg.undecodable_branch_targets(), &[at(0x1004)]);
+}
+
 #[test]
 fn data_ranges_answer_half_open_overlap_across_overlapping_inputs() {
     let ranges = DataRanges::new([0x2000..0x2004, 0x1010..0x1018, 0x1014..0x101c]);
