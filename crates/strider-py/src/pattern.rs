@@ -3550,7 +3550,10 @@ node_builder! {
     ],
 }
 
+/// A branch slot's whole pattern compiles by recursing through its builder, so
+/// it takes a nesting level like [`compile_operand_match`].
 fn pattern_for_operand(ob: &Bound<'_, PyAny>) -> PyResult<Pattern> {
+    let _depth = DepthGuard::enter()?;
     let py = ob.py();
     let like = ob.extract::<PatLike<'_>>()?;
     like.to_pattern(py)
