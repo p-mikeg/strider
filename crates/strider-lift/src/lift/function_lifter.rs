@@ -61,9 +61,9 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// `all_vns` seeds the tracked set: every REGISTER / UNIQUE varnode the
-    /// `cfg`'s instructions name, plus every `CallOther` ABI footprint
-    /// register.  The stack vn and each override's argument registers are
-    /// added here.
+    /// `cfg`'s instructions name, every `CallOther` ABI footprint register,
+    /// and every register a LOAD / STORE resolves through the REGISTER space.
+    /// The stack vn and each override's argument registers are added here.
     pub(crate) fn new(
         lifter: &'a Lifter<R>,
         cc: strider_target::BuiltCallingConvention,
