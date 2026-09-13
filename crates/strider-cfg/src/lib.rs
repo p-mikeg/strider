@@ -105,9 +105,10 @@ impl Cfg {
         &self.isa_mode_conflicts
     }
 
-    /// Branch targets interior to a region but off every instruction boundary,
-    /// which no split can express, plus region starts a later decode stepped
-    /// over.
+    /// Branch targets interior to a region but off every region-start
+    /// boundary, which no split can express, plus region starts a later decode
+    /// stepped over. A branch into a MIPS delay slot lands here too: the slot
+    /// is a machine instruction, but it decodes as part of its branch.
     ///
     /// A DIRECT branch keeps its edge, wired to the region that OWNS those
     /// bytes, whose stream starts earlier, so the arm is not the instruction
@@ -124,6 +125,10 @@ impl Cfg {
     /// Addresses the reader has no bytes for, a direct branch target or a
     /// sequential fall-through, each seated as an empty `TailCall` stub so the
     /// edge survives and so does every region that did decode.
+    ///
+    /// The address is the instruction that could not be read whole, so a MIPS
+    /// branch whose delay slot is unmapped reports the branch's own, mapped,
+    /// address.
     ///
     /// A buffer whose window the branch leaves, a partially-mapped image, an
     /// unrelocated `jmp`: the callee is real code somewhere, just not here, so

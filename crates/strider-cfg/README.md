@@ -106,9 +106,11 @@ all: they overlap in cause and not in content.
   seeded target is a misclassification, so its edge is dropped and reported.
   Bytes Sleigh rejects on a path from the entry through no arm still fail the
   whole build.
-- `unmapped_branch_targets`: a DIRECT branch to an address the reader has no
-  bytes for. It leaves through an empty `TailCall` stub, so the regions that did
-  decode survive. An unmapped ENTRY is still an `Err` on the whole build.
+- `unmapped_branch_targets`: a DIRECT branch or a sequential fall-through to an
+  address the reader has no bytes for. It leaves through an empty `TailCall`
+  stub, so the regions that did decode survive. A MIPS branch whose delay slot
+  is unmapped reports the branch's own address. An unmapped ENTRY is still an
+  `Err` on the whole build.
 - `isa_mode_conflicts`: two edges reached an address carrying different ISA
   modes, and the losing path decodes in the winner's. A direct edge the entry
   reaches without an arm wins over an arm; otherwise the first decode wins by
