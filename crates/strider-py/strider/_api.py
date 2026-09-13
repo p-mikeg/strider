@@ -52,10 +52,8 @@ _EM_ARM = 40
 _EM_X86_64 = 62
 _EM_AARCH64 = 183
 
-# ARM `e_flags` bit for BE8: instructions little-endian, data big-endian.
-_EF_ARM_BE8 = 0x0080_0000
+# ARM `e_flags` float-ABI bit for a soft or softfp image.
 _EF_ARM_ABI_FLOAT_SOFT = 0x0000_0200
-_EF_ARM_ABI_FLOAT_HARD = 0x0000_0400
 
 
 class _ElfHeader:
@@ -100,12 +98,13 @@ class _ElfHeader:
 
 def _arch_and_cc_for_elf(
     header: _ElfHeader,
+    is_arm_be8: bool = False,
 ) -> tuple[SleighArch, CallingConvention]:
     """Pick the `SleighArch` and userland `CallingConvention` preset matching
     this ELF. Raises `ValueError` for an unsupported e_machine.
 
     ARM defaults to little-endian `arm`; a big-endian image is `arm_be_kernel`
-    when it flags BE8 and `arm_be` otherwise. Its convention follows the
+    when `is_arm_be8` (the loaded ELF's `is_arm_be8`) and `arm_be` otherwise. Its convention follows the
     `e_flags` float-ABI bit: `arm_aapcs_soft` for a soft/softfp image,
     `arm_aapcs` otherwise. A Thumb image is loaded by
     passing an explicit `arch=SleighArch.arm_thumb()`, since the ELF header
@@ -122,7 +121,7 @@ def _arch_and_cc_for_elf(
     if em == _EM_ARM:
         if le:
             arch = SleighArch.arm()
-        elif header.e_flags & _EF_ARM_BE8:
+        elif is_arm_be8:
             # BE8 stores instructions little-endian, so `arm_be` decodes every
             # one of them byte-swapped. `EI_DATA` marks both images alike.
             arch = SleighArch.arm_be_kernel()
@@ -181,12 +180,12 @@ def _load_elf_with(
     if not os.path.exists(path):
         raise FileNotFoundError(path)
     header = _ElfHeader(path)
+    elf = loader(path, apply_relocations)
     # Only run the (possibly raising) detector when arch or cc is missing.
     if arch is None or cc is None:
-        det_arch, det_cc = _arch_and_cc_for_elf(header)
+        det_arch, det_cc = _arch_and_cc_for_elf(header, elf.is_arm_be8)
         arch = arch if arch is not None else det_arch
         cc = cc if cc is not None else det_cc
-    elf = loader(path, apply_relocations)
     return ElfLifter(elf, arch, cc, elf.reader(), rom=elf.ro_reader())
 
 
