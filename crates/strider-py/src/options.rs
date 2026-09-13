@@ -137,6 +137,8 @@ pub struct PyCfgOptions {
     /// `Lifter.call_other_abi(name)` reads back what strider already makes of
     /// one.
     pub call_other_abis: Arc<HashMap<String, PyCallOtherAbi>>,
+    /// Address ranges `(start, end)` the image marks as data, never decoded.
+    pub data_ranges: strider_cfg::DataRanges,
     /// The two tables' Python faces, shared with every clone of this object,
     /// which shares the tables themselves.
     known_targets_view: Arc<MappingView>,
@@ -150,12 +152,14 @@ impl PyCfgOptions {
     #[new]
     #[pyo3(signature = (*, function_max_size = None, allow_code_before_start_addr = false,
                         known_targets = MapArg(HashMap::new()),
-                        call_other_abis = MapArg(HashMap::new())))]
+                        call_other_abis = MapArg(HashMap::new()),
+                        data_ranges = Vec::new()))]
     fn new(
         function_max_size: Option<u64>,
         allow_code_before_start_addr: bool,
         known_targets: MapArg<HashMap<u64, KnownTarget>>,
         call_other_abis: MapArg<HashMap<String, CallOtherAbiArg>>,
+        data_ranges: Vec<(u64, u64)>,
     ) -> PyResult<Self> {
         reject_zero_max_size(function_max_size)?;
         Ok(Self {
@@ -169,8 +173,42 @@ impl PyCfgOptions {
                     .map(|(name, abi)| (name, abi.0))
                     .collect(),
             ),
+            data_ranges: data_ranges_from(data_ranges),
             known_targets_view: Arc::default(),
             call_other_abis_view: Arc::default(),
+        })
+    }
+
+    /// Address ranges `(start, end)`, end exclusive, the image marks as data,
+    /// sorted and merged. A branch or fall-through into one is reported, never
+    /// decoded.
+    #[getter]
+    fn data_ranges(&self) -> Vec<(u64, u64)> {
+        self.data_ranges
+            .ranges()
+            .iter()
+            .map(|r| (r.start, r.end))
+            .collect()
+    }
+
+    /// This object with `data_ranges` replaced, sharing both tables.
+    fn with_data_ranges(&self, data_ranges: Vec<(u64, u64)>) -> Self {
+        Self {
+            data_ranges: data_ranges_from(data_ranges),
+            ..self.clone()
+        }
+    }
+
+    /// This object with the mapping-symbol data ranges of `elf`, unless it
+    /// already names some. Shares the ELF's table rather than copying it
+    /// through Python on every analyse.
+    fn _with_elf_data_ranges(&self, elf: PyRef<'_, crate::reader::PyLoadedElf>) -> PyResult<Self> {
+        if !self.data_ranges.ranges().is_empty() {
+            return Ok(self.clone());
+        }
+        Ok(Self {
+            data_ranges: elf.data_ranges()?,
+            ..self.clone()
         })
     }
 
@@ -204,13 +242,19 @@ impl PyCfgOptions {
         // analysis than the one that ran.
         format!(
             "CfgOptions(function_max_size={:?}, allow_code_before_start_addr={}, \
-             known_targets={{{} entries}}, call_other_abis={{{} entries}})",
+             known_targets={{{} entries}}, call_other_abis={{{} entries}}, \
+             data_ranges=[{} ranges])",
             self.function_max_size,
             py_bool(self.allow_code_before_start_addr),
             self.known_targets.len(),
             self.call_other_abis.len(),
+            self.data_ranges.ranges().len(),
         )
     }
+}
+
+fn data_ranges_from(ranges: Vec<(u64, u64)>) -> strider_cfg::DataRanges {
+    strider_cfg::DataRanges::new(ranges.into_iter().map(|(start, end)| start..end))
 }
 
 /// Render a bool the Python way, so a `repr` reads as an eval-able constructor

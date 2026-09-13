@@ -55,6 +55,7 @@ pub(crate) fn make_cfg(
         isa_mode_conflicts: Vec::new(),
         interior_branch_targets: Vec::new(),
         unmapped_branch_targets: Vec::new(),
+        undecodable_branch_targets: Vec::new(),
         link_register_seated: Vec::new(),
         tail_call_seated: Vec::new(),
         function_isa_bit: None,
