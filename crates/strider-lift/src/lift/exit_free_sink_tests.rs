@@ -146,9 +146,11 @@ fn seating_cost(count: usize) -> (usize, usize) {
     let cc = strider_target::CallingConvention::x86_64_systemv()
         .build(lifter.sleigh_regs())
         .expect("cc");
-    let (outcome, visits) = lifter
-        .build_ir_counting_sink_visits(&cfg, cc, &crate::LiftOptions::default())
+    super::exit_free_sink::SINK_VISITS.with(|v| v.set(0));
+    let outcome = lifter
+        .build_ir_with(&cfg, cc, &crate::LiftOptions::default())
         .expect("lift");
+    let visits = super::exit_free_sink::SINK_VISITS.with(std::cell::Cell::get);
     (visits, sinks(&outcome.function))
 }
 
