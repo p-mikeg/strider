@@ -70,6 +70,11 @@ impl<N> Node<N> {
     }
 }
 
+// Per-record overhead, pinned at a zero-sized payload.
+const _: () = assert!(size_of::<ValueData<()>>() == 12);
+const _: () = assert!(size_of::<UseData>() == 20);
+const _: () = assert!(size_of::<Node<()>>() == 8);
+
 /// The structural arena backing a [`crate::graph::Graph`].
 #[derive(Clone)]
 pub struct RawStore<N, V> {
