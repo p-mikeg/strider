@@ -18,10 +18,11 @@ use graph_invariants::{
     check_function_invariants_availability, check_function_invariants_call_cc,
     check_function_invariants_consts, check_function_invariants_control_single_use,
     check_function_invariants_data_cycles, check_function_invariants_extend_truncate,
-    check_function_invariants_memory_chain, check_function_invariants_memory_linearity,
-    check_function_invariants_phis, check_function_invariants_region,
-    check_function_invariants_side_indices, check_function_invariants_switch,
-    check_function_invariants_terminator_reachable, check_function_invariants_uniqueness,
+    check_function_invariants_initial_vars, check_function_invariants_memory_chain,
+    check_function_invariants_memory_linearity, check_function_invariants_phis,
+    check_function_invariants_region, check_function_invariants_side_indices,
+    check_function_invariants_switch, check_function_invariants_terminator_reachable,
+    check_function_invariants_uniqueness,
 };
 use local_typing::check_local_typing;
 
@@ -48,6 +49,7 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     check_function_invariants_control_single_use(function, &reachable, &mut errs);
     check_function_invariants_phis(function, &reachable, &mut errs);
     check_function_invariants_consts(function, &reachable, &mut errs);
+    check_function_invariants_initial_vars(function, &reachable, &mut errs);
     check_function_invariants_extend_truncate(function, &reachable, &mut errs);
     check_function_invariants_arith_widths(function, &reachable, &mut errs);
     check_function_invariants_switch(function, &reachable, &mut errs);
@@ -263,6 +265,19 @@ pub enum ValidationError {
     )]
     LostStore { node: NodeId },
 
+    #[error("node {node:?} names InitialVnId {id:?}, which the function never minted")]
+    DanglingInitialVnId {
+        node: NodeId,
+        id: crate::node::InitialVnId,
+    },
+
+    #[error("InitialVar {node:?} reads varnode {vn:?} as {ty:?}, not as the integer of its size")]
+    InitialVarTypeMismatch {
+        node: NodeId,
+        vn: rsleigh::Vn,
+        ty: ValueType,
+    },
+
     #[error(
         "initial_var_index entry for varnode {vn:?} points at reachable node \
          {node:?} (kind {actual_kind:?}); expected an InitialVar({vn:?}) node. \
@@ -443,6 +458,8 @@ impl ValidationError {
             | E::DataCycle { node, .. }
             | E::OrphanedMemoryOutput { node, .. }
             | E::LostStore { node }
+            | E::DanglingInitialVnId { node, .. }
+            | E::InitialVarTypeMismatch { node, .. }
             | E::StaleInitialVarIndex { node, .. }
             | E::ExtendTruncateWidthDirection { node, .. }
             | E::ArithmeticWidthMismatch { node, .. }
