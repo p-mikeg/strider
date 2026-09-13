@@ -10,27 +10,31 @@ from . import _elf_builder as eb
 from .conftest import fixture_path
 
 
+def _name_at(lift, address: int):
+    sym = lift.symbol_at(address)
+    return None if sym is None else sym.name
+
+
 def test_a_thumb_function_is_measured_from_its_first_instruction():
     """A Thumb function's `st_value` carries the ISA bit, one past its first
     instruction. `address` keeps it for `analyze`; lookups start at the
     instruction, so the first one is the function's own and one past its end
     is not."""
     lift = strider.lift.load_elf(str(fixture_path("arm_thumb", "arithmetic")))
-    fns = [s for s in lift.functions() if s.address & 1 and s.size]
+    fns = [(s, s.size) for s in lift.functions() if s.address & 1 and s.size]
     assert fns, "the Thumb fixture has sized Thumb functions"
-    for sym in fns:
+    for sym, size in fns:
         code = sym.address & ~1
         assert sym.is_thumb
-        assert sym.end == code + sym.size
-        assert lift.symbol_at(code).name == sym.name
-        after = lift.symbol_at(code + sym.size)
-        assert after is None or after.name != sym.name
+        assert sym.end == code + size
+        assert _name_at(lift, code) == sym.name
+        assert _name_at(lift, code + size) != sym.name
 
 
 def test_an_arm_function_is_not_thumb():
     lift = strider.lift.load_elf(str(fixture_path("arm", "arithmetic")))
     add = lift.symbol("add")
-    assert not add.is_thumb
+    assert not add.is_thumb and add.size is not None
     assert add.end == add.address + add.size
 
 
@@ -44,7 +48,7 @@ def test_a_symbol_defined_at_address_zero_is_kept(tmp_path):
     lift = strider.lift.load_elf(str(path))
     assert lift.symbol("helper").address == 0
     assert [s.name for s in lift.functions()] == ["helper", "_start"]
-    assert lift.symbol_at(3).name == "helper"
+    assert _name_at(lift, 3) == "helper"
 
 
 def test_a_definition_in_a_later_image_beats_an_import_carrying_a_plt_address(tmp_path):
@@ -66,7 +70,7 @@ def test_a_definition_in_a_later_image_beats_an_import_carrying_a_plt_address(tm
     assert lift.symbol("libfn").address == 0x401040, "the import names its stub"
     lift.add_elf(str(lib))
     assert lift.symbol("libfn").address == 0x7001100
-    assert lift.symbol_at(0x401040).name == "libfn", "the stub is still named"
+    assert _name_at(lift, 0x401040) == "libfn", "the stub is still named"
 
 
 def test_an_object_files_undefined_symbol_is_named_at_an_unmapped_address(tmp_path):
@@ -96,8 +100,8 @@ def test_symbol_at_inside_a_sized_function_full_of_unsized_symbols(tmp_path):
         + [eb.Sym(f"l{i}", 0x1000 + i, 0, kind=eb.STT_NOTYPE) for i in range(1, count)],
     ).write(path)
     lift = strider.lift.load_elf(str(path))
-    assert lift.symbol_at(0x1000 + count).name == "big"
-    assert lift.symbol_at(0x1000 + 7).name == "l7"
+    assert _name_at(lift, 0x1000 + count) == "big"
+    assert _name_at(lift, 0x1000 + 7) == "l7"
     assert lift.symbol_at(0x1000 + count + 1) is None
 
 
