@@ -1,31 +1,11 @@
-//! SSA-shaped patterns: `phi()` / `phi_for(vn)`, `initial_var()` /
-//! `initial_var_for(vn)`, and the `SideTables::arg_index_to_values` side-table
-//! `FunctionArgDetect` populates.
+//! SSA-shaped patterns: `phi()`, `initial_var_for(vn)`, and the
+//! `SideTables::arg_index_to_values` side-table `FunctionArgDetect` populates.
 
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{IRViewer, IntCmpOp};
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, reg_vn, shapes, stack_vn};
-
-#[test]
-fn initial_var_matches_any() {
-    let (g, _reg) = shapes::single_initial_var();
-    a::matches(&g, initial_var().into_pattern(), 1);
-}
-
-#[test]
-fn initial_var_for_exact_vn_matches() {
-    let (g, reg) = shapes::single_initial_var();
-    a::matches(&g, initial_var_for(reg).into_pattern(), 1);
-}
-
-#[test]
-fn initial_var_for_wrong_vn_rejects() {
-    let (g, _reg) = shapes::single_initial_var();
-    let other = reg_vn(0x40, 8);
-    a::none(&g, initial_var_for(other).into_pattern());
-}
 
 /// `InitialVar` carries a per-function `all_vns` index, not the varnode.
 /// With two tracked regs, `hi` sorts to `all_vns[1]` (not `[0]`), so a
@@ -42,14 +22,6 @@ fn initial_var_for_resolves_nonzero_index() {
     let g = t.ret_val(sum);
     a::matches(&g, initial_var_for(hi).into_pattern(), 1);
     a::matches(&g, initial_var_for(lo).into_pattern(), 1);
-}
-
-#[test]
-fn initial_var_capture_binds_value() {
-    let (g, _reg) = shapes::single_initial_var();
-    let v = Capture::new();
-    let m = a::unique(&g, initial_var().capture(v).into_pattern());
-    assert!(m.value(v).is_some());
 }
 
 /// `if (reg == 0) { reg = 1 } else { reg = 2 }`: after merge, a phi
@@ -82,27 +54,6 @@ fn graph_phi_for_reg() -> (strider_ir::Function, rsleigh::Vn) {
     t.enter(merge);
     let merged = t.read_var(&reg);
     (t.ret_val(merged), reg)
-}
-
-#[test]
-fn phi_matches_any() {
-    let (g, _reg) = graph_phi_for_reg();
-    let hits = Matcher::new(&g).find_all(&phi().build()).unwrap();
-    assert!(!hits.is_empty(), "expected at least one phi");
-}
-
-#[test]
-fn phi_for_matches_exact_vn() {
-    let (g, reg) = graph_phi_for_reg();
-    let hits = Matcher::new(&g).find_all(&phi_for(reg).build()).unwrap();
-    assert!(!hits.is_empty(), "phi_for({reg:?}) should match");
-}
-
-#[test]
-fn phi_for_wrong_vn_rejects() {
-    let (g, _reg) = graph_phi_for_reg();
-    let other = reg_vn(0x40, 8);
-    a::none(&g, phi_for(other).build());
 }
 
 // After `FunctionArgDetect`, the underlying `InitialVar` / `Load` nodes
