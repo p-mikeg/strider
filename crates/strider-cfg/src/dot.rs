@@ -99,7 +99,7 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         write!(&mut label, "\\l").map_err(anyhow::Error::from)?;
 
         let extra: &[(&str, &str)] = if self.center == Some(node_id) {
-            &[("color", "\"#ffcc00\""), ("penwidth", "2.5")]
+            &[("color", "#ffcc00"), ("penwidth", "2.5")]
         } else {
             &[]
         };
