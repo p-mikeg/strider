@@ -50,9 +50,6 @@ impl PeepholePass for ConstantFold {
                 | NodeKind::FloatBinaryOp(_)
                 | NodeKind::FloatUnaryOp(_)
                 | NodeKind::FloatCmpOp(_)
-                | NodeKind::IntToFloat
-                | NodeKind::FloatToInt
-                | NodeKind::FloatToFloat
                 | NodeKind::IntBitsToFloat
                 | NodeKind::FloatBitsToInt
         )
