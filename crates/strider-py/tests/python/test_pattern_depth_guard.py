@@ -126,10 +126,13 @@ def test_the_count_bound_still_answers_for_a_pathological_chain():
 
 
 def test_a_reentrant_index_raises_instead_of_recursing_forever():
-    """A `__index__` that re-enters the builder costs one Python frame per
-    level, so `sys.getrecursionlimit()` never trips. The depth guard's error
-    was then swallowed by the int-extraction attempt and retried by the next
-    one, which is exponential."""
+    """A `__index__` that re-enters the builder must raise, not recurse
+    forever. The depth guard's error used to be swallowed by the
+    int-extraction attempt and retried by the next one, which is exponential.
+
+    Which bound fires first depends on the build: a debug frame exhausts the
+    stack budget, a release one is small enough that CPython's recursion limit
+    trips first, at about two Python frames per level."""
     builder = p.load()
 
     class Reentrant:
@@ -138,7 +141,7 @@ def test_a_reentrant_index_raises_instead_of_recursing_forever():
             return 3
 
     builder.addr(Reentrant())  # type: ignore[arg-type]
-    with pytest.raises(strider.StriderError, match="nesting too deep"):
+    with pytest.raises((strider.StriderError, RecursionError)):
         builder.into_pat()
 
 
