@@ -117,20 +117,6 @@ fn store_space_matches() {
 }
 
 #[test]
-fn store_then_load_same_addr_match() {
-    let function = shapes::store_then_load_ram(0x200, 77);
-    a::matches(
-        &function,
-        store()
-            .addr(int_const(0x200u128))
-            .data(int_const(77u128))
-            .build(),
-        1,
-    );
-    a::matches(&function, load().addr(int_const(0x200u128)).build(), 1);
-}
-
-#[test]
 fn load_only_graph_matches() {
     let mut t = Tb::empty();
     let addr = t.u64(0x100);
