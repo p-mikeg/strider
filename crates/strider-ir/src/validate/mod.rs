@@ -265,6 +265,12 @@ pub enum ValidationError {
     )]
     LostStore { node: NodeId },
 
+    #[error(
+        "{node:?} takes the memory state from before {effect:?}, a memory effect \
+         on a path into it, so that effect is lost"
+    )]
+    MemoryRewind { node: NodeId, effect: NodeId },
+
     #[error("node {node:?} names InitialVnId {id:?}, which the function never minted")]
     DanglingInitialVnId {
         node: NodeId,
@@ -440,6 +446,7 @@ impl ValidationError {
                 phi, owner_region, ..
             } => smallvec::smallvec![phi, owner_region],
             E::PhiInputTypeMismatch { phi, .. } => smallvec::smallvec![phi],
+            E::MemoryRewind { node, effect } => smallvec::smallvec![node, effect],
             E::EmptyRegionPredecessors { region } => smallvec::smallvec![region],
             E::StaleValueVn { producer, .. } => smallvec::smallvec![producer],
             E::NodeInputCountMismatch { node, .. }
