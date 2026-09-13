@@ -33,6 +33,7 @@ strider-ir = { workspace = true, features = ["test-util"] }
 # Test-only single-pass runners (run_one / run_post) used by integration tests.
 strider-opt = { workspace = true, features = ["test-util"] }
 strider-ir-test-utils = { workspace = true, features = ["proptest-gen"] }
+strider-target = { workspace = true, features = ["test-util"] }
 paste = "1"
 criterion.workspace = true
 proptest.workspace = true

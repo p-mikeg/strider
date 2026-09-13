@@ -376,8 +376,8 @@ impl SleighArch {
         arm_be_kernel => SLA_SPEC_ARM8_LE, PSPEC_ARMT, Big, ArmBeKernel
     }
 
-    /// Extracts this arch's register table by probing Sleigh against an
-    /// empty memory reader.
+    /// This arch's register table, read off a Sleigh over an empty image.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn probe_regs(self) -> anyhow::Result<rsleigh::SleighRegs> {
         let probe = rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0);
         let sleigh = rsleigh::Sleigh::new(self.sla_spec, self.pspec, probe)?;
