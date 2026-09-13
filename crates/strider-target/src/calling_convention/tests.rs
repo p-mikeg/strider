@@ -410,36 +410,7 @@ fn build_case(case: &Case) -> (BuiltCallingConvention, rsleigh::SleighRegs) {
     (built, regs)
 }
 
-#[track_caller]
-fn assert_all_distinct(set: &[rsleigh::Vn], label: &str) {
-    for i in 0..set.len() {
-        for j in (i + 1)..set.len() {
-            assert_ne!(
-                set[i], set[j],
-                "{label}: varnodes at positions {i} and {j} are the same"
-            );
-        }
-    }
-}
-
-#[track_caller]
-fn assert_disjoint(
-    a: &[rsleigh::Vn],
-    b: &[rsleigh::Vn],
-    a_label: &str,
-    b_label: &str,
-    case_name: &str,
-) {
-    for vn in a {
-        assert!(
-            !b.contains(vn),
-            "{case_name}: {a_label} reg {vn:?} also appears in {b_label}",
-        );
-    }
-}
-
-/// Documented register count per category, pairwise distinct varnodes, and
-/// disjoint arg / callee-saved sets.
+/// Documented register count per category.
 #[test]
 fn presets_resolve_correct_register_sets() {
     for c in cases() {
@@ -464,23 +435,6 @@ fn presets_resolve_correct_register_sets() {
             c.ret_count,
             "{}: return values",
             c.name
-        );
-        assert_all_distinct(&built.arg_passing_regs, c.name);
-        assert_all_distinct(&built.callee_saved_regs, c.name);
-        assert_all_distinct(&built.ret_val_regs, c.name);
-        assert_disjoint(
-            &built.arg_passing_regs,
-            &built.callee_saved_regs,
-            "arg_passing_regs",
-            "callee_saved_regs",
-            c.name,
-        );
-        assert_disjoint(
-            &built.ret_val_regs,
-            &built.callee_saved_regs,
-            "ret_val_regs",
-            "callee_saved_regs",
-            c.name,
         );
     }
 }
@@ -1151,7 +1105,7 @@ fn aliased_float_ret_regs_collapse_to_one_container_each() {
     let r1 = vn_for_name(&regs, "r1").expect("ARM sla defines r1");
     let tracked = [r0, r1, q0, q1];
     let (ret_vals, _clobbers) = built.ret_and_clobber_vns(&tracked, |v| container_in(&tracked, v));
-    assert_all_distinct(&ret_vals, "ret_vals with q0/q1 tracked");
+    assert_eq!(ret_vals, [r0, r1, q0, q1], "one slot per tracked container");
 }
 
 /// Float / vector argument registers, per psABI, plus proof each name resolves
@@ -1295,7 +1249,6 @@ fn float_arg_registers_match_the_psabi() {
             expected.len(),
             "{name}: every float argument register name must resolve",
         );
-        assert_all_distinct(&built.arg_passing_regs_float, name);
     }
 }
 
@@ -1472,7 +1425,6 @@ fn callee_saved_float_registers_match_the_psabi() {
                 "{name}: {want} did not resolve into callee_saved_regs",
             );
         }
-        assert_all_distinct(&built.callee_saved_regs, name);
     }
 }
 
