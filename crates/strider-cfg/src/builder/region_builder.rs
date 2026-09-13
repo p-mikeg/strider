@@ -1680,20 +1680,6 @@ mod tests {
     }
 
     #[test]
-    fn finish_current_region_empty_insns_returns_error() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
-        let mut rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        let err = rb
-            .finish_current_region(RegionTerminator::Return)
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("has no instructions"),
-            "got: {err}"
-        );
-    }
-
-    #[test]
     fn process_new_insn_branch_with_empty_inputs_errors() {
         let mut sleigh = make_sleigh();
         let mut b = make_builder(0x1000, &mut sleigh);

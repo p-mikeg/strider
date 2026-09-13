@@ -650,20 +650,8 @@ fn build_one(mut sleigh: Sleigh<TestReader>, start: u64) -> (Cfg, Sleigh<TestRea
     (cfg, sleigh)
 }
 
-#[test]
-fn cfg_build_returns_sleigh_for_reuse() {
-    let bytes = vec![0xc3u8];
-    let sleigh = make_sleigh_x86_64(bytes, 0x1000);
-
-    // The Cfg never owns the Sleigh, so a rebuild reuses it without
-    // re-loading the SLA spec.
-    let (cfg1, sleigh) = build_one(sleigh, 0x1000);
-    assert!(cfg1.region_graph().node_count() >= 1);
-
-    let (cfg2, _sleigh) = build_one(sleigh, 0x1000);
-    assert!(cfg2.region_graph().node_count() >= 1);
-}
-
+/// The Cfg never owns the Sleigh, so a rebuild reuses it without re-loading
+/// the SLA spec.
 #[test]
 fn sleigh_can_be_used_for_multiple_cfg_builds() {
     let bytes_a = vec![0xc3u8];
@@ -679,18 +667,18 @@ fn sleigh_can_be_used_for_multiple_cfg_builds() {
     let _ = cfg3.entry();
 }
 
-fn build_unresolved_jmp_rax_cfg() -> Cfg {
-    let base = 0x1000u64;
+/// `jmp rax` at 0x1000 followed by 16 `int3`.
+fn jmp_rax_bytes() -> Vec<u8> {
     let mut bytes = vec![0xff, 0xe0u8];
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
-    let arch = SleighArch::x86_64();
-    let reader = BufMemReader::new(bytes, base);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    Builder::for_arch(&arch, &mut sleigh, base, &CfgOptions::default())
-        .build()
-        .expect("build")
+    bytes
 }
 
+fn build_unresolved_jmp_rax_cfg() -> Cfg {
+    build_from_bytes(jmp_rax_bytes(), 0x1000)
+}
+
+/// Panics unless the CFG holds an `UnresolvedIndirectBranch` region.
 fn locate_unresolved_addr(cfg: &Cfg) -> PcodeInsnAddr {
     for region_id in cfg.region_ids() {
         let region = cfg.region_graph().node_weight(region_id).expect("region");
@@ -702,23 +690,9 @@ fn locate_unresolved_addr(cfg: &Cfg) -> PcodeInsnAddr {
 }
 
 #[test]
-fn with_known_targets_default_is_unresolved() {
-    let cfg = build_unresolved_jmp_rax_cfg();
-    let addr = locate_unresolved_addr(&cfg);
-    assert!(addr.machine_addr.addr >= 0x1000);
-}
-
-#[test]
 fn with_known_targets_link_register_overrides_to_return() {
     let cfg_v1 = build_unresolved_jmp_rax_cfg();
     let unresolved_addr = locate_unresolved_addr(&cfg_v1);
-
-    let base = 0x1000u64;
-    let mut bytes = vec![0xff, 0xe0u8];
-    bytes.extend(std::iter::repeat_n(0xccu8, 16));
-    let arch = SleighArch::x86_64();
-    let reader = BufMemReader::new(bytes, base);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
 
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(unresolved_addr, ResolvedTargets::LinkRegister);
@@ -727,9 +701,7 @@ fn with_known_targets_link_register_overrides_to_return() {
         known_targets: known,
         ..CfgOptions::default()
     };
-    let cfg_v2 = Builder::for_arch(&arch, &mut sleigh, base, &opts)
-        .build()
-        .expect("build with known_targets");
+    let cfg_v2 = build_from_bytes_opts(jmp_rax_bytes(), 0x1000, &opts);
 
     let mut had_return = false;
     for region in cfg_v2.regions() {
@@ -748,40 +720,7 @@ fn with_known_targets_link_register_overrides_to_return() {
 }
 
 #[test]
-fn with_known_targets_empty_map_falls_through_to_tier_1() {
-    let base = 0x1000u64;
-    let mut bytes = vec![0xff, 0xe0u8];
-    bytes.extend(std::iter::repeat_n(0xccu8, 16));
-    let arch = SleighArch::x86_64();
-    let reader = BufMemReader::new(bytes, base);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-
-    let opts = CfgOptions {
-        known_targets: FxHashMap::default(),
-        ..CfgOptions::default()
-    };
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
-        .build()
-        .expect("build with empty known_targets");
-
-    let had_unresolved = cfg.regions().any(|r| {
-        matches!(
-            r.terminator,
-            RegionTerminator::UnresolvedIndirectBranch { .. }
-        )
-    });
-    assert!(had_unresolved);
-}
-
-#[test]
 fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
-    let base = 0x1000u64;
-    let mut bytes = vec![0xff, 0xe0u8];
-    bytes.extend(std::iter::repeat_n(0xccu8, 16));
-    let arch = SleighArch::x86_64();
-    let reader = BufMemReader::new(bytes, base);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-
     let cfg_v1 = build_unresolved_jmp_rax_cfg();
     let unresolved_addr = locate_unresolved_addr(&cfg_v1);
 
@@ -796,9 +735,8 @@ fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
         known_targets: known,
         ..CfgOptions::default()
     };
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
-        .build()
-        .expect("build must succeed; mixed Multiple defers via UnresolvedIndirectBranch");
+    // Must succeed: a mixed Multiple defers via UnresolvedIndirectBranch.
+    let cfg = build_from_bytes_opts(jmp_rax_bytes(), 0x1000, &opts);
 
     let mut had_unresolved = false;
     let mut had_switch = false;
@@ -820,13 +758,7 @@ fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
 #[test]
 fn known_single_oob_target_produces_tail_call() {
     // `jmp rax` resolved to 0x9000, outside [0x1000, 0x1100).
-    let base = 0x1000u64;
     let oob_target = 0x9000u64;
-    let mut bytes = vec![0xff, 0xe0u8]; // jmp rax
-    bytes.extend(std::iter::repeat_n(0xccu8, 16));
-    let arch = SleighArch::x86_64();
-    let reader = BufMemReader::new(bytes, base);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
 
     let cfg_v1 = build_unresolved_jmp_rax_cfg();
     let unresolved_addr = locate_unresolved_addr(&cfg_v1);
@@ -839,9 +771,7 @@ fn known_single_oob_target_produces_tail_call() {
         known_targets: known,
         ..CfgOptions::default()
     };
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
-        .build()
-        .expect("build with Single(oob) known_target must succeed");
+    let cfg = build_from_bytes_opts(jmp_rax_bytes(), 0x1000, &opts);
 
     let mut had_tail_call = false;
     for region in cfg.regions() {
@@ -868,13 +798,9 @@ fn known_single_oob_target_produces_tail_call() {
 
 #[test]
 fn known_multiple_in_range_targets_produces_switch() {
-    let base = 0x1000u64;
     let mut bytes = vec![0xff, 0xe0u8];
     bytes.extend(std::iter::repeat_n(0x90u8, 32));
     bytes.push(0xc3);
-    let arch = SleighArch::x86_64();
-    let reader = BufMemReader::new(bytes, base);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
 
     let cfg_v1 = build_unresolved_jmp_rax_cfg();
     let unresolved_addr = locate_unresolved_addr(&cfg_v1);
@@ -890,9 +816,7 @@ fn known_multiple_in_range_targets_produces_switch() {
         known_targets: known,
         ..CfgOptions::default()
     };
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
-        .build()
-        .expect("build with in-range Multiple must succeed");
+    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
 
     let had_switch = cfg
         .regions()
