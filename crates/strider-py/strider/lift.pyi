@@ -236,8 +236,9 @@ class Lifter:
         as it does inside `analyze`. Invalidates outstanding `Node` / `Match`
         handles and every node id for `function`.
 
-        Holds the GIL for the whole run, unlike `analyze`: a pipeline may
-        contain Python-defined passes, which need it."""
+        Holds the GIL for the whole run, unlike `analyze`: the run borrows the
+        function out of its `RefCell`, and the `RefMut` is `!Send`, so the
+        closure cannot satisfy `allow_threads`'s `Ungil` bound."""
         ...
     def reg(self, name: str) -> Optional[Vn]:
         """The varnode for the register called `name`, or `None` when the
