@@ -188,7 +188,6 @@ impl NodeKind {
             Self::Entry
             | Self::InitialMemory
             | Self::InitialVar(..)
-            | Self::If
             | Self::Load(..)
             | Self::Store(..)
             | Self::IntConst(..)
@@ -214,6 +213,7 @@ impl NodeKind {
             | Self::Phi
             | Self::MemPhi
             // Each occurrence is a distinct event.
+            | Self::If
             | Self::Return
             | Self::IndirectBranch
             | Self::Unreachable
