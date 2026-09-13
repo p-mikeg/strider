@@ -156,3 +156,36 @@ def test_a_raising_index_surfaces_its_own_error():
 
     with pytest.raises(ValueError, match="from __index__"):
         p.load().addr(Boom()).into_pat()  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("depth", [600, 5000])
+def test_deeply_nested_branch_patterns_raise_rather_than_crashing(depth):
+    """A branch slot takes a whole pattern, compiled by its own recursion
+    through the builder. Unguarded, 600 nested `false_branch` levels overflowed
+    the stack while compiling, so the run is a child and the parent reads its
+    exit code."""
+    body = textwrap.dedent(
+        f"""\
+        import strider
+        from strider import pattern as p
+
+        mem = strider.reader.BufferReader(0x1000, bytes([0x48, 0x01, 0xF8, 0xC3]))
+        lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+        fn = lift.analyze(
+            0x1000, strider.sleigh.CallingConvention.x86_64_systemv()
+        ).function
+
+        pat = p.if_else()
+        for _ in range({depth}):
+            pat = p.if_else().false_branch(pat)
+        try:
+            print("matches", len(fn.find_all(pat)), flush=True)
+        except strider.StriderError as e:
+            print("raised", e, flush=True)
+        """
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", body], capture_output=True, text=True, timeout=300
+    )
+    assert out.returncode == 0, f"child exited {out.returncode}: stderr={out.stderr!r}"
+    assert out.stdout.startswith("raised"), out.stdout
