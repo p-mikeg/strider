@@ -23,7 +23,7 @@ prog = strider.lift.load_elf("fixtures/out/x86/memory.elf")
 `prog` knows the binary's symbols and memory:
 
 ```python
-prog.symbol("array_sum")     # a Symbol: name, address, size, end, is_function, region
+prog.symbol("array_sum")     # a Symbol: name, address, size, end, is_function, is_thumb, region
 prog.symbols()               # {name: Symbol} for all of them
 prog.functions()             # one Symbol per function address, address order
 prog.symbol_at(0x401234)     # the Symbol covering an address, or None
@@ -111,13 +111,11 @@ hit[base].op_opt             # operation name, e.g. "Add", or None
 ```
 
 Index by the `Capture` object, or by its name when it has one (`hit["off"]`).
-A numeric capture also converts and compares directly, so `int(hit[off])` and
-`hit[off] == 0x10` work. The same readers exist as `Match` methods taking the
-capture (`hit.uint(off)`) when that reads better.
+[python-api.md](python-api.md#6-reading-a-match) lists every reader.
 
-A capture can land on a node with no operation and no fingerprint; an
-`InitialVar`, a register as it stood at entry, is the common case. Reach for
-`op_opt` unless you already know the shape.
+A capture can land on a node with no operation, such as an `InitialVar` (a
+register as it stood at entry). Reach for `op_opt` unless you already know the
+shape.
 
 ### Guards and joins
 
@@ -155,12 +153,10 @@ you want distinct ones.
 
 ### One pattern, several shapes
 
-Compiled code reaches the same result more than one way, and writing a query
-per spelling gets tedious. `one_of` takes a list and matches any of them,
-reporting every hit; `first_of` stops at the first that matches, which is what
-you want when the alternatives overlap and you only care that one applied.
-Either can sit in any slot, so the alternation goes where the variation is
-rather than around the whole pattern:
+`one_of` matches any pattern in a list and reports every hit; `first_of`
+stops at the first that matches, for alternatives that overlap. Either can sit
+in any slot, so the alternation goes where the variation is rather than around
+the whole pattern:
 
 ```python
 from strider.pattern import one_of, load, int_add, var, Capture
@@ -174,27 +170,26 @@ hits = function.find_all(
 )
 ```
 
-For a struct field, `field` is that alternation with a constant offset.
-`ConstantFold` rewrites `base + 0` to `base`, so offset 0 always lifts bare, and
-`f.offset(m)` reads 0 back for it:
+For a struct field, `field` is that alternation with a constant offset, and
+`f.offset(m)` reads 0 back for the bare arm:
 
 ```python
 from strider.pattern import field, function_arg
 
+struct_fn = prog.analyze("struct_field_load").function
 f = field(function_arg(0))
-for m in function.find_all(f.load()):
-    print("reads p->field at", f.offset(m))
+for m in struct_fn.find_all(f.load()):
+    print("reads p->field at", f.offset(m))   # 0, then 4
 ```
 
 `code_ptr(x)` is the same idea for a code pointer: `x`, or `x & -2`, the mask an
 ARM interworking or MIPS16 branch applies to clear the ISA-mode bit.
 
-Three more shape helpers worth knowing. `.ordered()` turns off commutative
-matching where you need the operands in the order you wrote them.
-`.any_input(p)` matches `p` against any input slot, for nodes whose arity you
-do not want to pin. And `load().non_stack()` / `load().heap_only()` filter by
-what the address is rooted at, which is how you separate spills from real
-memory traffic.
+Other shape helpers: `.ordered()` turns off commutative matching where you
+need the operands in the order you wrote them. `.any_input(p)` matches `p`
+against any input slot, for nodes whose arity you do not want to pin.
+`load().non_stack()` / `load().heap_only()` filter by what the address is
+rooted at, which separates spills from other memory traffic.
 
 ## Constraints: relating matches by control flow
 
@@ -313,10 +308,8 @@ Example `03` walks through this end to end.
 
 ## Looking at the graph
 
-The interactive explorer is the easiest way to look at a function. It opens on
-the whole graph; `whole=False` opens on the neighborhood around a node and
-re-centers as you click, which is what stays usable on a graph of a few thousand
-nodes.
+`visualize` opens an interactive explorer on the whole graph, or with
+`whole=False` on the neighborhood around the entry, re-centering as you click.
 
 ```python
 prog.visualize(function)                   # prints a local URL; blocks until interrupted
@@ -325,9 +318,8 @@ port = prog.visualize(function, background=True)   # serve and keep querying
 strider.explore.shutdown(port)             # ...until you stop it
 ```
 
-Either way the server renders through a decoder of its own, so your handle
-stays free to keep analysing. The keys, the toolbar and what its limits apply to
-are in [python-api.md](python-api.md#10-visualizing).
+The keys, the toolbar and what its limits apply to are in
+[python-api.md](python-api.md#10-visualizing).
 
 For a static picture, render the IR or the CFG to a self-contained HTML file:
 
@@ -356,11 +348,8 @@ that trip people up most:
   lowers `a - b` to `a + (-b)`, and `a != b` to `not (a == b)`. Use the alias
   constructors (`int_sub`, `int_le`, `float_ne`, ...) instead of building the raw
   shape.
-- **Commutative ops try both orders for you.** The integer adds, multiplies and
-  bitwise ops, the float `float_add` and `float_mul`, and the commutative
-  comparisons all match either operand order, as do the lowered `int_ne` and
-  `float_ne` that wrap an equality. The rest keep the order you wrote;
-  [python-api.md](python-api.md#operators) enumerates which is which.
+- **Commutative ops try both orders for you**, and the rest keep the order
+  you wrote; [python-api.md](python-api.md#operators) lists which is which.
 - **`phi()` matches any phi**, whatever register it carries; `phi_for(vn)`
   narrows to one. Use `mem_phi()` for the memory merge.
 
@@ -370,15 +359,17 @@ entry looking for the actual shape.
 
 ## Beyond ELF: custom code and data
 
-`load_elf` is a convenience. Underneath, a lifter needs two things: somewhere to
-read instruction bytes, and optionally a read-only image for constant data. You
-can supply both from Python, which is how you analyze firmware or any raw source.
+A lifter needs somewhere to read instruction bytes, and optionally a read-only
+image for constant data. You can supply both from Python, which is how you
+analyze firmware or any raw source.
 
-The simplest code source is a block of bytes at a base address:
+The simplest code source is a block of bytes at a base address. `BufferReader`
+takes `bytes`, a `bytearray` or a sequence of ints:
 
 ```python
 arch = strider.sleigh.SleighArch.x86_64()
 cc = strider.sleigh.CallingConvention.x86_64_systemv()
+code_bytes = bytes([0x8D, 0x04, 0x37, 0xC3])   # lea eax, [rdi + rsi] ; ret
 mem = strider.reader.BufferReader(0x8000, code_bytes)
 lft = strider.lift.lifter(arch, mem)
 cfg, function, unresolved = lft.analyze(0x8000, cc)

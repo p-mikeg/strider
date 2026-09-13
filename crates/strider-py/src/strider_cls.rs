@@ -680,7 +680,7 @@ impl PyLifter {
     /// failure.
     ///
     /// An empty `unresolved` is not a complete answer: see `AnalyzeResult`
-    /// for the five channels, and `Cfg.is_complete` to test them all.
+    /// for the six channels, and `Cfg.is_complete` to test them all.
     ///
     /// Runs the fixed-point loop with the GIL released, so other Python
     /// threads keep running. One consequence: a DAEMON thread sitting inside
