@@ -167,10 +167,18 @@ pub(crate) fn defer_drop<T: Send + 'static>(tower: T) {
     if DRAINING.replace(true) {
         return;
     }
+    // A panicking drop must not leave the thread's flag set, or every later
+    // call parks its tower in the pit and nothing drains it again.
+    struct Draining;
+    impl Drop for Draining {
+        fn drop(&mut self) {
+            DRAINING.set(false);
+        }
+    }
+    let _guard = Draining;
     while let Some(link) = DROP_PIT.with_borrow_mut(Vec::pop) {
         drop(link);
     }
-    DRAINING.set(false);
 }
 
 /// A sub-pattern that produces a memory token, so it can be chained into a
