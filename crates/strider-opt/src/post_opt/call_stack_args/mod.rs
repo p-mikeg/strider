@@ -48,17 +48,23 @@ fn collect_stack_args(
         return Vec::new();
     };
 
+    // A probe past the `i128` carrier names no slot.
+    let Some(first_off) = call_sp_off.checked_add(stack_args.offset_of(0)) else {
+        return Vec::new();
+    };
     let mut scan = ArgStoreScan::new(
         alias_cfg.options().clone(),
         mem_value,
         base,
-        call_sp_off + stack_args.offset_of(0),
+        first_off,
         i128::MAX,
     );
     let mut args = Vec::new();
     let mut cursor = 0usize;
     loop {
-        let slot_off = call_sp_off + stack_args.offset_of(cursor);
+        let Some(slot_off) = call_sp_off.checked_add(stack_args.offset_of(cursor)) else {
+            break;
+        };
         // A slot reached by anything but a whole store of its own ends the
         // prefix: a covering store anchored earlier means the slot was never
         // written as a slot, a def the scan cannot see through leaves nothing
