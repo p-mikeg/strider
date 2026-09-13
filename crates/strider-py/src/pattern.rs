@@ -252,14 +252,17 @@ pub(crate) enum PatRepr {
     /// A finished control / variadic [`Pattern`] from a control builder's
     /// `.into_pat()`. One-shot: consumed when queried, and not nestable as a
     /// value operand.
-    Finished {
-        /// Taken on the first query.
-        pattern: Box<std::sync::Mutex<Option<Pattern>>>,
-        /// The `.when()` predicates compiled into `pattern`, shared with its
-        /// closures: the only Python objects a `Pattern` holds, and otherwise
-        /// invisible to the cyclic collector.
-        when_handles: Vec<WhenFn>,
-    },
+    Finished(Box<std::sync::Mutex<FinishedPattern>>),
+}
+
+pub(crate) struct FinishedPattern {
+    /// Taken on the first query.
+    pattern: Option<Pattern>,
+    /// The `.when()` predicates compiled into `pattern`, shared with its
+    /// closures: the only Python objects a `Pattern` holds, and otherwise
+    /// invisible to the cyclic collector. They leave with `pattern` when it is
+    /// nested into another builder, which then reports them.
+    when_handles: Vec<WhenFn>,
 }
 
 /// A finished pattern. Reusable across `find_all` / rewrite calls, except one
@@ -759,9 +762,13 @@ impl PatRepr {
             | PatRepr::Ordered(inner)
             | PatRepr::OfWidth(inner, _)
             | PatRepr::ValueTy(inner, _) => visit.call(inner)?,
-            PatRepr::Finished { when_handles, .. } => {
-                for f in when_handles {
-                    visit.call(&**f)?;
+            // Held only briefly and never across Python code; a skipped
+            // report keeps the predicate alive rather than freeing it.
+            PatRepr::Finished(finished) => {
+                if let Ok(finished) = finished.try_lock() {
+                    for f in &finished.when_handles {
+                        visit.call(&**f)?;
+                    }
                 }
             }
             _ => {}
@@ -1396,29 +1403,22 @@ fn cast_tpl(kind: CastKind, x: DynTemplate, b: &mut TemplateBuilder) -> TmplValu
 
 impl PatRepr {
     pub(crate) fn to_pattern(&self, py: Python<'_>) -> PyResult<Pattern> {
-        if let PatRepr::Finished {
-            pattern,
-            when_handles,
-        } = self
-        {
-            // Compiled in before this scope opened, so the attachments are
-            // replayed into it: the `Pattern` moves to whatever is being
-            // finalised here, and its predicates have to move with it or the
-            // new owner reports none and a cycle through one is uncollectable.
-            if !when_handles.is_empty() {
-                note_when_attached();
-                retain_when(when_handles);
-            }
-            return pattern
-                .lock()
-                .expect("pattern cache poisoned")
-                .take()
-                .ok_or_else(|| {
-                    into_strider_err(anyhow::anyhow!(
-                        "this control / variadic pattern was already consumed by a \
+        if let PatRepr::Finished(finished) = self {
+            let mut finished = finished.lock().expect("pattern cache poisoned");
+            let pattern = finished.pattern.take().ok_or_else(|| {
+                into_strider_err(anyhow::anyhow!(
+                    "this control / variadic pattern was already consumed by a \
                      prior query; rebuild it for each find/rewrite call"
-                    ))
-                });
+                ))
+            })?;
+            // Compiled in before any open scope, so the attachments move into
+            // it with the `Pattern`: the new owner reports them from here on and
+            // this one stops, one report per reference.
+            if !finished.when_handles.is_empty() {
+                note_when_attached();
+                move_when_into_scope(&mut finished.when_handles);
+            }
+            return Ok(pattern);
         }
         Ok(self.compile_match(py)?.into_pattern())
     }
@@ -1523,9 +1523,9 @@ impl PatLike<'_> {
     /// `Pat` holding a finished control / variadic one.
     fn restore(&self, pat: Pattern) {
         if let PatLike::Pat(p) = self
-            && let PatRepr::Finished { pattern, .. } = &*p.borrow().repr
+            && let PatRepr::Finished(finished) = &*p.borrow().repr
         {
-            *pattern.lock().expect("pattern cache poisoned") = Some(pat);
+            finished.lock().expect("pattern cache poisoned").pattern = Some(pat);
         }
     }
 }
@@ -1706,7 +1706,7 @@ fn note_when_attached() {
 
 /// A `.when()` predicate baked into a compiled [`Pattern`], shared with the
 /// closure that runs it. One attachment is one strong Python reference, which
-/// the owning `Pat` reports to the cyclic collector exactly once.
+/// only the `Pat` currently holding that `Pattern` reports to the collector.
 pub(crate) type WhenFn = Arc<PyObject>;
 
 // Collects the predicates baked into the pattern being finalised, while a
@@ -1745,11 +1745,12 @@ fn retain_when_handles<T>(build: impl FnOnce() -> PyResult<T>) -> PyResult<(T, V
     Ok((built?, RetainedWhenScope::handles()))
 }
 
-/// Registers already-compiled predicates with the open scope.
-fn retain_when(handles: &[WhenFn]) {
+/// Moves already-compiled predicates into the open scope; without one, a
+/// query is taking the pattern and they stay where they are.
+fn move_when_into_scope(handles: &mut Vec<WhenFn>) {
     RETAINED_WHEN.with(|c| {
         if let Some(open) = c.borrow_mut().as_mut() {
-            open.extend(handles.iter().map(Arc::clone));
+            open.append(handles);
         }
     });
 }
@@ -1758,7 +1759,11 @@ fn retain_when(handles: &[WhenFn]) {
 fn attach_when(f: PyObject) -> WhenFn {
     note_when_attached();
     let f = Arc::new(f);
-    retain_when(std::slice::from_ref(&f));
+    RETAINED_WHEN.with(|c| {
+        if let Some(open) = c.borrow_mut().as_mut() {
+            open.push(Arc::clone(&f));
+        }
+    });
     f
 }
 
@@ -2464,10 +2469,12 @@ macro_rules! builder_common_methods {
             /// Finalise into a `Pat`.
             fn into_pat(&self, py: Python<'_>) -> PyResult<PyPat> {
                 let (pat, when_handles) = retain_when_handles(|| self.build_pattern_py(py))?;
-                Ok(PyPat::from_repr(PatRepr::Finished {
-                    pattern: Box::new(std::sync::Mutex::new(Some(pat))),
-                    when_handles,
-                }))
+                Ok(PyPat::from_repr(PatRepr::Finished(Box::new(
+                    std::sync::Mutex::new(FinishedPattern {
+                        pattern: Some(pat),
+                        when_handles,
+                    }),
+                ))))
             }
             fn __repr__(slf: Bound<'_, Self>) -> PyResult<String> {
                 let name: String = slf.get_type().getattr("__name__")?.extract()?;
