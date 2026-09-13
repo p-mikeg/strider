@@ -118,9 +118,9 @@ impl Cfg {
         &self.interior_branch_targets
     }
 
-    /// Direct-branch targets the reader has no bytes for, each seated as an
-    /// empty `TailCall` stub so the branch keeps an edge and every region that
-    /// did decode survives.
+    /// Addresses the reader has no bytes for, a direct branch target or a
+    /// sequential fall-through, each seated as an empty `TailCall` stub so the
+    /// edge survives and so does every region that did decode.
     ///
     /// A buffer whose window the branch leaves, a partially-mapped image, an
     /// unrelocated `jmp`: the callee is real code somewhere, just not here, so
