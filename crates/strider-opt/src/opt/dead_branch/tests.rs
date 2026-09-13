@@ -723,3 +723,68 @@ fn constant_diamond_chain_never_walks_the_whole_cfg() -> Result<()> {
     crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::new(None))?;
     Ok(())
 }
+
+/// A ring of `n` constant `If`s whose only exits are their dead arms, each
+/// `exit_len` regions from its `Return`.  `live_on_true` picks which arm stays on the
+/// ring.
+fn make_constant_exit_ring(
+    n: usize,
+    exit_len: usize,
+    live_on_true: bool,
+) -> Result<strider_ir::Function> {
+    let mut b = strider_ir_test_utils::empty_builder()?;
+    let entry = b.create_region_all()?;
+    let heads: Vec<_> = (0..n)
+        .map(|_| b.create_region_all())
+        .collect::<Result<Vec<_>>>()?;
+    let exits: Vec<Vec<_>> = (0..n)
+        .map(|_| (0..exit_len).map(|_| b.create_region_all()).collect())
+        .collect::<Result<Vec<_>>>()?;
+    b.set_entry_region_all(entry)?;
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    b.set_region(entry);
+    b.build_branch(heads[0])?;
+    for i in 0..n {
+        b.set_region(heads[i]);
+        let cond = b.build_boolean_const(live_on_true);
+        let (next, exit) = (heads[(i + 1) % n], exits[i][0]);
+        if live_on_true {
+            b.build_if(cond, next, exit)?;
+        } else {
+            b.build_if(cond, exit, next)?;
+        }
+        for pair in exits[i].windows(2) {
+            b.set_region(pair[0]);
+            b.build_branch(pair[1])?;
+        }
+        b.set_region(*exits[i].last().expect("non-empty exit"));
+        b.build_return(None, &[])?;
+    }
+    b.set_lift_addr(None);
+    b.build()
+}
+
+/// Every fold but the last leaves another exit on the ring, so each root's
+/// walk succeeds; the walks must not each go round the whole ring.
+#[test]
+fn a_ring_whose_exits_are_all_dead_arms_walks_linearly() -> Result<()> {
+    fn walked(n: usize, exit_len: usize, live_on_true: bool) -> Result<u64> {
+        let mut fg = make_constant_exit_ring(n, exit_len, live_on_true)?;
+        super::WALKED_NODES.with(|c| c.set(0));
+        crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?;
+        let ifs = fg.walk_kind(|k| matches!(k, NodeKind::If)).count();
+        assert_eq!(ifs, 1, "the last exit on the ring must stay");
+        Ok(super::WALKED_NODES.with(std::cell::Cell::get))
+    }
+    for live_on_true in [false, true] {
+        let small = walked(100, 4, live_on_true)?;
+        let large = walked(800, 4, live_on_true)?;
+        // Linear would be 8x; quadratic 64x.
+        assert!(
+            large < small * 16,
+            "8x the ring walked {:.1}x the nodes ({small} -> {large})",
+            large as f64 / small as f64,
+        );
+    }
+    Ok(())
+}
