@@ -556,6 +556,15 @@ mod tests {
         );
     }
 
+    /// `EditFunction::canonicalize_node` merges a twin through its only output.
+    #[test]
+    fn every_cacheable_kind_has_one_output() {
+        for k in every_node_kind().iter().filter(|k| k.is_cacheable()) {
+            let sig = expected_signature(k);
+            assert_eq!(sig.outputs.max_len, 1, "{k:?} is cacheable");
+        }
+    }
+
     #[test]
     fn expected_signature_covers_every_node_kind() {
         for k in &every_node_kind() {
