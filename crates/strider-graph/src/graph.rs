@@ -304,6 +304,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
 
     /// Compacts the remaining inputs' indices. `false` if `index` is out of
     /// bounds.
+    #[cfg(any(test, feature = "test-injectors"))]
     pub fn remove_node_input(&mut self, node_id: NodeId, index: u32) -> bool {
         let index = index as usize;
         let inputs = &self.store.nodes[node_id].inputs;
@@ -329,9 +330,8 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         true
     }
 
-    /// Equivalent to [`Self::remove_node_input`] per index, but removing K of a
-    /// node's D inputs is O(D), not O(K*D). Out-of-bounds indices and
-    /// duplicates are ignored.
+    /// Removes the inputs at `indices` and compacts the rest: O(D) for a node's
+    /// D inputs. Out-of-bounds indices and duplicates are ignored.
     pub fn remove_node_inputs_batch(
         &mut self,
         node_id: NodeId,
