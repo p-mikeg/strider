@@ -12,11 +12,12 @@
 //! opaquely rather than claiming a rounding it cannot express. `NEON_frint` is
 //! pure, so the function still lifts and only the rounded value is unknown.
 
-use rsleigh::mem_readers::BufMemReader;
 use strider_ir::IRViewer;
 use strider_ir::node::NodeKind;
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+
+mod common;
 
 const BASE: u64 = 0x10000;
 
@@ -25,18 +26,8 @@ const FRINTP_RET: [u8; 8] = [0x00, 0xc0, 0x64, 0x1e, 0xc0, 0x03, 0x5f, 0xd6];
 
 #[test]
 fn rounding_to_integral_does_not_lift_as_a_conversion_to_integer() {
-    let arch = strider_target::SleighArch::aarch64();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(FRINTP_RET.to_vec(), BASE),
-    )
-    .expect("sleigh");
-    let regs = sleigh.regs().expect("regs");
-    let cc = strider_target::CallingConvention::aarch64_aapcs64()
-        .build(&regs)
-        .expect("cc");
-    let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
+    let (mut strider, cc) =
+        common::strider_over_bytes(common::Arch::Aarch64, FRINTP_RET.to_vec(), BASE, None);
     let result = strider
         .analyze(
             BASE,

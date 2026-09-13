@@ -5,28 +5,18 @@
 //! as one `imul` and one `shl`. Pairing mul with mul and `x` with shift while
 //! leaving mul-with-shift and shift-with-shift alone left those sums unfactored.
 
-use rsleigh::mem_readers::BufMemReader;
 use strider_ir::IRViewer;
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+
+mod common;
 
 const BASE: u64 = 0x1000;
 
 /// The coefficient of the single surviving `Mul`, or `None` if the sum did not
 /// collapse to one.
 fn folded_coefficient(bytes: Vec<u8>) -> Option<u128> {
-    let arch = strider_target::SleighArch::x86_64();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes, BASE),
-    )
-    .expect("sleigh");
-    let regs = sleigh.regs().expect("regs");
-    let cc = strider_target::CallingConvention::x86_64_systemv()
-        .build(&regs)
-        .expect("cc");
-    let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
     let r = strider
         .analyze(
             BASE,
