@@ -10,7 +10,7 @@ at its head.
 
 - File: `crates/dot/assets/vendored/svg-pan-zoom.min.js`
 - Upstream: <https://github.com/ariutta/svg-pan-zoom>
-- Licence: BSD-2-Clause — Copyright 2009-2010 Andrea Leofreddi
+- Licence: BSD-2-Clause. Copyright 2009-2010 Andrea Leofreddi
   <a.leofreddi@vleo.net>. Updates and changes to the original SVGPan are under
   the same licence, each change's copyright held by its author.
 - Used for: pan / zoom over the rendered SVG in the graph viewer.
@@ -22,13 +22,13 @@ of the vendored copy reproduces `LICENSE` from the upstream repository.
 
 - File: `crates/dot/assets/vendored/viz-standalone.js`
 - Upstream: <https://github.com/mdaines/viz-js>
-- Licence: MIT — Copyright (c) 2023 Michael Daines.
+- Licence: MIT. Copyright (c) 2023 Michael Daines.
 - Used for: rendering DOT to SVG in the browser, so the emitted page needs no
   Graphviz install and no network.
 
 Per its own banner, the bundle embeds two further components as object code
 (a base64 Wasm payload), with no source form in this repository:
 
-- Graphviz 11.x, <https://www.graphviz.org> — Eclipse Public License 1.0, the
+- Graphviz 11.x, <https://www.graphviz.org>: Eclipse Public License 1.0, the
   `LICENSE` file of the Graphviz 11.x source tree.
-- Expat, <https://libexpat.github.io> — MIT.
+- Expat, <https://libexpat.github.io>: MIT.

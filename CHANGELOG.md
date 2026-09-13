@@ -29,15 +29,15 @@ The shape each API settled into is in
   accessor the stubs call universal.
 
 - `add_elf` applies relocations by default (`apply_relocations=True`), as
-  `load_elf` already did. The flag also selects what is mapped -- `True` every
-  allocatable section, `False` code and read-only data only -- so the two
-  defaults disagreeing served a different image from the same file. Pass
+  `load_elf` already did. The flag also selects what is mapped: `True` every
+  allocatable section, `False` code and read-only data only. The two defaults
+  disagreeing served a different image from the same file. Pass
   `apply_relocations=False` for the old behaviour.
 
 - A pattern over 256 nodes, or a `one_of` nested more than 256 levels deep, is
   refused with a catchable `StriderError` when the query runs. The matcher is
-  continuation-passing -- a node's later operands match inside the deepest
-  frame of its earlier operands' subtrees -- so stack depth tracks pattern
+  continuation-passing, a node's later operands matching inside the deepest
+  frame of its earlier operands' subtrees, so stack depth tracks pattern
   NODES, not pattern depth, and nothing bounded it: measured in debug, a
   551-node chain and a 1023-node balanced tree both overflowed the stack and
   aborted the interpreter, and nested `one_of` overflowed at lowering time.
@@ -255,6 +255,10 @@ The shape each API settled into is in
   `DenseEntitySet::clear` and `MemRegion::fully_covers`.
 - `elf_get_loadable_regions_including_writable` is gone; use `OwnedElf::regions`
   with a `LoadFilter`.
+- `NodeKind::SegmentOp`, `IRBuilderExt::build_segment_op` and the `Seg` / `Off`
+  slot roles are gone. The kind had no non-test constructor, the opcode already
+  failing the lift by name, so an exhaustive `match` over `NodeKind` loses an
+  arm and nothing else changes.
 - `NodeKind` gains `input_head_len` and `expected_output_kind`, so a consumer
   outside `strider-ir` can read the slot-layout single source of truth instead
   of hardcoding the shift. `strider-pattern`'s `call().arg(n)`, `ret_val(n)` and
@@ -373,7 +377,7 @@ The shape each API settled into is in
 - `FunctionBuilder::build_call_other_abi` is removed. It re-implemented
   `strider-lift`'s `build_abi_call_other`; that is the only copy now.
 - `FunctionBuilder::build_branch` takes the `test-util` gate its siblings
-  carry, and `Function::retain_reachable` is private -- neither had a
+  carry, and `Function::retain_reachable` is private. Neither had a
   production caller. `Graph` grows a stale-cache entry point for the one
   caller that re-keys the dedup cache afterwards.
 - Dot labelling is infallible: resolving the register table once per render
@@ -388,7 +392,7 @@ The shape each API settled into is in
   errors. `ValueId` derives `Default`, so a slot never written read back as
   `Entry`'s control edge: a real value dressed as an SSA variable.
 - A `SegmentOp` or `Indirect` opcode fails the lift by name. Neither can come
-  from `lift_one` -- `SegmentOp`'s only producer is a decompiler action whose
+  from `lift_one`: `SegmentOp`'s only producer is a decompiler action whose
   first input is a host pointer. The dispatch is exhaustive now, so a new
   rsleigh opcode is a compile error rather than a runtime message.
 - `Builder::enqueue_resolved` takes the dispatch's `PcodeInsnAddr` rather than
@@ -404,6 +408,19 @@ The shape each API settled into is in
   the paired form on a reused engine.
 
 ### Added
+
+- `strider.pattern.field(base, offset=None)` and `FieldPat`: a struct field at
+  `base + offset`. `ConstantFold` rewrites `base + 0` to `base`, so the pattern
+  matches the bare base too and `offset(m)` reads 0 back for it. `.load()` and
+  `.store(data)` wrap it.
+- `strider.pattern.code_ptr(x)`: `x`, or `x & -2`, the ISA-mode mask an ARM
+  interworking or MIPS16 branch applies and the only one strider strips.
+- `PhiPat.input_from(edge, value)` / `MemPhiPat.input_from` and
+  `.constraints()`: the phi capture, value capture and `phi_input_from_edge`
+  constraint in one call.
+- `strider_cfg::Builder::with_user_op_names`, so a caller holding the Sleigh
+  user-op table lends it rather than paying an FFI fetch per build; `Lifter`
+  does. `Cfg::space_ids` is the address-space table the CFG decoded with.
 
 - The root `Cargo.toml` declares `[profile.release]` with
   `overflow-checks = true`, so an arithmetic slip in the shipped wheel traps
@@ -581,6 +598,17 @@ The shape each API settled into is in
 
 ### Performance
 
+- `Function::validate` is linear. The data-cycle walk kept its DFS path in a
+  `DenseEntitySet`, whose `remove` rescans every backing word when it drops the
+  current maximum, and the path empties once per seed: n^1.65 to n^1.05, 2.1 s
+  to 232 ms at 192k nodes. It runs at the end of every pipeline run.
+- A CFG build no longer re-fetches the Sleigh user-op table over FFI: 124.8 µs
+  to 11.6 µs per `Builder::build` on x86-64, once per function and per
+  resolve round.
+- A jump-table site whose stack-slot map exhausts its budget defers instead of
+  walking the store chain once per probe: 20 494 steps to 4 096 on a
+  4 097-store chain.
+
 - A failing branch query costs one walk per consumer, not one per `If` output.
   The success short-circuit did not fire on failure, so nesting doubled the cost
   per level: the innermost pattern's visit count ran 80, 156, 304, 1152, 4352,
@@ -604,17 +632,9 @@ The shape each API settled into is in
   table. Both are cached `mappingproxy` views over one `Arc`-shared map, where a
   `#[pyo3(get)]` deep-copied the whole table on every read and `_api` read them
   on every call: `analyze` with 20,000 known targets cost 32.0 ms against
-  1.6 ms, plus 6.8 ms to seat the seeds. The views are read-only -- rebinding
-  the attribute raises `AttributeError`, item assignment `TypeError` -- where
+  1.6 ms, plus 6.8 ms to seat the seeds. The views are read-only, rebinding
+  the attribute raising `AttributeError` and item assignment `TypeError`, where
   the copy silently absorbed a write.
-- Dead-branch elimination memoizes what escapes as well as what does not. It
-  kept only the walk's false verdicts, and the positive memo it did keep proves
-  escape only along routes avoiding every constant branch's dead arm, so a
-  shape where each gate's live arm reaches `Return` only by crossing another
-  gate's dead arm paid a whole-CFG walk per gate: 2n+1 walks at n = 8, 16, 32
-  and 64. The walk now attributes a verdict to every node it covers and drops
-  only the memos whose route crossed a branch that has since folded. One walk
-  at every n.
 - Applying relocations reuses one scratch buffer instead of allocating per
   relocation site.
 
@@ -648,7 +668,8 @@ The shape each API settled into is in
 - Dead-branch elimination reuses one escape set per sweep rather than walking
   the whole CFG once per constant-condition branch. Growth over a chain of
   constant diamonds falls from quadratic to linear (measured exponent 2.16 to
-  1.07; 288ms to 2.8ms at 32k nodes).
+  1.07; 288ms to 2.8ms at 32k nodes), and a chain of 64 constant gates over one
+  spin loop went from 64 full walks to 1.
 - The stack argument window widens geometrically as intended. Its gate tested a
   stack offset for positivity, and offsets are normally negative, so an
   ascending run of probes rescanned the whole prefix per load (exponent 1.99 to
@@ -656,9 +677,6 @@ The shape each API settled into is in
 - `add_elf` checks region overlap against a sorted prefix-max index rather than
   every existing region, so the per-call cost no longer grows with the regions
   already loaded (2.64s to 0.44s over eight images of 3200 regions).
-- Dead-branch elimination shares one backward CFG walk across candidate roots
-  instead of walking per root: a chain of 64 constant gates over one spin loop
-  went from 64 full walks to 1.
 - A call's float argument registers are projected once per function, like its
   return and clobber varnodes; the varnode universe is seeded through a hash
   set; `Sleigh::regs()` is fetched once per CFG dump rather than once per
@@ -686,13 +704,40 @@ The shape each API settled into is in
   and the linear sweep no longer makes repeated calls quadratic.
 - A guard lookup walks the query point's dominator chain instead of scanning
   every guard recorded for that value. Guards on one value cost the square of
-  their count in entries scanned and grew cubically -- 4096 entries and 9.4ms
+  their count in entries scanned and grew cubically: 4096 entries and 9.4ms
   at 64 guards, against 3 probes now.
 - Stamping the same lift address on a node the dedup cache returned adds one
   leaf rather than one per call, so an asm fingerprint grows with distinct
   addresses instead of with node creations.
 
 ### Fixed
+
+- A commutative query no longer drops a binding when a capture sits on an
+  operand's sibling output. `int_add(load().output(0).capture(c), load())`
+  found 1 match on `Add(Load, Load)` where `int_add(load().capture(c), load())`
+  found 2, and a join over it returned no row.
+
+- A deep tower of `if_else().with_true(...)` branch patterns frees without
+  recursing; it aborted the process with a stack overflow when dropped.
+
+- AArch64 `svc` lifts. `CallSupervisor` had no user-op ABI row, so `analyze`
+  failed on every function containing a syscall.
+
+- A decode that runs off the end of the mapped image partway through an
+  instruction ends the region, as one starting past the end already did,
+  instead of failing the function.
+
+- DOT, HTML and p-code text are deterministic. A `Load` / `Store` address
+  space printed as the host address of Sleigh's space object, so the same
+  function rendered differently on every run; it is named now (`ram`, or `r` in
+  plain p-code text).
+
+- `rewrite_all` and the Rust `apply_rules_count` stop at the first rule that
+  fires at a node; later rules built a replacement they discarded and folded
+  its fingerprints into a live node.
+
+- `visualize(depth=-1)` raises `ValueError`. It clamped to 0, the "no limit"
+  sentinel.
 
 - A value tested for non-zero is no longer read as bit 0 of itself.
   `Xor(IntEqual(y, 0), 1)` is `y != 0`, the OR of every bit of `y`, and the
@@ -1257,8 +1302,8 @@ The shape each API settled into is in
   per `recv` now.
 - A callee owns the whole argument slot, not the bytes the caller wrote into
   it. The outgoing-argument window recorded each range as the store's extent
-  while advancing by whole ABI slots, so the tail of a sub-slot argument -- a
-  4-byte seventh integer argument on x86-64 SysV -- fell outside the window and
+  while advancing by whole ABI slots, so the tail of a sub-slot argument, a
+  4-byte seventh integer argument on x86-64 SysV, fell outside the window and
   a load of those bytes forwarded across a call that may write them. Reachable
   only under `escape_analysis` or a non-empty `noalias_allocators`.
 - An ISA-mode clash costs the arm that names the clashing address, not the
@@ -1278,7 +1323,7 @@ The shape each API settled into is in
   levels. A release build was never affected.
 - An `__index__` that re-enters the pattern builder raises instead of
   recursing without bound. The depth guard fired, and the integer extraction
-  swallowed its error before retrying at another width -- two recursions per
+  swallowed its error before retrying at another width: two recursions per
   level.
 - A failed multi-pattern query no longer consumes the one-shot patterns it had
   already taken, and a failed `add_symbols` no longer commits the entries it
@@ -1313,8 +1358,8 @@ The shape each API settled into is in
   that way was never collected. A cached pattern replays its predicate handles
   into the open scope.
 
-- A query that raises before doing any work -- a bad `constraints` argument, a
-  `.when()` on a rewrite LHS -- restores its one-shot pattern instead of
+- A query that raises before doing any work, on a bad `constraints` argument
+  or a `.when()` on a rewrite LHS, restores its one-shot pattern instead of
   burning it, so the next `find_all` no longer reports a query that never ran.
 
 - `Cfg.fingerprint_pcode` rejects a `Node` whose function another `Cfg` lifted,
@@ -1365,17 +1410,18 @@ The shape each API settled into is in
   read `known_targets` by exact p-code key, where every other seed-aware read
   goes through the machine-start fallback that exists because a caller can only
   spell the machine address. At any dispatch whose `BRANCHIND` is not the
-  instruction's first p-code op -- ARM `bx`, MIPS `jr`, x86 `jmp [mem]` -- the
+  instruction's first p-code op (ARM `bx`, MIPS `jr`, x86 `jmp [mem]`), the
   lookup missed, so the arm was seated mode-less and decoded in the flowing
   mode, which at an interworking `bx` is the mode being switched away from.
   Neither mode report fired, so `is_complete` answered true and the next round
   stayed silent.
 
-- A single out-of-range or interior arm no longer costs the whole seeded table.
-  Bad arms drop individually and land on the channel that reports them -- an
-  interior arm on `interior_branch_targets`, a short seat on
-  `unresolved_indirect_branches` -- where before one tail-calling switch case
-  re-deferred the dispatch every round and the interior case recorded nothing.
+- An interior seeded arm is reported. A table arm interior to a decoded region
+  but off every instruction boundary lands on `interior_branch_targets` before
+  its site defers; before, it recorded nothing. The site still defers as a
+  whole on one bad arm: that arm is evidence the bound over-approximates, and
+  seating the rest failed 485 functions across 42 of 155 kernels that lift
+  with the site unresolved.
 
 - An undecodable seeded target freezes only the site that named it, rather than
   every site naming that address: `undecodable_seeded_targets` carries the
