@@ -1370,6 +1370,69 @@ fn forwards_spill_across_call_when_frame_private() -> Result<()> {
     Ok(())
 }
 
+/// A spill whose address a register the call's convention neither passes nor
+/// preserves still holds at the call, the way i386 `regparm` hands a local's
+/// address over in EAX.  `held` is what that register holds.
+fn spill_across_call_with_register(held_is_frame_address: bool) -> Result<strider_ir::Function> {
+    let sp = sp32_vn();
+    let eax = strider_ir_test_utils::reg_vn(0x0, 4);
+    let mut b = strider_ir_test_utils::RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .tracked(eax)
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    let minus_eight = b.build_int_const((-8i64) as u64, ValueType::I32)?;
+    let slot =
+        b.build_int_binary_operation(sp_val, minus_eight, IntBinaryOp::Add, ValueType::I32)?;
+    let eleven = b.build_int_const(11u64, ValueType::I32)?;
+    b.build_store(slot, eleven, rsleigh::VnSpace::RAM)?;
+    let held = if held_is_frame_address {
+        slot
+    } else {
+        b.build_int_const(0x1234u64, ValueType::I32)?
+    };
+    b.write_variable(&eax, held)?;
+    let frame = b.build_int_const((-64i64) as u64, ValueType::I32)?;
+    let call_sp = b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::I32)?;
+    b.write_variable(&sp, call_sp)?;
+    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let (_, clobbers) = b.build_call(target, &[], &[eax], 0)?;
+    b.write_variable(&eax, clobbers[0])?;
+    let loaded = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    let mut octx = crate::OptCtx::new(None);
+    octx.options.assumptions.escape_analysis = true;
+    crate::test_support::standard_test().run(&mut fg, &mut octx)?;
+    Ok(fg)
+}
+
+#[test]
+fn spill_not_forwarded_across_call_when_a_clobbered_register_holds_its_address() -> Result<()> {
+    let fg = spill_across_call_with_register(true)?;
+    assert_eq!(
+        fg.count_kind(|k| matches!(k, NodeKind::Load(_))),
+        1,
+        "the callee can write the spill through the register, so the reload stays"
+    );
+    Ok(())
+}
+
+#[test]
+fn spill_forwarded_across_call_when_the_clobbered_register_holds_no_address() -> Result<()> {
+    let fg = spill_across_call_with_register(false)?;
+    let val = crate::test_support::return_value(fg.graph())?;
+    assert_eq!(
+        fg.int_const_u128(val),
+        Some(11),
+        "a register holding no frame address leaves the frame private"
+    );
+    Ok(())
+}
+
 #[test]
 fn spill_not_forwarded_across_call_by_default() -> Result<()> {
     let sp = sp32_vn();

@@ -18,9 +18,16 @@
 //! which is also how a stack argument is passed before `CallStackArgCollect`
 //! runs), a `Call` / `CallOther` argument, a `Return`, or an op whose result
 //! leaves `U` (pointer arithmetic). Detection is at that boundary, never at the
-//! callee: an address only reaches a callee's registers or readable memory by
-//! first crossing one of these uses, so a pointer into already-written memory
-//! is caught at the store that wrote it.
+//! callee: an address only reaches a callee's readable memory by first crossing
+//! one of these uses, so a pointer into already-written memory is caught at the
+//! store that wrote it.
+//!
+//! A register reaches the callee without any use: a `Call` carries only the
+//! argument registers its convention names, yet a callee may read one the
+//! convention clobbers (i386 `regparm` in EAX, clang's `fastcc` in ECX, the
+//! GNU C static chain, AArch64's indirect-result register X8).  The builder
+//! records a stack-derived value held in such a register at any call, and that
+//! record is an escape too.
 //!
 //! `decompose` under-approximates `U`: an unfolded offset such as `sp + (5 ^ 3)`
 //! reads as outside `U` until `ConstantFold` collapses it. That stays sound,
@@ -32,8 +39,9 @@
 //! since a leaked pointer can be stored to a global and reloaded by a later
 //! callee.
 //!
-//! Sound modulo two claims the IR cannot check: a conforming callee does not
-//! write the caller's frame outside the argument area, and no pointer is
+//! Sound modulo two claims the IR cannot check: a callee does not write the
+//! caller's frame outside the argument area except through a pointer it was
+//! handed in an argument, a clobbered register or memory, and no pointer is
 //! fabricated numerically equal to a private slot.
 
 use rustc_hash::FxHashSet;
@@ -67,6 +75,9 @@ pub(crate) fn frame_address_escapes_cached(
 }
 
 fn frame_address_escapes(function: &Function, noalias_allocators: &FxHashSet<u64>) -> bool {
+    if function.side_tables().frame_address_in_call_register() {
+        return true;
+    }
     for node in function.walk() {
         let kind = *function.node_kind(node);
         // A Call's inputs are [ctrl, mem, target, sp, ...args]; slot 3 is the
@@ -216,6 +227,31 @@ mod tests {
             frame_address_escapes(&fg, &FxHashSet::default()),
             "a frame address passed as a call argument escapes"
         );
+        Ok(())
+    }
+
+    /// A register the call clobbers still holds `&local` at the call, which
+    /// the call node does not carry.
+    #[test]
+    fn frame_address_in_a_clobbered_register_escapes() -> crate::Result<()> {
+        let sp = sp();
+        let eax = strider_ir_test_utils::reg_vn(0x0, 4);
+        let mut b = strider_ir_test_utils::RegisterSet::new()
+            .tracked(sp)
+            .arg(sp)
+            .stack_vn(sp)
+            .tracked(eax)
+            .build_fn_single_region()?;
+        let sp_v = b.read_variable(&sp)?;
+        let frame_addr = frame_off(&mut b, sp_v, -4)?;
+        b.write_variable(&eax, frame_addr)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        b.build_call(target, &[], &[eax], 0)?;
+        b.build_return(None, &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
+        assert!(frame_address_escapes(&fg, &FxHashSet::default()));
         Ok(())
     }
 
