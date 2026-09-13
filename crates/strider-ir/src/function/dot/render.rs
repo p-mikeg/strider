@@ -107,10 +107,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         if is_arg_node {
             extra.push(("peripheries", "2"));
         }
-        if self.center == Some(node) {
-            extra.push(("color", "\"#ffcc00\""));
-            extra.push(("penwidth", "2.5"));
-        }
+        extra.extend(self.highlight(node));
 
         out.node(&cur_id, &label, node_shape(&kind), &extra);
         Some(cur_id)
@@ -138,9 +135,9 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 cur_id,
                 &virt_id,
                 &[
-                    ("color", "\"#00cccc\""),
+                    ("color", "#00cccc"),
                     ("label", elabel),
-                    ("fontcolor", "\"#cccccc\""),
+                    ("fontcolor", "#cccccc"),
                     ("fontsize", "9"),
                 ],
             );
@@ -158,7 +155,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             Some(existing) => existing,
             None => {
                 let v = state.alloc_virtual_id();
-                out.node(&v, blabel, "trapezium", &[("fillcolor", "\"#3a2a10\"")]);
+                out.node(&v, blabel, "trapezium", &[("fillcolor", "#3a2a10")]);
                 state.virtual_nodes.insert(out_id, v.clone());
                 v
             }
@@ -208,12 +205,12 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                         &virt_id,
                         &label,
                         "box",
-                        &[("fillcolor", "\"#28102a\""), ("style", "\"filled,dashed\"")],
+                        &[("fillcolor", "#28102a"), ("style", "filled,dashed")],
                     );
                     out.edge(
                         &call_dot_id,
                         &virt_id,
-                        &[("color", "\"#888888\""), ("style", "dashed")],
+                        &[("color", "#888888"), ("style", "dashed")],
                     );
                     state.virtual_nodes.insert(parent_value, virt_id.clone());
                     virt_id
@@ -258,7 +255,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         let mut extra: Vec<(&str, &str)> = vec![("color", color)];
         if !label_str.is_empty() {
             extra.push(("label", label_str));
-            extra.push(("fontcolor", "\"#cccccc\""));
+            extra.push(("fontcolor", "#cccccc"));
             extra.push(("fontsize", "9"));
         }
 
