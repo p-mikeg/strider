@@ -7,7 +7,7 @@ use strider_ir_test_utils::{Tb, reg_vn, stack_vn_x86_64 as stack_vn};
 
 // Shared with the other crate's copy of this module, so they live in the
 // dev-dependency both already use.
-pub(crate) use strider_ir_test_utils::{if_cmp_then_return, single_initial_var};
+pub(crate) use strider_ir_test_utils::if_cmp_then_return;
 
 /// Compiler-inverted equivalent of [`if_cmp_then_return`]: same source
 /// program, but the cond is wrapped in a negation and the branches swapped,
