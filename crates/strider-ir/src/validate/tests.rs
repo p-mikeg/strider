@@ -1192,24 +1192,32 @@ fn memory_linearity_token_forked_into_two_arms_validates() {
     validate(&s.f).expect("a token forked into two arms is one chain");
 }
 
+/// A `Call { cc: None }` on `ctrl` / `mem`. Returns `(call, [ctrl, mem])`.
+fn call(f: &mut Function, ctrl: ValueId, mem: ValueId) -> (NodeId, [ValueId; 2]) {
+    let (target_n, target) = int_const(f, 0x1000, ValueType::I64);
+    stamp(f, target_n);
+    let (sp_n, sp) = int_const(f, 0x7fff_0000, ValueType::I64);
+    stamp(f, sp_n);
+    let call = f.graph_mut().create_node(
+        NodeKind::Call { cc: None },
+        [ctrl, mem, target, sp],
+        [ValueKind::Control, ValueKind::Memory],
+    );
+    stamp(f, call);
+    (call, f.node_outputs_exact::<2>(call).unwrap())
+}
+
 /// A memory-preserving `Call` legitimately leaves its Memory output
 /// unconsumed.
 #[test]
 fn memory_chain_preserving_call_unconsumed_memory_output_not_flagged() {
     let mut s = spine();
-    let (target_n, target) = int_const(&mut s.f, 0x1000, ValueType::I64);
-    stamp(&mut s.f, target_n);
-    let (sp_n, sp) = int_const(&mut s.f, 0x7fff_0000, ValueType::I64);
-    stamp(&mut s.f, sp_n);
-
-    // The Memory output is left unconsumed.
-    let call = s.f.graph_mut().create_node(
-        NodeKind::Call { cc: None },
-        [s.entry_ctrl, s.mem_value, target, sp],
-        [ValueKind::Control, ValueKind::Memory],
-    );
-    stamp(&mut s.f, call);
-    let [call_ctrl, _call_mem] = s.f.node_outputs_exact::<2>(call).unwrap();
+    let (call, [call_ctrl, _call_mem]) = call(&mut s.f, s.entry_ctrl, s.mem_value);
+    let cc = strider_target::BuiltCallingConvention {
+        preserves_memory: true,
+        ..Default::default()
+    };
+    s.f.set_call_cc(call, cc);
 
     // The Return takes the Call's control but the pre-call memory edge.
     let ret =
@@ -1219,6 +1227,171 @@ fn memory_chain_preserving_call_unconsumed_memory_output_not_flagged() {
 
     validate(&s.f)
         .expect("a memory-preserving Call's unconsumed memory output must not be flagged");
+}
+
+/// `Store -> Call -> Return` where the clobbering `Call`'s memory output is
+/// unused and the `Return` takes the token from before the `Store`.
+#[test]
+fn memory_order_return_behind_a_clobbering_call_is_rejected() {
+    let mut s = spine();
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::I64);
+    stamp(&mut s.f, addr_n);
+    let (_, st_mem) = store(&mut s.f, s.mem_value, addr, addr);
+    let (call, [call_ctrl, _]) = call(&mut s.f, s.entry_ctrl, st_mem);
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [call_ctrl, s.mem_value], []);
+    stamp(&mut s.f, ret);
+
+    let errs = validate(&s.f).unwrap_err();
+    assert!(
+        matches!(errs.0.as_slice(), [ValidationError::MemoryRewind { node, effect }]
+            if *node == ret && *effect == call),
+        "{errs:?}"
+    );
+}
+
+/// A no-return `Call` sinks into a control-only `Unreachable`: nothing after it
+/// reads memory.
+#[test]
+fn memory_order_no_return_call_into_unreachable_validates() {
+    let mut s = spine();
+    let (_, [call_ctrl, _]) = call(&mut s.f, s.entry_ctrl, s.mem_value);
+    let sink =
+        s.f.graph_mut()
+            .create_node(NodeKind::Unreachable, [call_ctrl], []);
+    stamp(&mut s.f, sink);
+
+    validate(&s.f).expect("a no-return Call leaves its memory output unused");
+}
+
+/// A clobbering `Call` on one arm of a diamond whose merge has no `MemPhi`.
+#[test]
+fn memory_order_arm_effect_dropped_at_a_merge_is_rejected() {
+    let mut s = spine();
+    let (cond_n, cond) = int_const(&mut s.f, 1, ValueType::I1);
+    stamp(&mut s.f, cond_n);
+    let branch = s.f.graph_mut().create_node(
+        NodeKind::If,
+        [s.entry_ctrl, cond],
+        [ValueKind::Control, ValueKind::Control],
+    );
+    stamp(&mut s.f, branch);
+    let [then_edge, else_edge] = s.f.node_outputs_exact::<2>(branch).unwrap();
+    let (call, [call_ctrl, _]) = call(&mut s.f, then_edge, s.mem_value);
+    let merge = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [call_ctrl, else_edge],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let [merge_ctrl, _] = s.f.node_outputs_exact::<2>(merge).unwrap();
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [merge_ctrl, s.mem_value], []);
+    stamp(&mut s.f, ret);
+
+    let errs = validate(&s.f).unwrap_err();
+    assert!(
+        matches!(errs.0.as_slice(), [ValidationError::MemoryRewind { node, effect }]
+            if *node == merge && *effect == call),
+        "{errs:?}"
+    );
+}
+
+/// The same diamond, with the arms merged by a `MemPhi` the `Return` takes.
+#[test]
+fn memory_order_arm_effect_merged_by_a_mem_phi_validates() {
+    let mut s = spine();
+    let (cond_n, cond) = int_const(&mut s.f, 1, ValueType::I1);
+    stamp(&mut s.f, cond_n);
+    let branch = s.f.graph_mut().create_node(
+        NodeKind::If,
+        [s.entry_ctrl, cond],
+        [ValueKind::Control, ValueKind::Control],
+    );
+    stamp(&mut s.f, branch);
+    let [then_edge, else_edge] = s.f.node_outputs_exact::<2>(branch).unwrap();
+    let (_, [call_ctrl, call_mem]) = call(&mut s.f, then_edge, s.mem_value);
+    let merge = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [call_ctrl, else_edge],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let [merge_ctrl, token] = s.f.node_outputs_exact::<2>(merge).unwrap();
+    let mem_phi = s.f.graph_mut().create_node(
+        NodeKind::MemPhi,
+        [token, call_mem, s.mem_value],
+        [ValueKind::Memory],
+    );
+    let [merged] = s.f.node_outputs_exact::<1>(mem_phi).unwrap();
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [merge_ctrl, merged], []);
+    stamp(&mut s.f, ret);
+
+    validate(&s.f).expect("a MemPhi carries each arm's memory state");
+}
+
+/// A `MemPhi` arm from before the effect its own edge runs.
+#[test]
+fn memory_order_mem_phi_arm_behind_its_edge_effect_is_rejected() {
+    let mut s = spine();
+    let (cond_n, cond) = int_const(&mut s.f, 1, ValueType::I1);
+    stamp(&mut s.f, cond_n);
+    let branch = s.f.graph_mut().create_node(
+        NodeKind::If,
+        [s.entry_ctrl, cond],
+        [ValueKind::Control, ValueKind::Control],
+    );
+    stamp(&mut s.f, branch);
+    let [then_edge, else_edge] = s.f.node_outputs_exact::<2>(branch).unwrap();
+    let (call, [call_ctrl, _]) = call(&mut s.f, then_edge, s.mem_value);
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::I64);
+    stamp(&mut s.f, addr_n);
+    let (_, st_mem) = store(&mut s.f, s.mem_value, addr, addr);
+    let merge = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [call_ctrl, else_edge],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let [merge_ctrl, token] = s.f.node_outputs_exact::<2>(merge).unwrap();
+    let mem_phi = s.f.graph_mut().create_node(
+        NodeKind::MemPhi,
+        [token, s.mem_value, st_mem],
+        [ValueKind::Memory],
+    );
+    let [merged] = s.f.node_outputs_exact::<1>(mem_phi).unwrap();
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [merge_ctrl, merged], []);
+    stamp(&mut s.f, ret);
+
+    let errs = validate(&s.f).unwrap_err();
+    assert!(
+        matches!(errs.0.as_slice(), [ValidationError::MemoryRewind { node, effect }]
+            if *node == mem_phi && *effect == call),
+        "{errs:?}"
+    );
+}
+
+/// A `CallOther` that does not clobber memory leaves its Memory output unused,
+/// and the chain carries on from its input.
+#[test]
+fn memory_order_non_clobbering_call_other_validates() {
+    let mut s = spine();
+    let op = s.f.graph_mut().create_node(
+        NodeKind::CallOther { user_op_id: 0 },
+        [s.entry_ctrl, s.mem_value],
+        [ValueKind::Control, ValueKind::Memory],
+    );
+    stamp(&mut s.f, op);
+    let [op_ctrl, _] = s.f.node_outputs_exact::<2>(op).unwrap();
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [op_ctrl, s.mem_value], []);
+    stamp(&mut s.f, ret);
+
+    validate(&s.f).expect("a non-clobbering CallOther is no memory effect");
 }
 
 /// Builds `kind(IntConst:in_ty) -> out_ty` into a returned spine and asserts
