@@ -2732,4 +2732,45 @@ mod tests {
             target_keys(&multiple(&[(0x2000, None)])),
         );
     }
+
+    /// Abandoning one dispatch of a two-dispatch instruction drops the shared
+    /// machine-start key, and the other dispatch's next fold re-seats the
+    /// caller's answer under its own anchor.
+    #[test]
+    fn abandoning_one_dispatch_keeps_the_caller_seed_of_its_neighbour() {
+        let (_function, node) = fn_with_live_indirect_branch();
+        let start = pcode_addr(0x1000);
+        let first = mid_insn_addr(0x1000);
+        let second = PcodeInsnAddr {
+            insn_index: 5,
+            ..first
+        };
+        let caller_seed: FxHashMap<PcodeInsnAddr, ResolvedTargets> =
+            std::iter::once((start, multiple(&[(0x4000, None)]))).collect();
+        let mut known = caller_seed.clone();
+        let mut abandoned = rustc_hash::FxHashSet::default();
+        abandon_site(&mut known, &mut abandoned, first);
+        assert!(
+            known.is_empty(),
+            "the shape under test: the shared key is gone"
+        );
+
+        let mut resolutions: IndirectResolutions = FxHashMap::default();
+        resolutions.insert(node, Some(multiple(&[(0x5000, None)])));
+        apply_resolutions(
+            &mut known,
+            &caller_seed,
+            &vec![(second, node)],
+            &Vec::new(),
+            resolutions,
+            &FxHashMap::default(),
+            &abandoned,
+        )
+        .expect("fold");
+
+        assert_eq!(
+            target_keys(&known[&second]),
+            target_keys(&multiple(&[(0x4000, None), (0x5000, None)])),
+        );
+    }
 }
