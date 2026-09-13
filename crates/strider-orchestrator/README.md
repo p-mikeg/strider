@@ -51,11 +51,11 @@ arms in whatever mode flows into the branch.
 The loop converges when no anchor is left, or when a round changes no address's
 successor set. It stops for three other reasons, none of them an error:
 
-- A site that NARROWS twice is abandoned. One narrowing is a refinement (the
-  classifier over-approximates an index bound and then proves the tighter
-  answer); a second means the answer depends on what the previous round seated,
-  so no member of the cycle is trustworthy. Its seat is dropped and its
-  placeholder left live.
+- A site that NARROWS twice is abandoned. Every narrowing is reported
+  unresolved, since nothing tells a tighter proof of an over-approximated index
+  bound from a lost arm; a second means the answer depends on what the previous
+  round seated, so no member of the cycle is trustworthy. Its seat is dropped
+  and its placeholder left live.
 - A site naming a target the CFG could not decode is abandoned whole: the
   bound that produced it is what is wrong, so no arm of that answer stands. A
   site naming an address two edges reached in different ISA modes loses just
@@ -74,7 +74,8 @@ none of them answers it alone.
 
 - `unresolved_indirect_branches`: a live `IndirectBranch` placeholder, a seated
   `Switch` whose selector no longer derives, a site still growing when the cap
-  ran out, and a site whose fold dropped a successor the classifier proved.
+  ran out, a site whose fold dropped a successor the classifier proved, a site
+  whose answer narrowed in any round, and a site the loop abandoned.
 - `unverified_seeded_sites`: answers that are whole but that nothing verified. A
   `Switch` holding exactly the caller's seed and nothing derived; a site the CFG
   CONSUMED, where a `LinkRegister` answer became a `Return` and a lone
