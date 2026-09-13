@@ -30,7 +30,7 @@ strider-pattern = { workspace = true, features = ["test-util"] }
 strider-ir = { workspace = true, features = ["test-util"] }
 strider-ir-test-utils = { path = "../strider-ir-test-utils" }
 # Used only by the integration tests (e.g. control_build, call_other slots).
-strider-target = { workspace = true }
+strider-target = { workspace = true, features = ["test-util"] }
 criterion = { workspace = true }
 
 [[bench]]

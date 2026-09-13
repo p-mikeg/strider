@@ -49,6 +49,7 @@ strider-ir-test-utils = { workspace = true, features = ["proptest-gen"] }
 # the validator consistency tests. Dev-dep only, so production strider-ir never
 # carries them.
 strider-graph = { workspace = true, features = ["test-injectors"] }
+strider-target = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

@@ -13,5 +13,13 @@ readme = "README.md"
 rsleigh.workspace = true
 anyhow.workspace = true
 
+[features]
+# `SleighArch::probe_regs`, a register table read off an empty image.
+test-util = []
+
+[dev-dependencies]
+# Self dev-dependency: turns `test-util` on for the `tests/` targets only.
+strider-target = { workspace = true, features = ["test-util"] }
+
 [lints]
 workspace = true
