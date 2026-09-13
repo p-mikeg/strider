@@ -25,7 +25,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::Context as _;
-use object::{Object, ObjectKind, ObjectSection, ObjectSegment};
+use object::{Object, ObjectKind, ObjectSection, ObjectSegment, ObjectSymbol};
 
 use crate::{FileBytes, MemRegion, Result};
 
@@ -38,7 +38,7 @@ pub enum RegionSource {
     Sections,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoadFilter {
     /// `.text`, `.rodata`, `.plt`, `.eh_frame`, plus a writable-but-executable
     /// mapping: what an instruction FETCH may reference.
@@ -118,21 +118,55 @@ pub fn elf_get_loadable_regions(obj: &object::File<'_>) -> Result<Vec<MemRegion>
 #[derive(Default)]
 pub(crate) struct LoadedImage {
     pub(crate) regions: Vec<MemRegion>,
-    /// `[start, end)` of every writable mapping the walk SAW, whether or not
-    /// it survived the filter and the dedup: a writable PT_LOAD overlapping an
-    /// accepted read-only one leaves no region behind, and a
-    /// [`crate::ReadOnlyMemory`] view that did not know about it would serve
-    /// the accepted mapping's file-initial bytes for an address that is RW at
-    /// runtime. Unsorted, and free to overlap both each other and the regions.
-    pub(crate) writable: Vec<(u64, u64)>,
+    /// Every writable mapping the walk SAW, whether or not it survived the
+    /// filter and the dedup: a writable PT_LOAD overlapping an accepted
+    /// read-only one leaves no region behind, and a [`crate::ReadOnlyMemory`]
+    /// view that did not know about it would serve the accepted mapping's
+    /// file-initial bytes for an address that is RW at runtime.
+    pub(crate) writable: AddressRanges,
 }
 
 impl LoadedImage {
     /// Address space, not file bytes: a mapping's BSS tail is writable too.
     fn note_writable(&mut self, start: u64, size: u64) {
         if size != 0 {
-            self.writable.push((start, start.saturating_add(size)));
+            self.writable.0.push((start, start.saturating_add(size)));
         }
+    }
+}
+
+/// `[start, end)` address ranges, ascending and disjoint once
+/// [`merged`](Self::merged).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct AddressRanges(Vec<(u64, u64)>);
+
+impl AddressRanges {
+    /// `ranges` sorted, with everything that overlaps or touches merged.
+    pub(crate) fn merged(mut ranges: Vec<(u64, u64)>) -> Self {
+        ranges.sort_unstable();
+        let mut out: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
+        for (lo, hi) in ranges {
+            match out.last_mut() {
+                Some(last) if lo <= last.1 => last.1 = last.1.max(hi),
+                _ => out.push((lo, hi)),
+            }
+        }
+        Self(out)
+    }
+
+    /// The merged ranges overlapping `[lo, hi)`.
+    pub(crate) fn overlapping(&self, lo: u64, hi: u64) -> &[(u64, u64)] {
+        let first = self.0.partition_point(|&(_, end)| end <= lo);
+        let last = first + self.0[first..].partition_point(|&(start, _)| start < hi);
+        &self.0[first..last]
+    }
+
+    /// Whether `[addr, addr + len)` touches any of the merged ranges.
+    pub(crate) fn touches(&self, addr: u64, len: usize) -> bool {
+        len != 0
+            && !self
+                .overlapping(addr, addr.saturating_add(len as u64))
+                .is_empty()
     }
 }
 
@@ -226,17 +260,34 @@ pub struct ElfSectionLayout {
     /// ET_REL, so `bases` holds every section header and an index absent from
     /// it is out of range rather than a pass-through.
     rebased: bool,
+    /// Symbol index -> synthetic address, for every ET_REL symbol the link
+    /// would place outside this object: undefined and `SHN_COMMON` ones.
+    externs: BTreeMap<usize, u64>,
+    /// Where the synthetic GOT starts: slot `i` holds symbol `i`'s address.
+    got_base: u64,
+    /// Bytes per GOT slot.
+    word: u64,
+    /// The PowerPC64 TOC pointer, `.TOC.`.
+    toc_base: Option<u64>,
 }
 
 /// Where an ET_REL's first rebased section is seated, so that address 0 stays
-/// unmapped. A mapped 0 makes a null dereference a readable, foldable ROM read,
-/// and every relocation site whose symbol does not resolve keeps its
-/// file-initial zero, which then folds through `LoadReadOnly` to the bytes at 0
-/// instead of failing to fold.
+/// unmapped: a mapped 0 makes a null dereference a readable, foldable ROM read.
 ///
 /// Round, obviously not a link-time address, and inside the low 2 GiB so an
 /// absolute 32-bit relocation field still holds it.
 const ET_REL_IMAGE_BASE: u64 = 0x1000_0000;
+
+/// Page granularity of the synthetic ranges past an ET_REL image: each starts
+/// on a page boundary one unmapped page past the previous one.
+const ET_REL_PAGE: u64 = 0x1000;
+
+/// Address space per undefined symbol in the extern range.
+const EXTERN_STRIDE: u64 = 0x10;
+
+/// `.TOC.` sits this far past the start of the TOC it addresses, so a signed
+/// 16-bit offset reaches the first 64 KiB of it.
+const PPC64_TOC_BIAS: u64 = 0x8000;
 
 impl ElfSectionLayout {
     /// A rebase whose alignment round-up would run past `u64::MAX` seats the
@@ -253,9 +304,14 @@ impl ElfSectionLayout {
                 bases,
                 unseated,
                 rebased: false,
+                externs: BTreeMap::new(),
+                got_base: 0,
+                word: 0,
+                toc_base: None,
             };
         }
         let mut watermark = ET_REL_IMAGE_BASE;
+        let mut toc_section = None;
         for sec in obj.sections() {
             // `SHF_TLS` is allocatable but lives in the per-thread block, not
             // the flat address space: a `.tdata` / `.tbss` symbol's `st_value`
@@ -298,13 +354,89 @@ impl ElfSectionLayout {
                     }
                 }
             }
+            if alloc && toc_section.is_none() && sec.name() == Ok(".toc") {
+                toc_section = Some(base);
+            }
             bases.insert(sec.index().0, base);
+        }
+
+        // Past the image, one unmapped page apart: the undefined and common
+        // symbols, then the GOT.
+        let past = |end: u64| align_up(end, ET_REL_PAGE).saturating_add(ET_REL_PAGE);
+        let word = if obj.is_64() { 8 } else { 4 };
+        let arch = obj.architecture();
+        let mut externs = BTreeMap::new();
+        let mut cursor = past(watermark);
+        let mut deferred = Vec::new();
+        for sym in obj.symbols() {
+            if sym.is_common() {
+                // `st_value` is the alignment.
+                cursor = align_up(cursor, sym.address());
+                externs.insert(sym.index().0, cursor);
+                cursor = cursor.saturating_add(sym.size().max(1));
+            } else if sym.is_undefined() && sym.index().0 != 0 {
+                match sym.name() {
+                    Ok(".TOC.") if arch == object::Architecture::PowerPc64 => {
+                        deferred.push(sym.index().0);
+                    }
+                    Ok("_GLOBAL_OFFSET_TABLE_") => deferred.push(sym.index().0),
+                    _ => {
+                        cursor = align_up(cursor, EXTERN_STRIDE);
+                        externs.insert(sym.index().0, cursor);
+                        cursor = cursor.saturating_add(EXTERN_STRIDE);
+                    }
+                }
+            }
+        }
+        let got_base = past(cursor);
+        let toc_base = (arch == object::Architecture::PowerPc64).then(|| {
+            toc_section
+                .unwrap_or(got_base)
+                .saturating_add(PPC64_TOC_BIAS)
+        });
+        for index in deferred {
+            externs.insert(index, toc_base.unwrap_or(got_base));
         }
         Self {
             bases,
             unseated,
             rebased: true,
+            externs,
+            got_base,
+            word,
+            toc_base,
         }
+    }
+
+    /// The address an ET_REL gives a symbol the link would place outside the
+    /// object: an undefined symbol gets a distinct one in an unmapped range
+    /// past the image, a `SHN_COMMON` one room for its size there. `.TOC.` is
+    /// the PowerPC64 TOC pointer and `_GLOBAL_OFFSET_TABLE_` the GOT's start.
+    ///
+    /// `None` for a defined symbol and for any symbol of a linked image.
+    pub fn extern_address(&self, symbol_index: usize) -> Option<u64> {
+        self.externs.get(&symbol_index).copied()
+    }
+
+    /// Where the synthetic GOT starts, `_GLOBAL_OFFSET_TABLE_`.
+    pub(crate) fn got_base(&self) -> u64 {
+        self.got_base
+    }
+
+    /// The GOT slot holding symbol `symbol_index`'s address, and its width.
+    pub(crate) fn got_slot(&self, symbol_index: usize) -> Option<(u64, usize)> {
+        let offset = (symbol_index as u64).checked_mul(self.word)?;
+        Some((self.got_base.checked_add(offset)?, self.word as usize))
+    }
+
+    /// The PowerPC64 TOC pointer: `.TOC.`, `0x8000` past the object's `.toc`.
+    pub(crate) fn toc_base(&self) -> Option<u64> {
+        self.toc_base
+    }
+
+    /// Whether the layout rebased an ET_REL.
+    pub(crate) fn is_rebased(&self) -> bool {
+        self.rebased
     }
 
     /// Where `sec` is loaded.
@@ -404,9 +536,9 @@ impl<'d> OpdTable<'d> {
     /// not carry, the triple being 24 bytes in compiler output and 16 in the
     /// hand-written asm that leaves the environment word off.
     ///
-    /// Zero because an ET_DYN's `.opd` is file-initially zero under its
-    /// `R_PPC64_RELATIVE`s: address 0 is never the entry, and passing `addr`
-    /// through unfollowed at least leaves the descriptor visible.
+    /// A zero word is a descriptor nothing filled in: address 0 is never the
+    /// entry, and passing `addr` through unfollowed leaves the descriptor
+    /// visible.
     pub fn entry_at(&self, addr: u64) -> Option<u64> {
         let off = usize::try_from(addr.checked_sub(self.base)?).ok()?;
         if off % 8 != 0 {
@@ -479,15 +611,19 @@ pub(crate) fn collect_regions(
     filter: LoadFilter,
     layout: &ElfSectionLayout,
 ) -> Result<LoadedImage> {
-    match (source, obj.kind()) {
+    let image = match (source, obj.kind()) {
         (RegionSource::Auto, ObjectKind::Executable | ObjectKind::Dynamic) => {
-            collect_loadable_segments(obj, bytes, filter)
+            collect_loadable_segments(obj, bytes, filter)?
         }
         // ET_REL plus any unknown / core kind. An `.o` has no program headers,
         // and a core dump's segment layout isn't what the analyser wants
         // either, so the section walk is the safer fallback for both.
-        _ => collect_loadable_sections_dedup(obj, bytes, filter, layout),
-    }
+        _ => collect_loadable_sections_dedup(obj, bytes, filter, layout)?,
+    };
+    Ok(LoadedImage {
+        writable: AddressRanges::merged(image.writable.0),
+        ..image
+    })
 }
 
 /// Ceiling on the bytes the copying path materialises, as a multiple of the
