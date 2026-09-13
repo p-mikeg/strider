@@ -1746,26 +1746,9 @@ fn one_window_answers_reloads_on_either_side_of_it() -> Result<()> {
     Ok(())
 }
 
-/// Grafts a `MemPhi` with `arms` onto `token`, returning its memory output.
-fn graft_mem_phi(
-    fg: &mut strider_ir::Function,
-    token: strider_ir::node::ValueId,
-    arms: &[strider_ir::node::ValueId],
-) -> strider_ir::node::ValueId {
-    let inputs: Vec<strider_ir::node::ValueId> = core::iter::once(token)
-        .chain(arms.iter().copied())
-        .collect();
-    let n = strider_ir_test_utils::sentinel_node(
-        fg,
-        NodeKind::MemPhi,
-        inputs,
-        [strider_ir::node::ValueKind::Memory],
-    );
-    fg.node_outputs(n)[0]
-}
-
 /// Two nested loops with no memory def in either body, whose exits merge above
-/// the load: `merge[inner_header, exit_merge[store, outer_header]]`.
+/// the load: `merge[inner_exit, exit_merge[store, outer_header]]`, with the
+/// inner header on `inner_exit`'s only arm.
 ///
 /// Resolving the `exit_merge` arm first walks the outer header, which reaches
 /// the inner one; resolving `merge`'s other arm then reads the inner header
@@ -1776,59 +1759,56 @@ fn nested_loop_exit_merge_graph() -> Result<(
     strider_ir::node::ValueId,
     strider_ir::node::ValueId,
 )> {
-    let mut fg = strider_ir_test_utils::make_empty_fn(|b| {
-        let addr = b.build_int_const(0x10u64, ValueType::I64)?;
-        let data = b.build_int_const(0x42u64, ValueType::I64)?;
-        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        b.build_int_const(7u64, ValueType::I64)
-    })?;
+    let mut b = strider_ir_test_utils::empty_builder()?;
+    let entry = b.create_region_all()?;
+    let store_r = b.create_region_all()?;
+    let outer_header = b.create_region_all()?;
+    let inner_header = b.create_region_all()?;
+    let inner_latch = b.create_region_all()?;
+    let inner_exit = b.create_region_all()?;
+    let outer_latch = b.create_region_all()?;
+    let exit_merge = b.create_region_all()?;
+    let merge = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let im = fg
-        .walk_kind(|k| matches!(k, NodeKind::InitialMemory))
-        .next()
-        .expect("node kind must exist");
-    let store = fg
-        .walk_kind(|k| matches!(k, NodeKind::Store(_)))
-        .next()
-        .expect("node kind must exist");
-    let region = fg
-        .walk_kind(|k| matches!(k, NodeKind::Region))
-        .next()
-        .expect("node kind must exist");
-    let ret = fg
-        .walk_kind(|k| matches!(k, NodeKind::Return))
-        .next()
-        .expect("node kind must exist");
-    let im_mem = fg.node_outputs(im)[0];
-    let store_mem = fg.node_outputs(store)[0];
-    let store_addr = fg.node_inputs(store)[1];
-    let token = fg.node_outputs(region)[1];
+    b.set_region(entry);
+    let addr = b.build_int_const(0x10u64, ValueType::I64)?;
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, store_r, outer_header)?;
 
-    // Placeholder back-edge arms, closed below.
-    let outer = graft_mem_phi(&mut fg, token, &[im_mem, im_mem]);
-    let inner = graft_mem_phi(&mut fg, token, &[outer, outer]);
-    for (phi, arm) in [(inner, inner), (outer, inner)] {
-        let node = fg.producer(phi);
-        let use_id = fg
-            .node_input_id_at(node, 2)
-            .expect("a two-armed MemPhi has a second arm");
-        fg.graph_mut().update_input(use_id, arm);
-    }
-    let exit_merge = graft_mem_phi(&mut fg, token, &[store_mem, outer]);
-    let merge = graft_mem_phi(&mut fg, token, &[inner, exit_merge]);
+    b.set_region(store_r);
+    let data = b.build_int_const(0x42u64, ValueType::I64)?;
+    b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+    b.build_branch(exit_merge)?;
 
-    let load = strider_ir_test_utils::sentinel_node(
-        &mut fg,
-        NodeKind::Load(rsleigh::VnSpace::RAM),
-        [merge, store_addr],
-        [strider_ir::node::ValueKind::Typed(ValueType::I64)],
-    );
-    let loaded = fg.node_outputs(load)[0];
-    let ret_value = fg
-        .node_input_id_at(ret, 2)
-        .expect("Return carries a value input");
-    fg.graph_mut().update_input(ret_value, loaded);
-    Ok((fg, merge, loaded))
+    b.set_region(outer_header);
+    b.build_if(cond, inner_header, exit_merge)?;
+
+    b.set_region(inner_header);
+    b.build_if(cond, inner_latch, inner_exit)?;
+
+    b.set_region(inner_latch);
+    b.build_branch(inner_header)?;
+
+    // Linked before `exit_merge`, so it is `merge`'s first arm.
+    b.set_region(inner_exit);
+    b.build_if(cond, outer_latch, merge)?;
+
+    b.set_region(outer_latch);
+    b.build_branch(outer_header)?;
+
+    b.set_region(exit_merge);
+    b.build_branch(merge)?;
+
+    b.set_region(merge);
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
+    b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
+    let fg = b.build()?;
+
+    let merge_mem = fg.node_inputs(fg.producer(loaded))[0];
+    Ok((fg, merge_mem, loaded))
 }
 
 /// The load's memory edge must stay on the exit merge: the inner header is

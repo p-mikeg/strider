@@ -25,7 +25,7 @@ fn reachable_regions(fg: &strider_ir::Function) -> Vec<NodeId> {
 /// branch with no downstream join is never visited by CfgDetach and stays in
 /// the arena as an unreachable orphan.
 fn destructive_teardown(fg: &mut strider_ir::Function) -> Result<()> {
-    crate::pipeline::run_one(&DeadBranchElimination, fg, &mut OptCtx::new(None))?;
+    crate::pipeline::run_one_unvalidated(&DeadBranchElimination, fg, &mut OptCtx::new(None))?;
     crate::pipeline::run_one(&CfgDetach, fg, &mut OptCtx::new(None))?;
     Ok(())
 }
@@ -335,7 +335,7 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
         b.build()?
     };
 
-    crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?;
+    crate::pipeline::run_one_unvalidated(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?;
     crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::new(None))?;
     crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut OptCtx::new(None))?;
 
@@ -538,8 +538,11 @@ fn dead_arm_feeding_an_unreachable_sink_keeps_the_branch() -> Result<()> {
         .next()
         .expect("the dead arm feeds its Region");
     fg.graph_mut().remove_node_input(dead_region, slot);
-    fg.graph_mut()
+    let sink = fg
+        .graph_mut()
         .create_node(NodeKind::Unreachable, [dead_ctrl], []);
+    fg.side_tables_mut()
+        .extend_asm_fingerprint(sink, &[SENTINEL_LIFT_ADDR]);
 
     let result = crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?;
 
@@ -598,8 +601,12 @@ fn make_const_header_loop(back_edge: bool) -> Result<strider_ir::Function> {
 fn escape_memo_does_not_survive_into_the_next_sweep() -> Result<()> {
     let mut acyclic = make_const_header_loop(false)?;
     assert!(
-        crate::pipeline::run_one(&DeadBranchElimination, &mut acyclic, &mut OptCtx::new(None))?
-            .changed(),
+        crate::pipeline::run_one_unvalidated(
+            &DeadBranchElimination,
+            &mut acyclic,
+            &mut OptCtx::new(None)
+        )?
+        .changed(),
         "the acyclic twin must fold, filling the memo"
     );
 
@@ -700,8 +707,12 @@ fn constant_diamond_chain_never_walks_the_whole_cfg() -> Result<()> {
 
     super::FULL_WALKS.with(|c| c.set(0));
     assert!(
-        crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?
-            .changed(),
+        crate::pipeline::run_one_unvalidated(
+            &DeadBranchElimination,
+            &mut fg,
+            &mut OptCtx::new(None)
+        )?
+        .changed(),
         "every constant branch must fold"
     );
     assert_eq!(
@@ -709,5 +720,6 @@ fn constant_diamond_chain_never_walks_the_whole_cfg() -> Result<()> {
         0,
         "the escape set must answer every branch"
     );
+    crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::new(None))?;
     Ok(())
 }
