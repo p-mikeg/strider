@@ -20,9 +20,7 @@ impl VisitMap<NodeId> for NodeVisitMap {
     }
 
     fn unvisit(&mut self, a: NodeId) -> bool {
-        let was = self.0.contains(a);
-        self.0.remove(a);
-        was
+        self.0.remove(a)
     }
 }
 
@@ -63,7 +61,7 @@ impl Visitable for ControlFlowView<'_> {
     }
 
     fn reset_map(&self, map: &mut Self::Map) {
-        map.0 = DenseEntitySet::new();
+        map.0.clear();
     }
 }
 
