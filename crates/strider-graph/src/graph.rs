@@ -372,11 +372,28 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     }
 
     /// Keeps both affected use-lists consistent. A self-redirect is a no-op.
+    ///
+    /// # Panics
+    ///
+    /// If `input_id` is stale: removed from its node by
+    /// [`Self::remove_node_input`], [`Self::remove_node_inputs_batch`] or
+    /// [`Self::detach_node_inputs`].
     pub fn update_input(&mut self, input_id: UseId, value_id: ValueId) {
+        let UseData {
+            node_id,
+            input_index,
+            ..
+        } = self.store.inputs[input_id];
+        assert!(
+            self.store
+                .node_input_uses(node_id)
+                .get(input_index as usize)
+                == Some(&input_id),
+            "stale {input_id:?}: no longer input {input_index} of {node_id:?}"
+        );
         if self.store.inputs[input_id].value_id == value_id {
             return;
         }
-        let node_id = self.store.inputs[input_id].node_id;
         self.cache.invalidate(node_id);
         self.store.unlink_use_from_value_list(input_id);
         self.store.inputs[input_id].value_id = value_id;
