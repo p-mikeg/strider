@@ -191,15 +191,14 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
     Ok(())
 }
 
-/// Applies every rule at every reachable node, returning the total
-/// per-`(node, rule)` fire count.
+/// Applies the FIRST matching rule at every reachable node, returning the fire
+/// count.
 ///
-/// Rules are tried in order at each node and a fire does not stop the rest.
-/// The first fire is what the graph keeps: it redirects the matched root's
-/// uses, leaving the root itself detached, so a later rule matching that same
-/// root redirects nothing and is not counted.  "First fire wins" is what a
-/// rewrite normally wants; the in-tree peephole driver makes it explicit with
-/// `first_matching_rule`, which skips the wasted later matches.
+/// Rules are tried in order and the first fire ends the node: it redirects the
+/// matched root's uses, leaving the root itself detached, and a later rule
+/// would still instantiate a full RHS and union the discarded match's
+/// fingerprints into what can be a live node.  Same rule as the in-tree
+/// peephole driver's `first_matching_rule`.
 ///
 /// One call walks the graph once, so a rule whose output its own LHS matches
 /// needs the caller to loop to a fixed point.
@@ -239,6 +238,7 @@ where
         for r in rules {
             if r(edit, node)?.is_some() {
                 applied += 1;
+                break;
             }
         }
     }
