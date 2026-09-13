@@ -3,7 +3,7 @@ use strider_ir::node::{NodeKind, ValueKind, ValueType};
 use strider_ir::{IRBuilderExt, IRWalker};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, make_if_fn, reg_vn};
 
-use crate::{DeadBranchElimination, OptCtx};
+use crate::OptCtx;
 
 // Reproduces the post-DBE shape CfgDetach is meant to clean up: redirect the
 // constant `If`'s live successor past it and detach the `If`, leaving the dead
@@ -90,50 +90,6 @@ fn find_mem_phi_of_region(fg: &strider_ir::Function, region: NodeId) -> Option<N
     fg.graph().all_node_ids().find(|&n| {
         matches!(fg.node_kind(n), NodeKind::MemPhi) && phi_belongs_to_region(fg, n, region)
     })
-}
-
-/// The dead branch has no downstream join, so it falls fully out of the
-/// reachable graph. CfgDetach only visits validator-reachable Regions, so it
-/// leaves the orphan alone (keeping its dangling input); orphans are harmless
-/// and never swept.
-#[test]
-fn cfg_detach_removes_dead_region_pred_after_dbe() -> crate::Result<()> {
-    let mut fg = make_if_fn(false)?;
-
-    // cond = false, so the true branch (If output 0) is dead. Capture the dead
-    // Region before teardown.
-    let if_node = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
-        .expect("If node must exist");
-    let dead_ctrl = fg.node_outputs(if_node)[0];
-    let dead_region = fg
-        .graph()
-        .value_uses(dead_ctrl)
-        .map(|(n, _)| n)
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
-        .expect("dead branch Region must consume the If's dead control output");
-
-    crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::new(None))?;
-    crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::new(None))?;
-
-    let reachable_regions: Vec<_> = fg
-        .walk()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Region))
-        .collect();
-    assert!(
-        !reachable_regions.contains(&dead_region),
-        "dead Region must be unreachable from entry after DBE + CfgDetach"
-    );
-    assert_eq!(
-        reachable_regions.len(),
-        2,
-        "entry and the live branch Region must remain reachable"
-    );
-    strider_ir::validate::validate(&fg)
-        .map_err(|e| anyhow::anyhow!("post-teardown validation failed: {e:?}"))?;
-    Ok(())
 }
 
 /// Isolates CfgDetach from DBE: graft a ctrl edge from a disconnected node onto

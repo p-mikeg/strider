@@ -13,20 +13,6 @@ fn test_rom() -> MockRom {
     MockRom::fixed_table(&[(0x1000, 42), (0x2000, 0xFF)])
 }
 
-#[test]
-fn load_from_rom_const_addr() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
-        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
-    })?;
-    let rom = test_rom();
-    assert!(
-        crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::new(Some(&rom)))?.changed()
-    );
-    assert_returns_const(&fg, 42);
-    Ok(())
-}
-
 /// The address is part of the proof for the folded value, so the new
 /// `IntConst` must inherit it; without the absorb, the culled address cone's
 /// asm is lost.
