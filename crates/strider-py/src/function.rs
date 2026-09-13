@@ -61,19 +61,9 @@ impl PyFunction {
         html: bool,
         with: Option<&Bound<'_, crate::strider_cls::PyLifter>>,
     ) -> PyResult<Option<String>> {
-        use crate::strider_cls::{DotOp, DotResult};
         let cfg = self.cfg.bind(py).try_borrow()?;
         let lifter = resolve_lifter(py, &cfg, with)?;
-        let op = match (html, path) {
-            (true, Some(p)) => DotOp::DumpHtml(p),
-            (false, Some(p)) => DotOp::DumpDot(p),
-            (true, None) => DotOp::HtmlStr,
-            (false, None) => DotOp::DotStr,
-        };
-        match lifter.dispatch_dot(self, style, op)? {
-            DotResult::Html(s) | DotResult::Dot(s) => Ok(Some(s)),
-            DotResult::Unit => Ok(None),
-        }
+        lifter.render_dot(self, style, html, path)
     }
 
     pub(crate) fn read_inner(&self) -> anyhow::Result<Ref<'_, strider_ir::Function>> {
