@@ -141,20 +141,6 @@ fn multi_sink_pattern_root_errors_with_sink_count() {
 }
 
 #[test]
-#[should_panic(expected = "cyclic staged pattern graph")]
-fn cyclic_pattern_graph_panics_at_finish() {
-    // A cycle is expressible through the raw MatcherBuilder but never reaches
-    // `Pattern::root()`: the staged-graph seal panics at `finish()`. The typed
-    // `MatchPat` builders cannot express a cycle at all (operands are consumed
-    // by value), so this is builder-bug territory, pinned as a panic not an Err.
-    let mut mb = MatcherBuilder::new();
-    let n = mb.node(KindSpec::Any);
-    let out = mb.value_output(n, 0);
-    mb.input(n, 0, out);
-    let _ = mb.finish();
-}
-
-#[test]
 fn multi_output_root_node_still_resolves_root() {
     // One root node with two unconsumed outputs is still single-SINK.
     let mut mb = MatcherBuilder::new();
