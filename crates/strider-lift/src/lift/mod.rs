@@ -72,7 +72,7 @@ pub struct Lifter<R: rsleigh::MemReader> {
     entry_defaults: strider_cfg::FlowContext,
     /// The same, for the `noflow` vars that still change the decode
     /// ([`SleighArch::transient_decode_vars`]).  They are outside `flow_vars`
-    /// by construction, so `pin_at` cannot reach them.
+    /// by construction, so the builder resets them at each decode instead.
     transient_defaults: Vec<(&'static str, u32)>,
     /// The entry context each ISA mode last pinned, keyed by the mode value
     /// ([`SleighArch::entry_mode_context`]), `None` for an arch without one.
@@ -194,15 +194,6 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             .get(&mode_key)
             .unwrap_or(&self.entry_defaults);
         self.flow_vars.pin_at(&mut self.sleigh, decode_addr, want)?;
-        // A `noflow` commit holds at exactly the address it was made for, so a
-        // prior function's `mov lr,pc` leaves `LRset` set at THIS entry and its
-        // `bx` would decode as an indirect call. `pin_at` covers the flowing
-        // vars only, so clear these by name.
-        for (name, default) in &self.transient_defaults {
-            if self.sleigh.get_context_at(decode_addr, name)? != *default {
-                self.sleigh.set_context_at(decode_addr, name, *default)?;
-            }
-        }
         // The pin misses a mode var a sla does not declare flowing, and its
         // diff can write an alias of the mode bit last, flipping it back.
         if let Some((var, value)) = entry_mode
@@ -216,6 +207,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         self.entry_contexts.insert(mode_key, function_mode.clone());
         strider_cfg::Builder::for_arch(&self.arch, &mut self.sleigh, decode_addr, cfg_opts)
             .with_flow_context(&self.flow_vars, function_mode)
+            .with_transient_defaults(&self.transient_defaults)
             .with_user_op_names(&self.user_op_names)
             .with_per_address_ccs(per_address_ccs.clone())
             .build()
