@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     # `_ext` is an opaque module to a checker, so its attributes come back as
     # `Any`; the stub imports below are the same classes with their real types.
     from .lift import Lifter, LifterOptions
+    from .pattern import CaptureKey, LoadPat, Match, Pat, StorePat, ValueLike
     from .reader import BufferReader, MemLike, RomLike, Symbol
     from .sleigh import CallingConvention, SleighArch
 else:
@@ -432,3 +433,56 @@ class ElfLifter(Lifter):
         if cc is None:
             cc = self._cc
         return super().analyze(addr, cc, opts)
+
+
+class FieldPat:
+    """A struct field at `base + offset`. `ConstantFold` rewrites `base + 0`
+    to `base`, so a field at offset 0 lifts with no `Add`; `pattern` matches
+    both forms and `offset(m)` reads 0 back for the bare one."""
+
+    __slots__ = ("pattern", "capture", "_known")
+
+    def __init__(
+        self, base: ValueLike, offset: Union[int, CaptureKey, None] = None
+    ) -> None:
+        p = _ext.pattern
+        #: The offset capture, `None` for a known offset.
+        self.capture: Optional[CaptureKey] = None
+        self._known: Optional[int] = None
+        if isinstance(offset, int):
+            self._known = offset
+            self.pattern: ValueLike = base if offset == 0 else p.int_add(base, p.int_const(offset))
+            return
+        cap = p.Capture() if offset is None else offset
+        self.capture = cap
+        const = p.int_const().capture(cap) if isinstance(cap, str) else p.int_const(cap)
+        self.pattern = p.one_of([p.int_add(base, const), base])
+
+    def offset(self, m: Match) -> int:
+        """The field offset `m` matched."""
+        if self._known is not None:
+            return self._known
+        assert self.capture is not None
+        return m.uint(self.capture) if m.has(self.capture) else 0
+
+    def load(self) -> LoadPat:
+        """A `Load` of the field."""
+        return _ext.pattern.load(addr=self.pattern)
+
+    def store(self, data: Optional[ValueLike] = None) -> StorePat:
+        """A `Store` into the field, of `data` when given."""
+        return _ext.pattern.store(addr=self.pattern, data=data)
+
+
+def field(base: ValueLike, offset: Union[int, CaptureKey, None] = None) -> FieldPat:
+    """The field at `base + offset`. `offset` is an `int` to require that
+    offset, a `Capture` or capture name to bind it, or `None` for a fresh
+    capture."""
+    return FieldPat(base, offset)
+
+
+def code_ptr(target: ValueLike) -> Pat:
+    """`target`, or `target & -2`: an ARM interworking or MIPS16 branch clears
+    the ISA-mode bit, the one mask strider strips when resolving a target."""
+    p = _ext.pattern
+    return p.one_of([target, p.int_and(target, p.int_const(-2))])
