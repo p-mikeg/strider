@@ -19,6 +19,26 @@ pub struct PyFunction {
     assumptions: RefCell<strider_orchestrator::opt::AssumptionOptions>,
 }
 
+/// The decoder a `lifter=` renderer argument names, defaulting to the one that
+/// lifted `cfg`.  A caller-supplied handle must be on `cfg`'s arch and not
+/// already borrowed by an in-flight `analyze`.
+fn resolve_lifter<'py>(
+    py: Python<'py>,
+    cfg: &PyCfg,
+    lifter: Option<&Bound<'py, crate::strider_cls::PyLifter>>,
+) -> PyResult<PyRef<'py, crate::strider_cls::PyLifter>> {
+    match lifter {
+        Some(l) => {
+            let l = l
+                .try_borrow()
+                .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
+            l.check_arch_is(cfg.arch_name)?;
+            Ok(l)
+        }
+        None => Ok(cfg.lifter.bind(py).try_borrow()?),
+    }
+}
+
 impl PyFunction {
     pub(crate) fn new(
         function: strider_ir::Function,
@@ -43,20 +63,7 @@ impl PyFunction {
     ) -> PyResult<Option<String>> {
         use crate::strider_cls::{DotOp, DotResult};
         let cfg = self.cfg.bind(py).try_borrow()?;
-        let borrowed;
-        let lifter = match with {
-            Some(l) => {
-                let l = l
-                    .try_borrow()
-                    .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
-                l.check_arch_is(cfg.arch_name)?;
-                l
-            }
-            None => {
-                borrowed = cfg.lifter.bind(py);
-                borrowed.try_borrow()?
-            }
-        };
+        let lifter = resolve_lifter(py, &cfg, with)?;
         let op = match (html, path) {
             (true, Some(p)) => DotOp::DumpHtml(p),
             (false, Some(p)) => DotOp::DumpDot(p),
@@ -253,20 +260,7 @@ impl PyFunction {
     ) -> PyResult<String> {
         if pretty {
             let cfg = self.cfg.bind(py).try_borrow()?;
-            let borrowed;
-            let lifter = match lifter {
-                Some(l) => {
-                    let l = l
-                        .try_borrow()
-                        .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
-                    l.check_arch_is(cfg.arch_name)?;
-                    l
-                }
-                None => {
-                    borrowed = cfg.lifter.bind(py);
-                    borrowed.try_borrow()?
-                }
-            };
+            let lifter = resolve_lifter(py, &cfg, lifter)?;
             return lifter.dispatch_neighborhood_dot(
                 self,
                 center,

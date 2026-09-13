@@ -953,21 +953,14 @@ fn op_match(py: Python<'_>, ob: &Py<PyAny>) -> PyResult<DynMatch> {
 fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
     // Operands compile eagerly while the GIL and the `Bound`s are held, so the
     // boxed closure owns only child shims and outlives those borrows. These
-    // macros stamp out that skeleton: `m_binop` / `m_unop` carry a leading op
-    // value, `m_bin` / `m_un` do not, and the `*_any` pair appends `.capture`.
+    // macros stamp out that skeleton: `m_binop` carries a leading op value,
+    // `m_bin` / `m_un` do not, and the `*_any` pair appends `.capture`.
     macro_rules! m_binop {
         ($f:path, $op:ident, $l:ident, $r:ident) => {{
             let op = *$op;
             let l = op_match(py, $l)?;
             let r = op_match(py, $r)?;
             DynMatch(Box::new(move |b| mc($f(op, l, r), b)))
-        }};
-    }
-    macro_rules! m_unop {
-        ($f:path, $op:ident, $x:ident) => {{
-            let op = *$op;
-            let x = op_match(py, $x)?;
-            DynMatch(Box::new(move |b| mc($f(op, x), b)))
         }};
     }
     macro_rules! m_bin {
@@ -1115,7 +1108,11 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
             let x = op_match(py, x)?;
             DynMatch(Box::new(move |b| cast_match(kind, x, b)))
         }
-        PatRepr::Extend(op, x) => m_unop!(sp::int_extend, op, x),
+        PatRepr::Extend(op, x) => {
+            let op = *op;
+            let x = op_match(py, x)?;
+            DynMatch(Box::new(move |b| mc(sp::int_extend(op, x), b)))
+        }
         PatRepr::IntCmp(op, l, r) => m_binop!(sp::int_cmp, op, l, r),
         PatRepr::IntNe(l, r) => m_bin!(sp::int_ne, l, r),
         PatRepr::IntLe(l, r) => m_bin!(sp::int_le, l, r),
@@ -1266,13 +1263,6 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
             DynTemplate(Box::new(move |b| tc($f(op, l, r), b)))
         }};
     }
-    macro_rules! t_unop {
-        ($f:path, $op:ident, $x:ident) => {{
-            let op = *$op;
-            let x = op_tpl(py, $x)?;
-            DynTemplate(Box::new(move |b| tc($f(op, x), b)))
-        }};
-    }
     macro_rules! t_bin {
         ($f:path, $l:ident, $r:ident) => {{
             let l = op_tpl(py, $l)?;
@@ -1325,7 +1315,11 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
             let x = op_tpl(py, x)?;
             DynTemplate(Box::new(move |b| cast_tpl(kind, x, b)))
         }
-        PatRepr::Extend(op, x) => t_unop!(tpl::int_extend, op, x),
+        PatRepr::Extend(op, x) => {
+            let op = *op;
+            let x = op_tpl(py, x)?;
+            DynTemplate(Box::new(move |b| tc(tpl::int_extend(op, x), b)))
+        }
         PatRepr::IntCmp(op, l, r) => t_binop!(tpl::int_cmp, op, l, r),
         PatRepr::FloatBinary(op, l, r) => t_binop!(tpl::float_binary, op, l, r),
         PatRepr::FloatSub(l, r) => t_bin!(tpl::float_sub, l, r),
