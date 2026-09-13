@@ -277,6 +277,71 @@ impl SleighArch {
         }
     }
 
+    /// Registers the sla declares for its own semantics rather than as
+    /// processor state: scratch a constructor writes and reads within one
+    /// instruction, or storage the decompiler fakes.  No callee can read them.
+    ///
+    /// ARM `mult_addr` / `mult_dat8` / `mult_dat16` walk a `push` / `pop` /
+    /// `ldm` / `stm` over its list (`ARM.sinc:13-16`), so `mult_addr` holds a
+    /// stack address after every `push`, and `tmpNG`.. hold flags mid-compute
+    /// (`:11`).  AArch64 `tmp_ldWn`.. carry a loaded or stored value
+    /// (`AARCH64instructions.sinc:419-422`), `VecMemAddr` / `VectorSelem` /
+    /// `VecRegAddr` an address a vector load or store steps (`:68-71`),
+    /// `glob_mask32` / `glob_mask64` a computed mask (`:64-65`), `TMPZ1`.. SIMD
+    /// intermediates (`:543`), `tmpCY`.. flags (`:62`).  x86 `xmmTmp1` /
+    /// `xmmTmp2` (`ia.sinc:140`).  MIPS `tsp` steps the stack over a microMIPS
+    /// `lwm` / `swm` list (`mips.sinc:368`, `mipsmicro.sinc:430`).  PowerPC
+    /// `r2Save` is fake storage for the TOC (`ppc_common.sinc:72`), and
+    /// `RESERVE_ADDRESS` the load-reservation address `lwarn` records
+    /// (`:53`), which only a later `stwcx` on the same thread consults.
+    #[must_use]
+    pub fn internal_registers(&self) -> &'static [&'static str] {
+        match self.preset {
+            ArchPreset::Arm
+            | ArchPreset::ArmBe
+            | ArchPreset::ArmBeKernel
+            | ArchPreset::ArmThumb => &[
+                "mult_addr",
+                "mult_dat8",
+                "mult_dat16",
+                "tmpNG",
+                "tmpZR",
+                "tmpCY",
+                "tmpOV",
+            ],
+            ArchPreset::Aarch64 | ArchPreset::Aarch64Be => &[
+                "tmp_ldWn",
+                "tmp_ldXn",
+                "tmp_stWn",
+                "tmp_stXn",
+                "VecMemAddr",
+                "VectorSelem",
+                "VecRegAddr",
+                "glob_mask32",
+                "glob_mask64",
+                "TMPZ1",
+                "TMPZ2",
+                "TMPZ3",
+                "TMPZ4",
+                "TMPZ5",
+                "TMPZ6",
+                "tmpCY",
+                "tmpOV",
+                "tmpNG",
+                "tmpZR",
+            ],
+            ArchPreset::X86 | ArchPreset::X86_64 => &["xmmTmp1", "xmmTmp2"],
+            ArchPreset::MipsBe32
+            | ArchPreset::MipsLe32
+            | ArchPreset::MipsBe64
+            | ArchPreset::MipsLe64 => &["tsp"],
+            ArchPreset::Ppc32Be
+            | ArchPreset::Ppc32Le
+            | ArchPreset::Ppc64Be
+            | ArchPreset::Ppc64Le => &["r2Save", "RESERVE_ADDRESS"],
+        }
+    }
+
     /// The ISA-mode context a cold entry at `entry_addr` decodes in, as
     /// `(context_var, value)`: the address low bit set means the alternate ISA
     /// (ARM Thumb, MIPS16e), clear means the base one. The instruction itself
