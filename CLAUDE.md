@@ -31,13 +31,18 @@ cargo test --workspace --release   # a debug_assert hides from the debug run
                                    #  debug-assertions off; root Cargo.toml)
 RUSTDOCFLAGS='-D rustdoc::broken_intra_doc_links' cargo doc --workspace --no-deps
 cargo +1.91.0 check --workspace --all-targets   # the declared MSRV
+cargo +1.91.0 check -p <crate> --all-targets    # every package on its own
+cargo run --release -p strider-orchestrator --example dump_arch_cmps  # and
+                                   # orchestrator_demo, memory_demo; the tree
+                                   # must stay clean afterwards
 
 # Main demo: reads the committed fixtures/out/x86/arithmetic.elf::add and dumps
 # cfg / graph / graph-opt as both .html and .dot at the workspace root.
 # Source: crates/strider-orchestrator/examples/orchestrator_demo.rs
 cargo run -p strider-orchestrator --example orchestrator_demo
 
-# Per-arch IR cmp shapes (debug helper for the FlagCmpCanonicalize work).
+# The p-code of cmp-then-conditional-branch sequences, one arch per flag model
+# (reference for FlagCmpCanonicalize's rule set).
 cargo run -p strider-orchestrator --example dump_arch_cmps
 ```
 
@@ -49,6 +54,11 @@ uv run maturin develop
 uv run pytest
 uv run pyright     # type-checks strider/, its tests and examples; gate is 0 errors
 ```
+
+CI also runs every `crates/strider-py/examples/python/*.py` on Python 3.9 and
+3.13, `pytest` against `maturin develop --release`, and checks that a
+`maturin build --release` wheel carries every `.pyi` stub, `py.typed` and
+`explore.html`.
 
 ## Crates
 
@@ -66,8 +76,8 @@ Generic:
   `EntityInterner`, `UnionDag`). Use these over `std` `HashSet`/`HashMap` when
   keying by `NodeId` / `ValueId`.
 - `graph-algorithms`: generic traversal (`walk`) and dominance-based SSA
-  support (dominance frontiers, dominator-tree preorder, iterated-DF phi
-  placement) over opaque node ids. Test-only `graphmock` DSL under `tests/`.
+  support (Lengauer-Tarjan `dominators`, dominance frontiers, dominator-tree
+  preorder, iterated-DF phi placement) over opaque node ids. Test-only `graphmock` DSL under `tests/`.
 - `strider-graph`: generic despite the name: the payload-agnostic bipartite
   sea-of-nodes `Graph<N, V, C: NodeCacheable<N, V>>` that `strider-ir` and
   `strider-pattern` build on. No `Hash`/`Eq` bound on payloads; dedup lives in
@@ -92,10 +102,13 @@ Strider:
 - `strider-pattern`: the graph-based pattern DSL (`Pattern` / `Capture` /
   `Matcher` / `Match` / builders) over `strider-graph` with the `NeverCacheable`
   policy. `Pat` is the Python class, not a Rust type. Both recursion limits are
-  `MAX_PATTERN_NODES` (256, `matcher/graph.rs`): a pattern over that many nodes
-  and a `one_of` nested that deep are both refused through the reject channel
+  `MAX_PATTERN_NODES` (256, `matcher/graph.rs`): a pattern over that many nodes,
+  counting the nodes of `IfPat::with_true` / `with_false` branch patterns, and
+  operands or alternations nested that deep (or past a 1 MiB lowering stack
+  budget, `MAX_PATTERN_STACK`) are refused through the reject channel
   (`Pattern.root: Result<NodeId, String>`, surfaced by `Pattern::root()`), not
-  by overflowing the stack. `TemplatePat` is implemented for `Captured<P>` only
+  by overflowing the stack. `MatcherBuilder::finish` reports a cyclic wiring
+  through the same channel. `TemplatePat` is implemented for `Captured<P>` only
   at `P = Var`, so `template::int_add(..).capture(c)` is a compile error rather
   than a silently dropped operand.
 - `strider-opt`: optimization passes, the `OptimizerPipeline`, the
@@ -130,8 +143,8 @@ strider-ir-test-utils -> strider-ir, strider-target
 ```
 
 `strider-ir-test-utils` is a dev-only crate, but those two are normal
-`[dependencies]` of it, so a workspace-wide build resolves `strider-ir` with the
-feature on.
+`[dependencies]` of it, so a workspace-wide build resolves `strider-ir` with its
+`test-util` feature on.
 
 Workspace production dependencies only. Leaves (no workspace deps): `dot`,
 `entity-utils`, `read-only-memory`, `strider-graph`, `strider-target`,
@@ -143,9 +156,9 @@ dependency of `strider-cfg`, `strider-graph`, `strider-ir`, `strider-lift`,
 
 Dev-dependencies are not in that graph, and are not a DAG:
 `strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it.
-`strider-graph` and `strider-pattern` also dev-depend on THEMSELVES, which is
-how their `tests/` integration targets get a feature (`test-injectors`,
-`test-util`) that `cfg(test)` cannot reach.
+`strider-graph`, `strider-pattern` and `strider-target` also dev-depend on
+THEMSELVES, which is how their `tests/` integration targets get a feature
+(`test-injectors`, `test-util`) that `cfg(test)` cannot reach.
 
 ## IR node model
 
@@ -219,9 +232,10 @@ Commutative matching tries both operand orders, driven by the single source of
 truth `NodeKind::is_commutative`: int `Add/Mul/And/Or/Xor`, float `Add/Mul`,
 `IntCmpOp::{Equal,Carry,Scarry}`, `FloatCmpOp::Equal`. One pinned operand
 commutes too (`matcher/walk.rs`, `(1..=COMM_ORDER.len()).contains(&n_fixed)`),
-or the same query would answer differently by which slot it named;
-`NodeInputs::interchangeable` cuts the duplicate when both slots hold the same
-value.
+or the same query would answer differently by which slot it named.
+`NodeInputs::interchangeable` cuts the swap when the two pattern operands accept
+the same operand pairs with the same bindings; the matcher also skips the swap
+when both IR slots hold the same value.
 
 ## Cross-cutting invariants
 
@@ -256,15 +270,22 @@ value.
   `Function::new` sorts them, which is what fixes `InitialVnId` numbering.
 - Indirect-branch resolution is a re-lift fixed-point loop in `Strider::analyze`
   that converges on the induced edge set; unresolvable branches are a result
-  (`unresolved_indirect_branches`), not an error. A site that NARROWS twice has
-  an unstable answer: it is abandoned and reported, never an `Err`. Exhausting
-  `MAX_RESOLUTION_ITERATIONS` while every site still grows is the discovery
-  depth limit, and those sites come back as unresolved too.
-- A converged CFG is never silently incomplete, but it reports through FIVE
+  (`unresolved_indirect_branches`), not an error. Every narrowing is reported
+  there, and a site that NARROWS twice has an unstable answer: it is abandoned
+  and reported, never an `Err`. Exhausting `MAX_RESOLUTION_ITERATIONS` while
+  every site still grows is the discovery depth limit, and those sites come back
+  as unresolved too. A `Return` whose folded target is not provably the entry
+  return address is reported there as well (`strider_opt::ReturnTargets`).
+- Analysis stays inside the function being lifted: nothing reads a callee's
+  code. A callee's stack pop and clobbers come from its calling convention, so
+  a callee-cleanup `ret $imm16` or an i386 PC thunk needs a `per_address_ccs`
+  entry (see `CallingConvention::x86_cdecl`).
+- A converged CFG is never silently incomplete, but it reports through SIX
   fields on `AnalyzeResult` (`unresolved_indirect_branches`,
   `unverified_seeded_sites`, `isa_mode_conflicts`, `interior_branch_targets`,
-  `unmapped_branch_targets`), and a consumer asking "may this be incomplete?"
-  reads all five, which is what `AnalyzeResult::is_complete` does. Each field's
+  `unmapped_branch_targets`, `undecodable_branch_targets`), and a consumer
+  asking "may this be incomplete?" reads all six, which is what
+  `AnalyzeResult::is_complete` does. Each field's
   contract is on the struct (`crates/strider-orchestrator/src/lib.rs`).
   `interior_branch_targets` also carries a region start a later decode stepped
   over (`RegionBuilder::note_stepped_over_region_starts`): those bytes have two
@@ -276,7 +297,7 @@ value.
   analysed that the IR cannot prove, so a wrong one miscompiles; every field's
   risky value is the positive one, two default ON, and
   `AssumptionOptions::none()`, not `::default()`, is the configuration sound
-  under any input. Per-field detail is on the struct
+  under any input whose memory behaves as RAM. Per-field detail is on the struct
   (`crates/strider-opt/src/options.rs`). `LoadForward` is two analyzers: the
   `alias` one derives from `assumptions`, the `narrow` one is pinned to
   `MemOptions::structural()`, because `narrow_load_to` rewires for good and the
