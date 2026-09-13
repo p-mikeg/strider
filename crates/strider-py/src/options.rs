@@ -138,7 +138,8 @@ pub struct PyCfgOptions {
     /// `Lifter.call_other_abi(name)` reads back what strider already makes of
     /// one.
     pub call_other_abis: Arc<HashMap<String, PyCallOtherAbi>>,
-    /// Address ranges `(start, end)` the image marks as data, never decoded.
+    /// Address ranges `(start, end)` the image marks as data, decoded only for
+    /// the entry instruction.
     pub data_ranges: strider_cfg::DataRanges,
     /// The two tables' Python faces, shared with every clone of this object,
     /// which shares the tables themselves.
