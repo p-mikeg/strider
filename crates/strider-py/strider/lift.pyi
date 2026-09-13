@@ -55,8 +55,9 @@ class AssumptionOptions:
     None is checked, and each one's risky value is the positive one, so any of
     them can make the answer wrong on valid input. `stack_global_disjoint` and
     `assume_incoming_args_survive_calls` default `True`, the other four off or
-    empty; clearing all six is the only configuration sound under any input.
-    What each one claims is in `docs/python-api.md` section 2.
+    empty; clearing all six is the only configuration sound under any input
+    whose memory behaves as RAM (see `none`). What each one claims is in
+    `docs/python-api.md` section 2.
     """
 
     # Read-only: the options types are frozen, so a plain attribute
@@ -90,6 +91,12 @@ class AssumptionOptions:
         """Every claim cleared: the only configuration sound under any input.
 
         Two of the six default `True`, so this is not `AssumptionOptions()`.
+
+        Memory is still taken to be RAM: a load reads back the last value the
+        analysed code stored at its address, with nothing outside that code
+        (a device, another thread, a signal handler) changing it in between.
+        A memory-mapped register polled after a write reads as the value
+        written, and no option lifts that premise.
         """
         ...
 
