@@ -66,6 +66,10 @@ impl DomTree {
         &self.preorder
     }
 
+    pub(crate) fn contains(&self, node: NodeId) -> bool {
+        self.span[node].0 != 0
+    }
+
     pub(crate) fn dominates(&self, a: NodeId, b: NodeId) -> bool {
         let ((a_pre, a_post), (b_pre, b_post)) = (self.span[a], self.span[b]);
         a_pre != 0 && b_pre != 0 && a_pre <= b_pre && b_post <= a_post
@@ -88,30 +92,28 @@ pub(crate) fn is_pinned(graph: &Graph, node: NodeId) -> bool {
 
 pub(crate) struct ScheduleContext<'a> {
     pub(crate) function: &'a Function,
-    pub(crate) live: &'a NodeIdSet,
+    /// What a control node of the dominator tree can use on a path that runs:
+    /// its data producers and its phis', transitively, except a phi input on an
+    /// edge from a node outside the tree, which is never selected.
+    pub(crate) live: NodeIdSet,
     pub(crate) domtree: DomTree,
 }
 
 impl<'a> ScheduleContext<'a> {
-    pub(crate) fn new(function: &'a Function, live: &'a NodeIdSet) -> Self {
+    /// Over `reachable`, the nodes a walk from the entry reaches.
+    pub(crate) fn new(function: &'a Function, reachable: &NodeIdSet) -> Self {
+        let domtree = DomTree::compute(function, reachable);
+        let live = cfg_live(function.graph(), reachable, &domtree);
         Self {
             function,
             live,
-            domtree: DomTree::compute(function, live),
+            domtree,
         }
     }
 
     /// The live phis owned by `cfg_node`, a `Region`; none for any other kind.
     pub(crate) fn attached_phis(&self, cfg_node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-        let graph = self.function.graph();
-        graph
-            .node_outputs(cfg_node)
-            .iter()
-            .copied()
-            .filter(|&v| matches!(graph.value_kind(v), ValueKind::PhiToken))
-            .flat_map(|token| graph.value_uses(token))
-            .map(|(phi, _slot)| phi)
-            .filter(|&phi| self.live.contains(phi))
+        region_phis(self.function.graph(), cfg_node).filter(|&phi| self.live.contains(phi))
     }
 
     /// Each control node of the dominator tree in pre-order, followed by its
@@ -122,6 +124,55 @@ impl<'a> ScheduleContext<'a> {
             .iter()
             .flat_map(|&cfg_node| core::iter::once(cfg_node).chain(self.attached_phis(cfg_node)))
     }
+}
+
+/// The phis owned by `cfg_node`, a `Region`; none for any other kind.
+fn region_phis(graph: &Graph, cfg_node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+    graph
+        .node_outputs(cfg_node)
+        .iter()
+        .copied()
+        .filter(|&v| matches!(graph.value_kind(v), ValueKind::PhiToken))
+        .flat_map(|token| graph.value_uses(token))
+        .map(|(phi, _slot)| phi)
+}
+
+/// [`ScheduleContext::live`]: seeded with every tree node and its reachable
+/// phis, closed over data inputs, a phi's input `i` followed only when its
+/// region's control input `i - 1` comes from a tree node.
+fn cfg_live(graph: &Graph, reachable: &NodeIdSet, tree: &DomTree) -> NodeIdSet {
+    let mut live = NodeIdSet::new();
+    let mut stack: Vec<NodeId> = Vec::new();
+    for &cfg_node in tree.preorder() {
+        stack.push(cfg_node);
+        stack.extend(region_phis(graph, cfg_node).filter(|&phi| reachable.contains(phi)));
+    }
+    while let Some(node) = stack.pop() {
+        if !live.insert(node) {
+            continue;
+        }
+        let inputs = graph.node_inputs(node);
+        let region_preds = matches!(graph.node_kind(node), NodeKind::Phi | NodeKind::MemPhi)
+            .then(|| inputs.into_iter().next())
+            .flatten()
+            .map(|token| graph.node_inputs(graph.value_definition(token).0));
+        for (i, value) in inputs.into_iter().enumerate() {
+            if graph.value_kind(value).is_control() {
+                continue;
+            }
+            if let (Some(preds), Some(edge_idx)) = (&region_preds, i.checked_sub(1))
+                && let Some(edge) = preds.into_iter().nth(edge_idx)
+                && !tree.contains(graph.value_definition(edge).0)
+            {
+                continue;
+            }
+            let producer = graph.value_definition(value).0;
+            if reachable.contains(producer) {
+                stack.push(producer);
+            }
+        }
+    }
+    live
 }
 
 /// The live floating data producers of a node.
@@ -159,7 +210,7 @@ impl graph_algorithms::walk::GraphRef for UnpinnedDataPreds<'_> {
 pub(crate) fn schedule_early(ctx: &ScheduleContext<'_>, mut schedule: impl FnMut(NodeId)) {
     let preds = UnpinnedDataPreds {
         graph: ctx.function.graph(),
-        live: ctx.live,
+        live: &ctx.live,
     };
     let roots: Vec<NodeId> = ctx.pinned_nodes().flat_map(|p| preds.of(p)).collect();
     let mut walk = PostOrder::new(preds, roots);
