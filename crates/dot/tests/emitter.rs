@@ -20,8 +20,8 @@ fn empty_emitter_with_dark_style_emits_attr_blocks_in_order() {
         "block ordering broke: {out}"
     );
 
-    assert!(out.contains("rankdir=TB,"));
-    assert!(out.contains("shape=box,"));
+    assert!(out.contains("rankdir=\"TB\","));
+    assert!(out.contains("shape=\"box\","));
     assert!(out.contains("color=\"#aaaaaa\","));
     assert!(out.ends_with("}\n"));
 }
@@ -33,7 +33,7 @@ fn node_emits_quoted_id_and_escaped_label() {
     e.node("n1", "hello \"world\"", "box", &[]);
     let out = e.finish();
     assert!(
-        out.contains("\"n1\" [label=\"hello \\\"world\\\"\", shape=box];\n"),
+        out.contains("\"n1\" [label=\"hello \\\"world\\\"\", shape=\"box\"];\n"),
         "unexpected DOT: {out}"
     );
 }
@@ -42,10 +42,10 @@ fn node_emits_quoted_id_and_escaped_label() {
 fn node_with_extra_attrs_emits_them_comma_separated() {
     let style = DotStyle::empty();
     let mut e = DotEmitter::new("G", &style);
-    e.node("n1", "lbl", "trapezium", &[("fillcolor", "\"#3a2a10\"")]);
+    e.node("n1", "lbl", "trapezium", &[("fillcolor", "#3a2a10")]);
     let out = e.finish();
     assert!(
-        out.contains("\"n1\" [label=\"lbl\", shape=trapezium, fillcolor=\"#3a2a10\"];\n"),
+        out.contains("\"n1\" [label=\"lbl\", shape=\"trapezium\", fillcolor=\"#3a2a10\"];\n"),
         "unexpected DOT: {out}"
     );
 }
@@ -69,9 +69,8 @@ fn edge_with_extra_emits_bracketed_attrs() {
     let mut e = DotEmitter::new("G", &style);
     e.edge("a", "b", &[("label", "Branch"), ("style", "dashed")]);
     let out = e.finish();
-    // `label` is free text so it gets quoted; other attrs stay bare.
     assert!(
-        out.contains("\"a\" -> \"b\" [label=\"Branch\", style=dashed];\n"),
+        out.contains("\"a\" -> \"b\" [label=\"Branch\", style=\"dashed\"];\n"),
         "unexpected DOT: {out}"
     );
 }
@@ -112,7 +111,7 @@ fn node_id_with_special_chars_is_escaped() {
     e.node("a\"b\\c", "lbl", "box", &[]);
     let out = e.finish();
     assert!(
-        out.contains("\"a\\\"b\\\\c\" [label=\"lbl\", shape=box];\n"),
+        out.contains("\"a\\\"b\\\\c\" [label=\"lbl\", shape=\"box\"];\n"),
         "unexpected DOT: {out}"
     );
 }
