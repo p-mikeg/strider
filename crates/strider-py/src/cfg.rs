@@ -4,12 +4,11 @@
 //! Sleigh would render the wrong p-code for a mid-function mode switch.
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::OnceLock;
 
 use pyo3::prelude::*;
 
-use crate::dot::{DEFAULT_CFG_STYLE, dot_style_for};
+use crate::dot::{DEFAULT_CFG_STYLE, dot_style_for, render};
 use crate::errors::into_strider_err;
 use crate::node::PyNode;
 use crate::reader::AnyMemReader;
@@ -224,30 +223,18 @@ impl PyCfg {
         )))
     }
 
-    fn dispatch_dot(
+    fn render_dot(
         &self,
         py: Python<'_>,
-        style: &str,
-        op: CfgDotOp<'_>,
+        style: Option<&str>,
+        html: bool,
+        path: Option<&str>,
         with: Option<&Bound<'_, PyLifter>>,
-    ) -> PyResult<CfgDotResult> {
+    ) -> PyResult<Option<String>> {
+        let style = style.unwrap_or(DEFAULT_CFG_STYLE);
         self.with_sleigh_of(py, with, |sleigh| {
             let d = dot::GraphDot::new(self.inner.dot_dumper(sleigh), dot_style_for(Some(style))?);
-            match op {
-                CfgDotOp::ToHtml(p) => d
-                    .dump_as_html(Path::new(p))
-                    .map(|()| CfgDotResult::Unit)
-                    .map_err(into_strider_err),
-                CfgDotOp::ToDot(p) => d
-                    .dump_as_dot(Path::new(p))
-                    .map(|()| CfgDotResult::Unit)
-                    .map_err(into_strider_err),
-                CfgDotOp::HtmlStr => d
-                    .as_html_from_dot()
-                    .map(CfgDotResult::Html)
-                    .map_err(into_strider_err),
-                CfgDotOp::DotStr => d.as_dot().map(CfgDotResult::Dot).map_err(into_strider_err),
-            }
+            render(&d, html, path)
         })
     }
 
@@ -278,25 +265,6 @@ impl PyCfg {
                 .collect()
         })
     }
-}
-
-enum CfgDotOp<'a> {
-    ToHtml(&'a str),
-    ToDot(&'a str),
-    HtmlStr,
-    DotStr,
-}
-
-enum CfgDotResult {
-    Unit,
-    Html(String),
-    Dot(String),
-}
-
-fn mismatched_dot_result() -> PyErr {
-    into_strider_err(anyhow::anyhow!(
-        "internal error: the dot renderer returned a result of the wrong kind"
-    ))
 }
 
 #[pymethods]
@@ -412,16 +380,7 @@ impl PyCfg {
         style: Option<&str>,
         lifter: Option<&Bound<'_, PyLifter>>,
     ) -> PyResult<Option<String>> {
-        let style = style.unwrap_or(DEFAULT_CFG_STYLE);
-        match path {
-            Some(p) => self
-                .dispatch_dot(py, style, CfgDotOp::ToDot(p), lifter)
-                .map(|_| None),
-            None => match self.dispatch_dot(py, style, CfgDotOp::DotStr, lifter)? {
-                CfgDotResult::Dot(s) => Ok(Some(s)),
-                CfgDotResult::Html(_) | CfgDotResult::Unit => Err(mismatched_dot_result()),
-            },
-        }
+        self.render_dot(py, style, false, path, lifter)
     }
 
     /// Render the CFG to a standalone HTML page. Returns the HTML string
@@ -437,16 +396,7 @@ impl PyCfg {
         path: Option<&str>,
         style: Option<&str>,
     ) -> PyResult<Option<String>> {
-        let style = style.unwrap_or(DEFAULT_CFG_STYLE);
-        match path {
-            Some(p) => self
-                .dispatch_dot(py, style, CfgDotOp::ToHtml(p), None)
-                .map(|_| None),
-            None => match self.dispatch_dot(py, style, CfgDotOp::HtmlStr, None)? {
-                CfgDotResult::Html(s) => Ok(Some(s)),
-                CfgDotResult::Dot(_) | CfgDotResult::Unit => Err(mismatched_dot_result()),
-            },
-        }
+        self.render_dot(py, style, true, path, None)
     }
 
     /// The lifted p-code for the machine instruction at `addr`: every p-code
