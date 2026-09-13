@@ -82,7 +82,10 @@ class Symbol:
     def address(self) -> int:
         """The symbol's virtual address (`st_value`), except for a ppc64
         ELFv1 function, where it is the code the `.opd` descriptor at
-        `st_value` names."""
+        `st_value` names. An ARM Thumb function keeps the Thumb bit here,
+        which is what `analyze` enters it in Thumb mode on; see `is_thumb`.
+        An undefined symbol of an object file has an address past the image
+        that maps nothing."""
         ...
     @property
     def size(self) -> Optional[int]:
@@ -99,7 +102,14 @@ class Symbol:
         ...
     @property
     def end(self) -> Optional[int]:
-        """One past the last byte, or `None` when `size` is."""
+        """One past the last byte, or `None` when `size` is. Measured from the
+        first instruction, so a Thumb function's ISA bit does not count."""
+        ...
+    @property
+    def is_thumb(self) -> bool:
+        """Whether this is an ARM Thumb function: `address` then carries the
+        Thumb bit, and its first instruction is at `address & ~1`, which is
+        also where `symbol_at` and `region` measure it from."""
         ...
     @property
     def region(self) -> Optional[tuple[int, int]]:

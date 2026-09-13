@@ -147,20 +147,38 @@ pub(crate) fn check_mem_unchanged(py: Python<'_>, mem_obj: &Option<Py<PyAny>>) -
         .map_err(into_strider_err)
 }
 
-/// Whether a symbol carries an address of its own. A linked image uses
-/// `st_value == 0` for synthetic linker entries; an object file's `st_value`
-/// is section-relative, so zero is a real address there and definedness is the
-/// test instead.
-fn symbol_is_addressed<'d, S: ObjectSymbol<'d>>(sym: &S, relocatable: bool) -> bool {
+/// Where a symbol sits in this address space, if anywhere: its own address
+/// when it is defined, `Import` when it only names something another image
+/// defines.
+enum SymbolPlace {
+    Defined,
+    /// An undefined symbol still carrying an address: a linked image's PLT
+    /// stub, or the synthetic one an object file's layout gives it.
+    Import(u64),
+    Nowhere,
+}
+
+fn symbol_place<'d, S: ObjectSymbol<'d>>(sym: &S, layout: &ElfSectionLayout) -> SymbolPlace {
     // A TLS symbol's value is an offset into the per-thread block, so it has
     // no address in this space whichever kind of object holds it.
     if sym.kind() == object::SymbolKind::Tls {
-        return false;
+        return SymbolPlace::Nowhere;
     }
-    if relocatable {
-        matches!(sym.section(), object::SymbolSection::Section(_))
-    } else {
-        sym.address() != 0
+    match sym.section() {
+        object::SymbolSection::Section(_) => SymbolPlace::Defined,
+        // `SHN_ABS` 0 is how a linked image spells a synthetic entry, such as
+        // an `STT_FILE` name.
+        object::SymbolSection::Absolute if sym.address() != 0 => SymbolPlace::Defined,
+        object::SymbolSection::Undefined | object::SymbolSection::Common => {
+            match layout.extern_address(sym.index().0) {
+                Some(addr) => SymbolPlace::Import(addr),
+                None if sym.is_undefined() && sym.address() != 0 => {
+                    SymbolPlace::Import(sym.address())
+                }
+                None => SymbolPlace::Nowhere,
+            }
+        }
+        _ => SymbolPlace::Nowhere,
     }
 }
 
@@ -313,7 +331,22 @@ pub struct PySymbol {
     #[pyo3(get)]
     size: Option<u64>,
     is_function: bool,
+    /// An ARM Thumb function, whose `address` keeps the ISA bit.
+    thumb: bool,
     region: Option<(u64, u64)>,
+}
+
+impl PySymbol {
+    /// The first byte the symbol covers: `address` without a Thumb bit.
+    fn start(&self) -> u64 {
+        self.address & !u64::from(self.thumb)
+    }
+
+    /// One past the last address the symbol covers. A symbol with no recorded
+    /// size covers only its own first byte.
+    fn covered_end(&self) -> u64 {
+        self.start().saturating_add(self.size.unwrap_or(1))
+    }
 }
 
 #[pymethods]
@@ -325,10 +358,19 @@ impl PySymbol {
         self.is_function
     }
 
-    /// One past the last byte, or `None` when `size` is.
+    /// One past the last byte, or `None` when `size` is. Measured from the
+    /// first instruction, so a Thumb function's ISA bit does not count.
     #[getter]
     fn end(&self) -> Option<u64> {
-        self.size.map(|s| self.address.saturating_add(s))
+        self.size.map(|s| self.start().saturating_add(s))
+    }
+
+    /// Whether this is an ARM Thumb function: `address` then carries the
+    /// Thumb bit, which is what `analyze` enters the function in Thumb mode
+    /// on, and its first instruction is at `address & ~1`.
+    #[getter]
+    fn is_thumb(&self) -> bool {
+        self.thumb
     }
 
     /// The `(start, end)` bounds (end exclusive) of the loaded region this
@@ -357,11 +399,10 @@ struct SymbolTable {
     syms: Vec<PySymbol>,
     /// The winner for each name; two symbols can share one.
     by_name: HashMap<String, usize>,
-    /// Indices into `syms`, ascending by address, ties in load order.
+    /// Indices into `syms`, ascending by first byte, ties in load order.
     by_addr: Vec<usize>,
-    /// Prefix maximum of the covered end over `by_addr`, so a backward scan
-    /// stops as soon as nothing at or below can still reach the address.
-    by_addr_max_end: Vec<u64>,
+    /// Which symbols cover an address, over `[start, covered_end)`.
+    extents: RegionIndex,
 }
 
 /// A build id as the hex string every tool prints it in.
@@ -445,6 +486,9 @@ impl PyLoadedElf {
         };
         let mut syms: Vec<PySymbol> = Vec::new();
         let mut by_name: HashMap<String, usize> = HashMap::new();
+        // Names only an undefined symbol carries, taken once no ELF defines
+        // them.
+        let mut imports: Vec<(String, usize)> = Vec::new();
         for obj in self.elfs.iter().chain(&self.symbol_elfs) {
             // `with_symbols` stats every mapping before calling this, so a
             // rebuild between the two is the torn-read race the reader
@@ -454,7 +498,7 @@ impl PyLoadedElf {
                 continue;
             };
             let layout = ElfSectionLayout::new(&file);
-            let relocatable = file.kind() == object::ObjectKind::Relocatable;
+            let arm = file.architecture() == object::Architecture::Arm;
             // `None` for everything but a linked ppc64 ELFv1 image; built once
             // per ELF rather than per symbol.
             let opd = OpdTable::new(&file);
@@ -465,18 +509,23 @@ impl PyLoadedElf {
                 std::collections::HashSet::new();
             for sym in file.symbols().chain(file.dynamic_symbols()) {
                 let Ok(name) = sym.name() else { continue };
-                if name.is_empty() || !symbol_is_addressed(&sym, relocatable) {
+                if name.is_empty() {
                     continue;
                 }
+                let place = symbol_place(&sym, &layout);
+                let declared = match place {
+                    SymbolPlace::Defined => layout.symbol_address(&sym),
+                    SymbolPlace::Import(addr) => addr,
+                    SymbolPlace::Nowhere => continue,
+                };
                 let is_function = sym.kind() == object::SymbolKind::Text;
-                let declared = layout.symbol_address(&sym);
                 // On ppc64 ELFv1 an `STT_FUNC` `st_value` addresses an `.opd`
                 // descriptor, not code, and `st_size` measures that descriptor.
                 // Following one therefore drops the size too: bounding the lift
                 // to the 24-byte triple would cut every function short.
                 let followed = opd
                     .as_ref()
-                    .filter(|_| is_function)
+                    .filter(|_| is_function && matches!(place, SymbolPlace::Defined))
                     .and_then(|t| t.entry_at(declared));
                 let (address, size) = match followed {
                     Some(code) => (code, None),
@@ -491,8 +540,13 @@ impl PyLoadedElf {
                     address,
                     size,
                     is_function,
-                    region: region_of(address),
+                    thumb: arm && is_function && address & 1 == 1,
+                    region: None,
                 });
+                if matches!(place, SymbolPlace::Import(_)) {
+                    imports.push((name.to_string(), ix));
+                    continue;
+                }
                 match per_elf.entry(name.to_string()) {
                     std::collections::hash_map::Entry::Occupied(mut o) => {
                         if syms[ix].is_function && !syms[*o.get()].is_function {
@@ -508,37 +562,29 @@ impl PyLoadedElf {
                 by_name.entry(name).or_insert(ix);
             }
         }
+        for (name, ix) in imports {
+            by_name.entry(name).or_insert(ix);
+        }
         // Hand-supplied symbols land last, so a name any ELF already carries
         // keeps the ELF's answer; `symbol_at` still sees these by address.
         for extra in &self.extra_symbols {
             let ix = syms.len();
-            syms.push(PySymbol {
-                region: region_of(extra.address),
-                ..extra.clone()
-            });
+            syms.push(extra.clone());
             by_name.entry(extra.name.clone()).or_insert(ix);
         }
-        let mut by_addr: Vec<usize> = (0..syms.len()).collect();
-        by_addr.sort_by_key(|&i| syms[i].address);
-        let mut by_addr_max_end: Vec<u64> = Vec::with_capacity(by_addr.len());
-        let mut running = 0u64;
-        for &i in &by_addr {
-            running = running.max(covered_end(&syms[i]));
-            by_addr_max_end.push(running);
+        for sym in &mut syms {
+            sym.region = region_of(sym.start());
         }
+        let mut by_addr: Vec<usize> = (0..syms.len()).collect();
+        by_addr.sort_by_key(|&i| syms[i].start());
+        let extents: Vec<(u64, u64)> = syms.iter().map(|s| (s.start(), s.covered_end())).collect();
         SymbolTable {
+            extents: RegionIndex::from_ranges(&extents),
             syms,
             by_name,
             by_addr,
-            by_addr_max_end,
         }
     }
-}
-
-/// One past the last address `sym` covers. A symbol with no recorded size
-/// covers only its own address.
-fn covered_end(sym: &PySymbol) -> u64 {
-    sym.address.saturating_add(sym.size.unwrap_or(1))
 }
 
 /// The symbol of `group` covering `address`. Aliases sharing an address are
@@ -549,7 +595,7 @@ fn covering<'a>(group: impl Iterator<Item = &'a PySymbol>, address: u64) -> Opti
     let rank = |s: &PySymbol| (s.size.is_some(), s.is_function);
     let mut best: Option<&PySymbol> = None;
     for sym in group {
-        let covers = sym.address <= address && address < covered_end(sym);
+        let covers = sym.start() <= address && address < sym.covered_end();
         if covers && best.is_none_or(|b| rank(sym) > rank(b)) {
             best = Some(sym);
         }
@@ -584,7 +630,9 @@ impl PyLoadedElf {
 
     /// The `Symbol` named `name`, taking the first ELF in load order that
     /// defines it and preferring a code symbol over a data one of the same
-    /// name.  Raises `StriderError` when no loaded ELF defines it.
+    /// name, else an undefined symbol that still has an address (a PLT stub,
+    /// or an object file's extern).  Raises `StriderError` when there is
+    /// neither.
     fn symbol(&self, name: &str) -> PyResult<PySymbol> {
         self.symbol_opt(name)?.ok_or_else(|| {
             into_strider_err(anyhow::anyhow!(
@@ -608,21 +656,13 @@ impl PyLoadedElf {
     /// code.  `None` when nothing covers `address`.
     fn symbol_at(&self, address: u64) -> PyResult<Option<PySymbol>> {
         self.with_symbols(|t| {
-            let mut hi = t.by_addr.partition_point(|&i| t.syms[i].address <= address);
-            while hi > 0 {
-                // Nothing at or below this point extends far enough.
-                if t.by_addr_max_end[hi - 1] <= address {
-                    return None;
-                }
-                let base = t.syms[t.by_addr[hi - 1]].address;
-                let lo = t.by_addr[..hi].partition_point(|&i| t.syms[i].address < base);
-                if let Some(hit) = covering(t.by_addr[lo..hi].iter().map(|&i| &t.syms[i]), address)
-                {
-                    return Some(hit.clone());
-                }
-                hi = lo;
-            }
-            None
+            // Every symbol covering `address`, highest start first: the nearest
+            // start's aliases are the leading run.
+            let mut hits = t.extents.covering(address, 1).peekable();
+            let base = t.syms[*hits.peek()?].start();
+            let mut group: Vec<usize> = hits.take_while(|&i| t.syms[i].start() == base).collect();
+            group.sort_unstable();
+            covering(group.iter().map(|&i| &t.syms[i]), address).cloned()
         })
     }
 
@@ -665,7 +705,7 @@ impl PyLoadedElf {
                     continue;
                 }
                 match out.last_mut() {
-                    Some(prev) if prev.address == sym.address => {
+                    Some(prev) if prev.start() == sym.start() => {
                         if prev.size.is_none() && sym.size.is_some() {
                             *prev = sym.clone();
                         }
@@ -806,6 +846,7 @@ impl PyLoadedElf {
                 address,
                 size,
                 is_function,
+                thumb: false,
                 region: None,
             });
         }
