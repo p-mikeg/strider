@@ -24,6 +24,7 @@ pub mod node;
 pub use graph::Inputs;
 mod node_signature;
 mod region;
+mod schedule;
 pub use ::read_only_memory::ReadOnlyMemory;
 pub mod validate;
 mod viewer;

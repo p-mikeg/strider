@@ -6,6 +6,7 @@ use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
 use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueKind};
+use crate::schedule::{DomTree, ScheduleContext, schedule_early};
 use crate::walk::{NodeIdSet, PostOrder, WalkPhase};
 
 use super::ValidationError;
@@ -581,4 +582,93 @@ pub(super) fn check_function_invariants_terminator_reachable(
             count: 1 + stranded.count(),
         });
     }
+}
+
+/// Every data input is available where it is used, judged on an early schedule
+/// ([`schedule_early`]): a floating node sits at the latest of its inputs'
+/// positions, which must lie on one dominator chain; a control node's latest
+/// input must dominate it; a phi's input must dominate the predecessor edge it
+/// arrives on. An input with no position at all, computed only in unreachable
+/// code or on a data cycle, is unavailable to a live use. A phi input on an
+/// unreachable edge can never be selected, and is not judged.
+pub(super) fn check_function_invariants_availability(
+    function: &Function,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    let ctx = ScheduleContext::new(function, reachable);
+    let graph = function.graph();
+    let tree = &ctx.domtree;
+
+    let mut at: SecondaryMap<NodeId, Option<NodeId>> = SecondaryMap::new();
+    for &cfg_node in tree.preorder() {
+        at[cfg_node] = Some(cfg_node);
+        for phi in ctx.attached_phis(cfg_node) {
+            at[phi] = Some(cfg_node);
+        }
+    }
+
+    schedule_early(&ctx, |node| {
+        let latest = latest_input(graph, tree, &at, node, errs);
+        at[node] = Some(latest.map_or(tree.root(), |(pos, _)| pos));
+    });
+
+    for &cfg_node in tree.preorder() {
+        if let Some((pos, input_idx)) = latest_input(graph, tree, &at, cfg_node, errs)
+            && !tree.dominates(pos, cfg_node)
+        {
+            errs.push(ValidationError::InputNotAvailable {
+                node: cfg_node,
+                input_idx,
+            });
+        }
+        let preds = graph.node_inputs(cfg_node);
+        for phi in ctx.attached_phis(cfg_node) {
+            let arms = graph.node_inputs(phi).into_iter().skip(1);
+            for ((input_idx, value), edge) in (1..).zip(arms).zip(preds) {
+                let Some(edge_at) = at[graph.value_definition(edge).0] else {
+                    continue;
+                };
+                if !at[graph.value_definition(value).0]
+                    .is_some_and(|pos| tree.dominates(pos, edge_at))
+                {
+                    errs.push(ValidationError::InputNotAvailable {
+                        node: phi,
+                        input_idx,
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// The dominance-latest position among `node`'s data inputs and the input
+/// holding it. An input with no position, or one off the chain the earlier
+/// inputs lie on, is reported; the latter ends the scan.
+fn latest_input(
+    graph: &Graph,
+    tree: &DomTree,
+    at: &SecondaryMap<NodeId, Option<NodeId>>,
+    node: NodeId,
+    errs: &mut Vec<ValidationError>,
+) -> Option<(NodeId, usize)> {
+    let mut latest: Option<(NodeId, usize)> = None;
+    for (input_idx, value) in graph.node_inputs(node).into_iter().enumerate() {
+        if graph.value_kind(value).is_control() {
+            continue;
+        }
+        let Some(pos) = at[graph.value_definition(value).0] else {
+            errs.push(ValidationError::InputNotAvailable { node, input_idx });
+            continue;
+        };
+        match latest {
+            Some((cur, _)) if tree.dominates(pos, cur) => {}
+            Some((cur, _)) if !tree.dominates(cur, pos) => {
+                errs.push(ValidationError::InputNotAvailable { node, input_idx });
+                return latest;
+            }
+            _ => latest = Some((pos, input_idx)),
+        }
+    }
+    latest
 }
