@@ -1,6 +1,5 @@
-use graph_algorithms::dominance::{DomTree, Frontiers};
+use graph_algorithms::dominance::{DomTree, Dominators, Frontiers};
 use petgraph::Direction::Incoming;
-use petgraph::algo::dominators::{Dominators, simple_fast};
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::{Cfg, RegionId};
 
@@ -35,7 +34,8 @@ pub(crate) struct DomInfo {
 impl DomInfo {
     #[must_use]
     pub(crate) fn compute(cfg: &Cfg) -> Self {
-        let doms = simple_fast(cfg.region_graph(), cfg.entry());
+        let graph = cfg.region_graph();
+        let doms = graph_algorithms::dominance::dominators(cfg.entry(), |r| graph.neighbors(r));
 
         // The adapter only borrows `doms`; that borrow ends before `doms` moves
         // into `Self`.

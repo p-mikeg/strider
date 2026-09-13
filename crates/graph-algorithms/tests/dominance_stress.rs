@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use graph_algorithms::dominance::{
-    DomTree, dominance_frontiers, dominator_tree_preorder, phi_placement,
+    DomTree, dominance_frontiers, dominator_tree_preorder, dominators, phi_placement,
 };
 
 /// Predecessors and idoms are both explicit; the idom map is oracle-computed.
@@ -289,4 +289,70 @@ fn dominance_frontiers_rejects_root_as_its_own_idom() {
         idom: HashMap::from([(0, 0), (1, 0), (2, 1)]),
     };
     let _ = dominance_frontiers(&mock, 0);
+}
+
+/// Against the fixpoint oracle, on dense irreducible graphs plus an island of
+/// vertices the root never reaches, and edges back into the root.
+#[test]
+fn dominators_match_the_fixpoint_oracle_over_random_cfgs() {
+    let mut rng = Rng(0x0dd0_face_5eed_cafe);
+    for iter in 0..1_000u32 {
+        let n = 2 + rng.below(14);
+        let extra = rng.below(3 * n);
+        let preds = random_cfg(&mut rng, n, extra);
+        let (_, idom) = oracle_dom_and_idom(n, &preds);
+        let island = n + rng.below(3);
+        let mut succs: HashMap<u32, Vec<u32>> = HashMap::new();
+        for (&v, ps) in &preds {
+            for &p in ps {
+                succs.entry(p).or_default().push(v);
+            }
+        }
+        // Island vertices reach into the graph but nothing reaches them.
+        for x in n..island {
+            succs.entry(x).or_default().push(rng.below(n));
+        }
+        let got = dominators(0u32, |v| succs.get(&v).cloned().unwrap_or_default());
+        assert_eq!(got.vertices()[0], 0, "iter {iter}: root first");
+        assert_eq!(
+            got.vertices().len(),
+            n as usize,
+            "iter {iter}: reachable set"
+        );
+        assert_eq!(got.immediate_dominator(0), None, "iter {iter}: root");
+        for v in 1..island {
+            assert_eq!(
+                got.immediate_dominator(v),
+                idom.get(&v).copied(),
+                "iter {iter}: idom({v}) (n={n})\npreds={preds:?}"
+            );
+        }
+    }
+}
+
+/// `if (c) goto err;` `n` times: a chain whose every vertex also edges into
+/// one sink.
+#[test]
+fn dominators_of_an_error_ladder_scale_near_linearly() {
+    fn ladder(n: u32) -> std::time::Duration {
+        let start = std::time::Instant::now();
+        let got = dominators(0u32, |v| match v {
+            v if v + 1 < n => vec![n, v + 1],
+            v if v + 1 == n => vec![n],
+            _ => Vec::new(),
+        });
+        let elapsed = start.elapsed();
+        assert_eq!(got.immediate_dominator(n), Some(0));
+        assert_eq!(got.immediate_dominator(n - 1), Some(n - 2));
+        elapsed
+    }
+    ladder(5_000);
+    let small = ladder(25_000);
+    let large = ladder(200_000);
+    // Linear would be 8x; quadratic 64x.
+    assert!(
+        large.as_secs_f64() < small.as_secs_f64() * 24.0,
+        "8x the rungs cost {:.1}x ({small:?} -> {large:?})",
+        large.as_secs_f64() / small.as_secs_f64(),
+    );
 }
