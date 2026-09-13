@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Mapping, Optional, Union
+from typing import Literal, Mapping, Optional, Sequence, Union
 
 from .ir import Node
 from .lift import Lifter
@@ -119,8 +119,22 @@ class Cfg:
         known. A buffer whose window the branch leaves, a partially-mapped
         image, an unrelocated `jmp`, a ROM built from a symbol subset, code
         running off the end of the mapped bytes. A MIPS branch whose delay slot
-        is unmapped reports the branch itself. A direct edge produces these, so they are reported here rather than in
-        `unresolved`.
+        is unmapped reports the branch itself. A direct edge produces these, so
+        they are reported here rather than in `unresolved`.
+
+        Accumulated over every round `analyze` ran.
+        """
+        ...
+    def undecodable_branch_targets(self) -> list[int]:
+        """Addresses a direct branch or a fall-through past a call reached that
+        hold no instruction: bytes Sleigh rejects, or a range
+        `CfgOptions.data_ranges` marks as data.
+
+        A direct branch there keeps an edge to an empty tail-call stub. A
+        fall-through past a call ends that call as no-return, which is what a
+        callee nobody marked no-return leaves behind (a literal pool, a
+        traceback table, a deliberately invalid word), though nothing proves it
+        never returns.
 
         Accumulated over every round `analyze` ran.
         """
@@ -140,12 +154,13 @@ class Cfg:
         """
         ...
     def is_complete(self) -> bool:
-        """Whether all five incompleteness channels are empty: the
+        """Whether all six incompleteness channels are empty: the
         `unresolved` of the `AnalyzeResult` this CFG came from,
         `unverified_seeded_sites`, `isa_mode_conflicts`,
-        `interior_branch_targets` and `unmapped_branch_targets`.
+        `interior_branch_targets`, `unmapped_branch_targets` and
+        `undecodable_branch_targets`.
 
-        The answer to "may this be incomplete?", which none of the five gives
+        The answer to "may this be incomplete?", which none of the six gives
         alone. `False` is not always a loss: `unverified_seeded_sites` holds
         answers that are complete but unverified, so a site consumed as a
         return (an ARM `pop {pc}` epilogue) clears it. Read whichever channel
@@ -176,6 +191,11 @@ class CfgOptions:
     built-in table. Each value is a `strider.sleigh.CallOtherAbi`: one of
     the four footprint-free classes, or `CallOtherAbi.custom(...)` naming
     implicit registers.
+
+    `data_ranges` lists `(start, end)` address ranges, end exclusive, that are
+    data rather than code (an ARM literal pool): a branch or fall-through into
+    one is reported through `Cfg.undecodable_branch_targets`, never decoded.
+    `ElfLifter.analyze` fills it from the ELF's mapping symbols when empty.
     """
 
     # Read-only: the options types are frozen, so a plain attribute
@@ -191,6 +211,8 @@ class CfgOptions:
     def known_targets(self) -> Mapping[int, Union[list[int], Literal["return"]]]: ...
     @property
     def call_other_abis(self) -> Mapping[str, CallOtherAbi]: ...
+    @property
+    def data_ranges(self) -> list[tuple[int, int]]: ...
     def __init__(
         self,
         *,
@@ -198,6 +220,7 @@ class CfgOptions:
         allow_code_before_start_addr: bool = ...,
         known_targets: Mapping[int, Union[list[int], Literal["return"]]] = ...,
         call_other_abis: Mapping[str, CallOtherAbi] = ...,
+        data_ranges: Sequence[tuple[int, int]] = ...,
     ) -> None:
         """Build the options. Raises `ValueError` for
         `function_max_size=0`."""
@@ -205,4 +228,11 @@ class CfgOptions:
     def with_function_max_size(self, function_max_size: int) -> "CfgOptions":
         """These options with `function_max_size` set, sharing both tables.
         Raises `ValueError` for `0`."""
+        ...
+    def with_data_ranges(self, data_ranges: Sequence[tuple[int, int]]) -> "CfgOptions":
+        """These options with `data_ranges` replaced, sharing both tables."""
+        ...
+    def _with_elf_data_ranges(self, elf: object) -> "CfgOptions":
+        """These options with `elf`'s mapping-symbol data ranges, unless
+        `data_ranges` already names some."""
         ...

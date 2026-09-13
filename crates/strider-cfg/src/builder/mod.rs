@@ -4,7 +4,7 @@ mod split;
 
 use flow::NO_FLOW_VARS;
 pub use flow::{FlowContext, FlowVars};
-use region_builder::{RegionBuilder, is_unmapped_start};
+use region_builder::{RegionBuilder, is_unmapped_start, not_code_at};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
@@ -166,6 +166,9 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// Branch targets and fall-throughs no byte backs; see
     /// [`Cfg::unmapped_branch_targets`].
     pub(super) unmapped_branch_targets: Vec<PcodeInsnAddr>,
+    /// Branch targets and fall-throughs that hold no instruction; see
+    /// [`Cfg::undecodable_branch_targets`].
+    pub(super) undecodable_branch_targets: Vec<PcodeInsnAddr>,
     /// Seeded arms whose address an earlier decode already owns in the other
     /// ISA mode, with the region that seated them. The arm goes, as the loser
     /// of [`Self::next_work_item`]'s arbitration.
@@ -192,6 +195,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             work_queue: Vec::new(),
             seeded_queue: Vec::new(),
             unmapped_branch_targets: Vec::new(),
+            undecodable_branch_targets: Vec::new(),
             clashing_seeded: Vec::new(),
             undecodable_seeded: Vec::new(),
             region_isa_mode: BTreeMap::new(),
@@ -829,20 +833,30 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             let is_arm = seeded_by.is_some_and(|s| s.is_arm(parent_region, address));
             // A direct branch out of the mapped image (a firmware window, a
             // partially-mapped file, an unrelocated `jmp`) names bytes nobody
-            // can supply. The function is not broken by it, so the edge leaves
-            // through a `TailCall` stub and the address is reported; every
-            // region that did decode survives.
+            // can supply, and one to bytes that hold no instruction (glibc's
+            // PowerPC `abort` word, a literal pool) names nothing to decode.
+            // The function is not broken by either, so the edge leaves through
+            // a `TailCall` stub and the address is reported; every region that
+            // did decode survives. Undecodable bytes under a seeded arm are the
+            // arm's misclassification instead, handled below.
             //
             // The ENTRY has no parent to hang the stub off, and a function
-            // whose first byte is unmapped has nothing to analyse, so it stays
-            // an `Err`.
-            if !is_arm
-                && let Some(parent) = parent_region.filter(|_| is_unmapped_start(&e, address))
-            {
-                let stub = self.tail_call_stub(address)?;
-                self.region_graph.add_edge(parent, stub, ());
-                self.unmapped_branch_targets.push(address);
-                continue;
+            // whose first instruction does not exist has nothing to analyse,
+            // so it stays an `Err`.
+            if !is_arm && let Some(parent) = parent_region {
+                let report = if is_unmapped_start(&e, address) {
+                    Some(&mut self.unmapped_branch_targets)
+                } else if seeded_by.is_none() && not_code_at(&e, address).is_some() {
+                    Some(&mut self.undecodable_branch_targets)
+                } else {
+                    None
+                };
+                if let Some(report) = report {
+                    report.push(address);
+                    let stub = self.tail_call_stub(address)?;
+                    self.region_graph.add_edge(parent, stub, ());
+                    continue;
+                }
             }
             // Under a seeded arm it is a misclassification, not a broken
             // function: drop the arm and report it against the site that named
@@ -898,6 +912,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             isa_mode_conflicts: self.isa_mode_conflicts,
             interior_branch_targets: self.interior_branch_targets,
             unmapped_branch_targets: self.unmapped_branch_targets,
+            undecodable_branch_targets: self.undecodable_branch_targets,
             link_register_seated: self.link_register_seated,
             tail_call_seated: self.tail_call_seated,
             function_isa_bit,
