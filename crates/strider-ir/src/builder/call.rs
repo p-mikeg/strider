@@ -55,9 +55,12 @@ impl FunctionBuilder {
         // A callee can read a register its convention neither passes nor
         // preserves (i386 `regparm`, a static chain, AArch64's indirect-result
         // register), and the call node carries no such value.  A Sleigh
-        // temporary is scratch no callee sees.
+        // temporary and an sla-internal register are scratch no callee sees.
+        let internal = &self.internal_registers;
         let reaches_callee = |vn: &&rsleigh::Vn| {
-            vn.addr_space == rsleigh::VnSpace::REGISTER && vn.size == sp_vn.size
+            vn.addr_space == rsleigh::VnSpace::REGISTER
+                && vn.size == sp_vn.size
+                && !internal.iter().any(|r| vn_container::vn_contains(r, vn))
         };
         for vn in output_vns.iter().filter(reaches_callee) {
             if let Ok(held) = self.read_variable(vn) {

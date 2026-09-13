@@ -82,6 +82,26 @@ fn transient_decode_vars_resolve_on_their_preset() {
     }
 }
 
+/// Every name `internal_registers` returns must be a register the preset's own
+/// sla declares: the lifter resolves each by name and drops a miss, which
+/// would leave that scratch register counted as callee-visible.
+#[test]
+fn internal_registers_resolve_on_their_preset() {
+    for preset in ArchPreset::ALL {
+        let arch = preset.arch();
+        let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
+            .unwrap_or_else(|e| panic!("{preset:?}: Sleigh::new failed: {e:?}"));
+        let regs = sleigh
+            .regs()
+            .unwrap_or_else(|e| panic!("{preset:?}: {e:?}"));
+        assert!(!arch.internal_registers().is_empty(), "{preset:?}");
+        for name in arch.internal_registers() {
+            assert!(regs.name_to_vn(name).is_some(), "{preset:?}/{name}");
+        }
+    }
+}
+
 /// The two MIPS `noflow` context vars a `globalset(inst_next, ...)` paints
 /// forward: `PAIR_INSTRUCTION_FLAG` (`mips.sinc:412`), which selects the
 /// `lwl`/`swl`/`ldl`/`sdl` constructor performing the whole unaligned access,
