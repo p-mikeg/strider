@@ -103,6 +103,8 @@ impl Cfg {
     /// wired, which is right for the over-approximated jump-table entry that
     /// produces it. A stepped-over region start is neither: those bytes have
     /// two owners with two different instruction streams.
+    ///
+    /// Sorted and deduplicated.
     pub fn interior_branch_targets(&self) -> &[types::PcodeInsnAddr] {
         &self.interior_branch_targets
     }
