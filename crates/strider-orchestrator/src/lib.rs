@@ -232,7 +232,7 @@ where
         let mut dropped_seats = abandon_undecodable(
             cfg.undecodable_seeded_targets(),
             cfg.isa_mode_conflicts(),
-            &dispatch_anchors(&cfg),
+            &DispatchAnchors::new(&cfg),
             &mut abandoned,
             &mut working.cfg.known_targets,
         );
@@ -299,7 +299,7 @@ where
             let mut dropped_seats = abandon_undecodable(
                 cfg.undecodable_seeded_targets(),
                 cfg.isa_mode_conflicts(),
-                &dispatch_anchors(&cfg),
+                &DispatchAnchors::new(&cfg),
                 &mut abandoned,
                 &mut working.cfg.known_targets,
             );
@@ -1006,32 +1006,53 @@ fn abandon_site(
     }
 }
 
-/// Every `BranchIndirect` anchor a cfg carries, seated or deferred.
-fn dispatch_anchors(cfg: &strider_cfg::Cfg) -> Vec<PcodeInsnAddr> {
-    cfg.regions()
-        .filter_map(|region| match &region.terminator {
+/// Every `BranchIndirect` anchor a cfg carries, seated or deferred, indexed
+/// for [`DispatchAnchors::anchor_of`]: built once per round, looked up once per
+/// `known_targets` entry.
+struct DispatchAnchors {
+    anchors: rustc_hash::FxHashSet<PcodeInsnAddr>,
+    /// Lowest anchor of each machine instruction.
+    first_at: FxHashMap<u64, PcodeInsnAddr>,
+}
+
+impl DispatchAnchors {
+    fn new(cfg: &strider_cfg::Cfg) -> Self {
+        Self::from_addrs(cfg.regions().filter_map(|region| match &region.terminator {
             strider_cfg::RegionTerminator::Switch { addr, .. }
             | strider_cfg::RegionTerminator::UnresolvedIndirectBranch { addr, .. } => Some(*addr),
             _ => None,
-        })
-        .collect()
-}
-
-/// The `BranchIndirect` address a `known_targets` key stands for.
-///
-/// A caller can only spell the machine address ([`seed_for`]), so its key is
-/// the instruction's, not the dispatch's. Falls back to the key itself for a
-/// seat the cfg CONSUMED, which leaves no anchor to name.
-fn anchor_of(anchors: &[PcodeInsnAddr], site: PcodeInsnAddr) -> PcodeInsnAddr {
-    if anchors.contains(&site) {
-        return site;
+        }))
     }
-    anchors
-        .iter()
-        .filter(|a| a.machine_addr.addr == site.machine_addr.addr)
-        .min()
-        .copied()
-        .unwrap_or(site)
+
+    fn from_addrs(addrs: impl IntoIterator<Item = PcodeInsnAddr>) -> Self {
+        let mut this = Self {
+            anchors: rustc_hash::FxHashSet::default(),
+            first_at: FxHashMap::default(),
+        };
+        for addr in addrs {
+            this.anchors.insert(addr);
+            this.first_at
+                .entry(addr.machine_addr.addr)
+                .and_modify(|first| *first = (*first).min(addr))
+                .or_insert(addr);
+        }
+        this
+    }
+
+    /// The `BranchIndirect` address a `known_targets` key stands for.
+    ///
+    /// A caller can only spell the machine address ([`seed_for`]), so its key
+    /// is the instruction's, not the dispatch's. Falls back to the key itself
+    /// for a seat the cfg CONSUMED, which leaves no anchor to name.
+    fn anchor_of(&self, site: PcodeInsnAddr) -> PcodeInsnAddr {
+        if self.anchors.contains(&site) {
+            return site;
+        }
+        self.first_at
+            .get(&site.machine_addr.addr)
+            .copied()
+            .unwrap_or(site)
+    }
 }
 
 /// Abandons every site naming a target the round's cfg could not trust,
@@ -1058,7 +1079,7 @@ fn anchor_of(anchors: &[PcodeInsnAddr], site: PcodeInsnAddr) -> PcodeInsnAddr {
 fn abandon_undecodable(
     undecodable_targets: &[strider_cfg::UndecodableTarget],
     clashing_targets: &[PcodeInsnAddr],
-    dispatch_anchors: &[PcodeInsnAddr],
+    dispatch_anchors: &DispatchAnchors,
     abandoned: &mut rustc_hash::FxHashSet<PcodeInsnAddr>,
     known_targets: &mut FxHashMap<PcodeInsnAddr, ResolvedTargets>,
 ) -> Vec<PcodeInsnAddr> {
@@ -1113,7 +1134,7 @@ fn abandon_undecodable(
                     .filter(|t| !clashing.contains(&t.addr))
                     .copied()
                     .collect();
-                (*site, anchor_of(dispatch_anchors, *site), kept)
+                (*site, dispatch_anchors.anchor_of(*site), kept)
             })
         })
         .collect();
@@ -2507,7 +2528,7 @@ mod tests {
         let hit = abandon_undecodable(
             &[undecodable(site, 0x9000)],
             &[],
-            &[],
+            &DispatchAnchors::from_addrs([]),
             &mut abandoned,
             &mut known,
         );
@@ -2535,7 +2556,7 @@ mod tests {
         let hit = abandon_undecodable(
             &[undecodable(bad, 0x9000)],
             &[],
-            &[],
+            &DispatchAnchors::from_addrs([]),
             &mut abandoned,
             &mut known,
         );
@@ -2561,7 +2582,13 @@ mod tests {
         );
         let mut abandoned = rustc_hash::FxHashSet::default();
 
-        let hit = abandon_undecodable(&[], &[pcode_addr(0x3000)], &[], &mut abandoned, &mut known);
+        let hit = abandon_undecodable(
+            &[],
+            &[pcode_addr(0x3000)],
+            &DispatchAnchors::from_addrs([]),
+            &mut abandoned,
+            &mut known,
+        );
 
         assert_eq!(hit, vec![site]);
         assert_eq!(
@@ -2588,7 +2615,7 @@ mod tests {
         let hit = abandon_undecodable(
             &[],
             &[pcode_addr(0x3000)],
-            &[anchor],
+            &DispatchAnchors::from_addrs([anchor]),
             &mut abandoned,
             &mut known,
         );
@@ -2612,7 +2639,13 @@ mod tests {
         );
         let mut abandoned = rustc_hash::FxHashSet::default();
 
-        let hit = abandon_undecodable(&[], &[pcode_addr(0x3000)], &[], &mut abandoned, &mut known);
+        let hit = abandon_undecodable(
+            &[],
+            &[pcode_addr(0x3000)],
+            &DispatchAnchors::from_addrs([]),
+            &mut abandoned,
+            &mut known,
+        );
 
         assert_eq!(hit, vec![site]);
         assert!(!known.contains_key(&site));
@@ -2629,7 +2662,7 @@ mod tests {
         let hit = abandon_undecodable(
             &[undecodable(pcode_addr(0x7000), 0x9000)],
             &[pcode_addr(0x8000)],
-            &[],
+            &DispatchAnchors::from_addrs([]),
             &mut abandoned,
             &mut known,
         );
