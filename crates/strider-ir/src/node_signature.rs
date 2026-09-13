@@ -248,6 +248,52 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
     }
 }
 
+/// One representative per [`NodeKind`] variant, in declaration order.
+#[cfg(test)]
+pub(crate) fn every_node_kind() -> Vec<NodeKind> {
+    use crate::node::{
+        ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
+    };
+    use cranelift_entity::EntityRef;
+    let space = rsleigh::VnSpace::RAM;
+    vec![
+        NodeKind::Entry,
+        NodeKind::InitialMemory,
+        NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
+        NodeKind::Region,
+        NodeKind::MemPhi,
+        NodeKind::Phi,
+        NodeKind::If,
+        NodeKind::Switch(crate::node::SwitchTableId::from_u32(0)),
+        NodeKind::Call { cc: None },
+        NodeKind::Return,
+        NodeKind::IndirectBranch,
+        NodeKind::Unreachable,
+        NodeKind::Load(space),
+        NodeKind::Store(space),
+        NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
+        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        NodeKind::IntCmpOp(IntCmpOp::Equal),
+        NodeKind::Truncate,
+        NodeKind::Popcount,
+        NodeKind::Lzcount,
+        NodeKind::Extend(ExtendOp::ZeroExtend),
+        NodeKind::FloatConst(0),
+        NodeKind::FloatBinaryOp(FloatBinaryOp::Add),
+        NodeKind::FloatUnaryOp(FloatUnaryOp::Neg),
+        NodeKind::FloatCmpOp(FloatCmpOp::Equal),
+        NodeKind::IntToFloat,
+        NodeKind::FloatToInt,
+        NodeKind::FloatToFloat,
+        NodeKind::IntBitsToFloat,
+        NodeKind::FloatBitsToInt,
+        NodeKind::CallOther { user_op_id: 0 },
+        NodeKind::CPoolRef,
+        NodeKind::New,
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -456,50 +502,6 @@ mod tests {
         let sig = expected_signature(&NodeKind::IntBinaryOp(IntBinaryOp::Add));
         assert_eq!(sig.inputs.at(0).unwrap().role, SlotRole::Lhs);
         assert_eq!(sig.inputs.at(1).unwrap().role, SlotRole::Rhs);
-    }
-
-    /// One representative per [`NodeKind`] variant, in declaration order.
-    fn every_node_kind() -> Vec<NodeKind> {
-        use crate::node::{
-            ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
-        };
-        let space = rsleigh::VnSpace::RAM;
-        vec![
-            NodeKind::Entry,
-            NodeKind::InitialMemory,
-            NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
-            NodeKind::Region,
-            NodeKind::MemPhi,
-            NodeKind::Phi,
-            NodeKind::If,
-            NodeKind::Switch(crate::node::SwitchTableId::from_u32(0)),
-            NodeKind::Call { cc: None },
-            NodeKind::Return,
-            NodeKind::IndirectBranch,
-            NodeKind::Unreachable,
-            NodeKind::Load(space),
-            NodeKind::Store(space),
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
-            NodeKind::IntUnaryOp(IntUnaryOp::Neg),
-            NodeKind::IntBinaryOp(IntBinaryOp::Add),
-            NodeKind::IntCmpOp(IntCmpOp::Equal),
-            NodeKind::Truncate,
-            NodeKind::Popcount,
-            NodeKind::Lzcount,
-            NodeKind::Extend(ExtendOp::ZeroExtend),
-            NodeKind::FloatConst(0),
-            NodeKind::FloatBinaryOp(FloatBinaryOp::Add),
-            NodeKind::FloatUnaryOp(FloatUnaryOp::Neg),
-            NodeKind::FloatCmpOp(FloatCmpOp::Equal),
-            NodeKind::IntToFloat,
-            NodeKind::FloatToInt,
-            NodeKind::FloatToFloat,
-            NodeKind::IntBitsToFloat,
-            NodeKind::FloatBitsToInt,
-            NodeKind::CallOther { user_op_id: 0 },
-            NodeKind::CPoolRef,
-            NodeKind::New,
-        ]
     }
 
     /// Position of `kind` in [`every_node_kind`]'s declaration order. The match
