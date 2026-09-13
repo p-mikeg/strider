@@ -171,10 +171,11 @@ impl PostOptimizer for IndirectBranchClassify {
                 // arms) reads as a wider table now that the loop is closed. The
                 // orchestrator REPLACES the seated set with this one, adopting
                 // per address the ISA mode it already proved, so widening never
-                // re-decides a decode. A `Switch` carries no ISA-mode input, so
-                // `mode_value` is `None` there and every re-derived target
-                // reports no mode. Returning `None` keeps the seated arms and
-                // REPORTS the site unresolved: they may be a proper subset.
+                // re-decides a decode. The `Switch` carries the ISA mode its
+                // instruction commits, as the placeholder did, so a widened arm
+                // is evaluated in its own mode. Returning `None` keeps the
+                // seated arms and REPORTS the site unresolved: they may be a
+                // proper subset.
                 //
                 // A site can also STOP deriving as the CFG grows: a back edge
                 // puts the arms' `Call` on the path to the dispatch, and a
@@ -197,7 +198,7 @@ impl PostOptimizer for IndirectBranchClassify {
                         ctx.rom,
                         &mut ranges,
                         &ctx.options.assumptions,
-                        None,
+                        function.switch_isa_mode(node),
                     )
                 } else {
                     classify_target(

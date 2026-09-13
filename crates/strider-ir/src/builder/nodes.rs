@@ -119,16 +119,31 @@ impl FunctionBuilder {
     /// when `address == arms[i].1`. Requires `arms` non-empty, and terminates
     /// the current region.
     pub fn build_switch(&mut self, address: ValueId, arms: &[(RegionId, u64)]) -> Result<NodeId> {
+        self.build_switch_with_mode(address, None, arms)
+    }
+
+    /// [`Self::build_switch`] carrying the ISA-mode bit `isa_mode` the dispatch
+    /// instruction commits (slot 2), so re-deriving the table can decode each
+    /// arm in its own mode. `None` for a non-switching dispatch.
+    pub fn build_switch_with_mode(
+        &mut self,
+        address: ValueId,
+        isa_mode: Option<ValueId>,
+        arms: &[(RegionId, u64)],
+    ) -> Result<NodeId> {
         debug_assert!(!arms.is_empty(), "build_switch requires at least one arm");
         let res = self.terminate_cur_region()?;
         self.require_value_kind(address)?;
+        if let Some(mode) = isa_mode {
+            self.require_value_kind(mode)?;
+        }
         self.require_control_kind(res.control)?;
 
         let targets: Vec<u64> = arms.iter().map(|&(_, a)| a).collect();
         let table = self.function_mut().add_switch_table(targets);
         let sw = self.create_node(
             NodeKind::Switch(table),
-            [res.control, address],
+            [res.control, address].into_iter().chain(isa_mode),
             std::iter::repeat_n(ValueKind::Control, arms.len()),
         );
         let out_ctrls: Vec<ValueId> = self.function().node_outputs(sw).to_vec();

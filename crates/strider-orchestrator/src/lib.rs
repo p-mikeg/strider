@@ -489,10 +489,11 @@ pub struct AnalyzeResult {
     /// the function becomes a `TailCall`, leaving no placeholder and no
     /// anchor, so a dispatch that had more arms leaves no other trace.
     ///
-    /// A third, on an arch with an ISA-mode var: an arm a mode-less
-    /// re-derivation discovered at a site whose other arms all proved the
-    /// flowing mode. It is seated and it decodes, but nothing evaluated that
-    /// arm's own mode.
+    /// A third: an arm a mode-less re-derivation discovered at a site whose
+    /// other arms all carry the flowing mode. A dispatch that commits a mode
+    /// has it evaluated per arm, so those modes came from a caller seed at a
+    /// dispatch committing none. It is seated and it decodes, but nothing
+    /// evaluated that arm's own mode.
     pub unverified_seeded_sites: Vec<PcodeInsnAddr>,
 }
 
@@ -629,10 +630,10 @@ fn apply_resolutions(
         // address, so at a site whose `BRANCHIND` is not the instruction's
         // first p-code op the answer to adopt modes from is keyed there.
         let known = seed_for(known_targets, addr);
-        // A seated `Switch` carries no ISA-mode input, so its re-derivation
-        // reports no mode for ANY target, including the ones a mode-bearing
-        // classification already proved. Re-deriving must widen the arm set,
-        // not re-decode the old arms in the mode flowing into the branch.
+        // A re-derivation reports no mode where the dispatch commits none,
+        // including at an address a caller seed gave a mode. Re-deriving must
+        // widen the arm set, not re-decode the old arms in the mode flowing
+        // into the branch.
         let (targets, assumed_mode) = adopt_known_modes(known, targets, flowing_at(addr));
         // The caller's own seed is unioned in by ADDRESS every round, after
         // both mode filters and never subject to them: a seed carries a mode
@@ -847,10 +848,9 @@ fn concrete_targets(r: &ResolvedTargets) -> &[strider_cfg::ResolvedTarget] {
 }
 
 /// Union two classifications of one pcode address that BOTH derive from the
-/// IR, dropping a mode-less address only the non-interworking side knows: a
-/// `Switch` re-derivation carries no ISA-mode input, so every address it
-/// discovers reports `None`, which the cfg decodes in `flowing_isa_bit`. That
-/// is a guess only against a side proving a DIFFERENT mode.
+/// IR, dropping a mode-less address only the non-interworking side knows: an
+/// address reported with no mode decodes in `flowing_isa_bit`, which is a guess
+/// only against a side proving a DIFFERENT mode.
 fn merge_resolved(
     a: &ResolvedTargets,
     b: &ResolvedTargets,
@@ -1649,8 +1649,8 @@ mod tests {
     }
 
     /// Two anchors at ONE pcode address in one round, one of them a `Switch`
-    /// re-derivation, which carries no ISA-mode input and so reports `None` for
-    /// every address it discovers. The cfg reads that as "inherit the branch's
+    /// re-derivation with no mode to evaluate, which reports `None` for every
+    /// address it discovers. The cfg reads that as "inherit the branch's
     /// mode", a guess on an interworking dispatch, so the mode-less side does
     /// not contribute addresses of its own. Across ROUNDS the seated set is not
     /// merged but re-derived, and widening there is
@@ -1926,8 +1926,8 @@ mod tests {
     }
 
     /// Round 1 seats an interworking table with a proven per-target mode.
-    /// Round 2 re-derives the now-seated `Switch`, which carries no ISA-mode
-    /// input, so every target comes back mode-less. The seated modes must
+    /// Round 2 re-derives the now-seated `Switch` with no mode to evaluate, so
+    /// every target comes back mode-less. The seated modes must
     /// survive the fold, or the arms decode in the superseded ISA, and an
     /// address only the mode-less side knows must not be seated: the cfg would
     /// decode it in the mode flowing into the branch, the same guess
@@ -2329,9 +2329,9 @@ mod tests {
     }
 
     /// Round 1 seats one interworking arm before the dispatch loop closes.
-    /// Round 2 re-derives the now-seated `Switch`, which carries no ISA-mode
-    /// input and so reports every arm mode-less, and the three NEW arms cannot
-    /// be seated in a mode. The fold then equals the seated set, so the loop
+    /// Round 2 re-derives the now-seated `Switch` with no mode to evaluate, so
+    /// it reports every arm mode-less, and the three NEW arms cannot be seated
+    /// in a mode. The fold then equals the seated set, so the loop
     /// converges here: the site has to come back through `incomplete` or the
     /// caller reads a one-arm table alongside an empty `unresolved`.
     #[test]

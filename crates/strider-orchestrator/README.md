@@ -44,7 +44,8 @@ resolve: one round seats one level of discovery.
 reports what changed. Two anchors sharing one pcode address merge within the
 round; across rounds the staged set replaces the previous entry. The caller's
 own seed is unioned back in by address every round, and the caller's map is
-never mutated. On an arch with an ISA-mode variable a mode-less re-derivation
+never mutated. A seated `Switch` keeps the ISA mode its instruction commits, so
+a widened arm is evaluated in its own mode; a re-derivation reporting no mode
 adopts the mode already proved for that address, rather than re-decoding proved
 arms in whatever mode flows into the branch.
 
@@ -80,8 +81,8 @@ none of them answers it alone.
   `Switch` holding exactly the caller's seed and nothing derived; a site the CFG
   CONSUMED, where a `LinkRegister` answer became a `Return` and a lone
   out-of-function target became a `TailCall`, leaving no placeholder and no
-  anchor to report through; and an arm seated on the mode its siblings proved,
-  which nobody evaluated for that arm.
+  anchor to report through; and an arm seated on the mode a caller seed gave
+  its siblings, which nobody evaluated for that arm.
 - `isa_mode_conflicts`, `interior_branch_targets` and
   `unmapped_branch_targets`: losses no indirect site owns, since a direct edge
   produces them too. An address two edges reached in different modes, a target
