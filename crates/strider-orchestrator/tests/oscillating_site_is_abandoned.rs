@@ -1,7 +1,7 @@
 //! A site whose answer never settles is abandoned and reported, not an error.
 //!
-//! One narrowing is a refinement; a second means the answer depends on what
-//! the previous round seated, so the resolve loop stops resolving the site.
+//! Every narrowing is reported; a second means the answer depends on what the
+//! previous round seated, so the resolve loop stops resolving the site.
 //! That counter is the loop's only oscillation guard: without it an unstable
 //! site burns the whole iteration budget and comes back as `still_growing`.
 //!
