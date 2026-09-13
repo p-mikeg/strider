@@ -112,7 +112,7 @@ where
     /// `TailCall` leaves no placeholder and is named in
     /// [`AnalyzeResult::unverified_seeded_sites`], and in both if it grew before
     /// narrowing to `LinkRegister`. Only [`AnalyzeResult::is_complete`], which
-    /// reads all five channels, answers "may this be incomplete?".
+    /// reads all six channels, answers "may this be incomplete?".
     ///
     /// `lift_opts.cfg.known_targets` is re-unioned into the working set every
     /// round and never mutated; a seed at an abandoned site is dropped from the
@@ -197,6 +197,8 @@ where
         // Sticky as `interior` is: a stub seated in one round is a target the
         // classifier then read, whether or not the final cfg still seats it.
         let mut unmapped: Vec<PcodeInsnAddr> = cfg.unmapped_branch_targets().to_vec();
+        // Sticky as `unmapped` is.
+        let mut undecodable: Vec<PcodeInsnAddr> = cfg.undecodable_branch_targets().to_vec();
         // Sites this loop has given up on: their answer never settled, or it
         // named an address that would not decode. Abandoning one leaves its
         // `IndirectBranch` a live placeholder, which is reported as unresolved
@@ -282,6 +284,7 @@ where
             interior.extend_from_slice(cfg.interior_branch_targets());
             isa_conflicts.extend_from_slice(cfg.isa_mode_conflicts());
             unmapped.extend_from_slice(cfg.unmapped_branch_targets());
+            undecodable.extend_from_slice(cfg.undecodable_branch_targets());
             live_indirect = resolutions.keys().copied().collect();
             unclassified = unclassified_nodes(&resolutions);
         }
@@ -363,6 +366,9 @@ where
         let mut unmapped_branch_targets = unmapped;
         unmapped_branch_targets.sort_unstable();
         unmapped_branch_targets.dedup();
+        let mut undecodable_branch_targets = undecodable;
+        undecodable_branch_targets.sort_unstable();
+        undecodable_branch_targets.dedup();
         Ok(AnalyzeResult {
             cfg,
             function,
@@ -370,6 +376,7 @@ where
             isa_mode_conflicts,
             interior_branch_targets,
             unmapped_branch_targets,
+            undecodable_branch_targets,
             unverified_seeded_sites: unverified_seeded,
         })
     }
@@ -477,6 +484,16 @@ pub struct AnalyzeResult {
     /// these, so they are reported here rather than in
     /// `unresolved_indirect_branches`.
     pub unmapped_branch_targets: Vec<PcodeInsnAddr>,
+    /// Addresses ANY round's cfg reached that hold no instruction: bytes Sleigh
+    /// rejects, or bytes `CfgOptions::data_ranges` marks as data.
+    ///
+    /// A direct branch there leaves through an empty `TailCall` stub, as an
+    /// unmapped target does. A fall-through past a call ends that call as
+    /// no-return, which is what a callee nobody marked no-return leaves behind
+    /// (a literal pool, a traceback table, a deliberately invalid word), and
+    /// nothing proves the callee really does not return. Like
+    /// `unmapped_branch_targets` a direct edge produces these.
+    pub undecodable_branch_targets: Vec<PcodeInsnAddr>,
     /// Sites whose answer nothing verified.
     ///
     /// Three shapes land here. A seated `Switch` holding exactly the caller's
@@ -497,11 +514,11 @@ pub struct AnalyzeResult {
 }
 
 impl AnalyzeResult {
-    /// Whether all five report channels are empty, i.e. the CFG carries no
+    /// Whether all six report channels are empty, i.e. the CFG carries no
     /// caveat at all.
     ///
     /// This is the question "may this result be incomplete?", which needs all
-    /// five and which none of them answers alone. `false` is NOT always a
+    /// six and which none of them answers alone. `false` is NOT always a
     /// loss: `unverified_seeded_sites` holds answers that are complete but
     /// that nothing verified, so a site consumed as a `Return` (an ARM
     /// `pop {pc}` dispatch, say) clears it. Read whichever channel is
@@ -513,6 +530,7 @@ impl AnalyzeResult {
             && self.isa_mode_conflicts.is_empty()
             && self.interior_branch_targets.is_empty()
             && self.unmapped_branch_targets.is_empty()
+            && self.undecodable_branch_targets.is_empty()
     }
 }
 

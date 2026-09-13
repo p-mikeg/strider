@@ -258,6 +258,9 @@ pub struct PyLoadedElf {
     /// Every symbol of every source, built on the first symbol query and
     /// dropped whenever a source is added.
     symbol_table: Mutex<Option<SymbolTable>>,
+    /// The `$d` mapping-symbol spans of every ELF, built on first use and
+    /// dropped whenever an ELF is added.
+    data_ranges: Mutex<Option<strider_cfg::DataRanges>>,
 }
 
 fn invalidate_and_extend(reader: &PyBufferReader, regions: Vec<MemRegion>) {
@@ -466,6 +469,26 @@ impl PyLoadedElf {
         }
         let table = self.symbol_table.lock_shared();
         Ok(f(table.as_ref().expect("just built")))
+    }
+
+    /// Bytes inside executable sections that ARM / AArch64 mapping symbols
+    /// mark as data, over every ELF and symbol file.
+    pub(crate) fn data_ranges(&self) -> PyResult<strider_cfg::DataRanges> {
+        let mut cached = self.data_ranges.lock_shared();
+        if let Some(ranges) = cached.as_ref() {
+            return Ok(ranges.clone());
+        }
+        self.check_unchanged()?;
+        let mut all = Vec::new();
+        for obj in self.elfs.iter().chain(&self.symbol_elfs) {
+            let Ok(file) = obj.checked_file() else {
+                continue;
+            };
+            all.extend(strider_reader::elf::mapping_symbol_data_ranges(&file));
+        }
+        let ranges = strider_cfg::DataRanges::new(all);
+        *cached = Some(ranges.clone());
+        Ok(ranges)
     }
 
     /// One name can have several symbols: FreeBSD's `model_name` is both an
@@ -799,6 +822,7 @@ impl PyLoadedElf {
         self.writable.extend(writable);
         self.elfs.push(obj);
         self.symbol_table.lock_shared().take();
+        self.data_ranges.lock_shared().take();
         Ok(())
     }
 
@@ -817,6 +841,7 @@ impl PyLoadedElf {
         self.check_describes_a_loaded_image(&obj, path)?;
         self.symbol_elfs.push(obj);
         self.symbol_table.lock_shared().take();
+        self.data_ranges.lock_shared().take();
         Ok(())
     }
 
@@ -876,6 +901,7 @@ fn load_elf_impl(
         rom,
         source,
         symbol_table: Mutex::new(None),
+        data_ranges: Mutex::new(None),
     })
 }
 

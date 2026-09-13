@@ -396,7 +396,8 @@ class ElfLifter(Lifter):
 
         A `str` entry is resolved through the ELF symbol table, and its
         recorded size bounds the lift unless `opts.cfg.function_max_size` is
-        set. `cc` defaults to this handle's convention.
+        set. Unless `opts.cfg.data_ranges` names some, the ELF's `$d` mapping
+        symbols supply them. `cc` defaults to this handle's convention.
 
         Raises `TypeError` when `entry` is neither `str` nor `int`, and
         `StriderError` when the binary changed on disk since it was loaded.
@@ -428,6 +429,9 @@ class ElfLifter(Lifter):
                 f"`entry` must be a symbol name (str) or address (int), "
                 f"got {type(target).__name__}"
             )
+        # A literal pool inside the function decodes as plausible instructions;
+        # the ELF's mapping symbols are the only record that it is data.
+        opts = opts.with_cfg(opts.cfg._with_elf_data_ranges(self._elf))
 
         # The raw address passes through: `Lifter::build_cfg` reads its low bit
         # per function and masks `decode_addr` itself.

@@ -34,7 +34,7 @@ pub(crate) fn flowing_isa_bit_at<R: rsleigh::MemReader>(
 
 pub use builder::{Builder, FlowContext, FlowVars};
 pub use indirect_resolver::{ResolvedTarget, ResolvedTargets};
-pub use options::CfgOptions;
+pub use options::{CfgOptions, DataRanges};
 pub use pcode_text::{insn_plain_text, insn_text};
 
 pub use query::IfRegionSuccessors;
@@ -56,6 +56,7 @@ pub struct Cfg {
     pub(crate) isa_mode_conflicts: Vec<types::PcodeInsnAddr>,
     pub(crate) interior_branch_targets: Vec<types::PcodeInsnAddr>,
     pub(crate) unmapped_branch_targets: Vec<types::PcodeInsnAddr>,
+    pub(crate) undecodable_branch_targets: Vec<types::PcodeInsnAddr>,
     pub(crate) link_register_seated: Vec<types::PcodeInsnAddr>,
     pub(crate) tail_call_seated: Vec<types::PcodeInsnAddr>,
     pub(crate) function_isa_bit: Option<bool>,
@@ -138,6 +139,20 @@ impl Cfg {
     /// Failing the whole function stays the answer when the ENTRY is unmapped.
     pub fn unmapped_branch_targets(&self) -> &[types::PcodeInsnAddr] {
         &self.unmapped_branch_targets
+    }
+
+    /// Addresses a direct branch or a fall-through past a call reached that
+    /// hold no instruction: bytes Sleigh rejects, or bytes
+    /// [`CfgOptions::data_ranges`] marks as data.
+    ///
+    /// A direct branch leaves through an empty `TailCall` stub, as an unmapped
+    /// target does. A fall-through past a call ends that call as `NoReturn`,
+    /// which is what a callee nobody marked no-return leaves behind: a literal
+    /// pool, a traceback table, a deliberately invalid word. Any other
+    /// fall-through into data leaves through a stub too; one into bytes Sleigh
+    /// rejects is still an `Err` on the whole build.
+    pub fn undecodable_branch_targets(&self) -> &[types::PcodeInsnAddr] {
+        &self.undecodable_branch_targets
     }
 
     /// Sites seated as a `Return` because the answer was `LinkRegister`.
