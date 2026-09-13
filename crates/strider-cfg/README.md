@@ -101,9 +101,11 @@ all: they overlap in cause and not in content.
 - `undecodable_seeded_targets`: a seeded target that would not decode, with the
   dispatch site it was an arm of. A seeded target is a misclassification, so its
   edge is dropped and reported.
-- `unmapped_branch_targets`: a DIRECT branch to an address the reader has no
-  bytes for. It leaves through an empty `TailCall` stub, so the regions that did
-  decode survive. An unmapped ENTRY is still an `Err` on the whole build.
+- `unmapped_branch_targets`: a DIRECT branch or a sequential fall-through to an
+  address the reader has no bytes for. It leaves through an empty `TailCall`
+  stub, so the regions that did decode survive. A MIPS branch whose delay slot
+  is unmapped reports the branch's own address. An unmapped ENTRY is still an
+  `Err` on the whole build.
 - `isa_mode_conflicts`: two edges reached an address carrying different ISA
   modes, and the losing path decodes in the winner's. A direct edge always
   wins; between two direct ones the winner is work-queue order, so neither
