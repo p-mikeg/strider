@@ -133,6 +133,44 @@ impl LoadedImage {
             self.writable.0.push((start, start.saturating_add(size)));
         }
     }
+
+    /// Cuts every writable address out of the regions, so that no read of one
+    /// can serve bytes the program can overwrite.
+    fn without_writable(mut self) -> Self {
+        self.writable = AddressRanges::merged(std::mem::take(&mut self.writable.0));
+        self.regions = cut(self.regions, &self.writable);
+        self
+    }
+}
+
+/// `regions` with every address of `ranges` cut out: a region a range splits
+/// becomes the pieces either side of it, sharing its bytes.
+///
+/// How a read-only view of one image bars another image's writable mapping,
+/// `ranges` being [`OwnedElf::writable_ranges`](super::OwnedElf::writable_ranges).
+pub fn without_ranges(regions: Vec<MemRegion>, ranges: &[(u64, u64)]) -> Vec<MemRegion> {
+    cut(regions, &AddressRanges::merged(ranges.to_vec()))
+}
+
+fn cut(regions: Vec<MemRegion>, ranges: &AddressRanges) -> Vec<MemRegion> {
+    let mut kept = Vec::with_capacity(regions.len());
+    for region in regions {
+        let (mut lo, end) = (region.start_addr(), region.end_addr());
+        for &(w_lo, w_hi) in ranges.overlapping(lo, end) {
+            if w_lo > lo {
+                kept.push(region.slice(lo, w_lo));
+            }
+            lo = lo.max(w_hi);
+        }
+        if lo < end {
+            kept.push(if lo == region.start_addr() {
+                region
+            } else {
+                region.slice(lo, end)
+            });
+        }
+    }
+    kept
 }
 
 /// `[start, end)` address ranges, ascending and disjoint once
@@ -155,10 +193,14 @@ impl AddressRanges {
     }
 
     /// The merged ranges overlapping `[lo, hi)`.
-    pub(crate) fn overlapping(&self, lo: u64, hi: u64) -> &[(u64, u64)] {
+    fn overlapping(&self, lo: u64, hi: u64) -> &[(u64, u64)] {
         let first = self.0.partition_point(|&(_, end)| end <= lo);
         let last = first + self.0[first..].partition_point(|&(start, _)| start < hi);
         &self.0[first..last]
+    }
+
+    pub(crate) fn as_slice(&self) -> &[(u64, u64)] {
+        &self.0
     }
 
     /// Whether `[addr, addr + len)` touches any of the merged ranges.
@@ -620,9 +662,13 @@ pub(crate) fn collect_regions(
         // either, so the section walk is the safer fallback for both.
         _ => collect_loadable_sections_dedup(obj, bytes, filter, layout)?,
     };
-    Ok(LoadedImage {
-        writable: AddressRanges::merged(image.writable.0),
-        ..image
+    Ok(match filter {
+        // A read-only mapping a writable one overlaps is writable there.
+        LoadFilter::ImmutableOnly => image.without_writable(),
+        _ => LoadedImage {
+            writable: AddressRanges::merged(image.writable.0),
+            ..image
+        },
     })
 }
 
