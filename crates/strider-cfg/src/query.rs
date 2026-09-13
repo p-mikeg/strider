@@ -263,18 +263,7 @@ mod tests {
         graph.add_edge(src, fallthrough, ());
         graph.add_edge(src, taken, ());
 
-        let cfg = Cfg {
-            region_graph: graph,
-            entry: src,
-            undecodable_seeded: Vec::new(),
-            isa_mode_conflicts: Vec::new(),
-            interior_branch_targets: Vec::new(),
-            unmapped_branch_targets: Vec::new(),
-            link_register_seated: Vec::new(),
-            tail_call_seated: Vec::new(),
-            function_isa_bit: None,
-            flowing_isa_bits: std::collections::BTreeMap::new(),
-        };
+        let cfg = make_cfg(graph, src);
 
         let s = cfg.region_if(src).unwrap();
         assert_eq!(
@@ -297,18 +286,7 @@ mod tests {
         graph.add_edge(src, fallthrough, ());
         graph.add_edge(src, taken, ());
 
-        let cfg = Cfg {
-            region_graph: graph,
-            entry: src,
-            undecodable_seeded: Vec::new(),
-            isa_mode_conflicts: Vec::new(),
-            interior_branch_targets: Vec::new(),
-            unmapped_branch_targets: Vec::new(),
-            link_register_seated: Vec::new(),
-            tail_call_seated: Vec::new(),
-            function_isa_bit: None,
-            flowing_isa_bits: std::collections::BTreeMap::new(),
-        };
+        let cfg = make_cfg(graph, src);
 
         let s = cfg.region_if(src).unwrap();
         assert_eq!(
@@ -329,18 +307,7 @@ mod tests {
         graph.add_edge(src, both, ());
         graph.add_edge(src, both, ());
 
-        let cfg = Cfg {
-            region_graph: graph,
-            entry: src,
-            undecodable_seeded: Vec::new(),
-            isa_mode_conflicts: Vec::new(),
-            interior_branch_targets: Vec::new(),
-            unmapped_branch_targets: Vec::new(),
-            link_register_seated: Vec::new(),
-            tail_call_seated: Vec::new(),
-            function_isa_bit: None,
-            flowing_isa_bits: std::collections::BTreeMap::new(),
-        };
+        let cfg = make_cfg(graph, src);
 
         let s = cfg.region_if(src).unwrap();
         assert_eq!(s.if_true_region, Some(both));
@@ -364,18 +331,7 @@ mod tests {
         graph.add_edge(src, arm_b, ());
         graph.add_edge(src, arm_c, ());
 
-        let cfg = Cfg {
-            region_graph: graph,
-            entry: src,
-            undecodable_seeded: Vec::new(),
-            isa_mode_conflicts: Vec::new(),
-            interior_branch_targets: Vec::new(),
-            unmapped_branch_targets: Vec::new(),
-            link_register_seated: Vec::new(),
-            tail_call_seated: Vec::new(),
-            function_isa_bit: None,
-            flowing_isa_bits: std::collections::BTreeMap::new(),
-        };
+        let cfg = make_cfg(graph, src);
 
         let arms = cfg.switch_arm_regions(src);
         assert_eq!(arms.get(&addr(0x3000, 0)), Some(&arm_b));
@@ -401,18 +357,7 @@ mod tests {
         let mid_pcode = graph.add_node(make_region(&[(0x2000, 3)]));
         graph.add_edge(src, mid_pcode, ());
 
-        let cfg = Cfg {
-            region_graph: graph,
-            entry: src,
-            undecodable_seeded: Vec::new(),
-            isa_mode_conflicts: Vec::new(),
-            interior_branch_targets: Vec::new(),
-            unmapped_branch_targets: Vec::new(),
-            link_register_seated: Vec::new(),
-            tail_call_seated: Vec::new(),
-            function_isa_bit: None,
-            flowing_isa_bits: std::collections::BTreeMap::new(),
-        };
+        let cfg = make_cfg(graph, src);
 
         assert_eq!(
             cfg.switch_arm_regions(src).get(&addr(0x2000, 0)),
