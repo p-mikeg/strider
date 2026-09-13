@@ -62,8 +62,7 @@ fn with_test_lifter(f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_
 }
 
 /// Explicit tracked-varnode list, for tests using registers wider than the
-/// default 4-byte regs.  `all_vns` must be pre-sorted by
-/// `(space, offset, size)`.
+/// default 4-byte regs.
 fn with_test_lifter_tracking(
     all_vns: Vec<Vn>,
     f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),

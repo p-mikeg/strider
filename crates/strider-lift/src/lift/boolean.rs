@@ -2,8 +2,15 @@
 //! ops: and/or/xor at `I1`, and `BoolNeg` to `Xor(x, IntConst(1)):I1`.
 //!
 //! The operands are 1-BYTE varnodes, which read back as `I8`, so the narrowing
-//! to `I1` below is load-bearing.  It is exact: a p-code boolean is 0 or 1, and
-//! `OpBehaviorBoolAnd` and friends are the bare bitwise ops over it.
+//! to `I1` below is load-bearing.  It is exact only under the ASSUMPTION that a
+//! p-code boolean is 0 or 1: `OpBehaviorBoolOr` and friends are the bitwise ops
+//! over the WHOLE varnode (`opbehavior.cc`), so `BOOL_OR(2, 0)` is TRUE there
+//! and FALSE here.  The assumption holds across the vendored specs, whose every
+//! `&&` / `||` / `!` operand is a comparison, `carry()`/`scarry()`, or a
+//! one-bit bitrange the SLEIGH compiler lowers to shift-and-mask
+//! (`ARM.sinc:20-22`, `:278`; `AARCH64instructions.sinc:2031-2032`).  A spec
+//! carrying a wider value in a boolean needs these lowered as `!= 0` at the
+//! operand width instead.
 
 use strider_ir::{IRBuilderExt, IntBinaryOp, ValueType};
 

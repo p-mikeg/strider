@@ -801,10 +801,7 @@ mod tests {
         use strider_ir_test_utils::IrWalkerEx;
 
         let arch = strider_target::SleighArch::aarch64();
-        // `probe_regs` consumes the arch, hence the second copy.
-        let regs = strider_target::SleighArch::aarch64()
-            .probe_regs()
-            .expect("probe regs");
+        let regs = arch.probe_regs().expect("probe regs");
         let cc = strider_target::CallingConvention::aarch64_aapcs64()
             .build(&regs)
             .expect("build cc");
@@ -836,6 +833,46 @@ mod tests {
         assert!(
             !function.has_kind(|k| matches!(k, NodeKind::IndirectBranch)),
             "`ret` must NOT emit an IndirectBranch placeholder"
+        );
+    }
+
+    /// AArch64 `svc` raises the `CallSupervisor` user-op, which has to carry a
+    /// `CallOtherAbi`: an unclassified user-op fails the whole function's lift.
+    #[test]
+    fn aarch64_svc_lifts_through_the_call_supervisor_abi() {
+        use strider_ir::node::NodeKind;
+        use strider_ir_test_utils::IrWalkerEx;
+
+        let arch = strider_target::SleighArch::aarch64();
+        let regs = arch.probe_regs().expect("probe regs");
+        let cc = strider_target::CallingConvention::aarch64_aapcs64()
+            .build(&regs)
+            .expect("build cc");
+        // `svc #0` = 0xD4000001, `ret` = 0xD65F03C0, little-endian.
+        let reader = rsleigh::mem_readers::BufMemReader::new(
+            vec![0x01, 0x00, 0x00, 0xd4, 0xc0, 0x03, 0x5f, 0xd6],
+            0x1000,
+        );
+        let mut sleigh =
+            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+        let cfg = strider_cfg::Builder::for_arch(
+            &arch,
+            &mut sleigh,
+            0x1000,
+            &strider_cfg::CfgOptions::default(),
+        )
+        .build()
+        .expect("cfg");
+        let lifter = super::Lifter::new(arch, sleigh).expect("lifter");
+        let outcome = lifter
+            .build_ir(&cfg, cc)
+            .expect("`svc` must lift, not fail the function");
+
+        assert!(
+            outcome
+                .function
+                .has_kind(|k| matches!(k, NodeKind::CallOther { .. })),
+            "`svc` must lift to a CallOther node"
         );
     }
 
