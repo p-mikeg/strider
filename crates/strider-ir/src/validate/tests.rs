@@ -1284,3 +1284,205 @@ fn phi_carried_data_cycle_not_flagged() {
 
     assert_no_validation_err(&s.f, |e| matches!(e, ValidationError::DataCycle { .. }));
 }
+
+/// A diamond `Entry -> If -> {then, else} -> merge` with a one-input phi in
+/// each arm. Returns `(function, [then_val, else_val], merge_token, merge_ctrl)`.
+fn diamond_with_arm_phis() -> (Function, [ValueId; 2], ValueId, ValueId) {
+    let mut s = spine();
+    let (cond_node, cond) = int_const(&mut s.f, 1, ValueType::I1);
+    stamp(&mut s.f, cond_node);
+    let (seed_node, seed) = int_const(&mut s.f, 7, ValueType::I64);
+    stamp(&mut s.f, seed_node);
+    let branch = s.f.graph_mut().create_node(
+        NodeKind::If,
+        [s.entry_ctrl, cond],
+        [ValueKind::Control, ValueKind::Control],
+    );
+    stamp(&mut s.f, branch);
+    let [then_edge, else_edge] = s.f.node_outputs_exact::<2>(branch).unwrap();
+    let mut arm = |edge: ValueId| {
+        let region = s.f.graph_mut().create_node(
+            NodeKind::Region,
+            [edge],
+            [ValueKind::Control, ValueKind::PhiToken],
+        );
+        let [ctrl, token] = s.f.node_outputs_exact::<2>(region).unwrap();
+        let phi = s.f.graph_mut().create_node(
+            NodeKind::Phi,
+            [token, seed],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let [value] = s.f.node_outputs_exact::<1>(phi).unwrap();
+        (ctrl, value)
+    };
+    let (then_ctrl, then_val) = arm(then_edge);
+    let (else_ctrl, else_val) = arm(else_edge);
+    let merge = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [then_ctrl, else_ctrl],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let [merge_ctrl, merge_token] = s.f.node_outputs_exact::<2>(merge).unwrap();
+    (s.f, [then_val, else_val], merge_token, merge_ctrl)
+}
+
+fn close_with_return(f: &mut Function, ctrl: ValueId, values: &[ValueId]) {
+    let mem = crate::function::test_initial_memory(f);
+    let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+    let inputs: Vec<ValueId> = [ctrl, mem_value]
+        .into_iter()
+        .chain(values.iter().copied())
+        .collect();
+    let ret = f.graph_mut().create_node(NodeKind::Return, inputs, []);
+    stamp(f, ret);
+}
+
+#[test]
+fn phi_input_from_the_other_arm_is_not_available() {
+    let (mut f, [then_val, _], token, ctrl) = diamond_with_arm_phis();
+    let merge_phi = f.graph_mut().create_node(
+        NodeKind::Phi,
+        [token, then_val, then_val],
+        [ValueKind::Typed(ValueType::I64)],
+    );
+    let [merged] = f.node_outputs_exact::<1>(merge_phi).unwrap();
+    close_with_return(&mut f, ctrl, &[merged]);
+
+    assert_validation_err(&f, |e| {
+        matches!(
+            e,
+            ValidationError::InputNotAvailable { node, input_idx: 2, .. } if *node == merge_phi
+        )
+    });
+    assert_no_validation_err(&f, |e| {
+        matches!(e, ValidationError::InputNotAvailable { input_idx: 1, .. })
+    });
+}
+
+#[test]
+fn phi_inputs_from_their_own_arms_are_available() {
+    let (mut f, [then_val, else_val], token, ctrl) = diamond_with_arm_phis();
+    let merge_phi = f.graph_mut().create_node(
+        NodeKind::Phi,
+        [token, then_val, else_val],
+        [ValueKind::Typed(ValueType::I64)],
+    );
+    let [merged] = f.node_outputs_exact::<1>(merge_phi).unwrap();
+    close_with_return(&mut f, ctrl, &[merged]);
+
+    assert_no_validation_err(&f, |e| {
+        matches!(e, ValidationError::InputNotAvailable { .. })
+    });
+}
+
+/// An arm's value used past the merge, directly and through arithmetic.
+#[test]
+fn arm_value_used_after_the_merge_is_not_available() {
+    let (mut f, [then_val, else_val], _, ctrl) = diamond_with_arm_phis();
+    let add = f.graph_mut().create_node(
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        [then_val, else_val],
+        [ValueKind::Typed(ValueType::I64)],
+    );
+    stamp(&mut f, add);
+    let [sum] = f.node_outputs_exact::<1>(add).unwrap();
+    close_with_return(&mut f, ctrl, &[then_val, sum]);
+
+    assert_validation_err(
+        &f,
+        |e| matches!(e, ValidationError::InputNotAvailable { node, .. } if *node == add),
+    );
+    assert_validation_err(&f, |e| {
+        matches!(e, ValidationError::InputNotAvailable { input_idx: 2, .. })
+    });
+}
+
+/// A Region no control edge reaches, and a phi value it owns.
+fn unreachable_region_value(f: &mut Function, seed: ValueId) -> (ValueId, ValueId) {
+    let region = f.graph_mut().create_node(
+        NodeKind::Region,
+        [],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let [ctrl, token] = f.node_outputs_exact::<2>(region).unwrap();
+    let phi = f.graph_mut().create_node(
+        NodeKind::Phi,
+        [token, seed],
+        [ValueKind::Typed(ValueType::I64)],
+    );
+    let [value] = f.node_outputs_exact::<1>(phi).unwrap();
+    (ctrl, value)
+}
+
+#[test]
+fn a_value_from_unreachable_code_is_not_available_to_a_live_use() {
+    let mut s = spine();
+    let (seed_node, seed) = int_const(&mut s.f, 7, ValueType::I64);
+    stamp(&mut s.f, seed_node);
+    let (_, dead) = unreachable_region_value(&mut s.f, seed);
+    let add = s.f.graph_mut().create_node(
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        [dead, seed],
+        [ValueKind::Typed(ValueType::I64)],
+    );
+    stamp(&mut s.f, add);
+    let [sum] = s.f.node_outputs_exact::<1>(add).unwrap();
+    close_with_return(&mut s.f, s.entry_ctrl, &[sum]);
+
+    assert_validation_err(
+        &s.f,
+        |e| matches!(e, ValidationError::InputNotAvailable { node, input_idx: 0, .. } if *node == add),
+    );
+}
+
+#[test]
+fn a_phi_input_from_unreachable_code_on_a_live_edge_is_not_available() {
+    let (mut f, [then_val, _], token, ctrl) = diamond_with_arm_phis();
+    let (seed_node, seed) = int_const(&mut f, 3, ValueType::I64);
+    stamp(&mut f, seed_node);
+    let (_, dead) = unreachable_region_value(&mut f, seed);
+    let merge_phi = f.graph_mut().create_node(
+        NodeKind::Phi,
+        [token, then_val, dead],
+        [ValueKind::Typed(ValueType::I64)],
+    );
+    let [merged] = f.node_outputs_exact::<1>(merge_phi).unwrap();
+    close_with_return(&mut f, ctrl, &[merged]);
+
+    assert_validation_err(
+        &f,
+        |e| matches!(e, ValidationError::InputNotAvailable { node, input_idx: 2, .. } if *node == merge_phi),
+    );
+}
+
+/// A phi input on an edge from unreachable code can never be selected.
+#[test]
+fn a_dead_edge_into_a_phi_is_not_judged() {
+    let mut s = spine();
+    let (seed_node, seed) = int_const(&mut s.f, 7, ValueType::I64);
+    stamp(&mut s.f, seed_node);
+    let live = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [s.entry_ctrl],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let [live_ctrl, _] = s.f.node_outputs_exact::<2>(live).unwrap();
+    let (dead_ctrl, dead) = unreachable_region_value(&mut s.f, seed);
+    let merge = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [live_ctrl, dead_ctrl],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let [merge_ctrl, merge_token] = s.f.node_outputs_exact::<2>(merge).unwrap();
+    let merge_phi = s.f.graph_mut().create_node(
+        NodeKind::Phi,
+        [merge_token, seed, dead],
+        [ValueKind::Typed(ValueType::I64)],
+    );
+    let [merged] = s.f.node_outputs_exact::<1>(merge_phi).unwrap();
+    close_with_return(&mut s.f, merge_ctrl, &[merged]);
+
+    assert_no_validation_err(&s.f, |e| {
+        matches!(e, ValidationError::InputNotAvailable { .. })
+    });
+}
