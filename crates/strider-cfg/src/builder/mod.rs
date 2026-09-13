@@ -109,6 +109,9 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// target decodes in ([`Self::enqueue_resolved`]).  Empty unless
     /// [`Self::with_flow_context`] supplies it.
     pub(super) function_mode: FlowContext,
+    /// The pspec default of each `noflow` var that changes a decode; see
+    /// [`Self::with_transient_defaults`].
+    pub(super) transient_defaults: &'a [(&'static str, u32)],
     /// Seeded targets whose region would not decode, each with the region that
     /// seeded it; see [`Cfg::undecodable_seeded_targets`].  Keyed on the SITE,
     /// not the address alone: two explorations of one address decode in
@@ -184,6 +187,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             // `with_flow_context`.
             flow_vars: &NO_FLOW_VARS,
             function_mode: FlowContext::default(),
+            transient_defaults: &[],
         }
     }
 
@@ -212,6 +216,19 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         );
         self.flow_vars = flow_vars;
         self.function_mode = function_mode;
+        self
+    }
+
+    /// Supplies the default of each `noflow` context var that changes a decode
+    /// ([`strider_target::SleighArch::transient_decode_vars`]), read on an
+    /// engine nothing has decoded with yet.
+    ///
+    /// A `globalset` of one of them commits at exactly one address and outlives
+    /// the build that made it, so on a reused engine every decode resets them
+    /// to these unless the instruction flowing into it committed them.
+    #[must_use]
+    pub fn with_transient_defaults(mut self, defaults: &'a [(&'static str, u32)]) -> Self {
+        self.transient_defaults = defaults;
         self
     }
 
