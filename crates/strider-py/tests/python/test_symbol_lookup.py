@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import strider
 
 from . import _elf_builder as eb
@@ -97,3 +99,35 @@ def test_symbol_at_inside_a_sized_function_full_of_unsized_symbols(tmp_path):
     assert lift.symbol_at(0x1000 + count).name == "big"
     assert lift.symbol_at(0x1000 + 7).name == "l7"
     assert lift.symbol_at(0x1000 + count + 1) is None
+
+
+def _object_calling(path, r_type: int, offset: int = 1) -> None:
+    """`f: call ext_fn; ret` with a relocation of `r_type` at `offset`."""
+    eb.Elf(
+        e_type=eb.ET_REL,
+        sections=[eb.Section(".text", 0, b"\xe8\0\0\0\0\xc3")],
+        symbols=[eb.Sym("f", 0, 0, size=6), eb.Sym("ext_fn", 0, None, kind=eb.STT_NOTYPE)],
+        relocs=[(0, offset, 1, r_type, -4)],
+    ).write(path)
+
+
+def test_an_object_files_call_to_an_undefined_function_targets_its_symbol(tmp_path):
+    from strider.pattern import call
+
+    path = tmp_path / "f.o"
+    _object_calling(path, 4)  # R_X86_64_PLT32
+    lift = strider.lift.load_elf(str(path))
+    result = lift.analyze("f")
+    assert result.function.find_all(call().target(lift.symbol("ext_fn").address))
+
+
+def test_an_uncomputed_relocation_in_code_fails_the_decode(tmp_path):
+    """`R_X86_64_TPOFF32` is not computed, so its field serves no bytes: a
+    decode across it fails, and one starting on it names the relocation."""
+    inside, start = tmp_path / "inside.o", tmp_path / "start.o"
+    _object_calling(inside, 23)
+    _object_calling(start, 23, offset=0)
+    with pytest.raises(strider.StriderError, match="not mapped"):
+        strider.lift.load_elf(str(inside)).analyze("f")
+    with pytest.raises(strider.StriderError, match="relocation of type 23"):
+        strider.lift.load_elf(str(start)).analyze("f")
