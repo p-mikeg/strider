@@ -82,27 +82,32 @@ successor set. It stops for three other reasons, none of them an error:
   discovery-depth limit, and exhausting it while sites are still growing is that
   limit being hit, not an oscillation. Those sites are reported.
 
-## Five channels, and all five must be read
+## Six channels, and all six must be read
 
-A converged CFG may be incomplete, and `AnalyzeResult` says so five ways.
-`is_complete()` is the question "may this be incomplete?" and needs all five;
+A converged CFG may be incomplete, and `AnalyzeResult` says so six ways.
+`is_complete()` is the question "may this be incomplete?" and needs all six;
 none of them answers it alone.
 
 - `unresolved_indirect_branches`: a live `IndirectBranch` placeholder, a seated
   `Switch` whose selector no longer derives, a site still growing when the cap
   ran out, a site whose fold dropped a successor the classifier proved, a site
-  whose answer narrowed in any round, and a site the loop abandoned.
+  whose answer narrowed in any round, a site the loop abandoned, and a return
+  whose folded target is not provably the entry return address.
 - `unverified_seeded_sites`: answers that are whole but that nothing verified. A
   `Switch` holding exactly the caller's seed and nothing derived; a site the CFG
   CONSUMED, where a `LinkRegister` answer became a `Return` and a lone
   out-of-function target became a `TailCall`, leaving no placeholder and no
   anchor to report through; and an arm seated on the mode a caller seed gave
   its siblings, which nobody evaluated for that arm.
-- `isa_mode_conflicts`, `interior_branch_targets` and
-  `unmapped_branch_targets`: losses no indirect site owns, since a direct edge
-  produces them too. An address two edges reached in different modes, a target
-  off every instruction boundary, and a target the image had no bytes for,
-  seated as an empty `TailCall` stub. All three are accumulated across rounds,
+- `isa_mode_conflicts`, `interior_branch_targets`, `unmapped_branch_targets`
+  and `undecodable_branch_targets`: losses no indirect site owns, since a
+  direct edge produces them too. An address two edges reached in different
+  modes, a target off every instruction boundary, a target the image had no
+  bytes for, seated as an empty `TailCall` stub, and bytes that hold no
+  instruction (Sleigh rejects them, or `CfgOptions::data_ranges` marks them),
+  reached by a branch, which leaves through a `TailCall` stub, or by a
+  fall-through past a call, which ends that call as no-return. All four are
+  accumulated across rounds,
   not read off the final CFG: the round that decoded an address twice fed the
   classifier whether or not a later rebuild still carries that edge.
 
