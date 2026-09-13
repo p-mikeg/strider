@@ -1578,6 +1578,56 @@ mod tests {
             "surviving Phi value inputs keep original order, contiguous, token first"
         );
     }
+    /// Orphaning the head of an `n`-long chain kills it top-down, each node's
+    /// operand the next one dequeued.
+    #[test]
+    fn clean_dead_chain_cost_is_linear() {
+        fn kill_chain(n: usize) -> std::time::Duration {
+            let mut b = single_region_builder();
+            let three = b.build_int_const(3u64, ValueType::I64).unwrap();
+            let mut x = b.build_int_const(1u64, ValueType::I64).unwrap();
+            for _ in 0..n {
+                x = b
+                    .build_int_binary_operation(x, three, IntBinaryOp::Add, ValueType::I64)
+                    .unwrap();
+            }
+            b.build_return(Some(x), &[]).unwrap();
+            b.set_lift_addr(None);
+            let mut function = b.build().unwrap();
+            let ret = function
+                .graph()
+                .all_node_ids()
+                .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
+                .expect("a Return node");
+            let slot_index = function
+                .node_inputs(ret)
+                .iter()
+                .position(|v| v == x)
+                .expect("Return reads the chain head");
+
+            let mut ctx = EditFunction::new(&mut function);
+            let zero = ctx.build_int_const(0u64, ValueType::I64).unwrap();
+            let slot = ctx.function().node_input_id_at(ret, slot_index).unwrap();
+            let start = std::time::Instant::now();
+            ctx.update_input(slot, zero);
+            ctx.clean();
+            let elapsed = start.elapsed();
+            assert!(
+                !ctx.is_live(ctx.function().producer(x)),
+                "chain head culled"
+            );
+            elapsed
+        }
+        kill_chain(2_000);
+        let small = kill_chain(10_000);
+        let large = kill_chain(80_000);
+        // Linear would be 8x; quadratic 64x.
+        assert!(
+            large.as_secs_f64() < small.as_secs_f64() * 24.0,
+            "8x the chain cost {:.1}x the clean ({small:?} -> {large:?})",
+            large.as_secs_f64() / small.as_secs_f64(),
+        );
+    }
 }
 
 #[cfg(test)]
