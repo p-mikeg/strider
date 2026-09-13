@@ -101,6 +101,16 @@ impl<R: rsleigh::MemReader> Lifter<R> {
                 "{arch:?}: the address space with shortcut 'r' is named {ram_name:?}, not \"ram\""
             ));
         }
+        // GHIDRA scales a LOAD/STORE offset by the space's word size
+        // (`AddrSpace::addressToByte`, `emulate.cc:243`); the lift uses the
+        // offset as a byte address directly, so a word-addressed space would
+        // read the wrong bytes with no diagnostic.
+        let ram_word_size = ram.word_size();
+        if ram_word_size != 1 {
+            return Err(anyhow!(
+                "{arch:?}: \"ram\" has word size {ram_word_size}, and the lift indexes it in bytes"
+            ));
+        }
         let space_ids = sleigh.space_ids();
         let flow_vars = strider_cfg::FlowVars::discover(&sleigh)?;
         // Read on the still-fresh engine, so this is the pspec default, not a
