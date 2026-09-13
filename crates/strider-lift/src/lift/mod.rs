@@ -46,7 +46,21 @@ pub struct LiftOutcome {
     /// keeps its selector, so the resolver re-derives it each round and can
     /// WIDEN a table that resolved before the CFG finished growing.
     pub switch_anchors: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
+
+    /// Every Sleigh `RETURN` op lifted to a `Return`: where the jump back to the
+    /// caller is taken from is a value like any other, and only a check against
+    /// the optimised IR can tell it is the caller's return address.
+    pub return_sites: Vec<ReturnSite>,
 }
+
+/// A Sleigh `RETURN` op's pcode address, the `Return` node lifted for it, and
+/// the address it jumps to, which that node does not consume and which is
+/// therefore dead until something anchors it.
+pub type ReturnSite = (
+    strider_cfg::PcodeInsnAddr,
+    strider_ir::node::NodeId,
+    strider_ir::node::ValueId,
+);
 
 /// The CFG-to-IR lift engine, built once and reused across every function and
 /// rebuild iteration.  The calling convention is per-function, hence a per-call
@@ -446,11 +460,13 @@ impl<R: rsleigh::MemReader> Lifter<R> {
 
         let unresolved_branches = std::mem::take(&mut driver.unresolved_branches);
         let switch_anchors = std::mem::take(&mut driver.switch_anchors);
+        let return_sites = std::mem::take(&mut driver.return_sites);
         let function = driver.builder.build()?;
         Ok(LiftOutcome {
             function,
             unresolved_branches,
             switch_anchors,
+            return_sites,
         })
     }
 }

@@ -19,7 +19,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // instruction's address in its asm-fingerprint side-table.
         let machine_addr = addr.machine_addr.addr;
         let res = self.with_lift_addr(Some(machine_addr), |s| {
-            s.process_insn_inner(region_id, insn, region_map)
+            s.process_insn_inner(region_id, insn, addr, region_map)
         });
         // Width / shape errors raised deep in the IR builders carry no asm
         // context, so a failed whole-function lift could not otherwise be tied
@@ -36,6 +36,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         &mut self,
         region_id: strider_cfg::RegionId,
         insn: &rsleigh::Insn,
+        addr: strider_cfg::PcodeInsnAddr,
         region_map: &super::RegionMap,
     ) -> Result<()> {
         match insn.opcode {
@@ -112,7 +113,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // (ARM `bx lr`).  Tail calls, jump tables and computed gotos never
             // reach here: the cfg builder gives them dedicated terminators,
             // handled in the special-terminator post-pass.
-            Opcode::Return | Opcode::BranchIndirect => self.handle_return()?,
+            Opcode::Return => self.handle_sleigh_return(region_id, insn, addr, region_map)?,
+            Opcode::BranchIndirect => self.handle_return()?,
             Opcode::Call => self.handle_call(insn)?,
             Opcode::CallIndirect => self.handle_call_indirect(insn)?,
             // Decompiler-internal phi; `lift_one` never emits it.  Same
