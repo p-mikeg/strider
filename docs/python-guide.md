@@ -280,10 +280,10 @@ prog.optimize(function)   # collapse phi / dead-branch noise the rewrite exposed
 ```
 
 Use `rewrite_all([(find, replace), ...])` to stage several rules at once. One
-call walks the graph once, over a snapshot of the nodes, trying every rule at
-every node in order; the first to fire at a node is what the graph keeps, since
-it redirects the matched root's uses and the rules after it find nothing left to
-redirect. A rule whose output its own `find` side matches needs a second call.
+call walks the graph once, over a snapshot of the nodes, trying the rules at
+each node in order and stopping at the first that fires, so a node is rewritten
+by at most one rule. A rule whose output its own `find` side matches needs a
+second call.
 `function.clone()` gives you a copy to rewrite without touching the original.
 Example `03` walks through this end to end.
 
