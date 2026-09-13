@@ -818,3 +818,61 @@ fn asymmetric_and_capturing_operands_keep_both_orders() {
         1,
     );
 }
+
+/// `return(load[0x1000] + load[0x2000])`.
+fn add_of_two_loads() -> strider_ir::Function {
+    use strider_ir::node::ValueType;
+    let mut t = Tb::empty();
+    let a = t.u64(0x1000);
+    let b = t.u64(0x2000);
+    let la = t.load_ram(a, ValueType::I64);
+    let lb = t.load_ram(b, ValueType::I64);
+    let s = t.add(la, lb);
+    t.ret_val(s)
+}
+
+/// A capture on a SIBLING output vertex (`.output(slot)` / `.any_output()`)
+/// is as order-sensitive as one on the anchor, so the interchangeable cut must
+/// not swallow the swapped ordering: all three spellings bind both loads.
+#[test]
+fn sibling_output_capture_keeps_both_orders() {
+    let function = add_of_two_loads();
+    let k = Capture::new();
+    let bound = |pat| {
+        let vs: Vec<_> = a::matches(&function, pat, 2)
+            .iter()
+            .map(|m| m.bindings().get_value(k).expect("bound"))
+            .collect();
+        assert_ne!(vs[0], vs[1], "the two bindings must be DISTINCT");
+        vs
+    };
+    let anchor = bound(int_add(load().capture(k), load()).into_pattern());
+    assert_eq!(
+        bound(int_add(load().output(0).capture(k), load()).into_pattern()),
+        anchor,
+    );
+    assert_eq!(
+        bound(int_add(load().any_output().capture(k), load()).into_pattern()),
+        anchor,
+    );
+}
+
+/// The dropped ordering turns into a dropped join ROW as soon as another
+/// pattern pins the capture, so both spellings must join the same.
+#[test]
+fn sibling_output_capture_joins_like_the_anchor() {
+    let function = add_of_two_loads();
+    let m = Matcher::new(&function);
+    let c = Capture::new();
+    let rows = |sum: Pattern| {
+        let second = load().addr(int_const(0x2000u128)).capture(c).build();
+        m.find_joined_constrained(&[&sum, &second], &[])
+            .expect("join")
+            .len()
+    };
+    assert_eq!(rows(int_add(load().capture(c), load()).into_pattern()), 1);
+    assert_eq!(
+        rows(int_add(load().output(0).capture(c), load()).into_pattern()),
+        1,
+    );
+}
