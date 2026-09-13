@@ -50,7 +50,7 @@ fn switch_terminator_lifts_to_one_arm_switch_for_one_target() {
     // A 1-target dispatch keeps its `Switch`, which retains the selector so
     // the resolver can widen the site later; it is still not an If-ladder.
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(1);
-    let (g, _, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
+    let g = common::analyze_with_known_targets(&bytes, base, ba, &targets);
     assert_eq!(
         count_switches(&g),
         1,
@@ -76,7 +76,7 @@ fn switch_terminator_lifts_to_single_switch_node_for_three_targets() {
     // zero IntCmpOp::Equal. Target addresses live in the switch table, not
     // as IR comparison constants.
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(3);
-    let (g, _, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
+    let g = common::analyze_with_known_targets(&bytes, base, ba, &targets);
     assert_eq!(
         common::count_ifs(&g),
         0,
@@ -198,7 +198,7 @@ fn switch_targets_are_not_double_linked_by_the_region_linker() {
     // double-link gives each of the N target regions two.
     for n in [1usize, 2, 3] {
         let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(n);
-        let (g, _, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
+        let g = common::analyze_with_known_targets(&bytes, base, ba, &targets);
         let over_linked: Vec<_> = g
             .walk()
             .filter(|&nid| matches!(g.node_kind(nid), NodeKind::Region))
@@ -221,7 +221,7 @@ fn ir_level_multiple_resolution_end_to_end_produces_lifted_switch_in_ir() {
     // Multiple([t0, t1]) via with_known_targets must produce IR containing
     // the corresponding Switch node, which is the dispatch's IR encoding.
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(2);
-    let (g, _, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
+    let g = common::analyze_with_known_targets(&bytes, base, ba, &targets);
     assert_eq!(
         common::count_ifs(&g),
         0,

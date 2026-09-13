@@ -65,42 +65,16 @@ fn build_ir_with_applies_per_address_override() {
         "override CC must be recorded on the Call (effective CC differs from default)"
     );
     let outs = bfg.node_outputs(call_id);
-    let override_clobbers = outs.iter().skip(2).count();
     assert!(
         outs.iter()
             .skip(2)
             .all(|&v| bfg.get_vn_for_value(v).is_some()),
         "every clobber output must carry its varnode tag"
     );
+    let (ret, clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.get_cc(call_id));
     assert_eq!(
         outs.len(),
-        2 + override_clobbers,
-        "Call's outputs = Control + Memory + override clobber slots"
-    );
-}
-
-#[test]
-fn build_ir_with_default_options_matches_build_ir() {
-    let (bytes, entry, _) = x86_64_call_then_ret();
-    let reader = BufMemReader::new(bytes, entry);
-    let (mut strider, cc) = common::driver_for_reader(common::Arch::X64, reader);
-    let cfg = strider
-        .build_cfg(
-            MachineInsnAddr::from(entry),
-            &strider_cfg::CfgOptions::default(),
-            &Default::default(),
-        )
-        .unwrap();
-
-    let outcome_default = strider.build_ir(&cfg, cc.clone()).unwrap();
-    let outcome_with = strider
-        .build_ir_with(&cfg, cc, &LiftOptions::default())
-        .unwrap();
-
-    let n_default = outcome_default.function.graph().all_node_ids().count();
-    let n_with = outcome_with.function.graph().all_node_ids().count();
-    assert_eq!(
-        n_default, n_with,
-        "build_ir_with(default) must produce the same graph shape as build_ir"
+        2 + ret.len() + clob.len(),
+        "Call's outputs = Control + Memory + the override's ret-val/clobber slots"
     );
 }

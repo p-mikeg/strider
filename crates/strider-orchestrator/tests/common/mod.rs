@@ -204,17 +204,13 @@ pub(crate) fn synth_jmp_rax_with_targets(n_targets: usize) -> (Vec<u8>, u64, u64
 /// Lift `bytes` via `build_ir`, seeding `CfgOptions::known_targets` so the
 /// `BranchIndirect` at `branch_indirect_addr` resolves to `Multiple(targets)`.
 ///
-/// Returns `(function, driver, cc)`. Panics on any construction failure.
+/// Panics on any construction failure.
 pub(crate) fn analyze_with_known_targets(
     bytes: &[u8],
     base: u64,
     branch_indirect_addr: u64,
     targets: &[u64],
-) -> (
-    strider_ir::Function,
-    strider_orchestrator::Lifter<rsleigh::mem_readers::BufMemReader<Vec<u8>>>,
-    strider_target::BuiltCallingConvention,
-) {
+) -> strider_ir::Function {
     use rustc_hash::FxHashMap;
     use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 
@@ -237,13 +233,7 @@ pub(crate) fn analyze_with_known_targets(
         .build_cfg(MachineInsnAddr::from(base), &cfg_opts, &Default::default())
         .expect("cfg build with Multiple known targets");
 
-    // build_ir consumes cc by value; clone so the caller also gets an
-    // owned cc back.
-    let function = driver
-        .build_ir(&cfg, cc.clone())
-        .expect("build_ir")
-        .function;
-    (function, driver, cc)
+    driver.build_ir(&cfg, cc).expect("build_ir").function
 }
 
 pub(crate) fn binary_path(arch: Arch, case: &str) -> PathBuf {
@@ -251,6 +241,49 @@ pub(crate) fn binary_path(arch: Arch, case: &str) -> PathBuf {
         .join("../../fixtures/out")
         .join(arch.name())
         .join(format!("{case}.elf"))
+}
+
+/// A [`strider_orchestrator::Strider`] over `obj`'s image, with a second view
+/// of it as the optimiser's ROM.
+pub(crate) fn strider_over_object(
+    arch: Arch,
+    obj: &object::File<'_>,
+) -> strider_orchestrator::Strider<strider_reader::ElfFileMemReader> {
+    let sleigh_arch = arch.sleigh();
+    let mem = strider_reader::ElfFileMemReader::from_object(obj).expect("mem reader");
+    let rom = strider_reader::ElfFileMemReader::from_object(obj).expect("rom reader");
+    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
+        .expect("create sleigh");
+    strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(Box::new(rom)))
+        .expect("Strider::new")
+}
+
+/// [`strider_over_object`] on the (arch, case) ELF, with `arch`'s calling
+/// convention and `fn_name`'s address. The address keeps its ARM-Thumb
+/// interworking bit: that bit IS the entry's ISA mode.
+pub(crate) fn fixture_strider(
+    arch: Arch,
+    case: &str,
+    fn_name: &str,
+) -> (
+    strider_orchestrator::Strider<strider_reader::ElfFileMemReader>,
+    strider_target::BuiltCallingConvention,
+    u64,
+) {
+    let path = binary_path(arch, case);
+    if !path.exists() {
+        panic!("missing test binary {path:?}; run `make -C fixtures`");
+    }
+    let owned = strider_reader::load_elf(&path)
+        .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
+    let obj = owned.checked_file().expect("the mapped file is unchanged");
+    let addr = obj
+        .symbol_by_name(fn_name)
+        .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
+        .address();
+    let strider = strider_over_object(arch, &obj);
+    let cc = arch.cc().build(strider.sleigh_regs()).expect("build cc");
+    (strider, cc, addr)
 }
 
 /// Loads the (arch, case) ELF, builds a CFG at `fn_name`, and lifts it. The
@@ -262,9 +295,7 @@ pub(crate) fn lift_for_pipeline(
     fn_name: &str,
 ) -> (
     strider_orchestrator::LiftOutcome,
-    strider_orchestrator::Lifter<strider_reader::ElfFileMemReader>,
     strider_target::BuiltCallingConvention,
-    strider_target::SleighArch,
     strider_reader::ElfFileMemReader,
 ) {
     let path = binary_path(arch, case);
@@ -278,7 +309,6 @@ pub(crate) fn lift_for_pipeline(
     let obj = strider_reader::load_elf(&path)
         .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
     let obj = obj.checked_file().expect("the mapped file is unchanged");
-    let sleigh_arch = arch.sleigh();
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let (mut ana, cc) = driver_for_reader(arch, mem);
     let raw_addr = obj
@@ -308,7 +338,7 @@ pub(crate) fn lift_for_pipeline(
         .unwrap_or_else(|e| panic!("build_ir for {fn_name}: {e:?}"));
     let rom_for_opt =
         strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
-    (outcome, ana, cc, sleigh_arch, rom_for_opt)
+    (outcome, cc, rom_for_opt)
 }
 
 /// [`lift_for_pipeline`] followed by `default_pipeline`.
@@ -320,7 +350,7 @@ pub(crate) fn lift_for_pipeline(
 /// assumption cleared belongs in unit tests with a directly-configured
 /// `OptCtx`.
 pub(crate) fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
-    let (outcome, _lifter, _cc, _sleigh_arch, rom_for_opt) = lift_for_pipeline(arch, case, fn_name);
+    let (outcome, _cc, rom_for_opt) = lift_for_pipeline(arch, case, fn_name);
     let mut function = outcome.function;
     // The reader serves raw bytes; `LoadReadOnly` decodes them with the
     // function's own endianness, so big-endian fixtures fold correctly.
@@ -332,6 +362,21 @@ pub(crate) fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Func
 }
 
 use strider_ir::node::NodeKind;
+
+/// The `Call` whose target input (slot 2) is `IntConst(target)`.
+pub(crate) fn find_call_to(
+    function: &strider_ir::Function,
+    target: u64,
+) -> Option<strider_ir::node::NodeId> {
+    function.walk().find(|&nid| {
+        matches!(function.node_kind(nid), NodeKind::Call { .. })
+            && function
+                .node_inputs(nid)
+                .into_iter()
+                .nth(2)
+                .is_some_and(|value| function.int_const_u128(value) == Some(u128::from(target)))
+    })
+}
 
 pub(crate) fn count_int_binop(
     function: &strider_ir::Function,
@@ -422,6 +467,28 @@ pub(crate) fn returned(f: &strider_ir::Function) -> Vec<strider_ir::node::ValueI
         .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
         .expect("one Return");
     f.node_inputs(ret).into_iter().skip(2).collect()
+}
+
+/// The kind of `v`'s producer.
+pub(crate) fn producer_kind(
+    f: &strider_ir::Function,
+    v: strider_ir::node::ValueId,
+) -> &strider_ir::node::NodeKind {
+    f.node_kind(f.producer(v))
+}
+
+/// The inputs of `v`'s producer.
+pub(crate) fn inputs_of(
+    f: &strider_ir::Function,
+    v: strider_ir::node::ValueId,
+) -> Vec<strider_ir::node::ValueId> {
+    f.node_inputs(f.producer(v)).into_iter().collect()
+}
+
+/// Writes `word` little-endian at `addr` of an image mapped at `base`.
+pub(crate) fn put_le32(bytes: &mut [u8], base: u64, addr: u64, word: u32) {
+    let off = usize::try_from(addr - base).expect("offset fits usize");
+    bytes[off..off + 4].copy_from_slice(&word.to_le_bytes());
 }
 
 /// A byte image of 32-bit instruction words in `endian` order.

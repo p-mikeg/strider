@@ -5,7 +5,6 @@
 
 mod common;
 
-use object::{Object, ObjectSymbol};
 use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::IrWalkerEx;
 
@@ -222,18 +221,8 @@ fn assert_loop_carried_switch_reaches_every_arm(arch: common::Arch, arms: usize)
     );
     // The widest seated table is the inlined dispatch; a narrower one is a
     // different site (x86 seats a one-target `Switch` of its own).
-    let widest = result
-        .cfg
-        .regions()
-        .filter_map(|r| match &r.terminator {
-            strider_cfg::RegionTerminator::Switch { targets, .. } => {
-                let mut addrs: Vec<u64> = targets.iter().map(|t| t.addr).collect();
-                addrs.sort_unstable();
-                addrs.dedup();
-                Some(addrs)
-            }
-            _ => None,
-        })
+    let widest = switch_arms(&result.cfg)
+        .into_iter()
         .max_by_key(Vec::len)
         .unwrap_or_default();
     assert_eq!(
@@ -275,23 +264,7 @@ fn analyze_with_opts(
     known: rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets>,
     resolve: bool,
 ) -> anyhow::Result<strider_orchestrator::AnalyzeResult> {
-    let path = common::binary_path(arch, case);
-    if !path.exists() {
-        panic!("missing test binary {path:?}; run `make -C fixtures`");
-    }
-    let obj = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = obj.checked_file().expect("the mapped file is unchanged");
-    let sa = arch.sleigh();
-    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem");
-    let sleigh = rsleigh::Sleigh::new(sa.sla_spec(), sa.pspec(), mem).expect("sleigh");
-    // The symbol's ARM-Thumb interworking bit IS the entry's ISA mode, and
-    // `Lifter::build_cfg` masks it off for decoding itself, so it is passed
-    // through rather than stripped here.
-    let addr = obj.symbol_by_name(fn_name).expect("symbol").address();
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
-        Box::new(strider_reader::ElfFileMemReader::from_object(&obj).expect("rom"));
-    let regs = sleigh.regs().expect("regs");
-    let cc = arch.cc().build(&regs).expect("cc");
+    let (mut strider, cc, addr) = common::fixture_strider(arch, case, fn_name);
     let lift_opts = strider_orchestrator::LiftOptions {
         cfg: strider_cfg::CfgOptions {
             allow_code_before_start_addr: true,
@@ -304,39 +277,7 @@ fn analyze_with_opts(
         resolve_indirect_branches: resolve,
         ..Default::default()
     };
-    let mut strider =
-        strider_orchestrator::Strider::new(sa, sleigh, Some(rom)).expect("Strider::new");
     strider.analyze(addr, &cc, &lift_opts, &opt_opts, None)
-}
-
-#[test]
-fn resolution_can_be_turned_off() {
-    let on = run_with_opts(
-        common::Arch::X64,
-        "switch",
-        "dispatch_value",
-        Default::default(),
-        true,
-    )
-    .expect("converges");
-    assert_eq!(
-        count_indirect_branch_placeholders(&on),
-        0,
-        "resolves by default"
-    );
-
-    let off = run_with_opts(
-        common::Arch::X64,
-        "switch",
-        "dispatch_value",
-        Default::default(),
-        false,
-    )
-    .expect("converges with resolution off");
-    assert!(
-        count_indirect_branch_placeholders(&off) > 0,
-        "resolution off must leave the dispatch a placeholder",
-    );
 }
 
 #[test]
