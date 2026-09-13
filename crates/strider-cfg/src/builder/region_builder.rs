@@ -97,6 +97,9 @@ pub(super) struct RegionBuilder<'b, 'a: 'b, R: rsleigh::MemReader> {
     /// when a read-back shows it actually drifted, so a region with no barrier
     /// in it costs reads and no parse-cache flush.
     isa_mode: Option<u32>,
+    /// The machine instruction this region decoded last, whose commits the
+    /// next sequential decode reads.
+    last_lift: Option<u64>,
 }
 
 impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
@@ -113,6 +116,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             empty_span_len: 0,
             parent_edge,
             isa_mode,
+            last_lift: None,
         }
     }
 
@@ -128,10 +132,83 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         Ok(())
     }
 
+    /// Resets the `noflow` decode vars at `addr` to their defaults, so a value
+    /// an earlier decode committed there does not change this one.
+    ///
+    /// The region's first instruction reads defaults. A sequential decode reads
+    /// what the instruction before it committed: when `addr` holds anything
+    /// but defaults, they are written and that instruction re-lifted, which
+    /// commits its own values again.
+    fn hold_transients(&mut self, addr: u64) -> Result<()> {
+        let defaults = self.builder.transient_defaults;
+        if defaults.is_empty() {
+            return Ok(());
+        }
+        let prev = self.last_lift;
+        // Sealed onto rather than decoded: `build` discards this lift.
+        if prev.is_some()
+            && self
+                .builder
+                .start_addr_to_region_id
+                .contains_key(&PcodeInsnAddr::at_machine_start(addr))
+        {
+            return Ok(());
+        }
+        let mut wrote = false;
+        for &(name, default) in defaults {
+            if self.builder.sleigh.get_context_at(addr, name)? != default {
+                self.builder.sleigh.set_context_at(addr, name, default)?;
+                wrote = true;
+            }
+        }
+        if wrote && let Some(prev) = prev {
+            self.lift_unheld(prev)?;
+        }
+        Ok(())
+    }
+
+    /// Holds the context at every instruction start inside the lift at `addr`,
+    /// returning whether it wrote any.
+    ///
+    /// Sleigh decodes a delay slot as part of its branch but reads the context
+    /// at the slot's own address, so the slot takes the branch's ISA mode and
+    /// the `noflow` defaults, plus what the branch itself commits there.
+    fn hold_delay_slot(&mut self, addr: u64, len: usize) -> Result<bool> {
+        if !self.builder.arch.has_delay_slots() {
+            return Ok(false);
+        }
+        let isa = self.isa_mode.zip(self.builder.arch.isa_mode_var());
+        let defaults = self.builder.transient_defaults;
+        let end = addr.saturating_add(len as u64);
+        let mut wrote = false;
+        // Every MIPS encoding is a whole number of 16-bit words.
+        for at in (addr.saturating_add(2)..end).step_by(2) {
+            let isa_var = isa.map(|(want, var)| (var, want));
+            for (name, want) in isa_var.into_iter().chain(defaults.iter().copied()) {
+                if self.builder.sleigh.get_context_at(at, name)? != want {
+                    self.builder.sleigh.set_context_at(at, name, want)?;
+                    wrote = true;
+                }
+            }
+        }
+        Ok(wrote)
+    }
+
     /// Re-lifting an address is cheap: `Sleigh` memoises recently-parsed
     /// instructions.
     fn lift_one(&mut self, addr: u64) -> Result<rsleigh::LiftRes> {
+        self.hold_transients(addr)?;
         self.hold_isa_mode(addr)?;
+        let mut lift = self.lift_unheld(addr)?;
+        if self.hold_delay_slot(addr, lift.machine_insn_len)? {
+            lift = self.lift_unheld(addr)?;
+        }
+        self.last_lift = Some(addr);
+        Ok(lift)
+    }
+
+    /// One Sleigh decode at `addr`, in whatever context the engine holds there.
+    fn lift_unheld(&mut self, addr: u64) -> Result<rsleigh::LiftRes> {
         self.builder.sleigh.lift_one(addr).map_err(|e| {
             // Display, not Debug: the error's `Debug` nests its source's, which
             // for a reader error carries a captured backtrace.
