@@ -5,7 +5,7 @@ use cranelift_entity::SecondaryMap;
 use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
-use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueKind};
+use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind};
 use crate::schedule::{DomTree, ScheduleContext, schedule_early};
 use crate::walk::{NodeIdSet, PostOrder, WalkPhase};
 
@@ -603,6 +603,74 @@ pub(super) fn check_function_invariants_terminator_reachable(
     }
 }
 
+/// Every live `Store` is on a memory chain that reaches a sink: the memory
+/// input of a live `Return`, `IndirectBranch`, `Unreachable`, `Call` or
+/// `CallOther`, or a live-edge arm of a live `MemPhi`. The chain steps back
+/// through `Store`, `MemPhi` arms and `Call` / `CallOther` memory inputs. A
+/// `Load` is no sink, so a write only a `Load` reads, while the chain carries
+/// on from the `Store`'s own input token, is lost. A token may fork: each arm
+/// of a branch continues the same chain.
+pub(super) fn check_function_invariants_memory_linearity(
+    ctx: &ScheduleContext<'_>,
+    errs: &mut Vec<ValidationError>,
+) {
+    let graph = ctx.function.graph();
+    let memory_input = |node: NodeId| {
+        graph
+            .nth_input(node, 1)
+            .filter(|&v| graph.value_kind(v) == ValueKind::Memory)
+    };
+    let mut stack: Vec<ValueId> = Vec::new();
+    for node in ctx.pinned_nodes() {
+        match graph.node_kind(node) {
+            NodeKind::Return
+            | NodeKind::IndirectBranch
+            | NodeKind::Unreachable
+            | NodeKind::Call { .. }
+            | NodeKind::CallOther { .. } => stack.extend(memory_input(node)),
+            NodeKind::MemPhi => stack.extend(live_arms(graph, &ctx.domtree, node)),
+            _ => {}
+        }
+    }
+    let mut on_chain = NodeIdSet::new();
+    while let Some(value) = stack.pop() {
+        let producer = graph.value_definition(value).0;
+        if !on_chain.insert(producer) {
+            continue;
+        }
+        match graph.node_kind(producer) {
+            NodeKind::Store(_) => stack.extend(graph.nth_input(producer, 0)),
+            NodeKind::MemPhi => stack.extend(live_arms(graph, &ctx.domtree, producer)),
+            NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
+                stack.extend(memory_input(producer));
+            }
+            _ => {}
+        }
+    }
+    for node in &ctx.live {
+        if matches!(graph.node_kind(node), NodeKind::Store(_)) && !on_chain.contains(node) {
+            errs.push(ValidationError::LostStore { node });
+        }
+    }
+}
+
+/// A phi's value inputs on edges from a node of `tree`.
+fn live_arms<'a>(
+    graph: &'a Graph,
+    tree: &'a DomTree,
+    phi: NodeId,
+) -> impl Iterator<Item = ValueId> + 'a {
+    let token = graph.nth_input(phi, 0).expect("a phi has a token");
+    let region = graph.value_definition(token).0;
+    graph
+        .node_inputs(phi)
+        .into_iter()
+        .skip(1)
+        .zip(graph.node_inputs(region))
+        .filter(|&(_, edge)| tree.contains(graph.value_definition(edge).0))
+        .map(|(arm, _)| arm)
+}
+
 /// Every data input is available where it is used, judged on an early schedule
 /// ([`schedule_early`]): a floating node sits at the latest of its inputs'
 /// positions, which must lie on one dominator chain; a control node's latest
@@ -611,12 +679,10 @@ pub(super) fn check_function_invariants_terminator_reachable(
 /// code or on a data cycle, is unavailable to a live use. A phi input on an
 /// unreachable edge can never be selected, and is not judged.
 pub(super) fn check_function_invariants_availability(
-    function: &Function,
-    reachable: &NodeIdSet,
+    ctx: &ScheduleContext<'_>,
     errs: &mut Vec<ValidationError>,
 ) {
-    let ctx = ScheduleContext::new(function, reachable);
-    let graph = function.graph();
+    let graph = ctx.function.graph();
     let tree = &ctx.domtree;
 
     let mut at: SecondaryMap<NodeId, Option<NodeId>> = SecondaryMap::new();
@@ -627,7 +693,7 @@ pub(super) fn check_function_invariants_availability(
         }
     }
 
-    schedule_early(&ctx, |node| {
+    schedule_early(ctx, |node| {
         let latest = latest_input(graph, tree, &at, node, errs);
         at[node] = Some(latest.map_or(tree.root(), |(pos, _)| pos));
     });

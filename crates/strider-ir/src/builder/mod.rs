@@ -134,10 +134,10 @@ impl FunctionBuilder {
     }
 
     /// Validates before handing the function over. A failure wraps a
-    /// [`crate::validate::ValidationErrors`] bundle, recoverable with
-    /// `err.downcast_ref::<crate::validate::ValidationErrors>()`.
+    /// [`crate::validate::ValidationReport`], recoverable with
+    /// `err.downcast_ref::<crate::validate::ValidationReport>()`.
     pub fn build(self) -> crate::Result<crate::Function> {
-        crate::validate::validate(&self.function)?;
+        crate::validate::validate(&self.function).map_err(|e| e.report(&self.function))?;
         Ok(self.function)
     }
 }
