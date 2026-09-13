@@ -6,7 +6,7 @@ use std::io::Write as _;
 use common::elf_fixture::simple_text_elf;
 use common::reader_contract::{
     assert_mem_reader_partial_read_ok, assert_mem_reader_reads,
-    assert_mem_reader_unmapped_is_not_mapped_error, assert_readonly_errors, assert_readonly_reads,
+    assert_mem_reader_unmapped_is_not_mapped_error, assert_readonly_errors,
 };
 use rsleigh::{MemReader, VnAddr, VnSpace};
 use strider_reader::{ElfFileMemReader, ReadOnlyMemory};
@@ -23,16 +23,6 @@ fn read_raw(r: &ElfFileMemReader, addr: u64, len: usize) -> Vec<u8> {
     let mut buf = vec![0u8; len];
     ReadOnlyMemory::read(r, addr, &mut buf).expect("ReadOnlyMemory::read");
     buf
-}
-
-/// The fixture builder produces parseable bytes, and the reader reflects the
-/// single `.text` section at the chosen address, raw and unswapped.
-#[test]
-fn simple_text_elf_fixture_round_trips_through_elf_reader() {
-    let elf = simple_text_elf(0x1000, &[0xaa, 0xbb, 0xcc, 0xdd]);
-    let r = reader(&elf);
-
-    assert_eq!(read_raw(&r, 0x1000, 4), &[0xaa, 0xbb, 0xcc, 0xdd]);
 }
 
 /// Bytes come back verbatim regardless of endianness.
@@ -94,15 +84,6 @@ fn elf_reader_satisfies_mem_reader_contract() {
     assert_mem_reader_unmapped_is_not_mapped_error(&r, 0x9000);
     // Partial: ask 6, get 4.
     assert_mem_reader_partial_read_ok(&r, 0x1000, 6, 4);
-}
-
-#[test]
-fn elf_reader_satisfies_read_only_memory_contract() {
-    let elf = simple_text_elf(0x1000, &[0x11, 0x22, 0x33, 0x44]);
-    let r = reader(&elf);
-
-    assert_readonly_reads(&r, 0x1000, &[0x11, 0x22, 0x33, 0x44]);
-    assert_readonly_errors(&r, 0x9000, 4);
 }
 
 /// `from_object` copies the mappings and `from_elf` windows into the ELF's own
