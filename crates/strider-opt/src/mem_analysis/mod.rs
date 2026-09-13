@@ -19,6 +19,10 @@ use crate::OptOptions;
 use AddrClass::*;
 
 mod frame_escape;
+mod index;
+
+use crate::mem_ssa::{Answers, ClobberProbe, MemLayout};
+use index::StoreIndex;
 
 /// Which memory region a decomposed base roots in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,7 +47,7 @@ pub(crate) struct MemExpr {
 
 /// Coarse Load / Store address class; [`alias_verdict`] is keyed on the
 /// `(load_class, store_class)` pair.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum AddrClass {
     /// Offsets are only comparable within one `base`.  Distinct bases (say
     /// `InitialVar(sp)` vs `sp & -16`) differ by the caller-dependent
@@ -659,7 +663,7 @@ fn offsets_comparable(load: SizedAddr, store: SizedAddr, load_off: i128, store_o
 }
 
 /// One operand (load or store) of the pairwise [`alias_verdict`].
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct SizedAddr {
     pub(crate) class: AddrClass,
     pub(crate) size: i128,
@@ -738,6 +742,8 @@ pub(crate) fn alias_verdict(
 /// The SP-aware [`crate::mem_ssa::find_nearest_clobber`] predicate carrier.
 struct MemWalker<'a> {
     analyzer: &'a MemAnalyzer,
+    /// The analyzer's own, or the relaxation-free ones of a window scan.
+    options: &'a MemOptions,
     /// The probed location.  Precomputed rather than a `Load` `NodeId`, since
     /// a probe need not have a backing `Load` node.
     load: SizedAddr,
@@ -786,7 +792,7 @@ impl MemWalker<'_> {
                 // for an exact `Match` afterward.  Same store derivation as
                 // `verdict`, so the walk stops at exactly the stores that
                 // re-check sees.
-                self.analyzer.alias(self.load, store) != AliasVerdict::Disjoint
+                alias_verdict(self.load, store, self.options) != AliasVerdict::Disjoint
             }
             NodeKind::Call { .. } => {
                 // A callee declared transparent to memory writes none, so the
@@ -806,7 +812,7 @@ impl MemWalker<'_> {
                 {
                     false
                 } else {
-                    self.analyzer.options.calls_block
+                    self.options.calls_block
                 }
             }
             // No opaque memory producer can be proven disjoint.  This is where
@@ -836,11 +842,11 @@ impl MemWalker<'_> {
         }
         let verdict = match self.load.class {
             AddrClass::StackRooted { base, offset } => {
-                self.analyzer.options.call_relaxations
+                self.options.call_relaxations
                     && in_own_frame(function, base, offset, self.load.size)
                     && !frame_escape::frame_address_escapes_cached(
                         function,
-                        &self.analyzer.options.noalias_allocators,
+                        &self.options.noalias_allocators,
                     )
             }
             _ => false,
@@ -855,7 +861,7 @@ impl MemWalker<'_> {
     /// from the fact alone ([`Self::allocator_transparent`]), the knob being a
     /// claim about arbitrary callees that a pure allocator does not need.
     fn private_frame_forward(&self, function: &Function) -> bool {
-        self.analyzer.options.escape_analysis && self.frame_is_private(function)
+        self.options.escape_analysis && self.frame_is_private(function)
     }
 
     /// Does the probed slot fall in the region `call` hands its callee?  A
@@ -929,7 +935,7 @@ impl MemWalker<'_> {
         }
         // The relaxation empties the argument window, leaving only the
         // reserved area below it callee-writable.
-        if self.analyzer.options.callee_preserves_stack_args {
+        if self.options.callee_preserves_stack_args {
             return false;
         }
         // Nothing declared above the reserved area, so nothing left to overlap.
@@ -947,8 +953,14 @@ impl MemWalker<'_> {
             sp_offset: call_sp_off,
             args: stack_args,
         };
-        self.analyzer
-            .arg_window_covers(function, call, &geometry, load_off, window_hi)
+        self.analyzer.arg_window_covers(
+            function,
+            self.options,
+            call,
+            &geometry,
+            load_off,
+            window_hi,
+        )
     }
 
     /// A pure allocator writes only its own fresh allocation (plus internal
@@ -958,11 +970,11 @@ impl MemWalker<'_> {
     /// allocation, an escaped or foreign stack slot, a global (the
     /// allocator's private state may live there), or an opaque pointer do not.
     fn allocator_transparent(&self, function: &Function, call: NodeId) -> bool {
-        if !self.analyzer.options.call_relaxations {
+        if !self.options.call_relaxations {
             return false;
         }
         let Some(ret_base) =
-            allocator_return_base(function, call, &self.analyzer.options.noalias_allocators)
+            allocator_return_base(function, call, &self.options.noalias_allocators)
         else {
             return false;
         };
@@ -1032,11 +1044,13 @@ struct ArgWindowGeometry {
 /// scanned for one probe answers a shallower one conservatively.
 fn scan_arg_window(
     function: &Function,
+    analyzer: &MemAnalyzer,
     options: &MemOptions,
     geometry: &ArgWindowGeometry,
     hi: i128,
 ) -> ArgWindow {
     let mut scan = ArgStoreScan::new(
+        analyzer,
         options.without_call_relaxations(),
         geometry.mem_start,
         geometry.base,
@@ -1114,8 +1128,10 @@ fn scan_arg_window(
 /// window probe skips no slot probe would stop at.  `MemPhi` transparency does
 /// depend on the probed slot, so a slot left uncovered when the scan stops at
 /// one falls back to its own probe.
-pub(crate) struct ArgStoreScan {
-    probe: MemAnalyzer,
+pub(crate) struct ArgStoreScan<'a> {
+    /// Answers the probes under `options`, from its index.
+    analyzer: &'a MemAnalyzer,
+    options: MemOptions,
     /// Chain start, for the `MemPhi` fallback probe.
     mem_start: ValueId,
     base: ValueId,
@@ -1140,8 +1156,9 @@ pub(crate) struct ArgStoreScan {
     stopped_at: Option<NodeId>,
 }
 
-impl ArgStoreScan {
+impl<'a> ArgStoreScan<'a> {
     pub(crate) fn new(
+        analyzer: &'a MemAnalyzer,
         options: MemOptions,
         mem_start: ValueId,
         base: ValueId,
@@ -1149,7 +1166,8 @@ impl ArgStoreScan {
         hi: i128,
     ) -> Self {
         Self {
-            probe: MemAnalyzer::new(options),
+            analyzer,
+            options,
             mem_start,
             base,
             lo,
@@ -1179,10 +1197,15 @@ impl ArgStoreScan {
             // A `MemPhi` clobbers the probe that met it, not necessarily this
             // slot: its arms can still agree on this one, which only the slot's
             // own probe can say.
-            let def =
-                self.probe
-                    .nearest_sp_clobber(function, self.mem_start, self.base, slot_off, 1);
-            return match self.probe.anchored_store(function, def, self.base) {
+            let def = self.analyzer.nearest_sp_clobber(
+                function,
+                &self.options,
+                self.mem_start,
+                self.base,
+                slot_off,
+                1,
+            );
+            return match self.analyzer.anchored_store(function, def, self.base) {
                 Some(hit) if hit.store_offset == slot_off => {
                     let end = slot_off.saturating_add(hit.size(function));
                     SlotReach::Anchored {
@@ -1212,14 +1235,19 @@ impl ArgStoreScan {
         let Some(cur) = self.cursor.take() else {
             return false;
         };
-        let def = self
-            .probe
-            .nearest_sp_clobber(function, cur, self.base, self.lo, self.size);
+        let def = self.analyzer.nearest_sp_clobber(
+            function,
+            &self.options,
+            cur,
+            self.base,
+            self.lo,
+            self.size,
+        );
         if !self.seen.insert(def) {
             self.stopped_at = Some(def);
             return false;
         }
-        let Some(hit) = self.probe.anchored_store(function, def, self.base) else {
+        let Some(hit) = self.analyzer.anchored_store(function, def, self.base) else {
             self.stopped_at = Some(def);
             return false;
         };
@@ -1532,12 +1560,47 @@ impl MemOptions {
 
 /// The SP-aware query surface.  Takes the `&Function` per call rather than
 /// binding it, so a query may be interleaved with `&mut` edits.
+///
+/// Its index, arg windows and per-location answers are read off the graph on
+/// first use and kept for the analyzer's life, so its owner decides how long
+/// they may outlive the graph state they were read from.  Edits that leave
+/// every memory def and its address in place keep them valid; a rewrite that
+/// reaches a store address or a call's SP must [`Self::forget_answers`].
 pub(crate) struct MemAnalyzer {
     options: MemOptions,
-    /// One [`ArgWindow`] per `Call`, scanned on first use.  Scoped to the
-    /// analyzer, so its owner decides how long the memo may outlive the graph
-    /// state it was read from.
+    /// One [`ArgWindow`] per `Call`, scanned on first use.
     arg_windows: std::cell::RefCell<FxHashMap<NodeId, ArgWindow>>,
+    /// `None` walks every query instead; built, `None` inside is a graph
+    /// [`MemLayout`] does not answer, which is walked too.
+    index: Option<std::cell::OnceCell<Option<MemIndex>>>,
+    answers: std::cell::RefCell<FxHashMap<(SizedAddr, rsleigh::VnSpace), Answers>>,
+}
+
+struct MemIndex {
+    layout: MemLayout,
+    stores: StoreIndex,
+}
+
+/// A [`MemWalker`] asked through a [`StoreIndex`].
+struct IndexProbe<'w, 'a> {
+    walker: &'w mut MemWalker<'a>,
+    stores: &'w StoreIndex,
+}
+
+impl ClobberProbe for IndexProbe<'_, '_> {
+    fn clobbers(&mut self, function: &Function, def: NodeId) -> bool {
+        self.walker.def_clobbers(function, def)
+    }
+
+    fn candidate(&mut self, _layout: &MemLayout, lo: u32, hi: u32) -> Option<u32> {
+        self.stores.candidate(
+            &self.walker.load,
+            self.walker.load_space,
+            self.walker.options,
+            lo,
+            hi,
+        )
+    }
 }
 
 impl MemAnalyzer {
@@ -1545,7 +1608,77 @@ impl MemAnalyzer {
         Self {
             options,
             arg_windows: std::cell::RefCell::default(),
+            index: Some(std::cell::OnceCell::new()),
+            answers: std::cell::RefCell::default(),
         }
+    }
+
+    /// Answers by walking each query's paths, with no index to build: for a
+    /// caller asking a handful of queries of a graph it does not own.
+    pub(crate) fn walking(options: MemOptions) -> Self {
+        Self {
+            index: None,
+            ..Self::new(options)
+        }
+    }
+
+    /// Drops the memoised answers, for a rewrite that can change a def's
+    /// verdict.
+    pub(crate) fn forget_answers(&self) {
+        self.answers.borrow_mut().clear();
+    }
+
+    fn index(&self, function: &Function) -> Option<&MemIndex> {
+        self.index
+            .as_ref()?
+            .get_or_init(|| {
+                MemLayout::build(function).map(|layout| MemIndex {
+                    stores: StoreIndex::build(function, &layout, &self.options.noalias_allocators),
+                    layout,
+                })
+            })
+            .as_ref()
+    }
+
+    /// The nearest clobber of `load` backward from `start`'s memory output,
+    /// under `options`.  `memoize` holds for the analyzer's own options only.
+    fn nearest(
+        &self,
+        function: &Function,
+        start: NodeId,
+        load: SizedAddr,
+        load_space: rsleigh::VnSpace,
+        options: &MemOptions,
+        memoize: bool,
+    ) -> NodeId {
+        let mut walker = MemWalker {
+            analyzer: self,
+            options,
+            load,
+            load_space,
+            private_frame: std::cell::Cell::new(None),
+        };
+        if let Some(index) = self.index(function) {
+            let mut probe = IndexProbe {
+                walker: &mut walker,
+                stores: &index.stores,
+            };
+            let found = if memoize {
+                let mut answers = self.answers.borrow_mut();
+                let answers = answers.entry((load, load_space)).or_default();
+                index
+                    .layout
+                    .nearest_clobber(function, start, &mut probe, answers)
+            } else {
+                index
+                    .layout
+                    .nearest_clobber(function, start, &mut probe, &mut Answers::default())
+            };
+            if let Some(clobber) = found {
+                return clobber;
+            }
+        }
+        crate::mem_ssa::find_nearest_clobber(function, start, &mut |f, d| walker.def_clobbers(f, d))
     }
 
     /// [`ArgWindow::covers`] against the memo, scanning `call`'s window on a
@@ -1553,6 +1686,7 @@ impl MemAnalyzer {
     fn arg_window_covers(
         &self,
         function: &Function,
+        options: &MemOptions,
         call: NodeId,
         geometry: &ArgWindowGeometry,
         offset: i128,
@@ -1582,7 +1716,7 @@ impl MemAnalyzer {
             ),
             _ => hi,
         };
-        let window = scan_arg_window(function, &self.options, geometry, scan_hi);
+        let window = scan_arg_window(function, self, options, geometry, scan_hi);
         let covered = window.covers(offset, hi);
         // The fresh window always reaches at least as far as any it replaces:
         // the reuse test above consumed every cached entry with
@@ -1603,20 +1737,6 @@ impl MemAnalyzer {
 
     pub(crate) fn noalias_allocators(&self) -> &FxHashSet<u64> {
         &self.options.noalias_allocators
-    }
-
-    fn walker(&self, load: SizedAddr, load_space: rsleigh::VnSpace) -> MemWalker<'_> {
-        MemWalker {
-            analyzer: self,
-            load,
-            load_space,
-            private_frame: std::cell::Cell::new(None),
-        }
-    }
-
-    /// The one place the knobs meet [`alias_verdict`].
-    fn alias(&self, load: SizedAddr, store: SizedAddr) -> AliasVerdict {
-        alias_verdict(load, store, &self.options)
     }
 
     fn load_sized(&self, function: &Function, load: NodeId) -> SizedAddr {
@@ -1672,9 +1792,10 @@ impl MemAnalyzer {
         {
             return AliasVerdict::Disjoint;
         }
-        self.alias(
+        alias_verdict(
             self.load_sized(function, load_node),
             self.store_sized(function, store_node),
+            &self.options,
         )
     }
 
@@ -1689,11 +1810,14 @@ impl MemAnalyzer {
             unreachable!("nearest_clobber is only called on Load nodes");
         };
         let load = self.load_sized(function, load);
-        let mem_node = function.producer(mem);
-        let mut walker = self.walker(load, load_space);
-        crate::mem_ssa::find_nearest_clobber(function, mem_node, &mut |f, d| {
-            walker.def_clobbers(f, d)
-        })
+        self.nearest(
+            function,
+            function.producer(mem),
+            load,
+            load_space,
+            &self.options,
+            true,
+        )
     }
 
     /// The nearest `Store` covering `[offset, offset + probe_size)` relative to
@@ -1712,36 +1836,40 @@ impl MemAnalyzer {
         offset: i128,
         probe_size: i128,
     ) -> Option<ReachingSpStore> {
-        let clobber = self.nearest_sp_clobber(function, mem_start, base, offset, probe_size);
+        let clobber =
+            self.nearest_sp_clobber(function, &self.options, mem_start, base, offset, probe_size);
         self.anchored_store(function, clobber, base)
     }
 
     /// The nearest def of `[offset, offset + probe_size)` relative to SP
-    /// terminal `base` on the chain from `mem_start`.
+    /// terminal `base` on the chain from `mem_start`, under `options`.
     fn nearest_sp_clobber(
         &self,
         function: &Function,
+        options: &MemOptions,
         mem_start: ValueId,
         base: ValueId,
         offset: i128,
         probe_size: i128,
     ) -> NodeId {
+        let probe = SizedAddr {
+            class: AddrClass::StackRooted { base, offset },
+            size: probe_size,
+            // `offset` came from `decompose`, so it is already reduced at
+            // the base's width. Passing `None` would make
+            // `offsets_comparable` reject every pair.
+            addr_bits: addr_bit_width(function, base),
+        };
         // Stack memory lives in RAM, so a same-address store in another space
         // counts as disjoint and is skipped.
-        let mut walker = self.walker(
-            SizedAddr {
-                class: AddrClass::StackRooted { base, offset },
-                size: probe_size,
-                // `offset` came from `decompose`, so it is already reduced at
-                // the base's width. Passing `None` would make
-                // `offsets_comparable` reject every pair.
-                addr_bits: addr_bit_width(function, base),
-            },
+        self.nearest(
+            function,
+            function.producer(mem_start),
+            probe,
             rsleigh::VnSpace::RAM,
-        );
-        crate::mem_ssa::find_nearest_clobber(function, function.producer(mem_start), &mut |f, d| {
-            walker.def_clobbers(f, d)
-        })
+            options,
+            false,
+        )
     }
 
     /// `clobber` read as a `Store` whose own SP offset shares `base`, the only
