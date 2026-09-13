@@ -16,7 +16,8 @@ not read a mapping the program can write.
 - `ElfFileMemReader`: the ELF backend, built with `ElfFileMemReader::from_elf`
   (shares the ELF's bytes) or `::from_object` (copies them); implements both
   reader traits. Either way it serves the file-initial bytes, so an unlinked or
-  not-yet-`ld.so`'d image reads zero at every relocation site; the relocated
+  not-yet-`ld.so`'d image serves each relocation site's unrelocated field (an
+  addend, or `ld`'s link-time value), never its target; the relocated
   view of an image is an `OwnedElf::regions(.., relocate)` load.
 - `load_elf(path)`: memory-map an ELF into an `OwnedElf`.
   `OwnedElf::regions(source, filter, relocate)`: one region set cut from those
@@ -67,6 +68,18 @@ above all, loads from sections, whose pre-link `sh_addr` is typically 0 for all
 of them; `elf::ElfSectionLayout` rebases the collisions apart the way a linker
 would, from a synthetic image base that leaves address 0 unmapped, and every
 address a caller sees (region start, relocation site, symbol) goes through it.
+
+Relocating an ET_REL stands in for the link. A symbol the object does not
+define, and a `SHN_COMMON` one, gets a distinct address in an unmapped range
+past the image (`ElfSectionLayout::extern_address`), so a call or load through
+it has a target but nothing to fold. A GOT reference loads from a synthetic
+slot holding the symbol's address. Instruction encodings (branches, page and
+split address pairs, `MOVW`/`MOVT`, TOC offsets) are applied for x86, ARM,
+AArch64, MIPS and PowerPC. The GOT and TOC are this loader's, so their bytes
+differ from any real link's while computing the same addresses. A relocation it
+cannot compute (TLS, MIPS GP-relative, a branch that would need a veneer) is
+never left as its unrelocated field: outside a writable mapping the field is a
+hole, so decoding or folding across it fails with the relocation type named.
 
 The `ReadOnlyMemory` view rejects any writable mapping outright, so on an image
 whose only PT_LOAD is RWX (the MIPS `vmlinux` shape; x86-64 and arm64 ship
