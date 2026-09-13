@@ -1028,6 +1028,101 @@ fn memory_chain_orphaned_store_flagged() {
     });
 }
 
+/// A stamped `Store(mem_in, 0x2000, 0x42)` and a `Load` of the same address
+/// off its output. Returns `(store, store mem, loaded value)`.
+fn store_then_load(f: &mut Function, mem_in: ValueId) -> (NodeId, ValueId, ValueId) {
+    let (addr_n, addr) = int_const(f, 0x2000, ValueType::I64);
+    stamp(f, addr_n);
+    let (data_n, data) = int_const(f, 0x42, ValueType::I64);
+    stamp(f, data_n);
+    let (st, st_mem) = store(f, mem_in, addr, data);
+    let load = f.graph_mut().create_node(
+        NodeKind::Load(rsleigh::VnSpace::RAM),
+        [st_mem, addr],
+        [ValueKind::Typed(ValueType::I64)],
+    );
+    stamp(f, load);
+    let [loaded] = f.node_outputs_exact::<1>(load).unwrap();
+    (st, st_mem, loaded)
+}
+
+/// Only a `Load` reads the write, and the chain carries on from the token the
+/// `Store` consumed, so no later reader of memory sees it.
+#[test]
+fn memory_linearity_store_read_only_by_a_load_is_lost() {
+    let mut s = spine();
+    let (st, _, loaded) = store_then_load(&mut s.f, s.mem_value);
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, loaded], []);
+    stamp(&mut s.f, ret);
+
+    let errs = validate(&s.f).unwrap_err();
+    assert!(
+        matches!(errs.0.as_slice(), [ValidationError::LostStore { node }] if *node == st),
+        "the lost write is the only error: {errs:?}"
+    );
+}
+
+#[test]
+fn report_names_each_node_kind_and_lowest_address() {
+    let mut s = spine();
+    let (st, _, loaded) = store_then_load(&mut s.f, s.mem_value);
+    s.f.side_tables_mut()
+        .extend_asm_fingerprint(st, &[0x40_2000, 0x40_1000]);
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, loaded], []);
+    stamp(&mut s.f, ret);
+
+    let report = validate(&s.f).unwrap_err().report(&s.f).to_string();
+    assert!(
+        report.contains(&format!("[{st:?} Store(")) && report.contains("@ 0x401000]"),
+        "{report}"
+    );
+}
+
+#[test]
+fn memory_linearity_store_read_by_a_load_then_the_chain_validates() {
+    let mut s = spine();
+    let (_, st_mem, loaded) = store_then_load(&mut s.f, s.mem_value);
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, st_mem, loaded], []);
+    stamp(&mut s.f, ret);
+
+    validate(&s.f).expect("a Store the chain continues from is not lost");
+}
+
+/// One token continuing into both arms of a branch is one chain, not a lost
+/// write.
+#[test]
+fn memory_linearity_token_forked_into_two_arms_validates() {
+    let mut s = spine();
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::I64);
+    stamp(&mut s.f, addr_n);
+    let (data_n, data) = int_const(&mut s.f, 0x42, ValueType::I64);
+    stamp(&mut s.f, data_n);
+    let (_, st_mem) = store(&mut s.f, s.mem_value, addr, data);
+    let (cond_n, cond) = int_const(&mut s.f, 1, ValueType::I1);
+    stamp(&mut s.f, cond_n);
+    let branch = s.f.graph_mut().create_node(
+        NodeKind::If,
+        [s.entry_ctrl, cond],
+        [ValueKind::Control, ValueKind::Control],
+    );
+    stamp(&mut s.f, branch);
+    let [taken, not_taken] = s.f.node_outputs_exact::<2>(branch).unwrap();
+    for arm in [taken, not_taken] {
+        let ret =
+            s.f.graph_mut()
+                .create_node(NodeKind::Return, [arm, st_mem], []);
+        stamp(&mut s.f, ret);
+    }
+
+    validate(&s.f).expect("a token forked into two arms is one chain");
+}
+
 /// A memory-preserving `Call` legitimately leaves its Memory output
 /// unconsumed.
 #[test]
@@ -1436,7 +1531,10 @@ fn arm_value_used_after_the_merge_is_not_available() {
     });
 }
 
-/// A Region no control edge reaches, and a phi value it owns.
+/// A self-looping Region no control edge from the entry reaches, and a phi
+/// value it owns. Its only predecessor is the taken arm of an `If` inside it;
+/// the other arm, returned as the exit, is for the caller to consume. The
+/// shape is structurally valid, so the dataflow checks judge it.
 fn unreachable_region_value(f: &mut Function, seed: ValueId) -> (ValueId, ValueId) {
     let region = f.graph_mut().create_node(
         NodeKind::Region,
@@ -1444,13 +1542,23 @@ fn unreachable_region_value(f: &mut Function, seed: ValueId) -> (ValueId, ValueI
         [ValueKind::Control, ValueKind::PhiToken],
     );
     let [ctrl, token] = f.node_outputs_exact::<2>(region).unwrap();
+    let (cond_node, cond) = int_const(f, 1, ValueType::I1);
+    stamp(f, cond_node);
+    let branch = f.graph_mut().create_node(
+        NodeKind::If,
+        [ctrl, cond],
+        [ValueKind::Control, ValueKind::Control],
+    );
+    stamp(f, branch);
+    let [taken, exit] = f.node_outputs_exact::<2>(branch).unwrap();
+    f.graph_mut().add_node_input(region, taken);
     let phi = f.graph_mut().create_node(
         NodeKind::Phi,
         [token, seed],
         [ValueKind::Typed(ValueType::I64)],
     );
     let [value] = f.node_outputs_exact::<1>(phi).unwrap();
-    (ctrl, value)
+    (exit, value)
 }
 
 #[test]
@@ -1458,7 +1566,8 @@ fn a_value_from_unreachable_code_is_not_available_to_a_live_use() {
     let mut s = spine();
     let (seed_node, seed) = int_const(&mut s.f, 7, ValueType::I64);
     stamp(&mut s.f, seed_node);
-    let (_, dead) = unreachable_region_value(&mut s.f, seed);
+    let (dead_exit, dead) = unreachable_region_value(&mut s.f, seed);
+    close_with_return(&mut s.f, dead_exit, &[]);
     let add = s.f.graph_mut().create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [dead, seed],
@@ -1479,7 +1588,8 @@ fn a_phi_input_from_unreachable_code_on_a_live_edge_is_not_available() {
     let (mut f, [then_val, _], token, ctrl) = diamond_with_arm_phis();
     let (seed_node, seed) = int_const(&mut f, 3, ValueType::I64);
     stamp(&mut f, seed_node);
-    let (_, dead) = unreachable_region_value(&mut f, seed);
+    let (dead_exit, dead) = unreachable_region_value(&mut f, seed);
+    close_with_return(&mut f, dead_exit, &[]);
     let merge_phi = f.graph_mut().create_node(
         NodeKind::Phi,
         [token, then_val, dead],
@@ -1521,9 +1631,7 @@ fn a_dead_edge_into_a_phi_is_not_judged() {
     let [merged] = s.f.node_outputs_exact::<1>(merge_phi).unwrap();
     close_with_return(&mut s.f, merge_ctrl, &[merged]);
 
-    assert_no_validation_err(&s.f, |e| {
-        matches!(e, ValidationError::InputNotAvailable { .. })
-    });
+    validate(&s.f).expect("an unreachable edge into a phi is not judged");
 }
 
 /// A floating value used only on an unreachable edge into a phi is never
@@ -1561,7 +1669,5 @@ fn a_floating_value_on_a_dead_edge_into_a_phi_is_not_judged() {
     let [merged] = s.f.node_outputs_exact::<1>(merge_phi).unwrap();
     close_with_return(&mut s.f, merge_ctrl, &[merged]);
 
-    assert_no_validation_err(&s.f, |e| {
-        matches!(e, ValidationError::InputNotAvailable { .. })
-    });
+    validate(&s.f).expect("an unreachable edge into a phi is not judged");
 }
