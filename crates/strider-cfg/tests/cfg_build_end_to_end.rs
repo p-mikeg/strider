@@ -1224,6 +1224,29 @@ fn fallthrough_off_the_end_of_the_mapped_image_seats_a_stub() {
     assert_eq!(cfg.region_graph().edge_count(), 1);
 }
 
+/// The window ending mid-instruction is the same verdict as it ending on the
+/// boundary: Sleigh raises `PartiallyInitializedInsn` rather than
+/// `DataUnavailErr`, and the region still seals on a stub.
+#[test]
+fn a_fallthrough_straddling_the_end_of_the_mapped_image_seats_a_stub() {
+    // 0x1000: xor rax,rax (48 31 c0); 0x1003 holds one byte of a three-byte
+    // instruction, so its decode reads past the end of the image.
+    let cfg = build_from_bytes(vec![0x48u8, 0x31, 0xc0, 0x48], 0x1000);
+
+    assert_eq!(
+        cfg.unmapped_branch_targets(),
+        &[PcodeInsnAddr::at_machine_start(0x1003)],
+        "the straddling fall-through is reported, not silently dropped"
+    );
+    assert_eq!(
+        cfg.region_graph()[cfg.entry()].terminator,
+        RegionTerminator::Unconditional,
+        "the decoded instructions are kept as a sealed region"
+    );
+    assert_tail_call_stub_at(&cfg, 0x1003);
+    assert_eq!(cfg.region_graph().edge_count(), 1);
+}
+
 /// `fn_max_size: Some(0)` reads as unbounded.  A zero-length bound taken
 /// literally puts `start_addr` itself out of range, and the first fall-through
 /// then fails the function.
