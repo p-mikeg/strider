@@ -687,10 +687,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 .ok_or_else(|| anyhow!("no region {src:?} in cfg"))?
                 .terminator;
             if matches!(src_terminator, strider_cfg::RegionTerminator::Unconditional) {
-                // Every CFG edge, against a `translate_regions` that walks the
-                // dominator pre-order: a source unreachable from the entry has
-                // no values, which `link_regions` rejects the moment the target
-                // carries a phi.
+                // Every CFG edge against a `translate_regions` that walks the
+                // dominator pre-order, which covers every region only because
+                // `strider_cfg::Builder::build` removes the unreachable ones.
                 self.builder.link_regions(
                     ir_region_of(region_map, src)?,
                     ir_region_of(region_map, tgt)?,
