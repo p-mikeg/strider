@@ -158,50 +158,40 @@ fn loop_carried_self_ref_phi_collapses() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
     let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
     let entry = b.create_region_all()?;
-    let join = b.create_region_all()?;
+    let header = b.create_region_all()?;
+    let exit = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
-    b.build_branch(join)?;
+    b.build_branch(header)?;
 
-    b.set_region(join);
+    // The back edge leaves `var` unwritten, so the header phi reads itself.
+    b.set_region(header);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, header, exit)?;
+
+    b.set_region(exit);
     let read_back = b.read_variable(&var)?;
     b.build_return(Some(read_back), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let phi = find_var_phi(&fg, var);
-    let phi_inputs_pre = fg.node_inputs(phi);
-    let initial_value = phi_inputs_pre[1];
-    let region = fg.value_definition(phi_inputs_pre[0]).0;
-
-    // Build the back edge by hand: a self-loop ctrl predecessor, and for that
-    // new slot every phi over the region gets its own output.
-    let region_outputs = fg.node_outputs(region);
-    let region_ctrl_value = region_outputs[0];
-    let region_phi_value = region_outputs[1];
-    fg.graph_mut().add_node_input(region, region_ctrl_value);
-    let phi_consumers: Vec<NodeId> = fg
-        .graph()
-        .value_uses(region_phi_value)
-        .map(|(n, _)| n)
-        .collect();
-    for p in phi_consumers {
-        let self_value = fg.node_outputs_exact::<1>(p)?[0];
-        fg.graph_mut().add_node_input(p, self_value);
-    }
-    assert_eq!(
-        fg.node_inputs(phi).len(),
-        3,
-        "[token, initial, self-ref] after surgery"
+    assert!(
+        fg.graph().all_node_ids().any(|n| {
+            matches!(fg.node_kind(n), NodeKind::Phi)
+                && fg.node_inputs(n).len() == 3
+                && fg.node_inputs(n)[2] == fg.node_outputs(n)[0]
+        }),
+        "the header phi carries [token, initial, self-ref]"
     );
 
     crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::new(None))?;
 
     let ret_val = fg.node_inputs(find_return(&fg))[2];
-    assert_eq!(
-        ret_val, initial_value,
-        "Return must rewire to the non-self-referential value"
+    assert!(
+        matches!(fg.node_kind(fg.producer(ret_val)), NodeKind::InitialVar(_)),
+        "Return must rewire past the self-referential header phi to the entry value, got {:?}",
+        fg.node_kind(fg.producer(ret_val))
     );
     Ok(())
 }
