@@ -1,7 +1,7 @@
-//! Pattern queries whose fixtures need a strider-opt pass (`PhiCollapse`,
-//! `IfCondInversion`, `FunctionArgDetect`) applied first.  They cannot live in
-//! `crates/strider-pattern/tests/` with the rest: strider-pattern would have to
-//! depend on strider-opt, inverting the crate graph.
+//! Pattern queries grouped by topic, most over fixtures that need a strider-opt
+//! pass (`PhiCollapse`, `IfCondInversion`, `FunctionArgDetect`) applied first.
+//! Those cannot live in `crates/strider-pattern/tests/`: strider-pattern would
+//! have to depend on strider-opt, inverting the crate graph.
 
 #![allow(
     clippy::cast_possible_truncation,
