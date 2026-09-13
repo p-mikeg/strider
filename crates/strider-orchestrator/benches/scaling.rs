@@ -16,7 +16,7 @@ use object::{Object, ObjectSymbol};
 
 use strider_ir::node::{ValueKind, ValueType};
 use strider_ir::{IRBuilder, IRBuilderExt, IntBinaryOp};
-use strider_ir_test_utils::{RegisterSet, stack_vn_aarch64};
+use strider_ir_test_utils::{IrWalkerEx, RegisterSet, stack_vn_aarch64};
 use strider_orchestrator::opt::{
     ConstantFold, LoadForward, OptimizerPipeline, PhiCollapse, RegionCollapse,
 };
@@ -146,12 +146,22 @@ mod synthetic {
 
     /// Builds `n` SP-relative `Store`s at distinct offsets, each storing
     /// a fresh `IntConst`, followed by `n` matching `Load`s chained
-    /// through `Add`s into the return value. Runs `ConstantFold` first
-    /// so the bench measures `LoadForward` in isolation.
+    /// through `Add`s into the return value, and canonicalises so the bench
+    /// measures `LoadForward` in isolation.
+    ///
+    /// Two halves of that setup are what make all `n` loads forward, and
+    /// dropping either leaves the fixture measuring one rewrite:
+    /// `stack_vn` names the convention's stack pointer, without which the
+    /// addresses do not decompose and every store is a may-alias;
+    /// `PhiCollapse` / `RegionCollapse` retire the trivial `MemPhi` the
+    /// builder leaves at the region header, which the memory walk treats as
+    /// an opaque merge. [`bench_stack_store_chain`] asserts the fixture is
+    /// live.
     pub fn build_stack_store_chain(n: usize) -> strider_ir::Function {
         let sp = stack_vn();
         let mut b = RegisterSet::new()
             .tracked(sp)
+            .stack_vn(sp)
             .callee_saved(sp)
             .build_fn_single_region()
             .unwrap();
@@ -181,6 +191,8 @@ mod synthetic {
         let mut fg = b.build().unwrap();
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold::new());
+        p.add(PhiCollapse);
+        p.add(RegionCollapse);
         p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
             .unwrap();
         fg
@@ -348,7 +360,25 @@ mod synthetic {
 }
 
 fn bench_stack_store_chain(c: &mut Criterion) {
+    // A fixture that stops forwarding still runs, and its curve still looks
+    // clean, so the guard is worth its one extra pass run.
+    {
+        let mut fg = synthetic::build_stack_store_chain(32);
+        let pass = LoadForward::default();
+        strider_orchestrator::opt::run_one(
+            &pass,
+            &mut fg,
+            &mut strider_orchestrator::opt::OptCtx::new(None),
+        )
+        .unwrap();
+        assert_eq!(
+            fg.count_kind(|k| matches!(k, strider_ir::node::NodeKind::Load(_))),
+            0,
+            "every load must forward, or this group benches one rewrite"
+        );
+    }
     let mut group = c.benchmark_group("synthetic/stack_store_chain");
+    group.sample_size(20); // one sweep over n=1000 is ~80ms
     for n in [100usize, 500, 1_000] {
         group.bench_function(format!("n_{n}"), |b| {
             b.iter_batched(
