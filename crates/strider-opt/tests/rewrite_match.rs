@@ -306,7 +306,7 @@ fn apply_count_with_one_match_returns_one() {
 /// fixed point, the two inner identity-Adds collapse and the outer
 /// lowered-Sub Add stays.
 #[test]
-fn apply_rules_count_round_robin_reaches_fixed_point() {
+fn apply_rules_count_driven_in_a_loop_reaches_a_fixed_point() {
     let mut t = Tb::empty();
     let ac = t.u64(11);
     let bc = t.u64(13);

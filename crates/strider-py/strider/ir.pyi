@@ -323,9 +323,9 @@ class Function:
         graph generation moves before the rule runs."""
         ...
     def rewrite_all(self, pairs: Sequence[tuple[_PatLike, _ReplaceLike]]) -> int:
-        """Apply `(find, replace)` pairs round-robin at every reachable node,
-        returning the total fire count. Stales outstanding `Node` handles the
-        same way `rewrite` does, a return of 0 included."""
+        """Apply the first matching `(find, replace)` pair at every reachable
+        node, returning the total fire count. Stales outstanding `Node` handles
+        the same way `rewrite` does, a return of 0 included."""
         ...
     def clone(self) -> "Function":
         """A deep, fully independent copy of this function. The parent `Cfg`
