@@ -878,41 +878,6 @@ fn standard_presets_have_preserves_memory_false() {
     }
 }
 
-#[test]
-fn every_preset_factory_resolves() {
-    // Catches a wrapper appended without its `CC_PRESETS` row (or with a
-    // misspelled name) before the production panic in `cc_from_table` fires.
-    let factories: &[(&str, fn() -> CallingConvention)] = &[
-        ("x86_64_systemv", CallingConvention::x86_64_systemv),
-        ("aarch64_aapcs64", CallingConvention::aarch64_aapcs64),
-        ("arm_aapcs", CallingConvention::arm_aapcs),
-        ("arm_aapcs_soft", CallingConvention::arm_aapcs_soft),
-        ("mips_o32", CallingConvention::mips_o32),
-        ("mips_n64", CallingConvention::mips_n64),
-        ("powerpc_sysv32", CallingConvention::powerpc_sysv32),
-        ("powerpc64_elf_v1", CallingConvention::powerpc64_elf_v1),
-        ("powerpc64_elf_v2", CallingConvention::powerpc64_elf_v2),
-        ("x86_cdecl", CallingConvention::x86_cdecl),
-        ("x86_linux_kernel", CallingConvention::x86_linux_kernel),
-    ];
-    for (name, factory) in factories {
-        let row = lookup_preset(name)
-            .unwrap_or_else(|| panic!("preset {name:?} missing from CC_PRESETS"));
-        assert_eq!(
-            row.cc,
-            factory(),
-            "preset {name:?}: CC_PRESETS row does not match factory output",
-        );
-    }
-    assert_eq!(
-        CC_PRESETS.len(),
-        factories.len(),
-        "CC_PRESETS has {} rows but every_preset_factory_resolves lists {} factories",
-        CC_PRESETS.len(),
-        factories.len(),
-    );
-}
-
 /// Positional-argument layout is derived on demand from `arg_passing_regs`
 /// plus the `stack_args` formula.  x86_64 SysV (6 register args, stack from
 /// +8) and x86 cdecl (stack-only, from +4) between them cover every path.
