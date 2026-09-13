@@ -1,5 +1,8 @@
+use std::hash::Hash;
+
+use cranelift_entity::{EntityRef, SecondaryMap};
 use entity_utils::DenseEntitySet;
-use petgraph::visit::{GraphBase, IntoNeighbors, VisitMap, Visitable};
+use petgraph::visit::{Dfs, GraphBase, IntoNeighbors, VisitMap, Visitable, Walker};
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
@@ -101,6 +104,90 @@ pub fn dominance_verdict<N: Copy + Eq + std::hash::Hash>(
     Some(dominates(doms, a, b))
 }
 
+/// A dominator tree numbered by pre/post interval, so [`Self::dominates`] is
+/// O(1). Answers exactly as [`dominates`] and [`dominance_verdict`] over the
+/// same graph.
+pub struct DominatorTree<K: EntityRef> {
+    /// `(0, 0)` for a vertex outside the tree.
+    span: SecondaryMap<K, (u32, u32)>,
+    preorder: Vec<K>,
+}
+
+impl<K: EntityRef + Hash> DominatorTree<K> {
+    /// Over the vertices `graph` reaches from `root`.
+    fn compute<G>(graph: G, root: K) -> Self
+    where
+        G: IntoNeighbors<NodeId = K> + Visitable,
+    {
+        let doms = petgraph::algo::dominators::simple_fast(graph, root);
+        let mut edges: Vec<(K, K)> = Dfs::new(graph, root)
+            .iter(graph)
+            .filter_map(|v| doms.immediate_dominator(v).map(|d| (d, v)))
+            .collect();
+        edges.sort_unstable_by_key(|&(d, v)| (d.index(), v.index()));
+        let mut span: SecondaryMap<K, (u32, u32)> = SecondaryMap::new();
+        let mut preorder = Vec::new();
+        let mut clock = 1u32;
+        let mut stack = vec![(root, false)];
+        while let Some((vertex, done)) = stack.pop() {
+            if done {
+                span[vertex].1 = clock;
+            } else {
+                span[vertex].0 = clock;
+                preorder.push(vertex);
+                stack.push((vertex, true));
+                let lo = edges.partition_point(|&(d, _)| d.index() < vertex.index());
+                stack.extend(
+                    edges[lo..]
+                        .iter()
+                        .take_while(|&&(d, _)| d == vertex)
+                        .map(|&(_, child)| (child, false)),
+                );
+            }
+            clock += 1;
+        }
+        Self { span, preorder }
+    }
+
+    pub(crate) fn root(&self) -> K {
+        self.preorder[0]
+    }
+
+    /// Vertices in dominator-tree pre-order, so a vertex follows every vertex
+    /// that dominates it.
+    pub(crate) fn preorder(&self) -> &[K] {
+        &self.preorder
+    }
+
+    pub(crate) fn contains(&self, v: K) -> bool {
+        self.span[v].0 != 0
+    }
+
+    /// [`dominates`]: reflexive, and `false` when either vertex is absent.
+    pub fn dominates(&self, a: K, b: K) -> bool {
+        let ((a_pre, a_post), (b_pre, b_post)) = (self.span[a], self.span[b]);
+        a == b || (a_pre != 0 && b_pre != 0 && a_pre <= b_pre && b_post <= a_post)
+    }
+
+    /// [`dominance_verdict`]: `None` when either vertex is absent.
+    pub fn dominance_verdict(&self, a: K, b: K) -> Option<bool> {
+        (self.contains(a) && self.contains(b)).then(|| self.dominates(a, b))
+    }
+}
+
+/// [`control_dominators`] as a [`DominatorTree`].
+pub fn control_dominator_tree(function: &Function) -> DominatorTree<NodeId> {
+    DominatorTree::compute(&ControlFlowView::new(function), function.entry())
+}
+
+/// [`control_edge_dominators`] as a [`DominatorTree`].
+pub fn control_edge_dominator_tree(function: &Function) -> DominatorTree<CtrlKey> {
+    DominatorTree::compute(
+        &ControlSplitView::new(function),
+        CtrlKey::Node(function.entry()),
+    )
+}
+
 /// A vertex of the edge-split control graph. Dominance over `Edge(v)` is edge
 /// dominance over `v` in the ordinary CFG.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -108,6 +195,24 @@ pub enum CtrlKey {
     Node(NodeId),
     /// A `Control`-kind output value.
     Edge(ValueId),
+}
+
+/// A node's index is even, an edge's odd.
+impl EntityRef for CtrlKey {
+    fn new(index: usize) -> Self {
+        if index.is_multiple_of(2) {
+            Self::Node(NodeId::new(index / 2))
+        } else {
+            Self::Edge(ValueId::new(index / 2))
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            Self::Node(n) => 2 * n.index(),
+            Self::Edge(v) => 2 * v.index() + 1,
+        }
+    }
 }
 
 /// [`ControlFlowView`] with [`cfg_succs`](crate::walk::cfg_succs)'s two stages
@@ -746,5 +851,156 @@ mod tests {
             !dominates(&split, CtrlKey::Edge(true_edge), CtrlKey::Node(if_node)),
             "an edge cannot dominate its own producer; the If precedes it"
         );
+    }
+
+    /// A two-entry loop `B <-> C` entered from both arms of `A`, and an orphan
+    /// loop `U <-> V` that no path from the entry reaches, exiting into `C`:
+    ///
+    /// ```text
+    ///       Entry
+    ///         |
+    ///     Region A
+    ///       If(c)
+    ///      /     \
+    ///  Region B <-> Region C <- Region V <-> Region U   (orphans)
+    ///      \       /
+    ///      Region X
+    ///         |
+    ///       Return
+    /// ```
+    fn irreducible_with_orphan() -> crate::error::Result<Function> {
+        let mut b = empty_builder()?;
+        let (a, rb, rc, x, u, v) = (
+            b.create_region_all()?,
+            b.create_region_all()?,
+            b.create_region_all()?,
+            b.create_region_all()?,
+            b.create_region_all()?,
+            b.create_region_all()?,
+        );
+        b.set_entry_region_all(a)?;
+        b.set_lift_addr(Some(0x4000));
+        for (region, t, f) in [(a, rb, rc), (rb, rc, x), (rc, rb, x), (v, u, rc)] {
+            b.set_region(region);
+            let cond = b.build_boolean_const(true);
+            b.build_if(cond, t, f)?;
+        }
+        b.set_region(u);
+        b.build_branch(v)?;
+        b.set_region(x);
+        b.build_function_return()?;
+        b.build()
+    }
+
+    /// A CFG of 2 to 9 regions with terminators drawn from `seed`: loops,
+    /// irreducible edges and orphan regions. `None` when the draw is not a
+    /// valid function, e.g. an exit-free cycle.
+    fn random_cfg(seed: u64) -> Option<Function> {
+        let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        let mut next = move |bound: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % bound
+        };
+        let mut b = empty_builder().ok()?;
+        let n = 2 + next(8);
+        let regions: Vec<_> = (0..n)
+            .map(|_| b.create_region_all())
+            .collect::<crate::error::Result<_>>()
+            .ok()?;
+        b.set_entry_region_all(regions[0]).ok()?;
+        b.set_lift_addr(Some(0x5000));
+        for &region in &regions {
+            b.set_region(region);
+            let pick = regions[next(n) as usize];
+            let other = regions[next(n) as usize];
+            match next(10) {
+                0 => b.build_function_return().ok()?,
+                1 => b.build_unreachable().ok()?,
+                2 | 3 => b.build_branch(pick).ok()?,
+                4 => {
+                    let address = b.build_int_const(0u64, crate::node::ValueType::I64).ok()?;
+                    let third = regions[next(n) as usize];
+                    b.build_switch(address, &[(pick, 0), (other, 1), (third, 2)])
+                        .ok()?;
+                }
+                _ => {
+                    let cond = b.build_boolean_const(true);
+                    b.build_if(cond, pick, other).ok()?;
+                }
+            }
+        }
+        b.build().ok()
+    }
+
+    /// The interval trees answer every query exactly as the idom chain walk:
+    /// over every pair of nodes, and over every pair of node and value keys of
+    /// the split graph.
+    #[test]
+    fn dominator_tree_matches_chain_walk() {
+        let mut fixtures = vec![
+            diamond().expect("diamond builds"),
+            empty_true_arm().expect("empty_true_arm builds").0,
+            diamond_loop_and_empty_arm().expect("combined fixture builds"),
+            irreducible_with_orphan().expect("irreducible fixture builds"),
+        ];
+        let hand_built = fixtures.len();
+        fixtures.extend((0..400).filter_map(random_cfg));
+        assert!(
+            fixtures.len() >= hand_built + 100,
+            "too few random CFGs built: {}",
+            fixtures.len() - hand_built
+        );
+
+        for (i, f) in fixtures.iter().enumerate() {
+            let chain = control_dominators(f);
+            let tree = control_dominator_tree(f);
+            let nodes: Vec<NodeId> = f.graph().all_node_ids().collect();
+            let mut held = 0usize;
+            for &a in &nodes {
+                for &b in &nodes {
+                    let verdict = tree.dominance_verdict(a, b);
+                    assert_eq!(
+                        verdict,
+                        dominance_verdict(&chain, a, b),
+                        "fixture {i}: node verdict({a:?}, {b:?})"
+                    );
+                    assert_eq!(
+                        tree.dominates(a, b),
+                        dominates(&chain, a, b),
+                        "fixture {i}: node dominates({a:?}, {b:?})"
+                    );
+                    held += usize::from(verdict == Some(true));
+                }
+            }
+            assert!(held >= 2, "fixture {i}: vacuous node tree");
+
+            let chain = control_edge_dominators(f);
+            let tree = control_edge_dominator_tree(f);
+            let keys: Vec<CtrlKey> = nodes
+                .iter()
+                .map(|&n| CtrlKey::Node(n))
+                .chain(f.graph().all_value_ids().map(CtrlKey::Edge))
+                .collect();
+            let mut held = 0usize;
+            for &a in &keys {
+                for &b in &keys {
+                    let verdict = tree.dominance_verdict(a, b);
+                    assert_eq!(
+                        verdict,
+                        dominance_verdict(&chain, a, b),
+                        "fixture {i}: split verdict({a:?}, {b:?})"
+                    );
+                    assert_eq!(
+                        tree.dominates(a, b),
+                        dominates(&chain, a, b),
+                        "fixture {i}: split dominates({a:?}, {b:?})"
+                    );
+                    held += usize::from(verdict == Some(true));
+                }
+            }
+            assert!(held >= 3, "fixture {i}: vacuous split tree");
+        }
     }
 }
