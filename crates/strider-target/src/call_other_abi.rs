@@ -500,6 +500,24 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             no_return: false,
         }),
     },
+    // Linux AArch64 SVC: w8 = syscall number, x0..x5 = args, x0 = return.  The
+    // number is read as the whole `x8` container, which is what the lifter's
+    // tracked-varnode set carries.  `AARCH64base.sinc:6473` raises
+    // `CallSupervisor(imm16:2)` with the vector immediate as its only operand,
+    // so the register ABI is entirely implicit here.  Unlike x86-64 SYSCALL,
+    // the SVC instruction itself clobbers no register.
+    CallOtherRow {
+        preset_arches: AARCH64_BOTH,
+        op_names: &["CallSupervisor"],
+        class: CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: &["x8", "x0", "x1", "x2", "x3", "x4", "x5"],
+            implicit_writes: &["x0"],
+            // A kernel entry can read or write any user memory, the user stack
+            // frame included.
+            clobbers_memory: true,
+            no_return: false,
+        }),
+    },
     // ARM SMCCC for HVC (CallHyperVisor) and SMC (CallSecureMonitor): x0..x7
     // in, x0..x3 out, shared by LE and BE aarch64.  Arch-specific because
     // `x0..x7` only resolve on aarch64's register table; arm-32 has `r0..r12`.
@@ -715,7 +733,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             "crc32",
             // `XmmReg1 = pblendvb(XmmReg1, XmmReg2_m128, XMM0)`
             // (`ia.sinc:9978-9979`): the otherwise-implicit XMM0 is a listed
-            // operand, like SHA256RNDS2 above.
+            // operand, like SHA256RNDS2.
             "pblendvb",
             // MMX `psraw` (`ia.sinc:8931-8933`) and its SSE form (`:8962-8964`).
             "psraw",
@@ -725,7 +743,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             "movntdqa",
             // The rest of `sha.sinc`, whose seven pcodeops all have the shape
             // `XmmReg1 = <op>(XmmReg1, XmmReg2_m128[, imm8|XMM0])`; the
-            // `sha256*` three are in the arch-independent table above.
+            // `sha256*` three are in the arch-independent table below.
             "sha1msg1_sha",
             "sha1msg2_sha",
             "sha1nexte_sha",
@@ -1969,6 +1987,27 @@ mod tests {
             assert_eq!(abi.implicit_writes, &["r0"], "{preset:?}");
             assert!(abi.clobbers_memory, "{preset:?}");
         }
+    }
+
+    #[test]
+    fn call_supervisor_on_aarch64_returns_linux_syscall_abi() {
+        // AArch64 emits `CallSupervisor` for SVC.  Without the row the op is
+        // unclassified and every function containing a syscall fails to lift.
+        for preset in [crate::ArchPreset::Aarch64, crate::ArchPreset::Aarch64Be] {
+            let class = classify(preset, "CallSupervisor")
+                .unwrap_or_else(|| panic!("{preset:?}/CallSupervisor"));
+            let CallOtherClass::Call(abi) = class else {
+                panic!("{preset:?}: expected Call, got {class:?}")
+            };
+            assert_eq!(
+                abi.implicit_reads,
+                &["x8", "x0", "x1", "x2", "x3", "x4", "x5"],
+                "{preset:?}",
+            );
+            assert_eq!(abi.implicit_writes, &["x0"], "{preset:?}");
+            assert!(abi.clobbers_memory, "{preset:?}");
+        }
+        assert_eq!(classify(crate::ArchPreset::Arm, "CallSupervisor"), None);
     }
 
     #[test]
