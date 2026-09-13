@@ -135,15 +135,18 @@ fn try_forward_load(
     // rewire outlives this run, and a later run with the relaxations off would
     // inherit an edge that only holds with them on.
     let sound_clobber = narrow_cfg.nearest_clobber(edit.function(), load, mem);
-    crate::mem_ssa::narrow_load_to(edit, load, sound_clobber);
+    // A moved edge is a change: the load may now be a structural twin of
+    // another, and the fixed point must not exit before that merge is seen.
+    let narrowed = crate::mem_ssa::narrow_load_to(edit, load, sound_clobber);
+    let unforwarded = OptimizationResult::from_changed(narrowed);
 
     if !matches!(edit.node_kind(clobber_node), NodeKind::Store(_)) {
-        return Ok(OptimizationResult::NoChange);
+        return Ok(unforwarded);
     }
 
     // Exact match: same location, stored bytes covering the load's range.
     if alias_cfg.verdict(edit.function(), load, clobber_node) != AliasVerdict::Match {
-        return Ok(OptimizationResult::NoChange);
+        return Ok(unforwarded);
     }
 
     let store_data = edit.store_data(clobber_node);
@@ -162,13 +165,13 @@ fn try_forward_load(
     {
         narrow(edit, store_data, load)?
     } else {
-        return Ok(OptimizationResult::NoChange);
+        return Ok(unforwarded);
     };
 
     // Redirecting the sole output leaves the Load dead; the automatic cull
     // removes it and its address cone.
     let changed = edit.replace_value(load_value, forwarded)?;
-    Ok(OptimizationResult::from_changed(changed))
+    Ok(OptimizationResult::from_changed(changed || narrowed))
 }
 
 /// Reshapes a wider store's value down to the load width.  On BE the load's
