@@ -1753,6 +1753,55 @@ mod stack_table_cost {
         (resolved, steps)
     }
 
+    /// A chain longer than `SLOT_MAP_BUDGET` above the dispatch: the build
+    /// stops before the table's own stores, so every probe falls off the map.
+    /// The site must defer rather than pay the uncapped fallback walk per index.
+    #[test]
+    fn a_budget_exhausted_slot_map_defers_the_site() {
+        let filler = super::super::super::eval::SLOT_MAP_BUDGET as usize + 1;
+        let targets: Vec<u64> = (0..4u64).map(|i| 0x401000 + i * 0x10).collect();
+        let sp = sp64();
+        let arg_vn = rsleigh::Vn {
+            addr_off: 0x38,
+            addr_space: rsleigh::VnSpace::REGISTER,
+            size: 8,
+        };
+        let mut b = sp_frame(sp)
+            .tracked(arg_vn)
+            .build_fn_single_region()
+            .unwrap();
+        let sp_val = b.read_variable(&sp).unwrap();
+        wire_stack_stores(&targets, -32, 8, sp_val, &mut b);
+        // Nearer the load than the table, so the budget runs out above it.
+        wire_stack_stores(&vec![0u64; filler], -0x10000, 8, sp_val, &mut b);
+        wire_stack_dispatch(targets.len(), -32, 8, sp_val, &mut b, arg_vn);
+        let (fg, _load) = finish_stack_array(b.build().unwrap());
+
+        let (known, doms) = make_known_and_doms(&fg);
+        let mut ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
+        crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
+        super::super::super::eval::SLOT_MAP_STEPS.with(|c| c.set(0));
+        let result = classify_table_dispatch(
+            &fg,
+            sole_indirect_branch(&fg),
+            None,
+            &mut ranges,
+            &crate::AssumptionOptions::default(),
+            None,
+        );
+        let steps = crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get)
+            + super::super::super::eval::SLOT_MAP_STEPS.with(std::cell::Cell::get);
+        assert_eq!(
+            result, None,
+            "an exhausted slot map must defer the site, not grind a walk per index"
+        );
+        assert!(
+            steps < 2 * filler as u64,
+            "the deferral must cost one truncated build, not one chain walk per \
+             index: {steps} steps over a {filler}-def chain"
+        );
+    }
+
     #[test]
     fn is_not_quadratic_in_entries() {
         let (small_targets, small) = resolve(64);
