@@ -200,7 +200,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 // ConstantFold collapses the extend/truncate round trip.
                 let reg_ty: ValueType = reg.int_type()?;
                 let coerced = self.builder.convert_to_int_if_needed(val, reg_ty)?;
-                return self.builder.write_variable(reg, coerced);
+                return self.write_variable(reg, coerced);
             }
             SubRegOutcome::SubReg(ctx) => ctx,
         };

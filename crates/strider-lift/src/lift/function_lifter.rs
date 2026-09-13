@@ -47,6 +47,16 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     /// [`super::cc_projection::float_arg_prefix`] under the function-default
     /// CC, cached for the same reason.
     pub(super) default_float_arg_vns: Vec<rsleigh::Vn>,
+    /// What [`Self::collect_def_sites`] mirrored, for the write-path check in
+    /// [`Self::write_variable`]. Empty until `build_ir` fills it.
+    #[cfg(debug_assertions)]
+    pub(super) def_sites: rustc_hash::FxHashMap<
+        strider_ir::node::InitialVnId,
+        rustc_hash::FxHashSet<strider_cfg::RegionId>,
+    >,
+    /// The region [`Self::translate_regions`] is lifting, for the same check.
+    #[cfg(debug_assertions)]
+    pub(super) current_cfg_region: Option<strider_cfg::RegionId>,
 }
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
@@ -170,6 +180,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             region_last_addrs: rustc_hash::FxHashMap::default(),
             default_ret_clobber_vns,
             default_float_arg_vns,
+            #[cfg(debug_assertions)]
+            def_sites: rustc_hash::FxHashMap::default(),
+            #[cfg(debug_assertions)]
+            current_cfg_region: None,
         })
     }
 
