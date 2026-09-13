@@ -24,6 +24,9 @@ sea-of-nodes IR `strider-lift` builds from it.
 - Queries on `Cfg` (`regions`, `region_ids`, `region_predecessors`,
   `region_if`, `switch_arm_regions`) and dark-themed Graphviz output
   (`dot_dumper`, `neighborhood_dot`).
+- `insn_text` / `insn_plain_text`: one decoded p-code op as text, a LOAD /
+  STORE space id named by its space (`Cfg::space_ids`) rather than printed as
+  the host address Sleigh encodes it as.
 
 ## Every address decodes once
 
