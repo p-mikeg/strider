@@ -1253,6 +1253,7 @@ dependencies = [
  "cranelift-entity",
  "dot",
  "entity-utils",
+ "expect-test",
  "graph-algorithms",
  "petgraph",
  "proptest",
