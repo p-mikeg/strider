@@ -26,15 +26,16 @@ fn chain(links: u64) -> Vec<u8> {
     bytes
 }
 
-/// The five report channels, so a failure says which one fired.
+/// The six report channels, so a failure says which one fired.
 fn caveats(result: &strider_orchestrator::AnalyzeResult) -> String {
     format!(
-        "unresolved {:?}, unverified {:?}, isa {:?}, interior {:?}, unmapped {:?}",
+        "unresolved {:?}, unverified {:?}, isa {:?}, interior {:?}, unmapped {:?}, undecodable {:?}",
         result.unresolved_indirect_branches,
         result.unverified_seeded_sites,
         result.isa_mode_conflicts,
         result.interior_branch_targets,
         result.unmapped_branch_targets,
+        result.undecodable_branch_targets,
     )
 }
 

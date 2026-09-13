@@ -9,7 +9,7 @@ description = "Python bindings for the Strider binary analysis pipeline"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD-PARTY.md"]
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: 3",
