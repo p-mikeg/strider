@@ -308,6 +308,11 @@ enum Scale {
     Narrow(u128),
 }
 
+/// Producer steps [`is_width_only`]'s scale strip may take, matching the caps
+/// its sibling walks carry.  Exhausting it answers "width-only", the same
+/// conservative bail as an uncountable scale.
+const MAX_SCALE_STRIP: u32 = 64;
+
 /// Is `v`'s range merely its type width rather than a real narrowing?  A raw
 /// byte load fills its cell width exactly, making it table DATA, not an index.
 ///
@@ -321,15 +326,21 @@ enum Scale {
 /// spacing a preceding multiply built up, so `(cell << 2) >> 1` keeps all
 /// `1 << w`.  The count is then capped by what the OUTPUT width can hold at
 /// that spacing, since a widening scale wraps: `zext(i8) << 25` at `I32` has
-/// 128 distinct values, not 256.  A scale past the `u128` carrier, and a floor
-/// over an unrelated spacing, both answer "width-only", which defers the site
-/// rather than enumerating a cell.  An unrecognised producer is not a failure:
-/// the strip ends there and the count is taken at that value's own width.
-/// `w < 128` keeps the shift well-defined.
+/// 128 distinct values, not 256.  A scale past the `u128` carrier, a floor
+/// over an unrelated spacing, and a strip longer than [`MAX_SCALE_STRIP`] all
+/// answer "width-only", which defers the site rather than enumerating a cell.
+/// An unrecognised producer is not a failure: the strip ends there and the
+/// count is taken at that value's own width.  `w < 128` keeps the shift
+/// well-defined.
 fn is_width_only(function: &strider_ir::Function, v: ValueId, iv: Interval) -> bool {
     let mut base = v;
     let mut chain: Vec<Scale> = Vec::new();
+    let mut steps = MAX_SCALE_STRIP;
     loop {
+        let Some(left) = steps.checked_sub(1) else {
+            return true;
+        };
+        steps = left;
         let producer = function.producer(base);
         let inner = match *function.node_kind(producer) {
             // Preserves the integer value while widening the type.
