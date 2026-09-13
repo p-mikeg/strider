@@ -8,13 +8,12 @@ still accepted there for compatibility, but only its build-valid subset
 compiles: a capture reference such as `var(c)`, or a constant, carries over,
 while `.when()`, `.of_width()`, `.value_ty()` and `anything()` are rejected.
 
-Compiling and matching a pattern is native recursion mirroring its nesting,
-so how deep a pattern a query accepts depends on the stack of the thread it
-runs on: the budget is taken from that thread's own bounds, and a pattern
-past it raises `StriderError` instead of overflowing. A `threading.Thread`
-with a reduced `stack_size` therefore answers fewer levels than the main
-thread, and the 512-level count bound is the ceiling only where the stack is
-not the tighter of the two.
+Compiling and matching a pattern is native recursion, so a query refuses
+a pattern the thread running it cannot recurse through: one of more than 256
+nodes, counting those nested through `true_branch` / `false_branch`, or one
+nested deeper than the thread's stack allows, raises `StriderError` instead of
+overflowing. A `threading.Thread` with a reduced `stack_size` accepts less
+nesting than the main thread.
 """
 
 from __future__ import annotations
@@ -186,8 +185,9 @@ class Match:
     def asm_fingerprint(self, key: CaptureKey) -> list[int]:
         """Sorted, deduped machine-instruction addresses whose lift or later
         rewrite contributed to the node bound to `key`. `[]` when `key` is
-        unbound or binds a structural kind (`Entry`, `InitialMemory`,
-        `InitialVar`, `Region`, `Phi`, `MemPhi`)."""
+        unbound, and possibly when it binds a structural kind (`Entry`,
+        `InitialMemory`, `InitialVar`, `Region`, `Phi`, `MemPhi`), which can
+        also carry addresses a rewrite moved onto it."""
         ...
     def node(self, key: CaptureKey) -> Node:
         """A `Node` handle on what `key` bound to (`key` is a `Capture` or a
