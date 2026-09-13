@@ -236,6 +236,62 @@ fn guard_propagates_through_shift_left() {
     assert_eq!(iv.count(), 4);
 }
 
+/// PowerPC `slwi` lifts to `And(idx << 2, ~3)`. The mask clears only bits the
+/// shift already zeroed, so the guard on `idx` bounds it exactly as it bounds
+/// the bare shift; a mask that clears a bit the value can hold is not the same
+/// value and takes no such bound.
+#[test]
+fn guard_propagates_through_a_mask_of_known_zero_bits() {
+    let range = |mask: u64| {
+        let mut b = RegisterSet::new().build_fn().unwrap();
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let entry = b.create_region_all().unwrap();
+        let dispatch = b.create_region_all().unwrap();
+        let exit = b.create_region_all().unwrap();
+        b.set_entry_region_all(entry).unwrap();
+        let ty = ValueType::I32;
+
+        b.set_region(entry);
+        let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
+        let idx = b.build_load(dummy_addr, rsleigh::VnSpace::RAM, ty).unwrap();
+        let bound_c = b.build_int_const(4u64, ty).unwrap();
+        let cond = b
+            .build_int_cmp_operation(idx, bound_c, IntCmpOp::Less, ty)
+            .unwrap();
+        b.build_if(cond, dispatch, exit).unwrap();
+
+        b.set_region(dispatch);
+        let two = b.build_int_const(2u64, ty).unwrap();
+        let shifted = b
+            .build_int_binary_operation(idx, two, IntBinaryOp::ShiftLeft, ty)
+            .unwrap();
+        let mask_c = b.build_int_const(mask, ty).unwrap();
+        let masked = b
+            .build_int_binary_operation(shifted, mask_c, IntBinaryOp::And, ty)
+            .unwrap();
+        b.build_return(Some(masked), &[]).unwrap();
+
+        b.set_region(exit);
+        b.build_return(Some(idx), &[]).unwrap();
+
+        b.set_lift_addr(None);
+        let mut f = b.build().unwrap();
+        canonicalize(&mut f);
+        let (dispatch_node, _exit) = if_edge_consumers(&f);
+        let doms = control_dominators(&f);
+        let known = analyze_known_bits(&f).unwrap();
+        let mut ranges = compute_value_ranges(&f, &doms, &known);
+        ranges.range_of(masked, dispatch_node)
+    };
+    let iv = range(0xffff_fffc);
+    assert_eq!((iv.lo, iv.hi, iv.stride), (0, 12, 4));
+    let iv = range(0xffff_fff8);
+    assert!(
+        iv.hi > 12,
+        "a mask clearing bit 2 is not the guarded value, got {iv:?}"
+    );
+}
+
 /// Same through a non-power-of-two `idx * c`: `idx < 4` gives `idx*3  in
 /// {0,3,6,9}`.
 #[test]
