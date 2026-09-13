@@ -17,19 +17,21 @@ def _mov_rax_42_ret():
 
 
 def test_to_text_prints_the_header_and_the_returned_constant():
-    text = _mov_rax_42_ret().to_text()
+    function = _mov_rax_42_ret()
+    text = function.to_text()
     assert text.startswith("endian little\ntracked [")
     assert "= entry\n" in text
-    assert "iconst[0x2a]  @{0x1000}" in text
+    assert "iconst[0x2a]\n" in text
     assert "\nreturn " in text
+    assert "iconst[0x2a]  @{0x1000}" in function.to_text(fingerprints=True)
 
 
 def test_to_text_is_the_same_for_two_analyses_a_clone_and_a_compacted_function():
     elf_path = str(fixture_path("x64", "arithmetic"))
     first = strider.lift.load_elf(elf_path).analyze("add").function
     second = strider.lift.load_elf(elf_path).analyze("add").function
-    text = first.to_text()
-    assert second.to_text() == text
-    assert first.clone().to_text() == text
+    text = first.to_text(fingerprints=True)
+    assert second.to_text(fingerprints=True) == text
+    assert first.clone().to_text(fingerprints=True) == text
     second.compact()
-    assert second.to_text() == text
+    assert second.to_text(fingerprints=True) == text
