@@ -280,8 +280,8 @@ class _IrVisualizer:
         return self._fn.entry_node()
 
     def controls(self) -> list[dict[str, Any]]:
-        """The render knobs, defaults taken from the renderer binding. The
-        page opens on the readable view, so `pretty` starts on."""
+        """The render knobs. The page opens uncapped and on the readable view;
+        only `count_producers` takes the renderer binding's default."""
         return _controls(
             self._fn.neighborhood_dot,
             ["whole", "depth", "hub_cap", "max_nodes", "count_producers", "pretty"],
@@ -338,9 +338,9 @@ class _CfgVisualizer:
         return self._cfg.entry()
 
     def controls(self) -> list[dict[str, Any]]:
-        """The render knobs, defaults taken from the renderer binding. The raw
-        view and the hub cap are `Function` concepts (the raw view is keyed by
-        IR node id), so a query naming either knob is ignored."""
+        """The render knobs, every default the explorer's own. The raw view and
+        the hub cap are `Function` concepts (the raw view is keyed by IR node
+        id), so a query naming either knob is ignored."""
         return _controls(
             self._cfg.neighborhood_dot,
             ["whole", "depth", "max_nodes"],
