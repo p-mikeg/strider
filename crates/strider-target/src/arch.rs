@@ -211,6 +211,13 @@ impl SleighArch {
         self.preset
     }
 
+    /// `true` where a call pushes its return address and a return pops it
+    /// (x86, x86-64), so a callee's return instruction sets the caller's SP.
+    #[must_use]
+    pub fn call_pushes_return_address(&self) -> bool {
+        matches!(self.preset, ArchPreset::X86 | ArchPreset::X86_64)
+    }
+
     /// The context variable holding the address-low-bit ISA mode, or `None` on
     /// arches with no such mode (they decode from the pspec default).
     ///

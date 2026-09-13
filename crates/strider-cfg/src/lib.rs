@@ -1,4 +1,5 @@
 mod builder;
+mod callee;
 mod dot;
 mod indirect_resolver;
 mod neighborhood;
@@ -33,6 +34,7 @@ pub(crate) fn flowing_isa_bit_at<R: rsleigh::MemReader>(
 }
 
 pub use builder::{Builder, FlowContext, FlowVars};
+pub use callee::CalleeEffect;
 pub use indirect_resolver::{ResolvedTarget, ResolvedTargets};
 pub use options::CfgOptions;
 pub use pcode_text::{insn_plain_text, insn_text};
@@ -61,6 +63,7 @@ pub struct Cfg {
     pub(crate) function_isa_bit: Option<bool>,
     pub(crate) flowing_isa_bits: std::collections::BTreeMap<types::PcodeInsnAddr, bool>,
     pub(crate) space_ids: rsleigh::SpaceIds,
+    pub(crate) callee_effects: rustc_hash::FxHashMap<u64, CalleeEffect>,
 }
 
 impl Cfg {
@@ -174,6 +177,12 @@ impl Cfg {
     /// answer.
     pub fn flowing_isa_bit_at_site(&self, site: types::PcodeInsnAddr) -> Option<bool> {
         self.flowing_isa_bits.get(&site).copied()
+    }
+
+    /// What the direct callee at `target` does to its caller beyond a calling
+    /// convention, when its code shows it; see [`CalleeEffect`].
+    pub fn callee_effect(&self, target: u64) -> Option<&CalleeEffect> {
+        self.callee_effects.get(&target)
     }
 }
 

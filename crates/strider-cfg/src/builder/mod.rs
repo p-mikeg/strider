@@ -146,6 +146,9 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// mode, with the region that seated them. The arm goes: a direct edge
     /// switches no mode, so the decode that won is the proved one.
     pub(super) clashing_seeded: Vec<(NodeIndex, PcodeInsnAddr)>,
+    /// Whether [`Self::build`] reads each direct callee's effect; off for the
+    /// callee builds themselves.
+    pub(crate) probe_callees: bool,
 }
 
 impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
@@ -184,6 +187,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             // `with_flow_context`.
             flow_vars: &NO_FLOW_VARS,
             function_mode: FlowContext::default(),
+            probe_callees: true,
         }
     }
 
@@ -792,6 +796,16 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         self.interior_branch_targets.sort_unstable();
         self.interior_branch_targets.dedup();
 
+        let callee_effects = if self.probe_callees && self.arch.call_pushes_return_address() {
+            crate::callee::callee_effects(
+                &self.arch,
+                self.sleigh,
+                self.user_op_names.as_deref(),
+                self.region_graph.node_weights(),
+            )
+        } else {
+            rustc_hash::FxHashMap::default()
+        };
         let function_isa_bit = self.isa_mode_of(&self.function_mode).map(|mode| mode != 0);
         Ok(Cfg {
             region_graph: self.region_graph,
@@ -809,6 +823,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             function_isa_bit,
             flowing_isa_bits: self.flowing_isa_bits,
             space_ids: self.sleigh.space_ids(),
+            callee_effects,
         })
     }
 }

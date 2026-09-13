@@ -534,12 +534,9 @@ const X86_CDECL_BASE: CallingConvention = CallingConvention {
         base_offset: 4,
         increment: 4,
     }),
-    // A callee returning a struct or union also pops the caller's hidden
-    // result pointer (Intel386 psABI), so the caller observes SP advanced by
-    // 8 and `gcc -m32` emits `ret $0x4`.  `ret_stack_pop` is one constant per
-    // convention and the IR carries no callee return class, so that call site
-    // needs a per-address CC override with `ret_stack_pop: 8`; without one
-    // every later SP-relative access there is misattributed by one slot.
+    // The plain `ret`. A callee returning a struct or union also pops the
+    // caller's hidden result pointer (Intel386 psABI, `ret $0x4`), which the
+    // lift reads off a direct callee's code; see `x86_cdecl`.
     ret_stack_pop: 4,
     // `call` pushes the return address.
     link_register_reg_name: None,
@@ -990,7 +987,16 @@ impl CallingConvention {
         powerpc64_elf_v2,
         "Returns the PowerPC 64-bit ELFv2 calling convention."
     );
-    cc_factory!(x86_cdecl, "Returns the x86 cdecl calling convention.");
+    cc_factory!(
+        x86_cdecl,
+        "Returns the x86 cdecl calling convention.\n\n\
+         Its `ret_stack_pop` of 4 is a plain `ret`. A callee that also pops \
+         arguments (a struct return's `ret $4`) is accounted for only at a \
+         direct call whose callee's returns all decode to one pop and no path \
+         leaves it otherwise; an indirect call, a target under a \
+         per-address override, and any other callee keep 4, and SP-relative \
+         accesses after such a call are off by the callee's operand."
+    );
 
     /// Resolves every register name in this convention against `sleigh_regs`.
     ///
