@@ -95,12 +95,12 @@ pub struct AssumptionOptions {
     ///
     /// A shared handle, but not a uniform one: `MemOptions::structural` holds
     /// an EMPTY set alongside the configured analyzer in the same run, and the
-    /// `decompose` memo is keyed by `ValueId` alone.  Both directions of that
-    /// sharing are handled: a heap base the configured walk cached is read back
-    /// under the empty set and dropped by `classify_addr`, leaving the address
-    /// a may-alias `Anchor`, and the empty-set walk withholds the `NotMemory`
-    /// verdict it reaches by not recognising an allocator, so it cannot answer
-    /// the configured one.
+    /// `decompose` memo is keyed by `ValueId` alone.  A heap base the configured
+    /// analyzer cached is read back under the empty set and dropped by
+    /// `classify_addr`, leaving the address a may-alias `Anchor`.  The other
+    /// direction is kept out by order: the empty set commits `NotMemory` for an
+    /// allocator's pointer it does not recognise, so the configured analyzer
+    /// decomposes every address first.
     pub noalias_allocators: std::sync::Arc<rustc_hash::FxHashSet<u64>>,
     /// When the function's frame is provably private (no stack address escapes
     /// to any callee), forward a spill `Load` across a `Call` and step it past
