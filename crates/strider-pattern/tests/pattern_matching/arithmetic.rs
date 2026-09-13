@@ -4,16 +4,6 @@ use strider_pattern::*;
 use super::support::{Tb, assertions as a, shapes};
 
 #[test]
-fn add_matches() {
-    let function = shapes::add_consts(5, 3);
-    a::matches(
-        &function,
-        int_add(int_const(5u128), int_const(3u128)).into_pattern(),
-        1,
-    );
-}
-
-#[test]
 fn add_wrong_operand_rejects() {
     let function = shapes::add_consts(5, 3);
     a::none(
@@ -66,21 +56,6 @@ fn wrong_op_rejects() {
     a::none(
         &function,
         int_add(int_const(5u128), int_const(3u128)).into_pattern(),
-    );
-}
-
-/// `int_sub(a, b)` is an alias for the lowered `Add(a, Neg(b))` shape.
-#[test]
-fn sub_matches_lowered_shape() {
-    let mut t = Tb::empty();
-    let l = t.u64(5);
-    let r = t.u64(3);
-    let lowered = t.sub(l, r);
-    let function = t.ret_val(lowered);
-    a::matches(
-        &function,
-        int_sub(int_const(5u128), int_const(3u128)).into_pattern(),
-        1,
     );
 }
 

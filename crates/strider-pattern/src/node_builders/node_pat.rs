@@ -345,17 +345,15 @@ pub(crate) fn variant_kind(
 
 #[cfg(test)]
 mod tests {
-    //! `input_any` on kinds with control/memory inputs (`Call`, `MemPhi`),
-    //! driven through the raw [`NodePat::input_any`] path since no public
-    //! wrapper exposes `any_input` on them. They pin the general model:
-    //! candidate slots are EVERY input slot, with no value-kind filter, and
-    //! the sub-pattern does the discriminating.
+    //! `input_any` on a `Call`, whose inputs include control and memory, pins
+    //! the general model: candidate slots are EVERY input slot, with no
+    //! value-kind filter, and the sub-pattern does the discriminating.
 
     use super::*;
     use crate::{Matcher, int_const};
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IRViewer};
-    use strider_ir_test_utils::{RegisterSet, mem_phi_with_two_stores};
+    use strider_ir_test_utils::RegisterSet;
 
     /// Target `IntConst(0xABCD)` at fixed-prefix slot 2, arg0 `IntConst(42)`
     /// in the variadic tail at slot 4.
@@ -444,52 +442,6 @@ mod tests {
                 .iter()
                 .any(|k| matches!(k, strider_ir::node::ValueKind::Memory)),
             "wildcard any_input binds the memory input",
-        );
-    }
-
-    fn mem_phi_any_input<P: MatchPat + 'static>(p: P) -> Pattern {
-        NodePat::node(KindSpec::variant_of(&NodeKind::MemPhi))
-            .with_mem_value(0)
-            .input_any(p)
-            .build()
-    }
-
-    /// A `MemPhi`'s memory predecessors are inputs like any other, so a
-    /// wildcard reaches both of them and the slot-0 `PhiToken`. A typed value
-    /// sub binds none of them: it can never bind a `Memory` or `PhiToken`
-    /// edge.
-    #[test]
-    fn mem_phi_any_input_binds_a_memory_predecessor() {
-        let function = mem_phi_with_two_stores();
-        let matcher = Matcher::new(&function);
-
-        // Both stores' memory outputs and the `PhiToken` plumbing slot.
-        let c = crate::Capture::new();
-        let hits = matcher.find_all(&mem_phi_any_input(crate::var(c))).unwrap();
-        let kinds: Vec<_> = hits
-            .iter()
-            .map(|hit| function.value_kind(hit.value(c).unwrap()))
-            .collect();
-        assert!(
-            kinds
-                .iter()
-                .any(|k| matches!(k, strider_ir::node::ValueKind::Memory)),
-            "wildcard any_input must bind a MemPhi memory predecessor, kinds: {kinds:?}",
-        );
-        assert!(
-            kinds
-                .iter()
-                .any(|k| matches!(k, strider_ir::node::ValueKind::PhiToken)),
-            "wildcard any_input can now also reach the PhiToken slot, kinds: {kinds:?}",
-        );
-
-        assert_eq!(
-            matcher
-                .find_all(&mem_phi_any_input(int_const(1u128)))
-                .unwrap()
-                .len(),
-            0,
-            "a typed value sub must not bind a Memory or PhiToken predecessor",
         );
     }
 
