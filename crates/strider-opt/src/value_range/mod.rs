@@ -86,8 +86,9 @@ fn gcd(mut a: u128, mut b: u128) -> u128 {
 /// `lo`/`hi` are unsigned regardless of signedness: guard extraction gates
 /// `Sless` on KnownBits sign-bit = 0, so the interval is non-negative.
 ///
-/// `stride` is a must-congruence from KnownBits, always a sound divisor of the
-/// real spacing.
+/// `stride` is a must-congruence, from KnownBits trailing zeros or carried
+/// through a union, a meet or a constant `Mul` / `ShiftLeft`, and always a
+/// sound divisor of the real spacing.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Interval {
     pub lo: u128,

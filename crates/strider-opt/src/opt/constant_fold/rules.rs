@@ -25,8 +25,8 @@ pub(super) fn build_rules() -> Vec<crate::BoxedRule> {
 ///
 /// These rules move a constant across an operator boundary, which is an
 /// identity only when the whole shape evaluates at one width: reassociating
-/// `Add(Add(x:I8, C1:I8):I8, C2:I16):I16` drops the inner truncation and
-/// changes the value. `validate` rejects such a node, but a rewrite can mint
+/// `Add(Add(x:I8, C1:I8):I8, C2:I16):I16` into one `I16` add loses the inner
+/// add's 8-bit wraparound and changes the value. `validate` rejects such a node, but a rewrite can mint
 /// one mid-pipeline, where nothing has validated yet.
 fn all_same_width(
     edit: &strider_pattern::Matcher,
