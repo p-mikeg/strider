@@ -170,11 +170,12 @@ class Function:
         """Like `to_dot`, but wraps the DOT in a self-contained HTML page.
         Same `pretty` argument, same caveats."""
         ...
-    def to_text(self) -> str:
+    def to_text(self, fingerprints: bool = ...) -> str:
         """The canonical text form: one line per node reachable from entry,
-        `outs = op[payload] ins  @{asm addresses}`, after a header of
-        endianness, tracked varnodes, default convention and argument
-        carriers.
+        `outs = op[payload] ins`, after a header of endianness, tracked
+        varnodes, default convention and argument carriers. `fingerprints=True`
+        ends each line in its sorted asm address set `  @{..}`, which can be
+        many times the rest on a large function.
 
         Values are named `%v0`, `%v1`, ... in print order, and the order
         follows control flow and input slots only, so two builds of the same

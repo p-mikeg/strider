@@ -197,16 +197,30 @@ fn check(net: &Net, expected: Expect) {
     let (forward, fwd_ids) = net.build(false);
     let (mut backward, bwd_ids) = net.build(true);
     assert_ne!(fwd_ids, bwd_ids, "the two builds share arena ids");
-    let text = forward.to_text();
+    let text = forward.to_text(true);
     expected.assert_eq(&text);
-    assert_eq!(backward.to_text(), text, "creation order changed the text");
     assert_eq!(
-        backward.clone().to_text(),
+        backward.to_text(true),
+        text,
+        "creation order changed the text"
+    );
+    assert_eq!(
+        backward.clone().to_text(true),
         text,
         "a clone prints differently"
     );
     backward.compact().unwrap();
-    assert_eq!(backward.to_text(), text, "compact changed the text");
+    assert_eq!(backward.to_text(true), text, "compact changed the text");
+    let bare: String = text
+        .lines()
+        .map(|line| line.split("  @{").next().unwrap_or(line))
+        .flat_map(|line| [line, "\n"])
+        .collect();
+    assert_eq!(
+        forward.to_text(false),
+        bare,
+        "fingerprints are all it drops"
+    );
 }
 
 #[test]
@@ -556,5 +570,5 @@ fn every_node_kind_prints() {
         %v69:i64, %v70:ctrl = call[?]
         %v71:i64, %v72:ctrl = switch[?]
         return %v0, %v1, %v3, %v5, %v7, %v9, %v11, %v13, %v15, %v17, %v19, %v21, %v23, %v25, %v27, %v29, %v31, %v33, %v35, %v37, %v39, %v41, %v43, %v45, %v47, %v49, %v51, %v53, %v55, %v57, %v59, %v61, %v63, %v65, %v67, %v69, %v71
-    "#]].assert_eq(&f.to_text());
+    "#]].assert_eq(&f.to_text(true));
 }
