@@ -93,7 +93,7 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
             .map_err(|e| anyhow!("sleigh register table unavailable: {e}"))?;
         for insn in &node.insns {
             let insn_addr = insn.addr.machine_addr.addr;
-            let pretty = insn.insn.ctx_fmt(self.sleigh, regs);
+            let pretty = crate::insn_text(&insn.insn, &self.cfg.space_ids, self.sleigh, regs);
             write!(&mut label, "\\l{insn_addr:#x}: {pretty}").map_err(anyhow::Error::from)?;
         }
         write!(&mut label, "\\l").map_err(anyhow::Error::from)?;

@@ -101,3 +101,50 @@ fn dot_output_uses_rsleigh_insn_ctx_fmt() {
          the cfg dot dumper should delegate to InsnCtxFmt.\n\nfull dot:\n{s}",
     );
 }
+
+/// `mov [rsp], rax; mov rbx, [rsp]; ret`: one STORE and one LOAD.
+const LOAD_STORE: [u8; 9] = [0x48, 0x89, 0x04, 0x24, 0x48, 0x8b, 0x1c, 0x24, 0xc3];
+
+/// A LOAD / STORE space id is the host address of the engine's `AddrSpace`, so
+/// printed raw it differs between two engines over the same bytes.
+#[test]
+fn dot_output_names_load_store_space_and_is_identical_across_engines() {
+    let (cfg_a, sleigh_a) = build_from_bytes(LOAD_STORE.to_vec(), 0x1000);
+    let (cfg_b, sleigh_b) = build_from_bytes(LOAD_STORE.to_vec(), 0x1000);
+    let a = dot_source(&cfg_a, &sleigh_a);
+    let b = dot_source(&cfg_b, &sleigh_b);
+    assert_eq!(a, b, "two engines rendered the same bytes differently");
+    assert!(a.contains("Store ram, "), "STORE space not named:\n{a}");
+    assert!(a.contains(", ram, "), "LOAD space not named:\n{a}");
+}
+
+/// The explorer renders through a decoder of its own thread, whose `AddrSpace`
+/// addresses are not the ones the CFG's space ids carry.
+#[test]
+fn dot_output_names_load_store_space_through_another_engine() {
+    let (cfg, sleigh) = build_from_bytes(LOAD_STORE.to_vec(), 0x1000);
+    let (_, other) = build_from_bytes(LOAD_STORE.to_vec(), 0x1000);
+    assert_eq!(dot_source(&cfg, &other), dot_source(&cfg, &sleigh));
+}
+
+#[test]
+fn insn_text_spells_load_store_space_without_a_host_address() {
+    let (cfg, sleigh) = build_from_bytes(LOAD_STORE.to_vec(), 0x1000);
+    let regs = sleigh.regs().expect("regs");
+    let insns: Vec<_> = cfg.regions().flat_map(|r| &r.insns).collect();
+    let text = |f: &dyn Fn(&rsleigh::Insn) -> String| {
+        insns
+            .iter()
+            .map(|ri| f(&ri.insn))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let plain = text(&|i| strider_cfg::insn_plain_text(i, cfg.space_ids()).to_string());
+    assert!(plain.contains("Store r, "), "{plain}");
+    let foreign = rsleigh::SpaceIds::default();
+    let foreign_ctx = text(&|i| strider_cfg::insn_text(i, &foreign, &sleigh, &regs).to_string());
+    assert!(
+        foreign_ctx.contains("Store <foreign space>, "),
+        "{foreign_ctx}"
+    );
+}

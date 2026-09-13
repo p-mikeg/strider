@@ -9,6 +9,7 @@ use crate::errors::into_strider_err;
 /// text but still advances by its byte length.
 pub(crate) fn lift_one_text<R: rsleigh::MemReader>(
     sleigh: &mut rsleigh::Sleigh<R>,
+    space_ids: &rsleigh::SpaceIds,
     addr: u64,
 ) -> PyResult<(String, usize)> {
     let lift = sleigh
@@ -17,7 +18,7 @@ pub(crate) fn lift_one_text<R: rsleigh::MemReader>(
     let text = lift
         .insns
         .iter()
-        .map(|insn| insn.to_string())
+        .map(|insn| strider_cfg::insn_plain_text(insn, space_ids).to_string())
         .collect::<Vec<_>>()
         .join("; ");
     Ok((text, lift.machine_insn_len))

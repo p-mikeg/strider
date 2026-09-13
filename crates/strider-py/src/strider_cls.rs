@@ -395,6 +395,8 @@ struct SweepSleigh {
     context_gen: u64,
     entry: u64,
     sleigh: rsleigh::Sleigh<AnyMemReader>,
+    /// `sleigh`'s own, which its LOAD / STORE space ids resolve against.
+    space_ids: rsleigh::SpaceIds,
 }
 
 fn collect_py_deps(mem: &MemInput, rom: Option<&MemInput>) -> Vec<std::sync::Arc<Py<PyAny>>> {
@@ -960,15 +962,19 @@ impl PyLifter {
                          fresh Lifter to sweep from"
                     )));
                 }
+                let sleigh = sleigh.clone();
                 SweepSleigh {
                     context_gen,
                     entry,
-                    sleigh: sleigh.clone(),
+                    space_ids: sleigh.space_ids(),
+                    sleigh,
                 }
             }
         };
         let out = with_pending_control_flow(|| {
-            let sleigh = &mut sweep.sleigh;
+            let SweepSleigh {
+                sleigh, space_ids, ..
+            } = &mut sweep;
             let mut cur = entry;
             let mut decoded: u64 = 0;
             loop {
@@ -978,7 +984,7 @@ impl PyLifter {
                 if decoded.is_multiple_of(1024) {
                     py.check_signals()?;
                 }
-                let (text, len) = crate::pcode::lift_one_text(sleigh, cur)?;
+                let (text, len) = crate::pcode::lift_one_text(sleigh, space_ids, cur)?;
                 if cur == addr {
                     return Ok(text);
                 }
