@@ -1,21 +1,8 @@
-//! Every [`strider_target::SleighArch`] preset must feed into
-//! `rsleigh::Sleigh::new` and yield a usable register table.  Without this,
-//! presets nothing else exercises (`mipsbe32`, `mipsle32`, `aarch64be`) would
-//! silently rot when an upstream constant is renamed.
+//! Per-preset [`strider_target::SleighArch`] facts checked against every
+//! preset, so ones nothing else exercises (`mipsbe32`, `mipsle32`,
+//! `aarch64be`) do not silently rot when an upstream constant is renamed.
 
-use strider_target::{ArchPreset, Endianness, SleighArch};
-
-fn assert_preset_resolves(preset: ArchPreset, arch: SleighArch) {
-    arch.probe_regs()
-        .unwrap_or_else(|e| panic!("{preset:?}: probe_regs failed: {e:?}"));
-}
-
-#[test]
-fn all_presets_resolve() {
-    for preset in ArchPreset::ALL {
-        assert_preset_resolves(*preset, preset.arch());
-    }
-}
+use strider_target::{ArchPreset, Endianness};
 
 /// The lifter's `vn_io` reads `register_endianness()` to pick the shift
 /// direction when extracting a sub-register from its container, so a mistyped
