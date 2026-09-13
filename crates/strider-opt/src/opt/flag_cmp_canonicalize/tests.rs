@@ -58,8 +58,8 @@ fn ppc_cr_bit_test_canonicalizes_to_intcmp() -> Result<()> {
     )?;
 
     let if_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .next()
         .expect("If node");
     // Bit 3 (LT) of the CR pack is `Less(idx, 8)`.
     assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, idx, eight);
@@ -124,8 +124,8 @@ fn ppc_cr_bit_test_canonicalizes_through_a_ne_zero_branch() -> Result<()> {
     )?;
 
     let if_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .next()
         .expect("If node");
     // Bit 2 (GT) of the CR pack is `Less(8, idx)`.
     assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, eight, idx);
@@ -192,8 +192,8 @@ fn ppc_cr_bit_canonicalize_preserves_pack_fingerprints() -> Result<()> {
 
     // The bit-3 `Less(idx, 8)` is the only reachable `Less` once the pack is culled.
     let cmp_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::IntCmpOp(IntCmpOp::Less)))
+        .walk_kind(|k| matches!(k, NodeKind::IntCmpOp(IntCmpOp::Less)))
+        .next()
         .expect("the canonicalized comparison survives");
     let fp = fg.side_tables().asm_fingerprint(cmp_node);
     assert!(
@@ -255,8 +255,8 @@ fn ppc_cr_bit_test_selects_middle_eq_bit() -> Result<()> {
     )?;
 
     let if_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .next()
         .expect("If node");
     assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Equal, idx, eight);
     Ok(())
@@ -1138,8 +1138,8 @@ fn flag_cmp_offset_folded_ls_tree_rejects_wrong_offset() -> Result<()> {
     // `Equal(Add(b,C2),0)` is still reshaped to `Equal(b,-C2)` by the
     // compare-with-const rule, which is value-preserving and not the LS fold.
     let if_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .next()
         .expect("If node");
     let cond_node = fg.producer(fg.if_cond(if_node));
     assert!(
@@ -1188,8 +1188,8 @@ fn eq_add_const_solves_for_x() -> Result<()> {
     )?;
 
     let if_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .next()
         .expect("If node");
     let cond = fg.if_cond(if_node);
     let cond_node = fg.producer(cond);
@@ -1249,8 +1249,8 @@ fn eq_xor_const_solves_for_x() -> Result<()> {
     )?;
 
     let if_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .next()
         .expect("If");
     let cond_node = fg.producer(fg.if_cond(if_node));
     assert!(matches!(
@@ -1299,8 +1299,8 @@ fn eq_neg_solves_for_x() -> Result<()> {
     )?;
 
     let if_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .next()
         .expect("If");
     let cond_node = fg.producer(fg.if_cond(if_node));
     let inputs: Vec<_> = fg.node_inputs(cond_node).into_iter().collect();
@@ -1349,8 +1349,8 @@ fn sless_of_left_shift_is_a_sign_bit_test() -> Result<()> {
     )?;
 
     let if_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .next()
         .expect("If");
     let xor = fg.producer(fg.if_cond(if_node));
     assert!(
@@ -1426,8 +1426,8 @@ fn sless_of_oversized_left_shift_is_not_a_sign_bit_test() -> Result<()> {
         &mut crate::OptCtx::new(None),
     )?;
     let if_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .next()
         .expect("If");
     assert!(
         matches!(
@@ -1497,8 +1497,8 @@ fn wide_const_rewrites_skip_past_128_bits() -> Result<()> {
             "shape {i}: I256 compare must not rewrite"
         );
         let if_node = fg
-            .walk()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+            .walk_kind(|k| matches!(k, NodeKind::If))
+            .next()
             .expect("If");
         let after = fg.producer(fg.if_cond(if_node));
         assert_eq!(after, before, "shape {i}: condition node must survive");
@@ -1588,8 +1588,8 @@ fn cr_bit_test_declines_a_shift_past_the_width() -> Result<()> {
     )?;
 
     let if_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .next()
         .expect("If node");
     let kind = *fg.node_kind(fg.producer(fg.if_cond(if_node)));
     assert!(
@@ -1644,8 +1644,8 @@ fn cr_bit_test_declines_a_ne_zero_pack_carrying_a_higher_term() -> Result<()> {
     )?;
 
     let if_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .next()
         .expect("If node");
     let kind = *fg.node_kind(fg.producer(fg.if_cond(if_node)));
     assert!(
