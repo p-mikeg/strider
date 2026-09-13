@@ -1,5 +1,5 @@
 use super::*;
-use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use crate::node::{InitialVnId, IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
 /// Distinct from any real machine address.
 const SENTINEL: u64 = 0xDEAD_BEEF_0000_0001;
@@ -239,6 +239,75 @@ fn validate_flags_stale_value_vn_entry() {
             ValidationError::StaleValueVn { value, .. } if *value == kv
         )
     });
+}
+
+/// Returns `(InitialVar node, its value)` for a `Return` fed that value.
+fn returned_initial_var(s: &mut Spine, id: InitialVnId, ty: ValueType) -> (NodeId, ValueId) {
+    let iv =
+        s.f.graph_mut()
+            .create_node(NodeKind::InitialVar(id), [], [ValueKind::Typed(ty)]);
+    let [value] = s.f.node_outputs_exact::<1>(iv).unwrap();
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, value], []);
+    stamp(&mut s.f, ret);
+    (iv, value)
+}
+
+#[test]
+fn validate_flags_initial_var_with_unminted_varnode_id() {
+    let mut s = spine();
+    let id = InitialVnId::from_index(7);
+    let (iv, _) = returned_initial_var(&mut s, id, ValueType::I64);
+
+    assert_validation_err(&s.f, |e| {
+        matches!(e, ValidationError::DanglingInitialVnId { node, id: found }
+            if *node == iv && *found == id)
+    });
+}
+
+#[test]
+fn validate_flags_initial_var_typed_against_its_varnode_size() {
+    let mut s = spine();
+    let vn = test_vn();
+    s.f.set_all_vns(vec![vn]);
+    let id = s.f.vn_id_of(&vn).expect("vn is tracked");
+    let (iv, _) = returned_initial_var(&mut s, id, ValueType::I8);
+
+    assert_validation_err(&s.f, |e| {
+        matches!(e, ValidationError::InitialVarTypeMismatch { node, ty: ValueType::I8, .. }
+            if *node == iv)
+    });
+}
+
+#[test]
+fn validate_accepts_initial_var_typed_by_its_varnode_size() {
+    let mut s = spine();
+    let vn = test_vn();
+    s.f.set_all_vns(vec![vn]);
+    let id = s.f.vn_id_of(&vn).expect("vn is tracked");
+    returned_initial_var(&mut s, id, ValueType::I32);
+
+    validate(&s.f).expect("a 4-byte varnode read as I32 validates");
+}
+
+/// Side-table entries keyed by ids the interner no longer holds are reported,
+/// not resolved.
+#[test]
+fn validate_reports_side_table_entries_keyed_by_unminted_varnode_ids() {
+    let mut s = spine();
+    let vn = test_vn();
+    s.f.set_all_vns(vec![vn]);
+    let id = s.f.vn_id_of(&vn).expect("vn is tracked");
+    let (iv, value) = returned_initial_var(&mut s, id, ValueType::I32);
+    s.f.side_tables_mut().initial_var_index.insert(id, iv);
+    s.f.set_vn_for_value(value, vn);
+    s.f.set_all_vns(Vec::new());
+
+    assert_validation_err(
+        &s.f,
+        |e| matches!(e, ValidationError::DanglingInitialVnId { node, .. } if *node == iv),
+    );
 }
 
 #[test]
