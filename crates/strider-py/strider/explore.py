@@ -827,7 +827,8 @@ def visualize(
 
     The neighborhood knobs (depth, hub cap, max nodes) open uncapped, and are
     set from the page; 0 means no limit on each. `depth=None` keeps that, while
-    a number seeds the toolbar's depth control instead.
+    a number seeds the toolbar's depth control instead. A negative `depth`
+    raises `ValueError`.
 
     Blocks until interrupted, and returns the port it had bound.
     `background=True` serves on a thread instead and returns the port straight
@@ -843,6 +844,9 @@ def visualize(
     `shutdown(port)` joins the serving thread as well as stopping the server: a
     thread still parked in the serve loop at interpreter exit aborts the
     process, which is also why the thread is not a daemon."""
+    if depth is not None and depth < 0:
+        # The control clamps to its min of 0, and 0 is the uncapped sentinel.
+        raise ValueError(f"depth must be >= 0, got {depth}")
     tn = type(target).__name__
     if tn == "Function":
         vis: _Visualizer = _IrVisualizer(cast("Function", target), whole)
