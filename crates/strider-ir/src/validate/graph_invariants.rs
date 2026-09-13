@@ -605,8 +605,8 @@ pub(super) fn check_function_invariants_terminator_reachable(
 
 /// Every live `Store` is on a memory chain that reaches a sink: the memory
 /// input of a live `Return`, `IndirectBranch`, `Unreachable`, `Call` or
-/// `CallOther`, or a live-edge arm of a live `MemPhi`. The chain steps back
-/// through `Store`, `MemPhi` arms and `Call` / `CallOther` memory inputs. A
+/// `CallOther`. The chain steps back through `Store`, the live-edge arms of a
+/// `MemPhi` and `Call` / `CallOther` memory inputs. A
 /// `Load` is no sink, so a write only a `Load` reads, while the chain carries
 /// on from the `Store`'s own input token, is lost. A token may fork: each arm
 /// of a branch continues the same chain.
@@ -628,7 +628,6 @@ pub(super) fn check_function_invariants_memory_linearity(
             | NodeKind::Unreachable
             | NodeKind::Call { .. }
             | NodeKind::CallOther { .. } => stack.extend(memory_input(node)),
-            NodeKind::MemPhi => stack.extend(live_arms(graph, &ctx.domtree, node)),
             _ => {}
         }
     }
