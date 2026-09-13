@@ -3802,6 +3802,7 @@ impl PyJoinPredicate {
 
     /// Override to return whether the joined match survives. The base raises
     /// `NotImplementedError`.
+    // The raising base reads no parameter; the names are the subclass keywords.
     #[allow(unused_variables)]
     fn constraint(&self, m: &Bound<'_, PyAny>) -> PyResult<bool> {
         Err(pyo3::exceptions::PyNotImplementedError::new_err(
@@ -4424,9 +4425,8 @@ pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-/// `parent` must be the `pattern` module so the `sys.modules` key is the full
-/// dotted path. Without that, `from strider.pattern import constraints` fails
-/// even though attribute access works.
+/// `parent` must be the `pattern` module, so `strider.pattern.constraints`
+/// resolves by attribute.
 fn register_constraints(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new_bound(py, "constraints")?;
     m.add_class::<PyJoinConstraint>()?;
