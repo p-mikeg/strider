@@ -86,16 +86,18 @@ merge. So does an intervening call, unless its convention declares
 `__fentry__`.
 
 Each load walks the chain from its own cursor and the memo is keyed on the
-probed location, so loads at different offsets share nothing, but that does not
-compound: the per-function address-decomposition memos, and `narrow_load_to`
-shortening each load's memory edge onto its clobber for good, hold the marginal
-cost of one more load flat as the chain grows. Measured in `--release` on the
-workspace's own bench shape, N SP-relative stores at distinct offsets read back
-by N loads (`crates/strider-orchestrator/benches/scaling.rs`), the pass grows
-about 2.0x per doubling of N, the same as every other pass, and costs roughly a
-27th of what `ConstantFold` costs on that same shape. That is synthetic IR
-timed on one machine, but the exponent holds across three shape variants and a
-512x range of N.
+probed location, so loads at different offsets share nothing: the first sweep
+costs loads times memory-chain length. Later sweeps are near-free, because
+`narrow_load_to` has shortened every load's memory edge onto its clobber for
+good. What bounds the first one in practice is that a `Call` ends the chain, so
+optimised input never builds a long one; a call-free run of frame traffic does,
+which is `-O0` output, large leaf functions and big register-spill regions.
+Measured in `--release` on the workspace's own bench shape, N SP-relative
+stores at distinct offsets read back by N loads
+(`crates/strider-orchestrator/benches/scaling.rs`), the first sweep grows 4x
+per doubling of N: about 85 ms at N = 1000 and 1.4 s at N = 4000, where
+`ConstantFold` takes 4 ms and 21 ms on the same shape and a second
+`LoadForward` sweep under 1 ms. That is synthetic IR timed on one machine.
 
 With `AssumptionOptions(escape_analysis=True)` it also forwards across a call,
 when no stack address escapes to the callee and the slot is not one the call
