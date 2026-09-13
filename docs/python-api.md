@@ -483,6 +483,22 @@ is the **ordered** variant: it cuts to the first matching arm, so a permissive
 leading arm shadows the rest; list most-specific first. Any pattern kind is a valid arm, including the node-rooted control
 builders (`ret` / `if_else` / `switch` / `indirect_branch` / `unreachable`).
 
+### `field` / `code_ptr`, the two canonical-form alternations
+
+```python
+f = p.field(p.function_arg(0))              # base+K, or bare base at offset 0
+function.find_all(f.load())                  # f.store(data) for a write
+f.offset(hit)                                # 0 for the bare arm
+p.field(p.function_arg(0), offset=8)         # only that offset
+p.call().target(p.code_ptr(p.function_arg(0)))   # f, or f & -2
+```
+
+`ConstantFold` rewrites `base + 0` to `base`, so a field at offset 0 has no
+`Add`; `field` matches both forms and `offset(m)` decodes the bare one.
+`offset` takes an `int`, a `Capture` or a capture name. `code_ptr` accepts
+exactly `-2`, the ISA-mode mask strider strips when resolving a branch; any
+other constant is real arithmetic on the target.
+
 ### Captures
 
 ```python
@@ -623,6 +639,17 @@ k.all_of([k.dominates(t, c), k.dominates(f, c)])
 branch-edge captures; it is not "reachable from", so no single incoming edge
 dominates a merge/loop-header phi. `phi_input_from_edge(phi, edge, value)` says
 "the value `phi` merges from that branch edge is `value`".
+
+`phi().input_from(edge, value)` and `mem_phi().input_from(edge, value)` build
+that constraint for you: a pattern `value` becomes a phi input under a fresh
+capture, and a `Capture` names a value another pattern in the list binds (a
+`store().capture(s)` feeding a `mem_phi`). The phi's `constraints()` is what to
+pass:
+
+```python
+merged = p.phi().input_from(t, p.int_const())
+function.find_all([guard, merged], constraints=merged.constraints())
+```
 
 ### `JoinPredicate`, your own logic
 

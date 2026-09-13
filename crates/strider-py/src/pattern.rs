@@ -2194,6 +2194,8 @@ pub fn initial_var_for(vn: crate::sleigh::PyVn) -> PyPat {
 /// ```python
 /// offset = h.uint(off) if h.has(off) else 0
 /// ```
+///
+/// `field` is that alternation for a struct offset.
 #[pyfunction]
 pub fn one_of(patterns: Vec<Py<PyAny>>) -> PyPat {
     PyPat::from_repr(PatRepr::OneOf(patterns, false))
@@ -2428,6 +2430,8 @@ struct CommonState {
     /// Operands from `.any_input(p)`, one existential slot each.
     any_inputs: Vec<Py<PyAny>>,
     outputs: Vec<OutputSpecPy>,
+    /// `(edge, value)` from a phi's `.input_from`.
+    edge_links: Vec<(Capture, Capture)>,
 }
 
 /// The one aspect a single `.output(slot)` / `.any_output()` call commits.
@@ -3948,6 +3952,68 @@ node_builder! {
     ],
     ctor: mem_phi = "Start a `MemPhi` pattern builder.",
 }
+
+/// `.input_from` / `.constraints` on the two phi builders.
+macro_rules! phi_edge_links {
+    ($ty:ty) => {
+        #[pymethods]
+        impl $ty {
+            /// Merge `value` in from the branch edge `edge` binds (an
+            /// `if_else` `capture_true` / `capture_false`). A pattern `value`
+            /// becomes an input; a `Capture` names one another pattern in the
+            /// query binds. Pass `constraints()` to the query.
+            fn input_from<'py>(
+                slf: PyRef<'py, Self>,
+                edge: crate::matcher::CaptureKey<'_>,
+                value: &Bound<'py, PyAny>,
+            ) -> PyResult<PyRef<'py, Self>> {
+                let py = slf.py();
+                let edge = edge.resolve()?;
+                let value_cap = match value.extract::<crate::matcher::CaptureKey<'_>>() {
+                    Ok(key) => key.resolve()?,
+                    Err(_) => {
+                        let cap = Capture::new();
+                        let arm = Bound::new(py, one_of(vec![value.clone().unbind()]))?;
+                        let captured = derive(&arm, |inner| PatRepr::Captured(inner, cap))?;
+                        slf.common
+                            .borrow_mut()
+                            .any_inputs
+                            .push(Py::new(py, captured)?.into_any());
+                        cap
+                    }
+                };
+                let mut common = slf.common.borrow_mut();
+                common.capture.get_or_insert_with(Capture::new);
+                common.edge_links.push((edge, value_cap));
+                drop(common);
+                Ok(slf)
+            }
+
+            /// One `phi_input_from_edge` per `input_from`, on this phi's
+            /// current capture.
+            fn constraints(&self) -> Vec<PyJoinConstraint> {
+                let common = self.common.borrow();
+                let Some(phi) = common.capture else {
+                    return Vec::new();
+                };
+                common
+                    .edge_links
+                    .iter()
+                    .map(|&(edge, value)| {
+                        PyJoinConstraint::leaf(JoinConstraint::PhiInputFromEdge {
+                            phi,
+                            edge,
+                            value,
+                        })
+                    })
+                    .collect()
+            }
+        }
+    };
+}
+
+phi_edge_links!(PyPhiPat);
+phi_edge_links!(PyMemPhiPat);
 
 node_builder! {
     ty: PyEntryPat,
