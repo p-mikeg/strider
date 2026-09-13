@@ -1,23 +1,28 @@
 //! ELF relocation application, as a per-region patch list applied when a read
 //! crosses a site.
 //!
-//! An image that has not been through its linker, or through `ld.so`, leaves
-//! every cross-reference field at zero. An ET_REL's `call rel32` sits as
-//! `e8 00 00 00 00` under an `R_X86_64_PLT32` the linker would resolve; an
-//! ET_DYN's dispatch-table slots and GOT/PLT entries sit at zero under
-//! `.rela.dyn` / `.rela.plt` until `ld.so` fills them. Unpatched, the analyser
-//! follows rel32 = 0 as control flow into the next instruction (call site + 5)
-//! and reads every table slot as a null pointer. This replicates both
-//! statically.
+//! An image that has not been through its linker, or through `ld.so`, holds
+//! only an addend, or nothing, in every cross-reference field. An ET_REL's
+//! `call rel32` sits as `e8 fc ff ff ff` or `e8 00 00 00 00` under an
+//! `R_X86_64_PLT32` the linker would resolve, and an AArch64 `bl` as a branch
+//! to itself; an ET_DYN's dispatch-table slots and GOT/PLT entries hold what
+//! `ld` left under `.rela.dyn` / `.rela.plt` until `ld.so` fills them. Every
+//! one of those decodes as a plausible reference into the image itself. This
+//! applies the relocations statically.
 //!
-//! Unrecognised relocation kinds and unknown architectures are skipped
-//! silently rather than mis-patched.
+//! A relocation whose value is not computed is not left in place: outside a
+//! writable mapping its field becomes a hole no read serves, see
+//! [`apply_elf_relocations_with`].
 
 use object::{
     Architecture as A, Object, ObjectSection, ObjectSymbol, ObjectSymbolTable, RelocationFlags,
     RelocationKind, RelocationTarget,
 };
 
+use std::collections::BTreeMap;
+
+use super::encodings::{Field, Half, Isa, Kind, Value, classify, encode, implicit_addend, sext};
+use super::sections::AddressRanges;
 use crate::{MemRegion, Patch, RegionIndex, Result};
 
 /// Adds a possibly-negative relocation `addend` to a base address.
@@ -99,9 +104,7 @@ fn reloc_addend(
 ///   `R_386_PC32`). Symbol-targeted.
 /// * `PltRelative`, valued the same as `Relative` (no PLT is materialised, so
 ///   the symbol's own address is used): the 32-bit `R_X86_64_PLT32` /
-///   `R_386_PLT32` apply. `R_AARCH64_CALL26` also arrives as `PltRelative`, but
-///   its 26-bit field fails the byte-width gate and is left unpatched
-///   (branch-immediate encodings are not modelled).
+///   `R_386_PLT32` apply.
 ///
 /// Via raw `r_type`, which `object` reports as `RelocationKind::Unknown`:
 /// * `R_*_RELATIVE` / `R_*_IRELATIVE`: `image_base + addend`, image base
@@ -113,45 +116,42 @@ fn reloc_addend(
 ///   `S + A - P`. `object` surfaces all three as `Unknown` with `size = 0`, so
 ///   they dispatch on the raw `r_type` like the GOT/PLT slots; a PowerPC
 ///   `.rodata` switch table is built out of exactly these.
+/// * The instruction, GOT and TOC relocations [`super::encodings::classify`]
+///   lists. A GOT reference resolves through a synthetic GOT slot holding the
+///   symbol's address, which exists only for an ET_REL.
 ///
-/// # Not supported
+/// On an ET_REL an undefined or `SHN_COMMON` symbol resolves to its
+/// [`ElfSectionLayout::extern_address`], outside every mapping.
 ///
-/// * `Got` / `GotRelative` / `GotBaseRelative` / `GotBaseOffset`: would need a
-///   synthesised GOT section, which is never allocated.
-/// * Encodings that don't fit a plain low-bytes-at-offset field: Thumb
-///   branches, AArch64 ADR_PREL_PG_HI21 + ADD_ABS_LO12_NC pairs, MIPS HI16/LO16
-///   splits, PPC TOC relocations. Most arrive as `Unknown` with `size = 0`;
-///   the rest carry a byte-multiple size with a non-plain
-///   [`object::RelocationEncoding`] (s390x's `*DBL` halved displacements,
-///   `R_LARCH_B16`, the SHARC instruction fields) and are rejected on that.
-/// * Every mips64el `SHT_REL` type but `R_MIPS_REL32` / `R_MIPS_GLOB_DAT` /
-///   `R_MIPS_JUMP_SLOT`: `object` transposes that table's `r_info`, so the
-///   reported kind and size describe the symbol index instead of the type.
+/// # Not computed
 ///
-/// Everything unsupported is skipped silently, leaving the site at its
-/// file-initial bytes.
+/// A relocation whose value is not computed (a kind not listed above, a symbol
+/// with no address, a value its field cannot hold, a branch needing a veneer)
+/// leaves no plausible bytes behind: unless the field is in a writable mapping,
+/// which nothing folds, it becomes a hole no read serves, so decoding or
+/// folding through it fails.
 ///
 /// Any patch list the regions already carry is replaced, so re-applying over
 /// one region set is idempotent.
 ///
-/// `layout` must be the one built for `obj`, and `loaded_with` the filter the
-/// regions were loaded with.
+/// `layout` must be the one built for `obj`, `loaded_with` the filter the
+/// regions were loaded with and `writable` the image's writable mappings.
+///
+/// Returns the GOT slots the relocations referenced, as regions of their own.
 ///
 /// # Errors
 ///
 /// When a loaded section's bytes cannot be read, or when a site lands in more
 /// overlapping regions than the [`MAX_PATCH_AMPLIFICATION`] budget allows: the
 /// patch lists are the memory an image chooses the size of, so exhausting the
-/// budget fails the load rather than serving some sites unpatched. A
-/// relocation whose target symbol or section index does not resolve is NOT an
-/// error (neither a legitimate `STN_UNDEF` for an external lib nor a corrupt
-/// index); it is skipped, leaving the site at its file-initial bytes.
+/// budget fails the load rather than serving some sites unpatched.
 pub(crate) fn apply_elf_relocations_with(
     regions: &mut [MemRegion],
     obj: &object::File<'_>,
     loaded_with: super::sections::LoadFilter,
     layout: &super::sections::ElfSectionLayout,
-) -> Result<()> {
+    writable: &AddressRanges,
+) -> Result<Vec<MemRegion>> {
     let owners = super::sections::loaded_section_indices(obj, layout, loaded_with)?;
     // One lookup per relocation instead of a scan of every region; an ET_REL
     // carries one region per SHF_ALLOC section.
@@ -164,24 +164,47 @@ pub(crate) fn apply_elf_relocations_with(
         records: 0,
         scratch: Vec::new(),
     };
-    for_each_reloc_site(obj, &owners, layout, |site_addr, avail, reloc| {
+    let mut ctx = Ctx {
+        obj,
+        layout,
+        regions,
+        region_index: &region_index,
+        writable,
+        endian_le: matches!(obj.endianness(), object::Endianness::Little),
+        opd_entries: opd_entries(obj, layout),
+        got: BTreeMap::new(),
+    };
+    for_each_reloc_site(obj, &owners, layout, |site_addr, avail, reloc, pair| {
         apply_one_relocation(
-            obj,
-            layout,
-            regions,
-            &region_index,
+            &mut ctx,
             &mut sink,
             RelocSite {
                 addr: site_addr,
                 avail,
             },
             reloc,
+            pair,
         )
     })?;
+    let got = got_regions(&ctx.got, ctx.endian_le)?;
     for (region, patches) in regions.iter_mut().zip(patches) {
         region.set_patches(patches);
     }
-    Ok(())
+    Ok(got)
+}
+
+/// What every relocation in one walk reads, and the GOT slots it fills.
+struct Ctx<'a, 'd> {
+    obj: &'a object::File<'d>,
+    layout: &'a super::sections::ElfSectionLayout,
+    regions: &'a [MemRegion],
+    region_index: &'a RegionIndex,
+    writable: &'a AddressRanges,
+    endian_le: bool,
+    /// ELFv1 descriptor address -> the code entry its first word relocates to.
+    opd_entries: BTreeMap<u64, u64>,
+    /// GOT slot address -> (the symbol address it holds, slot width).
+    got: BTreeMap<u64, (u64, usize)>,
 }
 
 /// A relocation site: where the field lands, and how many bytes of the section
@@ -192,11 +215,15 @@ struct RelocSite {
     avail: u64,
 }
 
-/// Invokes `f(site_addr, avail, reloc)` per relocation site, `site_addr` being
-/// the **absolute** virtual address in the coordinate system the loaded regions
-/// live in and `avail` the bytes left of the section owning the site
+/// Invokes `f(site_addr, avail, reloc, pair)` per relocation site, `site_addr`
+/// being the **absolute** virtual address in the coordinate system the loaded
+/// regions live in and `avail` the bytes left of the section owning the site
 /// (`u64::MAX` for a dynamic site, whose owner is a segment and which therefore
 /// has no section end to overrun).
+///
+/// `pair` is, for an `SHT_REL` `R_MIPS_HI16`, the site of the `R_MIPS_LO16`
+/// against the same symbol that follows it, whose field holds the low half of
+/// the addend.
 ///
 /// Kind dispatch:
 ///
@@ -215,17 +242,21 @@ fn for_each_reloc_site<F>(
     mut f: F,
 ) -> Result<()>
 where
-    F: FnMut(u64, u64, &object::Relocation) -> Result<()>,
+    F: FnMut(u64, u64, &object::Relocation, Option<u64>) -> Result<()>,
 {
     match obj.kind() {
         object::ObjectKind::Relocatable => {
+            let arch = obj.architecture();
+            let endian_le = matches!(obj.endianness(), object::Endianness::Little);
             for sec in obj.sections() {
                 if !owners.contains(&sec.index().0) {
                     continue;
                 }
                 let sec_base = layout.section_base(&sec);
                 let sec_size = sec.size();
-                for (offset, reloc) in sec.relocations() {
+                let relocs: Vec<(u64, object::Relocation)> = sec.relocations().collect();
+                let pairs = mips_hi16_pairs(&relocs, arch, endian_le);
+                for (i, (offset, reloc)) in relocs.iter().enumerate() {
                     // The gABI puts `r_offset` inside the section `sh_info`
                     // names.  A malformed object can point it past the end,
                     // where the site still lands in SOME loaded region and
@@ -233,8 +264,13 @@ where
                     // `reloc.size()` is 0 for every type dispatched on the raw
                     // `r_type`, so the budget travels to where the width is
                     // actually chosen instead of being checked here.
-                    let avail = sec_size.saturating_sub(offset);
-                    f(sec_base.wrapping_add(offset), avail, &reloc)?;
+                    let avail = sec_size.saturating_sub(*offset);
+                    let pair = pairs
+                        .get(i)
+                        .copied()
+                        .flatten()
+                        .map(|lo| sec_base.wrapping_add(lo));
+                    f(sec_base.wrapping_add(*offset), avail, reloc, pair)?;
                 }
             }
         }
@@ -243,32 +279,119 @@ where
                 return Ok(());
             };
             for (site_addr, reloc) in dyn_relocs {
-                f(site_addr, u64::MAX, &reloc)?;
+                f(site_addr, u64::MAX, &reloc, None)?;
             }
         }
     }
     Ok(())
 }
 
-/// Applies one relocation entry at the already-absolute `site_addr`.
+/// For each `SHT_REL` `R_MIPS_HI16` in `relocs`, the offset of the next
+/// `R_MIPS_LO16` against the same symbol; empty unless there are any.
+fn mips_hi16_pairs(
+    relocs: &[(u64, object::Relocation)],
+    arch: object::Architecture,
+    endian_le: bool,
+) -> Vec<Option<u64>> {
+    if !matches!(arch, A::Mips | A::Mips64) {
+        return Vec::new();
+    }
+    let mut pairs = vec![None; relocs.len()];
+    let mut next_lo: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
+    for (i, (offset, reloc)) in relocs.iter().enumerate().rev() {
+        if !reloc.has_implicit_addend() {
+            continue;
+        }
+        let Some((r_sym, r_type, _)) = mips_reloc_parts(reloc, arch, endian_le) else {
+            continue;
+        };
+        if r_type == object::elf::R_MIPS_LO16 {
+            next_lo.insert(r_sym, *offset);
+        } else if r_type == object::elf::R_MIPS_HI16 {
+            pairs[i] = next_lo.get(&r_sym).copied();
+        }
+    }
+    pairs
+}
+
+/// Where each ppc64 ELFv1 `.opd` descriptor of an ET_REL enters its code: the
+/// `S + A` of the `R_PPC64_ADDR64` on the descriptor's first word.
+fn opd_entries(
+    obj: &object::File<'_>,
+    layout: &super::sections::ElfSectionLayout,
+) -> BTreeMap<u64, u64> {
+    let mut out = BTreeMap::new();
+    if obj.architecture() != A::PowerPc64 || obj.kind() != object::ObjectKind::Relocatable {
+        return out;
+    }
+    let endian_le = matches!(obj.endianness(), object::Endianness::Little);
+    let Some(opd) = obj.section_by_name(".opd") else {
+        return out;
+    };
+    let base = layout.section_base(&opd);
+    for (offset, reloc) in opd.relocations() {
+        if reloc.flags()
+            != (RelocationFlags::Elf {
+                r_type: object::elf::R_PPC64_ADDR64,
+            })
+        {
+            continue;
+        }
+        if let Some(target) = resolve_symbol_target(obj, layout, &reloc, endian_le) {
+            out.insert(
+                base.wrapping_add(offset),
+                apply_addend(target.addr, reloc.addend()),
+            );
+        }
+    }
+    out
+}
+
+/// The referenced GOT slots, adjacent ones sharing a region.
+fn got_regions(got: &BTreeMap<u64, (u64, usize)>, endian_le: bool) -> Result<Vec<MemRegion>> {
+    let mut out = Vec::new();
+    let mut run: Option<(u64, Vec<u8>)> = None;
+    for (&addr, &(value, width)) in got {
+        let bytes = if endian_le {
+            value.to_le_bytes()[..width].to_vec()
+        } else {
+            value.to_be_bytes()[8 - width..].to_vec()
+        };
+        match &mut run {
+            Some((start, data)) if *start + data.len() as u64 == addr => data.extend(bytes),
+            _ => {
+                if let Some((start, data)) = run.take() {
+                    out.push(MemRegion::new(start, data)?);
+                }
+                run = Some((addr, bytes));
+            }
+        }
+    }
+    if let Some((start, data)) = run {
+        out.push(MemRegion::new(start, data)?);
+    }
+    Ok(out)
+}
+
+/// Applies one relocation entry at the already-absolute `site.addr`.
 ///
-/// Anything that can't be resolved or patched (weak externs, malformed targets,
-/// unsupported kinds, sites with no backing region) is silently skipped.
+/// Sites with no backing region are skipped; a relocation whose value is not
+/// computed becomes a hole, see [`apply_elf_relocations_with`].
 ///
 /// # Errors
 ///
 /// When the patches would exceed the sink's budget.
 fn apply_one_relocation(
-    obj: &object::File<'_>,
-    layout: &super::sections::ElfSectionLayout,
-    regions: &[MemRegion],
-    region_index: &RegionIndex,
+    ctx: &mut Ctx<'_, '_>,
     sink: &mut PatchSink<'_>,
     site: RelocSite,
     reloc: &object::Relocation,
+    pair: Option<u64>,
 ) -> Result<()> {
+    let obj = ctx.obj;
     let site_addr = site.addr;
-    let endian_le = matches!(obj.endianness(), object::Endianness::Little);
+    let endian_le = ctx.endian_le;
+    let arch = obj.architecture();
 
     // Image-relative relocations store `image_base + addend` with no symbol or
     // section reference, so `object` surfaces them as an `Absolute` target with
@@ -278,8 +401,8 @@ fn apply_one_relocation(
     // its unrelocated file bytes wherever the slot IS mapped; under the
     // read-only filters those slots sit in the RW `PT_LOAD` and are not mapped
     // at all, since `PT_GNU_RELRO` is not modelled.
-    if let Some((value, size_bytes)) = image_relative_reloc(reloc, obj.architecture(), endian_le) {
-        let site_regions = sink.covering(region_index, regions, site, site_addr, size_bytes)?;
+    if let Some((value, size_bytes)) = image_relative_reloc(reloc, arch, endian_le) {
+        let site_regions = sink.covering(ctx, site, site_addr, size_bytes)?;
         sink.record(site_regions, site_addr, value, size_bytes, endian_le);
         return Ok(());
     }
@@ -288,30 +411,28 @@ fn apply_one_relocation(
     // which the general `match reloc.kind()` below would mis-bucket as
     // unsupported. Each yields `(size_bytes, pc_relative,
     // read_implicit_addend)`; first match wins.
-    let word_sized = got_or_plt_slot_reloc_size(reloc, obj.architecture(), endian_le)
+    let word_sized = got_or_plt_slot_reloc_size(reloc, arch, endian_le)
         // GOT/PLT slot, `S`. Its own field is the PLT push offset, not an
         // addend, so it is never read back; `reloc.addend()` is the RELA one,
         // zero under REL.
         .map(|size_bytes| (size_bytes, false, false))
         // Defined-symbol `R_MIPS_REL32`, `S + A`.
         .or_else(|| {
-            mips_rel32_symbol_reloc_size(reloc, obj.architecture(), endian_le)
+            mips_rel32_symbol_reloc_size(reloc, arch, endian_le)
                 .map(|size_bytes| (size_bytes, false, true))
         })
         // `R_PPC_REL32` / `R_ARM_REL32` / `R_PPC64_REL64`, `S + A - P`.
-        .or_else(|| {
-            pc_relative_word_reloc(reloc, obj.architecture())
-                .map(|size_bytes| (size_bytes, true, true))
-        });
+        .or_else(|| pc_relative_word_reloc(reloc, arch).map(|size_bytes| (size_bytes, true, true)));
     if let Some((size_bytes, pc_relative, read_implicit_addend)) = word_sized {
-        let Some(target_addr) = resolve_symbol_target(obj, layout, reloc, endian_le) else {
+        let site_regions = sink.covering(ctx, site, site_addr, size_bytes)?;
+        let Some(target) = resolve_symbol_target(obj, ctx.layout, reloc, endian_le) else {
+            sink.unmodelled(ctx, site_regions, site_addr, size_bytes, reloc);
             return Ok(());
         };
-        let site_regions = sink.covering(region_index, regions, site, site_addr, size_bytes)?;
         let addend = if read_implicit_addend {
             reloc_addend(
                 reloc,
-                regions,
+                ctx.regions,
                 &site_regions,
                 site_addr,
                 size_bytes,
@@ -320,7 +441,7 @@ fn apply_one_relocation(
         } else {
             reloc.addend()
         };
-        let value = apply_addend(target_addr, addend);
+        let value = apply_addend(target.addr, addend);
         sink.record(
             site_regions,
             site_addr,
@@ -339,65 +460,75 @@ fn apply_one_relocation(
     // the `kind` and `size` consulted below come from the real `r_sym`, matched
     // against `R_MIPS_16` / `R_MIPS_32` / `R_MIPS_64` (symbol index 1, 2, 18).
     // Every MIPS relocation handled here dispatches on the raw `r_type` above.
-    if matches!(obj.architecture(), A::Mips64) && endian_le && reloc.has_implicit_addend() {
+    if matches!(arch, A::Mips64) && endian_le && reloc.has_implicit_addend() {
+        let site_regions = sink.covering(ctx, site, site_addr, UNKNOWN_FIELD_BYTES)?;
+        sink.unmodelled(ctx, site_regions, site_addr, UNKNOWN_FIELD_BYTES, reloc);
         return Ok(());
     }
 
-    // `object`'s ELF `parse_relocation` yields only `Symbol` or `Absolute`;
-    // the latter (an immediate with no symbol) and any future variant fall
-    // through as unsupported.
-    let RelocationTarget::Symbol(_) = reloc.target() else {
-        return Ok(());
-    };
-    let Some(target_addr) = resolve_symbol_target(obj, layout, reloc, endian_le) else {
-        return Ok(());
-    };
+    if let Some(kind) = classified(reloc, arch, endian_le) {
+        return apply_classified(ctx, sink, site, reloc, pair, kind);
+    }
 
     // `size` is in bits, and 0 nominally means "the kind's default". Absolute /
     // Relative / PltRelative all set it explicitly on every arch of interest,
-    // so 0 here signals an arch-specific encoding (ARM Thumb branch, ...) that
-    // isn't modelled. The width is needed before the value: an `SHT_REL` addend
-    // is read back out of the field.
+    // so 0 here signals an arch-specific encoding that isn't modelled. The
+    // width is needed before the value: an `SHT_REL` addend is read back out
+    // of the field.
     let size_bits = reloc.size();
-    if size_bits == 0 || !size_bits.is_multiple_of(8) || size_bits > 64 {
+    let plain = size_bits != 0
+        && size_bits.is_multiple_of(8)
+        && size_bits <= 64
+        // A byte-multiple size still does not make the field plain low bytes
+        // at the offset: s390x's `*DBL` types hold `(S + A - P) >> 1`,
+        // `R_LARCH_B16` a branch displacement, the SHARC `*_V3` family
+        // instruction-encoded operands. `X86Signed` is the one non-`Generic`
+        // encoding that IS plain: it only names the sign extension
+        // `R_X86_64_32S` applies at runtime.
+        && matches!(
+            reloc.encoding(),
+            object::RelocationEncoding::Generic | object::RelocationEncoding::X86Signed
+        );
+    // `PltRelative`'s L collapses to S here since no PLT is materialised.
+    let pc_relative = match reloc.kind() {
+        RelocationKind::Absolute => Some(false),
+        RelocationKind::Relative | RelocationKind::PltRelative => Some(true),
+        _ => None,
+    };
+    let (Some(pc_relative), true) = (pc_relative, plain) else {
+        let width = if plain {
+            (size_bits / 8) as usize
+        } else {
+            UNKNOWN_FIELD_BYTES
+        };
+        let site_regions = sink.covering(ctx, site, site_addr, width)?;
+        sink.unmodelled(ctx, site_regions, site_addr, width, reloc);
         return Ok(());
-    }
+    };
     let size_bytes = (size_bits / 8) as usize;
-
-    // A byte-multiple size still does not make the field plain low bytes at the
-    // offset: s390x's `*DBL` types hold `(S + A - P) >> 1`, `R_LARCH_B16` a
-    // branch displacement, the SHARC `*_V3` family instruction-encoded operands.
-    // `X86Signed` is the one non-`Generic` encoding that IS plain: it only names
-    // the sign extension `R_X86_64_32S` applies at runtime.
-    if !matches!(
-        reloc.encoding(),
-        object::RelocationEncoding::Generic | object::RelocationEncoding::X86Signed
-    ) {
-        return Ok(());
-    }
 
     // `r_offset` addresses the storage unit, inside which the field can be
     // offset. A `r_offset` at the very top of the address space is malformed;
     // the skew would carry the field out of it.
-    let Some(field_addr) =
-        site_addr.checked_add(mips_half_field_skew(reloc, obj.architecture(), endian_le))
+    let Some(field_addr) = site_addr.checked_add(mips_half_field_skew(reloc, arch, endian_le))
     else {
         return Ok(());
     };
 
-    // Ahead of `covering`, which charges the site to the patch budget: a kind
-    // that records nothing must not loosen the allowance for the ones that do.
-    // `PltRelative`'s L collapses to S here since no PLT is materialised.
-    let pc_relative = match reloc.kind() {
-        RelocationKind::Absolute => false,
-        RelocationKind::Relative | RelocationKind::PltRelative => true,
-        _ => return Ok(()),
+    let site_regions = sink.covering(ctx, site, field_addr, size_bytes)?;
+    // `object`'s ELF `parse_relocation` yields only `Symbol` or `Absolute`;
+    // the latter (an immediate with no symbol) has no target to add.
+    let target = match reloc.target() {
+        RelocationTarget::Symbol(_) => resolve_symbol_target(obj, ctx.layout, reloc, endian_le),
+        _ => None,
     };
-
-    let site_regions = sink.covering(region_index, regions, site, field_addr, size_bytes)?;
+    let Some(target) = target else {
+        sink.unmodelled(ctx, site_regions, field_addr, size_bytes, reloc);
+        return Ok(());
+    };
     let addend = reloc_addend(
         reloc,
-        regions,
+        ctx.regions,
         &site_regions,
         field_addr,
         size_bytes,
@@ -406,15 +537,228 @@ fn apply_one_relocation(
     // S, A, P follow the System V ABI generic relocation formula:
     // S = target_addr, A = addend, P = site_addr. P is the storage unit, not
     // the field inside it.
-    let value = apply_addend(target_addr, addend);
+    let value = apply_addend(target.addr, addend);
     let value = if pc_relative {
         value.wrapping_sub(site_addr)
     } else {
         value
     };
-
-    sink.record(site_regions, field_addr, value, size_bytes, endian_le);
+    let field = Field::Data {
+        bytes: size_bytes as u8,
+        signed: pc_relative || matches!(reloc.encoding(), object::RelocationEncoding::X86Signed),
+    };
+    match fit(obj, field, value) {
+        Some(value) => sink.record(site_regions, field_addr, value, size_bytes, endian_le),
+        None => sink.unmodelled(ctx, site_regions, field_addr, size_bytes, reloc),
+    }
     Ok(())
+}
+
+/// Field width assumed for a relocation whose type gives none: an instruction
+/// word, or the 32-bit displacement of an x86 one.
+const UNKNOWN_FIELD_BYTES: usize = 4;
+
+/// `value` checked against a plain data `field`. An ELF32 image's address
+/// arithmetic wraps at 32 bits, so there a word always fits and a narrower
+/// field is checked against the sign-extended 32-bit value.
+fn fit(obj: &object::File<'_>, field: Field, value: u64) -> Option<u64> {
+    if obj.is_64() {
+        return encode(field, 0, value, Isa::Same, 0);
+    }
+    let value = i64::from(value as u32 as i32) as u64;
+    if field.width() >= 4 {
+        return Some(value);
+    }
+    encode(field, 0, value, Isa::Same, 0)
+}
+
+/// The [`classify`] answer for `reloc`, `None` for a type it does not list or
+/// a MIPS composite of more than one type.
+fn classified(
+    reloc: &object::Relocation,
+    arch: object::Architecture,
+    endian_le: bool,
+) -> Option<Kind> {
+    let RelocationFlags::Elf { r_type } = reloc.flags() else {
+        return None;
+    };
+    match mips_reloc_parts(reloc, arch, endian_le) {
+        Some((_, first, _)) => {
+            (mips_type_word(reloc, arch, endian_le)? >> 8 == 0).then_some(())?;
+            classify(arch, first)
+        }
+        None => classify(arch, r_type),
+    }
+}
+
+/// A [`classify`]-listed relocation, see [`super::encodings`].
+///
+/// # Errors
+///
+/// When the patches would exceed the sink's budget.
+fn apply_classified(
+    ctx: &mut Ctx<'_, '_>,
+    sink: &mut PatchSink<'_>,
+    site: RelocSite,
+    reloc: &object::Relocation,
+    pair: Option<u64>,
+    kind: Kind,
+) -> Result<()> {
+    let (value_kind, field) = match kind {
+        Kind::Marker => return Ok(()),
+        Kind::Compute(value, field) => (value, field),
+        Kind::Ppc64Call { .. } | Kind::PpcPltCall => (Value::Pcrel, Field::PpcBranch24),
+    };
+    let p = site.addr;
+    let width = field.width();
+    let site_regions = sink.covering(ctx, site, p, width)?;
+    match compute_classified(ctx, reloc, pair, kind, value_kind, field, p, &site_regions) {
+        Some(word) => sink.record(site_regions, p, word, width, ctx.endian_le),
+        None => sink.unmodelled(ctx, site_regions, p, width, reloc),
+    }
+    Ok(())
+}
+
+/// The patched field of a [`classify`]-listed relocation at `p`, `None` when
+/// it is not computed.
+#[allow(clippy::too_many_arguments)]
+fn compute_classified(
+    ctx: &mut Ctx<'_, '_>,
+    reloc: &object::Relocation,
+    pair: Option<u64>,
+    kind: Kind,
+    value_kind: Value,
+    field: Field,
+    p: u64,
+    site_regions: &[usize],
+) -> Option<u64> {
+    let (obj, layout, endian_le) = (ctx.obj, ctx.layout, ctx.endian_le);
+    let thumb_le =
+        endian_le && matches!(field, Field::ThumbBranch { .. } | Field::ThumbMovw { .. });
+    let raw = read_field(ctx.regions, site_regions, p, field.width(), endian_le)?;
+    let raw = if thumb_le { swap_halfwords(raw) } else { raw };
+    let target = match reloc.target() {
+        RelocationTarget::Symbol(_) => Some(resolve_symbol_target(obj, layout, reloc, endian_le)?),
+        _ => None,
+    };
+    let s = target.map_or(0, |t| t.addr);
+
+    let mut a = if reloc.has_implicit_addend() {
+        implicit_addend(field, raw)?
+    } else {
+        reloc.addend()
+    };
+    match field {
+        // The low half of an `SHT_REL` HI16's addend is its LO16's field.
+        Field::MipsHalf16(Half::Ha) if reloc.has_implicit_addend() => {
+            let lo = read_field_at(ctx, pair?, 4)?;
+            a = (a << 16) + sext(lo & 0xffff, 16);
+        }
+        Field::Mips26 if reloc.has_implicit_addend() && !target.is_some_and(|t| t.local) => {
+            a = sext(a as u64, 28);
+        }
+        _ => {}
+    }
+    // `_gp_disp` is the distance to the GP of a PIC function, never modelled.
+    if matches!(field, Field::MipsHalf16(_)) && target.is_some_and(|t| t.gp_disp) {
+        return None;
+    }
+
+    let got_slot = |ctx: &mut Ctx<'_, '_>| -> Option<u64> {
+        // A GOT exists only for an ET_REL, and a slot holds `S` alone.
+        if !layout.is_rebased() || (value_kind_needs_zero(value_kind) && a != 0) {
+            return None;
+        }
+        let t = target?;
+        let (slot, width) = layout.got_slot(t.index)?;
+        ctx.got.insert(slot, (t.addr, width));
+        Some(slot)
+    };
+    let got_base = layout.is_rebased().then(|| layout.got_base());
+    let isa = target.map_or(Isa::Same, |t| t.isa);
+    // A branch enters the instruction, not the symbol's ISA bit.
+    let branch_s = match field {
+        Field::ArmBranch24 { .. } | Field::ThumbBranch { .. } if isa == Isa::Thumb => s & !1,
+        _ => s,
+    };
+    let sa = apply_addend(branch_s, a);
+    let page = |x: u64| x & !0xfff;
+    let value = match (kind, value_kind) {
+        (Kind::PpcPltCall, _) => s.wrapping_sub(p),
+        // A descriptor's entry is where `S + A` in `.opd` relocates to.
+        (Kind::Ppc64Call { .. }, _) if target?.in_opd => ctx.opd_entries.get(&sa)?.wrapping_sub(p),
+        (Kind::Ppc64Call { notoc }, _) => {
+            let entry = if notoc {
+                sa
+            } else {
+                sa.wrapping_add(target?.ppc64_local_entry)
+            };
+            entry.wrapping_sub(p)
+        }
+        (_, Value::Abs) => sa,
+        (_, Value::Pcrel) => sa.wrapping_sub(p),
+        (_, Value::PagePcrel) => page(sa).wrapping_sub(page(p)),
+        (_, Value::GotPcrel) => apply_addend(got_slot(ctx)?, a).wrapping_sub(p),
+        (_, Value::GotPagePcrel) => page(got_slot(ctx)?).wrapping_sub(page(p)),
+        (_, Value::Got) => got_slot(ctx)?,
+        (_, Value::GotOffset) => apply_addend(got_slot(ctx)?.wrapping_sub(got_base?), a),
+        (_, Value::GotRelative) => sa.wrapping_sub(got_base?),
+        (_, Value::GotBasePcrel) => apply_addend(got_base?, a).wrapping_sub(p),
+        (_, Value::TocRelative) => sa.wrapping_sub(layout.toc_base()?),
+        (_, Value::Toc) => apply_addend(layout.toc_base()?, a),
+    };
+    let word = match field {
+        Field::Data { .. } => fit(obj, field, value)?,
+        _ => encode(field, raw, value, isa, p)?,
+    };
+    Some(if thumb_le { swap_halfwords(word) } else { word })
+}
+
+/// Whether a GOT value only holds for a zero addend: the slot is `S`, so a
+/// `Page(G)` or `G` cannot carry one.
+fn value_kind_needs_zero(value: Value) -> bool {
+    matches!(value, Value::GotPagePcrel | Value::Got)
+}
+
+/// The file-initial `width`-byte field at `addr`, read out of the first region
+/// in `site_regions` holding all of it.
+fn read_field(
+    regions: &[MemRegion],
+    site_regions: &[usize],
+    addr: u64,
+    width: usize,
+    endian_le: bool,
+) -> Option<u64> {
+    let end = addr.checked_add(width as u64)?;
+    let region = site_regions
+        .iter()
+        .map(|&i| &regions[i])
+        .find(|r| r.start_addr() <= addr && end <= r.end_addr())?;
+    let off = (addr - region.start_addr()) as usize;
+    let field = &region.raw()[off..off + width];
+    let mut raw = 0u64;
+    if endian_le {
+        for (n, &b) in field.iter().enumerate() {
+            raw |= u64::from(b) << (8 * n);
+        }
+    } else {
+        for &b in field {
+            raw = (raw << 8) | u64::from(b);
+        }
+    }
+    Some(raw)
+}
+
+/// [`read_field`] from whichever region holds the whole field.
+fn read_field_at(ctx: &Ctx<'_, '_>, addr: u64, width: usize) -> Option<u64> {
+    let holders: Vec<usize> = ctx.region_index.covering(addr, width as u64).collect();
+    read_field(ctx.regions, &holders, addr, width, ctx.endian_le)
+}
+
+/// A Thumb-2 instruction read as one little-endian word, with its halfwords
+/// swapped to put the first one high, or back.
+fn swap_halfwords(word: u64) -> u64 {
+    ((word & 0xffff) << 16) | ((word >> 16) & 0xffff)
 }
 
 /// Slice indices of every region overlapping `[addr, addr + size_bytes)`,
@@ -489,8 +833,7 @@ impl PatchSink<'_> {
     /// times the sites recording them.
     fn covering(
         &mut self,
-        index: &RegionIndex,
-        regions: &[MemRegion],
+        ctx: &Ctx<'_, '_>,
         site: RelocSite,
         field_addr: u64,
         size_bytes: usize,
@@ -516,7 +859,8 @@ impl PatchSink<'_> {
         // keeps a site covered by every region of a crafted image from
         // materialising that list at all.
         covering.extend(
-            overlapping_regions(index, regions, field_addr, size_bytes).take(allowance + 1),
+            overlapping_regions(ctx.region_index, ctx.regions, field_addr, size_bytes)
+                .take(allowance + 1),
         );
         if covering.len() > allowance {
             anyhow::bail!(
@@ -544,11 +888,34 @@ impl PatchSink<'_> {
         endian_le: bool,
     ) {
         if let Some(patch) = Patch::new(site_addr, value, size_bytes, endian_le) {
-            for &i in &covering {
-                self.per_region[i].push(patch);
-            }
+            self.push(&covering, patch);
         }
         self.scratch = covering;
+    }
+
+    /// A relocation whose value is not computed: a hole over the field on
+    /// every region in `covering`, unless the field is writable at runtime.
+    fn unmodelled(
+        &mut self,
+        ctx: &Ctx<'_, '_>,
+        covering: Vec<usize>,
+        field_addr: u64,
+        size_bytes: usize,
+        reloc: &object::Relocation,
+    ) {
+        let RelocationFlags::Elf { r_type } = reloc.flags() else {
+            unreachable!("an ELF relocation carries ELF flags");
+        };
+        if !ctx.writable.touches(field_addr, size_bytes) {
+            self.push(&covering, Patch::hole(field_addr, size_bytes, r_type));
+        }
+        self.scratch = covering;
+    }
+
+    fn push(&mut self, covering: &[usize], patch: Patch) {
+        for &i in covering {
+            self.per_region[i].push(patch);
+        }
     }
 }
 
@@ -566,7 +933,26 @@ fn mips_corrected_symbol(
     (r_sym != 0).then_some(object::read::SymbolIndex(r_sym as usize))
 }
 
-/// Address of `reloc`'s `RelocationTarget::Symbol` index.
+/// A relocation's resolved symbol.
+#[derive(Clone, Copy)]
+struct Target {
+    /// `S`.
+    addr: u64,
+    /// Its symbol-table index, which picks its GOT slot.
+    index: usize,
+    /// The ISA an ARM function is entered in.
+    isa: Isa,
+    /// `STB_LOCAL`.
+    local: bool,
+    /// MIPS `_gp_disp`.
+    gp_disp: bool,
+    /// Defined in `.opd`, so `S` is a ppc64 ELFv1 descriptor.
+    in_opd: bool,
+    /// How far past `S` a ppc64 ELFv2 local call enters.
+    ppc64_local_entry: u64,
+}
+
+/// `reloc`'s `RelocationTarget::Symbol`.
 ///
 /// Dispatches through `obj.dynamic_symbol_table()` first and falls back to the
 /// static `.symtab` only when there is none. Indices in the dynamic table
@@ -575,63 +961,96 @@ fn mips_corrected_symbol(
 /// the fallback resolves.
 ///
 /// The address is rebased through `layout`: an ET_REL symbol's `st_value` is
-/// an offset into its section, and every section after the first at a given
-/// `sh_addr` sits at a synthetic base.
+/// an offset into its section, every section after the first at a given
+/// `sh_addr` sits at a synthetic base, and an undefined or `SHN_COMMON` one
+/// resolves to its [`ElfSectionLayout::extern_address`].
 ///
-/// `None` (caller skips the relocation) when the index doesn't resolve
-/// (malformed ELF), when its `st_shndx` names no section header, when it
-/// resolves to the legitimate weak / undef case (`address == 0 &&
-/// is_undefined`), when the symbol is an unallocated `SHN_COMMON`, or when the
-/// target isn't a `Symbol`.
+/// `None` when the index doesn't resolve (malformed ELF), when its `st_shndx`
+/// names no section header, when a linked image's symbol is undefined with a
+/// zero value or `SHN_COMMON`, or when the target isn't a `Symbol`.
+///
+/// [`ElfSectionLayout::extern_address`]: super::sections::ElfSectionLayout::extern_address
 fn resolve_symbol_target(
     obj: &object::File<'_>,
     layout: &super::sections::ElfSectionLayout,
     reloc: &object::Relocation,
     endian_le: bool,
-) -> Option<u64> {
-    match mips_corrected_symbol(reloc, obj.architecture(), endian_le)
+) -> Option<Target> {
+    let RelocationTarget::Symbol(idx) = mips_corrected_symbol(reloc, obj.architecture(), endian_le)
         .map_or_else(|| reloc.target(), RelocationTarget::Symbol)
-    {
-        RelocationTarget::Symbol(idx) => {
-            // An ET_REL's per-section `SHT_REL`/`SHT_RELA` indexes the
-            // `.symtab` its `sh_link` names, never the dynamic table.
-            // `object`'s `dynamic_symbol_table` is simply the first
-            // `SHT_DYNSYM` section in the file, populated whatever the
-            // `e_type`, so an object file carrying one otherwise sends every
-            // relocation to the wrong table and patches in an unrelated
-            // symbol's `st_value`.
-            let relocatable = obj.kind() == object::ObjectKind::Relocatable;
-            let resolved = obj
-                .dynamic_symbol_table()
-                .filter(|_| !relocatable)
-                .map_or_else(|| obj.symbol_by_index(idx), |t| t.symbol_by_index(idx))
-                .map(|s| {
-                    (
-                        s.address(),
-                        layout.try_symbol_address(&s),
-                        s.is_undefined(),
-                        s.is_common(),
-                    )
-                })
-                .ok();
-            // `None` is an invalid index (malformed ELF); `(0, true)` is a
-            // legitimate undefined or weak extern. Skip either way. Tested on
-            // the raw `st_value`, which is what "undefined" is expressed in.
-            let (raw, addr, undef, common) = resolved?;
-            if raw == 0 && undef {
+    else {
+        return None;
+    };
+    // An ET_REL's per-section `SHT_REL`/`SHT_RELA` indexes the `.symtab` its
+    // `sh_link` names, never the dynamic table. `object`'s
+    // `dynamic_symbol_table` is simply the first `SHT_DYNSYM` section in the
+    // file, populated whatever the `e_type`, so an object file carrying one
+    // otherwise sends every relocation to the wrong table and patches in an
+    // unrelated symbol's `st_value`.
+    let relocatable = obj.kind() == object::ObjectKind::Relocatable;
+    let sym = obj
+        .dynamic_symbol_table()
+        .filter(|_| !relocatable)
+        .map_or_else(|| obj.symbol_by_index(idx), |t| t.symbol_by_index(idx))
+        .ok()?;
+    let addr = match layout.extern_address(idx.0) {
+        Some(addr) => addr,
+        None => {
+            // `(0, undefined)` is a legitimate undefined or weak extern of a
+            // linked image, tested on the raw `st_value`, which is what
+            // "undefined" is expressed in.
+            if sym.address() == 0 && sym.is_undefined() {
+                return None;
+            }
+            // `SHN_COMMON` holds the symbol's alignment in `st_value`; its
+            // address exists only once the link allocates it in `.bss`.
+            if sym.is_common() {
                 return None;
             }
             // An `st_shndx` past the section table: the offset it declares has
             // no base, so there is no address to patch.
-            let addr = addr?;
-            // `SHN_COMMON` holds the symbol's alignment in `st_value`; its
-            // address exists only once the link allocates it in `.bss`.
-            if common {
-                return None;
-            }
-            Some(addr)
+            layout.try_symbol_address(&sym)?
         }
-        _ => None,
+    };
+    let arch = obj.architecture();
+    let isa = match (arch, sym.kind()) {
+        (A::Arm, object::SymbolKind::Text) if !sym.is_undefined() => {
+            if sym.address() & 1 == 1 {
+                Isa::Thumb
+            } else {
+                Isa::Arm
+            }
+        }
+        _ => Isa::Same,
+    };
+    let st_other = match sym.flags() {
+        object::SymbolFlags::Elf { st_other, .. } => st_other,
+        _ => 0,
+    };
+    Some(Target {
+        addr,
+        index: idx.0,
+        isa,
+        local: sym.is_local(),
+        gp_disp: matches!(arch, A::Mips | A::Mips64) && sym.name() == Ok("_gp_disp"),
+        in_opd: sym
+            .section_index()
+            .and_then(|i| obj.section_by_index(i).ok())
+            .is_some_and(|sec| sec.name() == Ok(".opd")),
+        ppc64_local_entry: if arch == A::PowerPc64 && !sym.is_undefined() {
+            ppc64_local_entry_offset(st_other)
+        } else {
+            0
+        },
+    })
+}
+
+/// `PPC64_LOCAL_ENTRY_OFFSET`: bytes from a function's global entry to its
+/// local one, from `st_other`'s top three bits.
+fn ppc64_local_entry_offset(st_other: u8) -> u64 {
+    match st_other >> 5 {
+        v @ 2..=6 => ((1u64 << v) >> 2) << 2,
+        _ => 0,
     }
 }
 
@@ -843,6 +1262,29 @@ fn mips_reloc_parts(
     }
 }
 
+/// The MIPS64 `r_type3 << 16 | r_type2 << 8 | r_type` word, MIPS32's single
+/// type.
+fn mips_type_word(
+    reloc: &object::Relocation,
+    arch: object::Architecture,
+    endian_le: bool,
+) -> Option<u32> {
+    let RelocationFlags::Elf { r_type } = reloc.flags() else {
+        return None;
+    };
+    match arch {
+        A::Mips => Some(r_type),
+        A::Mips64 if endian_le && reloc.has_implicit_addend() => match reloc.target() {
+            RelocationTarget::Symbol(idx) => {
+                Some(u32::try_from(idx.0).ok()?.swap_bytes() & 0x00ff_ffff)
+            }
+            _ => Some(0),
+        },
+        A::Mips64 => Some(r_type & 0x00ff_ffff),
+        _ => None,
+    }
+}
+
 /// `R_MIPS_REL32`'s field width. "REL32" names a 32-bit field, but MIPS64
 /// linkers emit it composed with `R_MIPS_64`, and that pair is the 64-bit
 /// pointer slot glibc's `ld.so` patches as one word.
@@ -909,7 +1351,7 @@ mod tests {
         let owned = crate::OwnedElf::open(&path).expect("open");
         let obj = owned.checked_file().expect("the mapped file is unchanged");
         let layout = super::super::sections::ElfSectionLayout::new(&obj);
-        let mut regions = owned
+        let image = owned
             .regions_with(
                 &obj,
                 &layout,
@@ -917,8 +1359,8 @@ mod tests {
                 filter,
                 false,
             )
-            .expect("regions")
-            .regions;
+            .expect("regions");
+        let (mut regions, writable) = (image.regions, image.writable);
 
         let bytes = |regions: &[MemRegion]| -> Vec<Vec<u8>> {
             regions
@@ -930,9 +1372,10 @@ mod tests {
                 })
                 .collect()
         };
-        apply_elf_relocations_with(&mut regions, &obj, filter, &layout).expect("apply");
+        apply_elf_relocations_with(&mut regions, &obj, filter, &layout, &writable).expect("apply");
         let once = bytes(&regions);
-        apply_elf_relocations_with(&mut regions, &obj, filter, &layout).expect("re-apply");
+        apply_elf_relocations_with(&mut regions, &obj, filter, &layout, &writable)
+            .expect("re-apply");
         assert_eq!(once, bytes(&regions));
     }
 
