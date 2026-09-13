@@ -1121,63 +1121,13 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
     let targets = [0x401190u64, 0x401180u64];
     let base_offset: i64 = -24;
     let stride: u64 = 8;
-    for (i, &target_addr) in targets.iter().enumerate() {
-        let off = base_offset + (i as i64) * (stride as i64);
-        let off_const = b.build_int_const(off as u64, ValueType::I64).unwrap();
-        let addr = b
-            .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::I64)
-            .unwrap();
-        let target = b.build_int_const(target_addr, ValueType::I64).unwrap();
-        b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
-    }
+    wire_stack_stores(&targets, base_offset, stride, sp_val, &mut b);
     // A constant absolute address, unrelated to the stack pointer.
     let global_addr = b.build_int_const(0x0060_0000u64, ValueType::I64).unwrap();
     let global_val = b.build_int_const(0x0000_DEADu64, ValueType::I64).unwrap();
     b.build_store(global_addr, global_val, rsleigh::VnSpace::RAM)
         .unwrap();
-    // Load from sp + base + idx*stride.
-    let arg_val = b.read_variable(&arg_vn).unwrap();
-    let arg_u32 = strider_ir_test_utils::sentinel_node(
-        b.function_mut(),
-        NodeKind::Truncate,
-        [arg_val],
-        [strider_ir::node::ValueKind::Typed(ValueType::I32)],
-    );
-    let arg_u32_value = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
-    let one = b.build_int_const(1u64, ValueType::I32).unwrap();
-    let masked = b
-        .build_int_binary_operation(arg_u32_value, one, IntBinaryOp::And, ValueType::I32)
-        .unwrap();
-    let idx_u64 = strider_ir_test_utils::sentinel_node(
-        b.function_mut(),
-        NodeKind::Extend(ExtendOp::ZeroExtend),
-        [masked],
-        [strider_ir::node::ValueKind::Typed(ValueType::I64)],
-    );
-    let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
-    let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
-    let idx_scaled = b
-        .build_int_binary_operation(
-            idx_u64_value,
-            stride_const,
-            IntBinaryOp::Mul,
-            ValueType::I64,
-        )
-        .unwrap();
-    let base_const = b
-        .build_int_const(base_offset as u64, ValueType::I64)
-        .unwrap();
-    let sp_plus_base = b
-        .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, ValueType::I64)
-        .unwrap();
-    let load_addr = b
-        .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, ValueType::I64)
-        .unwrap();
-    let loaded = b
-        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)
-        .unwrap();
-    b.build_indirect_branch(loaded).unwrap();
-    b.set_lift_addr(None);
+    wire_stack_dispatch(targets.len(), base_offset, stride, sp_val, &mut b, arg_vn);
     let (fg, _load_value) = finish_stack_array(b.build().unwrap());
 
     // The default assumptions prove the global store disjoint.
@@ -1220,63 +1170,20 @@ fn classify_table_dispatch_returns_none_when_call_clobbers_between_stores_and_lo
     let targets = [0x401190u64, 0x401180u64];
     let base_offset: i64 = -24;
     let stride: u64 = 8;
-    for (i, &target_addr) in targets.iter().enumerate() {
-        let off = base_offset + (i as i64) * (stride as i64);
-        let off_const = b.build_int_const(off as u64, ValueType::I64).unwrap();
-        let addr = b
-            .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::I64)
-            .unwrap();
-        let target = b.build_int_const(target_addr, ValueType::I64).unwrap();
-        b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
-    }
+    wire_stack_stores(&targets, base_offset, stride, sp_val, &mut b);
     // Clobbers memory, including the slots the callee can reach through SP.
     let call_target_const = b.build_int_const(0x0040_1000u64, ValueType::I64).unwrap();
     b.build_call_cc(call_target_const, None).unwrap();
     // Re-read sp: the call may have advanced the stack.
     let sp_val_after = b.read_variable(&sp).unwrap();
-    // Load from sp + base + idx*stride.  Mirrors the stack-array shape.
-    let arg_val = b.read_variable(&arg_vn).unwrap();
-    let arg_u32 = strider_ir_test_utils::sentinel_node(
-        b.function_mut(),
-        NodeKind::Truncate,
-        [arg_val],
-        [strider_ir::node::ValueKind::Typed(ValueType::I32)],
+    wire_stack_dispatch(
+        targets.len(),
+        base_offset,
+        stride,
+        sp_val_after,
+        &mut b,
+        arg_vn,
     );
-    let arg_u32_value = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
-    let one = b.build_int_const(1u64, ValueType::I32).unwrap();
-    let masked = b
-        .build_int_binary_operation(arg_u32_value, one, IntBinaryOp::And, ValueType::I32)
-        .unwrap();
-    let idx_u64 = strider_ir_test_utils::sentinel_node(
-        b.function_mut(),
-        NodeKind::Extend(ExtendOp::ZeroExtend),
-        [masked],
-        [strider_ir::node::ValueKind::Typed(ValueType::I64)],
-    );
-    let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
-    let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
-    let idx_scaled = b
-        .build_int_binary_operation(
-            idx_u64_value,
-            stride_const,
-            IntBinaryOp::Mul,
-            ValueType::I64,
-        )
-        .unwrap();
-    let base_const = b
-        .build_int_const(base_offset as u64, ValueType::I64)
-        .unwrap();
-    let sp_plus_base = b
-        .build_int_binary_operation(sp_val_after, base_const, IntBinaryOp::Add, ValueType::I64)
-        .unwrap();
-    let load_addr = b
-        .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, ValueType::I64)
-        .unwrap();
-    let loaded = b
-        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)
-        .unwrap();
-    b.build_indirect_branch(loaded).unwrap();
-    b.set_lift_addr(None);
     let (fg, _load_value) = finish_stack_array(b.build().unwrap());
     assert_eq!(
         classify(&fg, None),
@@ -1353,7 +1260,7 @@ fn classify_table_dispatch_one_stack_target_resolves() {
     // A degenerate one-element stack array.  Masking idx with 0 makes it
     // always 0, so the bound is 1.
     let targets = [0x401200u64];
-    let (fg, _load_value) = build_one_target_array(targets, -8, 8);
+    let (fg, _load_value) = build_stack_array(&targets, -8, 8);
     let result = classify(&fg, None);
     // A 1-element table may defer; a resolution must name the single target.
     match result {
@@ -1367,80 +1274,6 @@ fn classify_table_dispatch_one_stack_target_resolves() {
         }
         other => panic!("unexpected classifier result: {other:?}"),
     }
-}
-
-fn build_one_target_array(
-    targets: [u64; 1],
-    base_offset: i64,
-    stride: u64,
-) -> (strider_ir::Function, strider_ir::node::ValueId) {
-    let sp = rsleigh::Vn {
-        addr_off: 0x40,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let arg_vn = rsleigh::Vn {
-        addr_off: 0x38,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let mut b = sp_frame(sp)
-        .tracked(arg_vn)
-        .build_fn_single_region()
-        .unwrap();
-    let sp_val = b.read_variable(&sp).unwrap();
-    let off_const = b
-        .build_int_const(base_offset as u64, ValueType::I64)
-        .unwrap();
-    let addr = b
-        .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::I64)
-        .unwrap();
-    let target = b.build_int_const(targets[0], ValueType::I64).unwrap();
-    b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
-    let arg_val = b.read_variable(&arg_vn).unwrap();
-    // Load through sp+base+idx*stride with idx masked to a single value.
-    let arg_u32 = strider_ir_test_utils::sentinel_node(
-        b.function_mut(),
-        NodeKind::Truncate,
-        [arg_val],
-        [strider_ir::node::ValueKind::Typed(ValueType::I32)],
-    );
-    let arg_u32_value = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
-    let mask0 = b.build_int_const(0u64, ValueType::I32).unwrap();
-    let masked = b
-        .build_int_binary_operation(arg_u32_value, mask0, IntBinaryOp::And, ValueType::I32)
-        .unwrap();
-    let idx_u64 = strider_ir_test_utils::sentinel_node(
-        b.function_mut(),
-        NodeKind::Extend(ExtendOp::ZeroExtend),
-        [masked],
-        [strider_ir::node::ValueKind::Typed(ValueType::I64)],
-    );
-    let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
-    let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
-    let idx_scaled = b
-        .build_int_binary_operation(
-            idx_u64_value,
-            stride_const,
-            IntBinaryOp::Mul,
-            ValueType::I64,
-        )
-        .unwrap();
-    let base_const = b
-        .build_int_const(base_offset as u64, ValueType::I64)
-        .unwrap();
-    let sp_plus_base = b
-        .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, ValueType::I64)
-        .unwrap();
-    let load_addr = b
-        .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, ValueType::I64)
-        .unwrap();
-    let loaded = b
-        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)
-        .unwrap();
-    b.build_indirect_branch(loaded).unwrap();
-    b.set_lift_addr(None);
-    finish_stack_array(b.build().unwrap())
 }
 
 #[test]
@@ -1757,39 +1590,15 @@ mod stack_table_cost {
     use super::*;
 
     /// Targets and the memory-chain steps `classify_table_dispatch` spends on
-    /// an `entries`-slot stack array, counting both the per-probe walks and the
-    /// slot-map builds that replace them.  Asserts the resolved set, so the cost
-    /// measurement can never be met by resolving less.
-    fn resolve(entries: usize) -> (Vec<u64>, u64) {
+    /// an `entries`-slot stack array from `build`, counting both the per-probe
+    /// walks and the slot-map builds that replace them.  Asserts the resolved
+    /// set, so the cost measurement can never be met by resolving less.
+    fn resolve(
+        entries: usize,
+        build: fn(&[u64], i64, u64) -> (strider_ir::Function, ValueId),
+    ) -> (Vec<u64>, u64) {
         let targets: Vec<u64> = (0..entries as u64).map(|i| 0x401000 + i * 0x10).collect();
-        let (fg, _load) = build_stack_array(&targets, -8 * entries as i64, 8);
-        let (known, doms) = make_known_and_doms(&fg);
-        let mut ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
-        crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
-        super::super::super::eval::SLOT_MAP_STEPS.with(|c| c.set(0));
-        let result = classify_table_dispatch(
-            &fg,
-            sole_indirect_branch(&fg),
-            None,
-            &mut ranges,
-            &crate::AssumptionOptions::default(),
-            None,
-        );
-        let steps = crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get)
-            + super::super::super::eval::SLOT_MAP_STEPS.with(std::cell::Cell::get);
-        let Some(ResolvedTargets::Multiple(ts)) = result else {
-            panic!("an {entries}-entry stack array must resolve, got {result:?}");
-        };
-        let resolved: Vec<u64> = ts.iter().map(|t| t.addr).collect();
-        assert_eq!(resolved, targets, "every slot resolves to its own label");
-        (resolved, steps)
-    }
-
-    /// As [`resolve`], for an array whose dispatch load sits below a `MemPhi`,
-    /// where the straight-line segment above the probe is empty.
-    fn resolve_across_mem_phi(entries: usize) -> (Vec<u64>, u64) {
-        let targets: Vec<u64> = (0..entries as u64).map(|i| 0x401000 + i * 0x10).collect();
-        let (fg, _load) = build_stack_array_across_mem_phi(&targets, -8 * entries as i64, 8);
+        let (fg, _load) = build(&targets, -8 * entries as i64, 8);
         let (known, doms) = make_known_and_doms(&fg);
         let mut ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
@@ -1863,8 +1672,8 @@ mod stack_table_cost {
 
     #[test]
     fn is_not_quadratic_in_entries() {
-        let (small_targets, small) = resolve(64);
-        let (big_targets, big) = resolve(128);
+        let (small_targets, small) = resolve(64, build_stack_array);
+        let (big_targets, big) = resolve(128, build_stack_array);
         assert_eq!(small_targets.len(), 64);
         assert_eq!(big_targets.len(), 128);
         assert!(
@@ -1879,8 +1688,8 @@ mod stack_table_cost {
     /// walk per entry.
     #[test]
     fn is_not_quadratic_across_a_mem_phi() {
-        let (small_targets, small) = resolve_across_mem_phi(64);
-        let (big_targets, big) = resolve_across_mem_phi(128);
+        let (small_targets, small) = resolve(64, build_stack_array_across_mem_phi);
+        let (big_targets, big) = resolve(128, build_stack_array_across_mem_phi);
         assert_eq!(small_targets.len(), 64);
         assert_eq!(big_targets.len(), 128);
         assert!(
