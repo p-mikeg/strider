@@ -3,7 +3,7 @@ use cranelift_entity::packed_option::ReservedValue;
 
 use crate::error::Result;
 use crate::function::Function;
-use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
+use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind};
 use crate::region::Region;
 
 mod build_trait;
@@ -55,6 +55,9 @@ pub struct FunctionBuilder {
     pub(crate) cur_region: Option<crate::region::RegionId>,
     /// Stamped onto every node `create_node` produces while it is `Some`.
     lift_addr: Option<u64>,
+    /// What each `Call`'s clobbered registers held when it was built, at the
+    /// stack pointer's width.
+    call_register_values: Vec<ValueId>,
 }
 
 impl FunctionBuilder {
@@ -96,6 +99,7 @@ impl FunctionBuilder {
             regions: PrimaryMap::new(),
             cur_region: None,
             lift_addr: None,
+            call_register_values: Vec::new(),
         };
         fb.build_entry()?;
         Ok(fb)
@@ -136,8 +140,41 @@ impl FunctionBuilder {
     /// Validates before handing the function over. A failure wraps a
     /// [`crate::validate::ValidationReport`], recoverable with
     /// `err.downcast_ref::<crate::validate::ValidationReport>()`.
-    pub fn build(self) -> crate::Result<crate::Function> {
+    pub fn build(mut self) -> crate::Result<crate::Function> {
         crate::validate::validate(&self.function).map_err(|e| e.report(&self.function))?;
+        if any_stack_derived(&self.function, &self.call_register_values) {
+            self.function
+                .side_tables_mut()
+                .set_frame_address_in_call_register();
+        }
         Ok(self.function)
     }
+}
+
+/// Whether any of `values` is computed from the entry stack pointer through the
+/// arithmetic an address is built from: `Add`, `And`, `Or`, `Xor`, a width
+/// change, or a `Phi`.  A value reloaded from memory is left out, since storing
+/// the address was already an escape.
+fn any_stack_derived(function: &Function, values: &[ValueId]) -> bool {
+    use crate::IRViewer;
+    let sp = function.stack_vn();
+    let mut seen = entity_utils::DenseEntitySet::new();
+    let mut work = values.to_vec();
+    while let Some(v) = work.pop() {
+        if !seen.insert(v) {
+            continue;
+        }
+        let node = function.producer(v);
+        match *function.node_kind(node) {
+            NodeKind::InitialVar(id) if function.initial_vn(id) == sp => return true,
+            NodeKind::IntBinaryOp(
+                IntBinaryOp::Add | IntBinaryOp::And | IntBinaryOp::Or | IntBinaryOp::Xor,
+            )
+            | NodeKind::Extend(_)
+            | NodeKind::Truncate
+            | NodeKind::Phi => work.extend(function.value_inputs(node)),
+            _ => {}
+        }
+    }
+    false
 }

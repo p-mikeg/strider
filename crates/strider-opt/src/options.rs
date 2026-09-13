@@ -92,7 +92,7 @@ pub struct AssumptionOptions {
     /// again.  The load that exposes this is a use-after-free.
     ///
     /// A non-empty set also forwards a stack spill across a listed call when the
-    /// frame is provably private, so it carries the same two gaps
+    /// frame is provably private, so it carries the gaps
     /// [`escape_analysis`](Self::escape_analysis) documents, without that knob
     /// being set.
     ///
@@ -110,11 +110,14 @@ pub struct AssumptionOptions {
     /// an opaque (`Anchor`) store. Both rest on the same axiom: nothing outside
     /// the frame can name a private slot, barring a fabricated pointer.
     ///
-    /// It sits here because the proof has two gaps the IR cannot close: an sret
-    /// call handed a hidden pointer to a caller-frame return slot the lifter
-    /// does not model as an argument, and an alignment hole in the outgoing
-    /// argument window read as the window's end (see `mem_analysis`'s KNOWN
-    /// LIMIT).
+    /// A stack address escapes through a call argument, a stored value, a
+    /// return, or a register a call clobbers holding it at the call, which
+    /// covers a callee reading a register its convention does not pass (i386
+    /// `regparm`, clang `fastcc`, the GNU C static chain, AArch64's X8).  It
+    /// sits here because the proof keeps two gaps the IR cannot close: a callee
+    /// reading an address from a register its convention preserves, and an
+    /// alignment hole in the outgoing argument window read as the window's end
+    /// (see `mem_analysis`'s KNOWN LIMIT).
     pub escape_analysis: bool,
 }
 

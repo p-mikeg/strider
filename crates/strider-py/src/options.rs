@@ -272,9 +272,9 @@ pub struct PyAssumptionOptions {
 
     /// When the frame is provably private (no stack address escapes to a
     /// callee), forward a spill load across a call and past an opaque store.
-    /// The proof is sound; the claim is that no callee returns a struct by
-    /// value, an sret hidden pointer being a frame-address escape the analysis
-    /// may not see.
+    /// An address held in an argument, a stored value, a return, or a register
+    /// a call clobbers escapes; the claim is that no callee reads one from a
+    /// register its convention preserves.
     #[pyo3(get)]
     pub escape_analysis: bool,
 }
