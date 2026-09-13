@@ -369,14 +369,17 @@ fn try_match_at(
     // side, so an ordinary wildcard-leaved add tree costs 2^k for k nodes under
     // `find_all`, whose continuation returns `false` and drives every
     // configuration. `NodeInputs::interchangeable` cuts the symmetric half of
-    // that; `.ordered()` pins an operand pair for the rest.
+    // that; `.ordered()` pins an operand pair for the rest. Both IR slots
+    // holding one value makes the swap assign every operand what the natural
+    // order did, so it is not tried.
     let commutative = !nd.force_ordered
         && (1..=COMM_ORDER.len()).contains(&n_fixed)
         && !node_inputs.interchangeable
         && inputs[..n_fixed]
             .iter()
             .all(|e| e.consumer_slot < COMM_ORDER.len())
-        && ctx.function().node_kind(ir_node).is_commutative();
+        && ctx.function().node_kind(ir_node).is_commutative()
+        && input_at(ctx, ir_node, 0) != input_at(ctx, ir_node, 1);
 
     // The existential candidate set: every input slot of `ir_node`, less the
     // ones a fixed operand pinned, which on a commutative node is none, its
