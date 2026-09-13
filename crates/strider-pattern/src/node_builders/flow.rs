@@ -38,6 +38,26 @@ type BranchWalk = Box<
         + Send,
 >;
 
+/// The branch `Pattern` a [`BranchWalk`] holds. Nesting these is unbounded
+/// (`with_branch` takes an already built pattern, so no builder cap sees it)
+/// and the derived glue frees one frame per level, so the free goes through
+/// the drop pit.
+struct BranchPattern(Option<Pattern>);
+
+impl BranchPattern {
+    fn get(&self) -> &Pattern {
+        self.0.as_ref().expect("taken only by Drop")
+    }
+}
+
+impl Drop for BranchPattern {
+    fn drop(&mut self) {
+        if let Some(pat) = self.0.take() {
+            crate::node_builders::defer_drop(pat);
+        }
+    }
+}
+
 /// A `Call` clobbers caller-saved registers and the memory token.
 pub struct CallPat(NodePat);
 
@@ -556,12 +576,13 @@ impl IfPat {
                 .into_iter()
                 .collect(),
         };
+        let pat = BranchPattern(Some(pat));
         let walk = Box::new(
             move |m: &crate::Matcher,
                   if_node,
                   b: &mut crate::Bindings,
                   k: &mut dyn FnMut(&mut crate::Bindings) -> bool| {
-                match_branch_consumer(m, if_node, slot, &pat, b, k)
+                match_branch_consumer(m, if_node, slot, pat.get(), b, k)
             },
         );
         if slot == 0 {
