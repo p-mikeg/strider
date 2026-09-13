@@ -77,22 +77,23 @@ computed number. Each edge carries one of four things:
 
 **Value type.** The width of a data value and whether it is integer or float.
 Integers are `I1, I8, I16, I24, I32, I40, I48, I56, I64, I72, I80, I96, I112,
-I128, I256, I512`; floats are `F16, F32, F64, F80, F128`. A boolean is the 1-bit
-integer `I1`. The odd sizes come from hardware registers and from Sleigh's
-intermediate temporaries, and `crates/strider-ir/src/node/value_type.rs` names
-a source per width: `I24` is the x86 `SegmentLimit` result, `I40` and `I72` the
-32- and 64-bit `adcx` / `adox` carry accumulators (`I72` also the AArch64
-fixed-point `ucvtf` temporary), `I48` a 6-byte varnode, on ARM temporaries and
-on x86 far-pointer loads (the only true 6-byte registers in any spec are 32-bit
-x86's `GDTR` / `IDTR` / `LDTR` / `TR`), `I56` the AArch64 tagged-pointer `cmpp`
-/ `subp` temporaries, `I80` and `F80` the x87 extended-precision registers,
-`I256` an x86 `YMM` and the AArch64 SVE temporaries, `I512` an AVX-512 `zmm`,
-`F16` an AArch64 `FPR16` or an ARM `vcvt.f16`, and `F128` the 16-byte float
-destination ARM's `vcvt.f32.f16 Qd,Dm` writes. `I96` and `I112` are the odd
-ones out: x86 declares those same four registers at 12 and 14 bytes behind a
-debugger-only guard, but every instruction naming them routes through a pcodeop,
-so no lifted p-code carries a value of either width. Read a node's type in
-Python with `node.value_type()`.
+I128, I256, I512`; floats are `F16, F32, F64, F80, F128`. A boolean is the
+1-bit integer `I1`. The odd sizes come from hardware registers and from
+Sleigh's intermediate temporaries, and
+`crates/strider-ir/src/node/value_type.rs` names a source for most of them:
+`I24` is the x86 `SegmentLimit` result, `I40` and `I72` the 32- and 64-bit
+`adcx` / `adox` carry accumulators (`I72` also the AArch64 fixed-point `ucvtf`
+temporary), `I48` a 6-byte varnode, on ARM temporaries and on x86 far-pointer
+loads (the only true 6-byte registers in any spec are 32-bit x86's `GDTR` /
+`IDTR` / `LDTR` / `TR`), `I56` the AArch64 tagged-pointer `cmpp` / `subp`
+temporaries, `I80` and `F80` the x87 extended-precision registers, `I256` an
+x86 `YMM` and the AArch64 SVE temporaries, `I512` an AVX-512 `zmm`, `F16` an
+AArch64 `FPR16` or an ARM `vcvt.f16`, and `F128` the 16-byte float destination
+ARM's `vcvt.f32.f16 Qd,Dm` writes. `I96` and `I112` are the odd ones out: x86
+declares those same four registers at 12 and 14 bytes behind a debugger-only
+guard, but every instruction naming them routes through a pcodeop, so no lifted
+p-code carries a value of either width. Read a node's type in Python with
+`node.value_type()`.
 
 **Walks (cfg, data, memory).** Ways to traverse the graph from the entry. A
 **cfg walk** follows control edges only, giving the region skeleton
