@@ -174,6 +174,21 @@ hits = function.find_all(
 )
 ```
 
+For a struct field, `field` is that alternation with a constant offset.
+`ConstantFold` rewrites `base + 0` to `base`, so offset 0 always lifts bare, and
+`f.offset(m)` reads 0 back for it:
+
+```python
+from strider.pattern import field, function_arg
+
+f = field(function_arg(0))
+for m in function.find_all(f.load()):
+    print("reads p->field at", f.offset(m))
+```
+
+`code_ptr(x)` is the same idea for a code pointer: `x`, or `x & -2`, the mask an
+ARM interworking or MIPS16 branch applies to clear the ISA-mode bit.
+
 Three more shape helpers worth knowing. `.ordered()` turns off commutative
 matching where you need the operands in the order you wrote them.
 `.any_input(p)` matches `p` against any input slot, for nodes whose arity you
@@ -222,6 +237,15 @@ matches = function.find_all(
 )
 for m in matches:
     print("on the taken branch the phi selects", m.uint(v))
+```
+
+`input_from` on a `phi()` or `mem_phi()` builder writes the phi capture, the
+value capture and the constraint for you:
+
+```python
+merged = phi().input_from(edge, int_const())
+matches = function.find_all([if_else().capture_true(edge), merged],
+                            constraints=merged.constraints())
 ```
 
 `negate(c)` keeps matches where `c` does *not* hold, and `any_of([...])` /
