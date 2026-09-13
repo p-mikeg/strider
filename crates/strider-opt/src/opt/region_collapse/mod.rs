@@ -87,8 +87,8 @@ impl RegionCollapse {
 /// Replaces every live phi over `phi_token` with its single value input and
 /// kills it: with one control predecessor a phi merges nothing.
 ///
-/// `None`, having edited nothing, if any phi has more than one value input or
-/// draws its value from another phi over this token: the collapse pairs are
+/// `None`, having edited nothing, if any phi does not have exactly one value
+/// input, or draws its value from another phi over this token: the collapse pairs are
 /// snapshotted, so such a value is retargeted by an earlier replacement and
 /// then killed, leaving it dangling.  `Some(true)` when at least one phi
 /// collapsed.

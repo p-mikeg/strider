@@ -81,8 +81,16 @@ pub(crate) enum AliasVerdict {
 /// pass; the post-passes that skip the drain only mutate the graph in ways that
 /// leave every address value's decomposition unchanged.
 ///
-/// The memo is per `function` and shared: every walk over one `function` must
-/// pass the same `noalias_allocators`, or one caller's verdict answers another.
+/// The memo is per `function` and shared by walks under different
+/// `noalias_allocators` sets ([`MemOptions::structural`] holds an empty one
+/// beside the configured analyzer).  A heap class read back under an empty set
+/// is dropped by [`classify_addr`].  A `NotMemory` committed under a smaller set
+/// is not: it answers a later walk under a larger one, so the configured walk
+/// must reach an address first (`try_forward_load`, `detect_stack_args`).
+///
+/// The memo is also the verdict `strider-pattern`'s region filters read
+/// (`non_stack`, `heap_only`, `stack_only`), so it holds the configured set's
+/// answers.
 pub(crate) fn decompose(
     function: &Function,
     value: ValueId,
@@ -780,7 +788,9 @@ impl MemWalker<'_> {
             }
             NodeKind::Call => {
                 // A callee declared transparent to memory writes none, so the
-                // load steps through whatever the frame analysis proves.
+                // load steps through whatever the frame analysis proves.  A
+                // caller assertion, outside `AssumptionOptions`, so it survives
+                // `MemOptions::structural` and a permanent rewire may rest on it.
                 if function.get_cc(def).preserves_memory {
                     return false;
                 }
@@ -1424,7 +1434,8 @@ pub(crate) struct MemOptions {
     distinct_sp_bases_disjoint: bool,
     /// Read only where the outgoing-argument window is consulted, so it is
     /// inert unless [`Self::escape_analysis`] or a non-empty allocator set
-    /// opens that path.
+    /// opens that path.  Pinned off by [`MemOptions::call_blocking`]; only
+    /// [`MemOptions::with_callee_preserves_stack_args`] opts back in.
     callee_preserves_stack_args: bool,
     /// Let an SP-rooted `Load` step through a `Call` when the frame is provably
     /// private ([`frame_escape`]).
@@ -1435,9 +1446,9 @@ pub(crate) struct MemOptions {
     /// otherwise re-enter.
     call_relaxations: bool,
     /// Callee addresses whose return is a fresh heap base
-    /// ([`crate::AssumptionOptions::noalias_allocators`]).  Shared, so every
-    /// analyzer over one `Function` decomposes against the same set and none
-    /// poisons the `memory_offsets` memo for another.
+    /// ([`crate::AssumptionOptions::noalias_allocators`]).  Analyzers over one
+    /// `Function` may hold different sets; [`decompose`] states what that costs
+    /// the shared `memory_offsets` memo.
     noalias_allocators: std::sync::Arc<FxHashSet<u64>>,
 }
 
@@ -1448,7 +1459,9 @@ impl MemOptions {
     /// The allocator set is a parameter, not a default: the `decompose` memo
     /// lives on the `Function` keyed by `ValueId` alone, so an analyzer built
     /// against a narrower set reads back a heap base another one cached and
-    /// answers `Disjoint` where its own configuration forbids it.
+    /// answers `Disjoint` where its own configuration forbids it.  Only
+    /// [`MemOptions::structural`] is allowed that, and only because
+    /// [`classify_addr`] drops the heap class under an empty set.
     pub(crate) fn call_blocking(
         stack_global_disjoint: bool,
         noalias_allocators: &std::sync::Arc<FxHashSet<u64>>,
@@ -1479,7 +1492,9 @@ impl MemOptions {
     }
 
     /// Every claim off, so a verdict holds under
-    /// [`crate::AssumptionOptions::none`].  What a permanent rewire may name.
+    /// [`crate::AssumptionOptions::none`].  What a permanent rewire may name,
+    /// modulo the per-`Call` `preserves_memory` CC flag, which is the caller's
+    /// assertion and outside [`crate::AssumptionOptions`].
     pub(crate) fn structural() -> Self {
         Self {
             stack_global_disjoint: false,

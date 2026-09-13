@@ -48,12 +48,12 @@ pub(crate) struct Evaluator<'a> {
     function: &'a strider_ir::Function,
     rom: Option<&'a dyn ReadOnlyMemory>,
     map: FxHashMap<ValueId, Abs>,
-    /// One [`SlotMap`] per probe point, keyed by `(memory token, stack base)`.
+    /// One [`SlotMap`] per probe GROUP, keyed by `(memory token, stack base)`.
     /// Survives [`Self::begin_index`]: the memory segment above a load does not
     /// depend on the index.
     slot_maps: FxHashMap<(ValueId, ValueId), SlotMap>,
-    /// Held across probes for its arg-window memo, which is populated only when
-    /// `noalias_allocators` names a callee on the chain.
+    /// The analyzer answering a probe that lands past its [`SlotMap`]'s
+    /// segment, held so every probe queries under one set of options.
     off_segment: MemAnalyzer,
 }
 
