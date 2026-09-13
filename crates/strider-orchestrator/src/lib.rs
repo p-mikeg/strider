@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 use anyhow::{Result, anyhow};
 
 use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
-use strider_opt::{OptCtx, OptOptions, PostOptimizer, ReadOnlyMemory};
+use strider_opt::{OptCtx, OptOptions, ReadOnlyMemory};
 
 /// Per-binary analysis handle.
 pub struct Strider<R>
@@ -158,13 +158,11 @@ where
 
         let (mut cfg, mut function, mut unresolved, mut switch_anchors, mut resolutions) =
             self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
-        // Must be snapshotted in lockstep with `function`, and BEFORE
-        // `resolutions` is moved into `apply_resolutions`. The classifier
-        // already walked for these, so reusing its keys saves
-        // `live_unresolved_branches` a per-iteration reachability walk.
-        let mut live_indirect: rustc_hash::FxHashSet<strider_ir::node::NodeId> =
-            resolutions.keys().copied().collect();
-        let mut unclassified = unclassified_nodes(&resolutions);
+        // Snapshotted in lockstep with `function`, and BEFORE `resolutions` is
+        // moved into `apply_resolutions`. Read off the function, not the
+        // classification map, which any post-pass can rewrite.
+        let mut live_indirect = live_dispatch_sites(&function);
+        let mut unclassified = unclassified_nodes(&live_indirect, &resolutions);
         let mut converged = false;
         // A round that only ever ADDED successors cannot cycle, so exhausting
         // the budget on one is the depth limit, not an oscillation. One
@@ -282,8 +280,8 @@ where
             interior.extend_from_slice(cfg.interior_branch_targets());
             isa_conflicts.extend_from_slice(cfg.isa_mode_conflicts());
             unmapped.extend_from_slice(cfg.unmapped_branch_targets());
-            live_indirect = resolutions.keys().copied().collect();
-            unclassified = unclassified_nodes(&resolutions);
+            live_indirect = live_dispatch_sites(&function);
+            unclassified = unclassified_nodes(&live_indirect, &resolutions);
         }
 
         // The cap is spent on a `build_lift` whose classifications nothing has
@@ -525,13 +523,8 @@ const MAX_RESOLUTION_ITERATIONS: usize = 256;
 /// caller-supplied pipeline that already registers it would otherwise repeat
 /// the pass's known-bits / dominator / value-range setup every re-lift round.
 fn with_classify(mut pipeline: strider_opt::OptimizerPipeline) -> strider_opt::OptimizerPipeline {
-    let classify = strider_opt::IndirectBranchClassify;
-    if !pipeline
-        .post_passes()
-        .iter()
-        .any(|pass| pass.name() == classify.name())
-    {
-        pipeline.add_post_pass(classify);
+    if !pipeline.has_post_pass::<strider_opt::IndirectBranchClassify>() {
+        pipeline.add_post_pass(strider_opt::IndirectBranchClassify);
     }
     pipeline
 }
@@ -1268,10 +1261,9 @@ fn live_unresolved_branches(
     settled: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     derived: DerivedChannels<'_>,
 ) -> Vec<PcodeInsnAddr> {
-    // `live_indirect` is the classifier's key set, snapshotted from the
-    // `build_lift` that produced `function`: every reachable placeholder AND
-    // seated `Switch`. Intersecting it with `unresolved`, which anchors only
-    // placeholders, selects the live ones.
+    // `live_indirect` holds every reachable placeholder AND seated `Switch` of
+    // the `build_lift` that produced `function`. Intersecting it with
+    // `unresolved`, which anchors only placeholders, selects the live ones.
     let mut out: Vec<PcodeInsnAddr> = unresolved
         .iter()
         .filter(|(_addr, node)| live_indirect.contains(node))
@@ -1295,14 +1287,27 @@ fn live_unresolved_branches(
     out
 }
 
-/// The sites the classifier could not derive this round.
+/// Every reachable `IndirectBranch` placeholder and seated `Switch`.
+fn live_dispatch_sites(
+    function: &strider_ir::Function,
+) -> rustc_hash::FxHashSet<strider_ir::node::NodeId> {
+    use strider_ir::IRWalker;
+    use strider_ir::node::NodeKind;
+    function
+        .walk_kind(|k| matches!(k, NodeKind::IndirectBranch | NodeKind::Switch(_)))
+        .collect()
+}
+
+/// The live sites this round derived no targets for, including any the
+/// classification map does not name.
 fn unclassified_nodes(
+    live_sites: &rustc_hash::FxHashSet<strider_ir::node::NodeId>,
     resolutions: &IndirectResolutions,
 ) -> rustc_hash::FxHashSet<strider_ir::node::NodeId> {
-    resolutions
+    live_sites
         .iter()
-        .filter(|(_node, resolved)| resolved.is_none())
-        .map(|(node, _resolved)| *node)
+        .filter(|node| !matches!(resolutions.get(node), Some(Some(_))))
+        .copied()
         .collect()
 }
 
@@ -1419,23 +1424,12 @@ mod tests {
         )
     }
 
-    /// The reachable `IndirectBranch` set; production snapshots the
-    /// equivalent from `resolutions.keys()`.
-    fn live_indirect_set(function: &strider_ir::Function) -> rustc_hash::FxHashSet<NodeId> {
-        use strider_ir::node::NodeKind;
-        use strider_ir::{IRViewer, IRWalker};
-        function
-            .walk()
-            .filter(|&n| matches!(function.node_kind(n), NodeKind::IndirectBranch))
-            .collect()
-    }
-
     #[test]
     fn live_unresolved_reports_live_unclassified_branch() {
         let (function, node) = fn_with_live_indirect_branch();
         let addr = pcode_addr(0x1000);
         let unresolved: UnresolvedAnchors = vec![(addr, node)];
-        let live = live_indirect_set(&function);
+        let live = live_dispatch_sites(&function);
         assert_eq!(live_placeholders(&live, &unresolved), vec![addr]);
     }
 
@@ -1452,7 +1446,7 @@ mod tests {
             .expect("entry node");
         let addr = pcode_addr(0x1000);
         let unresolved: UnresolvedAnchors = vec![(addr, non_indirect)];
-        let live = live_indirect_set(&function);
+        let live = live_dispatch_sites(&function);
         assert!(
             live_placeholders(&live, &unresolved).is_empty(),
             "a dead / non-live IndirectBranch placeholder must not be reported"
@@ -1467,7 +1461,7 @@ mod tests {
         let (function, node) = fn_with_live_indirect_branch();
         let addr = pcode_addr(0x1000);
         let unresolved: UnresolvedAnchors = vec![(addr, node)];
-        let live = live_indirect_set(&function);
+        let live = live_dispatch_sites(&function);
         assert_eq!(
             live_placeholders(&live, &unresolved),
             vec![addr],
