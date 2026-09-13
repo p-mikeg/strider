@@ -231,6 +231,22 @@ impl MemRegion {
         self.bytes.mapping_id()
     }
 
+    /// `[lo, hi)` of this region, sharing its bytes and patches.
+    ///
+    /// # Panics
+    ///
+    /// When `[lo, hi)` is not a non-empty part of the region.
+    pub(crate) fn slice(&self, lo: u64, hi: u64) -> Self {
+        assert!(self.start_addr <= lo && lo < hi && hi <= self.end_addr());
+        Self {
+            start_addr: lo,
+            bytes: self.bytes.clone(),
+            offset: self.offset + (lo - self.start_addr) as usize,
+            len: (hi - lo) as usize,
+            patches: self.patches.clone(),
+        }
+    }
+
     /// The file-initial bytes, with no relocation patch applied.
     pub(crate) fn raw(&self) -> &[u8] {
         &self.bytes.as_slice()[self.offset..self.offset + self.len]
