@@ -86,10 +86,10 @@ pub enum RegionTerminator {
     ///
     /// Two shapes: a region ending in a direct (or `known_targets`-resolved)
     /// jump to an OOB target, and the empty stub `Builder::tail_call_stub`
-    /// creates per OOB conditional arm.  The stub's `start_addr` IS the OOB
-    /// target and it carries no instructions, since nothing outside the bound
-    /// is decoded; it hangs off a regular CondBranch edge so the conditional
-    /// survives.
+    /// creates for an edge leaving the decoded bytes.  The stub's `start_addr`
+    /// IS the target and it carries no instructions, since nothing outside the
+    /// bound and nothing unmapped is decoded; it hangs off a regular successor
+    /// edge so the branch it came from survives.
     TailCall {
         /// The callee, with the ISA mode the branch committed for it (an
         /// interworking `bx <const>` to a different-mode function); its `isa_bit`
@@ -123,15 +123,15 @@ pub enum RegionTerminator {
 
 /// A basic block: maximal straight-line pcode entered only at `start_addr` and
 /// left only at the terminator.  Ends on a `Branch`, `CondBranch`, `Return`, or
-/// `BranchIndirect` opcode, on a no-return `Call`/`CallOther`, or when
+/// `BranchIndirect` opcode, on a no-return `Call`/`CallOther`/`CallIndirect`,
+/// on a zero-pcode-op instruction (`build` segments at every one), or when
 /// sequential decoding reaches an already-discovered region's start.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Region {
     pub start_addr: PcodeInsnAddr,
     /// Program order.  Empty in two cases: an `Unconditional` region sealed
     /// at a zero-pcode-op instruction, which is the common one since `build`
-    /// segments at every such instruction, or a `TailCall` stub for an
-    /// out-of-bound CondBranch arm.
+    /// segments at every such instruction, or a `TailCall` stub.
     pub insns: Vec<RegionInstruction>,
     /// Byte length of the zero-pcode-op machine instruction an empty region was
     /// sealed at, which no `RegionInstruction` records.  `0` when the region
