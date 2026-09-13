@@ -82,3 +82,9 @@ def test_buffer_reader_read_huge_size_unmapped():
     r = strider.reader.BufferReader(0x1000, b"\x01\x02\x03\x04")
     # Unmapped base: clamp must not allocate, returns None.
     assert r.read(0x9000, 2 ** 60) is None
+
+
+def test_data_may_be_bytes_bytearray_or_a_list_of_ints():
+    for data in (b"\x01\x02\x03", bytearray(b"\x01\x02\x03"), [1, 2, 3]):
+        r = strider.reader.BufferReader(0x1000, data)
+        assert r.read(0x1000, 3) == b"\x01\x02\x03"
