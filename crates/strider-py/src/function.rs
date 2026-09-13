@@ -483,8 +483,8 @@ impl PyFunction {
         )
     }
 
-    /// Apply `(find, replace)` pairs round-robin at every reachable node,
-    /// returning the total fire count across pairs and nodes. See `rewrite`.
+    /// Apply the first matching `(find, replace)` pair at every reachable
+    /// node, returning the total fire count. See `rewrite`.
     fn rewrite_all(
         &self,
         py: Python<'_>,
