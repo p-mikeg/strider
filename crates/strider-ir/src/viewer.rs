@@ -153,8 +153,9 @@ pub trait IRViewer {
         self.value_kind(value).as_value()?.get_signed_int(v)
     }
 
-    /// Little-endian bytes of a constant too wide for `u64`, widened to the
-    /// output type's byte size. `None` for narrow constants.
+    /// Little-endian bytes of a constant whose declared type is wider than
+    /// `u64`, zero-extended to that type's byte size. `None` for a narrower
+    /// declared type, whatever the value.
     fn int_const_wide_le_bytes(&self, node: crate::node::NodeId) -> Option<Vec<u8>> {
         let [out] = self.node_outputs_exact::<1>(node).ok()?;
         let ty = self.value_kind(out).as_value()?;
@@ -334,6 +335,7 @@ pub trait IRViewer {
         if ty.is_float() {
             return Ok(ty);
         }
+        // `byte_size()` is at most 64.
         #[allow(clippy::cast_possible_truncation)]
         ValueType::float_for_byte_size(ty.byte_size() as u32)
             .map_err(|e| anyhow!("infer_float_type of {ty}: {e}"))
