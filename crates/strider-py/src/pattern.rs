@@ -2066,8 +2066,8 @@ pub enum IntConstAnyWidthArg {
 
 /// Match an `IntConst` holding `value` however it was width-extended into the
 /// constant's own type: exact, widened by zero extension, or widened by sign
-/// extension. Given a list, any member of it. More permissive than
-/// `int_const`, which is bit-exact at the output width.
+/// extension. Given a list, any member of it. `value` must fit the width it
+/// is matched at, so `0x1234` never matches `0x34` at `i8`.
 ///
 /// A value outside the signed 64-bit range raises.
 #[pyfunction]

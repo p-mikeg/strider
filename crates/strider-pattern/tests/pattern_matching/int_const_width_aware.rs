@@ -212,3 +212,46 @@ fn a_bool_constant_matches_at_its_own_width() {
         "int_const_any_width(0) must not match IntConst(1) at I1"
     );
 }
+
+/// `0x34:I8` is no extension of `0x1234`: a query wider than the constant must
+/// fit its width, not share its low bits.
+#[test]
+fn an_any_width_query_wider_than_the_constant_does_not_match_its_low_bits() {
+    let mut t = Tb::empty();
+    let low_byte = t.int_of(0x34u64, ValueType::I8);
+    let function = t.ret_val(low_byte);
+    assert!(
+        Matcher::new(&function)
+            .find_all(&int_const_any_width(0x1234).into_pattern())
+            .unwrap()
+            .is_empty(),
+        "int_const_any_width(0x1234) must not match IntConst(0x34) at I8"
+    );
+
+    let mut t = Tb::empty();
+    let low_word = t.int_of(0x5678u64, ValueType::I32);
+    let function = t.ret_val(low_word);
+    assert!(
+        Matcher::new(&function)
+            .find_all(&int_const_any_width(0x7_0000_5678).into_pattern())
+            .unwrap()
+            .is_empty(),
+        "int_const_any_width(0x7_0000_5678) must not match IntConst(0x5678) at I32"
+    );
+}
+
+/// `int_const` masks the query to the constant's width too, so a wider value
+/// matches a narrow constant holding its low bits.
+#[test]
+fn an_int_const_query_is_truncated_to_the_constant_width() {
+    let mut t = Tb::empty();
+    let low_byte = t.int_of(0x34u64, ValueType::I8);
+    let function = t.ret_val(low_byte);
+    assert_eq!(
+        Matcher::new(&function)
+            .find_all(&int_const(0x1234u128).into_pattern())
+            .unwrap()
+            .len(),
+        1
+    );
+}
