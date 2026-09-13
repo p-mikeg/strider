@@ -4,7 +4,7 @@ mod split;
 
 use flow::NO_FLOW_VARS;
 pub use flow::{FlowContext, FlowVars};
-use region_builder::{RegionBuilder, is_unmapped_start};
+use region_builder::{RegionBuilder, is_unmapped_start, not_code_at};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
@@ -142,6 +142,9 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// Branch targets and fall-throughs no byte backs; see
     /// [`Cfg::unmapped_branch_targets`].
     pub(super) unmapped_branch_targets: Vec<PcodeInsnAddr>,
+    /// Branch targets and fall-throughs that hold no instruction; see
+    /// [`Cfg::undecodable_branch_targets`].
+    pub(super) undecodable_branch_targets: Vec<PcodeInsnAddr>,
     /// Seeded arms whose address a direct edge already decoded in the other ISA
     /// mode, with the region that seated them. The arm goes: a direct edge
     /// switches no mode, so the decode that won is the proved one.
@@ -168,6 +171,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             work_queue: Vec::new(),
             seeded_queue: Vec::new(),
             unmapped_branch_targets: Vec::new(),
+            undecodable_branch_targets: Vec::new(),
             clashing_seeded: Vec::new(),
             undecodable_seeded: Vec::new(),
             region_isa_mode: BTreeMap::new(),
@@ -761,20 +765,29 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 (Err(e), None) => {
                     // A direct branch out of the mapped image (a firmware window,
                     // a partially-mapped file, an unrelocated `jmp`) names bytes
-                    // nobody can supply. The function is not broken by it, so the
-                    // edge leaves through a `TailCall` stub and the address is
-                    // reported; every region that did decode survives.
+                    // nobody can supply, and one to bytes that hold no
+                    // instruction (glibc's PowerPC `abort` word, a literal pool)
+                    // names nothing to decode. The function is not broken by
+                    // either, so the edge leaves through a `TailCall` stub and
+                    // the address is reported; every region that did decode
+                    // survives.
                     //
                     // The ENTRY has no parent to hang the stub off, and a
-                    // function whose first byte is unmapped has nothing to
-                    // analyse, so it stays an `Err`.
-                    let Some(parent) = parent_region.filter(|_| is_unmapped_start(&e, address))
-                    else {
+                    // function whose first instruction does not exist has
+                    // nothing to analyse, so it stays an `Err`.
+                    let report = if is_unmapped_start(&e, address) {
+                        &mut self.unmapped_branch_targets
+                    } else if not_code_at(&e, address).is_some() {
+                        &mut self.undecodable_branch_targets
+                    } else {
                         return Err(e);
                     };
+                    let Some(parent) = parent_region else {
+                        return Err(e);
+                    };
+                    report.push(address);
                     let stub = self.tail_call_stub(address)?;
                     self.region_graph.add_edge(parent, stub, ());
-                    self.unmapped_branch_targets.push(address);
                 }
             }
         }
@@ -804,6 +817,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             isa_mode_conflicts: self.isa_mode_conflicts,
             interior_branch_targets: self.interior_branch_targets,
             unmapped_branch_targets: self.unmapped_branch_targets,
+            undecodable_branch_targets: self.undecodable_branch_targets,
             link_register_seated: self.link_register_seated,
             tail_call_seated: self.tail_call_seated,
             function_isa_bit,

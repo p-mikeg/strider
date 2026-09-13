@@ -640,18 +640,25 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             // Fingerprint contributor for the terminator handlers: the region's
             // last pcode insn.  A region with zero pcode insns is a synthetic
             // tail-call stub, whose `Call + Return` is proven by the
-            // predecessor's conditional branch, so fall back to that or its
+            // predecessor's branch or fall-through, so fall back to that or its
             // nodes carry no fingerprint and fail the validator's non-empty
-            // check.  `max` picks one deterministic contributor when several
-            // branches share a deduped stub.
+            // check.  A predecessor with no pcode insn is a zero-pcode-op
+            // instruction falling through, which starts at its region's start.
+            // `max` picks one deterministic contributor when several branches
+            // share a deduped stub.
             let term_addr = region
                 .insns
                 .last()
                 .map(|wrapped| wrapped.addr.machine_addr.addr)
                 .or_else(|| {
                     cfg.region_predecessors(cfg_rid)
-                        .filter_map(|pred| pred.insns.last())
-                        .map(|wrapped| wrapped.addr.machine_addr.addr)
+                        .map(|pred| {
+                            pred.insns
+                                .last()
+                                .map_or(pred.start_addr, |w| w.addr)
+                                .machine_addr
+                                .addr
+                        })
                         .max()
                 });
             // A `NoReturn` region ending in a `Call` or `CallIndirect` has an

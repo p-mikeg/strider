@@ -7,4 +7,5 @@ pub use load::{OwnedElf, load_elf};
 pub use reader::ElfFileMemReader;
 pub use sections::{
     ElfSectionLayout, LoadFilter, OpdTable, RegionSource, elf_get_loadable_regions,
+    mapping_symbol_data_ranges,
 };

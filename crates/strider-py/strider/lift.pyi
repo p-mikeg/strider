@@ -38,11 +38,11 @@ class AnalyzeResult(NamedTuple):
     not be resolved, and a non-empty list is not an error.
 
     Empty means fully resolved, NOT that the answer is complete: it is one of
-    five incompleteness channels, and a dispatch the CFG consumed as a return
+    six incompleteness channels, and a dispatch the CFG consumed as a return
     or a tail call is reported only through `cfg.unverified_seeded_sites()`.
-    The other three are `cfg.isa_mode_conflicts()`,
-    `cfg.interior_branch_targets()` and `cfg.unmapped_branch_targets()`;
-    `cfg.is_complete()` tests all five.
+    The other four are `cfg.isa_mode_conflicts()`,
+    `cfg.interior_branch_targets()`, `cfg.unmapped_branch_targets()` and
+    `cfg.undecodable_branch_targets()`; `cfg.is_complete()` tests all six.
     """
 
     cfg: Cfg
@@ -432,7 +432,9 @@ class ElfLifter(Lifter):
         opts: Optional[LifterOptions] = ...,
     ) -> AnalyzeResult:
         """Lift the function at `entry`, a symbol name or an address. `cc`
-        defaults to this handle's convention.
+        defaults to this handle's convention. Unless `opts.cfg.data_ranges` names
+        some, the ELF's `$d` mapping symbols supply them, so a literal pool is
+        never decoded as code.
 
         Releases the GIL as `Lifter.analyze` does, with the same consequence
         for a daemon thread parked inside it at interpreter finalization."""

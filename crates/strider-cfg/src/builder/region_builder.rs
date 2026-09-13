@@ -55,6 +55,33 @@ impl std::fmt::Display for UnmappedAddr {
 
 impl std::error::Error for UnmappedAddr {}
 
+/// No instruction decodes at this address: Sleigh rejected the bytes, or
+/// [`crate::CfgOptions::data_ranges`] marks them as data.
+#[derive(Debug)]
+pub(super) struct NotCode {
+    pub(super) addr: u64,
+    pub(super) marked_data: bool,
+}
+
+impl std::fmt::Display for NotCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.marked_data {
+            write!(f, "{:#x} is marked as data", self.addr)
+        } else {
+            write!(f, "{:#x} does not decode", self.addr)
+        }
+    }
+}
+
+impl std::error::Error for NotCode {}
+
+/// The [`NotCode`] verdict for the instruction at `addr`, `None` for any other
+/// failure, or for one at another address.
+pub(super) fn not_code_at(err: &anyhow::Error, addr: PcodeInsnAddr) -> Option<&NotCode> {
+    err.downcast_ref::<NotCode>()
+        .filter(|n| n.addr == addr.machine_addr.addr)
+}
+
 /// Whether `err` is a decode the reader could not supply the bytes for, at
 /// `addr` or partway into the instruction there.
 ///
@@ -146,9 +173,36 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                     rsleigh::error::BaseError::DataUnavailErr
                     | rsleigh::error::BaseError::PartiallyInitializedInsn,
                 ) => anyhow::Error::new(UnmappedAddr(addr)).context(msg),
+                // Every decode Sleigh rejects (`BadDataError`, an unimplemented
+                // constructor) surfaces as a C++ exception.
+                rsleigh::error::GenericError::Base(
+                    rsleigh::error::BaseError::UnexpectedCppException(_),
+                ) => anyhow::Error::new(NotCode {
+                    addr,
+                    marked_data: false,
+                })
+                .context(msg),
                 rsleigh::error::GenericError::Base(_) => anyhow!(msg),
             }
         })
+    }
+
+    /// [`Self::lift_one`], refusing an instruction any byte of which
+    /// [`crate::CfgOptions::data_ranges`] marks as data.
+    fn lift_code(&mut self, addr: u64) -> Result<rsleigh::LiftRes> {
+        let data = || NotCode {
+            addr,
+            marked_data: true,
+        };
+        let ranges = &self.builder.options.data_ranges;
+        if ranges.overlaps(addr, addr.saturating_add(1)) {
+            return Err(data().into());
+        }
+        let lifted = self.lift_one(addr)?;
+        if ranges.overlaps(addr, addr.saturating_add(lifted.machine_insn_len as u64)) {
+            return Err(data().into());
+        }
+        Ok(lifted)
     }
 
     /// Pcode encodes branch targets two ways: CONST-space is a signed offset
@@ -682,13 +736,24 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     pub(super) fn build(mut self) -> Result<()> {
         let mut cur_addr = self.start_addr;
         loop {
-            let lift_res = match self.lift_one(cur_addr.machine_addr.addr) {
+            let lift_res = match self.lift_code(cur_addr.machine_addr.addr) {
                 Ok(lift_res) => lift_res,
-                Err(e)
-                    if cur_addr.machine_addr != self.start_addr.machine_addr
-                        && is_unmapped_start(&e, cur_addr) =>
-                {
-                    return self.seal_at_unmapped_fallthrough(cur_addr);
+                Err(e) if cur_addr.machine_addr != self.start_addr.machine_addr => {
+                    if is_unmapped_start(&e, cur_addr) {
+                        return self.seal_at_unmapped_fallthrough(cur_addr);
+                    }
+                    let Some(&NotCode { marked_data, .. }) = not_code_at(&e, cur_addr) else {
+                        return Err(e);
+                    };
+                    if self.seal_at_call_not_returning(cur_addr)? {
+                        return Ok(());
+                    }
+                    if marked_data {
+                        self.seal_at_fallthrough_stub(cur_addr)?;
+                        self.builder.undecodable_branch_targets.push(cur_addr);
+                        return Ok(());
+                    }
+                    return Err(e);
                 }
                 Err(e) => return Err(e),
             };
@@ -815,6 +880,37 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// region; a function abutting the end of the mapped image costs its
     /// trailing edge rather than the whole lift.
     fn seal_at_unmapped_fallthrough(&mut self, cur_addr: PcodeInsnAddr) -> Result<()> {
+        self.seal_at_fallthrough_stub(cur_addr)?;
+        self.builder.unmapped_branch_targets.push(cur_addr);
+        Ok(())
+    }
+
+    /// Ends the region at its last `Call` / `CallIndirect` as `NoReturn` when
+    /// the fall-through reached `cur_addr`, which holds no instruction; the
+    /// instructions after the call (a PowerPC TOC restore) are dropped with it.
+    /// Returns whether the region held a call.
+    ///
+    /// Code after a call that does not decode is what a no-return callee the
+    /// build was not told about leaves behind: a literal pool, a traceback
+    /// table, a deliberately invalid word.
+    fn seal_at_call_not_returning(&mut self, cur_addr: PcodeInsnAddr) -> Result<bool> {
+        let Some(call) = self.insns.iter().rposition(|i| {
+            matches!(
+                i.insn.opcode,
+                rsleigh::Opcode::Call | rsleigh::Opcode::CallIndirect
+            )
+        }) else {
+            return Ok(false);
+        };
+        self.insns.truncate(call + 1);
+        self.finish_current_region(RegionTerminator::NoReturn)?;
+        self.builder.undecodable_branch_targets.push(cur_addr);
+        Ok(true)
+    }
+
+    /// Seals the region onto a [`Builder::tail_call_stub`] at `cur_addr`, where
+    /// the fall-through found nothing to decode.
+    fn seal_at_fallthrough_stub(&mut self, cur_addr: PcodeInsnAddr) -> Result<()> {
         if self.insns.is_empty() {
             self.empty_span_len = u32::try_from(
                 cur_addr
@@ -827,7 +923,6 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let region = self.finish_current_region(RegionTerminator::Unconditional)?;
         let stub = self.builder.tail_call_stub(cur_addr)?;
         self.builder.region_graph.add_edge(region, stub, ());
-        self.builder.unmapped_branch_targets.push(cur_addr);
         Ok(())
     }
 

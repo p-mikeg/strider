@@ -95,7 +95,7 @@ bytes and the arm goes.
 
 ## Nothing is dropped silently
 
-A completed `Cfg` may be incomplete, and says so through six getters. Read them
+A completed `Cfg` may be incomplete, and says so through seven getters. Read them
 all: they overlap in cause and not in content.
 
 - `undecodable_seeded_targets`: a seeded target that would not decode, with the
@@ -106,6 +106,13 @@ all: they overlap in cause and not in content.
   stub, so the regions that did decode survive. A MIPS branch whose delay slot
   is unmapped reports the branch's own address. An unmapped ENTRY is still an
   `Err` on the whole build.
+- `undecodable_branch_targets`: a direct branch, or a fall-through past a call,
+  to bytes that hold no instruction: Sleigh rejects them, or
+  `CfgOptions::data_ranges` (an ELF's `$d` mapping symbols) marks them as data.
+  A branch leaves through a `TailCall` stub; the call is ended as `NoReturn`,
+  dropping any instructions between it and the bytes. A literal pool never
+  decodes as code, and a traceback table or an `abort` word no longer fails the
+  build.
 - `isa_mode_conflicts`: two edges reached an address carrying different ISA
   modes, and the losing path decodes in the winner's. A direct edge always
   wins; between two direct ones the winner is work-queue order, so neither
