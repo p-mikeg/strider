@@ -1,7 +1,7 @@
 # strider-lift
 
 Turns one function's `strider_cfg::Cfg` into a `strider_ir::Function`: a
-sea-of-nodes graph in pruned SSA, with one IR `Region` per CFG region, the
+sea-of-nodes graph in minimal SSA, with one IR `Region` per CFG region, the
 control and memory edges wired along the CFG's edges, and every machine
 register modelled as an SSA variable.
 
@@ -74,12 +74,12 @@ value when the address names one.
 
 ## SSA construction
 
-Cytron pruned SSA. `collect_def_sites` walks every region's pcode and records
-what the lift will write; `iterated_frontier` turns that into the set of
-variables needing a `Phi` at each region. `record_insn_defs` is a HAND-WRITTEN
-mirror of the lift's write paths, not a shared code path: a def it records that
-the lift never writes costs a dead phi, one the lift writes and it misses loses
-the phi and miscompiles.
+Minimal (Cytron) SSA, with no liveness pruning. `collect_def_sites` walks every
+region's pcode and records what the lift will write; `iterated_frontier` turns
+that into the set of variables needing a `Phi` at each region.
+`record_insn_defs` is a HAND-WRITTEN mirror of the lift's write paths, not a
+shared code path: a def it records that the lift never writes costs a dead phi,
+one the lift writes and it misses loses the phi and miscompiles.
 
 Renaming walks the dominator tree in pre-order: each region takes its immediate
 dominator's finished variable map and overrides the variables carrying a phi of

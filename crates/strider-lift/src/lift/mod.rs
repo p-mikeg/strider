@@ -444,7 +444,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             &opts.cfg.call_other_overrides,
         )?;
 
-        // Cytron pruned-SSA phi placement: iterated dominance frontier of each
+        // Minimal (Cytron) SSA phi placement: iterated dominance frontier of each
         // variable's definition sites.  This is what stops the lifter minting a
         // value `Phi` for every varnode at every region.
         let dom = dominance::DomInfo::compute(cfg);
