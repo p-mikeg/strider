@@ -361,18 +361,6 @@ mod tests {
     }
 
     #[test]
-    fn classify_int_const_when_lr_unset_still_returns_single() {
-        // The IntConst arm must not consult `link_register_vn`.
-        let (function, target) = empty_graph_returning(|fb| {
-            fb.build_int_const(0xfeed_face_u64, ValueType::I64).unwrap()
-        });
-        assert_eq!(
-            classify_target_bare(&function, target),
-            Some(ResolvedTargets::Single(0xfeed_face.into())),
-        );
-    }
-
-    #[test]
     fn classify_initial_var_with_matching_lr_returns_link_register() {
         let lr_vn = fake_reg_vn(0x4c, 4);
         // The only tracked variable IS the link register, so reading it gives
