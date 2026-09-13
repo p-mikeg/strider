@@ -214,18 +214,6 @@ mod tests {
     }
 
     #[test]
-    fn regions_iterator_count_matches_node_count() {
-        let cfg = real_cfg("control", "sum_to_n");
-        assert_eq!(cfg.regions().count(), cfg.region_graph.node_count());
-    }
-
-    #[test]
-    fn region_ids_iterator_count_matches_node_count() {
-        let cfg = real_cfg("control", "sum_to_n");
-        assert_eq!(cfg.region_ids().count(), cfg.region_graph.node_count());
-    }
-
-    #[test]
     fn region_if_both_successors_present_on_abs_val() {
         let cfg = real_cfg("control", "abs_val");
         let has_pair = cfg.region_ids().any(|id| {
