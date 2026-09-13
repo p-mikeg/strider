@@ -95,10 +95,12 @@ impl Cfg {
     /// Addresses two edges reached carrying different ISA modes. One region
     /// owns the bytes, so the losing edge's path decodes in the other's mode.
     ///
-    /// A direct edge always wins over a seeded arm, whose arm is then dropped
-    /// (`Builder::drop_refused_switch_arms`). Between two direct edges the
-    /// winner is work-queue order, so a caller that cares must treat those as
-    /// unresolved rather than trusting either decode.
+    /// An edge the entry reaches without any seeded arm is decoded before
+    /// every arm, so it wins over one, whose arm is then dropped
+    /// (`Builder::drop_refused_switch_arms`). Any other pair, including an arm
+    /// against a direct edge found while decoding another arm's code, is won
+    /// by whichever decoded first in work-queue order, so a caller that cares
+    /// must treat those as unresolved rather than trusting either decode.
     pub fn isa_mode_conflicts(&self) -> &[types::PcodeInsnAddr] {
         &self.isa_mode_conflicts
     }
