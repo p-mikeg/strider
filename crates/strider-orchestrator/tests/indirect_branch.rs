@@ -17,7 +17,6 @@
 
 mod common;
 use common::*;
-use object::{Object, ObjectSymbol};
 use strider_ir::{IRViewer, IRWalker};
 
 /// Drives `Strider::analyze` to its fixed point on
@@ -31,27 +30,8 @@ use strider_ir::{IRViewer, IRWalker};
 /// one-arm answer, an over-approximated table, and an arm landing off a
 /// region start all fail.
 fn assert_indirect_goto_resolves_to_both_labels(arch: Arch) {
-    let path = binary_path(arch, "indirect_branch");
-    let owned = strider_reader::load_elf(&path)
-        .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
-    let obj = owned.checked_file().expect("the mapped file is unchanged");
-    let sleigh_arch = arch.sleigh();
-    // The Thumb interworking bit IS the entry's ISA mode; `build_cfg` masks it
-    // off for decoding itself.
-    let entry = obj
-        .symbol_by_name("indirect_branch_resolved")
-        .unwrap_or_else(|| panic!("symbol not found in {path:?}"))
-        .address();
-    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
-    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
-        .expect("Sleigh::new");
-    // A second view of the same image, for the optimiser's rodata loads.
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
-        Box::new(strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader"));
-    let regs = sleigh.regs().expect("regs");
-    let cc = arch.cc().build(&regs).expect("build cc");
-    let mut strider =
-        strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(rom)).expect("Strider::new");
+    let (mut strider, cc, entry) =
+        fixture_strider(arch, "indirect_branch", "indirect_branch_resolved");
     let result = strider
         .analyze(
             entry,

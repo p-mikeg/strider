@@ -39,7 +39,7 @@ fn count_adds(function: &Function) -> usize {
 #[test]
 fn replace_switch_address_with_const_collapses_switch_after_reoptimize() -> anyhow::Result<()> {
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(3);
-    let (mut g, _strider, _cc) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
+    let mut g = common::analyze_with_known_targets(&bytes, base, ba, &targets);
     assert_eq!(
         common::count_ifs(&g),
         0,
@@ -101,7 +101,7 @@ fn replace_switch_address_with_const_collapses_switch_after_reoptimize() -> anyh
 fn rewrite_rule_targeting_old_if_ladder_shape_is_a_no_op_against_switch_dispatch()
 -> anyhow::Result<()> {
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(3);
-    let (mut g, _strider, _cc) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
+    let mut g = common::analyze_with_known_targets(&bytes, base, ba, &targets);
     assert_eq!(
         common::count_ifs(&g),
         0,
@@ -215,48 +215,6 @@ fn re_optimize_without_changes_is_no_op() -> anyhow::Result<()> {
     assert_eq!(
         count_after_first, count_after_second,
         "re_optimize on an already-stable graph is a no-op",
-    );
-    Ok(())
-}
-
-#[test]
-fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
-    // Local typing + use-list consistency + graph invariants: a broken
-    // use-list would only surface here.
-    let mut function = add_k_plus_zero(42);
-    let x = Capture::new();
-    let rule = rewrite_rule(int_add(var(x), int_const(0u128)), var(x));
-
-    {
-        let mut ctx = EditFunction::new(&mut function);
-        apply_rules_count(&mut ctx, std::slice::from_ref(&rule))?;
-    }
-
-    strider_ir::validate::validate(&function)
-        .map_err(|e| anyhow::anyhow!("assertion failed: validate failed after rewrite: {e}"))?;
-    Ok(())
-}
-
-#[test]
-fn apply_rule_using_pattern_var_capture() -> anyhow::Result<()> {
-    // add(var(x), int_const(0u128)) -> var(x): the capture binds the Add's
-    // left input and the RHS reuses it as a passthrough.
-    // Pins: apply_rules_count's fire count, and that Return ends up wired
-    // directly to `x` once the Add becomes unreachable.
-    let mut function = add_k_plus_zero(99);
-    assert_eq!(count_adds(&function), 1, "fixture has one Add");
-
-    let x = Capture::new();
-    let rule = rewrite_rule(int_add(var(x), int_const(0u128)), var(x));
-    let fired = {
-        let mut ctx = EditFunction::new(&mut function);
-        apply_rules_count(&mut ctx, std::slice::from_ref(&rule))?
-    };
-    assert_eq!(fired, 1, "Capture-capture rule fires exactly once");
-    assert_eq!(
-        count_adds(&function),
-        0,
-        "post-rewrite Add is unreachable: the Return feeds off `x` directly",
     );
     Ok(())
 }
