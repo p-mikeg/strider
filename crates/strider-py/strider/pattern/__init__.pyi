@@ -827,16 +827,17 @@ def bool_inputs(inner: ValueLike) -> Pat:
     """Match `inner` whose value inputs are all booleans (1-bit `I1`).
     Exactly `inputs_of_width(1, inner)`, named for intent."""
 def int_const(value: int | list[int] | Capture | None = ...) -> Pat:
-    """Match an integer constant whose value, masked to its output width,
-    equals `value`, or is one of `value` when given a list; an empty list
-    matches nothing. Given a `Capture`, or nothing, match any integer
+    """Match an integer constant whose value equals `value`, both masked to
+    the constant's output width, or is one of `value` when given a list; an
+    empty list matches nothing. The query is truncated too, so `0x1234`
+    matches `0x34` at `i8`. Given a `Capture`, or nothing, match any integer
     constant, binding it when there is a capture."""
 def int_const_any_width(value: int | list[int]) -> Pat:
     """Match an integer constant holding `value` however it was width-extended
     into the constant's own type: exact, widened by zero extension, or widened
-    by sign extension. Given a list, any member of it. More permissive than
-    `int_const`, which is bit-exact at the output width. A value outside the
-    signed 64-bit range raises."""
+    by sign extension. Given a list, any member of it. `value` must fit the
+    width it is matched at, so `0x1234` never matches `0x34` at `i8`. A value
+    outside the signed 64-bit range raises."""
 def bool_const(value: bool | Capture | None = ...) -> Pat:
     """Match a 1-bit boolean constant equal to `value`. Given a `Capture`, or
     nothing, match any boolean constant, binding it when there is a capture."""
