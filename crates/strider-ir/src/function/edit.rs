@@ -1405,6 +1405,9 @@ mod tests {
             ctx.is_live(store_node),
             "cull_dead must not kill the in-use memory Store"
         );
+        // Read only by the Load, the write is still off the memory chain.
+        let mem_slot = ctx.graph_ref().node_input_id_at(return_node, 1).unwrap();
+        ctx.update_input(mem_slot, store_mem);
         crate::validate::validate(ctx.function())
             .expect("graph validates after resurrecting a Load over a memory Store");
     }
