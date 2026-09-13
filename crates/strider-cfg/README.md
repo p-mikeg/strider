@@ -89,9 +89,12 @@ costs functions outright, seating the rest to decode whatever else the bound
 over-approximated into. Only an arm the site learns about
 after it was seated is dropped on its own, and a `Switch` left with no arm
 degrades to `UnresolvedIndirectBranch` too. So does one whose bytes turn out to
-be decoded in the other ISA mode: a direct edge proves the mode it carries, a
-classifier-committed `isa_bit` only claims one, so the direct decode keeps the
-bytes and the arm goes.
+be decoded in the other ISA mode. Every edge the entry reaches without an arm is
+decoded before any arm: such an edge proves the mode it carries, a
+classifier-committed `isa_bit` only claims one, so that decode keeps the bytes
+and the arm goes. An edge found while decoding an arm's code is only as certain
+as the arm and arrives after the arms decoded before it, so there the first
+decode keeps the bytes, the edge is wired, and the clash is reported.
 
 ## Nothing is dropped silently
 
@@ -107,9 +110,9 @@ all: they overlap in cause and not in content.
   bytes for. It leaves through an empty `TailCall` stub, so the regions that did
   decode survive. An unmapped ENTRY is still an `Err` on the whole build.
 - `isa_mode_conflicts`: two edges reached an address carrying different ISA
-  modes, and the losing path decodes in the winner's. A direct edge always
-  wins; between two direct ones the winner is work-queue order, so neither
-  decode can be trusted.
+  modes, and the losing path decodes in the winner's. A direct edge the entry
+  reaches without an arm wins over an arm; otherwise the first decode wins by
+  work-queue order, so neither decode can be trusted.
 - `interior_branch_targets`: the off-boundary targets above, whose edge is
   inexact (a direct branch) or absent (a dropped `Switch` arm), plus a region
   start a later decode stepped over.

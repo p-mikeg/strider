@@ -166,9 +166,9 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// Branch targets and fall-throughs no byte backs; see
     /// [`Cfg::unmapped_branch_targets`].
     pub(super) unmapped_branch_targets: Vec<PcodeInsnAddr>,
-    /// Seeded arms whose address a direct edge already decoded in the other ISA
-    /// mode, with the region that seated them. The arm goes: a direct edge
-    /// switches no mode, so the decode that won is the proved one.
+    /// Seeded arms whose address an earlier decode already owns in the other
+    /// ISA mode, with the region that seated them. The arm goes, as the loser
+    /// of [`Self::next_work_item`]'s arbitration.
     pub(super) clashing_seeded: Vec<(NodeIndex, PcodeInsnAddr)>,
 }
 
@@ -343,8 +343,12 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// mode certain, where an arm's committed `isa_bit` is a classifier claim;
     /// draining direct edges first hands the bytes to the proved mode.
     ///
-    /// Within one switch the arms still pop lowest-first, and a region decoded
-    /// off an arm still explores its own direct successors before the next arm.
+    /// Proved only for code the entry reaches without an arm. Within one switch
+    /// the arms pop lowest-first, and a region decoded off an arm explores its
+    /// own direct successors before the next arm, so such an edge can arrive
+    /// at bytes an earlier arm decoded in the other mode. It is no more certain
+    /// than its own arm, and un-decoding the earlier region is not expressible,
+    /// so the first decode keeps the bytes and the clash is only reported.
     fn next_work_item(&mut self) -> Option<WorkItem> {
         self.work_queue.pop().or_else(|| self.seeded_queue.pop())
     }
