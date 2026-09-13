@@ -109,8 +109,8 @@ fn canonicalize(f: &mut strider_ir::Function) {
 /// becomes the false edge in that case.
 fn if_edge_consumers(f: &strider_ir::Function) -> (NodeId, NodeId) {
     let if_node = f
-        .walk()
-        .find(|&n| matches!(f.node_kind(n), NodeKind::If))
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .next()
         .expect("an If node");
     let outs: Vec<ValueId> = f.node_outputs(if_node).to_vec();
     let consumer = |ctrl: ValueId| {
@@ -2496,8 +2496,8 @@ fn build_guard_fan(k: usize) -> (strider_ir::Function, ValueId, NodeId) {
     canonicalize(&mut f);
 
     let first_if = f
-        .walk()
-        .find(|&n| matches!(f.node_kind(n), NodeKind::If))
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .next()
         .expect("an If node");
     let true_edge = f.node_outputs(first_if)[0];
     let leaf = f

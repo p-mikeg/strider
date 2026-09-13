@@ -38,8 +38,8 @@ fn assert_clean(fg: &Function, r: NodeId) {
 fn empty_chain() -> (Function, ValueId) {
     let fg = make_empty_fn(|b| b.build_int_const(7u64, ValueType::I64)).unwrap();
     let im = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
+        .walk_kind(|k| matches!(k, NodeKind::InitialMemory))
+        .next()
         .expect("InitialMemory must exist");
     let im_value = fg.node_outputs_exact::<1>(im).unwrap()[0];
     (fg, im_value)
@@ -59,8 +59,8 @@ fn linear_store_chain(depth: usize) -> (Function, ValueId, Vec<ValueId>) {
     })
     .unwrap();
     let ret = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
+        .walk_kind(|k| matches!(k, NodeKind::Return))
+        .next()
         .expect("Return must exist");
     let head = fg.node_inputs(ret)[1];
     // Head to tail, i.e. most recent store first.
@@ -93,8 +93,8 @@ fn linear_chain_with_load(depth: usize) -> (Function, NodeId, ValueId, Vec<Value
     })
     .unwrap();
     let load = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+        .walk_kind(|k| matches!(k, NodeKind::Load(_)))
+        .next()
         .expect("Load must exist");
     let head = fg.node_inputs(load)[0];
     let mut store_mems = Vec::new();
@@ -178,16 +178,16 @@ fn base_with_store() -> (Function, ValueId, ValueId, ValueId) {
     })
     .unwrap();
     let im_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
+        .walk_kind(|k| matches!(k, NodeKind::InitialMemory))
+        .next()
         .expect("InitialMemory must exist");
     let store_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
+        .walk_kind(|k| matches!(k, NodeKind::Store(_)))
+        .next()
         .expect("Store must exist");
     let region_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+        .walk_kind(|k| matches!(k, NodeKind::Region))
+        .next()
         .expect("Region must exist");
     let im = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
     let store_mem = fg.node_outputs_exact::<1>(store_node).unwrap()[0];
@@ -354,12 +354,12 @@ fn mem_phi_all_initial(n_arms: usize) -> (Function, ValueId) {
     })
     .unwrap();
     let im_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
+        .walk_kind(|k| matches!(k, NodeKind::InitialMemory))
+        .next()
         .expect("InitialMemory must exist");
     let region_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+        .walk_kind(|k| matches!(k, NodeKind::Region))
+        .next()
         .expect("Region must exist");
     let im_value = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
     let phi_token = fg.node_outputs(region_node)[1];
@@ -409,16 +409,16 @@ fn mem_phi_disagreeing_arms_returns_phi_boundary() {
     })
     .unwrap();
     let im_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
+        .walk_kind(|k| matches!(k, NodeKind::InitialMemory))
+        .next()
         .unwrap();
     let store_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
+        .walk_kind(|k| matches!(k, NodeKind::Store(_)))
+        .next()
         .unwrap();
     let region_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+        .walk_kind(|k| matches!(k, NodeKind::Region))
+        .next()
         .unwrap();
     let im_value = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
     let store_mem = fg.node_outputs_exact::<1>(store_node).unwrap()[0];
@@ -450,12 +450,12 @@ fn mem_phi_agreeing_arms_pass_through_to_shared_store() {
     })
     .unwrap();
     let store_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
+        .walk_kind(|k| matches!(k, NodeKind::Store(_)))
+        .next()
         .unwrap();
     let region_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+        .walk_kind(|k| matches!(k, NodeKind::Region))
+        .next()
         .unwrap();
     let store_mem = fg.node_outputs_exact::<1>(store_node).unwrap()[0];
     let phi_token = fg.node_outputs(region_node)[1];
@@ -481,8 +481,8 @@ fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
     let (fg, _head, store_mems) = linear_store_chain(2);
     let mut fg = fg;
     let region_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+        .walk_kind(|k| matches!(k, NodeKind::Region))
+        .next()
         .unwrap();
     let phi_token = fg.node_outputs(region_node)[1];
     let arm_a = store_mems[0];
@@ -509,8 +509,8 @@ fn call_on_chain_is_the_nearest_clobber() {
     // InitialMemory <- Store(disjoint) <- CallOther(clobbering) <- load.
     let (mut fg, _im, store_mem, _phi_token) = base_with_store();
     let region_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+        .walk_kind(|k| matches!(k, NodeKind::Region))
+        .next()
         .expect("Region must exist");
     let control = fg.node_outputs(region_node)[0];
     let call_mem = mk_call_other(&mut fg, control, store_mem);
@@ -535,8 +535,8 @@ fn call_on_chain_is_the_nearest_clobber() {
 fn mem_phi_call_arm_disagrees_returns_phi_boundary() {
     let (mut fg, im, _store_mem, phi_token) = base_with_store();
     let region_node = fg
-        .walk()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+        .walk_kind(|k| matches!(k, NodeKind::Region))
+        .next()
         .expect("Region must exist");
     let control = fg.node_outputs(region_node)[0];
     // arm 0: a clobbering CallOther rooted at InitialMemory.  arm 1: clean.
@@ -634,4 +634,32 @@ fn cyclic_loop_header_phi_terminates() {
         "nearest clobber must be the entry Store, got {:?}",
         fg.node_kind(r),
     );
+}
+
+/// A loop header `outer` whose arms are an exit edge out of an inner loop's
+/// body `inner_body`, the inner header `inner`, and its own back-edge.
+/// `inner_body`'s memo entry cycled to `inner`, which is closed by the time
+/// `outer` reads it on the exit edge, so it degrades to a clobber even though
+/// `inner`'s entry arm reaches `InitialMemory`.  Returns `(function, outer)`.
+fn loop_exit_from_a_closed_inner_loop() -> (Function, ValueId) {
+    let (mut fg, im, _store_mem, phi_token) = base_with_store();
+    let inner = mk_mem_phi(&mut fg, phi_token, &[im, im]);
+    let (a, d) = (mk_const(&mut fg, 0x77), mk_const(&mut fg, 0x88));
+    let inner_body = mk_store(&mut fg, inner, a, d);
+    let use_id = fg.node_input_id_at(fg.producer(inner), 2).unwrap();
+    fg.graph_mut().update_input(use_id, inner_body);
+    let outer = mk_mem_phi(&mut fg, phi_token, &[inner_body, inner, im]);
+    let outer_body = mk_store(&mut fg, outer, a, d);
+    let use_id = fg.node_input_id_at(fg.producer(outer), 3).unwrap();
+    fg.graph_mut().update_input(use_id, outer_body);
+    (fg, outer)
+}
+
+/// The degraded arm is a clobber, never a `Cycle` that would let the walk
+/// name the `InitialMemory` it entered.
+#[test]
+fn a_degraded_arm_stops_the_walk_at_the_loop_header() {
+    let (mut fg, outer) = loop_exit_from_a_closed_inner_loop();
+    let r = run(&mut fg, &mut never_alias(), outer);
+    assert_eq!(r, fg.producer(outer), "got {:?}", fg.node_kind(r));
 }
