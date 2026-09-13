@@ -373,7 +373,9 @@ fn spine_walk_trailed(
             }
             // A pure allocator's return pointer is a fresh heap base, bottomed
             // out exactly like the SP terminal.
-            NodeKind::Call if is_allocator_return(function, cur, node, noalias_allocators) => {
+            NodeKind::Call { .. }
+                if is_allocator_return(function, cur, node, noalias_allocators) =>
+            {
                 // An alignment mask above a heap base leaves the masked pointer's
                 // offset to the raw base unknown, and heap disjointness is exact,
                 // so returning the Stack-kinded anchor would call an aligned heap
@@ -786,7 +788,7 @@ impl MemWalker<'_> {
                 // re-check sees.
                 self.analyzer.alias(self.load, store) != AliasVerdict::Disjoint
             }
-            NodeKind::Call => {
+            NodeKind::Call { .. } => {
                 // A callee declared transparent to memory writes none, so the
                 // load steps through whatever the frame analysis proves.  A
                 // caller assertion, outside `AssumptionOptions`, so it survives
@@ -1418,7 +1420,7 @@ fn allocator_return_base(
     call: NodeId,
     noalias_allocators: &FxHashSet<u64>,
 ) -> Option<ValueId> {
-    if !matches!(function.node_kind(call), NodeKind::Call) {
+    if !matches!(function.node_kind(call), NodeKind::Call { .. }) {
         return None;
     }
     let ret = *function.node_outputs(call).get(2)?;

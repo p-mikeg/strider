@@ -454,7 +454,7 @@ fn ret_call_does_not_match_through_region_by_default() {
         .ctrl(anything().filter(|m, node| {
             matches!(
                 m.function().node_kind(node),
-                strider_ir::node::NodeKind::Call
+                strider_ir::node::NodeKind::Call { .. }
             )
         }))
         .build();

@@ -297,8 +297,8 @@ pub(super) fn check_function_invariants_extend_truncate(
     }
 }
 
-/// Every reachable [`NodeKind::Switch`] needs at least one control output, and
-/// one recorded `switch_targets` case address per control output.
+/// Every reachable [`NodeKind::Switch`] needs a table of this function's, at
+/// least one control output, and one case address per control output.
 pub(super) fn check_function_invariants_switch(
     function: &Function,
     reachable: &NodeIdSet,
@@ -306,19 +306,38 @@ pub(super) fn check_function_invariants_switch(
 ) {
     let graph = function.graph();
     for (node, kind) in function.reachable_kind_iter(reachable) {
-        if !matches!(kind, NodeKind::Switch) {
+        let NodeKind::Switch(id) = *kind else {
             continue;
-        }
+        };
+        let Some(targets) = function.switch_table(id) else {
+            errs.push(ValidationError::DanglingSwitchTableId { node, id });
+            continue;
+        };
         let n_out = graph.node_outputs(node).len();
-        let n_targets = function.side_tables().switch_targets(node).len();
         if n_out == 0 {
             errs.push(ValidationError::EmptySwitchTargets { node });
-        } else if n_out != n_targets {
+        } else if n_out != targets.len() {
             errs.push(ValidationError::SwitchTargetArityMismatch {
                 node,
                 outputs: n_out,
-                targets: n_targets,
+                targets: targets.len(),
             });
+        }
+    }
+}
+
+/// Every reachable [`NodeKind::Call`] override names a convention of this
+/// function's.
+pub(super) fn check_function_invariants_call_cc(
+    function: &Function,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    for (node, kind) in function.reachable_kind_iter(reachable) {
+        if let NodeKind::Call { cc: Some(id) } = *kind
+            && function.cc(id).is_none()
+        {
+            errs.push(ValidationError::DanglingCcId { node, id });
         }
     }
 }
@@ -490,7 +509,7 @@ pub(super) fn check_function_invariants_side_indices(
         let producer_kind = graph.node_kind(producer);
         if !matches!(
             producer_kind,
-            NodeKind::Phi | NodeKind::Call | NodeKind::CallOther { .. }
+            NodeKind::Phi | NodeKind::Call { .. } | NodeKind::CallOther { .. }
         ) {
             errs.push(ValidationError::StaleValueVn {
                 value,

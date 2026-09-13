@@ -884,9 +884,7 @@ fn build_call_other_lays_out_reads_result_and_clobbers() -> Result<()> {
     let rcx_val = b.read_variable(&rcx)?;
     let (node, outputs) =
         b.build_call_other(5, &[rcx_val, explicit], &[out_vn, rax, rdx], true, false)?;
-    b.function_mut()
-        .side_tables_mut()
-        .set_call_other_name(node, "syscall");
+    b.function_mut().set_call_other_name(5, "syscall");
     let (result, clobbers) = outputs.split_first().expect("result then clobbers");
     for (vn, value) in core::iter::zip([rax, rdx], clobbers) {
         b.write_variable(&vn, *value)?;
@@ -958,10 +956,7 @@ fn build_call_other_lays_out_reads_result_and_clobbers() -> Result<()> {
     let mem_after = b.cur_region_memory()?;
     assert_ne!(mem_before, mem_after, "clobbers_memory -> memory advances");
 
-    assert_eq!(
-        b.function().side_tables().call_other_name(node),
-        Some("syscall")
-    );
+    assert_eq!(b.function().call_other_name(node), Some("syscall"));
     Ok(())
 }
 
@@ -2053,7 +2048,7 @@ mod build_call_with_cc {
         let call_node = function
             .graph()
             .all_node_ids()
-            .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
+            .find(|n| matches!(function.node_kind(*n), NodeKind::Call { .. }))
             .unwrap();
         assert!(
             function.node_outputs(call_node).len() >= 2,
@@ -2242,7 +2237,7 @@ mod build_call_with_cc {
         let call_node = function
             .graph()
             .all_node_ids()
-            .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
+            .find(|n| matches!(function.node_kind(*n), NodeKind::Call { .. }))
             .unwrap();
         let outs = function.node_outputs(call_node);
         assert_eq!(
@@ -2297,7 +2292,7 @@ mod build_call_with_cc {
         let call_node = function
             .graph()
             .all_node_ids()
-            .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
+            .find(|n| matches!(function.node_kind(*n), NodeKind::Call { .. }))
             .unwrap();
         let inputs: Vec<_> = function.node_inputs(call_node).into_iter().collect();
 
@@ -2428,7 +2423,7 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
     let call_node = f
         .graph()
         .all_node_ids()
-        .find(|n| matches!(f.node_kind(*n), NodeKind::Call))
+        .find(|n| matches!(f.node_kind(*n), NodeKind::Call { .. }))
         .expect("exactly one Call node must be present");
     let outs = f.node_outputs(call_node);
 
@@ -2709,11 +2704,47 @@ fn build_switch_makes_n_control_outputs_and_records_targets() -> Result<()> {
     let sw = f
         .graph()
         .all_node_ids()
-        .find(|&n| matches!(f.node_kind(n), NodeKind::Switch))
+        .find(|&n| matches!(f.node_kind(n), NodeKind::Switch(_)))
         .expect("switch node exists");
     assert_eq!(f.node_inputs(sw).len(), 2, "[ctrl, address]");
     assert_eq!(f.node_outputs(sw).len(), 2, "one control output per arm");
-    assert_eq!(f.side_tables().switch_targets(sw), &[0x1000, 0x1020]);
+    assert_eq!(f.switch_targets(sw), &[0x1000, 0x1020]);
+    Ok(())
+}
+
+/// Compaction drops a dead switch table and renumbers the live one in place.
+#[test]
+fn switch_targets_survive_compact() -> Result<()> {
+    let mut b = empty_builder()?;
+    let entry = b.create_region_all()?;
+    let a = b.create_region_all()?;
+    let c = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let _dead = b.function_mut().add_switch_table(vec![0xdead]);
+    let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
+    b.build_switch(addr, &[(a, 0x1000), (c, 0x1020)])?;
+    for arm in [a, c] {
+        b.set_region(arm);
+        b.build_return(None, &[])?;
+    }
+    let mut f = b.build()?;
+    f.compact()?;
+    let sw = f
+        .graph()
+        .all_node_ids()
+        .find(|&n| matches!(f.node_kind(n), NodeKind::Switch(_)))
+        .expect("switch node survives");
+    assert_eq!(
+        f.node_kind(sw),
+        &NodeKind::Switch(crate::node::SwitchTableId::from_u32(0))
+    );
+    assert_eq!(f.switch_targets(sw), &[0x1000, 0x1020]);
+    assert_eq!(
+        f.switch_table(crate::node::SwitchTableId::from_u32(1)),
+        None
+    );
     Ok(())
 }
 

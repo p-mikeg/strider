@@ -22,7 +22,7 @@ fn forward_8_call_has_stack_args_collected_x86() {
 
     let calls: Vec<NodeId> = function
         .walk()
-        .filter(|&n| matches!(function.node_kind(n), NodeKind::Call))
+        .filter(|&n| matches!(function.node_kind(n), NodeKind::Call { .. }))
         .collect();
     assert!(
         !calls.is_empty(),

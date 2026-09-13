@@ -346,12 +346,12 @@ mod tests {
         let [target_value] = function.node_outputs_exact::<1>(target).unwrap();
         let outs = [ValueKind::Control, ValueKind::Memory];
         let call_a = function.graph_mut().create_node(
-            NodeKind::Call,
+            NodeKind::Call { cc: None },
             [ctrl_value, mem_value, target_value],
             outs,
         );
         let call_b = function.graph_mut().create_node(
-            NodeKind::Call,
+            NodeKind::Call { cc: None },
             [ctrl_value, mem_value, target_value],
             outs,
         );
@@ -361,6 +361,7 @@ mod tests {
         );
     }
 
+    /// The name belongs to the user-op, so every node of that op carries it.
     #[test]
     fn call_other_name_round_trip() {
         let mut function = test_function();
@@ -374,33 +375,25 @@ mod tests {
                 .graph_mut()
                 .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         let [init_mem_value] = function.node_outputs_exact::<1>(init_mem).unwrap();
-        let id_a = function.graph_mut().create_node(
-            NodeKind::CallOther { user_op_id: 62 },
-            [entry_ctrl, init_mem_value],
-            outs,
-        );
-        let id_b = function.graph_mut().create_node(
-            NodeKind::CallOther { user_op_id: 62 },
-            [entry_ctrl, init_mem_value],
-            outs,
-        );
+        let call_other = |function: &mut crate::Function, user_op_id| {
+            function.graph_mut().create_node(
+                NodeKind::CallOther { user_op_id },
+                [entry_ctrl, init_mem_value],
+                outs,
+            )
+        };
+        let id_a = call_other(&mut function, 62);
+        let id_b = call_other(&mut function, 62);
+        let id_c = call_other(&mut function, 7);
         assert_ne!(id_a, id_b, "CallOther is non-cacheable");
-        assert_eq!(function.side_tables().call_other_name(id_a), None);
-        function
-            .side_tables_mut()
-            .set_call_other_name(id_a, "setISAMode");
-        assert_eq!(
-            function.side_tables().call_other_name(id_a),
-            Some("setISAMode")
-        );
-        assert_eq!(function.side_tables().call_other_name(id_b), None);
-        function
-            .side_tables_mut()
-            .set_call_other_name(id_a, "OtherName");
-        assert_eq!(
-            function.side_tables().call_other_name(id_a),
-            Some("OtherName")
-        );
+        assert_eq!(function.call_other_name(id_a), None);
+        function.set_call_other_name(62, "setISAMode");
+        assert_eq!(function.call_other_name(id_a), Some("setISAMode"));
+        assert_eq!(function.call_other_name(id_b), Some("setISAMode"));
+        assert_eq!(function.call_other_name(id_c), None);
+        function.set_call_other_name(62, "OtherName");
+        assert_eq!(function.call_other_name(id_a), Some("OtherName"));
+        assert_eq!(function.call_other_name(entry), None, "not a CallOther");
     }
 
     #[test]
@@ -1194,11 +1187,11 @@ mod tests {
 
         let mut function = test_function();
         let nid = function.graph_mut().create_node(
-            NodeKind::Call,
+            NodeKind::Call { cc: None },
             [],
             [ValueKind::Control, ValueKind::Memory],
         );
-        function.side_tables_mut().set_call_cc(nid, cc.clone());
+        function.set_call_cc(nid, cc.clone());
         assert_ne!(function.get_cc(nid), function.default_cc());
         assert_eq!(function.get_cc(nid).stack_args, cc.stack_args,);
     }
@@ -1207,7 +1200,7 @@ mod tests {
     fn value_vn_clobber_tag_round_trips() {
         let mut function = test_function();
         let nid = function.graph_mut().create_node(
-            NodeKind::Call,
+            NodeKind::Call { cc: None },
             [],
             [
                 ValueKind::Control,

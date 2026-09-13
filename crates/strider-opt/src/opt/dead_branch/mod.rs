@@ -30,7 +30,7 @@ pub struct DeadBranchElimination;
 
 impl PeepholePass for DeadBranchElimination {
     fn matches_kind(&self, kind: &NodeKind) -> bool {
-        matches!(kind, NodeKind::If | NodeKind::Switch)
+        matches!(kind, NodeKind::If | NodeKind::Switch(_))
     }
 
     fn try_rewrite(
@@ -92,7 +92,7 @@ impl PeepholePass for DeadBranchElimination {
                 edit.kill_node(root);
                 Ok(PeepholeRewrite::Changed { new_node: None })
             }
-            NodeKind::Switch => {
+            NodeKind::Switch(_) => {
                 let [ctrl_value, addr_value] = edit
                     .graph_ref()
                     .node_inputs_exact::<2>(root)
@@ -107,7 +107,6 @@ impl PeepholePass for DeadBranchElimination {
                 // before the mutable calls below, without cloning the slice.
                 let Some(i) = edit
                     .function()
-                    .side_tables()
                     .switch_targets(root)
                     .iter()
                     .position(|&t| u128::from(t) == k)
@@ -318,7 +317,7 @@ fn dead_arm_values(edit: &crate::EditFunction<'_>, node: NodeId) -> Vec<ValueId>
             };
             vec![if cond { ctrl_false } else { ctrl_true }]
         }
-        NodeKind::Switch => {
+        NodeKind::Switch(_) => {
             let [_, addr_value] = edit
                 .node_inputs_exact::<2>(node)
                 .expect("Switch has 2 inputs per node signature");
@@ -327,7 +326,6 @@ fn dead_arm_values(edit: &crate::EditFunction<'_>, node: NodeId) -> Vec<ValueId>
             };
             let Some(live) = edit
                 .function()
-                .side_tables()
                 .switch_targets(node)
                 .iter()
                 .position(|&t| u128::from(t) == k)

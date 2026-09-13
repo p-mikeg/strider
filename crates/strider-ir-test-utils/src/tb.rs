@@ -266,9 +266,7 @@ impl Tb {
     ) -> anyhow::Result<(NodeId, Vec<ValueId>)> {
         let (node, outputs) =
             fb.build_call_other(user_op_id, args, output_vns, clobbers_memory, terminate)?;
-        fb.function_mut()
-            .side_tables_mut()
-            .set_call_other_name(node, name);
+        fb.function_mut().set_call_other_name(user_op_id, name);
         Ok((node, outputs))
     }
 

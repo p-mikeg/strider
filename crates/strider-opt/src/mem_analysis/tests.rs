@@ -1116,7 +1116,7 @@ mod heap_tests {
         assert!(
             matches!(
                 fg.node_kind(cfg.nearest_clobber(&fg, load, mem)),
-                NodeKind::Call
+                NodeKind::Call { .. }
             ),
             "the table walk must stop at a listed allocator, not step through it"
         );
@@ -1136,7 +1136,7 @@ mod heap_tests {
         let call = fg
             .graph()
             .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Call))
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Call { .. }))
             .expect("call");
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
@@ -1246,7 +1246,7 @@ mod heap_tests {
         // A per-call convention declaring a return register this function does
         // not track: the declaration alone must not mint a base.
         let cc = fg.default_cc().clone();
-        fg.side_tables_mut().set_call_cc(
+        fg.set_call_cc(
             call,
             strider_target::BuiltCallingConvention {
                 ret_val_regs: vec![ret_reg()],
@@ -1294,7 +1294,7 @@ mod heap_tests {
         let analyzer = MemAnalyzer::new(MemOptions::call_blocking(true, &na));
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
-            matches!(fg.node_kind(clobber), NodeKind::Call),
+            matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "the allocator owns its own argument slot, so the walk must stop on it"
         );
         Ok(())
@@ -1353,7 +1353,7 @@ mod heap_tests {
             let (mut fg, na) = built(b, &[])?;
 
             let cc = fg.default_cc().clone();
-            fg.side_tables_mut().set_call_cc(
+            fg.set_call_cc(
                 call,
                 strider_target::BuiltCallingConvention {
                     preserves_memory,
@@ -1474,7 +1474,7 @@ mod heap_tests {
             MemAnalyzer::new(MemOptions::call_blocking(true, &na).with_escape_analysis(true));
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
-            matches!(fg.node_kind(clobber), NodeKind::Call),
+            matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "a slot above the entry SP is the caller's memory, which the \
              private-frame proof does not cover; got {:?}",
             fg.node_kind(clobber),
@@ -1882,7 +1882,7 @@ mod arg_window_bounds {
         let _ = sp_val;
 
         let call = fg
-            .walk_kind(|k| matches!(k, NodeKind::Call))
+            .walk_kind(|k| matches!(k, NodeKind::Call { .. }))
             .next()
             .expect("the fixture has one call");
         let analyzer = MemAnalyzer::new(MemOptions::call_blocking(false, &Default::default()));
@@ -1993,7 +1993,7 @@ mod arg_window_complexity {
         WALK_STEPS.with(|c| c.set(0));
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
-            matches!(fg.node_kind(clobber), NodeKind::Call),
+            matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "the window scan cannot see past the call before the nearest one, \
              so the nearest one keeps the slot"
         );
@@ -2065,7 +2065,7 @@ mod arg_window_complexity {
         WALK_STEPS.with(|c| c.set(0));
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
-            matches!(fg.node_kind(clobber), NodeKind::Call),
+            matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "the spill sits one slot above the last argument, so the window \
              reaches it and the call clobbers"
         );
@@ -2212,7 +2212,7 @@ mod arg_window_complexity {
             let mem = fg.node_inputs(load)[0];
             let clobber = analyzer.nearest_clobber(&fg, load, mem);
             assert!(
-                matches!(fg.node_kind(clobber), NodeKind::Call),
+                matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
                 "an argument slot is the callee's, so the call keeps it"
             );
         }
@@ -2371,7 +2371,7 @@ mod arg_window_visibility {
         );
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
-            matches!(fg.node_kind(clobber), NodeKind::Call),
+            matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "sp+4 is g's own argument slot, so g clobbers it; got {:?}",
             fg.node_kind(clobber),
         );
@@ -2506,7 +2506,7 @@ mod arg_window_visibility {
         );
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
-            matches!(fg.node_kind(clobber), NodeKind::Call),
+            matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "the earlier call hides slot 0, so the window cannot be shown to \
              end below sp'+8, which g owns; got {:?}",
             fg.node_kind(clobber),
@@ -2704,7 +2704,7 @@ mod arg_window_visibility {
         );
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
-            matches!(fg.node_kind(clobber), NodeKind::Call),
+            matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "sp-8 is the callee's third outgoing argument slot, which the \
              opaque store hides rather than disproves; got {:?}",
             fg.node_kind(clobber),
@@ -2767,7 +2767,7 @@ mod arg_window_visibility {
         );
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
-            matches!(fg.node_kind(clobber), NodeKind::Call),
+            matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "the upper 4 bytes of argument slot 0 are the callee's, so the \
              load must stop at the call; got {:?}",
             fg.node_kind(clobber),

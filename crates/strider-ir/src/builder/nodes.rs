@@ -115,7 +115,7 @@ impl FunctionBuilder {
     }
 
     /// One `Control` output per arm, wired to that arm's region in order, with
-    /// the case addresses recorded in `switch_targets`. Output `i` is taken
+    /// the case addresses in a fresh switch table. Output `i` is taken
     /// when `address == arms[i].1`. Requires `arms` non-empty, and terminates
     /// the current region.
     pub fn build_switch(&mut self, address: ValueId, arms: &[(RegionId, u64)]) -> Result<NodeId> {
@@ -124,8 +124,10 @@ impl FunctionBuilder {
         self.require_value_kind(address)?;
         self.require_control_kind(res.control)?;
 
+        let targets: Vec<u64> = arms.iter().map(|&(_, a)| a).collect();
+        let table = self.function_mut().add_switch_table(targets);
         let sw = self.create_node(
-            NodeKind::Switch,
+            NodeKind::Switch(table),
             [res.control, address],
             std::iter::repeat_n(ValueKind::Control, arms.len()),
         );
@@ -133,10 +135,6 @@ impl FunctionBuilder {
         for (&(region, _addr), &ctrl) in arms.iter().zip(&out_ctrls) {
             self.link_region(region, ctrl, res.memory, res.region_id)?;
         }
-        let targets: Vec<u64> = arms.iter().map(|&(_, a)| a).collect();
-        self.function_mut()
-            .side_tables_mut()
-            .set_switch_targets(sw, targets);
         Ok(sw)
     }
 

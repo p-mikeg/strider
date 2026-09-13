@@ -439,7 +439,7 @@ fn valueless_kind(spec: &KindSpec) -> bool {
     spec.discriminant().is_some_and(|d| {
         [
             NodeKind::If,
-            NodeKind::Switch,
+            NodeKind::Switch(strider_ir::node::SwitchTableId::from_u32(0)),
             NodeKind::Return,
             NodeKind::IndirectBranch,
             NodeKind::Unreachable,
