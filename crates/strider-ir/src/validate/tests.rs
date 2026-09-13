@@ -1471,6 +1471,38 @@ fn close_with_return(f: &mut Function, ctrl: ValueId, values: &[ValueId]) {
     stamp(f, ret);
 }
 
+/// A write merged into a `MemPhi` that only a `Load` reads is lost, as when
+/// the Return takes the pre-branch token.
+#[test]
+fn memory_linearity_store_merged_into_a_mem_phi_only_a_load_reads_is_lost() {
+    let (mut f, _, token, ctrl) = diamond_with_arm_phis();
+    let (seed_node, seed) = int_const(&mut f, 0x2000, ValueType::I64);
+    stamp(&mut f, seed_node);
+    let mem = crate::function::test_initial_memory(&mut f);
+    let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+    let (st, st_mem) = store(&mut f, mem_value, seed, seed);
+    let mem_phi = f.graph_mut().create_node(
+        NodeKind::MemPhi,
+        [token, st_mem, mem_value],
+        [ValueKind::Memory],
+    );
+    let [merged_mem] = f.node_outputs_exact::<1>(mem_phi).unwrap();
+    let load = f.graph_mut().create_node(
+        NodeKind::Load(rsleigh::VnSpace::RAM),
+        [merged_mem, seed],
+        [ValueKind::Typed(ValueType::I64)],
+    );
+    stamp(&mut f, load);
+    let [loaded] = f.node_outputs_exact::<1>(load).unwrap();
+    close_with_return(&mut f, ctrl, &[loaded]);
+
+    let errs = validate(&f).unwrap_err();
+    assert!(
+        matches!(errs.0.as_slice(), [ValidationError::LostStore { node }] if *node == st),
+        "the lost write is the only error: {errs:?}"
+    );
+}
+
 #[test]
 fn phi_input_from_the_other_arm_is_not_available() {
     let (mut f, [then_val, _], token, ctrl) = diamond_with_arm_phis();
