@@ -342,7 +342,8 @@ Rendering:
 - `CfgOptions::data_ranges` (`DataRanges`) and
   `strider_reader::elf::mapping_symbol_data_ranges`.
 - `strider_cfg::Builder::with_user_op_names` and `with_transient_defaults`;
-  `SleighArch::has_delay_slots`.
+  `SleighArch::has_delay_slots` and `internal_registers`;
+  `FunctionBuilder::set_internal_registers`.
 - `LiftOutcome::return_sites` and `strider_opt::ReturnTargets`.
 - `OptimizerPipeline::has_post_pass`.
 - `ElfSectionLayout::extern_address`, `OwnedElf::writable_ranges`,
@@ -492,6 +493,11 @@ Optimizer and analysis:
   once that engine was dropped.
 - `rewrite_all` and `apply_rules_count` stop at the first rule that fires at a
   node.
+- Under `escape_analysis`, a frame address held in any register a call
+  clobbers escapes the frame (i386 `regparm`, clang fastcc, the GNU C static
+  chain, AArch64 `x8`); a spill is no longer forwarded across a callee that
+  writes it. Sleigh's internal registers (`SleighArch::internal_registers`)
+  are not callee-visible and stay out.
 
 Indirect branches and the CFG:
 
