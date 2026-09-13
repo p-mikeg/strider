@@ -751,11 +751,18 @@ fn region_from(
     data: &[u8],
     budget: &mut CopyBudget,
 ) -> Result<MemRegion> {
+    // The byte at `u64::MAX` is unmappable, so a mapping ending exactly at
+    // 2^64 loses that byte rather than failing the load.
+    let tops_out =
+        |len: u64| len != 0 && addr.checked_add(len).is_none() && addr.wrapping_add(len) == 0;
     match (bytes, range) {
-        (Some(bytes), Some((offset, len))) => MemRegion::window(addr, bytes, offset, len),
+        (Some(bytes), Some((offset, len))) => {
+            MemRegion::window(addr, bytes, offset, len - u64::from(tops_out(len)))
+        }
         _ => {
             budget.charge(range, data.len() as u64)?;
-            MemRegion::new(addr, data.to_vec())
+            let len = data.len() - usize::from(tops_out(data.len() as u64));
+            MemRegion::new(addr, data[..len].to_vec())
         }
     }
 }
