@@ -265,8 +265,12 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     }
 
     /// [`Self::lift_one`], refusing an instruction any byte of which
-    /// [`crate::CfgOptions::data_ranges`] marks as data.
+    /// [`crate::CfgOptions::data_ranges`] marks as data, except the one at the
+    /// function start: the caller named it as code.
     fn lift_code(&mut self, addr: u64) -> Result<rsleigh::LiftRes> {
+        if addr == self.builder.start_addr.addr {
+            return self.lift_one(addr);
+        }
         let data = || NotCode {
             addr,
             marked_data: true,
