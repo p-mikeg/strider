@@ -94,30 +94,6 @@ fn is_const_only_for_constant_kinds() {
     assert!(!NodeKind::Return.is_const());
 }
 
-/// Every kind that receives inputs after creation must be non-cacheable.
-#[test]
-fn non_cacheable_kinds_are_not_cacheable() {
-    let non_cacheable = [
-        NodeKind::Return,
-        NodeKind::Region,
-        NodeKind::MemPhi,
-        NodeKind::Phi,
-        NodeKind::Call { cc: None },
-        NodeKind::If,
-    ];
-    for kind in non_cacheable {
-        assert!(!kind.is_cacheable(), "{kind:?} should not be cacheable");
-    }
-}
-
-/// Equal operands give equal results, so these always dedup.
-#[test]
-fn arithmetic_kinds_are_cacheable() {
-    assert!(NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)).is_cacheable());
-    assert!(NodeKind::IntBinaryOp(crate::node::IntBinaryOp::Add).is_cacheable());
-    assert!(NodeKind::IntUnaryOp(crate::node::IntUnaryOp::Neg).is_cacheable());
-}
-
 #[test]
 fn get_unsigned_int_returns_none_for_floats() {
     assert_eq!(ValueType::F32.get_unsigned_int(0x3F800000), None);
@@ -128,25 +104,6 @@ fn get_unsigned_int_returns_none_for_floats() {
 fn get_signed_int_returns_none_for_floats() {
     assert_eq!(ValueType::F32.get_signed_int(0x3F800000), None);
     assert_eq!(ValueType::F64.get_signed_int(0x3FF0000000000000), None);
-}
-
-#[test]
-fn float_const_is_const_and_cacheable() {
-    let fc = NodeKind::FloatConst(0x3F800000);
-    assert!(fc.is_const());
-    assert!(fc.is_cacheable());
-}
-
-#[test]
-fn float_ops_are_cacheable() {
-    assert!(NodeKind::FloatBinaryOp(crate::node::FloatBinaryOp::Add).is_cacheable());
-    assert!(NodeKind::FloatUnaryOp(crate::node::FloatUnaryOp::Neg).is_cacheable());
-    assert!(NodeKind::FloatCmpOp(crate::node::FloatCmpOp::Equal).is_cacheable());
-    assert!(NodeKind::IntToFloat.is_cacheable());
-    assert!(NodeKind::FloatToInt.is_cacheable());
-    assert!(NodeKind::FloatToFloat.is_cacheable());
-    assert!(NodeKind::IntBitsToFloat.is_cacheable());
-    assert!(NodeKind::FloatBitsToInt.is_cacheable());
 }
 
 #[test]

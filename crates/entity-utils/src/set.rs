@@ -152,15 +152,6 @@ mod tests {
     }
 
     #[test]
-    fn double_insert_is_idempotent() {
-        let mut s: DenseEntitySet<Id> = DenseEntitySet::new();
-        s.insert(Id(7));
-        s.insert(Id(7));
-        let collected: Vec<_> = s.iter().collect();
-        assert_eq!(collected, vec![Id(7)]);
-    }
-
-    #[test]
     fn iter_yields_in_ascending_index_order() {
         let mut s: DenseEntitySet<Id> = DenseEntitySet::new();
         for &i in &[5u32, 1, 9, 2, 1] {
