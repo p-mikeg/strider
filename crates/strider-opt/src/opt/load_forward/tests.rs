@@ -2054,3 +2054,65 @@ fn narrowing_that_makes_twin_loads_reruns_the_fixed_point() -> Result<()> {
     );
     Ok(())
 }
+
+mod scaling {
+    use crate::test_support::memory_shapes as shapes;
+
+    /// The analysis work one `LoadForward` run takes over `fg`: every def
+    /// verdict asked plus every step of the climb.
+    fn work(mut fg: strider_ir::Function) -> crate::Result<u64> {
+        crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
+        crate::mem_ssa::CLIMB_STEPS.with(|c| c.set(0));
+        crate::pipeline::run_one(
+            &crate::LoadForward::default(),
+            &mut fg,
+            &mut crate::OptCtx::new(None),
+        )?;
+        Ok(crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get)
+            + crate::mem_ssa::CLIMB_STEPS.with(std::cell::Cell::get))
+    }
+
+    /// Doubling the shape may only double the work, give or take a logarithm.
+    fn assert_near_linear(
+        name: &str,
+        build: fn(usize) -> crate::Result<strider_ir::Function>,
+    ) -> crate::Result<()> {
+        let small = work(build(100)?)?;
+        let big = work(build(200)?)?;
+        assert!(
+            big * 100 <= small * 260,
+            "{name}: doubling the shape took {small} steps to {big}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_store_chain_costs_near_linear_work() -> crate::Result<()> {
+        assert_near_linear("store chain", shapes::store_chain)
+    }
+
+    #[test]
+    fn store_diamonds_cost_near_linear_work() -> crate::Result<()> {
+        assert_near_linear("store diamonds", shapes::store_diamonds)
+    }
+
+    #[test]
+    fn call_diamonds_cost_near_linear_work() -> crate::Result<()> {
+        assert_near_linear("call diamonds", shapes::call_diamonds)
+    }
+
+    #[test]
+    fn an_accumulator_loop_costs_near_linear_work() -> crate::Result<()> {
+        assert_near_linear("accumulator loop", shapes::accumulator_loop)
+    }
+
+    #[test]
+    fn sequential_loops_cost_near_linear_work() -> crate::Result<()> {
+        assert_near_linear("sequential loops", shapes::sequential_loops)
+    }
+
+    #[test]
+    fn nested_loops_cost_near_linear_work() -> crate::Result<()> {
+        assert_near_linear("nested loops", shapes::nested_loops)
+    }
+}
