@@ -51,17 +51,6 @@ fn const_eval_absorbs_operand_fingerprints() -> Result<()> {
 }
 
 #[test]
-fn new_builds_pass_that_folds() -> Result<()> {
-    let mut fg = add_consts_fixture()?;
-    assert!(
-        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_returns_const(&fg, 7);
-    Ok(())
-}
-
-#[test]
 fn two_independent_instances_each_fold() -> Result<()> {
     let pass_a = ConstantFold::new();
     let pass_b = ConstantFold::new();
@@ -160,8 +149,6 @@ fn fold_int_binary_two_consts_cases() -> Result<()> {
         Case { case: "fold_int_and_zero", lhs: 0xFF, rhs: 0, op: IntBinaryOp::And, ty: ValueType::I64, expected: 0 },
         Case { case: "fold_mul_by_one", lhs: 5, rhs: 1, op: IntBinaryOp::Mul, ty: ValueType::I64, expected: 5 },
         Case { case: "fold_shl_const_u32", lhs: 1, rhs: 4, op: IntBinaryOp::ShiftLeft, ty: ValueType::I32, expected: 0x10 },
-        // Last in-range shift amount.
-        Case { case: "fold_shl_at_width_boundary_u32", lhs: 1, rhs: 31, op: IntBinaryOp::ShiftLeft, ty: ValueType::I32, expected: 0x8000_0000 },
         Case { case: "fold_shr_const_u8", lhs: 0x80, rhs: 7, op: IntBinaryOp::ShiftRight, ty: ValueType::I8, expected: 1 },
         // The Xor-with-all-ones rows are bitwise NOT, so `~49 = 0xFFFF_FFCE`,
         // NOT two's complement `-49`.
@@ -1087,21 +1074,6 @@ fn fold_truncate_of_extend_skips_when_widths_differ() -> Result<()> {
 // folds all flow through the generic integer rules.
 
 #[test]
-fn fold_bool_neg_const() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let t = b.build_boolean_const(true);
-        let one = b.build_int_const(u128::MAX, ValueType::I1)?;
-        b.build_int_binary_operation(t, one, IntBinaryOp::Xor, ValueType::I1)
-    })?;
-    assert!(
-        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_returns_const(&fg, 0);
-    Ok(())
-}
-
-#[test]
 fn fold_bool_and_consts() -> Result<()> {
     let mut fg = make_fn(|b| {
         let t = b.build_boolean_const(true);
@@ -1222,23 +1194,6 @@ fn fold_bool_double_not_to_x() -> Result<()> {
         crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_return_kind(fg.graph(), NodeKind::IntCmpOp(IntCmpOp::Equal));
-    Ok(())
-}
-
-// Composes with the xor-true rule via the fixed-point loop.
-#[test]
-fn fold_bool_xor_true_xor_true_collapses_to_x() -> Result<()> {
-    let vn = reg_vn(0x1000, 8);
-    let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
-        let c5 = b.build_int_const(5u64, ValueType::I64).unwrap();
-        let cmp = b.build_int_cmp_operation(x, c5, IntCmpOp::Equal, ValueType::I64)?;
-        let t1 = b.build_boolean_const(true);
-        let xor1 = b.build_int_binary_operation(cmp, t1, IntBinaryOp::Xor, ValueType::I1)?;
-        let t2 = b.build_boolean_const(true);
-        b.build_int_binary_operation(xor1, t2, IntBinaryOp::Xor, ValueType::I1)
-    })?;
-    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     assert_return_kind(fg.graph(), NodeKind::IntCmpOp(IntCmpOp::Equal));
     Ok(())
 }

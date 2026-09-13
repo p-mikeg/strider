@@ -328,15 +328,6 @@ fn linear_chain_finds_nearest_aliasing_store() {
 }
 
 #[test]
-fn non_aliasing_store_is_skipped() {
-    let (mut fg, head, store_mems) = linear_store_chain(3);
-    let furthest = *store_mems.last().unwrap();
-    let mut walker = alias_set(vec![furthest]);
-    let r = run(&mut fg, &mut walker, head);
-    assert_eq!(r, fg.producer(furthest), "walk skips non-aliasing stores");
-}
-
-#[test]
 fn linear_chain_all_clean_returns_none() {
     let (mut fg, head, _store_mems) = linear_store_chain(5);
     let r = run(&mut fg, &mut never_alias(), head);

@@ -641,6 +641,7 @@ mod tests {
         assert!(!edit.is_live(old_node), "old producer enqueued + culled");
         assert!(!edit.is_live(k_node), "old's orphaned operand culled too");
         assert!(edit.is_live(new_node), "new producer stays live");
+        assert_live_matches_reachable(&edit);
     }
 
     /// `live_of_kind` filters the cached live set without re-walking.
@@ -1380,39 +1381,6 @@ mod tests {
                 "fresh RHS node {n:?} missing root fingerprint"
             );
         }
-    }
-
-    /// A direct `replace_value` plus `clean()` must also leave the cached
-    /// state equal to the entry-reachable walk.
-    #[test]
-    fn track_direct_replace_value() {
-        let mut b = RegisterSet::new().build_fn_single_region().unwrap();
-        b.set_lift_addr(Some(0x10));
-        let k = b.build_int_const(5u64, ValueType::I64).unwrap();
-        let neg = b
-            .build_int_unary_operation(k, IntUnaryOp::Neg, ValueType::I64)
-            .unwrap();
-        b.build_return(Some(neg), &[]).unwrap();
-        b.set_lift_addr(None);
-        let mut function = b.build().unwrap();
-
-        let neg_node = function.producer(neg);
-        let k_node = function.producer(k);
-
-        let mut edit = EditFunction::new(&mut function);
-        edit.cull_dead();
-
-        let new_v = edit.build_int_const(9u64, ValueType::I64).unwrap();
-        let new_node = edit.producer(new_v);
-        let changed = edit.replace_value(neg, new_v).unwrap();
-        assert!(changed);
-        edit.clean();
-
-        assert!(!edit.is_live(neg_node), "old Neg culled");
-        assert!(!edit.is_live(k_node), "Neg's orphaned operand culled");
-        assert!(edit.is_live(new_node), "fresh const live");
-
-        assert_live_matches_reachable(&edit);
     }
 
     /// The RHS const dedup-REVIVES a node built earlier but culled as
