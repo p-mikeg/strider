@@ -42,10 +42,10 @@ pub struct PyBufferReader {
 
 impl PyBufferReader {
     pub(crate) fn lookup_table(&self) -> Arc<MemRegionsLookupTable> {
-        if let Some(t) = self.inner.lock_shared().table.as_ref() {
+        let mut inner = self.inner.lock_shared();
+        if let Some(t) = inner.table.as_ref() {
             return Arc::clone(t);
         }
-        let mut inner = self.inner.lock_shared();
         let t = Arc::new(MemRegionsLookupTable::new(inner.regions.clone()));
         inner.max_region_len = Some(
             inner
