@@ -3,6 +3,7 @@ mod dot;
 mod indirect_resolver;
 mod neighborhood;
 mod options;
+mod pcode_text;
 mod query;
 #[cfg(test)]
 mod test_support;
@@ -34,6 +35,7 @@ pub(crate) fn flowing_isa_bit_at<R: rsleigh::MemReader>(
 pub use builder::{Builder, FlowContext, FlowVars};
 pub use indirect_resolver::{ResolvedTarget, ResolvedTargets};
 pub use options::CfgOptions;
+pub use pcode_text::{insn_plain_text, insn_text};
 
 pub use query::IfRegionSuccessors;
 pub(crate) use query::is_addr_tail_call;
@@ -58,6 +60,7 @@ pub struct Cfg {
     pub(crate) tail_call_seated: Vec<types::PcodeInsnAddr>,
     pub(crate) function_isa_bit: Option<bool>,
     pub(crate) flowing_isa_bits: std::collections::BTreeMap<types::PcodeInsnAddr, bool>,
+    pub(crate) space_ids: rsleigh::SpaceIds,
 }
 
 impl Cfg {
@@ -67,6 +70,12 @@ impl Cfg {
 
     pub fn entry(&self) -> NodeIndex {
         self.entry
+    }
+
+    /// The space ids of the engine that decoded this CFG, which every LOAD /
+    /// STORE in it carries; see [`insn_text`].
+    pub fn space_ids(&self) -> &rsleigh::SpaceIds {
+        &self.space_ids
     }
 
     /// Caller-seeded or classifier-derived targets that failed to decode, so
