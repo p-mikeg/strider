@@ -319,10 +319,11 @@ mod tests {
     /// `TMode`, `T`, `LowBitCodeMode`, `ISA_MODE`. A resolved interworking target
     /// that switches a Thumb function to ARM sets only `TMode` to 0 in the
     /// carried context; the three aliases stay at the Thumb value, and
-    /// `pin_at`'s diff writes them last, clobbering the intended mode. The
-    /// ISA-mode var must be re-imposed last so the target decodes as ARM.
+    /// `pin_at`'s diff writes them last, clobbering the intended mode. Pinned
+    /// here is that the carried context survives `pin_at` still naming ARM,
+    /// which is what the repair re-imposes from.
     #[test]
-    fn pin_at_reimposes_isa_mode_var_over_its_sla_aliases() {
+    fn a_carried_context_survives_pin_at_still_naming_the_arm_mode() {
         use rsleigh::mem_readers::BufMemReader;
         use strider_target::SleighArch;
         let arch = SleighArch::arm();

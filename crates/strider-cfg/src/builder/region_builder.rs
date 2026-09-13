@@ -471,8 +471,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
 
     /// Seats a terminator from this site's `known_targets` entry: `LinkRegister`
     /// as `Return`, an out-of-range `Single` as `TailCall`, anything else as a
-    /// `Switch` over the arms that can be seated.  A site with no entry, and one
-    /// left with no seatable arm, defers via `UnresolvedIndirectBranch`.
+    /// `Switch`, but only when EVERY arm seats.  One out-of-range or
+    /// off-boundary arm defers the whole site via `UnresolvedIndirectBranch`,
+    /// as does a site with no entry.
     fn process_branch_indirect(
         &mut self,
         insn: &rsleigh::Insn,
@@ -669,8 +670,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     ///
     /// Decoding MUST stay sequential within a region: `Sleigh::lift_one`
     /// takes `&mut self` and carries context-register state (ARM/Thumb mode,
-    /// x86 segment selectors, MIPS16 mode) that a decoded instruction can
-    /// itself modify, so lifting out of order yields wrong instructions.
+    /// x86 operand/address size and segment override, MIPS16 mode) that a
+    /// decoded instruction can itself modify, so lifting out of order yields
+    /// wrong instructions.
     ///
     /// A region can start mid-machine-instruction when a relative
     /// `CondBranch` jumps into the middle of a pcode sequence, so
@@ -690,9 +692,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 }
                 Err(e) => return Err(e),
             };
-            // `skip` needs a usize.  Pcode count per machine instruction is
-            // bounded by Sleigh's per-insn output (<= 256) and usize >= u32
-            // everywhere we support, so this cannot truncate.
+            // `skip` needs a usize.  `insn_index` is either 0 or a value
+            // `decode_branch_target` already bounded by `lift_res.insns.len()`,
+            // itself a usize, so this cannot truncate.
             #[allow(clippy::cast_possible_truncation)]
             let start_pcode_idx = cur_addr.insn_index as usize;
             // A zero-pcode-op machine instruction (x86 `nop`/`pause`/`endbr64`,
@@ -845,10 +847,19 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             return Ok(());
         }
         let start = self.builder.start_addr.addr;
-        let fn_max_size = self.builder.fn_max_size;
+        // No upper bound applies on an unbounded function or one whose bound
+        // overflows u64; both reach here from an address BELOW `start`.
+        let end = match self
+            .builder
+            .fn_max_size
+            .and_then(|size| start.checked_add(size))
+        {
+            Some(end) => format!("{end:#x}"),
+            None => "unbounded".to_owned(),
+        };
         anyhow::bail!(
             "function-boundary error at {cur_addr:?}: sequential decoding overflowed past \
-             [start={start:#x}, start + fn_max_size={fn_max_size:?}); function is unterminated \
+             [start={start:#x}, end={end}); function is unterminated \
              within its recorded extent (likely cause: `fn_max_size` is too small for the \
              function, OR the binary ends mid-function)"
         );
@@ -1526,7 +1537,7 @@ mod tests {
             .unwrap_err();
         assert!(
             err.to_string().contains("no target operand"),
-            "expected MissingBranchTarget; got {err}"
+            "expected the \"no target operand\" error; got {err}"
         );
     }
 
@@ -1546,7 +1557,7 @@ mod tests {
             .unwrap_err();
         assert!(
             err.to_string().contains("no target operand"),
-            "expected MissingBranchTarget; got {err}"
+            "expected the \"no target operand\" error; got {err}"
         );
     }
 }
