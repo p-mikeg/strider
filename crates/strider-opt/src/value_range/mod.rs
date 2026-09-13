@@ -767,7 +767,7 @@ impl<'f> RangeMap<'f> {
         let mut curr = f.producer(ctrl_val);
         loop {
             match f.node_kind(curr) {
-                NodeKind::If | NodeKind::Call | NodeKind::CallOther { .. } => {
+                NodeKind::If | NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
                     // The controlling predecessor is the first input.
                     if let Some(pred_ctrl) = f.nth_input(curr, 0) {
                         curr = f.producer(pred_ctrl);

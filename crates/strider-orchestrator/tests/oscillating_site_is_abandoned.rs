@@ -53,7 +53,7 @@ impl PostOptimizer for FlappingClassify {
             .filter(|&n| {
                 matches!(
                     edit.function().node_kind(n),
-                    NodeKind::IndirectBranch | NodeKind::Switch
+                    NodeKind::IndirectBranch | NodeKind::Switch(_)
                 )
             })
             .collect();

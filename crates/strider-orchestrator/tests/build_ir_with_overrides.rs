@@ -57,7 +57,7 @@ fn build_ir_with_applies_per_address_override() {
     let call_id = bfg
         .graph()
         .all_node_ids()
-        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
+        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call { .. }))
         .expect("function lifts to one Call");
     assert_ne!(
         bfg.get_cc(call_id),

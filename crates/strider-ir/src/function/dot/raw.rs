@@ -40,6 +40,8 @@ impl<'a> RawFunctionDumper<'a> {
             },
             // The value itself goes on the next line.
             NodeKind::IntConst(id) => format!("IntConst(#{})", id.as_u32()),
+            NodeKind::Switch(_) => "Switch".to_string(),
+            NodeKind::Call { .. } => "Call".to_string(),
             other => format!("{other:?}"),
         };
         let mut s = format!("n{}  {kind_str}", node.as_u32());
@@ -72,10 +74,10 @@ impl<'a> RawFunctionDumper<'a> {
         {
             s.push_str(&format!("\ntag={}", fmt_vn(&vn)));
         }
-        if let Some(name) = f.side_tables().call_other_name(node) {
+        if let Some(name) = f.call_other_name(node) {
             s.push_str(&format!("\nop={name}"));
         }
-        if matches!(f.node_kind(node), NodeKind::Call) {
+        if matches!(f.node_kind(node), NodeKind::Call { .. }) {
             // How many outputs past Control/Memory carry a clobber tag.
             let tagged = f
                 .node_outputs(node)

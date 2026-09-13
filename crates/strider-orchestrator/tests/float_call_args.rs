@@ -24,7 +24,7 @@ const X64_INT_ARGS: usize = 6;
 fn calls(function: &strider_ir::Function) -> Vec<NodeId> {
     function
         .walk()
-        .filter(|&n| matches!(function.node_kind(n), NodeKind::Call))
+        .filter(|&n| matches!(function.node_kind(n), NodeKind::Call { .. }))
         .collect()
 }
 

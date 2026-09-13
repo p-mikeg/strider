@@ -71,7 +71,7 @@ fn bounded_lift_handles_tail_call_terminator() {
     let mut had_return = false;
     for nid in function.walk() {
         match function.node_kind(nid) {
-            NodeKind::Call => {
+            NodeKind::Call { .. } => {
                 // Call inputs: [ctrl, mem, target, sp, args...].  Slot 2 is the target.
                 let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
                 if let Some(&target_value) = inputs.get(2)
@@ -99,7 +99,7 @@ fn graph_has_tail_call_to(function: &strider_ir::Function, target: u64) -> bool 
     let mut had_return = false;
     for nid in function.walk() {
         match function.node_kind(nid) {
-            NodeKind::Call => {
+            NodeKind::Call { .. } => {
                 let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
                 if let Some(&target_value) = inputs.get(2)
                     && function.int_const_u128(target_value) == Some(u128::from(target))
@@ -213,7 +213,7 @@ fn bounded_lift_fall_through_past_fn_max_size_is_function_boundary_error() {
 /// args...]; the target sits at slot 2.
 fn find_call_to(function: &strider_ir::Function, target: u64) -> Option<strider_ir::node::NodeId> {
     function.walk().find(|&nid| {
-        matches!(function.node_kind(nid), NodeKind::Call)
+        matches!(function.node_kind(nid), NodeKind::Call { .. })
             && function
                 .node_inputs(nid)
                 .into_iter()
@@ -325,7 +325,7 @@ fn bounded_lift_oob_taken_arm_lifts_as_conditional_tail_call() {
         function.side_tables().asm_fingerprint(call)
     );
     assert_eq!(
-        function.count_kind(|k| matches!(k, NodeKind::Call)),
+        function.count_kind(|k| matches!(k, NodeKind::Call { .. })),
         1,
         "only the OOB arm carries a Call"
     );

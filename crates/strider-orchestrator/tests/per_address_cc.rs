@@ -46,7 +46,7 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
     let call_id = bfg
         .graph()
         .all_node_ids()
-        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
+        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call { .. }))
         .expect("function lifts to one Call");
     let outs = bfg.node_outputs(call_id);
     // With the all-preserving override, the only tracked variables that
@@ -109,7 +109,7 @@ fn call_without_override_uses_function_default_clobber_set() {
     let call_id = bfg
         .graph()
         .all_node_ids()
-        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
+        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call { .. }))
         .expect("function lifts to one Call");
     assert_eq!(
         bfg.get_cc(call_id),

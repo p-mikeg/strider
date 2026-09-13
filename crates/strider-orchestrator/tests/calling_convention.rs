@@ -277,7 +277,7 @@ fn uses_return_assertions(function: &strider_ir::Function) {
     use strider_ir::node::NodeId;
     let calls: Vec<NodeId> = function
         .walk()
-        .filter(|&n| matches!(function.node_kind(n), NodeKind::Call))
+        .filter(|&n| matches!(function.node_kind(n), NodeKind::Call { .. }))
         .collect();
     assert!(
         !calls.is_empty(),
@@ -293,7 +293,7 @@ fn uses_return_assertions(function: &strider_ir::Function) {
             let mut producer = function.producer(inp);
             for _ in 0..16 {
                 match function.node_kind(producer) {
-                    NodeKind::Call if producer != outer => return true,
+                    NodeKind::Call { .. } if producer != outer => return true,
                     NodeKind::Load(_) | NodeKind::Region => {
                         // Load[memory, addr]: first input is the memory
                         // predecessor. Region: first input is its first pred.

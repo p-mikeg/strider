@@ -12,7 +12,7 @@
 //! the result is a single `NodeKind::Switch` with one `Control` output per
 //! target (in target order) and zero `If` / `IntCmpOp::Equal` nodes:
 //! `handle_switch` emits one `Switch` node directly, with case addresses in
-//! the `switch_targets` side table rather than as IR comparison constants.
+//! its switch table rather than as IR comparison constants.
 //!
 //! Unit-level coverage of `build_switch`'s primitive lives in
 //! `crates/strider-lift/src/lift/control.rs::tests`.
@@ -73,8 +73,8 @@ fn switch_terminator_lifts_to_one_arm_switch_for_one_target() {
 fn switch_terminator_lifts_to_single_switch_node_for_three_targets() {
     // handle_switch emits exactly one Switch with N=3 Control outputs (one
     // per target region, in target order); no if-ladder, so zero If and
-    // zero IntCmpOp::Equal. Target addresses live in the switch_targets
-    // side table, not as IR comparison constants.
+    // zero IntCmpOp::Equal. Target addresses live in the switch table, not
+    // as IR comparison constants.
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(3);
     let (g, _, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
     assert_eq!(
@@ -99,9 +99,9 @@ fn switch_terminator_lifts_to_single_switch_node_for_three_targets() {
         "Switch has one Control output per target",
     );
     assert_eq!(
-        g.side_tables().switch_targets(switch_id),
+        g.switch_targets(switch_id),
         targets.as_slice(),
-        "switch_targets side table must list the 3 target addresses in target order",
+        "switch table must list the 3 target addresses in target order",
     );
 }
 
@@ -240,9 +240,9 @@ fn ir_level_multiple_resolution_end_to_end_produces_lifted_switch_in_ir() {
         "Switch has one Control output per target",
     );
     assert_eq!(
-        g.side_tables().switch_targets(switch_id),
+        g.switch_targets(switch_id),
         targets.as_slice(),
-        "switch_targets side table must list both target addresses in target order",
+        "switch table must list both target addresses in target order",
     );
     // No BranchIndirect was fully classified to Multiple before lift, so no
     // UnresolvedIndirectBranch placeholder is generated.

@@ -1913,7 +1913,7 @@ fn narrowing_across_a_call_never_outlives_escape_analysis() -> Result<()> {
         .expect("nothing stores to the slot, so the load survives");
     let mem = fg.node_inputs(load)[0];
     assert!(
-        matches!(fg.node_kind(fg.producer(mem)), NodeKind::Call),
+        matches!(fg.node_kind(fg.producer(mem)), NodeKind::Call { .. }),
         "the Call must stay on the load's memory chain, got {:?}",
         fg.node_kind(fg.producer(mem)),
     );
@@ -2010,7 +2010,7 @@ fn narrowing_across_an_allocator_never_outlives_noalias_allocators() -> Result<(
         .expect("nothing stores to the slot, so the load survives");
     let mem = fg.node_inputs(load)[0];
     assert!(
-        matches!(fg.node_kind(fg.producer(mem)), NodeKind::Call),
+        matches!(fg.node_kind(fg.producer(mem)), NodeKind::Call { .. }),
         "the Call must stay on the load's memory chain, got {:?}",
         fg.node_kind(fg.producer(mem)),
     );

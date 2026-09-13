@@ -31,6 +31,24 @@ fn call_at_addr_matches_and_rejects() {
     a::none(&function, call().at(0x9999).build());
 }
 
+/// The convention a `Call` carries is not part of `call()`.
+#[test]
+fn call_matches_whatever_convention_the_call_carries() {
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let override_cc = strider_target::BuiltCallingConvention {
+        preserves_memory: true,
+        ..b.function().default_cc().clone()
+    };
+    for (addr, cc) in [(0x1000u64, None), (0x2000, Some(&override_cc))] {
+        let tgt = b.build_int_const(addr, ValueType::I64).unwrap();
+        b.build_call_cc(tgt, cc).unwrap();
+    }
+    b.build_return(None, &[]).unwrap();
+    let function = b.build().unwrap();
+    a::matches(&function, call().build(), 2);
+    a::matches(&function, call().at(0x2000).build(), 1);
+}
+
 #[test]
 fn call_target_set() {
     let function = call_at(0x1234);
@@ -232,7 +250,7 @@ fn switch_matches_and_captures() {
         .expect("switch node capture");
     assert!(matches!(
         function.node_kind(node),
-        strider_ir::node::NodeKind::Switch
+        strider_ir::node::NodeKind::Switch(_)
     ));
 }
 
@@ -1251,7 +1269,7 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
     let call = function
         .graph()
         .all_node_ids()
-        .find(|&n| matches!(function.node_kind(n), NodeKind::Call))
+        .find(|&n| matches!(function.node_kind(n), NodeKind::Call { .. }))
         .expect("call node");
     let clobber_value = *function
         .node_outputs(call)
@@ -1290,7 +1308,7 @@ fn call_and_clobber(function: &strider_ir::Function) -> (NodeKind, strider_ir::n
     let call = function
         .graph()
         .all_node_ids()
-        .find(|&n| matches!(function.node_kind(n), NodeKind::Call))
+        .find(|&n| matches!(function.node_kind(n), NodeKind::Call { .. }))
         .expect("call node");
     let clobber = *function
         .node_outputs(call)
