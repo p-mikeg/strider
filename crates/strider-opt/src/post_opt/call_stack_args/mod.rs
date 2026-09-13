@@ -53,6 +53,7 @@ fn collect_stack_args(
         return Vec::new();
     };
     let mut scan = ArgStoreScan::new(
+        alias_cfg,
         alias_cfg.options().clone(),
         mem_value,
         base,

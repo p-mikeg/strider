@@ -663,3 +663,363 @@ fn a_degraded_arm_stops_the_walk_at_the_loop_header() {
     let r = run(&mut fg, &mut never_alias(), outer);
     assert_eq!(r, fg.producer(outer), "got {:?}", fg.node_kind(r));
 }
+
+/// Every def a candidate: the climb's answer with no index to lean on.
+struct EveryDef<'a>(&'a mut dyn FnMut(&Function, NodeId) -> bool);
+
+impl ClobberProbe for EveryDef<'_> {
+    fn clobbers(&mut self, function: &Function, def: NodeId) -> bool {
+        (self.0)(function, def)
+    }
+
+    fn candidate(&mut self, _layout: &MemLayout, lo: u32, hi: u32) -> Option<u32> {
+        (lo <= hi).then_some(hi)
+    }
+}
+
+/// The dominator climb from the def that produced `start_mem`.
+fn climb(
+    fg: &Function,
+    clobbers: &mut dyn FnMut(&Function, NodeId) -> bool,
+    start_mem: ValueId,
+) -> NodeId {
+    let layout = MemLayout::build(fg).expect("a reducible graph is laid out");
+    layout
+        .nearest_clobber(
+            fg,
+            fg.producer(start_mem),
+            &mut EveryDef(clobbers),
+            &mut Answers::default(),
+        )
+        .expect("the start is laid out")
+}
+
+/// The walk re-reads `inner_body` after the inner loop closed and degrades it
+/// to a clobber; the climb has no such history and finds every path clean.
+#[test]
+fn the_climb_does_not_degrade_a_closed_inner_loop() {
+    let (fg, outer) = loop_exit_from_a_closed_inner_loop();
+    let r = climb(&fg, &mut never_alias(), outer);
+    assert_clean(&fg, r);
+}
+
+#[test]
+fn the_climb_steps_through_a_loop_back_edge_to_the_dominating_store() {
+    let (mut fg, _im, store_dom_mem, phi_token) = base_with_store();
+    let phi_mem = mk_mem_phi(&mut fg, phi_token, &[store_dom_mem, store_dom_mem]);
+    let (ba, bd) = (mk_const(&mut fg, 0x77), mk_const(&mut fg, 0x88));
+    let back_store_mem = mk_store(&mut fg, phi_mem, ba, bd);
+    let use_id = fg.node_input_id_at(fg.producer(phi_mem), 2).unwrap();
+    fg.graph_mut().update_input(use_id, back_store_mem);
+    let r = climb(&fg, &mut alias_set(vec![store_dom_mem]), phi_mem);
+    assert_eq!(r, fg.producer(store_dom_mem));
+}
+
+/// An inner loop header whose entry arm leads to the outer header: the outer
+/// back edge reaches the inner header again, which is a cycle, not a value.
+#[test]
+fn the_climb_resolves_a_query_at_an_inner_loop_header_through_the_outer_loop() {
+    let (mut fg, im, _store, phi_token) = base_with_store();
+    let (a, d) = (mk_const(&mut fg, 0x20), mk_const(&mut fg, 0x21));
+    let entry_store = mk_store(&mut fg, im, a, d);
+    let outer = mk_mem_phi(&mut fg, phi_token, &[entry_store, entry_store]);
+    let pre_inner = mk_store(&mut fg, outer, a, d);
+    let inner = mk_mem_phi(&mut fg, phi_token, &[pre_inner, pre_inner]);
+    let inner_body = mk_store(&mut fg, inner, a, d);
+    let use_id = fg.node_input_id_at(fg.producer(inner), 2).unwrap();
+    fg.graph_mut().update_input(use_id, inner_body);
+    let outer_latch = mk_store(&mut fg, inner, a, d);
+    let use_id = fg.node_input_id_at(fg.producer(outer), 2).unwrap();
+    fg.graph_mut().update_input(use_id, outer_latch);
+    let r = climb(&fg, &mut alias_set(vec![entry_store]), inner);
+    assert_eq!(r, fg.producer(entry_store), "got {:?}", fg.node_kind(r));
+}
+
+/// Two loops entered at each other's bodies: no header dominates the cycle.
+#[test]
+fn an_irreducible_loop_is_not_laid_out() {
+    let (mut fg, im, _store, phi_token) = base_with_store();
+    let (a, d) = (mk_const(&mut fg, 0x20), mk_const(&mut fg, 0x21));
+    let left_in = mk_store(&mut fg, im, a, d);
+    let right_in = mk_store(&mut fg, im, a, d);
+    let left = mk_mem_phi(&mut fg, phi_token, &[left_in, left_in]);
+    let right = mk_mem_phi(&mut fg, phi_token, &[right_in, left]);
+    let use_id = fg.node_input_id_at(fg.producer(left), 2).unwrap();
+    fg.graph_mut().update_input(use_id, right);
+    assert!(MemLayout::build(&fg).is_none());
+}
+
+/// Random structured memory graphs: sequences of stores, merges of two or
+/// three arms, top-tested and bottom-tested loops, and loops left from the
+/// middle of their body.
+struct ShapeGen {
+    fg: Function,
+    token: ValueId,
+    state: u64,
+    slots: Vec<ValueId>,
+    allow_loops: bool,
+    values: Vec<ValueId>,
+}
+
+impl ShapeGen {
+    fn new(seed: u64, allow_loops: bool) -> (Self, ValueId) {
+        let (mut fg, im, _store, token) = base_with_store();
+        let slots = (0..3).map(|k| mk_const(&mut fg, 0x100 + k)).collect();
+        let gen_ = Self {
+            fg,
+            token,
+            state: seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
+            slots,
+            allow_loops,
+            values: vec![im],
+        };
+        (gen_, im)
+    }
+
+    fn next(&mut self, bound: u64) -> u64 {
+        self.state ^= self.state << 13;
+        self.state ^= self.state >> 7;
+        self.state ^= self.state << 17;
+        self.state % bound
+    }
+
+    fn phi(&mut self, arms: &[ValueId]) -> ValueId {
+        let v = mk_mem_phi(&mut self.fg, self.token, arms);
+        self.values.push(v);
+        v
+    }
+
+    /// A loop header whose back arm is filled in later.
+    fn open_loop(&mut self, entry: ValueId) -> ValueId {
+        self.phi(&[entry, entry])
+    }
+
+    fn close_loop(&mut self, header: ValueId, latch: ValueId) {
+        let use_id = self
+            .fg
+            .node_input_id_at(self.fg.producer(header), 2)
+            .unwrap();
+        self.fg.graph_mut().update_input(use_id, latch);
+    }
+
+    fn body(&mut self, mem: ValueId, depth: u32) -> ValueId {
+        let mut m = mem;
+        for _ in 0..=self.next(3) {
+            let nested = depth < 4;
+            m = match self.next(8) {
+                2 if nested => {
+                    let (a, b) = (self.body(m, depth + 1), self.body(m, depth + 1));
+                    self.phi(&[a, b])
+                }
+                3 if nested => {
+                    let (a, b, c) = (
+                        self.body(m, depth + 1),
+                        self.body(m, depth + 1),
+                        self.body(m, depth + 1),
+                    );
+                    self.phi(&[a, b, c])
+                }
+                4 if nested && self.allow_loops => {
+                    let header = self.open_loop(m);
+                    let latch = self.body(header, depth + 1);
+                    self.close_loop(header, latch);
+                    header
+                }
+                5 if nested && self.allow_loops => {
+                    let header = self.open_loop(m);
+                    let latch = self.body(header, depth + 1);
+                    self.close_loop(header, latch);
+                    latch
+                }
+                6 if nested && self.allow_loops => {
+                    let header = self.open_loop(m);
+                    let middle = self.body(header, depth + 1);
+                    let latch = self.body(middle, depth + 1);
+                    self.close_loop(header, latch);
+                    self.phi(&[header, middle])
+                }
+                _ => {
+                    let pick = self.next(3) as usize;
+                    let slot = self.slots[pick];
+                    let value = self.next(4);
+                    let data = mk_const(&mut self.fg, value);
+                    let v = mk_store(&mut self.fg, m, slot, data);
+                    self.values.push(v);
+                    v
+                }
+            };
+        }
+        m
+    }
+}
+
+/// The documented answer, computed the long way: the nearest dominator of the
+/// start that clobbers or is a `MemPhi` with a clobber in its region, over
+/// dominators found by the textbook iteration.
+struct ByDefinition {
+    preds: rustc_hash::FxHashMap<NodeId, Vec<NodeId>>,
+    idom: rustc_hash::FxHashMap<NodeId, NodeId>,
+}
+
+impl ByDefinition {
+    fn new(fg: &Function, values: &[ValueId]) -> Self {
+        let nodes: Vec<NodeId> = values.iter().map(|&v| fg.producer(v)).collect();
+        let preds: rustc_hash::FxHashMap<NodeId, Vec<NodeId>> = nodes
+            .iter()
+            .map(|&n| {
+                let ps = match fg.node_kind(n) {
+                    NodeKind::MemPhi => fg.phi_data_inputs(n).map(|v| fg.producer(v)).collect(),
+                    NodeKind::InitialMemory => Vec::new(),
+                    _ => fg
+                        .memory_input_of(n)
+                        .into_iter()
+                        .map(|v| fg.producer(v))
+                        .collect(),
+                };
+                (n, ps)
+            })
+            .collect();
+        let root = nodes[0];
+        // Reverse postorder from the root over consumers.
+        let mut succs: rustc_hash::FxHashMap<NodeId, Vec<NodeId>> = Default::default();
+        for (&n, ps) in &preds {
+            for &p in ps {
+                succs.entry(p).or_default().push(n);
+            }
+        }
+        let mut post = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut stack = vec![(root, 0usize)];
+        seen.insert(root);
+        while let Some((n, i)) = stack.last().copied() {
+            let next = succs.get(&n).and_then(|s| s.get(i)).copied();
+            stack.last_mut().expect("non-empty").1 += 1;
+            match next {
+                Some(m) if seen.insert(m) => stack.push((m, 0)),
+                Some(_) => {}
+                None => {
+                    post.push(n);
+                    stack.pop();
+                }
+            }
+        }
+        let order: rustc_hash::FxHashMap<NodeId, usize> =
+            post.iter().enumerate().map(|(i, &n)| (n, i)).collect();
+        let mut idom: rustc_hash::FxHashMap<NodeId, NodeId> = Default::default();
+        idom.insert(root, root);
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for &n in post.iter().rev().skip(1) {
+                let mut new: Option<NodeId> = None;
+                for &p in &preds[&n] {
+                    if !idom.contains_key(&p) {
+                        continue;
+                    }
+                    new = Some(match new {
+                        None => p,
+                        Some(mut q) => {
+                            let mut p = p;
+                            while p != q {
+                                while order[&p] < order[&q] {
+                                    p = idom[&p];
+                                }
+                                while order[&q] < order[&p] {
+                                    q = idom[&q];
+                                }
+                            }
+                            p
+                        }
+                    });
+                }
+                let new = new.expect("a reachable node has a processed predecessor");
+                if idom.get(&n) != Some(&new) {
+                    idom.insert(n, new);
+                    changed = true;
+                }
+            }
+        }
+        Self { preds, idom }
+    }
+
+    fn nearest(
+        &self,
+        fg: &Function,
+        start: NodeId,
+        clobbers: &mut dyn FnMut(&Function, NodeId) -> bool,
+    ) -> NodeId {
+        let mut x = start;
+        loop {
+            match fg.node_kind(x) {
+                NodeKind::InitialMemory => return x,
+                NodeKind::MemPhi => {
+                    let stop = self.idom[&x];
+                    let mut region = vec![x];
+                    let mut seen = rustc_hash::FxHashSet::default();
+                    let mut dirty = false;
+                    while let Some(y) = region.pop() {
+                        for &p in &self.preds[&y] {
+                            if p != stop && p != x && seen.insert(p) {
+                                region.push(p);
+                                let def = !matches!(
+                                    fg.node_kind(p),
+                                    NodeKind::MemPhi | NodeKind::InitialMemory
+                                );
+                                dirty |= def && clobbers(fg, p);
+                            }
+                        }
+                    }
+                    if dirty {
+                        return x;
+                    }
+                    x = stop;
+                }
+                _ => {
+                    if clobbers(fg, x) {
+                        return x;
+                    }
+                    x = self.idom[&x];
+                }
+            }
+        }
+    }
+}
+
+fn store_at(slot: ValueId) -> impl FnMut(&Function, NodeId) -> bool {
+    move |f: &Function, def: NodeId| {
+        matches!(f.node_kind(def), NodeKind::Store(_)) && f.store_addr(def) == slot
+    }
+}
+
+/// The climb names what its definition names, from every def and for every
+/// slot, over random reducible graphs; with no loop it also names what the
+/// path walk does.
+#[test]
+fn the_climb_matches_its_definition_on_random_graphs() {
+    for seed in 0..300 {
+        let allow_loops = seed % 3 != 0;
+        let (mut shape, im) = ShapeGen::new(seed, allow_loops);
+        shape.body(im, 0);
+        let ShapeGen {
+            fg, slots, values, ..
+        } = shape;
+        let layout = MemLayout::build(&fg).expect("a structured graph is reducible");
+        let definition = ByDefinition::new(&fg, &values);
+        for &slot in &slots {
+            let mut answers = Answers::default();
+            for &v in &values {
+                let start = fg.producer(v);
+                let mut clobbers = store_at(slot);
+                let got = layout
+                    .nearest_clobber(&fg, start, &mut EveryDef(&mut clobbers), &mut answers)
+                    .expect("every generated def is laid out");
+                let want = definition.nearest(&fg, start, &mut store_at(slot));
+                assert_eq!(got, want, "seed {seed}: from {start:?}");
+                if !allow_loops {
+                    let walked = find_nearest_clobber(&fg, start, &mut store_at(slot));
+                    assert_eq!(got, walked, "seed {seed}: the walk from {start:?}");
+                }
+            }
+        }
+    }
+}
