@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional, Union
+from typing import Optional, Sequence, Union
 
 __all__: list[str]
 
@@ -13,7 +13,7 @@ class BufferReader:
     memory) arguments of `strider.lift.lifter`, and the `mem` argument of
     `strider.sleigh.Sleigh`. Cheap to copy; copies share one backing state.
     """
-    def __init__(self, base_addr: int, data: Union[bytes, bytearray]) -> None:
+    def __init__(self, base_addr: int, data: Union[bytes, bytearray, Sequence[int]]) -> None:
         """Serve `data` as the bytes mapped starting at `base_addr`. Raises
         `StriderError` for an invalid region."""
         ...
