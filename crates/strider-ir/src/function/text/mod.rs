@@ -14,8 +14,9 @@ use crate::node::{
 impl Function {
     /// The canonical text form: a header (endianness, tracked varnodes, default
     /// convention, argument carriers), then one line per node reachable from
-    /// [`Self::entry`] as `outs = op[payload] ins  @{asm addresses}`, values
-    /// named `%vN` in print order.
+    /// [`Self::entry`] as `outs = op[payload] ins`, values named `%vN` in print
+    /// order. With `fingerprints`, each line ends in its sorted asm address set
+    /// `  @{..}`; those sets can dwarf the rest on large functions.
     ///
     /// Control nodes print in reverse postorder of the control graph, taking
     /// successors in output-index order. Each is preceded by its unprinted
@@ -28,9 +29,9 @@ impl Function {
     ///
     /// Unreachable nodes are not printed, which is why [`Self::compact`]
     /// leaves the text unchanged.
-    pub fn to_text(&self) -> String {
+    pub fn to_text(&self, fingerprints: bool) -> String {
         let order = Orderer::new(self).run();
-        render(self, &attach_phis(self, order))
+        render(self, &attach_phis(self, order), fingerprints)
     }
 }
 
@@ -257,7 +258,7 @@ fn push_name(out: &mut String, names: &Names, value: ValueId) {
     };
 }
 
-fn render(f: &Function, order: &[NodeId]) -> String {
+fn render(f: &Function, order: &[NodeId], fingerprints: bool) -> String {
     let mut names: Names = SecondaryMap::new();
     let mut next = 0u32;
     for &node in order {
@@ -324,7 +325,7 @@ fn render(f: &Function, order: &[NodeId]) -> String {
             out.push_str(if i == 0 { " " } else { ", " });
             push_name(&mut out, &names, value);
         }
-        if !st.asm_fingerprint_is_empty(node) {
+        if fingerprints && !st.asm_fingerprint_is_empty(node) {
             let mut addrs: Vec<u64> = st.asm_fingerprint(node).into_iter().collect();
             addrs.sort_unstable();
             out.push_str("  @{");
