@@ -576,9 +576,16 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             addr: dispatch,
         } = &mut region.terminator
         else {
+            // An x86 branch to an address one prefix into an instruction (a
+            // `je` over a `lock`) re-enters the same instruction's decode: the
+            // owner already runs that stream from a byte earlier, so the edge
+            // is exact and nothing is stepped over.
+            let benign = self.is_benign_prefix_reentry(owner, addr);
             let edge = self.region_graph.add_edge(parent, owner, ());
             self.non_boundary_seats.insert(edge, addr);
-            self.interior_branch_targets.push(addr);
+            if !benign {
+                self.interior_branch_targets.push(addr);
+            }
             return Ok(());
         };
         // One arm per seating, not every arm at the address: `known_targets` is
@@ -605,6 +612,71 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // so anything unsaid here leaves the site an arm short in silence.
         self.interior_branch_targets.push(addr);
         Ok(())
+    }
+
+    /// Whether `addr` lands one instruction-prefix into `owner`'s stream and
+    /// re-enters the same instruction: decoding from `addr` ends at the byte
+    /// the containing instruction does and carries the same p-code once the
+    /// atomic-prefix markers (`LOCK` / `UNLOCK`) are set aside.
+    ///
+    /// Only on an arch with no ISA-mode context (x86 / x86-64), where a
+    /// byte-granular prefix exists and a throwaway decode cannot leak mode
+    /// state. Off it, an interior target is a real overlap.
+    fn is_benign_prefix_reentry(&mut self, owner: NodeIndex, addr: PcodeInsnAddr) -> bool {
+        if self.arch.isa_mode_var().is_some() {
+            return false;
+        }
+        let Some(region) = self.region_graph.node_weight(owner) else {
+            return false;
+        };
+        let target = addr.machine_addr.addr;
+        let Some(insn) = region
+            .insns
+            .iter()
+            .rev()
+            .find(|i| i.addr.machine_addr.addr <= target)
+        else {
+            return false;
+        };
+        let start = insn.addr.machine_addr.addr;
+        let full_end = start.saturating_add(u64::from(insn.len));
+        if !(start < target && target < full_end) {
+            return false;
+        }
+        // The owner already holds the containing instruction's p-code, one
+        // entry per op, all stamped at `start`.
+        let full: Vec<rsleigh::Insn> = region
+            .insns
+            .iter()
+            .filter(|i| i.addr.machine_addr.addr == start)
+            .map(|i| i.insn.clone())
+            .collect();
+        let Ok(tail) = self.sleigh.lift_one(target) else {
+            return false;
+        };
+        if target.saturating_add(tail.machine_insn_len as u64) != full_end {
+            return false;
+        }
+        self.strip_atomic_markers(&full) == self.strip_atomic_markers(&tail.insns)
+    }
+
+    /// The p-code ops with the `LOCK` / `UNLOCK` markers an x86 `lock` prefix
+    /// brackets its instruction with removed: they wrap the same core op an
+    /// unprefixed decode emits bare.
+    fn strip_atomic_markers(&self, ops: &[rsleigh::Insn]) -> Vec<rsleigh::Insn> {
+        ops.iter()
+            .filter(|op| {
+                op.opcode != rsleigh::Opcode::CallOther
+                    || !op
+                        .inputs
+                        .first()
+                        .filter(|vn| vn.addr_space == rsleigh::VnSpace::CONST)
+                        .and_then(|vn| usize::try_from(vn.addr_off).ok())
+                        .and_then(|id| self.user_op_names.as_deref().and_then(|n| n.get(id)))
+                        .is_some_and(|name| name == "LOCK" || name == "UNLOCK")
+            })
+            .cloned()
+            .collect()
     }
 
     fn start_pcode_addr(&self) -> PcodeInsnAddr {
