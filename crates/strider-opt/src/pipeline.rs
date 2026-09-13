@@ -214,7 +214,7 @@ clone_box_shim! {
 /// Assumes the optimizer has converged: may rely on any canonical shape the
 /// in-loop passes settle on (e.g. `Add(_, Neg(_))` for subtraction) rather
 /// than re-normalising.
-pub trait PostOptimizer: PostOptimizerClone {
+pub trait PostOptimizer: PostOptimizerClone + std::any::Any {
     /// `edit` wraps the converged function.
     ///
     /// # Errors
@@ -278,6 +278,16 @@ impl OptimizerPipeline {
     #[must_use]
     pub fn post_passes(&self) -> &[Box<dyn PostOptimizer + Send>] {
         &self.post_passes
+    }
+
+    /// Whether a post-pass of type `P` is registered, by type rather than by
+    /// [`PostOptimizer::name`], which any pass can share.
+    #[must_use]
+    pub fn has_post_pass<P: PostOptimizer>(&self) -> bool {
+        self.post_passes.iter().any(|pass| {
+            let pass: &dyn std::any::Any = pass.as_ref();
+            pass.is::<P>()
+        })
     }
 
     /// Runs the passes to convergence, then each post-pass once in
