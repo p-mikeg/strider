@@ -1,5 +1,7 @@
 use core::ops::ControlFlow;
 
+use cranelift_entity::SecondaryMap;
+
 use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
@@ -55,19 +57,22 @@ pub(super) fn check_function_invariants_data_cycles(
         universe: reachable,
     };
     let mut walk = PostOrder::new(producers, reachable.iter());
-    let mut on_path = NodeIdSet::new();
+    // Not a `NodeIdSet`: the walk is seeded from every reachable node, so the
+    // path empties once per seed, and `DenseEntitySet::remove` costs
+    // O(max_index / 64) each time it drops the set's maximum.
+    let mut on_path: SecondaryMap<NodeId, bool> = SecondaryMap::new();
     while let Some((phase, node)) = walk.next_event() {
         match phase {
             WalkPhase::Pre => {
-                on_path.insert(node);
-                if producers.of(node).any(|p| on_path.contains(p)) {
+                on_path[node] = true;
+                if producers.of(node).any(|p| on_path[p]) {
                     errs.push(ValidationError::DataCycle {
                         node,
                         kind: *function.node_kind(node),
                     });
                 }
             }
-            WalkPhase::Post => on_path.remove(node),
+            WalkPhase::Post => on_path[node] = false,
         }
     }
 }
