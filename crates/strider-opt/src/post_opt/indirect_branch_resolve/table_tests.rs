@@ -466,6 +466,41 @@ fn classify_table_dispatch_defers_nonloaded_full_byte_index_conservatively() {
     );
 }
 
+/// A bounded operand under a constant offset enumerates only while the offset
+/// keeps its range one unsigned interval: `(x & 7) + 1` names slots 1..8, while
+/// `(x & 7) - 2` reaches below the table, where only guards the classifier
+/// could not read would stop it, so it defers.
+#[test]
+fn classify_table_dispatch_defers_an_offset_that_wraps_the_bounded_operand() {
+    let build = |offset: u64| {
+        build_with_target(move |fb| {
+            let raw = build_non_const_idx(fb);
+            let seven = fb.build_int_const(7u64, ValueType::I32).unwrap();
+            let masked = fb
+                .build_int_binary_operation(raw, seven, IntBinaryOp::And, ValueType::I32)
+                .expect("and");
+            let offset_c = fb.build_int_const(offset, ValueType::I32).unwrap();
+            let index = fb
+                .build_int_binary_operation(masked, offset_c, IntBinaryOp::Add, ValueType::I32)
+                .expect("add");
+            table_target(fb, index, 4u64, 0x4000u64)
+        })
+    };
+    let rom = MockRom::strided(0x3ff8, 4, (0..16).map(|i| 0x100 + i).collect(), 4);
+
+    let (g, _) = build(1);
+    match classify(&g, Some(&rom)) {
+        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(
+            ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
+            (3..11).map(|i| 0x100 + i).collect::<Vec<_>>()
+        ),
+        other => panic!("an offset that keeps the range resolves; got {other:?}"),
+    }
+
+    let (g, _) = build(0xffff_fffe);
+    assert_eq!(classify(&g, Some(&rom)), None);
+}
+
 #[test]
 fn classify_table_dispatch_with_if_guard_bound_returns_multiple() {
     // The guard path: idx is an unmasked register read bounded only by a
