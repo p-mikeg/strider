@@ -27,8 +27,6 @@
 //! Over-approximating the bound is sound, since surplus targets become dead CFG
 //! edges.  Under-approximating is not.
 
-#![allow(clippy::module_name_repetitions)]
-
 use super::MAX_TABLE_ENTRIES;
 use crate::ReadOnlyMemory;
 use crate::value_range::Interval;
@@ -214,8 +212,9 @@ fn decompose_index(
     let target_idx = *nidx.get(&target)?;
     let doms = petgraph::algo::dominators::simple_fast(&g, entry);
 
-    // `dominators` yields the chain shallow to deep, so the first bounded hit
-    // IS the shallowest.
+    // `dominators` yields the chain from the target up to the entry, which is
+    // the target-rooted shallow-to-deep above, so the first bounded hit IS the
+    // shallowest.
     doms.dominators(target_idx)?
         .filter_map(|di| *g.node_weight(di).expect("dominator is a graph node"))
         .filter(|&v| v != target)

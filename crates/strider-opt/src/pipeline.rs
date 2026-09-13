@@ -324,8 +324,6 @@ impl OptimizerPipeline {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
     use super::{OptCtx, Optimizer};
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IRViewer, IRWalker};
