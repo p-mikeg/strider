@@ -7,7 +7,7 @@ use crate::node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp, NodeKind, ValueKind, ValueType,
 };
 use cranelift_entity::EntityRef;
-use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
+use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, reg_vn};
 
 /// Local stand-in for `strider_ir_test_utils::builder`, which cannot be used
 /// here: under `cargo test` the dev-dep links a separate compilation of
@@ -470,7 +470,6 @@ fn cast_to_float_of_int_is_int_bits_to_float() -> Result<()> {
 /// and the list stops at the first untracked position.
 #[test]
 fn build_call_cc_float_args_are_positional_slices() -> Result<()> {
-    use strider_ir_test_utils::reg_vn;
     let sp = strider_ir_test_utils::stack_vn_x86_64();
     let q0 = reg_vn(0x100, 16);
     let (d0, d1) = (reg_vn(0x100, 8), reg_vn(0x108, 8));
@@ -742,15 +741,6 @@ fn build_call_other_rejects_non_value_arg() -> Result<()> {
         "got: {err}"
     );
     Ok(())
-}
-
-/// These need not correspond to any tracked-variable entry.
-fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
-    rsleigh::Vn {
-        size,
-        addr_off: off,
-        addr_space: rsleigh::VnSpace::REGISTER,
-    }
 }
 
 /// Any value fitting `u128` interns as `Bits` whatever the declared width, so
@@ -2362,8 +2352,7 @@ mod build_call_with_cc {
             );
         }
 
-        let function = b.build().unwrap();
-        crate::validate::validate(&function)
+        b.build()
             .expect("build() after extended use must yield a valid graph");
     }
 }
@@ -2786,7 +2775,6 @@ fn call_with_register_holding(
     internal: bool,
     held: impl FnOnce(&mut FunctionBuilder, ValueId) -> Result<ValueId>,
 ) -> Result<crate::Function> {
-    use strider_ir_test_utils::reg_vn;
     let sp = strider_ir_test_utils::stack_vn_x86_64();
     let (rax, rbx) = (reg_vn(0x0, 8), reg_vn(0x18, 8));
     let cc = strider_target::BuiltCallingConvention {

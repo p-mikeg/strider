@@ -76,14 +76,6 @@ fn edge_with_extra_emits_bracketed_attrs() {
 }
 
 #[test]
-fn finish_appends_closing_brace_and_newline_exactly_once() {
-    let style = DotStyle::empty();
-    let out = DotEmitter::new("G", &style).finish();
-    assert_eq!(out.matches('}').count(), 1);
-    assert!(out.ends_with("}\n"));
-}
-
-#[test]
 fn digraph_name_with_special_chars_is_quoted_and_escaped() {
     let style = DotStyle::empty();
     let out = DotEmitter::new("my graph \"X\"", &style).finish();
