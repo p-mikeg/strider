@@ -278,7 +278,7 @@ fn guard_propagates_through_a_mask_of_known_zero_bits() {
         let mut f = b.build().unwrap();
         canonicalize(&mut f);
         let (dispatch_node, _exit) = if_edge_consumers(&f);
-        let doms = control_dominators(&f);
+        let doms = control_dominator_tree(&f);
         let known = analyze_known_bits(&f).unwrap();
         let mut ranges = compute_value_ranges(&f, &doms, &known);
         ranges.range_of(masked, dispatch_node)
