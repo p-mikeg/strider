@@ -136,8 +136,25 @@ pub fn run_one_unvalidated(
     function.side_tables().clear_frame_escape();
     let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
-    let result = pass.apply(&mut edit, octx)?;
+    let result = apply_checked(pass, &mut edit, octx)?;
     edit.clean();
+    Ok(result)
+}
+
+/// [`Optimizer::apply`], asserting in a debug build that a pass reporting
+/// `NoChange` did not edit: the fixed point would exit on it.
+fn apply_checked(
+    pass: &dyn Optimizer,
+    edit: &mut crate::EditFunction<'_>,
+    ctx: &mut OptCtx<'_>,
+) -> crate::Result<OptimizationResult> {
+    let generation = edit.generation();
+    let result = pass.apply(edit, ctx)?;
+    debug_assert!(
+        result.changed() || edit.generation() == generation,
+        "{} reported NoChange after moving a use or killing a node",
+        pass.name()
+    );
     Ok(result)
 }
 
@@ -292,7 +309,7 @@ impl OptimizerPipeline {
             let converged = loop {
                 let mut changed = false;
                 for opt in &self.passes {
-                    if opt.apply(&mut edit, ctx)?.changed() {
+                    if apply_checked(opt.as_ref(), &mut edit, ctx)?.changed() {
                         changed = true;
                         // Drain after every changing pass so the next pass in
                         // this iteration sees a culled graph, and invalidate the
@@ -491,6 +508,38 @@ mod tests {
             "run_one must clear a memo derived under another configuration"
         );
         Ok(())
+    }
+
+    /// An edit reported as no change would let the fixed point exit early.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "reported NoChange after moving a use")]
+    fn a_pass_hiding_an_edit_trips_the_debug_check() {
+        use super::{OptimizationResult, Optimizer, OptimizerPipeline};
+        use strider_ir::node::NodeKind;
+        #[derive(Clone)]
+        struct HidesAnEdit;
+        impl Optimizer for HidesAnEdit {
+            fn apply(
+                &self,
+                edit: &mut crate::EditFunction<'_>,
+                _ctx: &mut OptCtx<'_>,
+            ) -> crate::Result<OptimizationResult> {
+                let ret = edit
+                    .live_of_kind(|k| matches!(k, NodeKind::Return))
+                    .next()
+                    .expect("the fixture returns");
+                let value = edit.build_int_const(9u64, ValueType::I64)?;
+                let slot = edit.node_input_id_at(ret, 2)?;
+                edit.update_input(slot, value);
+                Ok(OptimizationResult::NoChange)
+            }
+        }
+
+        let mut function = one_const_fn(1);
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(HidesAnEdit);
+        let _ = pipeline.run(&mut function, &mut OptCtx::new(None));
     }
 
     /// Pins that the validate-on-finish step is wired and accepts a clean
