@@ -223,6 +223,8 @@ DEEP_SHAPES = {
         "m.anything()",
         "m.int_binary('add', x, m.int_const(1))",
     ),
+    "one_of_arm": ("strider.pattern", "m.anything()", "m.one_of([x])"),
+    "when_closure": ("strider.pattern", "m.anything()", "m.anything().when(lambda _m, _x=x: True)"),
 }
 
 DEEP_CHAIN = """
