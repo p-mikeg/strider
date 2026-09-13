@@ -15,7 +15,10 @@
 
 use std::cell::RefCell;
 
+use cranelift_entity::SecondaryMap;
 use entity_utils::DenseEntitySet;
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRViewer, IRWalker};
 
@@ -133,6 +136,7 @@ impl PeepholePass for DeadBranchElimination {
     fn start_sweep(&self) {
         ESCAPES.with(|memo| *memo.borrow_mut() = None);
         NO_ESCAPE.with(|memo| *memo.borrow_mut() = DenseEntitySet::new());
+        WITNESSES.with(|memo| *memo.borrow_mut() = Witnesses::default());
     }
 
     fn propagate_to_consumers(&self) -> bool {
@@ -145,19 +149,127 @@ thread_local! {
     /// Whole-CFG walks neither memo below could answer.  Unlike them it is not
     /// reset per sweep; a test zeroes it before measuring.
     pub(super) static FULL_WALKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+
+    /// Nodes the exact walks popped, reset the same way.
+    pub(super) static WALKED_NODES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 thread_local! {
     /// [`escaping_nodes`] for the sweep in progress, shared by every root.
     /// Not a field on the pass: `DeadBranchElimination` is a unit struct other
     /// crates name as a value.
-    static ESCAPES: RefCell<Option<DenseEntitySet<NodeId>>> = const { RefCell::new(None) };
+    static ESCAPES: RefCell<Option<EscapeSet>> = const { RefCell::new(None) };
 
     /// Nodes an exact walk found no terminator from, shared by every root of
     /// the sweep.  Negative only: a verdict recorded while another root was
     /// excluded can differ from this root's exact answer in one direction
     /// only, declining a fold the walk would have allowed.
     static NO_ESCAPE: RefCell<DenseEntitySet<NodeId>> = RefCell::new(DenseEntitySet::new());
+
+    /// The escape paths earlier exact walks found, shared by every root of the
+    /// sweep.
+    static WITNESSES: RefCell<Witnesses> = RefCell::new(Witnesses::default());
+}
+
+struct EscapeSet {
+    escapes: DenseEntitySet<NodeId>,
+    /// Every control output a constant selector never takes, as the sweep began.
+    dead_arms: DenseEntitySet<ValueId>,
+}
+
+/// A walk's route to an escape stops being one only by losing an edge, and a
+/// fold removes exactly the dead arms of the branch it kills, so a route
+/// proves an escape for `root` while no branch whose dead arm it takes is
+/// dead or `root`.  It must also avoid [`NO_ESCAPE`], which the walk prunes.
+struct Witness {
+    /// The constant-selector branches whose dead arms the route takes before
+    /// joining `tail`.
+    crossed: SmallVec<[NodeId; 2]>,
+    /// The witness the route finishes along.
+    tail: Option<u32>,
+    /// Branches and links [`Witnesses::holds`] checks along the `tail` chain.
+    cost: usize,
+    /// Cleared when a node on the route joins [`NO_ESCAPE`], or is claimed by
+    /// a later witness.
+    intact: bool,
+}
+
+#[derive(Default)]
+struct Witnesses {
+    /// One past the index of the witness whose route a node is on; `0` for none.
+    of: SecondaryMap<NodeId, u32>,
+    routes: Vec<Witness>,
+}
+
+/// Bounds the check a witness costs; a longer one is not recorded.
+const MAX_WITNESS_COST: usize = 16;
+
+impl Witnesses {
+    /// Whether `node`'s recorded route still escapes with `root` gone.
+    fn holds(&self, edit: &crate::EditFunction<'_>, node: NodeId, root: NodeId) -> bool {
+        let Some(mut at) = self.of[node].checked_sub(1) else {
+            return false;
+        };
+        loop {
+            let witness = &self.routes[at as usize];
+            if !witness.intact
+                || witness
+                    .crossed
+                    .iter()
+                    .any(|&branch| branch == root || !edit.is_live(branch))
+            {
+                return false;
+            }
+            match witness.tail {
+                Some(tail) => at = tail,
+                None => return true,
+            }
+        }
+    }
+
+    fn forget(&mut self, node: NodeId) {
+        if let Some(at) = self.of[node].checked_sub(1) {
+            self.routes[at as usize].intact = false;
+        }
+    }
+
+    /// Records the route `came_from` leads back from `end`, which is an escape
+    /// itself or, with `tail`, the node where the route joins that witness.
+    fn record(
+        &mut self,
+        came_from: &FxHashMap<NodeId, (NodeId, bool)>,
+        end: NodeId,
+        tail: Option<u32>,
+    ) {
+        let mut route: Vec<NodeId> = Vec::new();
+        let mut crossed: SmallVec<[NodeId; 2]> = SmallVec::new();
+        let mut at = end;
+        while let Some(&(prev, dead_arm)) = came_from.get(&at) {
+            if dead_arm {
+                crossed.push(prev);
+            }
+            route.push(prev);
+            at = prev;
+        }
+        if tail.is_none() {
+            route.push(end);
+        }
+        let cost = crossed.len() + 1 + tail.map_or(0, |t| self.routes[t as usize].cost);
+        if cost > MAX_WITNESS_COST {
+            return;
+        }
+        let index = u32::try_from(self.routes.len()).expect("fewer witnesses than nodes");
+        self.routes.push(Witness {
+            crossed,
+            tail,
+            cost,
+            intact: true,
+        });
+        for node in route {
+            self.forget(node);
+            self.of[node] = index + 1;
+        }
+    }
 }
 
 /// Does the surviving successor still reach a terminator once `root` is gone?
@@ -173,7 +285,8 @@ thread_local! {
 ///
 /// [`escaping_nodes`] answers `true` for most roots without a walk, and
 /// [`NO_ESCAPE`] carries the previous walks' `false` verdicts forward; only a
-/// live side neither can vouch for costs the whole-CFG traversal.
+/// live side neither can vouch for costs the whole-CFG traversal, which
+/// [`WITNESSES`] cuts short where an earlier walk's route still stands.
 fn live_side_reaches_terminator(
     edit: &crate::EditFunction<'_>,
     root: NodeId,
@@ -189,8 +302,8 @@ fn live_side_reaches_terminator(
     }
     if ESCAPES.with(|memo| {
         let mut memo = memo.borrow_mut();
-        let escapes = memo.get_or_insert_with(|| escaping_nodes(edit));
-        stack.iter().any(|&node| escapes.contains(node))
+        let set = memo.get_or_insert_with(|| escaping_nodes(edit));
+        stack.iter().any(|&node| set.escapes.contains(node))
     }) {
         return true;
     }
@@ -202,14 +315,33 @@ fn live_side_reaches_terminator(
     }
     #[cfg(test)]
     FULL_WALKS.with(|c| c.set(c.get() + 1));
-    let reaches = NO_ESCAPE.with(|memo| exact_walk(edit, root, stack, &mut seen, &memo.borrow()));
+    let reaches = ESCAPES.with(|escapes| {
+        NO_ESCAPE.with(|no_escape| {
+            WITNESSES.with(|witnesses| {
+                let escapes = escapes.borrow();
+                let dead_arms = &escapes.as_ref().expect("filled above").dead_arms;
+                exact_walk(
+                    edit,
+                    root,
+                    stack,
+                    &mut seen,
+                    &no_escape.borrow(),
+                    dead_arms,
+                    &mut witnesses.borrow_mut(),
+                )
+            })
+        })
+    });
     if !reaches {
         // The stack drained, so every node walked has the same verdict.
         NO_ESCAPE.with(|memo| {
-            let mut memo = memo.borrow_mut();
-            for node in &seen {
-                memo.insert(node);
-            }
+            WITNESSES.with(|witnesses| {
+                let (mut memo, mut witnesses) = (memo.borrow_mut(), witnesses.borrow_mut());
+                for node in &seen {
+                    memo.insert(node);
+                    witnesses.forget(node);
+                }
+            });
         });
     }
     reaches
@@ -220,11 +352,20 @@ fn live_side_reaches_terminator(
 fn exact_walk(
     edit: &crate::EditFunction<'_>,
     root: NodeId,
-    mut stack: Vec<NodeId>,
+    seeds: Vec<NodeId>,
     seen: &mut DenseEntitySet<NodeId>,
     no_escape: &DenseEntitySet<NodeId>,
+    dead_arms: &DenseEntitySet<ValueId>,
+    witnesses: &mut Witnesses,
 ) -> bool {
-    while let Some(node) = stack.pop() {
+    // Each entry carries the node that pushed it and whether the edge taken is
+    // a dead arm; a seed has none.
+    let mut stack: Vec<(NodeId, Option<(NodeId, bool)>)> =
+        seeds.into_iter().map(|node| (node, None)).collect();
+    let mut came_from: FxHashMap<NodeId, (NodeId, bool)> = FxHashMap::default();
+    while let Some((node, edge)) = stack.pop() {
+        #[cfg(test)]
+        WALKED_NODES.with(|c| c.set(c.get() + 1));
         // `root` is about to go, and its live successors are already seeded.
         if node == root || !seen.insert(node) {
             continue;
@@ -233,7 +374,16 @@ fn exact_walk(
         if no_escape.contains(node) {
             continue;
         }
+        if let Some(edge) = edge {
+            came_from.insert(node, edge);
+        }
+        if witnesses.holds(edit, node, root) {
+            let tail = witnesses.of[node] - 1;
+            witnesses.record(&came_from, node, Some(tail));
+            return true;
+        }
         if edit.node_kind(node).is_terminator() {
+            witnesses.record(&came_from, node, None);
             return true;
         }
         for &out in edit.node_outputs(node) {
@@ -243,9 +393,10 @@ fn exact_walk(
             let mut consumed = false;
             for (succ, _) in edit.value_uses(out) {
                 consumed = true;
-                stack.push(succ);
+                stack.push((succ, Some((node, dead_arms.contains(out)))));
             }
             if !consumed {
+                witnesses.record(&came_from, node, None);
                 return true;
             }
         }
@@ -264,7 +415,7 @@ fn exact_walk(
 /// Valid for the whole sweep.  A fold rewires the live arm onto the branch's
 /// own control input and orphans the dead cone, neither of which is on any
 /// route this set was built from.
-fn escaping_nodes(edit: &crate::EditFunction<'_>) -> DenseEntitySet<NodeId> {
+fn escaping_nodes(edit: &crate::EditFunction<'_>) -> EscapeSet {
     let mut dead_arms: DenseEntitySet<ValueId> = DenseEntitySet::new();
     let nodes: Vec<NodeId> = edit.walk().collect();
     for &node in &nodes {
@@ -297,7 +448,7 @@ fn escaping_nodes(edit: &crate::EditFunction<'_>) -> DenseEntitySet<NodeId> {
         |v| dead_arms.contains(v),
         None,
     );
-    escapes
+    EscapeSet { escapes, dead_arms }
 }
 
 /// The control outputs a constant-selector branch never takes; empty for every
