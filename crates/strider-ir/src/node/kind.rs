@@ -34,13 +34,13 @@ impl InitialVnId {
 }
 
 /// A `Switch`'s case-address table. Resolve via
-/// [`crate::Function::switch_targets`].
+/// [`crate::Function::switch_table`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SwitchTableId(u32);
 entity_impl!(SwitchTableId, "switch_table");
 
 /// A `Call`'s override calling convention, deduped by value. Resolve via
-/// [`crate::Function::get_cc`].
+/// [`crate::Function::cc`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CcId(u32);
 entity_impl!(CcId, "cc");
