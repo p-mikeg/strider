@@ -156,8 +156,14 @@ where
             compact: false,
         };
 
-        let (mut cfg, mut function, mut unresolved, mut switch_anchors, mut resolutions) =
-            self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
+        let (
+            mut cfg,
+            mut function,
+            mut unresolved,
+            mut switch_anchors,
+            mut resolutions,
+            mut unverified_returns,
+        ) = self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
         // Must be snapshotted in lockstep with `function`, and BEFORE
         // `resolutions` is moved into `apply_resolutions`. The classifier
         // already walked for these, so reusing its keys saves
@@ -264,8 +270,14 @@ where
                 converged = true;
                 break;
             }
-            (cfg, function, unresolved, switch_anchors, resolutions) =
-                self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
+            (
+                cfg,
+                function,
+                unresolved,
+                switch_anchors,
+                resolutions,
+                unverified_returns,
+            ) = self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
             // BEFORE `abandon_undecodable`, which drops the site or its bad
             // arms from `known_targets`, the map `seated_arm_losses` looks the
             // site up in. Reversed, every site abandoned this round loses its
@@ -323,7 +335,7 @@ where
         let budget_exhausted: &[PcodeInsnAddr] = if converged { &[] } else { &still_growing };
         let settled = final_targets.as_ref().unwrap_or(&working.cfg.known_targets);
 
-        let unresolved_indirect_branches = live_unresolved_branches(
+        let mut unresolved_indirect_branches = live_unresolved_branches(
             &live_indirect,
             &unresolved,
             &switch_anchors,
@@ -335,6 +347,10 @@ where
                 incomplete_derived: &derived_incomplete,
             },
         );
+        // Read off the final round only: the function returned is that round's.
+        unresolved_indirect_branches.append(&mut unverified_returns);
+        unresolved_indirect_branches.sort_unstable();
+        unresolved_indirect_branches.dedup();
         let mut unverified_seeded = unverified_seeded_sites(
             &cfg,
             &switch_anchors,
@@ -402,6 +418,7 @@ where
         UnresolvedAnchors,
         UnresolvedAnchors,
         IndirectResolutions,
+        Vec<PcodeInsnAddr>,
     )> {
         // Destructured to split the borrow: `lifter` goes out `&mut` while
         // the optimiser ctx holds `&rom`.
@@ -422,15 +439,32 @@ where
             mut function,
             unresolved_branches: unresolved,
             switch_anchors,
-            ..
+            return_sites,
         } = lifter.build_ir_with(&cfg, cc.clone(), working)?;
 
+        // A `Return` consumes no target, so the pipeline would drop the value
+        // each return jumps to. It rides on its `Return` for the run.
+        {
+            let mut edit = strider_opt::EditFunction::new(&mut function);
+            for &(_, ret, target) in &return_sites {
+                edit.add_node_input(ret, target)?;
+            }
+        }
         let mut ctx = OptCtx::new(rom_ref);
         ctx.options = opt_opts.clone();
         pipeline.run(&mut function, &mut ctx)?;
         let resolutions = std::mem::take(&mut ctx.indirect_resolutions);
+        let unverified_returns =
+            settle_return_sites(&mut function, &return_sites, &opt_opts.assumptions);
 
-        Ok((cfg, function, unresolved, switch_anchors, resolutions))
+        Ok((
+            cfg,
+            function,
+            unresolved,
+            switch_anchors,
+            resolutions,
+            unverified_returns,
+        ))
     }
 }
 
@@ -1314,6 +1348,43 @@ fn live_unresolved_branches(
     out.sort_unstable();
     out.dedup();
     out
+}
+
+/// The return sites whose target is not the function's entry return address,
+/// after taking each target off the `Return` [`Strider::build_lift`] anchored
+/// it on.
+///
+/// A site the pipeline culled took its `Return` with it.
+fn settle_return_sites(
+    function: &mut strider_ir::Function,
+    sites: &[strider_lift::lift::ReturnSite],
+    assumptions: &strider_opt::AssumptionOptions,
+) -> Vec<PcodeInsnAddr> {
+    let mut unverified = Vec::new();
+    let mut live = Vec::with_capacity(sites.len());
+    let mut edit = strider_opt::EditFunction::new(function);
+    {
+        let mut targets = strider_opt::ReturnTargets::new(edit.function(), assumptions);
+        for &(addr, ret, _) in sites {
+            if !edit.is_live(ret) {
+                continue;
+            }
+            let inputs = strider_ir::IRViewer::node_inputs(edit.function(), ret);
+            let anchored = inputs.len() - 1;
+            let &target = inputs
+                .get(anchored)
+                .expect("an anchored Return carries its target last");
+            if !targets.returns_to_caller(target) {
+                unverified.push(addr);
+            }
+            live.push((ret, anchored));
+        }
+    }
+    for (ret, anchored) in live {
+        edit.truncate_node_inputs(ret, anchored);
+    }
+    edit.clean();
+    unverified
 }
 
 /// The sites the classifier could not derive this round.
