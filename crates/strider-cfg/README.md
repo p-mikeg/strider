@@ -98,9 +98,11 @@ bytes and the arm goes.
 A completed `Cfg` may be incomplete, and says so through six getters. Read them
 all: they overlap in cause and not in content.
 
-- `undecodable_seeded_targets`: a seeded target that would not decode, with the
-  dispatch site it was an arm of. A seeded target is a misclassification, so its
-  edge is dropped and reported.
+- `undecodable_seeded_targets`: a seeded target that would not decode, or that
+  leads to code that would not, with the dispatch site it was an arm of. A
+  seeded target is a misclassification, so its edge is dropped and reported.
+  Bytes Sleigh rejects on a path from the entry through no arm still fail the
+  whole build.
 - `unmapped_branch_targets`: a DIRECT branch to an address the reader has no
   bytes for. It leaves through an empty `TailCall` stub, so the regions that did
   decode survive. An unmapped ENTRY is still an `Err` on the whole build.
