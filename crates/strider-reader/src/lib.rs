@@ -337,24 +337,31 @@ impl MemRegion {
         (available != 0).then_some((offset, available))
     }
 
-    /// Both regions serve the same bytes across `[lo, hi)`, patches included.
-    /// Any part of the range either region fails to serve in full, whether
-    /// unmapped or short of the request, counts as differing.
+    /// Both regions serve the same bytes across `[lo, hi)`, patches included,
+    /// and leave the same uncomputed relocation fields unserved. Any other
+    /// part of the range either region fails to serve, whether unmapped or
+    /// short of the request, counts as differing.
     pub fn same_bytes_in(&self, other: &MemRegion, lo: u64, hi: u64) -> bool {
         let mut addr = lo;
         let (mut a, mut b) = ([0u8; 4096], [0u8; 4096]);
         while addr < hi {
             let want = (hi - addr).min(a.len() as u64) as usize;
-            let (Some(n), Some(m)) = (
+            match (
                 self.read(addr, &mut a[..want]),
                 other.read(addr, &mut b[..want]),
-            ) else {
-                return false;
-            };
-            if (n, m) != (want, want) || a[..want] != b[..want] {
-                return false;
+            ) {
+                (Some(n), Some(m)) if n == m && n != 0 && a[..n] == b[..n] => {
+                    addr += n as u64;
+                }
+                (None, None)
+                    if self.unmodelled_relocation_at(addr).is_some()
+                        && self.unmodelled_relocation_at(addr)
+                            == other.unmodelled_relocation_at(addr) =>
+                {
+                    addr += 1;
+                }
+                _ => return false,
             }
-            addr += want as u64;
         }
         true
     }
