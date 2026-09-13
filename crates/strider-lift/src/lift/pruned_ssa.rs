@@ -1,5 +1,5 @@
-//! Cytron pruned-SSA value-phi placement: per region, the iterated dominance
-//! frontier of each variable's definition sites.
+//! Minimal (Cytron) SSA value-phi placement: per region, the iterated dominance
+//! frontier of each variable's definition sites, with no liveness pruning.
 //!
 //! Def-sites are collected in the lifter, but `record_insn_defs` is a
 //! HAND-WRITTEN mirror of the lift's write paths, not a shared code path with
