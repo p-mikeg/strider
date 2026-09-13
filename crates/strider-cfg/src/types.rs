@@ -62,10 +62,11 @@ pub struct UndecodableTarget {
 /// outgoing edge at all.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegionTerminator {
-    /// Four cases: the region ended at a zero-pcode-op instruction (`nop`,
+    /// Five cases: the region ended at a zero-pcode-op instruction (`nop`,
     /// `endbr64`, `paciasp`, `bti`, alignment padding), decoding fell into an
-    /// already-discovered region, the region is the first half of a split, or
-    /// it closed on an explicit `Branch` opcode.
+    /// already-discovered region, the region is the first half of a split, it
+    /// closed on an explicit `Branch` opcode, or decoding fell through onto
+    /// unmapped bytes and the region edges to a `TailCall` stub there.
     Unconditional,
     /// Two outgoing edges; the one whose target region CONTAINS
     /// `true_target` is the taken side, the other the fall-through.
@@ -99,9 +100,11 @@ pub enum RegionTerminator {
     /// Jump table built from a `ResolvedTargets::Multiple` fed back via
     /// `known_targets`.
     ///
-    /// Every target must be an instruction-start address; the builder can
-    /// only validate against the function address bounds, since instruction
-    /// boundaries are known post-decode.
+    /// Every target is an instruction start inside the function bound. An arm
+    /// out of the bound, or off every instruction boundary of a region decoded
+    /// before the seal, defers the whole site as `UnresolvedIndirectBranch`; an
+    /// off-boundary arm found after the seal is dropped. Both are reported on
+    /// [`crate::Cfg::interior_branch_targets`].
     Switch {
         /// The `BranchIndirect`'s `inputs[0]`.
         target_vn: rsleigh::Vn,
@@ -124,8 +127,9 @@ pub enum RegionTerminator {
 /// A basic block: maximal straight-line pcode entered only at `start_addr` and
 /// left only at the terminator.  Ends on a `Branch`, `CondBranch`, `Return`, or
 /// `BranchIndirect` opcode, on a no-return `Call`/`CallOther`/`CallIndirect`,
-/// on a zero-pcode-op instruction (`build` segments at every one), or when
-/// sequential decoding reaches an already-discovered region's start.
+/// on a zero-pcode-op instruction (`build` segments at every one), when
+/// sequential decoding reaches an already-discovered region's start, or when it
+/// reaches unmapped bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Region {
     pub start_addr: PcodeInsnAddr,
