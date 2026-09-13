@@ -1489,6 +1489,60 @@ fn index_bound_ok_rejects_types_past_the_u128_carrier() {
 }
 
 #[test]
+fn classify_table_dispatch_resolves_a_bitfield_index_under_its_guard() {
+    // ARM `ubfx r3, r0, #27, #2; cmp r3, #3; ldrls pc, [pc, r3, lsl #2]`
+    // (linux 6.1 `arch_bp_generic_fields`): the index lifts as
+    // `(r0 << 3) >> 30`, four values of a register, not a table cell.
+    use strider_ir::IntCmpOp;
+    let r0 = strider_ir_test_utils::reg_vn(0x20, 4);
+    let mut b = RegisterSet::new().tracked(r0).arg(r0).build_fn().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+
+    b.set_region(entry);
+    let arg = b.read_variable(&r0).unwrap();
+    let three = b.build_int_const(3u64, ValueType::I32).unwrap();
+    let up = b
+        .build_int_binary_operation(arg, three, IntBinaryOp::ShiftLeft, ValueType::I32)
+        .unwrap();
+    let thirty = b.build_int_const(30u64, ValueType::I32).unwrap();
+    let idx = b
+        .build_int_binary_operation(up, thirty, IntBinaryOp::ShiftRight, ValueType::I32)
+        .unwrap();
+    let cond = b
+        .build_int_cmp_operation(three, idx, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond, exit, dispatch).unwrap();
+
+    b.set_region(dispatch);
+    let loaded = table_target(&mut b, idx, 4u64, 0x4000u64);
+    b.build_indirect_branch(loaded).unwrap();
+
+    b.set_region(exit);
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut g = b.build().unwrap();
+    // `value_range` assumes converged IR.
+    {
+        let mut p = crate::OptimizerPipeline::new();
+        p.add(crate::PhiCollapse);
+        p.add(crate::RegionCollapse);
+        p.run(&mut g, &mut crate::OptCtx::new(None)).unwrap();
+    }
+
+    let rom = MockRom::strided(0x4000, 4, (0..32).map(|i| 0x5000 + 0x10 * i).collect(), 4);
+    assert_eq!(
+        classify(&g, Some(&rom)),
+        Some(ResolvedTargets::Multiple(
+            [0x5000u64, 0x5010, 0x5020, 0x5030].map(Into::into).to_vec()
+        )),
+    );
+}
+
+#[test]
 fn classify_table_dispatch_excludes_right_shifted_table_entry_as_index() {
     // As the `tbb` case above, with the entry scaled by `>> 2` before the `* 4`
     // address arithmetic.  A right shift is still a scaling of the raw cell, so
