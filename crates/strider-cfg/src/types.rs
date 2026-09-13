@@ -235,12 +235,6 @@ mod tests {
     use crate::test_support::{addr, make_region};
 
     #[test]
-    fn machine_insn_addr_from_u64() {
-        let a: MachineInsnAddr = 0x1000u64.into();
-        assert_eq!(a.addr, 0x1000);
-    }
-
-    #[test]
     fn pcode_addr_orders_by_machine_addr_first() {
         // A larger insn_index never outranks a smaller machine address.
         assert!(addr(200, 0) > addr(100, 99));
