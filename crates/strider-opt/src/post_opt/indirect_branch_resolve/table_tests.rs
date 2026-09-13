@@ -281,6 +281,37 @@ fn classify_table_dispatch_excludes_width_bounded_table_entry_as_index() {
     );
 }
 
+/// The same table ENTRY scaled the way PowerPC `slwi` lifts, `And(entry << 2,
+/// ~3)`: the mask clears only bits the shift zeroed, so it is still the cell's
+/// 256 values and still defers.
+#[test]
+fn classify_table_dispatch_excludes_width_bounded_entry_under_identity_mask() {
+    let (g, _target) = build_with_target(|fb| {
+        let byte_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
+        let byte = fb
+            .build_load(byte_addr, VnSpace::RAM, ValueType::I8)
+            .expect("byte load (table entry)");
+        let wide = fb
+            .extend_if_needed(byte, ValueType::I32, ExtendOp::ZeroExtend)
+            .expect("zero-extend the byte to I32");
+        let two = fb.build_int_const(2u64, ValueType::I32).unwrap();
+        let shifted = fb
+            .build_int_binary_operation(wide, two, IntBinaryOp::ShiftLeft, ValueType::I32)
+            .expect("shl");
+        let mask = fb.build_int_const(0xffff_fffcu64, ValueType::I32).unwrap();
+        let masked = fb
+            .build_int_binary_operation(shifted, mask, IntBinaryOp::And, ValueType::I32)
+            .expect("and");
+        table_target(fb, masked, 1u64, 0x4000u64)
+    });
+    let rom = MockRom::strided(0x4000, 4, vec![0x10; 256], 4);
+    assert_eq!(
+        classify(&g, Some(&rom)),
+        None,
+        "a width-bounded entry behind an identity mask must be excluded as the index"
+    );
+}
+
 #[test]
 fn classify_table_dispatch_resolves_guarded_shift_narrowed_loaded_index() {
     // x86 instruction-decoder shape: `loaded_byte >> 5`, the top 3 bits, under
