@@ -25,6 +25,22 @@ pub fn dot_style_for(name: Option<&str>) -> PyResult<dot::DotStyle> {
     Ok(style)
 }
 
+/// Writes `d` to `path` and returns `None`, or returns the text when there is
+/// no `path`; HTML when `html`, else DOT.
+pub fn render<G: dot::GraphDotDumper>(
+    d: &dot::GraphDot<G>,
+    html: bool,
+    path: Option<&str>,
+) -> PyResult<Option<String>> {
+    match (html, path) {
+        (true, Some(p)) => d.dump_as_html(p).map(|()| None),
+        (false, Some(p)) => d.dump_as_dot(p).map(|()| None),
+        (true, None) => d.as_html_from_dot().map(Some),
+        (false, None) => d.as_dot().map(Some),
+    }
+    .map_err(into_strider_err)
+}
+
 /// The `pretty=` render selector: `False` renders the graph as stored, `True`
 /// renders it prettily in the default theme, and a style name renders it
 /// prettily in that theme.
