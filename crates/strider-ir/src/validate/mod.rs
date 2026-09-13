@@ -5,6 +5,7 @@ use crate::IRViewer;
 use crate::function::Function;
 use crate::node::{NodeId, ValueId, ValueKind, ValueType};
 use crate::node_signature::ExpectedValueKind;
+use crate::schedule::ScheduleContext;
 use crate::walk::NodeIdSet;
 
 mod graph_invariants;
@@ -17,10 +18,10 @@ use graph_invariants::{
     check_function_invariants_availability, check_function_invariants_call_cc,
     check_function_invariants_consts, check_function_invariants_control_single_use,
     check_function_invariants_data_cycles, check_function_invariants_extend_truncate,
-    check_function_invariants_memory_chain, check_function_invariants_phis,
-    check_function_invariants_region, check_function_invariants_side_indices,
-    check_function_invariants_switch, check_function_invariants_terminator_reachable,
-    check_function_invariants_uniqueness,
+    check_function_invariants_memory_chain, check_function_invariants_memory_linearity,
+    check_function_invariants_phis, check_function_invariants_region,
+    check_function_invariants_side_indices, check_function_invariants_switch,
+    check_function_invariants_terminator_reachable, check_function_invariants_uniqueness,
 };
 use local_typing::check_local_typing;
 
@@ -54,9 +55,16 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     check_function_invariants_asm_fingerprints(function, &reachable, &mut errs);
     check_function_invariants_memory_chain(function, &reachable, &mut errs);
     check_function_invariants_data_cycles(function, &reachable, &mut errs);
-    check_function_invariants_availability(function, &reachable, &mut errs);
     check_function_invariants_side_indices(function, &reachable, &mut errs);
     check_function_invariants_terminator_reachable(function, &mut errs);
+
+    // The dataflow checks schedule the graph, so they judge only one that
+    // passed every structural check.
+    if errs.is_empty() {
+        let ctx = ScheduleContext::new(function, &reachable);
+        check_function_invariants_memory_linearity(&ctx, &mut errs);
+        check_function_invariants_availability(&ctx, &mut errs);
+    }
 
     if errs.is_empty() {
         Ok(())
@@ -248,6 +256,14 @@ pub enum ValidationError {
     },
 
     #[error(
+        "reachable Store {node:?} is off the memory chain: no Return, \
+         IndirectBranch, Unreachable, Call, CallOther or live MemPhi arm takes \
+         the token it produces, directly or through later Stores, so the write \
+         is lost"
+    )]
+    LostStore { node: NodeId },
+
+    #[error(
         "initial_var_index entry for varnode {vn:?} points at reachable node \
          {node:?} (kind {actual_kind:?}); expected an InitialVar({vn:?}) node. \
          The index has drifted from the live graph"
@@ -336,3 +352,104 @@ impl std::fmt::Display for ValidationErrors {
 }
 
 impl std::error::Error for ValidationErrors {}
+
+impl ValidationErrors {
+    /// Renders each error followed by the kind and lowest asm-fingerprint
+    /// address of every node it names.
+    #[must_use]
+    pub fn report(self, function: &Function) -> ValidationReport {
+        let mut rendered = String::new();
+        for err in &self.0 {
+            rendered.push_str(&err.to_string());
+            let described: Vec<String> = err
+                .nodes()
+                .into_iter()
+                .map(|node| describe_node(function, node))
+                .collect();
+            if !described.is_empty() {
+                rendered.push_str(&format!(" [{}]", described.join("; ")));
+            }
+            rendered.push('\n');
+        }
+        ValidationReport {
+            errors: self,
+            rendered,
+        }
+    }
+}
+
+/// `node12 Load(..) @ 0x401a2c`; the address is left off an unattributed node.
+fn describe_node(function: &Function, node: NodeId) -> String {
+    if !function.graph().has_node(node) {
+        return format!("{node:?}");
+    }
+    let kind = function.node_kind(node);
+    match function
+        .side_tables()
+        .asm_fingerprint(node)
+        .into_iter()
+        .min()
+    {
+        Some(addr) => format!("{node:?} {kind:?} @ {addr:#x}"),
+        None => format!("{node:?} {kind:?}"),
+    }
+}
+
+/// [`ValidationErrors`] rendered against the function they were found in.
+#[derive(Debug)]
+pub struct ValidationReport {
+    pub errors: ValidationErrors,
+    rendered: String,
+}
+
+impl std::fmt::Display for ValidationReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.rendered)
+    }
+}
+
+impl std::error::Error for ValidationReport {}
+
+impl ValidationError {
+    /// Every node the error names, in field order.
+    #[must_use]
+    pub fn nodes(&self) -> smallvec::SmallVec<[NodeId; 2]> {
+        use ValidationError as E;
+        match *self {
+            E::MultipleEntryNodes { first, second }
+            | E::MultipleInitialMemoryNodes { first, second } => {
+                smallvec::smallvec![first, second]
+            }
+            E::PhiTokenNotFromRegion { phi, producer, .. } => smallvec::smallvec![phi, producer],
+            E::PhiValueArityMismatch {
+                phi, owner_region, ..
+            } => smallvec::smallvec![phi, owner_region],
+            E::PhiInputTypeMismatch { phi, .. } => smallvec::smallvec![phi],
+            E::EmptyRegionPredecessors { region } => smallvec::smallvec![region],
+            E::StaleValueVn { producer, .. } => smallvec::smallvec![producer],
+            E::NodeInputCountMismatch { node, .. }
+            | E::NodeInputKindMismatch { node, .. }
+            | E::NodeOutputCountMismatch { node, .. }
+            | E::NodeOutputKindMismatch { node, .. }
+            | E::UnusedControlOutput { node, .. }
+            | E::ReusedControlOutput { node, .. }
+            | E::NoTerminatorReachable { node, .. }
+            | E::InputNotAvailable { node, .. }
+            | E::MissingAsmFingerprint { node, .. }
+            | E::DanglingConstId { node, .. }
+            | E::ConstWidthMismatch { node, .. }
+            | E::FloatConstWidthMismatch { node, .. }
+            | E::FloatConstUnrepresentableType { node, .. }
+            | E::DataCycle { node, .. }
+            | E::OrphanedMemoryOutput { node, .. }
+            | E::LostStore { node }
+            | E::StaleInitialVarIndex { node, .. }
+            | E::ExtendTruncateWidthDirection { node, .. }
+            | E::ArithmeticWidthMismatch { node, .. }
+            | E::EmptySwitchTargets { node }
+            | E::DanglingSwitchTableId { node, .. }
+            | E::DanglingCcId { node, .. }
+            | E::SwitchTargetArityMismatch { node, .. } => smallvec::smallvec![node],
+        }
+    }
+}
