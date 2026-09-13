@@ -1,6 +1,6 @@
 use strider_ir::Function;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntCmpOp, control_dominators};
+use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntCmpOp, control_dominator_tree};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
 
 use super::compute_value_ranges;
@@ -170,7 +170,7 @@ fn build_guarded_dispatch(
 #[test]
 fn strict_less_guard_bounds_index_on_true_edge() {
     let (f, idx, dispatch_region, _exit) = build_guarded_dispatch(8, ValueType::I32);
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -221,7 +221,7 @@ fn build_guarded_scaled(
 
 fn scaled_range(bound: u64, op: IntBinaryOp, c: u64) -> Interval {
     let (f, scaled, dispatch) = build_guarded_scaled(bound, ValueType::I32, op, c);
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
     ranges.range_of(scaled, dispatch)
@@ -265,7 +265,7 @@ fn guard_propagates_through_udiv_const() {
 #[test]
 fn scaled_range_scans_the_operand_guards_once() {
     let (f, scaled, dispatch) = build_guarded_scaled(8, ValueType::I32, IntBinaryOp::Div, 2);
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
     crate::value_range::GUARD_SCANS.with(|c| c.set(0));
@@ -347,7 +347,7 @@ fn build_two_arm_merge(
 #[test]
 fn guard_survives_a_merge_of_two_bounded_arms() {
     let (f, v, merge) = build_two_arm_merge(8, 6, true);
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
     let iv = ranges.range_of(v, merge);
@@ -364,7 +364,7 @@ fn guard_survives_a_merge_of_two_bounded_arms() {
 #[test]
 fn guard_does_not_survive_a_merge_with_an_unbounded_arm() {
     let (f, v, merge) = build_two_arm_merge(8, 6, false);
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
     let iv = ranges.range_of(v, merge);
@@ -504,7 +504,7 @@ fn guard_on_add_propagates_bound_back_to_operand() {
     // If's true-edge consumer.  `x` is a Load and survives canonicalisation.
     let (dispatch_node, _exit_node) = if_edge_consumers(&f);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -553,7 +553,7 @@ fn guard_on_add_with_wrapping_backprop_stays_top() {
     // consumer.  `x` is a Load and survives canonicalisation.
     let (dispatch_node, _exit_node) = if_edge_consumers(&f);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -611,7 +611,7 @@ fn trivial_phi_of_guarded_index_is_bounded() {
     // `Less(raw_idx, 8)` (no Xor) -> no swap -> dispatch is the true-edge consumer.
     let (dispatch_node, _exit_node) = if_edge_consumers(&f);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -655,7 +655,7 @@ fn known_bits_mask_bounds_index_everywhere() {
     let other_node = f.graph().producer(other_ctrl);
     let entry_node = f.entry();
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -699,7 +699,7 @@ fn known_bits_scaled_index_carries_stride() {
     let f = b.build().unwrap();
 
     let entry_node = f.entry();
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -759,7 +759,7 @@ fn unguarded_predecessor_makes_range_top() {
     let f = b.build().unwrap();
     let dispatch_node = f.graph().producer(dispatch_ctrl);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -818,7 +818,7 @@ fn lowered_le_guard_bounds_index() {
     // IfCondInversion swaps the branches, so dispatch is now the FALSE edge.
     let (_exit_node, dispatch_node) = if_edge_consumers(&f);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -872,7 +872,7 @@ fn lowered_le_guard_swapped_xor_operands_still_bounds_index() {
     // IfCondInversion swaps the branches, so dispatch is now the FALSE edge.
     let (_exit_node, dispatch_node) = if_edge_consumers(&f);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -925,7 +925,7 @@ fn sless_guard_with_known_zero_sign_bit_bounds_index() {
     // Bare `Sless` cond: no swap, so dispatch is the true-edge consumer.
     let (dispatch_node, _exit_node) = if_edge_consumers(&f);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -980,7 +980,7 @@ fn inverted_less_guard_bounds_index_on_false_edge() {
     // IfCondInversion swaps the branches, so dispatch is now the TRUE edge.
     let (dispatch_node, oob_node) = if_edge_consumers(&f);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -1016,7 +1016,7 @@ fn no_constraint_is_top() {
     let f = b.build().unwrap();
     let entry_node = f.entry();
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -1065,7 +1065,7 @@ fn sless_guard_without_known_sign_bit_is_top() {
     let f = b.build().unwrap();
     let dispatch_node = f.graph().producer(dispatch_ctrl);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -1085,7 +1085,7 @@ fn sless_guard_without_known_sign_bit_is_top() {
 fn false_successor_of_guard_is_top() {
     let (f, idx, _dispatch, exit) = build_guarded_dispatch(8, ValueType::I32);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -1175,7 +1175,7 @@ fn sibling_region_not_dominated_is_top() {
     let dispatch_node = edge_consumer(guard_if, 0); // true edge of the guard
     let right_node = edge_consumer(flag_if, 1); // false edge -> sibling right
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -1244,7 +1244,7 @@ fn cyclic_phi_is_top() {
     let f = b.build().unwrap();
     let header_node = f.graph().producer(header_ctrl);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -1309,7 +1309,7 @@ fn back_edge_guard_bounds_a_masked_loop_index() {
     let f = b.build().unwrap();
     let header_node = f.graph().producer(header_ctrl);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -1379,7 +1379,7 @@ fn phi_of_phi_cycle_terminates_top() {
     let f = b.build().unwrap();
     let header_node = f.graph().producer(header_ctrl);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -1462,7 +1462,7 @@ fn nested_guards_intersect_at_inner_region() {
         .expect("inner true-edge consumer")
         .0;
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -1490,7 +1490,7 @@ fn nested_guards_intersect_at_inner_region() {
 fn strict_less_zero_bound_is_top() {
     let (f, idx, dispatch_region, _exit) = build_guarded_dispatch(0, ValueType::I32);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -1515,7 +1515,7 @@ fn strict_less_at_type_mask_narrows_by_one() {
     let type_mask_u64 = 0xFFFF_FFFFu64;
     let (f, idx, dispatch_region, _exit) = build_guarded_dispatch(type_mask_u64, ValueType::I32);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -1620,7 +1620,7 @@ fn two_sibling_guard_regions_give_independent_bounds() {
     let da_node = true_edge_consumer_of_guard(8);
     let db_node = true_edge_consumer_of_guard(16);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -1683,7 +1683,7 @@ fn multi_input_phi_of_constants_keeps_the_arm_spacing() {
     let phi_token = f.graph().nth_input(phi_producer, 0).unwrap();
     let join_region = f.graph().producer(phi_token);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
     let iv = ranges.range_of(phi_idx, join_region);
@@ -1756,7 +1756,7 @@ fn multi_input_phi_unions_two_distinct_finite_arms() {
     let phi_token = f.graph().nth_input(phi_producer, 0).unwrap();
     let join_region = f.graph().producer(phi_token);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -1866,7 +1866,7 @@ fn multi_input_phi_output_guard_bounds_index() {
         "the join phi must have multiple data inputs for this test to exercise the bug"
     );
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -1941,7 +1941,7 @@ fn join_fails_closed_when_one_predecessor_unguarded() {
     let f = b.build().unwrap();
     let dispatch_node = f.graph().producer(dispatch_ctrl);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -1998,7 +1998,7 @@ fn const_lhs_less_guard_bounds_false_edge() {
     // Bare `Less` cond: no swap, so `above` is the true-edge consumer.
     let (above_node, below_node) = if_edge_consumers(&f);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -2056,7 +2056,7 @@ fn guard_into_control_merge_is_not_applied() {
     let f = b.build().unwrap();
     let merge_node = f.graph().producer(merge_ctrl);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -2115,7 +2115,7 @@ fn guard_on_edge_into_merge_is_top_below_merge() {
     let f = b.build().unwrap();
     let merge_node = f.graph().producer(merge_ctrl);
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -2190,7 +2190,7 @@ fn guard_survives_region_collapse_at_nonregion_consumer() {
         "after collapse, the If true edge feeds a non-Region node"
     );
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -2449,7 +2449,7 @@ fn range_of_non_integer_value_is_top() {
     b.set_lift_addr(None);
     let f = b.build().unwrap();
 
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
 
@@ -2509,16 +2509,15 @@ fn build_guard_fan(k: usize) -> (strider_ir::Function, ValueId, NodeId) {
     (f, idx, leaf)
 }
 
-/// A guard lookup costs the query point's dominator depth, not the value's
-/// guard count: `k` guards on one value must not make a query two steps from
-/// the entry `k` times more expensive.  Keyed by node, the whole chain from
-/// the leaf is three nodes whatever `k` is.
+/// A guard lookup costs the guards dominating the query point, not the value's
+/// guard count: `k` guards on one value must not make a query at one leaf `k`
+/// times more expensive.  Only the first `If`'s guard dominates that leaf.
 #[test]
-fn a_guard_lookup_tracks_dominator_depth_not_guard_count() {
+fn a_guard_lookup_does_not_scale_with_guard_count() {
     let mut probes = Vec::new();
     for k in [4usize, 32] {
         let (f, idx, leaf) = build_guard_fan(k);
-        let doms = control_dominators(&f);
+        let doms = control_dominator_tree(&f);
         let known = analyze_known_bits(&f).unwrap();
         let mut ranges = compute_value_ranges(&f, &doms, &known);
         assert_eq!(
@@ -2537,7 +2536,82 @@ fn a_guard_lookup_tracks_dominator_depth_not_guard_count() {
     }
     assert_eq!(
         probes[0], probes[1],
-        "8x the guards, same dominator chain: {probes:?}"
+        "8x the guards, one dominating the leaf: {probes:?}"
+    );
+}
+
+/// `n` guarded sites in sequence, each `If` bounding its own value on the
+/// edge into the next: the `i`th guard sits `i` dominator steps deep.
+/// Returns the function and each `(value, guard_node)`.
+fn build_guard_sequence(n: usize) -> (strider_ir::Function, Vec<(ValueId, NodeId)>) {
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let sites: Vec<_> = (0..=n).map(|_| b.create_region_all().unwrap()).collect();
+    let exits: Vec<_> = (0..n).map(|_| b.create_region_all().unwrap()).collect();
+    b.set_entry_region_all(sites[0]).unwrap();
+    let mut values = Vec::new();
+    for i in 0..n {
+        b.set_region(sites[i]);
+        let addr = b
+            .build_int_const(0x1000 + i as u64, ValueType::I64)
+            .unwrap();
+        let idx = b
+            .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
+            .unwrap();
+        let bound = b.build_int_const(8u64, ValueType::I32).unwrap();
+        let cond = b
+            .build_int_cmp_operation(idx, bound, IntCmpOp::Less, ValueType::I32)
+            .unwrap();
+        b.build_if(cond, sites[i + 1], exits[i]).unwrap();
+        b.set_region(exits[i]);
+        b.build_return(Some(idx), &[]).unwrap();
+        values.push(idx);
+    }
+    b.set_region(sites[n]);
+    let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
+    b.build_return(Some(zero), &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+    let known = analyze_known_bits(&f).unwrap();
+    let doms = control_dominator_tree(&f);
+    let ranges = compute_value_ranges(&f, &doms, &known);
+    let sites = values
+        .iter()
+        .map(|v| {
+            let node = *ranges.guards[v]
+                .keys()
+                .next()
+                .expect("each site guards its value");
+            (*v, node)
+        })
+        .collect();
+    (f, sites)
+}
+
+/// A lookup must not walk from the query point to the entry: over `n`
+/// sequential sites that would be quadratic.
+#[test]
+fn guard_lookups_over_sequential_sites_cost_linear_total() {
+    fn probes(n: usize) -> u64 {
+        let (f, sites) = build_guard_sequence(n);
+        let doms = control_dominator_tree(&f);
+        let known = analyze_known_bits(&f).unwrap();
+        let mut ranges = compute_value_ranges(&f, &doms, &known);
+        crate::value_range::GUARD_PROBES.with(|c| c.set(0));
+        for &(value, node) in &sites {
+            let iv = ranges.range_of(value, node);
+            assert_eq!((iv.lo, iv.hi), (0, 7), "each site's own guard holds");
+        }
+        crate::value_range::GUARD_PROBES.with(std::cell::Cell::get)
+    }
+    let small = probes(40);
+    let large = probes(320);
+    // Linear would be 8x; quadratic 64x.
+    assert!(
+        large < small * 16,
+        "8x the sites probed {:.1}x ({small} -> {large})",
+        large as f64 / small as f64,
     );
 }
 
@@ -2603,7 +2677,7 @@ fn build_guarded_cast_ladder(bound: u64, and_mask: Option<u64>) -> (Function, Va
 
 fn cast_ladder_range(bound: u64, and_mask: Option<u64>) -> Interval {
     let (f, scaled, dispatch) = build_guarded_cast_ladder(bound, and_mask);
-    let doms = control_dominators(&f);
+    let doms = control_dominator_tree(&f);
     let known = analyze_known_bits(&f).unwrap();
     let mut ranges = compute_value_ranges(&f, &doms, &known);
     ranges.range_of(scaled, dispatch)
