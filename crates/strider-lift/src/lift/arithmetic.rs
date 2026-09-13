@@ -13,9 +13,10 @@ use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, IntCmpOp, IntUnaryOp, Valu
 use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
 
-/// Sleigh's contract already guarantees equal widths here, and the IR builders
-/// reject a mismatch anyway.  This exists to surface a malformed `.sla` spec
-/// with a precise lift-time diagnostic instead of a generic builder error.
+/// Sleigh's contract guarantees equal widths here. The lift resizes operands to
+/// one width before the builder sees them, so this is the only check: without
+/// it a malformed `.sla` lifts silently, and a widened `Carry` / `Scarry` /
+/// `Sborrow` operand makes the flag constant-false.
 fn require_equal_input_widths(a: &rsleigh::Vn, b: &rsleigh::Vn) -> Result<()> {
     if a.size != b.size {
         return Err(anyhow::anyhow!(
@@ -27,7 +28,7 @@ fn require_equal_input_widths(a: &rsleigh::Vn, b: &rsleigh::Vn) -> Result<()> {
     Ok(())
 }
 
-/// Unary counterpart of [`require_equal_input_widths`], same rationale.
+/// Unary counterpart of [`require_equal_input_widths`].
 pub(super) fn require_equal_input_output_width(
     input: &rsleigh::Vn,
     output: &rsleigh::Vn,
