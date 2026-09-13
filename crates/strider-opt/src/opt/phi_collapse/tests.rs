@@ -374,3 +374,161 @@ fn a_cascading_sweep_converges_in_one_iteration() -> crate::Result<()> {
     assert_eq!(phis(&fg), 0);
     Ok(())
 }
+
+/// One block of [`build_blocks`]: an optional constant written to `var`, then
+/// no successor (return `var`), one (branch) or two (`If` on `var == 0`).
+type Block = (Option<u64>, &'static [usize]);
+
+/// A function over one tracked `var` whose regions are `blocks`, block 0 the
+/// entry.
+fn build_blocks(blocks: &[Block]) -> crate::Result<strider_ir::Function> {
+    let var = reg_vn(0x1000, 8);
+    let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
+    let regions = blocks
+        .iter()
+        .map(|_| b.create_region_all())
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    b.set_entry_region_all(regions[0])?;
+    for (&(write, succs), &region) in blocks.iter().zip(&regions) {
+        b.set_region(region);
+        if let Some(k) = write {
+            let value = b.build_int_const(k, ValueType::I64)?;
+            b.write_variable(&var, value)?;
+        }
+        let current = b.read_variable(&var)?;
+        match *succs {
+            [] => b.build_return(Some(current), &[])?,
+            [next] => b.build_branch(regions[next])?,
+            [taken, not_taken] => {
+                let zero = b.build_int_const(0u64, ValueType::I64)?;
+                let cond = b.build_int_cmp_operation(
+                    current,
+                    zero,
+                    strider_ir::IntCmpOp::Equal,
+                    ValueType::I64,
+                )?;
+                b.build_if(cond, regions[taken], regions[not_taken])?;
+            }
+            _ => unreachable!("a block has at most two successors"),
+        }
+    }
+    b.set_lift_addr(None);
+    b.build()
+}
+
+fn count_live(fg: &strider_ir::Function, pred: impl Fn(&NodeKind) -> bool) -> usize {
+    use strider_ir_test_utils::IrWalkerEx;
+    fg.count_kind(pred)
+}
+
+fn run(fg: &mut strider_ir::Function) -> crate::Result<bool> {
+    Ok(crate::pipeline::run_one(&PhiCollapse, fg, &mut crate::OptCtx::new(None))?.changed())
+}
+
+fn return_value_kind(fg: &strider_ir::Function) -> NodeKind {
+    *fg.node_kind(fg.producer(fg.node_inputs(find_return(fg))[2]))
+}
+
+/// A loop nest resetting `var` to 0 in the inner body:
+/// `h1 = phi(0, h2)`, `h2 = phi(h1, 0)`.
+#[test]
+fn two_phi_cycle_with_one_outside_value_collapses() -> crate::Result<()> {
+    let mut fg = build_blocks(&[
+        (Some(0), &[1]),
+        (None, &[2]),
+        (None, &[3, 4]),
+        (Some(0), &[2]),
+        (None, &[1, 5]),
+        (None, &[]),
+    ])?;
+    assert!(run(&mut fg)?);
+    assert_eq!(count_live(&fg, |k| matches!(k, NodeKind::Phi)), 0);
+    assert!(matches!(return_value_kind(&fg), NodeKind::IntConst(_)));
+    Ok(())
+}
+
+/// The inner body joins a reset and a pass-through arm:
+/// `h1 = phi(0, h2)`, `h2 = phi(h1, j)`, `j = phi(0, h2)`.
+#[test]
+fn three_phi_cycle_over_two_loop_headers_collapses() -> crate::Result<()> {
+    let mut fg = build_blocks(&[
+        (Some(0), &[1]),
+        (None, &[2]),
+        (None, &[3, 6]),
+        (None, &[4, 5]),
+        (Some(0), &[5]),
+        (None, &[2]),
+        (None, &[1, 7]),
+        (None, &[]),
+    ])?;
+    assert!(run(&mut fg)?);
+    assert_eq!(count_live(&fg, |k| matches!(k, NodeKind::Phi)), 0);
+    assert!(matches!(return_value_kind(&fg), NodeKind::IntConst(_)));
+    Ok(())
+}
+
+/// `h1 = phi(0, h2)`, `h2 = phi(h1, 1)` is a genuine merge.
+#[test]
+fn cycle_with_two_outside_values_stays() -> crate::Result<()> {
+    let mut fg = build_blocks(&[
+        (Some(0), &[1]),
+        (None, &[2]),
+        (None, &[3, 4]),
+        (Some(1), &[2]),
+        (None, &[1, 5]),
+        (None, &[]),
+    ])?;
+    run(&mut fg)?;
+    assert_eq!(count_live(&fg, |k| matches!(k, NodeKind::Phi)), 2);
+    assert!(matches!(return_value_kind(&fg), NodeKind::Phi));
+    assert!(!run(&mut fg)?, "a second run finds nothing to collapse");
+    Ok(())
+}
+
+/// The outer cycle `h1 = phi(0, o)`, `o = phi(h2, 1)` merges two values, but
+/// the inner loop never writes `var`: `h2 = phi(h1, p)`, `p = phi(h2, q)`,
+/// `q = phi(h2, p)` take only `h1` from outside themselves.
+#[test]
+fn inner_scc_of_a_genuine_merge_collapses() -> crate::Result<()> {
+    let mut fg = build_blocks(&[
+        (Some(0), &[1]),
+        (None, &[2]),
+        (None, &[3, 7]),
+        (None, &[4, 5]),
+        (None, &[5, 6]),
+        (None, &[4]),
+        (None, &[2]),
+        (None, &[8, 9]),
+        (Some(1), &[9]),
+        (None, &[1, 10]),
+        (None, &[]),
+    ])?;
+    assert!(run(&mut fg)?);
+    assert_eq!(count_live(&fg, |k| matches!(k, NodeKind::Phi)), 2);
+    let o = fg.producer(fg.node_inputs(find_return(&fg))[2]);
+    let h1 = fg.producer(fg.node_inputs(o)[1]);
+    assert!(matches!(fg.node_kind(h1), NodeKind::Phi));
+    assert_eq!(fg.node_inputs(h1)[2], fg.node_outputs(o)[0]);
+    Ok(())
+}
+
+/// Two joins entered from one block and from each other, with no store:
+/// `p = memphi(m, q)`, `q = memphi(m, p)`.
+#[test]
+fn mem_phi_cycle_with_one_outside_token_collapses() -> crate::Result<()> {
+    let mut fg = build_blocks(&[
+        (None, &[1]),
+        (None, &[2, 3]),
+        (None, &[3, 4]),
+        (None, &[2]),
+        (None, &[]),
+    ])?;
+    assert!(run(&mut fg)?);
+    assert_eq!(count_live(&fg, |k| matches!(k, NodeKind::MemPhi)), 0);
+    let memory = fg.node_inputs(find_return(&fg))[1];
+    assert!(matches!(
+        fg.node_kind(fg.producer(memory)),
+        NodeKind::InitialMemory
+    ));
+    Ok(())
+}
