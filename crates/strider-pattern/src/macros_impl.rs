@@ -8,11 +8,9 @@
 //! Bracket-list grammar. Each entry is `name: kind`, where `kind` picks the
 //! extractor:
 //!
-//!   * `uint`, `int`, `bool`: `Bindings::get_uint` / `get_int` / `get_bool`,
-//!     yielding `u128` / `i128` / `bool`.
+//!   * `uint`: `Bindings::get_uint`, yielding `u128`.
 //!   * `float_bits`: `Bindings::get_float_bits`, yielding `u64`.
-//!   * `int_binary_op` / `int_unary_op` / `int_cmp_op`
-//!   * `bool_binary_op`
+//!   * `int_unary_op`
 //!   * `float_binary_op` / `float_unary_op` / `float_cmp_op`
 //!
 //! Two reserved bare identifiers bind graph-derived values instead of capture
@@ -132,40 +130,15 @@ macro_rules! __const_with_extract {
             .get_uint($cap, $ctx.function)
             .ok_or_else(|| $crate::missing_binding("uint"))
     };
-    ($ctx:ident, $cap:ident, int) => {
-        $ctx.bindings
-            .get_int($cap, $ctx.function)
-            .ok_or_else(|| $crate::missing_binding("int"))
-    };
-    ($ctx:ident, $cap:ident, bool) => {
-        $ctx.bindings
-            .get_bool($cap, $ctx.function)
-            .ok_or_else(|| $crate::missing_binding("bool"))
-    };
     ($ctx:ident, $cap:ident, float_bits) => {
         $ctx.bindings
             .get_float_bits($cap, $ctx.function.graph())
             .ok_or_else(|| $crate::missing_binding("float_bits"))
     };
-    ($ctx:ident, $cap:ident, int_binary_op) => {
-        $ctx.bindings
-            .get_int_binary_op($cap, $ctx.function.graph())
-            .ok_or_else(|| $crate::missing_binding("int_binary_op"))
-    };
     ($ctx:ident, $cap:ident, int_unary_op) => {
         $ctx.bindings
             .get_int_unary_op($cap, $ctx.function.graph())
             .ok_or_else(|| $crate::missing_binding("int_unary_op"))
-    };
-    ($ctx:ident, $cap:ident, int_cmp_op) => {
-        $ctx.bindings
-            .get_int_cmp_op($cap, $ctx.function.graph())
-            .ok_or_else(|| $crate::missing_binding("int_cmp_op"))
-    };
-    ($ctx:ident, $cap:ident, bool_binary_op) => {
-        $ctx.bindings
-            .get_bool_binary_op($cap, $ctx.function.graph())
-            .ok_or_else(|| $crate::missing_binding("bool_binary_op"))
     };
     ($ctx:ident, $cap:ident, float_binary_op) => {
         $ctx.bindings
