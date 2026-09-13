@@ -21,6 +21,41 @@ pub struct CfgOptions {
     /// tables.  One override governs both the region terminator and the
     /// emitted node.
     pub call_other_overrides: strider_target::call_other_abi::CallOtherOverrides,
+    /// Bytes the image marks as data (ELF `$d` mapping symbols), which the
+    /// builder never decodes; see [`crate::Cfg::undecodable_branch_targets`].
+    pub data_ranges: DataRanges,
+}
+
+/// Sorted, merged, half-open address ranges. Cloning shares one table.
+#[derive(Clone, Default, Debug)]
+pub struct DataRanges(std::sync::Arc<[std::ops::Range<u64>]>);
+
+impl DataRanges {
+    /// Any order, overlapping or adjacent; empty ranges are dropped.
+    pub fn new(ranges: impl IntoIterator<Item = std::ops::Range<u64>>) -> Self {
+        let mut sorted: Vec<std::ops::Range<u64>> =
+            ranges.into_iter().filter(|r| r.start < r.end).collect();
+        sorted.sort_unstable_by_key(|r| r.start);
+        let mut merged: Vec<std::ops::Range<u64>> = Vec::with_capacity(sorted.len());
+        for r in sorted {
+            match merged.last_mut() {
+                Some(last) if r.start <= last.end => last.end = last.end.max(r.end),
+                _ => merged.push(r),
+            }
+        }
+        Self(merged.into())
+    }
+
+    pub fn ranges(&self) -> &[std::ops::Range<u64>] {
+        &self.0
+    }
+
+    /// Whether any byte of `[start, end)` is data.
+    pub fn overlaps(&self, start: u64, end: u64) -> bool {
+        // The first range ending past `start` is the only candidate.
+        let i = self.0.partition_point(|r| r.end <= start);
+        self.0.get(i).is_some_and(|r| r.start < end)
+    }
 }
 
 impl CfgOptions {

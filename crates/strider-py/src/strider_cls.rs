@@ -278,6 +278,7 @@ pub(crate) fn cfg_options_from(
         allow_code_before_start_addr: opts.allow_code_before_start_addr,
         known_targets: seat_known_targets(&opts.known_targets),
         call_other_overrides: overrides_from(&opts.call_other_abis, target_arch)?,
+        data_ranges: opts.data_ranges.clone(),
     })
 }
 
@@ -345,11 +346,12 @@ fn analyze_result_type(py: Python<'_>) -> PyResult<PyObject> {
                  `unresolved` holds the machine addresses of indirect branches \
                  that could not be resolved, and a non-empty list is not an \
                  error. Empty means fully resolved, NOT that the answer is \
-                 complete: it is one of five incompleteness channels, the \
+                 complete: it is one of six incompleteness channels, the \
                  others being cfg.unverified_seeded_sites(), \
-                 cfg.isa_mode_conflicts(), cfg.interior_branch_targets() and \
-                 cfg.unmapped_branch_targets(). cfg.is_complete() tests all \
-                 five.",
+                 cfg.isa_mode_conflicts(), cfg.interior_branch_targets(), \
+                 cfg.unmapped_branch_targets() and \
+                 cfg.undecodable_branch_targets(). cfg.is_complete() tests all \
+                 six.",
             )?;
             PyResult::Ok(nt.unbind())
         })
@@ -824,7 +826,7 @@ impl PyLifter {
         // released.
         check_pending_control_flow()?;
 
-        // From the result, not from `cfg`: four of the five accumulate over
+        // From the result, not from `cfg`: five of the six accumulate over
         // the resolver's rounds and `cfg` is only the final one, and
         // `unverified_seeded` is read against the settled seed set, which
         // `cfg` does not carry.
@@ -834,6 +836,7 @@ impl PyLifter {
             isa_mode_conflicts: machine_addrs(&result.isa_mode_conflicts),
             interior_branch_targets: machine_addrs(&result.interior_branch_targets),
             unmapped_branch_targets: machine_addrs(&result.unmapped_branch_targets),
+            undecodable_branch_targets: machine_addrs(&result.undecodable_branch_targets),
         };
         let cfg_obj = Py::new(py, PyCfg::with_reports(py, cfg, slf.clone_ref(py), reports))?;
 
