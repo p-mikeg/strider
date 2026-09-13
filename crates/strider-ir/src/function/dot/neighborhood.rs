@@ -104,7 +104,6 @@ impl<R: MemReader> FunctionDotDumper<'_, R> {
             node_to_arg_indices: self.node_to_arg_indices.clone(),
             nodes: Some(set),
             center: Some(center),
-            errors: self.errors.clone(),
         };
         ::dot::GraphDot::new(restricted, ::dot::DotStyle::dark())
             .as_dot()

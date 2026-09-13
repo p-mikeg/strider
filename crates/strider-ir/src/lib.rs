@@ -11,8 +11,7 @@
 mod builder;
 mod control_flow_view;
 pub use control_flow_view::{
-    CtrlKey, DominatorTree, control_dominator_tree, control_dominators,
-    control_edge_dominator_tree, control_edge_dominators, dominance_verdict, dominates,
+    CtrlKey, DominatorTree, control_dominator_tree, control_dominators, control_edge_dominator_tree,
 };
 pub mod error;
 mod function;
