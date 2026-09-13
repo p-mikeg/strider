@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use pyo3::prelude::*;
 
 use crate::arch::PySleighArch;
@@ -468,45 +466,22 @@ impl PyLifter {
 
     /// Pretty-render `function`, resolving register names against this
     /// handle's Sleigh.
-    pub(crate) fn dispatch_dot(
+    pub(crate) fn render_dot(
         &self,
         function: &PyFunction,
         style: Option<&str>,
-        op: DotOp<'_>,
-    ) -> PyResult<DotResult> {
+        html: bool,
+        path: Option<&str>,
+    ) -> PyResult<Option<String>> {
         let sleigh = self.sleigh()?;
         let guard = function.read_inner().map_err(into_strider_err)?;
         let dumper = guard.dot_dumper(sleigh).map_err(into_strider_err)?;
-        let d = dot::GraphDot::new(dumper, dot_style_for(style)?);
-        match op {
-            DotOp::DumpHtml(p) => d
-                .dump_as_html(Path::new(p))
-                .map(|()| DotResult::Unit)
-                .map_err(into_strider_err),
-            DotOp::DumpDot(p) => d
-                .dump_as_dot(Path::new(p))
-                .map(|()| DotResult::Unit)
-                .map_err(into_strider_err),
-            DotOp::HtmlStr => d
-                .as_html_from_dot()
-                .map(DotResult::Html)
-                .map_err(into_strider_err),
-            DotOp::DotStr => d.as_dot().map(DotResult::Dot).map_err(into_strider_err),
-        }
+        crate::dot::render(
+            &dot::GraphDot::new(dumper, dot_style_for(style)?),
+            html,
+            path,
+        )
     }
-}
-
-pub(crate) enum DotOp<'a> {
-    DumpHtml(&'a str),
-    DumpDot(&'a str),
-    HtmlStr,
-    DotStr,
-}
-
-pub(crate) enum DotResult {
-    Unit,
-    Html(String),
-    Dot(String),
 }
 
 fn build_lifter(
