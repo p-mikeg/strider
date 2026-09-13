@@ -44,9 +44,9 @@ two different instruction streams. The stepped-over start is reported on
 `interior_branch_targets`.
 
 Within a region decoding is strictly sequential. `Sleigh::lift_one` takes
-`&mut self` and carries context-register state (ARM/Thumb mode, x86 operand and
-address size, MIPS16) that a decoded instruction can itself set, so lifting out
-of order returns the wrong instructions.
+`&mut self` and carries context-register state (ARM/Thumb mode, x86
+operand/address size and segment override, MIPS16) that a decoded instruction
+can itself set, so lifting out of order returns the wrong instructions.
 
 That state is *flowing* context: as in GHIDRA's `ContextDatabase` a flowing var
 is a value committed per address, holding forward until the next change point.
