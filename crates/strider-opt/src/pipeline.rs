@@ -112,7 +112,11 @@ pub fn run_one(
 ) -> crate::Result<OptimizationResult> {
     let result = run_one_unvalidated(pass, function, octx)?;
     if let Err(errors) = strider_ir::validate::validate(function) {
-        panic!("{} left invalid IR: {errors}", pass.name());
+        panic!(
+            "{} left invalid IR: {}",
+            pass.name(),
+            errors.report(function)
+        );
     }
     Ok(result)
 }
@@ -234,7 +238,9 @@ clone_box_shim! {
 
 /// An ordered pass list run in a shared fixed-point loop: every pass is
 /// called once per iteration in registration order, repeating until no pass
-/// reports a change.
+/// reports a change.  A pass whose last run changed nothing is skipped until
+/// some edit changes the live graph, so a pass must be a function of the graph,
+/// its options and the ROM.
 pub struct OptimizerPipeline {
     passes: Vec<Box<dyn Optimizer + Send>>,
     post_passes: Vec<Box<dyn PostOptimizer + Send>>,
@@ -306,10 +312,18 @@ impl OptimizerPipeline {
             let mut edit = crate::EditFunction::new(function);
             edit.cull_dead();
             let mut iters: u32 = 0;
+            // Per pass, `edits()` after its last run when that run changed
+            // nothing.
+            let mut settled: Vec<Option<u64>> = vec![None; self.passes.len()];
             let converged = loop {
                 let mut changed = false;
-                for opt in &self.passes {
-                    if apply_checked(opt.as_ref(), &mut edit, ctx)?.changed() {
+                for (opt, settled) in self.passes.iter().zip(&mut settled) {
+                    if *settled == Some(edit.edits()) {
+                        continue;
+                    }
+                    let result = apply_checked(opt.as_ref(), &mut edit, ctx)?;
+                    *settled = (!result.changed()).then(|| edit.edits());
+                    if result.changed() {
                         changed = true;
                         // Drain after every changing pass so the next pass in
                         // this iteration sees a culled graph, and invalidate the
@@ -507,6 +521,72 @@ mod tests {
             function.side_tables().memory_decomp(returned).1.is_none(),
             "run_one must clear a memo derived under another configuration"
         );
+        Ok(())
+    }
+
+    /// Rewrites the returned value to a fresh constant on its first `edits`
+    /// runs.
+    #[derive(Clone)]
+    struct RewritesReturn {
+        edits: usize,
+        runs: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl super::Optimizer for RewritesReturn {
+        fn apply(
+            &self,
+            edit: &mut crate::EditFunction<'_>,
+            _ctx: &mut OptCtx<'_>,
+        ) -> crate::Result<super::OptimizationResult> {
+            let run = self.runs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if run >= self.edits {
+                return Ok(super::OptimizationResult::NoChange);
+            }
+            let ret = edit
+                .live_of_kind(|k| matches!(k, strider_ir::node::NodeKind::Return))
+                .next()
+                .expect("the fixture returns");
+            let value = edit.build_int_const(100 + run as u64, ValueType::I64)?;
+            let old = edit.node_inputs(ret)[2];
+            edit.absorb_fingerprint(value, old);
+            edit.replace_value(old, value)?;
+            Ok(super::OptimizationResult::Changed)
+        }
+    }
+
+    /// Counts its runs and changes nothing.
+    #[derive(Clone)]
+    struct CountsRuns(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    impl super::Optimizer for CountsRuns {
+        fn apply(
+            &self,
+            _edit: &mut crate::EditFunction<'_>,
+            _ctx: &mut OptCtx<'_>,
+        ) -> crate::Result<super::OptimizationResult> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(super::OptimizationResult::NoChange)
+        }
+    }
+
+    /// Three rewrites take four iterations; the pass after the rewriter reruns
+    /// after each rewrite, but not in the last iteration, where nothing changed
+    /// since its previous run.
+    #[test]
+    fn a_pass_that_changed_nothing_is_skipped_until_the_graph_changes() -> crate::Result<()> {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let rewrites = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::new(AtomicUsize::new(0));
+        let mut pipeline = super::OptimizerPipeline::new();
+        pipeline.add(RewritesReturn {
+            edits: 3,
+            runs: Arc::clone(&rewrites),
+        });
+        pipeline.add(CountsRuns(Arc::clone(&counted)));
+        pipeline.run(&mut one_const_fn(1), &mut OptCtx::new(None))?;
+        assert_eq!(rewrites.load(Ordering::Relaxed), 4);
+        assert_eq!(counted.load(Ordering::Relaxed), 3);
         Ok(())
     }
 

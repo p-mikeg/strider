@@ -58,6 +58,8 @@ pub struct EditFunction<'g> {
     pub(crate) function: &'g mut Function,
     state: FunctionState,
     generation: u64,
+    /// Nodes created, resurrected or re-walked into the live set.
+    live_entries: u64,
 }
 
 impl<'g> EditFunction<'g> {
@@ -68,6 +70,7 @@ impl<'g> EditFunction<'g> {
             function,
             state,
             generation: 0,
+            live_entries: 0,
         }
     }
 
@@ -76,6 +79,12 @@ impl<'g> EditFunction<'g> {
     /// write through [`Self::function_mut`] such as an asm-fingerprint union.
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// [`Self::generation`] plus every node entering the live set, so two equal
+    /// readings bracket no change to the live graph.
+    pub fn edits(&self) -> u64 {
+        self.generation + self.live_entries
     }
 
     /// Kills everything outside `state.live_nodes`, walking the **raw** forward
@@ -101,6 +110,7 @@ impl<'g> EditFunction<'g> {
     /// O(graph).  The incremental bookkeeping tracks **data** orphaning only,
     /// so call this after a control edit that detached a subgraph.
     pub fn resync_live_set(&mut self) {
+        self.live_entries += 1;
         self.state = FunctionState::populate(self.function);
         self.cull_dead();
     }
@@ -231,6 +241,7 @@ impl<'g> EditFunction<'g> {
             if !self.state.live_nodes.insert(node) {
                 continue;
             }
+            self.live_entries += 1;
             // A structural twin may have been minted while this node was dead,
             // so flag it for re-canon rather than leaking a duplicate.
             if self.function.node_kind(node).is_cacheable() {
@@ -399,7 +410,8 @@ impl<'g> EditFunction<'g> {
 
     /// Register a fresh node into the cached live/roots state.  Idempotent.
     fn track_created(&mut self, node: NodeId) {
-        self.state.live_nodes.insert(node);
+        // A dedup onto a live node changes nothing.
+        self.live_entries += u64::from(self.state.live_nodes.insert(node));
         if self.node_inputs(node).is_empty() {
             self.state.roots.insert(node);
         }
