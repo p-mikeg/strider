@@ -6,12 +6,8 @@
 use strider_target::{ArchPreset, Endianness, SleighArch};
 
 fn assert_preset_resolves(preset: ArchPreset, arch: SleighArch) {
-    let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
-        .unwrap_or_else(|e| panic!("{preset:?}: Sleigh::new failed: {e:?}"));
-    sleigh
-        .regs()
-        .unwrap_or_else(|e| panic!("{preset:?}: Sleigh::regs failed: {e:?}"));
+    arch.probe_regs()
+        .unwrap_or_else(|e| panic!("{preset:?}: probe_regs failed: {e:?}"));
 }
 
 #[test]
