@@ -10,14 +10,11 @@ use strider_orchestrator::opt::OptOptions;
 
 mod common;
 
+use common::put_le32;
+
 const BASE: u64 = 0x1000;
 /// Reached as ARM by one seeded arm and as Thumb by the other.
 const CLASH: u64 = 0x1020;
-
-fn put(bytes: &mut [u8], at: u64, word: u32) {
-    let off = (at - BASE) as usize;
-    bytes[off..off + 4].copy_from_slice(&word.to_le_bytes());
-}
 
 /// ARM at 0x1000:
 ///
@@ -34,15 +31,15 @@ fn put(bytes: &mut [u8], at: u64, word: u32) {
 fn bytes() -> Vec<u8> {
     let mut bytes = vec![0u8; 0x60];
     for i in 0..0x18 {
-        put(&mut bytes, BASE + i * 4, 0xe12f_ff1e); // bx lr
+        put_le32(&mut bytes, BASE, BASE + i * 4, 0xe12f_ff1e); // bx lr
     }
-    put(&mut bytes, 0x1000, 0xe350_0000); // cmp r0, #0
-    put(&mut bytes, 0x1004, 0x0a00_0002); // beq 0x1014
-    put(&mut bytes, 0x1008, 0xe12f_ff10); // bx r0
-    put(&mut bytes, 0x1014, 0xe28f_f000); // add pc, pc, #0
+    put_le32(&mut bytes, BASE, 0x1000, 0xe350_0000); // cmp r0, #0
+    put_le32(&mut bytes, BASE, 0x1004, 0x0a00_0002); // beq 0x1014
+    put_le32(&mut bytes, BASE, 0x1008, 0xe12f_ff10); // bx r0
+    put_le32(&mut bytes, BASE, 0x1014, 0xe28f_f000); // add pc, pc, #0
     // ARM `mov r4, r0, ror #14`; its low halfword is Thumb `bx lr`, so the
     // clash target terminates cleanly whichever mode decodes it.
-    put(&mut bytes, CLASH, 0xe1a0_4770);
+    put_le32(&mut bytes, BASE, CLASH, 0xe1a0_4770);
     bytes
 }
 

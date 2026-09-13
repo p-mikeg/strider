@@ -9,7 +9,6 @@
 
 mod common;
 
-use object::{Object, ObjectSymbol};
 use strider_cfg::PcodeInsnAddr;
 
 struct Report {
@@ -20,17 +19,7 @@ struct Report {
 }
 
 fn analyze(arch: common::Arch, case: &str, fn_name: &str) -> Report {
-    let path = common::binary_path(arch, case);
-    let owned = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = owned.checked_file().expect("the mapped file is unchanged");
-    let sa = arch.sleigh();
-    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem");
-    let sleigh = rsleigh::Sleigh::new(sa.sla_spec(), sa.pspec(), mem).expect("sleigh");
-    let addr = obj.symbol_by_name(fn_name).expect("symbol").address();
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
-        Box::new(strider_reader::ElfFileMemReader::from_object(&obj).expect("rom"));
-    let cc = arch.cc().build(&sleigh.regs().expect("regs")).expect("cc");
-    let mut strider = strider_orchestrator::Strider::new(sa, sleigh, Some(rom)).expect("new");
+    let (mut strider, cc, addr) = common::fixture_strider(arch, case, fn_name);
     let r = strider
         .analyze(
             addr,

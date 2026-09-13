@@ -10,7 +10,6 @@
 
 mod common;
 
-use object::{Object, ObjectSymbol};
 use rustc_hash::FxHashMap;
 use strider_cfg::{PcodeInsnAddr, ResolvedTarget, ResolvedTargets};
 
@@ -19,20 +18,8 @@ use strider_cfg::{PcodeInsnAddr, ResolvedTarget, ResolvedTargets};
 fn arms_with(
     seed: Option<Vec<u64>>,
 ) -> (Vec<u64>, Vec<PcodeInsnAddr>, Vec<u64>, Vec<PcodeInsnAddr>) {
-    let path = common::binary_path(common::Arch::X86, "switch");
-    let owned = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = owned.checked_file().expect("the mapped file is unchanged");
-    let sa = common::Arch::X86.sleigh();
-    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem");
-    let sleigh = rsleigh::Sleigh::new(sa.sla_spec(), sa.pspec(), mem).expect("sleigh");
-    let addr = obj
-        .symbol_by_name("dispatch_value")
-        .expect("symbol")
-        .address();
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
-        Box::new(strider_reader::ElfFileMemReader::from_object(&obj).expect("rom"));
-    let regs = sleigh.regs().expect("regs");
-    let cc = common::Arch::X86.cc().build(&regs).expect("cc");
+    let (mut strider, cc, addr) =
+        common::fixture_strider(common::Arch::X86, "switch", "dispatch_value");
 
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     if let Some(targets) = seed {
@@ -55,7 +42,6 @@ fn arms_with(
         },
         ..Default::default()
     };
-    let mut strider = strider_orchestrator::Strider::new(sa, sleigh, Some(rom)).expect("new");
     let r = strider
         .analyze(
             addr,
@@ -163,17 +149,7 @@ fn a_site_seated_only_from_a_seed_is_named_as_unverified() {
 /// `analyze` of x64 `main` with `known_targets` seeded at `seed[0]`'s site,
 /// returning its switch arms, the unresolved set and the unverified-seed set.
 fn x64_main_with_seed(seed: Vec<u64>) -> (Vec<u64>, Vec<PcodeInsnAddr>, Vec<PcodeInsnAddr>) {
-    let path = common::binary_path(common::Arch::X64, "switch");
-    let owned = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = owned.checked_file().expect("the mapped file is unchanged");
-    let sa = common::Arch::X64.sleigh();
-    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem");
-    let sleigh = rsleigh::Sleigh::new(sa.sla_spec(), sa.pspec(), mem).expect("sleigh");
-    let addr = obj.symbol_by_name("main").expect("symbol").address();
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
-        Box::new(strider_reader::ElfFileMemReader::from_object(&obj).expect("rom"));
-    let regs = sleigh.regs().expect("regs");
-    let cc = common::Arch::X64.cc().build(&regs).expect("cc");
+    let (mut strider, cc, addr) = common::fixture_strider(common::Arch::X64, "switch", "main");
 
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
@@ -187,7 +163,6 @@ fn x64_main_with_seed(seed: Vec<u64>) -> (Vec<u64>, Vec<PcodeInsnAddr>, Vec<Pcod
         },
         ..Default::default()
     };
-    let mut strider = strider_orchestrator::Strider::new(sa, sleigh, Some(rom)).expect("new");
     let r = strider
         .analyze(
             addr,
@@ -219,20 +194,8 @@ fn x64_main_with_seed(seed: Vec<u64>) -> (Vec<u64>, Vec<PcodeInsnAddr>, Vec<Pcod
 /// silence it: the CFG then presents a fabricated successor set as complete.
 #[test]
 fn a_seeded_site_is_still_reported_unverified_with_resolution_off() {
-    let path = common::binary_path(common::Arch::X86, "switch");
-    let owned = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = owned.checked_file().expect("the mapped file is unchanged");
-    let sa = common::Arch::X86.sleigh();
-    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem");
-    let sleigh = rsleigh::Sleigh::new(sa.sla_spec(), sa.pspec(), mem).expect("sleigh");
-    let addr = obj
-        .symbol_by_name("dispatch_value")
-        .expect("symbol")
-        .address();
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
-        Box::new(strider_reader::ElfFileMemReader::from_object(&obj).expect("rom"));
-    let regs = sleigh.regs().expect("regs");
-    let cc = common::Arch::X86.cc().build(&regs).expect("cc");
+    let (mut strider, cc, addr) =
+        common::fixture_strider(common::Arch::X86, "switch", "dispatch_value");
 
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
@@ -250,7 +213,6 @@ fn a_seeded_site_is_still_reported_unverified_with_resolution_off() {
         resolve_indirect_branches: false,
         ..Default::default()
     };
-    let mut strider = strider_orchestrator::Strider::new(sa, sleigh, Some(rom)).expect("new");
     let r = strider
         .analyze(addr, &cc, &opts, &opt_opts, None)
         .expect("analyze");
