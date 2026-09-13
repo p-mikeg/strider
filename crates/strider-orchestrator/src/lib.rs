@@ -702,9 +702,10 @@ pub struct AnalyzeResult {
     /// `unresolved_indirect_branches`.
     pub function: strider_ir::Function,
     /// Sorted and deduplicated: live placeholders, seated `Switch`es whose
-    /// selector stopped deriving, sites still growing when the cap ran out, and
+    /// selector stopped deriving, sites still growing when the cap ran out,
     /// sites whose answer lost a proved successor, narrowed in any round, or
-    /// was abandoned.
+    /// was abandoned, and returns whose target is not provably the caller's
+    /// return address.
     ///
     /// Empty means fully resolved, but not that the answer is complete: a site
     /// the CFG consumed as a `Return` or `TailCall` leaves no placeholder and is
