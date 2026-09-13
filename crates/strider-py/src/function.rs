@@ -219,6 +219,12 @@ impl PyFunction {
         }
     }
 
+    /// The canonical text form: one line per node reachable from entry, values
+    /// named in print order, so equal graphs print equal text.
+    fn to_text(&self) -> PyResult<String> {
+        self.with_read_value(strider_ir::Function::to_text)
+    }
+
     /// Total number of node ids in the graph, whether or not they are
     /// reachable from entry.
     fn node_count(&self) -> PyResult<usize> {
