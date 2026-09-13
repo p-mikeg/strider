@@ -16,6 +16,12 @@ use strider_ir::{IRBuilder, IRBuilderExt, IRViewer};
 
 use super::FunctionLifter;
 
+#[cfg(test)]
+thread_local! {
+    /// Node visits exit-free-sink seating performed since a test last cleared it.
+    pub(crate) static SINK_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The cycle-closing control edge a sink is seated on.
 struct BackEdge {
     /// The consumer's use of `control`, repointed at the sink branch's live arm.
@@ -29,38 +35,29 @@ struct BackEdge {
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// Seats `If(true) { back edge } { Unreachable(mem) }` on one edge of every
-    /// exit-free control cycle, and returns the node visits that took.
+    /// exit-free control cycle.
     ///
     /// The `If` is what supplies the extra control output: every control output
     /// inside the cycle already has its one permitted consumer, and `Region`'s
     /// signature has no spare.
-    pub(crate) fn seat_exit_free_sinks(&mut self) -> Result<usize> {
+    pub(crate) fn seat_exit_free_sinks(&mut self) -> Result<()> {
         let function = self.builder.function();
         let mut stranded = stranded_nodes(function.graph(), function.entry());
         // The one whole-function scan. Seating a sink makes exactly the nodes
         // reaching that cycle escape, and they leave the set incrementally.
-        let mut visits = function.graph().all_node_ids().count();
+        #[cfg(test)]
+        SINK_VISITS.with(|v| v.set(v.get() + function.graph().all_node_ids().count()));
         let seeds: Vec<NodeId> = stranded.iter().collect();
         for seed in seeds {
             if !stranded.contains(seed) {
                 continue;
             }
-            let cycle = walk_to_cycle(
-                self.builder.function().graph(),
-                &stranded,
-                seed,
-                &mut visits,
-            );
+            let cycle = walk_to_cycle(self.builder.function().graph(), &stranded, seed);
             let edge = self.exit_free_back_edge(&cycle)?;
             self.with_lift_addr(edge.addr, |s| s.seat_sink(&edge))?;
-            drop_escaped(
-                self.builder.function().graph(),
-                &mut stranded,
-                &cycle,
-                &mut visits,
-            );
+            drop_escaped(self.builder.function().graph(), &mut stranded, &cycle);
         }
-        Ok(visits)
+        Ok(())
     }
 
     fn seat_sink(&mut self, edge: &BackEdge) -> Result<()> {
@@ -148,18 +145,14 @@ fn region_memory_input(graph: &Graph, region: NodeId, index: usize) -> Result<Va
 /// cycle. Every successor of a stranded node is stranded (a successor that
 /// reached a terminator would carry its predecessor with it), so the walk
 /// stays inside the set and, being finite, must close.
-fn walk_to_cycle(
-    graph: &Graph,
-    stranded: &NodeIdSet,
-    start: NodeId,
-    visits: &mut usize,
-) -> NodeIdSet {
+fn walk_to_cycle(graph: &Graph, stranded: &NodeIdSet, start: NodeId) -> NodeIdSet {
     let mut path: Vec<NodeId> = Vec::new();
     let mut on_path = NodeIdSet::new();
     let mut node = start;
     while on_path.insert(node) {
         path.push(node);
-        *visits += 1;
+        #[cfg(test)]
+        SINK_VISITS.with(|v| v.set(v.get() + 1));
         let next = cfg_outputs(graph, node)
             .flat_map(|v| graph.value_uses(v))
             .map(|(succ, _)| succ)
@@ -183,13 +176,14 @@ fn walk_to_cycle(
 /// Drops every stranded node reaching `cycle`: the sink seated there is now
 /// their terminator. Each node leaves the set once, so the whole seating
 /// loop stays linear in the function.
-fn drop_escaped(graph: &Graph, stranded: &mut NodeIdSet, cycle: &NodeIdSet, visits: &mut usize) {
+fn drop_escaped(graph: &Graph, stranded: &mut NodeIdSet, cycle: &NodeIdSet) {
     let mut work: Vec<NodeId> = cycle.iter().collect();
     for &node in &work {
         stranded.remove(node);
     }
     while let Some(node) = work.pop() {
-        *visits += 1;
+        #[cfg(test)]
+        SINK_VISITS.with(|v| v.set(v.get() + 1));
         for value in graph.node_inputs(node) {
             if !graph.value_kind(value).is_control() {
                 continue;
