@@ -131,7 +131,9 @@ impl FunctionBuilder {
 
     /// Test-only: the CC-aware `Call` construction the lifter performs in
     /// prod.
-    #[allow(clippy::missing_errors_doc)]
+    ///
+    /// # Errors
+    /// Propagates the variable reads and [`Self::build_call`] unchanged.
     #[cfg(any(test, feature = "test-util"))]
     pub fn build_call_cc(
         &mut self,

@@ -5,6 +5,10 @@ pub struct NodeId(u32);
 entity_impl!(NodeId, "node");
 
 /// One output slot of a node.
+///
+/// `Default` is `ValueId(0)`, a real id rather than a sentinel, so a
+/// `SecondaryMap<_, ValueId>` cannot report an absent key. Where absence
+/// matters, hold `PackedOption<ValueId>`.
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ValueId(u32);
 entity_impl!(ValueId, "%");

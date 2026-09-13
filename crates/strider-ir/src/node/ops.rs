@@ -75,10 +75,12 @@ pub enum FloatUnaryOp {
     Round,
 }
 
-/// Every variant outputs `I1`. The other two comparisons arrive lowered:
+/// Every variant outputs `I1`. The remaining float predicates arrive lowered:
 ///
 /// - `FloatNotEqual(a, b)` -> `Xor(FloatEqual(a, b), IntConst(1)):I1`.
 /// - `FloatLessEqual(a, b)` -> `Or(FloatLess(a, b), FloatEqual(a, b))`.
+/// - `FLOAT_NAN(x)` -> `Xor(FloatEqual(x, x), IntConst(1)):I1`, so a
+///   `FloatEqual(x, x)` in the IR is a NaN test, not a tautology.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FloatCmpOp {
     /// False if either operand is NaN.
