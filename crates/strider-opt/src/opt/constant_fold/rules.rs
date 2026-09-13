@@ -319,8 +319,8 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
     );
 
     // ((x & C1) | (y & C2)) & C3 -> (x & (C1 & C3)) | (y & (C2 & C3)),
-    // gated on some product `Ci & C3` being zero: with both non-zero neither
-    // disjunct shrinks and the rule re-fires forever.
+    // gated on some product `Ci & C3` being zero, the case where a disjunct
+    // folds away.
     let rule_and_dist = rewrite_rule(
         int_and(
             int_or(
