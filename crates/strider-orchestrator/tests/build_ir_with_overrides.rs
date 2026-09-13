@@ -19,7 +19,7 @@ use common::x86_64_call_then_ret;
 fn build_ir_with_applies_per_address_override() {
     let (bytes, entry, call_target) = x86_64_call_then_ret();
     let reader = BufMemReader::new(bytes, entry);
-    let (mut strider, _cc) = common::strider_x86_64(reader);
+    let (mut strider, _cc) = common::driver_for_reader(common::Arch::X64, reader);
     let cfg = strider
         .build_cfg(
             MachineInsnAddr::from(entry),
@@ -83,7 +83,7 @@ fn build_ir_with_applies_per_address_override() {
 fn build_ir_with_default_options_matches_build_ir() {
     let (bytes, entry, _) = x86_64_call_then_ret();
     let reader = BufMemReader::new(bytes, entry);
-    let (mut strider, cc) = common::strider_x86_64(reader);
+    let (mut strider, cc) = common::driver_for_reader(common::Arch::X64, reader);
     let cfg = strider
         .build_cfg(
             MachineInsnAddr::from(entry),

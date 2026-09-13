@@ -17,7 +17,7 @@ fn x86_64_ud2_terminates_cleanly() {
     let bytes = vec![0x0fu8, 0x0b]; // ud2
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
-    let (mut strider, cc) = common::strider_x86_64(reader);
+    let (mut strider, cc) = common::driver_for_reader(common::Arch::X64, reader);
     let cfg = strider
         .build_cfg(
             MachineInsnAddr::from(entry),
@@ -46,7 +46,7 @@ fn aarch64_brk_terminates_cleanly() {
     let bytes = vec![0x00u8, 0x00, 0x21, 0xd4];
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
-    let (mut strider, cc) = common::strider_aarch64(reader);
+    let (mut strider, cc) = common::driver_for_reader(common::Arch::Aarch64, reader);
     let cfg = strider
         .build_cfg(
             MachineInsnAddr::from(entry),
@@ -77,7 +77,7 @@ fn mips_break_terminates_cleanly() {
     bytes.extend_from_slice(&[0x00; 16]);
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
-    let (mut strider, cc) = common::strider_mips32le(reader);
+    let (mut strider, cc) = common::driver_for_reader(common::Arch::Mips32le, reader);
     let cfg = strider
         .build_cfg(
             MachineInsnAddr::from(entry),
@@ -111,7 +111,7 @@ fn call_other_override_restores_the_fall_through() {
     bytes.extend_from_slice(&[0x00; 32]);
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
-    let (mut strider, _cc) = common::strider_mips32le(reader);
+    let (mut strider, _cc) = common::driver_for_reader(common::Arch::Mips32le, reader);
     let opts = strider_cfg::CfgOptions {
         call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(vec![(
             "trap".to_owned(),

@@ -11,7 +11,7 @@
 //! mirroring `cranelift-fuzzgen`. Control-flow properties stay in
 //! hand-authored fixtures.
 
-#![allow(clippy::todo, clippy::enum_variant_names)]
+#![allow(clippy::enum_variant_names)]
 
 use std::collections::{BTreeSet, HashMap};
 

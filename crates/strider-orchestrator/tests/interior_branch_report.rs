@@ -1,7 +1,7 @@
 //! A branch into an instruction's interior cannot be seated exactly, so it has
 //! to reach the caller on a report channel rather than look like a real edge.
 
-use rsleigh::mem_readers::BufMemReader;
+mod common;
 
 /// x86-64 at 0x1000: `movabs rax, 0` (ten bytes), `je 0x1005` (five bytes
 /// into that `movabs`), then `ret`. No region can start at 0x1005, because
@@ -15,18 +15,8 @@ fn a_branch_into_an_instruction_interior_is_reported() {
     bytes.extend_from_slice(&[0u8; 8]);
     bytes.extend_from_slice(&[0x74, 0xf9, 0xc3]);
 
-    let sa = strider_target::SleighArch::x86_64();
-    let sleigh = rsleigh::Sleigh::new(
-        sa.sla_spec(),
-        sa.pspec(),
-        BufMemReader::new(bytes.clone(), base),
-    )
-    .expect("sleigh");
-    let regs = sleigh.regs().expect("regs");
-    let cc = strider_target::CallingConvention::x86_64_systemv()
-        .build(&regs)
-        .expect("cc");
-    let mut strider = strider_orchestrator::Strider::new(sa, sleigh, None).expect("Strider::new");
+    let (mut strider, cc) =
+        common::strider_over_bytes(common::Arch::X64, bytes.clone(), base, None);
     let out = strider
         .analyze(
             base,

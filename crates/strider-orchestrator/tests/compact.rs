@@ -1,7 +1,5 @@
-use rsleigh::mem_readers::BufMemReader;
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
-use strider_target::{CallingConvention, SleighArch};
 
 mod common;
 
@@ -16,16 +14,11 @@ fn x86_64_mov_then_ret_bytes() -> (Vec<u8>, u64) {
 
 fn run_with(compact: bool) -> strider_ir::Function {
     let (bytes, entry) = x86_64_mov_then_ret_bytes();
-    let arch = SleighArch::x86_64();
-    let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
-    let regs = sleigh.regs().unwrap();
-    let cc = CallingConvention::x86_64_systemv().build(&regs).unwrap();
     let lift_opts = LiftOptions {
         compact,
         ..LiftOptions::default()
     };
-    let mut strider = Strider::new(arch, sleigh, None).unwrap();
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, entry, None);
     strider
         .analyze(entry, &cc, &lift_opts, &OptOptions::default(), None)
         .unwrap()
