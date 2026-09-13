@@ -10,8 +10,8 @@ pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
 /// continuation-passing, so a node's later operands are matched inside the
 /// deepest frame of its earlier operands' subtrees and the stack grows with the
 /// NODE COUNT, not the depth. Measured on an 8 MiB debug thread, the densest
-/// shape (a linear add chain) survives 551 nodes and overflows at 553; this
-/// leaves a factor of two.
+/// shape (a linear add chain) survives 1829 nodes and overflows at 1831; this
+/// leaves a factor of seven.
 pub(crate) const MAX_PATTERN_NODES: usize = 256;
 
 pub struct Pattern {
@@ -168,8 +168,9 @@ impl Pattern {
     }
 
     /// Runs after root and all inputs have matched; returning `false` rejects
-    /// the match. The `Option<ValueType>` is `None` where the matched root has
-    /// no value output. Composes with a guard already on the root, like
+    /// the match. The type is that of the matched output, `None` where there
+    /// is none: a control, memory or `PhiToken` edge, or a zero-output node.
+    /// Composes with a guard already on the root, like
     /// [`MatcherBuilder::set_post_match`](crate::matcher::MatcherBuilder::set_post_match).
     ///
     /// A pattern with no unique sink root has nowhere to put the guard; it

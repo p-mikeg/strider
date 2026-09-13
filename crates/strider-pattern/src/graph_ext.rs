@@ -29,7 +29,9 @@ pub(crate) fn consumed_inputs<N: HasInputSlots, V>(
         .collect()
 }
 
-/// The root is the unique sink, derived structurally rather than stored.
+/// The root is the unique sink, derived structurally rather than stored. A
+/// node with no outputs is vacuously a sink, which is what roots `ret()` /
+/// `switch()` / `if_else()`.
 ///
 /// # Errors
 /// Unless there is exactly one sink: zero means rootless or cyclic, more than

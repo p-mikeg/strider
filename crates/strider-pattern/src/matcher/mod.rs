@@ -85,10 +85,11 @@ pub struct Matcher<'f> {
     /// to a root, so a per-walk counter would cut a nested `first_of` on the
     /// hand-off and drop the arms a later rejection needs.
     ///
-    /// Shared across nested WALKS, not across QUERIES: caller-supplied logic
-    /// (`when_match`, a `JoinPredicate`) holds this same `Matcher` and may run
-    /// a query of its own, whose matches would otherwise count towards an
-    /// enclosing arm's cut and discard the arm holding the real match.
+    /// Restored per candidate root ([`Self::scoped_count`], taken in
+    /// `matches_at_node`). That covers a nested query too: caller-supplied
+    /// logic (`when_match`, a `JoinPredicate`) holds this same `Matcher`, and
+    /// its matches would otherwise count towards an enclosing arm's cut and
+    /// discard the arm holding the real match.
     pub(crate) satisfied: std::cell::Cell<u64>,
 }
 
@@ -463,7 +464,7 @@ impl<'f> Matcher<'f> {
             let caps = con.captures();
             if let Some(c) = caps.iter().find(|c| !cap_owner.contains_key(c)) {
                 anyhow::bail!(
-                    "find_joined: constraint mentions capture {c:?}, which no pattern \
+                    "find_joined_constrained: constraint mentions capture {c:?}, which no pattern \
                      in the join binds, so it could never be satisfied (and under \
                      `negate` would hold vacuously, true because nothing was seen); \
                      bind it with a positive pattern"
@@ -485,7 +486,7 @@ impl<'f> Matcher<'f> {
             for &i in rest {
                 if find(&mut parent, i) != root0 {
                     anyhow::bail!(
-                        "find_joined: pattern {i} shares no capture (even transitively) \
+                        "find_joined_constrained: pattern {i} shares no capture (even transitively) \
                          with the others; a join correlates on shared captures (use a \
                          capture-free pattern for an intentional cross-product)"
                     );
@@ -1184,9 +1185,7 @@ enum CaptureKey {
 ///
 /// KNOWN LIMIT: a pattern whose captures are ALL owned by an earlier slot adds
 /// no entry of its own, so tuples differing only in ITS root still collapse.
-/// That follows the shared-capture contract above rather than the carve-out;
-/// making it follow the carve-out instead would drop the contract, so the two
-/// cannot both hold and the contract wins.
+/// That follows the shared-capture contract above rather than the carve-out.
 ///
 /// `row_agrees` already made each tuple internally consistent, so a capture
 /// bound as a value anywhere in the tuple has the same value everywhere and the

@@ -69,7 +69,8 @@ impl Match {
         self.bindings.get_node(c, graph)
     }
 
-    /// `None` for an unbound or control-flow capture. A multi-output node
+    /// `None` for an unbound capture or one bound to a NODE (the value-less
+    /// roots); a captured control edge does come back. A multi-output node
     /// such as `Call = [Control, Memory, ..results]` binds the slot its
     /// capture's vertex sits at.
     pub fn value(&self, c: Capture) -> Option<ValueId> {
