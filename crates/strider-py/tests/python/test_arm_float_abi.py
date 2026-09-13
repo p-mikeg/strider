@@ -6,11 +6,13 @@ import shutil
 import struct
 
 from strider._api import (
-    _EF_ARM_ABI_FLOAT_HARD,
     _EF_ARM_ABI_FLOAT_SOFT,
     _arch_and_cc_for_elf,
     _ElfHeader,
 )
+
+# ARM `e_flags` float-ABI bit for a hard-float image.
+_EF_ARM_ABI_FLOAT_HARD = 0x0000_0400
 
 SRC = "fixtures/out/arm/calling_convention.elf"
 
