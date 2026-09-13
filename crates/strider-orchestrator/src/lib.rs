@@ -125,6 +125,13 @@ where
     /// [`strider_opt::IndirectBranchClassify`] is appended unless it already
     /// runs.
     ///
+    /// On an arch with no ISA-mode var, a site a round's seats newly expose is
+    /// first classified by lifting only the code in front of it, so a chain of
+    /// tables reachable only through each other's arms seats in a few rounds
+    /// instead of one round per table. Every such seat is re-derived by the
+    /// next full round; a run where one differs, or that does not end complete,
+    /// is redone without the shortcut.
+    ///
     /// # Errors
     ///
     /// Lift / cfg / opt / validation failures only, never an indirect branch.
@@ -136,9 +143,32 @@ where
         opt_opts: &OptOptions,
         pipeline: Option<strider_opt::OptimizerPipeline>,
     ) -> Result<AnalyzeResult> {
-        let start_addr = MachineInsnAddr::from(entry);
         // Built once and reused across re-lifts (`run` takes `&self`).
         let pipeline = with_classify(pipeline.unwrap_or_else(strider_opt::default_pipeline));
+        if self.arch.isa_mode_var().is_none() {
+            let mut lookahead = Some(Lookahead::default());
+            match self.resolve(entry, cc, lift_opts, opt_opts, &pipeline, &mut lookahead) {
+                Ok(Some(result)) => return Ok(result),
+                Err(err) if !lookahead.as_ref().is_some_and(|la| la.used) => return Err(err),
+                Ok(None) | Err(_) => {}
+            }
+        }
+        self.resolve(entry, cc, lift_opts, opt_opts, &pipeline, &mut None)
+            .map(|result| result.expect("a run without lookahead always returns its result"))
+    }
+
+    /// The resolve loop behind [`Self::analyze`]. `None` when `lookahead` made
+    /// a seat and the run cannot vouch for matching the plain loop.
+    fn resolve(
+        &mut self,
+        entry: u64,
+        cc: &strider_target::BuiltCallingConvention,
+        lift_opts: &LiftOptions,
+        opt_opts: &OptOptions,
+        pipeline: &strider_opt::OptimizerPipeline,
+        lookahead: &mut Option<Lookahead>,
+    ) -> Result<Option<AnalyzeResult>> {
+        let start_addr = MachineInsnAddr::from(entry);
         // Carried across iterations; only `known_targets` mutates. Seeded from
         // the caller's answers, which the loop then grows: `apply_resolutions`
         // re-unions the seed every round. A seed asserts the site is settled,
@@ -157,7 +187,7 @@ where
         };
 
         let (mut cfg, mut function, mut unresolved, mut switch_anchors, mut resolutions) =
-            self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
+            self.build_lift(start_addr, cc, &working, opt_opts, pipeline, None)?;
         // Snapshotted in lockstep with `function`, and BEFORE `resolutions` is
         // moved into `apply_resolutions`. Read off the function, not the
         // classification map, which any post-pass can rewrite.
@@ -214,11 +244,14 @@ where
         let mut seats_stale = !dropped_seats.is_empty();
         derived_incomplete.append(&mut dropped_seats);
         // Every round rebuilds the whole function from `known_targets`: cfg,
-        // lift and pipeline. Seating one level per round therefore costs
-        // O(depth^2) on a trampoline chain, bounded by the cap. Carrying a
-        // round's work forward would make the cfg a function of more than
-        // `known_targets`, which is what convergence rests on.
-        for _ in 0..MAX_RESOLUTION_ITERATIONS {
+        // lift and pipeline. Seating one level per round would cost O(depth^2)
+        // on a chain of tables, which the lookahead cuts to a cfg rebuild per
+        // level. Carrying a round's work forward would make the cfg a function
+        // of more than `known_targets`, which is what convergence rests on.
+        // Rounds and lookahead steps both spend `budget`, one level each.
+        let mut budget = MAX_RESOLUTION_ITERATIONS;
+        while budget > 0 {
+            budget -= 1;
             // Seated `Switch` sites are re-derived every round, so the loop
             // runs on while either anchor set is non-empty: a table that
             // resolved before its loop closed widens here. `seats_stale` runs
@@ -260,8 +293,28 @@ where
                 converged = true;
                 break;
             }
+            let prebuilt = match lookahead.as_mut() {
+                Some(la) => self.look_ahead(
+                    start_addr,
+                    cc,
+                    &mut working,
+                    opt_opts,
+                    pipeline,
+                    &cfg,
+                    &abandoned,
+                    la,
+                    &mut budget,
+                ),
+                None => None,
+            };
             (cfg, function, unresolved, switch_anchors, resolutions) =
-                self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
+                self.build_lift(start_addr, cc, &working, opt_opts, pipeline, prebuilt)?;
+            live_indirect = live_dispatch_sites(&function);
+            if let Some(la) = lookahead.as_mut()
+                && !la.confirm(&switch_anchors, &live_indirect, &resolutions)
+            {
+                return Ok(None);
+            }
             // BEFORE `abandon_undecodable`, which drops the site or its bad
             // arms from `known_targets`, the map `seated_arm_losses` looks the
             // site up in. Reversed, every site abandoned this round loses its
@@ -280,7 +333,6 @@ where
             interior.extend_from_slice(cfg.interior_branch_targets());
             isa_conflicts.extend_from_slice(cfg.isa_mode_conflicts());
             unmapped.extend_from_slice(cfg.unmapped_branch_targets());
-            live_indirect = live_dispatch_sites(&function);
             unclassified = unclassified_nodes(&live_indirect, &resolutions);
         }
 
@@ -349,6 +401,15 @@ where
         unverified_seeded.sort_unstable();
         unverified_seeded.dedup();
 
+        let complete = unresolved_indirect_branches.is_empty()
+            && unverified_seeded.is_empty()
+            && isa_conflicts.is_empty()
+            && interior.is_empty()
+            && unmapped.is_empty();
+        if lookahead.as_ref().is_some_and(|la| la.used) && !(converged && complete) {
+            return Ok(None);
+        }
+
         if lift_opts.compact {
             function.compact()?;
         }
@@ -361,7 +422,7 @@ where
         let mut unmapped_branch_targets = unmapped;
         unmapped_branch_targets.sort_unstable();
         unmapped_branch_targets.dedup();
-        Ok(AnalyzeResult {
+        Ok(Some(AnalyzeResult {
             cfg,
             function,
             unresolved_indirect_branches,
@@ -369,10 +430,174 @@ where
             interior_branch_targets,
             unmapped_branch_targets,
             unverified_seeded_sites: unverified_seeded,
-        })
+        }))
     }
 
-    /// One resolve/re-lift iteration: the CFG `function` was lifted from, the
+    /// Seats the sites that `working`'s seats newly expose, each classified by
+    /// [`Self::speculate`], and repeats on the sites those seats expose in
+    /// turn. Returns the cfg `working` now builds, or `None` when the last
+    /// cfg built does not match it.
+    ///
+    /// A step whose seats make the cfg fail, name code that will not decode,
+    /// or raise a report the previous cfg did not is withdrawn, and the full
+    /// round goes ahead without it.
+    #[allow(clippy::too_many_arguments)]
+    fn look_ahead(
+        &mut self,
+        start_addr: MachineInsnAddr,
+        cc: &strider_target::BuiltCallingConvention,
+        working: &mut LiftOptions,
+        opt_opts: &OptOptions,
+        pipeline: &strider_opt::OptimizerPipeline,
+        full_cfg: &strider_cfg::Cfg,
+        abandoned: &rustc_hash::FxHashSet<PcodeInsnAddr>,
+        la: &mut Lookahead,
+        budget: &mut usize,
+    ) -> Option<strider_cfg::Cfg> {
+        let mut seen: rustc_hash::FxHashSet<PcodeInsnAddr> = DispatchAnchors::new(full_cfg).anchors;
+        let mut reports = CfgReports::of(full_cfg);
+        let mut step: Vec<PcodeInsnAddr> = Vec::new();
+        loop {
+            let built = self
+                .lifter
+                .build_cfg(start_addr, &working.cfg, &working.per_address_ccs)
+                .ok()
+                .filter(|cfg| step.is_empty() || !reports.grew_in(cfg));
+            let Some(cfg) = built else {
+                la.withdraw(&step, &mut working.cfg.known_targets);
+                return None;
+            };
+            reports = CfgReports::of(&cfg);
+            if *budget == 0 {
+                return Some(cfg);
+            }
+            let fresh: Vec<(PcodeInsnAddr, strider_cfg::RegionId)> = cfg
+                .region_ids()
+                .filter_map(|id| match &cfg.region_graph().node_weight(id)?.terminator {
+                    strider_cfg::RegionTerminator::UnresolvedIndirectBranch { addr, .. } => {
+                        Some((*addr, id))
+                    }
+                    _ => None,
+                })
+                .filter(|(addr, _)| {
+                    !seen.contains(addr) && !abandoned.contains(addr) && !la.tried.contains(addr)
+                })
+                .collect();
+            step.clear();
+            if !fresh.is_empty() {
+                let starts: FxHashMap<PcodeInsnAddr, strider_cfg::RegionId> = cfg
+                    .region_ids()
+                    .filter_map(|id| Some((cfg.region_graph().node_weight(id)?.start_addr, id)))
+                    .collect();
+                for (site, region) in fresh {
+                    seen.insert(site);
+                    la.tried.insert(site);
+                    if let Some(targets) =
+                        self.speculate(&cfg, &starts, site, region, cc, working, opt_opts, pipeline)
+                    {
+                        working.cfg.known_targets.insert(site, targets.clone());
+                        la.pending.insert(site, targets);
+                        step.push(site);
+                    }
+                }
+            }
+            if step.is_empty() {
+                return Some(cfg);
+            }
+            la.used = true;
+            *budget -= 1;
+        }
+    }
+
+    /// `site`'s targets as classified over the code in front of it: the run of
+    /// single-predecessor regions ending at `region`, lifted on their own with
+    /// the function's pipeline and every branch past the site a tail call.
+    ///
+    /// That code's registers and memory are unconstrained on entry, so what it
+    /// proves holds on every path the whole function has into it; the whole
+    /// function can still prove less or more, which the next full round
+    /// checks.
+    #[allow(clippy::too_many_arguments)]
+    fn speculate(
+        &mut self,
+        cfg: &strider_cfg::Cfg,
+        starts: &FxHashMap<PcodeInsnAddr, strider_cfg::RegionId>,
+        site: PcodeInsnAddr,
+        region: strider_cfg::RegionId,
+        cc: &strider_target::BuiltCallingConvention,
+        working: &mut LiftOptions,
+        opt_opts: &OptOptions,
+        pipeline: &strider_opt::OptimizerPipeline,
+    ) -> Option<ResolvedTargets> {
+        let start_of = |id| {
+            cfg.region_graph()
+                .node_weight(id)
+                .map(|region: &strider_cfg::Region| region.start_addr)
+        };
+        let mut head = region;
+        for _ in 0..MAX_LOOKAHEAD_CHAIN {
+            let mut preds = cfg.region_predecessors(head);
+            let (Some(pred), None) = (preds.next(), preds.next()) else {
+                break;
+            };
+            let falls_in = matches!(
+                pred.terminator,
+                strider_cfg::RegionTerminator::Unconditional
+                    | strider_cfg::RegionTerminator::CondBranch { .. }
+            );
+            if !falls_in || Some(pred.start_addr) >= start_of(head) {
+                break;
+            }
+            head = *starts.get(&pred.start_addr)?;
+        }
+        let start = start_of(head)?.machine_addr.addr;
+        let span = site.machine_addr.addr.checked_sub(start)?.checked_add(1)?;
+
+        // Everything but the seats, which the window's own sites must not take.
+        let seats = std::mem::take(&mut working.cfg.known_targets);
+        let mut window = working.cfg.clone();
+        working.cfg.known_targets = seats;
+        window.fn_max_size = Some(span);
+        window.allow_code_before_start_addr = false;
+        let window = LiftOptions {
+            cfg: window,
+            per_address_ccs: working.per_address_ccs.clone(),
+            compact: false,
+        };
+
+        let Strider {
+            ref mut lifter,
+            ref rom,
+            ..
+        } = *self;
+        let window_cfg = lifter
+            .build_cfg(
+                MachineInsnAddr::from(start),
+                &window.cfg,
+                &window.per_address_ccs,
+            )
+            .ok()?;
+        let LiftOutcome {
+            mut function,
+            unresolved_branches,
+            ..
+        } = lifter
+            .build_ir_with(&window_cfg, cc.clone(), &window)
+            .ok()?;
+        let node = unresolved_branches
+            .iter()
+            .find_map(|(addr, node)| (*addr == site).then_some(*node))?;
+        let mut ctx = OptCtx::new(rom.as_deref());
+        ctx.options = opt_opts.clone();
+        pipeline.run(&mut function, &mut ctx).ok()?;
+        ctx.indirect_resolutions
+            .remove(&node)
+            .flatten()
+            .filter(|targets| !matches!(targets, ResolvedTargets::LinkRegister))
+    }
+
+    /// One resolve/re-lift iteration: the CFG `function` was lifted from
+    /// (`prebuilt` when the caller already built it from `working`), the
     /// optimised IR, the lift-time deferred anchors, the seated-`Switch`
     /// anchors, and the classifier post-pass's node-keyed classification map.
     ///
@@ -387,6 +612,7 @@ where
         working: &LiftOptions,
         opt_opts: &OptOptions,
         pipeline: &strider_opt::OptimizerPipeline,
+        prebuilt: Option<strider_cfg::Cfg>,
     ) -> Result<(
         strider_cfg::Cfg,
         strider_ir::Function,
@@ -405,7 +631,10 @@ where
 
         // A `BranchIndirect` outside `known_targets` is deferred here and
         // resolved at the full-function IR level by the classifier post-pass.
-        let cfg = lifter.build_cfg(start_addr, &working.cfg, &working.per_address_ccs)?;
+        let cfg = match prebuilt {
+            Some(cfg) => cfg,
+            None => lifter.build_cfg(start_addr, &working.cfg, &working.per_address_ccs)?,
+        };
         // `cc` is moved all the way into `Function::default_cc`, but the
         // resolve loop calls this again on the next re-lift, so the clone is
         // unavoidable here.
@@ -517,9 +746,9 @@ impl AnalyzeResult {
     }
 }
 
-/// Doubles as a DEPTH limit: one iteration seats one LEVEL of indirect-branch
-/// discovery, so a chain of trampolines each jumping to the next needs one
-/// iteration per link. [`apply_resolutions`] reporting no change is the
+/// Doubles as a DEPTH limit: one iteration, or one lookahead step, seats one
+/// LEVEL of indirect-branch discovery, so a chain of trampolines each jumping
+/// to the next needs one per link. [`apply_resolutions`] reporting no change is the
 /// terminator for everything shallower. Exhausting the cap is a RESULT, never
 /// an error: the sites still growing are reported, and a site whose answer
 /// never settles is abandoned and reported the same way.
@@ -533,6 +762,87 @@ fn with_classify(mut pipeline: strider_opt::OptimizerPipeline) -> strider_opt::O
         pipeline.add_post_pass(strider_opt::IndirectBranchClassify);
     }
     pipeline
+}
+
+/// Regions [`Strider::speculate`] walks back from a site, through predecessors
+/// that are each the only way in, to reach the code that computes and guards
+/// its index.
+const MAX_LOOKAHEAD_CHAIN: usize = 8;
+
+/// Seats [`Strider::look_ahead`] made over part of a function, pending the full
+/// round that re-derives them.
+#[derive(Default)]
+struct Lookahead {
+    /// A seat was made this way during the run.
+    used: bool,
+    /// Seats no full round has re-derived yet.
+    pending: FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    /// Sites already classified this way, successfully or not.
+    tried: rustc_hash::FxHashSet<PcodeInsnAddr>,
+}
+
+impl Lookahead {
+    /// Whether the round that lifted `switch_anchors` derived every pending seat
+    /// exactly, which clears them.
+    ///
+    /// A one-arm seat whose `Switch` the pipeline folded away is confirmed too:
+    /// the fold proved the selector is that arm.
+    fn confirm(
+        &mut self,
+        switch_anchors: &UnresolvedAnchors,
+        live_sites: &rustc_hash::FxHashSet<strider_ir::node::NodeId>,
+        resolutions: &IndirectResolutions,
+    ) -> bool {
+        self.pending.drain().all(|(site, seated)| {
+            switch_anchors
+                .iter()
+                .filter(|(addr, _node)| *addr == site)
+                .any(|(_addr, node)| match resolutions.get(node) {
+                    Some(Some(derived)) => target_keys(derived) == target_keys(&seated),
+                    Some(None) => false,
+                    None => !live_sites.contains(node) && concrete_targets(&seated).len() == 1,
+                })
+        })
+    }
+
+    fn withdraw(
+        &mut self,
+        step: &[PcodeInsnAddr],
+        known_targets: &mut FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    ) {
+        for site in step {
+            known_targets.remove(site);
+            self.pending.remove(site);
+        }
+    }
+}
+
+/// The report channels a cfg raises, to tell whether a lookahead step raised
+/// any.
+struct CfgReports {
+    undecodable: usize,
+    isa_mode_conflicts: usize,
+    interior: usize,
+    unmapped: usize,
+}
+
+impl CfgReports {
+    fn of(cfg: &strider_cfg::Cfg) -> Self {
+        Self {
+            undecodable: cfg.undecodable_seeded_targets().len(),
+            isa_mode_conflicts: cfg.isa_mode_conflicts().len(),
+            interior: cfg.interior_branch_targets().len(),
+            unmapped: cfg.unmapped_branch_targets().len(),
+        }
+    }
+
+    fn grew_in(&self, cfg: &strider_cfg::Cfg) -> bool {
+        let next = Self::of(cfg);
+        next.undecodable > self.undecodable
+            || next.isa_mode_conflicts > self.isa_mode_conflicts
+            || next.interior > self.interior
+            || next.unmapped > self.unmapped
+    }
 }
 
 /// One round's effect on the induced edge set.
