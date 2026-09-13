@@ -301,6 +301,7 @@ Rendering:
 
 ```python
 function.to_dot(pretty=True)                 # Graphviz DOT text
+function.to_text()                           # canonical text, one line per node; diff two runs
 function.to_html("graph.html")               # dark-themed standalone page (path=None returns text)
 function.neighborhood_dot(function.entry_node(), depth=2, pretty=True)  # local subgraph DOT
 ```
