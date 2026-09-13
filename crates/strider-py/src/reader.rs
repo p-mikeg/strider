@@ -92,7 +92,13 @@ impl PyBufferReader {
     /// Create a reader over a single raw-byte region: `data` mapped at
     /// `base_addr`.  Raises `StriderError` if the region is invalid.
     #[new]
-    fn new(base_addr: u64, data: Vec<u8>) -> PyResult<Self> {
+    fn new(base_addr: u64, data: &Bound<'_, PyAny>) -> PyResult<Self> {
+        // `bytes` / `bytearray` copy in one piece; anything else (a list of
+        // ints) converts per element.
+        let data = match data.extract::<pyo3::pybacked::PyBackedBytes>() {
+            Ok(bytes) => bytes.to_vec(),
+            Err(_) => data.extract::<Vec<u8>>()?,
+        };
         let region = MemRegion::new(base_addr, data).map_err(into_strider_err)?;
         Ok(Self::from_regions(vec![region]))
     }
