@@ -134,6 +134,12 @@ impl<K: EntityRef + Hash> DominatorTree<K> {
         self.span[v].0 != 0
     }
 
+    /// `v`'s `(pre, post)` clock, `None` outside the tree: `a` dominates `b`
+    /// iff `a`'s span encloses `b`'s, and spans otherwise never overlap.
+    pub fn span(&self, v: K) -> Option<(u32, u32)> {
+        self.contains(v).then(|| self.span[v])
+    }
+
     /// True when every path from the root to `b` passes through `a`. Reflexive
     /// for every vertex, one absent from the tree included; otherwise `false`
     /// when either vertex is absent.
