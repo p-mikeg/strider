@@ -54,3 +54,15 @@ fn load_elf_on_a_non_regular_file_is_an_error() {
     let err = strider_reader::load_elf("/tmp").unwrap_err();
     assert!(err.to_string().contains("not a regular file"), "got: {err}",);
 }
+
+/// A regular file that stats as empty yet reads for hundreds of GiB: the
+/// fallback read stops at the stat'd size, as a mapping does.
+#[cfg(target_os = "linux")]
+#[test]
+fn load_elf_reads_no_further_than_the_stat_size() {
+    let err = strider_reader::load_elf("/proc/self/pagemap").unwrap_err();
+    assert!(
+        err.to_string().contains("failed to parse ELF"),
+        "got: {err}"
+    );
+}

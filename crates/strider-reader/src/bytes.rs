@@ -82,7 +82,10 @@ impl FileIdentity {
 /// terabytes must not turn into an allocation abort before a byte is read.
 const MAX_RESERVED_READ: u64 = 64 << 20;
 
-/// The whole of the already-open `file`, `len` being what its `stat` reported.
+/// The first `len` bytes of the already-open `file`, `len` being what its
+/// `stat` reported: the extent a mapping would cover. A file growing under the
+/// read, or a `/proc` file that stats empty and reads for 256 GiB
+/// (`/proc/self/pagemap`), stops there.
 ///
 /// Through the fd rather than the path, so the bytes come from the inode the
 /// checks above ran on however the name is rebound meanwhile.
@@ -90,7 +93,7 @@ fn read_all(file: &mut std::fs::File, len: u64) -> std::io::Result<Vec<u8>> {
     use std::io::Read as _;
     let reserve = usize::try_from(len.min(MAX_RESERVED_READ)).unwrap_or(0);
     let mut bytes = Vec::with_capacity(reserve);
-    file.read_to_end(&mut bytes)?;
+    file.take(len).read_to_end(&mut bytes)?;
     Ok(bytes)
 }
 
