@@ -1,34 +1,33 @@
 use alloc::collections::VecDeque;
-use cranelift_entity::EntityRef;
-
-use super::set::DenseEntitySet;
+use cranelift_entity::{EntityRef, SecondaryMap};
 
 /// FIFO queue for fixed-point iteration, holding each entity at most once:
 /// enqueueing one already queued is a no-op, but an entity may be re-enqueued
 /// once dequeued.
 #[derive(Clone, Debug)]
-pub struct Worklist<E> {
+pub struct Worklist<E: EntityRef> {
     worklist: VecDeque<E>,
-    workset: DenseEntitySet<E>,
+    /// Not a `DenseEntitySet`: dropping its maximum rescans the lower words.
+    workset: SecondaryMap<E, bool>,
 }
 
 impl<E: EntityRef> Worklist<E> {
     pub fn new() -> Self {
         Self {
             worklist: VecDeque::new(),
-            workset: DenseEntitySet::new(),
+            workset: SecondaryMap::new(),
         }
     }
 
     pub fn enqueue(&mut self, entity: E) {
-        if self.workset.insert(entity) {
+        if !core::mem::replace(&mut self.workset[entity], true) {
             self.worklist.push_back(entity);
         }
     }
 
     pub fn dequeue(&mut self) -> Option<E> {
         let entity = self.worklist.pop_front()?;
-        self.workset.remove(entity);
+        self.workset[entity] = false;
         Some(entity)
     }
 }
@@ -97,10 +96,10 @@ mod tests {
     fn enqueue_dequeue_roundtrip() {
         let mut wl: Worklist<Id> = Worklist::new();
         wl.enqueue(Id(0));
-        assert!(wl.workset.contains(Id(0)));
+        assert!(wl.workset[Id(0)]);
 
         assert_eq!(wl.dequeue(), Some(Id(0)));
-        assert!(!wl.workset.contains(Id(0)));
+        assert!(!wl.workset[Id(0)]);
         assert_eq!(wl.dequeue(), None);
     }
 
@@ -141,9 +140,9 @@ mod tests {
     fn contains_only_while_queued() {
         let mut wl: Worklist<Id> = Worklist::new();
         wl.enqueue(Id(5));
-        assert!(wl.workset.contains(Id(5)));
+        assert!(wl.workset[Id(5)]);
         let _ = wl.dequeue();
-        assert!(!wl.workset.contains(Id(5)));
+        assert!(!wl.workset[Id(5)]);
     }
 
     #[test]
@@ -154,7 +153,7 @@ mod tests {
         let _ = format!("{wl:?}");
     }
 
-    /// Pins the single-pass `if workset.insert(e) { push }` shape at scale.
+    /// Pins the single-pass mark-then-push dedup at scale.
     #[test]
     fn enqueue_dedup_at_ten_thousand_scale() {
         let n: u32 = 10_000;
@@ -171,5 +170,29 @@ mod tests {
         }
         assert_eq!(count, n as usize, "no duplicates after re-enqueue");
         assert_eq!(wl.dequeue(), None);
+    }
+
+    /// One entity queued at a time, drained from the highest index down: every
+    /// dequeue removes the membership maximum.
+    #[test]
+    fn descending_drain_cost_is_linear() {
+        fn drain(n: u32) -> std::time::Duration {
+            let mut wl: Worklist<Id> = Worklist::new();
+            let start = std::time::Instant::now();
+            for i in (0..n).rev() {
+                wl.enqueue(Id(i));
+                assert_eq!(wl.dequeue(), Some(Id(i)));
+            }
+            start.elapsed()
+        }
+        drain(10_000);
+        let small = drain(25_000);
+        let large = drain(200_000);
+        // Linear would be 8x; quadratic 64x.
+        assert!(
+            large.as_secs_f64() < small.as_secs_f64() * 24.0,
+            "8x the entities cost {:.1}x the drain ({small:?} -> {large:?})",
+            large.as_secs_f64() / small.as_secs_f64(),
+        );
     }
 }
