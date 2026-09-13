@@ -1894,14 +1894,17 @@ mod arg_window_bounds {
         else {
             panic!("the call's SP is the entry SP plus 8")
         };
-        let walker = analyzer.walker(
-            SizedAddr {
+        let walker = MemWalker {
+            analyzer: &analyzer,
+            options: analyzer.options(),
+            load: SizedAddr {
                 class: AddrClass::StackRooted { base, offset: -8 },
                 size: 4,
                 addr_bits: Some(32),
             },
-            rsleigh::VnSpace::RAM,
-        );
+            load_space: rsleigh::VnSpace::RAM,
+            private_frame: std::cell::Cell::new(None),
+        };
         assert!(
             walker.in_outgoing_arg_area(&fg, call),
             "a window that starts past the carrier covers everything below it"
@@ -1932,7 +1935,14 @@ mod arg_window_bounds {
             sp_offset: 8,
             args: saturating_args().expect("declared above"),
         };
-        let window = scan_arg_window(&fg, &MemOptions::structural(), &geometry, i128::MAX);
+        let analyzer = MemAnalyzer::new(MemOptions::structural());
+        let window = scan_arg_window(
+            &fg,
+            &analyzer,
+            &MemOptions::structural(),
+            &geometry,
+            i128::MAX,
+        );
         assert!(
             !window.covers(-8, -4),
             "a window whose first slot saturates owns nothing below it"
@@ -3094,5 +3104,162 @@ fn only_a_top_reaching_run_is_an_alignment_mask() {
         (!0xFFFFu128, 128, "a 64 KiB alignment is a bit-manipulation"),
     ] {
         assert!(!is_alignment_mask(m, width), "{m:#x} at {width}: {why}");
+    }
+}
+
+#[cfg(test)]
+mod store_index {
+    use crate::mem_analysis::*;
+    use crate::mem_ssa::{MemLayout, Shape};
+    use strider_ir::node::ValueType;
+    use strider_ir::{IRBuilderExt, IntBinaryOp};
+    use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
+
+    use super::super::test_sp as sp;
+
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self, bound: u64) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0 % bound
+        }
+    }
+
+    /// A random run of stores through every address class, calls and an
+    /// opaque user-op, plus the addresses a probe can take.
+    fn random_chain(seed: u64) -> crate::Result<(Function, Vec<ValueId>)> {
+        let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let sp = sp();
+        let mut b = strider_ir_test_utils::sp_frame(sp).build_fn_single_region()?;
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let sp_value = b.read_variable(&sp)?;
+        let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::I32)?;
+        let aligned =
+            b.build_int_binary_operation(sp_value, mask, IntBinaryOp::And, ValueType::I32)?;
+        let cell = b.build_int_const(0x9000u64, ValueType::I32)?;
+        let opaque = b.build_load(cell, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let mut addresses = vec![opaque];
+        for _ in 0..40 {
+            let k = rng.next(24) as i64 - 12;
+            let addr = match rng.next(7) {
+                0 | 1 => {
+                    let k = b.build_int_const(k as u64, ValueType::I32)?;
+                    b.build_int_binary_operation(sp_value, k, IntBinaryOp::Add, ValueType::I32)?
+                }
+                2 => {
+                    let k = b.build_int_const(k as u64, ValueType::I32)?;
+                    b.build_int_binary_operation(aligned, k, IntBinaryOp::Add, ValueType::I32)?
+                }
+                3 => b.build_int_const((0x1000 + k) as u64, ValueType::I32)?,
+                4 => b.build_int_const((0xFFFF_F000u64).wrapping_add(k as u64), ValueType::I32)?,
+                5 => opaque,
+                _ => {
+                    if rng.next(2) == 0 {
+                        let target = b.build_int_const(0x2000u64, ValueType::I32)?;
+                        b.build_call(target, &[], &[], 0)?;
+                    } else {
+                        b.build_call_other(0, &[], &[], true, false)?;
+                    }
+                    continue;
+                }
+            };
+            addresses.push(addr);
+            let ty = [
+                ValueType::I8,
+                ValueType::I16,
+                ValueType::I32,
+                ValueType::I64,
+            ][rng.next(4) as usize];
+            let data = b.build_int_const(rng.next(100), ty)?;
+            b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        }
+        b.build_return(None, &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+        super::super::collapse_phis(&mut fg);
+        Ok((fg, addresses))
+    }
+
+    /// Over every prefix of the chain, the index offers a def at least as high
+    /// as the highest one the walker says clobbers, for every class of probe
+    /// and every setting the candidates read.
+    #[test]
+    fn the_index_never_hides_a_clobber() -> crate::Result<()> {
+        let allocators = std::sync::Arc::default();
+        for seed in 0..60 {
+            let (fg, addresses) = random_chain(seed)?;
+            let layout = MemLayout::build(&fg).expect("one region is laid out");
+            let stores = StoreIndex::build(&fg, &layout, &FxHashSet::default());
+            let analyzer = MemAnalyzer::new(MemOptions::structural());
+            for sgd in [false, true] {
+                for dsbd in [false, true] {
+                    let blocking = MemOptions {
+                        distinct_sp_bases_disjoint: dsbd,
+                        ..MemOptions::call_blocking(sgd, &allocators)
+                    };
+                    let stepping = MemOptions {
+                        calls_block: false,
+                        ..blocking.clone()
+                    };
+                    for options in [&blocking, &stepping] {
+                        for &addr in &addresses {
+                            for size in [1, 4, 8] {
+                                let class = classify_addr(&fg, addr, &FxHashSet::default());
+                                let probe = SizedAddr {
+                                    class,
+                                    size,
+                                    addr_bits: addr_bit_width(&fg, addr),
+                                };
+                                let mut walker = MemWalker {
+                                    analyzer: &analyzer,
+                                    options,
+                                    load: probe,
+                                    load_space: rsleigh::VnSpace::RAM,
+                                    private_frame: std::cell::Cell::new(None),
+                                };
+                                let mut highest = None;
+                                for pos in 0..layout.len() as u32 {
+                                    if layout.shape_at(pos) == Shape::Def
+                                        && walker.def_clobbers(&fg, layout.node_at(pos))
+                                    {
+                                        highest = Some(pos);
+                                    }
+                                    let offered = stores.candidate(
+                                        &probe,
+                                        rsleigh::VnSpace::RAM,
+                                        options,
+                                        0,
+                                        pos,
+                                    );
+                                    assert!(
+                                        offered >= highest,
+                                        "seed {seed}: {probe:?} up to {pos} offered {offered:?} \
+                                         below the clobber at {highest:?}"
+                                    );
+                                    if let Some(h) = highest {
+                                        assert!(
+                                            stores
+                                                .candidate(
+                                                    &probe,
+                                                    rsleigh::VnSpace::RAM,
+                                                    options,
+                                                    h,
+                                                    pos
+                                                )
+                                                .is_some_and(|c| c >= h),
+                                            "seed {seed}: {probe:?} in {h}..={pos} hid the clobber"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }

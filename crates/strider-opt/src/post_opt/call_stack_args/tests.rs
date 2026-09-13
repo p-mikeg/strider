@@ -1301,3 +1301,22 @@ fn the_slot_after_the_offset_carrier_ends_collection() -> Result<()> {
     assert_eq!(collect_at_the_offset_carrier_top(0, i128::MAX - 3)?, 5);
     Ok(())
 }
+
+/// Doubling the calls may only double the work of collecting their arguments.
+#[test]
+fn collecting_across_call_diamonds_costs_near_linear_work() -> Result<()> {
+    let work = |n: usize| -> Result<u64> {
+        let mut fg = crate::test_support::memory_shapes::stack_arg_call_diamonds(n)?;
+        crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
+        crate::mem_ssa::CLIMB_STEPS.with(|c| c.set(0));
+        crate::pipeline::run_post(&CallStackArgCollect, &mut fg, &mut crate::OptCtx::new(None))?;
+        Ok(crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get)
+            + crate::mem_ssa::CLIMB_STEPS.with(std::cell::Cell::get))
+    };
+    let (small, big) = (work(100)?, work(200)?);
+    assert!(
+        big * 100 <= small * 260,
+        "doubling the call diamonds took {small} steps to {big}"
+    );
+    Ok(())
+}

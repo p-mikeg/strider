@@ -4,8 +4,9 @@
 //! may-aliasing memory definition is an exact-match store: same address
 //! class, base and offset, with stored bytes fully covering the load's
 //! range (a wider store is reshaped via `Truncate` / `ShiftRight`).
-//! Anything else blocks: a non-exact overlapping store, a `MemPhi`
-//! (control merge, arms may disagree), or `InitialMemory`.
+//! Anything else blocks: a non-exact overlapping store, a `MemPhi` whose arms
+//! reach different definitions, or `InitialMemory`.  A `MemPhi` whose arms
+//! agree is transparent.
 //!
 //! A `Call` blocks unless its convention declares `preserves_memory`; a
 //! `CallOther` always blocks, since only a user-op its ABI row declares
@@ -16,8 +17,9 @@
 //! callee and the probed location is a PRIVATE-frame stack slot outside that
 //! same window, or a different allocation.
 //!
-//! The pass never synthesizes a value-`Phi`; a control merge is opaque.
-//! Requires `PhiCollapse` to have run, so a trivial `MemPhi` is already gone.
+//! The pass never synthesizes a value-`Phi`, so no merge of two stored values
+//! forwards.  A stack address decomposes only once `PhiCollapse` has folded the
+//! region phis over SP.
 
 use std::cell::RefCell;
 
@@ -31,12 +33,14 @@ use crate::pipeline::OptimizationResult;
 
 #[derive(Default)]
 pub struct LoadForward {
-    /// Shared by every root in one sweep, for its outgoing-argument-window
-    /// memo.  Valid that long because the pass only rewires `Load` memory
-    /// edges and redirects `Load` outputs: a `Call` keeps its memory input and
-    /// its SP, and a forwarded value can only make an address the window scan
-    /// could not place placeable, which ends a prefix sooner than the memo
-    /// says.
+    /// Shared by every root in one sweep, for their memory index, answers
+    /// and outgoing-argument-window memo.  Valid that long because the pass
+    /// only rewires `Load` memory edges and redirects `Load` outputs: every
+    /// memory def keeps its inputs, a store address a forward can still change
+    /// was an `Anchor` the index offers every location, a forward reaching an
+    /// address drops the answers, and a forwarded value can only make an
+    /// address the window scan could not place placeable, which ends a prefix
+    /// sooner than the memo says.
     analyzers: RefCell<Option<Analyzers>>,
 }
 
@@ -99,22 +103,9 @@ impl crate::peephole::PeepholePass for LoadForward {
     }
 }
 
-/// QUADRATIC on the FIRST sweep: `nearest_clobber` is an unmemoised reverse
-/// walk as long as the distance from the load to its defining store, it runs
-/// twice per load, and its memo is keyed on the probed location, so loads at
-/// different offsets share nothing.  The cost is loads x memory-chain length.
-/// `narrow_load_to` shortens only the NARROW walk, onto the structural
-/// clobber; the alias walk keeps stepping past it under the relaxations the
-/// structural options pin off, so its cost is the relaxation-visible chain on
-/// every sweep.
-///
-/// What bounds it in practice is that a `Call` ends the chain, so optimised
-/// input never builds a long one.  A call-free run of frame traffic does:
-/// `-O0` output, large leaf functions, big register-spill regions.
-///
-/// Answering in one pass needs a per-location def index, which a `MemPhi` DAG
-/// has no linear order to build one over; that is a MemorySSA redesign, not a
-/// tuning knob.
+/// Two nearest-clobber queries per load, each a climb of the memory dominator
+/// tree over the analyzers' index.  `narrow_load_to` moves the load's edge onto
+/// the structural clobber, which later sweeps start from.
 fn try_forward_load(
     edit: &mut crate::EditFunction<'_>,
     load: NodeId,
@@ -126,9 +117,9 @@ fn try_forward_load(
         .expect("a Load has a memory input (slot 0)");
     let (load_value, load_ty) = edit.single_value_output(load)?;
 
-    // First: `narrow_cfg` stops at more clobbers, so it only reaches addresses
-    // this walk has already decomposed under the configured allocator set, and
-    // its empty set never commits a `NotMemory` for them (see `decompose`).
+    // First: the configured analyzer decomposes every address before
+    // `narrow_cfg`'s empty set can commit a `NotMemory` for one (see
+    // `decompose`).
     let clobber_node = alias_cfg.nearest_clobber(edit.function(), load, mem);
     // Shorten the load's memory edge onto the clobber `narrow_cfg` proves so
     // future walks skip the proven-disjoint run.  Never `alias_cfg`'s: the
@@ -168,10 +159,38 @@ fn try_forward_load(
         return Ok(unforwarded);
     };
 
+    // A forwarded address can turn an `Anchor` store into a located one,
+    // which moves verdicts the analyzers memoised.
+    if feeds_an_address(edit.function(), load_value) {
+        alias_cfg.forget_answers();
+        narrow_cfg.forget_answers();
+    }
     // Redirecting the sole output leaves the Load dead; the automatic cull
     // removes it and its address cone.
     let changed = edit.replace_value(load_value, forwarded)?;
     Ok(OptimizationResult::from_changed(changed || narrowed))
+}
+
+/// Whether `value` reaches a store's address or a call's SP through `Add` and
+/// `And` steps, the shapes `decompose` follows.
+fn feeds_an_address(function: &strider_ir::Function, value: ValueId) -> bool {
+    let mut work = vec![value];
+    let mut seen = rustc_hash::FxHashSet::default();
+    while let Some(v) = work.pop() {
+        for (user, slot) in function.graph().value_uses(v) {
+            match function.node_kind(user) {
+                NodeKind::Store(_) if slot == 1 => return true,
+                NodeKind::Call { .. } if slot == 3 => return true,
+                NodeKind::IntBinaryOp(
+                    strider_ir::IntBinaryOp::Add | strider_ir::IntBinaryOp::And,
+                ) if seen.insert(user) => {
+                    work.extend(function.node_outputs(user).iter().copied());
+                }
+                _ => {}
+            }
+        }
+    }
+    false
 }
 
 /// Reshapes a wider store's value down to the load width.  On BE the load's
