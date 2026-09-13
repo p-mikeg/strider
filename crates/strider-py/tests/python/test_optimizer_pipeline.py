@@ -10,26 +10,13 @@ def test_empty_pipeline():
 
 
 def test_default_pipeline_pass_names():
+    """`default()` snapshots the Rust `default_pipeline()`."""
     p = strider.opt.OptimizerPipeline.default()
     names = p.passes
     assert isinstance(names, list) and all(isinstance(n, str) for n in names)
     assert len(names) == 10
     assert "ConstantFold" in names
     assert len(p.post_passes) == 3
-
-
-def test_python_default_pipeline_matches_rust_pinned_count():
-    """The Python default pipeline is listed by hand, so a pass added on the
-    Rust side but not mirrored here would silently make the Python pipeline a
-    behaviourally different subset.  These counts catch that drift.
-    """
-    assert len(strider.opt.OptimizerPipeline.default().passes) == 10
-    assert len(strider.opt.OptimizerPipeline.default().post_passes) == 3
-
-
-def test_default_pipeline_nonempty():
-    pipe = strider.opt.OptimizerPipeline.default()
-    assert len(pipe.passes) > 0
 
 
 def test_add_pure_pass():
@@ -61,19 +48,6 @@ def test_if_cond_inversion_pass_exposed():
     assert len(pipe.passes) == 1
 
 
-def test_default_pipeline_mirrors_rust_default():
-    """The default pipeline must stay in step with the Rust one: ten in-loop
-    passes (`ConstantFold`, `LoadReadOnly`, `KnownBits`,
-    `FlagCmpCanonicalize`, `IfCondInversion`, `PhiCollapse`,
-    `RegionCollapse`, `DeadBranchElimination`, `CfgDetach`, `LoadForward`)
-    plus three post-passes (`StackOffsetDetect`, `CallStackArgCollect`,
-    `FunctionArgDetect`).  Out of sync, the custom-pipeline path silently
-    skips canonicalisation and queries that work under `analyze` fail here.
-    """
-    assert len(strider.opt.OptimizerPipeline.default().passes) == 10
-    assert len(strider.opt.OptimizerPipeline.default().post_passes) == 3
-
-
 def test_cc_aware_passes_construct(x86_memory_elf):
     del x86_memory_elf
 
@@ -91,13 +65,6 @@ def test_cc_aware_passes_construct(x86_memory_elf):
     pipe.add_post(d)
     assert len(pipe.passes) == 2
     assert len(pipe.post_passes) == 2
-
-
-def test_default_optimizer_pipeline_nonempty_pre_and_post():
-    # `OptimizerPipeline.default()` is what `Lifter.analyze` drives internally.
-    pipe = strider.opt.OptimizerPipeline.default()
-    assert len(pipe.passes) > 0
-    assert len(pipe.post_passes) > 0
 
 
 def test_optimize_on_lifter_mutates(x86_memory_elf):
