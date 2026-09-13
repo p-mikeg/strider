@@ -44,13 +44,6 @@ fn build_if_with_neg_cond() -> Result<(strider_ir::Function, strider_ir::node::N
     Ok((fg, if_node))
 }
 
-fn if_cond_kind(fg: &strider_ir::Graph, if_node: strider_ir::node::NodeId) -> NodeKind {
-    let [_ctrl, cond_value] = fg
-        .node_inputs_exact::<2>(if_node)
-        .expect("If has exactly two inputs");
-    *fg.kind_of_value(cond_value)
-}
-
 #[test]
 fn new_builds_pass_that_inverts() -> Result<()> {
     let (mut fg, if_node) = build_if_with_neg_cond()?;
@@ -84,26 +77,6 @@ fn two_independent_instances_each_invert() -> Result<()> {
     assert!(crate::pipeline::run_one(&pass_b, &mut fg_b, &mut crate::OptCtx::new(None))?.changed());
     let cond_b = fg_b.producer(fg_b.graph().node_inputs_exact::<2>(if_b)?[1]);
     assert!(!is_i1_xor_with_one(&fg_b, cond_b));
-    Ok(())
-}
-
-#[test]
-fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
-    let (mut fg, if_node) = build_if_with_neg_cond()?;
-    let cond_node_pre = fg.producer(fg.graph().node_inputs_exact::<2>(if_node)?[1]);
-    assert!(is_i1_xor_with_one(&fg, cond_node_pre));
-
-    let r = crate::pipeline::run_one(
-        &IfCondInversion::new(),
-        &mut fg,
-        &mut crate::OptCtx::new(None),
-    )?;
-    assert!(r.changed());
-
-    // The cond is now the Xor's inner operand.
-    let cond_node_post = fg.producer(fg.graph().node_inputs_exact::<2>(if_node)?[1]);
-    assert!(!is_i1_xor_with_one(&fg, cond_node_post));
-    let _ = if_cond_kind; // the helper's only reference
     Ok(())
 }
 

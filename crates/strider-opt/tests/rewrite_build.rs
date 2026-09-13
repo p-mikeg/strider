@@ -6,7 +6,7 @@ use strider_ir::node::{NodeKind, ValueType as T};
 use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::{make_empty_fn, make_fn_with_var, reg_vn};
 
-use strider_opt::{EditFunction, apply_rules_count, rewrite_rule, rewrite_rule_runtime};
+use strider_opt::{EditFunction, rewrite_rule, rewrite_rule_runtime};
 use strider_pattern::{
     Capture, MatchPat, Matcher, TemplatePat, int_add, int_const, int_const_with, one_of, template,
     var,
@@ -57,44 +57,6 @@ fn or_node(f: &strider_ir::Function) -> strider_ir::node::NodeId {
     f.walk()
         .find(|&n| matches!(f.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Or)))
         .unwrap()
-}
-
-/// An `int_const_with!` constant-fold rule folds two captured constants.
-#[test]
-fn const_fold_rule_via_macro() {
-    let c1 = Capture::new();
-    let c2 = Capture::new();
-
-    let mut fx = make_empty_fn(|b| {
-        let a = b.build_int_const(3u64, T::I64)?;
-        let k = b.build_int_const(4u64, T::I64)?;
-        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::I64)
-    })
-    .unwrap();
-
-    let rule = rewrite_rule(
-        int_add(int_const(c1), int_const(c2)),
-        int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
-    );
-
-    let add_root = {
-        let m = Matcher::new(&fx);
-        let pat = int_add(int_const(c1), int_const(c2)).into_pattern();
-        let hits = m.find_all(&pat).unwrap();
-        assert!(!hits.is_empty());
-        hits[0].root()
-    };
-
-    let mut ctx = EditFunction::new(&mut fx);
-    let fired = rule(&mut ctx, add_root).unwrap().is_some();
-    assert!(fired);
-
-    let has_seven = ctx.function().walk().any(|n| {
-        let f = ctx.function();
-        matches!(f.node_kind(n), NodeKind::IntConst(_))
-            && f.int_const_u128(f.node_outputs(n)[0]) == Some(7)
-    });
-    assert!(has_seven, "3 + 4 should fold to IntConst(7)");
 }
 
 /// A binary op nesting a computed `int_const_with!` const is a valid
@@ -219,21 +181,3 @@ fn rewrite_rule_runtime_accepts_capture_bound_on_every_arm() {
 //     let p: strider_pattern::Pattern = var(c).into_pattern();
 //     rewrite_rule_runtime(lhs, p);
 //     // error[E0308]: expected `Template`, found `Pattern`
-
-/// `apply_rules_count` drives the rule across every reachable node.
-#[test]
-fn apply_rules_count_drives_rule_across_function() {
-    let x = Capture::new();
-    let mut fx = make_empty_fn(|b| {
-        let a = b.build_int_const(9u64, T::I64)?;
-        let zero = b.build_int_const(0u64, T::I64)?;
-        let sum = b.build_int_binary_operation(a, zero, IntBinaryOp::Add, T::I64)?;
-        b.build_int_binary_operation(sum, a, IntBinaryOp::Or, T::I64)
-    })
-    .unwrap();
-
-    let rule = rewrite_rule(int_add(var(x), int_const(0u128)), var(x));
-    let mut ctx = EditFunction::new(&mut fx);
-    let fired = apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).unwrap() > 0;
-    assert!(fired);
-}

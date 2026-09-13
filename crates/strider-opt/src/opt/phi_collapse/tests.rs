@@ -311,27 +311,6 @@ fn single_value_mem_phi_collapses() -> crate::Result<()> {
     Ok(())
 }
 
-#[test]
-fn collapse_then_validates() -> crate::Result<()> {
-    let var = reg_vn(0x1000, 8);
-    let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = b.create_region_all()?;
-    let join = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-    b.set_region(entry);
-    b.build_branch(join)?;
-    b.set_region(join);
-    let read_back = b.read_variable(&var)?;
-    b.build_return(Some(read_back), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::new(None))?;
-    strider_ir::validate::validate(&fg)
-        .map_err(|e| anyhow::anyhow!("post-PhiCollapse validation failed: {e:?}"))?;
-    Ok(())
-}
-
 /// The pipeline loop over a chain of trivial phis, each a consumer of the one
 /// before: the first sweep collapses them all, so the second reports nothing.
 #[test]

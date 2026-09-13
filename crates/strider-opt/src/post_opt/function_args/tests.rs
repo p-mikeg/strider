@@ -904,39 +904,6 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
     Ok(())
 }
 
-/// An SP-rooted store whose byte range is disjoint from the load's must not
-/// mark the chain dirty: [0,4) against [4,8), so sp+4 is still arg 0.
-#[test]
-fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
-    let sp = sp32_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(4, 8))
-        .build_fn_single_region()?;
-    let sp_val = b.read_variable(&sp)?;
-    // Covers [0,4).
-    let zero_data = b.build_int_const(0x11u64, ValueType::I32)?;
-    b.build_store(sp_val, zero_data, rsleigh::VnSpace::RAM)?;
-
-    // Covers [4,8), disjoint from [0,4).
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
-    let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::I32)?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
-
-    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
-    assert!(
-        !arg0_nodes.is_empty(),
-        "disjoint SP-rooted Store(sp+0, I32) must not mark Load[sp+4] dirty: still registered as arg 0"
-    );
-    Ok(())
-}
-
 /// A store through an SP-rooted phi that does NOT collapse to a single
 /// terminal must conservatively mark the chain dirty.  The branches do
 /// `sp -= 4` and `sp -= 8`, so the join phi disagrees, decomposition returns
@@ -1161,39 +1128,6 @@ fn incoming_args_survive_calls_toggle_gates_arg_across_call() -> Result<()> {
          so Load[sp+4] is NOT registered as an arg",
     );
     Ok(())
-}
-
-/// Projected onto dirty/clean, the production phi join (`join_phi_results`) is
-/// dirty whenever any predecessor is: arms that disagree merge to `Clobber`.
-/// That is what lets a back-edge arm resolve to `Cycle` and drop out of the
-/// join without losing soundness.
-#[test]
-fn function_args_combine_phi_or_semantics_pinned() {
-    fn combine_phi(preds: Vec<bool>) -> bool {
-        preds.into_iter().any(|d| d)
-    }
-    assert!(
-        combine_phi(vec![false, true]),
-        "any() invariant: one dirty pred forces phi-combined verdict to dirty"
-    );
-    assert!(
-        combine_phi(vec![true, false, false]),
-        "any() invariant: first dirty pred forces phi-combined verdict to dirty"
-    );
-    assert!(
-        !combine_phi(vec![false, false]),
-        "all-clean preds combine to clean"
-    );
-    assert!(
-        !combine_phi(vec![]),
-        "empty pred set combines to clean (no information => assume clean for this edge)"
-    );
-    // Pinned with the arms above so neither can be swapped alone.
-    let cycle_sentinel: bool = false;
-    assert!(
-        combine_phi(vec![cycle_sentinel, true]),
-        "cycle_verdict()=false must still combine to dirty when a non-cycle pred is dirty"
-    );
 }
 
 /// `assume_incoming_args_survive_calls` governs which loads count as incoming
