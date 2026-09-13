@@ -258,3 +258,51 @@ fn ppc_genuine_returns_stay_complete() {
         "blr with LR restored across a call",
     );
 }
+
+#[test]
+fn x86_64_a_return_slot_rewritten_with_itself_in_a_loop_stays_complete() {
+    // mov (%rsp),%rax ; mov %rax,(%rsp) ; test %edi,%edi ; jne 0 ; ret
+    assert_complete(
+        Arch::X64,
+        vec![
+            0x48, 0x8b, 0x04, 0x24, 0x48, 0x89, 0x04, 0x24, 0x85, 0xff, 0x75, 0xf4, 0xc3,
+        ],
+        "the return slot rewritten with its own value in a loop",
+    );
+}
+
+#[test]
+fn ppc_a_link_register_resaved_in_a_loop_stays_complete() {
+    // mflr r0 ; stw r0,4(r1) ; loop: lwz r0,4(r1) ; mtlr r0 ; cmpwi r3,0 ; beqlr ;
+    // stw r0,4(r1) ; bl ; b loop
+    assert_complete(
+        Arch::Ppc32be,
+        be32(&[
+            0x7c08_02a6,
+            0x9001_0004,
+            0x8001_0004,
+            0x7c08_03a6,
+            0x2c03_0000,
+            0x4d82_0020,
+            0x9001_0004,
+            0x4800_1001,
+            0x4bff_ffe8,
+        ]),
+        "a conditional blr in a loop that re-saves the LR it restored",
+    );
+}
+
+#[test]
+fn x86_64_a_return_slot_rewritten_in_a_loop_from_an_argument_is_reported() {
+    // mov (%rsp),%rax ; test %edi,%edi ; je 1f ; mov %rsi,%rax ; 1: mov %rax,(%rsp) ;
+    // test %edx,%edx ; jne 0 ; ret
+    assert_reported(
+        Arch::X64,
+        vec![
+            0x48, 0x8b, 0x04, 0x24, 0x85, 0xff, 0x74, 0x03, 0x48, 0x89, 0xf0, 0x48, 0x89, 0x04,
+            0x24, 0x85, 0xd2, 0x75, 0xed, 0xc3,
+        ],
+        0x13,
+        "the return slot takes an argument on one path around the loop",
+    );
+}
