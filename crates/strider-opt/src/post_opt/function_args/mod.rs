@@ -181,6 +181,8 @@ fn mem_chain_is_dirty(
     let mem_token = edit
         .memory_input_of(load)
         .expect("a Load has a memory input (slot 0)");
+    // In this order, as in `try_forward_load`: the configured walk decomposes
+    // first, so `narrow_cfg`'s empty set commits no `NotMemory` over it.
     let clobber = alias_cfg.nearest_clobber(edit.function(), load, mem_token);
     let sound = narrow_cfg.nearest_clobber(edit.function(), load, mem_token);
     narrow_load_to(edit, load, sound);
