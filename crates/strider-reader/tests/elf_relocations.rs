@@ -79,6 +79,64 @@ fn absolute_rel_keeps_the_implicit_in_field_addend() {
     );
 }
 
+/// `SHT_CREL` without the header's addend bit is the `SHT_REL` shape: A is in
+/// the field.
+#[test]
+fn crel_without_addends_keeps_the_implicit_in_field_addend() {
+    let addend: u32 = 0x2c;
+    let fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Little,
+            is_64: false,
+            e_machine: object::elf::EM_386,
+            r_type: object::elf::R_386_32,
+            defined_symbol: true,
+            slot_init: addend.to_le_bytes().to_vec(),
+        },
+        common::elf_fixture::RelPlacement {
+            table: common::elf_fixture::RelTable::Crel(None),
+            ..Default::default()
+        },
+    );
+
+    let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
+
+    assert_eq!(
+        read_u32_le_at(&regions, fx.slot_addr),
+        Some(fx.sym_addr as u32 + addend),
+    );
+}
+
+/// `SHT_CREL` with the addend bit carries A in the entry, and the field's
+/// bytes are not an addend.
+#[test]
+fn crel_with_addends_writes_the_entry_addend_over_the_field() {
+    let fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Little,
+            is_64: true,
+            e_machine: object::elf::EM_X86_64,
+            r_type: object::elf::R_X86_64_64,
+            defined_symbol: true,
+            slot_init: 0x2cu64.to_le_bytes().to_vec(),
+        },
+        common::elf_fixture::RelPlacement {
+            table: common::elf_fixture::RelTable::Crel(Some(-8)),
+            ..Default::default()
+        },
+    );
+
+    let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
+
+    let mut got = [0u8; 8];
+    let region = regions
+        .iter()
+        .find(|r| r.start_addr() <= fx.slot_addr && fx.slot_addr + 8 <= r.end_addr())
+        .expect("slot region");
+    assert_eq!(region.read(fx.slot_addr, &mut got), Some(8));
+    assert_eq!(u64::from_le_bytes(got), fx.sym_addr.wrapping_sub(8));
+}
+
 #[test]
 fn relative_rel_keeps_the_implicit_in_field_addend() {
     // `call rel32` sites carry A = -4 in the field, so a dropped A shifts every
