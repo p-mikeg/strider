@@ -237,6 +237,19 @@ impl SleighArch {
         }
     }
 
+    /// Whether the sla decodes a branch together with its delay slot, one
+    /// `lift_one` spanning both.
+    #[must_use]
+    pub fn has_delay_slots(&self) -> bool {
+        matches!(
+            self.preset,
+            ArchPreset::MipsBe32
+                | ArchPreset::MipsLe32
+                | ArchPreset::MipsBe64
+                | ArchPreset::MipsLe64
+        )
+    }
+
     /// Context vars the sla declares `noflow` that still change which
     /// constructor matches, so a value committed by one function is a decode
     /// change for the next on a reused engine and a cold entry must clear them.
