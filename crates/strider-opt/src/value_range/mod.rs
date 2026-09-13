@@ -372,6 +372,9 @@ pub struct RangeMap<'f> {
     /// `dominating_guard` is a pure function of `guards` and `doms`, both
     /// fixed here, and every `range_of` frame asks it at least once.
     guard_memo: std::cell::RefCell<FxHashMap<(ValueId, NodeId), Option<Interval>>>,
+    /// Per `And(x, c)` output whose mask clears only bits KnownBits proves zero
+    /// in `x`, that `x`: the two are the same value.
+    identity_masks: SecondaryMap<ValueId, Option<ValueId>>,
 }
 
 impl<'f> RangeMap<'f> {
@@ -417,6 +420,9 @@ impl<'f> RangeMap<'f> {
         // 256-case index.
         let result = if matches!(self.function.node_kind(producer), NodeKind::Phi) {
             self.resolve_phi(producer, region)
+        } else if let Some(operand) = self.identity_masks[value] {
+            let leaf = self.resolve_leaf(value, region);
+            self.range_of(operand, region).intersect(leaf)
         } else {
             let leaf = self.resolve_leaf(value, region);
             match self.const_scale(value) {
@@ -663,6 +669,12 @@ impl<'f> RangeMap<'f> {
         Some((operand, ArmHop::Scaled(scale, mask)))
     }
 
+    /// `x` when `value` is an `And(x, c)` whose mask clears only bits known zero
+    /// in `x`, i.e. the same value as `x`.
+    pub(crate) fn identity_mask_operand(&self, value: ValueId) -> Option<ValueId> {
+        self.identity_masks[value]
+    }
+
     /// Reflexive: a node dominates itself.
     fn dominates(&self, node: NodeId, region: NodeId) -> bool {
         match self.doms.dominators(region) {
@@ -889,7 +901,11 @@ pub fn compute_value_ranges<'f>(
     known: &KnownBitsMap,
 ) -> RangeMap<'f> {
     let mut kb_bounds: SecondaryMap<ValueId, Option<Interval>> = SecondaryMap::new();
+    let mut identity_masks: SecondaryMap<ValueId, Option<ValueId>> = SecondaryMap::new();
     for node in function.walk() {
+        if let Some((value, operand)) = identity_mask(function, node, known) {
+            identity_masks[value] = Some(operand);
+        }
         for &value_id in function.node_outputs(node) {
             let kb: KnownBitsFacts = known[value_id];
             if kb.ones == 0 && kb.zeros == 0 {
@@ -1012,7 +1028,35 @@ pub fn compute_value_ranges<'f>(
         kb_bounds,
         memo: FxHashMap::default(),
         guard_memo: std::cell::RefCell::new(FxHashMap::default()),
+        identity_masks,
     }
+}
+
+/// `(output, x)` for an `And(x, c)` node whose mask clears only bits known zero
+/// in `x`: `slwi` / `sldi` lift to `And(ShiftLeft(idx, k), ~(2^k - 1))`.
+fn identity_mask(
+    function: &strider_ir::Function,
+    node: NodeId,
+    known: &KnownBitsMap,
+) -> Option<(ValueId, ValueId)> {
+    if !matches!(
+        function.node_kind(node),
+        NodeKind::IntBinaryOp(IntBinaryOp::And)
+    ) {
+        return None;
+    }
+    let &[value] = function.node_outputs(node) else {
+        return None;
+    };
+    let [a, b] = function.producer_inputs_exact::<2>(value).ok()?;
+    let (operand, mask) = match (function.int_const_u128(a), function.int_const_u128(b)) {
+        (None, Some(c)) => (a, c),
+        (Some(c), None) => (b, c),
+        _ => return None,
+    };
+    let type_mask = crate::opt::known_bits::type_mask_u128(function.value_type_opt(value)?)?;
+    let cleared = !mask & type_mask;
+    (cleared & !known[operand].zeros == 0).then_some((value, operand))
 }
 
 /// The `(value, interval)` an `If`-controlled edge establishes on the value its
