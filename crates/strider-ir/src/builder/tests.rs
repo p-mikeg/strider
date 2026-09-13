@@ -2777,3 +2777,63 @@ fn twelve_and_fourteen_byte_tracked_varnodes_build_initial_vars() -> Result<()> 
     }
     Ok(())
 }
+
+/// `rax` volatile, `rbx` callee-saved; `held` is written to `reg` before a call
+/// built the way the lifter builds one, then the function is built.
+fn call_with_register_holding(
+    reg_is_volatile: bool,
+    held: impl FnOnce(&mut FunctionBuilder, ValueId) -> Result<ValueId>,
+) -> Result<crate::Function> {
+    use strider_ir_test_utils::reg_vn;
+    let sp = strider_ir_test_utils::stack_vn_x86_64();
+    let (rax, rbx) = (reg_vn(0x0, 8), reg_vn(0x18, 8));
+    let cc = strider_target::BuiltCallingConvention {
+        callee_saved_regs: vec![rbx],
+        stack_vn: sp,
+        ..Default::default()
+    };
+    let mut b = FunctionBuilder::new(vec![rax, rbx, sp], cc, strider_target::Endianness::Little)?;
+    let region = b.create_region_all()?;
+    b.set_entry_region_all(region)?;
+    b.set_region(region);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let sp_value = b.read_variable(&sp)?;
+    let value = held(&mut b, sp_value)?;
+    b.write_variable(if reg_is_volatile { &rax } else { &rbx }, value)?;
+    let target = b.build_int_const(0x1000u64, ValueType::I64)?;
+    b.build_call_cc(target, None)?;
+    b.build_return(None, &[])?;
+    b.build()
+}
+
+#[test]
+fn a_stack_address_in_a_clobbered_register_at_a_call_is_recorded() -> Result<()> {
+    let f = call_with_register_holding(true, |b, sp| {
+        let k = b.build_int_const((-16i64) as u64, ValueType::I64)?;
+        let slot = b.build_int_binary_operation(sp, k, IntBinaryOp::Add, ValueType::I64)?;
+        // A width round trip is still the address.
+        let low = b.truncate_if_needed(slot, ValueType::I32)?;
+        b.extend_if_needed(low, ValueType::I64, ExtendOp::ZeroExtend)
+    })?;
+    assert!(f.side_tables().frame_address_in_call_register());
+    Ok(())
+}
+
+#[test]
+fn a_clobbered_register_holding_no_stack_address_is_not_recorded() -> Result<()> {
+    let f = call_with_register_holding(true, |b, _| b.build_int_const(0x1234u64, ValueType::I64))?;
+    assert!(!f.side_tables().frame_address_in_call_register());
+    Ok(())
+}
+
+/// A frame pointer lives in a callee-saved register, which a conforming callee
+/// restores without reading through.
+#[test]
+fn a_stack_address_in_a_preserved_register_is_not_recorded() -> Result<()> {
+    let f = call_with_register_holding(false, |b, sp| {
+        let k = b.build_int_const((-16i64) as u64, ValueType::I64)?;
+        b.build_int_binary_operation(sp, k, IntBinaryOp::Add, ValueType::I64)
+    })?;
+    assert!(!f.side_tables().frame_address_in_call_register());
+    Ok(())
+}
