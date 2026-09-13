@@ -117,7 +117,7 @@ all: they overlap in cause and not in content.
   A branch leaves through a `TailCall` stub; the call is ended as `NoReturn`,
   dropping any instructions between it and the bytes. A literal pool never
   decodes as code, and a traceback table or an `abort` word no longer fails the
-  build.
+  build. The instruction at the start address decodes even inside a data range.
 - `isa_mode_conflicts`: two edges reached an address carrying different ISA
   modes, and the losing path decodes in the winner's. A direct edge the entry
   reaches without an arm wins over an arm; otherwise the first decode wins by
