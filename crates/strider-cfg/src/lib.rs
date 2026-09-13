@@ -78,11 +78,12 @@ impl Cfg {
         &self.space_ids
     }
 
-    /// Caller-seeded or classifier-derived targets that failed to decode, so
-    /// their edge is absent from this CFG. A misclassified jump-table bound
-    /// reaches past the table and yields addresses that are not code; dropping
-    /// those keeps the rest of the function analysable, and reporting them is
-    /// what stops the CFG being silently incomplete.
+    /// Caller-seeded or classifier-derived targets that failed to decode, or
+    /// led to code that did, so their edge is absent from this CFG. A
+    /// misclassified jump-table bound reaches past the table and yields
+    /// addresses that are not code; dropping those keeps the rest of the
+    /// function analysable, and reporting them is what stops the CFG being
+    /// silently incomplete.
     ///
     /// Each carries the site it was seated from: the same address reached from
     /// another site decodes in that site's own committed context, so the
