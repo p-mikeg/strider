@@ -170,6 +170,17 @@ class Function:
         """Like `to_dot`, but wraps the DOT in a self-contained HTML page.
         Same `pretty` argument, same caveats."""
         ...
+    def to_text(self) -> str:
+        """The canonical text form: one line per node reachable from entry,
+        `outs = op[payload] ins  @{asm addresses}`, after a header of
+        endianness, tracked varnodes, default convention and argument
+        carriers.
+
+        Values are named `%v0`, `%v1`, ... in print order, and the order
+        follows control flow and input slots only, so two builds of the same
+        graph print the same text; diff two runs to see what changed.
+        """
+        ...
     def neighborhood_dot(
         self,
         center: int,
