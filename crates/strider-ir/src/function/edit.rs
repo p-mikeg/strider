@@ -623,8 +623,7 @@ impl<'g> EditFunction<'g> {
         Ok(())
     }
 
-    /// Batched counterpart of [`Graph::remove_node_input`], for a
-    /// **non-cacheable** node.  Out-of-range and duplicate indices are ignored.
+    /// [`Graph::remove_node_inputs_batch`] for a **non-cacheable** node.  Out-of-range and duplicate indices are ignored.
     fn remove_node_inputs_batch(&mut self, node: NodeId, indices: &[u32]) {
         // Snapshot the values at the removed (in-range) slots BEFORE the edit.
         let inputs: smallvec::SmallVec<[ValueId; 8]> =
