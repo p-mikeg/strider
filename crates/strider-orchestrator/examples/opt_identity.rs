@@ -1,7 +1,7 @@
 //! Runs `Strider::analyze` on every function symbol of every fixture ELF and
 //! prints one line per function: `<arch>/<case>::<symbol>@<addr> <digest>`. The
 //! digest covers the final function's raw DOT, its asm-fingerprints, the CFG
-//! DOT, the five report fields, and the error of a failed analysis. Two builds
+//! DOT, the six report fields, and the error of a failed analysis. Two builds
 //! diff line for line; the summed analyze wall time goes to stderr.
 //!
 //! ```text
@@ -122,11 +122,12 @@ fn digest_one(
             text.push_str(&cfg.as_dot()?);
             writeln!(
                 text,
-                "unresolved {:?}\nisa {:?}\ninterior {:?}\nunmapped {:?}\nunverified {:?}",
+                "unresolved {:?}\nisa {:?}\ninterior {:?}\nunmapped {:?}\nundecodable {:?}\nunverified {:?}",
                 r.unresolved_indirect_branches,
                 r.isa_mode_conflicts,
                 r.interior_branch_targets,
                 r.unmapped_branch_targets,
+                r.undecodable_branch_targets,
                 r.unverified_seeded_sites,
             )?;
         }
