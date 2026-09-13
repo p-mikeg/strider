@@ -68,6 +68,11 @@ pub struct AssumptionOptions {
     /// [`escape_analysis`](Self::escape_analysis) or a non-empty
     /// [`noalias_allocators`](Self::noalias_allocators), both off by default.
     /// Set alone it changes nothing.
+    ///
+    /// Honoured by `LoadForward` alone.  Stack-argument collection and the
+    /// jump-table walk pin it off, keeping the full window: both settle a
+    /// structure (a call's arguments, a CFG edge) that outlives the run, where
+    /// a wrong narrowing is not a lost fold but a wrong answer.
     pub callee_preserves_stack_args: bool,
     /// Callee addresses of pure `noalias` heap allocators (`malloc`/`calloc`-like:
     /// a size in, a fresh non-overlapping pointer out, no pointer arguments).
@@ -90,10 +95,12 @@ pub struct AssumptionOptions {
     ///
     /// A shared handle, but not a uniform one: `MemOptions::structural` holds
     /// an EMPTY set alongside the configured analyzer in the same run, and the
-    /// `decompose` memo is keyed by `ValueId` alone, so a walk under the empty
-    /// set reads back a heap base the other one cached.  What keeps that sound
-    /// is `classify_addr`, which drops every heap class when the set is empty,
-    /// leaving the address a may-alias `Anchor`.
+    /// `decompose` memo is keyed by `ValueId` alone.  Both directions of that
+    /// sharing are handled: a heap base the configured walk cached is read back
+    /// under the empty set and dropped by `classify_addr`, leaving the address
+    /// a may-alias `Anchor`, and the empty-set walk withholds the `NotMemory`
+    /// verdict it reaches by not recognising an allocator, so it cannot answer
+    /// the configured one.
     pub noalias_allocators: std::sync::Arc<rustc_hash::FxHashSet<u64>>,
     /// When the function's frame is provably private (no stack address escapes
     /// to any callee), forward a spill `Load` across a `Call` and step it past

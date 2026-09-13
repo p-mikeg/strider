@@ -13,7 +13,8 @@
 //! `escape_analysis`
 //! proves the frame private and the slot is outside the call's
 //! outgoing-argument window, and when it is a listed `noalias_allocators`
-//! callee and the probed location is a stack slot or a different allocation.
+//! callee and the probed location is a PRIVATE-frame stack slot outside that
+//! same window, or a different allocation.
 //!
 //! The pass never synthesizes a value-`Phi`; a control merge is opaque.
 //! Requires `PhiCollapse` to have run, so a trivial `MemPhi` is already gone.
@@ -102,8 +103,10 @@ impl crate::peephole::PeepholePass for LoadForward {
 /// walk as long as the distance from the load to its defining store, it runs
 /// twice per load, and its memo is keyed on the probed location, so loads at
 /// different offsets share nothing.  The cost is loads x memory-chain length.
-/// Later sweeps are near-free, because `narrow_load_to` has already shortened
-/// every load's edge onto its relaxation-free clobber.
+/// `narrow_load_to` shortens only the NARROW walk, onto the structural
+/// clobber; the alias walk keeps stepping past it under the relaxations the
+/// structural options pin off, so its cost is the relaxation-visible chain on
+/// every sweep.
 ///
 /// What bounds it in practice is that a `Call` ends the chain, so optimised
 /// input never builds a long one.  A call-free run of frame traffic does:
@@ -123,6 +126,9 @@ fn try_forward_load(
         .expect("a Load has a memory input (slot 0)");
     let (load_value, load_ty) = edit.single_value_output(load)?;
 
+    // First: `narrow_cfg` stops at more clobbers, so it only reaches addresses
+    // this walk has already decomposed under the configured allocator set, and
+    // its empty set never commits a `NotMemory` for them (see `decompose`).
     let clobber_node = alias_cfg.nearest_clobber(edit.function(), load, mem);
     // Shorten the load's memory edge onto the clobber `narrow_cfg` proves so
     // future walks skip the proven-disjoint run.  Never `alias_cfg`'s: the

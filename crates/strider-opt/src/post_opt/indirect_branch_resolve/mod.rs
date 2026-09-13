@@ -6,8 +6,6 @@
 //! `table::classify_table_dispatch` for rodata jump tables and on-stack label
 //! arrays.  No match leaves the target unresolved.
 
-#![allow(clippy::module_name_repetitions)]
-
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRViewer, IRWalker};
 
