@@ -345,24 +345,26 @@ impl Function {
         }
     }
 
-    /// The `initial_var_index` entries with each key resolved to its varnode.
+    /// The `initial_var_index` entries.
     #[inline]
     pub(crate) fn initial_var_index_entries(
         &self,
-    ) -> impl Iterator<Item = (rsleigh::Vn, NodeId)> + '_ {
+    ) -> impl Iterator<Item = (crate::node::InitialVnId, NodeId)> + '_ {
         self.side_tables
             .initial_var_index
             .iter()
-            .map(|(&vn_id, &id)| (self.initial_vn(vn_id), id))
+            .map(|(&vn_id, &id)| (vn_id, id))
     }
 
-    /// The `value_vn` entries with each tag resolved to its varnode.
+    /// The `value_vn` entries.
     #[inline]
-    pub(crate) fn value_vn_entries(&self) -> impl Iterator<Item = (ValueId, rsleigh::Vn)> + '_ {
+    pub(crate) fn value_vn_entries(
+        &self,
+    ) -> impl Iterator<Item = (ValueId, crate::node::InitialVnId)> + '_ {
         self.side_tables
             .value_vn
             .iter()
-            .map(|(&value, &id)| (value, self.initial_vn(id)))
+            .map(|(&value, &id)| (value, id))
     }
 
     /// The `InitialVar(stack_vn)` node, whose output is the entry SP, or `None`

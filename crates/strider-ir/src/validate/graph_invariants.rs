@@ -6,7 +6,7 @@ use crate::DominatorTree;
 use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
-use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind};
+use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::schedule::{ScheduleContext, schedule_early};
 use crate::walk::{NodeIdSet, PostOrder, WalkPhase};
 
@@ -471,6 +471,34 @@ pub(super) fn check_function_invariants_memory_chain(
     }
 }
 
+/// Every reachable `InitialVar(id)` names a minted varnode and is typed as the
+/// integer of that varnode's size.
+pub(super) fn check_function_invariants_initial_vars(
+    function: &Function,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    let graph = function.graph();
+    for (node, kind) in function.reachable_kind_iter(reachable) {
+        let NodeKind::InitialVar(id) = *kind else {
+            continue;
+        };
+        let Some(vn) = function.initial_vn_opt(id) else {
+            errs.push(ValidationError::DanglingInitialVnId { node, id });
+            continue;
+        };
+        let Some(&out) = graph.node_outputs(node).first() else {
+            continue; // arity reported elsewhere
+        };
+        let ValueKind::Typed(ty) = graph.value_kind(out) else {
+            continue;
+        };
+        if ValueType::int_for_byte_size(vn.size).ok() != Some(ty) {
+            errs.push(ValidationError::InitialVarTypeMismatch { node, vn, ty });
+        }
+    }
+}
+
 /// The side-indices must not have drifted from the live graph.
 ///
 /// * Every reachable `initial_var_index` entry resolves to an
@@ -478,22 +506,24 @@ pub(super) fn check_function_invariants_memory_chain(
 ///   tolerated.
 /// * Every `value_vn` key with a reachable producer is produced by a `Phi` /
 ///   `Call` / `CallOther`.
+///
+/// An entry keyed by an unminted id is a `DanglingInitialVnId`.
 pub(super) fn check_function_invariants_side_indices(
     function: &Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (vn, node) in function.initial_var_index_entries() {
+    for (id, node) in function.initial_var_index_entries() {
         if !reachable.contains(node) {
             continue;
         }
+        let Some(vn) = function.initial_vn_opt(id) else {
+            errs.push(ValidationError::DanglingInitialVnId { node, id });
+            continue;
+        };
         let kind = graph.node_kind(node);
-        // `initial_vn_opt` (not `initial_vn`) so a malformed `InitialVar` id
-        // yields a validation error rather than panicking out of the validator.
-        let matches = matches!(kind, NodeKind::InitialVar(found)
-            if function.initial_vn_opt(*found) == Some(vn));
-        if !matches {
+        if !matches!(kind, NodeKind::InitialVar(found) if *found == id) {
             errs.push(ValidationError::StaleInitialVarIndex {
                 node,
                 vn,
@@ -502,11 +532,15 @@ pub(super) fn check_function_invariants_side_indices(
         }
     }
 
-    for (value, vn) in function.value_vn_entries() {
+    for (value, id) in function.value_vn_entries() {
         let producer = graph.producer(value);
         if !reachable.contains(producer) {
             continue;
         }
+        let Some(vn) = function.initial_vn_opt(id) else {
+            errs.push(ValidationError::DanglingInitialVnId { node: producer, id });
+            continue;
+        };
         let producer_kind = graph.node_kind(producer);
         if !matches!(
             producer_kind,
