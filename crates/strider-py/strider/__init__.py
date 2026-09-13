@@ -67,6 +67,10 @@ from . import explore as explore  # noqa: E402
 lift.ElfLifter = _mod_api.ElfLifter          # type: ignore[attr-defined]
 lift.load_elf = _mod_api.load_elf            # type: ignore[attr-defined]
 _export(lift, "ElfLifter", "load_elf")
+pattern.FieldPat = _mod_api.FieldPat         # type: ignore[attr-defined]
+pattern.field = _mod_api.field               # type: ignore[attr-defined]
+pattern.code_ptr = _mod_api.code_ptr         # type: ignore[attr-defined]
+_export(pattern, "FieldPat", "field", "code_ptr")
 
 # The type aliases live in the .pyi stubs; also bind them at runtime so
 # `p.PatLike` works in an annotation evaluated without
