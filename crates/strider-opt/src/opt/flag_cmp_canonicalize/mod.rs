@@ -83,14 +83,19 @@ impl PeepholePass for FlagCmpCanonicalize {
         _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
-        // Imperative arm: the variable-arity CR pack
-        // `Or(ShiftLeft(ZeroExtend(cmp_i), pos_i)...)` doesn't fit the
-        // fixed-shape `rewrite_rule` DSL.
-        if let Some(cmp) = canonicalize_cr_bit_test(edit, root)? {
-            return Ok(PeepholeRewrite::from_new_value(edit, Some(cmp)));
+        // Killed by the `clean` below after an earlier rewrite orphaned it.
+        if !edit.is_live(root) {
+            return Ok(PeepholeRewrite::NoChange);
         }
-        let opt = RULES.with(|rules| first_matching_rule(rules, edit, root))?;
-        Ok(PeepholeRewrite::from_new_value(edit, opt))
+        let rewrite = rewrite_at(edit, root)?;
+        if let PeepholeRewrite::Changed { .. } = rewrite {
+            // Outermost-first, a redirect lands on a value a later root
+            // redirects again, carrying every consumer the earlier ones moved
+            // onto it; merging twins and culling the orphaned cone now keeps a
+            // chain of nested flag tests linear.
+            edit.clean();
+        }
+        Ok(rewrite)
     }
 
     /// A collapsed `IntCmpOp` cannot expose a fresh flag-tree shape to its
@@ -98,6 +103,17 @@ impl PeepholePass for FlagCmpCanonicalize {
     fn propagate_to_consumers(&self) -> bool {
         false
     }
+}
+
+fn rewrite_at(edit: &mut crate::EditFunction<'_>, root: NodeId) -> Result<PeepholeRewrite> {
+    // Imperative arm: the variable-arity CR pack
+    // `Or(ShiftLeft(ZeroExtend(cmp_i), pos_i)...)` doesn't fit the
+    // fixed-shape `rewrite_rule` DSL.
+    if let Some(cmp) = canonicalize_cr_bit_test(edit, root)? {
+        return Ok(PeepholeRewrite::from_new_value(edit, Some(cmp)));
+    }
+    let opt = RULES.with(|rules| first_matching_rule(rules, edit, root))?;
+    Ok(PeepholeRewrite::from_new_value(edit, opt))
 }
 
 /// The width `width_src` binds, or `None` for a float and past the `u128` the
