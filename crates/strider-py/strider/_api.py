@@ -304,8 +304,10 @@ class ElfLifter(Lifter):
         return iter(self._elf.iter_symbols())
 
     def symbol(self, name: str) -> "Symbol":
-        """The `Symbol` named `name`. Raises `StriderError` when it is not
-        defined in any loaded ELF."""
+        """The `Symbol` named `name`: its definition in the first ELF that
+        defines it, else an undefined symbol that still has an address (a PLT
+        stub, or an object file's extern). Raises `StriderError` when there is
+        neither."""
         return self._elf.symbol(name)
 
     def symbol_opt(self, name: str) -> Optional["Symbol"]:
