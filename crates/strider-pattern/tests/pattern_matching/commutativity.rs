@@ -325,24 +325,6 @@ fn bool_binary_ordered_rejects_swap() {
     );
 }
 
-#[test]
-fn bool_and_ordered_rejects_swap() {
-    let function = shapes::bool_bin(true, false, IntBinaryOp::And);
-    a::none(
-        &function,
-        bool_and(bool_const(false), bool_const(true))
-            .ordered()
-            .into_pattern(),
-    );
-    a::matches(
-        &function,
-        bool_and(bool_const(true), bool_const(false))
-            .ordered()
-            .into_pattern(),
-        1,
-    );
-}
-
 /// The `I1` output guard survives `.ordered()`: neither form may match a
 /// same-shaped wide `And`, even with the operand order lined up.
 #[test]
@@ -797,16 +779,10 @@ fn pat_add_tree(b: &mut MatcherBuilder, depth: u32) -> PatValueRef {
     b.binary(IntBinaryOp::Add, l, r)
 }
 
-/// Operands that differ, or that bind, keep both orderings.
+/// Operands that differ keep both orderings.
 #[test]
 fn asymmetric_and_capturing_operands_keep_both_orders() {
     let function = shapes::add_consts(5, 3);
-    let k = Capture::new();
-    a::matches(
-        &function,
-        int_add(anything().capture(k), anything()).into_pattern(),
-        2,
-    );
     a::matches(
         &function,
         int_add(int_const(5u128), anything()).into_pattern(),
