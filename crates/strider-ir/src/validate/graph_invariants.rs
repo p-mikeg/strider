@@ -686,6 +686,127 @@ pub(super) fn check_function_invariants_memory_linearity(
             errs.push(ValidationError::LostStore { node });
         }
     }
+    check_memory_order(ctx, &on_chain, errs);
+}
+
+/// Memory state follows control: every read of it takes the latest memory
+/// effect on each path in.
+///
+/// A control node's state is the nearest memory effect dominating it: the
+/// entry, a `Region` with a `MemPhi` on the chain, a `Call` whose convention
+/// does not preserve memory, or a `Call` / `CallOther` on the chain. A memory
+/// input steps back through `Store`s to one of these, which must be the state
+/// before its consumer. A `MemPhi` arm must be its edge's state, and at a
+/// `Region` with no such `MemPhi` every live edge carries the state the
+/// `Region`'s immediate dominator has.
+fn check_memory_order(
+    ctx: &ScheduleContext<'_>,
+    on_chain: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    let function = ctx.function;
+    let graph = function.graph();
+    let tree = &ctx.domtree;
+    let chain_mem_phis = |region: NodeId| {
+        ctx.attached_phis(region).filter(|&phi| {
+            matches!(graph.node_kind(phi), NodeKind::MemPhi) && on_chain.contains(phi)
+        })
+    };
+    let is_effect = |node: NodeId| match graph.node_kind(node) {
+        NodeKind::Entry => true,
+        NodeKind::Region => chain_mem_phis(node).next().is_some(),
+        NodeKind::Call { .. } => !function.get_cc(node).preserves_memory || on_chain.contains(node),
+        NodeKind::CallOther { .. } => on_chain.contains(node),
+        _ => false,
+    };
+
+    // The effect a memory token was last advanced by, memoized per `Store`.
+    let mut store_origin: SecondaryMap<NodeId, Option<NodeId>> = SecondaryMap::new();
+    let mut stores: Vec<NodeId> = Vec::new();
+    let mut origin = |value: ValueId| {
+        let mut producer = graph.value_definition(value).0;
+        let found = loop {
+            match graph.node_kind(producer) {
+                NodeKind::Store(_) => {
+                    if let Some(known) = store_origin[producer] {
+                        break known;
+                    }
+                    stores.push(producer);
+                    producer = graph
+                        .value_definition(graph.nth_input(producer, 0).expect("a Store has memory"))
+                        .0;
+                }
+                NodeKind::MemPhi => {
+                    let token = graph.nth_input(producer, 0).expect("a phi has a token");
+                    break graph.value_definition(token).0;
+                }
+                NodeKind::InitialMemory => break tree.root(),
+                _ => break producer,
+            }
+        };
+        for store in stores.drain(..) {
+            store_origin[store] = Some(found);
+        }
+        found
+    };
+
+    // Pre-order with a stack of ancestors: the top that dominates a node is its
+    // immediate dominator.
+    let mut state: SecondaryMap<NodeId, Option<NodeId>> = SecondaryMap::new();
+    let mut idom: SecondaryMap<NodeId, Option<NodeId>> = SecondaryMap::new();
+    let mut ancestors: Vec<NodeId> = Vec::new();
+    for &node in tree.preorder() {
+        while ancestors.last().is_some_and(|&a| !tree.dominates(a, node)) {
+            ancestors.pop();
+        }
+        let parent = ancestors.last().copied();
+        idom[node] = parent;
+        let before = parent.and_then(|p| state[p]);
+        state[node] = if is_effect(node) { Some(node) } else { before };
+        ancestors.push(node);
+
+        // Of the control nodes, exactly the memory readers take Memory there.
+        let memory = graph
+            .nth_input(node, 1)
+            .filter(|&v| graph.value_kind(v) == ValueKind::Memory);
+        if let (Some(memory), Some(effect)) = (memory, before)
+            && origin(memory) != effect
+        {
+            errs.push(ValidationError::MemoryRewind { node, effect });
+        }
+    }
+
+    for &region in tree.preorder() {
+        if !matches!(graph.node_kind(region), NodeKind::Region) {
+            continue;
+        }
+        let edge_states = graph
+            .node_inputs(region)
+            .into_iter()
+            .map(|edge| state[graph.value_definition(edge).0]);
+        if is_effect(region) {
+            for phi in chain_mem_phis(region) {
+                let arms = graph.node_inputs(phi).into_iter().skip(1);
+                for (arm, edge_state) in arms.zip(edge_states.clone()) {
+                    if let Some(effect) = edge_state
+                        && origin(arm) != effect
+                    {
+                        errs.push(ValidationError::MemoryRewind { node: phi, effect });
+                    }
+                }
+            }
+        } else {
+            let merged = idom[region].and_then(|d| state[d]);
+            for effect in edge_states.flatten() {
+                if Some(effect) != merged {
+                    errs.push(ValidationError::MemoryRewind {
+                        node: region,
+                        effect,
+                    });
+                }
+            }
+        }
+    }
 }
 
 /// A phi's value inputs on edges from a node of `tree`.
