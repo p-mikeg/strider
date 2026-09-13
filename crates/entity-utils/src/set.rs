@@ -3,7 +3,10 @@ use core::marker::PhantomData;
 use cranelift_bitset::CompoundBitSet;
 use cranelift_entity::EntityRef;
 
-/// O(1) membership and update, keyed on the entity's integer index.
+/// O(1) membership and insert, keyed on the entity's integer index.
+/// [`remove`](DenseEntitySet::remove), [`len`](DenseEntitySet::len),
+/// [`is_empty`](DenseEntitySet::is_empty) and [`iter`](DenseEntitySet::iter)
+/// are not.
 #[derive(Clone, Debug)]
 pub struct DenseEntitySet<E> {
     bitset: CompoundBitSet,
@@ -42,6 +45,10 @@ impl<E: EntityRef> DenseEntitySet<E> {
         self.bitset.insert(entity.index())
     }
 
+    /// NOT O(1) when `entity` is the set's current maximum: the backing
+    /// bitset then rescans down for the new maximum, so O(max_index / 64).
+    /// A path-stack that empties repeatedly wants a
+    /// `SecondaryMap<_, bool>` instead.
     pub fn remove(&mut self, entity: E) {
         self.bitset.remove(entity.index());
     }
