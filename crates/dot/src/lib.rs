@@ -56,20 +56,20 @@ impl DotStyle {
         Self {
             graph: vec![
                 ("rankdir", "TB"),
-                ("bgcolor", "\"#1e1e1e\""),
+                ("bgcolor", "#1e1e1e"),
                 ("fontcolor", "white"),
             ],
             node: vec![
                 ("shape", "box"),
-                ("style", "\"filled,rounded\""),
-                ("fillcolor", "\"#2d2d2d\""),
-                ("color", "\"#888888\""),
+                ("style", "filled,rounded"),
+                ("fillcolor", "#2d2d2d"),
+                ("color", "#888888"),
                 ("fontcolor", "white"),
                 ("fontname", fontname),
                 ("margin", "0.2"),
             ],
             edge: vec![
-                ("color", "\"#aaaaaa\""),
+                ("color", "#aaaaaa"),
                 ("fontcolor", "white"),
                 ("penwidth", "1.2"),
             ],
@@ -200,11 +200,8 @@ impl DotEmitter {
         Self { out: s }
     }
 
-    /// `id` and `label` are escaped and quoted; `shape` is spliced RAW. Of
-    /// `extra`, only a `"label"` key is escaped and quoted; every other
-    /// value, `xlabel` and `tooltip` included, is inserted verbatim and the
-    /// caller owns quoting it (a hex colour needs its own `"..."`, a bare ident
-    /// like `dashed` does not).
+    /// `id`, `label`, `shape` and every `extra` value are escaped and quoted,
+    /// so a value is passed bare (`#ffcc00`, not `"#ffcc00"`).
     pub fn node(&mut self, id: &str, label: &str, shape: &str, extra: &[(&str, &str)]) {
         self.node_inner(id, &escape_dot_label(label), shape, extra);
     }
@@ -213,10 +210,10 @@ impl DotEmitter {
         let id = escape_dot_label(id);
         self.out.push_str("  \"");
         self.out.push_str(&id);
-        self.out.push_str("\" [label=\"");
-        self.out.push_str(escaped_label);
-        self.out.push_str("\", shape=");
-        self.out.push_str(shape);
+        self.out.push_str("\" [");
+        push_quoted_attr(&mut self.out, "label", escaped_label);
+        self.out.push_str(", ");
+        push_attr(&mut self.out, "shape", shape);
 
         for (k, v) in extra {
             self.out.push_str(", ");
@@ -233,8 +230,8 @@ impl DotEmitter {
         self.node_inner(id, &escape_dot_label_keep_breaks(label), shape, extra);
     }
 
-    /// Endpoints are escaped; `extra` follows the same caller-quotes-the-value
-    /// contract as [`DotEmitter::node`].
+    /// Endpoints and `extra` values are escaped and quoted, as in
+    /// [`DotEmitter::node`].
     pub fn edge(&mut self, from: &str, to: &str, extra: &[(&str, &str)]) {
         let from = escape_dot_label(from);
         let to = escape_dot_label(to);
@@ -264,23 +261,18 @@ impl DotEmitter {
     }
 }
 
-/// Appends one `key=value` attribute; callers supply their own framing
-/// (leading comma, separator, bracket block).
-///
-/// `label` is the one exception to the caller-owns-quoting contract: its value
-/// is free text, and a DOT-special character in it (a hyphen, colon, space)
-/// makes Graphviz abort with "syntax error near '-'". So labels are quoted and
-/// escaped here; everything else is passed through as given.
+/// Appends one `key="value"` attribute, the value escaped; callers supply
+/// their own framing (leading comma, separator, bracket block).
 fn push_attr(out: &mut String, k: &str, v: &str) {
+    push_quoted_attr(out, k, &escape_dot_label(v));
+}
+
+/// [`push_attr`] for a value the caller already escaped.
+fn push_quoted_attr(out: &mut String, k: &str, escaped: &str) {
     out.push_str(k);
-    out.push('=');
-    if k == "label" {
-        out.push('"');
-        out.push_str(&escape_dot_label(v));
-        out.push('"');
-    } else {
-        out.push_str(v);
-    }
+    out.push_str("=\"");
+    out.push_str(escaped);
+    out.push('"');
 }
 
 fn emit_attr_block(out: &mut String, name: &str, attrs: &[(&str, &str)]) {
@@ -532,10 +524,19 @@ mod attr_quoting_tests {
             !dot.contains("label=if-false"),
             "raw unquoted label present:\n{dot}"
         );
-        // Non-label attrs keep the caller-owns-quoting contract.
+        assert!(dot.contains("style=\"dashed\""), "style not quoted:\n{dot}");
+    }
+
+    /// Every attribute value is free text to the emitter, so a quote or a
+    /// newline in one cannot end the value early.
+    #[test]
+    fn non_label_attr_value_is_escaped() {
+        let mut e = DotEmitter::new("G", &DotStyle::empty());
+        e.node("n0", "lbl", "box", &[("tooltip", "say \"hi\"\nbye")]);
+        let dot = e.finish();
         assert!(
-            dot.contains("style=dashed"),
-            "style should stay bare:\n{dot}"
+            dot.contains("tooltip=\"say \\\"hi\\\"\\nbye\""),
+            "tooltip not escaped:\n{dot}"
         );
     }
 

@@ -41,50 +41,50 @@ pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
 /// Dark-theme fill color.
 pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
     match kind {
-        NodeKind::Entry | NodeKind::InitialMemory | NodeKind::InitialVar(_) => "\"#1a3a5c\"",
+        NodeKind::Entry | NodeKind::InitialMemory | NodeKind::InitialVar(_) => "#1a3a5c",
 
-        NodeKind::Region => "\"#2a1a4a\"",
+        NodeKind::Region => "#2a1a4a",
 
-        NodeKind::Phi | NodeKind::MemPhi => "\"#163030\"",
+        NodeKind::Phi | NodeKind::MemPhi => "#163030",
 
-        NodeKind::If => "\"#3a2a10\"",
+        NodeKind::If => "#3a2a10",
 
-        NodeKind::Load(_) | NodeKind::Store(_) => "\"#102030\"",
+        NodeKind::Load(_) | NodeKind::Store(_) => "#102030",
 
-        NodeKind::Call { .. } => "\"#3a1010\"",
-        NodeKind::CallOther { .. } => "\"#3a2810\"", // amber: opaque intrinsic
-        NodeKind::CPoolRef => "\"#2a1a3a\"",         // violet: JVM metadata
-        NodeKind::New => "\"#103a2a\"",              // dark green: allocation
+        NodeKind::Call { .. } => "#3a1010",
+        NodeKind::CallOther { .. } => "#3a2810", // amber: opaque intrinsic
+        NodeKind::CPoolRef => "#2a1a3a",         // violet: JVM metadata
+        NodeKind::New => "#103a2a",              // dark green: allocation
 
-        NodeKind::Return | NodeKind::IndirectBranch => "\"#103a10\"",
+        NodeKind::Return | NodeKind::IndirectBranch => "#103a10",
 
         NodeKind::FloatConst(_)
         | NodeKind::FloatBinaryOp(_)
         | NodeKind::FloatUnaryOp(_)
-        | NodeKind::FloatCmpOp(_) => "\"#1a3020\"", // dark green
+        | NodeKind::FloatCmpOp(_) => "#1a3020", // dark green
 
         NodeKind::IntToFloat
         | NodeKind::FloatToInt
         | NodeKind::FloatToFloat
         | NodeKind::IntBitsToFloat
-        | NodeKind::FloatBitsToInt => "\"#302018\"", // dark amber
+        | NodeKind::FloatBitsToInt => "#302018", // dark amber
 
-        _ => "\"#2d2d2d\"",
+        _ => "#2d2d2d",
     }
 }
 
 pub(super) fn role_color(role: SlotRole) -> &'static str {
     match role {
-        SlotRole::Control => "\"#00cccc\"",             // aqua
-        SlotRole::Memory => "\"#cc88aa\"",              // pink
-        SlotRole::Phi | SlotRole::In => "\"#dddddd\"",  // white
-        SlotRole::Lhs => "\"#4488ff\"",                 // blue
-        SlotRole::Rhs => "\"#ff4444\"",                 // red
-        SlotRole::Val | SlotRole::Ret => "\"#88cc88\"", // green
-        SlotRole::Addr => "\"#cc88ff\"",                // purple
-        SlotRole::Data | SlotRole::Arg | SlotRole::Ref => "\"#ff8800\"", // orange
-        SlotRole::Target | SlotRole::Sp => "\"#ffdd44\"", // yellow
-        SlotRole::Cond => "\"#ff44ff\"",                // magenta
+        SlotRole::Control => "#00cccc",                              // aqua
+        SlotRole::Memory => "#cc88aa",                               // pink
+        SlotRole::Phi | SlotRole::In => "#dddddd",                   // white
+        SlotRole::Lhs => "#4488ff",                                  // blue
+        SlotRole::Rhs => "#ff4444",                                  // red
+        SlotRole::Val | SlotRole::Ret => "#88cc88",                  // green
+        SlotRole::Addr => "#cc88ff",                                 // purple
+        SlotRole::Data | SlotRole::Arg | SlotRole::Ref => "#ff8800", // orange
+        SlotRole::Target | SlotRole::Sp => "#ffdd44",                // yellow
+        SlotRole::Cond => "#ff44ff",                                 // magenta
     }
 }
 
@@ -99,7 +99,7 @@ pub(super) fn edge_style<R: MemReader>(
     let sig = expected_signature(kind);
     match sig.inputs.at(input_idx) {
         Some(slot) => (slot.name, role_color(slot.role)),
-        None => ("", "\"#cccccc\""),
+        None => ("", "#cccccc"),
     }
 }
 
@@ -117,6 +117,39 @@ pub struct FunctionDotDumper<'a, R: MemReader> {
     pub(crate) nodes: Option<FxHashSet<NodeId>>,
     /// Focus of a neighbourhood render, drawn with a highlight border.
     pub(crate) center: Option<NodeId>,
+    /// Newline-joined texts of the validation errors naming each node, drawn
+    /// with a red border and shown as its tooltip.
+    pub(crate) errors: FxHashMap<NodeId, String>,
+}
+
+impl<R: MemReader> FunctionDotDumper<'_, R> {
+    /// Marks every node `errors` names.
+    #[must_use]
+    pub fn with_validation_errors(mut self, errors: &crate::validate::ValidationErrors) -> Self {
+        for err in &errors.0 {
+            let text = err.to_string();
+            for node in err.nodes() {
+                let tooltip = self.errors.entry(node).or_default();
+                if !tooltip.is_empty() {
+                    tooltip.push('\n');
+                }
+                tooltip.push_str(&text);
+            }
+        }
+        self
+    }
+
+    /// Border and tooltip attributes for `node`: red for an error, else the
+    /// neighbourhood highlight.
+    pub(super) fn highlight(&self, node: NodeId) -> Vec<(&'static str, &str)> {
+        if let Some(text) = self.errors.get(&node) {
+            vec![("color", "#ff3333"), ("penwidth", "3"), ("tooltip", text)]
+        } else if self.center == Some(node) {
+            vec![("color", "#ffcc00"), ("penwidth", "2.5")]
+        } else {
+            Vec::new()
+        }
+    }
 }
 
 /// A carrier's argument annotation. The integer and float index spaces are

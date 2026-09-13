@@ -220,7 +220,9 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     pub(super) fn emit_const_node(&self, node: NodeId, dot_id: &str, out: &mut ::dot::DotEmitter) {
         let fc = node_fillcolor(self.function.node_kind(node));
         let label = self.pretty_label(node);
-        out.node(dot_id, &label, "ellipse", &[("fillcolor", fc)]);
+        let mut extra = vec![("fillcolor", fc)];
+        extra.extend(self.highlight(node));
+        out.node(dot_id, &label, "ellipse", &extra);
     }
 
     /// Label for a Call / CallOther output past `[Control, Memory]`, taken from
