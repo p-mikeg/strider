@@ -26,7 +26,7 @@ fn classify_target_with_rom(
     rom: Option<&dyn strider_orchestrator::opt::ReadOnlyMemory>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
     let known = analyze_known_bits(view)?;
-    let doms = strider_ir::control_dominators(view);
+    let doms = strider_ir::control_dominator_tree(view);
     let mut ranges = compute_value_ranges(view, &doms, &known);
     let branch = view
         .walk()

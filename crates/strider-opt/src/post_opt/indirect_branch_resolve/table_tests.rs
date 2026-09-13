@@ -19,10 +19,10 @@ fn make_known_and_doms(
     fg: &Function,
 ) -> (
     crate::KnownBitsMap,
-    petgraph::algo::dominators::Dominators<strider_ir::node::NodeId>,
+    strider_ir::DominatorTree<strider_ir::node::NodeId>,
 ) {
     let known = crate::analyze_known_bits(fg).expect("kb analyze");
-    let doms = strider_ir::control_dominators(fg);
+    let doms = strider_ir::control_dominator_tree(fg);
     (known, doms)
 }
 
