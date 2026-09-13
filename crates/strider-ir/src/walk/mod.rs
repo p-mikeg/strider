@@ -266,7 +266,7 @@ fn is_memory_chain_kind(kind: &NodeKind) -> bool {
         NodeKind::InitialMemory
             | NodeKind::Store(_)
             | NodeKind::Load(_)
-            | NodeKind::Call
+            | NodeKind::Call { .. }
             | NodeKind::CallOther { .. }
             | NodeKind::MemPhi
     )
@@ -1058,7 +1058,7 @@ mod tests {
                     NodeKind::InitialMemory
                         | NodeKind::Store(_)
                         | NodeKind::Load(_)
-                        | NodeKind::Call
+                        | NodeKind::Call { .. }
                         | NodeKind::CallOther { .. }
                         | NodeKind::MemPhi
                 ),

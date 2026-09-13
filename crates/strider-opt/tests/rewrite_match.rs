@@ -190,7 +190,7 @@ fn rewrite_rule_on_call_root_returns_err() {
     let rule = rewrite_rule_runtime(call().build(), int_const(0u128).into_template()).unwrap();
     let call_node = function
         .walk()
-        .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
+        .find(|n| matches!(function.node_kind(*n), NodeKind::Call { .. }))
         .expect("Call node");
     let err = {
         let mut ctx = EditFunction::new(&mut function);

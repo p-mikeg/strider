@@ -153,9 +153,10 @@ how their `tests/` integration targets get a feature (`test-injectors`,
 
 - Initial: `Entry`, `InitialMemory`, `InitialVar(InitialVnId)`.
 - Region / phi: `Region`, `MemPhi`, `Phi`.
-- Control: `If`, `Switch`, `IndirectBranch` (unresolved placeholder),
-  `Unreachable` (no-return sink), `Return`.
-- Calls: `Call`, `CallOther { user_op_id }`.
+- Control: `If`, `Switch(SwitchTableId)`, `IndirectBranch` (unresolved
+  placeholder), `Unreachable` (no-return sink), `Return`.
+- Calls: `Call { cc: Option<CcId> }` (`None` is `default_cc`),
+  `CallOther { user_op_id }`.
 - Memory: `Load(VnSpace)`, `Store(VnSpace)`.
 - Integer (incl. booleans): `IntConst(ConstId)`, `IntUnaryOp`, `IntBinaryOp`,
   `IntCmpOp`, `Truncate`, `Extend(ExtendOp)`, `Popcount`, `Lzcount`.

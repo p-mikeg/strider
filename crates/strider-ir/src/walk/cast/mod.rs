@@ -32,8 +32,8 @@ pub const fn cast_mask_of(kind: &NodeKind) -> CastMask {
         | NodeKind::Phi
         | NodeKind::MemPhi
         | NodeKind::If
-        | NodeKind::Switch
-        | NodeKind::Call
+        | NodeKind::Switch(_)
+        | NodeKind::Call { .. }
         | NodeKind::CallOther { .. }
         | NodeKind::Return
         | NodeKind::IndirectBranch

@@ -616,7 +616,7 @@ mod tests {
         let call = function
             .graph()
             .all_node_ids()
-            .find(|&n| matches!(function.node_kind(n), NodeKind::Call))
+            .find(|&n| matches!(function.node_kind(n), NodeKind::Call { .. }))
             .expect("Call present");
         let inputs = function.node_inputs(call);
         assert_eq!(

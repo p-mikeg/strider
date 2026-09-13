@@ -177,10 +177,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         }
 
         if let Some(cc) = override_cc {
-            self.builder
-                .function_mut()
-                .side_tables_mut()
-                .set_call_cc(call, cc.clone());
+            self.builder.function_mut().set_call_cc(call, cc.clone());
         }
         Ok(())
     }
@@ -307,7 +304,7 @@ mod tests {
         b.build_switch(idx, &arms).expect("build_switch");
         let function = b.build().expect("build");
         let switches: Vec<_> = function
-            .walk_kind(|k| matches!(k, NodeKind::Switch))
+            .walk_kind(|k| matches!(k, NodeKind::Switch(_)))
             .collect();
         assert_eq!(switches.len(), 1, "exactly one Switch node");
         assert_eq!(

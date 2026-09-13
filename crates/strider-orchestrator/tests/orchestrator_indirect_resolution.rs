@@ -188,12 +188,14 @@ fn outer_loop_resolves_via_stack_load_forward_for_x86_64_push_pop() {
 /// call.
 fn call_to(function: &strider_ir::Function, target: u64) -> Option<strider_ir::node::NodeId> {
     function.walk().find(|&nid| {
-        matches!(function.node_kind(nid), strider_ir::node::NodeKind::Call)
-            && function
-                .node_inputs(nid)
-                .into_iter()
-                .nth(2)
-                .is_some_and(|value| function.int_const_u128(value) == Some(u128::from(target)))
+        matches!(
+            function.node_kind(nid),
+            strider_ir::node::NodeKind::Call { .. }
+        ) && function
+            .node_inputs(nid)
+            .into_iter()
+            .nth(2)
+            .is_some_and(|value| function.int_const_u128(value) == Some(u128::from(target)))
     })
 }
 
@@ -202,7 +204,12 @@ fn call_to(function: &strider_ir::Function, target: u64) -> Option<strider_ir::n
 fn call_targets(function: &strider_ir::Function) -> Vec<u128> {
     function
         .walk()
-        .filter(|&nid| matches!(function.node_kind(nid), strider_ir::node::NodeKind::Call))
+        .filter(|&nid| {
+            matches!(
+                function.node_kind(nid),
+                strider_ir::node::NodeKind::Call { .. }
+            )
+        })
         .filter_map(|nid| {
             function
                 .node_inputs(nid)
