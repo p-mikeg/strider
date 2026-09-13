@@ -2,7 +2,7 @@ use std::hash::Hash;
 
 use cranelift_entity::{EntityRef, SecondaryMap};
 use entity_utils::DenseEntitySet;
-use petgraph::visit::{Dfs, GraphBase, IntoNeighbors, VisitMap, Visitable, Walker};
+use petgraph::visit::{GraphBase, IntoNeighbors, VisitMap, Visitable};
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
@@ -68,7 +68,8 @@ impl Visitable for ControlFlowView<'_> {
     }
 }
 
-/// Cooper-Harvey-Kennedy dominators of the control subgraph.
+/// Cooper-Harvey-Kennedy dominators of the control subgraph, quadratic on a
+/// long `if (c) goto err;` ladder; [`control_dominator_tree`] is not.
 pub fn control_dominators(function: &Function) -> petgraph::algo::dominators::Dominators<NodeId> {
     let entry = function.entry();
     petgraph::algo::dominators::simple_fast(&ControlFlowView::new(function), entry)
@@ -86,12 +87,13 @@ impl<K: EntityRef + Hash> DominatorTree<K> {
     /// Over the vertices `graph` reaches from `root`.
     fn compute<G>(graph: G, root: K) -> Self
     where
-        G: IntoNeighbors<NodeId = K> + Visitable,
+        G: IntoNeighbors<NodeId = K>,
     {
-        let doms = petgraph::algo::dominators::simple_fast(graph, root);
-        let mut edges: Vec<(K, K)> = Dfs::new(graph, root)
-            .iter(graph)
-            .filter_map(|v| doms.immediate_dominator(v).map(|d| (d, v)))
+        let doms = graph_algorithms::dominance::dominators(root, |v| graph.neighbors(v));
+        let mut edges: Vec<(K, K)> = doms
+            .vertices()
+            .iter()
+            .filter_map(|&v| doms.immediate_dominator(v).map(|d| (d, v)))
             .collect();
         edges.sort_unstable_by_key(|&(d, v)| (d.index(), v.index()));
         let mut span: SecondaryMap<K, (u32, u32)> = SecondaryMap::new();
@@ -993,5 +995,48 @@ mod tests {
             }
             assert!(held >= 3, "fixture {i}: vacuous split tree");
         }
+    }
+
+    /// `if (c) goto err;` `n` times: every rung also edges into one shared
+    /// error region.
+    fn error_ladder(n: usize) -> crate::error::Result<Function> {
+        let mut b = empty_builder()?;
+        let rungs: Vec<_> = (0..n)
+            .map(|_| b.create_region_all())
+            .collect::<crate::error::Result<_>>()?;
+        let (err, done) = (b.create_region_all()?, b.create_region_all()?);
+        b.set_entry_region_all(rungs[0])?;
+        b.set_lift_addr(Some(0x6000));
+        for (i, &rung) in rungs.iter().enumerate() {
+            b.set_region(rung);
+            let cond = b.build_boolean_const(true);
+            b.build_if(cond, err, rungs.get(i + 1).copied().unwrap_or(done))?;
+        }
+        for region in [err, done] {
+            b.set_region(region);
+            b.build_function_return()?;
+        }
+        b.build()
+    }
+
+    #[test]
+    fn dominator_tree_build_is_near_linear_on_an_error_ladder() {
+        fn build_tree(n: usize) -> std::time::Duration {
+            let f = error_ladder(n).expect("ladder builds");
+            let start = std::time::Instant::now();
+            let tree = control_dominator_tree(&f);
+            let elapsed = start.elapsed();
+            assert!(tree.contains(f.entry()));
+            elapsed
+        }
+        build_tree(500);
+        let small = build_tree(1_000);
+        let large = build_tree(16_000);
+        // Linear would be 16x; quadratic 256x.
+        assert!(
+            large.as_secs_f64() < small.as_secs_f64() * 40.0,
+            "16x the rungs cost {:.1}x the build ({small:?} -> {large:?})",
+            large.as_secs_f64() / small.as_secs_f64(),
+        );
     }
 }
