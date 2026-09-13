@@ -115,7 +115,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let mut output_vns: Vec<rsleigh::Vn> = result_vn.into_iter().collect();
         output_vns.extend_from_slice(&clobber_vns);
 
-        let (node, outputs) = self
+        let (_, outputs) = self
             .builder
             .build_call_other(
                 user_op_id,
@@ -127,8 +127,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             .with_context(|| format!("CallOther {name:?}: output and clobber vns"))?;
         self.builder
             .function_mut()
-            .side_tables_mut()
-            .set_call_other_name(node, name);
+            .set_call_other_name(user_op_id, name);
         let (ret_vals, clobbers) = outputs.split_at(result_vn.iter().count());
 
         // Full-container writes: an opaque intrinsic defines the whole

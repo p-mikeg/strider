@@ -195,10 +195,10 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // One Control output per target region, in target order. No default
         // arm, and the arms need not cover every dispatch value: a site the
         // resolver seated early can hold one arm and widen later.
-        NodeKind::Switch => sig!(inputs: [CTRL, INT_VAL], outputs: [CTRL]; out_tail: CTRL),
+        NodeKind::Switch(_) => sig!(inputs: [CTRL, INT_VAL], outputs: [CTRL]; out_tail: CTRL),
 
         // SP is an input-only anchor; the outputs are the clobbered varnodes.
-        NodeKind::Call => sig!(
+        NodeKind::Call { .. } => sig!(
             inputs: [CTRL, MEM, TARGET, SP]; in_tail: ARG,
             outputs: [CTRL, MEM]; out_tail: ANY_VAL,
         ),
@@ -336,7 +336,7 @@ mod tests {
 
     #[test]
     fn expected_signature_call() {
-        let (inputs, outputs) = kinds(&NodeKind::Call);
+        let (inputs, outputs) = kinds(&NodeKind::Call { cc: None });
         assert_eq!(
             inputs,
             vec![
@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn call_is_variadic_in_args() {
-        let sig = expected_signature(&NodeKind::Call);
+        let sig = expected_signature(&NodeKind::Call { cc: None });
         assert!(sig.inputs.tail.is_some());
         assert_eq!(sig.inputs.head.len(), 4);
         assert_eq!(sig.inputs.at(0).unwrap().name, "ctrl");
@@ -472,8 +472,8 @@ mod tests {
             NodeKind::MemPhi,
             NodeKind::Phi,
             NodeKind::If,
-            NodeKind::Switch,
-            NodeKind::Call,
+            NodeKind::Switch(crate::node::SwitchTableId::from_u32(0)),
+            NodeKind::Call { cc: None },
             NodeKind::Return,
             NodeKind::IndirectBranch,
             NodeKind::Unreachable,
@@ -515,8 +515,8 @@ mod tests {
             NodeKind::MemPhi => 4,
             NodeKind::Phi => 5,
             NodeKind::If => 6,
-            NodeKind::Switch => 7,
-            NodeKind::Call => 8,
+            NodeKind::Switch(_) => 7,
+            NodeKind::Call { .. } => 8,
             NodeKind::Return => 9,
             NodeKind::IndirectBranch => 10,
             NodeKind::Unreachable => 11,
@@ -595,7 +595,7 @@ mod tests {
             (NodeKind::Region, K::Control),
             (NodeKind::MemPhi, K::Memory),
             (NodeKind::Phi, K::AnyValue),
-            (NodeKind::Call, K::AnyValue),
+            (NodeKind::Call { cc: None }, K::AnyValue),
             (NodeKind::CallOther { user_op_id: 0 }, K::AnyValue),
             (NodeKind::Return, K::AnyValue),
             (NodeKind::CPoolRef, K::AnyInt),
@@ -610,7 +610,7 @@ mod tests {
             assert_eq!(tail.kind, *expected, "input tail kind for {k:?}");
         }
 
-        let sig = expected_signature(&NodeKind::Call);
+        let sig = expected_signature(&NodeKind::Call { cc: None });
         let tail = sig
             .outputs
             .tail
@@ -620,7 +620,7 @@ mod tests {
 
     #[test]
     fn expected_signature_switch_is_ctrl_val_in_variadic_ctrl_out() {
-        let sig = expected_signature(&NodeKind::Switch);
+        let sig = expected_signature(&NodeKind::Switch(crate::node::SwitchTableId::from_u32(0)));
         assert_eq!(sig.inputs.head.len(), 2);
         assert!(sig.inputs.tail.is_none(), "switch inputs are fixed-arity");
         assert!(

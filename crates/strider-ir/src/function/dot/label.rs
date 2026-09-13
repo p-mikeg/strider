@@ -176,7 +176,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             NodeKind::CallOther { user_op_id } => {
                 let name_prefix = self
                     .function
-                    .side_tables()
                     .call_other_name(node)
                     .map(|n| format!("{n} "))
                     .unwrap_or_default();
@@ -188,10 +187,9 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             NodeKind::CPoolRef => format!("CPoolRef{}", self.out_type_suffix(node, ":")),
             NodeKind::New => format!("New{}", self.out_type_suffix(node, ":")),
 
-            NodeKind::Switch => {
+            NodeKind::Switch(_) => {
                 let cases: String = self
                     .function
-                    .side_tables()
                     .switch_targets(node)
                     .iter()
                     .map(|a| format!("\n0x{a:x}"))
@@ -199,6 +197,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 format!("Switch{cases}")
             }
 
+            NodeKind::Call { .. } => "Call".to_string(),
             _ => format!("{kind:?}"),
         }
     }

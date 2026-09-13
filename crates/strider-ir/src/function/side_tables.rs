@@ -60,14 +60,11 @@ where
 /// of the graph's structural identity.
 #[derive(Default, Clone)]
 pub struct SideTables {
-    pub(crate) call_other_names: FxHashMap<NodeId, String>,
     /// Machine-instruction addresses whose lifting or rewrite contributed to
     /// each node's value.
     asm_fingerprints: UnionDag<NodeId, u64>,
     /// The tracked varnode a value represents, at most one per value.
     pub(crate) value_vn: FxHashMap<ValueId, crate::node::InitialVnId>,
-    /// Per-`Call` override calling convention.
-    pub(crate) call_cc: FxHashMap<NodeId, strider_target::BuiltCallingConvention>,
     /// Per-class CC argument index to the carrier nodes' output values
     /// (`InitialVar` for register args, `Load` for stack args).
     arg_index_to_values: FxHashMap<(ArgClass, u32), Vec<ValueId>>,
@@ -78,9 +75,6 @@ pub struct SideTables {
     /// share both.
     memory_offsets: RefCell<SecondaryMap<ValueId, MemDecomp>>,
     memory_interner: RefCell<EntityInterner<MemoryId, (ValueId, i128)>>,
-    /// Per-output case target addresses for a `Switch`: machine addresses, not
-    /// arena ids.
-    switch_targets: FxHashMap<NodeId, Vec<u64>>,
     /// `InitialVnId` to `InitialVar(id)` node index. Accessors trust it; the
     /// validator re-checks reachable entries against the node's kind
     /// (`StaleInitialVarIndex`).
@@ -92,22 +86,6 @@ pub struct SideTables {
 }
 
 impl SideTables {
-    #[inline]
-    pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
-        self.call_other_names.get(&node_id).map(String::as_str)
-    }
-
-    #[inline]
-    pub fn set_call_other_name(&mut self, node_id: NodeId, name: impl Into<String>) {
-        self.call_other_names.insert(node_id, name.into());
-    }
-
-    /// Replaces any prior override.
-    #[inline]
-    pub fn set_call_cc(&mut self, node_id: NodeId, cc: strider_target::BuiltCallingConvention) {
-        self.call_cc.insert(node_id, cc);
-    }
-
     #[inline]
     fn class_values(&self, class: ArgClass, index: u32) -> &[ValueId] {
         self.arg_index_to_values
@@ -255,16 +233,6 @@ impl SideTables {
         self.frame_escape.set(None);
     }
 
-    #[inline]
-    pub fn switch_targets(&self, id: NodeId) -> &[u64] {
-        self.switch_targets.get(&id).map_or(&[], Vec::as_slice)
-    }
-
-    #[inline]
-    pub fn set_switch_targets(&mut self, id: NodeId, targets: Vec<u64>) {
-        self.switch_targets.insert(id, targets);
-    }
-
     /// Unordered.
     pub fn asm_fingerprint(&self, id: NodeId) -> FxHashSet<u64> {
         let mut set = FxHashSet::default();
@@ -300,15 +268,6 @@ impl SideTables {
     pub(crate) fn remap(&mut self, remap: &NodeIdRemap) {
         self.asm_fingerprints
             .remap(|old| remap.node_old_to_new(old));
-        self.call_other_names = remap_hashmap(&mut self.call_other_names, |old, name| {
-            remap.node_old_to_new(old).map(|n| (n, name))
-        });
-        self.switch_targets = remap_hashmap(&mut self.switch_targets, |old, targets| {
-            remap.node_old_to_new(old).map(|n| (n, targets))
-        });
-        self.call_cc = remap_hashmap(&mut self.call_cc, |old, cc| {
-            remap.node_old_to_new(old).map(|n| (n, cc))
-        });
         // Both the slot key and its interned base are ValueIds, so the map and
         // the interner have to be rebuilt together.
         let (new_slots, new_interner) = {
