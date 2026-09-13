@@ -314,7 +314,7 @@ impl OptimizerPipeline {
             }
             capped = !converged;
         }
-        strider_ir::validate::validate(function)?;
+        strider_ir::validate::validate(function).map_err(|e| e.report(function))?;
         if capped {
             anyhow::bail!("optimizer pipeline did not converge after {MAX_ITERS} iterations");
         }
