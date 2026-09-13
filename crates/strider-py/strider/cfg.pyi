@@ -96,11 +96,12 @@ class Cfg:
         """
         ...
     def interior_branch_targets(self) -> list[int]:
-        """Branch targets interior to a region but off every instruction
-        boundary.
+        """Branch targets interior to a region but off every boundary a region
+        can start at.
 
         No region can start there, decoding from inside an instruction yields
-        a different stream, so the edge is seated on the region owning the
+        a different stream (a branch into a MIPS delay slot is one: the slot
+        decodes as part of its branch), so the edge is seated on the region owning the
         bytes, whose instructions start earlier. A direct edge can cause this,
         not only a resolved indirect branch. Non-empty means this CFG claims a
         successor the branch does not actually enter at.
@@ -111,13 +112,14 @@ class Cfg:
         """
         ...
     def unmapped_branch_targets(self) -> list[int]:
-        """Direct-branch targets no byte of this image backs.
+        """Direct-branch targets and fall-throughs no byte of this image backs.
 
         Each is seated as an empty tail-call stub, so the branch keeps an edge
         and every region that did decode survives; nothing past the stub is
         known. A buffer whose window the branch leaves, a partially-mapped
-        image, an unrelocated `jmp`, a ROM built from a symbol subset. A direct
-        edge produces these, so they are reported here rather than in
+        image, an unrelocated `jmp`, a ROM built from a symbol subset, code
+        running off the end of the mapped bytes. A MIPS branch whose delay slot
+        is unmapped reports the branch itself. A direct edge produces these, so they are reported here rather than in
         `unresolved`.
 
         Accumulated over every round `analyze` ran.

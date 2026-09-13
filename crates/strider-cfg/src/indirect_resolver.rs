@@ -38,8 +38,10 @@ pub enum ResolvedTargets {
     /// Return via the link register (ARM/AArch64 `bx lr`).  Seated as a
     /// [`crate::RegionTerminator::Return`].
     LinkRegister,
-    /// One constant target: an intra-function edge, or a tail call when out
-    /// of function range.
+    /// One constant target. Out of function range it is a
+    /// [`crate::RegionTerminator::TailCall`]; in range it is seated as a
+    /// one-arm [`crate::RegionTerminator::Switch`], which keeps the selector
+    /// so a later round can widen it.
     Single(ResolvedTarget),
     /// A jump table, seated as a [`crate::RegionTerminator::Switch`].
     /// Sorted-deduplicated by the classifier.
