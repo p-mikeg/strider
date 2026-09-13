@@ -58,6 +58,8 @@ pub struct FunctionBuilder {
     /// What each `Call`'s clobbered registers held when it was built, at the
     /// stack pointer's width.
     call_register_values: Vec<ValueId>,
+    /// Registers no callee reads, left out of `call_register_values`.
+    internal_registers: Vec<rsleigh::Vn>,
 }
 
 impl FunctionBuilder {
@@ -100,9 +102,16 @@ impl FunctionBuilder {
             cur_region: None,
             lift_addr: None,
             call_register_values: Vec::new(),
+            internal_registers: Vec::new(),
         };
         fb.build_entry()?;
         Ok(fb)
+    }
+
+    /// Registers the sla declares for its own semantics, which a call's value
+    /// in them cannot reach the callee through.
+    pub fn set_internal_registers(&mut self, registers: Vec<rsleigh::Vn>) {
+        self.internal_registers = registers;
     }
 
     /// Attributes every subsequent `create_node` to `addr` until replaced.
