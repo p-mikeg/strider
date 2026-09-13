@@ -17,16 +17,15 @@ fn signed_min(ty: ValueType) -> i128 {
 /// wraps, masks and shifts at 128 bits, which is the wrong modulus for a wider
 /// declared width.
 ///
-/// Both operands are masked to `ty` at entry. Div, Rem and ShiftRight are not
-/// safe under masking-commutativity, so they need the inputs already narrowed
-/// to give the right answer on a caller that passed raw bits.
+/// Both operands are masked to `ty` at entry, the shift amount only after its
+/// out-of-range test. Div, Rem and ShiftRight are not safe under
+/// masking-commutativity, so they need the inputs already narrowed to give the
+/// right answer on a caller that passed raw bits.
 pub(crate) fn eval_int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) -> Option<u128> {
     if ty.bit_width() > 128 {
         return None;
     }
     let mask = ty.bit_mask_u128();
-    let l = l & mask;
-    let r = r & mask;
     let bits = ty.bit_width() as u32;
     // Sleigh (opbehavior.cc:411) returns 0 when the shift amount reaches the
     // output width for IntLeft/IntRight, and `signbit ? calc_mask : 0` for
@@ -36,9 +35,12 @@ pub(crate) fn eval_int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) 
     // same reason, so an `I1` shift or signed compare answers off strider's
     // boolean width, not Sleigh's. The lifter emits `I1` only from compares and
     // `Truncate(..):I1`, so no shift ever reaches it. Do NOT reduce the amount
-    // modulo `bits`: that diverges from Sleigh by the full shift output for any
-    // literal `r >= bits`.
+    // modulo `bits`, nor mask it to `ty` before this test: either wraps an
+    // out-of-range literal back into range, diverging from Sleigh by the full
+    // shift output.
     let r_ge_bits = r >= u128::from(bits);
+    let l = l & mask;
+    let r = r & mask;
     // `shift` is only reached inside the `!r_ge_bits` branch, so `s < bits` and
     // the truncation is lossless.
     #[allow(clippy::cast_possible_truncation)]
@@ -198,6 +200,16 @@ mod eval_helper_tests {
         assert_eq!(eval_popcount(1, ValueType::I256), None);
         assert_eq!(eval_int_unary(IntUnaryOp::Neg, 1, ValueType::I512), None);
         assert_eq!(eval_sign_extend(1, ValueType::I256, ValueType::I512), None);
+    }
+
+    /// Sleigh's `OpBehaviorIntLeft` returns 0 once the amount reaches the
+    /// output width, so the amount must not be masked back into range first.
+    #[test]
+    fn an_out_of_range_shift_amount_saturates_rather_than_wrapping() {
+        assert_eq!(
+            eval_int_binary(IntBinaryOp::ShiftLeft, 1, 0x100, ValueType::I8),
+            Some(0)
+        );
     }
 
     #[test]
