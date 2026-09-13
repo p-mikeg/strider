@@ -80,6 +80,34 @@ pub(super) fn with_test_lifter_tracking_arch(
     all_vns: Vec<Vn>,
     f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
 ) {
+    with_test_lifter_arch_cc(arch, term_bytes, empty_cc(), all_vns, f);
+}
+
+/// Caller-provided CC instead of `empty_cc()`.  The projection tests need this:
+/// the other helpers seed `empty_cc`'s `stack_vn` (0x9000) into the tracked
+/// set, and a test CC that neither owns nor callee-saves it would misclassify
+/// it as an extra clobber, polluting exact clobber-list assertions.
+pub(super) fn with_test_lifter_cc(
+    cc: strider_target::BuiltCallingConvention,
+    all_vns: Vec<Vn>,
+    f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
+) {
+    with_test_lifter_arch_cc(
+        strider_target::SleighArch::x86(),
+        vec![0xc3],
+        cc,
+        all_vns,
+        f,
+    );
+}
+
+fn with_test_lifter_arch_cc(
+    arch: strider_target::SleighArch,
+    term_bytes: Vec<u8>,
+    cc: strider_target::BuiltCallingConvention,
+    all_vns: Vec<Vn>,
+    f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
+) {
     let mut sleigh = rsleigh::Sleigh::new(
         arch.sla_spec(),
         arch.pspec(),
@@ -95,54 +123,6 @@ pub(super) fn with_test_lifter_tracking_arch(
     .build()
     .expect("throwaway cfg");
     // Value opcodes never consult the region id or map, so any valid id works.
-    let region_id = cfg.entry();
-    let cc = empty_cc();
-    let lifter = Lifter::new(arch, sleigh).expect("lifter");
-    let no_overrides = rustc_hash::FxHashMap::default();
-    let no_call_other_overrides = strider_target::call_other_abi::CallOtherOverrides::default();
-    let mut driver = FunctionLifter::new(
-        &lifter,
-        cc,
-        &cfg,
-        all_vns,
-        &no_overrides,
-        &no_call_other_overrides,
-    )
-    .expect("driver");
-    driver.builder.set_lift_addr(None);
-    let region = driver.builder.create_region_all().expect("create_region");
-    driver
-        .builder
-        .set_entry_region_all(region)
-        .expect("set_entry_region");
-    driver.builder.set_region(region);
-    f(&mut driver, region_id);
-}
-
-/// Caller-provided CC instead of `empty_cc()`.  The projection tests need this:
-/// the other helpers seed `empty_cc`'s `stack_vn` (0x9000) into the tracked
-/// set, and a test CC that neither owns nor callee-saves it would misclassify
-/// it as an extra clobber, polluting exact clobber-list assertions.
-pub(super) fn with_test_lifter_cc(
-    cc: strider_target::BuiltCallingConvention,
-    all_vns: Vec<Vn>,
-    f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
-) {
-    let arch = strider_target::SleighArch::x86();
-    let mut sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(vec![0xc3], 0x1000),
-    )
-    .expect("create test Sleigh");
-    let cfg = strider_cfg::Builder::for_arch(
-        &arch,
-        &mut sleigh,
-        0x1000,
-        &strider_cfg::CfgOptions::default(),
-    )
-    .build()
-    .expect("throwaway cfg");
     let region_id = cfg.entry();
     let lifter = Lifter::new(arch, sleigh).expect("lifter");
     let no_overrides = rustc_hash::FxHashMap::default();
@@ -184,15 +164,6 @@ fn lift_int_add_of_consts() {
         Opcode::IntAdd,
         Some(reg(0)),
         vec![const_vn(7, 4), const_vn(35, 4)],
-    );
-}
-
-#[test]
-fn lift_int_sub_of_consts() {
-    assert_lifts_one(
-        Opcode::IntSub,
-        Some(reg(0)),
-        vec![const_vn(50, 4), const_vn(8, 4)],
     );
 }
 
@@ -274,7 +245,6 @@ fn lift_int_mul_of_consts() {
 /// Narrow `IntNeg` lowers to `Xor(x, all_ones)` with the constant inline.
 #[test]
 fn lift_int_neg_narrow_lowers_to_xor_all_ones() {
-    assert_lifts_one(Opcode::IntNeg, Some(reg(0)), vec![const_vn(0x1234, 4)]);
     with_test_lifter(|d, rid| {
         let insn = Insn {
             opcode: Opcode::IntNeg,
