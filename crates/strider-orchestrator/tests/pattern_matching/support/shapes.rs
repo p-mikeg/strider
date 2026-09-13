@@ -44,7 +44,7 @@ pub(crate) fn if_cmp_then_return_inverted(c: u64) -> Function {
 /// carrier for arg 0 in `SideTables::arg_index_to_values`. The underlying
 /// `InitialVar(reg)` node stays in place.
 pub(crate) fn function_arg_reg() -> (Function, rsleigh::Vn) {
-    use strider_orchestrator::opt::{FunctionArgDetect, Optimizer};
+    use strider_orchestrator::opt::FunctionArgDetect;
     let reg = reg_vn(0x38, 8);
     let sp = stack_vn();
     // The pass reads its arg layout from the function's own CC, so the

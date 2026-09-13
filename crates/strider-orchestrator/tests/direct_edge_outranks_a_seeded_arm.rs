@@ -7,10 +7,11 @@
 //! must agree with the report channels rather than still seating the `Switch`
 //! the loop abandoned.
 
-use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{CfgOptions, PcodeInsnAddr, RegionTerminator, ResolvedTarget, ResolvedTargets};
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+
+mod common;
 
 const BASE: u64 = 0x1000;
 const SITE: u64 = 0x1008;
@@ -43,19 +44,7 @@ fn bytes() -> Vec<u8> {
 
 #[test]
 fn a_direct_edge_keeps_the_bytes_a_seeded_arm_claims_in_the_other_mode() {
-    let arch = strider_target::SleighArch::arm();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes(), BASE),
-    )
-    .expect("sleigh");
-    let regs = sleigh.regs().expect("regs");
-    let cc = strider_target::CallingConvention::arm_aapcs()
-        .build(&regs)
-        .expect("cc");
-
-    let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::Arm, bytes(), BASE, None);
 
     // One build from the answer the classifier derives, so the arbitration is
     // pinned where it happens rather than through whatever the resolve loop
