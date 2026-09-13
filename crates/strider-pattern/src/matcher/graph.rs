@@ -6,12 +6,13 @@ use super::vertex::{PatNode, PatValue, PostMatchFn};
 
 pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
 
-/// Pattern nodes one query may recurse through. The engine is
-/// continuation-passing, so a node's later operands are matched inside the
-/// deepest frame of its earlier operands' subtrees and the stack grows with the
-/// NODE COUNT, not the depth. Measured on an 8 MiB debug thread, the densest
-/// shape (a linear add chain) survives 1829 nodes and overflows at 1831; this
-/// leaves a factor of seven.
+/// Pattern nodes one query may recurse through, counting those of every branch
+/// pattern nested inside. The engine is continuation-passing, so a node's later
+/// operands are matched inside the deepest frame of its earlier operands'
+/// subtrees and the stack grows with the NODE COUNT, not the depth. Measured on
+/// a debug build at the cap, 255 nested `If` branches take about 1.45 MiB and a
+/// 255-node add chain about 1.15 MiB, so the 2 MiB a spawned thread gets keeps
+/// a factor of about 1.4.
 pub(crate) const MAX_PATTERN_NODES: usize = 256;
 
 pub struct Pattern {
@@ -19,6 +20,8 @@ pub struct Pattern {
     pub(crate) cast_mask: CastMask,
     /// Resolved once at seal and memoized, verdict included.
     root: Result<NodeId, String>,
+    /// This graph's nodes plus those of the branch patterns nested in it.
+    total_nodes: usize,
     /// Per pat node, indexed by `NodeId::as_u32`.
     inputs: Vec<super::walk::NodeInputs>,
 }
@@ -26,40 +29,35 @@ pub struct Pattern {
 impl Pattern {
     /// Seal point of [`MatcherBuilder`](crate::matcher::MatcherBuilder):
     /// resolves and memoizes the match root.
-    pub(crate) fn from_graph(graph: PatGraph) -> Self {
-        let count = graph.all_node_ids().count();
+    pub(crate) fn from_graph(graph: PatGraph, nested_nodes: usize) -> Self {
+        let count = graph.all_node_ids().count().saturating_add(nested_nodes);
         let root = if count > MAX_PATTERN_NODES {
             Err(format!(
                 "pattern has {count} nodes, over the {MAX_PATTERN_NODES} a query can \
                  recurse through; split it or match the parts separately"
             ))
         } else {
-            Self::resolve_root(&graph).map_err(|e| e.to_string())
+            crate::graph_ext::derive_root(&graph).map_err(|e| e.to_string())
         };
         let inputs = super::walk::collect_node_inputs(&graph, root.is_ok());
         Self {
             graph,
             cast_mask: CastMask::empty(),
             root,
+            total_nodes: count,
             inputs,
         }
+    }
+
+    /// Nodes a query recurses through, nested branch patterns included.
+    pub(crate) fn total_nodes(&self) -> usize {
+        self.total_nodes
     }
 
     /// The structure is frozen at seal, so a match attempt reads this instead
     /// of rebuilding the edge list per operand ordering.
     pub(crate) fn inputs_of(&self, node: NodeId) -> &super::walk::NodeInputs {
         &self.inputs[node.as_u32() as usize]
-    }
-
-    /// The unique sink, after confirming its input cone is acyclic.
-    ///
-    /// # Errors
-    /// Zero sinks (rootless / cyclic), more than one sink, or a cycle in the
-    /// root's input cone.
-    fn resolve_root(graph: &PatGraph) -> anyhow::Result<NodeId> {
-        let root = crate::graph_ext::derive_root(graph)?;
-        crate::graph_ext::reachable_topo(graph, root)?;
-        Ok(root)
     }
 
     /// A build-time refusal, reported through the same channel as an
@@ -111,8 +109,8 @@ impl Pattern {
         Ok(self.guaranteed_from(self.root()?, &mut memo))
     }
 
-    /// The pattern graph is acyclic (`resolve_root` proves it), so the memo
-    /// makes this linear and the recursion terminates.
+    /// A sealed graph is acyclic, so the memo makes this linear and the
+    /// recursion terminates.
     fn guaranteed_from(
         &self,
         node: NodeId,
