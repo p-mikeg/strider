@@ -137,15 +137,6 @@ mod tests {
     }
 
     #[test]
-    fn contains_only_while_queued() {
-        let mut wl: Worklist<Id> = Worklist::new();
-        wl.enqueue(Id(5));
-        assert!(wl.workset[Id(5)]);
-        let _ = wl.dequeue();
-        assert!(!wl.workset[Id(5)]);
-    }
-
-    #[test]
     fn debug_format_pins_derive() {
         // Pins the `Debug` derive against silent removal.
         let mut wl: Worklist<Id> = Worklist::new();

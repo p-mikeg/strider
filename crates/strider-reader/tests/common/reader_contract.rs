@@ -81,14 +81,6 @@ pub(crate) fn assert_mem_reader_partial_read_ok<R>(
     assert_eq!(n, expected_n, "partial read length");
 }
 
-/// The bytes must arrive raw, with no endianness swap: the reader copies
-/// verbatim and decoding is the optimizer's job.
-pub(crate) fn assert_readonly_reads(r: &impl ReadOnlyMemory, addr: u64, expected: &[u8]) {
-    let mut buf = vec![0u8; expected.len()];
-    r.read(addr, &mut buf).expect("ReadOnlyMemory::read");
-    assert_eq!(&buf[..], expected, "ReadOnlyMemory raw bytes");
-}
-
 /// All-or-nothing: any unmapped byte in the range must error.
 pub(crate) fn assert_readonly_errors(r: &impl ReadOnlyMemory, addr: u64, len: usize) {
     let mut buf = vec![0u8; len];

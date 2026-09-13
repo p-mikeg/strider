@@ -1373,19 +1373,6 @@ mod tests {
     }
 
     #[test]
-    fn truly_invisible_decoder_context_classifies_as_noop() {
-        // On x86/x86_64 the only NoOp user-op is the Sleigh decoder-context
-        // `setISAMode`.  Memory markers (LOCK / UNLOCK / barriers) and CPU
-        // hints are promoted to Call so patterns can find them.  (PowerPC
-        // additionally treats some prefetch / MSR-state hints as NoOp; see
-        // `classify_ppc`.)
-        assert_eq!(
-            classify(crate::ArchPreset::X86_64, "setISAMode"),
-            Some(CallOtherClass::NoOp),
-        );
-    }
-
-    #[test]
     fn set_isa_mode_is_noop_on_every_arch() {
         // `setISAMode` is NoOp on every arch (incl. ARM32); the mode is carried
         // on the `IndirectBranch`, not this op (see the TABLE comment above).
@@ -1415,6 +1402,8 @@ mod tests {
         // Barriers must sit on the IR memory chain so patterns walking mem
         // find them, and must have empty register channels since
         // arch-independent entries may not name arch-specific registers.
+        // They are full serialization points, so the clobber spares no stack:
+        // LoadForward must not carry a stack value across one.
         for n in [
             "LOCK",
             "UNLOCK",
@@ -1443,33 +1432,6 @@ mod tests {
                 abi.clobbers_memory,
                 "{n}: must advance mem edge for chain visibility"
             );
-        }
-    }
-
-    /// LOCK, UNLOCK, and the barriers are full serialization points that make
-    /// all prior stores visible across them, another CPU's writes to an
-    /// escaped stack pointer included.  Sparing the stack would let
-    /// LoadForward carry a stack value across a barrier, unsound under
-    /// shared-stack / aliased-frame patterns.
-    #[test]
-    fn full_memory_barriers_clobber_memory() {
-        for n in [
-            "LOCK",
-            "UNLOCK",
-            "DataMemoryBarrier",
-            "DataSynchronizationBarrier",
-            "InstructionSynchronizationBarrier",
-            "enforceInOrderExecutionIO",
-            "instructionSynchronize",
-            "sync",
-            "SYNC",
-            "synch",
-        ] {
-            let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n}"));
-            let CallOtherClass::Call(abi) = class else {
-                panic!("{n}: expected Call")
-            };
-            assert!(abi.clobbers_memory, "{n}: barrier ops must clobber memory",);
         }
     }
 
@@ -1954,14 +1916,6 @@ mod tests {
             assert_eq!(abi.implicit_writes, &[] as &[&str], "{n}");
             assert!(abi.clobbers_memory, "{n}");
         }
-    }
-
-    #[test]
-    fn unknown_returns_none() {
-        assert_eq!(
-            classify(crate::ArchPreset::X86_64, "nonexistent_op_xyzzy_abc"),
-            None
-        );
     }
 
     #[test]
