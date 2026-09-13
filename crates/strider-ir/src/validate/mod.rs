@@ -14,12 +14,12 @@ mod tests;
 
 use graph_invariants::{
     check_function_invariants_arith_widths, check_function_invariants_asm_fingerprints,
-    check_function_invariants_consts, check_function_invariants_control_single_use,
-    check_function_invariants_data_cycles, check_function_invariants_extend_truncate,
-    check_function_invariants_memory_chain, check_function_invariants_phis,
-    check_function_invariants_region, check_function_invariants_side_indices,
-    check_function_invariants_switch, check_function_invariants_terminator_reachable,
-    check_function_invariants_uniqueness,
+    check_function_invariants_availability, check_function_invariants_consts,
+    check_function_invariants_control_single_use, check_function_invariants_data_cycles,
+    check_function_invariants_extend_truncate, check_function_invariants_memory_chain,
+    check_function_invariants_phis, check_function_invariants_region,
+    check_function_invariants_side_indices, check_function_invariants_switch,
+    check_function_invariants_terminator_reachable, check_function_invariants_uniqueness,
 };
 use local_typing::check_local_typing;
 
@@ -52,6 +52,7 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     check_function_invariants_asm_fingerprints(function, &reachable, &mut errs);
     check_function_invariants_memory_chain(function, &reachable, &mut errs);
     check_function_invariants_data_cycles(function, &reachable, &mut errs);
+    check_function_invariants_availability(function, &reachable, &mut errs);
     check_function_invariants_side_indices(function, &reachable, &mut errs);
     check_function_invariants_terminator_reachable(function, &mut errs);
 
@@ -144,6 +145,9 @@ pub enum ValidationError {
          whole body"
     )]
     NoTerminatorReachable { node: NodeId, count: usize },
+
+    #[error("node {node:?} input[{input_idx}] is not available where it is used")]
+    InputNotAvailable { node: NodeId, input_idx: usize },
 
     #[error(
         "phi node {phi:?} input[0] token producer {producer:?} has kind \

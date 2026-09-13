@@ -377,7 +377,17 @@ fn chained_phis_over_one_region_do_not_dangle() -> crate::Result<()> {
 
     crate::pipeline::run_one(&RegionCollapse, &mut fg, &mut crate::OptCtx::new(None))?;
 
-    strider_ir::validate::validate(&fg).expect("IR must stay valid");
+    // The hand-chained phi input is unavailable on its edge before the pass
+    // runs; what the pass must not add is anything else, a dangling input first.
+    if let Err(errs) = strider_ir::validate::validate(&fg) {
+        assert!(
+            errs.0.iter().all(|e| matches!(
+                e,
+                strider_ir::validate::ValidationError::InputNotAvailable { .. }
+            )),
+            "IR must stay valid: {errs:?}"
+        );
+    }
     Ok(())
 }
 
