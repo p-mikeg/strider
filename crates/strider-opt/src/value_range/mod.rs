@@ -19,7 +19,7 @@
 use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
 
-use petgraph::algo::dominators::Dominators;
+use strider_ir::DominatorTree;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_ir::{IRViewer, IRWalker, IntBinaryOp, IntCmpOp};
 
@@ -351,15 +351,14 @@ enum MemoSlot {
 /// Per-`(value, region)` integer ranges.
 pub struct RangeMap<'f> {
     function: &'f strider_ir::Function,
-    doms: &'f Dominators<NodeId>,
+    doms: &'f DominatorTree<NodeId>,
     /// Per guarded value, the interval proven AT each guard node: an `If`'s
     /// guarded successor edge, or a `Region` every one of whose predecessor
     /// edges bounds the value (a merge whose arms all constrain it).
-    ///
-    /// Keyed by node so a lookup walks the query point's dominator chain
-    /// instead of the value's whole guard list: `k` guards on one value and
-    /// `m` query points cost `m * depth`, not `k * m * depth`.
     guards: FxHashMap<ValueId, FxHashMap<NodeId, Interval>>,
+    /// `guards` on the dominator tree, so a lookup climbs only the guards
+    /// dominating the query point.
+    guard_forests: FxHashMap<ValueId, GuardForest>,
     /// Flow-insensitive `[0, max_value]` bounds from KnownBits.
     kb_bounds: SecondaryMap<ValueId, Option<Interval>>,
     /// Resolved intervals, with `InProgress` cutting resolution cycles.
@@ -666,30 +665,19 @@ impl<'f> RangeMap<'f> {
 
     /// Reflexive: a node dominates itself.
     fn dominates(&self, node: NodeId, region: NodeId) -> bool {
-        match self.doms.dominators(region) {
-            Some(mut chain) => chain.any(|d| d == node),
-            None => node == region,
-        }
+        self.doms.dominates(node, region)
     }
 
-    /// The guards recorded on `value` itself whose node dominates `region`.
+    /// The guards recorded on `value` itself whose node dominates `region`,
+    /// met from `region` up towards the entry.
     fn guard_at(&self, value: ValueId, region: NodeId) -> Option<Interval> {
         #[cfg(test)]
         GUARD_SCANS.with(|c| c.set(c.get() + 1));
-        self.guards.get(&value).and_then(|by_node| {
-            match self.doms.dominators(region) {
-                // The chain starts at `region` itself.
-                Some(chain) => chain
-                    .inspect(|_| {
-                        #[cfg(test)]
-                        GUARD_PROBES.with(|c| c.set(c.get() + 1));
-                    })
-                    .filter_map(|d| by_node.get(&d).copied())
-                    .reduce(Interval::intersect),
-                // Off the dominator tree, `dominates` still holds reflexively.
-                None => by_node.get(&region).copied(),
-            }
-        })
+        let Some(span) = self.doms.span(region) else {
+            // Off the dominator tree, `dominates` still holds reflexively.
+            return self.guards.get(&value)?.get(&region).copied();
+        };
+        self.guard_forests.get(&value)?.meet_dominating(span)
     }
 
     /// The operand whose bound `value` inherits, and on what terms.  `None`
@@ -799,11 +787,11 @@ impl<'f> RangeMap<'f> {
 
 #[cfg(test)]
 thread_local! {
-    /// [`RangeMap::dominating_guard`] calls that missed the memo, each a walk
-    /// of the query point's dominator chain.
+    /// [`RangeMap::guard_at`] lookups, one per guard scan of a value.
     pub(crate) static GUARD_SCANS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    /// Guard-map lookups, one per dominator-chain step: the cost a query pays,
-    /// which must track the chain's depth and not the value's guard count.
+    /// Guards met by a lookup, one per guard dominating the query point: the
+    /// cost a query pays, which must track neither the chain's depth nor the
+    /// value's guard count.
     pub(crate) static GUARD_PROBES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
@@ -865,6 +853,85 @@ fn is_sign_bit_known_zero(
     known[value].zeros & sign_bit != 0
 }
 
+/// One value's guard nodes in dominator-tree preorder.
+struct GuardForest {
+    entries: Vec<GuardEntry>,
+    /// `max_post[l][i]`: the largest `post` among `entries[i..i + 2^l]`.
+    max_post: Vec<Vec<u32>>,
+}
+
+struct GuardEntry {
+    pre: u32,
+    post: u32,
+    interval: Interval,
+    /// The nearest entry whose node dominates this one's.
+    parent: Option<usize>,
+}
+
+impl GuardForest {
+    fn new(doms: &DominatorTree<NodeId>, by_node: &FxHashMap<NodeId, Interval>) -> Self {
+        let mut entries: Vec<GuardEntry> = by_node
+            .iter()
+            .filter_map(|(&node, &interval)| {
+                let (pre, post) = doms.span(node)?;
+                Some(GuardEntry {
+                    pre,
+                    post,
+                    interval,
+                    parent: None,
+                })
+            })
+            .collect();
+        entries.sort_unstable_by_key(|e| e.pre);
+        let mut open: Vec<usize> = Vec::new();
+        for i in 0..entries.len() {
+            while open
+                .last()
+                .is_some_and(|&top| entries[top].post < entries[i].post)
+            {
+                open.pop();
+            }
+            entries[i].parent = open.last().copied();
+            open.push(i);
+        }
+        let mut max_post = vec![entries.iter().map(|e| e.post).collect::<Vec<u32>>()];
+        while 2usize << (max_post.len() - 1) <= entries.len() {
+            let below = max_post.last().expect("level 0 exists");
+            let half = 1usize << (max_post.len() - 1);
+            let level = (0..=entries.len() - 2 * half)
+                .map(|i| below[i].max(below[i + half]))
+                .collect();
+            max_post.push(level);
+        }
+        Self { entries, max_post }
+    }
+
+    /// The guards whose nodes enclose `span`, met nearest first.
+    fn meet_dominating(&self, (pre, post): (u32, u32)) -> Option<Interval> {
+        // Every entry up to `end` starts at or before `pre`, so it encloses the
+        // query iff it has not finished before `post`; the last such is the
+        // nearest dominating guard.
+        let mut end = self.entries.partition_point(|e| e.pre <= pre);
+        for level in (0..self.max_post.len()).rev() {
+            let width = 1usize << level;
+            if end >= width && self.max_post[level][end - width] < post {
+                end -= width;
+            }
+        }
+        let mut at = end.checked_sub(1)?;
+        let mut met = self.entries[at].interval;
+        loop {
+            #[cfg(test)]
+            GUARD_PROBES.with(|c| c.set(c.get() + 1));
+            let Some(parent) = self.entries[at].parent else {
+                return Some(met);
+            };
+            at = parent;
+            met = met.intersect(self.entries[at].interval);
+        }
+    }
+}
+
 /// Records `interval` as proven at `node`, intersecting with any bound already
 /// recorded there.
 fn add_guard(
@@ -886,7 +953,7 @@ fn add_guard(
 /// value.
 pub fn compute_value_ranges<'f>(
     function: &'f strider_ir::Function,
-    doms: &'f Dominators<NodeId>,
+    doms: &'f DominatorTree<NodeId>,
     known: &KnownBitsMap,
 ) -> RangeMap<'f> {
     let mut kb_bounds: SecondaryMap<ValueId, Option<Interval>> = SecondaryMap::new();
@@ -1005,10 +1072,15 @@ pub fn compute_value_ranges<'f>(
         add_guard(&mut guards, v0, region, union);
     }
 
+    let guard_forests = guards
+        .iter()
+        .map(|(&value, by_node)| (value, GuardForest::new(doms, by_node)))
+        .collect();
     RangeMap {
         function,
         doms,
         guards,
+        guard_forests,
         edge_guards,
         kb_bounds,
         memo: FxHashMap::default(),
