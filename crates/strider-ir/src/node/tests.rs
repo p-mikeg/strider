@@ -103,6 +103,7 @@ fn non_cacheable_kinds_are_not_cacheable() {
         NodeKind::MemPhi,
         NodeKind::Phi,
         NodeKind::Call,
+        NodeKind::If,
     ];
     for kind in non_cacheable {
         assert!(!kind.is_cacheable(), "{kind:?} should not be cacheable");
@@ -115,7 +116,6 @@ fn arithmetic_kinds_are_cacheable() {
     assert!(NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)).is_cacheable());
     assert!(NodeKind::IntBinaryOp(crate::node::IntBinaryOp::Add).is_cacheable());
     assert!(NodeKind::IntUnaryOp(crate::node::IntUnaryOp::Neg).is_cacheable());
-    assert!(NodeKind::If.is_cacheable());
 }
 
 #[test]
@@ -275,7 +275,8 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
 fn legacy_is_cacheable(kind: &NodeKind) -> bool {
     !matches!(
         kind,
-        NodeKind::Return
+        NodeKind::If
+            | NodeKind::Return
             | NodeKind::IndirectBranch
             | NodeKind::Unreachable
             | NodeKind::Switch
