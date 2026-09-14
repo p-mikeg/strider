@@ -1685,7 +1685,7 @@ fn settle_return_sites(
             let &target = inputs
                 .get(anchored)
                 .expect("an anchored Return carries its target last");
-            if !targets.returns_to_caller(target) {
+            if !targets.returns_to_caller(ret, target) {
                 unverified.push(addr);
             }
             live.push((ret, anchored));
