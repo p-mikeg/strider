@@ -132,7 +132,7 @@ fn addr_bit_width(function: &Function, addr: ValueId) -> Option<u32> {
 /// 0x7FFFFFFF` on a 32-bit target reads as `sp + 4294967294` instead of
 /// `sp - 2`, Disjoint from the slot it actually names.  An address wider than
 /// the i128 carrier keeps the raw sum.
-fn wrap_to_addr_width(function: &Function, addr: ValueId, offset: i128) -> i128 {
+pub(crate) fn wrap_to_addr_width(function: &Function, addr: ValueId, offset: i128) -> i128 {
     function
         .value_type(addr)
         .ok()
