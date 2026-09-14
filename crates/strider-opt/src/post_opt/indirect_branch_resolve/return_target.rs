@@ -3,7 +3,9 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{Function, IRViewer, IntBinaryOp};
+use strider_ir::{
+    CtrlKey, DominatorTree, Function, IRViewer, IntBinaryOp, control_edge_dominator_tree,
+};
 
 use crate::mem_analysis::{
     MemExpr, MemKind, alignment_masked_operand, decompose, store_value_byte_size,
@@ -29,12 +31,19 @@ pub struct ReturnTargets<'f> {
     assumptions: &'f crate::AssumptionOptions,
     /// Every claim a query has decided. Return sites mostly share their
     /// claims, and each is explored once.
-    settled: FxHashMap<Claim, bool>,
-    /// The one offset from the entry SP a value is claimed at.
-    claimed: FxHashMap<ValueId, i128>,
-    guesses: FxHashMap<ValueId, Option<i128>>,
+    settled: FxHashMap<(Path, Claim), bool>,
+    doms: Option<DominatorTree<CtrlKey>>,
+    feasible: FxHashMap<(CtrlKey, NodeId), Option<usize>>,
+    /// The one offset from the entry SP a value is claimed at, per path.
+    claimed: FxHashMap<(Path, ValueId), i128>,
+    guesses: FxHashMap<(Path, ValueId), Option<i128>>,
     stored: FxHashMap<(ValueId, StackAddr, i128), Option<ValueId>>,
+    guards: FxHashMap<ValueId, Vec<(NodeId, bool)>>,
 }
+
+/// Where a claim is observed: `Some(point)` each time control passes `point`,
+/// of the values current there, `None` everywhere.
+type Path = Option<CtrlKey>;
 
 /// One fact a return target's verification rests on.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -80,23 +89,24 @@ impl<'f> ReturnTargets<'f> {
             function,
             assumptions,
             settled: FxHashMap::default(),
+            doms: None,
+            feasible: FxHashMap::default(),
             claimed: FxHashMap::default(),
             guesses: FxHashMap::default(),
             stored: FxHashMap::default(),
+            guards: FxHashMap::default(),
         }
     }
 
-    /// Whether `target` is the address the function was entered with.
+    /// Whether `target`, the address `ret` jumps to, is the address the
+    /// function was entered with.
     ///
     /// A claim holds unless one it rests on fails outright, so a cycle of
     /// claims (a loop rewriting a slot with its own value, a phi of itself)
     /// brings in no value of its own. Linear in the claims reached.
-    pub fn returns_to_caller(&mut self, target: ValueId) -> bool {
-        let root = Claim::Target(target);
-        if let Some(&holds) = self.settled.get(&root) {
-            return holds;
-        }
-        let mut index: FxHashMap<Claim, usize> = FxHashMap::default();
+    pub fn returns_to_caller(&mut self, ret: NodeId, target: ValueId) -> bool {
+        let root = (Some(CtrlKey::Node(ret)), Claim::Target(target));
+        let mut index: FxHashMap<(Path, Claim), usize> = FxHashMap::default();
         index.insert(root, 0);
         let mut claims = vec![root];
         // Per claim, the claims resting on it.
@@ -104,9 +114,9 @@ impl<'f> ReturnTargets<'f> {
         let mut failed: Vec<usize> = Vec::new();
         let mut premises = Vec::new();
         let mut next = 0;
-        while let Some(&claim) = claims.get(next) {
+        while let Some(&(path, claim)) = claims.get(next) {
             premises.clear();
-            if !self.premises(claim, &mut premises) {
+            if !self.premises(path, claim, &mut premises) {
                 failed.push(next);
             }
             for &premise in &premises {
@@ -136,7 +146,7 @@ impl<'f> ReturnTargets<'f> {
     }
 
     /// Pushes what `claim` rests on onto `out`; `false` when it fails outright.
-    fn premises(&mut self, claim: Claim, out: &mut Vec<Claim>) -> bool {
+    fn premises(&mut self, path: Path, claim: Claim, out: &mut Vec<(Path, Claim)>) -> bool {
         let function = self.function;
         match claim {
             Claim::Target(target) => {
@@ -147,17 +157,18 @@ impl<'f> ReturnTargets<'f> {
                         function.default_cc().link_register_vn == Some(function.initial_vn(id))
                     }
                     NodeKind::Phi => {
-                        out.extend(function.phi_data_inputs(producer).map(Claim::Target));
+                        let arms = self.arms(path, producer);
+                        out.extend(arms.map(|(path, arm)| (path, Claim::Target(arm))));
                         true
                     }
                     NodeKind::Load(space) if space == rsleigh::VnSpace::RAM => {
-                        self.push_slot(producer, value, Held::ReturnAddress, out)
+                        self.push_slot(path, producer, value, Held::ReturnAddress, out)
                     }
                     _ => false,
                 }
             }
             Claim::EntrySp { value, offset } => {
-                if *self.claimed.entry(value).or_insert(offset) != offset {
+                if *self.claimed.entry((path, value)).or_insert(offset) != offset {
                     return false;
                 }
                 if let Some(at) = self.spine(value) {
@@ -170,22 +181,24 @@ impl<'f> ReturnTargets<'f> {
                             return false;
                         };
                         let offset = wrap_to_addr_width(function, value, offset - addend);
-                        out.push(Claim::EntrySp {
-                            value: operand,
-                            offset,
-                        });
+                        out.push((
+                            path,
+                            Claim::EntrySp {
+                                value: operand,
+                                offset,
+                            },
+                        ));
                         true
                     }
                     NodeKind::Phi => {
+                        let arms = self.arms(path, producer);
                         out.extend(
-                            function
-                                .phi_data_inputs(producer)
-                                .map(|value| Claim::EntrySp { value, offset }),
+                            arms.map(|(path, value)| (path, Claim::EntrySp { value, offset })),
                         );
                         true
                     }
                     NodeKind::Load(space) if space == rsleigh::VnSpace::RAM => {
-                        self.push_slot(producer, value, Held::EntrySp(offset), out)
+                        self.push_slot(path, producer, value, Held::EntrySp(offset), out)
                     }
                     _ => false,
                 }
@@ -197,11 +210,16 @@ impl<'f> ReturnTargets<'f> {
                 holds,
             } => {
                 let node = function.producer(mem);
-                let below = |mem| Claim::Slot {
-                    mem,
-                    at,
-                    size,
-                    holds,
+                let below = |mem| {
+                    (
+                        None,
+                        Claim::Slot {
+                            mem,
+                            at,
+                            size,
+                            holds,
+                        },
+                    )
                 };
                 match *function.node_kind(node) {
                     // Untouched since entry: a stack-push ISA's return slot.
@@ -217,13 +235,16 @@ impl<'f> ReturnTargets<'f> {
                     }
                     NodeKind::Store(_) => match self.store_effect(node, at, size) {
                         StoreEffect::Writes(data) => {
-                            out.push(match holds {
-                                Held::ReturnAddress => Claim::Target(data),
-                                Held::EntrySp(offset) => Claim::EntrySp {
-                                    value: data,
-                                    offset,
+                            out.push((
+                                None,
+                                match holds {
+                                    Held::ReturnAddress => Claim::Target(data),
+                                    Held::EntrySp(offset) => Claim::EntrySp {
+                                        value: data,
+                                        offset,
+                                    },
                                 },
-                            });
+                            ));
                             true
                         }
                         StoreEffect::Clobbers => false,
@@ -242,43 +263,123 @@ impl<'f> ReturnTargets<'f> {
         }
     }
 
+    /// Each arm of `phi` control can have taken to reach `path`, observed on
+    /// the edge it enters by.
+    ///
+    /// An arm entering a `Region` both of whose inputs are one `If`'s edges is
+    /// cut when an `If` on the same condition value, below the region, takes
+    /// the other edge on the way to `path`. The region is not a loop header
+    /// (the `If` dominates it), and nothing between the two `If`s is above that
+    /// `If`, so both test the one evaluation of the condition that chose the
+    /// region's latest arm.
+    fn arms(&mut self, path: Path, phi: NodeId) -> impl Iterator<Item = (Path, ValueId)> + 'f {
+        let function = self.function;
+        let region = function.producer(function.node_inputs(phi)[0]);
+        let feasible = path.and_then(|point| self.feasible_arm(point, region));
+        function
+            .phi_data_inputs(phi)
+            .zip(function.node_inputs(region))
+            .enumerate()
+            .filter(move |&(arm, _)| feasible.is_none_or(|only| only == arm))
+            .map(|(_, (value, edge))| (Some(CtrlKey::Edge(edge)), value))
+    }
+
+    /// The one input of `region` control can have arrived through when it
+    /// passes `point`, `None` when that is not shown.
+    fn feasible_arm(&mut self, point: CtrlKey, region: NodeId) -> Option<usize> {
+        if let Some(&arm) = self.feasible.get(&(point, region)) {
+            return arm;
+        }
+        let arm = self.decide_arm(point, region);
+        self.feasible.insert((point, region), arm);
+        arm
+    }
+
+    fn decide_arm(&mut self, point: CtrlKey, region: NodeId) -> Option<usize> {
+        let function = self.function;
+        let [a, b] = function.node_inputs_exact::<2>(region).ok()?;
+        let branch = function.producer(a);
+        if function.producer(b) != branch || !matches!(function.node_kind(branch), NodeKind::If) {
+            return None;
+        }
+        let (cond, flipped) = condition(function, function.if_cond(branch));
+        let guards = self
+            .guards
+            .entry(cond)
+            .or_insert_with(|| guards(function, cond).collect());
+        let doms = self
+            .doms
+            .get_or_insert_with(|| control_edge_dominator_tree(function));
+        let below = |edge| {
+            doms.dominates(CtrlKey::Node(region), CtrlKey::Edge(edge))
+                && doms.dominates(CtrlKey::Edge(edge), point)
+        };
+        // Whether the condition value is true at `point`.
+        let known = guards.iter().find_map(|&(guard, guard_flipped)| {
+            let &[on_true, on_false] = function.node_outputs(guard) else {
+                return None;
+            };
+            if below(on_true) {
+                Some(!guard_flipped)
+            } else if below(on_false) {
+                Some(guard_flipped)
+            } else {
+                None
+            }
+        })?;
+        let taken = function.node_outputs(branch)[usize::from(known == flipped)];
+        [a, b].iter().position(|&input| input == taken)
+    }
+
     /// Pushes the slot a `Load` reads, holding `holds`, for the loaded
     /// `value`; `false` when its address is no known stack address.
     fn push_slot(
         &mut self,
+        path: Path,
         load: NodeId,
         value: ValueId,
         holds: Held,
-        out: &mut Vec<Claim>,
+        out: &mut Vec<(Path, Claim)>,
     ) -> bool {
         let function = self.function;
         let (Some(at), Ok(ty), Some(mem)) = (
-            self.locate(function.load_addr(load), out),
+            self.locate(path, function.load_addr(load), out),
             function.value_type(value),
             function.memory_input_of(load),
         ) else {
             return false;
         };
-        out.push(Claim::Slot {
-            mem,
-            at,
-            size: ty.byte_size() as i128,
-            holds,
-        });
+        out.push((
+            None,
+            Claim::Slot {
+                mem,
+                at,
+                size: ty.byte_size() as i128,
+                holds,
+            },
+        ));
         true
     }
 
     /// `addr` as a stack address. One the address spine does not name is
     /// guessed as an entry-SP offset, and the claim that it is one pushed.
-    fn locate(&mut self, addr: ValueId, out: &mut Vec<Claim>) -> Option<StackAddr> {
+    fn locate(
+        &mut self,
+        path: Path,
+        addr: ValueId,
+        out: &mut Vec<(Path, Claim)>,
+    ) -> Option<StackAddr> {
         if let Some(at) = self.spine(addr) {
             return Some(at);
         }
-        let offset = self.guess(addr)?;
-        out.push(Claim::EntrySp {
-            value: addr,
-            offset,
-        });
+        let offset = self.guess(path, addr)?;
+        out.push((
+            path,
+            Claim::EntrySp {
+                value: addr,
+                offset,
+            },
+        ));
         Some(StackAddr { base: None, offset })
     }
 
@@ -303,22 +404,22 @@ impl<'f> ReturnTargets<'f> {
         })
     }
 
-    /// An entry-SP offset `value` may hold, read off one chain of
+    /// An entry-SP offset `value` may hold along `path`, read off one chain of
     /// additions, phi arms and the stack slots address spines name. A guess
     /// only: a claim proves it.
-    fn guess(&mut self, value: ValueId) -> Option<i128> {
+    fn guess(&mut self, path: Path, value: ValueId) -> Option<i128> {
         let function = self.function;
-        let mut trail: Vec<(ValueId, i128)> = Vec::new();
+        let mut trail: Vec<((Path, ValueId), i128)> = Vec::new();
         let mut on_trail = FxHashSet::default();
-        let (mut cur, mut accrued) = (value, 0i128);
+        let (mut path, mut cur, mut accrued) = (path, value, 0i128);
         let found = loop {
-            if let Some(&known) = self.guesses.get(&cur) {
+            if let Some(&known) = self.guesses.get(&(path, cur)) {
                 break known.map(|offset| offset + accrued);
             }
-            if !on_trail.insert(cur) {
+            if !on_trail.insert((path, cur)) {
                 break None;
             }
-            trail.push((cur, accrued));
+            trail.push(((path, cur), accrued));
             if let Some(at) = self.spine(cur) {
                 break at.base.is_none().then_some(at.offset + accrued);
             }
@@ -332,13 +433,13 @@ impl<'f> ReturnTargets<'f> {
                     cur = operand;
                 }
                 NodeKind::Phi => {
-                    let Some(arm) = function
-                        .phi_data_inputs(producer)
+                    let Some(arm) = self
+                        .arms(path, producer)
                         .find(|arm| !on_trail.contains(arm))
                     else {
                         break None;
                     };
-                    cur = arm;
+                    (path, cur) = arm;
                 }
                 NodeKind::Load(space) if space == rsleigh::VnSpace::RAM => {
                     let (Some(at), Ok(ty), Some(mem)) = (
@@ -351,15 +452,16 @@ impl<'f> ReturnTargets<'f> {
                     let Some(data) = self.stored_value(mem, at, ty.byte_size() as i128) else {
                         break None;
                     };
+                    path = None;
                     cur = data;
                 }
                 _ => break None,
             }
         };
         let found = found.map(|offset| wrap_to_addr_width(function, value, offset));
-        for (cur, accrued) in trail {
-            let offset = found.map(|offset| wrap_to_addr_width(function, cur, offset - accrued));
-            self.guesses.insert(cur, offset);
+        for (key, accrued) in trail {
+            let offset = found.map(|offset| wrap_to_addr_width(function, key.1, offset - accrued));
+            self.guesses.insert(key, offset);
         }
         found
     }
@@ -462,6 +564,52 @@ impl<'f> ReturnTargets<'f> {
         }
         Some((lo, hi))
     }
+}
+
+/// `value` with every `Xor(_, 1)` of a boolean peeled off, and whether an odd
+/// number were.
+fn condition(function: &Function, mut value: ValueId) -> (ValueId, bool) {
+    let mut flipped = false;
+    while let Some(inner) = negated(function, value) {
+        value = inner;
+        flipped = !flipped;
+    }
+    (value, flipped)
+}
+
+/// `x` for a boolean `Xor(x, 1)`.
+fn negated(function: &Function, value: ValueId) -> Option<ValueId> {
+    if !function.value_kind(value).is_bool() {
+        return None;
+    }
+    let producer = function.producer(value);
+    if !matches!(
+        function.node_kind(producer),
+        NodeKind::IntBinaryOp(IntBinaryOp::Xor)
+    ) {
+        return None;
+    }
+    let [l, r] = function.node_inputs_exact::<2>(producer).ok()?;
+    match (function.bool_const_val(l), function.bool_const_val(r)) {
+        (_, Some(true)) => Some(l),
+        (Some(true), _) => Some(r),
+        _ => None,
+    }
+}
+
+/// Each `If` testing `cond` or its negation, and whether it tests the negation.
+fn guards(function: &Function, cond: ValueId) -> impl Iterator<Item = (NodeId, bool)> + '_ {
+    let direct = function.value_uses(cond).map(|(user, _)| (user, false));
+    let negations = function
+        .value_uses(cond)
+        .filter_map(move |(user, _)| {
+            let out = function.first_value_output_of(user)?;
+            (negated(function, out) == Some(cond)).then_some(out)
+        })
+        .flat_map(|out| function.value_uses(out).map(|(user, _)| (user, true)));
+    direct
+        .chain(negations)
+        .filter(|&(user, _)| matches!(function.node_kind(user), NodeKind::If))
 }
 
 /// `(x, c)` for `Add(x, c)` with `c` a constant.
