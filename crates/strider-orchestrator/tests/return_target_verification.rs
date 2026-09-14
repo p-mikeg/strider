@@ -307,6 +307,97 @@ fn x86_64_a_return_slot_rewritten_in_a_loop_from_an_argument_is_reported() {
     );
 }
 
+// netdev_upper_dev_unlink, arm/6.1-clang.
+const ARM_STACK_PROTECTED_UNLINK: [u32; 14] = [
+    0xe92d_4800, // push {fp, lr}
+    0xe24d_d010, // sub sp, sp, #16
+    0xee1d_2f70, // mrc 15, 0, r2, cr13, cr0, {3}
+    0xe592_24f8, // ldr r2, [r2, #1272]
+    0xe58d_200c, // str r2, [sp, #12]
+    0xe1a0_200d, // mov r2, sp
+    0xeb00_0006, // bl
+    0xe59d_000c, // ldr r0, [sp, #12]
+    0xee1d_1f70, // mrc 15, 0, r1, cr13, cr0, {3}
+    0xe591_14f8, // ldr r1, [r1, #1272]
+    0xe151_0000, // cmp r1, r0
+    0x028d_d010, // addeq sp, sp, #16
+    0x08bd_8800, // popeq {fp, pc}
+    0xeb06_6be4, // bl __stack_chk_fail
+];
+
+#[test]
+fn arm_a_conditional_pop_after_a_conditional_sp_adjustment_on_the_same_flags_stays_complete() {
+    assert_complete(
+        Arch::Arm,
+        le32(&ARM_STACK_PROTECTED_UNLINK),
+        "addeq sp, sp, #16 ; popeq {fp, pc}",
+    );
+}
+
+#[test]
+fn arm_a_conditional_pop_on_the_opposite_flags_of_the_sp_adjustment_is_reported() {
+    let mut words = ARM_STACK_PROTECTED_UNLINK;
+    // addne sp, sp, #16: the eq path pops pc from a slot nothing saved.
+    words[11] = 0x128d_d010;
+    assert_reported(Arch::Arm, le32(&words), 0x30, "addne sp ; popeq {fp, pc}");
+}
+
+#[test]
+fn arm_a_conditional_pop_on_flags_recomputed_after_the_sp_adjustment_is_reported() {
+    let mut words: Vec<u32> = ARM_STACK_PROTECTED_UNLINK.to_vec();
+    // cmp r2, #0 between the two: popeq no longer tests addeq's flags.
+    words.insert(12, 0xe352_0000);
+    assert_reported(
+        Arch::Arm,
+        le32(&words),
+        0x34,
+        "addeq sp ; cmp r2, #0 ; popeq {fp, pc}",
+    );
+}
+
+// tcp_skb_shift, thumb/6.1-clang: a conditional pop and tail call in one IT
+// block, and a pop on the path that took neither.
+const THUMB_CONDITIONAL_TAIL_CALL: [u16; 23] = [
+    0xb580, // push {r7, lr}
+    0xf8d0, 0xc050, // ldr.w ip, [r0, #80]
+    0xf64f, 0x7ef7, // movw lr, #65527
+    0xf2c0, 0x0e07, // movt lr, #7
+    0x449c, // add ip, r3
+    0x45f4, // cmp ip, lr
+    0xd80a, // bhi.n -> movs r0, #0
+    0xf8b0, 0xc020, // ldrh.w ip, [r0, #32]
+    0x4462, // add r2, ip
+    0xf5b2, 0x3f80, // cmp.w r2, #65536
+    0xbfbe, // ittt lt
+    0x461a, // movlt r2, r3
+    0xe8bd, 0x4080, // ldmialt.w sp!, {r7, lr}
+    0xf797, 0xb840, // blt.w skb_shift
+    0x2000, // movs r0, #0
+    0xbd80, // pop {r7, pc}
+];
+
+#[test]
+fn thumb_a_pop_past_a_conditional_pop_on_the_flags_of_its_skipped_branch_stays_complete() {
+    assert_complete(
+        Arch::ArmThumb,
+        le16(&THUMB_CONDITIONAL_TAIL_CALL),
+        "ittt lt ; ldmialt sp!, {r7, lr} ; blt.w ; ... ; pop {r7, pc}",
+    );
+}
+
+#[test]
+fn thumb_a_pop_past_a_conditional_pop_on_the_opposite_flags_is_reported() {
+    let mut words = THUMB_CONDITIONAL_TAIL_CALL;
+    // itet lt: ldmiage pops on the path the blt does not take.
+    words[15] = 0xbfb6;
+    assert_reported(
+        Arch::ArmThumb,
+        le16(&words),
+        0x2c,
+        "itet lt ; ldmiage ; blt.w ; pop",
+    );
+}
+
 // cycles_2_ns, x64/4.4-gcc: a DRAP frame, the stack realigned and restored
 // from a pointer saved in the aligned frame.
 const X86_64_DRAP_CYCLES_2_NS: [u8; 115] = [
