@@ -306,3 +306,64 @@ fn x86_64_a_return_slot_rewritten_in_a_loop_from_an_argument_is_reported() {
         "the return slot takes an argument on one path around the loop",
     );
 }
+
+// cycles_2_ns, x64/4.4-gcc: a DRAP frame, the stack realigned and restored
+// from a pointer saved in the aligned frame.
+const X86_64_DRAP_CYCLES_2_NS: [u8; 115] = [
+    0x4c, 0x8d, 0x54, 0x24, 0x08, // lea 0x8(%rsp),%r10
+    0x48, 0x83, 0xe4, 0xf0, // and $-16,%rsp
+    0x41, 0xff, 0x72, 0xf8, // push -0x8(%r10)
+    0x55, // push %rbp
+    0x48, 0x89, 0xe5, // mov %rsp,%rbp
+    0x41, 0x52, // push %r10
+    0x48, 0x8b, 0x35, 0xc1, 0x30, 0x2b, 0x00, 0x48, 0x8b, 0x05, 0xc2, 0x30, 0x2b, 0x00, 0x48, 0x39,
+    0xc6, 0x75, 0x1c, 0x8b, 0x06, 0x8b, 0x4e, 0x04, 0x48, 0xf7, 0xe7, 0x48, 0x0f, 0xad, 0xd0, 0x48,
+    0xd3, 0xea, 0xf6, 0xc1, 0x40, 0x48, 0x0f, 0x45, 0xc2, 0x48, 0x03, 0x46, 0x08, 0xeb, 0x29, 0xff,
+    0x46, 0x10, 0x8b, 0x06, 0x8b, 0x4e, 0x04, 0x48, 0xf7, 0xe7, 0x48, 0x0f, 0xad, 0xd0, 0x48, 0xd3,
+    0xea, 0xf6, 0xc1, 0x40, 0x48, 0x0f, 0x45, 0xc2, 0x48, 0x03, 0x46, 0x08, 0xff, 0x4e, 0x10, 0x75,
+    0x07, 0x48, 0x89, 0x35, 0x78, 0x30, 0x2b, 0x00, 0x41, 0x5a, // pop %r10
+    0x5d, // pop %rbp
+    0x49, 0x8d, 0x62, 0xf8, // lea -0x8(%r10),%rsp
+    0xc3, // ret
+];
+
+#[test]
+fn x86_64_a_return_through_a_realigned_frame_stays_complete() {
+    assert_complete(
+        Arch::X64,
+        X86_64_DRAP_CYCLES_2_NS.to_vec(),
+        "lea 0x8(%rsp),%r10 ; and $-16,%rsp ; ... ; lea -0x8(%r10),%rsp ; ret",
+    );
+}
+
+/// lea 0x8(%rsp),%r10 ; and $-16,%rsp ; push -0x8(%r10) ; push %rbp ;
+/// mov %rsp,%rbp ; push %r10 ; `clobber` ; pop %r10 ; pop %rbp ;
+/// lea -0x8(%r10),%rsp ; ret
+fn x86_64_drap_frame_with(clobber: &[u8]) -> Vec<u8> {
+    let mut bytes = X86_64_DRAP_CYCLES_2_NS[..19].to_vec();
+    bytes.extend_from_slice(clobber);
+    bytes.extend_from_slice(&X86_64_DRAP_CYCLES_2_NS[107..]);
+    bytes
+}
+
+#[test]
+fn x86_64_a_realigned_frame_whose_saved_stack_pointer_is_overwritten_is_reported() {
+    // mov %rsi,-0x8(%rbp)
+    let bytes = x86_64_drap_frame_with(&[0x48, 0x89, 0x75, 0xf8]);
+    let ret = bytes.len() as u64 - 1;
+    assert_reported(Arch::X64, bytes, ret, "the saved %r10 slot overwritten");
+}
+
+#[test]
+fn x86_64_a_realigned_frame_whose_saved_stack_pointer_may_be_overwritten_is_reported() {
+    // mov %rsi,-0x28(%r10): the entry-SP slot 32 below the entry SP is the
+    // saved %r10 slot when the entry SP was 8 above a 16-byte boundary.
+    let bytes = x86_64_drap_frame_with(&[0x49, 0x89, 0x72, 0xd8]);
+    let ret = bytes.len() as u64 - 1;
+    assert_reported(
+        Arch::X64,
+        bytes,
+        ret,
+        "a store the alignment may place on the saved %r10",
+    );
+}
