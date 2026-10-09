@@ -63,14 +63,9 @@ impl PeepholePass for DeadBranchElimination {
                 let dead_ctrl = if cond_val { ctrl_false } else { ctrl_true };
 
                 // An `Unreachable` on the dead arm anchors the memory of an
-                // exit-free control cycle. Folding the branch orphans it and the
-                // cycle loses its stores. `live_side_reaches_terminator` below
-                // rejects that shape too, so this is the deliberately
-                // conservative half: it also declines a dead arm that is a bare
-                // `Unreachable`, where the fold would be sound. `if (const) ..
-                // else abort();` still folds, its dead arm reaching the
-                // `Unreachable` through the `Call`. Kept because the cost is one
-                // unfolded branch and the failure mode is a lost store.
+                // exit-free control cycle the fold would orphan.  Coarser than
+                // `live_side_reaches_terminator` below: a dead arm that is a
+                // bare `Unreachable` declines too, though folding it is sound.
                 let dead_consumers: Vec<NodeId> = edit
                     .graph_ref()
                     .value_uses(dead_ctrl)
