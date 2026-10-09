@@ -18,8 +18,9 @@ class BufferReader:
         `StriderError` for an invalid region."""
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
-        """Up to `size` bytes at `addr` (fewer near a region edge), or `None`
-        when `addr` itself is unmapped."""
+        """Up to `size` bytes at `addr` (fewer near a region edge, or before a
+        relocation the ELF loader does not compute), or `None` when `addr`
+        itself is unmapped or inside such a relocation's field."""
         ...
 
 class MemReader:
