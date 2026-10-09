@@ -978,8 +978,17 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         let mut reported = rustc_hash::FxHashSet::default();
         self.undecodable_seeded
             .retain(|&(_, bad)| reported.insert(bad));
-        self.interior_branch_targets.sort_unstable();
-        self.interior_branch_targets.dedup();
+        // Two producers push each of these: the explore-path stub and the
+        // fall-through seal, which checks the region map only after `lift_code`
+        // fails.
+        for report in [
+            &mut self.interior_branch_targets,
+            &mut self.unmapped_branch_targets,
+            &mut self.undecodable_branch_targets,
+        ] {
+            report.sort_unstable();
+            report.dedup();
+        }
 
         let function_isa_bit = self.isa_mode_of(&self.function_mode).map(|mode| mode != 0);
         Ok(Cfg {
