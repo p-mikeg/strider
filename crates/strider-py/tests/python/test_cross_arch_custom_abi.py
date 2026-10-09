@@ -3,7 +3,8 @@ one arch's register table.
 
 The same register name denotes a different varnode on another arch (x86-64
 `EDI` is `%[0x38]:4`, x86 `EDI` is `%[0x1c]:4`), so consuming one on the wrong
-`Lifter` used to lift a function whose arguments silently were not there.
+`Lifter` has to raise rather than lift a function whose arguments silently
+are not there.
 """
 
 import pytest

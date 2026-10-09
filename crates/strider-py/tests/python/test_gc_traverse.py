@@ -202,10 +202,10 @@ print("dropped", flush=True)
 
 @pytest.mark.parametrize("shape", sorted(DEEP_SHAPES))
 def test_dropping_a_deep_chain_does_not_crash_the_interpreter(shape):
-    """Dropping the chain descends one native frame per link, and PyO3 0.22 has
-    no `Py_TRASHCAN`, so it used to take the process down with SIGSEGV and no
-    catchable exception. Building it is the cheap half; the crash is in the
-    drop, which is why the child prints on both sides of the `del`."""
+    """Dropping the chain descends one native frame per link, and PyO3 0.22
+    has no `Py_TRASHCAN`, so an unguarded drop is a SIGSEGV with no catchable
+    exception. Building it is the cheap half; the risk is in the drop, which is
+    why the child prints on both sides of the `del`."""
     import subprocess
     import sys
 

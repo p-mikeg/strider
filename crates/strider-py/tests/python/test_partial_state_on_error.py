@@ -38,8 +38,8 @@ def test_a_failed_add_symbols_adds_nothing():
     with pytest.raises((TypeError, ValueError)):
         elf.add_symbols({"ghost": 0x2000, "bad": "not an address"})  # type: ignore[dict-item]
     assert elf.symbol_opt("ghost") is None
-    # A later mutation used to publish the stranded entry, and a corrected
-    # retry then held two `ghost` rows with `by_name` keeping the first.
+    # A stranded entry published by a later mutation would leave the
+    # corrected retry with two `ghost` rows, `by_name` keeping the first.
     elf.add_symbols({"ghost": 0x3000})
     ghost = elf.symbol_opt("ghost")
     assert ghost is not None and ghost.address == 0x3000
