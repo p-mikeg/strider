@@ -477,6 +477,9 @@ Lifting and memory:
   preset named a vector register at all and DCE deleted every AltiVec/VSX
   result and every caller's vector argument setup. An ELFv2 `__float128` or
   IEEE `long double` return comes back in `v2` too.
+- `BuiltCallingConvention::validate` rejects a stack-pointer SUB-register in a
+  register list, as its byte-level disjointness rule always claimed; `ESP`
+  beside `RSP` was accepted and made the stack pointer `arg 0`.
 - A `per_address_ccs` override naming an integer argument register outside the
   function's own convention lifts.
 - An ARM32 function with a NEON register and a call analyses.

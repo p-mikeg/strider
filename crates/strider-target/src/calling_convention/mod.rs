@@ -78,7 +78,7 @@ pub struct BuiltCallingConvention {
     pub ret_val_regs: Vec<rsleigh::Vn>,
     /// In positional order.
     pub ret_val_regs_float: Vec<rsleigh::Vn>,
-    /// Never present in the five register lists above.
+    /// Shares no byte with the five register lists above.
     pub stack_vn: rsleigh::Vn,
     /// `None` when the convention passes no arguments on the stack.
     pub stack_args: Option<StackArgs>,
@@ -302,7 +302,7 @@ impl BuiltCallingConvention {
     ///   `arg_passing_regs_float`, `ret_val_regs`, and `ret_val_regs_float`
     /// - `ret_val_regs` and `ret_val_regs_float` are disjoint
     /// - `arg_passing_regs` and `arg_passing_regs_float` are disjoint
-    /// - `stack_vn` is in none of the five register lists
+    /// - `stack_vn` shares no byte with any of the five register lists
     /// - no duplicates within any single list
     /// - a `Some` `link_register_vn` is also in `callee_saved_regs` (the
     ///   deliberate link-register tradeoff)
@@ -385,12 +385,12 @@ impl BuiltCallingConvention {
             ("ret_val_regs", &self.ret_val_regs),
             ("ret_val_regs_float", &self.ret_val_regs_float),
         ] {
-            if list.contains(&self.stack_vn) {
+            if let Some(vn) = first_overlapping(list, std::slice::from_ref(&self.stack_vn)) {
                 return Err(anyhow::anyhow!(
-                    "BuiltCallingConvention: stack_vn {:?} appears in {} \
-                     (the SP is implicit and must not be in any reg list)",
+                    "BuiltCallingConvention: varnode {vn:?} in {list_name} shares \
+                     bytes with stack_vn {:?} (the SP is implicit and must not be \
+                     in any reg list)",
                     self.stack_vn,
-                    list_name,
                 ));
             }
             if let Some(vn) = first_dup(list) {
