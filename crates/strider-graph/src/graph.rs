@@ -464,13 +464,24 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
 
         let reachable: Vec<NodeId> = reachable.into_iter().collect();
 
-        let mut new_nodes: PrimaryMap<NodeId, Node<N>> = PrimaryMap::new();
-        let mut new_outputs: PrimaryMap<ValueId, ValueData<V>> = PrimaryMap::new();
-        let mut new_inputs: PrimaryMap<UseId, UseData> = PrimaryMap::new();
+        // Sized up front off the survivors, so these arenas carry no doubling
+        // slack beside the graph they are replacing.  The list pools are left
+        // to grow: their size classes are the pool's own, and reserving the
+        // old pool's capacity costs more than the doubling it saves.
+        let (mut out_slots, mut in_slots) = (0usize, 0usize);
+        for &id in &reachable {
+            out_slots += self.store.nodes[id].outputs.len(&self.store.output_pool);
+            in_slots += self.store.nodes[id].inputs.len(&self.store.input_pool);
+        }
+        let mut new_nodes: PrimaryMap<NodeId, Node<N>> = PrimaryMap::with_capacity(reachable.len());
+        let mut new_outputs: PrimaryMap<ValueId, ValueData<V>> =
+            PrimaryMap::with_capacity(out_slots);
+        let mut new_inputs: PrimaryMap<UseId, UseData> = PrimaryMap::with_capacity(in_slots);
         let mut new_output_pool = ListPool::<ValueId>::new();
         let mut new_input_pool = ListPool::<UseId>::new();
 
-        let mut remap = NodeIdRemap::default();
+        let mut remap =
+            NodeIdRemap::with_capacity(self.store.nodes.len(), self.store.outputs.len());
 
         // Copy nodes (placeholder slot lists) and outputs first, so every new
         // NodeId / ValueId exists before the second pass rewrites edges.
@@ -536,9 +547,8 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.output_pool = new_output_pool;
         self.store.input_pool = new_input_pool;
 
-        let all_use_ids: SmallVec<[UseId; 16]> = self.store.inputs.keys().collect();
-        for use_id in all_use_ids {
-            self.store.link_use_to_value_list(use_id);
+        for i in 0..self.store.inputs.len() {
+            self.store.link_use_to_value_list(UseId::new(i));
         }
 
         remap
@@ -554,6 +564,14 @@ pub struct NodeIdRemap {
 }
 
 impl NodeIdRemap {
+    /// Sized for the PRE-compaction arena, which is what the keys index.
+    fn with_capacity(nodes: usize, outputs: usize) -> Self {
+        Self {
+            nodes: SecondaryMap::with_capacity(nodes),
+            outputs: SecondaryMap::with_capacity(outputs),
+        }
+    }
+
     #[inline]
     pub fn node_old_to_new(&self, old: NodeId) -> Option<NodeId> {
         self.nodes[old]
