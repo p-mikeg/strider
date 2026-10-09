@@ -502,7 +502,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     },
     // Linux AArch64 SVC: w8 = syscall number, x0..x5 = args, x0 = return.  The
     // number is read as the whole `x8` container, which is what the lifter's
-    // tracked-varnode set carries.  `AARCH64base.sinc:6473` raises
+    // tracked-varnode set carries.  `AARCH64base.sinc:6489` raises
     // `CallSupervisor(imm16:2)` with the vector immediate as its only operand,
     // so the register ABI is entirely implicit here.  Unlike x86-64 SYSCALL,
     // the SVC instruction itself clobbers no register.
@@ -543,7 +543,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     },
     // The AArch32 half of the same SMCCC (`ARM.sinc:150-151`, raised by
     // `ARMinstructions.sinc:1591`/`:1608` and the Thumb pair at
-    // `ARMTHUMBinstructions.sinc:1444`/`:1451`).  The sla declares no output
+    // `ARMTHUMBinstructions.sinc:1447`/`:1454`).  The sla declares no output
     // for either op, so without this row nothing writes r0 and a read after
     // an SMC resolves to the value that flowed IN.  SMC32/HVC32 passes
     // arguments in r0..r7 and returns in r0..r3; SMCCC 1.0 leaves r4..r14
@@ -721,7 +721,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     CallOtherRow {
         preset_arches: X86_BOTH,
         op_names: &[
-            // AES-NI (`ia.sinc:10347-10399`), the whole block:
+            // AES-NI (`ia.sinc:10364-10416`), the whole block:
             // `XmmReg1 = <op>(XmmReg1, XmmReg2_m128)`.
             "aesdec",
             "aesdeclast",
@@ -729,15 +729,15 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             "aesenclast",
             "aesimc",
             "aeskeygenassist",
-            // `Reg32 = crc32(Reg32, rm8|rm16|rm32)` (`ia.sinc:10298-10304`).
+            // `Reg32 = crc32(Reg32, rm8|rm16|rm32)` (`ia.sinc:10315-10321`).
             "crc32",
             // `XmmReg1 = pblendvb(XmmReg1, XmmReg2_m128, XMM0)`
-            // (`ia.sinc:9978-9979`): the otherwise-implicit XMM0 is a listed
+            // (`ia.sinc:9996-9997`): the otherwise-implicit XMM0 is a listed
             // operand, like SHA256RNDS2.
             "pblendvb",
-            // MMX `psraw` (`ia.sinc:8931-8933`) and its SSE form (`:8962-8964`).
+            // MMX `psraw` (`ia.sinc:8939-8941`) and its SSE form (`:8970-8972`).
             "psraw",
-            // MOVNTDQA (`ia.sinc:10291`) is `XmmReg = movntdqa(XmmReg, m128)`:
+            // MOVNTDQA (`ia.sinc:10308`) is `XmmReg = movntdqa(XmmReg, m128)`:
             // a non-temporal LOAD whose access is the explicit `m128` p-code
             // Load, leaving the user-op itself pure.
             "movntdqa",
@@ -785,11 +785,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     },
     // x86 ops that DO reach memory without the p-code saying so.
     //
-    // MOVDIR64B (`ia.sinc:7294-7308`) is `movdir64b(Reg, m512)`: the 64-byte
+    // MOVDIR64B (`ia.sinc:7304-7316`) is `movdir64b(Reg, m512)`: the 64-byte
     // SOURCE read is the explicit `m512` Load, but the 64-byte destination
     // store to the address in `Reg` is modelled nowhere.
     //
-    // VIA PadLock XSHA256 (`ia.sinc:9928`) is `xsha256(ECX,ESI,EDI)`: it
+    // VIA PadLock XSHA256 (`ia.sinc:9946`) is `xsha256(ECX,ESI,EDI)`: it
     // streams ECX blocks from [ESI] and writes the digest at [EDI], with
     // neither access spelled in p-code.  ECX/ESI/EDI are listed operands, so
     // the register channel stays empty.
@@ -798,7 +798,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         op_names: &["movdir64b", "xsha256"],
         class: MEM_CLOBBER,
     },
-    // AArch64 TBL / TBX (`AARCH64neon.sinc:24163-24276`): a table lookup
+    // AArch64 TBL / TBX (`AARCH64neon.sinc:24646-24757`): a table lookup
     // across up to four vector REGISTERS, every one a listed operand
     // (`Rd_VPR128.16B = a64_TBL(tblx, Rn_VPR128.16B, ..., Rm_VPR128.16B)`).
     // The name is aarch64's alone, so it is scoped rather than sharing the
@@ -808,13 +808,13 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         op_names: &["a64_TBL"],
         class: PURE,
     },
-    // AArch64 SVE LDR / STR of a Z or P register (`AARCH64sve.sinc:4504`,
-    // `:4513`, `:6531`, `:6540`).  The sla passes the BASE REGISTER as a
+    // AArch64 SVE LDR / STR of a Z or P register (`AARCH64sve.sinc:4553`,
+    // `:4562`, `:6593`, `:6602`).  The sla passes the BASE REGISTER as a
     // value (`Zd = SVE_ldr(Zd, Rn_GPR64xsp, imm)`, `SVE_str(Zd,
     // Rn_GPR64xsp, imm)`), NOT a dynamic memory varnode, so no p-code Load or
     // Store is emitted and the access is entirely implicit.  74 of the 315
     // `SVE_*` user-ops have that shape (every `SVE_ld*`, `SVE_st*`,
-    // `SVE_prf*`; `SVE_ld1b` at `:2650` is structurally identical to
+    // `SVE_prf*`; `SVE_ld1b` at `:2702` is structurally identical to
     // `SVE_ldr`), which is why `SVE_` is not a prefix family: the rest are
     // register compute.  These two are listed because they are the ones seen;
     // an unlisted name fails the lift rather than forwarding across a hidden
@@ -825,7 +825,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: MEM_CLOBBER,
     },
     // ARM32 NEON ops `ARMneon.sinc` names outside its `Vector*` / `Float*`
-    // groups.  `vrev` (`:5282-5314`, `Qd = vrev(Qm, esize)`), the saturating
+    // groups.  `vrev` (`:5286-5322`, `Qd = vrev(Qm, esize)`), the saturating
     // pair (`:5078-5079`, `Dd = SatQ(Dd, esize, unsigned)`), and the SHA-256
     // message schedule (`:681`, `Qd = SHA256ScheduleUpdate0(Qd, Qm)`) are all
     // register-to-register with listed operands.  Arch-scoped because `vrev`
