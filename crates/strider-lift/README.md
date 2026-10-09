@@ -14,9 +14,12 @@ register modelled as an SSA variable.
   `build_ir_with(cfg, cc, opts)` lift. The calling convention is per function,
   hence an argument rather than engine state.
 - `LiftOutcome`: the `Function`, plus `unresolved_branches` (each unresolved
-  `BranchIndirect`'s pcode address and its `IndirectBranch` placeholder) and
+  `BranchIndirect`'s pcode address and its `IndirectBranch` placeholder),
   `switch_anchors` (each seated `Switch`, so a resolver can re-derive and WIDEN
-  a table that resolved before the CFG finished growing).
+  a table that resolved before the CFG finished growing) and `return_sites`
+  (each Sleigh `RETURN`'s pcode address, its `Return` node and the address it
+  jumps to, which only a check against the optimised IR can confirm is the
+  caller's).
 - `LiftOptions`: the `CfgOptions` to decode with, `per_address_ccs` for direct
   call targets, and `compact`, which this crate only carries for the
   orchestrator to read after the pipeline.
@@ -55,8 +58,8 @@ Masks are built in container coordinates, so an upper-half write (AArch64
 A register slot holds an integer at the register's natural width: an `I1` flag
 is zero-extended on the way in and a float is rejected, every float producer
 having bitcast first. That is what makes a cross-region `Phi` over a register
-type-homogeneous, and it is why the conditional-branch lifter narrows a flag
-back to `I1` on the way out.
+type-homogeneous, and the conditional-branch lifter reads such a flag back by
+testing `!= 0` at the slot's own width rather than narrowing it to `I1`.
 
 ## A register-space LOAD or STORE is a register access
 
