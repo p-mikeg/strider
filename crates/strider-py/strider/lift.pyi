@@ -61,7 +61,7 @@ class AssumptionOptions:
     `docs/python-api.md` section 2.
     """
 
-    # Read-only: the options types are frozen, so a plain attribute
+    # Read-only: these are getters with no setter, so a plain attribute
     # declaration would let a type checker accept `o.x = ...`, which raises at runtime.
     @property
     def stack_global_disjoint(self) -> bool: ...
@@ -116,7 +116,7 @@ class LifterOptions:
     replaces the default optimizer pipeline for the calls these options drive.
     """
 
-    # Read-only: the options types are frozen, so a plain attribute
+    # Read-only: these are getters with no setter, so a plain attribute
     # declaration would let a type checker accept `o.x = ...`, which raises at runtime.
     @property
     def cfg(self) -> CfgOptions: ...
@@ -124,8 +124,10 @@ class LifterOptions:
     def assumptions(self) -> AssumptionOptions: ...
     @property
     def compact(self) -> bool: ...
+    # A read-only VIEW onto what the constructor stored, built once and handed
+    # out unchanged, as the `CfgOptions` tables are.
     @property
-    def per_address_ccs(self) -> Optional[dict[int, CallingConvention]]: ...
+    def per_address_ccs(self) -> Optional[Mapping[int, CallingConvention]]: ...
     @property
     def resolve_indirect_branches(self) -> bool: ...
     @property
@@ -223,6 +225,9 @@ class Lifter:
 
         `cc` is required here; `ElfLifter.analyze` also takes a symbol name
         and supplies a default `cc`.
+
+        A bad `entry` raises a `StriderError` naming the cause, as `build_cfg`
+        does for the same argument.
 
         An empty `unresolved` is not a complete answer: see `AnalyzeResult`
         for the six channels, and `Cfg.is_complete` to test them all.

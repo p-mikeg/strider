@@ -29,7 +29,7 @@ pub struct PyCallOtherAbi {
     writes: Vec<String>,
     /// The arch a `custom(...)` ABI resolved its register names against;
     /// `None` for a preset class, which carries no varnodes.
-    pub(crate) source_arch: Option<&'static str>,
+    pub(crate) source_arch: Option<crate::strider_cls::SourceArch>,
 }
 
 impl PyCallOtherAbi {
@@ -133,7 +133,7 @@ impl PyCallOtherAbi {
     ) -> PyResult<Self> {
         let sleigh_borrow = sleigh.borrow(py);
         let regs = sleigh_borrow.regs.clone();
-        let source_arch = sleigh_borrow.arch_name;
+        let source_arch = sleigh_borrow.source_arch;
         drop(sleigh_borrow);
         let resolve = |names: &[String]| -> PyResult<Vec<rsleigh::Vn>> {
             names

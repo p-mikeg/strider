@@ -22,10 +22,6 @@ use crate::reader::{AnyMemReader, MemInput};
 /// Moving is what matters: pinned, a `Function` dropped on a worker thread
 /// leaks its whole `Lifter`, because PyO3 will not run an `unsendable`
 /// destructor off-thread.
-///
-/// Not generic: the only thing pinned is the `Strider` behind a `Lifter`, and
-/// the message below names it, so a second instantiation would have to say
-/// something this cannot.
 pub(crate) struct ThreadPinned {
     owner: std::thread::ThreadId,
     /// `None` once `PyLifter::__clear__` has released it.
@@ -68,21 +64,65 @@ impl ThreadPinned {
     }
 }
 
+/// The arch a `custom(...)` convention or user-op ABI froze its register
+/// varnodes against.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SourceArch {
+    /// The preset name, for messages.
+    pub(crate) name: &'static str,
+    /// The register table's identity: the sla carries it, so two presets over
+    /// one sla (`arm` / `arm_thumb` / `arm_be_kernel`) resolve a register name
+    /// to the same varnode.
+    pub(crate) sla: rsleigh::sla_spec::SlaSpec,
+}
+
+impl SourceArch {
+    pub(crate) fn new(arch: strider_target::SleighArch, name: &'static str) -> Self {
+        Self {
+            name,
+            sla: arch.sla_spec(),
+        }
+    }
+
+    fn resolves_like(self, other: Self) -> bool {
+        self.name == other.name || self.sla == other.sla
+    }
+}
+
+/// By name, which fixes the sla.
+impl PartialEq for SourceArch {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for SourceArch {}
+
+impl std::hash::Hash for SourceArch {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
+}
+
 /// A `custom(...)` convention or user-op ABI froze varnodes resolved against
-/// one arch's register table; the same name denotes a different varnode on
-/// another arch (x86-64 `EDI` is `%[0x38]:4`, x86 `EDI` is `%[0x1c]:4`), so
+/// one arch's register table; the same name denotes a different varnode under
+/// another sla (x86-64 `EDI` is `%[0x38]:4`, x86 `EDI` is `%[0x1c]:4`), so
 /// consuming it there silently mismatches every register.
 fn check_source_arch(
-    source_arch: Option<&str>,
-    target_arch: &str,
+    source_arch: Option<SourceArch>,
+    target: SourceArch,
     what: std::fmt::Arguments<'_>,
 ) -> PyResult<()> {
     match source_arch {
-        Some(source) if source != target_arch => Err(into_strider_err(anyhow::anyhow!(
-            "{what} was built against a {source:?} Sleigh but is being used \
-             with a {target_arch:?} Lifter; its register varnodes are frozen \
-             at construction, so rebuild it from a {target_arch:?} Sleigh"
-        ))),
+        Some(source) if !source.resolves_like(target) => {
+            let (source, target) = (source.name, target.name);
+            Err(into_strider_err(anyhow::anyhow!(
+                "{what} was built against a {source:?} Sleigh but is being used \
+                 with a {target:?} Lifter, whose register table is a different \
+                 one; its register varnodes are frozen at construction, so \
+                 rebuild it from a {target:?} Sleigh"
+            )))
+        }
         _ => Ok(()),
     }
 }
@@ -90,11 +130,11 @@ fn check_source_arch(
 pub(crate) fn build_cc(
     cc: &PyCallingConvention,
     regs: &rsleigh::SleighRegs,
-    target_arch: &str,
+    target: SourceArch,
 ) -> PyResult<strider_target::BuiltCallingConvention> {
     check_source_arch(
         cc.source_arch,
-        target_arch,
+        target,
         format_args!("this custom CallingConvention"),
     )?;
     if cc.no_return {
@@ -113,14 +153,14 @@ pub(crate) fn build_cc(
 pub(crate) fn build_per_address_ccs(
     per_address_ccs_py: std::collections::HashMap<u64, PyCallingConvention>,
     regs: &rsleigh::SleighRegs,
-    target_arch: &str,
+    target: SourceArch,
 ) -> PyResult<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>> {
     per_address_ccs_py
         .into_iter()
         .map(|(addr, py_cc)| {
             check_source_arch(
                 py_cc.source_arch,
-                target_arch,
+                target,
                 format_args!("the custom per-address CallingConvention at {addr:#x}"),
             )?;
             let mut built = match py_cc.inner {
@@ -164,6 +204,28 @@ pub(crate) fn reentrant_lifter_err() -> PyErr {
          a `read()` callback cannot re-enter the same handle. Build a \
          separate Lifter for the nested analysis"
     ))
+}
+
+/// `entry` as an address, the same way for every entry point that takes one:
+/// `build_cfg` answered a bare `OverflowError` where this names the cause.
+///
+/// An int that does not fit is a different mistake from a str, and saying "you
+/// need an ElfLifter" to someone holding one sends them the wrong way.
+fn entry_addr(entry: &Bound<'_, PyAny>) -> PyResult<u64> {
+    entry.extract().map_err(|_| {
+        if entry.is_instance_of::<pyo3::types::PyInt>() {
+            into_strider_err(anyhow::anyhow!(
+                "`entry` is out of range for an address: it must fit an \
+                 unsigned 64-bit integer"
+            ))
+        } else {
+            into_strider_err(anyhow::anyhow!(
+                "`entry` must be an address (int); a symbol name (str) is \
+                 accepted by ElfLifter.analyze only. Build one with \
+                 strider.lift.load_elf(path)"
+            ))
+        }
+    })
 }
 
 pub(crate) fn reject_zero_max_size(function_max_size: Option<u64>) -> PyResult<()> {
@@ -212,12 +274,12 @@ pub(crate) fn build_strider(
 /// that is not a dict gets the message instead of a panic.
 fn overrides_from(
     call_other_abis: &std::collections::HashMap<String, crate::call_other_abi::PyCallOtherAbi>,
-    target_arch: &str,
+    target: SourceArch,
 ) -> PyResult<strider_target::call_other_abi::CallOtherOverrides> {
     for (name, abi) in call_other_abis {
         check_source_arch(
             abi.source_arch,
-            target_arch,
+            target,
             format_args!("the custom CallOtherAbi for {name:?}"),
         )?;
     }
@@ -259,15 +321,55 @@ pub(crate) fn seat_known_targets(
 /// `build_cfg` came to ignore `known_targets` entirely.
 pub(crate) fn cfg_options_from(
     opts: &PyCfgOptions,
-    target_arch: &str,
+    target: SourceArch,
 ) -> PyResult<strider_cfg::CfgOptions> {
     Ok(strider_cfg::CfgOptions {
         fn_max_size: opts.function_max_size,
         allow_code_before_start_addr: opts.allow_code_before_start_addr,
-        known_targets: seat_known_targets(&opts.known_targets),
-        call_other_overrides: overrides_from(&opts.call_other_abis, target_arch)?,
+        known_targets: opts.seated_known_targets().clone(),
+        call_other_overrides: overrides_from(&opts.call_other_abis, target)?,
         data_ranges: opts.data_ranges.clone(),
     })
+}
+
+/// The caller's seeds this build actually seated, which is what `analyze`
+/// reports: no classifier ran, so a seated seed is an answer nothing checked,
+/// while a seed at an address the function has no dispatch at seats nothing.
+///
+/// A site the build CONSUMED leaves no terminator to find, so the two seated
+/// lists carry it instead, the way `Strider::analyze` reads them.
+fn seeded_sites(opts: &strider_cfg::CfgOptions, cfg: &strider_cfg::Cfg) -> Vec<u64> {
+    let consumed = cfg
+        .link_register_seated()
+        .iter()
+        .chain(cfg.tail_call_seated());
+    let seated: rustc_hash::FxHashSet<strider_cfg::PcodeInsnAddr> = cfg
+        .regions()
+        .filter_map(|region| match &region.terminator {
+            strider_cfg::RegionTerminator::Switch { addr, .. } => Some(*addr),
+            _ => None,
+        })
+        .chain(consumed.copied())
+        .collect();
+    let mut out: Vec<u64> = opts
+        .known_targets
+        .keys()
+        .filter(|addr| seated.contains(addr))
+        .map(|addr| addr.machine_addr.addr)
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// `addr` is not a machine-instruction boundary on the linear path from
+/// `entry`, which a sweep only discovers by stepping over it.
+fn stepped_past(entry: u64, addr: u64) -> PyErr {
+    into_strider_err(anyhow::anyhow!(
+        "pcode_at: linear sweep from entry {entry:#x} stepped past target {addr:#x} \
+         (misaligned: {addr:#x} is not a machine-instruction boundary on the linear \
+         path from entry)"
+    ))
 }
 
 pub(crate) fn machine_addrs(addrs: &[strider_cfg::PcodeInsnAddr]) -> Vec<u64> {
@@ -371,10 +473,9 @@ pub struct PyLifter {
     /// The exact `rom` object the handle was built from, returned by `rom()`.
     /// `None` when no rom was supplied, or after `__clear__` during GC.
     rom_obj: Option<Py<PyAny>>,
-    /// The engine `pcode_at` sweeps with, kept between calls. `Sleigh::clone`
-    /// is a whole `Sleigh::new` plus a commit replay, tens of milliseconds
-    /// against the microseconds the one instruction it decodes costs, and
-    /// walking an instruction stream is one call per address.
+    /// The engine `pcode_at` sweeps with, kept between calls with everything
+    /// it has decoded: `Sleigh::clone` is a whole `Sleigh::new` plus a commit
+    /// replay, and walking an instruction stream is one call per address.
     sweep_sleigh: std::cell::RefCell<Option<SweepSleigh>>,
     /// Bumped by `analyze` and `build_cfg`, the only callers that reach
     /// `set_context_at`, so a cached sweep engine built before a commit is
@@ -382,18 +483,27 @@ pub struct PyLifter {
     context_gen: std::cell::Cell<u64>,
 }
 
-/// A `pcode_at` sweep engine plus what makes it reusable.
+/// A `pcode_at` sweep engine plus everything it has already decoded.
 ///
 /// Decoding writes flow context back into the engine, so this is NOT a clean
-/// clone after its first sweep. Re-sweeping the SAME entry re-derives the same
-/// values it already holds, which is what makes reuse decode as a fresh clone
-/// would; a different entry gets a fresh one.
+/// clone after its first sweep, and re-decoding an address it has already
+/// passed would answer in whatever mode a LATER instruction pinned (an ARM
+/// backward `blx` pins Thumb at its target). So an address the sweep already
+/// decoded is answered out of `answers` and the engine only ever moves forward
+/// from `cursor`, which is what makes an answer independent of the order the
+/// calls came in. A different entry, or a context commit on the owning
+/// `Lifter`, gets a fresh engine.
 struct SweepSleigh {
     context_gen: u64,
     entry: u64,
     sleigh: rsleigh::Sleigh<AnyMemReader>,
     /// `sleigh`'s own, which its LOAD / STORE space ids resolve against.
     space_ids: rsleigh::SpaceIds,
+    /// `machine addr -> joined p-code`, for every address this sweep decoded.
+    answers: std::collections::HashMap<u64, String>,
+    /// Where the engine will decode next: `entry` before the first sweep, one
+    /// past the last instruction decoded after that.
+    cursor: u64,
 }
 
 fn collect_py_deps(mem: &MemInput, rom: Option<&MemInput>) -> Vec<std::sync::Arc<Py<PyAny>>> {
@@ -431,6 +541,11 @@ impl PyLifter {
 
     pub(crate) fn sleigh(&self) -> PyResult<&rsleigh::Sleigh<AnyMemReader>> {
         Ok(self.inner.get()?.sleigh())
+    }
+
+    /// What a `custom(...)` convention or user-op ABI is checked against.
+    pub(crate) fn source_arch(&self) -> SourceArch {
+        SourceArch::new(self.arch, self.arch_name)
     }
 
     /// Retires any cached `pcode_at` sweep engine, for a caller about to
@@ -646,16 +761,17 @@ impl PyLifter {
     fn build_cfg(
         slf: Py<Self>,
         py: Python<'_>,
-        entry: u64,
+        entry: &Bound<'_, PyAny>,
         opts: Option<Py<PyCfgOptions>>,
     ) -> PyResult<PyCfg> {
+        let entry = entry_addr(entry)?;
         {
             let lifter = try_borrow_lifter(&slf, py)?;
             crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
         }
-        let arch_name = try_borrow_lifter(&slf, py)?.arch_name;
+        let target = try_borrow_lifter(&slf, py)?.source_arch();
         let cfg_opts = match &opts {
-            Some(o) => cfg_options_from(&o.borrow(py), arch_name)?,
+            Some(o) => cfg_options_from(&o.borrow(py), target)?,
             None => strider_cfg::CfgOptions::default(),
         };
         let inner = with_pending_control_flow(|| {
@@ -667,14 +783,7 @@ impl PyLifter {
                 .build_cfg(entry, &cfg_opts)
                 .map_err(into_strider_err)
         })?;
-        // No classifier ran, so every seat the caller supplied is an answer
-        // nothing here checked.
-        let mut seeded: Vec<u64> = cfg_opts
-            .known_targets
-            .keys()
-            .map(|addr| addr.machine_addr.addr)
-            .collect();
-        seeded.sort_unstable();
+        let seeded = seeded_sites(&cfg_opts, &inner);
         Ok(PyCfg::new(py, inner, slf, seeded))
     }
 
@@ -703,22 +812,7 @@ impl PyLifter {
         cc: Option<PyCallingConvention>,
         opts: Option<Py<PyLifterOptions>>,
     ) -> PyResult<PyObject> {
-        // An int that does not fit `u64` is a different mistake from a str, and
-        // saying "you need an ElfLifter" to someone holding one sends them the
-        // wrong way.
-        let entry: u64 = entry.extract().map_err(|_| {
-            if entry.is_instance_of::<pyo3::types::PyInt>() {
-                into_strider_err(anyhow::anyhow!(
-                    "`entry` is out of range for an address: it must fit an \
-                     unsigned 64-bit integer"
-                ))
-            } else {
-                into_strider_err(anyhow::anyhow!(
-                    "`entry` must be an address (int); a symbol name (str) needs \
-                     an ElfLifter. Build one with strider.lift.load_elf(path)"
-                ))
-            }
-        })?;
+        let entry = entry_addr(entry)?;
         let cc = cc.ok_or_else(|| {
             into_strider_err(anyhow::anyhow!(
                 "`cc` is required on a plain Lifter (the handle stores no \
@@ -731,7 +825,6 @@ impl PyLifter {
         };
         let opts_ref = opts.borrow(py);
         let compact = opts_ref.compact;
-        let per_address_ccs_py = opts_ref.per_address_ccs.clone().unwrap_or_default();
         let opt_opts = opt_options_from(py, &opts_ref)?;
         // Materialise the pipeline override BEFORE dropping the GIL below.
         let custom_pipeline = opts_ref
@@ -740,18 +833,18 @@ impl PyLifter {
             .map(|p| p.borrow(py).build_pipeline());
         drop(opts_ref);
 
-        let (arch_name, cc_built, per_address_built) = {
+        let (target, cc_built, per_address_built) = {
             let lifter = try_borrow_lifter(&slf, py)?;
             crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
             crate::reader::check_mem_unchanged(py, &lifter.rom_obj)?;
             let regs = lifter.inner.get()?.sleigh_regs();
-            let arch_name = lifter.arch_name;
-            let cc_built = build_cc(&cc, regs, arch_name)?;
-            let per_address_built = build_per_address_ccs(per_address_ccs_py, regs, arch_name)?;
-            (arch_name, cc_built, per_address_built)
+            let target = lifter.source_arch();
+            let cc_built = build_cc(&cc, regs, target)?;
+            let per_address_built = opts.borrow(py).built_per_address_ccs(regs, target)?;
+            (target, cc_built, per_address_built)
         };
 
-        // `arch_name` is only known after the borrow above, so the CFG knobs
+        // `target` is only known after the borrow above, so the CFG knobs
         // are read here rather than with the rest of the options: nothing
         // between the two points runs Python, and `CfgOptions` is get-only, so
         // it is the same object either way.
@@ -759,7 +852,7 @@ impl PyLifter {
             let opts_ref = opts.borrow(py);
             let cfg_ref = opts_ref.cfg.borrow(py);
             strider_orchestrator::LiftOptions {
-                cfg: cfg_options_from(&cfg_ref, arch_name)?,
+                cfg: cfg_options_from(&cfg_ref, target)?,
                 per_address_ccs: per_address_built,
                 compact,
             }
@@ -776,24 +869,27 @@ impl PyLifter {
             // `&mut Strider`, not the GIL-bound `PyRefMut`, which embeds a
             // `!Send` `Python<'_>` marker and would fail `Ungil`.
             let inner = lifter.inner.get_mut()?;
-            match custom_pipeline {
-                Some(pipeline) => prefer_pending_control_flow(
-                    py.allow_threads(|| {
-                        inner.analyze(entry, &cc_built, &lift_opts, &opt_opts, Some(pipeline))
-                    })
-                    .map_err(into_strider_err),
-                )?,
-                None => prefer_pending_control_flow(
-                    py.allow_threads(|| {
-                        inner.analyze(entry, &cc_built, &lift_opts, &opt_opts, None)
-                    })
-                    .map_err(into_strider_err),
-                )?,
-            }
+            prefer_pending_control_flow(
+                py.allow_threads(|| {
+                    inner.analyze(entry, &cc_built, &lift_opts, &opt_opts, custom_pipeline)
+                })
+                .map_err(into_strider_err),
+            )?
         };
-        let cfg = result.cfg;
-        let function = result.function;
-        let unresolved = machine_addrs(&result.unresolved_indirect_branches);
+        // Destructured, never `..`: a channel added to `AnalyzeResult` has to
+        // be handled here rather than dropping silently out of
+        // `Cfg.is_complete`.
+        let strider_orchestrator::AnalyzeResult {
+            cfg,
+            function,
+            unresolved_indirect_branches,
+            isa_mode_conflicts,
+            interior_branch_targets,
+            unmapped_branch_targets,
+            undecodable_branch_targets,
+            unverified_seeded_sites,
+        } = result;
+        let unresolved = machine_addrs(&unresolved_indirect_branches);
 
         // Surface anything a Python callback stashed while the GIL was
         // released.
@@ -805,11 +901,11 @@ impl PyLifter {
         // `cfg` does not carry.
         let reports = crate::cfg::CfgReports {
             unresolved: unresolved.clone(),
-            unverified_seeded: machine_addrs(&result.unverified_seeded_sites),
-            isa_mode_conflicts: machine_addrs(&result.isa_mode_conflicts),
-            interior_branch_targets: machine_addrs(&result.interior_branch_targets),
-            unmapped_branch_targets: machine_addrs(&result.unmapped_branch_targets),
-            undecodable_branch_targets: machine_addrs(&result.undecodable_branch_targets),
+            unverified_seeded: machine_addrs(&unverified_seeded_sites),
+            isa_mode_conflicts: machine_addrs(&isa_mode_conflicts),
+            interior_branch_targets: machine_addrs(&interior_branch_targets),
+            unmapped_branch_targets: machine_addrs(&unmapped_branch_targets),
+            undecodable_branch_targets: machine_addrs(&undecodable_branch_targets),
         };
         let cfg_obj = Py::new(py, PyCfg::with_reports(py, cfg, slf.clone_ref(py), reports))?;
 
@@ -837,9 +933,7 @@ impl PyLifter {
     /// rom would read a different binary's bytes.  Invalidates outstanding
     /// `Node` / `Match` handles for `function`.
     ///
-    /// Holds the GIL for the whole run, unlike `analyze`: the run borrows the
-    /// function out of its `RefCell`, and the `RefMut` is `!Send`, so the
-    /// closure cannot satisfy `allow_threads`'s `Ungil` bound.
+    /// Holds the GIL for the whole run, unlike `analyze`.
     #[pyo3(signature = (function, pipeline=None, opts=None))]
     fn optimize(
         slf: &Bound<'_, Self>,
@@ -897,6 +991,9 @@ impl PyLifter {
     /// return that instruction's p-code (ops joined `"; "`, empty for an
     /// instruction that lifts to none).
     ///
+    /// Each call resumes where the last one from the same `entry` stopped, so
+    /// walking a whole instruction stream decodes it once.
+    ///
     /// A stand-alone sweep, so it works for an `addr` outside any analysed
     /// CFG.  `addr` must be reachable through the linear instruction stream
     /// from `entry`; raises `StriderError` otherwise.
@@ -953,14 +1050,27 @@ impl PyLifter {
                     entry,
                     space_ids: sleigh.space_ids(),
                     sleigh,
+                    answers: std::collections::HashMap::new(),
+                    cursor: entry,
                 }
             }
         };
         let out = with_pending_control_flow(|| {
+            if let Some(text) = sweep.answers.get(&addr) {
+                return Ok(text.clone());
+            }
+            // Already swept past it without landing on it, so the linear path
+            // from entry does not start an instruction there.
+            if addr < sweep.cursor {
+                return Err(stepped_past(entry, addr));
+            }
             let SweepSleigh {
-                sleigh, space_ids, ..
+                sleigh,
+                space_ids,
+                answers,
+                cursor,
+                ..
             } = &mut sweep;
-            let mut cur = entry;
             let mut decoded: u64 = 0;
             loop {
                 // The sweep holds the GIL for its whole run, so Ctrl-C reaches
@@ -969,9 +1079,18 @@ impl PyLifter {
                 if decoded.is_multiple_of(1024) {
                     py.check_signals()?;
                 }
+                let cur = *cursor;
                 let (text, len) = crate::pcode::lift_one_text(sleigh, space_ids, cur)?;
+                answers.insert(cur, text);
+                if len > 0 {
+                    *cursor = cur.checked_add(len as u64).ok_or_else(|| {
+                        into_strider_err(anyhow::anyhow!(
+                            "machine-address overflow advancing past {cur:#x}"
+                        ))
+                    })?;
+                }
                 if cur == addr {
-                    return Ok(text);
+                    return Ok(answers[&addr].clone());
                 }
                 if len == 0 {
                     return Err(into_strider_err(anyhow::anyhow!(
@@ -979,19 +1098,9 @@ impl PyLifter {
                          instruction; cannot advance toward {addr:#x}"
                     )));
                 }
-                let next = cur.checked_add(len as u64).ok_or_else(|| {
-                    into_strider_err(anyhow::anyhow!(
-                        "machine-address overflow advancing past {cur:#x}"
-                    ))
-                })?;
-                if next > addr {
-                    return Err(into_strider_err(anyhow::anyhow!(
-                        "pcode_at: linear sweep from entry {entry:#x} stepped past target \
-                         {addr:#x} (misaligned: {addr:#x} is not a machine-instruction \
-                         boundary on the linear path from entry)"
-                    )));
+                if *cursor > addr {
+                    return Err(stepped_past(entry, addr));
                 }
-                cur = next;
             }
         });
         if let Ok(mut slot) = self.sweep_sleigh.try_borrow_mut() {
