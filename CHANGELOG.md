@@ -253,6 +253,9 @@ Rendering:
   gone, and `elf::relocations` is private. `from_bytes(b)` is
   `object::File::parse(b)` then `::from_object(&obj)`; `from_path(p)` is
   `load_elf(p)` then `::from_elf(&owned)`.
+- `Lifter::arch` is gone; `Strider::arch` remains.
+- `BuiltCallingConvention::ret_and_clobber_vns` reports REGISTER clobbers only,
+  so a `Call` no longer carries an output per tracked Sleigh temporary.
 
 ### Added, Python
 
