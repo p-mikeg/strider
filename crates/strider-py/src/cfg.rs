@@ -50,14 +50,30 @@ pub(crate) struct CfgReports {
     /// resolver ran to report one: every site that build left an
     /// `UnresolvedIndirectBranch`.
     pub(crate) unresolved: Vec<u64>,
-    /// For a `build_cfg` result this is every site the caller seeded: no
-    /// classifier ran, so nothing checked any of them. `analyze` narrows it to
-    /// the seeds its resolver could not confirm.
+    /// For a `build_cfg` result this is every seed that build SEATED: no
+    /// classifier ran, so nothing checked any of them, while a seed the CFG
+    /// had no dispatch for seats nothing. `analyze` narrows it to the seeds
+    /// its resolver could not confirm.
     pub(crate) unverified_seeded: Vec<u64>,
     pub(crate) isa_mode_conflicts: Vec<u64>,
     pub(crate) interior_branch_targets: Vec<u64>,
     pub(crate) unmapped_branch_targets: Vec<u64>,
     pub(crate) undecodable_branch_targets: Vec<u64>,
+}
+
+impl CfgReports {
+    /// Every channel, which is what `is_complete` reads. The one place they
+    /// are enumerated, so a seventh cannot be left out of the answer.
+    fn channels(&self) -> [&[u64]; 6] {
+        [
+            &self.unresolved,
+            &self.unverified_seeded,
+            &self.isa_mode_conflicts,
+            &self.interior_branch_targets,
+            &self.unmapped_branch_targets,
+            &self.undecodable_branch_targets,
+        ]
+    }
 }
 
 /// Region starts in address order, plus the longest span any region covers:
@@ -349,8 +365,10 @@ impl PyCfg {
     /// Not unresolved (you asserted the answer), but nothing checked it.
     /// Seating a seed changes the CFG the classifier reads, so a stale or wrong
     /// seed can stop it deriving and take the site's real arms with it. These
-    /// are the sites where that cannot be ruled out. For a `build_cfg` result it
-    /// is every site you seeded, since no classifier ran to check any of them.
+    /// are the sites where that cannot be ruled out. For a `build_cfg` result
+    /// it is every seed the build SEATED, since no classifier ran to check any
+    /// of them; a seed at an address the function dispatches from nowhere
+    /// seats nothing and is not reported.
     fn unverified_seeded_sites(&self) -> Vec<u64> {
         self.reports.unverified_seeded.clone()
     }
@@ -368,15 +386,9 @@ impl PyCfg {
     ///
     /// On a `build_cfg` CFG `unresolved` is every indirect branch that build
     /// left without an outgoing edge, since `build_cfg` resolves none of them,
-    /// and `unverified_seeded_sites` holds every site you seeded.
+    /// and `unverified_seeded_sites` holds the seeds it seated.
     fn is_complete(&self) -> bool {
-        let r = &self.reports;
-        r.unresolved.is_empty()
-            && r.unverified_seeded.is_empty()
-            && r.isa_mode_conflicts.is_empty()
-            && r.interior_branch_targets.is_empty()
-            && r.unmapped_branch_targets.is_empty()
-            && r.undecodable_branch_targets.is_empty()
+        self.reports.channels().iter().all(|c| c.is_empty())
     }
 
     /// Exposes the strong `lifter` back-reference so the cyclic GC can see a
