@@ -438,8 +438,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // every region.
         let dom = dominance::DomInfo::compute(cfg);
         let (mut def_sites, nonlocal) = driver.collect_def_sites()?;
-        // The full map is the write funnel's reference, so it is kept before
-        // the placement map is narrowed.
+        // The write funnel checks against the FULL map, hence the copy before
+        // the narrowing below.
         #[cfg(debug_assertions)]
         {
             driver.def_sites = def_sites.clone();
@@ -520,7 +520,40 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // which needs a current region.
         self.builder.set_region(entry_ir);
         self.record_register_arg_carriers()?;
+        self.bind_entry_address_register()?;
         Ok(region_map)
+    }
+
+    /// Binds [`strider_target::BuiltCallingConvention::entry_address_vn`] to
+    /// the entry address, so the prologue that turns it into the TOC / GOT
+    /// pointer folds to a constant.
+    ///
+    /// Bound whatever address the analysis starts at, although the ABI
+    /// guarantees it only at a symbol's global entry: a function entered below
+    /// that never reads the register before writing it, the prologue that reads
+    /// it being above the entry.
+    fn bind_entry_address_register(&mut self) -> Result<()> {
+        let Some(vn) = self.builder.function().default_cc().entry_address_vn else {
+            return Ok(());
+        };
+        // Untracked means the function never names it, so nothing reads it.
+        if self
+            .builder
+            .function()
+            .vn_id_of(&self.container_of(&vn))
+            .is_none()
+        {
+            return Ok(());
+        }
+        let Some(addr) = self.entry_machine_addr() else {
+            return Ok(());
+        };
+        use strider_ir::{IRBuilderExt as _, VnTypeExt as _};
+        let ty = vn.int_type()?;
+        self.with_lift_addr(Some(addr), |s| {
+            let value = s.builder.build_int_const(u128::from(addr), ty)?;
+            s.write_vn(&vn, value)
+        })
     }
 
     /// Each arg-passing register's largest-container `InitialVar` output is the
