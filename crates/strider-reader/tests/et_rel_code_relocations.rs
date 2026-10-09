@@ -517,3 +517,40 @@ fn a_weak_undefined_symbols_got_slot_stays_unmapped() {
         "a weak undefined symbol's slot holds no address"
     );
 }
+
+/// `-mcmodel=large -fPIC`: `movabs $_GLOBAL_OFFSET_TABLE_, %rcx` plus
+/// `movabs $g@GOT, %rax` address the slot together, the second being
+/// `G - GOT + A` in eight bytes.
+#[test]
+fn x86_64_got64_and_gotpc64_address_the_slot_together() {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    // lea -7(%rip), %rax ; movabs $0, %rcx ; add %rax, %rcx ; movabs $0, %rax
+    let mut code = vec![0x48, 0x8d, 0x05, 0xf9, 0xff, 0xff, 0xff];
+    code.extend_from_slice(&[0x48, 0xb9]);
+    code.extend_from_slice(&[0u8; 8]);
+    code.extend_from_slice(&[0x48, 0x01, 0xc1, 0x48, 0xb8]);
+    code.extend_from_slice(&[0u8; 8]);
+    obj.append_section_data(text, &code, 1);
+    let data = obj.add_section(Vec::new(), b".data".to_vec(), SectionKind::Data);
+    obj.append_section_data(data, &[0u8; 8], 8);
+    let got = undefined(&mut obj, "_GLOBAL_OFFSET_TABLE_");
+    let g = defined(&mut obj, "g", data, 0);
+    reloc(&mut obj, text, 9, got, 9, elf::R_X86_64_GOTPC64);
+    reloc(&mut obj, text, 0x16, g, 0, elf::R_X86_64_GOT64);
+    let bytes = obj.write().expect("write");
+
+    let table = relocated(&bytes);
+    let insn = common::section_base(&bytes, ".text");
+    let dword = |addr: u64| -> u64 {
+        let mut buf = [0u8; 8];
+        table.read_exact(addr, &mut buf).expect("mapped");
+        u64::from_le_bytes(buf)
+    };
+    // `rax` holds the instruction's own address, the `lea`'s -7 from its end.
+    let got_base = insn.wrapping_add(dword(insn + 9));
+    let slot = got_base.wrapping_add(dword(insn + 0x16));
+    let mut held = [0u8; 8];
+    table.read_exact(slot, &mut held).expect("the GOT slot");
+    assert_eq!(u64::from_le_bytes(held), symbol_address(&bytes, "g"));
+}
