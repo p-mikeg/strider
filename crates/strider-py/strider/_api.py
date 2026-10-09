@@ -364,7 +364,7 @@ class ElfLifter(Lifter):
         segments unless `from_segments=False`)."""
         return self._elf.reader()
 
-    def add_elf(self, path: str, *, apply_relocations: bool = True) -> None:
+    def add_elf(self, path: StrPath, *, apply_relocations: bool = True) -> None:
         """Merge another ELF, such as a shared library, into this handle.
         The earlier-loaded ELF wins on name collisions.
 
@@ -376,10 +376,10 @@ class ElfLifter(Lifter):
         Raises `StriderError` if the new ELF maps code over an address already
         loaded with different bytes: `add_elf` places shared objects at distinct
         addresses, so two ELFs linked at the same base cannot be merged."""
-        self._elf.add_elf(path, apply_relocations)
+        self._elf.add_elf(os.fspath(path), apply_relocations)
         self._rebuild(self._arch, self._elf.reader(), rom=self._elf.ro_reader())
 
-    def add_symbol_file(self, path: str) -> None:
+    def add_symbol_file(self, path: StrPath) -> None:
         """Take the symbols of `path` and none of its bytes.
 
         This is how a separate debug or symbol file attaches after loading: a
@@ -391,7 +391,7 @@ class ElfLifter(Lifter):
         The mapped bytes are untouched, so nothing about lifting changes; only
         `symbol`, `symbol_at`, `symbols`, `functions` and `iter_symbols` see
         more."""
-        self._elf.add_symbol_file(path)
+        self._elf.add_symbol_file(os.fspath(path))
 
     def add_symbols(
         self,
