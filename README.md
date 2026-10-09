@@ -59,7 +59,8 @@ strider.explore.shutdown(port)
   ELFv1 symbols resolve through their `.opd` descriptors.
   `prog.add_symbol_file(path)` and `prog.add_symbols({name: addr})` name the
   functions of a stripped image. Images are memory-mapped; `STRIDER_NO_MMAP=1`
-  reads them instead.
+  reads them instead. `load_elf(relocated_got_is_rom=True)` serves `.got` and
+  `.data.rel.ro` as read-only, so a load through a GOT slot folds.
 - **Completeness you can check.** `cfg.is_complete()` reads six channels: an
   unresolved indirect branch (a return whose target is not provably the
   caller's rides there too), a site settled only by your own seed, an address
