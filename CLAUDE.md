@@ -316,8 +316,12 @@ queries (`find_all` / `find_unique`) and rendering (`Function.to_dot(pretty=)`)
 live on the returned objects. See the `.pyi` stubs for the typed surface.
 
 `add_elf(path, apply_relocations=True)` defaults the same way `load_elf` does,
-so a second image does not silently serve unrelocated bytes. `CfgOptions`
-exposes `known_targets` / `call_other_abis` as a memoized
-`types.MappingProxyType` over the shared `Arc` table, not a fresh dict per read:
-the authority is the Rust map, and a seeded 20k-entry table would otherwise cost
-milliseconds on every attribute access.
+so a second image does not silently serve unrelocated bytes, and re-merging an
+image already fully loaded does nothing. `CfgOptions` exposes `known_targets` /
+`call_other_abis`, and `LifterOptions` its `per_address_ccs`, as a memoized
+`types.MappingProxyType` over the shared table, not a fresh dict per read: the
+authority is the Rust map, and a seeded 20k-entry table would otherwise cost
+milliseconds on every attribute access. `known_targets` values are tuples, so
+the view is read-only all the way down. A `CfgOptions` also seats its
+`known_targets` into `strider_cfg`'s own form once, so a sweep does not
+re-seat it per `analyze`.

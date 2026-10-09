@@ -73,8 +73,7 @@ impl PyCapture {
 // Both tables live for the process: a `Capture` is a bare u32 handle into
 // them, so an id handed out stays resolvable. Nothing prunes them, so a name
 // built from data rather than written in source (`Capture(f"arg{i}")`) is
-// retained for the life of the process: 200k distinct names measured at
-// +25.7 MB, which `gc.collect()` does not release.
+// retained for the life of the process.
 fn intern_table() -> &'static Mutex<HashMap<String, Capture>> {
     static TABLE: std::sync::OnceLock<Mutex<HashMap<String, Capture>>> = std::sync::OnceLock::new();
     TABLE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -312,11 +311,11 @@ impl Drop for DrainGuard {
 ///
 /// An operand slot holds another wrapper, so a plain drop descends one native
 /// frame per link while the chain that built it went through a Python `for`
-/// loop and hit no interpreter limit. PyO3 0.22 has no `Py_TRASHCAN`, and an
-/// 8 MiB stack measured an overflow between 40_000 and 41_000 links. Queueing
-/// holds the depth at the three frames from here back to here: the drain drops
-/// one handle, its wrapper's `Drop` enqueues that wrapper's own state, and
-/// control returns here.
+/// loop and hit no interpreter limit. PyO3 0.22 has no `Py_TRASHCAN`, so a
+/// long enough chain overflows the stack. Queueing holds the depth at the
+/// three frames from here back to here: the drain drops one handle, its
+/// wrapper's `Drop` enqueues that wrapper's own state, and control returns
+/// here.
 pub(crate) fn defer_drop<T: 'static>(value: T) {
     let mut boxed: Option<Box<dyn std::any::Any>> = Some(Box::new(value));
     let queued = DROP_QUEUE
@@ -1623,10 +1622,11 @@ pub(crate) fn stash_pending_query_error(e: PyErr) {
 // peeks the top to build the `Match` it hands the callback.
 //
 // A stack rather than one slot: a predicate may itself issue a nested query,
-// which must not clobber the outer entry. Both entries share the live query's
-// `Arc<RefCell<Function>>`, so a `Match` accessor re-borrowing it under
-// `run_query`'s own read guard is a same-thread recursive READ lock. That is
-// only safe because no write lock is ever taken outside `try_write_inner`.
+// which must not clobber the outer entry. Both entries hold the live query's
+// `Py<PyFunction>`, so a `Match` accessor re-borrowing its `RefCell<Function>`
+// under `run_query`'s own read borrow is a same-thread recursive READ borrow.
+// That is only safe because no mutable borrow is ever taken outside
+// `try_write_inner`.
 thread_local! {
     static CURRENT_QUERY_FUNCTION: std::cell::RefCell<Vec<(Py<crate::function::PyFunction>, u64)>> =
         const { std::cell::RefCell::new(Vec::new()) };
@@ -1965,7 +1965,9 @@ impl PyPat {
     }
 
     /// Attach a Python predicate that runs after this pattern matches.
-    /// Returning `False` fails the match; raising aborts the whole query and
+    /// Returning `False` fails the match, and the return must be a `bool`:
+    /// anything else is a `TypeError`, so a predicate that forgot to return
+    /// is an error rather than a rejection. Raising aborts the whole query and
     /// re-raises out of `find_all` / `find_unique`, every later candidate
     /// failing without running the predicate.
     fn when(slf: &Bound<'_, Self>, f: PyObject) -> PyResult<PyPat> {
@@ -2484,7 +2486,8 @@ macro_rules! builder_common_methods {
                 slf.common.borrow_mut().capture = Some(c.resolve()?);
                 Ok(slf)
             }
-            /// Attach a Python predicate that runs after the match.
+            /// Attach a Python predicate that runs after the match, returning
+            /// a `bool`.
             fn when(slf: PyRef<'_, Self>, f: PyObject) -> PyRef<'_, Self> {
                 slf.common.borrow_mut().when = Some(f);
                 slf
@@ -3622,7 +3625,7 @@ const MAX_CONSTRAINT_NESTING: u32 = 512;
 /// (`all_of([c, c])`) grows exponentially in the depth.
 const MAX_CONSTRAINT_NODES: u64 = 65_536;
 
-/// A composed constraint, shared by `Rc` rather than copied at every wrap and
+/// A composed constraint, shared by `Arc` rather than copied at every wrap and
 /// materialised into a `JoinConstraint` once, at the query boundary.
 pub(crate) struct ConstraintTree {
     node: ConstraintNode,
@@ -3833,7 +3836,8 @@ impl PyJoinPredicate {
         Vec::new()
     }
 
-    /// Override to return whether the joined match survives. The base raises
+    /// Override to return whether the joined match survives, as a `bool`;
+    /// anything else is a `TypeError`. The base raises
     /// `NotImplementedError`.
     // The raising base reads no parameter; the names are the subclass keywords.
     #[allow(unused_variables)]
