@@ -33,7 +33,7 @@ fn assert_smoke(arch: &str) {
         "{arch}: expected little-endian binary",
     );
 
-    let r = ElfFileMemReader::from_elf(&owned).unwrap();
+    let r = ElfFileMemReader::from_object(&obj).unwrap();
 
     // Some toolchains (x86 in this fixture set) emit `e_entry == 0` when no
     // entry symbol reached the linker. Fall back to the first executable

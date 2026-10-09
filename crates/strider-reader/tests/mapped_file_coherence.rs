@@ -67,7 +67,8 @@ fn a_file_changed_under_a_live_handle_is_an_error() {
 }
 
 /// The region build is one of the two choke points: an analysis must not get a
-/// region set cut from a file that is no longer the one that was mapped.
+/// region set cut from a file that is no longer the one that was mapped. The
+/// other is the parse, below.
 #[test]
 fn building_regions_over_a_changed_file_is_an_error() {
     if mapping_disabled() {
@@ -79,22 +80,6 @@ fn building_regions_over_a_changed_file_is_an_error() {
 
     let err = elf
         .regions(RegionSource::Auto, LoadFilter::CodeAndReadOnly, false)
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("changed on disk"), "got: {err}");
-}
-
-/// The other choke point.
-#[test]
-fn building_a_mem_reader_over_a_changed_file_is_an_error() {
-    if mapping_disabled() {
-        return;
-    }
-    let f = elf_tempfile();
-    let elf = strider_reader::load_elf(f.path()).unwrap();
-    append_junk(&f);
-
-    let err = strider_reader::ElfFileMemReader::from_elf(&elf)
         .unwrap_err()
         .to_string();
     assert!(err.contains("changed on disk"), "got: {err}");
@@ -207,13 +192,11 @@ fn a_region_table_over_a_changed_file_is_an_error() {
         .unwrap();
     let region = regions[0].clone();
     let table = strider_reader::MemRegionsLookupTable::new(regions);
-    let reader = strider_reader::ElfFileMemReader::from_elf(&elf).unwrap();
     append_junk(&f);
 
     for err in [
         region.check_unchanged().unwrap_err().to_string(),
         table.check_unchanged().unwrap_err().to_string(),
-        reader.check_unchanged().unwrap_err().to_string(),
     ] {
         assert!(err.contains("changed on disk"), "got: {err}");
     }
@@ -235,8 +218,6 @@ fn a_same_size_rewrite_is_an_error_not_a_panic() {
 
     elf.regions(RegionSource::Auto, LoadFilter::CodeAndReadOnly, false)
         .expect_err("regions over a rewritten mapping");
-    strider_reader::ElfFileMemReader::from_elf(&elf)
-        .expect_err("a reader over a rewritten mapping");
     elf.checked_file()
         .expect_err("a parse of a rewritten mapping");
 }
