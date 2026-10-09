@@ -92,6 +92,15 @@ fn intersect_preserves_stride_phase() {
     assert_eq!((m.lo, m.stride), (0, 12));
 }
 
+/// One past `iv`'s top element, or `None` when `iv` spans the whole width.
+fn upper_exclusive(iv: Interval, width_mask: u128) -> Option<u64> {
+    if iv.hi >= width_mask {
+        None
+    } else {
+        u64::try_from(iv.hi + 1).ok()
+    }
+}
+
 /// `value`'s interval at `region`, from a fresh analysis of `f`.
 fn range_at(f: &Function, value: ValueId, region: NodeId) -> Interval {
     let doms = control_dominator_tree(f);
@@ -797,7 +806,7 @@ fn unguarded_predecessor_makes_range_top() {
         iv.hi
     );
     assert!(
-        iv.upper_exclusive(type_mask).is_none(),
+        upper_exclusive(iv, type_mask).is_none(),
         "upper_exclusive must be None for top"
     );
 }
@@ -1099,7 +1108,7 @@ fn false_successor_of_guard_is_top() {
         iv.hi
     );
     assert!(
-        iv.upper_exclusive(type_mask).is_none(),
+        upper_exclusive(iv, type_mask).is_none(),
         "upper_exclusive must be None on false edge"
     );
 }
@@ -1463,7 +1472,7 @@ fn nested_guards_intersect_at_inner_region() {
         iv.hi
     );
     assert_eq!(
-        iv.upper_exclusive(ValueType::I32.bit_mask_u128()),
+        upper_exclusive(iv, ValueType::I32.bit_mask_u128()),
         Some(8),
         "upper_exclusive must be Some(8)"
     );
@@ -1505,7 +1514,7 @@ fn strict_less_at_type_mask_narrows_by_one() {
         iv.hi
     );
     assert_eq!(
-        iv.upper_exclusive(type_mask),
+        upper_exclusive(iv, type_mask),
         Some(type_mask_u64),
         "upper_exclusive must be Some(type_mask)"
     );
@@ -1917,7 +1926,7 @@ fn join_fails_closed_when_one_predecessor_unguarded() {
         iv.hi
     );
     assert!(
-        iv.upper_exclusive(type_mask).is_none(),
+        upper_exclusive(iv, type_mask).is_none(),
         "upper_exclusive must be None when join is top"
     );
 }
