@@ -891,3 +891,70 @@ fn identical_operand_slots_are_not_retried_swapped() {
         "one configuration per match"
     );
 }
+
+/// `float_is_nan` fans its operand out to both equality inputs and pins the
+/// identity with a builder-minted capture. The swap moves the two pins between
+/// the `And`'s operands, which is not a second match: nothing a caller can see
+/// differs.
+#[test]
+fn an_identity_pin_moved_by_the_swap_is_not_a_second_match() {
+    let mut t = Tb::empty();
+    let a = t.f64(1.5);
+    let c = t.f64(2.5);
+    let one = t.boolean(true);
+    let eq_a = t.fcmp(a, a, FloatCmpOp::Equal);
+    let nan_a = t.bool_bin(eq_a, one, IntBinaryOp::Xor);
+    let eq_c = t.fcmp(c, c, FloatCmpOp::Equal);
+    let nan_c = t.bool_bin(eq_c, one, IntBinaryOp::Xor);
+    let both = t.bool_bin(nan_a, nan_c, IntBinaryOp::And);
+    let function = t.ret_val(both);
+
+    a::matches(
+        &function,
+        bool_and(float_is_nan(anything()), float_is_nan(anything())).into_pattern(),
+        1,
+    );
+    // A capture on each arm DOES tell the two orderings apart.
+    let (l, r) = (Capture::new(), Capture::new());
+    a::matches(
+        &function,
+        bool_and(
+            float_is_nan(anything().capture(l)),
+            float_is_nan(anything().capture(r)),
+        )
+        .into_pattern(),
+        2,
+    );
+}
+
+/// Binding nothing a caller can see, every operand ordering carries the same
+/// signature, so the first one to reach the root is the whole answer and the
+/// rest are not driven. `interchangeable` cannot cut these: the two operand
+/// sub-patterns have different shapes.
+#[test]
+fn a_capture_free_pattern_stops_at_the_first_ordering() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
+    let counted = |pat: Pattern| -> (usize, usize) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let pat = pat.with_root_post_match(Box::new(move |_, _, _, _| {
+            counter.fetch_add(1, Ordering::Relaxed);
+            true
+        }));
+        let hits = Matcher::new(&function).find_all(&pat).unwrap().len();
+        (hits, calls.load(Ordering::Relaxed))
+    };
+
+    assert_eq!(
+        counted(int_add(any_int_const(), anything()).into_pattern()),
+        (1, 1),
+    );
+    let c = Capture::new();
+    assert_eq!(
+        counted(int_add(any_int_const().capture(c), anything()).into_pattern()),
+        (2, 2),
+    );
+}

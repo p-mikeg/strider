@@ -120,8 +120,12 @@ impl Bindings {
     /// capture-free pattern reports one match per root.
     ///
     /// Sorted by capture id, making the key independent of bind order.
+    ///
+    /// Visible captures only, as [`Self::iter`]: a builder-minted identity pin
+    /// is invisible to the caller, so two configurations that differ only in
+    /// which operand a pin landed on are one match, not two.
     pub(crate) fn binding_signature(&self) -> Vec<(u32, Binding)> {
-        let mut sig: Vec<(u32, Binding)> = self.entries.iter().map(|&(c, b)| (c.id(), b)).collect();
+        let mut sig: Vec<(u32, Binding)> = self.iter().map(|(c, b)| (c.id(), b)).collect();
         sig.sort_unstable_by_key(|&(id, _)| id);
         sig
     }
