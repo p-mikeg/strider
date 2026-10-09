@@ -122,6 +122,34 @@ fn a_zero_pcode_op_run_between_a_call_and_bad_bytes_still_ends_the_call() {
     assert!(!decoded_addrs(&cfg).contains(&0x1006));
 }
 
+/// A branch landing on one of those zero-pcode-op instructions still has a
+/// successor: the run keeps its regions, sealed onto the stub at the bytes.
+#[test]
+fn a_branch_into_the_zero_pcode_op_run_past_a_call_keeps_a_successor() {
+    // 0x1000 je 0x1007 (74 05) ; 0x1002 call (e8 00 10 00 00) ; 0x1007 nop ;
+    // 0x1008 bytes x86-64 rejects.
+    let cfg = build(
+        &SleighArch::x86_64(),
+        vec![
+            0x74, 0x05, 0xe8, 0x00, 0x10, 0x00, 0x00, 0x90, 0x06, 0x06, 0x06, 0x06,
+        ],
+        0x1000,
+        &CfgOptions::default(),
+    )
+    .expect("build");
+    assert_eq!(cfg.undecodable_branch_targets(), &[at(0x1008)]);
+    let nop = cfg
+        .region_ids()
+        .find(|&id| cfg.region_graph()[id].start_addr == at(0x1007))
+        .expect("the branch target keeps a region");
+    assert_eq!(cfg.region_graph().neighbors(nop).count(), 1);
+    let call = cfg
+        .regions()
+        .find(|r| r.insns.iter().any(|i| i.addr.machine_addr.addr == 0x1002))
+        .expect("the call decodes");
+    assert_eq!(call.terminator, RegionTerminator::NoReturn);
+}
+
 /// The same for a literal pool a `$d` mapping symbol marks, which is what real
 /// `gcc -O2 -fPIC` output puts after a call to an unmarked no-return callee.
 #[test]
