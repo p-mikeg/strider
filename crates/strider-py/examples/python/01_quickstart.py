@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pathlib
+import tempfile
 
 import strider
 from strider.pattern import Capture, int_add, load
@@ -42,6 +43,7 @@ for hit in narrow:
 
 # pretty resolves register names, inlines constants and adds virtual nodes; a
 # theme name in place of True picks the colours, False is the raw as-stored graph.
-cfg.to_html("/tmp/quickstart-cfg.html", style="dark_cfg")
-function.to_html("/tmp/quickstart-graph.html", pretty="dark")
-print("wrote /tmp/quickstart-cfg.html and /tmp/quickstart-graph.html")
+out = pathlib.Path(tempfile.gettempdir())
+cfg.to_html(str(out / "quickstart-cfg.html"), style="dark_cfg")
+function.to_html(str(out / "quickstart-graph.html"), pretty="dark")
+print(f"wrote {out / 'quickstart-cfg.html'} and {out / 'quickstart-graph.html'}")

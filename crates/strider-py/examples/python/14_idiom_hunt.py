@@ -32,14 +32,16 @@ _cfg, fn, _unresolved = prog.analyze(
 def idioms() -> dict[str, PatLike]:
     """Fresh captures per call, so each returned pattern is independent."""
     x, k = Capture("x"), Capture("k")
-    base, off = Capture("base"), Capture("off")
+    base, idx, off = Capture("base"), Capture("idx"), Capture("off")
     return {
         # The pipeline folds xor(r, r) to a constant, so the idiom is spotted
         # by its result rather than by the xor.
         "zero via xor r,r (folded)": int_const(0),
         "shift-left (x << k)": int_shl(var(x), var(k)),   # often mul-by-2^k
         "bitmask (x & k)": int_and(var(x), var(k)),
-        "indexed load": load(addr=int_add(base, off)),
+        # base + idx*stride, the canonical indexed-array-load shape; a plain
+        # `base + off` would count every field and frame-slot load too.
+        "indexed load": load(addr=int_add(base, int_mul(var(idx), var(off)))),
         "integer multiply": int_mul(var(x), var(k)),
         "subtract": int_sub(var(x), var(k)),
         "store": store(),

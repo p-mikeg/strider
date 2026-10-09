@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import pathlib
+import tempfile
 
 import strider
 
 WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
-OUT_DIR = pathlib.Path("/tmp")
+OUT_DIR = pathlib.Path(tempfile.gettempdir())
 
 prog = strider.lift.load_elf(str(FIXTURE))
 cfg, function, unresolved = prog.analyze(
