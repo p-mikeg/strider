@@ -472,6 +472,11 @@ Lifting and memory:
   PPC64 stack-argument base is 112 bytes on ELFv1 and 96 on ELFv2, where every
   PPC64 stack argument was read at the wrong offset.
 - A callee-saved `d8`-`d15` preserves 64 bits, not the whole `q` register.
+- The PowerPC conventions pass vector arguments in `v2`-`v13` and return a
+  vector in `v2` (ELFv2 a homogeneous vector aggregate in `v2`-`v9`), where no
+  preset named a vector register at all and DCE deleted every AltiVec/VSX
+  result and every caller's vector argument setup. An ELFv2 `__float128` or
+  IEEE `long double` return comes back in `v2` too.
 - A `per_address_ccs` override naming an integer argument register outside the
   function's own convention lifts.
 - An ARM32 function with a NEON register and a call analyses.
