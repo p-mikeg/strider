@@ -108,7 +108,8 @@ where
     /// [`AnalyzeResult::unresolved_indirect_branches`] with their placeholder
     /// nodes still in the function. So does an abandoned site, one seated on
     /// only the arms of a proved answer its fold could take, and one naming a
-    /// target that will not decode. A site the CFG consumed as a `Return` or
+    /// target that will not decode or that leads to code that will not. A site
+    /// the CFG consumed as a `Return` or
     /// `TailCall` leaves no placeholder and is named in
     /// [`AnalyzeResult::unverified_seeded_sites`], and in both if it grew before
     /// narrowing to `LinkRegister`. Only [`AnalyzeResult::is_complete`], which
@@ -1095,8 +1096,12 @@ impl DispatchAnchors {
 /// A classifier that over-approximates a jump-table bound reaches past the
 /// table and names addresses that are not code. The bound is what is wrong, so
 /// no arm of that answer is trustworthy and the whole seat of the SITE that
-/// named it goes. The same address seated from another site decodes in that
-/// site's own committed context, so its failure there is no verdict here.
+/// named it goes. The same verdict covers an arm whose own target decodes but
+/// which reaches code that does not, through a direct branch out of it: the
+/// cfg reports the arm, not the address that failed, so the failing address
+/// reaches no report channel. The same address seated from another site decodes
+/// in that site's own committed context, so its failure there is no verdict
+/// here.
 ///
 /// An address two edges reach in different ISA modes is decoded once, in
 /// whichever mode won the work queue, so the other edge's arm is not the
