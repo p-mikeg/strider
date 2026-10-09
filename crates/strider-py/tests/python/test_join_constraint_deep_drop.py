@@ -2,9 +2,9 @@
 
 A composed constraint owns the constraint it wrapped, so freeing a chain of
 them descends one native frame per link while the Python `for` loop that built
-it hit no interpreter limit.  A depth the nesting guard ACCEPTS used to SIGSEGV
-on the free, which no Python `except` sees, so the child runs in a subprocess
-and the parent reads its exit code.
+it hit no interpreter limit.  A SIGSEGV on the free is what no Python
+`except` sees, so the child runs in a subprocess and the parent reads its exit
+code; the depth here is one the nesting guard ACCEPTS.
 """
 
 from __future__ import annotations

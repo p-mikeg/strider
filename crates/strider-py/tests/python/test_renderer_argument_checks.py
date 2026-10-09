@@ -1,9 +1,10 @@
 """A renderer argument that cannot serve the render must say so.
 
-Both halves used to return a graph instead: `Function.neighborhood_dot` looked
-at `lifter=` only on the `pretty=True` path, and `Cfg.neighborhood_dot` built a
-`RegionId` straight from its argument, which is a `debug_assert` away from
-petgraph's end sentinel and otherwise renders an empty graph.
+Returning a graph instead is the failure: `Function.neighborhood_dot` has
+to check `lifter=` off the `pretty=True` path too, and `Cfg.neighborhood_dot`
+has to range-check its centre rather than building a `RegionId` straight from
+it, which is a `debug_assert` away from petgraph's end sentinel and otherwise
+renders an empty graph.
 """
 
 from __future__ import annotations
