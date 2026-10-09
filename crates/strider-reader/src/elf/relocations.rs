@@ -108,10 +108,12 @@ fn reloc_addend(
 ///
 /// Via raw `r_type`, which `object` reports as `RelocationKind::Unknown`:
 /// * `R_*_RELATIVE` / `R_*_IRELATIVE`: `image_base + addend`, image base
-///   modelled as 0.
+///   modelled as 0. An `SHT_REL` one keeps A in its field, which is then
+///   already the whole value, so it is left exactly as assembled.
 /// * `R_*_GLOB_DAT` / `R_*_JUMP_SLOT`: the symbol's address at the slot
 ///   (S semantics, resolved eagerly).
-/// * `R_MIPS_REL32`, both the undefined (addend-only) and defined-symbol forms.
+/// * `R_MIPS_REL32`, both the undefined (addend-only) and defined-symbol forms,
+///   the `SHT_REL` undefined one again as assembled.
 /// * `R_ARM_REL32` / `R_PPC_REL32` / `R_PPC64_REL64`, plain word-sized
 ///   `S + A - P`. `object` surfaces all three as `Unknown` with `size = 0`, so
 ///   they dispatch on the raw `r_type` like the GOT/PLT slots; a PowerPC
@@ -390,6 +392,12 @@ fn apply_one_relocation(
     // read-only filters those slots sit in the RW `PT_LOAD` and are not mapped
     // at all, since `PT_GNU_RELRO` is not modelled.
     if let Some((value, size_bytes)) = image_relative_reloc(reloc, arch, endian_le) {
+        // An `SHT_REL` site keeps A in its field, which with the base modelled
+        // as 0 is already the whole value: nothing to patch, and nothing to
+        // hole either.
+        if reloc.has_implicit_addend() {
+            return Ok(());
+        }
         let site_regions = sink.covering(ctx, site, site_addr, size_bytes)?;
         sink.record(site_regions, site_addr, value, size_bytes, endian_le);
         return Ok(());
@@ -1085,7 +1093,7 @@ fn ppc64_local_entry_offset(st_other: u8) -> u64 {
 /// Matches the `R_*_RELATIVE` / `R_*_IRELATIVE` families: image-base + addend
 /// relocations with no symbol or section target. Yields
 /// `(value_to_write, size_bytes)`; image base is modelled as 0, so the value is
-/// the addend itself.
+/// the addend itself, and 0 for an `SHT_REL` site whose A is in the field.
 ///
 /// `r_type` constants collide across arches (`R_X86_64_RELATIVE` and
 /// `R_386_RELATIVE` are both 8), so dispatch is on `Architecture` first and
@@ -1100,12 +1108,6 @@ fn image_relative_reloc(
     arch: object::Architecture,
     endian_le: bool,
 ) -> Option<(u64, usize)> {
-    // SHT_REL carries its addend IN the field, and `object` reports r_addend = 0
-    // for it. With the image base modelled as 0 the field already holds the
-    // answer, so writing `0 + 0` would erase it.
-    if reloc.has_implicit_addend() {
-        return None;
-    }
     // These arrive with an `Absolute` target and an `Unknown` kind (`object`
     // doesn't enumerate them), so the raw type code is all there is to go on.
     let RelocationFlags::Elf { r_type } = reloc.flags() else {
@@ -1116,11 +1118,6 @@ fn image_relative_reloc(
     // addend-only, which is the case handled here; the `Symbol`-target gate
     // bails out to the defined-symbol path in the main loop. MIPS defines no
     // separate IRELATIVE.
-    //
-    // Only an `SHT_RELA` MIPS table reaches this: the early return above takes
-    // every `SHT_REL` one, which is what all three MIPS fixtures and the o32 /
-    // n64 toolchains emit for `.rel.dyn`. An `SHT_REL` site needs no patch
-    // anyway, its field already holding `A`.
     if let Some((r_sym, mips_type, mips_type2)) = mips_reloc_parts(reloc, arch, endian_le)
         && mips_type == object::elf::R_MIPS_REL32
         && r_sym == 0
