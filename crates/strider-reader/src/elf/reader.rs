@@ -7,14 +7,14 @@ use super::sections::{AddressRanges, ElfSectionLayout, LoadFilter, RegionSource,
 /// Instruction fetch may reference a mapping that constant-load folding must
 /// not, so the two views differ.
 ///
-/// Built from an [`super::OwnedElf`] the reader shares that ELF's bytes; built
-/// from a parsed `object::File` alone it copies them, borrowing neither the
-/// file nor its buffer.
+/// Built from a parsed `object::File`, whose mappings it copies, borrowing
+/// neither the file nor its buffer. A zero-copy view of a mapped ELF is a
+/// [`super::OwnedElf::regions`] load behind a [`MemRegionsLookupTable`].
 ///
-/// Either way the bytes are file-initial: an unlinked or not-yet-`ld.so`'d
-/// image serves each relocation site's unrelocated field, an addend or a
-/// link-time value rather than the target. A relocated image is a region set
-/// from [`super::OwnedElf::regions`], which this reader does not wrap.
+/// The bytes are file-initial: an unlinked or not-yet-`ld.so`'d image serves
+/// each relocation site's unrelocated field, an addend or a link-time value
+/// rather than the target. A relocated image is a region set from
+/// [`super::OwnedElf::regions`], which this reader does not wrap.
 #[derive(Debug)]
 pub struct ElfFileMemReader {
     lookup: MemRegionsLookupTable,
@@ -48,44 +48,11 @@ impl ElfFileMemReader {
         )?))
     }
 
-    /// [`from_object`](Self::from_object) over an ELF whose bytes are already
-    /// owned, windowing into them instead of copying.
-    ///
-    /// # Errors
-    ///
-    /// Same as [`from_object`](Self::from_object), plus a file rebuilt since
-    /// it was mapped.
-    pub fn from_elf(elf: &super::OwnedElf) -> Result<Self> {
-        // Building a reader is where an analysis starts reading the mapping,
-        // so it is where a file rebuilt under a live handle must surface as an
-        // `Err` instead of as bytes from a different program.
-        let obj = elf.checked_file()?;
-        let layout = ElfSectionLayout::new(&obj);
-        Ok(Self::over(elf.regions_with(
-            &obj,
-            &layout,
-            RegionSource::Auto,
-            LoadFilter::CodeAndReadOnly,
-            false,
-        )?))
-    }
-
     fn over(image: super::sections::LoadedImage) -> Self {
         Self {
             lookup: MemRegionsLookupTable::new(image.regions),
             writable: image.writable,
         }
-    }
-
-    /// Re-stat the mapping this reader serves. Call it at the top of an
-    /// operation that will read through it; the `read` impls themselves are
-    /// syscall-free and stay that way.
-    ///
-    /// # Errors
-    ///
-    /// When the mapped file changed since it was mapped.
-    pub fn check_unchanged(&self) -> Result<()> {
-        self.lookup.check_unchanged()
     }
 }
 
