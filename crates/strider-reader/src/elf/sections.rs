@@ -47,7 +47,22 @@ pub enum LoadFilter {
     /// constant-address load without consulting the memory chain, so a writable
     /// mapping here makes a store-then-reload fold to its file-initial value.
     ImmutableOnly,
-    /// Also `.data`, `.got`, `.data.rel.ro`.
+    /// [`ImmutableOnly`](Self::ImmutableOnly) plus `.got` and `.data.rel.ro`,
+    /// writable mappings that the dynamic loader fills before the program runs
+    /// and that a full-RELRO link then maps read-only.
+    ///
+    /// An UNCHECKED claim about the runtime, which the image cannot prove: a
+    /// `.got` slot rewritten later (a traditional MIPS lazy-binding stub, a
+    /// `dlopen`ed interposition, a program that writes its own GOT) folds to
+    /// its load-time value here. What it buys is the PIC table base: on
+    /// `-mabicalls` MIPS the jump-table base is loaded through the GOT, so
+    /// nothing in the dispatch folds while those slots are unmapped.
+    ///
+    /// `.got.plt` is NOT included. Lazy binding rewrites those slots on the
+    /// first call through each one, so their load-time contents are the PLT
+    /// resolver stub rather than the callee, whatever the image claims.
+    ImmutableAndRelocatedGot,
+    /// Every allocatable mapping, `.data` / `.got` / `.data.rel.ro` included.
     AllAllocatable,
 }
 
@@ -60,7 +75,9 @@ impl LoadFilter {
         match self {
             LoadFilter::CodeAndReadOnly => is_exec || !is_writable,
             LoadFilter::ImmutableOnly => !is_writable,
-            LoadFilter::AllAllocatable => true,
+            // The GOT lives in a writable PT_LOAD, so the whole mapping is
+            // taken and `collect_regions` cuts the rest of it back out.
+            LoadFilter::ImmutableAndRelocatedGot | LoadFilter::AllAllocatable => true,
         }
     }
 
@@ -82,9 +99,29 @@ impl LoadFilter {
         match self {
             LoadFilter::CodeAndReadOnly => is_exec || !is_writable,
             LoadFilter::ImmutableOnly => !is_writable,
-            LoadFilter::AllAllocatable => true,
+            LoadFilter::ImmutableAndRelocatedGot | LoadFilter::AllAllocatable => true,
         }
     }
+}
+
+/// `[start, end)` of every section whose bytes
+/// [`LoadFilter::ImmutableAndRelocatedGot`] serves although they are writable:
+/// `.got`, `.data.rel.ro` and its `.local` / per-object suffixes, at their
+/// [`ElfSectionLayout`] bases and over their whole declared extent.
+///
+/// `.got.plt` fails the exact-name test, for the reason the filter gives.
+fn relocated_got_ranges(obj: &object::File<'_>, layout: &ElfSectionLayout) -> AddressRanges {
+    let mut out = Vec::new();
+    for sec in obj.sections() {
+        let Ok(name) = sec.name() else { continue };
+        if name == ".got" || name == ".data.rel.ro" || name.starts_with(".data.rel.ro.") {
+            let base = layout.section_base(&sec);
+            if sec.size() != 0 {
+                out.push((base, base.saturating_add(sec.size())));
+            }
+        }
+    }
+    AddressRanges::merged(out)
 }
 
 /// The instruction-FETCH image, kind-dispatched per the module docs: PT_LOAD
@@ -134,10 +171,14 @@ impl LoadedImage {
         }
     }
 
-    /// Cuts every writable address out of the regions, so that no read of one
-    /// can serve bytes the program can overwrite.
-    fn without_writable(mut self) -> Self {
-        self.writable = AddressRanges::merged(std::mem::take(&mut self.writable.0));
+    /// Cuts every writable address but `served`'s out of the regions, so that
+    /// no read of one can serve bytes the program can overwrite.
+    ///
+    /// `served` leaves `writable`, so a relocation the applier cannot compute
+    /// over a served address is a hole rather than the field's file bytes:
+    /// [`crate::ReadOnlyMemory`] answers from these regions alone.
+    fn without_writable_except(mut self, served: &AddressRanges) -> Self {
+        self.writable = AddressRanges::merged_without(std::mem::take(&mut self.writable.0), served);
         self.regions = cut(self.regions, &self.writable);
         self
     }
@@ -187,6 +228,25 @@ impl AddressRanges {
             match out.last_mut() {
                 Some(last) if lo <= last.1 => last.1 = last.1.max(hi),
                 _ => out.push((lo, hi)),
+            }
+        }
+        Self(out)
+    }
+
+    /// [`merged`](Self::merged) with every address of `cut_out` removed.
+    /// `cut_out` must itself be merged.
+    fn merged_without(ranges: Vec<(u64, u64)>, cut_out: &Self) -> Self {
+        let merged = Self::merged(ranges);
+        let mut out: Vec<(u64, u64)> = Vec::with_capacity(merged.0.len());
+        for (mut lo, hi) in merged.0 {
+            for &(k_lo, k_hi) in cut_out.overlapping(lo, hi) {
+                if k_lo > lo {
+                    out.push((lo, k_lo));
+                }
+                lo = lo.max(k_hi);
+            }
+            if lo < hi {
+                out.push((lo, hi));
             }
         }
         Self(out)
@@ -808,7 +868,10 @@ pub(crate) fn collect_regions(
     };
     Ok(match filter {
         // A read-only mapping a writable one overlaps is writable there.
-        LoadFilter::ImmutableOnly => image.without_writable(),
+        LoadFilter::ImmutableOnly => image.without_writable_except(&AddressRanges::default()),
+        LoadFilter::ImmutableAndRelocatedGot => {
+            image.without_writable_except(&relocated_got_ranges(obj, layout))
+        }
         _ => LoadedImage {
             writable: AddressRanges::merged(image.writable.0),
             ..image
@@ -1076,6 +1139,7 @@ mod tests {
         for f in [
             LoadFilter::CodeAndReadOnly,
             LoadFilter::ImmutableOnly,
+            LoadFilter::ImmutableAndRelocatedGot,
             LoadFilter::AllAllocatable,
         ] {
             assert!(!f.section_accepts(0), "no flags at all");
@@ -1094,6 +1158,7 @@ mod tests {
         for f in [
             LoadFilter::CodeAndReadOnly,
             LoadFilter::ImmutableOnly,
+            LoadFilter::ImmutableAndRelocatedGot,
             LoadFilter::AllAllocatable,
         ] {
             assert!(!f.section_accepts(alloc | write | tls), ".tdata");
