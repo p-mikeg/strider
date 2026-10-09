@@ -204,8 +204,8 @@ impl PyCfg {
         f: impl FnOnce(&rsleigh::Sleigh<AnyMemReader>) -> PyResult<R>,
     ) -> PyResult<R> {
         // `borrow` would panic when the owning `Lifter` is mid-`analyze`
-        // (a `read()` callback rendering this Cfg), and that panic aborts:
-        // it cannot unwind out of rsleigh's `extern "C"` fetch callback.
+        // (a `read()` callback rendering this Cfg), and that surfaces as
+        // `PanicException`, a `BaseException` no `except Exception` catches.
         match with {
             Some(l) => {
                 let b = l

@@ -28,6 +28,12 @@ Loading and symbols:
 - Images are memory-mapped. A file changed on disk while it is loaded raises;
   set `STRIDER_NO_MMAP=1` to read the image instead.
 - `wide_const_bytes()` returns `bytes`; it returned `list[int]`.
+- `CfgOptions.known_targets` reads back target lists as tuples, so the
+  read-only view is read-only all the way down: editing one of those lists was
+  a silent no-op against the table `analyze` reads.
+- `LifterOptions.per_address_ccs` reads back as the same read-only
+  `mappingproxy` on every access, as the `CfgOptions` tables do; it built a
+  fresh dict of fresh objects per read.
 
 Analysis:
 
@@ -404,7 +410,16 @@ Rendering:
   call.
 - Reading `CfgOptions.known_targets` or `.call_other_abis` returns a cached
   read-only `mappingproxy` instead of copying the table (`analyze` with 20,000
-  known targets: 32.0 ms to 1.6 ms).
+  known targets: 32.0 ms to 1.6 ms), and `LifterOptions.per_address_ccs` is
+  served the same way.
+- A seeded `known_targets` table is seated into the CFG builder's own form
+  once per options object rather than per `analyze` (20,000 entries: 2.1 ms to
+  1.1 ms; 200,000: 34.7 ms to 19.3 ms), and reading
+  `LifterOptions.per_address_ccs` costs a view lookup rather than a fresh dict
+  of fresh objects (20,000 entries: 3.9 ms to 0.05 ms per read).
+- `pcode_at` keeps what each sweep decoded, so a walk over a function's
+  instructions decodes it once instead of re-sweeping from the entry per
+  address.
 - A CFG build reuses the `Lifter`'s Sleigh user-op table instead of fetching it
   over FFI, and `Function.to_dot(pretty=True)` resolves the register table once
   per render.
@@ -598,6 +613,26 @@ Python and the explorer:
 - A `MemReader` callback that panics raises `StriderError`, and one that
   re-enters `analyze` no longer aborts the process.
 - `Cfg.neighborhood_dot` raises on an out-of-range region id.
+- `build_cfg` reports only the `known_targets` seeds it seated, so a
+  whole-binary answer table no longer makes every `is_complete()` False and
+  name addresses the function does not dispatch from.
+- `build_cfg` raises the `StriderError` naming the cause for a bad `entry`,
+  as `analyze` does; it raised a bare `OverflowError`.
+- `pcode_at` answers the same whatever order the calls came in: a reused sweep
+  engine re-decoded an address a later instruction had already pinned a decode
+  mode at (an ARM backward `blx`).
+- `add_elf` does nothing when the image is already fully loaded byte for byte,
+  which the doc already promised; it appended every region and symbol again.
+- A `custom(...)` `CallingConvention` or `CallOtherAbi` is checked against the
+  register table it froze its varnodes against, not the preset name, so one
+  built from `arm` works with an `arm_thumb` handle.
+- `Function.rewrite` / `rewrite_all` compile the replacement first, so an
+  invalid one no longer consumes a one-shot `into_pat()` `find` pattern.
+- Importing strider no longer leaves `RUST_LIB_BACKTRACE=1` in the C
+  environment every child process inherits.
+- A pattern that shares one `Pat` into both operands (`q = int_add(q, q)`) is
+  refused while it is lowered, instead of building its exponentially many
+  matcher closures before the node cap can refuse it.
 - DOT, HTML and p-code text are deterministic, and a backslash in a symbol name
   is escaped.
 - `visualize(depth=-1)` raises `ValueError`.
