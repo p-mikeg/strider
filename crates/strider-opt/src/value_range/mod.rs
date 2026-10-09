@@ -34,6 +34,12 @@ mod tests;
 /// making the walk the cost centre.
 const MAX_GUARD_LADDER: u32 = 8;
 
+/// Deepest chain of `(value, region)` resolutions [`RangeMap::range_of`]
+/// follows.  A phi of phis costs one level each, so thousands of sequential
+/// conditional assignments feeding one query would otherwise recurse past the
+/// stack.  Exhaustion widens to top.
+const MAX_RANGE_DEPTH: u32 = 256;
+
 /// How much of an operand's bound survives one hop up to the value built from
 /// it.
 #[derive(Clone, Copy)]
@@ -375,6 +381,8 @@ pub struct RangeMap<'f> {
     /// Per `And(x, c)` output whose mask clears only bits KnownBits proves zero
     /// in `x`, that `x`: the two are the same value.
     identity_masks: SecondaryMap<ValueId, Option<ValueId>>,
+    /// Open `range_of` frames, against [`MAX_RANGE_DEPTH`].
+    depth: u32,
 }
 
 impl<'f> RangeMap<'f> {
@@ -409,7 +417,15 @@ impl<'f> RangeMap<'f> {
             }
             None => {}
         }
+
+        // Budget exhausted: top, left out of the memo so a shallower query of
+        // the same key still resolves it.
+        if self.depth >= MAX_RANGE_DEPTH {
+            let ty = self.function.value_type_opt(value);
+            return Interval::top(type_mask_or_top(ty));
+        }
         self.memo.insert(key, MemoSlot::InProgress);
+        self.depth += 1;
 
         let producer = self.function.producer(value);
 
@@ -438,6 +454,7 @@ impl<'f> RangeMap<'f> {
             }
         };
 
+        self.depth -= 1;
         self.memo.insert(key, MemoSlot::Done(result));
         result
     }
@@ -1102,6 +1119,7 @@ pub fn compute_value_ranges<'f>(
         memo: FxHashMap::default(),
         guard_memo: std::cell::RefCell::new(FxHashMap::default()),
         identity_masks,
+        depth: 0,
     }
 }
 
