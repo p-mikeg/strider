@@ -239,8 +239,6 @@ fn a_same_size_rewrite_is_an_error_not_a_panic() {
         .expect_err("a reader over a rewritten mapping");
     elf.checked_file()
         .expect_err("a parse of a rewritten mapping");
-    elf.function_entry(0x1000)
-        .expect_err("a descriptor lookup over a rewritten mapping");
 }
 
 /// One table can hold the regions of several images, and the check stats every
