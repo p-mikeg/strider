@@ -21,13 +21,12 @@ use crate::mem_analysis::{
 /// saved in a realigned frame back to the store that saved it. `false` when
 /// that cannot be shown, and the site is then an indirect branch.
 ///
-/// A store's address is located the way a load's is, so a write through a
-/// frame pointer reloaded off the stack is checked against the slot. What that
-/// leaves, a RAM store at no locatable stack address and any callee or
-/// user-op, rests on one claim,
+/// A RAM store the address spine does not place on the entry stack, and any
+/// callee or user-op, rest on one claim,
 /// [`AssumptionOptions::return_slots_survive_untracked_writes`](crate::AssumptionOptions):
-/// code that breaks it smashes its own stack, and `AssumptionOptions::none`
-/// clears it.
+/// code that breaks it smashes its own stack. `AssumptionOptions::none` clears
+/// it: such a store's address is then located the way a load's is, and one no
+/// location is reached for clobbers the slot.
 pub struct ReturnTargets<'f> {
     function: &'f Function,
     assumptions: &'f crate::AssumptionOptions,
@@ -522,13 +521,18 @@ impl<'f> ReturnTargets<'f> {
 
     /// What `store` does to the `size` bytes at `at`.
     ///
-    /// With `prove`, an address the spine does not name is located through
-    /// [`Self::guess`] and the claim that the guess holds pushed onto it, and
-    /// one that is not located at all answers `Clobbers` unless
-    /// `return_slots_survive_untracked_writes` says otherwise. Without it this
-    /// is itself part of a guess (`stored_value`), so it reads the spine alone
-    /// and an address the spine does not name passes: whatever offset the guess
-    /// reaches is proven by a claim of its own.
+    /// An address the spine names is compared exactly. One it does not is an
+    /// untracked write, and `return_slots_survive_untracked_writes` is what
+    /// lets it pass. With that claim cleared and `prove` given, the address is
+    /// located through [`Self::guess`] instead and the claim that the guess
+    /// holds pushed onto `out`, so an unlocatable write answers `Clobbers`.
+    ///
+    /// The guess stays out of the optimistic answer because it is not a
+    /// placement: a merged SP value guesses from one phi arm, which no claim
+    /// then proves, and a prologue's own `push lr` would read as a write that
+    /// cannot be shown to land anywhere. Without `prove` this is itself part of
+    /// a guess (`stored_value`), where a spine-less address passes and whatever
+    /// offset the walk reaches is proven by a claim of its own.
     fn store_effect(
         &mut self,
         path: Path,
@@ -548,23 +552,17 @@ impl<'f> ReturnTargets<'f> {
         let data = function.store_data(store);
         let len = store_value_byte_size(function, data);
         let optimistic = self.assumptions.return_slots_survive_untracked_writes;
-        let (written, guessed) = match (self.spine(addr), prove.is_some()) {
+        let (written, guessed) = match (self.spine(addr), prove.is_some() && !optimistic) {
             (Some(written), _) => (written, false),
             (None, false) => return StoreEffect::Passes,
             (None, true) => match self.guess(path, addr) {
                 Some(offset) => (StackAddr { base: None, offset }, true),
-                None if optimistic => return StoreEffect::Passes,
                 None => return StoreEffect::Clobbers,
             },
         };
-        let effect = self.overlap(written, len, at, size, data);
-        // The guess is what a claim turns into a proof, so one is pushed
-        // whenever the answer rests on it: always under the sound floor, and
-        // otherwise only where it reaches the probed bytes, since passing is
-        // what the claim above already grants.
-        if let (true, Some(out)) = (guessed, prove)
-            && (!optimistic || !matches!(effect, StoreEffect::Passes))
-        {
+        // The guess is what a claim turns into a proof, and the answer rests on
+        // it either way round, so one is pushed for every guessed address.
+        if let (true, Some(out)) = (guessed, prove) {
             out.push((
                 path,
                 Claim::EntrySp {
@@ -573,7 +571,7 @@ impl<'f> ReturnTargets<'f> {
                 },
             ));
         }
-        effect
+        self.overlap(written, len, at, size, data)
     }
 
     /// What a store of `len` bytes at `written` does to the `size` bytes at
