@@ -876,8 +876,8 @@ fn process_insn_no_operand_dispatch_routing() {
         ),
         (
             Opcode::BranchIndirect,
-            true,
-            "BranchIndirect shares the CC Return handler (link-register return)",
+            false,
+            "BranchIndirect shares the Return handler and errors on an absent target",
         ),
         (
             Opcode::Return,
