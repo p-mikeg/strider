@@ -137,6 +137,9 @@ impl Cfg {
     /// come. Nothing was decoded there, so no successor of it is known either.
     ///
     /// Failing the whole function stays the answer when the ENTRY is unmapped.
+    ///
+    /// Sorted and deduplicated: a direct branch and a fall-through can reach
+    /// one address.
     pub fn unmapped_branch_targets(&self) -> &[types::PcodeInsnAddr] {
         &self.unmapped_branch_targets
     }
@@ -151,6 +154,9 @@ impl Cfg {
     /// pool, a traceback table, a deliberately invalid word. Any other
     /// fall-through into data leaves through a stub too; one into bytes Sleigh
     /// rejects is still an `Err` on the whole build.
+    ///
+    /// Sorted and deduplicated: a direct branch and a fall-through can reach
+    /// one address.
     pub fn undecodable_branch_targets(&self) -> &[types::PcodeInsnAddr] {
         &self.undecodable_branch_targets
     }
