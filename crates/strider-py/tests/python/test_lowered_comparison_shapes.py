@@ -50,7 +50,7 @@ def test_the_helper_matches_the_raw_lifted_shape(helper, arch, case, fn, build):
     """No optimization: the helper against exactly what the lifter emits."""
     function = _function(arch, case, fn, optimize=False)
     assert function.find_all(build()), (
-        f"{helper}: {arch}/{case}::{fn} no longer matches the raw lift; the "
+        f"{helper}: {arch}/{case}::{fn} does not match the raw lift; the "
         f"lifter's lowering and the pattern helper have diverged"
     )
 

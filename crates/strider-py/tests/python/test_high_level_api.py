@@ -378,8 +378,8 @@ def test_load_x64_object_file_lifts_tzcount():
     section walk. Every section claims VMA 0 pre-link, so `ElfSectionLayout`
     rebases the colliding ones apart before the regions are built.
 
-    Regression: the loader used to build an empty memory map for `.o` files,
-    so `analyze()` silently lifted an empty CFG instead of failing.
+    The regions have to carry the object's bytes: an empty memory map
+    lifts an empty CFG instead of failing.
     """
     obj = FIXTURES_DIR / "x64" / "tzcount.o"
     if not obj.exists():
