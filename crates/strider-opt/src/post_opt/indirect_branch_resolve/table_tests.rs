@@ -422,9 +422,9 @@ fn decompose_index_picks_shallowest_narrowed_index() {
         branch,
         &rustc_hash::FxHashSet::default(),
     ) {
-        Some((_v, iv)) => assert_eq!(
-            (iv.lo, iv.hi),
-            (0, 7),
+        Some(hit) => assert_eq!(
+            (hit.range.lo, hit.range.hi, hit.rebase),
+            (0, 7, 0),
             "must pick the shallow narrowed [0,7] index, not the deeper [0,63]"
         ),
         None => panic!("expected an index candidate"),
@@ -470,6 +470,65 @@ fn classify_table_dispatch_defers_nonloaded_full_byte_index_conservatively() {
 /// keeps its range one unsigned interval: `(x & 7) + 1` names slots 1..8, while
 /// `(x & 7) - 2` reaches below the table, where only guards the classifier
 /// could not read would stop it, so it defers.
+/// `switch (x)` over a negative case base: gcc and clang guard `x + k` and
+/// ConstantFold then merges `k` into the table base, so the guarded value is
+/// nowhere in the dispatch cone and only the sibling carries the bound.
+#[test]
+fn classify_table_dispatch_resolves_a_bound_held_by_a_guarded_sibling() {
+    use strider_ir::IntCmpOp;
+    let idx_var = rsleigh::Vn {
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 4,
+    };
+    let mut b = RegisterSet::new().tracked(idx_var).build_fn().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let dispatch = b.create_region_all().unwrap();
+    let exit = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+
+    b.set_region(entry);
+    let idx_at_entry = b.read_variable(&idx_var).unwrap();
+    let two = b.build_int_const(2u64, ValueType::I32).unwrap();
+    // `idx + 2 < 4`, so idx is one of -2, -1, 0, 1.
+    let shifted = b
+        .build_int_binary_operation(idx_at_entry, two, IntBinaryOp::Add, ValueType::I32)
+        .unwrap();
+    let bound_c = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let cond = b
+        .build_int_cmp_operation(shifted, bound_c, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond, dispatch, exit).unwrap();
+
+    b.set_region(dispatch);
+    let idx_in_dispatch = b.read_variable(&idx_var).unwrap();
+    // The base carries the +2 the guard sits on: 0x4008 + 4*idx walks
+    // 0x4000..0x400c over those four values.
+    let loaded = table_target(&mut b, idx_in_dispatch, 4u64, 0x4008u64);
+    b.build_indirect_branch(loaded).unwrap();
+
+    b.set_region(exit);
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+
+    let mut function = b.build().unwrap();
+    {
+        let mut p = crate::OptimizerPipeline::new();
+        p.add(crate::PhiCollapse);
+        p.add(crate::RegionCollapse);
+        p.run(&mut function, &mut crate::OptCtx::new(None)).unwrap();
+    }
+
+    let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
+    match classify(&function, Some(&rom)) {
+        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(
+            ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
+            vec![0x10, 0x20, 0x30, 0x40]
+        ),
+        other => panic!("a guarded sibling must bound the index; got {other:?}"),
+    }
+}
+
 #[test]
 fn classify_table_dispatch_defers_an_offset_that_wraps_the_bounded_operand() {
     let build = |offset: u64| {

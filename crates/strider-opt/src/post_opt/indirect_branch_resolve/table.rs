@@ -77,13 +77,20 @@ pub(crate) fn classify_dispatch_value(
     mode_value: Option<ValueId>,
 ) -> Option<ResolvedTargets> {
     // A `Load[reg]` function pointer has no bounded dominator and defers here.
-    let (idx_value, range) = decompose_index(
+    let PinnedIndex {
+        index: idx_value,
+        range,
+        rebase,
+    } = decompose_index(
         function,
         ranges,
         target_value,
         site,
         &assumptions.noalias_allocators,
     )?;
+    let idx_mask = function
+        .value_type_opt(idx_value)
+        .and_then(crate::opt::known_bits::type_mask_u128)?;
 
     let mut ev = super::eval::Evaluator::new(function, rom, assumptions);
     let pruned = super::eval::cone_order_pruned(function, target_value, idx_value);
@@ -102,7 +109,7 @@ pub(crate) fn classify_dispatch_value(
             // One memo for both roots: they are siblings over one dispatch
             // word (`And(word, 1)` and `And(word, ~1)`), so everything under
             // `word` folds once.
-            ev.begin_index(idx_value, x);
+            ev.begin_index(idx_value, x.wrapping_sub(rebase) & idx_mask);
             let addr = ev.eval_root(&pruned, target_value)?;
             let isa_bit = match (mode_value, &mode_pruned) {
                 // The branch commits an ISA mode per target; that mode MUST fold.
@@ -157,7 +164,7 @@ fn decompose_index(
     target: ValueId,
     site: NodeId,
     noalias_allocators: &rustc_hash::FxHashSet<u64>,
-) -> Option<(ValueId, Interval)> {
+) -> Option<PinnedIndex> {
     // Node weight `None` marks the virtual ENTRY, `Some(v)` a cone value.
     let mut g: DiGraph<Option<ValueId>, ()> = DiGraph::new();
     let entry = g.add_node(None);
@@ -221,11 +228,25 @@ fn decompose_index(
         .filter_map(|di| *g.node_weight(di).expect("dominator is a graph node"))
         .filter(|&v| v != target)
         .collect();
-    let (depth, (index, range)) = chain
+    let (depth, hit) = chain
         .iter()
         .enumerate()
         .find_map(|(depth, &v)| bounded_index(function, ranges, site, v).map(|hit| (depth, hit)))?;
-    offsets_keep_range(function, &chain[..depth], index, range).then_some((index, range))
+    offsets_keep_range(function, &chain[..depth], hit.index, hit.range).then_some(hit)
+}
+
+/// The value the enumeration pins, the values to pin it to, and the constant
+/// those carry: the index takes `x - rebase` for each `x` in `range`.
+///
+/// `rebase` is non-zero where the bound came from a guarded sibling
+/// `Add(index, rebase)` rather than from the index itself, so `range` is in the
+/// sibling's coordinate and the offsets between index and address are checked
+/// there too.
+#[derive(Clone, Copy)]
+struct PinnedIndex {
+    index: ValueId,
+    range: Interval,
+    rebase: u128,
 }
 
 /// Whether the constant offsets applied to `index` on its way to the address
@@ -311,17 +332,56 @@ fn is_base_operand(
 /// A genuinely-bounded non-constant integer whose bound is a real narrowing,
 /// not just its type width.  A loaded table ENTRY, bounded only by its load
 /// width, is excluded: enumerating one folds to bogus targets.
+///
+/// The guard can sit on a sibling `v + k` the dispatch cone does not contain,
+/// which is what `switch (x)` over a negative case base lowers to once
+/// ConstantFold has merged `k` into the table base.  `Add` is modular at one
+/// width, so a bound on the sibling is a bound on `v` pinned `k` lower, and the
+/// tightest such sibling is taken.
 fn bounded_index(
     function: &strider_ir::Function,
     ranges: &mut crate::value_range::RangeMap<'_>,
     site: NodeId,
     v: ValueId,
-) -> Option<(ValueId, Interval)> {
+) -> Option<PinnedIndex> {
     let ty = function
         .value_type_opt(v)
         .filter(|t| t.is_integer() && function.int_const_u128(v).is_none())?;
     let iv = ranges.range_of(v, site);
-    (index_bound_ok(ty, iv) && !is_width_only(function, ranges, v, iv)).then_some((v, iv))
+    if index_bound_ok(ty, iv) && !is_width_only(function, ranges, v, iv) {
+        return Some(PinnedIndex {
+            index: v,
+            range: iv,
+            rebase: 0,
+        });
+    }
+    let siblings: Vec<(ValueId, u128)> = function
+        .value_uses(v)
+        .filter(|&(user, _)| {
+            matches!(
+                function.node_kind(user),
+                NodeKind::IntBinaryOp(IntBinaryOp::Add)
+            )
+        })
+        .filter_map(|(user, _)| {
+            let sum = function.first_value_output_of(user)?;
+            let (operand, addend) = strip_commutative_const_scale(function, sum)?;
+            (operand == v && function.value_type_opt(sum) == Some(ty)).then_some((sum, addend))
+        })
+        .collect();
+    siblings
+        .into_iter()
+        .filter_map(|(sum, addend)| {
+            let iv = ranges.range_of(sum, site);
+            (index_bound_ok(ty, iv) && !is_width_only(function, ranges, sum, iv)).then_some(
+                PinnedIndex {
+                    index: v,
+                    range: iv,
+                    rebase: addend,
+                },
+            )
+        })
+        .min_by_key(|hit| hit.range.count())
 }
 
 /// Is `iv` a non-empty, enumerable, genuinely-narrowed range at `ty`?
