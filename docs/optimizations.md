@@ -139,7 +139,7 @@ at lift time, so they are already in place before this pass runs.
 
 ## Indirect-branch resolution
 
-Jump tables, computed calls and returns are resolved by their own post-pass,
+Jump tables, computed jumps and returns are resolved by their own post-pass,
 `IndirectBranchClassify`, which `analyze` appends to the pipeline it runs unless
 that pipeline already lists it (the Rust API can; `strider.opt` does not expose
 it). After optimizing, Strider classifies each unresolved indirect branch
@@ -149,6 +149,9 @@ resolved comes back as the `unresolved` list from `analyze`, never as an
 exception. It is one of the six channels
 [python-api.md](python-api.md#12-the-cfg-stridercfg) describes, which
 `cfg.is_complete()` reads together.
+
+An indirect CALL is not resolved and not reported: its target stays the `Call`
+node's input value, for a query to read.
 
 A return instruction lands in `unresolved` too when its folded target is not
 provably the address the function was entered with: the entry link register,
