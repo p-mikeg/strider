@@ -38,8 +38,10 @@ cargo run --release -p strider-orchestrator --example dump_arch_cmps  # and
 
 # Main demo: reads the committed fixtures/out/x86/arithmetic.elf::add and dumps
 # cfg / graph / graph-opt as both .html and .dot at the workspace root.
+# `-- memory` renders x64/memory.elf::main the same way, prefixed `memory-`.
 # Source: crates/strider-orchestrator/examples/orchestrator_demo.rs
 cargo run -p strider-orchestrator --example orchestrator_demo
+cargo run -p strider-orchestrator --example orchestrator_demo -- memory
 
 # The p-code of cmp-then-conditional-branch sequences, one arch per flag model
 # (reference for FlagCmpCanonicalize's rule set).
