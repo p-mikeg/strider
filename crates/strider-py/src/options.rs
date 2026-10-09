@@ -348,9 +348,9 @@ pub struct PyAssumptionOptions {
     /// and any callee or user-op, leave the slots the function saved its
     /// return address and entry stack pointer in alone (default `True`). Read
     /// by return-target verification alone: off, a return after a call is
-    /// reported as unverified. A store the verifier can place, including one
-    /// through a frame pointer reloaded off the stack, is checked against the
-    /// slot either way.
+    /// reported as unverified, and a store through a pointer the analysis can
+    /// only guess at is checked against the slot. A store its SP decomposition
+    /// places is checked either way.
     #[pyo3(get)]
     pub return_slots_survive_untracked_writes: bool,
 }
