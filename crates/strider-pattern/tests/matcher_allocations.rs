@@ -1,5 +1,5 @@
 //! The engine re-enters a pat node once per operand ordering and attempts a
-//! kind-`Any` root at every reachable node, so anything it sets up per attempt
+//! kind-`Any` root at every reachable node, so anything it sets up per visit
 //! is multiplied by `2^depth` or by the graph size. Counting heap allocations
 //! rather than timing keeps the budget deterministic.
 //!
@@ -7,12 +7,13 @@
 //! running beside it would pollute the measurement.
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use strider_ir::IntBinaryOp;
 use strider_ir_test_utils::Tb;
 use strider_pattern::matcher::{KindSpec, MatcherBuilder, PatValueRef};
-use strider_pattern::{CaptureExt, MatchPat, Matcher, Pattern};
+use strider_pattern::{Capture, CaptureExt, MatchPat, Matcher, Pattern};
 
 static ALLOCS: AtomicUsize = AtomicUsize::new(0);
 
@@ -49,7 +50,7 @@ fn allocations_of<T>(f: impl Fn() -> T) -> (T, usize) {
 }
 
 /// `return(((1+2)+(3+4))+((5+6)+(7+8)))`: seven commutative adds, so the
-/// pattern below has `2^7` operand orderings at the root.
+/// pattern below has `2^7` operand orderings.
 fn balanced_add_tree() -> strider_ir::Function {
     let mut t = Tb::empty();
     let mut level: Vec<strider_ir::node::ValueId> =
@@ -64,10 +65,25 @@ fn balanced_add_tree() -> strider_ir::Function {
     t.ret_val(level[0])
 }
 
-/// The same shape with wildcard leaves.
-fn add_tree_pattern() -> Pattern {
+/// The same shape with wildcard leaves, every ordering live and counted.
+///
+/// A predicate on one leaf per pair is what keeps the swap on:
+/// `NodeInputs::interchangeable` would otherwise cut it at every node, two
+/// bare wildcards being indistinguishable. The root capture is what keeps
+/// `find_all` enumerating: binding nothing visible, the pattern would have one
+/// answer per root and stop at the first configuration. Every ordering binds
+/// that capture to the same value, so the match count stays 1.
+fn add_tree_pattern(root: Capture, configurations: &Arc<AtomicUsize>) -> Pattern {
     let mut b = MatcherBuilder::new();
-    let mut level: Vec<PatValueRef> = (0..LEAVES).map(|_| b.leaf(KindSpec::Any)).collect();
+    let mut level: Vec<PatValueRef> = (0..LEAVES)
+        .map(|i| {
+            let leaf = b.leaf(KindSpec::Any);
+            if i % 2 == 0 {
+                b.set_node_predicate(leaf, Box::new(|_m, _n| true));
+            }
+            leaf
+        })
+        .collect();
     while level.len() > 1 {
         let mut next = Vec::with_capacity(level.len() / 2);
         for pair in level.chunks(2) {
@@ -75,7 +91,12 @@ fn add_tree_pattern() -> Pattern {
         }
         level = next;
     }
-    b.finish()
+    b.capture_output(level[0], root);
+    let counter = Arc::clone(configurations);
+    b.finish().with_root_post_match(Box::new(move |_, _, _, _| {
+        counter.fetch_add(1, Ordering::Relaxed);
+        true
+    }))
 }
 
 /// `return(1+2+3+...)`, left-associated, wide enough that a per-candidate
@@ -91,17 +112,27 @@ fn add_chain(n: usize) -> strider_ir::Function {
 }
 
 #[test]
-fn matching_allocates_per_match_not_per_attempt() {
-    // Exploring an operand ordering. A capture-free pattern collapses every
-    // ordering into one match, so what is left is the per-attempt bookkeeping.
+fn matching_allocates_per_configuration_not_per_node_visited() {
+    // Exploring an operand ordering. Every ordering carries the same bindings,
+    // so all but one are discarded and what is left is the bookkeeping the
+    // walk down to the root set up.
     let function = balanced_add_tree();
-    let pattern = add_tree_pattern();
+    let configurations = Arc::new(AtomicUsize::new(0));
+    let pattern = add_tree_pattern(Capture::new(), &configurations);
     let matcher = Matcher::new(&function);
-    let (hits, allocations) = allocations_of(|| matcher.find_all(&pattern).unwrap());
+    configurations.store(0, Ordering::Relaxed);
+    let (hits, allocations) = allocations_of(|| {
+        configurations.store(0, Ordering::Relaxed);
+        matcher.find_all(&pattern).unwrap()
+    });
     assert_eq!(hits.len(), 1);
+    let orderings = configurations.load(Ordering::Relaxed);
+    assert_eq!(orderings, 1 << (LEAVES - 1), "every ordering is explored");
+    // One dedup key per configuration reaching the root, and nothing for the
+    // 15 pat nodes each of them walked.
     assert!(
-        allocations <= 16,
-        "{allocations} allocations for one match over 2^7 orderings"
+        allocations <= orderings + 16,
+        "{allocations} allocations over {orderings} orderings"
     );
 
     // Scanning a candidate. A kind-`Any` root is attempted at every reachable
