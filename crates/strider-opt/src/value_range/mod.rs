@@ -41,38 +41,28 @@ const MAX_GUARD_LADDER: u32 = 8;
 const MAX_RANGE_DEPTH: u32 = 256;
 
 /// How much of an operand's bound survives one hop up to the value built from
-/// it.
+/// it.  [`RangeMap::bound_carrying_operand`] yields every variant but
+/// `Scaled`, which only [`RangeMap::arm_carrying_operand`] adds.
 #[derive(Clone, Copy)]
-enum LadderHop {
+enum Hop {
     /// Identical unsigned value: the whole interval carries.
     SameValue,
     /// Identical below this mask, which the operand's `hi` must fit.
     SameValueBelow(u128),
     /// Only `hi` carries; the low end and the stride do not.
     UpperBound,
-}
-
-/// One hop from an operand up to the value built from it, as the map it puts on
-/// the operand's interval.  Where [`LadderHop`] says how much of a bound
-/// survives, this applies it.
-#[derive(Clone, Copy)]
-enum ArmHop {
-    SameValue,
-    /// Identical below this mask, which the operand's `hi` must fit.
-    TruncateTo(u128),
-    /// Only `hi` carries; the low end and the stride do not.
-    UpperBound,
     /// A monotone constant scaling, at the result's width mask.
     Scaled(ScaleOp, u128),
 }
 
-impl ArmHop {
+impl Hop {
+    /// The map this hop puts on the operand's interval.
     fn lift(self, iv: Interval) -> Option<Interval> {
         match self {
-            ArmHop::SameValue => Some(iv),
-            ArmHop::TruncateTo(mask) => (iv.hi <= mask).then_some(iv),
-            ArmHop::UpperBound => Some(Interval::dense(0, iv.hi)),
-            ArmHop::Scaled(scale, mask) => Some(scale.apply(iv, mask)),
+            Hop::SameValue => Some(iv),
+            Hop::SameValueBelow(mask) => (iv.hi <= mask).then_some(iv),
+            Hop::UpperBound => Some(Interval::dense(0, iv.hi)),
+            Hop::Scaled(scale, mask) => Some(scale.apply(iv, mask)),
         }
     }
 }
@@ -568,9 +558,12 @@ impl<'f> RangeMap<'f> {
                 break;
             };
             match hop {
-                LadderHop::SameValue => {}
-                LadderHop::SameValueBelow(mask) => trunc_mask = trunc_mask.min(mask),
-                LadderHop::UpperBound => upper_only = true,
+                Hop::SameValue => {}
+                Hop::SameValueBelow(mask) => trunc_mask = trunc_mask.min(mask),
+                Hop::UpperBound => upper_only = true,
+                // One accumulated mask cannot express a scaling, and
+                // `bound_carrying_operand` never yields one.
+                Hop::Scaled(..) => break,
             }
             if let Some(below) = self.bound_at(operand, region)
                 && below.hi <= trunc_mask
@@ -652,7 +645,7 @@ impl<'f> RangeMap<'f> {
     /// the interval its own operand really carries.
     fn edge_bound_on(&self, edge: ValueId, arm: ValueId) -> Option<Interval> {
         let (guarded, iv) = *self.edge_guards.get(&edge)?;
-        let mut hops: Vec<ArmHop> = Vec::new();
+        let mut hops: Vec<Hop> = Vec::new();
         let mut cur = arm;
         for _ in 0..MAX_GUARD_LADDER {
             if cur == guarded {
@@ -670,20 +663,13 @@ impl<'f> RangeMap<'f> {
 
     /// [`Self::bound_carrying_operand`] plus the monotone constant scalings, which
     /// a bound survives as a mapped interval rather than unchanged.
-    fn arm_carrying_operand(&self, value: ValueId) -> Option<(ValueId, ArmHop)> {
-        if let Some((operand, hop)) = self.bound_carrying_operand(value) {
-            return Some((
-                operand,
-                match hop {
-                    LadderHop::SameValue => ArmHop::SameValue,
-                    LadderHop::SameValueBelow(mask) => ArmHop::TruncateTo(mask),
-                    LadderHop::UpperBound => ArmHop::UpperBound,
-                },
-            ));
+    fn arm_carrying_operand(&self, value: ValueId) -> Option<(ValueId, Hop)> {
+        if let Some(hit) = self.bound_carrying_operand(value) {
+            return Some(hit);
         }
         let (operand, scale) = self.const_scale(value)?;
         let mask = type_mask_or_top(self.function.value_type_opt(value));
-        Some((operand, ArmHop::Scaled(scale, mask)))
+        Some((operand, Hop::Scaled(scale, mask)))
     }
 
     /// `x` when `value` is an `And(x, c)` whose mask clears only bits known zero
@@ -711,19 +697,19 @@ impl<'f> RangeMap<'f> {
 
     /// The operand whose bound `value` inherits, and on what terms.  `None`
     /// when no hop is sound, which ends the walk.
-    fn bound_carrying_operand(&self, value: ValueId) -> Option<(ValueId, LadderHop)> {
+    fn bound_carrying_operand(&self, value: ValueId) -> Option<(ValueId, Hop)> {
         let f = self.function;
         match *f.node_kind(f.producer(value)) {
             // Zero extension is the identity on the unsigned value.
             NodeKind::Extend(ExtendOp::ZeroExtend) => {
                 let [x] = f.producer_inputs_exact::<1>(value).ok()?;
-                Some((x, LadderHop::SameValue))
+                Some((x, Hop::SameValue))
             }
             // Truncation is the identity only below the narrower type's mask.
             NodeKind::Truncate => {
                 let [x] = f.producer_inputs_exact::<1>(value).ok()?;
                 let mask = crate::opt::known_bits::type_mask_u128(f.value_type_opt(value)?)?;
-                Some((x, LadderHop::SameValueBelow(mask)))
+                Some((x, Hop::SameValueBelow(mask)))
             }
             // Masking only clears bits, so `x & c <= x` carries the upper bound
             // while the low end and the stride do not survive.
@@ -734,7 +720,7 @@ impl<'f> RangeMap<'f> {
                     (Some(_), None) => b,
                     _ => return None,
                 };
-                Some((x, LadderHop::UpperBound))
+                Some((x, Hop::UpperBound))
             }
             _ => None,
         }
