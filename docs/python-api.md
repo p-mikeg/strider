@@ -33,6 +33,9 @@ prog = strider.lift.load_elf("fixtures/out/x86/switch.elf")
 # apply_relocations=True (default) patches relocations in place, and also
 # selects what is mapped: False drops writable mappings rather than serving
 # their on-disk bytes. Exec beats write, so a single RWX PT_LOAD still maps.
+# relocated_got_is_rom=True additionally serves .got / .data.rel.ro as
+# READ-ONLY memory, so a load through a GOT slot folds. Off by default: it
+# claims no slot is rewritten once the loader has run, which nothing checks.
 ```
 
 `load_elf` returns an `ElfLifter`: a lifter that also carries the symbol table,
