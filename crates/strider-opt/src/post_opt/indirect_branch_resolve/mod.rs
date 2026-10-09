@@ -169,23 +169,13 @@ impl PostOptimizer for IndirectBranchClassify {
 
             for node in sites {
                 // An already-seated `Switch` is re-derived from its retained
-                // selector: a site that resolved before the CFG finished
-                // growing (a switch whose loop back-edge runs through its own
-                // arms) reads as a wider table now that the loop is closed. The
-                // orchestrator REPLACES the seated set with this one, adopting
-                // per address the ISA mode it already proved, so widening never
-                // re-decides a decode. The `Switch` carries the ISA mode its
-                // instruction commits, as the placeholder did, so a widened arm
-                // is evaluated in its own mode. Returning `None` keeps the
-                // seated arms and REPORTS the site unresolved: they may be a
-                // proper subset.
-                //
-                // A site can also STOP deriving as the CFG grows: a back edge
-                // puts the arms' `Call` on the path to the dispatch, and a
-                // table base held in a call-clobbered register is not a
-                // constant there. `mips32le/switch.elf::main` is that case; a
-                // per-`Call` `preserves_regs` override supplies the callee's
-                // real clobber set.
+                // selector, which reads as a wider table once a loop back-edge
+                // through its own arms closes. The orchestrator REPLACES the
+                // seated set with this one, adopting per address the ISA mode
+                // it already proved, and the `Switch` carries the mode its
+                // instruction commits, so a widened arm is evaluated in its own
+                // mode. `None` keeps the seated arms and REPORTS the site
+                // unresolved: they may be a proper subset.
                 let resolved = if matches!(function.node_kind(node), NodeKind::Switch(_)) {
                     // Fail closed like every other bail on this path: an absent
                     // node is not an unresolved one, so `continue` here would
