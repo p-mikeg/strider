@@ -39,24 +39,9 @@ fn counted_region(calls: &Arc<AtomicUsize>, inner: Option<Pattern>) -> Pattern {
     b.finish()
 }
 
-/// The two attempts differ only in which vertex anchors, so the second cannot
-/// reach the continuation the first did not.
-#[test]
-fn a_failing_branch_walk_runs_once_per_consumer_not_once_per_output() {
-    let f = shapes::if_cmp_then_return(4);
-    let m = Matcher::new(&f);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let pat = if_else().with_false(counted_region(&calls, None)).build();
-
-    assert!(m.find_all(&pat).unwrap().is_empty());
-    assert_eq!(
-        calls.load(Ordering::Relaxed),
-        2,
-        "one attempt per output of the `If` the query is rooted at"
-    );
-}
-
 /// The cost of a failing chain is what pins this: a per-level retry is 2^D.
+/// Depth 0 also pins the root: the query is rooted at an `If`, whose two
+/// control outputs anchor one vertex, so it is attempted once and not twice.
 #[test]
 fn nesting_branch_patterns_does_not_double_the_failure_cost() {
     for depth in [0usize, 4, 12] {
@@ -72,7 +57,7 @@ fn nesting_branch_patterns_does_not_double_the_failure_cost() {
         assert!(m.find_all(&pat).unwrap().is_empty());
         assert_eq!(
             calls.load(Ordering::Relaxed),
-            2,
+            1,
             "depth {depth} must cost what depth 0 does"
         );
     }
