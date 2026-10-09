@@ -77,7 +77,8 @@ Generic:
   keying by `NodeId` / `ValueId`.
 - `graph-algorithms`: generic traversal (`walk`) and dominance-based SSA
   support (Lengauer-Tarjan `dominators`, dominance frontiers, dominator-tree
-  preorder, iterated-DF phi placement) over opaque node ids. Test-only `graphmock` DSL under `tests/`.
+  preorder, iterated-DF phi placement) over opaque node ids. Test-only
+  `graphmock` DSL under `tests/`.
 - `strider-graph`: generic despite the name: the payload-agnostic bipartite
   sea-of-nodes `Graph<N, V, C: NodeCacheable<N, V>>` that `strider-ir` and
   `strider-pattern` build on. No `Hash`/`Eq` bound on payloads; dedup lives in
@@ -102,8 +103,9 @@ Strider:
 - `strider-pattern`: the graph-based pattern DSL (`Pattern` / `Capture` /
   `Matcher` / `Match` / builders) over `strider-graph` with the `NeverCacheable`
   policy. `Pat` is the Python class, not a Rust type. Both recursion limits are
-  `MAX_PATTERN_NODES` (256, `matcher/graph.rs`): a pattern over that many nodes,
-  counting the nodes of `IfPat::with_true` / `with_false` branch patterns, and
+  `MAX_PATTERN_NODES` (256, `matcher/graph.rs`): a pattern over that many nodes
+  tree-unfolded, so a shared sub-pattern counts once per consumer and the nodes
+  of `IfPat::with_true` / `with_false` branch patterns count too, and
   operands or alternations nested that deep (or past a 1 MiB lowering stack
   budget, `MAX_PATTERN_STACK`) are refused through the reject channel
   (`Pattern.root: Result<NodeId, String>`, surfaced by `Pattern::root()`), not
@@ -152,7 +154,8 @@ Workspace production dependencies only. Leaves (no workspace deps): `dot`,
 on `read-only-memory`, and the orchestrator reaches `strider-pattern` and `dot`
 only from its tests and examples. External `petgraph` is a production
 dependency of `strider-cfg`, `strider-graph`, `strider-lift` and
-`strider-pattern`, and a dev-dependency of `strider-ir`.
+`strider-pattern`, and a dev-dependency of `strider-ir`, whose dominance tests
+check the interval trees against `simple_fast`.
 
 Dev-dependencies are not in that graph, and are not a DAG:
 `strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it.
@@ -240,9 +243,11 @@ when both IR slots hold the same value.
 ## Cross-cutting invariants
 
 - The workspace is single-threaded: prefer `Box` / moves / `&`-borrows, and
-  opt into `Rc` at a call site only if needed. Nothing runs in parallel, so a
-  `Send` bound never buys concurrency here; it buys the right to MOVE a value
-  between threads, which is what a Python caller needs.
+  opt into `Rc` at a call site only if needed. No Rust crate spawns a thread
+  and no handle ever runs concurrently with itself, so a `Send` bound buys the
+  right to MOVE a value between threads, not concurrency inside one handle.
+  That move is what lets `strider-py` drop the GIL around `analyze`, so
+  separate handles on separate Python threads DO run in parallel.
   - `read-only-memory`: `ReadOnlyMemory: Send` so `strider-py` can drop the GIL
     around `analyze`. The `Sync` half it also carries is unused.
   - `strider-pattern`: every boxed closure a pattern lowers to is `+ Send`, and
@@ -261,8 +266,10 @@ when both IR slots hold the same value.
     Everything else moves, so a REPL or notebook that introspects off-thread
     does not abort the interpreter.
 - `Sleigh::lift_one(&mut self)` is NOT stateless: it carries context-register
-  state (ARM/Thumb, x86 segment, MIPS16), so per-region decoding must stay
-  sequential (`RegionBuilder::build`).
+  state a decoded instruction can commit at a later address (ARM/Thumb and
+  IT-block state, MIPS16, ppc `vle`), so per-region decoding must stay
+  sequential (`RegionBuilder::build`). x86 declares its decode variables
+  flowing but no constructor commits one, so nothing there orders a decode.
 - Register aliasing (x86 rax/eax/ax, AArch64 q/d/s, x87 ST*, ...) is handled in
   the lifter's `read_vn` / `write_vn`: reads and writes go through the largest
   containing register with shift/mask for sub-register slices.
@@ -296,8 +303,10 @@ when both IR slots hold the same value.
   `assumptions` is an `AssumptionOptions` of seven claims about the code being
   analysed that the IR cannot prove, so a wrong one miscompiles; every field's
   risky value is the positive one, three default ON, and
-  `AssumptionOptions::none()`, not `::default()`, is the configuration sound
-  under any input whose memory behaves as RAM. Per-field detail is on the struct
+  `AssumptionOptions::none()`, not `::default()`, is the sound floor of those
+  fields under any input whose memory behaves as RAM. It is the floor, not the
+  only sound setting: `callee_preserves_stack_args` is inert without
+  `escape_analysis` or a listed allocator. Per-field detail is on the struct
   (`crates/strider-opt/src/options.rs`). `LoadForward` is two analyzers: the
   `alias` one derives from `assumptions`, the `narrow` one is pinned to
   `MemOptions::structural()`, because `narrow_load_to` rewires for good and the
