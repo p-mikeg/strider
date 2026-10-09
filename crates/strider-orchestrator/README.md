@@ -38,21 +38,6 @@ them, so a resolved branch becomes a real CFG edge and the next round's IR is
 lifted with that edge present. That is what makes a chain of trampolines
 resolve: one round seats one level of discovery.
 
-## Lookahead
-
-A full round per level makes a chain of tables, each reachable only through
-the previous table's arms, cost O(levels x function). On an arch with no
-ISA-mode variable, once a round's seats are folded the loop rebuilds only the
-CFG and classifies each newly exposed site over the code in front of it: the
-run of regions that are each the only way into the next, ending at the site,
-lifted on their own with the same pipeline. What that proves is seated, and
-the loop repeats on the sites those seats expose before the next full round.
-
-Every such seat is re-derived by that full round, so a seat the result keeps
-is one the whole function derives. A run in which one comes back different, or
-which does not end converged and complete, is redone from scratch without
-lookahead: a partial or refuted answer is always the plain loop's.
-
 ## The fixed-point loop
 
 `apply_resolutions` folds a round's classifications into `known_targets` and
@@ -65,22 +50,26 @@ adopts the mode already proved for that address, rather than re-decoding proved
 arms in whatever mode flows into the branch.
 
 The loop converges when no anchor is left, or when a round changes no address's
-successor set. It stops for three other reasons, none of them an error:
+successor set. `MAX_RESOLUTION_ITERATIONS` (256) is the one other thing that
+stops it, and not as an error: one iteration seats one level of discovery, so
+the cap is also the discovery-depth limit, and exhausting it while sites are
+still growing is that limit being hit, not an oscillation. Those sites are
+reported.
+
+Two verdicts freeze a single site, leaving the loop to run on without it:
 
 - A site that NARROWS twice is abandoned. Every narrowing is reported
   unresolved, since nothing tells a tighter proof of an over-approximated index
   bound from a lost arm; a second means the answer depends on what the previous
   round seated, so no member of the cycle is trustworthy. Its seat is dropped
   and its placeholder left live.
-- A site naming a target the CFG could not decode is abandoned whole: the
-  bound that produced it is what is wrong, so no arm of that answer stands. A
-  site naming an address two edges reached in different ISA modes loses just
-  that arm, since any two edges raise a clash, direct ones included. Either way
-  the site is frozen, taking no further classification.
-- `MAX_RESOLUTION_ITERATIONS` (256) caps the loop. Since one iteration, or one
-  lookahead step, seats one level of discovery, the cap is also the
-  discovery-depth limit, and exhausting it while sites are still growing is that
-  limit being hit, not an oscillation. Those sites are reported.
+- A site naming a target that failed to decode, or that led to code that did,
+  is abandoned whole: the bound that produced it is what is wrong, so no arm of
+  that answer stands. The site is reported; the address that failed is named in
+  no channel, since the CFG reports the arm it was reached from and not the
+  bytes. A site naming an address two edges reached in different ISA modes loses
+  just that arm, since any two edges raise a clash, direct ones included. Either
+  way the site is frozen, taking no further classification.
 
 ## Six channels, and all six must be read
 

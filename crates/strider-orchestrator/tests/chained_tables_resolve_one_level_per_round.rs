@@ -7,9 +7,9 @@
 //! L_n:  ret
 //! ```
 //!
-//! Every level is discovered only once the level before it is seated, so a
-//! loop that lifts the whole function to classify each newly exposed table
-//! pays a full round per level.
+//! Every level is discovered only once the level before it is seated, so the
+//! loop pays one full round per level. Pins that rate: all levels seat, and no
+//! level costs more than one round.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -96,7 +96,7 @@ impl PostOptimizer for CountWideRuns {
 }
 
 #[test]
-fn a_chain_of_tables_seats_in_a_constant_number_of_rounds() {
+fn a_chain_of_tables_seats_one_level_per_round() {
     let levels = 24;
     let (text, tables) = chain(levels);
     let (mut strider, cc) = common::strider_over_bytes(
@@ -135,8 +135,9 @@ fn a_chain_of_tables_seats_in_a_constant_number_of_rounds() {
     assert_eq!(seated, 24, "every level seats its four arms");
     let rounds = wide_runs.load(Ordering::Relaxed);
     assert!(
-        rounds <= 2,
-        "{rounds} full rounds for {levels} chained tables; one per level is the quadratic loop"
+        rounds <= usize::try_from(levels).expect("levels") + 2,
+        "{rounds} full rounds for {levels} chained tables; more than one per \
+         level means a level costs several rounds to seat"
     );
 }
 
@@ -152,9 +153,9 @@ fn a_chain_of_tables_seats_in_a_constant_number_of_rounds() {
 /// END: ret
 /// ```
 ///
-/// Lifted from `L1` on its own, the `and eax, 7` spans all eight slots; the
-/// entry guard, which dominates `L1`, proves four. The result is the one the
-/// whole function proves.
+/// `L1`'s own `and eax, 7` spans all eight slots; the entry guard, which
+/// dominates `L1`, proves four. The seated answer is the one the whole
+/// function proves, not the one the table's own code allows.
 #[test]
 fn a_table_the_whole_function_bounds_tighter_seats_the_tighter_answer() {
     const E: u64 = BASE;
