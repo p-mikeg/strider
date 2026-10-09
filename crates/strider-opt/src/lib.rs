@@ -13,6 +13,8 @@ pub use rewrite_rule::{
 pub use strider_ir::{EditFunction, FunctionState};
 
 mod const_eval;
+#[cfg(test)]
+mod differential;
 /// Passes that run inside the fixed-point loop.
 mod opt;
 /// Passes that run once, after the loop converges.
