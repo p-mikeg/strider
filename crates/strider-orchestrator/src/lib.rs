@@ -348,6 +348,17 @@ where
             },
         );
         // Read off the final round only: the function returned is that round's.
+        //
+        // A caller that seeded `return` asserted the answer, and
+        // `unverified_seeded_sites` names that seat; a seat the classifier
+        // derived carries its own proof. So only a return nothing vouched for
+        // rides this channel.
+        unverified_returns.retain(|addr| {
+            !matches!(
+                seed_for(&lift_opts.cfg.known_targets, *addr),
+                Some(ResolvedTargets::LinkRegister)
+            )
+        });
         unresolved_indirect_branches.append(&mut unverified_returns);
         unresolved_indirect_branches.sort_unstable();
         unresolved_indirect_branches.dedup();
@@ -478,7 +489,9 @@ pub struct AnalyzeResult {
     /// selector stopped deriving, sites still growing when the cap ran out,
     /// sites whose answer lost a proved successor, narrowed in any round, or
     /// was abandoned, and returns whose target is not provably the caller's
-    /// return address.
+    /// return address. A return a caller seeded with `LinkRegister` is not one
+    /// of those: the caller asserted that answer, and
+    /// `unverified_seeded_sites` names the seat.
     ///
     /// Empty means fully resolved, but not that the answer is complete: a site
     /// the CFG consumed as a `Return` or `TailCall` leaves no placeholder and is
@@ -544,7 +557,10 @@ pub struct AnalyzeResult {
     /// whether the answer came from a seed or from the classifier: a
     /// `LinkRegister` answer becomes a `Return` and a single target outside
     /// the function becomes a `TailCall`, leaving no placeholder and no
-    /// anchor, so a dispatch that had more arms leaves no other trace.
+    /// anchor, so a dispatch that had more arms leaves no other trace. Only a
+    /// CALLER's `LinkRegister` seat: the seated `Return` carries a return
+    /// site, so each round re-checks it, and a derivation the classifier made
+    /// is an unambiguous target set by contract.
     ///
     /// A third: an arm a mode-less re-derivation discovered at a site whose
     /// other arms all carry the flowing mode. A dispatch that commits a mode
