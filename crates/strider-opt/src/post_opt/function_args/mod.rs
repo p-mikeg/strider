@@ -53,8 +53,8 @@ impl PostOptimizer for FunctionArgDetect {
 /// arguments read by one wide load and one narrow load (a 16-byte load at slot
 /// 0 plus an 8-byte load at slot 1 on x86-64) merge into ONE ordinal and shift
 /// every later index down by one.  Separating them needs the callee's
-/// signature; unlike the over-collection above, the failure mode is a wrong
-/// index, not a surplus one.
+/// signature; unlike [`CallStackArgCollect`](crate::CallStackArgCollect)'s
+/// over-collection, the failure mode is a wrong index, not a surplus one.
 fn detect_stack_args(
     edit: &mut crate::EditFunction<'_>,
     alias_cfg: &MemAnalyzer,

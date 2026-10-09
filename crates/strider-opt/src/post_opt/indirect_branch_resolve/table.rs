@@ -6,9 +6,9 @@
 //! delegates the addressing to the abstract evaluator, pinning the index across
 //! its proven strided range and folding the dispatch cone for each value.
 //!
-//! The evaluator covers only ConstFold arithmetic, `LoadReadOnly` ROM reads,
-//! and `LoadForward` via `reaching_store`.  A cone needing anything else
-//! resolves to `None` and the branch defers: sound but less eager.
+//! The foldings the evaluator covers are listed on [`eval`](super::eval).  A
+//! cone needing anything else resolves to `None` and the branch defers: sound
+//! but less eager.
 //!
 //! # Soundness
 //!
@@ -141,11 +141,10 @@ pub(crate) fn classify_dispatch_value(
 /// Requiring dominance excludes a bypassed sub-branch: in a rotate
 /// `(x<<2) | (x>>30)`, `x>>30` has the tightest interval but does not dominate.
 ///
-/// SHALLOWEST here is target-rooted (nearest the dispatch value), the opposite
-/// of the entry-rooted "deepest-dominator" wording elsewhere. It, not the
-/// deepest, is load-bearing: it sits just below the address arithmetic with
-/// every guard/mask/shift applied, so enumerating it visits exactly the
-/// reachable slots.  A deeper (further-from-dispatch) node's bound can be
+/// SHALLOWEST here is target-rooted, nearest the dispatch value, not
+/// entry-rooted. It, not the deepest, is load-bearing: it sits just below the
+/// address arithmetic with every guard/mask/shift applied, so enumerating it
+/// visits exactly the reachable slots.  A deeper (further-from-dispatch) node's bound can be
 /// looser, and enumerating out-of-bounds slots defers a branch that should have
 /// resolved.
 ///
@@ -381,11 +380,12 @@ const MAX_SCALE_STRIP: u32 = 64;
 /// stripped first, then replayed innermost-first over the cell's `1 << w`
 /// consecutive values, tracking their spacing: a divide collapses the set only
 /// by however much it outruns the spacing a preceding multiply built up, so
-/// `(cell << 2) >> 1` keeps all `1 << w`.  The count is then capped by what the OUTPUT width can hold at
-/// that spacing, since a widening scale wraps: `zext(i8) << 25` at `I32` has
-/// 128 distinct values, not 256.  A scale past the `u128` carrier, a floor
-/// over an unrelated spacing, and a strip longer than [`MAX_SCALE_STRIP`] all
-/// answer "width-only", which defers the site rather than enumerating a cell.
+/// `(cell << 2) >> 1` keeps all `1 << w`.  The count is then capped by what
+/// the OUTPUT width can hold at that spacing, since a widening scale wraps:
+/// `zext(i8) << 25` at `I32` has 128 distinct values, not 256.  A scale past
+/// the `u128` carrier, a floor over an unrelated spacing, and a strip longer
+/// than [`MAX_SCALE_STRIP`] all answer "width-only", which defers the site
+/// rather than enumerating a cell.
 /// An unrecognised producer is not a failure: the strip ends there and the
 /// count is taken at that value's own width.  `w < 128` keeps the shift
 /// well-defined.
