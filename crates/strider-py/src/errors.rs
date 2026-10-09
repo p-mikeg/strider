@@ -8,9 +8,12 @@ create_exception!(
     PyException,
     "Every analysis failure strider raises.  The message is the error and its \
      causes, and `.backtrace` is that message followed by the Rust backtrace; \
-     `STRIDER_BACKTRACE=1` folds the backtrace into the message too.  Argument \
-     validation still raises the built-in `ValueError` / `TypeError`, and a \
-     missing file `FileNotFoundError`."
+     `STRIDER_BACKTRACE=1` folds the backtrace into the message too.  Most \
+     argument errors raise this too, not a built-in: the exceptions are an \
+     argument the conversion itself rejects (`TypeError` for the wrong type, \
+     `OverflowError` for an int out of range), a range-checked constructor \
+     argument such as `CfgOptions(function_max_size=0)` (`ValueError`), and a \
+     missing file (`FileNotFoundError`)."
 );
 
 thread_local! {
