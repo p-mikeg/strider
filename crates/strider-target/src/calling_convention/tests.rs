@@ -1244,3 +1244,30 @@ fn ret_and_clobber_vns_does_not_map_the_callee_saved_list() {
         built.callee_saved_regs.len(),
     );
 }
+
+/// A p-code CALL writes no Sleigh temporary, so a tracked UNIQUE varnode is
+/// not a call clobber: it would give every `Call` an output per temporary and
+/// make every call region a def site for all of them.
+#[test]
+fn tracked_unique_temporaries_are_not_call_clobbers() {
+    let regs = regs_for(crate::arch::SleighArch::x86_64());
+    let built = CallingConvention::x86_64_systemv()
+        .build(&regs)
+        .expect("x86_64_systemv must build");
+    let rcx = vn_for_name(&regs, "RCX").expect("x86-64 sla defines RCX");
+    let temp = rsleigh::Vn {
+        addr_space: rsleigh::VnSpace::UNIQUE,
+        addr_off: 0x58600,
+        size: 1,
+    };
+    let tracked = [rcx, temp];
+    let (_ret_vals, clobbers) = built.ret_and_clobber_vns(&tracked, |v| container_in(&tracked, v));
+    assert!(
+        clobbers.contains(&rcx),
+        "RCX is caller-saved and must stay a clobber; got {clobbers:?}",
+    );
+    assert!(
+        !clobbers.contains(&temp),
+        "a UNIQUE temporary must not be a call clobber; got {clobbers:?}",
+    );
+}
