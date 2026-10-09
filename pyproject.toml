@@ -2,7 +2,7 @@
 # maturin up to 1.8.1 refuses to parse `license-files` at all; 1.8.2 to 1.9.x
 # parse it but ship only the first entry, and spell the expression as the
 # deprecated `License`. 1.10 is the first release that writes
-# `License-Expression` and both `License-File` lines.
+# `License-Expression` and every `License-File` line.
 [build-system]
 requires = ["maturin>=1.10,<2.0"]
 build-backend = "maturin"
@@ -14,7 +14,13 @@ description = "Python bindings for the Strider binary analysis pipeline"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
-license-files = ["LICENSE", "THIRD-PARTY.md"]
+license-files = [
+    "LICENSE",
+    "THIRD-PARTY.md",
+    "licenses/Apache-2.0.txt",
+    "licenses/NOTICE-ghidra.txt",
+    "licenses/rust-crates.md",
+]
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: 3",
