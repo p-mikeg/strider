@@ -132,7 +132,7 @@ stored as `a + (-b)`, so you never have to write both. The
 **Assumption.** A claim about the code being analysed that the IR cannot
 prove, and that the optimizer needs before it can rule two memory accesses
 apart: that the stack and globals do not overlap, that a named allocator
-returns fresh storage, and four more. `AssumptionOptions` holds them, and a
+returns fresh storage, and five more. `AssumptionOptions` holds them, and a
 wrong one makes the answer wrong rather than imprecise.
 [python-api.md](python-api.md#2-analyzing-a-function) says what each buys and
 which values are sound.
