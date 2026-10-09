@@ -1,10 +1,19 @@
 use petgraph::graph::NodeIndex;
+use petgraph::visit::EdgeRef;
 
 use super::Builder;
 use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator};
 use anyhow::{anyhow, bail};
 
 use crate::Result;
+
+/// Whether this is the op a region can be ended as `NoReturn` at.
+fn is_call(insn: &RegionInstruction) -> bool {
+    matches!(
+        insn.insn.opcode,
+        rsleigh::Opcode::Call | rsleigh::Opcode::CallIndirect
+    )
+}
 
 fn branch_target_operand(insn: &rsleigh::Insn, addr: PcodeInsnAddr) -> Result<rsleigh::Vn> {
     insn.inputs
@@ -975,18 +984,67 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// build was not told about leaves behind: a literal pool, a traceback
     /// table, a deliberately invalid word.
     fn seal_at_call_not_returning(&mut self, cur_addr: PcodeInsnAddr) -> Result<bool> {
-        let Some(call) = self.insns.iter().rposition(|i| {
-            matches!(
-                i.insn.opcode,
-                rsleigh::Opcode::Call | rsleigh::Opcode::CallIndirect
-            )
-        }) else {
-            return Ok(false);
+        let Some(call) = self.insns.iter().rposition(is_call) else {
+            return self.seal_at_preceding_call_not_returning(cur_addr);
         };
         self.insns.truncate(call + 1);
         self.finish_current_region(RegionTerminator::NoReturn)?;
         self.builder.undecodable_branch_targets.push(cur_addr);
         Ok(true)
+    }
+
+    /// [`Self::seal_at_call_not_returning`] for a region holding only
+    /// zero-pcode-op instructions, which carries no call of its own: `build`
+    /// segments at every one of them, so `call; nop; <not code>` reaches the
+    /// seal from the nop's region.
+    ///
+    /// Walks back over the run (each nop an empty `Unconditional` region with
+    /// one predecessor) to the region ending in the call, truncates it to the
+    /// call and drops its fall-through edge, orphaning the nops.  The call must
+    /// be that region's LAST instruction: anything after it means the region
+    /// was not sealed at the nop and the fall-through is not the call's return.
+    fn seal_at_preceding_call_not_returning(&mut self, cur_addr: PcodeInsnAddr) -> Result<bool> {
+        if !self.insns.is_empty() {
+            return Ok(false);
+        }
+        let mut current = self.parent_edge;
+        while let Some(region_id) = current {
+            let Some(region) = self.builder.region_graph.node_weight(region_id) else {
+                return Ok(false);
+            };
+            if region.terminator != RegionTerminator::Unconditional {
+                return Ok(false);
+            }
+            match region.insns.last() {
+                Some(last) if is_call(last) => {
+                    let outgoing: Vec<_> = self
+                        .builder
+                        .region_graph
+                        .edges_directed(region_id, petgraph::Outgoing)
+                        .map(|e| e.id())
+                        .collect();
+                    for edge in outgoing {
+                        self.builder.region_graph.remove_edge(edge);
+                        self.builder.non_boundary_seats.remove(&edge);
+                    }
+                    self.builder.region_graph[region_id].terminator = RegionTerminator::NoReturn;
+                    self.builder.undecodable_branch_targets.push(cur_addr);
+                    return Ok(true);
+                }
+                Some(_) => return Ok(false),
+                // Another zero-pcode-op instruction: keep walking while its
+                // single predecessor makes the fall-through chain unambiguous.
+                None => {
+                    let mut preds = self
+                        .builder
+                        .region_graph
+                        .neighbors_directed(region_id, petgraph::Incoming);
+                    let pred = preds.next();
+                    current = preds.next().is_none().then_some(pred).flatten();
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// Seals the region onto a [`Builder::tail_call_stub`] at `cur_addr`, where
