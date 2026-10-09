@@ -16,16 +16,21 @@ impl Function {
     /// convention, argument carriers), then one line per node reachable from
     /// [`Self::entry`] as `outs = op[payload] ins`, values named `%vN` in print
     /// order. With `fingerprints`, each line ends in its sorted asm address set
-    /// `  @{..}`; those sets can dwarf the rest on large functions.
+    /// `  @{..}`; those sets can dwarf the rest on large functions, and each
+    /// one costs a walk of that node's whole fingerprint union closure, so a
+    /// chain of unions is quadratic in its length while the text stays linear
+    /// (see [`UnionDag::for_each`](entity_utils::UnionDag::for_each)).
     ///
     /// Control nodes print in reverse postorder of the control graph, taking
     /// successors in output-index order. Each is preceded by its unprinted
     /// data inputs in post-order over input slots. A `Phi` / `MemPhi` prints
     /// right after its `Region`, siblings in the order a consumer first
     /// demands them, and the cone of an input it takes over a predecessor edge
-    /// prints after that predecessor. Nothing reads an arena id, a hash order
-    /// or a use-list, save a control output's single use, so equal graphs
-    /// print equal text however they were built.
+    /// prints after that predecessor. A value that cone shares with a block
+    /// printed later is pulled into that later block, so a line of the cone
+    /// can name a value defined below it. Nothing reads an arena id, a hash
+    /// order or a use-list, save a control output's single use, so equal
+    /// graphs print equal text however they were built.
     ///
     /// Unreachable nodes are not printed, which is why [`Self::compact`]
     /// leaves the text unchanged.
