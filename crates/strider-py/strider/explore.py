@@ -63,13 +63,12 @@ _CONST_TYPES = (bool, int, float, str, type(None))
 
 
 def _eval_pattern_node(node: ast.expr, names: dict[str, Any]) -> Any:
-    """Evaluate one node of a pattern expression, rejecting anything that
-    could reach an attribute.
+    """Evaluate one node of a pattern expression. Builder calls on
+    `strider.pattern` names, literals and their lists are the whole language.
 
-    Builder calls on `strider.pattern` names, literals and their lists are the
-    whole language. `eval` with stripped builtins is not a sandbox:
-    `().__class__.__base__.__subclasses__()` walks from any literal to
-    `os.system`.
+    Nothing may reach an attribute: `eval` with stripped builtins is not a
+    sandbox, since `().__class__.__base__.__subclasses__()` walks from any
+    literal to `os.system`.
     """
     if isinstance(node, ast.Constant):
         if isinstance(node.value, _CONST_TYPES):
@@ -280,9 +279,9 @@ class _IrVisualizer:
         self._render_lifter: Any = None
 
     def _lifter(self) -> Any:
-        """A decoder owned by whichever thread renders; built from the sources
-        `_render_sources` captured before serving began. See `_RenderSources`
-        for why they are captured rather than read here."""
+        """A decoder owned by whichever thread renders, built from
+        `self._sources`. See `_RenderSources` for why those are captured
+        before serving rather than read here."""
         if self._render_lifter is None:
             self._render_lifter = self._sources.build()
         return self._render_lifter
@@ -388,11 +387,9 @@ class _CfgVisualizer:
 
 
 #: How long a response write may make NO progress before the connection is
-#: given up on. Progress re-arms it, so it is the idle half of the pair and
-#: binds only where the total budget is the looser of the two, on a body past
-#: about 20 MB. Well above what flow control alone produces: a client draining
-#: 4 KiB every 50 ms measured an 11 s window with no send accepted, so a
-#: deadline in that range cuts off a healthy transfer.
+#: given up on. Progress re-arms it, so it binds only the idle case, and it
+#: sits well above the windows flow control alone produces against a healthy
+#: slow reader.
 _WRITE_STALL_SECONDS = 60.0
 
 #: Longest one blocked `send` waits before the write loop re-checks
@@ -401,21 +398,13 @@ _WRITE_STALL_SECONDS = 60.0
 _WRITE_POLL_SECONDS = 0.5
 
 #: Total budget for one response, `_RESPONSE_START_SECONDS` plus a byte
-#: allowance at `_MIN_BODY_RATE`. The no-progress window bounds nothing in
-#: aggregate: a client accepting a trickle re-arms it forever and holds the
-#: single-threaded loop, and re-issuing denies service to everyone else.
-#: Against a healthy slow reader (4 KiB every 50 ms, ~80 KiB/s) the 1.4 MB
-#: `/viz.js` needs 17 s of the 22.6 s this allows it.
+#: allowance at `_MIN_BODY_RATE`. The aggregate bound: a client accepting a
+#: trickle re-arms the no-progress window forever and holds the
+#: single-threaded loop.
 _RESPONSE_START_SECONDS = 20.0
 _MIN_BODY_RATE = 512 * 1024
 
 
-class _DeadlineReader(io.RawIOBase):
-    """The raw socket layer under `rfile`, under a whole-request deadline.
-
-    Before each `recv` it sets the socket timeout to what is LEFT of the
-    budget, so the window shrinks toward zero and a client trickling bytes runs
-    out rather than renewing it.
 def _is_loopback(host: str) -> bool:
     """Whether `host` is the name `localhost` or any loopback address: all of
     127/8, `::1`, and the IPv4-mapped form `ipaddress` calls global."""
@@ -428,10 +417,15 @@ def _is_loopback(host: str) -> bool:
     return (getattr(addr, "ipv4_mapped", None) or addr).is_loopback
 
 
+class _DeadlineReader(io.RawIOBase):
+    """The raw socket layer under `rfile`, under a whole-request deadline.
+
+    Before each `recv` it sets the socket timeout to what is LEFT of the
+    budget, so a client trickling bytes runs out rather than renewing it.
 
     Under the buffer, not over it: `BufferedReader.readline` loops `recv`
-    inside ONE call, so arming per `readline` hands every one of those recvs a
-    full fresh window, which is exactly what a drip exploits.
+    inside ONE call, so arming per `readline` would hand every one of those
+    recvs a fresh window.
     """
 
     def __init__(self, inner: Any, conn: Any, budget: float) -> None:
@@ -472,41 +466,27 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     happens to collect next.
     """
 
-    #: Without this the read of the request line blocks forever, and one
-    #: connection that sends nothing is enough to wedge everything: the server
-    #: is single-threaded so no later request is served, `shutdown` cannot stop
-    #: a loop that is inside `finish_request` rather than `select`, and the
+    #: The whole-request read budget, armed per `recv` by `_DeadlineReader`.
+    #: Without it one connection that sends nothing wedges everything: the
+    #: server is single-threaded so no later request is served, `shutdown`
+    #: cannot stop a loop inside `finish_request` rather than `select`, and the
     #: serving thread is not a daemon, so the interpreter's own join never
-    #: returns either. A browser opening a speculative connection and sending
-    #: nothing is exactly this shape.
-    #:
-    #: Both directions are bounded, but by different rules: the read by this
-    #: whole-request budget, the write by a no-progress deadline plus the stop
-    #: flag (`_write_body`). Neither is tied to `_SHUTDOWN_START_SECONDS` any
-    #: more, because `_Server.serve_forever` sets `started` on entry rather than
-    #: after the first request completes.
+    #: returns either. The write direction is bounded separately, by a
+    #: no-progress deadline plus the stop flag (`_write_body`).
     timeout = 2.0
 
     def _write_body(self, b: bytes) -> None:
-        """Send `b`, waking every `_WRITE_POLL_SECONDS` to re-check whether the
-        server is stopping.
+        """Send `b` in `_WRITE_POLL_SECONDS` slices, so the write stays
+        interruptible. `wbufsize` is 0, so the alternative is one `sendall`
+        under one socket timeout, and no value for it works: short enough for
+        `shutdown` to reach the loop truncates a slow client mid-body against a
+        `Content-Length` already promising the rest, longer parks the
+        single-threaded loop for that whole deadline.
 
-        `wbufsize` is 0, so `wfile.write` is one `sendall` under one socket
-        timeout, and no value for that timeout works: short enough to reach
-        `shutdown` truncates a slow client mid-body against a `Content-Length`
-        already promising the rest, long enough not to park the
-        single-threaded loop for that whole deadline. `send` is a single
-        syscall, so a timeout means nothing was sent and `sent` stays exact,
-        which is what separates the two: the deadline re-arms on progress, and
-        the stop flag cuts a write that has none.
-
-        Three deadlines, because the re-arming one is not an aggregate bound:
-        `total` is what stops ONE client that takes a trickle forever from
-        owning the single-threaded loop. It bounds that connection, not the
-        server: N connections that stall on a large body each own the loop for
-        their own `total` in turn, so the wait a healthy request sees grows
-        with N (measured: ~22 s for one staller, ~67 s for three). `shutdown`
-        and interpreter exit stay bounded by `stopping` either way.
+        Three bounds, since `send` is one syscall and a timeout means nothing
+        went out: `deadline` re-arms on progress and cuts an idle peer, `total`
+        caps the one connection that takes a trickle forever, and `stopping` is
+        what bounds `shutdown` and interpreter exit.
         """
         stopping = cast("_Server", self.server).stopping
         view = memoryview(b)
@@ -625,14 +605,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def setup(self) -> None:
         super().setup()
-        # `timeout` is a per-`recv` deadline, so on its own it only fires on a
-        # connection that says NOTHING. A client dripping one byte at a time
-        # resets it with every byte and blocks the single-threaded loop
-        # forever, which stalls `shutdown` and the interpreter's own join
-        # exactly as a silent connection used to. `_DeadlineReader` replaces
-        # the RAW layer under `rfile`, so what is left of one whole-request
-        # budget arms every `recv`, the ones `BufferedReader.readline` loops
-        # over inside a single call included.
+        # `timeout` on its own is a per-`recv` deadline, which a client
+        # dripping one byte at a time resets with every byte, blocking the
+        # single-threaded loop forever. `_DeadlineReader` replaces the RAW
+        # layer under `rfile` so that one whole-request budget arms every
+        # `recv`, the ones `BufferedReader.readline` loops over inside a single
+        # call included.
         budget = self.timeout if self.timeout is not None else 2.0
         raw = self.rfile
         if isinstance(raw, io.BufferedIOBase):
@@ -681,9 +659,8 @@ class _Server(socketserver.TCPServer):
     """Carries the visualizer, its entry node and its render controls for
     `_Handler` to read.
 
-    Single-threaded: a `Function` may only be touched from the thread that
-    created it, which is whichever thread is blocked in `serve_forever`: the
-    caller's, or the worker `background=True` starts.
+    Single-threaded: one request at a time. Decoding is pinned to a thread, so
+    rendering uses the visualizer's own `Lifter`.
     """
 
     allow_reuse_address = True
@@ -722,9 +699,9 @@ class _Server(socketserver.TCPServer):
 
     def serve_forever(self, poll_interval: float = 0.5) -> None:
         # Marked here, not from `service_actions`: that runs only AFTER a
-        # request completes, so a first connection that holds the handler leaves
-        # `started` clear and `shutdown` gives up on a server that is running.
-        # Setting it early cannot hang a racing `shutdown` either: its
+        # request completes, so a first connection that holds the handler would
+        # leave `started` clear and `shutdown` would give up on a running
+        # server. A racing `shutdown` is safe either way, since its
         # `__shutdown_request` is read on the first loop iteration.
         self.started.set()
         super().serve_forever(poll_interval)
@@ -739,8 +716,7 @@ _RUNNING: dict[int, tuple[_Server, threading.Thread]] = {}
 
 
 #: Bound on the join that follows a drained serve loop; the thread is out of
-#: the Rust frame long before this, and exceeding it only risks the abort that
-#: was the status quo.
+#: the Rust frame long before this.
 _SHUTDOWN_JOIN_SECONDS = 5.0
 
 #: How long `shutdown` waits for a stopped serve loop to drain. A render
@@ -763,10 +739,9 @@ def shutdown(port: int | None = None) -> list[int]:
     running (returns `[]`), and safe to call from a thread other than the one
     serving.
 
-    Joins the serving thread as well as stopping the server. Stopping alone is
-    not enough: the serve loop exits while the thread is still unwinding out of
-    the Rust frame, and an interpreter that finalizes with a thread in that
-    state aborts the process.
+    Joins the serving thread as well as stopping the server: the serve loop
+    exits while the thread is still unwinding out of the Rust frame, and an
+    interpreter that finalizes with a thread in that state aborts the process.
 
     Every wait here is bounded, so a render already inside a handler does not
     hold this call for its whole duration; such a port is not reported as
@@ -774,13 +749,9 @@ def shutdown(port: int | None = None) -> list[int]:
 
     Registered with `threading._register_atexit`, NOT `atexit`: CPython's
     `Py_FinalizeEx` joins non-daemon threads BEFORE running `atexit` handlers,
-    and a thread parked in `serve_forever` is exactly such a thread, so an
-    `atexit` hook would never get to run and the process would hang on the join
+    so an `atexit` hook would never run and the process would hang on the join
     instead.
     """
-            # This server was not stopped, so the flag must not stay set: a
-            # later `_write_body` would send headers and then give up.
-            srv.stopping.clear()
     # A snapshot either way: a serving thread pops its own entry as its loop
     # exits, which is a mutation under both iterations.
     running = list(_RUNNING.items())
@@ -796,6 +767,9 @@ def shutdown(port: int | None = None) -> list[int]:
         # entry and sets on exit, so calling it before the loop starts blocks
         # forever.
         if not srv.started.wait(_SHUTDOWN_START_SECONDS):
+            # This server was not stopped, so the flag must not stay set: a
+            # later `_write_body` would send headers and then give up.
+            srv.stopping.clear()
             continue
         # Not `BaseServer.shutdown`: that waits on its own event with no
         # timeout, so a handler mid-render holds this call for the whole
@@ -806,18 +780,15 @@ def shutdown(port: int | None = None) -> list[int]:
         if srv.finished.wait(_SHUTDOWN_STOP_SECONDS):
             stopped.append(p)
     for p, (srv, thread) in targets:
-        # Nothing to drain out of a loop that never ran, and nothing will ever
-        # signal one; joining the thread serving us would deadlock, and that
-        # caller is already past the frame this exists to drain. A foreground
-        # `visualize` registered its CALLER's thread, which goes on running
-        # after the serve loop returns, so a join there can only burn the whole
-        # timeout, and `finished` above already drained it.
+        # Nothing to drain out of a loop that never ran; joining the thread
+        # serving us would deadlock, and it is already past the frame this
+        # exists to drain. A foreground `visualize` registered its CALLER's
+        # thread, which outlives the serve loop, so a join there can only burn
+        # the whole timeout.
         if p not in stopped or thread is current or not srv.owns_thread:
             continue
         if thread.is_alive():
             thread.join(timeout=_SHUTDOWN_JOIN_SECONDS)
-    # Only what was really stopped: giving up on `started` leaves the server
-    # serving, and saying otherwise would report a shutdown that did not happen.
     return stopped
 
 
@@ -842,34 +813,28 @@ def visualize(
 ) -> int:
     """Start the explorer for `target`, a `Function` from `analyze` or a
     `Cfg` from `build_cfg` / `analyze`. Blocks serving requests until
-    interrupted.
+    interrupted, then returns the port it had bound.
 
-    Opens on the entire graph. `whole=False` starts on a neighborhood around
-    the entry instead; either way the toolbar's `whole` toggle switches between
-    them from the page. Drawing everything is the honest default, since a
-    neighborhood hides nodes without saying so, but a function of a few
-    thousand nodes can keep the layout engine busy for a while, so turn `whole`
-    off for those.
+    Opens on the entire graph; `whole=False` starts on a neighborhood around
+    the entry instead, and the toolbar's `whole` toggle switches between them
+    from the page. A neighborhood hides nodes without saying so, which is why
+    the whole graph is the default, but a function of a few thousand nodes can
+    keep the layout engine busy for a while.
 
     The neighborhood knobs (depth, hub cap, max nodes) open uncapped, and are
     set from the page; 0 means no limit on each. `depth=None` keeps that, while
     a number seeds the toolbar's depth control instead. A negative `depth`
     raises `ValueError`.
 
-    Blocks until interrupted, and returns the port it had bound.
     `background=True` serves on a thread instead and returns the port straight
     away, so the calling thread keeps querying while the browser is open --
-    stop it with `shutdown(port)`.
+    stop it with `shutdown(port)`, which joins that thread as well as stopping
+    the server, since a thread still parked in the serve loop at interpreter
+    exit aborts the process.
 
     Either way the server renders through a decoder of its own, built on the
-    serving thread from this one's arch and readers. Decoding is pinned to its
-    creating thread, so the alternative would be for the browser and your
-    queries to contend for one; the tables a render reads are identical for any
-    handle on the same arch, so a second one costs only its own memory.
-
-    `shutdown(port)` joins the serving thread as well as stopping the server: a
-    thread still parked in the serve loop at interpreter exit aborts the
-    process, which is also why the thread is not a daemon."""
+    serving thread from this one's arch and readers, since decoding is pinned
+    to its creating thread."""
     if depth is not None and depth < 0:
         # The control clamps to its min of 0, and 0 is the uncapped sentinel.
         raise ValueError(f"depth must be >= 0, got {depth}")
@@ -916,11 +881,9 @@ def _serve_background(
 
     thread = threading.Thread(target=run, name=f"strider-explorer-{bound_port}", daemon=False)
     # Registered HERE, not in the worker: the port is already bound, so a
-    # `shutdown()` racing this return must find the server. `shutdown` carries
-    # its own `started` guard for one not yet inside `serve_forever`, so there
-    # is nothing to wait for. Waiting would also be a trap: `BaseServer.shutdown`
-    # blocks until the serve loop EXITS, so calling it on a loop that never
-    # ENTERED hangs, and the error meant to report that never raises.
+    # `shutdown()` racing this return must find the server. It carries its own
+    # `started` guard, which is what keeps `BaseServer.shutdown` off a loop
+    # that never ENTERED: that call blocks until the loop EXITS.
     srv.owns_thread = True
     _RUNNING[bound_port] = (srv, thread)
     try:
