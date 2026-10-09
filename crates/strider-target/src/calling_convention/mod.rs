@@ -193,7 +193,10 @@ impl BuiltCallingConvention {
     /// its bytes free.  `ret_vals`
     /// holds the tracked clobbered containers of `ret_val_regs` then
     /// `ret_val_regs_float` in ABI order; `clobbers` holds every other
-    /// clobbered REGISTER/UNIQUE entry in `tracked_vns` order.
+    /// clobbered REGISTER entry in `tracked_vns` order.
+    ///
+    /// REGISTER only: a p-code CALL writes no Sleigh temporary, so a tracked
+    /// UNIQUE varnode is not a clobber.
     pub fn ret_and_clobber_vns(
         &self,
         tracked_vns: &[rsleigh::Vn],
@@ -223,10 +226,8 @@ impl BuiltCallingConvention {
             .iter()
             .copied()
             .filter(|v| {
-                matches!(
-                    v.addr_space,
-                    rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE
-                ) && is_clobbered(v)
+                v.addr_space == rsleigh::VnSpace::REGISTER
+                    && is_clobbered(v)
                     && !ret_containers.contains(v)
             })
             .collect();
