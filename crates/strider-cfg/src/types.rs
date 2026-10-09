@@ -62,11 +62,13 @@ pub struct UndecodableTarget {
 /// outgoing edge at all.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegionTerminator {
-    /// Five cases: the region ended at a zero-pcode-op instruction (`nop`,
-    /// `endbr64`, `paciasp`, `bti`, alignment padding), decoding fell into an
+    /// The region ended at a zero-pcode-op instruction (`nop`, `endbr64`,
+    /// `paciasp`, `bti`, alignment padding), decoding fell into an
     /// already-discovered region, the region is the first half of a split, it
     /// closed on an explicit `Branch` opcode, or decoding fell through onto
-    /// unmapped bytes and the region edges to a `TailCall` stub there.
+    /// bytes that hold no instruction (unmapped, rejected, or marked data by
+    /// [`crate::CfgOptions::data_ranges`]) and the region edges to a
+    /// `TailCall` stub there.
     Unconditional,
     /// Two outgoing edges; the one whose target region CONTAINS
     /// `true_target` is the taken side, the other the fall-through.
@@ -77,17 +79,24 @@ pub enum RegionTerminator {
         true_target: PcodeInsnAddr,
     },
     Return,
-    /// Three emitters: a CallOther that classifies as noreturn (`BUG()`-class
-    /// traps such as x86 `ud2` or aarch64 `brk #imm`), a `call` whose target
-    /// carries a no-return calling convention, and a `call` or `callind` whose
-    /// return address falls outside the function bound.
+    /// Emitted by a CallOther that classifies as noreturn (`BUG()`-class traps
+    /// such as x86 `ud2` or aarch64 `brk #imm`), a `call` whose target carries
+    /// a no-return calling convention, a `call` or `callind` whose return
+    /// address falls outside the function bound, and a fall-through past a
+    /// call onto bytes that hold no instruction.
+    ///
+    /// That last one TRUNCATES: the region keeps nothing after the call, so
+    /// the instructions between it and the bytes (a PowerPC TOC restore) are
+    /// dropped. See [`crate::Cfg::undecodable_branch_targets`].
     NoReturn,
     /// Branch leaving the function range, lowered by the IR layer as
     /// `Call(IntConst(target)) + Return`.
     ///
     /// Two shapes: a region ending in a direct (or `known_targets`-resolved)
     /// jump to an OOB target, and the empty stub `Builder::tail_call_stub`
-    /// creates for an edge leaving the decoded bytes.  The stub's `start_addr`
+    /// creates for an edge leaving the decoded bytes, whether because the
+    /// target is out of the function bound, unmapped, or holds no
+    /// instruction.  The stub's `start_addr`
     /// IS the target and it carries no instructions, since nothing outside the
     /// bound and nothing unmapped is decoded; it hangs off a regular successor
     /// edge so the branch it came from survives.
@@ -128,8 +137,9 @@ pub enum RegionTerminator {
 /// left only at the terminator.  Ends on a `Branch`, `CondBranch`, `Return`, or
 /// `BranchIndirect` opcode, on a no-return `Call`/`CallOther`/`CallIndirect`,
 /// on a zero-pcode-op instruction (`build` segments at every one), when
-/// sequential decoding reaches an already-discovered region's start, or when it
-/// reaches unmapped bytes.
+/// sequential decoding reaches an already-discovered region's start, and when
+/// it reaches bytes that hold no instruction: unmapped, rejected by Sleigh, or
+/// marked data by [`crate::CfgOptions::data_ranges`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Region {
     pub start_addr: PcodeInsnAddr,

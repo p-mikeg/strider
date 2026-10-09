@@ -294,8 +294,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // parent's. The child's own snapshot reads the pspec DEFAULT for a
         // target the mode has not straight-line flowed to yet (a forward
         // branch), so take the ISA-mode var from the parent region's context at
-        // `source_addr`; transients keep the snapshot, a region start having
-        // fresh IT-block state.
+        // `source_addr`; the rest keep the snapshot, a target inside an IT
+        // block needing the in-block state the `IT` committed there.
         if let Some(var) = self.arch.isa_mode_var() {
             self.flow_vars
                 .take_var_at(&mut carried, self.sleigh, source_addr, var);
@@ -464,11 +464,12 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     }
 
     /// The empty region an edge leaving this function's decoded bytes hangs
-    /// off, created on first use.  Three producers: the out-of-function arm of
-    /// a conditional branch, an unmapped direct branch target, and an unmapped
-    /// sequential fall-through.  It is wired as a regular successor but never
-    /// enqueued, so no address outside `[start, start + fn_max_size)` and no
-    /// unmapped address is decoded.
+    /// off, created on first use.  Its producers: the out-of-function arm of a
+    /// conditional branch, a direct branch target that is unmapped or holds no
+    /// instruction, and a sequential fall-through onto either.  It is wired as
+    /// a regular successor but never enqueued, so no address outside
+    /// `[start, start + fn_max_size)` and no address holding no instruction is
+    /// decoded.
     ///
     /// Keyed through `start_addr_to_region_id` like any region, so two edges
     /// to the same address share one stub.

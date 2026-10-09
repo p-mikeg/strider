@@ -28,14 +28,15 @@ sea-of-nodes IR `strider-lift` builds from it.
   STORE space id named by its space (`Cfg::space_ids`) rather than printed as
   the host address Sleigh encodes it as.
 
-## Every address decodes once
+## No region is built twice over one instruction
 
 Region ownership is by address. A target an existing region owns routes to that
-region, splitting it in two when the target is one of its instruction
-boundaries; the second half keeps the region id so existing edges need no
-fixup. Those bytes are never decoded again. The first edge to arrive
-therefore fixes the ISA mode the bytes decode in; a later edge carrying a
-different mode is recorded rather than decoding a second copy of them.
+region, splitting it at the target's instruction or p-code boundary instead of
+building a second region over the same instructions. Incoming edges move to the
+first half, which keeps the start address; the second half keeps the region id
+and so its outgoing edges. The first edge to arrive therefore fixes the ISA
+mode the bytes decode in; a later edge carrying a different mode is recorded
+rather than decoding a second copy of them.
 
 Overlapping code is the exception, and the only one. Sequential decoding steps
 over a region start interior to an instruction it decodes, the fall-through
@@ -44,9 +45,11 @@ two different instruction streams. The stepped-over start is reported on
 `interior_branch_targets`.
 
 Within a region decoding is strictly sequential. `Sleigh::lift_one` takes
-`&mut self` and carries context-register state (ARM/Thumb mode, x86
-operand/address size and segment override, MIPS16) that a decoded instruction
-can itself set, so lifting out of order returns the wrong instructions.
+`&mut self` and carries context-register state (ARM/Thumb mode and IT-block
+state, MIPS16, ppc `vle`) that a decoded instruction can itself commit at a
+later address, so lifting out of order returns the wrong instructions. x86
+declares its decode vars flowing but no constructor commits one (no
+`globalset`), so a prefix changes the context only within its own instruction.
 
 That state is *flowing* context: as in GHIDRA's `ContextDatabase` a flowing var
 is a value committed per address, holding forward until the next change point.
@@ -59,12 +62,15 @@ ISA-mode bit into the context it hands the target.
 ## How a region ends
 
 `Unconditional` (an explicit branch, a fall-through into an already-discovered
-region, a zero-pcode-op instruction such as `nop` or `endbr64`, or the first
-half of a split), `CondBranch` carrying the taken target, `Return`, `NoReturn`
-(a CallOther classified as a `BUG()`-class trap, a call whose target has a
-no-return calling convention, or a call whose return address is out of range),
-`TailCall` carrying the callee, `Switch` carrying a jump table's arms and the
-dispatch address, and `UnresolvedIndirectBranch`. Only `Unconditional`, `CondBranch` and `Switch`
+region, a zero-pcode-op instruction such as `nop` or `endbr64`, the first half
+of a split, or a fall-through onto bytes that hold no instruction, which edges
+to a `TailCall` stub), `CondBranch` carrying the taken target, `Return`,
+`NoReturn` (a CallOther classified as a `BUG()`-class trap, a call whose target
+has a no-return calling convention, a call whose return address is out of
+range, or a call whose fall-through reaches bytes that hold no instruction,
+which also DROPS everything after the call), `TailCall` carrying the callee,
+`Switch` carrying a jump table's arms and the dispatch address, and
+`UnresolvedIndirectBranch`. Only `Unconditional`, `CondBranch` and `Switch`
 ever have an outgoing edge.
 
 Classifying a `BranchIndirect` needs the IR, which sits above this crate, so a
