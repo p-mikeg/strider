@@ -69,12 +69,12 @@ def test_known_targets_attribute_reads_are_cheap():
 
 def test_known_targets_still_reads_back():
     opts = strider.cfg.CfgOptions(known_targets={0x1000: [0x2000], 0x1010: "return"})
-    assert opts.known_targets[0x1000] == [0x2000]
+    assert opts.known_targets[0x1000] == (0x2000,)
     assert opts.known_targets[0x1010] == "return"
-    assert dict(opts.known_targets) == {0x1000: [0x2000], 0x1010: "return"}
+    assert dict(opts.known_targets) == {0x1000: (0x2000,), 0x1010: "return"}
     # The read-only view round-trips through the constructor.
     assert strider.cfg.CfgOptions(known_targets=opts.known_targets).known_targets == {
-        0x1000: [0x2000],
+        0x1000: (0x2000,),
         0x1010: "return",
     }
 
