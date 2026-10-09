@@ -38,7 +38,7 @@
 //! [`PatValue`]: crate::matcher::PatValue
 //! [`PatNode`]: crate::matcher::PatNode
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use rustc_hash::FxHashMap;
 use strider_graph::{NodeId as PatNodeId, ValueId as PatValueId};
@@ -53,9 +53,33 @@ struct Ctx<'a> {
     pat: &'a Pattern,
     /// [`Matcher::satisfied`], borrowed for the walk.
     satisfied: &'a Cell<u64>,
+    /// Per `first_of` node, the arm that first produced a match in this
+    /// attempt. The cut is scoped to the attempt, not to one invocation of the
+    /// alternation: a sibling operand enumerated INSIDE the alternation's
+    /// invocation and one enumerated around it must leave the same arms, or
+    /// the query answers differently by which slot it spells the alternation
+    /// in.
+    first_match_cut: RefCell<FxHashMap<PatNodeId, usize>>,
 }
 
-impl Ctx<'_> {
+impl<'a> Ctx<'a> {
+    fn new(matcher: &'a Matcher<'a>, pat: &'a Pattern) -> Self {
+        Self {
+            matcher,
+            pat,
+            satisfied: &matcher.satisfied,
+            first_match_cut: RefCell::default(),
+        }
+    }
+
+    fn cut_arm(&self, node: PatNodeId) -> Option<usize> {
+        self.first_match_cut.borrow().get(&node).copied()
+    }
+
+    fn record_cut_arm(&self, node: PatNodeId, arm: usize) {
+        self.first_match_cut.borrow_mut().entry(node).or_insert(arm);
+    }
+
     #[inline]
     fn function(&self) -> &strider_ir::Function {
         self.matcher.function()
@@ -106,11 +130,7 @@ fn try_match_rooted(
 ) -> bool {
     let root_out_vertex = root_output_vertex_for(pat, root, matcher, root_value);
     let root_node = matcher.function().producer(root_value);
-    let ctx = Ctx {
-        matcher,
-        pat,
-        satisfied: &matcher.satisfied,
-    };
+    let ctx = Ctx::new(matcher, pat);
     if !count_root {
         return try_match_at(
             &ctx,
@@ -169,11 +189,7 @@ pub(crate) fn try_match_node(
     if root_requires_value_output(pat, root) {
         return false;
     }
-    let ctx = Ctx {
-        matcher,
-        pat,
-        satisfied: &matcher.satisfied,
-    };
+    let ctx = Ctx::new(matcher, pat);
     if !count_root {
         return try_match_at(&ctx, root, node, None, None, bindings, k);
     }
@@ -319,7 +335,13 @@ fn try_match_at(
         if !bind_all_captures(bindings, nd, out_weight, ir_node, root_value) {
             return false;
         }
-        for alt in inputs {
+        let cut = ctx.cut_arm(pat_node);
+        for (arm, alt) in inputs.iter().enumerate() {
+            // An arm past the one that already matched in this attempt is not
+            // re-offered just because a sibling operand moved on.
+            if nd.first_match && cut.is_some_and(|c| arm > c) {
+                break;
+            }
             let before = ctx.satisfied.get();
             let accepted = try_match_at(
                 ctx,
@@ -350,6 +372,7 @@ fn try_match_at(
             // arm reaching `k` but rejected by a guard above falls through to
             // the next arm.
             if nd.first_match && ctx.satisfied.get() > before {
+                ctx.record_cut_arm(pat_node, arm);
                 break;
             }
         }
