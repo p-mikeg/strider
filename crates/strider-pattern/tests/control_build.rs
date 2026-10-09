@@ -1371,16 +1371,16 @@ fn indirect_branch_isa_mode_matches_only_a_switching_branch() {
     let switching = indirect_branch_with_mode(0x4000, 1);
     a::matches(
         &switching,
-        indirect_branch().isa_mode(int_const(1u128)).build(),
+        indirect_branch().input(3, int_const(1u128)).build(),
         1,
     );
     a::none(
         &switching,
-        indirect_branch().isa_mode(int_const(0u128)).build(),
+        indirect_branch().input(3, int_const(0u128)).build(),
     );
 
     let plain = indirect_branch_to(0x4000);
-    a::none(&plain, indirect_branch().isa_mode(anything()).build());
+    a::none(&plain, indirect_branch().input(3, anything()).build());
 }
 
 /// `with_true` takes an already built `Pattern`, so no builder cap bounds the
