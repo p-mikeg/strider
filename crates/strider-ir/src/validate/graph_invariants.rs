@@ -160,14 +160,9 @@ pub(super) fn check_function_invariants_control_single_use(
 /// An arithmetic node is evaluated at ONE width, so every value operand must
 /// carry it: for `IntBinaryOp` / `IntUnaryOp` / `FloatBinaryOp` /
 /// `FloatUnaryOp` that width is the output's, and for the comparisons (whose
-/// output is `I1`) it is the first operand's. A shift is the exception p-code
-/// itself makes: `INT_LEFT` pins only input0 to the output size, so the count
-/// may be any width. `Extend` / `Truncate` are how a width change is spelled.
-///
-/// The exemption covers IR from any source. `IRBuilderExt` is stricter than it
-/// and REJECTS a count of any other width, so a builder-produced shift never
-/// uses it; the lifter coerces first
-/// (`strider_lift::lift::arithmetic::saturate_shift_count`).
+/// output is `I1`) it is the first operand's. A shift's count (operand 1) may
+/// be any width, as in p-code. `Extend` / `Truncate` are how a width change is
+/// spelled.
 pub(super) fn check_function_invariants_arith_widths(
     function: &Function,
     reachable: &NodeIdSet,
