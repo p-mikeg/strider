@@ -177,7 +177,10 @@ These shapes come back in `unresolved` rather than as an error:
   by one 16-byte `str q0`, so it arrives as one 128-bit constant holding two
   entries.
 - MIPS64 GOT-indirect dispatch: the entries lift as `Add(Load[GOT], const)`
-  rather than constants. PLACEHOLDER_MIPS
+  rather than constants. Both halves of that now exist: the abicalls ABI puts
+  the function's own entry address in `t9`, which a convention names, and
+  `load_elf(relocated_got_is_rom=True)` serves the GOT slots the entry load
+  reads, so these resolve under that opt-in.
 - PowerPC stack-array dispatch on ppc64be and ppc64le, where the entries are
   loaded from `.data.rel.ro` in a writable segment that the read-only image
   leaves out, and the address is also relative to the incoming `r12`. On
