@@ -61,35 +61,10 @@ fn reloc_addend(
     if !reloc.has_implicit_addend() {
         return reloc.addend();
     }
-    let Some(field_end) = site_addr.checked_add(size_bytes as u64) else {
-        return 0;
-    };
-    let Some(region) = overlapping
-        .iter()
-        .map(|&i| &regions[i])
-        .find(|r| r.start_addr() <= site_addr && field_end <= r.end_addr())
-    else {
-        return 0;
-    };
-    let off = (site_addr - region.start_addr()) as usize;
-    let field = &region.raw()[off..off + size_bytes];
-    // Read by hand rather than through `Endianness::read_uint`: this crate
-    // depends only on `read-only-memory`, and pulling in `strider-target` for
-    // one loop would put a back-edge in the dependency graph.
-    let mut raw = 0u64;
-    if endian_le {
-        for (n, &b) in field.iter().enumerate() {
-            raw |= u64::from(b) << (8 * n);
-        }
-    } else {
-        for &b in field {
-            raw = (raw << 8) | u64::from(b);
-        }
-    }
-    // Sign-extend from the field width: a PC-relative site holds a negative A
+    // Sign-extended from the field width: a PC-relative site holds a negative A
     // (-4 for an x86 `call rel32`).
-    let shift = 64 - 8 * size_bytes as u32;
-    ((raw << shift) as i64) >> shift
+    read_field(regions, overlapping, site_addr, size_bytes, endian_le)
+        .map_or(0, |raw| sext(raw, 8 * size_bytes as u32))
 }
 
 /// Installs a relocation patch list on each region, walking the table
@@ -256,8 +231,11 @@ struct RelocSite {
 ///   points at), so the site is that section's `layout` base plus the offset.
 /// * Everything else: the dynamic table, `owners` and `layout` unused.
 ///   `dynamic_relocations()` is `Some` for every ELF, but its iterator yields
-///   nothing unless an `SHT_REL` / `SHT_RELA` section links to `.dynsym`, so a
-///   statically-linked image walks no sites.
+///   only relocation sections whose `sh_link` is the dynamic symbol table's
+///   index, which is 0 when there is no `.dynsym`. A static binary's
+///   `.rela.plt` links to `.symtab`, so it walks no sites; `strip` rewrites
+///   that link to 0, and the same binary then walks its IRELATIVE slots and
+///   serves each resolver's address in place of the file bytes.
 fn for_each_reloc_site<F>(
     obj: &object::File<'_>,
     owners: &std::collections::BTreeSet<usize>,
