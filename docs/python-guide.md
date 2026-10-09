@@ -31,6 +31,11 @@ prog.entry_point()           # the ELF entry point
 prog.read(addr, 16)          # raw bytes, or None if unmapped
 ```
 
+A stripped image has no symbol table, so name its functions from somewhere
+else: `prog.add_symbol_file(path)` reads the symbols of a separate file (a
+debug object, a `vmlinux`) and `prog.add_symbols({name: addr})` takes a map of
+your own. `prog.add_elf(path)` merges a second image's bytes and symbols.
+
 ## Analyzing a function
 
 `analyze` does the whole pipeline (CFG, lift, optimize, resolve branches) in one
@@ -46,6 +51,9 @@ The result unpacks into three things:
 - `function`: the lifted, optimized IR. This is what you query.
 - `unresolved`: addresses of indirect branches Strider could not resolve. An
   empty list is the normal case; a non-empty one is information, not an error.
+  It is one of six channels, though: `cfg.is_complete()` is the one call that
+  reads all of them, and
+  [python-api.md](python-api.md#12-the-cfg-stridercfg) says what each reports.
 
 You can also keep the result whole and use `result.cfg` / `result.function` /
 `result.unresolved`.
@@ -59,6 +67,15 @@ opts = strider.lift.LifterOptions(
 cfg, function, unresolved = prog.analyze("array_sum", opts=opts)
 ```
 
+The other options worth knowing about, all covered in
+[python-api.md](python-api.md#2-analyzing-a-function):
+`assumptions=AssumptionOptions(...)` states claims about the code that the
+analysis cannot check, and `AssumptionOptions.none()` makes none of them;
+`CfgOptions(known_targets=...)` seats indirect-branch answers of your own,
+`call_other_abis=` classifies a Sleigh user-op strider has no ABI for, and
+`data_ranges=` marks bytes that are data; `per_address_ccs=` names a callee's
+convention; `pipeline=` replaces the optimizer pass list outright.
+
 **One handle analyzes many functions.** The handle is the fixed setup:
 
 ```python
@@ -66,6 +83,13 @@ for sym in prog.functions():
     result = prog.analyze(sym.address)
     ...
 ```
+
+**One handle per thread** if you want them in parallel. A handle decodes only
+on the thread that built it and raises `StriderError` elsewhere, but `analyze`
+drops the GIL, so a worker that builds its own handle over the same
+`prog.arch`, `prog.reader()` and `prog.rom()` runs alongside this one. A plain
+handle has no symbols and no default convention, so call
+`analyze(addr, prog.cc)` on it.
 
 ## Writing a query
 
@@ -320,6 +344,10 @@ strider.explore.shutdown(port)             # ...until you stop it
 
 The keys, the toolbar and what its limits apply to are in
 [python-api.md](python-api.md#10-visualizing).
+
+For something to read or diff rather than look at, `function.to_text()` prints
+a header and then one line per node, stable across runs, so two analyses can be
+compared with `diff`.
 
 For a static picture, render the IR or the CFG to a self-contained HTML file:
 
