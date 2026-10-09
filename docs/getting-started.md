@@ -24,18 +24,21 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    a trap, is classified by a built-in ABI table saying whether it returns and
    what it clobbers; `CfgOptions(call_other_abis=...)` overrides an entry, and
    `CallOtherAbi.custom(sleigh, ...)` names the registers one reads and writes.
+   A callee's own convention comes from the ELF header unless
+   `LifterOptions(per_address_ccs=...)` names one for its address.
 3. Build a **CFG**, the map of which regions (straight runs of instructions)
    can jump to which. Each address decodes once, in the ISA mode carried by the
    edge that reached it, so ARM and Thumb code in one binary each decode
    correctly. Bytes that hold no instruction, such as a literal pool an ARM or
-   AArch64 ELF's `$d` mapping symbols mark, are not decoded.
+   AArch64 ELF's `$d` mapping symbols mark, are not decoded;
+   `CfgOptions(data_ranges=...)` names ranges the symbols miss.
 4. Build the **IR**, a graph where every value the function computes is a node
    and every dependency is an edge. Values carry their exact width, from the
    1-bit `I1` up to `I512`, so the odd widths SIMD and long-double code produce
    get their own types instead of being rounded to a machine word. This is the
-   thing you query; `function.to_text()` prints it one line per node, and
-   `function.validate()` checks its invariants. A call is modelled by its
-   calling convention, never by reading the callee.
+   thing you query; `function.to_text()` prints a header and then one line per
+   node, and `function.validate()` checks its invariants. A call is modelled by
+   its calling convention, never by reading the callee.
 5. **Optimize** the IR so that equivalent code reaches a query in fewer shapes.
    Constants fold, `x + (x << 1)` becomes `x * 3`, and a phi or a cycle of phis
    carrying one value collapses, so a pattern written against the source shape
@@ -83,8 +86,13 @@ and is the quickest way to see the shape a pattern has to match;
 keys and the toolbar.
 
 A lift handle decodes only on the thread that built it; a worker thread builds
-its own over the same `arch` / `reader()` / `rom()`. `analyze` releases the GIL,
-so the two run in parallel.
+its own over the same `arch` / `reader()` / `rom()` and calls
+`analyze(addr, cc)`, since a plain handle stores no default convention and
+carries no symbols. `analyze` releases the GIL, so the two run in parallel.
+
+An analysis failure is a `strider.StriderError`, and its `.backtrace` carries
+the message followed by the Rust backtrace; `STRIDER_BACKTRACE=1` folds that
+backtrace into the message too.
 
 ## Where to go next
 

@@ -40,15 +40,13 @@ pattern = load(addr=int_add(base, int_const(off)))
 for hit in function.find_all(pattern, ignore_casts=True):
     print("offset =", hit[off].uint)   # 4 and 8: the two stack arguments
 
-# The explorer draws the whole graph; visualize(whole=False) opens on the
-# neighborhood around the entry instead, which stays usable on large functions.
-# On a thread it prints a local URL and returns, so you can keep querying:
+# The explorer draws the whole graph, pannable and zoomable;
+# visualize(whole=False) opens on the neighborhood around the entry instead,
+# which stays usable on large functions. It prints a local URL and serves
+# until Ctrl-C; background=True serves on a thread and returns the port, so
+# you can keep querying:
 port = prog.visualize(function, background=True)
 strider.explore.shutdown(port)
-
-# Without background= it serves on this thread and blocks until interrupted,
-# so nothing after it runs:
-prog.visualize(function)
 ```
 
 ## What's new in 0.2.0
@@ -63,15 +61,18 @@ prog.visualize(function)
   functions of a stripped image. Images are memory-mapped; `STRIDER_NO_MMAP=1`
   reads them instead.
 - **Completeness you can check.** `cfg.is_complete()` reads six channels: an
-  unresolved indirect branch, a return whose target is not provably the
-  caller's, a site settled only by your own seed, an address reached in two ISA
-  modes, a branch target off an instruction boundary, outside the image or on
-  bytes that hold no instruction.
+  unresolved indirect branch (a return whose target is not provably the
+  caller's rides there too), a site settled only by your own seed, an address
+  reached in two ISA modes, and a branch target off an instruction boundary,
+  outside the image, or on bytes that hold no instruction.
 - **Mixed instruction sets.** Each address decodes in the ISA mode of the edge
   that reached it, and a resolved indirect target carries its own mode, so
   ARM/Thumb interworking and MIPS16 code decode correctly.
   `CfgOptions(known_targets=...)` seats answers of your own, and
   `LifterOptions(resolve_indirect_branches=False)` turns the classifier off.
+  Bytes that hold no instruction are not decoded: an ARM or AArch64 image's
+  `$d` mapping symbols mark its literal pools automatically, and
+  `CfgOptions(data_ranges=...)` names ranges the symbols miss.
 - **ABIs.** `CallingConvention.custom(sleigh, ...)`, `cc.preserves_all()` /
   `cc.preserves_regs()` and `arm_aapcs_soft`, applied per callee through
   `LifterOptions(per_address_ccs=...)`. Analysis never reads a callee, so a
@@ -91,18 +92,24 @@ prog.visualize(function)
 - **Optimizer.** `ConstantFold` turns sums of scaled copies (`x + (x << 1)`)
   into one `x * C`, `PhiCollapse` folds cycles of phis carrying one value, and
   a pass that changed nothing is skipped until the graph changes.
+  `LifterOptions(pipeline=...)` replaces the pass list outright, and a pipeline
+  of your own runs with the GIL dropped as the default one does.
   `Function.validate()` also checks the order of memory effects.
-- **Looking at results.** `Function.to_text()` prints the IR one line per node,
-  stable across runs. `visualize(background=True)` serves the explorer while
-  you keep querying. `StriderError.backtrace` carries the Rust trace.
-- **Failing safely.** A pattern too large or too deep for the thread's stack,
-  a lift handle used from another thread and an out-of-range operand index all
-  raise `StriderError` instead of crashing the interpreter, and the wheel is
-  built with overflow checks.
+- **Looking at results.** `Function.to_text()` prints a header and then one
+  line per node, stable across runs. `visualize(background=True)` serves the
+  pan-and-zoom explorer while you keep querying. `StriderError.backtrace`
+  carries the Rust trace.
+- **Threads.** `analyze` drops the GIL, so one lift handle per thread analyses
+  in parallel. A handle decodes only on the thread that built it and says so
+  rather than misbehaving.
+- **Failing safely.** A pattern too large or too deep for the thread's stack
+  and an out-of-range operand index raise `StriderError` instead of crashing
+  the interpreter, and the wheel is built with overflow checks.
 
 ## Upgrading from 0.1.0
 
-The query API renamed, which is every line of the 0.1.0 quickstart: `add` is
+The query API was renamed, so the 0.1.0 quickstart's pattern lines no longer
+run: `add` is
 `int_add`, a bare string is no longer a capture operand (`Capture` is), and
 `hit.const_uint(c)` is `hit.uint(c)`. `hit[c]` returns a `BoundCapture`, so
 `hit[c] is None` is always false; test `c in hit`. `prog.symbol(name)` returns a
@@ -118,7 +125,9 @@ raise `TypeError`: those claims moved into
 
 A lift handle decodes only on the thread that built it, so a script that
 analysed from a worker raises `StriderError` there. Build a second handle on
-that thread over the same `prog.arch`, `prog.reader()` and `prog.rom()`.
+that thread over the same `prog.arch`, `prog.reader()` and `prog.rom()`, and
+call its `analyze(addr, prog.cc)`: a plain handle stores no default convention
+and carries no symbols, so it needs both the convention and an address.
 
 A 0.1.0 pattern that now matches nothing has most often met `ConstantFold`'s
 repeated-term factoring: `x + x*2` reaches the query as `x*3`. Draw the function
@@ -226,5 +235,8 @@ uv run maturin develop && uv run pyright && uv run pytest
 
 ## License
 
-MIT. See [LICENSE](LICENSE). The vendored browser bundles keep their own
-notices; [THIRD-PARTY.md](THIRD-PARTY.md) lists them.
+MIT. See [LICENSE](LICENSE). The redistributed components keep their own
+notices: GHIDRA's Sleigh (Apache-2.0), the rsleigh bindings (MIT), the linked
+Rust crates and the two vendored browser bundles.
+[THIRD-PARTY.md](THIRD-PARTY.md) lists them and [`licenses/`](licenses) holds
+the full texts.
