@@ -619,6 +619,12 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// the containing instruction does and carries the same p-code once the
     /// atomic-prefix markers (`LOCK` / `UNLOCK`) are set aside.
     ///
+    /// The containing instruction must be `owner`'s FIRST, glibc's
+    /// `je 0f; lock; 0:` shape, where the prefixed instruction is the branch's
+    /// own fall-through. An owner starting earlier runs every instruction
+    /// before the prefix too, so the taken path is not the stream the branch
+    /// jumps to.
+    ///
     /// Only on an arch with no ISA-mode context (x86 / x86-64), where a
     /// byte-granular prefix exists and a throwaway decode cannot leak mode
     /// state. Off it, an interior target is a real overlap.
@@ -641,6 +647,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         let start = insn.addr.machine_addr.addr;
         let full_end = start.saturating_add(u64::from(insn.len));
         if !(start < target && target < full_end) {
+            return false;
+        }
+        if region.start_addr != PcodeInsnAddr::at_machine_start(start) {
             return false;
         }
         // The owner already holds the containing instruction's p-code, one
