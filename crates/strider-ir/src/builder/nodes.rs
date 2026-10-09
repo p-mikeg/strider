@@ -44,7 +44,9 @@ impl FunctionBuilder {
 
     /// Control sink for a no-return direct `Call`, consuming control only:
     /// the region's memory token is left unanchored. Terminates the current
-    /// region.
+    /// region. A region that MERGES a memory effect needs a reader below the
+    /// join, so sinking a join straight into this is rejected as
+    /// `UnmergedMemoryEffect`.
     pub fn build_unreachable(&mut self) -> Result<()> {
         let res = self.terminate_cur_region()?;
         self.require_terminator_kinds(&res)?;

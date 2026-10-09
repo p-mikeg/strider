@@ -1292,9 +1292,49 @@ fn memory_order_arm_effect_dropped_at_a_merge_is_rejected() {
 
     let errs = validate(&s.f).unwrap_err();
     assert!(
-        matches!(errs.0.as_slice(), [ValidationError::MemoryRewind { node, effect }]
-            if *node == merge && *effect == call),
+        matches!(errs.0.as_slice(), [ValidationError::UnmergedMemoryEffect { region, effect }]
+            if *region == merge && *effect == call),
         "{errs:?}"
+    );
+}
+
+/// The same diamond sinking into a memory-less `Unreachable`: nothing below
+/// the join reads the merged state, yet the arm's effect still reaches no
+/// reader, so the join is still rejected, naming itself rather than a reader.
+#[test]
+fn memory_order_arm_effect_dropped_at_a_merge_into_unreachable_is_rejected() {
+    let mut s = spine();
+    let (cond_n, cond) = int_const(&mut s.f, 1, ValueType::I1);
+    stamp(&mut s.f, cond_n);
+    let branch = s.f.graph_mut().create_node(
+        NodeKind::If,
+        [s.entry_ctrl, cond],
+        [ValueKind::Control, ValueKind::Control],
+    );
+    stamp(&mut s.f, branch);
+    let [then_edge, else_edge] = s.f.node_outputs_exact::<2>(branch).unwrap();
+    let (call, [call_ctrl, _]) = call(&mut s.f, then_edge, s.mem_value);
+    let merge = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [call_ctrl, else_edge],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let [merge_ctrl, _] = s.f.node_outputs_exact::<2>(merge).unwrap();
+    let sink =
+        s.f.graph_mut()
+            .create_node(NodeKind::Unreachable, [merge_ctrl], []);
+    stamp(&mut s.f, sink);
+
+    let errs = validate(&s.f).unwrap_err();
+    assert!(
+        matches!(errs.0.as_slice(), [ValidationError::UnmergedMemoryEffect { region, effect }]
+            if *region == merge && *effect == call),
+        "{errs:?}"
+    );
+    let rendered = errs.report(&s.f).to_string();
+    assert!(
+        !rendered.contains("takes the memory state"),
+        "a Region takes no memory: {rendered}"
     );
 }
 

@@ -799,10 +799,7 @@ fn check_memory_order(
             let merged = idom[region].and_then(|d| state[d]);
             for effect in edge_states.flatten() {
                 if Some(effect) != merged {
-                    errs.push(ValidationError::MemoryRewind {
-                        node: region,
-                        effect,
-                    });
+                    errs.push(ValidationError::UnmergedMemoryEffect { region, effect });
                 }
             }
         }
