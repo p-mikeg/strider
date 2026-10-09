@@ -57,7 +57,9 @@ Analysis:
   `optimize`, `pcode_at`, `reg`, `reg_name`, `call_other_abi`,
   `user_op_names` or a renderer given `lifter=` raise `StriderError` on any
   other thread. The handle moves and drops anywhere; build a second one over
-  the same `arch` / `reader()` / `rom()` to work off-thread.
+  the same `arch` / `reader()` / `rom()` to work off-thread, and call its
+  `analyze(addr, cc)`, a plain handle carrying no symbols and no default
+  convention.
 - `CallingConvention.custom(sleigh, ...)` resolves register names against the
   `Sleigh` it is given, so using the result with a `Lifter` of another
   architecture raises instead of analysing against the wrong registers.
