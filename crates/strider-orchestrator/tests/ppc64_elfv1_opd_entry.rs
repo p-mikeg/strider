@@ -26,6 +26,7 @@
 use object::{Object as _, ObjectSection as _, ObjectSymbol as _};
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IntBinaryOp};
+use strider_reader::elf::OpdTable;
 use strider_reader::{ElfFileMemReader, OwnedElf};
 use strider_target::{CallingConvention, SleighArch};
 
@@ -89,6 +90,15 @@ fn symbol(elf: &OwnedElf, name: &str) -> (u64, String) {
     (addr, section.name().expect("name").to_owned())
 }
 
+/// The code entry of the `.opd` descriptor at `addr`, `addr` itself when it is
+/// not one.
+fn entry_of(elf: &OwnedElf, addr: u64) -> u64 {
+    let obj = elf.checked_file().expect("file");
+    OpdTable::new(&obj)
+        .and_then(|t| t.entry_at(addr))
+        .unwrap_or(addr)
+}
+
 /// The lifted and optimised function at `entry` under `powerpc64_elf_v1`.
 fn analyze(elf: &OwnedElf, entry: u64) -> strider_ir::Function {
     let obj = elf.checked_file().expect("file");
@@ -123,14 +133,10 @@ fn the_descriptor_resolves_to_the_text_entry() {
     let elf = image();
     for (name, entry) in [("add7", ADD7_ENTRY), ("answer", ANSWER_ENTRY)] {
         let (descriptor, _) = symbol(&elf, name);
-        assert_eq!(
-            elf.function_entry(descriptor).expect("entry"),
-            entry,
-            "{name}"
-        );
+        assert_eq!(entry_of(&elf, descriptor), entry, "{name}");
     }
     assert_eq!(
-        elf.function_entry(ANSWER_ENTRY).expect("entry"),
+        entry_of(&elf, ANSWER_ENTRY),
         ANSWER_ENTRY,
         "a code address passes through"
     );
@@ -140,7 +146,7 @@ fn the_descriptor_resolves_to_the_text_entry() {
 fn answer_lifts_at_its_entry_and_returns_42() {
     let elf = image();
     let (descriptor, _) = symbol(&elf, "answer");
-    let f = analyze(&elf, elf.function_entry(descriptor).expect("entry"));
+    let f = analyze(&elf, entry_of(&elf, descriptor));
     let r3 = common::returned(&f)[0];
     assert_eq!(f.int_const_u128(r3), Some(42));
 }
@@ -149,7 +155,7 @@ fn answer_lifts_at_its_entry_and_returns_42() {
 fn add7_lifts_at_its_entry_and_returns_r3_plus_7() {
     let elf = image();
     let (descriptor, _) = symbol(&elf, "add7");
-    let f = analyze(&elf, elf.function_entry(descriptor).expect("entry"));
+    let f = analyze(&elf, entry_of(&elf, descriptor));
     let r3 = common::returned(&f)[0];
     let add = f.producer(r3);
     assert!(
