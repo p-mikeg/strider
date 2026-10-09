@@ -133,7 +133,9 @@ impl ArchPreset {
     /// The arch this preset names, inverse of [`SleighArch::preset`].
     ///
     /// Exhaustive, so a new variant fails to compile until it has a
-    /// constructor.
+    /// constructor.  Only the roster-sweeping tests need the inverse; a
+    /// caller holding a preset names the constructor directly.
+    #[cfg(any(test, feature = "test-util"))]
     #[must_use]
     pub fn arch(self) -> SleighArch {
         match self {
