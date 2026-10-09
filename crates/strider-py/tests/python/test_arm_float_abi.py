@@ -39,7 +39,8 @@ def test_float_abi_bit_selects_the_convention(tmp_path):
     base = 0x0500_0000
     assert _cc_for(base | _EF_ARM_ABI_FLOAT_HARD, tmp_path) == "arm_aapcs"
     assert _cc_for(base | _EF_ARM_ABI_FLOAT_SOFT, tmp_path) == "arm_aapcs_soft"
-    # Neither bit set (pre-EABI5 objects, hand-written asm) falls to hard.
+    # Only a linked image carries either bit, so an unlinked object falls
+    # to hard whatever it was built with.
     assert _cc_for(base, tmp_path) == "arm_aapcs"
 
 
