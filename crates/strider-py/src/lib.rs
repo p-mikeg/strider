@@ -48,6 +48,17 @@ fn force_anyhow_backtrace_capture() {
         unsafe {
             std::env::set_var("RUST_LIB_BACKTRACE", "1");
         }
+        // std caches the enabled/disabled decision in a static on the first
+        // capture, and anyhow captures through std. The variable is removed
+        // again right after, because `set_var` writes the C `environ`, which
+        // `subprocess` children inherit and `os.environ` does not show: a Rust
+        // tool the host spawns would otherwise pay for backtrace capture on
+        // every error.
+        let _ = std::backtrace::Backtrace::capture();
+        // SAFETY: as above.
+        unsafe {
+            std::env::remove_var("RUST_LIB_BACKTRACE");
+        }
     }
 }
 
