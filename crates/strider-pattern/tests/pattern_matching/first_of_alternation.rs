@@ -219,3 +219,44 @@ fn a_nested_query_in_a_guard_does_not_fire_an_enclosing_cut() {
     );
     assert_eq!(plain, 1, "the second arm still matches");
 }
+
+/// `add(x, add(x, z))`.
+fn add_x_add_x_z() -> strider_ir::Function {
+    let mut t = Tb::empty();
+    let x = t.u64(5);
+    let z = t.u64(7);
+    let inner = t.add(x, z);
+    let outer = t.add(x, inner);
+    t.ret_val(outer)
+}
+
+/// A `first_of` in one slot of a commutative node and its sibling in the other.
+/// Whichever slot spells the alternation, the sibling's configurations are the
+/// same set, so the cut must leave the same arms and the query the same answer.
+#[test]
+fn first_of_answers_the_same_in_both_mirror_spellings() {
+    let f = add_x_add_x_z();
+    let m = Matcher::new(&f);
+    let k = Capture::new();
+
+    let bound = |pat: strider_pattern::Pattern| -> Vec<Option<strider_ir::node::ValueId>> {
+        m.find_all(&pat).unwrap().iter().map(|h| h.value(k)).collect()
+    };
+
+    let alternation_first = bound(
+        int_add(
+            first_of![anything().capture(k), anything()],
+            int_add(anything().capture(k), anything()),
+        )
+        .into_pattern(),
+    );
+    let alternation_second = bound(
+        int_add(
+            int_add(anything().capture(k), anything()),
+            first_of![anything().capture(k), anything()],
+        )
+        .into_pattern(),
+    );
+    assert_eq!(alternation_first.len(), 1, "the cut keeps arm 1 only");
+    assert_eq!(alternation_first, alternation_second);
+}
