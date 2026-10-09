@@ -71,3 +71,15 @@ def test_shutdown_returns_when_serving_never_started(monkeypatch, unserved_serve
 def test_serving_flag_starts_clear(unserved_server):
     srv, _port = unserved_server
     assert not srv.started.is_set()
+
+
+def test_giving_up_on_a_server_that_never_served_leaves_it_able_to_serve(
+    monkeypatch, unserved_server
+):
+    """`stopping` cuts a body write, so a `shutdown` that reports stopping
+    nothing must not leave it set: every later response would go out with its
+    headers and no body."""
+    srv, port = unserved_server
+    monkeypatch.setattr(explore, "_SHUTDOWN_START_SECONDS", 0.2)
+    assert explore.shutdown(port) == []
+    assert not srv.stopping.is_set()

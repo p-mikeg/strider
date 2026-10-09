@@ -767,6 +767,9 @@ def shutdown(port: int | None = None) -> list[int]:
     `atexit` hook would never get to run and the process would hang on the join
     instead.
     """
+            # This server was not stopped, so the flag must not stay set: a
+            # later `_write_body` would send headers and then give up.
+            srv.stopping.clear()
     # A snapshot either way: a serving thread pops its own entry as its loop
     # exits, which is a mutation under both iterations.
     running = list(_RUNNING.items())
