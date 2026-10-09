@@ -896,7 +896,8 @@ class FieldPat:
     capture: Optional[CaptureKey]
     def __init__(self, base: ValueLike, offset: Union[int, CaptureKey, None] = ...) -> None: ...
     def offset(self, m: Match) -> int:
-        """The field offset `m` matched."""
+        """The field offset `m` matched, signed: a frame slot or a
+        `container_of` field sits below its base."""
     def load(self) -> LoadPat:
         """A `Load` of the field."""
     def store(self, data: Optional[ValueLike] = ...) -> StorePat:

@@ -483,14 +483,17 @@ class FieldPat:
         cap = p.Capture() if offset is None else offset
         self.capture = cap
         const = p.int_const().capture(cap) if isinstance(cap, str) else p.int_const(cap)
-        self.pattern = p.one_of([p.int_add(base, const), base])
+        # Ordered, not a union: `base` matches the `Add` too whenever it is
+        # permissive, and a union then reports every field twice.
+        self.pattern = p.first_of([p.int_add(base, const), base])
 
     def offset(self, m: Match) -> int:
-        """The field offset `m` matched."""
+        """The field offset `m` matched, signed: a frame slot or a
+        `container_of` field sits below its base."""
         if self._known is not None:
             return self._known
         assert self.capture is not None
-        return m.uint(self.capture) if m.has(self.capture) else 0
+        return m.sint(self.capture) if m.has(self.capture) else 0
 
     def load(self) -> LoadPat:
         """A `Load` of the field."""
@@ -512,4 +515,4 @@ def code_ptr(target: ValueLike) -> Pat:
     """`target`, or `target & -2`: an ARM interworking or MIPS16 branch clears
     the ISA-mode bit, the one mask strider strips when resolving a target."""
     p = _ext.pattern
-    return p.one_of([target, p.int_and(target, p.int_const(-2))])
+    return p.first_of([p.int_and(target, p.int_const(-2)), target])
