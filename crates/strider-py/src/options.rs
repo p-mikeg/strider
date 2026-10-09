@@ -35,7 +35,10 @@ impl<'py> FromPyObject<'py> for KnownTarget {
 impl IntoPy<PyObject> for KnownTarget {
     fn into_py(self, py: Python<'_>) -> PyObject {
         match self {
-            KnownTarget::Targets(v) => v.into_py(py),
+            // A tuple, not a list: the view below blocks writes to its keys
+            // only, so a mutable value would take an edit the analysis never
+            // reads.
+            KnownTarget::Targets(v) => pyo3::types::PyTuple::new_bound(py, v).into_py(py),
             KnownTarget::Return => "return".into_py(py),
         }
     }
@@ -77,10 +80,8 @@ impl<'py, T: FromPyObject<'py>> FromPyObject<'py> for MapArg<T> {
 
 /// A table's Python face, built once and handed out read-only.
 ///
-/// Rebuilding it per read turns a seeded 20k-entry table into milliseconds on
-/// every attribute access, and `analyze` reads one; the proxy is read-only
-/// because the authority is the Rust map beside it, which no mutation here
-/// would reach.
+/// The authority is the Rust map beside it, which no mutation here would
+/// reach, so every value in the proxy is immutable too.
 #[derive(Default)]
 struct MappingView(OnceLock<PyObject>);
 
@@ -145,6 +146,23 @@ pub struct PyCfgOptions {
     /// which shares the tables themselves.
     known_targets_view: Arc<MappingView>,
     call_other_abis_view: Arc<MappingView>,
+    /// `known_targets` in `strider_cfg`'s own form, seated once. Shared with
+    /// every clone, as the table it is built from is.
+    seated: Arc<OnceLock<SeatedTargets>>,
+}
+
+/// `known_targets` as `strider_cfg::CfgOptions` takes it.
+pub(crate) type SeatedTargets =
+    rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets>;
+
+impl PyCfgOptions {
+    /// The seated table, built on the first analyse that reads it: seating a
+    /// 20k-entry answer table costs more than the analysis it feeds, and one
+    /// options object serves every call.
+    pub(crate) fn seated_known_targets(&self) -> &SeatedTargets {
+        self.seated
+            .get_or_init(|| crate::strider_cls::seat_known_targets(&self.known_targets))
+    }
 }
 
 #[pymethods]
@@ -178,6 +196,7 @@ impl PyCfgOptions {
             data_ranges: data_ranges_from(data_ranges),
             known_targets_view: Arc::default(),
             call_other_abis_view: Arc::default(),
+            seated: Arc::default(),
         })
     }
 
@@ -448,7 +467,6 @@ pub struct PyLifterOptions {
     pub compact: bool,
     /// Per-target-address calling-convention overrides (preset or custom
     /// CCs accepted); `None`/omitted means no overrides.
-    #[pyo3(get)]
     pub per_address_ccs: Option<HashMap<u64, PyCallingConvention>>,
     /// Run the indirect-branch classifier (default `True`). `False` leaves
     /// every site an `IndirectBranch` placeholder, so you can supply your own
@@ -460,12 +478,27 @@ pub struct PyLifterOptions {
     /// default, for this call only.
     #[pyo3(get)]
     pub pipeline: Option<Py<PyOptimizerPipeline>>,
+    /// `per_address_ccs`' Python face.
+    per_address_ccs_view: MappingView,
 }
 
 impl PyLifterOptions {
     /// All-defaults fallback for `opts=None`.
     pub(crate) fn new_default(py: Python<'_>) -> PyResult<Self> {
         Self::new(py, None, None, true, None, true, None)
+    }
+
+    /// The overrides resolved against `regs`.
+    pub(crate) fn built_per_address_ccs(
+        &self,
+        regs: &rsleigh::SleighRegs,
+        target: crate::strider_cls::SourceArch,
+    ) -> PyResult<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>> {
+        crate::strider_cls::build_per_address_ccs(
+            self.per_address_ccs.clone().unwrap_or_default(),
+            regs,
+            target,
+        )
     }
 }
 
@@ -517,7 +550,18 @@ impl PyLifterOptions {
             per_address_ccs,
             resolve_indirect_branches,
             pipeline,
+            per_address_ccs_view: MappingView::default(),
         })
+    }
+
+    /// Per-target-address calling-convention overrides as a read-only
+    /// `{address: CallingConvention}` mapping, or `None` when there are none.
+    #[getter]
+    fn per_address_ccs<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        match &self.per_address_ccs {
+            Some(table) => self.per_address_ccs_view.get(py, table).map(Some),
+            None => Ok(None),
+        }
     }
 
     /// These options with `cfg` replaced and every other field carried over.
@@ -531,6 +575,7 @@ impl PyLifterOptions {
             per_address_ccs: self.per_address_ccs.clone(),
             resolve_indirect_branches: self.resolve_indirect_branches,
             pipeline: self.pipeline.as_ref().map(|p| p.clone_ref(py)),
+            per_address_ccs_view: MappingView::default(),
         }
     }
 

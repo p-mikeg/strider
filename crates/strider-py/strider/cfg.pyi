@@ -149,8 +149,9 @@ class Cfg:
         Seating a seed changes the CFG the classifier reads, so a stale or
         wrong seed can stop it deriving and take the site's real arms with it.
         These are the sites where that cannot be ruled out. For a `build_cfg`
-        result it is every site you seeded, since no classifier ran to check
-        any of them.
+        result it is every seed that build seated, since no classifier ran to
+        check any of them; a seed at an address the function dispatches from
+        nowhere seats nothing and is not reported.
         """
         ...
     def is_complete(self) -> bool:
@@ -168,7 +169,7 @@ class Cfg:
 
         On a `build_cfg` CFG `unresolved` is every indirect branch that build
         left without an outgoing edge, since `build_cfg` resolves none of them,
-        and `unverified_seeded_sites` holds every site you seeded.
+        and `unverified_seeded_sites` holds the seeds it seated.
         """
         ...
     def region_at(self, addr: int) -> Optional[int]:
@@ -199,7 +200,7 @@ class CfgOptions:
     `ElfLifter.analyze` fills it from the ELF's mapping symbols when empty.
     """
 
-    # Read-only: the options types are frozen, so a plain attribute
+    # Read-only: these are getters with no setter, so a plain attribute
     # declaration would let a type checker accept `o.x = ...`, which raises at runtime.
     @property
     def function_max_size(self) -> Optional[int]: ...
@@ -209,7 +210,7 @@ class CfgOptions:
     # built once and handed out unchanged: a seeded table can hold tens of
     # thousands of entries, and `analyze` reads it.
     @property
-    def known_targets(self) -> Mapping[int, Union[list[int], Literal["return"]]]: ...
+    def known_targets(self) -> Mapping[int, Union[tuple[int, ...], Literal["return"]]]: ...
     @property
     def call_other_abis(self) -> Mapping[str, CallOtherAbi]: ...
     @property
@@ -219,7 +220,7 @@ class CfgOptions:
         *,
         function_max_size: Optional[int] = ...,
         allow_code_before_start_addr: bool = ...,
-        known_targets: Mapping[int, Union[list[int], Literal["return"]]] = ...,
+        known_targets: Mapping[int, Union[Sequence[int], Literal["return"]]] = ...,
         call_other_abis: Mapping[str, CallOtherAbi] = ...,
         data_ranges: Sequence[tuple[int, int]] = ...,
     ) -> None:
