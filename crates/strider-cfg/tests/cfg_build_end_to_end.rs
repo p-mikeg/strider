@@ -1203,3 +1203,26 @@ fn a_zero_fn_max_size_is_unbounded() {
     );
     assert_eq!(cfg.region_graph().node_count(), 1);
 }
+
+/// A finished region hands on an exactly-sized instruction vector; the push
+/// doubling would otherwise carry its slack for the whole lift.
+#[test]
+fn a_finished_region_keeps_no_spare_instruction_capacity() {
+    let mut bytes = Vec::new();
+    for _ in 0..7 {
+        bytes.extend_from_slice(&[0x48, 0xff, 0xc0]); // inc rax
+    }
+    bytes.push(0xc3); // ret
+    let cfg = build_from_bytes(bytes, 0x1000);
+    let mut filled = 0usize;
+    for region in cfg.regions() {
+        assert_eq!(
+            region.insns.capacity(),
+            region.insns.len(),
+            "region at {:?} carries spare instruction capacity",
+            region.start_addr
+        );
+        filled += usize::from(!region.insns.is_empty());
+    }
+    assert!(filled > 0, "expected a region holding instructions");
+}
