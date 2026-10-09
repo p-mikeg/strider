@@ -376,6 +376,10 @@ class ElfLifter(Lifter):
         Raises `StriderError` if the new ELF maps code over an address already
         loaded with different bytes: `add_elf` places shared objects at distinct
         addresses, so two ELFs linked at the same base cannot be merged."""
+        # Checked BEFORE the merge: the rebuild below is what fails off this
+        # handle's thread, and the merge is already committed by then, leaving
+        # `symbol` and `read` seeing the new ELF while the decoder does not.
+        self._check_usable()
         self._elf.add_elf(os.fspath(path), apply_relocations)
         self._rebuild(self._arch, self._elf.reader(), rom=self._elf.ro_reader())
 

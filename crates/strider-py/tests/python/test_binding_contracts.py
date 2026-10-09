@@ -3,12 +3,12 @@ differently before.
 
 The options views hand out immutable values, `build_cfg` reports only the seeds
 it seated, `pcode_at` answers the same whatever order the calls came in,
-re-merging a loaded image does nothing, a bad `entry` raises the exception its
-conversion raises, a rewrite does not burn a one-shot pattern on a bad
-replacement, importing strider exports nothing to a child process, a custom
-convention is checked against the register table rather than the preset name,
-a `.when()` predicate is read for truth, and an exponentially-shared pattern is
-refused rather than compiled.
+merging an image does nothing when it is already loaded and nothing when the
+handle cannot rebuild, `build_cfg` and `analyze` answer the same for a bad
+`entry`, a rewrite does not burn a one-shot pattern on a bad replacement,
+importing strider exports nothing to a child process, a custom convention is
+checked against the register table rather than the preset name, and a pattern
+shared into an exponential tree is refused rather than compiled.
 """
 
 from __future__ import annotations
@@ -144,6 +144,32 @@ def test_walking_a_stream_decodes_it_once():
 
 
 # --- add_elf ----------------------------------------------------------------
+
+
+def test_an_add_elf_that_cannot_rebuild_merges_nothing():
+    """The merge committed first, so a `_rebuild` that raised left `symbol`
+    and `read` seeing the new ELF while the decoder kept the old snapshot."""
+    import threading
+
+    prog = strider.lift.load_elf(str(fixture_path("x86", "memory")))
+    other = str(fixture_path("x86", "elf_relocs"))
+    before = (repr(prog.reader()), len(list(prog.iter_symbols())))
+    failure: list[str] = []
+
+    def off_thread():
+        try:
+            prog.add_elf(other)
+        except strider.StriderError:
+            failure.append("raised")
+
+    t = threading.Thread(target=off_thread)
+    t.start()
+    t.join()
+    assert failure == ["raised"]
+    assert (repr(prog.reader()), len(list(prog.iter_symbols()))) == before
+    # Still mergeable on the owning thread.
+    prog.add_elf(other)
+    assert "helper_a" in prog.symbols()
 
 
 def test_re_merging_a_loaded_image_does_nothing():
