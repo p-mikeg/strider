@@ -470,6 +470,107 @@ fn classify_table_dispatch_defers_nonloaded_full_byte_index_conservatively() {
 /// keeps its range one unsigned interval: `(x & 7) + 1` names slots 1..8, while
 /// `(x & 7) - 2` reaches below the table, where only guards the classifier
 /// could not read would stop it, so it defers.
+/// `(tbl[i] & m) + base`: the mask puts the CELL's range below its load width,
+/// so the cell reads as a narrowed index. Enumerating it seats one arm per
+/// masked value where the runtime has one per `i`.
+#[test]
+fn classify_table_dispatch_masked_cell_prefers_the_index_in_its_address() {
+    let idx_var = rsleigh::Vn {
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 4,
+    };
+    let mut b = RegisterSet::new()
+        .tracked(idx_var)
+        .build_fn_single_region()
+        .unwrap();
+    let raw = b.read_variable(&idx_var).unwrap();
+    let three = b.build_int_const(3u64, ValueType::I32).unwrap();
+    let idx = b
+        .build_int_binary_operation(raw, three, IntBinaryOp::And, ValueType::I32)
+        .unwrap();
+    let cell = {
+        let wide = b
+            .extend_if_needed(idx, ValueType::I64, ExtendOp::ZeroExtend)
+            .unwrap();
+        let two = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let scaled = b
+            .build_int_binary_operation(wide, two, IntBinaryOp::Mul, ValueType::I64)
+            .unwrap();
+        let base = b.build_int_const(0x4000u64, ValueType::I64).unwrap();
+        let addr = b
+            .build_int_binary_operation(scaled, base, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.build_load(addr, VnSpace::RAM, ValueType::I16).unwrap()
+    };
+    // The lifted shape: the i16 cell widened to the register, then narrowed
+    // to the width the mask is applied at.
+    let cell64 = b
+        .extend_if_needed(cell, ValueType::I64, ExtendOp::ZeroExtend)
+        .unwrap();
+    let narrow = b.truncate_if_needed(cell64, ValueType::I32).unwrap();
+    let m63 = b.build_int_const(0x3Fu64, ValueType::I32).unwrap();
+    let masked = b
+        .build_int_binary_operation(narrow, m63, IntBinaryOp::And, ValueType::I32)
+        .unwrap();
+    let offset = b
+        .extend_if_needed(masked, ValueType::I64, ExtendOp::ZeroExtend)
+        .unwrap();
+    let code = b.build_int_const(0x5000u64, ValueType::I64).unwrap();
+    let target = b
+        .build_int_binary_operation(offset, code, IntBinaryOp::Add, ValueType::I64)
+        .unwrap();
+    b.build_indirect_branch(target).unwrap();
+    b.set_lift_addr(None);
+    let function = b.build().unwrap();
+
+    let rom = MockRom::strided(0x4000, 2, vec![0, 6, 12, 18], 2);
+    match classify(&function, Some(&rom)) {
+        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(
+            ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
+            vec![0x5000, 0x5006, 0x500c, 0x5012]
+        ),
+        other => panic!("the cell's address holds the index; got {other:?}"),
+    }
+}
+
+/// The same narrowing mask over a cell the evaluator CANNOT fold: nothing
+/// deeper is an index, so the masked value is the one to enumerate.
+#[test]
+fn classify_table_dispatch_masked_opaque_cell_stays_the_index() {
+    let ptr_var = rsleigh::Vn {
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let mut b = RegisterSet::new()
+        .tracked(ptr_var)
+        .build_fn_single_region()
+        .unwrap();
+    let ptr = b.read_variable(&ptr_var).unwrap();
+    let byte = b.build_load(ptr, VnSpace::RAM, ValueType::I8).unwrap();
+    let wide = b
+        .extend_if_needed(byte, ValueType::I32, ExtendOp::ZeroExtend)
+        .unwrap();
+    let three = b.build_int_const(3u64, ValueType::I32).unwrap();
+    let masked = b
+        .build_int_binary_operation(wide, three, IntBinaryOp::And, ValueType::I32)
+        .unwrap();
+    let loaded = table_target(&mut b, masked, 4u64, 0x4000u64);
+    b.build_indirect_branch(loaded).unwrap();
+    b.set_lift_addr(None);
+    let function = b.build().unwrap();
+
+    let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
+    match classify(&function, Some(&rom)) {
+        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(
+            ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
+            vec![0x10, 0x20, 0x30, 0x40]
+        ),
+        other => panic!("a masked opaque cell is the index; got {other:?}"),
+    }
+}
+
 /// `switch (x)` over a negative case base: gcc and clang guard `x + k` and
 /// ConstantFold then merges `k` into the table base, so the guarded value is
 /// nowhere in the dispatch cone and only the sibling carries the bound.
