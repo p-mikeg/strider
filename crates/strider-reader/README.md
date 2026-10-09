@@ -13,9 +13,9 @@ not read a mapping the program can write.
   merge: the highest-start region fully covering the request, else the region
   serving the most bytes from the address. Both are O(log n) descents of a
   max-end tree, whether the regions are disjoint or nest.
-- `ElfFileMemReader`: the ELF backend, built with `ElfFileMemReader::from_elf`
-  (shares the ELF's bytes) or `::from_object` (copies them); implements both
-  reader traits. Either way it serves the file-initial bytes, so an unlinked or
+- `ElfFileMemReader`: the ELF backend, built with
+  `ElfFileMemReader::from_object`, which copies each mapping; implements both
+  reader traits. It serves the file-initial bytes, so an unlinked or
   not-yet-`ld.so`'d image serves each relocation site's unrelocated field (an
   addend, or `ld`'s link-time value), never its target; the relocated
   view of an image is an `OwnedElf::regions(.., relocate)` load.
@@ -38,12 +38,11 @@ The file must not change on disk while it is mapped. `load_elf` stats the file
 it just mapped and holds the fd, so the check follows that inode rather than the
 path.
 
-Checked at the top of an operation, one `stat` each: `OwnedElf::regions`,
-`OwnedElf::checked_file` and `ElfFileMemReader::from_elf` run it themselves
-(`from_object` serves copied bytes and has nothing to stat),
-and `check_unchanged` on `OwnedElf`, `MemRegion`,
-`MemRegionsLookupTable` and `ElfFileMemReader` runs it on demand, one `stat`
-per mapping rather than per region. A binary rebuilt between two operations is
+Checked at the top of an operation, one `stat` each: `OwnedElf::regions` and
+`OwnedElf::checked_file` run it themselves, and `check_unchanged` on
+`OwnedElf`, `MemRegion` and `MemRegionsLookupTable` runs it on demand, one
+`stat` per mapping rather than per region. An `ElfFileMemReader` has nothing to
+stat, serving copied bytes. A binary rebuilt between two operations is
 then an `Err` naming the file, not bytes from a program that is no longer there.
 A long-lived handle such as a REPL session should call `check_unchanged` at the top
 of its own operations.
