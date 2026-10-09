@@ -1,22 +1,13 @@
+use super::support::{Tb, reg_vn, shapes};
 use strider_ir::IRViewer as _;
-use strider_ir_test_utils::{Tb, reg_vn};
 use strider_pattern::{
     Capture, MatchPat, Matcher, call, call_other, first_of, load, one_of, ret, value_of_width, var,
 };
 
-/// `ret(int_add(5, 3))`: the `Return` produces no value.
-fn ret_over_add() -> strider_ir::Function {
-    let mut t = Tb::empty();
-    let a = t.u64(5);
-    let b = t.u64(3);
-    let sum = t.add(a, b);
-    t.ret_val(sum)
-}
-
 /// Baseline: a width constraint never matches the value-less `Return`.
 #[test]
 fn bare_width_pattern_skips_a_value_less_node() {
-    let f = ret_over_add();
+    let f = shapes::add_consts(5, 3);
     let m = Matcher::new(&f);
     let pat = value_of_width(64).into_pattern();
     let hits = m.find_all(&pat).unwrap();
@@ -31,7 +22,7 @@ fn bare_width_pattern_skips_a_value_less_node() {
 /// Wrapping that same constraint in a single-arm `one_of` must not relax it.
 #[test]
 fn one_of_arm_width_constraint_survives_at_a_value_less_node() {
-    let f = ret_over_add();
+    let f = shapes::add_consts(5, 3);
     let m = Matcher::new(&f);
     let pat = one_of![value_of_width(64)].into_pattern();
     let hits = m.find_all(&pat).unwrap();
@@ -47,7 +38,7 @@ fn one_of_arm_width_constraint_survives_at_a_value_less_node() {
 /// `Return` has no value to bind, so the arm must not match there at all.
 #[test]
 fn one_of_arm_capture_is_never_reported_unbound() {
-    let f = ret_over_add();
+    let f = shapes::add_consts(5, 3);
     let m = Matcher::new(&f);
     let x = Capture::new();
     let pat = one_of![var(x)].into_pattern();

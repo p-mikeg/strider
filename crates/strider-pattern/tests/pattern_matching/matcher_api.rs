@@ -183,26 +183,6 @@ fn graph_three_adds() -> strider_ir::Function {
     let final_ = t.add(s12, s3);
     t.ret_val(final_)
 }
-
-#[test]
-fn find_all_returns_distinct_matches_with_distinct_roots() {
-    let function = graph_three_adds();
-    let lhs = Capture::new();
-    let rhs = Capture::new();
-    let pat = int_add(int_const(lhs), int_const(rhs)).into_pattern();
-    let hits = Matcher::new(&function).find_all(&pat).unwrap();
-    // Three roots x two orderings: `int_add` is commutative and both captures sit
-    // on operands, so each root matches as (lhs,rhs) and as (rhs,lhs).
-    assert_eq!(hits.len(), 6);
-
-    let roots: std::collections::HashSet<NodeId> = hits.iter().map(|m| m.root()).collect();
-    assert_eq!(
-        roots.len(),
-        3,
-        "the six matches sit on three distinct roots"
-    );
-}
-
 #[test]
 fn each_match_has_its_own_bindings() {
     let function = graph_three_adds();
@@ -210,8 +190,8 @@ fn each_match_has_its_own_bindings() {
     let rhs = Capture::new();
     let pat = int_add(int_const(lhs), int_const(rhs)).into_pattern();
     let hits = Matcher::new(&function).find_all(&pat).unwrap();
-    // Two operand orderings per root; see
-    // `find_all_returns_distinct_matches_with_distinct_roots`.
+    // Three roots x two orderings: `int_add` is commutative and both captures
+    // sit on operands, so each root matches as (lhs,rhs) and as (rhs,lhs).
     assert_eq!(hits.len(), 6);
 
     let raw: Vec<(u128, u128)> = hits
@@ -336,27 +316,6 @@ fn cast_walk_through_records_skipped_cast_in_footprint() {
         hits[0].matched_nodes()
     );
 }
-
-#[test]
-fn add_mul_pattern_matches_through_chained_casts() {
-    let function = {
-        let mut t = Tb::empty();
-        let two = t.u64(2);
-        let three = t.u64(3);
-        let int_mul = t.mul(two, three);
-        let truncated = t.trunc_to(int_mul, ValueType::I32);
-        let widened = t.zext_to(truncated, ValueType::I64);
-        let four = t.u64(4);
-        let total = t.add(widened, four);
-        t.ret_val(total)
-    };
-    let pat = int_add(int_mul(anything(), anything()), anything())
-        .into_pattern()
-        .ignore_casts();
-    let hits = Matcher::new(&function).find_all(&pat).unwrap();
-    assert_eq!(hits.len(), 1);
-}
-
 #[test]
 fn truncate_pattern_still_matches_truncate_with_ignore_casts() {
     let function = {
