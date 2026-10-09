@@ -1528,13 +1528,21 @@ mod tests {
         )
     }
 
+    /// The report key is the LIVE placeholder, not the site's classification
+    /// state: the cfg layer re-emits a placeholder for a target set it could
+    /// not seat, and that site must still be named.
     #[test]
     fn live_unresolved_reports_live_unclassified_branch() {
         let (function, node) = fn_with_live_indirect_branch();
         let addr = pcode_addr(0x1000);
         let unresolved: UnresolvedAnchors = vec![(addr, node)];
         let live = live_dispatch_sites(&function);
-        assert_eq!(live_placeholders(&live, &unresolved), vec![addr]);
+        assert_eq!(
+            live_placeholders(&live, &unresolved),
+            vec![addr],
+            "a live placeholder must be reported whatever its site's \
+             classification state",
+        );
     }
 
     #[test]
@@ -1554,22 +1562,6 @@ mod tests {
         assert!(
             live_placeholders(&live, &unresolved).is_empty(),
             "a dead / non-live IndirectBranch placeholder must not be reported"
-        );
-    }
-
-    #[test]
-    fn live_unresolved_reports_classified_but_unseated_branch() {
-        // The report key is the LIVE placeholder, not the site's
-        // classification state: the cfg layer re-emits a placeholder for a
-        // target set it could not seat, and that site must still be named.
-        let (function, node) = fn_with_live_indirect_branch();
-        let addr = pcode_addr(0x1000);
-        let unresolved: UnresolvedAnchors = vec![(addr, node)];
-        let live = live_dispatch_sites(&function);
-        assert_eq!(
-            live_placeholders(&live, &unresolved),
-            vec![addr],
-            "a live placeholder must be reported even once its site is classified"
         );
     }
 
@@ -2361,6 +2353,8 @@ mod tests {
         assert_eq!(folded, multiple(&[(0x2000, None), (0x3000, None)]));
     }
 
+    /// The shrunken fold is applied, so the smaller set is what the next CFG is
+    /// built from and the round after it reads as converged.
     #[test]
     fn apply_resolutions_a_lost_address_narrows() {
         let (progress, _folded) = round(
@@ -2374,6 +2368,7 @@ mod tests {
             "losing 0x3000 is not monotone discovery"
         );
         assert!(progress.grew.is_empty());
+        assert_eq!(progress.derived_incomplete, vec![pcode_addr(0x1000)]);
     }
 
     /// A caller seed is mode-less by construction, so the round that PROVES an
@@ -2458,19 +2453,6 @@ mod tests {
             vec![pcode_addr(0x1000)],
             "a dropped widening must be reported, not silently seated",
         );
-    }
-
-    /// A fold that shrinks is applied, so the smaller set is what the next CFG
-    /// is built from and the round after it reads as converged.
-    #[test]
-    fn apply_resolutions_reports_a_site_that_lost_an_address() {
-        let (progress, _folded) = round(
-            Some(multiple(&[(0x2000, None), (0x3000, None)])),
-            multiple(&[(0x2000, None)]),
-            None,
-        );
-        assert!(!progress.narrowed.is_empty());
-        assert_eq!(progress.derived_incomplete, vec![pcode_addr(0x1000)]);
     }
 
     /// The interworking test reads the flowing bit AT THE SITE, so two sites in
