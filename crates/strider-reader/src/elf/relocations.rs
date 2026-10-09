@@ -121,7 +121,8 @@ fn reloc_addend(
 ///   symbol's address, which exists only for an ET_REL.
 ///
 /// On an ET_REL an undefined or `SHN_COMMON` symbol resolves to its
-/// [`ElfSectionLayout::extern_address`], outside every mapping.
+/// [`ElfSectionLayout::extern_address`], outside every mapping. An undefined
+/// `STB_WEAK` one is the exception: see `Target::weak_undefined`.
 ///
 /// An instruction field is read and written in the instruction byte order,
 /// which on AArch64 is little-endian whatever `EI_DATA` says; a data field
@@ -130,10 +131,10 @@ fn reloc_addend(
 /// # Not computed
 ///
 /// A relocation whose value is not computed (a kind not listed above, a symbol
-/// with no address, a value its field cannot hold, a branch needing a veneer)
-/// leaves no plausible bytes behind: unless the field is in a writable mapping,
-/// which nothing folds, it becomes a hole no read serves, so decoding or
-/// folding through it fails.
+/// with no address or a weak undefined one, a value its field cannot hold, a
+/// branch needing a veneer) leaves no plausible bytes behind: unless the field
+/// is in a writable mapping, which nothing folds, it becomes a hole no read
+/// serves, so decoding or folding through it fails.
 ///
 /// Any patch list the regions already carry is replaced, so re-applying over
 /// one region set is idempotent.
@@ -449,6 +450,11 @@ fn apply_one_relocation(
             sink.unmodelled(ctx, site_regions, site_addr, size_bytes, reloc);
             return Ok(());
         };
+        // A plain word holds the address itself, see `Target::weak_undefined`.
+        if target.weak_undefined {
+            sink.unmodelled(ctx, site_regions, site_addr, size_bytes, reloc);
+            return Ok(());
+        }
         let addend = if read_implicit_addend {
             reloc_addend(
                 reloc,
@@ -546,6 +552,13 @@ fn apply_one_relocation(
         sink.unmodelled(ctx, site_regions, field_addr, size_bytes, reloc);
         return Ok(());
     };
+    // `PltRelative` is a call or jump, whose displacement hides the address it
+    // was built from; every other plain field holds that address, see
+    // `Target::weak_undefined`.
+    if target.weak_undefined && !matches!(reloc.kind(), RelocationKind::PltRelative) {
+        sink.unmodelled(ctx, site_regions, field_addr, size_bytes, reloc);
+        return Ok(());
+    }
     let addend = reloc_addend(
         reloc,
         ctx.regions,
@@ -662,6 +675,14 @@ fn compute_classified(
         RelocationTarget::Symbol(_) => Some(resolve_symbol_target(obj, layout, reloc, endian_le)?),
         _ => None,
     };
+    // Only a branch displacement and a GOT slot reference hide the address
+    // they were built from, see `Target::weak_undefined`.
+    if target.is_some_and(|t| t.weak_undefined)
+        && !field.is_branch()
+        && !value_kind_through_got(value_kind)
+    {
+        return None;
+    }
     let s = target.map_or(0, |t| t.addr);
 
     let mut a = if reloc.has_implicit_addend() {
@@ -692,7 +713,11 @@ fn compute_classified(
         }
         let t = target?;
         let (slot, width) = layout.got_slot(t.index)?;
-        ctx.got.insert(slot, (t.addr, width));
+        // A weak undefined symbol's slot holds 0 as readily as an address, so
+        // it is left unmapped and the load through it stays opaque.
+        if !t.weak_undefined {
+            ctx.got.insert(slot, (t.addr, width));
+        }
         Some(slot)
     };
     let got_base = layout.is_rebased().then(|| layout.got_base());
@@ -739,6 +764,15 @@ fn compute_classified(
 /// `Page(G)` or `G` cannot carry one.
 fn value_kind_needs_zero(value: Value) -> bool {
     matches!(value, Value::GotPagePcrel | Value::Got)
+}
+
+/// Whether the value reaches the symbol only through its GOT slot, which is
+/// then the one place its address appears.
+fn value_kind_through_got(value: Value) -> bool {
+    matches!(
+        value,
+        Value::GotPcrel | Value::GotPagePcrel | Value::Got | Value::GotOffset
+    )
 }
 
 /// The file-initial `width`-byte field at `addr`, read out of the first region
@@ -965,6 +999,11 @@ struct Target {
     isa: Isa,
     /// `STB_LOCAL`.
     local: bool,
+    /// `STB_WEAK` and undefined, so the link or the module loader resolves it
+    /// to 0 as readily as to an address and `if (&w)` can go either way. The
+    /// synthetic extern address stands in only where it cannot be observed,
+    /// everything else being left uncomputed rather than folded one way.
+    weak_undefined: bool,
     /// MIPS `_gp_disp`.
     gp_disp: bool,
     /// Defined in `.opd`, so `S` is a ppc64 ELFv1 descriptor.
@@ -1053,6 +1092,7 @@ fn resolve_symbol_target(
         index: idx.0,
         isa,
         local: sym.is_local(),
+        weak_undefined: sym.is_weak() && sym.is_undefined(),
         gp_disp: matches!(arch, A::Mips | A::Mips64) && sym.name() == Ok("_gp_disp"),
         in_opd: sym
             .section_index()

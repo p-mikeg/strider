@@ -116,6 +116,22 @@ impl Field {
             _ => 4,
         }
     }
+
+    /// A branch displacement, which carries no address the program can compare
+    /// against null. `A64Imm19` is not one: it is also a literal load's.
+    pub(crate) fn is_branch(self) -> bool {
+        matches!(
+            self,
+            Field::A64Branch26
+                | Field::A64Imm14
+                | Field::ArmBranch24 { .. }
+                | Field::ThumbBranch { .. }
+                | Field::PpcBranch24
+                | Field::PpcBranch14
+                | Field::Mips26
+                | Field::MipsPc16
+        )
+    }
 }
 
 /// How a relocation type is applied.
