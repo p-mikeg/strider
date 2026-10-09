@@ -391,3 +391,55 @@ fn an_uncomputed_relocation_in_code_is_a_hole_and_in_data_is_left_alone() {
         .expect("writable data stays mapped");
     assert_eq!(kept, [0x55; 8]);
 }
+
+/// A64 instructions are little-endian whatever `EI_DATA` says, so a patched
+/// field on aarch64_be has to read back as a little-endian word. Written
+/// big-endian the immediate lands in the wrong bits: `adrp` becomes `adr` and
+/// `ldr w0, [x8, #:lo12:g]` a store.
+#[test]
+fn aarch64_big_endian_patches_instructions_little_endian() {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::Aarch64, Endianness::Big);
+    let callee_sec = obj.add_section(Vec::new(), b".text.callee".to_vec(), SectionKind::Text);
+    // An instruction the object stores little-endian, as a BE aarch64
+    // toolchain does; nothing relocates it, so it must read back unswapped.
+    obj.append_section_data(callee_sec, &0xd65f_03c0u32.to_le_bytes(), 4);
+    let caller = obj.add_section(Vec::new(), b".text.caller".to_vec(), SectionKind::Text);
+    let mut code = Vec::new();
+    for insn in [0x9400_0000u32, 0x9000_0000, 0xb940_0000] {
+        code.extend_from_slice(&insn.to_le_bytes());
+    }
+    obj.append_section_data(caller, &code, 4);
+    let data = obj.add_section(Vec::new(), b".data".to_vec(), SectionKind::Data);
+    obj.append_section_data(data, &[0u8; 0x1800], 8);
+    let callee = defined(&mut obj, "callee", callee_sec, 0);
+    let g = defined(&mut obj, "g", data, 0x1234);
+    reloc(&mut obj, caller, 0, callee, 0, elf::R_AARCH64_CALL26);
+    reloc(&mut obj, caller, 4, g, 0, elf::R_AARCH64_ADR_PREL_PG_HI21);
+    reloc(&mut obj, caller, 8, g, 0, elf::R_AARCH64_LDST32_ABS_LO12_NC);
+    let bytes = obj.write().expect("write");
+
+    let table = relocated(&bytes);
+    assert_eq!(
+        word(&table, common::section_base(&bytes, ".text.callee"), false),
+        0xd65f_03c0,
+        "an unrelocated instruction is served exactly as the file holds it"
+    );
+
+    let p = common::section_base(&bytes, ".text.caller");
+    let bl = u64::from(word(&table, p, false));
+    assert_eq!(bl >> 26, 0x25, "a `bl`, not a byte-reversed word");
+    let target = p.wrapping_add_signed(sext(bl & 0x03ff_ffff, 26) * 4);
+    assert_eq!(target, symbol_address(&bytes, "callee"));
+
+    let g_addr = symbol_address(&bytes, "g");
+    let adrp = u64::from(word(&table, p + 4, false));
+    assert_eq!(adrp >> 31, 1, "`adrp`, not the `adr` a swap turns it into");
+    let page = sext((((adrp >> 5) & 0x7_ffff) << 2) | ((adrp >> 29) & 3), 21);
+    assert_eq!(
+        ((p + 4) & !0xfff).wrapping_add_signed(page << 12),
+        g_addr & !0xfff
+    );
+    let ldr = u64::from(word(&table, p + 8, false));
+    assert_eq!(ldr >> 22, 0x2e5, "a 32-bit `ldr`, not a store");
+    assert_eq!(((ldr >> 10) & 0xfff) << 2, g_addr & 0xfff);
+}
