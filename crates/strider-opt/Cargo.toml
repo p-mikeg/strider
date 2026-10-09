@@ -27,7 +27,6 @@ graph-algorithms = { workspace = true }
 strider-cfg = { workspace = true }
 rsleigh.workspace = true
 vn-container.workspace = true
-petgraph.workspace = true
 anyhow.workspace = true
 cranelift-entity.workspace = true
 rustc-hash.workspace = true

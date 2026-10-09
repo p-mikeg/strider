@@ -151,8 +151,8 @@ Workspace production dependencies only. Leaves (no workspace deps): `dot`,
 `vn-container`. Notably `strider-cfg` is IR-free, `strider-reader` depends only
 on `read-only-memory`, and the orchestrator reaches `strider-pattern` and `dot`
 only from its tests and examples. External `petgraph` is a production
-dependency of `strider-cfg`, `strider-graph`, `strider-ir`, `strider-lift`,
-`strider-opt` and `strider-pattern`.
+dependency of `strider-cfg`, `strider-graph`, `strider-lift` and
+`strider-pattern`, and a dev-dependency of `strider-ir`.
 
 Dev-dependencies are not in that graph, and are not a DAG:
 `strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it.
