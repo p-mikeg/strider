@@ -130,6 +130,10 @@ pub fn any_bool() -> AnyBool {
 
 /// Match `inner` with every value input `n` bits wide. Also requires at least
 /// one value input and at least one value output.
+///
+/// The width is read off the matched node's own value inputs, so it says
+/// nothing about what `inner`'s operand sub-patterns bind: under
+/// `ignore_casts` an operand reached through a cast keeps its own width.
 pub struct InputsOfWidth<I> {
     bits: u32,
     inner: I,
@@ -139,7 +143,9 @@ impl<I: MatchPat> MatchPat for InputsOfWidth<I> {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = self.inner.compile(b);
         let want = self.bits;
-        b.constrain_input_widths(o, want);
+        // The node predicate alone. Pushing the width onto the operand vertices
+        // instead lands it on the ARMS of an alternation, which are not
+        // operands, and on the far side of a cast walk.
         b.set_node_predicate(
             o,
             Box::new(move |matcher, node| inputs_of_width_check(matcher, node, want as usize)),
