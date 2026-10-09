@@ -31,8 +31,9 @@ pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 ///
 /// Every recogniser must identify the runtime target set UNAMBIGUOUSLY and
 /// fails closed on a partial proof, never under-approximating.  `Load(sp)` for
-/// `pop pc`-style returns stays unclassified: a `push X; pop pc` tail call has
-/// the identical shape and would be misclassified as a return.
+/// a `pop pc`-style return, which a `push X; pop pc` tail call shares the shape
+/// of, is classified only where [`ReturnTargets`] follows the slot back to a
+/// store of the entry link register.
 ///
 /// Of `assumptions` the table walk honours `stack_global_disjoint` and the
 /// allocation identity `noalias_allocators` gives `decompose`.  The
@@ -54,7 +55,7 @@ pub fn classify_target(
     // evaluated per resolved target below.
     let mode_value = function.indirect_branch_isa_mode(branch);
     single_const_target(function, target_value, mode_value)
-        .or_else(|| link_register_return(function, target_value))
+        .or_else(|| link_register_return(function, branch, target_value, assumptions))
         .or_else(|| {
             table::classify_table_dispatch(function, branch, rom, ranges, assumptions, mode_value)
         })
@@ -115,14 +116,27 @@ fn strip_isa_mode_mask(function: &strider_ir::Function, value: ValueId) -> Value
 }
 
 /// `None` on stack-push ABIs (x86 / x86_64), which have no link register.
+///
+/// A single-register pop into the PC (ARM `ldr pc,[sp],#4`) lifts to a
+/// `BranchIndirect` over a stack load, not a `Return`, and once a call sits
+/// between the push and the pop nothing folds that load back to the link
+/// register.  [`ReturnTargets`] is what separates it from the `push X; pop pc`
+/// tail call it looks like.
 fn link_register_return(
     function: &strider_ir::Function,
+    branch: NodeId,
     target_value: ValueId,
+    assumptions: &crate::AssumptionOptions,
 ) -> Option<ResolvedTargets> {
     let lr = function.default_cc().link_register_vn?;
     match *function.kind_of_value(strip_isa_mode_mask(function, target_value)) {
         NodeKind::InitialVar(id) if function.initial_vn(id) == lr => {
             Some(ResolvedTargets::LinkRegister)
+        }
+        NodeKind::Load(space) if space == rsleigh::VnSpace::RAM => {
+            ReturnTargets::new(function, assumptions)
+                .returns_to_caller(branch, target_value)
+                .then_some(ResolvedTargets::LinkRegister)
         }
         _ => None,
     }
@@ -222,12 +236,21 @@ mod tests {
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn as fake_reg_vn};
 
     /// Runs the two value-based recognisers on a dispatch value directly.
+    ///
+    /// The entry stands in for the branch site: these targets are an
+    /// `InitialVar` or an `IntConst`, so no slot is followed from it.
     fn classify_target_bare(
         function: &strider_ir::Function,
         target_value: ValueId,
     ) -> Option<ResolvedTargets> {
-        single_const_target(function, target_value, None)
-            .or_else(|| link_register_return(function, target_value))
+        single_const_target(function, target_value, None).or_else(|| {
+            link_register_return(
+                function,
+                function.entry(),
+                target_value,
+                &crate::AssumptionOptions::default(),
+            )
+        })
     }
 
     /// An empty region terminated by a Return over the caller-supplied value,
