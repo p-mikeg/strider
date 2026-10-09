@@ -589,6 +589,53 @@ pub fn mapping_symbol_data_ranges(obj: &object::File<'_>) -> Vec<std::ops::Range
     out
 }
 
+/// Where each ppc64 ELFv1 `.opd` descriptor of an ET_REL enters its code: the
+/// `S + A` of the `R_PPC64_ADDR64` on the descriptor's first word. Empty for
+/// anything else.
+///
+/// An unlinked `.opd` holds zeros, so the relocations are the only record of
+/// the entry; `S` is rebased through `layout` exactly as a patch's is.
+pub(crate) fn opd_entries(obj: &object::File<'_>, layout: &ElfSectionLayout) -> BTreeMap<u64, u64> {
+    let mut out = BTreeMap::new();
+    if obj.architecture() != object::Architecture::PowerPc64
+        || obj.kind() != ObjectKind::Relocatable
+    {
+        return out;
+    }
+    let Some(opd) = obj.section_by_name(".opd") else {
+        return out;
+    };
+    let base = layout.section_base(&opd);
+    for (offset, reloc) in opd.relocations() {
+        if reloc.flags()
+            != (object::RelocationFlags::Elf {
+                r_type: object::elf::R_PPC64_ADDR64,
+            })
+        {
+            continue;
+        }
+        let object::RelocationTarget::Symbol(idx) = reloc.target() else {
+            continue;
+        };
+        let Ok(sym) = obj.symbol_by_index(idx) else {
+            continue;
+        };
+        let Some(s) = layout
+            .extern_address(idx.0)
+            .or_else(|| layout.try_symbol_address(&sym))
+        else {
+            continue;
+        };
+        // 0 is never an entry, and leaving it out keeps a descriptor whose
+        // relocation names no symbol visible as one.
+        let entry = s.wrapping_add(reloc.addend() as u64);
+        if entry != 0 {
+            out.insert(base.wrapping_add(offset), entry);
+        }
+    }
+    out
+}
+
 /// ppc64 ELFv1 function descriptors.
 ///
 /// On that ABI `st_value` of an `STT_FUNC` symbol addresses an 8-byte-aligned
@@ -596,22 +643,26 @@ pub fn mapping_symbol_data_ranges(obj: &object::File<'_>) -> Vec<std::ops::Range
 /// doubleword is the address to decode from. ELFv2 has no descriptors, and no
 /// other architecture defines them.
 pub struct OpdTable<'d> {
-    base: u64,
-    data: &'d [u8],
-    endian_le: bool,
+    descriptors: Descriptors<'d>,
+}
+
+/// Where a descriptor's entry word comes from.
+enum Descriptors<'d> {
+    /// A linked image's `.opd` file bytes, from `base`.
+    Bytes {
+        base: u64,
+        data: &'d [u8],
+        endian_le: bool,
+    },
+    /// An ET_REL's, from [`opd_entries`]: the section's own bytes are zeros.
+    Relocated(BTreeMap<u64, u64>),
 }
 
 impl<'d> OpdTable<'d> {
-    /// `None` unless `obj` is a linked ppc64 image whose `e_flags` ABI level
-    /// is not ELFv2 and which carries an `.opd`.
-    ///
-    /// The descriptor CONTENTS are the section's file bytes, which is why
-    /// ET_REL is excluded: an unlinked `.opd` holds zeros until its
-    /// `R_PPC64_ADDR64` relocations are applied.
+    /// `None` unless `obj` is a ppc64 image whose `e_flags` ABI level is not
+    /// ELFv2 and which carries a non-empty `.opd`.
     pub fn new(obj: &object::File<'d>) -> Option<Self> {
-        if obj.architecture() != object::Architecture::PowerPc64
-            || obj.kind() == ObjectKind::Relocatable
-        {
+        if obj.architecture() != object::Architecture::PowerPc64 {
             return None;
         }
         // `e_flags` bits 0..1 are the ABI level. 2 is ELFv2; 1 is ELFv1, and
@@ -624,11 +675,19 @@ impl<'d> OpdTable<'d> {
             return None;
         }
         let opd = obj.section_by_name(".opd")?;
+        if obj.kind() == ObjectKind::Relocatable {
+            let entries = opd_entries(obj, &ElfSectionLayout::new(obj));
+            return (!entries.is_empty()).then_some(Self {
+                descriptors: Descriptors::Relocated(entries),
+            });
+        }
         let data = opd.data().ok()?;
         (data.len() >= 8).then(|| Self {
-            base: opd.address(),
-            data,
-            endian_le: matches!(obj.endianness(), object::Endianness::Little),
+            descriptors: Descriptors::Bytes {
+                base: opd.address(),
+                data,
+                endian_le: matches!(obj.endianness(), object::Endianness::Little),
+            },
         })
     }
 
@@ -641,18 +700,27 @@ impl<'d> OpdTable<'d> {
     /// a descriptor's TOC or environment word is followed as if it were an
     /// entry: which words start a descriptor takes a stride the section does
     /// not carry, the triple being 24 bytes in compiler output and 16 in the
-    /// hand-written asm that leaves the environment word off.
+    /// hand-written asm that leaves the environment word off. An ET_REL is
+    /// exact instead, each entry word carrying a relocation of its own.
     ///
     /// A zero word is a descriptor nothing filled in: address 0 is never the
     /// entry, and passing `addr` through unfollowed leaves the descriptor
     /// visible.
     pub fn entry_at(&self, addr: u64) -> Option<u64> {
-        let off = usize::try_from(addr.checked_sub(self.base)?).ok()?;
+        let (base, data, endian_le) = match &self.descriptors {
+            Descriptors::Relocated(entries) => return entries.get(&addr).copied(),
+            Descriptors::Bytes {
+                base,
+                data,
+                endian_le,
+            } => (*base, *data, *endian_le),
+        };
+        let off = usize::try_from(addr.checked_sub(base)?).ok()?;
         if off % 8 != 0 {
             return None;
         }
-        let word: [u8; 8] = self.data.get(off..off.checked_add(8)?)?.try_into().ok()?;
-        let entry = if self.endian_le {
+        let word: [u8; 8] = data.get(off..off.checked_add(8)?)?.try_into().ok()?;
+        let entry = if endian_le {
             u64::from_le_bytes(word)
         } else {
             u64::from_be_bytes(word)
