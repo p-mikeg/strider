@@ -323,16 +323,6 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// # Errors
     /// Forwards any error from [`GraphDotDumper::dump_as_dot`].
     pub fn as_dot(&self) -> anyhow::Result<String> {
-        self.as_dot_with_state().map(|(dot, _)| dot)
-    }
-
-    /// The DOT source plus the state the dumper accumulated while rendering.
-    /// For dumpers whose DOT ids are not the node ids, that state is the
-    /// mapping back from an emitted id to the node it stands for.
-    ///
-    /// # Errors
-    /// Forwards any error from [`GraphDotDumper::dump_as_dot`].
-    pub fn as_dot_with_state(&self) -> anyhow::Result<(String, G::State)> {
         let mut dot = DotEmitter::new(&self.name, &self.style);
         let mut state = self.dumper.create_initial_state();
         for node in self.dumper.iter_nodes() {
@@ -341,7 +331,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
                 .map_err(|e| anyhow::anyhow!("dot dump error: {e}"))?;
         }
 
-        Ok((dot.finish(), state))
+        Ok(dot.finish())
     }
 
     /// An interactive HTML page rendering the DOT client-side via Graphviz
