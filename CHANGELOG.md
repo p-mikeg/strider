@@ -213,7 +213,9 @@ Rendering:
   `DotStyle::dark()`, `dark_cfg()` or `empty()`. Dot labelling is infallible:
   `pretty_label`, `call_clobbered_name`, `return_ret_name`, `try_declare_node`
   and `emit_input_edge` no longer return `io::Result`.
-- `strider_cfg::Builder::for_arch` takes `options: &'a CfgOptions`.
+- `strider_cfg::Builder::for_arch` takes `options: &'a CfgOptions`, and
+  `with_per_address_ccs` takes `&'a FxHashMap<..>` rather than the map by
+  value.
 - `CfgOptions` gains public `call_other_overrides` and `data_ranges` fields,
   so a struct literal needs `..Default::default()`.
 - `strider_cfg::ResolvedTargets` carries `ResolvedTarget { addr, isa_bit }`, so
