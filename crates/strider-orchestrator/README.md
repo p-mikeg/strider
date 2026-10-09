@@ -71,11 +71,11 @@ Two verdicts freeze a single site, leaving the loop to run on without it:
   just that arm, since any two edges raise a clash, direct ones included. Either
   way the site is frozen, taking no further classification.
 
-## Six channels, and all six must be read
+## Six channels
 
 A converged CFG may be incomplete, and `AnalyzeResult` says so six ways.
-`is_complete()` is the question "may this be incomplete?" and needs all six;
-none of them answers it alone.
+`is_complete()` is the question "may this be incomplete?"; none of the six
+answers it alone, so it reads all of them.
 
 - `unresolved_indirect_branches`: a live `IndirectBranch` placeholder, a seated
   `Switch` whose selector no longer derives, a site still growing when the cap
@@ -84,10 +84,11 @@ none of them answers it alone.
   whose folded target is not provably the entry return address.
 - `unverified_seeded_sites`: answers that are whole but that nothing verified. A
   `Switch` holding exactly the caller's seed and nothing derived; a site the CFG
-  CONSUMED, where a `LinkRegister` answer became a `Return` and a lone
+  CONSUMED, where a caller's `LinkRegister` seat became a `Return` and a lone
   out-of-function target became a `TailCall`, leaving no placeholder and no
-  anchor to report through; and an arm seated on the mode a caller seed gave
-  its siblings, which nobody evaluated for that arm.
+  anchor to report through (a `Return` the classifier derived instead carries a
+  return site, which every round re-checks); and an arm seated on the mode a
+  caller seed gave its siblings, which nobody evaluated for that arm.
 - `isa_mode_conflicts`, `interior_branch_targets`, `unmapped_branch_targets`
   and `undecodable_branch_targets`: losses no indirect site owns, since a
   direct edge produces them too. An address two edges reached in different
@@ -95,10 +96,10 @@ none of them answers it alone.
   bytes for, seated as an empty `TailCall` stub, and bytes that hold no
   instruction (Sleigh rejects them, or `CfgOptions::data_ranges` marks them),
   reached by a branch, which leaves through a `TailCall` stub, or by a
-  fall-through past a call, which ends that call as no-return. All four are
-  accumulated across rounds,
-  not read off the final CFG: the round that decoded an address twice fed the
-  classifier whether or not a later rebuild still carries that edge.
+  fall-through past a call, which ends that call as no-return. All four
+  accumulate across rounds rather than being read off the final CFG: the round
+  that decoded an address twice fed the classifier whether or not a later
+  rebuild still carries that edge.
 
 A caller seed asserts the site is settled, which suppresses the unclassifiable
 seated `Switch` report until the site outgrows the seed. It suppresses nothing
