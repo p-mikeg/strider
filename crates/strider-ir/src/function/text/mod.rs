@@ -616,6 +616,7 @@ fn cc_fields(cc: &strider_target::BuiltCallingConvention) -> Vec<(&'static str, 
         preserves_memory,
         preserves_all_registers,
         no_return,
+        entry_address_vn,
     } = cc;
     vec![
         ("arg_passing_regs", vn_list(arg_passing_regs)),
@@ -644,6 +645,12 @@ fn cc_fields(cc: &strider_target::BuiltCallingConvention) -> Vec<(&'static str, 
             preserves_all_registers.to_string(),
         ),
         ("no_return", no_return.to_string()),
+        (
+            "entry_address_vn",
+            entry_address_vn
+                .as_ref()
+                .map_or_else(|| "none".to_owned(), vn_str),
+        ),
     ]
 }
 
