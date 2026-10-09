@@ -415,7 +415,13 @@ class ElfLifter(Lifter):
         """The `BufferReader` over the regions `load_elf` mapped: PT_LOAD segments
         unless `from_segments=False`."""
         ...
-    def add_elf(self, path: StrPath, *, apply_relocations: bool = True) -> None:
+    def add_elf(
+        self,
+        path: StrPath,
+        *,
+        apply_relocations: bool = True,
+        relocated_got_is_rom: bool = False,
+    ) -> None:
         """Merge another ELF, such as a shared library, into this handle.
         The earlier-loaded ELF wins on name collisions.
 
@@ -423,6 +429,10 @@ class ElfLifter(Lifter):
         ELF is normally the ET_DYN case relocations exist for, and the flag
         also selects what is mapped, so `False` drops writable non-executable
         sections rather than serving their on-disk bytes.
+
+        `relocated_got_is_rom` is `load_elf`'s unchecked claim, made for THIS
+        image only: it does not inherit the handle's, since one shared
+        object's link says nothing about another's.
 
         Raises `StriderError` if the new ELF maps code over an address already
         loaded with different bytes (two ELFs at the same base cannot merge)."""
@@ -469,6 +479,7 @@ def load_elf(
     *,
     from_segments: bool = ...,
     apply_relocations: bool = ...,
+    relocated_got_is_rom: bool = ...,
     arch: Optional[SleighArch] = ...,
     cc: Optional[CallingConvention] = ...,
 ) -> ElfLifter:
@@ -483,6 +494,14 @@ def load_elf(
     binaries need; it also selects what is mapped, so `False` drops writable
     non-executable sections rather than serving their on-disk bytes. A
     writable-and-executable mapping is kept either way.
+
+    `relocated_got_is_rom` (default `False`) additionally serves `.got` and
+    `.data.rel.ro` as READ-ONLY memory, so a load through a GOT slot folds to
+    the address the slot holds. That is an unchecked claim about the runtime:
+    it is wrong wherever a slot is rewritten after the loader has run, and the
+    fold is then wrong too. It is what resolves a PIC jump table whose base
+    comes out of the GOT. `.got.plt` is never served, lazy binding rewriting
+    those slots on the first call through each one.
 
     Raises `FileNotFoundError` when `path` does not exist, and `ValueError`
     when the file is not an ELF, or its architecture or ABI is unsupported.
