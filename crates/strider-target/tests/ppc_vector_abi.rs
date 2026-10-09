@@ -1,6 +1,7 @@
-//! The PowerPC AltiVec/VSX vector ABI: `v2` returns a vector, `v2`-`v13`
-//! pass them, and `v20`-`v31` are non-volatile.  The sla overlays AltiVec
-//! onto the top 32 VSX registers, so `vN` is `vs(32+N)`.
+//! The PowerPC vector register FILE: the sla overlays AltiVec onto the top 32
+//! VSX registers, so `vN` is `vs(32+N)` and the ABI's `v2`-`v13` argument and
+//! `v20`-`v31` non-volatile windows are byte-disjoint from `f0`-`f31`.  Which
+//! registers each convention names is in the preset case table.
 
 use strider_target::{CallingConvention, SleighArch};
 
@@ -60,61 +61,6 @@ fn the_vector_bank_is_byte_disjoint_from_the_float_bank() {
                 );
             }
         }
-    }
-}
-
-/// ELFv2 2.2.3 returns a vector, an IEEE `__float128` and (under
-/// `-mabi=ieeelongdouble`) a `long double` in `v2`; the AltiVec supplement
-/// says the same for ELFv1 and 32-bit SysV.  Unlisted, nothing roots the
-/// vector cone at `Return` and DCE deletes the whole computation.
-#[test]
-fn every_ppc_preset_returns_a_vector_in_v2() {
-    for (name, arch, cc) in ppc_presets() {
-        let regs = regs_for(arch);
-        let built = cc.build(&regs).unwrap_or_else(|e| panic!("{name}: {e:?}"));
-        let v2 = regs.name_to_vn("vs34").expect("vs34");
-        assert!(
-            built.ret_val_regs_float.contains(&v2),
-            "{name}: v2 must be a vector return register",
-        );
-    }
-}
-
-/// ELFv2 2.2.3.3 returns a homogeneous vector aggregate of up to eight
-/// members in `v2`-`v9`.  ELFv1 and 32-bit SysV return such an aggregate
-/// through a hidden pointer, so `v2` alone is the whole story there.
-#[test]
-fn elfv2_returns_a_homogeneous_vector_aggregate_in_v2_v9() {
-    let regs = regs_for(SleighArch::ppc64le());
-    let built = CallingConvention::powerpc64_elf_v2()
-        .build(&regs)
-        .expect("build");
-    for n in 34..42u32 {
-        let vn = regs.name_to_vn(&format!("vs{n}")).expect("vs name");
-        assert!(
-            built.ret_val_regs_float.contains(&vn),
-            "vs{n} (v{}) must be a vector return register",
-            n - 32,
-        );
-    }
-}
-
-/// Vector arguments go in `v2`-`v13` on all three ABIs, after the
-/// floating-point ones so the existing float positions do not shift.
-#[test]
-fn every_ppc_preset_passes_vectors_in_v2_v13() {
-    for (name, arch, cc) in ppc_presets() {
-        let regs = regs_for(arch);
-        let built = cc.build(&regs).unwrap_or_else(|e| panic!("{name}: {e:?}"));
-        let want: Vec<rsleigh::Vn> = (34..46)
-            .map(|n| regs.name_to_vn(&format!("vs{n}")).expect("vs name"))
-            .collect();
-        let floats = built.arg_passing_regs_float.len() - want.len();
-        assert_eq!(
-            &built.arg_passing_regs_float[floats..],
-            &want[..],
-            "{name}: v2..v13 follow the float argument registers",
-        );
     }
 }
 
