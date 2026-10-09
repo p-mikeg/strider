@@ -18,9 +18,12 @@ types.
 - `CallingConvention`: a register-name description of how arguments are passed
   and results returned, with a preset per userland ABI plus `x86_linux_kernel`,
   the one kernel-internal ABI. `build(&regs)` resolves the names to varnodes.
-  Float and vector arguments have their own positional list,
-  `arg_passing_regs_float`, drawn from a register file the integer list never
-  names. ARM32 splits over the float variant the ELF header does not pin down:
+  Kernel code shares the userland register roles elsewhere, with one
+  documented exception: ppc64 `r13` is the per-CPU `paca` pointer rather than
+  the userland TLS pointer. Float and vector arguments have their own
+  positional list, `arg_passing_regs_float`, drawn from a register file the
+  integer list never names; where the float and vector banks are physically
+  distinct, as on PowerPC, the vector window (`v2`-`v13`) follows the floats. ARM32 splits over the float variant the ELF header does not pin down:
   `arm_aapcs` is hard-float (VFP), `arm_aapcs_soft` is `-mfloat-abi=soft` /
   `softfp`.
 - `StackArgs`: the stack-slot geometry (offsets and slot indices) that the
