@@ -73,7 +73,7 @@ def test_known_targets_accepts_a_return():
     cannot prove the value is the incoming return address; the caller often can.
     """
     c = strider.cfg.CfgOptions(known_targets={0x1000: [0x2000], 0x1010: "return"})
-    assert c.known_targets[0x1000] == [0x2000]
+    assert c.known_targets[0x1000] == (0x2000,)
     assert c.known_targets[0x1010] == "return"
 
 
@@ -81,7 +81,7 @@ def test_known_targets_accepts_an_empty_target_list():
     """An empty answer means "nothing seats here", which the CFG builder already
     implements as deferring the site."""
     c = strider.cfg.CfgOptions(known_targets={0x1000: []})
-    assert c.known_targets[0x1000] == []
+    assert c.known_targets[0x1000] == ()
 
 
 def test_known_targets_rejects_an_unknown_string():
