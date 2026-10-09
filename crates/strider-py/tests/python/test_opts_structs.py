@@ -61,11 +61,15 @@ def test_escape_analysis_defaults_false_and_round_trips():
     assert "escape_analysis=True" in repr(opts)
 
 
-def test_assumptions_default_to_a_fresh_group_with_the_two_pipeline_claims_on():
+def test_assumptions_default_to_a_fresh_group_with_the_pipeline_claims_on():
     a = strider.lift.LifterOptions()
     b = strider.lift.LifterOptions()
     assert a.assumptions is not b.assumptions
-    for name in ("stack_global_disjoint", "assume_incoming_args_survive_calls"):
+    for name in (
+        "stack_global_disjoint",
+        "assume_incoming_args_survive_calls",
+        "return_slots_survive_untracked_writes",
+    ):
         assert getattr(a.assumptions, name) is True
     for name in (
         "distinct_sp_bases_disjoint",
@@ -81,6 +85,15 @@ def test_incoming_args_survive_calls_defaults_true():
     a = strider.lift.AssumptionOptions(assume_incoming_args_survive_calls=False)
     assert a.assume_incoming_args_survive_calls is False
     assert "assume_incoming_args_survive_calls=False" in repr(a)
+
+
+def test_return_slots_survive_untracked_writes_defaults_true():
+    assert (
+        strider.lift.AssumptionOptions().return_slots_survive_untracked_writes is True
+    )
+    a = strider.lift.AssumptionOptions(return_slots_survive_untracked_writes=False)
+    assert a.return_slots_survive_untracked_writes is False
+    assert "return_slots_survive_untracked_writes=False" in repr(a)
 
 
 def test_analyze_with_escape_analysis():
@@ -128,6 +141,7 @@ def test_with_cfg_carries_over_every_other_field():
         callee_preserves_stack_args=True,
         noalias_allocators=[0x2000],
         escape_analysis=True,
+        return_slots_survive_untracked_writes=False,
     )
     opts = strider.lift.LifterOptions(
         cfg=strider.cfg.CfgOptions(function_max_size=64),
