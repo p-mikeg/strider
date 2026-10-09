@@ -168,7 +168,10 @@ pub(crate) fn classify(arch: A, r_type: u32) -> Option<Kind> {
             elf::R_X86_64_GOTPCREL64 => C(V::GotPcrel, data(8, false)),
             elf::R_X86_64_GOTPC32 => C(V::GotBasePcrel, data(4, true)),
             elf::R_X86_64_GOTPC64 => C(V::GotBasePcrel, data(8, false)),
-            elf::R_X86_64_GOTOFF64 => C(V::GotRelative, data(8, false)),
+            elf::R_X86_64_GOT64 => C(V::GotOffset, data(8, false)),
+            // `PLTOFF64` is `L - GOT + A`, L collapsing to S with no PLT
+            // materialised.
+            elf::R_X86_64_GOTOFF64 | elf::R_X86_64_PLTOFF64 => C(V::GotRelative, data(8, false)),
             elf::R_X86_64_PC64 => C(V::Pcrel, data(8, false)),
             _ => return None,
         },
