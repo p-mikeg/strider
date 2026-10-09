@@ -82,3 +82,18 @@ def test_aliases_at_one_address_rank_by_extent_before_by_being_code():
     hit = lift.symbol_at(at)
     assert hit is not None and hit.name == "data_alias"
     assert [s.name for s in lift.functions() if s.address == at] == ["code_alias"]
+
+
+def test_the_merge_methods_take_a_path_object(tmp_path, x86_memory_elf, x86_relocs_elf):
+    """`load_elf` accepts any `os.PathLike`, so the two methods that attach a
+    second file do too."""
+    import pathlib
+
+    lift = strider.lift.load_elf(pathlib.Path(x86_memory_elf))
+    lift.add_elf(pathlib.Path(x86_relocs_elf))
+    assert "helper_a" in lift.symbols()
+
+    _full, dbg, stripped = _strip_and_split(tmp_path)
+    stripped_lift = strider.lift.load_elf(pathlib.Path(stripped))
+    stripped_lift.add_symbol_file(pathlib.Path(dbg))
+    assert stripped_lift.symbols()
