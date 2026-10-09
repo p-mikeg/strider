@@ -78,11 +78,10 @@ exception: it resolves to 0 at link or module-load time as readily as to an
 address, so `if (&w)` must fold neither way. Its slot stays unmapped and every
 field that would hold its address is left uncomputed; only a call or jump
 displacement, which reveals no address, takes the synthetic one. Instruction
-encodings (branches, page and
-split address pairs, `MOVW`/`MOVT`, TOC offsets) are applied for x86, ARM,
-AArch64, MIPS and PowerPC, in the instruction byte order, which on AArch64 is
-little-endian whatever `EI_DATA` says since only data is big-endian there. The
-GOT and TOC are this loader's, so their bytes
+encodings (branches, page and split address pairs, `MOVW`/`MOVT`, TOC offsets)
+are applied for x86, ARM, AArch64, MIPS and PowerPC, in the instruction byte
+order, which on AArch64 is little-endian whatever `EI_DATA` says since only
+data is big-endian there. The GOT and TOC are this loader's, so their bytes
 differ from any real link's while computing the same addresses. A relocation it
 cannot compute (TLS, MIPS GP-relative, a branch that would need a veneer) is
 never left as its unrelocated field: outside a writable mapping the field is a

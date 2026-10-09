@@ -395,7 +395,8 @@ class ElfLifter(Lifter):
         """The entry-point address of the first loaded ELF."""
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
-        """Up to `size` raw bytes at `addr`, or `None` when unmapped."""
+        """Up to `size` raw bytes at `addr`, or `None` when `addr` is unmapped or
+        inside a relocation this loader does not compute."""
         ...
     def reader(self) -> BufferReader:
         """The `BufferReader` over the regions `load_elf` mapped: PT_LOAD segments
