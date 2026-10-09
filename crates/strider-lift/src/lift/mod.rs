@@ -432,16 +432,20 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             &opts.cfg.call_other_overrides,
         )?;
 
-        // Minimal (Cytron) SSA phi placement: iterated dominance frontier of each
-        // variable's definition sites.  This is what stops the lifter minting a
-        // value `Phi` for every varnode at every region.
+        // Semi-pruned SSA phi placement: iterated dominance frontier of each
+        // variable's definition sites, less the region-local temporaries.  This
+        // is what stops the lifter minting a value `Phi` for every varnode at
+        // every region.
         let dom = dominance::DomInfo::compute(cfg);
-        let def_sites = driver.collect_def_sites()?;
-        let placement = dom.iterated_frontier(&def_sites);
+        let (mut def_sites, nonlocal) = driver.collect_def_sites()?;
+        // The full map is the write funnel's reference, so it is kept before
+        // the placement map is narrowed.
         #[cfg(debug_assertions)]
         {
-            driver.def_sites = def_sites;
+            driver.def_sites = def_sites.clone();
         }
+        def_sites.retain(|&id, _| !driver.is_local_temporary(id, &nonlocal));
+        let placement = dom.iterated_frontier(&def_sites);
 
         let region_map = driver.build_region_map(&placement)?;
 
