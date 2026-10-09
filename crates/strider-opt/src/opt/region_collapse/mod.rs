@@ -4,6 +4,10 @@
 //!
 //! The Region is killed once nothing live consumes its outputs: it is
 //! side-effecting, so the automatic dead-cone cull never reaches it.
+//!
+//! A `Region` unreachable from entry is skipped: its sole predecessor can be
+//! its own `If`, and a phi over it then collapses onto a value built from
+//! itself, which `validate` rejects as a non-phi data cycle.
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
@@ -26,8 +30,10 @@ impl Optimizer for RegionCollapse {
         // One walk of the cached live Regions, no worklist. `try_collapse` reads
         // each root's CURRENT inputs and liveness, so edits made earlier in this
         // loop are visible to later entries.
+        let reachable = strider_ir::walk::cfg_reachable(edit.function().graph(), edit.entry());
         let regions: Vec<NodeId> = edit
             .live_of_kind(|k| matches!(k, NodeKind::Region))
+            .filter(|&region| reachable.contains(region))
             .collect();
         let mut overall = OptimizationResult::NoChange;
         for root in regions {
