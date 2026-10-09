@@ -86,7 +86,9 @@ GOT and TOC are this loader's, so their bytes
 differ from any real link's while computing the same addresses. A relocation it
 cannot compute (TLS, MIPS GP-relative, a branch that would need a veneer) is
 never left as its unrelocated field: outside a writable mapping the field is a
-hole, so decoding or folding across it fails with the relocation type named.
+hole, so decoding or folding across it fails with the relocation type named. An
+`SHT_REL` `R_*_RELATIVE` is not one of those: its field already holds the whole
+value, and is served as assembled.
 
 The `ReadOnlyMemory` view rejects any writable mapping outright, so on an image
 whose only PT_LOAD is RWX (the MIPS `vmlinux` shape; x86-64 and arm64 ship
