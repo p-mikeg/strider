@@ -25,7 +25,6 @@ bitflags.workspace = true
 dot.workspace = true
 entity-utils.workspace = true
 graph-algorithms.workspace = true
-petgraph = { workspace = true }
 strider-graph.workspace = true
 read-only-memory.workspace = true
 cranelift-entity.workspace = true
@@ -38,6 +37,9 @@ rustc-hash.workspace = true
 
 [dev-dependencies]
 expect-test.workspace = true
+# Only the dominance oracle in `control_flow_view`'s tests, which matches the
+# interval trees against petgraph's `simple_fast`.
+petgraph = { workspace = true }
 proptest.workspace = true
 # Dev-dep cycle is fine: cargo only links dev-deps for `cargo test`, never for
 # the regular `cargo build`, so the cycle (test-utils -> ir, ir [dev] ->
