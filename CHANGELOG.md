@@ -623,6 +623,9 @@ Python and the explorer:
   mode at (an ARM backward `blx`).
 - `add_elf` does nothing when the image is already fully loaded byte for byte,
   which the doc already promised; it appended every region and symbol again.
+  It also refuses off the handle's thread before merging anything, so a rebuild
+  that cannot run no longer leaves `symbol` and `read` seeing an ELF the
+  decoder does not.
 - A `custom(...)` `CallingConvention` or `CallOtherAbi` is checked against the
   register table it froze its varnodes against, not the preset name, so one
   built from `arm` works with an `arm_thumb` handle.
