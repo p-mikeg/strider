@@ -84,11 +84,18 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }
         args.extend_from_slice(explicit_args);
 
-        // Output vns are the 0-or-1 result then the clobbers, each canonicalized
-        // to its largest tracked container (the builder validates that) and
-        // deduplicated: sub-registers of one container collapse to a single
-        // slot, and the result wins ties over a clobber.
-        let result_vn = match output.map(|vn| self.container_of(&vn)) {
+        // Output vns are the 0-or-1 result then the clobbers. A clobber is
+        // canonicalized to its largest tracked container (the builder validates
+        // that) and deduplicated: sub-registers of one container collapse to a
+        // single slot, and the result wins ties over a clobber.
+        //
+        // The result keeps the pcode output's OWN width where the sla states
+        // what the machine does to the rest of the enclosing register
+        // ([`strider_target::SleighArch::callother_output_is_exact`]); where it
+        // does not, the result slot is the container and the write clobbers it
+        // whole, which is opaque rather than wrong.
+        let exact = self.lifter.arch.callother_output_is_exact();
+        let result_vn = match output.map(|vn| if exact { vn } else { self.container_of(&vn) }) {
             // An intrinsic that writes a memory operand (x86 `sgdt [mem]`) has
             // its output in ram, which no output slot can carry. A memory
             // clobber already advances the chain over the write, so drop the
@@ -130,12 +137,14 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             .set_call_other_name(user_op_id, name);
         let (ret_vals, clobbers) = outputs.split_at(result_vn.iter().count());
 
-        // Full-container writes: an opaque intrinsic defines the whole
-        // container.  Result last, so an aliased clobber cannot re-clobber it.
+        // An implicit clobber defines its whole container, so it is written
+        // whole.  The result goes through the masked-insert path, which is the
+        // full-container write when the slot IS the container.  Result last, so
+        // an aliased clobber cannot re-clobber it.
         //
         // Skipped for a terminating op: `build_call_other` already closed the
-        // region, so `write_variable` would insert into a terminated region and
-        // no successor could read the bindings anyway.  The node's output slots
+        // region, so the write would land in a terminated region and no
+        // successor could read the binding anyway.  The node's output slots
         // still exist and dangle, which matches `no_return` semantics.
         let result = ret_vals.first().copied();
         if !terminate {
@@ -143,7 +152,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 self.write_variable(vn, *v)?;
             }
             if let (Some(c), Some(v)) = (result_vn, result) {
-                self.write_variable(&c, v)?;
+                self.write_vn(&c, v)?;
             }
         }
         Ok(result)
