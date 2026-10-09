@@ -267,11 +267,12 @@ pub(crate) fn py_bool(b: bool) -> &'static str {
 
 /// Claims about the code being analysed, keyword-only. None is checked, and
 /// each one's risky value is the positive one, so any of them can make the
-/// answer wrong on valid input. Clearing all six leaves only what the IR
+/// answer wrong on valid input. Clearing all seven leaves only what the IR
 /// structurally proves, which still takes memory to be RAM.
 ///
-/// Two default `True`: `stack_global_disjoint` and
-/// `assume_incoming_args_survive_calls`, both of which every compiler this
+/// Three default `True`: `stack_global_disjoint`,
+/// `assume_incoming_args_survive_calls` and
+/// `return_slots_survive_untracked_writes`, each of which every compiler this
 /// analyses honours.
 #[pyclass(name = "AssumptionOptions", module = "strider.lift")]
 #[derive(Clone)]
@@ -323,6 +324,16 @@ pub struct PyAssumptionOptions {
     /// register its convention preserves.
     #[pyo3(get)]
     pub escape_analysis: bool,
+
+    /// A RAM store whose address the analysis cannot place on the entry stack,
+    /// and any callee or user-op, leave the slots the function saved its
+    /// return address and entry stack pointer in alone (default `True`). Read
+    /// by return-target verification alone: off, a return after a call is
+    /// reported as unverified. A store the verifier can place, including one
+    /// through a frame pointer reloaded off the stack, is checked against the
+    /// slot either way.
+    #[pyo3(get)]
+    pub return_slots_survive_untracked_writes: bool,
 }
 
 impl Default for PyAssumptionOptions {
@@ -342,6 +353,7 @@ impl From<&AssumptionOptions> for PyAssumptionOptions {
             callee_preserves_stack_args: a.callee_preserves_stack_args,
             noalias_allocators,
             escape_analysis: a.escape_analysis,
+            return_slots_survive_untracked_writes: a.return_slots_survive_untracked_writes,
         }
     }
 }
@@ -355,6 +367,7 @@ impl From<&PyAssumptionOptions> for AssumptionOptions {
             callee_preserves_stack_args: a.callee_preserves_stack_args,
             noalias_allocators: Arc::new(a.noalias_allocators.iter().copied().collect()),
             escape_analysis: a.escape_analysis,
+            return_slots_survive_untracked_writes: a.return_slots_survive_untracked_writes,
         }
     }
 }
@@ -371,6 +384,7 @@ impl PyAssumptionOptions {
         callee_preserves_stack_args = false,
         noalias_allocators = Vec::new(),
         escape_analysis = false,
+        return_slots_survive_untracked_writes = true,
     ))]
     #[allow(clippy::fn_params_excessive_bools)]
     fn new(
@@ -380,6 +394,7 @@ impl PyAssumptionOptions {
         callee_preserves_stack_args: bool,
         noalias_allocators: Vec<u64>,
         escape_analysis: bool,
+        return_slots_survive_untracked_writes: bool,
     ) -> Self {
         Self {
             stack_global_disjoint,
@@ -388,6 +403,7 @@ impl PyAssumptionOptions {
             callee_preserves_stack_args,
             noalias_allocators,
             escape_analysis,
+            return_slots_survive_untracked_writes,
         }
     }
 
@@ -406,13 +422,14 @@ impl PyAssumptionOptions {
             "AssumptionOptions(stack_global_disjoint={}, \
              assume_incoming_args_survive_calls={}, distinct_sp_bases_disjoint={}, \
              callee_preserves_stack_args={}, noalias_allocators={:?}, \
-             escape_analysis={})",
+             escape_analysis={}, return_slots_survive_untracked_writes={})",
             py_bool(self.stack_global_disjoint),
             py_bool(self.assume_incoming_args_survive_calls),
             py_bool(self.distinct_sp_bases_disjoint),
             py_bool(self.callee_preserves_stack_args),
             self.noalias_allocators,
             py_bool(self.escape_analysis),
+            py_bool(self.return_slots_survive_untracked_writes),
         )
     }
 }

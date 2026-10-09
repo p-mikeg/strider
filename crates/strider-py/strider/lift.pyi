@@ -53,11 +53,12 @@ class AssumptionOptions:
     """Claims about the code being analysed, for `LifterOptions(assumptions=...)`.
 
     None is checked, and each one's risky value is the positive one, so any of
-    them can make the answer wrong on valid input. `stack_global_disjoint` and
-    `assume_incoming_args_survive_calls` default `True`, the other four off or
-    empty; clearing all six is the sound floor under any input whose memory
-    behaves as RAM (see `none`). What each one claims is in `docs/python-api.md`
-    section 2.
+    them can make the answer wrong on valid input. `stack_global_disjoint`,
+    `assume_incoming_args_survive_calls` and
+    `return_slots_survive_untracked_writes` default `True`, the other four off
+    or empty; clearing all seven is the sound floor under any input whose
+    memory behaves as RAM (see `none`). What each one claims is in
+    `docs/python-api.md` section 2.
     """
 
     # Read-only: the options types are frozen, so a plain attribute
@@ -74,6 +75,8 @@ class AssumptionOptions:
     def noalias_allocators(self) -> list[int]: ...
     @property
     def escape_analysis(self) -> bool: ...
+    @property
+    def return_slots_survive_untracked_writes(self) -> bool: ...
     def __init__(
         self,
         *,
@@ -83,6 +86,7 @@ class AssumptionOptions:
         callee_preserves_stack_args: bool = ...,
         noalias_allocators: list[int] = ...,
         escape_analysis: bool = ...,
+        return_slots_survive_untracked_writes: bool = ...,
     ) -> None:
         """Build the claims; every field defaults as documented above."""
         ...
@@ -90,7 +94,8 @@ class AssumptionOptions:
     def none() -> "AssumptionOptions":
         """Every claim cleared: the sound floor under any input.
 
-        Two of the six default `True`, so this is not `AssumptionOptions()`.
+        Three of the seven default `True`, so this is not
+        `AssumptionOptions()`.
 
         Memory is still taken to be RAM: a load reads back the last value the
         analysed code stored at its address, with nothing outside that code
