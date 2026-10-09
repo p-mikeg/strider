@@ -11,8 +11,8 @@ publish.workspace = true
 [dependencies]
 strider-opt = { workspace = true }
 strider-ir = { workspace = true }
-# strider-cfg: the orchestrator builds the CFG (Builder/Cfg) and threads
-# its address + ResolvedTargets types through the rebuild fixed-point.
+# strider-cfg: the Cfg `Lifter::build_cfg` returns, plus the address and
+# ResolvedTargets types the rebuild fixed-point threads.
 strider-cfg = { workspace = true }
 # strider-lift: the CFG -> IR lift (lift::Lifter, LiftOptions).
 strider-lift = { workspace = true }
@@ -28,7 +28,9 @@ strider-pattern = { workspace = true }
 dot.workspace = true
 entity-utils = { workspace = true }
 object.workspace = true
-# Test-only IR helpers (count_kind, has_kind, build_sub_as_add_neg, …).
+# Test-only IR surface (build_branch, live_snapshot, cc_ret_and_clobber_vns, …).
+# The assertion vocabulary (count_kind, has_kind, build_sub_as_add_neg) is in
+# strider-ir-test-utils below.
 strider-ir = { workspace = true, features = ["test-util"] }
 # Test-only single-pass runners (run_one / run_post) used by integration tests.
 strider-opt = { workspace = true, features = ["test-util"] }
