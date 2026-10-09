@@ -9,6 +9,9 @@ use crate::reader::{AnyMemReader, MemInput};
 #[pyclass(name = "Sleigh", module = "strider.sleigh")]
 pub struct PySleigh {
     pub(crate) arch_name: &'static str,
+    /// What a `custom(...)` convention or user-op ABI records as the register
+    /// table it froze its varnodes against.
+    pub(crate) source_arch: crate::strider_cls::SourceArch,
     /// Probed once at construction.
     pub(crate) regs: rsleigh::SleighRegs,
 }
@@ -22,6 +25,7 @@ impl PySleigh {
             .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::regs failed: {e:?}")))?;
         Ok(Self {
             arch_name: arch.preset_name,
+            source_arch: crate::strider_cls::SourceArch::new(arch.inner, arch.preset_name),
             regs,
         })
     }

@@ -22,7 +22,7 @@ pub struct PyCallingConvention {
     pub(crate) preset_name: &'static str,
     /// The arch a `custom(...)` convention resolved its register names
     /// against; `None` for a preset, which resolves at consumption time.
-    pub(crate) source_arch: Option<&'static str>,
+    pub(crate) source_arch: Option<crate::strider_cls::SourceArch>,
     /// Only meaningful when this CC is resolved as a per-address override.
     pub(crate) no_return: bool,
 }
@@ -167,7 +167,7 @@ impl PyCallingConvention {
     ) -> PyResult<Self> {
         let sleigh_borrow = sleigh.borrow(py);
         let regs = sleigh_borrow.regs.clone();
-        let source_arch = sleigh_borrow.arch_name;
+        let source_arch = sleigh_borrow.source_arch;
         drop(sleigh_borrow);
         let resolve = |name: &str| {
             regs.name_to_vn(name).ok_or_else(|| {
@@ -237,7 +237,7 @@ impl PyCallingConvention {
     /// naming the arch its registers were resolved against.
     fn __repr__(&self) -> String {
         match self.source_arch {
-            Some(arch) => format!("<CallingConvention custom for {arch}>"),
+            Some(arch) => format!("<CallingConvention custom for {}>", arch.name),
             None => format!("CallingConvention.{}()", self.preset_name),
         }
     }
