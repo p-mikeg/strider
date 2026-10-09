@@ -110,6 +110,9 @@ all: they overlap in cause and not in content.
 - `undecodable_seeded_targets`: a seeded target that would not decode, or that
   leads to code that would not, with the dispatch site it was an arm of. A
   seeded target is a misclassification, so its edge is dropped and reported.
+  The entry names the ARM; the bytes that would not decode are on
+  `undecodable_branch_targets`. "Leads to" stops at the next dispatch, so an
+  arm reaching those bytes only back through another table keeps its edge.
   Bytes Sleigh rejects on a path from the entry through no arm still fail the
   whole build.
 - `unmapped_branch_targets`: a DIRECT branch or a sequential fall-through to an
