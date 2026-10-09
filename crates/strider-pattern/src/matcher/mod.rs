@@ -218,7 +218,8 @@ impl<'f> Matcher<'f> {
     }
 
     /// Attempt `pat` at `node`, once per output whatever its kind (a `Store`
-    /// roots through its Memory output, an `If` through either Control one),
+    /// roots through its Memory output), less the outputs
+    /// [`walk::anchor_repeats`] shows impose the attempt already made, and
     /// falling back to a node-rooted attempt only when the node has no outputs
     /// at all.
     ///
@@ -262,7 +263,18 @@ impl<'f> Matcher<'f> {
                 let mut bindings = Bindings::default();
                 walk::try_match_node(self, pat, root, node, &mut bindings, &mut collect, true);
             } else {
+                // An output whose anchor repeats the one already tried imposes
+                // the same constraint set, so it can only re-derive bindings
+                // the dedup set already holds. Both control outputs of an `If`
+                // root resolve to one vertex, which is the common case.
+                let mut anchored: Option<ValueId> = None;
                 for &out_id in outputs {
+                    if let Some(prev) = anchored
+                        && walk::anchor_repeats(self, pat, root, prev, out_id)
+                    {
+                        continue;
+                    }
+                    anchored = Some(out_id);
                     let mut bindings = Bindings::default();
                     // `try_match` returns `true` only when `collect` accepted,
                     // i.e. under `first_only`; otherwise every output is swept.
