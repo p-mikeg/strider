@@ -957,3 +957,38 @@ fn overlapping_mappings_load_unrelocated() {
         .expect("regions");
     assert_eq!(regions.len(), 64);
 }
+
+/// An `SHT_REL` `R_386_RELATIVE` keeps `image_base + A` in its own field, so
+/// with the base modelled as 0 the bytes are already right. Recording a hole
+/// over them unserved a read-only `.rodata` table whose every word was correct.
+#[test]
+fn an_implicit_addend_relative_in_a_read_only_mapping_serves_its_field() {
+    let slot_init = vec![0x88, 0x11, 0x00, 0x00];
+    let fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Little,
+            is_64: false,
+            e_machine: object::elf::EM_386,
+            r_type: object::elf::R_386_RELATIVE,
+            defined_symbol: false,
+            slot_init: slot_init.clone(),
+        },
+        common::elf_fixture::RelPlacement {
+            slot_exec: true,
+            ..Default::default()
+        },
+    );
+
+    for filter in [
+        strider_reader::elf::LoadFilter::AllAllocatable,
+        strider_reader::elf::LoadFilter::ImmutableOnly,
+    ] {
+        let table =
+            strider_reader::MemRegionsLookupTable::new(common::relocated(&fx.bytes, filter));
+        let mut got = [0u8; 4];
+        table
+            .read_exact(fx.slot_addr, &mut got)
+            .expect("a read-only RELATIVE site is not a hole");
+        assert_eq!(got.to_vec(), slot_init);
+    }
+}
