@@ -22,6 +22,7 @@ import atexit
 import http.server
 import inspect
 import io
+import ipaddress
 import json
 import pathlib
 import socket
@@ -404,6 +405,18 @@ class _DeadlineReader(io.RawIOBase):
     Before each `recv` it sets the socket timeout to what is LEFT of the
     budget, so the window shrinks toward zero and a client trickling bytes runs
     out rather than renewing it.
+def _is_loopback(host: str) -> bool:
+    """Whether `host` is the name `localhost` or any loopback address: all of
+    127/8, `::1`, and the IPv4-mapped form `ipaddress` calls global."""
+    if host == "localhost":
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return (getattr(addr, "ipv4_mapped", None) or addr).is_loopback
+
+
 
     Under the buffer, not over it: `BufferedReader.readline` loops `recv`
     inside ONE call, so arming per `readline` hands every one of those recvs a
@@ -531,7 +544,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self.connection.settimeout(self.timeout)
 
     def _host_is_local(self, addr: Any) -> bool:
-        """Whether `Host` names this server on a loopback name.
+        """Whether `Host` names this server by a loopback address.
 
         Absent (HTTP/1.0) is allowed: a rebinding attack is driven by a browser
         and browsers always send one. A caller that bound a non-loopback
@@ -541,8 +554,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if host is None:
             return True
         parts: list[Any] = list(addr) if isinstance(addr, tuple) else []
-        bound = str(parts[0]) if parts else ""
-        if bound not in ("127.0.0.1", "::1", "localhost"):
+        if not _is_loopback(str(parts[0]) if parts else ""):
             return True
         # An IPv6 literal is bracketed and holds colons of its own, so the port
         # is whatever follows `]`, not whatever follows the last colon.
@@ -552,7 +564,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             if name.startswith("[")
             else name.rsplit(":", 1)[0]
         )
-        return name in ("127.0.0.1", "::1", "localhost")
+        return _is_loopback(name)
 
     def do_GET(self) -> None:
         # Close after each response. This server is single-threaded, so it
@@ -561,11 +573,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         # times out.
         self.close_connection = True
         srv = cast("_Server", self.server)
-        # A page in the user's browser can resolve its own hostname to
-        # 127.0.0.1 and reach this server; dispatching on `self.path` alone
-        # would then let it read `/dot`, the whole rendered graph of the binary
-        # under analysis. The `Host` header is what distinguishes that from a
-        # real local request, and no browser lets a page forge it.
+        # A page in the user's browser can resolve its own hostname to a
+        # loopback address and reach this server, reading `/dot`, the whole
+        # rendered graph of the binary under analysis. `Host` is what
+        # distinguishes that from a real local request, and no browser lets a
+        # page forge it.
         if not self._host_is_local(cast(Any, srv.server_address)):
             self._send("bad host", ctype="text/plain", code=421)
             return
