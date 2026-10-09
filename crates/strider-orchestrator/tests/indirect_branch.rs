@@ -19,9 +19,27 @@ mod common;
 use common::*;
 use strider_ir::{IRViewer, IRWalker};
 
-/// Drives `Strider::analyze` to its fixed point on
-/// `indirect_branch_resolved` and asserts the site resolved to BOTH of the
-/// fixture's computed-goto labels: no region left carrying
+/// `indirect_branch_resolved` over the default ROM: the runtime-immutable
+/// image, where a table in a writable section is unmapped.
+fn assert_indirect_goto_resolves_to_both_labels(arch: Arch) {
+    resolves_to_both_labels(
+        arch,
+        fixture_strider(arch, "indirect_branch", "indirect_branch_resolved"),
+    );
+}
+
+/// The same over a ROM that also serves the relocated GOT. A PIC dispatch
+/// loads its table base through the GOT, so nothing in it folds while those
+/// slots are unmapped.
+fn assert_indirect_goto_resolves_with_the_got_served(arch: Arch) {
+    resolves_to_both_labels(
+        arch,
+        fixture_strider_serving_got(arch, "indirect_branch", "indirect_branch_resolved"),
+    );
+}
+
+/// Drives `Strider::analyze` to its fixed point and asserts the site resolved
+/// to BOTH of the fixture's computed-goto labels: no region left carrying
 /// `RegionTerminator::UnresolvedIndirectBranch`, no `IndirectBranch`
 /// placeholder left in the IR, exactly one `Switch` and exactly two distinct
 /// arms, each of which starts a region of the final cfg.
@@ -29,9 +47,14 @@ use strider_ir::{IRViewer, IRWalker};
 /// The arm addresses are not spelled out here (they differ per arch), but a
 /// one-arm answer, an over-approximated table, and an arm landing off a
 /// region start all fail.
-fn assert_indirect_goto_resolves_to_both_labels(arch: Arch) {
-    let (mut strider, cc, entry) =
-        fixture_strider(arch, "indirect_branch", "indirect_branch_resolved");
+fn resolves_to_both_labels(
+    arch: Arch,
+    (mut strider, cc, entry): (
+        strider_orchestrator::Strider<strider_reader::ElfFileMemReader>,
+        strider_target::BuiltCallingConvention,
+        u64,
+    ),
+) {
     let result = strider
         .analyze(
             entry,
@@ -147,23 +170,24 @@ fn indirect_branch_resolved_mips32be() {
     assert_indirect_goto_resolves_to_both_labels(Arch::Mips32be);
 }
 #[test]
-#[ignore = "mips64-le PIC: $gp derives from the entry value of t9, so the GOT load of the table base never folds and the arms lift as Add(Load[gp+off], const). Resolving it needs t9 pinned to the function entry, a psABI fact for abicalls, AND GOT entries served as immutable, which .got being writable excludes"]
+#[ignore = "mips64-le PIC: $gp derives from the entry value of t9, so the GOT load of the table base never folds and the arms lift as Add(Load[gp+off], const). The ROM here serves the GOT; what is still missing is t9 pinned to the function entry, a psABI fact for abicalls that no convention states"]
 fn indirect_branch_resolved_mips64le() {
-    assert_indirect_goto_resolves_to_both_labels(Arch::Mips64le);
+    assert_indirect_goto_resolves_with_the_got_served(Arch::Mips64le);
 }
 #[test]
-#[ignore = "mips64-be PIC: $gp derives from the entry value of t9, so the GOT load of the table base never folds and the arms lift as Add(Load[gp+off], const). Resolving it needs t9 pinned to the function entry, a psABI fact for abicalls, AND GOT entries served as immutable, which .got being writable excludes"]
+#[ignore = "mips64-be PIC: $gp derives from the entry value of t9, so the GOT load of the table base never folds and the arms lift as Add(Load[gp+off], const). The ROM here serves the GOT; what is still missing is t9 pinned to the function entry, a psABI fact for abicalls that no convention states"]
 fn indirect_branch_resolved_mips64be() {
-    assert_indirect_goto_resolves_to_both_labels(Arch::Mips64be);
+    assert_indirect_goto_resolves_with_the_got_served(Arch::Mips64be);
 }
 #[test]
 fn indirect_branch_resolved_ppc32be() {
     assert_indirect_goto_resolves_to_both_labels(Arch::Ppc32be);
 }
 #[test]
-#[ignore = "ppc32-le: stack-array dispatch unresolved; the lifter shape is uncharacterised and needs a one-shot pcode trace to identify which classifier arm is missing"]
 fn indirect_branch_resolved_ppc32le() {
-    assert_indirect_goto_resolves_to_both_labels(Arch::Ppc32le);
+    // The label table is an eight-byte `.data.rel.ro`, so the dispatch needs
+    // the GOT-serving ROM; with the immutable-only one the base is unmapped.
+    assert_indirect_goto_resolves_with_the_got_served(Arch::Ppc32le);
 }
 #[test]
 #[ignore = "ppc64-be: stack-array dispatch unresolved; the lifter shape is uncharacterised and needs a one-shot pcode trace to identify which classifier arm is missing"]
