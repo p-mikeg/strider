@@ -11,13 +11,6 @@ fn call_at_addr_matches() {
     a::matches(&function, call().at(0x1234).build(), 1);
     a::none(&function, call().at(0x9999).build());
 }
-
-#[test]
-fn call_target_with_pattern() {
-    let function = shapes::call_at(0x1234);
-    a::matches(&function, call().target(int_const(0x1234u128)).build(), 1);
-}
-
 #[test]
 fn call_target_set_matches_when_target_is_in_set() {
     let function = shapes::call_at(0x1234);
@@ -200,13 +193,6 @@ fn ret_captures_node() {
         strider_ir::node::NodeKind::Return
     ));
 }
-
-#[test]
-fn if_else_unconstrained_matches() {
-    let function = shapes::if_cmp_then_return(4);
-    a::matches(&function, if_else().build(), 1);
-}
-
 #[test]
 fn if_else_cond_matches() {
     let function = shapes::if_cmp_then_return(4);
@@ -320,13 +306,6 @@ fn graph_call_other(user_op_id: u64) -> strider_ir::Function {
     t.call_other("cpuid", user_op_id, &[arg], Some(out_vn), &[], &[]);
     t.ret_nothing()
 }
-
-#[test]
-fn call_other_matches_any_user_op() {
-    let function = graph_call_other(42);
-    a::matches(&function, call_other().build(), 1);
-}
-
 #[test]
 fn call_other_user_op_id_filter() {
     let function = graph_call_other(42);

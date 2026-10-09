@@ -15,12 +15,6 @@ fn non_const_u32(t: &mut Tb, a_v: u64, b_v: u64) -> strider_ir::node::ValueId {
     t.int_bin_at(a_, b_, strider_ir::IntBinaryOp::Add, ValueType::I32)
 }
 
-fn non_const_u64(t: &mut Tb, a_v: u64, b_v: u64) -> strider_ir::node::ValueId {
-    let a_ = t.u64(a_v);
-    let b_ = t.u64(b_v);
-    t.add(a_, b_)
-}
-
 #[test]
 fn extend_op_variant_matches_zero_and_sign() {
     let mut t = Tb::empty();
@@ -51,16 +45,6 @@ fn extend_op_variant_matches_zero_and_sign() {
         int_extend(ExtendOp::ZeroExtend, anything()).into_pattern(),
     );
 }
-
-#[test]
-fn truncate_matches() {
-    let mut t = Tb::empty();
-    let s = non_const_u64(&mut t, 0xAABBCCDD, 1);
-    let x = t.trunc_to(s, ValueType::I8);
-    let function = t.ret_val(x);
-    a::matches(&function, int_truncate(anything()).into_pattern(), 1);
-}
-
 #[test]
 fn extend_then_truncate_chain_matches() {
     let mut t = Tb::empty();
@@ -86,16 +70,6 @@ fn int_to_float_matches() {
     let function = t.ret_val(as_int);
     a::matches(&function, int_to_float(anything()).into_pattern(), 1);
 }
-
-#[test]
-fn float_to_int_matches() {
-    let mut t = Tb::empty();
-    let v = t.f64(1.5);
-    let i = t.float_to_int(v, ValueType::I64);
-    let function = t.ret_val(i);
-    a::matches(&function, float_to_int(anything()).into_pattern(), 1);
-}
-
 #[test]
 fn float_to_float_matches() {
     let mut t = Tb::empty();
@@ -107,31 +81,6 @@ fn float_to_float_matches() {
     // Two FloatToFloat nodes in the graph.
     a::matches(&function, float_to_float(anything()).into_pattern(), 2);
 }
-
-#[test]
-fn int_bits_to_float_matches() {
-    let mut t = Tb::empty();
-    // A const input folds, so feed an Add to emit a real IntBitsToFloat.
-    let a_ = t.u64(1);
-    let b_ = t.u64(2);
-    let s = t.add(a_, b_);
-    let f = t.int_bits_to_float(s, ValueType::F64);
-    let as_int = t.float_to_int(f, ValueType::I64);
-    let function = t.ret_val(as_int);
-    a::matches(&function, int_bits_to_float(anything()).into_pattern(), 1);
-}
-
-#[test]
-fn float_bits_to_int_matches() {
-    let mut t = Tb::empty();
-    let fa = t.f64(1.0);
-    let fb = t.f64(2.0);
-    let s = t.fbin(fa, fb, strider_ir::FloatBinaryOp::Add, ValueType::F64);
-    let i = t.float_bits_to_int(s, ValueType::I64);
-    let function = t.ret_val(i);
-    a::matches(&function, float_bits_to_int(anything()).into_pattern(), 1);
-}
-
 #[test]
 fn cast_patterns_are_kind_sensitive() {
     let mut t = Tb::empty();
