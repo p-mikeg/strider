@@ -20,6 +20,11 @@ use anyhow::{anyhow, bail};
 
 use crate::Result;
 
+/// Shared empty table, so a builder with no overrides borrows rather than
+/// allocates.
+static NO_PER_ADDRESS_CCS: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention> =
+    rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
+
 #[cfg(test)]
 thread_local! {
     /// Regions [`Builder::find_region_containing_addr`] tested for containment
@@ -116,7 +121,8 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     pub(super) seeded_queue: Vec<WorkItem>,
     /// CC overrides for CALL TARGETS, keyed by target machine address.  Only
     /// `no_return` is read here.
-    pub(super) per_address_ccs: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
+    pub(super) per_address_ccs:
+        &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     /// Indexed by `user_op_id`.  `None` until [`Self::build`] fetches the
     /// table off the engine, which [`Self::with_user_op_names`] pre-empts.
     pub(super) user_op_names: Option<std::borrow::Cow<'a, [String]>>,
@@ -205,7 +211,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             non_boundary_seats: rustc_hash::FxHashMap::default(),
             link_register_seated: Vec::new(),
             tail_call_seated: Vec::new(),
-            per_address_ccs: rustc_hash::FxHashMap::default(),
+            per_address_ccs: &NO_PER_ADDRESS_CCS,
             user_op_names: None,
             // A single-shot build on a fresh engine has no cross-function
             // context to leak; a reused engine supplies the vars via
@@ -268,10 +274,12 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         self
     }
 
+    /// Borrowed: a caller passes a binary-wide table and builds one CFG per
+    /// function, so cloning it is the whole table per function.
     #[must_use]
     pub fn with_per_address_ccs(
         mut self,
-        per_address_ccs: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
+        per_address_ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Self {
         self.per_address_ccs = per_address_ccs;
         self
