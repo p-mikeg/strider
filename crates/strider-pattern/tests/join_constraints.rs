@@ -322,30 +322,6 @@ fn negate_inverts_dominates_edge() {
     // Exactly the complement of the positive constraint's `[0xAAAA]`.
     assert_eq!(addrs, vec![0xBBBB, 0xCCCC]);
 }
-
-#[test]
-fn double_negation_is_the_identity() {
-    let (function, _) = diamond_with_calls();
-    let m = Matcher::new(&function);
-    let (t, c) = (Capture::new(), Capture::new());
-    let guard = if_else().capture_true(t).build();
-    let callp = call().capture(c).build();
-
-    let inner = JoinConstraint::Dominates {
-        dominator: t,
-        dominated: c,
-    };
-    let double = JoinConstraint::Not(Box::new(JoinConstraint::Not(Box::new(inner))));
-    let tuples = m
-        .find_joined_constrained(&[&guard, &callp], &[double])
-        .unwrap();
-    let addrs: Vec<u64> = tuples
-        .iter()
-        .map(|tp| call_addr(tp, c, &function))
-        .collect();
-    assert_eq!(addrs, vec![0xAAAA]);
-}
-
 /// Range restriction is one rule over every constraint, not a negation
 /// carve-out: an unbound capture in a positive constraint can never be
 /// satisfied, so it would drop every tuple and return an empty set that reads

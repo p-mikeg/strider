@@ -685,27 +685,6 @@ fn bool_family() {
     .0;
     assert_eq!(count(|| bool_not(any_bool()).into_pattern(), &fx), 1);
 }
-
-#[test]
-fn bool_binary_pins_i1_not_wide() {
-    // A wide (I64) And must not match a bool_and pinned to I1.
-    let v = reg_vn(0, 8);
-    let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let k = b.build_int_const(3u64, T::I64)?;
-        b.build_int_binary_operation(base, k, IntBinaryOp::And, T::I64)
-    })
-    .unwrap()
-    .0;
-    assert_eq!(
-        count(|| bool_and(anything(), anything()).into_pattern(), &fx),
-        0
-    );
-    assert_eq!(
-        count(|| int_and(anything(), anything()).into_pattern(), &fx),
-        1
-    );
-}
-
 #[test]
 fn const_family() {
     // int_const_any_width recognises the zero-extended narrow form.

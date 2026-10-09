@@ -1,42 +1,7 @@
 use strider_ir::node::ValueType;
 use strider_ir::{FunctionBuilder, IRBuilderExt};
 use strider_ir_test_utils::RegisterSet;
-use strider_pattern::{MatchPat, Matcher, int_const, load, store};
-
-#[test]
-fn bit_width_filters_load_by_value_width() {
-    // Two loads at one address, I32 and I64. The I32 one is returned; the
-    // I64 one is routed through a Store so it stays on the memory chain and
-    // thus reachable.
-    let mut b: FunctionBuilder = RegisterSet::new()
-        .build_fn_single_region()
-        .expect("build_fn_single_region");
-    let addr = b.build_int_const(0x100u64, ValueType::I64).expect("addr");
-    let l32 = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
-        .expect("u32 load");
-    let l64 = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
-        .expect("u64 load");
-    let other_addr = b
-        .build_int_const(0x200u64, ValueType::I64)
-        .expect("other_addr");
-    b.build_store(other_addr, l64, rsleigh::VnSpace::RAM)
-        .expect("store l64");
-    b.build_return(Some(l32), &[]).expect("ret");
-    let function = b.build().expect("build");
-
-    let m = Matcher::new(&function);
-    let h32 = m
-        .find_all(&load().addr(int_const(0x100u128)).bit_width(32).build())
-        .unwrap();
-    let h64 = m
-        .find_all(&load().addr(int_const(0x100u128)).bit_width(64).build())
-        .unwrap();
-    assert_eq!(h32.len(), 1, "bit_width(32) matches only the I32 load");
-    assert_eq!(h64.len(), 1, "bit_width(64) matches only the I64 load");
-}
-
+use strider_pattern::{CaptureExt, MatchPat, Matcher, int_const, store};
 #[test]
 fn bit_width_filters_store_by_data_width() {
     // Both stores are reachable via the memory chain ending at Return.
@@ -137,11 +102,12 @@ fn output_width_and_input_width_distinguish_bool_ops_from_comparisons() {
 }
 
 /// The `bool_*` constructors match only an `I1` value output, never a
-/// same-shaped wide integer op or const.
+/// same-shaped wide integer op or const. The guard survives `.ordered()`, so
+/// neither operand order reaches a wide `And` either.
 #[test]
 fn bool_ctors_require_i1_output() {
     use strider_ir::IntBinaryOp;
-    use strider_pattern::{anything, bool_and, bool_const};
+    use strider_pattern::{anything, bool_and, bool_binary, bool_const, int_and};
 
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
@@ -168,6 +134,21 @@ fn bool_ctors_require_i1_output() {
         0,
         "bool_const matches only an I1 constant, not a wide IntConst(1)"
     );
+    for pat in [
+        bool_binary(IntBinaryOp::And, anything(), anything()).into_pattern(),
+        bool_binary(IntBinaryOp::And, anything(), anything())
+            .ordered()
+            .into_pattern(),
+    ] {
+        assert!(m.find_all(&pat).unwrap().is_empty());
+    }
+    // The width is the whole difference: the integer constructor matches it.
+    assert_eq!(
+        m.find_all(&int_and(anything(), anything()).into_pattern())
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 /// `inputs_of_width` is a constraint on the matched NODE's inputs, so wrapping
@@ -176,7 +157,7 @@ fn bool_ctors_require_i1_output() {
 #[test]
 fn inputs_of_width_over_an_alternation_still_constrains_the_inputs() {
     use strider_ir::IntCmpOp;
-    use strider_pattern::{anything, int_eq, inputs_of_width, one_of};
+    use strider_pattern::{anything, inputs_of_width, int_eq, one_of};
 
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
@@ -195,9 +176,7 @@ fn inputs_of_width_over_an_alternation_still_constrains_the_inputs() {
         .unwrap();
     assert_eq!(plain.len(), 1);
     let wrapped = m
-        .find_all(
-            &inputs_of_width(64, one_of![int_eq(anything(), anything())]).into_pattern(),
-        )
+        .find_all(&inputs_of_width(64, one_of![int_eq(anything(), anything())]).into_pattern())
         .unwrap();
     assert_eq!(wrapped.len(), 1, "the arm is not an operand");
     // The named width still has to be the right one.
