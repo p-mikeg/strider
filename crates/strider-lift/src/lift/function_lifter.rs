@@ -159,14 +159,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             })
         };
         let isa_mode_switch_vn = lifter.sleigh_regs().name_to_vn("ISAModeSwitch");
-        // Capture and carry are paired BOTH ways. Carry without capture would
-        // leave `enqueue_resolved`'s None-arch arm dropping the committed bit
-        // and decoding a resolved target in the wrong mode; capture without
-        // carry means the name above did not resolve, which `name_to_vn`
-        // reports as `None` rather than as an error, so a misspelling would
-        // otherwise satisfy a one-directional check vacuously while the mode
-        // bit is silently never captured. Mirror of the carry-side check in
-        // `Builder::with_flow_context`.
+        // Capture and carry are paired BOTH ways; mirror of the carry-side
+        // check in `Builder::with_flow_context`.
         debug_assert_eq!(
             isa_mode_switch_vn.is_some(),
             lifter.arch.isa_mode_var().is_some(),
