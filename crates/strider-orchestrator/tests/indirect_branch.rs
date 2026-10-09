@@ -170,12 +170,10 @@ fn indirect_branch_resolved_mips32be() {
     assert_indirect_goto_resolves_to_both_labels(Arch::Mips32be);
 }
 #[test]
-#[ignore = "mips64-le PIC: $gp derives from the entry value of t9, so the GOT load of the table base never folds and the arms lift as Add(Load[gp+off], const). The ROM here serves the GOT; what is still missing is t9 pinned to the function entry, a psABI fact for abicalls that no convention states"]
 fn indirect_branch_resolved_mips64le() {
     assert_indirect_goto_resolves_with_the_got_served(Arch::Mips64le);
 }
 #[test]
-#[ignore = "mips64-be PIC: $gp derives from the entry value of t9, so the GOT load of the table base never folds and the arms lift as Add(Load[gp+off], const). The ROM here serves the GOT; what is still missing is t9 pinned to the function entry, a psABI fact for abicalls that no convention states"]
 fn indirect_branch_resolved_mips64be() {
     assert_indirect_goto_resolves_with_the_got_served(Arch::Mips64be);
 }
