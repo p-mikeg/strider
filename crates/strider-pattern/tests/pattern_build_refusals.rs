@@ -323,7 +323,10 @@ fn doubling_chain(k: usize) -> Pattern {
 /// channel, which is what the contract on `MAX_PATTERN_NODES` promises.
 #[test]
 fn a_shared_vertex_pattern_over_the_unfolded_cap_is_refused() {
-    assert!(doubling_chain(6).root().is_ok(), "127 walks is under the cap");
+    assert!(
+        doubling_chain(6).root().is_ok(),
+        "127 walks is under the cap"
+    );
     for k in [8usize, 12, 16] {
         std::thread::spawn(move || {
             assert!(
