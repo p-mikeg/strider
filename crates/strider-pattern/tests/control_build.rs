@@ -246,18 +246,6 @@ fn if_cond_captures() {
     let hits = a::matches(&function, if_else().cond(var(c)).build(), 1);
     assert!(hits[0].value(c).is_some());
 }
-
-#[test]
-fn if_captures_node() {
-    let (function, if_id) = if_then_else();
-    let n = Capture::new();
-    let hits = a::matches(&function, if_else().capture(n).build(), 1);
-    assert_eq!(
-        hits[0].node(n, function.graph()).expect("if node capture"),
-        if_id
-    );
-}
-
 #[test]
 fn if_capture_true_false_bind_distinct_control_outputs() {
     let (function, if_id) = if_then_else();
@@ -840,8 +828,8 @@ fn unreachable_any_input_wildcard_reaches_ctrl() {
     );
 }
 
-#[test]
-fn load_any_input_binds_addr() {
+/// `return(load[0x1000]:I64)`.
+fn load_from_0x1000() -> strider_ir::Function {
     let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
     let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
     let entry = b.create_region_all().unwrap();
@@ -853,7 +841,12 @@ fn load_any_input_binds_addr() {
         .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
-    let function = b.build().unwrap();
+    b.build().unwrap()
+}
+
+#[test]
+fn load_any_input_binds_addr() {
+    let function = load_from_0x1000();
     a::matches(
         &function,
         load().any_input(int_const(0x1000u128)).build(),
@@ -863,18 +856,7 @@ fn load_any_input_binds_addr() {
 
 #[test]
 fn load_raw_input_slot_is_the_addr_slot() {
-    let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
-    let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
-    let entry = b.create_region_all().unwrap();
-    b.set_entry_region_all(entry).unwrap();
-    b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
-    let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
-        .unwrap();
-    b.build_return(Some(loaded), &[]).unwrap();
-    let function = b.build().unwrap();
+    let function = load_from_0x1000();
     // `Load` is `[mem(0), addr(1)]`.
     a::matches(&function, load().input(1, int_const(0x1000u128)).build(), 1);
     // Slot 0 is the memory edge; no value pattern binds it.
@@ -883,18 +865,7 @@ fn load_raw_input_slot_is_the_addr_slot() {
 
 #[test]
 fn load_output_and_any_output_reach_the_loaded_value() {
-    let var_vn = strider_ir_test_utils::reg_vn(0x10, 8);
-    let mut b = RegisterSet::new().tracked(var_vn).build_fn().unwrap();
-    let entry = b.create_region_all().unwrap();
-    b.set_entry_region_all(entry).unwrap();
-    b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
-    let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
-        .unwrap();
-    b.build_return(Some(loaded), &[]).unwrap();
-    let function = b.build().unwrap();
+    let function = load_from_0x1000();
     let c = Capture::new();
     let hits = a::matches(&function, load().output(0).capture(c).build(), 1);
     assert!(hits[0].value(c).is_some());

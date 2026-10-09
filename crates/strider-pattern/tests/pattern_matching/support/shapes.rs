@@ -2,7 +2,7 @@
 //! stay inline in the test.
 
 use strider_ir::node::ValueType;
-use strider_ir::{FloatBinaryOp, Function, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{FloatBinaryOp, Function, IntBinaryOp, IntCmpOp};
 
 use strider_ir_test_utils::Tb;
 
@@ -26,42 +26,12 @@ pub(crate) fn int_bin(l: u64, r: u64, op: IntBinaryOp) -> Function {
     t.ret_val(v)
 }
 
-pub(crate) fn int_un(v: u64, op: IntUnaryOp) -> Function {
-    let mut t = Tb::empty();
-    let v = t.u64(v);
-    let v = t.int_un(v, op);
-    t.ret_val(v)
-}
-
 pub(crate) fn int_cmp_5_3(op: IntCmpOp) -> Function {
     let mut t = Tb::empty();
     let l = t.u64(5);
     let r = t.u64(3);
     let c = t.int_cmp(l, r, op);
     let cast = t.as_int(c, ValueType::I64);
-    t.ret_val(cast)
-}
-
-/// `return(5 <= 3)` in the lowered `not(Less(3, 5))` form the pcode lift
-/// produces for `IntLessEqual`. Args swapped, result negated.
-pub(crate) fn int_le_lowered_5_3() -> Function {
-    let mut t = Tb::empty();
-    let l = t.u64(5);
-    let r = t.u64(3);
-    let lt = t.int_cmp(r, l, IntCmpOp::Less);
-    let neg = t.bool_not(lt);
-    let cast = t.as_int(neg, ValueType::I64);
-    t.ret_val(cast)
-}
-
-/// Signed analogue of [`int_le_lowered_5_3`], over `Sless`.
-pub(crate) fn int_sle_lowered_5_3() -> Function {
-    let mut t = Tb::empty();
-    let l = t.u64(5);
-    let r = t.u64(3);
-    let lt = t.int_cmp(r, l, IntCmpOp::Sless);
-    let neg = t.bool_not(lt);
-    let cast = t.as_int(neg, ValueType::I64);
     t.ret_val(cast)
 }
 
