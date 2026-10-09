@@ -175,12 +175,22 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// what the instruction before it committed: when `addr` holds anything
     /// but defaults, they are written and that instruction re-lifted, which
     /// commits its own values again.
+    ///
+    /// A region STARTING mid-instruction is the exception: the region before it
+    /// just decoded those bytes, in the context that flows there, and this
+    /// decode only continues its p-code stream. Resetting would splice a
+    /// stream from a different constructor onto the half already in the graph,
+    /// which is how gcc `-march=armv4t`'s `movne lr,pc; bxne r3` loses its call
+    /// (`LRset` is committed at the `bx`).
     fn hold_transients(&mut self, addr: u64) -> Result<()> {
         let defaults = self.builder.transient_defaults;
         if defaults.is_empty() {
             return Ok(());
         }
         let prev = self.last_lift;
+        if prev.is_none() && self.start_addr.insn_index != 0 {
+            return Ok(());
+        }
         // Sealed onto rather than decoded: `build` discards this lift.
         if prev.is_some()
             && self
