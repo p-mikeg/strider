@@ -187,6 +187,7 @@ def _load_elf_with(
     path: StrPath,
     *,
     apply_relocations: bool,
+    relocated_got_is_rom: bool,
     arch: Optional[SleighArch],
     cc: Optional[CallingConvention],
 ) -> "ElfLifter":
@@ -200,7 +201,7 @@ def _load_elf_with(
     if not os.path.exists(path):
         raise FileNotFoundError(path)
     header = _ElfHeader(path)
-    elf = loader(path, apply_relocations)
+    elf = loader(path, apply_relocations, relocated_got_is_rom)
     # Only run the (possibly raising) detector when arch or cc is missing.
     if arch is None or cc is None:
         det_arch, det_cc = _arch_and_cc_for_elf(header, elf.is_arm_be8)
@@ -214,6 +215,7 @@ def load_elf(
     *,
     from_segments: bool = True,
     apply_relocations: bool = True,
+    relocated_got_is_rom: bool = False,
     arch: Optional[SleighArch] = None,
     cc: Optional[CallingConvention] = None,
 ) -> "ElfLifter":
@@ -229,6 +231,14 @@ def load_elf(
     non-executable sections rather than serving their on-disk bytes. A
     writable-and-executable mapping is kept either way.
 
+    `relocated_got_is_rom` (default `False`) additionally serves `.got` and
+    `.data.rel.ro` as READ-ONLY memory, so a load through a GOT slot folds to
+    the address the slot holds. That is an unchecked claim about the runtime:
+    it is wrong wherever a slot is rewritten after the loader has run, and the
+    fold is then wrong too. It is what resolves a PIC jump table whose base
+    comes out of the GOT. `.got.plt` is never served, lazy binding rewriting
+    those slots on the first call through each one.
+
     Raises `FileNotFoundError` when `path` does not exist, and `ValueError`
     when the file is not an ELF, or its architecture or ABI is unsupported.
     Passing both `arch=` and `cc=` skips the detector, and with it the ABI
@@ -236,7 +246,12 @@ def load_elf(
     """
     loader = _ext._load_elf_from_segments if from_segments else _ext._load_elf_from_sections
     return _load_elf_with(
-        loader, path, apply_relocations=apply_relocations, arch=arch, cc=cc
+        loader,
+        path,
+        apply_relocations=apply_relocations,
+        relocated_got_is_rom=relocated_got_is_rom,
+        arch=arch,
+        cc=cc,
     )
 
 
@@ -364,7 +379,13 @@ class ElfLifter(Lifter):
         segments unless `from_segments=False`)."""
         return self._elf.reader()
 
-    def add_elf(self, path: StrPath, *, apply_relocations: bool = True) -> None:
+    def add_elf(
+        self,
+        path: StrPath,
+        *,
+        apply_relocations: bool = True,
+        relocated_got_is_rom: bool = False,
+    ) -> None:
         """Merge another ELF, such as a shared library, into this handle.
         The earlier-loaded ELF wins on name collisions.
 
@@ -373,6 +394,10 @@ class ElfLifter(Lifter):
         also selects what is mapped, so `False` drops writable non-executable
         sections rather than serving their on-disk bytes.
 
+        `relocated_got_is_rom` is `load_elf`'s unchecked claim, made for THIS
+        image only: it does not inherit the handle's, since one shared
+        object's link says nothing about another's.
+
         Raises `StriderError` if the new ELF maps code over an address already
         loaded with different bytes: `add_elf` places shared objects at distinct
         addresses, so two ELFs linked at the same base cannot be merged."""
@@ -380,7 +405,7 @@ class ElfLifter(Lifter):
         # handle's thread, and the merge is already committed by then, leaving
         # `symbol` and `read` seeing the new ELF while the decoder does not.
         self._check_usable()
-        self._elf.add_elf(os.fspath(path), apply_relocations)
+        self._elf.add_elf(os.fspath(path), apply_relocations, relocated_got_is_rom)
         self._rebuild(self._arch, self._elf.reader(), rom=self._elf.ro_reader())
 
     def add_symbol_file(self, path: StrPath) -> None:
