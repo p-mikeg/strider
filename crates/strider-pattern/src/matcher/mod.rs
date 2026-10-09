@@ -542,7 +542,7 @@ impl<'f> Matcher<'f> {
         for (j, next) in per_pat.iter().enumerate().skip(1) {
             let mut new_acc: Vec<Vec<usize>> = Vec::new();
             let graph = self.function().graph();
-            // Captures that EVERY match on both sides binds. Agreement implies
+            // Captures both sides always bind. Agreement implies
             // the two bindings resolve to the same node (equal values share a
             // producer, and the other arm compares nodes outright), so grouping
             // by those nodes is a necessary condition: only rows in the same
@@ -581,10 +581,7 @@ impl<'f> Matcher<'f> {
                         per_pat: &per_pat,
                         idx: prefix,
                     };
-                    let Some(k) = row
-                        .iter()
-                        .find_map(|m| join_key(&m.bindings, &key_caps, graph))
-                    else {
+                    let Some(k) = row_join_key(row, &key_caps, graph) else {
                         continue;
                     };
                     for &i in buckets.get(&k).into_iter().flatten() {
@@ -1226,12 +1223,15 @@ fn dedup_on_shared_captures(acc: &mut Vec<JoinedMatch>, graph: &Graph) {
     });
 }
 
-/// Captures that every accumulated prefix row AND every match of `next` binds.
+/// Captures every match of `next` binds, and that some FIXED prefix position
+/// binds in every accumulated row.
 ///
-/// Restricted to captures bound on BOTH sides so the key is always computable:
+/// Both sides must always bind a key capture, or the key is not computable:
 /// `row_agrees` treats a capture one side leaves unbound as agreeing with
-/// anything, which no single hash bucket can express. Any shared capture that
-/// fails this test is not indexed on; the exact check still catches it.
+/// anything, which no single hash bucket can express. The prefix test is per
+/// position, not over the positions flattened together, which is what a chain
+/// join needs: in `P0(a) - P1(a, b) - P2(b)` no capture is bound at every
+/// position, yet `b` is bound at position 1 of every row.
 fn join_key_captures(
     per_pat: &[Vec<Match>],
     acc: &[Vec<usize>],
@@ -1252,11 +1252,14 @@ fn join_key_captures(
     if next_caps.is_empty() {
         return Vec::new();
     }
-    let mut caps = bound_by_all(Box::new(
-        acc.iter()
-            .flat_map(|idx| (0..j).map(move |i| &per_pat[i][idx[i]].bindings)),
-    ));
-    caps.retain(|c| next_caps.contains(c));
+    let mut caps: Vec<crate::Capture> = Vec::new();
+    for i in 0..j {
+        let mut at_i = bound_by_all(Box::new(
+            acc.iter().map(move |idx| &per_pat[i][idx[i]].bindings),
+        ));
+        at_i.retain(|c| next_caps.contains(c));
+        caps.append(&mut at_i);
+    }
     caps.sort_unstable_by_key(|c| c.id());
     caps.dedup_by_key(|c| c.id());
     caps
@@ -1267,6 +1270,21 @@ fn join_key(b: &Bindings, key_caps: &[crate::Capture], graph: &Graph) -> Option<
     key_caps
         .iter()
         .map(|c| b.get_node(*c, graph).map(|n| n.as_u32()))
+        .collect()
+}
+
+/// A prefix row's key, each capture read from whichever position binds it.
+///
+/// Any binder is a valid representative: earlier levels' `row_agrees` already
+/// forced every position of the row that binds a capture onto the same node.
+fn row_join_key(row: Row<'_>, key_caps: &[crate::Capture], graph: &Graph) -> Option<Vec<u32>> {
+    key_caps
+        .iter()
+        .map(|c| {
+            row.iter()
+                .find_map(|m| m.bindings.get_node(*c, graph))
+                .map(|n| n.as_u32())
+        })
         .collect()
 }
 
@@ -1292,6 +1310,60 @@ fn row_agrees(prefix: Row<'_>, m: &Match, graph: &Graph) -> bool {
         }
     }
     true
+}
+
+// `Binding` and `bind_capture` are `pub(crate)`, out of reach of an
+// integration test.
+#[cfg(test)]
+mod join_key_tests {
+    use super::{Binding, Bindings, Match, join_key_captures};
+    use crate::Capture;
+    use strider_ir::node::NodeId;
+
+    /// One match binding each listed capture to a node, root irrelevant.
+    fn hit(bound: &[(Capture, u32)]) -> Match {
+        let mut b = Bindings::default();
+        for &(c, node) in bound {
+            assert!(b.bind_capture(c, Binding::Node(NodeId::from_u32(node))));
+        }
+        Match::from_root(NodeId::from_u32(0), b)
+    }
+
+    /// A chain join `P0(a) - P1(a, b) - P2(b)`: level 2's key is `b`, which the
+    /// prefix binds at position 1 only. Keyed on the positions flattened
+    /// together it would be empty and the level a cartesian product.
+    #[test]
+    fn a_chain_joins_key_comes_from_the_one_prefix_position_that_binds_it() {
+        let (a, b) = (Capture::new(), Capture::new());
+        let per_pat = vec![
+            vec![hit(&[(a, 1)]), hit(&[(a, 2)])],
+            vec![hit(&[(a, 1), (b, 10)]), hit(&[(a, 2), (b, 20)])],
+            vec![hit(&[(b, 10)]), hit(&[(b, 20)])],
+        ];
+        let level1 = vec![vec![0], vec![1]];
+        assert_eq!(
+            join_key_captures(&per_pat, &level1, &per_pat[1], 1),
+            vec![a]
+        );
+        let level2 = vec![vec![0, 0], vec![1, 1]];
+        assert_eq!(
+            join_key_captures(&per_pat, &level2, &per_pat[2], 2),
+            vec![b]
+        );
+    }
+
+    /// A capture only SOME matches of a position bind is not indexable: the
+    /// unbound ones agree with anything, which no bucket expresses.
+    #[test]
+    fn a_capture_a_position_does_not_always_bind_is_not_a_key() {
+        let (a, b) = (Capture::new(), Capture::new());
+        let per_pat = vec![
+            vec![hit(&[(a, 1), (b, 10)]), hit(&[(a, 2)])],
+            vec![hit(&[(b, 10)]), hit(&[(b, 20)])],
+        ];
+        let acc = vec![vec![0], vec![1]];
+        assert!(join_key_captures(&per_pat, &acc, &per_pat[1], 1).is_empty());
+    }
 }
 
 #[cfg(test)]
