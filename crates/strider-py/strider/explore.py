@@ -40,10 +40,23 @@ if TYPE_CHECKING:
 
 
 def _pattern_names() -> list[str]:
-    """The `strider.pattern` builder names, for the search-bar autocomplete."""
+    """What a query may name: the `strider.pattern` builders, plus `Capture`
+    for a named binding. The rest of the module is type aliases, protocols and
+    result classes, and `field` reaches a pattern only through a method, which
+    `_eval_pattern_node` forbids."""
     from strider import pattern as _p
 
-    return sorted(k for k in dir(_p) if not k.startswith("_"))
+    return sorted(
+        k
+        for k in dir(_p)
+        if k == "Capture"
+        or (
+            not k.startswith("_")
+            and k.islower()
+            and k != "field"
+            and callable(getattr(_p, k))
+        )
+    )
 
 
 _CONST_TYPES = (bool, int, float, str, type(None))
@@ -96,9 +109,7 @@ def _run_pattern(function: Function, expr: str) -> list[int]:
     `load(addr=int_add(initial_var(), int_const()))`."""
     from strider import pattern as _p
 
-    names: dict[str, Any] = {
-        k: getattr(_p, k) for k in dir(_p) if not k.startswith("_")
-    }
+    names: dict[str, Any] = {k: getattr(_p, k) for k in _pattern_names()}
     pat = _eval_pattern_node(ast.parse(expr, mode="eval").body, names)
     return sorted({m.root for m in function.find_all(pat)})
 

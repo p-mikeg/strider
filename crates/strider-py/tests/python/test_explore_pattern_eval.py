@@ -98,3 +98,44 @@ def test_visualize_runs_on_the_thread_that_created_the_target():
     assert not t.is_alive()
     assert out.get("err") == "StriderError", out
     assert strider.explore.shutdown() == []
+
+
+def test_only_names_a_query_can_use_are_offered():
+    """Autocomplete and the evaluator share one name table, so every name it
+    offers has to evaluate. A type alias, a protocol or the `constraints`
+    submodule does not."""
+    names = strider.explore._pattern_names()
+    assert "int_add" in names and "load" in names
+    # `Capture` names a binding: `var(Capture("b"))` is a query.
+    assert "Capture" in names
+    for junk in ("PatLike", "ValueLike", "ValueTy", "IntCmpOpName", "NodePat",
+                 "Match", "BoundCapture", "FieldPat", "field", "constraints"):
+        assert junk not in names, junk
+
+    fn, _cfg = _function_and_cfg()
+    with pytest.raises(ValueError, match="unknown pattern builder"):
+        strider.explore._run_pattern(fn, "PatLike")
+    for name in names:
+        if name == "Capture":
+            continue
+        # A bare builder call either evaluates or names the argument it wants,
+        # rather than failing as a pyo3 extraction wall of text.
+        try:
+            strider.explore._run_pattern(fn, f"{name}()")
+        except TypeError as exc:
+            assert "missing" in str(exc), f"{name}: {exc}"
+
+
+def test_the_search_bar_placeholder_is_a_query_that_runs():
+    """The first hint a user sees. A builder renamed out from under it is only
+    visible when the example is evaluated."""
+    import re
+
+    m = re.search(
+        r'id="q"[^>]*placeholder="strider pattern, e\.g\.\s*(.*?)"',
+        strider.explore._FRONTEND,
+        re.S,
+    )
+    assert m is not None, "the search bar has no placeholder to check"
+    fn, _cfg = _function_and_cfg()
+    assert strider.explore._run_pattern(fn, m.group(1)) == []
