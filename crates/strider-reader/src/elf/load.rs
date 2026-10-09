@@ -3,7 +3,7 @@ use anyhow::Context as _;
 use crate::{FileBytes, MemRegion, Result};
 
 use super::relocations::apply_elf_relocations_with;
-use super::sections::{ElfSectionLayout, LoadFilter, OpdTable, RegionSource};
+use super::sections::{ElfSectionLayout, LoadFilter, RegionSource};
 
 /// Maps the file: it must not change on disk while the returned `OwnedElf`
 /// lives. [`OwnedElf::check_unchanged`] catches a file rebuilt between two
@@ -134,22 +134,6 @@ impl OwnedElf {
             object::read::Object::flags(&file),
             object::FileFlags::Elf { e_flags, .. } if e_flags & EF_ARM_BE8 != 0
         ))
-    }
-
-    /// The code entry at `addr`, following a ppc64 ELFv1 `.opd` descriptor
-    /// when `addr` is one; `addr` itself otherwise. See [`OpdTable`].
-    ///
-    /// One parse per call: a caller resolving many symbols builds an
-    /// [`OpdTable`] over its own [`checked_file`](Self::checked_file) instead.
-    ///
-    /// # Errors
-    ///
-    /// Anything [`checked_file`](Self::checked_file) reports.
-    pub fn function_entry(&self, addr: u64) -> Result<u64> {
-        let obj = self.checked_file()?;
-        Ok(OpdTable::new(&obj)
-            .and_then(|opd| opd.entry_at(addr))
-            .unwrap_or(addr))
     }
 
     /// The mappings `source` and `filter` select, as windows into this ELF's
