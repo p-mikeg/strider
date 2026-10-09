@@ -147,12 +147,12 @@ fn indirect_branch_resolved_mips32be() {
     assert_indirect_goto_resolves_to_both_labels(Arch::Mips32be);
 }
 #[test]
-#[ignore = "mips64-le PIC: GOT-indirect dispatch unresolved; table values lift as Add(Load[gp+off], const), not raw IntConst, and the resolver has no GOT-indirect arm yet"]
+#[ignore = "mips64-le PIC: $gp derives from the entry value of t9, so the GOT load of the table base never folds and the arms lift as Add(Load[gp+off], const). Resolving it needs t9 pinned to the function entry, a psABI fact for abicalls, AND GOT entries served as immutable, which .got being writable excludes"]
 fn indirect_branch_resolved_mips64le() {
     assert_indirect_goto_resolves_to_both_labels(Arch::Mips64le);
 }
 #[test]
-#[ignore = "mips64-be PIC: GOT-indirect dispatch unresolved; table values lift as Add(Load[gp+off], const), not raw IntConst, and the resolver has no GOT-indirect arm yet"]
+#[ignore = "mips64-be PIC: $gp derives from the entry value of t9, so the GOT load of the table base never folds and the arms lift as Add(Load[gp+off], const). Resolving it needs t9 pinned to the function entry, a psABI fact for abicalls, AND GOT entries served as immutable, which .got being writable excludes"]
 fn indirect_branch_resolved_mips64be() {
     assert_indirect_goto_resolves_to_both_labels(Arch::Mips64be);
 }
