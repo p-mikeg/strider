@@ -21,6 +21,14 @@ fn le16(words: &[u16]) -> Vec<u8> {
 }
 
 fn analyze(arch: Arch, bytes: Vec<u8>) -> strider_orchestrator::AnalyzeResult {
+    analyze_with(arch, bytes, &Default::default())
+}
+
+fn analyze_with(
+    arch: Arch,
+    bytes: Vec<u8>,
+    opt_opts: &strider_opt::OptOptions,
+) -> strider_orchestrator::AnalyzeResult {
     let size = bytes.len() as u64;
     // The entry's low bit selects Thumb.
     let entry = if matches!(arch, Arch::ArmThumb) {
@@ -37,8 +45,38 @@ fn analyze(arch: Arch, bytes: Vec<u8>) -> strider_orchestrator::AnalyzeResult {
         ..Default::default()
     };
     strider
-        .analyze(entry, &cc, &lift_opts, &Default::default(), None)
+        .analyze(entry, &cc, &lift_opts, opt_opts, None)
         .expect("analyze")
+}
+
+/// The sound floor: every claim about the program cleared.
+fn no_assumptions() -> strider_opt::OptOptions {
+    strider_opt::OptOptions {
+        assumptions: strider_opt::AssumptionOptions::none(),
+        ..Default::default()
+    }
+}
+
+/// The return at `BASE + ret_offset` is reported under
+/// `AssumptionOptions::none()`, and passes for lack of that floor under the
+/// defaults.
+fn assert_reported_only_without_assumptions(
+    arch: Arch,
+    bytes: Vec<u8>,
+    ret_offset: u64,
+    what: &str,
+) {
+    let floor = analyze_with(arch, bytes.clone(), &no_assumptions());
+    assert_eq!(
+        unresolved(&floor),
+        vec![BASE + ret_offset],
+        "{what}: the return rests on a cleared claim"
+    );
+    assert!(!floor.is_complete(), "{what}");
+    assert!(
+        analyze(arch, bytes).is_complete(),
+        "{what}: the default claim is what lets it pass"
+    );
 }
 
 fn unresolved(result: &strider_orchestrator::AnalyzeResult) -> Vec<u64> {
@@ -443,6 +481,89 @@ fn x86_64_a_realigned_frame_whose_saved_stack_pointer_is_overwritten_is_reported
     let bytes = x86_64_drap_frame_with(&[0x48, 0x89, 0x75, 0xf8]);
     let ret = bytes.len() as u64 - 1;
     assert_reported(Arch::X64, bytes, ret, "the saved %r10 slot overwritten");
+}
+
+// A DRAP frame reloading its realignment pointer after a call, which is what
+// keeps the reload from folding back to the `lea`: lea 0x8(%rsp),%r10 ;
+// and $-16,%rsp ; push -0x8(%r10) ; push %rbp ; mov %rsp,%rbp ; push %r10 ;
+// sub $8,%rsp ; call ; mov -0x8(%rbp),%r10 ; [write] ; mov -0x8(%rbp),%r10 ;
+// leave ; lea -0x8(%r10),%rsp ; ret
+fn x86_64_drap_reload_after_a_call(write: &[u8]) -> Vec<u8> {
+    let mut bytes = vec![
+        0x4c, 0x8d, 0x54, 0x24, 0x08, 0x48, 0x83, 0xe4, 0xf0, 0x41, 0xff, 0x72, 0xf8, 0x55, 0x48,
+        0x89, 0xe5, 0x41, 0x52, 0x48, 0x83, 0xec, 0x08, 0xe8, 0xfb, 0x0f, 0x00, 0x00, 0x4c, 0x8b,
+        0x55, 0xf8,
+    ];
+    bytes.extend_from_slice(write);
+    bytes.extend_from_slice(&[0x4c, 0x8b, 0x55, 0xf8, 0xc9, 0x49, 0x8d, 0x62, 0xf8, 0xc3]);
+    bytes
+}
+
+#[test]
+fn x86_64_a_write_through_the_reloaded_realignment_pointer_is_reported() {
+    // mov %rdi,-0x8(%r10): the reloaded pointer is the entry SP + 8, so the
+    // write lands on the return slot. The store's address is located the way
+    // the return's own load through that pointer is, so no claim is involved.
+    let bytes = x86_64_drap_reload_after_a_call(&[0x49, 0x89, 0x7a, 0xf8]);
+    let ret = bytes.len() as u64 - 1;
+    assert_reported(
+        Arch::X64,
+        bytes,
+        ret,
+        "a write through the reloaded %r10 pointer",
+    );
+}
+
+#[test]
+fn x86_64_a_realignment_pointer_reloaded_after_a_call_stays_complete() {
+    assert_complete(
+        Arch::X64,
+        x86_64_drap_reload_after_a_call(&[]),
+        "the same frame with nothing written through the reloaded %r10",
+    );
+}
+
+#[test]
+fn x86_64_a_write_through_a_pointer_loaded_from_a_global_rests_on_a_claim() {
+    // push %rbx ; mov 0x20000,%rax ; mov %rdi,0x8(%rax) ; pop %rbx ; ret
+    assert_reported_only_without_assumptions(
+        Arch::X64,
+        vec![
+            0x53, 0x48, 0x8b, 0x04, 0x25, 0x00, 0x00, 0x02, 0x00, 0x48, 0x89, 0x78, 0x08, 0x5b,
+            0xc3,
+        ],
+        14,
+        "a store through a pointer held in a global",
+    );
+}
+
+#[test]
+fn x86_64_an_indexed_stack_write_rests_on_a_claim() {
+    // sub $0x18,%rsp ; mov %rsi,(%rsp,%rdi,8) ; add $0x18,%rsp ; ret: %rdi = 3
+    // puts the write on the return slot.
+    assert_reported_only_without_assumptions(
+        Arch::X64,
+        vec![
+            0x48, 0x83, 0xec, 0x18, 0x48, 0x89, 0x34, 0xfc, 0x48, 0x83, 0xc4, 0x18, 0xc3,
+        ],
+        12,
+        "a stack write at an index no offset names",
+    );
+}
+
+#[test]
+fn x86_64_a_return_slot_address_passed_to_a_callee_rests_on_a_claim() {
+    // push %rbx ; lea 0x8(%rsp),%rdi ; call ; pop %rbx ; ret: the callee is
+    // handed the return slot's address. Without the claim every callee is taken
+    // to reach the slot, so the floor reports this whether it escapes or not.
+    assert_reported_only_without_assumptions(
+        Arch::X64,
+        vec![
+            0x53, 0x48, 0x8d, 0x7c, 0x24, 0x08, 0xe8, 0xfb, 0x0f, 0x00, 0x00, 0x5b, 0xc3,
+        ],
+        12,
+        "the return slot's address handed to a callee",
+    );
 }
 
 #[test]

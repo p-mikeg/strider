@@ -21,11 +21,13 @@ use crate::mem_analysis::{
 /// saved in a realigned frame back to the store that saved it. `false` when
 /// that cannot be shown, and the site is then an indirect branch.
 ///
-/// The one claim this rests on beyond the IR: only a store this function makes
-/// at a known offset from its entry SP, or from an alignment of it, can
-/// overwrite a value it saved to the stack. A callee, a user-op, or a store
-/// through any other pointer is taken to leave it alone; code that does
-/// otherwise smashes its own stack.
+/// A store's address is located the way a load's is, so a write through a
+/// frame pointer reloaded off the stack is checked against the slot. What that
+/// leaves, a RAM store at no locatable stack address and any callee or
+/// user-op, rests on one claim,
+/// [`AssumptionOptions::return_slots_survive_untracked_writes`](crate::AssumptionOptions):
+/// code that breaks it smashes its own stack, and `AssumptionOptions::none`
+/// clears it.
 pub struct ReturnTargets<'f> {
     function: &'f Function,
     assumptions: &'f crate::AssumptionOptions,
@@ -233,27 +235,32 @@ impl<'f> ReturnTargets<'f> {
                         out.extend(function.phi_data_inputs(node).map(below));
                         true
                     }
-                    NodeKind::Store(_) => match self.store_effect(node, at, size) {
-                        StoreEffect::Writes(data) => {
-                            out.push((
-                                None,
-                                match holds {
-                                    Held::ReturnAddress => Claim::Target(data),
-                                    Held::EntrySp(offset) => Claim::EntrySp {
-                                        value: data,
-                                        offset,
+                    NodeKind::Store(_) => {
+                        match self.store_effect(path, node, at, size, Some(&mut *out)) {
+                            StoreEffect::Writes(data) => {
+                                out.push((
+                                    None,
+                                    match holds {
+                                        Held::ReturnAddress => Claim::Target(data),
+                                        Held::EntrySp(offset) => Claim::EntrySp {
+                                            value: data,
+                                            offset,
+                                        },
                                     },
-                                },
-                            ));
-                            true
+                                ));
+                                true
+                            }
+                            StoreEffect::Clobbers => false,
+                            StoreEffect::Passes => {
+                                out.extend(function.memory_input_of(node).map(below));
+                                true
+                            }
                         }
-                        StoreEffect::Clobbers => false,
-                        StoreEffect::Passes => {
-                            out.extend(function.memory_input_of(node).map(below));
-                            true
-                        }
-                    },
+                    }
                     NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
+                        if !self.assumptions.return_slots_survive_untracked_writes {
+                            return false;
+                        }
                         out.extend(function.memory_input_of(node).map(below));
                         true
                     }
@@ -489,7 +496,7 @@ impl<'f> ReturnTargets<'f> {
             seen.push(cur);
             let node = function.producer(cur);
             match *function.node_kind(node) {
-                NodeKind::Store(_) => match self.store_effect(node, at, size) {
+                NodeKind::Store(_) => match self.store_effect(None, node, at, size, None) {
                     StoreEffect::Writes(data) => {
                         found = Some(data);
                         break;
@@ -514,19 +521,71 @@ impl<'f> ReturnTargets<'f> {
     }
 
     /// What `store` does to the `size` bytes at `at`.
-    fn store_effect(&self, store: NodeId, at: StackAddr, size: i128) -> StoreEffect {
+    ///
+    /// With `prove`, an address the spine does not name is located through
+    /// [`Self::guess`] and the claim that the guess holds pushed onto it, and
+    /// one that is not located at all answers `Clobbers` unless
+    /// `return_slots_survive_untracked_writes` says otherwise. Without it this
+    /// is itself part of a guess (`stored_value`), so it reads the spine alone
+    /// and an address the spine does not name passes: whatever offset the guess
+    /// reaches is proven by a claim of its own.
+    fn store_effect(
+        &mut self,
+        path: Path,
+        store: NodeId,
+        at: StackAddr,
+        size: i128,
+        prove: Option<&mut Vec<(Path, Claim)>>,
+    ) -> StoreEffect {
         let function = self.function;
         let NodeKind::Store(space) = *function.node_kind(store) else {
             unreachable!("store_effect on a non-Store");
         };
-        let written = (space == rsleigh::VnSpace::RAM)
-            .then(|| self.spine(function.store_addr(store)))
-            .flatten();
-        let Some(written) = written else {
+        if space != rsleigh::VnSpace::RAM {
             return StoreEffect::Passes;
-        };
+        }
+        let addr = function.store_addr(store);
         let data = function.store_data(store);
         let len = store_value_byte_size(function, data);
+        let optimistic = self.assumptions.return_slots_survive_untracked_writes;
+        let (written, guessed) = match (self.spine(addr), prove.is_some()) {
+            (Some(written), _) => (written, false),
+            (None, false) => return StoreEffect::Passes,
+            (None, true) => match self.guess(path, addr) {
+                Some(offset) => (StackAddr { base: None, offset }, true),
+                None if optimistic => return StoreEffect::Passes,
+                None => return StoreEffect::Clobbers,
+            },
+        };
+        let effect = self.overlap(written, len, at, size, data);
+        // The guess is what a claim turns into a proof, so one is pushed
+        // whenever the answer rests on it: always under the sound floor, and
+        // otherwise only where it reaches the probed bytes, since passing is
+        // what the claim above already grants.
+        if let (true, Some(out)) = (guessed, prove)
+            && (!optimistic || !matches!(effect, StoreEffect::Passes))
+        {
+            out.push((
+                path,
+                Claim::EntrySp {
+                    value: addr,
+                    offset: written.offset,
+                },
+            ));
+        }
+        effect
+    }
+
+    /// What a store of `len` bytes at `written` does to the `size` bytes at
+    /// `at`, carrying `data` out of an exact hit.
+    fn overlap(
+        &self,
+        written: StackAddr,
+        len: i128,
+        at: StackAddr,
+        size: i128,
+        data: ValueId,
+    ) -> StoreEffect {
         if written.base == at.base {
             return if written.offset == at.offset && len == size {
                 StoreEffect::Writes(data)
