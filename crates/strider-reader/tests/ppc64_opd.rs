@@ -133,3 +133,71 @@ fn a_descriptors_toc_word_is_followed_like_an_entry() {
         "the environment word reads zero, which is not an entry"
     );
 }
+
+/// An ET_REL's `.opd` holds zeros; each descriptor's entry exists only as the
+/// `R_PPC64_ADDR64` on its first word, so the table is built out of those.
+/// Without it every function symbol of a ppc64 BE object names its descriptor
+/// and decodes descriptor bytes.
+#[test]
+fn an_et_rel_descriptor_resolves_through_its_relocation() {
+    use object::write::{Object, Relocation, Symbol, SymbolSection};
+    use object::{
+        Architecture, BinaryFormat, Endianness, RelocationFlags, SectionKind, SymbolFlags,
+        SymbolKind, SymbolScope,
+    };
+
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::PowerPc64, Endianness::Big);
+    let code = obj.add_section(Vec::new(), b".text.func".to_vec(), SectionKind::Text);
+    obj.append_section_data(code, &0x4e80_0020u32.to_be_bytes(), 4);
+    let opd_sec = obj.add_section(Vec::new(), b".opd".to_vec(), SectionKind::Data);
+    obj.append_section_data(opd_sec, &[0u8; 24], 8);
+    let mut sym = |name: &str, section, value| {
+        obj.add_symbol(Symbol {
+            name: name.as_bytes().to_vec(),
+            value,
+            size: 0,
+            kind: SymbolKind::Text,
+            scope: SymbolScope::Linkage,
+            weak: false,
+            section: SymbolSection::Section(section),
+            flags: SymbolFlags::None,
+        })
+    };
+    let entry = sym(".L.func", code, 0);
+    sym("func", opd_sec, 0);
+    obj.add_relocation(
+        opd_sec,
+        Relocation {
+            offset: 0,
+            symbol: entry,
+            addend: 0,
+            flags: RelocationFlags::Elf {
+                r_type: object::elf::R_PPC64_ADDR64,
+            },
+        },
+    )
+    .expect("relocation");
+    let bytes = obj.write().expect("write");
+
+    let file = object::File::parse(&bytes[..]).expect("parse");
+    let layout = strider_reader::elf::ElfSectionLayout::new(&file);
+    let func = file.symbol_by_name("func").expect("func");
+    let descriptor = layout.symbol_address(&func);
+    let code_base = common::section_base(&bytes, ".text.func");
+    assert_eq!(
+        descriptor,
+        common::section_base(&bytes, ".opd"),
+        "the symbol names the descriptor, not the code"
+    );
+    assert_ne!(descriptor, code_base);
+
+    let opd = OpdTable::new(&file).expect("an ELFv1 object with an .opd");
+    assert_eq!(opd.entry_at(descriptor), Some(code_base));
+    assert_eq!(opd.entry_at(descriptor + 8), None, "the TOC word");
+
+    let elf = strider_reader::OwnedElf::parse(bytes).expect("parse");
+    assert_eq!(
+        elf.function_entry(descriptor).expect("descriptor"),
+        code_base
+    );
+}
