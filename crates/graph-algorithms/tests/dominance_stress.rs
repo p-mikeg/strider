@@ -5,7 +5,8 @@
 use std::collections::{HashMap, HashSet};
 
 use graph_algorithms::dominance::{
-    DomTree, dominance_frontiers, dominator_tree_preorder, dominators, phi_placement,
+    DomIntervals, DomTree, dominance_frontiers, dominator_tree_preorder, dominators,
+    immediate_dominators, phi_placement,
 };
 
 /// Predecessors and idoms are both explicit; the idom map is oracle-computed.
@@ -326,6 +327,102 @@ fn dominators_match_the_fixpoint_oracle_over_random_cfgs() {
                 idom.get(&v).copied(),
                 "iter {iter}: idom({v}) (n={n})\npreds={preds:?}"
             );
+        }
+    }
+}
+
+/// Depth-first preorder from 0: `(num, vertex, parent)`, as a caller that owns
+/// its own numbering hands it to [`immediate_dominators`].
+fn preorder_dfs(n: u32, succs: &HashMap<u32, Vec<u32>>) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+    const NONE: u32 = u32::MAX;
+    let mut num = vec![NONE; n as usize];
+    let mut vertex = vec![0u32];
+    let mut parent = vec![NONE];
+    num[0] = 0;
+    let mut stack: Vec<(u32, usize)> = vec![(0, 0)];
+    while let Some(top) = stack.last_mut() {
+        let (v, next) = *top;
+        let Some(&w) = succs.get(&v).and_then(|s| s.get(next)) else {
+            stack.pop();
+            continue;
+        };
+        top.1 += 1;
+        if num[w as usize] == NONE {
+            num[w as usize] = u32::try_from(vertex.len()).unwrap();
+            parent.push(num[v as usize]);
+            vertex.push(w);
+            stack.push((w, 0));
+        }
+    }
+    (num, vertex, parent)
+}
+
+fn succs_of(n: u32, preds: &HashMap<u32, Vec<u32>>) -> HashMap<u32, Vec<u32>> {
+    let mut succs: HashMap<u32, Vec<u32>> = (0..n).map(|x| (x, Vec::new())).collect();
+    for (&v, ps) in preds {
+        for &p in ps {
+            succs.get_mut(&p).unwrap().push(v);
+        }
+    }
+    succs
+}
+
+/// The preorder-numbered entry point, driven from a caller-owned DFS, answers
+/// what the node-keyed [`dominators`] answers.
+#[test]
+fn immediate_dominators_over_a_caller_owned_preorder_matches_the_oracle() {
+    let mut rng = Rng(0x1dea_5eed_f00d_b00b);
+    for iter in 0..1_000u32 {
+        let n = 2 + rng.below(14);
+        let extra = rng.below(3 * n);
+        let preds = random_cfg(&mut rng, n, extra);
+        let (_, idom) = oracle_dom_and_idom(n, &preds);
+        let succs = succs_of(n, &preds);
+        let (num, vertex, parent) = preorder_dfs(n, &succs);
+        assert_eq!(vertex.len(), n as usize, "iter {iter}: all reachable");
+        let got = immediate_dominators(&parent, |w| {
+            preds[&vertex[w as usize]]
+                .iter()
+                .map(|&p| num[p as usize])
+                .collect::<Vec<u32>>()
+        });
+        assert_eq!(got[0], 0, "iter {iter}: the root dominates itself");
+        for w in 1..n as usize {
+            assert_eq!(
+                vertex[got[w] as usize], idom[&vertex[w]],
+                "iter {iter}: idom({}) (n={n})\npreds={preds:?}",
+                vertex[w]
+            );
+        }
+    }
+}
+
+/// The interval numbering answers exactly the reflexive ancestor relation of
+/// the idom array it was built from.
+#[test]
+fn dom_intervals_answer_the_idom_chain() {
+    let mut rng = Rng(0xfeed_bead_0bad_c0de);
+    for iter in 0..2_000u32 {
+        let n = 1 + rng.below(20) as usize;
+        // `idom[v] < v` for `v > 0`: a valid preorder-numbered tree.
+        let idom: Vec<u32> = (0..n)
+            .map(|v| if v == 0 { 0 } else { rng.below(v as u32) })
+            .collect();
+        let intervals = DomIntervals::new(&idom);
+        for a in 0..n as u32 {
+            for b in 0..n as u32 {
+                let mut at = b;
+                let mut climbed = at == a;
+                while !climbed && at != 0 {
+                    at = idom[at as usize];
+                    climbed = at == a;
+                }
+                assert_eq!(
+                    intervals.dominates(a, b),
+                    climbed,
+                    "iter {iter}: dominates({a}, {b}) over {idom:?}"
+                );
+            }
         }
     }
 }

@@ -225,7 +225,27 @@ where
         stack.push((fresh, successors(succ).into_iter().collect(), 0));
     }
 
-    let n = vertices.len();
+    let idom = immediate_dominators(&parent, |w| std::mem::take(&mut preds[w as usize]));
+    Dominators {
+        vertices,
+        number,
+        idom,
+    }
+}
+
+/// Lengauer-Tarjan over a depth-first preorder numbering: `parent[w]` is `w`'s
+/// spanning-tree parent and `preds(w)` yields the preorder numbers of `w`'s
+/// predecessors, asked for each `w` exactly once. The result is indexed by
+/// preorder number, the root at 0 and its own immediate dominator.
+///
+/// Every vertex must be numbered, i.e. reachable from the root, and every
+/// number `preds` yields must be in range.
+#[must_use]
+pub fn immediate_dominators<I>(parent: &[u32], mut preds: impl FnMut(u32) -> I) -> Vec<u32>
+where
+    I: IntoIterator<Item = u32>,
+{
+    let n = parent.len();
     let mut semi: Vec<u32> = (0..n as u32).collect();
     let mut label: Vec<u32> = (0..n as u32).collect();
     let mut ancestor = vec![UNLINKED; n];
@@ -234,7 +254,7 @@ where
     let mut path: Vec<u32> = Vec::new();
 
     for w in (1..n).rev() {
-        for &v in &preds[w] {
+        for v in preds(w as u32) {
             let u = eval(v, &mut ancestor, &mut label, &semi, &mut path);
             semi[w] = semi[w].min(semi[u as usize]);
         }
@@ -255,10 +275,53 @@ where
             idom[w] = idom[idom[w] as usize];
         }
     }
-    Dominators {
-        vertices,
-        number,
-        idom,
+    idom
+}
+
+/// Enter/exit interval numbering of the dominator tree an
+/// [`immediate_dominators`] result describes, so [`DomIntervals::dominates`] is
+/// O(1).
+pub struct DomIntervals {
+    enter: Vec<u32>,
+    exit: Vec<u32>,
+}
+
+impl DomIntervals {
+    /// `idom` must be non-empty, with the root at index 0.
+    #[must_use]
+    pub fn new(idom: &[u32]) -> Self {
+        let n = idom.len();
+        let mut children: Vec<Vec<u32>> = vec![Vec::new(); n];
+        for (v, &d) in idom.iter().enumerate().skip(1) {
+            children[d as usize].push(v as u32);
+        }
+        let mut enter = vec![0u32; n];
+        let mut exit = vec![0u32; n];
+        let mut clock = 0u32;
+        let mut stack: Vec<(u32, usize)> = vec![(0, 0)];
+        enter[0] = clock;
+        clock += 1;
+        while let Some(top) = stack.last_mut() {
+            let (v, next) = *top;
+            if let Some(&c) = children[v as usize].get(next) {
+                top.1 += 1;
+                enter[c as usize] = clock;
+                clock += 1;
+                stack.push((c, 0));
+            } else {
+                exit[v as usize] = clock;
+                clock += 1;
+                stack.pop();
+            }
+        }
+        Self { enter, exit }
+    }
+
+    /// Reflexive: every vertex dominates itself.
+    #[must_use]
+    pub fn dominates(&self, a: u32, b: u32) -> bool {
+        self.enter[a as usize] <= self.enter[b as usize]
+            && self.exit[b as usize] <= self.exit[a as usize]
     }
 }
 

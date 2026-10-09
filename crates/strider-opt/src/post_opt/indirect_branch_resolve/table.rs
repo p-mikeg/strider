@@ -32,7 +32,6 @@
 use super::MAX_TABLE_ENTRIES;
 use crate::ReadOnlyMemory;
 use crate::value_range::Interval;
-use petgraph::graph::{DiGraph, NodeIndex};
 use strider_cfg::{ResolvedTarget, ResolvedTargets};
 use strider_ir::IRViewer;
 use strider_ir::IntBinaryOp;
@@ -165,14 +164,22 @@ fn decompose_index(
     site: NodeId,
     noalias_allocators: &rustc_hash::FxHashSet<u64>,
 ) -> Option<PinnedIndex> {
-    // Node weight `None` marks the virtual ENTRY, `Some(v)` a cone value.
-    let mut g: DiGraph<Option<ValueId>, ()> = DiGraph::new();
-    let entry = g.add_node(None);
-    let mut nidx: rustc_hash::FxHashMap<ValueId, NodeIndex> = rustc_hash::FxHashMap::default();
-    let node_of =
-        |g: &mut DiGraph<Option<ValueId>, ()>,
-         nidx: &mut rustc_hash::FxHashMap<ValueId, NodeIndex>,
-         v: ValueId| { *nidx.entry(v).or_insert_with(|| g.add_node(Some(v))) };
+    // Vertex 0 is the virtual ENTRY; `value[i]` is vertex `i`'s cone value,
+    // `None` for the ENTRY.
+    const ENTRY: u32 = 0;
+    let mut succs: Vec<Vec<u32>> = vec![Vec::new()];
+    let mut value: Vec<Option<ValueId>> = vec![None];
+    let mut nidx: rustc_hash::FxHashMap<ValueId, u32> = rustc_hash::FxHashMap::default();
+    let node_of = |succs: &mut Vec<Vec<u32>>,
+                   value: &mut Vec<Option<ValueId>>,
+                   nidx: &mut rustc_hash::FxHashMap<ValueId, u32>,
+                   v: ValueId| {
+        *nidx.entry(v).or_insert_with(|| {
+            succs.push(Vec::new());
+            value.push(Some(v));
+            u32::try_from(value.len() - 1).expect("cone vertex count fits u32")
+        })
+    };
 
     let mut seen: rustc_hash::FxHashSet<ValueId> = rustc_hash::FxHashSet::default();
     let mut stack = vec![target];
@@ -180,7 +187,7 @@ fn decompose_index(
         if function.int_const_u128(v).is_some() || !seen.insert(v) {
             continue;
         }
-        let vi = node_of(&mut g, &mut nidx, v);
+        let vi = node_of(&mut succs, &mut value, &mut nidx, v);
         // The addressing arithmetic, a foldable load's address, or nothing for
         // an opaque source.
         let inputs: Vec<ValueId> = match function.node_kind(function.producer(v)) {
@@ -208,26 +215,31 @@ fn decompose_index(
                 continue;
             }
             has_var_input = true;
-            let pi = node_of(&mut g, &mut nidx, p);
-            g.add_edge(pi, vi, ());
+            let pi = node_of(&mut succs, &mut value, &mut nidx, p);
+            succs[pi as usize].push(vi);
             stack.push(p);
         }
         if !has_var_input {
-            g.add_edge(entry, vi, ()); // a cone root
+            succs[ENTRY as usize].push(vi); // a cone root
         }
     }
 
     let target_idx = *nidx.get(&target)?;
-    let doms = petgraph::algo::dominators::simple_fast(&g, entry);
+    // Each vertex is asked for its successors once, as it is discovered.
+    let doms =
+        graph_algorithms::dominance::dominators(ENTRY, |v| std::mem::take(&mut succs[v as usize]));
 
-    // `dominators` yields the chain from the target up to the entry, which is
-    // the target-rooted shallow-to-deep above, so the first bounded hit IS the
-    // shallowest.
-    let chain: Vec<ValueId> = doms
-        .dominators(target_idx)?
-        .filter_map(|di| *g.node_weight(di).expect("dominator is a graph node"))
-        .filter(|&v| v != target)
-        .collect();
+    // The idom chain above the target is the target-rooted shallow-to-deep
+    // order, so the first bounded hit IS the shallowest; the ENTRY carries no
+    // cone value and drops out.
+    let mut chain: Vec<ValueId> = Vec::new();
+    let mut at = target_idx;
+    while let Some(up) = doms.immediate_dominator(at) {
+        if let Some(v) = value[up as usize] {
+            chain.push(v);
+        }
+        at = up;
+    }
     let hits: Vec<(usize, PinnedIndex)> = chain
         .iter()
         .enumerate()

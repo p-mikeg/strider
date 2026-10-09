@@ -96,8 +96,13 @@ impl MemLayout {
         let graph = Discovered::collect(function)?;
         let n = graph.node.len();
         let dfs = DepthFirst::from_root(&graph.succs);
-        let idom_dfs = dominators(&graph.preds, &dfs);
-        let dom_order = DomNumbering::new(&idom_dfs);
+        let idom_dfs = graph_algorithms::dominance::immediate_dominators(&dfs.parent, |w| {
+            graph.preds[dfs.vertex[w as usize] as usize]
+                .iter()
+                .map(|&p| dfs.num[p as usize])
+                .collect::<SmallVec<[u32; 2]>>()
+        });
+        let dom_order = graph_algorithms::dominance::DomIntervals::new(&idom_dfs);
         // A retreating edge whose target does not dominate its source enters a
         // loop somewhere other than its header.
         for (v, preds) in graph.preds.iter().enumerate() {
@@ -745,106 +750,6 @@ impl DepthFirst {
     /// Whether preorder number `a` is an ancestor of `b`, itself included.
     fn is_ancestor(&self, a: u32, b: u32) -> bool {
         a <= b && b < a + self.size[a as usize]
-    }
-}
-
-/// Lengauer-Tarjan immediate dominators, by preorder number.
-fn dominators(preds: &[SmallVec<[u32; 2]>], dfs: &DepthFirst) -> Vec<u32> {
-    let n = dfs.vertex.len();
-    let mut semi: Vec<u32> = (0..n as u32).collect();
-    let mut ancestor = vec![NONE; n];
-    let mut label: Vec<u32> = (0..n as u32).collect();
-    let mut idom = vec![0u32; n];
-    let mut bucket: Vec<Vec<u32>> = vec![Vec::new(); n];
-    let mut path: Vec<u32> = Vec::new();
-
-    let eval =
-        |v: u32, ancestor: &mut [u32], label: &mut [u32], semi: &[u32], path: &mut Vec<u32>| {
-            if ancestor[v as usize] == NONE {
-                return v;
-            }
-            let mut x = v;
-            while ancestor[ancestor[x as usize] as usize] != NONE {
-                path.push(x);
-                x = ancestor[x as usize];
-            }
-            while let Some(y) = path.pop() {
-                let a = ancestor[y as usize];
-                if semi[label[a as usize] as usize] < semi[label[y as usize] as usize] {
-                    label[y as usize] = label[a as usize];
-                }
-                ancestor[y as usize] = ancestor[a as usize];
-            }
-            label[v as usize]
-        };
-
-    for w in (1..n).rev() {
-        for &p in &preds[dfs.vertex[w] as usize] {
-            let v = dfs.num[p as usize];
-            let u = eval(v, &mut ancestor, &mut label, &semi, &mut path);
-            if semi[u as usize] < semi[w] {
-                semi[w] = semi[u as usize];
-            }
-        }
-        bucket[semi[w] as usize].push(w as u32);
-        let parent = dfs.parent[w];
-        ancestor[w] = parent;
-        for v in std::mem::take(&mut bucket[parent as usize]) {
-            let u = eval(v, &mut ancestor, &mut label, &semi, &mut path);
-            idom[v as usize] = if semi[u as usize] < semi[v as usize] {
-                u
-            } else {
-                parent
-            };
-        }
-    }
-    for w in 1..n {
-        if idom[w] != semi[w] {
-            idom[w] = idom[idom[w] as usize];
-        }
-    }
-    idom[0] = 0;
-    idom
-}
-
-/// Dominator-tree interval numbering, by preorder number.
-struct DomNumbering {
-    enter: Vec<u32>,
-    exit: Vec<u32>,
-}
-
-impl DomNumbering {
-    fn new(idom: &[u32]) -> Self {
-        let n = idom.len();
-        let mut children: Vec<Vec<u32>> = vec![Vec::new(); n];
-        for (v, &d) in idom.iter().enumerate().skip(1) {
-            children[d as usize].push(v as u32);
-        }
-        let mut enter = vec![0u32; n];
-        let mut exit = vec![0u32; n];
-        let mut clock = 0u32;
-        let mut stack: Vec<(u32, usize)> = vec![(0, 0)];
-        enter[0] = clock;
-        clock += 1;
-        while let Some(top) = stack.last_mut() {
-            let (v, next) = *top;
-            if let Some(&c) = children[v as usize].get(next) {
-                top.1 += 1;
-                enter[c as usize] = clock;
-                clock += 1;
-                stack.push((c, 0));
-            } else {
-                exit[v as usize] = clock;
-                clock += 1;
-                stack.pop();
-            }
-        }
-        Self { enter, exit }
-    }
-
-    fn dominates(&self, a: u32, b: u32) -> bool {
-        self.enter[a as usize] <= self.enter[b as usize]
-            && self.exit[b as usize] <= self.exit[a as usize]
     }
 }
 
