@@ -214,6 +214,9 @@ impl PyCallingConvention {
             preserves_memory,
             preserves_all_registers: false,
             no_return: false,
+            // A custom convention makes no entry-register promise; only the
+            // presets that carry an ABI guarantee do.
+            entry_address_vn: None,
         };
         built
             .validate()

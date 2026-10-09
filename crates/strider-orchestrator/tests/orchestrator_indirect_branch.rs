@@ -149,23 +149,32 @@ fn orchestrator_resolves_jump_tables_mips32() {
 // guard is `Truncate(ShiftRight(cr_pack, k)):I1`. `FlagCmpCanonicalize`
 // rewrites that to the bare comparison at the tested bit (each
 // `ShiftLeft(ZeroExtend(I1), pos)` term provably sets only bit `pos`),
-// which `value_range` then bounds like every other arch. (ppc64's N64 ABI
-// routes the table base/index through 64-bit register-aliasing + TOC
-// indirection that isn't modelled yet, so only ppc32 is covered here,
-// both endians.)
+// which `value_range` then bounds like every other arch.
 #[test]
 fn orchestrator_resolves_jump_tables_ppc32() {
     assert_all_table_shapes_resolve(common::Arch::Ppc32be);
     assert_all_table_shapes_resolve(common::Arch::Ppc32le);
 }
 
+// ppc64 reaches its table through the TOC, whose pointer the ELFv2 prologue
+// derives from the entry-address register (`r12`). With that register bound
+// the masked and value_range-unmasked shapes resolve; the offset shape
+// still defers on both endians.
+#[test]
+fn orchestrator_resolves_toc_relative_jump_tables_ppc64() {
+    for arch in [common::Arch::Ppc64be, common::Arch::Ppc64le] {
+        assert_table_resolves(arch, "switch", "dispatch_value");
+        assert_table_resolves(arch, "switch_value_range", "dispatch_unmasked");
+    }
+}
+
 // MIPS N64 accesses the jump table through the GOT relative to `gp` even
-// under `-fno-pic` (`Load[gp + got_off]`), and `gp` is an unresolved
-// runtime input (`InitialVar`) in the lifted IR. Pinning the index never
-// folds the table base, so the branch must DEFER (stay in
+// under `-fno-pic` (`Load[gp + got_off]`). The abicalls contract binding
+// `t9` to the entry address folds `gp` itself, but the GOT load of the
+// table base still does not: `.got` is writable, so no read-only memory
+// serves it. The branch must therefore DEFER (stay in
 // `unresolved_indirect_branches`, placeholder retained) rather than
-// resolve to a garbage target. Fixing this needs MIPS N64 gp-setup
-// modelling + applied GOT relocations.
+// resolve to a garbage target.
 
 #[test]
 fn orchestrator_mips64_pic_jump_table_defers_not_errors() {

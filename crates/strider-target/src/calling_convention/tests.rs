@@ -648,6 +648,7 @@ fn build_returns_error_for_unknown_register_name() {
             link_register_reg_name: None,
             preserves_memory: false,
             preserves_all_registers: false,
+            entry_address_reg_name: None,
         };
         let result = cc.build(&regs);
         let err = result.expect_err("expected UnknownRegName error");
@@ -676,6 +677,7 @@ fn build_returns_error_even_when_some_names_are_valid() {
         link_register_reg_name: None,
         preserves_memory: false,
         preserves_all_registers: false,
+        entry_address_reg_name: None,
     };
     assert!(
         cc.build(&regs).is_err(),
@@ -855,6 +857,7 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
         link_register_reg_name: None,
         preserves_memory: false,
         preserves_all_registers: false,
+        entry_address_reg_name: None,
     };
     let result = cc.build(&regs);
     let err = result.expect_err("expected UnknownRegName error");
@@ -1270,4 +1273,70 @@ fn tracked_unique_temporaries_are_not_call_clobbers() {
         !clobbers.contains(&temp),
         "a UNIQUE temporary must not be a call clobber; got {clobbers:?}",
     );
+}
+
+/// The entry-address contract is ELFv2's r12 and MIPS abicalls' t9 and nothing
+/// else: ELFv1 names a descriptor word, not a register, and no other shipped
+/// ABI promises anything about a register's entry value.
+#[test]
+fn only_elfv2_and_mips_carry_an_entry_address_register() {
+    type Case = (
+        &'static str,
+        fn() -> crate::arch::SleighArch,
+        fn() -> CallingConvention,
+        Option<&'static str>,
+    );
+    let cases: &[Case] = &[
+        (
+            "ppc64le elfv2",
+            crate::arch::SleighArch::ppc64le,
+            CallingConvention::powerpc64_elf_v2,
+            Some("r12"),
+        ),
+        (
+            "ppc64be elfv1",
+            crate::arch::SleighArch::ppc64be,
+            CallingConvention::powerpc64_elf_v1,
+            None,
+        ),
+        (
+            "mips o32",
+            crate::arch::SleighArch::mipsle32,
+            CallingConvention::mips_o32,
+            Some("t9"),
+        ),
+        (
+            "mips n64",
+            crate::arch::SleighArch::mipsle64,
+            CallingConvention::mips_n64,
+            Some("t9"),
+        ),
+        (
+            "x86-64 sysv",
+            crate::arch::SleighArch::x86_64,
+            CallingConvention::x86_64_systemv,
+            None,
+        ),
+        (
+            "ppc32 sysv",
+            crate::arch::SleighArch::ppc32be,
+            CallingConvention::powerpc_sysv32,
+            None,
+        ),
+        (
+            "aarch64 aapcs64",
+            crate::arch::SleighArch::aarch64,
+            CallingConvention::aarch64_aapcs64,
+            None,
+        ),
+    ];
+    for &(name, arch, cc, expected) in cases {
+        let regs = regs_for(arch());
+        let built = cc().build(&regs).expect(name);
+        assert_eq!(
+            built.entry_address_vn,
+            expected.map(|r| vn_for_name(&regs, r).expect(r)),
+            "{name}",
+        );
+    }
 }

@@ -491,6 +491,7 @@ fn build_call_cc_float_args_are_positional_slices() -> Result<()> {
         preserves_memory: false,
         preserves_all_registers: false,
         no_return: false,
+        entry_address_vn: None,
     };
     let mut b = FunctionBuilder::new(vec![q0, r0, sp], cc, strider_target::Endianness::Little)?;
     let region = b.create_region_all()?;
