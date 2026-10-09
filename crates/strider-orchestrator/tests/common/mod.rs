@@ -286,6 +286,58 @@ pub(crate) fn fixture_strider(
     (strider, cc, addr)
 }
 
+/// A [`strider_orchestrator::opt::ReadOnlyMemory`] over a region set loaded
+/// under a filter [`strider_reader::ElfFileMemReader`] does not build.
+struct RegionRom(strider_reader::MemRegionsLookupTable);
+
+impl strider_orchestrator::opt::ReadOnlyMemory for RegionRom {
+    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+        self.0.read_exact(addr, buf)
+    }
+}
+
+/// [`fixture_strider`] whose ROM also serves the relocated GOT
+/// (`LoadFilter::ImmutableAndRelocatedGot`), the opt-in a PIC dispatch whose
+/// table base is loaded through the GOT needs.
+pub(crate) fn fixture_strider_serving_got(
+    arch: Arch,
+    case: &str,
+    fn_name: &str,
+) -> (
+    strider_orchestrator::Strider<strider_reader::ElfFileMemReader>,
+    strider_target::BuiltCallingConvention,
+    u64,
+) {
+    let path = binary_path(arch, case);
+    if !path.exists() {
+        panic!("missing test binary {path:?}; run `make -C fixtures`");
+    }
+    let owned = strider_reader::load_elf(&path)
+        .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
+    let obj = owned.checked_file().expect("the mapped file is unchanged");
+    let addr = obj
+        .symbol_by_name(fn_name)
+        .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
+        .address();
+    let sleigh_arch = arch.sleigh();
+    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
+    let rom = RegionRom(strider_reader::MemRegionsLookupTable::new(
+        owned
+            .regions(
+                strider_reader::elf::RegionSource::Auto,
+                strider_reader::elf::LoadFilter::ImmutableAndRelocatedGot,
+                true,
+            )
+            .expect("rom regions"),
+    ));
+    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
+        .expect("create sleigh");
+    let strider = strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(Box::new(rom)))
+        .expect("Strider::new");
+    let cc = arch.cc().build(strider.sleigh_regs()).expect("build cc");
+    (strider, cc, addr)
+}
+
 /// Loads the (arch, case) ELF, builds a CFG at `fn_name`, and lifts it. The
 /// trailing `ElfFileMemReader` is a second view of the same image for the
 /// optimiser's ROM: the first is moved into the `Lifter`.
