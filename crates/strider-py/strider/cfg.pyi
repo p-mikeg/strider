@@ -99,10 +99,11 @@ class Cfg:
         """Branch targets interior to a region but off every boundary a region
         can start at.
 
-        No region can start there, decoding from inside an instruction yields
-        a different stream (a branch into a MIPS delay slot is one: the slot
-        decodes as part of its branch), so the edge is seated on the region owning the
-        bytes, whose instructions start earlier. A direct edge can cause this,
+        No region can start there, since decoding from inside an instruction
+        yields a different stream; a branch into a MIPS delay slot is one, the
+        slot decoding as part of its branch. The edge is therefore seated on
+        the region that owns the bytes, whose instructions start earlier. A
+        direct edge can cause this,
         not only a resolved indirect branch. Non-empty means this CFG claims a
         successor the branch does not actually enter at.
 
@@ -141,9 +142,11 @@ class Cfg:
         ...
     def unverified_seeded_sites(self) -> list[int]:
         """Dispatch addresses nothing verified: a site seated with exactly the
-        `known_targets` you supplied and nothing the classifier derived, plus
-        every site the CFG consumed outright as a return or a tail call,
-        whether that answer was seeded or derived.
+        `known_targets` you supplied and nothing the classifier derived, every
+        site the CFG consumed outright as a tail call, and a site consumed as a
+        return because YOUR `"return"` seat is what consumed it. A return the
+        classifier derived is re-checked against each round's IR instead, so it
+        is not here.
 
         Not unresolved (you asserted the answer), but nothing checked it.
         Seating a seed changes the CFG the classifier reads, so a stale or
@@ -163,9 +166,10 @@ class Cfg:
 
         The answer to "may this be incomplete?", which none of the six gives
         alone. `False` is not always a loss: `unverified_seeded_sites` holds
-        answers that are complete but unverified, so a site consumed as a
-        return (an ARM `pop {pc}` epilogue) clears it. Read whichever channel
-        is non-empty to tell the cases apart.
+        answers that are complete but unverified, so a site your seed consumed
+        as a return (an ARM `pop {pc}` epilogue) makes this `False` with
+        nothing missing. Read whichever channel is non-empty to tell the cases
+        apart.
 
         On a `build_cfg` CFG `unresolved` is every indirect branch that build
         left without an outgoing edge, since `build_cfg` resolves none of them,
@@ -201,7 +205,8 @@ class CfgOptions:
     """
 
     # Read-only: these are getters with no setter, so a plain attribute
-    # declaration would let a type checker accept `o.x = ...`, which raises at runtime.
+    # declaration would let a type checker accept `o.x = ...`, which raises at
+    # runtime.
     @property
     def function_max_size(self) -> Optional[int]: ...
     @property
