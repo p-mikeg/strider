@@ -336,3 +336,22 @@ fn a_shared_vertex_pattern_over_the_unfolded_cap_is_refused() {
         .unwrap();
     }
 }
+
+/// Replacing a branch drops what the discarded pattern declared, the refusal
+/// an unmatchable one carried included.
+#[test]
+fn replacing_a_refused_if_branch_drops_its_refusal() {
+    let replaced = if_else()
+        .with_true(multi_sink_pattern())
+        .with_true(strider_pattern::region().build())
+        .build();
+    assert!(replaced.root().is_ok());
+
+    // The other slot's refusal survives the replacement.
+    let still_refused = if_else()
+        .with_false(multi_sink_pattern())
+        .with_true(multi_sink_pattern())
+        .with_true(strider_pattern::region().build())
+        .build();
+    assert!(error_of(&still_refused).contains("If branch pattern is not matchable"));
+}
