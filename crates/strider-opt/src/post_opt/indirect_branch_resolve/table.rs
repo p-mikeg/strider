@@ -228,11 +228,53 @@ fn decompose_index(
         .filter_map(|di| *g.node_weight(di).expect("dominator is a graph node"))
         .filter(|&v| v != target)
         .collect();
-    let (depth, hit) = chain
+    let hits: Vec<(usize, PinnedIndex)> = chain
         .iter()
         .enumerate()
-        .find_map(|(depth, &v)| bounded_index(function, ranges, site, v).map(|hit| (depth, hit)))?;
+        .filter_map(|(depth, &v)| bounded_index(function, ranges, site, v).map(|hit| (depth, hit)))
+        .collect();
+    let shallowest = *hits.first()?;
+    // A candidate that strips to a cell of a table the evaluator folds bounds
+    // the table DATA, not the index the address scales.  A narrowing mask on
+    // the cell is what puts its range below its load width and past
+    // `bounded_index`.  Where the chain carries a bounded value BELOW that
+    // load, inside its address, that one is the index; a second mask on the
+    // cell itself is not, so the depth comparison is against the load.
+    let (depth, hit) = foldable_cell_load(function, shallowest.1.index, noalias_allocators)
+        .and_then(|cell| chain.iter().position(|&v| v == cell))
+        .and_then(|at| hits.iter().copied().find(|&(depth, _)| depth > at))
+        .unwrap_or(shallowest);
     offsets_keep_range(function, &chain[..depth], hit.index, hit.range).then_some(hit)
+}
+
+/// The cell `v` reduces to, through the width changes, masks and constant
+/// scalings between a load and the address arithmetic, when that is a load of
+/// a table the evaluator can fold.
+fn foldable_cell_load(
+    function: &strider_ir::Function,
+    v: ValueId,
+    noalias_allocators: &rustc_hash::FxHashSet<u64>,
+) -> Option<ValueId> {
+    let mut base = v;
+    for _ in 0..MAX_SCALE_STRIP {
+        let inner = match *function.node_kind(function.producer(base)) {
+            NodeKind::Load(_) => {
+                return foldable_load_address(function, base, noalias_allocators).map(|_| base);
+            }
+            NodeKind::Extend(ExtendOp::ZeroExtend) | NodeKind::Truncate => {
+                function.int_inputs(base).next()
+            }
+            NodeKind::IntBinaryOp(IntBinaryOp::And | IntBinaryOp::Mul) => {
+                strip_commutative_const_scale(function, base).map(|(next, _)| next)
+            }
+            NodeKind::IntBinaryOp(
+                IntBinaryOp::ShiftLeft | IntBinaryOp::ShiftRight | IntBinaryOp::Div,
+            ) => strip_const_scale(function, base).map(|(next, _)| next),
+            _ => None,
+        };
+        base = inner?;
+    }
+    None
 }
 
 /// The value the enumeration pins, the values to pin it to, and the constant
