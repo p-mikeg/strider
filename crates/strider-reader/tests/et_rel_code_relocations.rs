@@ -443,3 +443,77 @@ fn aarch64_big_endian_patches_instructions_little_endian() {
     assert_eq!(ldr >> 22, 0x2e5, "a 32-bit `ldr`, not a store");
     assert_eq!(((ldr >> 10) & 0xfff) << 2, g_addr & 0xfff);
 }
+
+fn weak_undefined(obj: &mut Object<'_>, name: &str) -> SymbolId {
+    obj.add_symbol(Symbol {
+        name: name.as_bytes().to_vec(),
+        value: 0,
+        size: 0,
+        kind: SymbolKind::Unknown,
+        scope: SymbolScope::Linkage,
+        weak: true,
+        section: SymbolSection::Undefined,
+        flags: SymbolFlags::None,
+    })
+}
+
+/// `if (w) w();` against an undefined weak `w`: the link or the module loader
+/// resolves `w` to 0 as readily as to an address, so a synthetic non-null one
+/// folds the test and drops the null path. The `mov $w, %ecx` immediate is
+/// therefore not computed, while the `call w` displacement, which reveals no
+/// address, keeps it.
+#[test]
+fn a_weak_undefined_symbols_address_is_not_folded_into_an_immediate() {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    // mov $w, %ecx ; call w ; ret
+    obj.append_section_data(text, &[0xb9, 0, 0, 0, 0, 0xe8, 0, 0, 0, 0, 0xc3], 1);
+    defined(&mut obj, "f", text, 0);
+    let w = weak_undefined(&mut obj, "w");
+    reloc(&mut obj, text, 1, w, 0, elf::R_X86_64_32);
+    reloc(&mut obj, text, 6, w, -4, elf::R_X86_64_PLT32);
+    let bytes = obj.write().expect("write");
+
+    let table = relocated(&bytes);
+    let insn = common::section_base(&bytes, ".text");
+    assert_eq!(
+        table.read(insn, &mut [0u8; 11]),
+        Some(1),
+        "only the opcode is served; the immediate is a hole"
+    );
+
+    let disp = word(&table, insn + 6, false) as i32;
+    assert_eq!(
+        (insn + 10).wrapping_add_signed(i64::from(disp)),
+        symbol_address(&bytes, "w"),
+        "a call keeps the extern address"
+    );
+}
+
+/// The position-independent shape, `cmpq $0, w@GOTPCREL(%rip)`: the
+/// displacement reaches `w`'s GOT slot, and that slot is left unmapped so the
+/// load through it stays opaque and both arms of the test survive.
+#[test]
+fn a_weak_undefined_symbols_got_slot_stays_unmapped() {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    obj.append_section_data(text, &[0x48, 0x83, 0x3d, 0, 0, 0, 0, 0, 0xc3], 1);
+    defined(&mut obj, "f", text, 0);
+    let w = weak_undefined(&mut obj, "w");
+    reloc(&mut obj, text, 3, w, -5, elf::R_X86_64_GOTPCREL);
+    let bytes = obj.write().expect("write");
+
+    let table = relocated(&bytes);
+    let insn = common::section_base(&bytes, ".text");
+    let mut whole = [0u8; 9];
+    table
+        .read_exact(insn, &mut whole)
+        .expect("the instruction still decodes");
+    let disp = word(&table, insn + 3, false) as i32;
+    let slot = (insn + 8).wrapping_add_signed(i64::from(disp));
+    assert_ne!(slot, insn + 8, "the displacement was computed");
+    assert!(
+        table.read(slot, &mut [0u8; 8]).is_none(),
+        "a weak undefined symbol's slot holds no address"
+    );
+}
