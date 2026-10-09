@@ -121,15 +121,7 @@ fn assert_some_call_arg_threads_through(function: &strider_ir::Function, n: u32,
 }
 
 // forward_1: single-parameter, all-register baseline.
-per_arch_test!(
-    "calling_convention",
-    "forward_1",
-    forward_1_assertions,
-    ignore = {
-        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
-        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
-    }
-);
+per_arch_test!("calling_convention", "forward_1", forward_1_assertions);
 
 fn forward_1_assertions(function: &strider_ir::Function) {
     assert_function_args_present(function, 1, 1, "forward_1");
@@ -137,15 +129,7 @@ fn forward_1_assertions(function: &strider_ir::Function) {
 }
 
 // forward_2: two params, register-passed on every arch but x86 (cdecl spills).
-per_arch_test!(
-    "calling_convention",
-    "forward_2",
-    forward_2_assertions,
-    ignore = {
-        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
-        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
-    }
-);
+per_arch_test!("calling_convention", "forward_2", forward_2_assertions);
 
 fn forward_2_assertions(function: &strider_ir::Function) {
     assert_function_args_present(function, 2, 2, "forward_2");
@@ -153,15 +137,7 @@ fn forward_2_assertions(function: &strider_ir::Function) {
 }
 
 // forward_4: 4 params, all register-passed except x86 (cdecl, all-stack).
-per_arch_test!(
-    "calling_convention",
-    "forward_4",
-    forward_4_assertions,
-    ignore = {
-        Ppc64be: "ppc64 ELFv1/v2 TOC-relative addressing breaks the spill/reload forwarding chain even under StackGlobalDisjoint; pending follow-up that handles Add(Load(r2), const) intervening stores",
-        Ppc64le: "ppc64 ELFv1/v2 TOC-relative addressing breaks the spill/reload forwarding chain even under StackGlobalDisjoint; pending follow-up that handles Add(Load(r2), const) intervening stores",
-    }
-);
+per_arch_test!("calling_convention", "forward_4", forward_4_assertions);
 
 fn forward_4_assertions(function: &strider_ir::Function) {
     assert_function_args_present(function, 4, 4, "forward_4");
@@ -170,15 +146,7 @@ fn forward_4_assertions(function: &strider_ir::Function) {
 
 // forward_8: exercises spilling on arches with <8 arg regs (arm aapcs spills
 // 4, x86 cdecl spills all 8, x64 SysV spills 2).
-per_arch_test!(
-    "calling_convention",
-    "forward_8",
-    forward_8_assertions,
-    ignore = {
-        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
-        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
-    }
-);
+per_arch_test!("calling_convention", "forward_8", forward_8_assertions);
 
 fn forward_8_assertions(function: &strider_ir::Function) {
     // `function_args::mem_chain_is_dirty`'s `Store(_)` arm lets all 8
@@ -188,15 +156,7 @@ fn forward_8_assertions(function: &strider_ir::Function) {
 }
 
 // forward_16: every arch spills some args to the stack.
-per_arch_test!(
-    "calling_convention",
-    "forward_16",
-    forward_16_assertions,
-    ignore = {
-        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
-        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
-    }
-);
+per_arch_test!("calling_convention", "forward_16", forward_16_assertions);
 
 fn forward_16_assertions(function: &strider_ir::Function) {
     // Floor at 8, not 16: the lowest-arity register sets (mips o32, arm
@@ -212,11 +172,7 @@ fn forward_16_assertions(function: &strider_ir::Function) {
 per_arch_test!(
     "calling_convention",
     "narrow_widths",
-    narrow_widths_assertions,
-    ignore = {
-        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
-        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
-    }
+    narrow_widths_assertions
 );
 
 fn narrow_widths_assertions(function: &strider_ir::Function) {
@@ -251,15 +207,7 @@ fn narrow_widths_assertions(function: &strider_ir::Function) {
 }
 
 // mixed_4: pointer + int parameters interleaved.
-per_arch_test!(
-    "calling_convention",
-    "mixed_4",
-    mixed_4_assertions,
-    ignore = {
-        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
-        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
-    }
-);
+per_arch_test!("calling_convention", "mixed_4", mixed_4_assertions);
 
 fn mixed_4_assertions(function: &strider_ir::Function) {
     assert_function_args_present(function, 4, 4, "mixed_4");

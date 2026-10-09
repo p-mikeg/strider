@@ -177,11 +177,12 @@ These shapes come back in `unresolved` rather than as an error:
   by one 16-byte `str q0`, so it arrives as one 128-bit constant holding two
   entries.
 - MIPS64 GOT-indirect dispatch: the entries lift as `Add(Load[GOT], const)`
-  rather than constants, with the GOT pointer derived from `t9`.
+  rather than constants. The `gp` pointer itself folds, the abicalls ABI
+  putting the function's own entry address in `t9`, but `.got` sits in a
+  writable segment the read-only image leaves out, so the entry load does not.
 - PowerPC stack-array dispatch on ppc32le, ppc64be and ppc64le, where the
   entries are loaded from `.data.rel.ro` in a writable segment, which the
-  read-only image leaves out. On ppc64 the address is also relative to the
-  incoming `r12`, an unknown register as in the MIPS64 shape.
+  read-only image leaves out.
 - A table index formed by a constant offset that takes a bounded value below
   zero, such as `(x & 7) - 2`. Enumerating `x` would name slots before the
   table that only the guards on the offset value exclude, so the site is left
