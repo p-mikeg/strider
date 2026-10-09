@@ -21,6 +21,10 @@
 //! Dropping a `Cycle` is sound only under the ancestor it cycled to, so every
 //! memo entry carries that ancestor and a reader outside it takes the
 //! conservative answer instead.
+//!
+//! An entry that dropped no `Cycle` and took no conservative answer holds for
+//! the location whatever the start was, so [`WalkAnswers`] carries it to the
+//! next query and prunes its subtree there.
 
 mod layout;
 
@@ -33,6 +37,16 @@ use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer};
 
+/// One location's start-independent walk answers by memory value.  Valid while
+/// no def's verdict for the location changes, the same window as [`Answers`].
+///
+/// Without it every query re-walks its own chain, so `L` loads over `S` defs
+/// cost `L * S`.
+#[derive(Default)]
+pub(crate) struct WalkAnswers {
+    nearest: FxHashMap<ValueId, NodeId>,
+}
+
 /// Nearest clobbering definition backward from `mem`'s memory output, the
 /// `InitialMemory` node when every path is clean, or `mem` itself when every
 /// path cycles without reaching either.  Read-only.
@@ -42,16 +56,20 @@ use strider_ir::{Function, IRViewer};
 /// those structurally.  Answer `true` for a producer you cannot reason about:
 /// `true` terminates the branch with that def as the nearest clobber, `false`
 /// advances past it to its own memory input.
+///
+/// `answers` must hold the answers of this `def_clobbers`, i.e. of one location
+/// under one set of options.
 pub(crate) fn find_nearest_clobber(
     function: &Function,
     mem: NodeId,
     def_clobbers: &mut dyn FnMut(&Function, NodeId) -> bool,
+    answers: &mut WalkAnswers,
 ) -> NodeId {
     MemSsaWalk {
         function,
         def_clobbers,
     }
-    .nearest_clobber(mem)
+    .nearest_clobber(mem, answers)
 }
 
 /// Repoints a `Load`'s memory input onto `clobber`'s memory output, skipping
@@ -119,6 +137,10 @@ struct Resolved {
     /// The deepest ancestor whose `Cycle` this result dropped, still open when
     /// it was computed.  `None` makes the entry unconditional.
     dep: Option<Dep>,
+    /// Whether the result took, or forwards, the conservative answer a re-read
+    /// of a closed `dep` gives.  Sound, but tied to this walk's order, so no
+    /// later query recalls it.
+    approximate: bool,
 }
 
 /// Keeps `dep` at the deepest of the ancestors seen so far.
@@ -174,13 +196,16 @@ struct MemSsaWalk<'f, 'w> {
 }
 
 impl MemSsaWalk<'_, '_> {
-    fn nearest_clobber(&mut self, mem: NodeId) -> NodeId {
+    fn nearest_clobber(&mut self, mem: NodeId, answers: &mut WalkAnswers) -> NodeId {
         let start_mem = self
             .function
             .memory_output_of(mem)
             .expect("memory-chain start node has a memory output");
+        if let Some(&answer) = answers.nearest.get(&start_mem) {
+            return answer;
+        }
         let mut initial_memory: Option<NodeId> = None;
-        match self.walk_from(start_mem, &mut initial_memory) {
+        match self.walk_from(start_mem, &mut initial_memory, answers) {
             Some(clobber_value) => self.function.producer(clobber_value),
             // No clobber and no clean bottom either: every path cycled, so
             // nothing is proven and the start is the only def-free answer.
@@ -188,12 +213,13 @@ impl MemSsaWalk<'_, '_> {
         }
     }
 
-    /// The memo is per-call, so every query re-walks from its own cursor: a
-    /// cost of the chain length per query.
+    /// Walks back from `start_mem`, publishing every start-independent result
+    /// into `answers` so the next query stops at it instead of re-walking.
     fn walk_from(
         &mut self,
         start_mem: ValueId,
         initial_memory: &mut Option<NodeId>,
+        answers: &mut WalkAnswers,
     ) -> Option<ValueId> {
         // A hash map, not a dense entity-keyed `SecondaryMap`: one walk
         // touches only O(chain) of the function's ValueIds, so a per-walk
@@ -211,6 +237,19 @@ impl MemSsaWalk<'_, '_> {
                     if memo.contains_key(&cur) {
                         continue;
                     }
+                    // A recalled answer holds whatever the start was, so it ends
+                    // the branch here.
+                    if let Some(reach) = self.recall(answers, cur, initial_memory) {
+                        memo.insert(
+                            cur,
+                            Resolve::Done(Resolved {
+                                reach,
+                                dep: None,
+                                approximate: false,
+                            }),
+                        );
+                        continue;
+                    }
                     let node = self.function.producer(cur);
                     let node_kind = self.function.node_kind(node);
                     let is_phi = matches!(node_kind, NodeKind::MemPhi);
@@ -225,6 +264,7 @@ impl MemSsaWalk<'_, '_> {
                             Resolve::Done(Resolved {
                                 reach: Reach::Clobber(cur),
                                 dep: None,
+                                approximate: false,
                             }),
                         );
                         continue;
@@ -242,6 +282,7 @@ impl MemSsaWalk<'_, '_> {
                 }
                 Frame::Exit(cur, parent) => {
                     let mut dep: Option<Dep> = None;
+                    let mut approximate = false;
                     let succ_results: SmallVec<[Reach; 4]> = self
                         .successors(cur)
                         .into_iter()
@@ -253,7 +294,10 @@ impl MemSsaWalk<'_, '_> {
                                 Reach::Cycle
                             }
                             Some(Resolve::Done(r)) => match r.dep {
-                                None => r.reach,
+                                None => {
+                                    approximate |= r.approximate;
+                                    r.reach
+                                }
                                 // Tagging each entry with the ancestor it
                                 // assumed away, instead of refusing to memoise
                                 // it, is what keeps the walk linear: a reader
@@ -266,10 +310,12 @@ impl MemSsaWalk<'_, '_> {
                                         Some(Resolve::InProgress(_))
                                     ) =>
                                 {
+                                    approximate = true;
                                     Reach::Clobber(s)
                                 }
                                 Some(d) => {
                                     deepen(&mut dep, d);
+                                    approximate |= r.approximate;
                                     r.reach
                                 }
                             },
@@ -287,19 +333,78 @@ impl MemSsaWalk<'_, '_> {
                         Some(d) if d.value == cur => parent,
                         other => other,
                     };
-                    memo.insert(cur, Resolve::Done(Resolved { reach, dep }));
+                    memo.insert(
+                        cur,
+                        Resolve::Done(Resolved {
+                            reach,
+                            dep,
+                            approximate,
+                        }),
+                    );
                 }
             }
         }
 
-        match memo.get(&start_mem).copied() {
-            Some(Resolve::Done(Resolved {
-                reach: Reach::Clobber(v),
-                ..
-            })) => Some(v),
+        let root = match memo.get(&start_mem).copied() {
+            Some(Resolve::Done(r)) => r,
+            _ => unreachable!("the start resolves before the work list empties"),
+        };
+        self.publish(&memo, root, *initial_memory, answers);
+        match root.reach {
+            Reach::Clobber(v) => Some(v),
             // Clean or Cycle: no clobber reached, so the caller names
             // `InitialMemory`.
-            _ => None,
+            Reach::Clean | Reach::Cycle => None,
+        }
+    }
+
+    /// The answer `answers` holds for `cur`, as a [`Reach`].
+    fn recall(
+        &self,
+        answers: &WalkAnswers,
+        cur: ValueId,
+        initial_memory: &mut Option<NodeId>,
+    ) -> Option<Reach> {
+        let &answer = answers.nearest.get(&cur)?;
+        if matches!(self.function.node_kind(answer), NodeKind::InitialMemory) {
+            *initial_memory = Some(answer);
+            return Some(Reach::Clean);
+        }
+        Some(Reach::Clobber(
+            self.function
+                .memory_output_of(answer)
+                .expect("a recalled clobber is a memory def"),
+        ))
+    }
+
+    /// Carries every start-independent result of one walk into `answers`: the
+    /// entries that dropped no `Cycle` and took no conservative answer, plus,
+    /// when the start reached no clobber at all, every clean node in its cone,
+    /// since a clobber anywhere in a cone reaches the start as one.
+    fn publish(
+        &self,
+        memo: &FxHashMap<ValueId, Resolve>,
+        root: Resolved,
+        initial_memory: Option<NodeId>,
+        answers: &mut WalkAnswers,
+    ) {
+        let clean_cone = matches!(root.reach, Reach::Clean);
+        for (&v, entry) in memo {
+            let Resolve::Done(r) = entry else { continue };
+            if r.approximate {
+                continue;
+            }
+            let answer = match r.reach {
+                Reach::Clobber(c) if r.dep.is_none() => self.function.producer(c),
+                Reach::Clean if r.dep.is_none() || clean_cone => {
+                    let Some(initial) = initial_memory else {
+                        continue;
+                    };
+                    initial
+                }
+                _ => continue,
+            };
+            answers.nearest.insert(v, answer);
         }
     }
 

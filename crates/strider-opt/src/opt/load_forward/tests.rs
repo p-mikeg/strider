@@ -2178,6 +2178,17 @@ mod scaling {
     fn nested_loops_cost_near_linear_work() -> crate::Result<()> {
         assert_near_linear("nested loops", shapes::nested_loops)
     }
+
+    /// The path walk, not the climb: an irreducible memory graph has no layout,
+    /// so this is the fallback's own scaling.
+    #[test]
+    fn an_irreducible_store_chain_costs_near_linear_work() -> crate::Result<()> {
+        assert!(
+            crate::mem_ssa::MemLayout::build(&shapes::irreducible_store_chain(8)?).is_none(),
+            "the shape must stay irreducible, or it measures the climb"
+        );
+        assert_near_linear("irreducible store chain", shapes::irreducible_store_chain)
+    }
 }
 
 /// The claims-free configuration still reads memory as RAM: a status register
