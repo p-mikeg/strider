@@ -210,9 +210,9 @@ class BoundCapture:
     `None`. A numeric capture also converts and compares directly (`int(m[c])`,
     `m[c] == 0x10`)."""
 
-    # Read-only: these are `#[getter]`s on a frozen pyclass, so a plain
-    # attribute declaration would let a type checker accept `x.f = ...`,
-    # which raises at runtime.
+    # Read-only: these are getters with no setter, so a plain attribute
+    # declaration would let a type checker accept `x.f = ...`, which raises
+    # at runtime.
     @property
     def has(self) -> bool: ...
     @property
@@ -327,9 +327,11 @@ class Pat(OrderedPat):
         """Bind the matched node to `c`, a `Capture` or a name."""
         ...
     def when(self, f: Callable[[Match], bool]) -> Pat:
-        """Keep a match only when `f` returns true for the partial match so
-        far. A rejected binding backtracks, so other bindings are still
-        tried. Raising is not a rejection: it aborts the whole query and
+        """Keep a match only when `f` returns `True` for the partial match so
+        far. `f` must return a `bool`; anything else is a `TypeError`, so a
+        predicate that forgot to return is an error and not a rejection. A
+        rejected binding backtracks, so other bindings are still tried.
+        Raising is not a rejection either: it aborts the whole query and
         re-raises out of `find_all` / `find_unique`."""
         ...
     def of_width(self, n: int) -> Pat:
@@ -430,10 +432,11 @@ class NodePat(Protocol):
         """Bind the matched node to `c`, a `Capture` or a name."""
         ...
     def when(self: _S, f: Callable[[Match], bool]) -> _S:
-        """Keep a match only when `f` returns true. A rejected binding
+        """Keep a match only when `f` returns `True`; `f` must return a
+        `bool`, and anything else is a `TypeError`. A rejected binding
         backtracks, so other bindings are still tried. Raising is not a
-        rejection: it aborts the whole query and re-raises out of `find_all` /
-        `find_unique`."""
+        rejection either: it aborts the whole query and re-raises out of
+        `find_all` / `find_unique`."""
         ...
     def into_pat(self) -> Pat:
         """Finalise to a `Pat`, consumed by its first query and not nestable
@@ -810,8 +813,8 @@ def anything() -> Pat:
 def var(c: Capture) -> Pat:
     """Wildcard that binds the matched node to capture `c`."""
 def predicate(f: Callable[[Match], bool]) -> Pat:
-    """Match any node for which `f` returns true; shorthand for
-    `anything().when(f)`."""
+    """Match any node for which `f` returns `True`; shorthand for
+    `anything().when(f)`, and `f` must return a `bool` as it does there."""
 def value_of_width(n: int) -> Pat:
     """Match any value whose own output is exactly `n` bits wide. Width 1
     means "produces a boolean", which INCLUDES comparisons, since a
