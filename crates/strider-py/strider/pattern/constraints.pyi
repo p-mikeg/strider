@@ -38,9 +38,10 @@ class JoinPredicate:
         """The captures this predicate correlates. Default: none."""
         ...
     def constraint(self, m: Match) -> bool:
-        """Override to return whether the joined match `m` survives. `m` spans
-        the whole join, so `m.node(c)` / `m.uint(c)` see every pattern's
-        captures. The base raises `NotImplementedError`.
+        """Override to return whether the joined match `m` survives, as a
+        `bool`; anything else is a `TypeError`. `m` spans the whole join, so
+        `m.node(c)` / `m.uint(c)` see every pattern's captures. The base
+        raises `NotImplementedError`.
 
         An exception raised here drops the row and is re-raised at the query
         boundary."""

@@ -181,9 +181,9 @@ pub(crate) fn build_per_address_ccs(
 
 /// Borrow the handle, erroring on a re-entrant call instead of panicking.
 ///
-/// `Py::borrow` panics when the handle is already borrowed, and the panic
-/// cannot unwind out of rsleigh's `extern "C"` instruction-fetch callback:
-/// a `MemReader.read` re-entering the handle would abort the process.
+/// `Py::borrow` panics when the handle is already borrowed, and a
+/// `MemReader.read` re-entering the handle surfaces that panic as
+/// `PanicException`, a `BaseException` no `except Exception` catches.
 fn try_borrow_lifter<'py>(
     slf: &'py Py<PyLifter>,
     py: Python<'py>,
@@ -1025,7 +1025,7 @@ impl PyLifter {
         let context_gen = self.context_gen.get();
         // Taken OUT of the cell for the sweep: `lift_one` reaches a Python
         // `MemReader.read`, which can call back in here, and a borrow held
-        // across that would panic inside an `extern "C"` frame.
+        // across that would raise `PanicException` from the nested call.
         let cached = self
             .sweep_sleigh
             .try_borrow_mut()
@@ -1117,14 +1117,14 @@ impl PyLifter {
     /// `host` / `port` choose where to bind, `port=0` taking whatever is free.
     /// The default binds loopback: any other `host` puts the graph of the
     /// binary you are analysing on the network, and no endpoint authenticates.
-    /// `depth` is the neighborhood radius, used only when `whole=False`.
+    /// `depth` is the neighborhood radius, which seeds the page's own control.
     ///
     /// Opens on the WHOLE graph: a neighborhood view hides nodes without
-    /// saying so. `whole=False` opens on the neighborhood around a node you
-    /// pick instead (inputs and outputs out to `depth` hops), which is what
-    /// scales to large functions; the toolbar's `whole` toggle switches
-    /// between them either way. A function of a few thousand nodes can keep
-    /// the layout engine busy for a while, so prefer `whole=False` there.
+    /// saying so. `whole=False` opens on the neighborhood around the entry
+    /// instead (inputs and outputs out to `depth` hops), which is what scales
+    /// to large functions; the toolbar's `whole` toggle switches between them
+    /// either way. A function of a few thousand nodes can keep the layout
+    /// engine busy for a while, so prefer `whole=False` there.
     ///
     /// The neighborhood knobs open uncapped and are set from the page, where
     /// 0 means no limit on each.
@@ -1133,8 +1133,7 @@ impl PyLifter {
     /// It is registered to run before the interpreter joins non-daemon
     /// threads, so an explorer left running does not hang or abort at exit.
     #[pyo3(signature = (target, host="127.0.0.1", port=0, depth=None, whole=true, background=false))]
-    // One parameter per Python keyword; splitting them into a struct would just
-    // move the same list somewhere the `#[pyo3(signature)]` cannot see it.
+    // One parameter per Python keyword, which `#[pyo3(signature)]` needs here.
     #[allow(clippy::too_many_arguments)]
     fn visualize(
         &self,
