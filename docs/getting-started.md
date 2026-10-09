@@ -18,7 +18,7 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    symbols get addresses of their own.
    [python-api.md](python-api.md#1-loading-a-binary) has the loaders, the
    symbol sources for a stripped image (`add_symbol_file`, `add_symbols`), and
-   the knobs over the mapping.
+   the knobs over the mapping, `relocated_got_is_rom` among them.
 2. **Lift** each machine instruction into p-code, GHIDRA's Sleigh engine's
    CPU-independent form. An instruction Sleigh leaves opaque, like a syscall or
    a trap, is classified by a built-in ABI table saying whether it returns and
