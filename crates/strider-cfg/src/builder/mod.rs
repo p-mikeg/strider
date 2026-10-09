@@ -767,18 +767,41 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         built
     }
 
-    /// Refuses every `Switch` arm from which one of `regions` is reachable.
+    /// Refuses every `Switch` arm from which one of `regions` is reachable
+    /// without passing through another dispatch.
     ///
     /// Each of `regions` was decoded off a seeded arm and lost a successor
     /// that would not decode. Every direct edge is explored before any arm, so
     /// the entry reaches such a region only through arms, and each of those
     /// arms leads into the same undecodable bytes.
+    ///
+    /// The reverse walk STOPS at every `Switch`: an arm reaching the bad bytes
+    /// only back through a dispatch (an outer table's arm into an inner table,
+    /// an arm looping to its own dispatch header) is no evidence about its own
+    /// bound, and expanding past the dispatch would refuse every ancestor of
+    /// it.
     fn refuse_arms_reaching(&mut self, regions: impl Iterator<Item = NodeIndex>) {
-        let reversed = petgraph::visit::Reversed(&self.region_graph);
-        let mut dfs = petgraph::visit::Dfs::empty(reversed);
-        for region in regions {
-            dfs.move_to(region);
-            while dfs.next(reversed).is_some() {}
+        let mut stack: Vec<NodeIndex> = regions.collect();
+        let mut reaching: rustc_hash::FxHashSet<NodeIndex> = stack.iter().copied().collect();
+        let mut seen = reaching.clone();
+        while let Some(region) = stack.pop() {
+            let preds: Vec<NodeIndex> = self
+                .region_graph
+                .neighbors_directed(region, petgraph::Incoming)
+                .collect();
+            for pred in preds {
+                if !seen.insert(pred) {
+                    continue;
+                }
+                if matches!(
+                    self.region_graph[pred].terminator,
+                    crate::RegionTerminator::Switch { .. }
+                ) {
+                    continue;
+                }
+                reaching.insert(pred);
+                stack.push(pred);
+            }
         }
         for switch in self.region_graph.node_indices() {
             let crate::RegionTerminator::Switch { addr: site, .. } =
@@ -787,7 +810,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 continue;
             };
             for arm in self.region_graph.neighbors(switch) {
-                if dfs.discovered.contains(arm.index()) {
+                if reaching.contains(&arm) {
                     self.undecodable_seeded.push((
                         Some(switch),
                         crate::UndecodableTarget {
