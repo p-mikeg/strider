@@ -3,6 +3,7 @@ the calling thread keeps querying."""
 
 import socket
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -165,11 +166,34 @@ def test_a_connection_that_sends_nothing_does_not_wedge_the_server():
 
 
 def test_blocking_mode_is_still_the_default():
-    """`background` defaults off, so an existing caller still blocks."""
-    import inspect
+    """`background` defaults off, so an existing caller still blocks: the call
+    does not return while its server is up, only once `shutdown` stops it.
 
-    sig = inspect.signature(strider.explore.visualize)
-    assert sig.parameters["background"].default is False
+    The target is built on the serving thread, as a foreground caller's would
+    be, and the bound port comes from the registry, since a blocking
+    `visualize` only returns it after it has stopped.
+    """
+    def serve():
+        lift = strider.lift.load_elf(str(fixture_path("x64", "switch")))
+        fn = lift.analyze(lift.entry_point()).function
+        strider.explore.visualize(fn, port=0)
+
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    for _ in range(100):
+        if strider.explore._RUNNING:
+            break
+        time.sleep(0.1)
+    ports = list(strider.explore._RUNNING)
+    assert len(ports) == 1, ports
+    port = ports[0]
+    try:
+        assert _get(port, "/entry").strip() != ""
+        assert t.is_alive(), "visualize returned while its server was serving"
+    finally:
+        assert strider.explore.shutdown(port) == [port]
+    t.join(timeout=10)
+    assert not t.is_alive(), "visualize did not return once the server stopped"
 
 
 class _WriteProbe:
