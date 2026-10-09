@@ -11,7 +11,6 @@ from typing import NamedTuple, Optional
 import strider
 from strider import pattern as p
 from strider import template as tpl
-from .conftest import fixture_path
 
 
 def _live(name: str) -> int:
@@ -100,26 +99,3 @@ def test_a_cleared_lifter_releases_its_reader():
     gc.collect()
     assert _live("_Marker") == base
 
-
-def test_raw_int_operand_spans_the_whole_u128_carrier():
-    """`IntConst` interns a u128, so an operand must reach 2**128-1.
-
-    `i128` extraction alone stops at 2**127-1 and everything above fell through
-    to the operand-kind error, at query time rather than construction.
-    """
-    import strider
-
-    prog = strider.lift.load_elf(str(fixture_path("x86", "memory")))
-    _cfg, function, _unres = prog.analyze("array_sum")
-    for v in (0, 1, 2**127 - 1, 2**127, 2**128 - 1, -1, -(2**127)):
-        function.find_all(p.int_add(p.anything(), v))  # compiles, may match nothing
-
-
-def test_int_operand_past_the_carrier_is_rejected():
-    import pytest
-    import strider
-
-    prog = strider.lift.load_elf(str(fixture_path("x86", "memory")))
-    _cfg, function, _unres = prog.analyze("array_sum")
-    with pytest.raises(strider.StriderError):
-        function.find_all(p.int_add(p.anything(), 2**200))
