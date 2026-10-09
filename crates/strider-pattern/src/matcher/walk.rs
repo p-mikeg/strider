@@ -388,13 +388,14 @@ fn try_match_at(
     //
     // Both orderings are re-driven under an enumerating continuation, so a
     // commutative node whose two operands EACH satisfy both sub-patterns
-    // doubles, and nesting multiplies: a wildcard operand satisfies either
-    // side, so an ordinary wildcard-leaved add tree costs 2^k for k nodes under
-    // `find_all`, whose continuation returns `false` and drives every
-    // configuration. `NodeInputs::interchangeable` cuts the symmetric half of
-    // that; `.ordered()` pins an operand pair for the rest. Both IR slots
-    // holding one value makes the swap assign every operand what the natural
-    // order did, so it is not tried.
+    // doubles, and nesting multiplies: 2^k for k such nodes under `find_all`,
+    // whose continuation returns `false` and drives every configuration.
+    // `NodeInputs::interchangeable` cuts the pairs that cannot tell the two
+    // orderings apart, which is every bare-wildcard-leaved tree, so what is
+    // left to pay for is operands differing by capture, predicate or kind;
+    // `.ordered()` pins a pair for the rest. Both IR slots holding one value
+    // makes the swap assign every operand what the natural order did, so it is
+    // not tried.
     let commutative = !nd.force_ordered
         && (1..=COMM_ORDER.len()).contains(&n_fixed)
         && !node_inputs.interchangeable
