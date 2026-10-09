@@ -9,18 +9,49 @@ pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
 /// Pattern nodes one query may recurse through, counting those of every branch
 /// pattern nested inside. The engine is continuation-passing, so a node's later
 /// operands are matched inside the deepest frame of its earlier operands'
-/// subtrees and the stack grows with the NODE COUNT, not the depth. Measured on
-/// a debug build at the cap, 255 nested `If` branches take about 1.45 MiB and a
-/// 255-node add chain about 1.15 MiB, so the 2 MiB a spawned thread gets keeps
-/// a factor of about 1.4.
+/// subtrees and the stack grows with the TREE-UNFOLDED node count, not the
+/// depth: a vertex feeding several slots is walked once per slot, which is what
+/// [`unfolded_nodes`] charges. Measured on a debug build at the cap, 255 nested
+/// `If` branches take about 1.45 MiB and a 255-node add chain about 1.15 MiB,
+/// so the 2 MiB a spawned thread gets keeps a factor of about 1.4.
 pub(crate) const MAX_PATTERN_NODES: usize = 256;
+
+/// Nodes a match attempt recurses through: every vertex once per consumer slot
+/// that reaches it, so a sub-pattern feeding two slots is charged twice.
+/// Saturating, and never below the raw node count, so a cyclic or multi-sink
+/// graph still reports its size.
+///
+/// Taken over every node rather than from the root, which is not derived yet
+/// and may not exist.
+fn unfolded_nodes(graph: &PatGraph) -> usize {
+    let raw = graph.all_node_ids().count();
+    let Ok(order) = petgraph::algo::toposort(graph, None) else {
+        return raw;
+    };
+    let mut size: FxHashMap<NodeId, usize> = FxHashMap::default();
+    let mut deepest = 0;
+    for vertex in order {
+        let strider_graph::Vertex::Node(node) = vertex else {
+            continue;
+        };
+        let own = graph
+            .node_inputs(node)
+            .into_iter()
+            .map(|value| size.get(&graph.producer(value)).copied().unwrap_or(1))
+            .fold(1usize, usize::saturating_add);
+        deepest = deepest.max(own);
+        size.insert(node, own);
+    }
+    raw.max(deepest)
+}
 
 pub struct Pattern {
     pub(crate) graph: PatGraph,
     pub(crate) cast_mask: CastMask,
     /// Resolved once at seal and memoized, verdict included.
     root: Result<NodeId, String>,
-    /// This graph's nodes plus those of the branch patterns nested in it.
+    /// This graph's unfolded nodes plus those of the branch patterns nested
+    /// in it.
     total_nodes: usize,
     /// Per pat node, indexed by `NodeId::as_u32`.
     inputs: Vec<super::walk::NodeInputs>,
@@ -30,7 +61,7 @@ impl Pattern {
     /// Seal point of [`MatcherBuilder`](crate::matcher::MatcherBuilder):
     /// resolves and memoizes the match root.
     pub(crate) fn from_graph(graph: PatGraph, nested_nodes: usize) -> Self {
-        let count = graph.all_node_ids().count().saturating_add(nested_nodes);
+        let count = unfolded_nodes(&graph).saturating_add(nested_nodes);
         let root = if count > MAX_PATTERN_NODES {
             Err(format!(
                 "pattern has {count} nodes, over the {MAX_PATTERN_NODES} a query can \
