@@ -227,9 +227,11 @@ impl<'g> EditFunction<'g> {
         if self.state.live_nodes.contains(producer) {
             return;
         }
-        let mut worklist: Worklist<NodeId> = Worklist::new();
-        worklist.enqueue(producer);
-        while let Some(node) = worklist.dequeue() {
+        // A `Worklist`'s workset would span the whole arena; `live_nodes`
+        // below is already the seen set, so a duplicate entry here is a
+        // no-op on its second turn.
+        let mut worklist = std::collections::VecDeque::from([producer]);
+        while let Some(node) = worklist.pop_front() {
             // Control corpses only.  A memory Store (side-effecting but NOT
             // control flow) reached as a genuine data input of a resurrected
             // pure node MUST come live, else the cached live set omits an in-use
@@ -256,7 +258,7 @@ impl<'g> EditFunction<'g> {
             for input in inputs {
                 let def = self.function.producer(input);
                 if !self.state.live_nodes.contains(def) {
-                    worklist.enqueue(def);
+                    worklist.push_back(def);
                 }
             }
         }
@@ -708,7 +710,7 @@ mod tests {
     use super::EditFunction;
     use super::test_fixtures::single_region_builder;
     use crate::builder::IRBuilderExt;
-    use crate::node::{NodeKind, ValueKind, ValueType};
+    use crate::node::{NodeKind, ValueId, ValueKind, ValueType};
     use crate::{IRViewer, IntBinaryOp};
     use cranelift_entity::EntityRef;
     use std::collections::BTreeSet;
@@ -1138,6 +1140,53 @@ mod tests {
         assert_eq!(
             cached, fresh,
             "cached live_nodes must equal the entry-reachable set after resurrect + clean + cull"
+        );
+    }
+
+    /// A resurrection costs its cone, not the arena: padding the node arena
+    /// with dead nodes must not slow the same resurrections down.
+    #[test]
+    fn resurrection_cost_does_not_scale_with_the_node_arena() {
+        /// `pad` dead constants, then `RESURRECTIONS` orphan `Neg`s swapped in
+        /// for the values the `Return` takes.
+        fn resurrect(pad: u64) -> std::time::Duration {
+            const RESURRECTIONS: u64 = 400;
+            let mut b = single_region_builder();
+            for i in 0..pad {
+                b.build_int_const(i + 0x10_0000, ValueType::I64).unwrap();
+            }
+            let orphans: Vec<ValueId> = (0..RESURRECTIONS)
+                .map(|i| {
+                    let k = b.build_int_const(i, ValueType::I64).unwrap();
+                    b.build_int_unary_operation(k, crate::node::IntUnaryOp::Neg, ValueType::I64)
+                        .unwrap()
+                })
+                .collect();
+            let live: Vec<ValueId> = (0..RESURRECTIONS)
+                .map(|i| b.build_int_const(i + 0x1000, ValueType::I64).unwrap())
+                .collect();
+            b.build_return(None, &live).unwrap();
+            b.set_lift_addr(None);
+            let mut function = b.build().unwrap();
+
+            let mut ctx = EditFunction::new(&mut function);
+            let start = std::time::Instant::now();
+            for (&dead, &orphan) in live.iter().zip(&orphans) {
+                ctx.replace_value(dead, orphan).unwrap();
+            }
+            start.elapsed()
+        }
+
+        resurrect(1_000);
+        let small = resurrect(2_000);
+        let large = resurrect(200_000);
+        // 100x the arena, the same resurrections. A per-call allocation sized
+        // to the highest node id made the large run ~70x the small one.
+        assert!(
+            large.as_secs_f64() < small.as_secs_f64() * 8.0 + 1e-3,
+            "100x the arena cost {:.1}x the resurrections ({small:?} -> {large:?}): \
+             a resurrection is scaling with the node arena",
+            large.as_secs_f64() / small.as_secs_f64(),
         );
     }
 
