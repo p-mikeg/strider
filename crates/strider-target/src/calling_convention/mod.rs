@@ -31,9 +31,11 @@ pub struct CallingConvention {
     arg_passing_regs: &'static [&'static str],
     /// Float / vector argument registers, in positional order, from a register
     /// file `arg_passing_regs` never names (`XMM0..7` on x86-64 SysV, `q0..7`
-    /// on AAPCS64, `d0..7` on AAPCS-VFP, `$f12`/`$f14` on MIPS O32, `f1..13` on
-    /// PowerPC64 ELF and `f1..8` on 32-bit SysV PowerPC).  Empty where floats
-    /// are stack-passed (i386 cdecl).
+    /// on AAPCS64, `d0..7` on AAPCS-VFP, `$f12`/`$f14` on MIPS O32, `f1..13`
+    /// then `v2..13` on PowerPC64 ELF and `f1..8` then `v2..13` on 32-bit SysV
+    /// PowerPC).  Where the float and vector banks are physically distinct, as
+    /// on PowerPC, the vector window is appended so the float positions stay
+    /// put.  Empty where floats are stack-passed (i386 cdecl).
     arg_passing_regs_float: &'static [&'static str],
     /// Excludes the stack pointer.
     callee_saved_regs: &'static [&'static str],
@@ -509,7 +511,14 @@ fn clamp_to_usize(n: i128) -> usize {
 const X86_CDECL_BASE: CallingConvention = CallingConvention {
     stack_ptr_reg_name: "ESP",
     arg_passing_regs: &[],
-    // Intel386 psABI: floats go on the stack like every other cdecl argument.
+    // Intel386 psABI: scalar floats go on the stack like every other cdecl
+    // argument.  Its SSE class (`__m128`) is NOT modelled, though the psABI
+    // passes the first three such arguments in XMM0-XMM2 (`gcc -m32 -msse2
+    // -O2` reads a 4-argument `__m128` function's fourth from `0x4(%esp)`):
+    // naming them here would push every STACK argument three slots up the
+    // `Call`'s flat argument list, renumbering `arg(n)` on an arch whose
+    // arguments are otherwise all stack-passed.  A callee still reads its own
+    // XMM0-2 correctly; only a caller's vector argument setup goes unrooted.
     arg_passing_regs_float: &[],
     callee_saved_regs: &["EBX", "ESI", "EDI", "EBP"],
     ret_val_regs: &["EAX", "EDX"],
@@ -542,8 +551,16 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
     arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
     // ELFv1 3.2.3 / ELFv2 2.2.3.1: floating-point arguments in f1..f13.  The
     // f1..f8 window is the 32-bit SysV rule (`powerpc_sysv32`).
+    //
+    // ELFv2 2.2.3 / the ELFv1 AltiVec supplement then pass vector arguments in
+    // v2..v13, a register file of its own (`vs34`-`vs45`; see
+    // `callee_saved_regs` for the `vN` spelling), byte-disjoint from f0-f31.
+    // Appended AFTER the floats so the float positions do not shift: a vector
+    // argument's own ordinal is not its index here, the same positional
+    // approximation `arm_aapcs` documents.
     arg_passing_regs_float: &[
-        "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13",
+        "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13", "vs34",
+        "vs35", "vs36", "vs37", "vs38", "vs39", "vs40", "vs41", "vs42", "vs43", "vs44", "vs45",
     ],
     callee_saved_regs: &[
         // r13 (TLS thread pointer) is reserved and genuinely never written.
@@ -578,8 +595,10 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
     ],
     ret_val_regs: &["r3", "r4"],
     // `long double` is IBM double-double and returns in the f1:f2 pair, as
-    // does `_Complex double`.
-    ret_val_regs_float: &["f1", "f2"],
+    // does `_Complex double`.  A vector returns in v2 (`vs34`), as does an
+    // IEEE `__float128` / `_Float128` and, under `-mabi=ieeelongdouble`,
+    // every `long double`.
+    ret_val_regs_float: &["f1", "f2", "vs34"],
     // 48-byte linkage area, then the 8-doubleword parameter save area that
     // homes r3-r10; the first stack-ONLY argument is above both.  GHIDRA's
     // ppc_64_be.cspec agrees on 112.
@@ -846,8 +865,13 @@ impl CallingConvention {
         CallingConvention {
             stack_ptr_reg_name: "r1",
             arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
-            // SysV PPC32: floating-point arguments in f1..f8.
-            arg_passing_regs_float: &["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"],
+            // SysV PPC32: floating-point arguments in f1..f8, then the AltiVec
+            // supplement's vector arguments in v2..v13 (`vs34`-`vs45`), the
+            // same append-after-the-floats layout as `POWERPC64_ELF_BASE`.
+            arg_passing_regs_float: &[
+                "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "vs34", "vs35", "vs36", "vs37",
+                "vs38", "vs39", "vs40", "vs41", "vs42", "vs43", "vs44", "vs45",
+            ],
             callee_saved_regs: &[
                 // r2 (system/TLS thread pointer) and r13 (small-data-area base)
                 // are reserved/dedicated: preserved across calls like r14-r31.
@@ -868,7 +892,9 @@ impl CallingConvention {
                 "vs62", "vs63",
             ],
             ret_val_regs: &["r3", "r4"],
-            ret_val_regs_float: &["f1", "f2"],
+            // The f1:f2 pair carries `long double` / `_Complex double`; v2
+            // carries a vector result (AltiVec supplement).
+            ret_val_regs_float: &["f1", "f2", "vs34"],
             stack_args: Some(StackArgs {
                 base_offset: 8,
                 increment: 4,
@@ -910,11 +936,16 @@ impl CallingConvention {
                 increment: 8,
             }),
             // ELFv2 2.2.3.3 returns a homogeneous float aggregate of up to
-            // eight members in f1-f8; `powerpc64le-linux-gnu-gcc -O1` reads
-            // members 7 and 8 straight out of f7/f8.  ELFv1 returns such an
-            // aggregate through a hidden pointer, so the base's f1:f2 pair
-            // (`long double`, `_Complex double`) is the whole story there.
-            ret_val_regs_float: &["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"],
+            // eight members in f1-f8 and a homogeneous VECTOR aggregate of up
+            // to eight in v2-v9 (`vs34`-`vs41`);
+            // `powerpc64le-linux-gnu-gcc -O1` reads members 7 and 8 straight
+            // out of f7/f8.  ELFv1 returns either aggregate through a hidden
+            // pointer, so the base's f1:f2 pair (`long double`,
+            // `_Complex double`) plus v2 is the whole story there.
+            ret_val_regs_float: &[
+                "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "vs34", "vs35", "vs36", "vs37",
+                "vs38", "vs39", "vs40", "vs41",
+            ],
             ..POWERPC64_ELF_BASE
         }
     }
