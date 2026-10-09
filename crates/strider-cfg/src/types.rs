@@ -94,12 +94,11 @@ pub enum RegionTerminator {
     ///
     /// Two shapes: a region ending in a direct (or `known_targets`-resolved)
     /// jump to an OOB target, and the empty stub `Builder::tail_call_stub`
-    /// creates for an edge leaving the decoded bytes, whether because the
-    /// target is out of the function bound, unmapped, or holds no
-    /// instruction.  The stub's `start_addr`
-    /// IS the target and it carries no instructions, since nothing outside the
-    /// bound and nothing unmapped is decoded; it hangs off a regular successor
-    /// edge so the branch it came from survives.
+    /// creates for an edge leaving the decoded bytes, whether the target is out
+    /// of the function bound, unmapped, or holds no instruction.  The stub's
+    /// `start_addr` IS the target and it carries no instructions, since none of
+    /// those is decoded; it hangs off a regular successor edge so the branch it
+    /// came from survives.
     TailCall {
         /// The callee, with the ISA mode the branch committed for it (an
         /// interworking `bx <const>` to a different-mode function); its `isa_bit`
