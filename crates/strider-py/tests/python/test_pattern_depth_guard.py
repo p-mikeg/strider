@@ -4,7 +4,9 @@ Compiling a pattern is native recursion mirroring its depth, and overflowing
 the Rust stack is a SIGSEGV no Python `except` sees. A level count alone does
 not bound stack: a frame costs many times more in an unoptimised build, and a
 `threading.stack_size` thread is a fraction of the main thread's, so a pattern
-well inside the documented 512 levels used to kill a 2 MiB thread outright.
+inside the 512-level internal nesting bound can still exhaust a 2 MiB thread.
+The limit the stubs document is 256 NODES; 512 levels is the internal
+`MAX_PATTERN_NESTING`.
 """
 
 from __future__ import annotations
@@ -19,8 +21,8 @@ import pytest
 import strider
 from strider import pattern as p
 
-#: Comfortably inside the 512-level count bound (a nested call costs two), so
-#: only the stack bound can answer here.
+#: Comfortably inside the 512-level `MAX_PATTERN_NESTING` bound (a nested
+#: call costs two), so only the stack bound can answer here.
 _NESTED = 255
 
 #: The smallest stack a caller realistically asks for.
@@ -127,8 +129,9 @@ def test_the_count_bound_still_answers_for_a_pathological_chain():
 
 def test_a_reentrant_index_raises_instead_of_recursing_forever():
     """A `__index__` that re-enters the builder must raise, not recurse
-    forever. The depth guard's error used to be swallowed by the
-    int-extraction attempt and retried by the next one, which is exponential.
+    forever. The depth guard's error has to escape the int-extraction attempt
+    rather than being swallowed and retried by the next one, which is
+    exponential.
 
     Which bound fires first depends on the build: a debug frame exhausts the
     stack budget, a release one is small enough that CPython's recursion limit

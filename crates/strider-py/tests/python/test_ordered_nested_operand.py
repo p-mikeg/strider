@@ -1,9 +1,9 @@
 """`.ordered()` must be nestable below the pattern root.
 
-Regression: `.ordered()` used to eagerly seal its builder into a finished
-`Pattern`, which the operand-nesting check then rejected ("a finished control /
-variadic pattern cannot be nested as a value operand").  It now stays a lazy
-builder and composes exactly like the bare commutative builder.
+It stays a lazy builder and composes exactly like the bare commutative
+builder. Sealing eagerly into a finished `Pattern` is what the
+operand-nesting check rejects ("a finished control / variadic pattern cannot
+be nested as a value operand").
 """
 
 import strider
@@ -44,8 +44,8 @@ def _store_and_fn():
 
 
 def test_ordered_builds_and_matches_as_a_value_operand():
-    """User-reported repro: an `.ordered()` binary op nested in a
-    `store(data=...)` slot used to raise StriderError at seal time."""
+    """An `.ordered()` binary op nested in a `store(data=...)` slot
+    compiles and matches, rather than raising at seal time."""
     fn = _store_and_fn()
     pat = p.store(data=p.int_binary("And", p.anything(), p.anything()).ordered())
     assert len(fn.find_all(pat)) >= 1

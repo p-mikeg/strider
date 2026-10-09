@@ -1,10 +1,11 @@
 """End-to-end tests for `strider.StriderError`, the single Python error class.
 
-Each test triggers a failure category that used to be its own typed subclass
-(`LiftError`, `ReaderError`, `PatternError`, `RewriteError`,
-`UnresolvedIndirectBranchError`, `UnknownCallOtherError`) and pins the message
-substring instead of the type identity.  If a typed hierarchy ever comes back,
-those substrings already document the discriminating text.
+Each test triggers one failure category and pins the message substring
+rather than a type identity, since every category raises the one class. The
+categories are the six a typed hierarchy would split out (`LiftError`,
+`ReaderError`, `PatternError`, `RewriteError`,
+`UnresolvedIndirectBranchError`, `UnknownCallOtherError`), so the substrings
+already document the discriminating text.
 """
 
 from __future__ import annotations
@@ -92,8 +93,8 @@ def test_rewrite_error_via_multi_output_lhs_root():
 def test_unknown_call_other_via_x86_clflushopt_instruction():
     """An unclassified CallOther raises rather than silently lifting to an
     empty CallOther.  `clflushopt [rax]` (`66 0F AE 38`) is the current
-    uncovered user-op; plain `clflush` used to serve here until it was
-    classified as a cache-maintenance memory clobber.  If anyone classifies
+    uncovered user-op; plain `clflush` is classified as a cache-maintenance
+    memory clobber, so it does not serve here. If anyone classifies
     `clflushopt`, port this to another uncovered op (e.g. `clwb`).
     """
     bytes_ = b"\x66\x0f\xae\x38\xc3"

@@ -1,8 +1,8 @@
 """When a subclassed `MemReader.read` raises, its message must survive
 into the `StriderError` that bubbles back up.
 
-Regression: a generic "callback failed" message used to replace the
-original `str(e)`, leaving users unable to debug their own reader.
+A generic "callback failed" in place of the original `str(e)` leaves
+users unable to debug their own reader.
 """
 
 from __future__ import annotations

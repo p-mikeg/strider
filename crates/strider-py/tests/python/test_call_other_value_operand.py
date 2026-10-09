@@ -1,8 +1,7 @@
 """`Call` / `CallOther` nested as a *value* operand of another node.
 
 `int_add(x, call_other().name("f"))` follows a value out of a user-op or
-call. Regression: these builders used to raise when nested as a value
-operand (they were memory-producer / root only).
+call, so neither builder is memory-producer / root only.
 """
 
 import strider

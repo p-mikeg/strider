@@ -2,8 +2,8 @@
 
 Only `find_all` / `find_unique` publish the function the predicate needs to
 build its `Match`; a rewrite holds the function for mutation while its rules
-fire, so the predicate could not read one. It used to be accepted, print an
-internal error to stderr per candidate node, and rewrite nothing.
+fire, so the predicate can read none. Accepting it instead means an internal
+error on stderr per candidate node and nothing rewritten.
 """
 
 import pytest

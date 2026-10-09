@@ -57,9 +57,9 @@ def test_be8_flag_picks_the_be8_arch(tmp_path):
 def test_a_rewrite_the_guard_cannot_see_raises_rather_than_panics(tmp_path):
     """`check_unchanged` compares a size and an mtime truncated to whole
     seconds, so a same-length rewrite inside one second passes it and the
-    re-parse then runs on bytes that are no longer ELF. That used to abort out
-    of Rust as `PanicException`, which derives from `BaseException` and so
-    escapes `except Exception`.
+    re-parse then runs on bytes that are not ELF. That has to raise
+    `StriderError`, not a `PanicException`, which derives from
+    `BaseException` and so escapes `except Exception`.
 
     The mtime is restored rather than raced, so the guard passes every run."""
     victim = tmp_path / "victim.elf"

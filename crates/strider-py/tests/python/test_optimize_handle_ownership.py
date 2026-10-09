@@ -54,7 +54,8 @@ def test_optimize_folds_its_own_functions_load_against_its_own_rom():
 
 
 def test_optimize_rejects_a_cross_arch_function():
-    """The renderers raise here; `optimize` used to accept it."""
+    """`optimize` refuses a foreign arch for the same reason the renderers
+    do: the graph's varnodes are another register table's."""
     x86 = strider.lift.lifter(
         strider.sleigh.SleighArch.x86(), strider.reader.BufferReader(_BASE, _CODE)
     )
