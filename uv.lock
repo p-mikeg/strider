@@ -229,7 +229,7 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "maturin", specifier = ">=1.5,<2.0" },
+    { name = "maturin", specifier = ">=1.10,<2.0" },
     { name = "patchelf", marker = "sys_platform == 'linux'", specifier = ">=0.17" },
     { name = "pyelftools", specifier = ">=0.30" },
     { name = "pyright", specifier = ">=1.1.400" },
