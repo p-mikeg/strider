@@ -309,20 +309,15 @@ pub fn ret() -> RetPat {
 }
 
 /// Inputs `[ctrl(0), mem(1), target(2)]` plus the optional interworking ISA
-/// mode at `3`, no outputs, so the pattern is rooted on the node itself.
-/// [`any_input`](Self::any_input) reaches the mode input too.
+/// mode at `3`, reached through [`input`](Self::input) and present only on a
+/// mode-switching branch. No outputs, so the pattern is rooted on the node
+/// itself; [`any_input`](Self::any_input) reaches the mode input too.
 pub struct IndirectBranchPat(NodePat);
 
 impl IndirectBranchPat {
     /// `inputs[2]`.
     pub fn target<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input(2, p))
-    }
-
-    /// `inputs[3]`, the interworking ISA-mode bit. Present only on a
-    /// mode-switching branch, so pinning it rejects every other one.
-    pub fn isa_mode<P: MatchPat + 'static>(self, p: P) -> Self {
-        Self(self.0.input(3, p))
     }
 
     /// `inputs[0]`. The sub-pattern's root produces a control edge.
