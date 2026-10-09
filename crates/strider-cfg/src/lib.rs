@@ -86,6 +86,10 @@ impl Cfg {
     /// function analysable, and reporting them is what stops the CFG being
     /// silently incomplete.
     ///
+    /// "Led to" stops at the next dispatch: an arm that reaches the bad bytes
+    /// only back through another `Switch` (an outer table's arm into an inner
+    /// one, an arm looping to its own header) says nothing about its own bound.
+    ///
     /// Each carries the site it was seated from: the same address reached from
     /// another site decodes in that site's own committed context, so the
     /// failure is no verdict there.

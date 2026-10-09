@@ -160,6 +160,120 @@ fn undecodable_bytes_reached_without_an_arm_still_fail_the_function() {
     );
 }
 
+/// Builds over `bytes` with one `known_targets` entry per site.
+fn build_sites(bytes: &[u8], size: u64, sites: &[(u64, &[u64])]) -> anyhow::Result<Cfg> {
+    let arch = SleighArch::x86_64();
+    let mut sleigh = rsleigh::Sleigh::new(
+        arch.sla_spec(),
+        arch.pspec(),
+        BufMemReader::new(bytes.to_vec(), BASE),
+    )
+    .expect("create Sleigh");
+    let mut opts = CfgOptions {
+        fn_max_size: Some(size),
+        ..CfgOptions::default()
+    };
+    for &(site, arms) in sites {
+        opts.known_targets.insert(
+            PcodeInsnAddr::at_machine_start(site),
+            ResolvedTargets::Multiple(arms.iter().map(|&a| a.into()).collect()),
+        );
+    }
+    Builder::for_arch(&arch, &mut sleigh, BASE, &opts).build()
+}
+
+/// The arms left on the `Switch` whose dispatch is at `site`.
+fn arms_at(cfg: &Cfg, site: u64) -> Vec<u64> {
+    cfg.regions()
+        .find_map(|r| match &r.terminator {
+            RegionTerminator::Switch { targets, addr, .. } if addr.machine_addr.addr == site => {
+                Some(targets.iter().map(|t| t.addr).collect())
+            }
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+/// `0xcc` padding, with `at` poked in at each offset from `BASE`.
+fn image(size: usize, at: &[(u64, &[u8])]) -> Vec<u8> {
+    let mut bytes = vec![0xccu8; size];
+    for &(addr, code) in at {
+        let off = (addr - BASE) as usize;
+        bytes[off..off + code.len()].copy_from_slice(code);
+    }
+    bytes
+}
+
+/// An arm reaching the bad bytes only back through another dispatch is no
+/// evidence about its own bound: refusing it would orphan the inner table and
+/// every good arm of it.
+///
+/// ```text
+/// 1000  jmp rax           ; outer, arms 0x1002 and 0x100d
+/// 1002  jmp rbx           ; inner, arms 0x1004 and 0x1005
+/// 1004  ret
+/// 1005  je 0x1009
+/// 1007  ret
+/// 1009  (invalid)
+/// 100d  ret
+/// ```
+#[test]
+fn an_inner_tables_bad_arm_does_not_refuse_the_outer_arm_leading_to_it() {
+    let bytes = image(
+        0x18,
+        &[
+            (0x1000, &[0xff, 0xe0]),
+            (0x1002, &[0xff, 0xe3]),
+            (0x1004, &[0xc3]),
+            (0x1005, &[0x74, 0x02]),
+            (0x1007, &[0xc3]),
+            (0x1009, &[0x06, 0x06, 0x06, 0x06]),
+            (0x100d, &[0xc3]),
+        ],
+    );
+    let cfg = build_sites(
+        &bytes,
+        0x18,
+        &[(0x1000, &[0x1002, 0x100d]), (0x1002, &[0x1004, 0x1005])],
+    )
+    .expect("one bad inner arm must not fail the function");
+    assert_eq!(arms_at(&cfg, 0x1000), [0x1002, 0x100d]);
+    assert_eq!(arms_at(&cfg, 0x1002), [0x1004]);
+    assert_eq!(undecodable(&cfg), [0x1005]);
+    assert_no_dangling_successor(&cfg);
+}
+
+/// An arm looping back to the dispatch reaches the bad bytes only through it,
+/// so it survives.
+///
+/// ```text
+/// 1000  jmp rax           ; arms 0x1010, 0x1020, 0x1030
+/// 1010  jmp 0x1000
+/// 1020  je 0x1024
+/// 1022  ret
+/// 1024  (invalid)
+/// 1030  ret
+/// ```
+#[test]
+fn a_loop_back_edge_arm_is_not_refused_with_the_bad_arm_beside_it() {
+    let bytes = image(
+        0x38,
+        &[
+            (0x1000, &[0xff, 0xe0]),
+            (0x1010, &[0xeb, 0xee]),
+            (0x1020, &[0x74, 0x02]),
+            (0x1022, &[0xc3]),
+            (0x1024, &[0x06, 0x06, 0x06, 0x06]),
+            (0x1030, &[0xc3]),
+        ],
+    );
+    let cfg = build_sites(&bytes, 0x38, &[(0x1000, &[0x1010, 0x1020, 0x1030])])
+        .expect("one bad arm must not fail the function");
+    assert_eq!(arms_at(&cfg, 0x1000), [0x1010, 0x1030]);
+    assert_eq!(undecodable(&cfg), [0x1020]);
+    assert_no_dangling_successor(&cfg);
+}
+
 /// A direct edge found while decoding an arm is only as certain as that arm,
 /// and an earlier arm may already own its target in the other ISA mode: the
 /// first decode keeps the bytes and the clash is reported.
