@@ -79,8 +79,8 @@ def test_cfg_address_search_still_works():
 
 def test_visualize_runs_on_the_thread_that_created_the_target():
     """`visualize` decodes through the Lifter, which is pinned to its
-    creating thread. Off-thread this raises rather than killing the thread:
-    it used to be a `PanicException`, which `except Exception` never caught."""
+    creating thread. Off-thread it raises `StriderError`, not a
+    `PanicException`, which `except Exception` never catches."""
     import threading
 
     _fn, cfg = _function_and_cfg()

@@ -2,9 +2,9 @@
 
 Nothing else enforces this. The stubs are hand-written, so a new binding
 reaches users' type checkers only if someone remembers to hand-edit the
-matching stub. Nobody remembered for a while: `strider.pattern` shipped
-1.0 missing `entry`, `region`, `indirect_branch`, `switch`,
-`unreachable`, `CallOutputPat`, `CallPat.mem` and `CallPat.output`.
+matching stub, and the 0.1.0 `strider.pattern` stub shipped without `entry`,
+`region`, `indirect_branch`, `switch`, `unreachable`, `CallOutputPat`,
+`CallPat.mem` or `CallPat.output`.
 
 Both directions are checked: a runtime name with no stub entry makes
 correct user code fail type-checking, and a stub entry with no runtime

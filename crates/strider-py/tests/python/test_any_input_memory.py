@@ -1,7 +1,7 @@
 """`any_input` matches SOME input of a node regardless of kind: a memory
-producer (`store` / `mem_phi`) now matches a memory input, not only value
-producers. Regression: `mem_phi().any_input(store())` used to raise
-"expected a value pattern"."""
+producer (`store` / `mem_phi`) matches a memory input, not only value
+producers, so `mem_phi().any_input(store())` is a query and not an
+"expected a value pattern" error."""
 
 import strider
 from strider import pattern as p

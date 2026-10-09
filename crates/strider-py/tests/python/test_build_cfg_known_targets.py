@@ -43,6 +43,7 @@ def test_an_unseeded_build_cfg_reports_nothing_unverified():
 
 
 def test_out_of_range_int_entry_reports_the_real_cause():
-    """It used to say an `ElfLifter` was needed, to someone holding one."""
+    """An address past the address space names the range, not the handle
+    type: the caller already holds an `ElfLifter`."""
     with pytest.raises(strider.StriderError, match="out of range"):
         _lifter().analyze(2**64, strider.sleigh.CallingConvention.x86_64_systemv())
