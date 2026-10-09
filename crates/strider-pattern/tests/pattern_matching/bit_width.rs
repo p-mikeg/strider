@@ -169,3 +169,71 @@ fn bool_ctors_require_i1_output() {
         "bool_const matches only an I1 constant, not a wide IntConst(1)"
     );
 }
+
+/// `inputs_of_width` is a constraint on the matched NODE's inputs, so wrapping
+/// an alternation in it must not land the width on the arms' own outputs: an
+/// `I1` compare is never 64 bits wide and the query would match nothing.
+#[test]
+fn inputs_of_width_over_an_alternation_still_constrains_the_inputs() {
+    use strider_ir::IntCmpOp;
+    use strider_pattern::{anything, int_eq, inputs_of_width, one_of};
+
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .build_fn_single_region()
+        .expect("build_fn_single_region");
+    let a = b.build_int_const(7u64, ValueType::I64).expect("a");
+    let c = b.build_int_const(9u64, ValueType::I64).expect("c");
+    let eq = b
+        .build_int_cmp_operation(a, c, IntCmpOp::Equal, ValueType::I64)
+        .expect("eq");
+    b.build_return(Some(eq), &[]).expect("ret");
+    let function = b.build().expect("build");
+
+    let m = Matcher::new(&function);
+    let plain = m
+        .find_all(&inputs_of_width(64, int_eq(anything(), anything())).into_pattern())
+        .unwrap();
+    assert_eq!(plain.len(), 1);
+    let wrapped = m
+        .find_all(
+            &inputs_of_width(64, one_of![int_eq(anything(), anything())]).into_pattern(),
+        )
+        .unwrap();
+    assert_eq!(wrapped.len(), 1, "the arm is not an operand");
+    // The named width still has to be the right one.
+    assert!(
+        m.find_all(&inputs_of_width(32, one_of![int_eq(anything(), anything())]).into_pattern())
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// The inputs the width is read off are the matched node's, not what its
+/// operand sub-patterns bound: under `ignore_casts` an operand reached through
+/// a cast is narrower than the input that feeds the node, and the node's input
+/// is what `inputs_of_width` names.
+#[test]
+fn inputs_of_width_reads_the_input_not_the_operand_behind_a_cast() {
+    use strider_ir::IntBinaryOp;
+    use strider_pattern::{anything, inputs_of_width, int_add};
+
+    let mut t = super::support::Tb::empty();
+    let a = t.u32(1);
+    let b = t.u32(2);
+    // I32 add, widened to I64 and added to an I64 value.
+    let narrow = t.int_bin_at(a, b, IntBinaryOp::Add, ValueType::I32);
+    let wide = t.zext_to(narrow, ValueType::I64);
+    let other = t.u64(9);
+    let outer = t.add(wide, other);
+    let function = t.ret_val(outer);
+
+    let m = Matcher::new(&function);
+    let pat = inputs_of_width(64, int_add(int_add(anything(), anything()), anything()))
+        .into_pattern()
+        .ignore_casts();
+    assert_eq!(
+        m.find_all(&pat).unwrap().len(),
+        1,
+        "the outer add's own inputs are both I64"
+    );
+}
