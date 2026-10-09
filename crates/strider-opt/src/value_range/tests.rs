@@ -2643,3 +2643,74 @@ fn guard_carries_up_through_a_mask() {
     assert_eq!(iv.hi, 80);
     assert!(iv.count() <= 21, "count {}", iv.count());
 }
+
+/// `x = 0` then `n` sequential `if (c < i) { x = i % 7; }` triangles, then
+/// `Return(x)`:
+/// `PhiCollapse` cannot remove the merge phis, so the returned value is a phi
+/// `n` levels deep.  Returns its range at the `Return`.
+fn deep_phi_chain_range(n: usize) -> Interval {
+    let var = strider_ir_test_utils::reg_vn(0x1000, 4);
+    let cvar = strider_ir_test_utils::reg_vn(0x2000, 4);
+    let mut b = RegisterSet::new()
+        .tracked(var)
+        .tracked(cvar)
+        .arg(cvar)
+        .build_fn()
+        .unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let entry = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    let zero = b.build_int_const(0_u64, ValueType::I32).unwrap();
+    b.write_variable(&var, zero).unwrap();
+    for i in 0..n {
+        let assign = b.create_region_all().unwrap();
+        let merge = b.create_region_all().unwrap();
+        let c = b.read_variable(&cvar).unwrap();
+        let k = b.build_int_const(i as u64 + 1, ValueType::I32).unwrap();
+        let cond = b
+            .build_int_cmp_operation(c, k, IntCmpOp::Less, ValueType::I32)
+            .unwrap();
+        b.build_if(cond, assign, merge).unwrap();
+        b.set_region(assign);
+        let kv = b.build_int_const((i % 7) as u64, ValueType::I32).unwrap();
+        b.write_variable(&var, kv).unwrap();
+        b.build_branch(merge).unwrap();
+        b.set_region(merge);
+    }
+    let x = b.read_variable(&var).unwrap();
+    b.build_return(None, &[x]).unwrap();
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+    let ret = f
+        .walk_kind(|k| matches!(k, NodeKind::Return))
+        .next()
+        .expect("a Return node");
+    let returned = f.node_inputs(ret)[2];
+    range_at(&f, returned, ret)
+}
+
+/// A phi chain past `MAX_RANGE_DEPTH` widens to a sound answer rather than
+/// recursing once per level: 4000 levels overflow a 2 MiB stack unbudgeted.
+#[test]
+fn phi_chain_deeper_than_the_budget_stays_sound() {
+    let worker = std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(|| deep_phi_chain_range(4000))
+        .expect("spawns");
+    let iv = worker.join().expect("range_of returns");
+    // Every arm is `i % 7`.
+    assert!(
+        iv.lo == 0 && iv.hi >= 6 && iv.stride == 1,
+        "unsound range for a capped chain: {iv:?}"
+    );
+}
+
+/// A chain within the budget still resolves exactly: the cap must not cost
+/// precision on anything a real function reaches.
+#[test]
+fn phi_chain_within_the_budget_resolves_exactly() {
+    let iv = deep_phi_chain_range(8);
+    assert_eq!((iv.lo, iv.hi, iv.stride), (0, 6, 1));
+}
