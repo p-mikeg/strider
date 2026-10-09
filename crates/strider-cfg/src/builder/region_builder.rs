@@ -1220,14 +1220,15 @@ mod tests {
     #[test]
     fn a_call_target_outside_code_space_is_not_read_as_an_address() {
         let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
-        b.per_address_ccs.insert(
+        let mut ccs = rustc_hash::FxHashMap::default();
+        ccs.insert(
             0x10,
             strider_target::BuiltCallingConvention {
                 no_return: true,
                 ..Default::default()
             },
         );
+        let mut b = make_builder(0x1000, &mut sleigh).with_per_address_ccs(&ccs);
         let mut rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         let insn = rsleigh::Insn {
             opcode: rsleigh::Opcode::Call,

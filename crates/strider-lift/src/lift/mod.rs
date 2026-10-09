@@ -218,7 +218,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             .with_flow_context(&self.flow_vars, function_mode)
             .with_transient_defaults(&self.transient_defaults)
             .with_user_op_names(&self.user_op_names)
-            .with_per_address_ccs(per_address_ccs.clone())
+            .with_per_address_ccs(per_address_ccs)
             .build()
     }
 

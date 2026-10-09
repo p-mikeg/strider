@@ -2,6 +2,23 @@ use anyhow::Result;
 
 use super::Lifter;
 
+/// Every address a `Call` this cfg holds selects its `per_address_ccs`
+/// override by: a direct call's target operand, and a tail-call terminator's
+/// target.  Mirror of `handle_call` / `handle_tail_call`.
+fn override_call_targets(cfg: &strider_cfg::Cfg) -> impl Iterator<Item = u64> + '_ {
+    cfg.regions().flat_map(|region| {
+        region
+            .insns
+            .iter()
+            .filter(|w| w.insn.opcode == rsleigh::Opcode::Call)
+            .filter_map(|w| w.insn.inputs.first().map(|vn| vn.addr_off))
+            .chain(match region.terminator {
+                strider_cfg::RegionTerminator::TailCall { target } => Some(target.addr),
+                _ => None,
+            })
+    })
+}
+
 /// Per-function translation context, borrowing the shared [`Lifter`] engine
 /// and owning a fresh [`strider_ir::FunctionBuilder`].
 pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
@@ -90,8 +107,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // an override's argument registers would be untracked: an integer one
         // fails the lift outright in `read_vns`, a float one gaps
         // `float_arg_slots` and truncates the call's float arguments there.
-        let overrides: Vec<rsleigh::Vn> = per_address_ccs
-            .values()
+        // Only the overrides THIS cfg selects: a caller passes a binary-wide
+        // table, and walking all of it costs the table per function.
+        let overrides: Vec<rsleigh::Vn> = override_call_targets(cfg)
+            .filter_map(|addr| per_address_ccs.get(&addr))
             .flat_map(|o| {
                 o.arg_passing_regs
                     .iter()
