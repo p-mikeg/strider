@@ -271,6 +271,12 @@ pub enum ValidationError {
     )]
     MemoryRewind { node: NodeId, effect: NodeId },
 
+    #[error(
+        "{region:?} merges a path carrying {effect:?}, a memory effect, but has no \
+         `MemPhi` on the memory chain to merge it into, so that effect is lost"
+    )]
+    UnmergedMemoryEffect { region: NodeId, effect: NodeId },
+
     #[error("node {node:?} names InitialVnId {id:?}, which the function never minted")]
     DanglingInitialVnId {
         node: NodeId,
@@ -447,6 +453,7 @@ impl ValidationError {
             } => smallvec::smallvec![phi, owner_region],
             E::PhiInputTypeMismatch { phi, .. } => smallvec::smallvec![phi],
             E::MemoryRewind { node, effect } => smallvec::smallvec![node, effect],
+            E::UnmergedMemoryEffect { region, effect } => smallvec::smallvec![region, effect],
             E::EmptyRegionPredecessors { region } => smallvec::smallvec![region],
             E::StaleValueVn { producer, .. } => smallvec::smallvec![producer],
             E::NodeInputCountMismatch { node, .. }
