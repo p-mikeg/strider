@@ -293,9 +293,9 @@ when both IR slots hold the same value.
   reported rather than silently double-owned.
 - SP-alias precision is tuned by `OptOptions` (`resolve_indirect_branches`,
   `assumptions`), threaded through `OptCtx` into every SP-aware pass.
-  `assumptions` is an `AssumptionOptions` of six claims about the code being
+  `assumptions` is an `AssumptionOptions` of seven claims about the code being
   analysed that the IR cannot prove, so a wrong one miscompiles; every field's
-  risky value is the positive one, two default ON, and
+  risky value is the positive one, three default ON, and
   `AssumptionOptions::none()`, not `::default()`, is the configuration sound
   under any input whose memory behaves as RAM. Per-field detail is on the struct
   (`crates/strider-opt/src/options.rs`). `LoadForward` is two analyzers: the
