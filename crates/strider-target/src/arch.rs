@@ -292,6 +292,26 @@ impl SleighArch {
         }
     }
 
+    /// Whether a `CallOther` whose pcode output is a sub-register may be
+    /// lifted as a write of that slice alone, leaving the enclosing register's
+    /// other bytes as they were.
+    ///
+    /// It may only where the machine leaves them alone and the sla says so by
+    /// writing the slice alone: x86 8- and 16-bit GPR destinations and legacy
+    /// SSE into a VEX-widened register (a 32-bit destination zero-extends, and
+    /// the sla emits that zext itself).
+    ///
+    /// Elsewhere the slice write would read bytes the machine redefines.
+    /// AArch64 zeroes them and the fork's sla emits the zext, so a slice write
+    /// is sound there, but it reads the incoming register first and that read
+    /// becomes a phantom argument carrier. ARM32, MIPS and PowerPC have not
+    /// been scanned for the class at all. All three keep the whole-container
+    /// clobber, which is opaque rather than wrong.
+    #[must_use]
+    pub fn callother_output_is_exact(&self) -> bool {
+        matches!(self.preset, ArchPreset::X86 | ArchPreset::X86_64)
+    }
+
     /// Registers the sla declares for its own semantics rather than as
     /// processor state: scratch a constructor writes and reads within one
     /// instruction, or storage the decompiler fakes.  No callee can read them.
@@ -517,6 +537,22 @@ mod tests {
                 arch.isa_mode_var().is_some(),
                 expected,
                 "{preset:?} ISA-mode presence",
+            );
+        }
+    }
+
+    /// Only the arches whose machine preserves the bytes outside a narrower
+    /// pcodeop destination are exact; every other preset keeps the
+    /// whole-container clobber.
+    #[test]
+    fn callother_output_is_exact_only_where_the_machine_preserves_the_rest() {
+        use super::ArchPreset;
+        for preset in ArchPreset::ALL {
+            let expected = matches!(preset, ArchPreset::X86 | ArchPreset::X86_64);
+            assert_eq!(
+                preset.arch().callother_output_is_exact(),
+                expected,
+                "{preset:?}",
             );
         }
     }
