@@ -45,17 +45,23 @@ fn render(function: &Function, entry: NodeId) -> String {
     render_with_state(function, entry).0
 }
 
-/// [`render`] plus the dumper state, for the `dot id -> NodeId` mapping.
+/// [`render`] plus the dumper state, for the `dot id -> NodeId` mapping, which
+/// only this test needs: the emitter loop is `GraphDot::as_dot`'s, which drops
+/// the state.
 fn render_with_state(
     function: &Function,
     entry: NodeId,
 ) -> (String, super::FunctionDotDumperState) {
     let sleigh = probe_sleigh();
     let dumper = make_dumper(function, entry, &sleigh);
-    use ::dot::GraphDot;
-    GraphDot::new(dumper, ::dot::DotStyle::empty())
-        .as_dot_with_state()
-        .expect("render must succeed")
+    let mut out = ::dot::DotEmitter::new("G", &::dot::DotStyle::empty());
+    let mut state = dumper.create_initial_state();
+    for node in dumper.iter_nodes() {
+        dumper
+            .dump_as_dot(node, &mut out, &mut state)
+            .expect("render must succeed");
+    }
+    (out.finish(), state)
 }
 
 /// `to_dot` renders un-validated IR, where a `Phi` can carry no output at all.
