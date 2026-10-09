@@ -1010,10 +1010,14 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     ///
     /// Walks back over the run (each nop an empty `Unconditional` region with
     /// one predecessor) to the region whose LAST instruction is the call,
-    /// re-seals it as `NoReturn` and drops its fall-through edge, orphaning
-    /// the nops.  Last, not anywhere: an instruction after the call means the
-    /// region was sealed somewhere other than the nop, so the fall-through is
-    /// not the call's return.
+    /// re-seals it as `NoReturn` and drops its fall-through edge.  Last, not
+    /// anywhere: an instruction after the call means the region was sealed
+    /// somewhere other than the nop, so the fall-through is not the call's
+    /// return.
+    ///
+    /// The nops keep their own regions, sealed onto a stub, so a branch
+    /// landing on one still has a successor; orphaned otherwise, they go with
+    /// `Builder::remove_unreachable_regions`.
     fn seal_at_preceding_call_not_returning(&mut self, cur_addr: PcodeInsnAddr) -> Result<bool> {
         if !self.insns.is_empty() {
             return Ok(false);
@@ -1028,6 +1032,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             }
             match region.insns.last() {
                 Some(last) if is_call(last) => {
+                    self.seal_at_fallthrough_stub(cur_addr)?;
                     let outgoing: Vec<_> = self
                         .builder
                         .region_graph
