@@ -170,6 +170,10 @@ class Lifter:
         mem: MemLike,
         rom: Optional[RomLike] = ...,
     ) -> _L: ...
+    def _check_usable(self) -> None:
+        """INTERNAL. Raise what `_rebuild` would, without rebuilding, so a
+        caller that commits state elsewhere can refuse before it does."""
+        ...
     def _rebuild(
         self, arch: SleighArch, mem: MemLike, rom: Optional[RomLike] = ...
     ) -> None:
