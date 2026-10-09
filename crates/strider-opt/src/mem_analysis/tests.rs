@@ -1390,6 +1390,7 @@ mod heap_tests {
                 preserves_memory,
                 preserves_all_registers: false,
                 no_return: false,
+                entry_address_vn: None,
             };
             let mut b = FunctionBuilder::new(
                 vec![sp(), ret_reg()],

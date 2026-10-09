@@ -53,6 +53,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             written: FxHashSet::default(),
             nonlocal: FxHashSet::default(),
         };
+        // Mirrors `bind_entry_address_register`, whose write no pcode names.
+        if let Some(vn) = self.builder.function().default_cc().entry_address_vn {
+            self.add_def(&vn, self.cfg.entry(), &mut defs, &mut exp);
+        }
         for r in self.cfg.region_ids() {
             let region = self
                 .cfg

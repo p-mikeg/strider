@@ -256,6 +256,10 @@ Rendering:
   `object::File::parse(b)` then `::from_object(&obj)`; `from_path(p)` is
   `load_elf(p)` then `::from_elf(&owned)`.
 - `Lifter::arch` is gone; `Strider::arch` remains.
+- `BuiltCallingConvention` gains `entry_address_vn`, the register an ABI
+  guarantees holds the function's own entry address on entry to it (PPC64
+  ELFv2 `r12`, MIPS abicalls `t9`), which the lift binds to the entry address;
+  a struct literal must name it.
 - `BuiltCallingConvention::ret_and_clobber_vns` reports REGISTER clobbers only,
   so a `Call` no longer carries an output per tracked Sleigh temporary.
 

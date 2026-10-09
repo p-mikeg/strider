@@ -149,6 +149,7 @@ impl RegisterSet {
             preserves_memory: false,
             preserves_all_registers: false,
             no_return: false,
+            entry_address_vn: None,
         };
         let endianness = self
             .endianness

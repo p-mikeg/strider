@@ -61,6 +61,8 @@ pub struct CallingConvention {
     /// Set by [`Self::preserves_all`] / [`Self::preserves_regs`]; false for
     /// every real ABI.
     preserves_all_registers: bool,
+    /// Resolved into [`BuiltCallingConvention::entry_address_vn`].
+    entry_address_reg_name: Option<&'static str>,
 }
 
 /// A [`CallingConvention`] with its register names resolved to varnodes.
@@ -96,6 +98,13 @@ pub struct BuiltCallingConvention {
     /// `__stack_chk_fail`), attached to a call TARGET via a per-address CC
     /// override.
     pub no_return: bool,
+    /// The register the ABI guarantees holds the function's own entry address
+    /// on entry to it: PPC64 ELFv2 `r12` (2.2.2.1) and MIPS abicalls `t9`,
+    /// which the prologue turns into the TOC / GOT pointer. The lifter binds it
+    /// to the entry address. `None` where the ABI promises nothing, ELFv1
+    /// included: there the analogue is the descriptor's TOC word, which is not
+    /// a register contract.
+    pub entry_address_vn: Option<rsleigh::Vn>,
 }
 
 /// The trivial convention for synthetic / mock graphs that have no real
@@ -119,6 +128,7 @@ impl Default for BuiltCallingConvention {
             preserves_memory: false,
             preserves_all_registers: false,
             no_return: false,
+            entry_address_vn: None,
         }
     }
 }
@@ -544,6 +554,7 @@ const X86_CDECL_BASE: CallingConvention = CallingConvention {
     link_register_reg_name: None,
     preserves_memory: false,
     preserves_all_registers: false,
+    entry_address_reg_name: None,
 };
 
 /// Base for `powerpc64_elf_v1` and `powerpc64_elf_v2`, which differ in
@@ -621,6 +632,7 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
     link_register_reg_name: Some("LR"),
     preserves_memory: false,
     preserves_all_registers: false,
+    entry_address_reg_name: None,
 };
 
 /// Base for `arm_aapcs` and `arm_aapcs_soft`, which differ only in the VFP
@@ -661,6 +673,7 @@ const ARM_AAPCS_VFP_BASE: CallingConvention = CallingConvention {
     link_register_reg_name: Some("lr"),
     preserves_memory: false,
     preserves_all_registers: false,
+    entry_address_reg_name: None,
 };
 
 /// Base for `mips_o32` and `mips_n64`; n64 widens both argument banks,
@@ -710,6 +723,11 @@ const MIPS_O32_BASE: CallingConvention = CallingConvention {
     link_register_reg_name: Some("ra"),
     preserves_memory: false,
     preserves_all_registers: false,
+    // The abicalls (PIC) contract: a call through `jalr t9` leaves the callee's
+    // own address in t9, and the prologue adds it to a link-time constant to
+    // form `gp`.  `-mno-abicalls` code never reads t9 at entry, so the binding
+    // is inert rather than wrong there.
+    entry_address_reg_name: Some("t9"),
 };
 
 impl CallingConvention {
@@ -750,6 +768,7 @@ impl CallingConvention {
             link_register_reg_name: None,
             preserves_memory: false,
             preserves_all_registers: false,
+            entry_address_reg_name: None,
         }
     }
 
@@ -795,6 +814,7 @@ impl CallingConvention {
             link_register_reg_name: Some("x30"),
             preserves_memory: false,
             preserves_all_registers: false,
+            entry_address_reg_name: None,
         }
     }
 
@@ -916,6 +936,7 @@ impl CallingConvention {
             link_register_reg_name: Some("LR"),
             preserves_memory: false,
             preserves_all_registers: false,
+            entry_address_reg_name: None,
         }
     }
 
@@ -957,6 +978,11 @@ impl CallingConvention {
                 "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "vs34", "vs35", "vs36", "vs37",
                 "vs38", "vs39", "vs40", "vs41",
             ],
+            // ELFv2 2.2.2.1: a caller entering through the GLOBAL entry leaves
+            // the function's own address in r12, which the two-instruction
+            // prologue turns into the TOC pointer. ELFv1 has no such register
+            // contract, hence the override here rather than in the base.
+            entry_address_reg_name: Some("r12"),
             ..POWERPC64_ELF_BASE
         }
     }
@@ -996,6 +1022,10 @@ impl CallingConvention {
             .link_register_reg_name
             .map(|name| vn_for_name(sleigh_regs, name))
             .transpose()?;
+        let entry_address_vn = self
+            .entry_address_reg_name
+            .map(|name| vn_for_name(sleigh_regs, name))
+            .transpose()?;
         let built = BuiltCallingConvention {
             arg_passing_regs,
             arg_passing_regs_float,
@@ -1009,6 +1039,7 @@ impl CallingConvention {
             preserves_memory: self.preserves_memory,
             preserves_all_registers: self.preserves_all_registers,
             no_return: false,
+            entry_address_vn,
         };
         built.validate()?;
         Ok(built)
