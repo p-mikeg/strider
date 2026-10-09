@@ -36,7 +36,8 @@ def test_capture_on_commutative_operand_reports_both_bindings(add_fn):
 
     bound = [h.node(k) for h in hits]
     assert len(set(bound)) == 2, "the two bindings must be distinct"
-    # Natural operand ordering is reported before the swapped one.
+    # Natural operand ordering first: `find_all(...)[0]` replaced
+    # `find_one`, so which binding lands there is part of the contract.
     assert bound == list(operands)
 
 
@@ -60,18 +61,6 @@ def test_ordered_suppresses_commutative_retry(add_fn):
         p.int_binary("Add", p.anything().capture(k), p.anything()).ordered()
     )
     assert len(hits) == 1
-    assert hits[0].node(k) == add_fn.node(_add_node(add_fn)).inputs()[0]
-
-
-def test_find_all_first_hit_is_the_natural_ordering(add_fn):
-    """Enumeration order is deterministic: natural operand order first.
-
-    `find_all(...)[0]` is the idiom that replaced `find_one`, so which
-    binding lands at index 0 is part of the contract, not an accident.
-    """
-    k = p.Capture()
-    hits = add_fn.find_all(p.int_add(p.anything().capture(k), p.anything()))
-    assert hits
     assert hits[0].node(k) == add_fn.node(_add_node(add_fn)).inputs()[0]
 
 

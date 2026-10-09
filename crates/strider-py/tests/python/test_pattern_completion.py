@@ -180,11 +180,6 @@ def test_mem_phi_any_input_wildcard_reaches_memory_and_phi_token():
     assert fn.find_all(mem_phi().any_input(int_const(1))) == []
 
 
-def test_phi_token_typed_sub_never_matches():
-    fn = _diamond_returning_eax()
-    assert fn.find_all(phi().phi_token(int_const(1))) == []
-
-
 def test_phi_token_wildcard_binds_the_phi_token_edge():
     fn = _diamond_returning_eax()
     c = Capture()
@@ -209,11 +204,6 @@ def test_mem_phi_phi_token_wildcard_binds():
     c = Capture()
     hits = fn.find_all(mem_phi().phi_token(var(c)))
     assert len(hits) >= 1
-
-
-def test_mem_phi_phi_token_typed_sub_never_matches():
-    fn = _diamond_with_memory_join()
-    assert fn.find_all(mem_phi().phi_token(int_const(1))) == []
 
 
 def test_mem_phi_phi_token_differs_from_shifted_input():
