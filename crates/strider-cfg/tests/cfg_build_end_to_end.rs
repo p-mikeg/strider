@@ -1148,6 +1148,21 @@ fn fallthrough_off_the_end_of_the_mapped_image_seats_a_stub() {
     assert_eq!(cfg.region_graph().edge_count(), 1);
 }
 
+/// A direct branch and a fall-through reaching one unmapped address report it
+/// once: the direct branch seats the stub from `Builder::build`'s error path,
+/// and the fall-through fails `lift_code` before it checks the region map.
+#[test]
+fn one_unmapped_address_two_edges_reach_is_reported_once() {
+    // 0x1000 je 0x1006 (74 04) ; 0x1002 jmp 0x1008 (eb 04) ; 0x1004 ret ;
+    // 0x1005 ret ; 0x1006 xor eax,eax (31 c0), falling through to 0x1008,
+    // which the image has no bytes for.
+    let cfg = build_from_bytes(vec![0x74, 0x04, 0xeb, 0x04, 0xc3, 0xc3, 0x31, 0xc0], 0x1000);
+    assert_eq!(
+        cfg.unmapped_branch_targets(),
+        &[PcodeInsnAddr::at_machine_start(0x1008)],
+    );
+}
+
 /// The window ending mid-instruction is the same verdict as it ending on the
 /// boundary: Sleigh raises `PartiallyInitializedInsn` rather than
 /// `DataUnavailErr`, and the region still seals on a stub.

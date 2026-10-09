@@ -189,6 +189,27 @@ fn a_seeded_arm_into_a_data_range_is_an_undecodable_seeded_target() {
     );
 }
 
+/// A direct branch and a fall-through reaching one data address report it
+/// once: the branch seats the stub from `Builder::build`'s error path, and the
+/// fall-through fails `lift_code` before it checks the region map.
+#[test]
+fn one_data_address_two_edges_reach_is_reported_once() {
+    // 0x1000 beq 0x1010 ; 0x1004 b 0x1014 ; 0x1008, 0x100c nop (unreached) ;
+    // 0x1010 nop, falling through to the 0x1014 word.
+    let words = [
+        0x0a00_0002,
+        0xea00_0002,
+        0xe1a0_0000,
+        0xe1a0_0000,
+        0xe1a0_0000,
+        0x0000_0000,
+    ];
+    let mut opts = bounded(0x18);
+    opts.data_ranges = DataRanges::new(std::iter::once(0x1014..0x1018));
+    let cfg = build(&SleighArch::arm(), le_words(&words), 0x1000, &opts).expect("build");
+    assert_eq!(cfg.undecodable_branch_targets(), &[at(0x1014)]);
+}
+
 // ARM kernel entries written as `.word` under a `$d` mapping symbol.
 const ARM_UDF_BUG: u32 = 0xe7f0_01f2;
 const ARM_HVC_0: u32 = 0xe140_0070;
