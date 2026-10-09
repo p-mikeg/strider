@@ -32,7 +32,41 @@ def test_huge_operand_index_raises(name, build):
 
 @pytest.mark.parametrize("name,build", _setters(), ids=[n for n, _ in _setters()])
 def test_ordinary_operand_index_still_works(name, build):
-    build(0).into_pat()
+    """The control for the refusal above: the magnitude is what is rejected,
+    not the setter. Compiled AND run, since a wrapped index lands on a real
+    slot and only shows up at match time."""
+    fn = _ret_one()
+    assert isinstance(fn.find_all(build(0).into_pat()), list)
+
+
+def _lift(code: bytes, arch, cc):
+    mem = strider.reader.BufferReader(0x1000, code)
+    lifter = strider.lift.lifter(arch, mem)
+    return lifter.analyze(0x1000, cc).function
+
+
+def _ret_one():
+    """`mov eax,1; ret`."""
+    return _lift(
+        bytes([0xB8, 0x01, 0, 0, 0, 0xC3]),
+        strider.sleigh.SleighArch.x86_64(),
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+    )
+
+
+def test_an_ordinary_index_binds_the_slot_it_names():
+    """`call().arg(0, ..)` and both `phi_input(0, ..)` are pinned against real
+    IR in test_call_builder.py and test_pattern_mixins.py; these two were only
+    ever compiled."""
+    assert len(_ret_one().find_all(p.ret().ret_val(0, p.int_const(1)))) == 1
+    # `int 0x80` lifts to CallOther(swi, 0x10, 0x80): two value arguments.
+    syscall = _lift(
+        bytes([0xCD, 0x80, 0xC3]),
+        strider.sleigh.SleighArch.x86(),
+        strider.sleigh.CallingConvention.x86_cdecl(),
+    )
+    assert len(syscall.find_all(p.call_other().arg(0, p.anything()))) == 1
+    assert len(syscall.find_all(p.call_other().arg(1, p.anything()))) == 1
 
 
 def test_nesting_cap_message_names_the_binding_limit():
