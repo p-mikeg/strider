@@ -174,9 +174,13 @@ impl<'f> Matcher<'f> {
         pat: &'p Pattern,
     ) -> anyhow::Result<impl Iterator<Item = Match> + 'p> {
         let root = pat.root()?;
+        // Binding no VISIBLE capture, every configuration shares one signature,
+        // so the first to reach the root is the whole answer for that root and
+        // driving the rest only to discard them is waste.
+        let first_only = pat.bound_captures().all(|c| c.is_internal());
         Ok(self
             .candidates(pat, root)
-            .flat_map(move |node| self.matches_at_node(node, pat, root, false)))
+            .flat_map(move |node| self.matches_at_node(node, pat, root, first_only)))
     }
 
     /// [`matches`](Self::matches)`.collect()`. Use `matches` directly to stop
