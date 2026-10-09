@@ -121,16 +121,6 @@ impl Interval {
         }
     }
 
-    /// `None` when top.
-    #[cfg(test)]
-    pub fn upper_exclusive(&self, width_mask: u128) -> Option<u64> {
-        if self.hi >= width_mask {
-            None
-        } else {
-            u64::try_from(self.hi + 1).ok()
-        }
-    }
-
     /// Meet of two arithmetic progressions. The result stride is `lcm(s1, s2)`
     /// (1 where that overflows or the CRT walk is capped) and `lo` is the first
     /// element `>= max(lo1, lo2)` congruent to both
