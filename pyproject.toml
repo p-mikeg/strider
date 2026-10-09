@@ -1,5 +1,10 @@
+# `license` as an SPDX expression and `license-files` below are PEP 639.
+# maturin up to 1.8.1 refuses to parse `license-files` at all; 1.8.2 to 1.9.x
+# parse it but ship only the first entry, and spell the expression as the
+# deprecated `License`. 1.10 is the first release that writes
+# `License-Expression` and both `License-File` lines.
 [build-system]
-requires = ["maturin>=1.5,<2.0"]
+requires = ["maturin>=1.10,<2.0"]
 build-backend = "maturin"
 
 [project]
@@ -28,7 +33,7 @@ Repository = "https://github.com/p-mikeg/strider"
 # Linux goes away.
 [dependency-groups]
 dev = [
-    "maturin>=1.5,<2.0",
+    "maturin>=1.10,<2.0",
     "patchelf>=0.17 ; sys_platform == 'linux'",
     "pytest>=7",
     "pyelftools>=0.30",
