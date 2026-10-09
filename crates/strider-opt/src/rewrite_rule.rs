@@ -40,19 +40,14 @@ pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(lhs: L, rhs
 /// The dynamic (FFI / scripted) counterpart of [`rewrite_rule`], taking an
 /// already-built [`Pattern`] and [`Template`].
 ///
-/// # Output-signature validity is author-owned
+/// # What the node signature leaves open is author-owned
 ///
-/// [`instantiate`] calls `Graph::create_node` with the [`Template`]'s
-/// DECLARED output signature and never runs [`strider_ir::validate`], so
-/// the RHS author owns two invariants nothing downstream checks:
-///
-/// * Each template node's declared output signature must match its
-///   `NodeKind`'s real `expected_signature` (kind, slot count, types).
-/// * No two producers may be wired into the same input slot; a duplicate
-///   silently drops the earlier edge.
-///
-/// The typed `template::` builders guarantee both; the raw
-/// [`TemplateBuilder`](strider_pattern::template::TemplateBuilder) does not.
+/// [`instantiate`] checks each template node's declared outputs, operand
+/// classes and widths against its `NodeKind`'s `expected_signature` and errors
+/// on a gapped or duplicate input slot, so a raw
+/// [`TemplateBuilder`](strider_pattern::template::TemplateBuilder) RHS is
+/// refused rather than built wrong. What the signature does not pin, such as
+/// which value a `Call` takes at an argument slot, is the RHS author's.
 ///
 /// # Errors
 ///
