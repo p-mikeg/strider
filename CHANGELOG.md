@@ -360,7 +360,7 @@ Rendering:
 - `graph_algorithms::dominance::dominators` (Lengauer-Tarjan),
   `DominatorTree` and `DominatorTree::span`.
 - `NodeKind::input_head_len`, `expected_output_kind` and `is_terminator`.
-- `ArchPreset::ALL` and `ArchPreset::arch()`.
+- `ArchPreset::ALL`.
 - `BuiltCallingConvention::float_arg_slots`.
 - `strider_ir::node::low_bits_mask_u128`.
 - `[profile.release]` sets `overflow-checks = true`, so the shipped wheel
