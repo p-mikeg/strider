@@ -233,14 +233,18 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.build_cc_return()
     }
 
-    /// A call through a vector a `CallOther` produced (x86 `int imm8`, `into`)
-    /// pushed no return address, so it pops none.
+    /// A call through a vector the `swi` intrinsic produced (x86 `int imm8`,
+    /// `int3`, `into`) pushed no return address, so it pops none.  Any other
+    /// intrinsic's result is an ordinary indirect call target.
     pub(super) fn handle_call_indirect(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let call_address = self.read_vn(nth_input_or_err(insn, 0)?)?;
-        let trap_vector = matches!(
-            self.builder.node_kind(self.builder.producer(call_address)),
-            strider_ir::node::NodeKind::CallOther { .. }
-        );
+        let trap_vector = match self.builder.node_kind(self.builder.producer(call_address)) {
+            strider_ir::node::NodeKind::CallOther { user_op_id } => usize::try_from(*user_op_id)
+                .ok()
+                .and_then(|id| self.lifter.user_op_names().get(id))
+                .is_some_and(|name| name == "swi"),
+            _ => false,
+        };
         self.build_cc_call(call_address, None, trap_vector.then_some(0))?;
         Ok(())
     }
