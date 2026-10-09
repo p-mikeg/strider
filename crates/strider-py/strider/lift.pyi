@@ -407,7 +407,7 @@ class ElfLifter(Lifter):
         """The `BufferReader` over the regions `load_elf` mapped: PT_LOAD segments
         unless `from_segments=False`."""
         ...
-    def add_elf(self, path: str, *, apply_relocations: bool = True) -> None:
+    def add_elf(self, path: StrPath, *, apply_relocations: bool = True) -> None:
         """Merge another ELF, such as a shared library, into this handle.
         The earlier-loaded ELF wins on name collisions.
 
@@ -419,7 +419,7 @@ class ElfLifter(Lifter):
         Raises `StriderError` if the new ELF maps code over an address already
         loaded with different bytes (two ELFs at the same base cannot merge)."""
         ...
-    def add_symbol_file(self, path: str) -> None:
+    def add_symbol_file(self, path: StrPath) -> None:
         """Take the symbols of `path` and none of its bytes.
 
         How a separate debug or symbol file attaches after loading: a
