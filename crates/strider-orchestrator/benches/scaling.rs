@@ -1,4 +1,6 @@
-//! Full lift + optimizer pipeline over x86 / x86_64 ELF fixtures.
+//! Full lift + optimizer pipeline over x86 / x86_64 ELF fixtures, the same
+//! cases again through `Strider::analyze`'s resolution loop, and synthetic
+//! scaling curves for individual passes and the pattern matcher.
 //!
 //! ```text
 //! cargo bench --bench scaling -- --save-baseline before
@@ -68,21 +70,37 @@ fn binary_path(arch_name: &str, case: &str) -> PathBuf {
         .join(format!("{case}.elf"))
 }
 
+fn target_of(
+    arch_name: &str,
+) -> (
+    strider_target::SleighArch,
+    strider_target::CallingConvention,
+) {
+    match arch_name {
+        "x86" => (
+            strider_target::SleighArch::x86(),
+            strider_target::CallingConvention::x86_cdecl(),
+        ),
+        "x64" => (
+            strider_target::SleighArch::x86_64(),
+            strider_target::CallingConvention::x86_64_systemv(),
+        ),
+        _ => panic!("unsupported arch {arch_name}"),
+    }
+}
+
+/// Decoding from inside an already-decoded function is what the fixtures'
+/// symbol addresses do, so both entry points below allow it.
+const CFG_OPTS: fn() -> strider_cfg::CfgOptions = || strider_cfg::CfgOptions {
+    allow_code_before_start_addr: true,
+    ..Default::default()
+};
+
 fn analyze_case(c: Case) -> strider_ir::Function {
     let path = binary_path(c.arch_name, c.case);
     let obj = strider_reader::load_elf(&path).expect("load_elf");
     let obj = obj.checked_file().expect("the mapped file is unchanged");
-    let sleigh_arch = match c.arch_name {
-        "x86" => strider_target::SleighArch::x86(),
-        "x64" => strider_target::SleighArch::x86_64(),
-        _ => panic!("unsupported arch {}", c.arch_name),
-    };
-    let cc = match c.arch_name {
-        "x86" => strider_target::CallingConvention::x86_cdecl(),
-        "x64" => strider_target::CallingConvention::x86_64_systemv(),
-        // Already matched above.
-        _ => panic!("unsupported arch {}", c.arch_name),
-    };
+    let (sleigh_arch, cc) = target_of(c.arch_name);
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh");
@@ -93,14 +111,10 @@ fn analyze_case(c: Case) -> strider_ir::Function {
         .unwrap_or_else(|| panic!("symbol {:?} not found in {path:?}", c.fn_name))
         .address();
     let addr = raw_addr;
-    let cfg_opts = strider_cfg::CfgOptions {
-        allow_code_before_start_addr: true,
-        ..Default::default()
-    };
     let cfg = ana
         .build_cfg(
             strider_cfg::MachineInsnAddr::from(addr),
-            &cfg_opts,
+            &CFG_OPTS(),
             &Default::default(),
         )
         .expect("Cfg build");
@@ -116,6 +130,40 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     function
 }
 
+/// `analyze_case` plus the indirect-branch resolution loop: one re-lift per
+/// level of discovery, so the difference between the two groups is what the
+/// loop costs.
+fn resolve_case(c: Case) -> strider_orchestrator::AnalyzeResult {
+    let path = binary_path(c.arch_name, c.case);
+    let obj = strider_reader::load_elf(&path).expect("load_elf");
+    let obj = obj.checked_file().expect("the mapped file is unchanged");
+    let (sleigh_arch, cc) = target_of(c.arch_name);
+    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
+    let rom = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader");
+    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
+        .expect("real sleigh");
+    let mut strider = strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(Box::new(rom)))
+        .expect("Strider::new");
+    let cc = cc.build(strider.sleigh_regs()).expect("build cc");
+    let addr = obj
+        .symbol_by_name(c.fn_name)
+        .unwrap_or_else(|| panic!("symbol {:?} not found in {path:?}", c.fn_name))
+        .address();
+    let lift_opts = strider_orchestrator::LiftOptions {
+        cfg: CFG_OPTS(),
+        ..Default::default()
+    };
+    strider
+        .analyze(
+            addr,
+            &cc,
+            &lift_opts,
+            &strider_orchestrator::opt::OptOptions::default(),
+            None,
+        )
+        .expect("analyze")
+}
+
 fn bench_pipeline(c: &mut Criterion) {
     let mut group = c.benchmark_group("strider/pipeline");
     group.sample_size(20); // slow pipeline runs; fewer samples than default
@@ -125,6 +173,21 @@ fn bench_pipeline(c: &mut Criterion) {
             b.iter(|| {
                 let function = analyze_case(*case);
                 black_box(function);
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_resolution_loop(c: &mut Criterion) {
+    let mut group = c.benchmark_group("strider/analyze");
+    group.sample_size(20);
+    for case in CASES {
+        let id = format!("{}/{}::{}", case.arch_name, case.case, case.fn_name);
+        group.bench_function(&id, |b| {
+            b.iter(|| {
+                let result = resolve_case(*case);
+                black_box(result);
             });
         });
     }
@@ -455,6 +518,7 @@ fn bench_find_joined_shared_capture(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_pipeline,
+    bench_resolution_loop,
     bench_stack_store_chain,
     bench_diamond_cfg,
     bench_wide_jump_table,
