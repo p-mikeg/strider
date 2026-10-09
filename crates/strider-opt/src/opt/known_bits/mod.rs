@@ -402,54 +402,41 @@ impl Optimizer for KnownBits {
             folds.push((value, edit.build_int_const(ones, ty)?));
         }
 
-        // A fingerprint union LINKS rather than copies, so a node's set already
-        // covers everything unioned into it. Linking each cone node to its own
-        // inputs ONCE therefore makes a fold's whole cone reachable from its
-        // producer, and the fold itself one union.
+        // A fold's contributors belong to the REPLACEMENT, so the cone is
+        // unioned into the fold's own producer, which the rewire below kills,
+        // and `replace_value` carries that one set to the new constant.  A cone
+        // node that is not itself fully known stays live and must not inherit
+        // its inputs' addresses.
         //
-        // A union with a set-less `src` is a no-op, so a node is linked to its
-        // inputs only once each has absorbed its own subtree: the `true` flag
-        // marks that second visit, and the marker sits below everything the
-        // first visit pushes.  The cone kinds cannot form a value cycle (only
-        // a `Phi` closes one, and it does not propagate), so the second visit
-        // always comes after every descendant's.
-        //
-        // `linked` is never cleared, so each edge is walked once across all
-        // folds; nested folds (`t(i) = t(i-1) | C(i)`) would otherwise be
-        // quadratic.
-        let mut linked: DenseEntitySet<NodeId> = DenseEntitySet::new();
-        let mut stack: Vec<(NodeId, bool)> = Vec::new();
-        let mut inputs: Vec<NodeId> = Vec::new();
-        for &(value, new_value) in &folds {
-            let new_producer = edit.producer(new_value);
+        // A finished old producer covers its whole cone, so a fold above stops
+        // there: nested folds (`t(i) = t(i-1) | C(i)`) would otherwise be
+        // quadratic.  The cone kinds cannot form a value cycle (only a `Phi`
+        // closes one, and it does not propagate), so `visited` only cuts
+        // diamonds; it is stamped per fold rather than cleared, since clearing
+        // costs the node space each time.
+        let mut absorbed: DenseEntitySet<NodeId> = DenseEntitySet::new();
+        let mut visited: SecondaryMap<NodeId, u32> = SecondaryMap::new();
+        let mut stamp: u32 = 0;
+        let mut stack: Vec<NodeId> = Vec::new();
+        for &(value, _) in &folds {
+            stamp += 1;
             let old_producer = edit.producer(value);
             stack.clear();
-            stack.push((old_producer, false));
-            while let Some((n, subtrees_absorbed)) = stack.pop() {
-                if subtrees_absorbed {
-                    inputs.clear();
-                    inputs.extend(crate::peephole::input_producers_iter(edit, n));
-                    for &input in &inputs {
-                        edit.function_mut()
-                            .side_tables_mut()
-                            .extend_asm_fingerprint_from(n, input);
-                    }
-                    continue;
-                }
-                if !linked.insert(n) {
+            stack.push(old_producer);
+            while let Some(n) = stack.pop() {
+                if std::mem::replace(&mut visited[n], stamp) == stamp {
                     continue;
                 }
                 bump_cone_steps();
-                if !propagates_known_bits(edit.node_kind(n)) {
+                edit.function_mut()
+                    .side_tables_mut()
+                    .extend_asm_fingerprint_from(old_producer, n);
+                if absorbed.contains(n) || !propagates_known_bits(edit.node_kind(n)) {
                     continue;
                 }
-                stack.push((n, true));
-                stack.extend(crate::peephole::input_producers_iter(edit, n).map(|i| (i, false)));
+                stack.extend(crate::peephole::input_producers_iter(edit, n));
             }
-            // `replace_value` below unions the same pair.
-            edit.function_mut()
-                .side_tables_mut()
-                .extend_asm_fingerprint_from(new_producer, old_producer);
+            absorbed.insert(old_producer);
         }
 
         let mut result = OptimizationResult::NoChange;

@@ -1103,3 +1103,55 @@ fn shift_count_wider_than_the_output_is_refused() {
         "unexpected refusal: {err}"
     );
 }
+
+/// `y = (x + 4) & 0xF0` stays live while `z = y & 0x0F` folds to 0.  The
+/// contributors proving `z` are the new constant's, so `y`'s own fingerprint
+/// must not pick up the `Add`'s address.
+#[test]
+fn a_surviving_cone_node_keeps_its_own_fingerprint() -> Result<()> {
+    use strider_ir::IRViewer;
+
+    let var = strider_ir_test_utils::reg_vn(0x1000, 4);
+    let mut b = RegisterSet::new()
+        .tracked(var)
+        .arg(var)
+        .build_fn_single_region()?;
+    b.set_lift_addr(Some(0xA0));
+    let x = b.read_variable(&var)?;
+    let four = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let xa = b.build_int_binary_operation(x, four, IntBinaryOp::Add, ValueType::I32)?;
+    b.set_lift_addr(Some(0xB0));
+    let mask_hi = b.build_int_const(0xF0u64, ValueType::I32).unwrap();
+    let y = b.build_int_binary_operation(xa, mask_hi, IntBinaryOp::And, ValueType::I32)?;
+    b.set_lift_addr(Some(0xC0));
+    let mask_lo = b.build_int_const(0x0Fu64, ValueType::I32).unwrap();
+    let z = b.build_int_binary_operation(y, mask_lo, IntBinaryOp::And, ValueType::I32)?;
+    b.build_return(None, &[y, z])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let y_node = fg.producer(y);
+    let before = fingerprint_of(&fg, y_node);
+    crate::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::new(None))?;
+
+    let ret = fg
+        .walk_kind(|k| matches!(k, NodeKind::Return))
+        .next()
+        .expect("a Return node");
+    let returned = fg.node_inputs(ret);
+    assert_eq!(fg.producer(returned[2]), y_node, "y survives the fold");
+    let folded = returned[3];
+    assert_eq!(fg.int_const_u128(folded), Some(0), "z folds to 0");
+    assert_eq!(
+        fingerprint_of(&fg, y_node),
+        before,
+        "a surviving cone node inherited its inputs' addresses"
+    );
+    // The fold's own constant carries the whole cone instead.
+    let cone = fingerprint_of(&fg, fg.producer(folded));
+    assert!(
+        cone.contains(&0xA0) && cone.contains(&0xB0) && cone.contains(&0xC0),
+        "the fold lost a contributor: {cone:?}"
+    );
+    Ok(())
+}
