@@ -207,9 +207,9 @@ Rendering:
   `set_stack_slot_not` -> `set_not_memory`, `clear_stack_slots` ->
   `clear_memory_slots`.
 - `Graph::retain_reachable` is `retain_reachable_stale_cache`, and
-  `Graph::update_input` panics on a `UseId` its node no longer holds. `Graph::remove_node_input` needs the
-  `test-injectors` feature and `FunctionBuilder::build_branch` the `test-util`
-  feature.
+  `Graph::update_input` panics on a `UseId` its node no longer holds.
+  `Graph::remove_node_input` needs the `test-injectors` feature and
+  `FunctionBuilder::build_branch` the `test-util` feature.
 - `FunctionBuilder::build_call_other_abi` is gone; `strider-lift` builds an
   ABI-carrying `CallOther` itself.
 - Removed: `Cfg::raw_neighborhood_dot`, `Cfg::region_id_at_start`, the
@@ -281,6 +281,11 @@ Rendering:
   an `OwnedElf::regions` load behind a `MemRegionsLookupTable`.
 - `OwnedElf::function_entry` is gone; build an `OpdTable` over a
   `checked_file` instead, which is what every caller already did.
+- `elf::LoadFilter` gains `ImmutableAndRelocatedGot`, so a match over it stops
+  compiling.
+- `strider-opt` no longer depends on petgraph: the jump-table index
+  classifier and `mem_ssa::layout` both take the `DominatorTree`
+  `graph_algorithms::dominance::dominators` builds.
 - `BuiltCallingConvention` gains `entry_address_vn`, the register an ABI
   guarantees holds the function's own entry address on entry to it (PPC64
   ELFv2 `r12`, MIPS abicalls `t9`), which the lift binds to the entry address;
@@ -501,6 +506,12 @@ Rendering:
 - A run of `$d` data mapping symbols is one range: each mark scanned the rest
   of its section for the next code mark, so k consecutive marks cost O(k^2) and
   produced k nested ranges.
+- One def-use walk order serves every read at a live-graph reading, where each
+  peephole pass seeded from its own whole-graph post-order and so re-walked the
+  graph once per pass of a pipeline iteration.
+- Compaction sizes its arenas off the survivors rather than doubling beside the
+  graph it replaces, and a finished CFG region drops its instruction vector's
+  push slack.
 - Resurrecting a value costs its own cone rather than an allocation spanning
   the node arena, and a phi's incoming edge is an indexed read of its
   `Region`'s inputs rather than a walk of the use list, which cost O(k) per arm
