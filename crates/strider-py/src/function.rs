@@ -460,8 +460,11 @@ impl PyFunction {
         find: crate::pattern::PatLike<'_>,
         replace: crate::pattern::TemplateLike<'_>,
     ) -> PyResult<usize> {
-        let lhs = crate::pattern::compile_rewrite_lhs(py, &find)?;
+        // RHS first, as `find_all` orders its own arguments: compiling the LHS
+        // TAKES a one-shot `into_pat()` pattern, and a raise after that burns
+        // it for a rewrite that never ran.
         let rhs = replace.to_template(py)?;
+        let lhs = crate::pattern::compile_rewrite_lhs(py, &find)?;
         let rule =
             strider_opt::rewrite_rule_runtime(lhs, rhs).map_err(crate::errors::into_strider_err)?;
         let mut function = self
@@ -484,10 +487,15 @@ impl PyFunction {
             crate::pattern::TemplateLike<'_>,
         )>,
     ) -> PyResult<usize> {
+        // Every RHS first, for the reason `rewrite` compiles its one RHS
+        // first: a bad replacement must not burn a one-shot `find` pattern.
+        let mut templates = Vec::with_capacity(pairs.len());
+        for (_, rhs) in &pairs {
+            templates.push(rhs.to_template(py)?);
+        }
         let mut rules: Vec<strider_opt::BoxedRule> = Vec::with_capacity(pairs.len());
-        for (lhs, rhs) in pairs {
-            let lhs_pat = crate::pattern::compile_rewrite_lhs(py, &lhs)?;
-            let rhs_tpl = rhs.to_template(py)?;
+        for ((lhs, _), rhs_tpl) in pairs.iter().zip(templates) {
+            let lhs_pat = crate::pattern::compile_rewrite_lhs(py, lhs)?;
             let rule = strider_opt::rewrite_rule_runtime(lhs_pat, rhs_tpl)
                 .map_err(crate::errors::into_strider_err)?;
             rules.push(rule);
