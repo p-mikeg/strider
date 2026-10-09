@@ -152,6 +152,11 @@ the positive one:
 - `assume_incoming_args_survive_calls` (default on): a callee leaves an
   incoming stack-argument slot as it found it, so an argument read after a
   call is still found.
+- `return_slots_survive_untracked_writes` (default on): a RAM store whose
+  address strider cannot place on the entry stack, and any callee or user-op,
+  leave the slots the function saved its return address and entry stack
+  pointer in alone. Only return-target verification reads it; off, a return
+  after any call is reported as unverified.
 - `distinct_sp_bases_disjoint` (off): a store rooted at an SP base other than
   the entry SP, such as an `sp & -16` frame local, does not alias an incoming
   argument slot. Only incoming-argument detection reads it.
@@ -169,7 +174,7 @@ the positive one:
   slots unchanged, which the psABIs do not require. It changes nothing unless
   `escape_analysis` is on or `noalias_allocators` is non-empty.
 
-`AssumptionOptions.none()` clears all six; `AssumptionOptions()` does not. It
+`AssumptionOptions.none()` clears all seven; `AssumptionOptions()` does not. It
 is sound for any input whose memory behaves as RAM: a load reads back the last
 value the analysed code stored at its address, so a memory-mapped register
 polled after a write still reads as the value written.

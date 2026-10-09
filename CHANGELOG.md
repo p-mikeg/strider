@@ -38,8 +38,10 @@ Analysis:
   `alias_mode` is `stack_global_disjoint` (default `True`), `calls_clobber` is
   `assume_incoming_args_survive_calls` (inverted, default `True`) and
   `assume_distinct_sp_bases_disjoint` is `distinct_sp_bases_disjoint`, beside
-  the new `callee_preserves_stack_args`, `noalias_allocators` and
-  `escape_analysis`. `AssumptionOptions.none()` clears all six.
+  the new `callee_preserves_stack_args`, `noalias_allocators`,
+  `escape_analysis` and `return_slots_survive_untracked_writes` (default
+  `True`, the claim return verification rests on).
+  `AssumptionOptions.none()` clears all seven.
 - A `Lifter` decodes only on the thread that built it. `analyze`, `build_cfg`,
   `optimize`, `pcode_at`, `reg`, `reg_name`, `call_other_abi`,
   `user_op_names` or a renderer given `lifter=` raise `StriderError` on any
@@ -216,7 +218,8 @@ Rendering:
 - `AliasMode`, `MemAliasOptions` and `OptOptions::arg_alias` are gone.
   `OptOptions` is `{ resolve_indirect_branches, assumptions }`, with the
   claims in `AssumptionOptions` as listed under Breaking, Python;
-  `AssumptionOptions::default()` keeps two on and `::none()` clears all six.
+  `AssumptionOptions::default()` keeps three on and `::none()` clears all
+  seven.
 - `strider_opt::apply_rules_in_order` is gone. `LoadForward` is no longer a
   unit struct: use `LoadForward::default()`.
 - `PostOptimizer` has an `Any` supertrait, so an implementor must be

@@ -29,12 +29,14 @@ impl Default for OptOptions {
 /// under any input program whose memory behaves as RAM (see there);
 /// [`OptOptions::resolve_indirect_branches`] defaults on and is outside it.
 ///
-/// Two default ON, both of which every compiler whose output this analyses
+/// Three default ON, each of which every compiler whose output this analyses
 /// honours: [`stack_global_disjoint`](Self::stack_global_disjoint), without
 /// which no stack store is disjoint from a global load nor global store from a
-/// stack load, and
+/// stack load,
 /// [`assume_incoming_args_survive_calls`](Self::assume_incoming_args_survive_calls),
-/// without which a stack argument read after a call is not detected as one.
+/// without which a stack argument read after a call is not detected as one, and
+/// [`return_slots_survive_untracked_writes`](Self::return_slots_survive_untracked_writes),
+/// without which a return after any call is reported as unverified.
 #[derive(Debug, Clone)]
 pub struct AssumptionOptions {
     /// The stack and the global / constant-address regions (`.data`,
@@ -114,6 +116,19 @@ pub struct AssumptionOptions {
     /// as the end of the outgoing-argument window, so a callee's own argument
     /// slot above the hole can be forwarded across the call.
     pub escape_analysis: bool,
+    /// A RAM `Store` whose address this analysis cannot place on the entry
+    /// stack, and any callee or user-op, leave the stack slots the function
+    /// saved its return address and its entry stack pointer in as it found
+    /// them.  Off is the sound answer: a return whose slot an unplaced store
+    /// or a call could reach is then reported as unverified.
+    ///
+    /// Read by return-target verification alone, where it covers code that
+    /// rewrites its own return slot through a pointer no SP decomposition
+    /// reaches, and code that hands the slot's address to a callee.  A store
+    /// the verifier CAN place, including one through a frame pointer reloaded
+    /// off the stack, is checked against the slot whatever this says.
+    /// Default ON.
+    pub return_slots_survive_untracked_writes: bool,
 }
 
 impl AssumptionOptions {
@@ -136,6 +151,7 @@ impl AssumptionOptions {
             callee_preserves_stack_args: false,
             noalias_allocators: std::sync::Arc::default(),
             escape_analysis: false,
+            return_slots_survive_untracked_writes: false,
         }
     }
 }
@@ -149,6 +165,7 @@ impl Default for AssumptionOptions {
             callee_preserves_stack_args: false,
             noalias_allocators: std::sync::Arc::default(),
             escape_analysis: false,
+            return_slots_survive_untracked_writes: true,
         }
     }
 }
@@ -157,8 +174,8 @@ impl Default for AssumptionOptions {
 mod tests {
     use super::{AssumptionOptions, OptOptions};
 
-    /// The two default-on claims are what a caller reaching for the sound
-    /// floor has to clear, so `none` clearing everything is the contract.
+    /// The default-on claims are what a caller reaching for the sound floor
+    /// has to clear, so `none` clearing everything is the contract.
     #[test]
     fn none_clears_every_claim() {
         let a = AssumptionOptions::none();
@@ -167,6 +184,7 @@ mod tests {
         assert!(!a.distinct_sp_bases_disjoint);
         assert!(!a.callee_preserves_stack_args);
         assert!(!a.escape_analysis);
+        assert!(!a.return_slots_survive_untracked_writes);
         assert!(a.noalias_allocators.is_empty());
     }
 
@@ -177,6 +195,7 @@ mod tests {
         assert!(o.resolve_indirect_branches);
         assert!(o.assumptions.stack_global_disjoint);
         assert!(o.assumptions.assume_incoming_args_survive_calls);
+        assert!(o.assumptions.return_slots_survive_untracked_writes);
         assert!(!o.assumptions.escape_analysis);
     }
 }
