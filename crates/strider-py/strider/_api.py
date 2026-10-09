@@ -110,12 +110,12 @@ def _arch_and_cc_for_elf(
     this ELF. Raises `ValueError` for an unsupported e_machine, and for an
     ELF32 MIPS ABI other than O32.
 
-    ARM defaults to little-endian `arm`; a big-endian image is `arm_be_kernel`
-    when `is_arm_be8` (the loaded ELF's `is_arm_be8`) and `arm_be` otherwise. Its convention follows the
-    `e_flags` float-ABI bit: `arm_aapcs_soft` for a soft/softfp image,
-    `arm_aapcs` otherwise. A Thumb image is loaded by
-    passing an explicit `arch=SleighArch.arm_thumb()`, since the ELF header
-    does not distinguish a Thumb build from an ARM one.
+    ARM defaults to little-endian `arm`; a big-endian image is
+    `arm_be_kernel` when `is_arm_be8` and `arm_be` otherwise. Its convention
+    follows the `e_flags` float-ABI bit: `arm_aapcs_soft` for a soft/softfp
+    image, `arm_aapcs` otherwise. A Thumb image is loaded by passing an
+    explicit `arch=SleighArch.arm_thumb()`, since the ELF header does not
+    distinguish a Thumb build from an ARM one.
     """
     em = header.e_machine
     le = header.is_little_endian
@@ -136,9 +136,9 @@ def _arch_and_cc_for_elf(
             arch = SleighArch.arm_be()
         # EABI float ABI, `e_flags` bits 9/10. A soft or softfp image passes
         # floats in r0-r3, so hard-float's d0-d7 would be phantom carriers.
-        # Neither bit set (pre-EABI5 objects, hand-written asm) falls to
-        # hard-float, matching the toolchain default for every Linux
-        # arm-linux-gnueabihf target and this repo's own fixtures.
+        # Only a linked image carries either bit: a relocatable object records
+        # its float ABI in `.ARM.attributes` alone, whatever it was built with,
+        # and falls to hard-float here.
         if header.e_flags & _EF_ARM_ABI_FLOAT_SOFT:
             return arch, CallingConvention.arm_aapcs_soft()
         return arch, CallingConvention.arm_aapcs()
