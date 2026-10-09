@@ -1,40 +1,11 @@
+"""Merging a second image into a loaded `ElfLifter`: what `add_elf` unions,
+what it refuses, and what the lift sees afterwards."""
+
 from __future__ import annotations
 
 import pytest
 
 import strider
-
-
-def test_symbol_returns_address(x86_memory_elf):
-    elf = strider.lift.load_elf(str(x86_memory_elf))
-    sym = elf.symbol("array_sum")
-    assert isinstance(sym.address, int)
-    assert sym.address > 0
-
-
-def test_symbol_unknown_raises_reader_error(x86_memory_elf):
-    elf = strider.lift.load_elf(str(x86_memory_elf))
-    with pytest.raises(strider.StriderError) as excinfo:
-        elf.symbol("definitely_not_a_real_symbol_xyz")
-    assert "not found" in str(excinfo.value).lower()
-
-
-def test_symbols_returns_dict(x86_memory_elf):
-    elf = strider.lift.load_elf(str(x86_memory_elf))
-    syms = elf.symbols()
-    assert isinstance(syms, dict)
-    assert "array_sum" in syms
-    assert syms["array_sum"].address == elf.symbol("array_sum").address
-    assert len(syms) > 5
-
-
-def test_entry_point(x86_memory_elf):
-    """No `> 0` assert: `memory.elf` is a freestanding function-export ELF
-    with no `_start`, so its `e_entry` is 0 by construction."""
-    elf = strider.lift.load_elf(str(x86_memory_elf))
-    ep = elf.entry_point()
-    assert isinstance(ep, int)
-    assert ep >= 0
 
 
 def test_add_elf_merges_symbols_of_both(x86_memory_elf, x86_relocs_elf):
