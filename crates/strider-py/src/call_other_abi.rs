@@ -203,7 +203,10 @@ impl PyCallOtherAbi {
         if self.is_noop() {
             return "CallOtherAbi.noop()".to_owned();
         }
-        if self.reads.is_empty() && self.writes.is_empty() {
+        // `source_arch` is what separates a `custom` from a preset under
+        // `__eq__`, so a `custom` keeps the `custom(...)` form however empty
+        // its footprint is.
+        if self.source_arch.is_none() && self.reads.is_empty() && self.writes.is_empty() {
             if self.is_no_return() {
                 return "CallOtherAbi.no_return()".to_owned();
             }
