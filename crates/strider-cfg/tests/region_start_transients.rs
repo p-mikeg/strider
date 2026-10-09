@@ -83,3 +83,43 @@ fn a_conditionally_set_link_register_still_makes_the_bx_a_call() {
         "no region decoded the `bxeq` as a jump: {ops:?}",
     );
 }
+
+/// The real thing: `arm-linux-gnueabihf-gcc -O2 -march=armv4t -marm` on
+/// `if (p->cb) p->cb(p); return p->v + 5;`.
+///
+/// ```text
+/// 1000  ldr   r3, [r0]
+/// 1004  cmp   r3, #0
+/// 1008  push  {r4, lr}
+/// 100c  mov   r4, r0
+/// 1010  movne lr, pc
+/// 1014  bxne  r3
+/// 1018  ldr   r0, [r4, #4]
+/// 101c  pop   {r4, lr}
+/// 1020  add   r0, r0, #5
+/// 1024  bx    lr
+/// ```
+#[test]
+fn gcc_armv4t_conditional_indirect_call_output_decodes_as_a_call() {
+    let cfg = build_arm(&[
+        0xe590_3000,
+        0xe353_0000,
+        0xe92d_4010,
+        0xe1a0_4000,
+        0x11a0_e00f,
+        0x112f_ff13,
+        0xe594_0004,
+        0xe8bd_4010,
+        0xe280_0005,
+        0xe12f_ff1e,
+    ]);
+    let ops = opcodes_at(&cfg, 0x1014);
+    assert!(
+        ops.contains(&rsleigh::Opcode::CallIndirect),
+        "the `bxne` under a `movne lr, pc` is a call: {ops:?}",
+    );
+    assert!(
+        !ops.contains(&rsleigh::Opcode::BranchIndirect),
+        "no region decoded it as a jump: {ops:?}",
+    );
+}
