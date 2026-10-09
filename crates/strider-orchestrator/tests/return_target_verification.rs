@@ -522,13 +522,13 @@ fn x86_64_drap_reload_after_a_call(write: &[u8]) -> Vec<u8> {
 }
 
 #[test]
-fn x86_64_a_write_through_the_reloaded_realignment_pointer_is_reported() {
+fn x86_64_a_write_through_the_reloaded_realignment_pointer_rests_on_a_claim() {
     // mov %rdi,-0x8(%r10): the reloaded pointer is the entry SP + 8, so the
-    // write lands on the return slot. The store's address is located the way
-    // the return's own load through that pointer is, so no claim is involved.
+    // write lands on the return slot. Only a guess reaches that address, which
+    // is what the cleared claim brings in.
     let bytes = x86_64_drap_reload_after_a_call(&[0x49, 0x89, 0x7a, 0xf8]);
     let ret = bytes.len() as u64 - 1;
-    assert_reported(
+    assert_reported_only_without_assumptions(
         Arch::X64,
         bytes,
         ret,

@@ -171,7 +171,8 @@ the positive one:
   address strider cannot place on the entry stack, and any callee or user-op,
   leave the slots the function saved its return address and entry stack
   pointer in alone. Only return-target verification reads it; off, a return
-  after any call is reported as unverified.
+  after any call is reported as unverified, and a store through a pointer only
+  a guess reaches is checked against the slot.
 - `distinct_sp_bases_disjoint` (off): a store rooted at an SP base other than
   the entry SP, such as an `sp & -16` frame local, does not alias an incoming
   argument slot. Only incoming-argument detection reads it.
