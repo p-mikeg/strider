@@ -25,10 +25,9 @@ impl Default for OptOptions {
 /// Assertions about the code being analysed, none of which the analysis can
 /// check.  Every field's risky value is the positive one, and each one turned
 /// on can make the answer wrong on valid input; the miscompile is then the
-/// caller's.  [`AssumptionOptions::none`] is the only configuration of THESE
-/// fields sound under any input program whose memory behaves as RAM (see
-/// there); [`OptOptions::resolve_indirect_branches`] defaults on and is outside
-/// it.
+/// caller's.  [`AssumptionOptions::none`] is the sound floor of THESE fields
+/// under any input program whose memory behaves as RAM (see there);
+/// [`OptOptions::resolve_indirect_branches`] defaults on and is outside it.
 ///
 /// Two default ON, both of which every compiler whose output this analyses
 /// honours: [`stack_global_disjoint`](Self::stack_global_disjoint), without
@@ -96,14 +95,9 @@ pub struct AssumptionOptions {
     /// [`escape_analysis`](Self::escape_analysis) documents, without that knob
     /// being set.
     ///
-    /// A shared handle, but not a uniform one: `MemOptions::structural` holds
-    /// an EMPTY set alongside the configured analyzer in the same run, and the
-    /// `decompose` memo is keyed by `ValueId` alone.  A heap base the configured
-    /// analyzer cached is read back under the empty set and dropped by
-    /// `classify_addr`, leaving the address a may-alias `Anchor`.  The other
-    /// direction is kept out by order: the empty set commits `NotMemory` for an
-    /// allocator's pointer it does not recognise, so the configured analyzer
-    /// decomposes every address first.
+    /// Passes that must hold without the claim read a heap base as a may-alias
+    /// opaque pointer rather than a distinct allocation, so setting this
+    /// widens what folds, never what a permanent rewrite names.
     pub noalias_allocators: std::sync::Arc<rustc_hash::FxHashSet<u64>>,
     /// When the function's frame is provably private (no stack address escapes
     /// to any callee), forward a spill `Load` across a `Call` and step it past
@@ -115,15 +109,16 @@ pub struct AssumptionOptions {
     /// covers a callee reading a register its convention does not pass (i386
     /// `regparm`, clang `fastcc`, the GNU C static chain, AArch64's X8).  It
     /// sits here because the proof keeps two gaps the IR cannot close: a callee
-    /// reading an address from a register its convention preserves, and an
-    /// alignment hole in the outgoing argument window read as the window's end
-    /// (see `mem_analysis`'s KNOWN LIMIT).
+    /// reading an address from a register its convention preserves, and, where
+    /// an argument's alignment exceeds the slot stride, the padding hole read
+    /// as the end of the outgoing-argument window, so a callee's own argument
+    /// slot above the hole can be forwarded across the call.
     pub escape_analysis: bool,
 }
 
 impl AssumptionOptions {
     /// Every claim cleared: forwards solely what the IR structurally proves,
-    /// the only configuration of these fields sound under any input program.
+    /// the sound floor of these fields under any input program.
     ///
     /// The proof still takes memory to be RAM: a load reads back the last value the
     /// analysed code stored at its address, and nothing outside that code (a
