@@ -60,8 +60,7 @@ fn an_address_outside_the_opd_is_not_a_descriptor() {
 }
 
 /// An offset inside a descriptor word reads half the entry and half the TOC
-/// pointer as one address, and `function_entry` would hand that to the decoder
-/// as code.
+/// pointer as one address, which a caller would hand to the decoder as code.
 #[test]
 fn an_unaligned_offset_into_the_opd_is_not_a_descriptor() {
     let fx = build_ppc64_opd_elf(1);
@@ -70,29 +69,6 @@ fn an_unaligned_offset_into_the_opd_is_not_a_descriptor() {
     for skew in [1, 4, 7] {
         assert_eq!(opd.entry_at(fx.descriptor_addr + skew), None, "skew {skew}");
     }
-
-    let addr = fx.descriptor_addr + 4;
-    let elf = strider_reader::OwnedElf::parse(fx.bytes).expect("parse");
-    assert_eq!(
-        elf.function_entry(addr).expect("unaligned"),
-        addr,
-        "an address that is not a descriptor word passes through"
-    );
-}
-
-/// The one-call form, for a caller resolving a single address.
-#[test]
-fn function_entry_follows_a_descriptor_and_passes_code_through() {
-    let fx = build_ppc64_opd_elf(1);
-    let elf = strider_reader::OwnedElf::parse(fx.bytes).expect("parse");
-    assert_eq!(
-        elf.function_entry(fx.descriptor_addr).expect("descriptor"),
-        fx.entry_addr
-    );
-    assert_eq!(
-        elf.function_entry(fx.entry_addr).expect("code address"),
-        fx.entry_addr
-    );
 }
 
 /// Off ppc64 there are no descriptors to follow, whatever `e_flags` says.
@@ -112,10 +88,6 @@ fn an_unrelocated_descriptor_is_not_an_entry() {
     let obj = object::File::parse(&fx.bytes[..]).expect("parse");
     let opd = OpdTable::new(&obj).expect("an ELFv1 image with an .opd");
     assert_eq!(opd.entry_at(fx.unrelocated_addr), None);
-
-    let addr = fx.unrelocated_addr;
-    let elf = strider_reader::OwnedElf::parse(fx.bytes).expect("parse");
-    assert_eq!(elf.function_entry(addr).expect("unrelocated"), addr);
 }
 
 /// The descriptor's TOC word is 8-byte aligned like its entry word, and a
@@ -194,10 +166,4 @@ fn an_et_rel_descriptor_resolves_through_its_relocation() {
     let opd = OpdTable::new(&file).expect("an ELFv1 object with an .opd");
     assert_eq!(opd.entry_at(descriptor), Some(code_base));
     assert_eq!(opd.entry_at(descriptor + 8), None, "the TOC word");
-
-    let elf = strider_reader::OwnedElf::parse(bytes).expect("parse");
-    assert_eq!(
-        elf.function_entry(descriptor).expect("descriptor"),
-        code_base
-    );
 }
