@@ -177,3 +177,45 @@ fn validate_accepts_adjacent_and_cross_space_ranges() {
     .validate()
     .expect("adjacent and cross-space ranges do not overlap");
 }
+
+/// The `stack_vn` rule is byte-level like every other disjointness rule
+/// here: a SUB-register of the SP in a list is the SP's storage.  An SP
+/// sub-register in an argument list makes the stack pointer's tracked
+/// container `function_arg(0)`.
+#[test]
+fn validate_rejects_a_stack_pointer_subregister() {
+    let sp = vn(0x40);
+    // The 4-byte low half, `ESP` inside `RSP`.
+    let sp_low = Vn {
+        addr_space: VnSpace::REGISTER,
+        addr_off: 0x40,
+        size: 4,
+    };
+    for (list_name, cc) in [
+        (
+            "callee_saved_regs",
+            BuiltCallingConvention {
+                callee_saved_regs: vec![sp_low, vn(0x10)],
+                stack_vn: sp,
+                ..Default::default()
+            },
+        ),
+        (
+            "arg_passing_regs",
+            BuiltCallingConvention {
+                arg_passing_regs: vec![sp_low, vn(0x10)],
+                stack_vn: sp,
+                ..Default::default()
+            },
+        ),
+    ] {
+        let msg = cc
+            .validate()
+            .expect_err("an SP sub-register must be rejected")
+            .to_string();
+        assert!(
+            msg.contains("stack_vn") && msg.contains(list_name),
+            "error must name stack_vn and {list_name}, got: {msg}",
+        );
+    }
+}
