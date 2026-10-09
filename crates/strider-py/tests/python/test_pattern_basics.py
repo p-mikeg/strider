@@ -11,12 +11,6 @@ def test_capture_creates():
     assert "Capture" in repr(c)
 
 
-def test_capture_distinct():
-    c1 = Capture()
-    c2 = Capture()
-    assert repr(c1) != repr(c2) or c1 is not c2  # at minimum: not aliased
-
-
 def test_int_const_returns_pat():
     p = int_const(42)
     assert isinstance(p, Pat)

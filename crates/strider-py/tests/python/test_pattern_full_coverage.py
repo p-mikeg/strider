@@ -161,8 +161,9 @@ def test_when_on_pat_returns_pat():
 
 
 def test_when_returning_false_filters_out_matches():
-    p = anything().when(lambda m: False)
-    assert isinstance(p, Pat)
+    _lift, fn = built_lifter_and_function("x86", "memory", "array_sum")
+    assert fn.find_all(anything().when(lambda m: True))
+    assert fn.find_all(anything().when(lambda m: False)) == []
 
 
 def test_add_ordered_chain_returns_builder():

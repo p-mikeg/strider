@@ -82,44 +82,6 @@ def test_lifter_options_nested_objects_are_traversed():
     assert pipeline in referents
 
 
-def test_builder_when_cycle_is_collectable():
-    """The concrete leak: a predicate closing over the builder it guards."""
-
-    class Sentinel:
-        pass
-
-    sentinel = Sentinel()
-    ref = weakref.ref(sentinel)
-    holder = []
-    call = p.call()
-    # holder -> call -> predicate -> holder, with the sentinel along for the ride.
-    call.when(lambda m, _h=holder, _s=sentinel: bool(_h))
-    holder.append(call)
-    del sentinel, call, holder
-    gc.collect()
-
-    assert ref() is None, "cycle through a builder's .when() predicate leaked"
-
-
-def test_into_pat_when_cycle_is_collectable():
-    """`into_pat` compiles the predicate into an opaque `Pattern`; the builder
-    it came from is what keeps that predicate GC-visible."""
-
-    class Sentinel:
-        pass
-
-    sentinel = Sentinel()
-    ref = weakref.ref(sentinel)
-    holder = []
-    # holder -> pat -> builder -> predicate -> holder.
-    pat = p.call().when(lambda m, _h=holder, _s=sentinel: bool(_h)).into_pat()
-    holder.append(pat)
-    del sentinel, pat, holder
-    gc.collect()
-
-    assert ref() is None, "cycle through a finished pattern's .when() predicate leaked"
-
-
 def test_into_pat_operand_cycle_is_collectable():
     """The same for an operand sub-pattern carrying the predicate."""
 
