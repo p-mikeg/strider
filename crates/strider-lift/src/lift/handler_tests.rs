@@ -635,37 +635,11 @@ fn lift_dedup_unions_two_addresses() {
     });
 }
 
+/// The canonical shape is `Xor(IntLess(b, a), IntConst(1)):I1`, operands
+/// SWAPPED.  Two distinct register operands are needed to see the swap: a
+/// const-fed lift cannot catch a dropped one.
 #[test]
-fn lift_int_less_equal_lowers_to_boolneg_less() {
-    with_test_lifter(|d, rid| {
-        {
-            let insn = Insn {
-                opcode: Opcode::IntLessEqual,
-                output: Some(reg(0)),
-                inputs: vec![const_vn(5, 4), const_vn(7, 4)].into(),
-            };
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .unwrap();
-        }
-        // Canonical shape is `Xor(IntLess(_, _), IntConst(1)):I1`.
-        assert!(
-            graph_has_kind(
-                &d.builder,
-                NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)
-            ),
-            "expected IntBinaryOp::Xor in graph (the I1 logical-NOT wrap)"
-        );
-        assert!(
-            graph_has_kind(&d.builder, NodeKind::IntCmpOp(IntCmpOp::Less)),
-            "expected IntCmpOp::Less in graph (the lowered cmp)"
-        );
-    });
-}
-
-/// The lowering SWAPS operands.  Two distinct register operands are needed to
-/// see it: the const-fed tests above cannot catch a dropped swap.
-#[test]
-fn lift_int_less_equal_swaps_operands() {
+fn lift_int_less_equal_lowers_to_xor_of_a_swapped_less() {
     with_test_lifter(|d, rid| {
         {
             let insn = Insn {
@@ -676,6 +650,13 @@ fn lift_int_less_equal_swaps_operands() {
             d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .unwrap();
         }
+        assert!(
+            graph_has_kind(
+                &d.builder,
+                NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)
+            ),
+            "expected IntBinaryOp::Xor in graph (the I1 logical-NOT wrap)"
+        );
         let less = find_first_node(&d.builder, NodeKind::IntCmpOp(IntCmpOp::Less))
             .expect("IntLessEqual must lower to an IntLess cmp");
         let [cmp_lhs, cmp_rhs] = d
@@ -694,29 +675,6 @@ fn lift_int_less_equal_swaps_operands() {
             d.builder.function().get_vn_for_value(cmp_rhs),
             Some(reg(0)),
             "Less second operand must be the SWAPPED lhs (read of a = reg(0))"
-        );
-    });
-}
-
-#[test]
-fn lift_int_sub_lowers_to_add_neg() {
-    with_test_lifter(|d, rid| {
-        {
-            let insn = Insn {
-                opcode: Opcode::IntSub,
-                output: Some(reg(0)),
-                inputs: vec![const_vn(50, 4), const_vn(8, 4)].into(),
-            };
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .unwrap();
-        }
-        assert!(
-            graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Add)),
-            "expected IntBinaryOp::Add in graph (the lowering wrap)"
-        );
-        assert!(
-            graph_has_kind(&d.builder, NodeKind::IntUnaryOp(IntUnaryOp::Neg)),
-            "expected IntUnaryOp::Neg in graph (the negated rhs)"
         );
     });
 }
@@ -772,49 +730,6 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
         assert_eq!(
             negs_after_second, negs_after_first,
             "second IntSub lift with same operands must dedup the Neg via the node cache"
-        );
-    });
-}
-
-#[test]
-fn lift_int_sub_caches_lowered_shape() {
-    with_test_lifter(|d, rid| {
-        let count_subs_in_graph = |b: &FunctionBuilder| -> usize {
-            b.function()
-                .graph()
-                .all_node_ids()
-                .filter(|&id| {
-                    matches!(
-                        b.function().node_kind(id),
-                        NodeKind::IntBinaryOp(IntBinaryOp::Add)
-                    )
-                })
-                .count()
-        };
-        {
-            let insn = Insn {
-                opcode: Opcode::IntSub,
-                output: Some(reg(0)),
-                inputs: vec![const_vn(50, 4), const_vn(8, 4)].into(),
-            };
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .unwrap();
-        }
-        let after_first = count_subs_in_graph(&d.builder);
-        {
-            // Same operands, different output reg.
-            let insn = Insn {
-                opcode: Opcode::IntSub,
-                output: Some(reg(4)),
-                inputs: vec![const_vn(50, 4), const_vn(8, 4)].into(),
-            };
-            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-                .unwrap();
-        }
-        let after_second = count_subs_in_graph(&d.builder);
-        assert_eq!(
-            after_first, after_second,
-            "second IntSub lift must dedupe the lowered Add+Neg shape via the node cache"
         );
     });
 }
