@@ -256,9 +256,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// convention, and a `CallOther`'s footprint.
     ///
     /// The address is computed, so the register appears in no pcode operand and
-    /// `find_all_unique_vns` cannot see it. Without this the register is not in
-    /// the universe, `write_vn` has nothing to write, and the lift fails on a
-    /// function that used to (wrongly) lift the write as memory.
+    /// `find_all_unique_vns` cannot see it; untracked, it has no slot for
+    /// `write_vn` to write and the lift fails.
     ///
     /// Silent about an address that does not resolve: the lift takes its
     /// opaque path there, which clobbers registers already in the set.

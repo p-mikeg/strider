@@ -177,10 +177,9 @@ pub(crate) fn is_register_space_access(insn: &rsleigh::Insn) -> bool {
 /// register enclosing it.
 ///
 /// The gate is what keeps the tracked set a nesting family. A computed offset
-/// need not land on a declared boundary, ARM's VLD4/VST4 single-lane forms
-/// omitting the element-size scale so the address is a raw byte offset into
-/// the register file, and an offset that straddles two registers, or lands
-/// past the end of the file, names no register at all. Seeding such a slot puts a
+/// need not land on a declared boundary: one that straddles two registers, or
+/// lands past the end of the register file, names no register at all. Seeding
+/// such a slot puts a
 /// varnode that only PARTIALLY overlaps a real register into the tracked set,
 /// where `dedup_overlapping_largest` keeps both and models them as
 /// non-aliasing: a write to one is invisible to a read of the other.
