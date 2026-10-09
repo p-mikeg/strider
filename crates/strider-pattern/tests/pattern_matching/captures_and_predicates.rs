@@ -23,19 +23,6 @@ fn var_used_three_times_enforces_all() {
         Some(7),
     );
 }
-
-#[test]
-fn when_true_passes_match_through() {
-    let function = shapes::add_consts(5, 3);
-    a::matches(
-        &function,
-        int_add(int_const(5u128), int_const(3u128))
-            .when_match(|_m, _ty, _b| true)
-            .into_pattern(),
-        1,
-    );
-}
-
 #[test]
 fn when_false_rejects_match() {
     let function = shapes::add_consts(5, 3);

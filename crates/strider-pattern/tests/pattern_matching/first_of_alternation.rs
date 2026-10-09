@@ -4,8 +4,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use super::support::{Tb, shapes};
 use strider_ir::IntUnaryOp;
-use strider_ir_test_utils::Tb;
 use strider_pattern::matcher::MatcherBuilder;
 use strider_pattern::{
     Capture, CaptureExt, MatchPat, Matcher, anything, first_of, int_add, int_neg, one_of, ret, var,
@@ -21,15 +21,6 @@ fn neg_add_5_mul() -> strider_ir::Function {
     let sum = t.add(five, prod);
     let n = t.int_un(sum, IntUnaryOp::Neg);
     t.ret_val(n)
-}
-
-/// `int_add(5, 3)`.
-fn add_5_3() -> strider_ir::Function {
-    let mut t = Tb::empty();
-    let five = t.u64(5);
-    let three = t.u64(3);
-    let sum = t.add(five, three);
-    t.ret_val(sum)
 }
 
 /// A guard above the alternation rejects every configuration of arm 1, so the
@@ -76,7 +67,7 @@ fn first_of_falls_through_when_the_alternations_own_guard_rejects() {
 /// With nothing rejecting it, arm 1 wins and arm 2 is never reported.
 #[test]
 fn first_of_reports_only_the_first_matching_arm() {
-    let f = add_5_3();
+    let f = shapes::add_consts(5, 3);
     let m = Matcher::new(&f);
     let x = Capture::new();
     let y = Capture::new();
@@ -141,7 +132,7 @@ fn root_continuations(f: &strider_ir::Function, ordered: bool) -> usize {
 
 #[test]
 fn one_of_explores_every_arm_while_first_of_cuts() {
-    let f = add_5_3();
+    let f = shapes::add_consts(5, 3);
     assert_eq!(root_continuations(&f, false), 4, "2 arms x 2 alternations");
     assert_eq!(root_continuations(&f, true), 1);
 }
@@ -152,7 +143,7 @@ fn one_of_explores_every_arm_while_first_of_cuts() {
 /// under it is the reference.
 #[test]
 fn an_alternation_root_never_reports_an_unbound_vertex_capture() {
-    let f = add_5_3();
+    let f = shapes::add_consts(5, 3);
     let m = Matcher::new(&f);
     let c = Capture::new();
 
@@ -240,7 +231,11 @@ fn first_of_answers_the_same_in_both_mirror_spellings() {
     let k = Capture::new();
 
     let bound = |pat: strider_pattern::Pattern| -> Vec<Option<strider_ir::node::ValueId>> {
-        m.find_all(&pat).unwrap().iter().map(|h| h.value(k)).collect()
+        m.find_all(&pat)
+            .unwrap()
+            .iter()
+            .map(|h| h.value(k))
+            .collect()
     };
 
     let alternation_first = bound(

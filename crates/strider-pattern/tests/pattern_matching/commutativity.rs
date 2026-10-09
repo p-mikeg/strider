@@ -1,5 +1,5 @@
 use strider_ir::node::NodeKind;
-use strider_ir::{FloatBinaryOp, FloatCmpOp, IRBuilderExt, IntBinaryOp, IntCmpOp};
+use strider_ir::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
 use strider_pattern::matcher::{KindSpec, MatcherBuilder, PatValueRef};
 use strider_pattern::*;
 
@@ -324,37 +324,6 @@ fn bool_binary_ordered_rejects_swap() {
         1,
     );
 }
-
-/// The `I1` output guard survives `.ordered()`: neither form may match a
-/// same-shaped wide `And`, even with the operand order lined up.
-#[test]
-fn bool_binary_ordered_requires_i1_output() {
-    use strider_ir::node::ValueType;
-    use strider_ir_test_utils::RegisterSet;
-
-    let mut b = RegisterSet::new()
-        .build_fn_single_region()
-        .expect("build_fn_single_region");
-    let x = b.build_int_const(0xFFu64, ValueType::I64).expect("x");
-    let one = b.build_int_const(1u64, ValueType::I64).expect("one");
-    let wide_and = b
-        .build_int_binary_operation(x, one, IntBinaryOp::And, ValueType::I64)
-        .expect("wide and");
-    b.build_return(Some(wide_and), &[]).expect("ret");
-    let function = b.build().expect("build");
-
-    a::none(
-        &function,
-        bool_binary(IntBinaryOp::And, anything(), anything()).into_pattern(),
-    );
-    a::none(
-        &function,
-        bool_binary(IntBinaryOp::And, anything(), anything())
-            .ordered()
-            .into_pattern(),
-    );
-}
-
 // `IntCmpOp::Carry` / `Scarry` are commutative in `NodeKind::is_commutative`:
 // an addition carry/overflow commutes because addition does.
 

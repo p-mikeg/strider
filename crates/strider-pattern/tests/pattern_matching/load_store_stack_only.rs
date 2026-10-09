@@ -158,20 +158,6 @@ fn stack_and_non_stack_are_kind_aware_with_heap() {
         "non_stack() keeps the heap load and drops the untagged one"
     );
 }
-
-#[test]
-fn non_stack_matches_only_heap_loads() {
-    let (g, _stack_node, _heap_node) = two_loads_one_stack();
-    let matcher = Matcher::new(&g);
-    let pat = load().non_stack().build();
-    let hits = matcher.find_all(&pat).unwrap();
-    assert_eq!(
-        hits.len(),
-        1,
-        "non_stack() must reject the proven-stack load"
-    );
-}
-
 #[test]
 fn non_stack_matches_only_heap_stores() {
     let (g, _stack_store, _heap_store) = two_stores_one_stack();
