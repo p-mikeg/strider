@@ -125,9 +125,9 @@ pub struct AssumptionOptions {
     /// Read by return-target verification alone, where it covers code that
     /// rewrites its own return slot through a pointer no SP decomposition
     /// reaches, and code that hands the slot's address to a callee.  A store
-    /// the verifier CAN place, including one through a frame pointer reloaded
-    /// off the stack, is checked against the slot whatever this says.
-    /// Default ON.
+    /// the address spine DOES place is checked against the slot whatever this
+    /// says; a guessed location is not a placement, so clearing this is what
+    /// brings one in.  Default ON.
     pub return_slots_survive_untracked_writes: bool,
 }
 
