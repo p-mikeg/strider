@@ -127,3 +127,30 @@ def test_input_from_on_a_capture_adds_no_input():
     t, v = p.Capture(), p.Capture()
     phi = p.mem_phi().input_from(t, v)
     assert len(phi.constraints()) == 1
+
+
+def test_field_under_a_permissive_base_reports_one_row_per_field():
+    """`var(c)` matches the `Add` itself, so a union of the two arms doubles
+    every field: once at its real offset, once as a bare base at 0."""
+    fn = _analyze("x86", "memory", "array_sum")
+    b = p.Capture()
+    f = p.field(p.var(b))
+    offsets = [f.offset(m) for m in fn.find_all(f.store(), ignore_casts=True)]
+    assert offsets == [-8, -4]
+
+
+def test_field_reads_a_negative_offset_signed():
+    # mov eax,[rdi-8]; ret
+    fn = _analyze_bytes(bytes([0x8B, 0x47, 0xF8, 0xC3]))
+    f = p.field(p.function_arg(0))
+    assert [f.offset(m) for m in fn.find_all(f.load())] == [-8]
+    known = p.field(p.function_arg(0), -8)
+    assert [known.offset(m) for m in fn.find_all(known.load())] == [-8]
+
+
+def test_code_ptr_under_a_permissive_target_matches_once():
+    """The mask arm has to win over the bare one, or the masked call matches
+    twice."""
+    fn = _analyze("arm", "calls", "apply_indirect")
+    t = p.Capture()
+    assert len(fn.find_all(p.call().target(p.code_ptr(p.var(t))))) == 1
