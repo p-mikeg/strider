@@ -112,9 +112,13 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // Both emit a CC `Return`, correct for the link-register return
             // (ARM `bx lr`).  Tail calls, jump tables and computed gotos never
             // reach here: the cfg builder gives them dedicated terminators,
-            // handled in the special-terminator post-pass.
-            Opcode::Return => self.handle_sleigh_return(region_id, insn, addr, region_map)?,
-            Opcode::BranchIndirect => self.handle_return()?,
+            // handled in the special-terminator post-pass.  A `BranchIndirect`
+            // reaches here only where a `LinkRegister` answer seated the region
+            // as a `Return`, and records its site like a Sleigh `RETURN` so the
+            // seat is re-checked against each round's IR.
+            Opcode::Return | Opcode::BranchIndirect => {
+                self.handle_sleigh_return(region_id, insn, addr, region_map)?;
+            }
             Opcode::Call => self.handle_call(insn)?,
             Opcode::CallIndirect => self.handle_call_indirect(insn)?,
             // Decompiler-internal phi; `lift_one` never emits it.  Same

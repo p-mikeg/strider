@@ -162,6 +162,28 @@ fn arm_returns_through_a_rewritten_link_register_are_reported() {
 }
 
 #[test]
+fn arm_a_single_register_pop_into_the_pc_is_a_return() {
+    // push {lr} ; bl ; pop {pc}: a `BranchIndirect` over the stack slot, which
+    // the call between the two keeps from folding back to the link register.
+    assert_complete(
+        Arch::Arm,
+        le32(&[0xe52d_e004, 0xeb00_03fd, 0xe49d_f004]),
+        "ldr pc, [sp], #4 with the saved lr intact across a call",
+    );
+}
+
+#[test]
+fn arm_a_single_register_pop_into_the_pc_of_another_value_is_reported() {
+    // push {r1} ; pop {pc}: the identical shape, dispatching to r1.
+    assert_reported(
+        Arch::Arm,
+        le32(&[0xe52d_1004, 0xe49d_f004]),
+        4,
+        "push {r1} ; ldr pc, [sp], #4",
+    );
+}
+
+#[test]
 fn arm_genuine_returns_stay_complete() {
     // push {r4, lr} ; bl ; pop {r4, pc}
     assert_complete(
