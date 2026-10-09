@@ -120,8 +120,7 @@ impl PyOptimizerPipeline {
         }
     }
 
-    /// A `Mutex`, not a `RefCell`: the class is `Send`, and the GIL alone does
-    /// not cover a borrow taken while it is released.
+    /// Every caller holds the GIL, so the lock never contends.
     fn borrow_state(&self) -> std::sync::MutexGuard<'_, PipelineState> {
         self.state
             .lock()
