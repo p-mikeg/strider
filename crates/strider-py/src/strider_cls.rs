@@ -582,6 +582,14 @@ impl PyLifter {
         self.rom_obj = None;
     }
 
+    /// INTERNAL. Raise exactly what `_rebuild` would, without rebuilding:
+    /// a caller that commits state elsewhere first calls this, so a rebuild
+    /// that cannot run leaves nothing half-applied.
+    #[pyo3(name = "_check_usable")]
+    fn check_usable(&self) -> PyResult<()> {
+        self.inner.check()
+    }
+
     /// INTERNAL. Rebuild this handle's Sleigh and orchestrator state from
     /// `arch`/`mem`/`rom`, so a newly merged-in ELF becomes visible.
     #[pyo3(name = "_rebuild", signature = (arch, mem, rom = None))]
