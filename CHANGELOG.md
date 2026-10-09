@@ -265,6 +265,11 @@ Rendering:
 
 ### Added, Python
 
+- `load_elf(relocated_got_is_rom=True)` / `add_elf(relocated_got_is_rom=True)`
+  serve `.got` and `.data.rel.ro` as read-only memory, so a load through a GOT
+  slot folds to the address it holds. Off by default: it is a claim about the
+  runtime that the image cannot prove. `.got.plt` is never served, lazy
+  binding rewriting those slots.
 - `LifterOptions(assumptions=AssumptionOptions(...))` tunes memory precision;
   [docs/python-api.md](docs/python-api.md#2-analyzing-a-function) says what
   each claim buys. `AssumptionOptions.none()` makes none of them.
@@ -366,6 +371,8 @@ Rendering:
 - `OptimizerPipeline::has_post_pass`.
 - `ElfSectionLayout::extern_address`, `OwnedElf::writable_ranges`,
   `elf::without_ranges`, `OwnedElf::checked_file`.
+- `elf::LoadFilter::ImmutableAndRelocatedGot`, the immutable image plus `.got`
+  and `.data.rel.ro`.
 - `graph_algorithms::dominance::dominators` (Lengauer-Tarjan),
   `DominatorTree` and `DominatorTree::span`.
 - `NodeKind::input_head_len`, `expected_output_kind` and `is_terminator`.
