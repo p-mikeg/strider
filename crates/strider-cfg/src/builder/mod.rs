@@ -4,7 +4,7 @@ mod split;
 
 use flow::NO_FLOW_VARS;
 pub use flow::{FlowContext, FlowVars};
-use region_builder::{RegionBuilder, is_unmapped_start, not_code_at};
+use region_builder::{RegionBuilder, is_unmapped_start, not_code_addr, not_code_at};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
@@ -964,6 +964,16 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                     self.region_graph.add_edge(parent, stub, ());
                     continue;
                 }
+            }
+            // The bytes themselves, which `UndecodableTarget` cannot name: it
+            // carries the ARM, and the arm decodes. Read off the error rather
+            // than from `address`, the failure being able to sit several
+            // instructions into the region this item decoded.
+            if seeded_by.is_some()
+                && let Some(bad) = not_code_addr(&e)
+            {
+                self.undecodable_branch_targets
+                    .push(PcodeInsnAddr::at_machine_start(bad));
             }
             // Under a seeded arm it is a misclassification, not a broken
             // function: drop the arm and report it against the site that named

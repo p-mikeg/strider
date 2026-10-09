@@ -91,6 +91,13 @@ pub(super) fn not_code_at(err: &anyhow::Error, addr: PcodeInsnAddr) -> Option<&N
         .filter(|n| n.addr == addr.machine_addr.addr)
 }
 
+/// The address `err` holds no instruction at, whatever address the decode was
+/// asked to start from: a region's sequential decode fails several
+/// instructions past its own start.
+pub(super) fn not_code_addr(err: &anyhow::Error) -> Option<u64> {
+    err.downcast_ref::<NotCode>().map(|n| n.addr)
+}
+
 /// Whether `err` is a decode the reader could not supply the bytes for, at
 /// `addr` or partway into the instruction there.
 ///
