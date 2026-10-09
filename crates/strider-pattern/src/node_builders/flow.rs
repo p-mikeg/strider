@@ -485,8 +485,10 @@ pub struct IfPat {
     branch_captures: [WalkCaptures; 2],
     /// Per branch slot, [`Pattern::total_nodes`] of the branch pattern.
     branch_nodes: [usize; 2],
-    /// An unmatchable branch pattern, replayed onto the builder at `lower`.
-    branch_refusal: Option<String>,
+    /// Per branch slot, the refusal an unmatchable branch pattern carries,
+    /// replayed onto the builder at `lower`. Per slot so replacing a branch
+    /// drops it with the pattern it refused.
+    branch_refusal: [Option<String>; 2],
 }
 
 /// The one aspect a single `.output(slot)` / `.any_output()` call commits.
@@ -573,10 +575,10 @@ impl IfPat {
 
     /// `slot` 0 is true, 1 is false.
     fn with_branch(mut self, slot: usize, pat: Pattern) -> Self {
-        if let Err(e) = pat.root() {
-            self.branch_refusal
-                .get_or_insert(format!("If branch pattern is not matchable ({e})"));
-        }
+        self.branch_refusal[slot] = pat
+            .root()
+            .err()
+            .map(|e| format!("If branch pattern is not matchable ({e})"));
         // Both branches must match, so each one's guarantees carry over whole.
         self.branch_captures[slot] = WalkCaptures {
             bound: pat.bound_captures().collect(),
@@ -645,7 +647,7 @@ impl IfPat {
             branch_nodes,
             branch_refusal,
         } = self;
-        if let Some(why) = branch_refusal {
+        if let Some(why) = branch_refusal.into_iter().flatten().next() {
             b.reject(why);
         }
         b.add_nested_nodes(branch_nodes[0].saturating_add(branch_nodes[1]));
