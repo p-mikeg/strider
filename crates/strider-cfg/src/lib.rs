@@ -90,6 +90,10 @@ impl Cfg {
     /// only back through another `Switch` (an outer table's arm into an inner
     /// one, an arm looping to its own header) says nothing about its own bound.
     ///
+    /// The ARM is what each entry names, and an arm that led to the bytes
+    /// decodes fine; the bytes are on
+    /// [`Self::undecodable_branch_targets`].
+    ///
     /// Each carries the site it was seated from: the same address reached from
     /// another site decodes in that site's own committed context, so the
     /// failure is no verdict there.
@@ -158,6 +162,11 @@ impl Cfg {
     /// pool, a traceback table, a deliberately invalid word. Any other
     /// fall-through into data leaves through a stub too; one into bytes Sleigh
     /// rejects is still an `Err` on the whole build.
+    ///
+    /// Code decoded off a seeded arm reports its bytes here too, with NO stub
+    /// and no edge: the arm is dropped instead, and named on
+    /// [`Self::undecodable_seeded_targets`], which carries the arm rather than
+    /// these bytes.
     ///
     /// Sorted and deduplicated: a direct branch and a fall-through can reach
     /// one address.

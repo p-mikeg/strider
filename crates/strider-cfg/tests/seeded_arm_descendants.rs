@@ -41,6 +41,14 @@ fn undecodable(cfg: &Cfg) -> Vec<u64> {
         .collect()
 }
 
+/// The bytes that would not decode, as opposed to the arm that led to them.
+fn undecodable_bytes(cfg: &Cfg) -> Vec<u64> {
+    cfg.undecodable_branch_targets()
+        .iter()
+        .map(|a| a.machine_addr.addr)
+        .collect()
+}
+
 /// Every edge a region has must land on a region, and every `Switch` arm on a
 /// successor starting at it.
 fn assert_no_dangling_successor(cfg: &Cfg) {
@@ -83,6 +91,10 @@ fn an_arm_whose_first_instruction_is_a_nop_is_dropped_like_any_bad_arm() {
             .unwrap_or_else(|e| panic!("arm {bad:#x} failed the function: {e:#}"));
         assert_eq!(switch_arms(&cfg), [0x1002], "arm {bad:#x}");
         assert_eq!(undecodable(&cfg), [bad], "arm {bad:#x}");
+        // The bytes, not the arm: both arms decode, and the decode fails
+        // several instructions past them.
+        let bytes = if bad == 0x1003 { 0x1006 } else { 0x100b };
+        assert_eq!(undecodable_bytes(&cfg), [bytes], "arm {bad:#x}");
         assert_no_dangling_successor(&cfg);
     }
 }
@@ -102,6 +114,11 @@ fn an_arm_that_branches_into_bytes_that_will_not_decode_is_dropped() {
     let cfg = build(&bytes, &[0x1002, 0x1003]).expect("one bad arm must not fail the function");
     assert_eq!(switch_arms(&cfg), [0x1002]);
     assert_eq!(undecodable(&cfg), [0x1003]);
+    assert_eq!(
+        undecodable_bytes(&cfg),
+        [0x1008],
+        "the address that would not decode is named, not only the arm",
+    );
     assert_no_dangling_successor(&cfg);
 }
 
