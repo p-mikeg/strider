@@ -2,6 +2,9 @@
 //! mapping symbol as data, which is how a literal pool inside a function is
 //! told apart from code.
 
+#[path = "common/mod.rs"]
+mod common;
+
 use strider_reader::elf::mapping_symbol_data_ranges;
 
 fn ranges_of(fixture: &str) -> Vec<std::ops::Range<u64>> {
@@ -36,4 +39,45 @@ fn thumb_literal_pools_run_to_the_next_code_mapping_symbol() {
 #[test]
 fn an_image_without_mapping_symbols_has_no_data_ranges() {
     assert!(ranges_of("x64/calls.elf").is_empty());
+}
+
+/// A run of `$d` marks with no code mark between them is one span, not one
+/// nested range per mark: emitting k of them also made the scan for each one's
+/// end quadratic in the run.
+#[test]
+fn a_run_of_data_marks_is_one_range() {
+    use object::write::{Object, Symbol, SymbolSection};
+    use object::{
+        Architecture, BinaryFormat, Endianness, SectionKind, SymbolFlags, SymbolKind, SymbolScope,
+    };
+
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::Arm, Endianness::Little);
+    let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    obj.append_section_data(text, &[0u8; 0x40], 4);
+    let mut mark = |name: String, value: u64| {
+        obj.add_symbol(Symbol {
+            name: name.into_bytes(),
+            value,
+            size: 0,
+            kind: SymbolKind::Label,
+            scope: SymbolScope::Compilation,
+            weak: false,
+            section: SymbolSection::Section(text),
+            flags: SymbolFlags::None,
+        });
+    };
+    mark("$a".to_owned(), 0);
+    for (i, at) in [0x10u64, 0x14, 0x18, 0x1c].iter().enumerate() {
+        mark(format!("$d.{i}"), *at);
+    }
+    mark("$a.1".to_owned(), 0x20);
+    mark("$d.4".to_owned(), 0x30);
+    let bytes = obj.write().expect("write");
+
+    let file = object::File::parse(&bytes[..]).expect("parse");
+    let base = common::section_base(&bytes, ".text");
+    assert_eq!(
+        mapping_symbol_data_ranges(&file),
+        vec![base + 0x10..base + 0x20, base + 0x30..base + 0x40]
+    );
 }
