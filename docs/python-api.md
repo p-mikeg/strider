@@ -14,7 +14,7 @@ The public surface is eight domain submodules plus one top-level error.
 ```python
 import strider
 from strider import ir, lift, cfg, sleigh, reader, opt, pattern, template, explore
-strider.StriderError      # the analysis error; bad arguments raise builtins
+strider.StriderError      # the analysis error; see Errors below
 strider.__version__
 ```
 
@@ -41,10 +41,13 @@ prog = strider.lift.load_elf("fixtures/out/x86/switch.elf")
 `load_elf` returns an `ElfLifter`: a lifter that also carries the symbol table,
 the loaded memory, and a default calling convention.
 
-The file is mapped, not copied. Rebuilding the binary under a live handle
-raises `StriderError: mapped file ... changed on disk since it was mapped`.
-Re-open it, or set `STRIDER_NO_MMAP=1` to read the file into memory instead,
-which a network or 9p mount also needs.
+The file is mapped, not copied. Writing into the loaded file, by copying over
+it or appending to it, raises `StriderError: mapped file ... changed on disk
+since it was mapped`; the check is the mapped inode's size and whole-second
+mtime, so a same-size rewrite within the second is missed. A rebuild or a `mv`
+that REPLACES the file leaves the mapping alone and keeps serving the image
+that was loaded, so re-open the handle to see a new build. `STRIDER_NO_MMAP=1`
+reads the file into memory instead, which a network or 9p mount also needs.
 
 On ppc64 ELFv1 a `STT_FUNC` symbol addresses a 24-byte `.opd` descriptor rather
 than code. `load_elf` reads its first doubleword, so `symbol("f").address` and
@@ -117,6 +120,15 @@ A plain `Lifter` needs an address and a calling convention:
 ```python
 _cfg, fn, _u = lft.analyze(0x1000, sleigh.CallingConvention.x86_64_systemv())
 ```
+
+A handle decodes only on the thread that built it. `analyze`, `build_cfg`,
+`optimize`, `pcode_at`, `reg`, `reg_name`, `call_other_abi`, `user_op_names`
+and any renderer given `lifter=` raise
+`StriderError: this Lifter was built on another thread` anywhere else; the
+handle itself still moves and drops freely. A worker thread builds its own over
+the same `prog.arch`, `prog.reader()` and `prog.rom()`, and since `analyze`
+drops the GIL the two run in parallel. `optimize` holds the GIL for its whole
+run.
 
 ### `lift.LifterOptions`, per-call tuning
 
@@ -319,7 +331,8 @@ Rendering:
 
 ```python
 function.to_dot(pretty=True)                 # Graphviz DOT text; path= writes a file
-function.to_text()                           # canonical text, one line per node; diff two runs
+function.to_text()                           # canonical text: a header, then
+                                             # one line per node
 function.to_text(fingerprints=True)          # ... each line ending in its asm addresses
 function.to_html("graph.html")               # dark-themed standalone page (path=None returns text)
 function.neighborhood_dot(function.entry_node(), depth=2, pretty=True)  # local subgraph DOT
@@ -766,10 +779,10 @@ prog.visualize(function)          # interactive explorer; prints a URL, blocks
 prog.visualize(cfg)               # a Cfg works too
 ```
 
-The explorer opens on the **whole graph**: a neighborhood view hides nodes
-without saying so, so you cannot tell a small function from a truncated one.
-`visualize(whole=False)` opens on the neighborhood around the entry instead,
-which stays fast on a large function, and the toolbar's **whole** toggle
+The explorer opens on the **whole graph**, since a neighborhood view hides
+nodes without saying so and you cannot tell a small function from a truncated
+one. `visualize(whole=False)` opens on the neighborhood around the entry
+instead, which stays fast on a large function; the toolbar's **whole** toggle
 switches between them either way.
 
 Drag with the mouse or press the arrow keys to pan (shift for a longer step);
@@ -783,6 +796,11 @@ register names), with **whole** (draw the entire graph, which the neighborhood
 knobs stop applying to) and **reset** to go back. The three limits start at
 `0`, which means no limit on each; **pretty** and **whole** start on, and
 **depth** takes whatever `visualize(depth=...)` seeds.
+
+`visualize()` binds `host='127.0.0.1'` and `port=0` (a free port) by default.
+Both are arguments; a non-loopback `host` exposes the graph, the queries and
+the bytes behind them to anything that can reach the port, with no
+authentication, so bind one only on a network you trust.
 
 `visualize()` blocks until interrupted and returns the port it bound;
 `background=True` serves on its own non-daemon thread and returns that port
@@ -888,17 +906,18 @@ cfg.fingerprint_pcode(n)               # [(address, p-code)] for a Node's finger
 cfg.is_complete()                      # all six channels below are empty
 ```
 
-A converged CFG is never silently incomplete, but it says so through SIX
-channels, and a consumer asking "may this be incomplete?" reads all six, which
-is what `is_complete()` does:
+Six channels report where a CFG may be incomplete, and `is_complete()` is true
+when all of them are empty:
 
 - `unresolved`, the third field of `analyze`'s result: indirect branches with
   no complete answer, such as a site that lost a successor, one whose answer
   oscillated or narrowed, one still growing at the iteration cap, and a return
   whose target is not provably the caller's return address (`push rsi; ret`).
 - `cfg.unverified_seeded_sites()`: sites nothing verified. A site seated with
-  only your `known_targets`, and every site the CFG consumed as a return or a
-  tail call, so an ARM `pop {pc}` epilogue lands here and not in `unresolved`.
+  only your `known_targets`, every site the CFG consumed as a tail call, and a
+  site consumed as a return because your own `"return"` seat consumed it, so a
+  seeded ARM `pop {pc}` epilogue lands here and not in `unresolved`. A return
+  the classifier derived is re-checked each round instead.
 - `cfg.isa_mode_conflicts()`: addresses two paths reached in different ISA
   modes. Always empty outside the four 32-bit ARM and four MIPS presets.
 - `cfg.interior_branch_targets()`: branch targets off every instruction
@@ -912,7 +931,7 @@ is what `is_complete()` does:
   empty tail-call stub; the call ends as no-return.
 
 All but `unverified_seeded_sites` accumulate across resolution rounds, so a
-later round cannot launder an earlier loss.
+loss in an early round stays reported.
 
 `CfgOptions` (passed via `LifterOptions.cfg` or `Lifter.build_cfg`) tunes CFG
 construction:
@@ -943,9 +962,13 @@ symbols unless the options already name some.
 
 ## Errors
 
-Failures inside an analysis are a `strider.StriderError`; bad arguments are
-not, so `load_elf` raises `FileNotFoundError` for a missing path and
-`ValueError` for a file that is not a supported ELF. Match readers raise
+Failures inside an analysis are a `strider.StriderError`. A wrongly TYPED
+argument raises the usual builtin (`TypeError`, `OverflowError`), and
+`load_elf` raises `FileNotFoundError` for a missing path and `ValueError` for a
+file that is not a supported ELF. Every other bad VALUE is a `StriderError`,
+including `add_elf` / `add_symbol_file` on the same bad paths, an unknown
+`style=`, a reserved capture name and a node id the function does not hold.
+Match readers raise
 `StriderError` for an unbound capture (use `has()` or the `_opt` readers to
 avoid that), and for a `Match` used after the function was reoptimized.
 
