@@ -55,6 +55,12 @@ _EM_AARCH64 = 183
 # ARM `e_flags` float-ABI bit for a soft or softfp image.
 _EF_ARM_ABI_FLOAT_SOFT = 0x0000_0200
 
+# MIPS `e_flags`: `EF_MIPS_ABI2` marks n32, and the `EF_MIPS_ABI` field names
+# O32 (0x1000, or 0 on an n32/n64 image) or one of these three.
+_EF_MIPS_ABI2 = 0x0000_0020
+_EF_MIPS_ABI = 0x0000_F000
+_EF_MIPS_ABI_NAMES = {0x2000: "O64", 0x3000: "EABI32", 0x4000: "EABI64"}
+
 
 class _ElfHeader:
     """Minimal ELF header reader: enough to pick the right `SleighArch` and
@@ -101,7 +107,8 @@ def _arch_and_cc_for_elf(
     is_arm_be8: bool = False,
 ) -> tuple[SleighArch, CallingConvention]:
     """Pick the `SleighArch` and userland `CallingConvention` preset matching
-    this ELF. Raises `ValueError` for an unsupported e_machine.
+    this ELF. Raises `ValueError` for an unsupported e_machine, and for an
+    ELF32 MIPS ABI other than O32.
 
     ARM defaults to little-endian `arm`; a big-endian image is `arm_be_kernel`
     when `is_arm_be8` (the loaded ELF's `is_arm_be8`) and `arm_be` otherwise. Its convention follows the
@@ -142,6 +149,19 @@ def _arch_and_cc_for_elf(
         if is64:
             arch = SleighArch.mipsle64() if le else SleighArch.mipsbe64()
             return arch, CallingConvention.mips_n64()
+        # O32 is the only ELF32 MIPS ABI strider has a preset for. n32 needs a
+        # 64-bit decoder with 32-bit addresses, arguments in $4-$11 and 64-bit
+        # returns; EABI and O64 have register sets of their own. Lifting any of
+        # them as O32 loses the arguments past the fourth.
+        abi = _EF_MIPS_ABI_NAMES.get(header.e_flags & _EF_MIPS_ABI)
+        if header.e_flags & _EF_MIPS_ABI2:
+            abi = "n32"
+        if abi is not None:
+            raise ValueError(
+                f"unsupported MIPS ABI {abi}: strider has no preset for it; "
+                f"pass an explicit SleighArch + CallingConvention via "
+                f"strider.lift.load_elf(path, arch=..., cc=...) instead"
+            )
         arch = SleighArch.mipsle32() if le else SleighArch.mipsbe32()
         return arch, CallingConvention.mips_o32()
     if em == _EM_PPC:
@@ -210,7 +230,9 @@ def load_elf(
     writable-and-executable mapping is kept either way.
 
     Raises `FileNotFoundError` when `path` does not exist, and `ValueError`
-    when the file is not an ELF or its architecture is unsupported.
+    when the file is not an ELF, or its architecture or ABI is unsupported.
+    Passing both `arch=` and `cc=` skips the detector, and with it the ABI
+    refusal.
     """
     loader = _ext._load_elf_from_segments if from_segments else _ext._load_elf_from_sections
     return _load_elf_with(
