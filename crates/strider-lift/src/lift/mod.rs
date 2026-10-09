@@ -150,11 +150,6 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         })
     }
 
-    #[must_use]
-    pub fn arch(&self) -> strider_target::SleighArch {
-        self.arch
-    }
-
     /// Indexed by `user_op_id`.
     #[must_use]
     pub fn user_op_names(&self) -> &[String] {
