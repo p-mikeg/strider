@@ -783,15 +783,17 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// it.
     fn refuse_arms_reaching(&mut self, regions: impl Iterator<Item = NodeIndex>) {
         let mut stack: Vec<NodeIndex> = regions.collect();
+        // Two sets: a dispatch is DISCOVERED, which is what bounds the walk,
+        // but it does not REACH, or an outer table's arm into it would.
         let mut reaching: rustc_hash::FxHashSet<NodeIndex> = stack.iter().copied().collect();
-        let mut seen = reaching.clone();
+        let mut discovered = reaching.clone();
         while let Some(region) = stack.pop() {
             let preds: Vec<NodeIndex> = self
                 .region_graph
                 .neighbors_directed(region, petgraph::Incoming)
                 .collect();
             for pred in preds {
-                if !seen.insert(pred) {
+                if !discovered.insert(pred) {
                     continue;
                 }
                 if matches!(
