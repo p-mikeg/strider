@@ -4,9 +4,10 @@
 //! A sla marks some context variables as *flowing*: the ISA mode (ARM `TMode`,
 //! ppc `vle`) plus per-instruction decode internals (condition eval, IT-block
 //! state, register-list iteration, x86 operand/address size) Sleigh flows
-//! along straight-line code. x86-64 flows dozens of them, so snapshotting and
-//! pinning do real work on every arch; only the mode-bit helpers are
-//! ARM/MIPS-specific, and nothing wires them to ppc `vle`.
+//! along straight-line code. x86 declares dozens of them flowing but no
+//! constructor commits one (no `globalset`), so snapshotting and pinning there
+//! only read; only the mode-bit helpers are ARM/MIPS-specific, and nothing
+//! wires them to ppc `vle`.
 //!
 //! Like GHIDRA's `ContextDatabase`, the context is a value committed per
 //! address. Pin a cold entry back to the pspec defaults (undo a prior
