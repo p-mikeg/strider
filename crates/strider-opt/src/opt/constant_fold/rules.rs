@@ -26,8 +26,9 @@ pub(super) fn build_rules() -> Vec<crate::BoxedRule> {
 /// These rules move a constant across an operator boundary, which is an
 /// identity only when the whole shape evaluates at one width: reassociating
 /// `Add(Add(x:I8, C1:I8):I8, C2:I16):I16` into one `I16` add loses the inner
-/// add's 8-bit wraparound and changes the value. `validate` rejects such a node, but a rewrite can mint
-/// one mid-pipeline, where nothing has validated yet.
+/// add's 8-bit wraparound and changes the value. `validate` rejects such a
+/// node, but a rewrite can mint one mid-pipeline, where nothing has validated
+/// yet.
 fn all_same_width(
     edit: &strider_pattern::Matcher,
     binds: &strider_pattern::Bindings,
@@ -52,14 +53,12 @@ fn coefficient_fits_carrier(ty: strider_ir::node::ValueType) -> bool {
     ty.bit_width() <= 128
 }
 
-/// Whether `cap` binds a shift count small enough to build `2^C` from.
+/// Whether `cap` binds a shift count `2^C` is buildable from: refuses widths
+/// over 128 and counts outside `0..width`.
 ///
 /// A count is an ordinary constant of the shifted type, so an `I64` shift can
-/// name 200 and `1u128 << 200` panics. The coefficient would be right without
-/// this: an out-of-range count makes the p-code shift produce zero, and `2^C` is
-/// also
-/// zero once masked to the width, so both give `x`. The guard is about the
-/// shift in this rule, not about the shift in the program.
+/// name 200, and `1u128 << 200` panics. The guard is about the shift in this
+/// rule, not about the shift in the program.
 fn shift_in_range(
     edit: &strider_pattern::Matcher,
     binds: &strider_pattern::Bindings,
@@ -329,7 +328,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
             ),
             int_const(c3),
         )
-        .when_match(move |edit, _ty, binds| {
+        .when_match(move |edit, ty, binds| {
             let (Some(v1), Some(v2), Some(v3)) = (
                 binds.get_uint(c1, edit.function()),
                 binds.get_uint(c2, edit.function()),
@@ -337,7 +336,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
             ) else {
                 return false;
             };
-            if !all_same_width(edit, binds, _ty, &[x, y, c1, c2, c3]) {
+            if !all_same_width(edit, binds, ty, &[x, y, c1, c2, c3]) {
                 return false;
             }
             (v1 & v3) == 0 || (v2 & v3) == 0
