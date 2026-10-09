@@ -196,8 +196,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 // before it reaches here.  Keeping `I1` out
                 // of register slots is what makes cross-region `Phi`s over a
                 // register type-homogeneous.  The flag-to-`If` flow survives:
-                // the cond-branch lifter narrows the read back to `I1` and
-                // ConstantFold collapses the extend/truncate round trip.
+                // `build_branch_condition` tests `!= 0` at the slot's own
+                // width.
                 let reg_ty: ValueType = reg.int_type()?;
                 let coerced = self.builder.convert_to_int_if_needed(val, reg_ty)?;
                 return self.write_variable(reg, coerced);
