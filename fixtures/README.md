@@ -2,11 +2,15 @@
 
 `out/<arch>/<case>.elf` is built from `cases/<case>.{c,S}` by `make`, one
 target per (arch, case); every C case also builds an unlinked `.o` twin.
-Only the `.o` files the tests load are committed (the `!` entries in the root
-`.gitignore`): four or five each on `x86`, `x64`, `arm`, `aarch64`, `mips64le`
-and `ppc64le`, one on `ppc32be`, none elsewhere. The binaries are committed
-through Git LFS, so a clone without `git-lfs` gets 129- or 130-byte pointer text
-where an ELF should be; run `git lfs pull` before running the test suite.
+Only the `.o` files the tests load are committed: four or five each on `x86`,
+`x64`, `arm`, `aarch64`, `mips64le` and `ppc64le`, one on `ppc32be`, none
+elsewhere. The `!` entries in the root `.gitignore` un-ignore those case names
+on EVERY arch, which is a superset of that set, so rebuilding another arch
+leaves its twins showing as untracked rather than ignored.
+
+The binaries are committed through Git LFS, so a clone without `git-lfs` gets
+129- or 130-byte pointer text where an ELF should be; run `git lfs pull` before
+running the test suite.
 
 Rebuilding is only needed when a case or an arch's flags change. See the header
 of `Makefile` for the `ARCH=` / `CASE=` selectors.
@@ -19,7 +23,7 @@ single arch you have a toolchain for.
 
 | Arch | Needs |
 |---|---|
-| `x86`, `x86_kernel` | `i686-linux-gnu-gcc`, else host `gcc` with `gcc-multilib` |
+| `x86`, `x86_kernel` | `i686-linux-gnu-gcc-11` or `i686-linux-gnu-gcc`, else host `gcc` with `gcc-multilib` |
 | `x64` | host `gcc` |
 | `aarch64` | `gcc-aarch64-linux-gnu` |
 | `arm`, `arm_thumb`, `arm_be8` | `gcc-arm-linux-gnueabihf` |
@@ -35,7 +39,7 @@ single arch you have a toolchain for.
 On Debian / Ubuntu:
 
 ```
-sudo apt install clang lld gcc-multilib \
+sudo apt install clang lld gcc-i686-linux-gnu \
   gcc-aarch64-linux-gnu \
   gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf \
   gcc-mips-linux-gnu gcc-mipsel-linux-gnu \
@@ -43,5 +47,8 @@ sudo apt install clang lld gcc-multilib \
   gcc-powerpc-linux-gnu gcc-powerpc64le-linux-gnu
 ```
 
-`i686-linux-gnu-gcc` is not packaged on current Debian; the `x86` arches fall
-back to host `gcc -m32`, which is what `gcc-multilib` supplies.
+Not `gcc-multilib`: it conflicts with the aarch64, arm and powerpc64le cross
+compilers, so the one line above fails to resolve with it in place (checked on
+Ubuntu 22.04). `gcc-i686-linux-gnu` is what the `x86` arches want anyway. On a
+host without that package they fall back to host `gcc -m32`, which
+`gcc-multilib` supplies, so install it alone there.
