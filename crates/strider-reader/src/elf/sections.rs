@@ -525,8 +525,9 @@ impl ElfSectionLayout {
 }
 
 /// The spans of executable sections that ARM / AArch64 mapping symbols mark as
-/// data: each `$d` runs to the next `$a` / `$t` / `$x` in its section, or to
-/// the section's end. Sorted by start; empty for an image with no `$d`.
+/// data: each run of `$d` marks spans to the next `$a` / `$t` / `$x` in its
+/// section, or to the section's end. Sorted by start; empty for an image with
+/// no `$d`.
 ///
 /// A literal pool sits inside a function's extent and decodes as plausible
 /// instructions, so these are the only record that those bytes are not code.
@@ -572,17 +573,27 @@ pub fn mapping_symbol_data_ranges(obj: &object::File<'_>) -> Vec<std::ops::Range
         }
         let end = layout.section_base(&section).saturating_add(section.size());
         section_marks.sort_unstable();
-        for (i, &(start, is_data)) in section_marks.iter().enumerate() {
-            if !is_data {
+        // One descending pass carrying the next code mark, so a run of `$d`
+        // marks costs O(k) rather than O(k^2) and emits one range instead of k
+        // nested ones.
+        let mut stop = end;
+        let mut run_start: Option<u64> = None;
+        for &(start, is_data) in section_marks.iter().rev() {
+            if is_data {
+                run_start = Some(start);
                 continue;
             }
-            let stop = section_marks[i + 1..]
-                .iter()
-                .find(|(_, data)| !data)
-                .map_or(end, |&(at, _)| at);
-            if start < stop {
-                out.push(start..stop);
+            if let Some(from) = run_start.take()
+                && from < stop
+            {
+                out.push(from..stop);
             }
+            stop = start;
+        }
+        if let Some(from) = run_start
+            && from < stop
+        {
+            out.push(from..stop);
         }
     }
     out.sort_unstable_by_key(|r| r.start);
