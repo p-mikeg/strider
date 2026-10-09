@@ -20,7 +20,7 @@ use AddrClass::*;
 mod frame_escape;
 mod index;
 
-use crate::mem_ssa::{Answers, ClobberProbe, MemLayout};
+use crate::mem_ssa::{Answers, ClobberProbe, MemLayout, WalkAnswers};
 use index::StoreIndex;
 
 /// Which memory region a decomposed base roots in.
@@ -1567,6 +1567,8 @@ pub(crate) struct MemAnalyzer {
     /// [`MemLayout`] does not answer, which is walked too.
     index: Option<std::cell::OnceCell<Option<MemIndex>>>,
     answers: std::cell::RefCell<FxHashMap<(SizedAddr, rsleigh::VnSpace), Answers>>,
+    /// The same, for the queries the index does not answer.
+    walk_answers: std::cell::RefCell<FxHashMap<(SizedAddr, rsleigh::VnSpace), WalkAnswers>>,
 }
 
 struct MemIndex {
@@ -1603,6 +1605,7 @@ impl MemAnalyzer {
             arg_windows: std::cell::RefCell::default(),
             index: Some(std::cell::OnceCell::new()),
             answers: std::cell::RefCell::default(),
+            walk_answers: std::cell::RefCell::default(),
         }
     }
 
@@ -1619,6 +1622,7 @@ impl MemAnalyzer {
     /// verdict.
     pub(crate) fn forget_answers(&self) {
         self.answers.borrow_mut().clear();
+        self.walk_answers.borrow_mut().clear();
     }
 
     fn index(&self, function: &Function) -> Option<&MemIndex> {
@@ -1671,7 +1675,23 @@ impl MemAnalyzer {
                 return clobber;
             }
         }
-        crate::mem_ssa::find_nearest_clobber(function, start, &mut |f, d| walker.def_clobbers(f, d))
+        if memoize {
+            let mut answers = self.walk_answers.borrow_mut();
+            let answers = answers.entry((load, load_space)).or_default();
+            crate::mem_ssa::find_nearest_clobber(
+                function,
+                start,
+                &mut |f, d| walker.def_clobbers(f, d),
+                answers,
+            )
+        } else {
+            crate::mem_ssa::find_nearest_clobber(
+                function,
+                start,
+                &mut |f, d| walker.def_clobbers(f, d),
+                &mut WalkAnswers::default(),
+            )
+        }
     }
 
     /// [`ArgWindow::covers`] against the memo, scanning `call`'s window on a

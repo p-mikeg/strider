@@ -24,7 +24,7 @@ fn run(
     start_mem: ValueId,
 ) -> NodeId {
     let start = fg.producer(start_mem);
-    super::find_nearest_clobber(fg, start, walker)
+    super::find_nearest_clobber(fg, start, walker, &mut WalkAnswers::default())
 }
 
 fn assert_clean(fg: &Function, r: NodeId) {
@@ -120,7 +120,7 @@ fn run_load(
 ) -> NodeId {
     let mem = fg.node_inputs(load)[0];
     let mem_node = fg.producer(mem);
-    let clobber = super::find_nearest_clobber(fg, mem_node, walker);
+    let clobber = super::find_nearest_clobber(fg, mem_node, walker, &mut WalkAnswers::default());
     let mut ctx = crate::EditFunction::new(fg);
     super::narrow_load_to(&mut ctx, load, clobber);
     clobber
@@ -982,6 +982,97 @@ fn store_at(slot: ValueId) -> impl FnMut(&Function, NodeId) -> bool {
     }
 }
 
+/// The memory predecessors of one def, the direction the walk takes.
+fn mem_preds(fg: &Function, n: NodeId) -> Vec<NodeId> {
+    match fg.node_kind(n) {
+        NodeKind::MemPhi => fg.phi_data_inputs(n).map(|v| fg.producer(v)).collect(),
+        NodeKind::InitialMemory => Vec::new(),
+        _ => fg
+            .memory_input_of(n)
+            .into_iter()
+            .map(|v| fg.producer(v))
+            .collect(),
+    }
+}
+
+/// One nearest-clobber answer is sound iff no def that clobbers the slot and no
+/// `InitialMemory` but `answer` itself reaches `start` without passing it.
+fn assert_sound(
+    fg: &Function,
+    start: NodeId,
+    answer: NodeId,
+    clobbers: &mut dyn FnMut(&Function, NodeId) -> bool,
+    seed: u64,
+) {
+    let mut stack = vec![start];
+    let mut seen = rustc_hash::FxHashSet::default();
+    while let Some(y) = stack.pop() {
+        if y == answer || !seen.insert(y) {
+            continue;
+        }
+        match fg.node_kind(y) {
+            NodeKind::InitialMemory => {
+                panic!("seed {seed}: InitialMemory {y:?} reaches {start:?} past {answer:?}")
+            }
+            NodeKind::MemPhi => {}
+            _ => assert!(
+                !clobbers(fg, y),
+                "seed {seed}: clobber {y:?} reaches {start:?} past {answer:?}"
+            ),
+        }
+        stack.extend(mem_preds(fg, y));
+    }
+}
+
+/// Every walk answer is sound over graphs no [`MemLayout`] covers, from every
+/// def and for every slot, with one [`WalkAnswers`] carried across the queries
+/// the way a `LoadForward` sweep asks them.
+#[test]
+fn the_walk_is_sound_on_random_irreducible_graphs() {
+    let mut irreducible = 0;
+    for seed in 0..40 {
+        let (mut shape, im) = ShapeGen::new(seed, true);
+        shape.body(im, 0);
+        // Every third merge's LAST arm becomes an edge to an arbitrary def,
+        // which may enter a loop away from its header.  The first arm is left
+        // alone, so every def stays reachable from `InitialMemory`.
+        let phis: Vec<ValueId> = shape
+            .values
+            .iter()
+            .copied()
+            .filter(|&v| matches!(shape.fg.node_kind(shape.fg.producer(v)), NodeKind::MemPhi))
+            .collect();
+        for (i, &p) in phis.iter().enumerate().filter(|(i, _)| i % 3 == 0) {
+            let node = shape.fg.producer(p);
+            let arms = shape.fg.phi_data_inputs(node).count();
+            let target = shape.values[(i * 13 + 7) % shape.values.len()];
+            let use_id = shape
+                .fg
+                .node_input_id_at(node, arms)
+                .expect("a merge has an arm at its own arity");
+            shape.fg.graph_mut().update_input(use_id, target);
+        }
+        let ShapeGen {
+            fg, slots, values, ..
+        } = shape;
+        if MemLayout::build(&fg).is_none() {
+            irreducible += 1;
+        }
+        for &slot in &slots {
+            let mut walk_answers = WalkAnswers::default();
+            for &v in &values {
+                let start = fg.producer(v);
+                let got = find_nearest_clobber(&fg, start, &mut store_at(slot), &mut walk_answers);
+                assert_sound(&fg, start, got, &mut store_at(slot), seed);
+            }
+        }
+    }
+    assert!(
+        irreducible > 20,
+        "{irreducible} of 40 graphs had no layout, too few to exercise the walk"
+    );
+}
+
 /// The climb names what its definition names, from every def and for every
 /// slot, over random reducible graphs; with no loop it also names what the
 /// path walk does.
@@ -998,6 +1089,7 @@ fn the_climb_matches_its_definition_on_random_graphs() {
         let definition = ByDefinition::new(&fg, &values);
         for &slot in &slots {
             let mut answers = Answers::default();
+            let mut walk_answers = WalkAnswers::default();
             for &v in &values {
                 let start = fg.producer(v);
                 let mut clobbers = store_at(slot);
@@ -1007,7 +1099,8 @@ fn the_climb_matches_its_definition_on_random_graphs() {
                 let want = definition.nearest(&fg, start, &mut store_at(slot));
                 assert_eq!(got, want, "seed {seed}: from {start:?}");
                 if !allow_loops {
-                    let walked = find_nearest_clobber(&fg, start, &mut store_at(slot));
+                    let walked =
+                        find_nearest_clobber(&fg, start, &mut store_at(slot), &mut walk_answers);
                     assert_eq!(got, walked, "seed {seed}: the walk from {start:?}");
                 }
             }
