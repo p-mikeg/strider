@@ -61,14 +61,6 @@ def test_one_of_in_memory_slot_takes_a_call_arm():
     assert union == direct
 
 
-def test_one_of_union_semantics_at_value_slot():
-    # Both overlapping arms fire (union), one match each.
-    fn = _lift(str(fixture_path("x86", "memory")), "array_sum")
-    x = p.Capture("x")
-    hits = fn.find_all(p.load(addr=p.one_of([p.anything().capture(x), p.int_add(p.anything(), p.anything()).capture(x)])))
-    assert hits
-
-
 def test_node_rooted_control_arms():
     # ret / if_else / switch / indirect_branch / unreachable are valid arms:
     # the core synthesizes an `Any` output for the alternation to wire.
@@ -84,20 +76,24 @@ def test_node_rooted_control_arms():
 
 
 def test_first_of_cuts_where_one_of_unions():
-    # A wildcard arm and a narrower arm both match an add; one_of yields both
-    # bindings, first_of commits to the first arm only.
-    fn = _lift(str(fixture_path("x86", "memory")), "array_sum")
-    x = p.Capture("x")
-    add_addr = p.load(addr=p.int_add(p.anything(), p.anything()))
-    n_adds = len(fn.find_all(add_addr))
-    assert n_adds >= 1
+    """The arms have to bind DIFFERENT things, or the union and the cut dedup
+    to the same rows and nothing tells them apart.
 
-    wild_then_add = [p.anything().capture(x), p.int_add(p.anything(), p.anything()).capture(x)]
-    union = fn.find_all(p.load(addr=p.one_of(wild_then_add)))
-    first = fn.find_all(p.load(addr=p.first_of(wild_then_add)))
-    # first_of commits to the wildcard arm, so never more matches than the union.
-    assert len(first) <= len(union)
-    assert len(first) >= 1
+    `var(b)` matches the `Add` as well as a bare base, so a `base + K` load
+    fires both arms. The union keeps the row where `off` bound alongside the
+    bare-base one; the cut keeps whichever arm is listed first.
+    """
+    fn = _lift(str(fixture_path("x86", "memory")), "array_sum")
+    b, off = p.Capture("b"), p.Capture("off")
+    specific = p.int_add(p.var(b), p.int_const(off))
+
+    def rows(addr_pat):
+        hits = fn.find_all(p.load(addr=addr_pat), ignore_casts=True)
+        return len(hits), sum(1 for m in hits if off in m)
+
+    assert rows(p.one_of([p.var(b), specific])) == (13, 2)
+    assert rows(p.first_of([p.var(b), specific])) == (11, 0)
+    assert rows(p.first_of([specific, p.var(b)])) == (11, 2)
 
 
 def test_captured_one_of_in_memory_slot():
