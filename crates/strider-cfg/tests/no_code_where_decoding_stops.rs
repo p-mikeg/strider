@@ -100,6 +100,49 @@ fn a_direct_branch_to_an_undecodable_word_is_reported_not_fatal() {
     assert!(matches!(stub.terminator, RegionTerminator::TailCall { .. }));
 }
 
+/// `build` gives every zero-pcode-op instruction its own region, so a
+/// `call; nop; <not code>` run reaches the seal from the nop's region, which
+/// holds no call. The call ahead of it is the one that does not return.
+#[test]
+fn a_zero_pcode_op_run_between_a_call_and_bad_bytes_still_ends_the_call() {
+    // 0x1000 call 0x2000 (e8 fb 0f 00 00) ; 0x1005 nop (90) ;
+    // 0x1006 bytes x86-64 rejects (06 06 06 06).
+    let cfg = build(
+        &SleighArch::x86_64(),
+        vec![0xe8, 0xfb, 0x0f, 0x00, 0x00, 0x90, 0x06, 0x06, 0x06, 0x06],
+        0x1000,
+        &CfgOptions::default(),
+    )
+    .expect("a nop between a call and bad bytes must not fail the function");
+    assert_eq!(
+        cfg.region_graph()[cfg.entry()].terminator,
+        RegionTerminator::NoReturn
+    );
+    assert_eq!(cfg.undecodable_branch_targets(), &[at(0x1006)]);
+    assert!(!decoded_addrs(&cfg).contains(&0x1006));
+}
+
+/// The same for a literal pool a `$d` mapping symbol marks, which is what real
+/// `gcc -O2 -fPIC` output puts after a call to an unmarked no-return callee.
+#[test]
+fn a_zero_pcode_op_run_between_a_call_and_a_data_range_still_ends_the_call() {
+    // 0x1000 bl 0x2000 ; 0x1004 nop ; 0x1008 .word (data)
+    let words = [0x9400_0400, 0xd503_201f, 0x0000_0000];
+    let mut opts = bounded(0xc);
+    opts.data_ranges = DataRanges::new(std::iter::once(0x1008..0x100c));
+    let cfg = build(&SleighArch::aarch64(), le_words(&words), 0x1000, &opts).expect("build");
+    assert_eq!(
+        cfg.region_graph()[cfg.entry()].terminator,
+        RegionTerminator::NoReturn
+    );
+    assert_eq!(cfg.undecodable_branch_targets(), &[at(0x1008)]);
+    assert!(
+        cfg.regions()
+            .all(|r| !matches!(r.terminator, RegionTerminator::TailCall { .. })),
+        "no stub is seated at the literal pool",
+    );
+}
+
 // ARM, little-endian:
 //   0x1000 push {r4, lr}
 //   0x1004 cmp  r0, #0
