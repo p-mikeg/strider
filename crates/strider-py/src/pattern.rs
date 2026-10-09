@@ -807,6 +807,15 @@ impl PatRepr {
 /// 8 MiB stack. The stack budget below is what holds on a smaller one.
 const MAX_PATTERN_NESTING: u32 = 512;
 
+/// Lowering steps one compile may spend, about two per pattern node.
+///
+/// Depth alone does not bound the work: a `Pat` used in two operands
+/// (`q = int_add(q, q)`) lowers once per use, so each level of reuse doubles
+/// the matcher closures, and every one of them is built before anything is
+/// staged for the matcher's own node cap to refuse. Well past that cap (256
+/// nodes), so no pattern a query can run is refused here.
+const MAX_COMPILE_STEPS: u64 = 4096;
+
 /// Fraction of the stack left below the outermost guard that one compile may
 /// consume. The match walk that follows costs about what the compile did, so a
 /// quarter spends half the headroom and leaves half spare.
@@ -824,6 +833,9 @@ const FALLBACK_PATTERN_STACK: usize = 48 * 1024;
 
 thread_local! {
     static COMPILE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// Lowering steps the live compile has spent, reset when the outermost
+    /// guard opens.
+    static COMPILE_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// A frame address from the outermost live guard on this thread, the zero
     /// the consumption below is measured against.
     static STACK_BASE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -927,6 +939,7 @@ impl DepthGuard {
             if next == 1 {
                 STACK_BASE.set(here);
                 STACK_BUDGET.set(compile_budget(here));
+                COMPILE_STEPS.set(0);
             } else {
                 let used = STACK_BASE.get().saturating_sub(here);
                 let budget = STACK_BUDGET.get();
@@ -940,6 +953,16 @@ impl DepthGuard {
                     )));
                 }
             }
+            let steps = COMPILE_STEPS.get() + 1;
+            if steps > MAX_COMPILE_STEPS {
+                return Err(into_strider_err(anyhow::anyhow!(
+                    "pattern too large to compile: over {MAX_COMPILE_STEPS} lowered \
+                     nodes. A Pat used in two operands (q = int_add(q, q)) lowers \
+                     once per use, so each level of reuse doubles the pattern; a \
+                     query stays well under the matcher's node cap"
+                )));
+            }
+            COMPILE_STEPS.set(steps);
             d.set(next);
             Ok(Self)
         })
