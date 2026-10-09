@@ -87,6 +87,11 @@ impl<N, V, C: NodeCacheable<N, V>> Iterator for InputIter<'_, N, V, C> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.iter.size_hint()
     }
+
+    /// The default walks `n` edges one at a time; the use-list is a slice.
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        Some(self.graph.store.inputs[*self.iter.nth(n)?].value_id)
+    }
 }
 
 /// Walks one value's use-list, able to mutate the edge it points at in place.
