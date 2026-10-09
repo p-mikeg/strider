@@ -86,24 +86,6 @@ fn elf_reader_satisfies_mem_reader_contract() {
     assert_mem_reader_partial_read_ok(&r, 0x1000, 6, 4);
 }
 
-/// `from_object` copies the mappings and `from_elf` windows into the ELF's own
-/// bytes, so the two must serve the same image.
-#[test]
-fn from_object_and_from_elf_serve_the_same_bytes() {
-    let elf = simple_text_elf(0x1000, &[1, 2, 3, 4]);
-    let copied = reader(&elf);
-    let windowed =
-        ElfFileMemReader::from_elf(&strider_reader::OwnedElf::parse(elf).expect("parse")).unwrap();
-
-    for addr in [0x1000u64, 0x1001, 0x1002, 0x1003] {
-        assert_eq!(
-            read_raw(&copied, addr, 1),
-            read_raw(&windowed, addr, 1),
-            "read mismatch at {addr:#x}",
-        );
-    }
-}
-
 /// The mapping path: the ELF comes off disk rather than out of a `Vec`, which
 /// is where the `stat` identity check runs.
 #[test]
@@ -114,7 +96,8 @@ fn elf_reader_over_a_mapped_temp_elf() {
     f.flush().unwrap();
 
     let owned = strider_reader::load_elf(f.path()).unwrap();
-    let r = ElfFileMemReader::from_elf(&owned).unwrap();
+    let obj = owned.checked_file().expect("the mapped file is unchanged");
+    let r = ElfFileMemReader::from_object(&obj).unwrap();
     assert_eq!(read_raw(&r, 0x1000, 4), &[0xde, 0xad, 0xbe, 0xef]);
 }
 
@@ -139,9 +122,14 @@ fn the_reader_serves_a_relocation_site_unpatched() {
         },
     );
     let elf = strider_reader::OwnedElf::parse(fx.bytes.clone()).expect("parse");
+    let obj = elf.checked_file().expect("parse");
 
     assert_eq!(
-        read_raw(&ElfFileMemReader::from_elf(&elf).unwrap(), fx.slot_addr, 4),
+        read_raw(
+            &ElfFileMemReader::from_object(&obj).unwrap(),
+            fx.slot_addr,
+            4
+        ),
         vec![0u8; 4],
         "the reader serves the file-initial bytes"
     );
