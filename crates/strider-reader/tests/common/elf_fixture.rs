@@ -1140,6 +1140,49 @@ impl SectionSpec {
             sh_size: None,
         }
     }
+    /// `.got`: allocatable and writable, holding addresses the loader fills in.
+    pub(crate) fn got(addr: u64, data: Vec<u8>) -> Self {
+        Self {
+            name: b".got",
+            addr,
+            data,
+            exec: false,
+            writable: true,
+            nobits: false,
+            tls: false,
+            sh_size: None,
+        }
+    }
+
+    /// `.got.plt`: the lazily-bound half of the GOT, writable at any moment
+    /// the program calls through a PLT stub for the first time.
+    pub(crate) fn got_plt(addr: u64, data: Vec<u8>) -> Self {
+        Self {
+            name: b".got.plt",
+            addr,
+            data,
+            exec: false,
+            writable: true,
+            nobits: false,
+            tls: false,
+            sh_size: None,
+        }
+    }
+
+    /// `.data.rel.ro.local`: a RELRO section under a per-object suffix.
+    pub(crate) fn data_rel_ro_local(addr: u64, data: Vec<u8>) -> Self {
+        Self {
+            name: b".data.rel.ro.local",
+            addr,
+            data,
+            exec: false,
+            writable: true,
+            nobits: false,
+            tls: false,
+            sh_size: None,
+        }
+    }
+
     /// `.tdata`: allocatable, writable and `SHF_TLS`.
     pub(crate) fn tdata(addr: u64, data: Vec<u8>) -> Self {
         Self {
