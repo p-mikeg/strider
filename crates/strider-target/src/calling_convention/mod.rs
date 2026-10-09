@@ -135,9 +135,11 @@ fn vns_overlap(a: &rsleigh::Vn, b: &rsleigh::Vn) -> bool {
 }
 
 /// First entry of `a` sharing a byte with any entry of `b`.  Overlap rather
-/// than equality: AArch64's `q8` starts where `d8` does and contains it
-/// (`AARCH64instructions.sinc:638`/`:673`, both banks at `offset=0x5000`), so
-/// a rule saying "disjoint" has to see the containment.
+/// than equality: AArch64's `q8` CONTAINS `d8`, both overlaid on `z8` at
+/// `offset=0x5000` (`AARCH64instructions.sinc:638`/`:674` little-endian,
+/// `:820`/`:856` big-endian), so a rule saying "disjoint" has to see the
+/// containment.  They share a START only on LE; the big-endian banks put
+/// `q8` at `z8`+16 and `d8` at `z8`+24.
 fn first_overlapping<'a>(a: &'a [rsleigh::Vn], b: &[rsleigh::Vn]) -> Option<&'a rsleigh::Vn> {
     a.iter()
         .find(|vn| b.iter().any(|other| vns_overlap(vn, other)))
@@ -563,7 +565,15 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
         "vs35", "vs36", "vs37", "vs38", "vs39", "vs40", "vs41", "vs42", "vs43", "vs44", "vs45",
     ],
     callee_saved_regs: &[
-        // r13 (TLS thread pointer) is reserved and genuinely never written.
+        // r13 is the userland TLS thread pointer, reserved and never written
+        // there.  In the ppc64 Linux kernel it is the per-CPU `paca` pointer,
+        // which `setup_paca`, `setjmp` / `longjmp`, `restore_gprs` and 204
+        // `mfsprg r13,1` interrupt-entry sites of a 6.6 ppc64le `vmlinux`
+        // write, and a task migrating inside a callee resumes on another
+        // CPU's paca.  Listed callee-saved anyway: the equality is then an
+        // address-identity claim the kernel does not make, while the call's
+        // memory clobber already cuts every load through it.
+        //
         // r2 (TOC) is NOT callee-saved: ELFv1 3.5.11 / ELFv2 2.3.2.1 put the
         // save and restore on the CALLER, and a cross-module callee does alter
         // it.  Modelled preserved anyway, the same tradeoff as `LR` below: it
@@ -1041,9 +1051,16 @@ impl CallingConvention {
     #[must_use]
     pub const fn x86_linux_kernel() -> Self {
         // The only kernel-internal preset: every other supported arch's kernel CC
-        // is byte-identical to its userland preset, so callers pick that directly.
-        // A syscall ABI lives in `call_other_abi`: the `syscall` / `int 0x80` /
-        // `svc` traps lift to `CallOther`.
+        // has the same register SET as its userland preset, so callers pick that
+        // directly.  One register's ROLE still differs: ppc64 r13 is the per-CPU
+        // `paca` pointer, not the userland TLS pointer (`POWERPC64_ELF_BASE`).
+        //
+        // A register-level syscall footprint lives in `call_other_abi` only
+        // where the sla leaves the trap opaque (`syscall`, `svc`, `sc`).  x86
+        // `int 0x80` is NOT one: its `swi` row carries no registers, and the
+        // sla's trailing `call [intloc]` (`ia.sinc:3667`) is what clobbers
+        // EAX/ECX/EDX, as an ordinary `Call` under the function's default
+        // convention.
         //
         // x86 32-bit `-mregparm=3`: first three integer args in EAX, EDX, ECX, the
         // rest on the stack at the same cdecl offsets.
