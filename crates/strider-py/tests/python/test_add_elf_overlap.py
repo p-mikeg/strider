@@ -59,10 +59,16 @@ def _nested(path, count: int, blob: bytes) -> None:
 
 
 def test_add_elf_accepts_a_re_merge_of_nested_loads(tmp_path):
+    """Merging an image over itself is a no-op: every nested load agrees with
+    the one already mapped, so the bytes and the mapped extent are unchanged.
+    The last load starts 15 bytes in, so the extent ends at 0x40400f."""
     path = tmp_path / "nested.elf"
     _nested(path, 16, b"\x90" * 0x4000)
     lift = strider.lift.load_elf(str(path))
+    before = (lift.read(0x400000, 0x40), lift.read(0x40400E, 1), lift.read(0x40400F, 1))
+    assert before == (b"\x90" * 0x40, b"\x90", None)
     lift.add_elf(str(path))
+    assert (lift.read(0x400000, 0x40), lift.read(0x40400E, 1), lift.read(0x40400F, 1)) == before
 
 
 def test_add_elf_refuses_nested_loads_serving_different_bytes(tmp_path):

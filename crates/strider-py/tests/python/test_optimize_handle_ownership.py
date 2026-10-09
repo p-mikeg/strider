@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 import strider
+from strider import pattern as p
 
 _CODE = bytes([0x48, 0x8B, 0x04, 0x25, 0x00, 0x20, 0x40, 0x00, 0xC3])  # mov rax,[0x402000]; ret
 _BASE = 0x401000
@@ -35,9 +36,21 @@ def test_optimize_rejects_a_function_from_another_handle():
         mine.optimize(foreign)
 
 
-def test_optimize_accepts_its_own_function():
+def test_optimize_folds_its_own_functions_load_against_its_own_rom():
+    """The positive case: an unoptimised `Function` from this handle has its
+    constant-address load folded to the bytes THIS handle's rom serves."""
     lift = _lifter(0x11)
-    lift.optimize(_function(lift))
+    fn = lift.analyze(
+        _BASE,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        opts=strider.lift.LifterOptions(
+            pipeline=strider.opt.OptimizerPipeline.empty()
+        ),
+    ).function
+    assert len(fn.find_all(p.load())) == 1
+    lift.optimize(fn)
+    assert fn.find_all(p.load()) == []
+    assert len(fn.find_all(p.int_const(0x1111_1111_1111_1111))) == 1
 
 
 def test_optimize_rejects_a_cross_arch_function():
