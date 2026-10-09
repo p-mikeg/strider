@@ -126,8 +126,8 @@
     .gv-sh ellipse,.gv-sh polygon,.gv-sh rect,.gv-sh path{stroke:var(--hl-search)!important;stroke-width:2.5px!important;filter:drop-shadow(0 0 8px rgba(250,204,21,.4))}
 
     /* Cursor: pointer on every node/edge. CSS scopes the rule uniformly for
-       constant-cost application regardless of node count, mirroring the minimap
-       fix.  The drag-mode `grab` / `grabbing` cursors still set
+       constant-cost application regardless of node count, as the `#minimap`
+       rules above do.  The drag-mode `grab` / `grabbing` cursors still set
        `svg.style.cursor` on the root, but that's a single-element write
        and unaffected. */
     #gw svg g.node,#gw svg g.edge{cursor:pointer}
