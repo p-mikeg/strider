@@ -823,9 +823,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// Decodes machine instructions one at a time until the region closes.
     ///
     /// Decoding MUST stay sequential within a region: `Sleigh::lift_one`
-    /// takes `&mut self` and carries context-register state (ARM/Thumb mode,
-    /// x86 operand/address size and segment override, MIPS16 mode) that a
-    /// decoded instruction can itself modify, so lifting out of order yields
+    /// takes `&mut self` and carries context-register state (ARM/Thumb mode
+    /// and IT-block state, MIPS16 mode, ppc `vle`) that a decoded instruction
+    /// can itself commit at a later address, so lifting out of order yields
     /// wrong instructions.
     ///
     /// A region can start mid-machine-instruction when a relative
@@ -1009,10 +1009,11 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// seal from the nop's region.
     ///
     /// Walks back over the run (each nop an empty `Unconditional` region with
-    /// one predecessor) to the region ending in the call, truncates it to the
-    /// call and drops its fall-through edge, orphaning the nops.  The call must
-    /// be that region's LAST instruction: anything after it means the region
-    /// was not sealed at the nop and the fall-through is not the call's return.
+    /// one predecessor) to the region whose LAST instruction is the call,
+    /// re-seals it as `NoReturn` and drops its fall-through edge, orphaning
+    /// the nops.  Last, not anywhere: an instruction after the call means the
+    /// region was sealed somewhere other than the nop, so the fall-through is
+    /// not the call's return.
     fn seal_at_preceding_call_not_returning(&mut self, cur_addr: PcodeInsnAddr) -> Result<bool> {
         if !self.insns.is_empty() {
             return Ok(false);
