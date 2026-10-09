@@ -2538,9 +2538,6 @@ mod tests {
         );
     }
 
-    /// The `BRANCHIND` of an ARM `bx`, a MIPS `jr` or an x86 `jmp [mem]` is not
-    /// the instruction's first p-code op, so the anchor key and the only key a
-    /// caller can spell are two entries for one site.
     /// A seeded arm at `target` that would not decode, seated from `site`.
     fn undecodable(site: PcodeInsnAddr, target: u64) -> strider_cfg::UndecodableTarget {
         strider_cfg::UndecodableTarget {
@@ -2549,6 +2546,9 @@ mod tests {
         }
     }
 
+    /// The `BRANCHIND` of an ARM `bx`, a MIPS `jr` or an x86 `jmp [mem]` is not
+    /// the instruction's first p-code op, so the anchor key and the only key a
+    /// caller can spell are two entries for one site.
     fn mid_insn_addr(machine: u64) -> PcodeInsnAddr {
         PcodeInsnAddr {
             machine_addr: MachineInsnAddr::from(machine),
