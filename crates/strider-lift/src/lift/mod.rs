@@ -794,7 +794,7 @@ impl SpecialTerm {
 mod tests {
     /// AArch64 `ret` is a `BranchIndirect` on `x30` in Sleigh, but the cfg
     /// marks it `RegionTerminator::Return`, so it must route through
-    /// `handle_return` and leave `unresolved_branches` empty.
+    /// `handle_sleigh_return` and leave `unresolved_branches` empty.
     #[test]
     fn aarch64_bx_lr_lifts_to_cc_return_not_indirect() {
         use strider_ir::node::NodeKind;
