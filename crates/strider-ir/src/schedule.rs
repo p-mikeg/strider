@@ -98,7 +98,7 @@ fn cfg_live(graph: &Graph, reachable: &NodeIdSet, tree: &DominatorTree<NodeId>) 
                 continue;
             }
             if let (Some(preds), Some(edge_idx)) = (&region_preds, i.checked_sub(1))
-                && let Some(edge) = preds.into_iter().nth(edge_idx)
+                && let Some(&edge) = preds.get(edge_idx)
                 && !tree.contains(graph.value_definition(edge).0)
             {
                 continue;
