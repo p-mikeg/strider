@@ -24,7 +24,13 @@ not read a mapping the program can write.
   bytes; several sets (a fetch image and its ROM subset) share the one buffer.
   `elf_get_loadable_regions(&file)` serves a caller holding only a parsed file,
   copying each mapping.
-- Section and relocation helpers under `elf::`.
+- Section helpers under `elf::`: `RegionSource` / `LoadFilter` pick what a
+  region set is cut from, `ElfSectionLayout` lays out an ET_REL's colliding
+  sections and mints each undefined symbol's `extern_address`, `OpdTable`
+  resolves a ppc64 ELFv1 function symbol through its `.opd` descriptor, and
+  `mapping_symbol_data_ranges` turns an ARM or AArch64 image's `$d` marks into
+  the data ranges a CFG build must not decode. The relocation machinery itself
+  is crate-private; it is reached through `OwnedElf::regions(.., relocate)`.
 
 ## Loading is lazy
 
@@ -42,10 +48,10 @@ Checked at the top of an operation, one `stat` each: `OwnedElf::regions` and
 `OwnedElf::checked_file` run it themselves, and `check_unchanged` on
 `OwnedElf`, `MemRegion` and `MemRegionsLookupTable` runs it on demand, one
 `stat` per mapping rather than per region. An `ElfFileMemReader` has nothing to
-stat, serving copied bytes. A binary rebuilt between two operations is
-then an `Err` naming the file, not bytes from a program that is no longer there.
-A long-lived handle such as a REPL session should call `check_unchanged` at the top
-of its own operations.
+stat, serving copied bytes. A binary rebuilt between two operations is then an
+`Err` naming the file, not bytes from a program that is no longer there. A
+long-lived handle such as a REPL session should call `check_unchanged` at the
+top of its own operations.
 
 Not checked, and not checkable:
 
@@ -53,8 +59,7 @@ Not checked, and not checkable:
   after an operation's check and before its reads is still a torn read, or a
   SIGBUS past a shortened end that kills the process uncatchably.
 - A rewrite in place that preserves the size and lands within the same second:
-  the identity is size plus mtime at whole-second granularity (drvfs truncates
-  mtime, so a finer comparison reports a change on identical bytes).
+  the identity is size plus mtime at whole-second granularity.
 - A different file moved onto the path. The mapped inode is untouched, its bytes
   are what was mapped, and reporting it would break analysing a build-system
   temp file that gets replaced or unlinked mid-run.

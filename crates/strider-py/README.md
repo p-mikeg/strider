@@ -47,8 +47,7 @@ the one top-level name.
 ## Learn more
 
 - The guides in [`../../docs/`](../../docs/): getting started, vocabulary, the
-  full Python walkthrough, the complete Python API reference, and the optimizer
-  passes.
+  full Python walkthrough, the Python API by topic, and the optimizer passes.
 - [`examples/python/`](examples/python/): seventeen runnable scripts, from a
   quickstart to the `BufferReader` group (10, 11, 12, 15, 17) that lifts raw bytes
   with no ELF.
