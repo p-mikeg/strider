@@ -23,7 +23,8 @@ types.
   the userland TLS pointer. Float and vector arguments have their own
   positional list, `arg_passing_regs_float`, drawn from a register file the
   integer list never names; where the float and vector banks are physically
-  distinct, as on PowerPC, the vector window (`v2`-`v13`) follows the floats. ARM32 splits over the float variant the ELF header does not pin down:
+  distinct, as on PowerPC, the vector window (`v2`-`v13`) follows the floats.
+  ARM32 splits over the float variant the ELF header does not pin down:
   `arm_aapcs` is hard-float (VFP), `arm_aapcs_soft` is `-mfloat-abi=soft` /
   `softfp`.
 - `StackArgs`: the stack-slot geometry (offsets and slot indices) that the
@@ -52,8 +53,9 @@ that implicit footprint:
 - `clobbers_memory`: whether it advances the IR's memory edge (true for atomics,
   barriers, port I/O, syscalls; false for pure compute like `rdtsc`).
 - `no_return`: whether control never comes back (true for `sysret`, an ERET, or
-  a trap that cannot fall through; the PowerPC `tw`/`td` family is conditional
-  and stays returning).
+  a trap that cannot fall through). The PowerPC `tw`/`td` family is conditional,
+  so the table row keeps it returning, but `trap_is_unconditional` reads the
+  `TO` mask and ends the region for the 7 of 32 masks that cover a trichotomy.
 
 `classify(preset, name)` says how to lift a given user-op: `NoOp` emits nothing (a
 hint with no effect on the model), and `Call(abi)` emits a CallOther node
@@ -68,5 +70,4 @@ Overrides are per-analysis, the way a calling convention is: the table states
 what the architecture does, an override states what one binary's build of the
 op does.
 
-Depends only on `rsleigh` and `anyhow`. The source is the reference for the full
-surface.
+Depends only on `rsleigh` and `anyhow`.
