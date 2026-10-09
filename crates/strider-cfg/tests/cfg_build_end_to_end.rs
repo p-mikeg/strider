@@ -40,7 +40,7 @@ fn build_from_bytes_ccs(
     let arch = SleighArch::x86_64();
     let mut sleigh = make_sleigh_x86_64(bytes, start);
     Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
-        .with_per_address_ccs(per_address_ccs.clone())
+        .with_per_address_ccs(per_address_ccs)
         .build()
         .expect("Builder::build on synthetic bytes")
 }
