@@ -146,11 +146,11 @@ def test_a_connection_that_sends_nothing_does_not_wedge_the_server():
     connection blocks every later request forever, `shutdown` cannot stop a
     loop parked in `finish_request`, and the interpreter's own join, which
     has no timeout, inherits the wait. The timeout must also stay under
-    `_SHUTDOWN_START_SECONDS`: `serve_forever` sets `started` only after the
-    first request completes, so a quiet FIRST connection keeps it clear, and
-    `shutdown` giving up on that event leaves the server running."""
+    `_SHUTDOWN_STOP_SECONDS`, which is all `shutdown` waits for the stopped
+    loop to drain: a handler reading a quiet connection holds that loop for up
+    to `timeout`."""
     assert strider.explore._Handler.timeout is not None
-    assert strider.explore._Handler.timeout < strider.explore._SHUTDOWN_START_SECONDS
+    assert strider.explore._Handler.timeout < strider.explore._SHUTDOWN_STOP_SECONDS
 
     lift = strider.lift.load_elf(str(fixture_path("x64", "switch")))
     fn = lift.analyze(next(iter(lift.functions())).address).function
