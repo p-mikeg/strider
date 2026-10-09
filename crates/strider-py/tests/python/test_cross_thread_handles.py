@@ -28,9 +28,9 @@ def _drop_on_new_thread(box):
 
 @pytest.mark.skipif(not os.path.exists("/proc/self/statm"), reason="needs procfs")
 def test_dropping_a_function_off_thread_does_not_leak_its_lifter():
-    """A `Function` outliving its `Lifter` on another thread used to leak the
-    whole analysis: PyO3 refuses to run an `unsendable` destructor off-thread,
-    so it leaked the object instead."""
+    """A `Function` outliving its `Lifter` on another thread frees the whole
+    analysis. PyO3 refuses to run an `unsendable` destructor off-thread and
+    leaks the object instead, so none of these may be `unsendable`."""
 
     def wave(n):
         for _ in range(n):
@@ -112,9 +112,10 @@ def test_call_other_abi_raises_off_thread_instead_of_answering_none():
 
 
 def test_add_elf_off_thread_does_not_steal_the_handle():
-    """`add_elf` rebuilds the underlying handle. Rebuilding from a foreign
-    thread used to re-pin it there, so the thread that BUILT it lost the
-    handle permanently, with an error naming the wrong thread as foreign."""
+    """`add_elf` rebuilds the underlying handle, and the rebuild keeps the
+    pin on the building thread. Re-pinning to the caller would cost that
+    thread the handle permanently, under an error naming it as the foreign
+    one."""
     el = strider.lift.load_elf("fixtures/out/x86/memory.elf")
     el.analyze("array_sum")
     added = _off_thread(
