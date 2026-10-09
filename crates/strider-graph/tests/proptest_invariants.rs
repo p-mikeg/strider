@@ -1,8 +1,59 @@
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
 use proptest::prelude::*;
 
 use strider_graph::{Graph, NodeCacheable, NodeId, RawStore, ValueId};
+
+thread_local! {
+    /// Counting is per-thread, so the harness' other tests do not add to it.
+    static COUNTING: Cell<bool> = const { Cell::new(false) };
+    static ALLOCS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Counts the allocations and reallocations of the counting thread; the
+/// `const`-initialised `Cell`s have no destructor to register, so the counting
+/// path never allocates itself.
+struct CountingAlloc;
+
+impl CountingAlloc {
+    fn tick() {
+        if COUNTING.with(Cell::get) {
+            ALLOCS.with(|c| c.set(c.get() + 1));
+        }
+    }
+}
+
+unsafe impl GlobalAlloc for CountingAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        Self::tick();
+        unsafe { System.alloc(layout) }
+    }
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        Self::tick();
+        unsafe { System.alloc_zeroed(layout) }
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        Self::tick();
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+}
+
+#[global_allocator]
+static ALLOC: CountingAlloc = CountingAlloc;
+
+/// Allocations `f` performs on this thread.
+fn count_allocs<R>(f: impl FnOnce() -> R) -> (R, usize) {
+    ALLOCS.with(|c| c.set(0));
+    COUNTING.with(|c| c.set(true));
+    let r = f();
+    COUNTING.with(|c| c.set(false));
+    (r, ALLOCS.with(Cell::get))
+}
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 enum TestKind {
@@ -483,6 +534,37 @@ fn compaction_rebuilds_cache() {
     assert_eq!(
         dedup, add_new,
         "post-compaction create must dedup to the survivor"
+    );
+}
+
+/// The node, output, input and remap arenas are sized off the survivors up
+/// front, so compaction does not grow them by doubling beside the graph it
+/// replaces; only the two list pools, whose size classes the caller cannot
+/// predict, still grow.
+#[test]
+fn compaction_sizes_its_arenas_up_front() {
+    const N: i64 = 2048;
+    let mut g = TestGraph::new();
+    let mut acc = const_node(&mut g, 0);
+    for k in 1..=N {
+        let c = const_node(&mut g, k);
+        acc = add_node(&mut g, acc, c);
+    }
+    let root = region_node(&mut g);
+    g.add_node_input(root, acc);
+    for k in N + 1..N + 16 {
+        let _zombie = const_node(&mut g, k);
+    }
+
+    let keep: Vec<NodeId> = reachable_from(&g, [root]).into_iter().collect();
+    let (_, allocs) = count_allocs(|| g.retain_reachable_stale_cache(keep));
+    // Five sized blocks, the survivor list and the two pools' doubling; sizing
+    // none of them costs about eleven blocks per arena on top.
+    assert!(
+        allocs <= 40,
+        "compacting {} nodes took {allocs} allocations: a sized arena grew by \
+         doubling",
+        2 * N + 2
     );
 }
 

@@ -779,14 +779,16 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     }
 
     fn finish_current_region(&mut self, terminator: RegionTerminator) -> Result<NodeIndex> {
+        let mut insns = std::mem::take(&mut self.insns);
+        insns.shrink_to_fit();
         let region = self.builder.add_region(Region {
             start_addr: self.start_addr,
-            empty_span_len: if self.insns.is_empty() {
+            empty_span_len: if insns.is_empty() {
                 self.empty_span_len
             } else {
                 0
             },
-            insns: std::mem::take(&mut self.insns),
+            insns,
             terminator,
         })?;
         if let Some(mode) = self.isa_mode {
