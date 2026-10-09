@@ -123,6 +123,10 @@ fn reloc_addend(
 /// On an ET_REL an undefined or `SHN_COMMON` symbol resolves to its
 /// [`ElfSectionLayout::extern_address`], outside every mapping.
 ///
+/// An instruction field is read and written in the instruction byte order,
+/// which on AArch64 is little-endian whatever `EI_DATA` says; a data field
+/// follows `EI_DATA`.
+///
 /// # Not computed
 ///
 /// A relocation whose value is not computed (a kind not listed above, a symbol
@@ -171,6 +175,8 @@ pub(crate) fn apply_elf_relocations_with(
         region_index: &region_index,
         writable,
         endian_le: matches!(obj.endianness(), object::Endianness::Little),
+        insn_le: matches!(obj.endianness(), object::Endianness::Little)
+            || obj.architecture() == A::Aarch64,
         opd_entries: opd_entries(obj, layout),
         got: BTreeMap::new(),
     };
@@ -201,10 +207,24 @@ struct Ctx<'a, 'd> {
     region_index: &'a RegionIndex,
     writable: &'a AddressRanges,
     endian_le: bool,
+    /// Byte order of an instruction field: A64 instructions are little-endian
+    /// whatever `EI_DATA` says, and only data follows it. ARM BE32 instructions
+    /// really are big-endian, BE8's swap being the link's.
+    insn_le: bool,
     /// ELFv1 descriptor address -> the code entry its first word relocates to.
     opd_entries: BTreeMap<u64, u64>,
     /// GOT slot address -> (the symbol address it holds, slot width).
     got: BTreeMap<u64, (u64, usize)>,
+}
+
+impl Ctx<'_, '_> {
+    /// The byte order `field` is read and patched in.
+    fn field_le(&self, field: Field) -> bool {
+        match field {
+            Field::Data { .. } => self.endian_le,
+            _ => self.insn_le,
+        }
+    }
 }
 
 /// A relocation site: where the field lands, and how many bytes of the section
@@ -612,8 +632,9 @@ fn apply_classified(
     let p = site.addr;
     let width = field.width();
     let site_regions = sink.covering(ctx, site, p, width)?;
+    let field_le = ctx.field_le(field);
     match compute_classified(ctx, reloc, pair, kind, value_kind, field, p, &site_regions) {
-        Some(word) => sink.record(site_regions, p, word, width, ctx.endian_le),
+        Some(word) => sink.record(site_regions, p, word, width, field_le),
         None => sink.unmodelled(ctx, site_regions, p, width, reloc),
     }
     Ok(())
@@ -633,9 +654,9 @@ fn compute_classified(
     site_regions: &[usize],
 ) -> Option<u64> {
     let (obj, layout, endian_le) = (ctx.obj, ctx.layout, ctx.endian_le);
-    let thumb_le =
-        endian_le && matches!(field, Field::ThumbBranch { .. } | Field::ThumbMovw { .. });
-    let raw = read_field(ctx.regions, site_regions, p, field.width(), endian_le)?;
+    let field_le = ctx.field_le(field);
+    let thumb_le = field_le && matches!(field, Field::ThumbBranch { .. } | Field::ThumbMovw { .. });
+    let raw = read_field(ctx.regions, site_regions, p, field.width(), field_le)?;
     let raw = if thumb_le { swap_halfwords(raw) } else { raw };
     let target = match reloc.target() {
         RelocationTarget::Symbol(_) => Some(resolve_symbol_target(obj, layout, reloc, endian_le)?),
