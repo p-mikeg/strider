@@ -101,15 +101,21 @@ fn first_of_reports_only_the_first_matching_arm() {
 
 /// Counts continuations reaching the root guard: `one_of` is multiplicative in
 /// the number of nested alternations, `first_of` cuts at the first match.
+///
+/// The root capture is load-bearing: a pattern binding nothing a caller can see
+/// has one answer per root, and `find_all` then stops at the first
+/// configuration instead of driving them all.
 fn root_continuations(f: &strider_ir::Function, ordered: bool) -> usize {
     let n = Arc::new(AtomicUsize::new(0));
     let seen = Arc::clone(&n);
+    let c = Capture::new();
     let pat = if ordered {
         int_add(
             first_of![anything(), anything()],
             first_of![anything(), anything()],
         )
         .ordered()
+        .capture(c)
         .when_match(move |_m, _ty, _b| {
             seen.fetch_add(1, Ordering::Relaxed);
             true
@@ -121,6 +127,7 @@ fn root_continuations(f: &strider_ir::Function, ordered: bool) -> usize {
             one_of![anything(), anything()],
         )
         .ordered()
+        .capture(c)
         .when_match(move |_m, _ty, _b| {
             seen.fetch_add(1, Ordering::Relaxed);
             true
