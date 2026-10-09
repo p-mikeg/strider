@@ -1229,8 +1229,15 @@ fn unverified_seeded_sites(
     // `Return`, leaving no placeholder and no `Switch` anchor, so the filter
     // above cannot see it and no other channel names it either. The seat is
     // the only record that a caller's answer replaced whatever the classifier
-    // would have derived.
-    out.extend_from_slice(cfg.link_register_seated());
+    // would have derived. Only a CALLER's: the seated `Return` carries a
+    // return site, so `settle_return_sites` re-checks every seat against the
+    // round's own IR, and a classifier derivation is an unambiguous target set
+    // by contract.
+    out.extend(
+        cfg.link_register_seated()
+            .iter()
+            .filter(|addr| seed_for(caller_seed, **addr).is_some()),
+    );
     // A `TailCall` seat consumes the site the same way: an answer of one
     // target outside the function replaces the dispatch, and any other arm it
     // had is gone with no placeholder and no anchor left behind.
