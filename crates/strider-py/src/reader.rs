@@ -222,14 +222,24 @@ fn elf_to_mem_regions(
 /// `.data.rel.ro`) are EXCLUDED, so every address here is
 /// runtime-immutable.
 ///
+/// `relocated_got_is_rom` takes `.got` and `.data.rel.ro` back in, on the
+/// caller's claim that nothing rewrites them once the loader has run. Never
+/// `.got.plt`; see [`LoadFilter::ImmutableAndRelocatedGot`].
+///
 /// Shares one backing buffer with [`elf_to_mem_regions`]: the ROM is a filter
 /// over the same bytes.
 fn elf_to_rom_regions(
     elf: &strider_reader::OwnedElf,
     source: ElfRegionSource,
     apply_relocations: bool,
+    relocated_got_is_rom: bool,
 ) -> PyResult<Vec<MemRegion>> {
-    elf.regions(source.into(), LoadFilter::ImmutableOnly, apply_relocations)
+    let filter = if relocated_got_is_rom {
+        LoadFilter::ImmutableAndRelocatedGot
+    } else {
+        LoadFilter::ImmutableOnly
+    };
+    elf.regions(source.into(), filter, apply_relocations)
         .map_err(into_strider_err)
 }
 
@@ -813,20 +823,29 @@ impl PyLoadedElf {
     /// also selects what is mapped, so `False` drops writable non-executable
     /// sections rather than serving their on-disk bytes.
     ///
+    /// `relocated_got_is_rom` is per image, and does not inherit the handle's:
+    /// the claim is about one shared object's link, so a RELRO main image says
+    /// nothing about a library merged into it.
+    ///
     /// Errors if the new ELF maps code over an address already loaded with
     /// DIFFERENT bytes: `add_elf` places shared objects at distinct addresses,
     /// so two ELFs linked at the same base cannot share one address space.
     /// Re-merging an image already fully loaded, byte for byte, is allowed and
     /// does nothing.
-    #[pyo3(signature = (path, apply_relocations=true))]
-    fn add_elf(&mut self, path: &str, apply_relocations: bool) -> PyResult<()> {
+    #[pyo3(signature = (path, apply_relocations=true, relocated_got_is_rom=false))]
+    fn add_elf(
+        &mut self,
+        path: &str,
+        apply_relocations: bool,
+        relocated_got_is_rom: bool,
+    ) -> PyResult<()> {
         let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
         let mem_regions = elf_to_mem_regions(&obj, self.source, apply_relocations)?;
         let writable = obj
             .writable_ranges(self.source.into())
             .map_err(into_strider_err)?;
         let rom_regions = without_ranges(
-            elf_to_rom_regions(&obj, self.source, apply_relocations)?,
+            elf_to_rom_regions(&obj, self.source, apply_relocations, relocated_got_is_rom)?,
             &self.writable,
         );
         if let Some((lo, hi)) =
@@ -925,10 +944,16 @@ fn load_elf_impl(
     path: &str,
     source: ElfRegionSource,
     apply_relocations: bool,
+    relocated_got_is_rom: bool,
 ) -> PyResult<PyLoadedElf> {
     let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
     let mem = PyBufferReader::from_regions(elf_to_mem_regions(&obj, source, apply_relocations)?);
-    let rom = PyBufferReader::from_regions(elf_to_rom_regions(&obj, source, apply_relocations)?);
+    let rom = PyBufferReader::from_regions(elf_to_rom_regions(
+        &obj,
+        source,
+        apply_relocations,
+        relocated_got_is_rom,
+    )?);
     let writable = obj
         .writable_ranges(source.into())
         .map_err(into_strider_err)?;
@@ -952,10 +977,23 @@ fn load_elf_impl(
 /// whose `.text` or function-pointer tables ship with unresolved
 /// relocations: section coverage widens to `.data.rel.ro` / `.got` and
 /// every understood relocation is applied.
+///
+/// `relocated_got_is_rom` additionally serves `.got` / `.data.rel.ro` as
+/// read-only memory, which constant-folds a load through them; see
+/// [`elf_to_rom_regions`].
 #[pyfunction]
-#[pyo3(name = "_load_elf_from_segments", signature = (path, apply_relocations=false))]
-pub fn load_elf_from_segments(path: &str, apply_relocations: bool) -> PyResult<PyLoadedElf> {
-    load_elf_impl(path, ElfRegionSource::Segments, apply_relocations)
+#[pyo3(name = "_load_elf_from_segments", signature = (path, apply_relocations=false, relocated_got_is_rom=false))]
+pub fn load_elf_from_segments(
+    path: &str,
+    apply_relocations: bool,
+    relocated_got_is_rom: bool,
+) -> PyResult<PyLoadedElf> {
+    load_elf_impl(
+        path,
+        ElfRegionSource::Segments,
+        apply_relocations,
+        relocated_got_is_rom,
+    )
 }
 
 /// Load the ELF at `path`, collecting regions by walking section headers
@@ -963,9 +1001,18 @@ pub fn load_elf_from_segments(path: &str, apply_relocations: bool) -> PyResult<P
 /// Use for section-granular regions (`.text` / `.rodata` / `.plt` as
 /// separate mappings) instead of coalesced PT_LOAD ranges.
 #[pyfunction]
-#[pyo3(name = "_load_elf_from_sections", signature = (path, apply_relocations=false))]
-pub fn load_elf_from_sections(path: &str, apply_relocations: bool) -> PyResult<PyLoadedElf> {
-    load_elf_impl(path, ElfRegionSource::Sections, apply_relocations)
+#[pyo3(name = "_load_elf_from_sections", signature = (path, apply_relocations=false, relocated_got_is_rom=false))]
+pub fn load_elf_from_sections(
+    path: &str,
+    apply_relocations: bool,
+    relocated_got_is_rom: bool,
+) -> PyResult<PyLoadedElf> {
+    load_elf_impl(
+        path,
+        ElfRegionSource::Sections,
+        apply_relocations,
+        relocated_got_is_rom,
+    )
 }
 
 /// Instruction source backed by Python.  Subclass and override
