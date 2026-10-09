@@ -304,3 +304,35 @@ fn nested_if_branches_at_the_node_cap_match() {
     .join()
     .unwrap();
 }
+
+/// `k` adds over ONE shared wildcard leaf, each add feeding both slots of the
+/// next: `k + 1` nodes, `2^(k+1) - 1` walks.
+fn doubling_chain(k: usize) -> Pattern {
+    let mut b = MatcherBuilder::new();
+    let mut o = b.leaf(KindSpec::Any);
+    b.set_output_any(o);
+    for _ in 0..k {
+        o = b.binary(IntBinaryOp::Add, o, o);
+    }
+    b.finish()
+}
+
+/// A vertex feeding both slots is walked once per slot, so the stack grows with
+/// the unfolded walk count and a 9-node pattern already overflows the 2 MiB a
+/// spawned thread gets. The cap charges the unfolding and refuses on the normal
+/// channel, which is what the contract on `MAX_PATTERN_NODES` promises.
+#[test]
+fn a_shared_vertex_pattern_over_the_unfolded_cap_is_refused() {
+    assert!(doubling_chain(6).root().is_ok(), "127 walks is under the cap");
+    for k in [8usize, 12, 16] {
+        std::thread::spawn(move || {
+            assert!(
+                error_of(&doubling_chain(k)).contains("nodes"),
+                "{} nodes sharing one leaf must be refused",
+                k + 1
+            );
+        })
+        .join()
+        .unwrap();
+    }
+}
