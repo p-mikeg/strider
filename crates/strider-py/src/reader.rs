@@ -271,6 +271,29 @@ fn invalidate_and_extend(reader: &PyBufferReader, regions: Vec<MemRegion>) {
     inner.max_region_len = None;
 }
 
+fn region_spans(regions: &[MemRegion]) -> Vec<(u64, u64)> {
+    regions
+        .iter()
+        .map(|r| (r.start_addr(), r.end_addr()))
+        .collect()
+}
+
+/// Every address `new` covers is covered by `existing`.
+fn spans_covered(existing: &[(u64, u64)], new: &[(u64, u64)]) -> bool {
+    let mut spans = existing.to_vec();
+    spans.sort_unstable();
+    let mut merged: Vec<(u64, u64)> = Vec::with_capacity(spans.len());
+    for (lo, hi) in spans {
+        match merged.last_mut() {
+            Some(last) if lo <= last.1 => last.1 = last.1.max(hi),
+            _ => merged.push((lo, hi)),
+        }
+    }
+    // Merged spans are disjoint, so a span inside their union is inside one.
+    new.iter()
+        .all(|&(lo, hi)| merged.iter().any(|&(s, e)| s <= lo && hi <= e))
+}
+
 /// A sub-range where `new` serves different bytes than `existing` at an
 /// address both map, or `None` if every such address reads the same (a benign
 /// re-merge of the same image). See `add_elf` for why differing overlap is
@@ -660,8 +683,8 @@ impl PyLoadedElf {
     fn symbol(&self, name: &str) -> PyResult<PySymbol> {
         self.symbol_opt(name)?.ok_or_else(|| {
             into_strider_err(anyhow::anyhow!(
-                "symbol {name:?} not found in any ELF loaded into this Program \
-                 ({} loaded)",
+                "symbol {name:?} not found in any ELF loaded into this \
+                 ElfLifter ({} loaded)",
                 self.elfs.len()
             ))
         })
@@ -792,8 +815,9 @@ impl PyLoadedElf {
     ///
     /// Errors if the new ELF maps code over an address already loaded with
     /// DIFFERENT bytes: `add_elf` places shared objects at distinct addresses,
-    /// so two ELFs linked at the same base cannot share one address space (a
-    /// byte-identical re-merge of the same image is allowed and is a no-op).
+    /// so two ELFs linked at the same base cannot share one address space.
+    /// Re-merging an image already fully loaded, byte for byte, is allowed and
+    /// does nothing.
     #[pyo3(signature = (path, apply_relocations=true))]
     fn add_elf(&mut self, path: &str, apply_relocations: bool) -> PyResult<()> {
         let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
@@ -813,6 +837,20 @@ impl PyLoadedElf {
                  already loaded there; add_elf merges shared objects at DISTINCT addresses, so \
                  two ELFs linked at the same base cannot be merged into one address space"
             )));
+        }
+        // An image already loaded: no byte it maps is new (the overlap check
+        // above makes the shared ones identical) and it bars nothing new from
+        // the read-only view, so its regions and symbols are the ones already
+        // here and a merge would append a second copy of both. An image
+        // mapping nothing still goes through, for its symbols.
+        if !mem_regions.is_empty()
+            && spans_covered(
+                &region_spans(&self.mem.inner.lock_shared().regions),
+                &region_spans(&mem_regions),
+            )
+            && spans_covered(&self.writable, &writable)
+        {
+            return Ok(());
         }
         invalidate_and_extend(&self.mem, mem_regions);
         {
