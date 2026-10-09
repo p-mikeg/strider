@@ -3,10 +3,11 @@
 //! order.
 //!
 //! An abstract value is either a concrete number or SP-relative, because the SP
-//! is symbolic and a stack address cannot be a pure number.  Three foldings do
-//! the work: ConstFold arithmetic, a constant-address ROM read, and an
-//! SP-relative load resolved against the [`SlotMap`] of the stores above it.
-//! Any unresolved value, a non-const dispatch result, or a cycle yields `None`.
+//! is symbolic and a stack address cannot be a pure number.  Four foldings do
+//! the work: ConstFold arithmetic, a constant-address ROM read, an SP-relative
+//! load resolved against the [`SlotMap`] of the stores above it, and a `Phi`
+//! whose arms agree.  Any unresolved value, a non-const dispatch result, or a
+//! cycle yields `None`.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -30,12 +31,8 @@ impl Abs {
     }
 }
 
-/// The memory options the table walk runs under.
-///
-/// The call-boundary relaxations are OFF: this walk decides a decoded branch
-/// target, so a relaxation that is wrong produces a wrong CFG edge rather than
-/// a wrong fold.  What `noalias_allocators` still buys is the allocation
-/// identity `decompose` reads off it, which is not a call boundary.
+/// The memory options the table walk runs under; which assumptions it honours
+/// is on [`classify_target`](super::classify_target).
 pub(crate) fn table_walk_options(assumptions: &crate::AssumptionOptions) -> MemOptions {
     MemOptions::call_blocking(
         assumptions.stack_global_disjoint,
@@ -85,8 +82,8 @@ impl<'a> Evaluator<'a> {
     /// Evaluates `dispatch` over `order` against the open index.
     ///
     /// Bailing on the first non-folding node is exact, not just an
-    /// optimization: every node in `order` is a value-ancestor of `dispatch`,
-    /// so one that fails to fold means `dispatch` cannot be constant either.
+    /// optimization: every fold here needs every operand constant, so the
+    /// first failure already forces `None` at `dispatch`.
     pub(crate) fn eval_root(&mut self, order: &[ValueId], dispatch: ValueId) -> Option<u64> {
         for &val in order {
             if self.map.contains_key(&val) {
