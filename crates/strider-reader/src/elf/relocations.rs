@@ -178,7 +178,7 @@ pub(crate) fn apply_elf_relocations_with(
         endian_le: matches!(obj.endianness(), object::Endianness::Little),
         insn_le: matches!(obj.endianness(), object::Endianness::Little)
             || obj.architecture() == A::Aarch64,
-        opd_entries: opd_entries(obj, layout),
+        opd_entries: super::sections::opd_entries(obj, layout),
         got: BTreeMap::new(),
     };
     for_each_reloc_site(obj, &owners, layout, |site_addr, avail, reloc, pair| {
@@ -333,39 +333,6 @@ fn mips_hi16_pairs(
         }
     }
     pairs
-}
-
-/// Where each ppc64 ELFv1 `.opd` descriptor of an ET_REL enters its code: the
-/// `S + A` of the `R_PPC64_ADDR64` on the descriptor's first word.
-fn opd_entries(
-    obj: &object::File<'_>,
-    layout: &super::sections::ElfSectionLayout,
-) -> BTreeMap<u64, u64> {
-    let mut out = BTreeMap::new();
-    if obj.architecture() != A::PowerPc64 || obj.kind() != object::ObjectKind::Relocatable {
-        return out;
-    }
-    let endian_le = matches!(obj.endianness(), object::Endianness::Little);
-    let Some(opd) = obj.section_by_name(".opd") else {
-        return out;
-    };
-    let base = layout.section_base(&opd);
-    for (offset, reloc) in opd.relocations() {
-        if reloc.flags()
-            != (RelocationFlags::Elf {
-                r_type: object::elf::R_PPC64_ADDR64,
-            })
-        {
-            continue;
-        }
-        if let Some(target) = resolve_symbol_target(obj, layout, &reloc, endian_le) {
-            out.insert(
-                base.wrapping_add(offset),
-                apply_addend(target.addr, reloc.addend()),
-            );
-        }
-    }
-    out
 }
 
 /// The referenced GOT slots, adjacent ones sharing a region.
