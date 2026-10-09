@@ -110,6 +110,17 @@ def test_a_preset_call_other_abi_is_not_arch_locked():
     assert fn.node_count() > 0
 
 
+def test_an_empty_custom_abi_does_not_repr_as_a_preset():
+    """`__repr__` is "the constructor call that produces this ABI", and
+    `__eq__` keys on `source_arch`, so an empty `custom` must not print as
+    the preset it is unequal to."""
+    empty = CallOtherAbi.custom(sleigh=Sleigh(SleighArch.x86_64(), _mem(RDTSC_RET)))
+    assert empty != CallOtherAbi.pure()
+    assert repr(empty) != repr(CallOtherAbi.pure())
+    assert repr(empty).startswith("CallOtherAbi.custom(")
+    assert repr(CallOtherAbi.pure()) == "CallOtherAbi.pure()"
+
+
 def test_a_custom_cc_repr_names_its_arch():
     assert repr(_custom_cc(SleighArch.x86_64())) == "<CallingConvention custom for x86_64>"
     assert repr(CallingConvention.x86_64_systemv()) == "CallingConvention.x86_64_systemv()"
