@@ -33,14 +33,15 @@ use crate::pipeline::OptimizationResult;
 
 #[derive(Default)]
 pub struct LoadForward {
-    /// Shared by every root in one sweep, for their memory index, answers
-    /// and outgoing-argument-window memo.  Valid that long because the pass
-    /// only rewires `Load` memory edges and redirects `Load` outputs: every
-    /// memory def keeps its inputs, a store address a forward can still change
-    /// was an `Anchor` the index offers every location, a forward reaching an
-    /// address drops the answers, and a forwarded value can only make an
-    /// address the window scan could not place placeable, which ends a prefix
-    /// sooner than the memo says.
+    /// Shared by every root in one sweep, for their memory index, answers and
+    /// outgoing-argument-window memo.
+    ///
+    /// The pass only rewires `Load` memory edges and redirects `Load` outputs,
+    /// so every memory def keeps its inputs and the index stands.  A store
+    /// address a forward can still change was an `Anchor`, which the index
+    /// offers every location, and a forward that reaches an address drops the
+    /// answers.  A forwarded value only makes an address the window scan could
+    /// not place placeable, which ends a prefix sooner than the memo says.
     analyzers: RefCell<Option<Analyzers>>,
 }
 
@@ -104,8 +105,9 @@ impl crate::peephole::PeepholePass for LoadForward {
 }
 
 /// Two nearest-clobber queries per load, each a climb of the memory dominator
-/// tree over the analyzers' index.  `narrow_load_to` moves the load's edge onto
-/// the structural clobber, which later sweeps start from.
+/// tree over the analyzers' index, or a path walk where the memory graph is
+/// irreducible and has none.  `narrow_load_to` moves the load's edge onto the
+/// structural clobber, which later sweeps start from.
 fn try_forward_load(
     edit: &mut crate::EditFunction<'_>,
     load: NodeId,

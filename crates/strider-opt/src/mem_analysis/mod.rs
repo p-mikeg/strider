@@ -89,11 +89,10 @@ pub(crate) enum AliasVerdict {
 /// beside the configured analyzer).  A heap class read back under an empty set
 /// is dropped by [`classify_addr`].  A `NotMemory` committed under a smaller set
 /// is not: it answers a later walk under a larger one, so the configured walk
-/// must reach an address first (`try_forward_load`, `detect_stack_args`).
+/// must reach an address first.
 ///
-/// The memo is also the verdict `strider-pattern`'s region filters read
-/// (`non_stack`, `heap_only`, `stack_only`), so it holds the configured set's
-/// answers.
+/// The memo is also the verdict `strider-pattern`'s region filters read, so it
+/// holds the configured set's answers.
 pub(crate) fn decompose(
     function: &Function,
     value: ValueId,
@@ -620,14 +619,21 @@ fn offset_range_verdict(load: SizedAddr, store: SizedAddr) -> AliasVerdict {
     }
 }
 
-/// Whether the two reduced offsets can be compared in integer order.
+/// Whether the two offsets can be compared in integer order.
 ///
-/// `wrap_to_addr_width` reduces each offset into the address type's signed
-/// range, which is correct mod 2^w but not order-preserving across the wrap:
-/// two addresses two bytes apart mod 2^32 reduce to `+2147483646` and
-/// `-2147483648`, which any interval test reads as nearly 2^32 apart. Whenever
-/// the reduced distance exceeds half the modulus the true distance is the
-/// short way round, and only `MayAlias` is sound.
+/// `wrap_to_addr_width` reduces a `StackRooted` / `HeapRooted` offset into the
+/// address type's signed range, which is correct mod 2^w but not
+/// order-preserving across the wrap: two addresses two bytes apart mod 2^32
+/// reduce to `+2147483646` and `-2147483648`, which any interval test reads as
+/// nearly 2^32 apart. Whenever the distance exceeds half the modulus the true
+/// distance is the short way round, and only `MayAlias` is sound.
+///
+/// A `Constant` offset is the raw unsigned address, not a reduced one, so the
+/// same bound cuts a different pair: two globals adjacent across the 0 / 2^w
+/// wrap (`0xFFFF_FFF0` against `0x10`) read as far apart and stay `MayAlias`.
+/// A modular distance, `min((a - b) mod 2^w, (b - a) mod 2^w)`, would place
+/// every pair of either class; this bound places the half of the circle each
+/// class is written for.
 fn offsets_comparable(load: SizedAddr, store: SizedAddr, load_off: i128, store_off: i128) -> bool {
     let bits = match (load.addr_bits, store.addr_bits) {
         // A missing width is "not known", not "not reduced": the offsets
