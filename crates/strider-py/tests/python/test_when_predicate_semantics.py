@@ -2,9 +2,9 @@
 that raises must not be swallowed.
 
 A builder nested in a `mem` slot compiles through a different path from a
-value operand, and used to drop its predicate: the query matched every site,
-and `rewrite()`, which refuses a guarded `find` pattern, never saw the guard
-either, so it mutated the graph with the condition discarded.
+value operand, and dropping its predicate there is silent: the query matches
+every site, and `rewrite()`, which refuses a guarded `find` pattern, does not
+see the guard either and mutates the graph with the condition discarded.
 """
 
 from __future__ import annotations
