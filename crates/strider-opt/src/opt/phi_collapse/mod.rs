@@ -12,6 +12,11 @@
 //!
 //! A phi takes part only when its `Region` and every input producer are live.
 //! Every value input counts, dead predecessor edge or not.
+//!
+//! Braun's argument needs each arm's definition to dominate the phi, which
+//! fails on a `Region` unreachable from entry: `phi(token, Add(phi, 2))` is
+//! then a one-member component whose single outside value is the `Add`, and
+//! collapsing onto it closes a non-phi data cycle.  Such a phi is skipped.
 
 use cranelift_entity::SecondaryMap;
 use strider_ir::IRViewer;
@@ -36,12 +41,16 @@ impl Optimizer for PhiCollapse {
         edit: &mut crate::EditFunction<'_>,
         _opt: &mut OptCtx<'_>,
     ) -> Result<OptimizationResult> {
+        let reachable = strider_ir::walk::cfg_reachable(edit.function().graph(), edit.entry());
         let phis: Vec<NodeId> = edit
             .reverse_postorder_filter(|k| matches!(k, NodeKind::Phi | NodeKind::MemPhi))
             .filter(|&phi| {
-                edit.node_inputs(phi)
-                    .into_iter()
-                    .all(|v| edit.is_live(edit.producer(v)))
+                edit.nth_input(phi, 0)
+                    .is_some_and(|token| reachable.contains(edit.producer(token)))
+                    && edit
+                        .node_inputs(phi)
+                        .into_iter()
+                        .all(|v| edit.is_live(edit.producer(v)))
             })
             .collect();
         let mut sccs = PhiSccs::default();

@@ -511,3 +511,41 @@ fn mem_phi_cycle_with_one_outside_token_collapses() -> crate::Result<()> {
     ));
     Ok(())
 }
+
+/// A `Region` whose only predecessor is its own `If` is unreachable from
+/// entry, so an arm's definition need not dominate the phi: collapsing
+/// `p = phi(token, Add(p, 2))` onto the `Add` makes the `Add` its own input.
+/// `validate` accepts the input and rejects that result.  The detached `If`
+/// also branches to a live region, which is what keeps it in the graph.
+#[test]
+fn a_phi_on_an_unreachable_region_is_left_alone() -> crate::Result<()> {
+    let var = reg_vn(0x1000, 4);
+    let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
+    let entry = b.create_region_all()?;
+    let join = b.create_region_all()?;
+    let detached = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+
+    b.set_region(entry);
+    b.build_branch(join)?;
+
+    b.set_region(detached);
+    let p = b.read_variable(&var)?;
+    let two = b.build_int_const(2u64, ValueType::I32).unwrap();
+    let next =
+        b.build_int_binary_operation(p, two, strider_ir::IntBinaryOp::Add, ValueType::I32)?;
+    b.write_variable(&var, next)?;
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, join, detached)?;
+
+    b.set_region(join);
+    let read_back = b.read_variable(&var)?;
+    b.build_return(None, &[read_back])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    strider_ir::validate::validate(&fg).expect("the input validates");
+
+    // `run_one` panics on invalid output.
+    run(&mut fg)?;
+    Ok(())
+}

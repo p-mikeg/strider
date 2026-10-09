@@ -412,3 +412,45 @@ fn phi_collapse_without_a_control_rewire_reports_changed() -> crate::Result<()> 
     );
     Ok(())
 }
+
+/// A `Region` whose only predecessor is its own `If` is unreachable from
+/// entry, so collapsing it replaces `phi(token, Add(phi, 2))` by the `Add`,
+/// which then reads itself.  `validate` accepts the input and rejects that
+/// result.  The detached `If` also branches to a live region, which is what
+/// keeps it in the graph.
+#[test]
+fn an_unreachable_self_loop_region_is_left_alone() -> crate::Result<()> {
+    let var = reg_vn(0x1000, 4);
+    let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
+    let entry = b.create_region_all()?;
+    let join = b.create_region_all()?;
+    let detached = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+
+    b.set_region(entry);
+    b.build_branch(join)?;
+
+    b.set_region(detached);
+    let p = b.read_variable(&var)?;
+    let two = b.build_int_const(2u64, ValueType::I32).unwrap();
+    let next =
+        b.build_int_binary_operation(p, two, strider_ir::IntBinaryOp::Add, ValueType::I32)?;
+    b.write_variable(&var, next)?;
+    // Without a store the region's MemPhi is its own sole input, which the
+    // pass already refuses to collapse.
+    let addr = b.build_int_const(0x4000u64, ValueType::I64).unwrap();
+    b.build_store(addr, next, rsleigh::VnSpace::RAM)?;
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, join, detached)?;
+
+    b.set_region(join);
+    let read_back = b.read_variable(&var)?;
+    b.build_return(None, &[read_back])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    strider_ir::validate::validate(&fg).expect("the input validates");
+
+    // `run_one` panics on invalid output.
+    crate::pipeline::run_one(&RegionCollapse, &mut fg, &mut crate::OptCtx::new(None))?;
+    Ok(())
+}
