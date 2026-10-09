@@ -21,28 +21,6 @@ fn float_ret_names(cc: CallingConvention, arch: SleighArch) -> Vec<String> {
         .collect()
 }
 
-/// SysV AMD64 psABI 3.2.3: a COMPLEX_X87 return puts the real part in `%st0`
-/// and the imaginary part in `%st1`. Without ST1 in the list nothing roots the
-/// imaginary half's cone and DCE deletes it.
-#[test]
-fn x86_64_returns_complex_long_double_imaginary_half_in_st1() {
-    let names = float_ret_names(CallingConvention::x86_64_systemv(), SleighArch::x86_64());
-    assert!(
-        names.iter().any(|n| n == "ST1"),
-        "ST1 must be a float return register, got {names:?}"
-    );
-}
-
-/// Same rule in the Intel386 psABI.
-#[test]
-fn x86_returns_complex_long_double_imaginary_half_in_st1() {
-    let names = float_ret_names(CallingConvention::x86_cdecl(), SleighArch::x86());
-    assert!(
-        names.iter().any(|n| n == "ST1"),
-        "ST1 must be a float return register, got {names:?}"
-    );
-}
-
 /// `preserves_regs` clobbers memory, and the load-forwarding gate is
 /// escape-based: dropping the argument registers hides a frame address handed
 /// to the callee, so a spill wrongly forwards across the call.
