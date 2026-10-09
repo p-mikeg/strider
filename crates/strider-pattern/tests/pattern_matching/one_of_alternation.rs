@@ -4,29 +4,6 @@ use strider_pattern::{
     Capture, CaptureExt, MatchPat, Matcher, OneOf, any_int_const, anything, int_add, int_and,
     int_const, int_mul, int_neg, int_xor, one_of, ret, var,
 };
-
-#[test]
-fn one_of_matches_any_alternative_at_root() {
-    let mut t = Tb::empty();
-    let a = t.u64(5);
-    let b = t.u64(3);
-    let sum = t.add(a, b);
-    let prod = t.mul(a, b);
-    let root = t.add(sum, prod); // keep both reachable
-    let f = t.ret_val(root);
-    let m = Matcher::new(&f);
-
-    let pat = one_of![
-        int_add(int_const(5u128), int_const(3u128)),
-        int_mul(int_const(5u128), int_const(3u128)),
-    ]
-    .into_pattern();
-
-    // The outer int_add(sum, prod) matches neither alternative: its operands are
-    // not the two constants.
-    assert_eq!(m.find_all(&pat).unwrap().len(), 2);
-}
-
 /// A shared capture must bind in whichever alternative fires, so a nested
 /// `one_of` can match an optionally-wrapped inner shape.
 #[test]

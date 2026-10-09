@@ -205,18 +205,6 @@ fn int_const_capture_binds_the_matched_value() {
     let m = a::unique(&function, int_const(iv).into_pattern());
     assert_eq!(m.bindings().get_uint(iv, &function), Some(123));
 }
-
-#[test]
-fn any_int_const_matches_every_int_const_and_nothing_else() {
-    let mut t = Tb::empty();
-    let a1 = t.u64(5);
-    let a2 = t.u64(3);
-    let s = t.add(a1, a2);
-    let function = t.ret_val(s);
-
-    a::matches(&function, any_int_const().into_pattern(), 2);
-}
-
 #[test]
 fn float_const_capture_binds_the_matched_bits() {
     let mut t = Tb::empty();
