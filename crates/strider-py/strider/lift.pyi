@@ -475,5 +475,10 @@ def load_elf(
     binaries need; it also selects what is mapped, so `False` drops writable
     non-executable sections rather than serving their on-disk bytes. A
     writable-and-executable mapping is kept either way.
+
+    Raises `FileNotFoundError` when `path` does not exist, and `ValueError`
+    when the file is not an ELF, or its architecture or ABI is unsupported.
+    Passing both `arch=` and `cc=` skips the detector, and with it the ABI
+    refusal.
     """
     ...
