@@ -104,22 +104,39 @@ impl LoadFilter {
     }
 }
 
-/// `[start, end)` of every section whose bytes
+/// Whether `name` is one of the sections
 /// [`LoadFilter::ImmutableAndRelocatedGot`] serves although they are writable:
-/// `.got`, `.data.rel.ro` and its `.local` / per-object suffixes, at their
-/// [`ElfSectionLayout`] bases and over their whole declared extent.
+/// `.got`, `.data.rel.ro` and its `.local` / per-object suffixes.
 ///
 /// `.got.plt` fails the exact-name test, for the reason the filter gives.
+fn is_relocated_got_name(name: &str) -> bool {
+    name == ".got" || name == ".data.rel.ro" || name.starts_with(".data.rel.ro.")
+}
+
+/// `[start, end)` of every such section, at its [`ElfSectionLayout`] base and
+/// over its whole declared extent.
+///
+/// The name alone is not enough, because every address a range here names stops
+/// being cut out of the read-only image: the section has to be one the loader
+/// really maps and really leaves writable, so it needs the flags
+/// [`LoadFilter::section_accepts`] demands of a mapped writable section
+/// (`SHF_ALLOC | SHF_WRITE`, no `SHF_TLS`, whose addresses are offsets into the
+/// per-thread block). A name-only match carves out whatever sits at the
+/// address, which for an unmapped section is another section's writable bytes.
 fn relocated_got_ranges(obj: &object::File<'_>, layout: &ElfSectionLayout) -> AddressRanges {
     let mut out = Vec::new();
     for sec in obj.sections() {
-        let Ok(name) = sec.name() else { continue };
-        if name == ".got" || name == ".data.rel.ro" || name.starts_with(".data.rel.ro.") {
-            let base = layout.section_base(&sec);
-            if sec.size() != 0 {
-                out.push((base, base.saturating_add(sec.size())));
-            }
+        let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
+            continue;
+        };
+        let mapped_writable = sh_flags & u64::from(object::elf::SHF_ALLOC) != 0
+            && sh_flags & u64::from(object::elf::SHF_WRITE) != 0
+            && sh_flags & u64::from(object::elf::SHF_TLS) == 0;
+        if sec.size() == 0 || !mapped_writable || !sec.name().is_ok_and(is_relocated_got_name) {
+            continue;
         }
+        let base = layout.section_base(&sec);
+        out.push((base, base.saturating_add(sec.size())));
     }
     AddressRanges::merged(out)
 }
