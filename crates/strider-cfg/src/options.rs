@@ -3,7 +3,8 @@ use rustc_hash::FxHashMap;
 use crate::indirect_resolver::ResolvedTargets;
 use crate::types::PcodeInsnAddr;
 
-/// Shared empty table, so options with no seats borrow rather than allocate.
+/// What `Default` lends: it hands out a `&'a`, which it cannot borrow from a
+/// temporary.
 static NO_KNOWN_TARGETS: FxHashMap<PcodeInsnAddr, ResolvedTargets> =
     FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
 
