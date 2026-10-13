@@ -214,8 +214,9 @@ Rendering:
   `Graph::update_input` panics on a `UseId` its node no longer holds.
   `Graph::remove_node_input` needs the `test-injectors` feature and
   `FunctionBuilder::build_branch` the `test-util` feature.
-- `FunctionBuilder::build_call_other_abi` is gone; `strider-lift` builds an
-  ABI-carrying `CallOther` itself.
+- `FunctionBuilder::build_call_other_abi` is gone with no public replacement;
+  `strider-lift` builds an ABI-carrying `CallOther` through its own
+  crate-private path.
 - Removed: `Cfg::raw_neighborhood_dot`, `Cfg::region_id_at_start`, the
   `ConstValue` re-export from `strider-ir`, `strider_ir::graph::InputCursor`
   (`strider_graph::InputCursor` remains), `dot::Result`,

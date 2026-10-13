@@ -387,9 +387,9 @@ class _CfgVisualizer:
 
 
 #: How long a response write may make NO progress before the connection is
-#: given up on. Progress re-arms it, so it binds only the idle case, and it
-#: sits well above the windows flow control alone produces against a healthy
-#: slow reader.
+#: given up on. Progress re-arms it, so it binds only the idle case. A client
+#: draining 4 KiB every 50 ms measured an 11 s window with no send accepted, so
+#: a lower bound is a false positive on a healthy slow reader.
 _WRITE_STALL_SECONDS = 60.0
 
 #: Longest one blocked `send` waits before the write loop re-checks
@@ -400,7 +400,8 @@ _WRITE_POLL_SECONDS = 0.5
 #: Total budget for one response, `_RESPONSE_START_SECONDS` plus a byte
 #: allowance at `_MIN_BODY_RATE`. The aggregate bound: a client accepting a
 #: trickle re-arms the no-progress window forever and holds the
-#: single-threaded loop.
+#: single-threaded loop. The largest asset, the 1.4 MB `/viz.js`, needs 17 s of
+#: the 22.6 s these two allow it.
 _RESPONSE_START_SECONDS = 20.0
 _MIN_BODY_RATE = 512 * 1024
 

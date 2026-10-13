@@ -7,9 +7,10 @@
 //! node, so `LoadForward`, `StoreDead`, the memory and SP-alias analyses and
 //! every float fold are outside what this checks.
 //!
-//! `FUZZ_N` seeds (`FUZZ_START` first, `FUZZ_STEPS` nodes per DAG) scale a run
-//! past the committed default; `FUZZ_PASS` runs `cf` / `kb` / `flag` alone
-//! instead of the whole pipeline.
+//! Four environment variables scale a run past the committed default:
+//! `FUZZ_N` seeds, `FUZZ_START` the first of them, `FUZZ_STEPS` nodes per DAG,
+//! and `FUZZ_PASS` runs `cf` / `kb` / `flag` alone instead of the whole
+//! pipeline.
 
 use rustc_hash::FxHashMap;
 use strider_ir::node::{ExtendOp, NodeKind, ValueId, ValueType};

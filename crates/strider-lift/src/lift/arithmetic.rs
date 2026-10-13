@@ -163,9 +163,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .build_int_binary_operation(narrow, addend, IntBinaryOp::Or, out_ty)
     }
 
-    /// Permissive about mixed input widths: each operand is coerced to the
-    /// output width. Equal-width lift-time checks are reserved for the lowered
-    /// forms, whose arithmetic requires them.
+    /// Permissive about mixed input widths: real Sleigh on 64-bit arches
+    /// mixes an 8-byte register with a 4-byte spill or immediate, so each
+    /// operand is coerced to the output width. Equal-width lift-time checks
+    /// are reserved for the lowered forms, whose arithmetic requires them.
     pub(super) fn process_int_binary_op(
         &mut self,
         insn: &rsleigh::Insn,
