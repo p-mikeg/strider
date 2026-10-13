@@ -148,6 +148,7 @@ opts = strider.lift.LifterOptions(
     assumptions=strider.lift.AssumptionOptions(
         stack_global_disjoint=True,
         assume_incoming_args_survive_calls=True,
+        return_slots_survive_untracked_writes=True,
         escape_analysis=False,
         noalias_allocators=[],            # callee addresses of malloc-like allocators
         distinct_sp_bases_disjoint=False,
@@ -195,9 +196,9 @@ the positive one:
   `escape_analysis` is on or `noalias_allocators` is non-empty.
 
 `AssumptionOptions.none()` clears all seven; `AssumptionOptions()` does not. It
-is sound for any input whose memory behaves as RAM: a load reads back the last
-value the analysed code stored at its address, so a memory-mapped register
-polled after a write still reads as the value written.
+is the sound floor of these fields for any input whose memory behaves as RAM:
+a load reads back the last value the analysed code stored at its address, so a
+memory-mapped register polled after a write still reads as the value written.
 
 `call_other_abis` reclassifies a Sleigh user-op by name ahead of the built-in
 table. Each value is a `strider.sleigh.CallOtherAbi`: one of the four

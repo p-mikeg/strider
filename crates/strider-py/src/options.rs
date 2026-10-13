@@ -421,9 +421,9 @@ impl PyAssumptionOptions {
         }
     }
 
-    /// Every claim cleared: the sound floor under any input program whose
-    /// memory behaves as RAM, forwarding solely what the IR structurally
-    /// proves. A memory-mapped register polled after a write still reads as
+    /// Every claim cleared: the sound floor of these fields under any input
+    /// program whose memory behaves as RAM, forwarding solely what the IR
+    /// structurally proves. A memory-mapped register polled after a write still reads as
     /// the value written.
     #[staticmethod]
     fn none() -> Self {
