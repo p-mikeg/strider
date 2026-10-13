@@ -8,7 +8,8 @@ use super::support::{Tb, shapes};
 use strider_ir::IntUnaryOp;
 use strider_pattern::matcher::MatcherBuilder;
 use strider_pattern::{
-    Capture, CaptureExt, MatchPat, Matcher, anything, first_of, int_add, int_neg, one_of, ret, var,
+    Capture, CaptureExt, MatchPat, Matcher, anything, first_of, int_add, int_neg, int_xor, one_of,
+    ret, var,
 };
 
 /// `int_neg(int_add(5, int_mul(7, 9)))`.
@@ -230,28 +231,86 @@ fn first_of_answers_the_same_in_both_mirror_spellings() {
     let m = Matcher::new(&f);
     let k = Capture::new();
 
-    let bound = |pat: strider_pattern::Pattern| -> Vec<Option<strider_ir::node::ValueId>> {
-        m.find_all(&pat)
+    // Enumeration order follows the spelling; the SET of bindings must not.
+    let bound = |pat: strider_pattern::Pattern| -> Vec<Option<u32>> {
+        let mut v: Vec<_> = m
+            .find_all(&pat)
             .unwrap()
             .iter()
-            .map(|h| h.value(k))
-            .collect()
+            .map(|h| h.value(k).map(|v| v.as_u32()))
+            .collect();
+        v.sort();
+        v
     };
 
-    let alternation_first = bound(
-        int_add(
-            first_of![anything().capture(k), anything()],
-            int_add(anything().capture(k), anything()),
-        )
-        .into_pattern(),
+    // Arm 1 takes the inner `add` and arm 2 the bare operand, so arm 1 matching
+    // for one ordering must leave arm 2 reachable for the other. An arm 1 that
+    // matched everything would make the cut unobservable here.
+    let alternation = || {
+        first_of![
+            int_add(anything(), anything()).capture(k),
+            anything().capture(k)
+        ]
+    };
+    let alternation_first = bound(int_add(alternation(), anything()).into_pattern());
+    let alternation_second = bound(int_add(anything(), alternation()).into_pattern());
+    assert_eq!(
+        alternation_first.len(),
+        4,
+        "the alternation reaches both operands of both adds"
     );
-    let alternation_second = bound(
-        int_add(
-            int_add(anything().capture(k), anything()),
-            first_of![anything().capture(k), anything()],
-        )
-        .into_pattern(),
-    );
-    assert_eq!(alternation_first.len(), 1, "the cut keeps arm 1 only");
     assert_eq!(alternation_first, alternation_second);
+}
+
+/// `add(int_neg(5), int_xor(7, 9))`.
+fn add_neg_xor() -> strider_ir::Function {
+    let mut t = Tb::empty();
+    let five = t.u64(5);
+    let seven = t.u64(7);
+    let nine = t.u64(9);
+    let neg = t.int_un(five, IntUnaryOp::Neg);
+    let xor = t.int_bin(seven, nine, strider_ir::IntBinaryOp::Xor);
+    let sum = t.add(neg, xor);
+    t.ret_val(sum)
+}
+
+/// The alternation's two arms each match one operand of a commutative node, so
+/// the two orderings offer it two DIFFERENT IR nodes. An arm that matched one
+/// of them must stay available for the other, and the count must not depend on
+/// which slot spells the alternation.
+#[test]
+fn first_of_keeps_a_later_arm_for_the_other_commutative_operand() {
+    let f = add_neg_xor();
+    let m = Matcher::new(&f);
+
+    let c = Capture::new();
+    let alternation = || {
+        first_of![
+            int_neg(anything()).capture(c),
+            int_xor(anything(), anything()).capture(c)
+        ]
+    };
+    // Enumeration order follows the spelling; the SET of bindings must not.
+    let bound = |pat: strider_pattern::Pattern| -> Vec<Option<u32>> {
+        let mut v: Vec<_> = m
+            .find_all(&pat)
+            .unwrap()
+            .iter()
+            .map(|h| h.value(c).map(|v| v.as_u32()))
+            .collect();
+        v.sort();
+        v
+    };
+
+    let in_slot_0 = bound(int_add(alternation(), anything()).into_pattern());
+    let in_slot_1 = bound(int_add(anything(), alternation()).into_pattern());
+    assert_eq!(
+        in_slot_0.len(),
+        2,
+        "one match per operand the alternation can take"
+    );
+    assert_eq!(
+        in_slot_0, in_slot_1,
+        "the slot spelling the alternation cannot change the answer"
+    );
 }
