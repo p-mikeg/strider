@@ -79,6 +79,14 @@ fn assert_reported_only_without_assumptions(
     );
 }
 
+fn seeded(result: &strider_orchestrator::AnalyzeResult) -> Vec<u64> {
+    result
+        .unverified_seeded_sites
+        .iter()
+        .map(|a| a.machine_addr.addr)
+        .collect()
+}
+
 fn unresolved(result: &strider_orchestrator::AnalyzeResult) -> Vec<u64> {
     result
         .unresolved_indirect_branches
@@ -165,10 +173,41 @@ fn arm_returns_through_a_rewritten_link_register_are_reported() {
 fn arm_a_single_register_pop_into_the_pc_is_a_return() {
     // push {lr} ; bl ; pop {pc}: a `BranchIndirect` over the stack slot, which
     // the call between the two keeps from folding back to the link register.
+    let result = analyze(Arch::Arm, le32(&[0xe52d_e004, 0xeb00_03fd, 0xe49d_f004]));
+    assert_eq!(
+        unresolved(&result),
+        Vec::<u64>::new(),
+        "ldr pc, [sp], #4 with the saved lr intact across a call is a return",
+    );
+
+    // Nothing between the push and the pop: the slot is proven, not claimed.
     assert_complete(
         Arch::Arm,
-        le32(&[0xe52d_e004, 0xeb00_03fd, 0xe49d_f004]),
-        "ldr pc, [sp], #4 with the saved lr intact across a call",
+        le32(&[0xe52d_e004, 0xe49d_f004]),
+        "ldr pc, [sp], #4 straight off the push",
+    );
+}
+
+/// The slot surviving the call rests on
+/// `return_slots_survive_untracked_writes`, so the seat it decides is named on
+/// the unverified channel: the answer is one target, but nothing proved it.
+#[test]
+fn arm_a_pop_into_the_pc_seated_on_a_claim_is_reported_as_unverified() {
+    let result = analyze(Arch::Arm, le32(&[0xe52d_e004, 0xeb00_03fd, 0xe49d_f004]));
+    assert_eq!(
+        seeded(&result),
+        vec![BASE + 8],
+        "the proof passed a call on a claim",
+    );
+    assert!(!result.is_complete());
+    // A return the lifter seated carries no claimed CFG edge, so the identical
+    // claim on an ordinary `pop {r4, pc}` stays off the channel.
+    assert_eq!(
+        seeded(&analyze(
+            Arch::Arm,
+            le32(&[0xe92d_4010, 0xeb00_03fd, 0xe8bd_8010]),
+        )),
+        Vec::<u64>::new(),
     );
 }
 
