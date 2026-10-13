@@ -25,6 +25,14 @@ fn read_u32_be(regions: &[MemRegion], addr: u64) -> Option<u32> {
         .map(|()| u32::from_be_bytes(buf))
 }
 
+fn read_u64_le(regions: &[MemRegion], addr: u64) -> Option<u64> {
+    let mut buf = [0u8; 8];
+    MemRegionsLookupTable::new(regions.to_vec())
+        .read_exact(addr, &mut buf)
+        .ok()
+        .map(|()| u64::from_le_bytes(buf))
+}
+
 /// `ranges` sorted, with everything overlapping or touching merged.
 fn merge(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
     ranges.sort_unstable();
@@ -93,6 +101,34 @@ fn the_opt_in_serves_a_relocated_data_rel_ro_slot_the_default_does_not() {
     assert_eq!(
         read_u32_be(&opted_in, fx.slot_addr),
         Some(fx.sym_addr as u32),
+        "the opt-in must serve the slot at its RELOCATED value"
+    );
+}
+
+/// The LP64 twin: an `R_X86_64_GLOB_DAT` slot reads back as the resolved
+/// symbol address over all eight bytes, little-endian.
+#[test]
+fn the_opt_in_serves_a_relocated_glob_dat_slot_at_its_full_width() {
+    // GLOB_DAT writes S, so the upper half of the file bytes must be cleared:
+    // a four-byte or byte-swapped write leaves some of `init` behind.
+    let init: u64 = 0x1234_5678_0000;
+    let fx = common::elf_fixture::build_x86_64_glob_dat_elf(init.to_le_bytes().to_vec());
+    assert_eq!(
+        read_u64_le(&common::regions(&fx.bytes, OPT_IN), fx.slot_addr),
+        Some(init),
+        "unrelocated, the slot is still its file bytes"
+    );
+
+    let default = common::relocated(&fx.bytes, DEFAULT);
+    assert!(
+        !serves(&default, fx.slot_addr, 8),
+        "the default ROM must not serve a writable `.data.rel.ro`"
+    );
+
+    let opted_in = common::relocated(&fx.bytes, OPT_IN);
+    assert_eq!(
+        read_u64_le(&opted_in, fx.slot_addr),
+        Some(fx.sym_addr),
         "the opt-in must serve the slot at its RELOCATED value"
     );
 }
@@ -209,14 +245,12 @@ fn the_opt_in_is_the_default_view_when_no_got_section_is_named() {
 fn a_linked_mips_pic_image_serves_only_its_got_under_the_opt_in() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/out/mips64le/indirect_branch.elf");
-    if !path.exists() {
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return;
-    }
+    // The only linked PIC image here, so a skip would leave the case untested.
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let owned = strider_reader::load_elf(&path).expect("load_elf");
     let obj = owned.checked_file().expect("the mapped file is unchanged");
     let extent = |name: &str| {

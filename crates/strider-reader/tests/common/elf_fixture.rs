@@ -137,6 +137,19 @@ pub(crate) fn build_mips32be_rel32_elf_with(defined_symbol: bool) -> RelFixture 
     })
 }
 
+/// An LP64 `R_X86_64_GLOB_DAT` over an eight-byte `.data.rel.ro` slot: the
+/// 64-bit, little-endian twin of [`build_mips32be_rel32_elf`].
+pub(crate) fn build_x86_64_glob_dat_elf(slot_init: Vec<u8>) -> RelFixture {
+    build_rel_elf(RelOpts {
+        endian: Endianness::Little,
+        is_64: true,
+        e_machine: elf::EM_X86_64,
+        r_type: elf::R_X86_64_GLOB_DAT,
+        defined_symbol: true,
+        slot_init,
+    })
+}
+
 /// Layout:
 /// - `.text`: one dummy instruction word at `0x1000`, where `func` is defined.
 /// - `.data.rel.ro`: the relocation site at `slot_addr`.
