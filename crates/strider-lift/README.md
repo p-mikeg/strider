@@ -1,7 +1,7 @@
 # strider-lift
 
 Turns one function's `strider_cfg::Cfg` into a `strider_ir::Function`: a
-sea-of-nodes graph in minimal SSA, with one IR `Region` per CFG region, the
+sea-of-nodes graph in semi-pruned SSA, with one IR `Region` per CFG region, the
 control and memory edges wired along the CFG's edges, and every machine
 register modelled as an SSA variable.
 
@@ -37,8 +37,9 @@ starts and comes from four places, because a register missing from it has no
 
 - every REGISTER / UNIQUE varnode the decoded pcode names,
 - the convention, above all the stack pointer, which a function may never name
-  yet the stack analysis still needs, plus each `per_address_ccs` override's
-  argument registers,
+  yet the stack analysis still needs, plus the argument registers of the
+  `per_address_ccs` overrides this CFG's own direct calls select, a binary-wide
+  table costing the whole table per function otherwise,
 - each `CallOther`'s ABI footprint, whose implicit reads and writes appear in no
   pcode operand (x86-64 `syscall` reads `R10` and writes `R11`),
 - every register a LOAD or STORE reaches through the REGISTER space by a
@@ -78,10 +79,11 @@ value when the address names one.
 
 ## SSA construction
 
-Minimal (Cytron) SSA, with no liveness pruning. `collect_def_sites` walks every
-region's pcode and records what the lift will write; `iterated_frontier` turns
-that into the set of variables needing a `Phi` at each region.
-`record_insn_defs` is a HAND-WRITTEN mirror of the lift's write paths, not a
+Semi-pruned SSA. `collect_def_sites` walks every region's pcode and records what
+the lift will write; `is_local_temporary` drops the UNIQUE temporaries no region
+reads before writing, and `iterated_frontier` turns the rest into the set of
+variables needing a `Phi` at each region.
+`record_insn_effects` is a HAND-WRITTEN mirror of the lift's write paths, not a
 shared code path: a def it records that the lift never writes costs a dead phi,
 one the lift writes and it misses loses the phi and miscompiles.
 
