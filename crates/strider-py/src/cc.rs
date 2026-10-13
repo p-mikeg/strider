@@ -42,6 +42,9 @@ forall_preset!(
         powerpc64_elf_v2,
         x86_cdecl,
         x86_linux_kernel,
+        powerpc_sysv32_linux_kernel,
+        powerpc64_elf_v1_linux_kernel,
+        powerpc64_elf_v2_linux_kernel,
     ]
 );
 

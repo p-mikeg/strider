@@ -61,12 +61,20 @@ _EF_MIPS_ABI2 = 0x0000_0020
 _EF_MIPS_ABI = 0x0000_F000
 _EF_MIPS_ABI_NAMES = {0x2000: "O64", 0x3000: "EABI32", 0x4000: "EABI64"}
 
+# PowerPC `KERNELBASE`: Linux links its own text at 0xc000_0000 (ppc32) or
+# 0xc000_0000_0000_0000 (ppc64), which is `TASK_SIZE` on ppc32 and far above
+# the user address space on ppc64, so no userland image's entry point can
+# reach it. The kernel is built `-mno-altivec -mno-vsx`, and its convention
+# names no vector register.
+_PPC32_KERNELBASE = 0xC000_0000
+_PPC64_KERNELBASE = 0xC000_0000_0000_0000
+
 
 class _ElfHeader:
     """Minimal ELF header reader: enough to pick the right `SleighArch` and
     `CallingConvention` preset."""
 
-    __slots__ = ("is_64bit", "is_little_endian", "e_machine", "e_flags")
+    __slots__ = ("is_64bit", "is_little_endian", "e_machine", "e_entry", "e_flags")
 
     def __init__(self, path: str) -> None:
         # Checked before opening: opening a FIFO read-only BLOCKS until a
@@ -91,10 +99,19 @@ class _ElfHeader:
         self.is_little_endian = ei_data == 1
         endian_fmt = "<H" if self.is_little_endian else ">H"
         (self.e_machine,) = struct.unpack(endian_fmt, header[18:20])
+        word_fmt = "<I" if self.is_little_endian else ">I"
+        # `e_entry` is the first of the three addresses, at offset 24 on both
+        # classes; 0 on a relocatable object, which has no entry point.
+        addr_fmt = ("<" if self.is_little_endian else ">") + ("Q" if self.is_64bit else "I")
+        size = 8 if self.is_64bit else 4
+        (self.e_entry,) = (
+            struct.unpack(addr_fmt, header[24 : 24 + size])
+            if len(header) >= 24 + size
+            else (0,)
+        )
         # `e_flags` follows the three addresses: offset 36 on ELF32, 48 on
         # ELF64. PowerPC64 carries its ABI level in the low two bits.
         off = 48 if self.is_64bit else 36
-        word_fmt = "<I" if self.is_little_endian else ">I"
         self.e_flags = (
             struct.unpack(word_fmt, header[off : off + 4])[0]
             if len(header) >= off + 4
@@ -106,9 +123,16 @@ def _arch_and_cc_for_elf(
     header: _ElfHeader,
     is_arm_be8: bool = False,
 ) -> tuple[SleighArch, CallingConvention]:
-    """Pick the `SleighArch` and userland `CallingConvention` preset matching
-    this ELF. Raises `ValueError` for an unsupported e_machine, and for an
-    ELF32 MIPS ABI other than O32.
+    """Pick the `SleighArch` and `CallingConvention` preset matching this ELF.
+    Raises `ValueError` for an unsupported e_machine, and for an ELF32 MIPS
+    ABI other than O32.
+
+    The convention is the userland one on every architecture but PowerPC,
+    where an `e_entry` at or above `KERNELBASE` selects the kernel flavour:
+    kernel code is built `-mno-altivec -mno-vsx`, so naming the AltiVec
+    windows there would track twelve 16-byte varnodes on every function for
+    nothing. x86's kernel ABI (`x86_linux_kernel`, `-mregparm=3`) has no
+    header bit to detect and stays an explicit `cc=`.
 
     ARM defaults to little-endian `arm`; a big-endian image is
     `arm_be_kernel` when `is_arm_be8` and `arm_be` otherwise. Its convention
@@ -166,15 +190,22 @@ def _arch_and_cc_for_elf(
         return arch, CallingConvention.mips_o32()
     if em == _EM_PPC:
         arch = SleighArch.ppc32le() if le else SleighArch.ppc32be()
+        if header.e_entry >= _PPC32_KERNELBASE:
+            return arch, CallingConvention.powerpc_sysv32_linux_kernel()
         return arch, CallingConvention.powerpc_sysv32()
     if em == _EM_PPC64:
         arch = SleighArch.ppc64le() if le else SleighArch.ppc64be()
+        is_kernel = header.e_entry >= _PPC64_KERNELBASE
         # The ABI level is the low two bits of `e_flags`. The two differ in
         # linkage-area size, so the wrong one reads stack arguments 16 bytes
         # off and collects none. Little-endian PPC64 is ELFv2 only; a
         # big-endian image predating the flag (0) is ELFv1.
         if le or (header.e_flags & 0x3) == 2:
+            if is_kernel:
+                return arch, CallingConvention.powerpc64_elf_v2_linux_kernel()
             return arch, CallingConvention.powerpc64_elf_v2()
+        if is_kernel:
+            return arch, CallingConvention.powerpc64_elf_v1_linux_kernel()
         return arch, CallingConvention.powerpc64_elf_v1()
     raise ValueError(
         f"unsupported ELF e_machine={em}; pass an explicit SleighArch + "

@@ -8,8 +8,12 @@ import strider
     "mips_o32", "mips_n64",
     "powerpc_sysv32", "powerpc64_elf_v1", "powerpc64_elf_v2",
     "x86_cdecl",
-    # Linux kernel preset (x86 32-bit regparm-3 is the only divergent one)
+    # Linux kernel presets: x86 32-bit diverges in its integer argument
+    # registers (regparm-3), PowerPC in naming no AltiVec register
     "x86_linux_kernel",
+    "powerpc_sysv32_linux_kernel",
+    "powerpc64_elf_v1_linux_kernel",
+    "powerpc64_elf_v2_linux_kernel",
 ])
 def test_cc_presets(name):
     cc = getattr(strider.sleigh.CallingConvention, name)()
