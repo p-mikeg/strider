@@ -148,6 +148,10 @@ impl OwnedElf {
     /// When a mapping's data can't be read, or its `address + length` would
     /// exceed `u64::MAX`, plus anything
     /// [`checked_file`](Self::checked_file) reports.
+    ///
+    /// Also when [`LoadFilter::ImmutableAndRelocatedGot`] meets
+    /// `relocate == false`: the filter's claim is that the loader has
+    /// relocated those slots, which `relocate == false` denies.
     pub fn regions(
         &self,
         source: RegionSource,
@@ -197,6 +201,15 @@ impl OwnedElf {
         filter: LoadFilter,
         relocate: bool,
     ) -> Result<super::sections::LoadedImage> {
+        if matches!(filter, LoadFilter::ImmutableAndRelocatedGot) && !relocate {
+            anyhow::bail!(
+                "LoadFilter::ImmutableAndRelocatedGot claims the loader has relocated \
+                 `.got` / `.data.rel.ro`, which relocate=false denies: the slots would \
+                 be served as their on-disk bytes, 0 on a PIE where the address lives \
+                 in the relocation addend, and a load through one folds to that 0. \
+                 Relocate, or use LoadFilter::ImmutableOnly"
+            );
+        }
         let mut image =
             super::sections::collect_regions(obj, Some(&self.backing), source, filter, layout)?;
         if relocate {
