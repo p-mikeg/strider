@@ -91,11 +91,18 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         //
         // The result keeps the pcode output's OWN width where the sla states
         // what the machine does to the rest of the enclosing register
-        // ([`strider_target::SleighArch::callother_output_is_exact`]); where it
-        // does not, the result slot is the container and the write clobbers it
-        // whole, which is opaque rather than wrong.
-        let exact = self.lifter.arch.callother_output_is_exact();
-        let result_vn = match output.map(|vn| if exact { vn } else { self.container_of(&vn) }) {
+        // ([`strider_target::SleighArch::callother_output_is_exact_in`]); where
+        // it does not, the result slot is the container and the write clobbers
+        // it whole, which is opaque rather than wrong. Decided per container,
+        // since one arch can hold register files that differ.
+        let result_vn = match output.map(|vn| {
+            let container = self.container_of(&vn);
+            if self.lifter.arch.callother_output_is_exact_in(&container) {
+                vn
+            } else {
+                container
+            }
+        }) {
             // An intrinsic that writes a memory operand (x86 `sgdt [mem]`) has
             // its output in ram, which no output slot can carry. A memory
             // clobber already advances the chain over the write, so drop the
