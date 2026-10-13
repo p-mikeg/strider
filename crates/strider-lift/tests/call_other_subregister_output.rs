@@ -108,3 +108,36 @@ fn an_aarch64_sub_register_intrinsic_output_stays_the_container() {
         "the result slot is q0's width, not d0's",
     );
 }
+
+/// x86 MMX registers are slices of the x87 `ST` registers, whose sign and
+/// exponent an MMX write redefines, and `ST0` is a float return register: a
+/// slice write there would assert those bits unchanged and return them.
+#[test]
+fn an_x86_mmx_intrinsic_output_stays_the_x87_container() {
+    // 1000: 0f 38 00 c1    pshufb mm0,mm1
+    // 1004: c3             ret
+    let f = lift(
+        strider_target::SleighArch::x86_64(),
+        strider_target::CallingConvention::x86_64_systemv(),
+        vec![0x0f, 0x38, 0x00, 0xc1, 0xc3],
+    );
+    let node = f
+        .walk_kind(|k| matches!(k, strider_ir::node::NodeKind::CallOther { .. }))
+        .next()
+        .expect("a CallOther node");
+    let result = f.node_outputs(node)[2];
+    assert_eq!(
+        f.value_kind(result),
+        strider_ir::node::ValueKind::Typed(strider_ir::ValueType::I80),
+        "the result slot is ST0's width, not MM0's",
+    );
+    let ret = f
+        .walk_kind(|k| matches!(k, strider_ir::node::NodeKind::Return))
+        .next()
+        .expect("a Return node");
+    assert!(
+        f.node_inputs(ret).iter().any(|v| v == result),
+        "the x87 return slot is the intrinsic's result, not a masked insert \
+         preserving the caller's sign and exponent",
+    );
+}
