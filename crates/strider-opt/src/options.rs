@@ -190,7 +190,7 @@ mod tests {
 
     /// The pipeline's own defaults, which are NOT the sound floor.
     #[test]
-    fn default_leaves_the_two_pipeline_claims_on() {
+    fn default_leaves_the_pipeline_claims_on() {
         let o = OptOptions::default();
         assert!(o.resolve_indirect_branches);
         assert!(o.assumptions.stack_global_disjoint);
