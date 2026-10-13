@@ -143,9 +143,23 @@ class CallingConvention:
         ...
     @classmethod
     def x86_linux_kernel(cls) -> CallingConvention:
-        """32-bit x86 Linux kernel-internal convention (`-mregparm=3`). This
-        is the only architecture whose kernel ABI differs from its userland
-        preset."""
+        """32-bit x86 Linux kernel-internal convention (`-mregparm=3`)."""
+        ...
+    @classmethod
+    def powerpc_sysv32_linux_kernel(cls) -> CallingConvention:
+        """`powerpc_sysv32` for kernel code, built `-mno-altivec -mno-vsx`:
+        no AltiVec register carries an argument or a result, so a function
+        tracks none of them."""
+        ...
+    @classmethod
+    def powerpc64_elf_v1_linux_kernel(cls) -> CallingConvention:
+        """`powerpc64_elf_v1` without the AltiVec argument and return
+        windows; see `powerpc_sysv32_linux_kernel`."""
+        ...
+    @classmethod
+    def powerpc64_elf_v2_linux_kernel(cls) -> CallingConvention:
+        """`powerpc64_elf_v2` without the AltiVec argument and return
+        windows; see `powerpc_sysv32_linux_kernel`."""
         ...
     @classmethod
     def custom(
