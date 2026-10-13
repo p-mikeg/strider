@@ -34,6 +34,13 @@ _DISPATCH = 0x1003
 _STRAIGHT = bytes([0x48, 0x31, 0xC0, 0xC3])
 
 
+def _image_state(prog):
+    """`repr` and a symbol count miss a merge that replaced region bytes in
+    place, so the bytes at every symbol are part of the state."""
+    syms = sorted((s.name, s.address) for s in prog.iter_symbols())
+    return (repr(prog.reader()), syms, [prog.read(a & ~1, 16) for _, a in syms])
+
+
 def _x86_64(code: bytes, base: int = _BASE):
     return strider.lift.lifter(
         SleighArch.x86_64(), strider.reader.BufferReader(base, code)
@@ -104,18 +111,11 @@ def _arm():
 def test_pcode_at_does_not_depend_on_earlier_calls(addr):
     """A backward `blx` decoded by a longer sweep pinned Thumb at its target,
     so the same call answered differently, or raised, by history."""
-    fresh = _arm()
-    try:
-        expected = fresh.pcode_at(_BASE, addr)
-    except strider.StriderError as e:
-        expected = type(e)
+    expected = _arm().pcode_at(_BASE, addr)
+    assert expected, "a decoded address answers p-code"
     walked = _arm()
     walked.pcode_at(_BASE, 0x1010)
-    if expected is strider.StriderError:
-        with pytest.raises(strider.StriderError):
-            walked.pcode_at(_BASE, addr)
-    else:
-        assert walked.pcode_at(_BASE, addr) == expected
+    assert walked.pcode_at(_BASE, addr) == expected
 
 
 def test_walking_a_stream_decodes_it_once():
@@ -153,7 +153,7 @@ def test_an_add_elf_that_cannot_rebuild_merges_nothing():
 
     prog = strider.lift.load_elf(str(fixture_path("x86", "memory")))
     other = str(fixture_path("x86", "elf_relocs"))
-    before = (repr(prog.reader()), len(list(prog.iter_symbols())))
+    before = _image_state(prog)
     failure: list[str] = []
 
     def off_thread():
@@ -166,7 +166,7 @@ def test_an_add_elf_that_cannot_rebuild_merges_nothing():
     t.start()
     t.join()
     assert failure == ["raised"]
-    assert (repr(prog.reader()), len(list(prog.iter_symbols()))) == before
+    assert _image_state(prog) == before
     # Still mergeable on the owning thread.
     prog.add_elf(other)
     assert "helper_a" in prog.symbols()
@@ -177,9 +177,9 @@ def test_re_merging_a_loaded_image_does_nothing():
     every region and every symbol again."""
     path = str(fixture_path("x86", "memory"))
     prog = strider.lift.load_elf(path)
-    before = (repr(prog.reader()), len(list(prog.iter_symbols())))
+    before = _image_state(prog)
     prog.add_elf(path)
-    assert (repr(prog.reader()), len(list(prog.iter_symbols()))) == before
+    assert _image_state(prog) == before
 
 
 # --- the exception contract -------------------------------------------------
@@ -190,10 +190,11 @@ def test_analyze_and_build_cfg_answer_the_same_for_a_bad_entry(entry):
     """`build_cfg` raised `OverflowError` where `analyze` raised the
     `StriderError` naming the real cause."""
     lifter = _x86_64(_STRAIGHT)
-    with pytest.raises(strider.StriderError):
+    with pytest.raises(strider.StriderError, match="`entry`") as analyzed:
         lifter.analyze(entry, CallingConvention.x86_64_systemv())
-    with pytest.raises(strider.StriderError):
+    with pytest.raises(strider.StriderError, match="`entry`") as built:
         lifter.build_cfg(entry)
+    assert str(built.value) == str(analyzed.value)
 
 
 # --- rewrite does not burn a one-shot pattern -------------------------------
@@ -278,11 +279,17 @@ def _custom_cc(arch) -> CallingConvention:
 def test_one_register_table_is_one_arch_for_a_custom_convention():
     """`arm` and `arm_thumb` are one sla and one register table, so a
     convention built on either resolves the same varnodes."""
-    cc = _custom_cc(SleighArch.arm())
     lifter = strider.lift.lifter(
         SleighArch.arm_thumb(), strider.reader.BufferReader(_BASE, b"\x1e\xff\x2f\xe1")
     )
-    lifter.analyze(_BASE, cc)
+    texts = [
+        lifter.analyze(_BASE, _custom_cc(arch)).function.to_text(False)
+        for arch in (SleighArch.arm(), SleighArch.arm_thumb())
+    ]
+    # The `default_cc` line carries every resolved varnode, so an empty or
+    # wrongly resolved table would not read as agreement.
+    assert "link_register_vn=%" in texts[0], texts[0]
+    assert texts[0] == texts[1]
 
 
 def test_a_different_register_table_is_still_refused():

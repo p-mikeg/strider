@@ -48,7 +48,7 @@ def test_size_is_none_when_the_elf_records_no_extent():
 
 
 def test_symbol_raises_for_undefined():
-    with pytest.raises(strider.StriderError):
+    with pytest.raises(strider.StriderError, match="not found in any ELF"):
         _switch().symbol("no_such_symbol_zzz")
 
 
