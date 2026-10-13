@@ -176,6 +176,10 @@ Rendering:
 - The `int`, `bool`, `int_binary_op`, `int_cmp_op` and `bool_binary_op`
   capture kinds of `int_const_with!` / `bool_const_with!` /
   `float_const_with!` are gone.
+- `MatcherBuilder::constrain_input_widths` is gone: it landed the width on an
+  alternation's arms and past a cast walk, so the constraint it wrote was not
+  the one asked for. Pin a width on the one vertex that must carry it with
+  `MatcherBuilder::set_value_width`.
 - `NodeKind::Switch(SwitchTableId)` and `NodeKind::Call { cc: Option<CcId> }`
   carry their case table and override convention. `SideTables::{switch_targets,
   set_call_cc, call_other_name, set_call_other_name}` moved to `Function`;
