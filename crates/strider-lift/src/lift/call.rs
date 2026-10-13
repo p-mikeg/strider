@@ -89,12 +89,12 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // that) and deduplicated: sub-registers of one container collapse to a
         // single slot, and the result wins ties over a clobber.
         //
-        // The result keeps the pcode output's OWN width where the sla states
-        // what the machine does to the rest of the enclosing register
-        // ([`strider_target::SleighArch::callother_output_is_exact_in`]); where
-        // it does not, the result slot is the container and the write clobbers
-        // it whole, which is opaque rather than wrong. Decided per container,
-        // since one arch can hold register files that differ.
+        // The result keeps the pcode output's OWN width only where
+        // [`strider_target::SleighArch::callother_output_is_exact_in`] says
+        // so, which carries the rule; elsewhere the result slot is the
+        // container and the write clobbers it whole, which is opaque rather
+        // than wrong. Decided per container, since one arch can hold register
+        // files that differ.
         let result_vn = match output.map(|vn| {
             let container = self.container_of(&vn);
             if self.lifter.arch.callother_output_is_exact_in(&container) {

@@ -127,8 +127,8 @@ mod tests {
         }
     }
 
-    /// Options over a caller's table name that table, so neither building nor
-    /// cloning them copies it.
+    /// Options built over a caller's table hold a borrow of it, so neither
+    /// building nor cloning them copies it.
     #[test]
     fn options_borrow_the_callers_table() {
         let known = seated_over(&[(PcodeInsnAddr::at_machine_start(0x1000), 0x2000)]);
