@@ -114,7 +114,10 @@ fn the_opt_in_serves_a_relocated_glob_dat_slot_at_its_full_width() {
     let init: u64 = 0x1234_5678_0000;
     let fx = common::elf_fixture::build_x86_64_glob_dat_elf(init.to_le_bytes().to_vec());
     assert_eq!(
-        read_u64_le(&common::regions(&fx.bytes, OPT_IN), fx.slot_addr),
+        read_u64_le(
+            &common::regions(&fx.bytes, LoadFilter::AllAllocatable),
+            fx.slot_addr
+        ),
         Some(init),
         "unrelocated, the slot is still its file bytes"
     );
@@ -133,17 +136,26 @@ fn the_opt_in_serves_a_relocated_glob_dat_slot_at_its_full_width() {
     );
 }
 
-/// Unrelocated, the opt-in serves the slot's file bytes. The claim it encodes
-/// is about the loader having run, so this is the caller's to get wrong; what
-/// must hold is that the region is there and reads the field, not a hole.
+/// The opt-in claims the loader has relocated those slots, and withholding
+/// relocations denies it: served unrelocated, the slot reads as its file
+/// bytes, 0 on a PIE where the address lives in the addend, and a load
+/// through it folds to that 0.
 #[test]
-fn the_opt_in_serves_an_unrelocated_slot_as_its_file_bytes() {
+fn the_opt_in_is_refused_without_relocations() {
     let fx = common::elf_fixture::build_mips32be_rel32_elf();
-    assert_eq!(
-        read_u32_be(&common::regions(&fx.bytes, OPT_IN), fx.slot_addr),
-        Some(0),
-        "`slot_init` is four zero bytes"
+    let err = common::try_regions(&fx.bytes, OPT_IN)
+        .expect_err("the opt-in must be refused unrelocated")
+        .to_string();
+    assert!(
+        err.contains("ImmutableAndRelocatedGot") && err.contains("relocate=false"),
+        "{err}"
     );
+    // The default view is unaffected, relocated or not.
+    assert!(!serves(
+        &common::regions(&fx.bytes, DEFAULT),
+        fx.slot_addr,
+        4
+    ));
 }
 
 /// `.got.plt` is rewritten by lazy binding, so it stays out of the ROM even
@@ -166,7 +178,7 @@ fn the_opt_in_takes_got_and_data_rel_ro_and_no_other_writable_section() {
     let at = |name: &str| common::section_base(&bytes, name);
 
     for (filter, want) in [(DEFAULT, false), (OPT_IN, true)] {
-        let regions = common::regions(&bytes, filter);
+        let regions = common::relocated(&bytes, filter);
         assert_eq!(serves(&regions, at(".got"), 8), want, "{filter:?} .got");
         assert_eq!(
             serves(&regions, at(".data.rel.ro.local"), 8),
@@ -182,7 +194,7 @@ fn the_opt_in_takes_got_and_data_rel_ro_and_no_other_writable_section() {
         assert!(serves(&regions, at(".text"), 8), "{filter:?} .text");
     }
 
-    let opted_in = common::regions(&bytes, OPT_IN);
+    let opted_in = common::relocated(&bytes, OPT_IN);
     let mut buf = vec![0u8; 8];
     MemRegionsLookupTable::new(opted_in.clone())
         .read_exact(at(".got"), &mut buf)
@@ -227,11 +239,11 @@ fn an_unmodelled_relocation_over_a_served_slot_is_a_hole() {
 fn the_opt_in_is_the_default_view_when_no_got_section_is_named() {
     let bytes = common::elf_fixture::simple_text_elf(0x1000, &[0x90; 16]);
     assert_eq!(
-        common::regions(&bytes, OPT_IN)
+        common::relocated(&bytes, OPT_IN)
             .iter()
             .map(|r| (r.start_addr(), common::region_bytes(r)))
             .collect::<Vec<_>>(),
-        common::regions(&bytes, DEFAULT)
+        common::relocated(&bytes, DEFAULT)
             .iter()
             .map(|r| (r.start_addr(), common::region_bytes(r)))
             .collect::<Vec<_>>(),
@@ -261,10 +273,10 @@ fn a_linked_mips_pic_image_serves_only_its_got_under_the_opt_in() {
     };
 
     let default = owned
-        .regions(elf::RegionSource::Auto, DEFAULT, false)
+        .regions(elf::RegionSource::Auto, DEFAULT, true)
         .expect("regions");
     let opted_in = owned
-        .regions(elf::RegionSource::Auto, OPT_IN, false)
+        .regions(elf::RegionSource::Auto, OPT_IN, true)
         .expect("regions");
 
     let (got_addr, got_len) = extent(".got");
