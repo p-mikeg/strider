@@ -135,7 +135,7 @@ fn a_chain_of_tables_seats_one_level_per_round() {
     assert_eq!(seated, 24, "every level seats its four arms");
     let rounds = wide_runs.load(Ordering::Relaxed);
     assert!(
-        rounds <= usize::try_from(levels).expect("levels") + 2,
+        rounds <= usize::try_from(levels).expect("levels"),
         "{rounds} full rounds for {levels} chained tables; more than one per \
          level means a level costs several rounds to seat"
     );
