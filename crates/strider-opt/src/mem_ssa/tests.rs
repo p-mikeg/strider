@@ -746,7 +746,7 @@ fn an_irreducible_loop_is_not_laid_out() {
 struct ShapeGen {
     fg: Function,
     token: ValueId,
-    state: u64,
+    rng: crate::test_support::Rng,
     slots: Vec<ValueId>,
     allow_loops: bool,
     values: Vec<ValueId>,
@@ -759,7 +759,7 @@ impl ShapeGen {
         let gen_ = Self {
             fg,
             token,
-            state: seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
+            rng: crate::test_support::Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1),
             slots,
             allow_loops,
             values: vec![im],
@@ -768,10 +768,7 @@ impl ShapeGen {
     }
 
     fn next(&mut self, bound: u64) -> u64 {
-        self.state ^= self.state << 13;
-        self.state ^= self.state >> 7;
-        self.state ^= self.state << 17;
-        self.state % bound
+        self.rng.next() % bound
     }
 
     fn phi(&mut self, arms: &[ValueId]) -> ValueId {
