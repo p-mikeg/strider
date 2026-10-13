@@ -812,11 +812,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // `:4562`, `:6593`, `:6602`).  The sla passes the BASE REGISTER as a
     // value (`Zd = SVE_ldr(Zd, Rn_GPR64xsp, imm)`, `SVE_str(Zd,
     // Rn_GPR64xsp, imm)`), NOT a dynamic memory varnode, so no p-code Load or
-    // Store is emitted and the access is entirely implicit.  74 of the 315
-    // `SVE_*` user-ops have that shape (every `SVE_ld*`, `SVE_st*`,
-    // `SVE_prf*`; `SVE_ld1b` at `:2702` is structurally identical to
-    // `SVE_ldr`), which is why `SVE_` is not a prefix family: the rest are
-    // register compute.  These two are listed because they are the ones seen;
+    // Store is emitted and the access is entirely implicit.  The `SVE_ld*`,
+    // `SVE_st*` and `SVE_prf*` user-ops have that shape (`SVE_ld1b` at
+    // `:2702` is structurally identical to `SVE_ldr`), which is why `SVE_` is
+    // not a prefix family: the rest are register compute.  These two are
+    // listed because they are the ones seen;
     // an unlisted name fails the lift rather than forwarding across a hidden
     // access.
     CallOtherRow {
