@@ -358,3 +358,43 @@ fn replacing_a_refused_if_branch_drops_its_refusal() {
         .build();
     assert!(error_of(&still_refused).contains("If branch pattern is not matchable"));
 }
+
+/// A chain of `k` adds over one shared leaf, offered as `arms` alternatives of
+/// one alternation. Each arm is the SAME vertex, so the alternation's own cost
+/// is one arm's, not the sum.
+fn shared_alternation(arms: usize, k: usize) -> Pattern {
+    let mut b = MatcherBuilder::new();
+    let mut o = b.leaf(KindSpec::Any);
+    b.set_output_any(o);
+    for _ in 0..k {
+        let leaf = b.leaf(KindSpec::Any);
+        o = b.binary(IntBinaryOp::Add, o, leaf);
+    }
+    let alts = vec![o; arms];
+    let alt = b.one_of(&alts);
+    b.set_output_any(alt);
+    b.finish()
+}
+
+/// `try_match_at` runs an alternation's arms one at a time and unwinds between
+/// them, so the arms do not stack: the cap must charge the deepest arm, not
+/// their sum, or it refuses a pattern the engine runs.
+#[test]
+fn an_alternations_arms_are_charged_at_their_deepest_not_their_sum() {
+    // Accepted AND run on a 2 MiB spawned-thread stack, which is what the cap
+    // exists to bound.
+    for arms in [2usize, 4, 8] {
+        std::thread::spawn(move || {
+            let pat = shared_alternation(arms, 40);
+            let function = add_5_3();
+            assert!(
+                Matcher::new(&function).find_all(&pat).is_ok(),
+                "{arms} arms of 41 nodes each run one at a time",
+            );
+        })
+        .join()
+        .unwrap();
+    }
+    // The deepest arm alone still has to fit.
+    assert!(error_of(&shared_alternation(2, 300)).contains("nodes"));
+}
