@@ -156,9 +156,12 @@ pub(crate) type SeatedTargets =
     rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets>;
 
 impl PyCfgOptions {
-    /// The seated table, built on the first analyse that reads it: seating a
-    /// 20k-entry answer table costs more than the analysis it feeds, and one
-    /// options object serves every call.
+    /// The seated table, built on the first analyse that reads it: one options
+    /// object serves every call, and seating per call charges a seeded table's
+    /// conversion to each analysis.
+    ///
+    /// The caller clones the result regardless, `strider_cfg::CfgOptions`
+    /// taking the table by value; the memo saves the conversion, not the copy.
     pub(crate) fn seated_known_targets(&self) -> &SeatedTargets {
         self.seated
             .get_or_init(|| crate::strider_cls::seat_known_targets(&self.known_targets))
