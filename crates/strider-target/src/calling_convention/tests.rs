@@ -63,6 +63,14 @@ const PPC_ELFV2_RET_F: &[&str] = &[
     "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "vs34", "vs35", "vs36", "vs37", "vs38", "vs39",
     "vs40", "vs41",
 ];
+/// The same four windows with the AltiVec half dropped: a PowerPC Linux
+/// kernel is built `-mno-altivec -mno-vsx`.
+const PPC32_ARG_F_KERNEL: &[&str] = &["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"];
+const PPC64_ARG_F_KERNEL: &[&str] = &[
+    "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13",
+];
+const PPC_RET_F_KERNEL: &[&str] = &["f1", "f2"];
+const PPC_ELFV2_RET_F_KERNEL: &[&str] = &["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"];
 
 /// One supported convention plus everything `build()` should produce for it.
 /// Adding a convention means adding one row; every invariant test picks it up.
@@ -450,9 +458,10 @@ fn cases() -> Vec<Case> {
             }),
             ret_stack_pop: 0,
         },
-        // `x86_linux_kernel` (regparm-3) is the only kernel CC whose register
-        // set differs from its userland counterpart, so it is the sole kernel
-        // row; every other arch's kernel CC is a userland preset above.
+        // The kernel rows: x86 32-bit differs from its userland counterpart in
+        // the integer argument registers (regparm-3), PowerPC in the vector
+        // windows alone.  Every other arch's kernel CC is a userland preset
+        // above.
         Case {
             name: "x86 Linux kernel (regparm-3)",
             cc: CallingConvention::x86_linux_kernel,
@@ -472,6 +481,66 @@ fn cases() -> Vec<Case> {
                 increment: 4,
             }),
             ret_stack_pop: 4,
+        },
+        Case {
+            name: "PowerPC SysV 32 Linux kernel",
+            cc: CallingConvention::powerpc_sysv32_linux_kernel,
+            arch: crate::arch::SleighArch::ppc32be,
+            arg_count: 8,
+            callee_saved_count: 21,
+            args_float: PPC32_ARG_F_KERNEL,
+            saved_float: PPC_F14_F31,
+            ret_float: PPC_RET_F_KERNEL,
+            callee_saved_cond_count: 3,
+            callee_saved_vec_count: 12,
+            ret_count: 2,
+            reg_size_bytes: 4,
+            stack_ptr_name: "r1",
+            stack_args: Some(StackArgs {
+                base_offset: 8,
+                increment: 4,
+            }),
+            ret_stack_pop: 0,
+        },
+        Case {
+            name: "PowerPC ELFv1 Linux kernel",
+            cc: CallingConvention::powerpc64_elf_v1_linux_kernel,
+            arch: crate::arch::SleighArch::ppc64be,
+            arg_count: 8,
+            callee_saved_count: 21,
+            args_float: PPC64_ARG_F_KERNEL,
+            saved_float: PPC_F14_F31,
+            ret_float: PPC_RET_F_KERNEL,
+            callee_saved_cond_count: 3,
+            callee_saved_vec_count: 12,
+            ret_count: 2,
+            reg_size_bytes: 8,
+            stack_ptr_name: "r1",
+            stack_args: Some(StackArgs {
+                base_offset: 112,
+                increment: 8,
+            }),
+            ret_stack_pop: 0,
+        },
+        Case {
+            name: "PowerPC ELFv2 Linux kernel",
+            cc: CallingConvention::powerpc64_elf_v2_linux_kernel,
+            arch: crate::arch::SleighArch::ppc64le,
+            arg_count: 8,
+            callee_saved_count: 21,
+            args_float: PPC64_ARG_F_KERNEL,
+            saved_float: PPC_F14_F31,
+            ret_float: PPC_ELFV2_RET_F_KERNEL,
+            callee_saved_cond_count: 3,
+            callee_saved_vec_count: 12,
+            ret_count: 2,
+            reg_size_bytes: 8,
+            stack_ptr_name: "r1",
+            stack_args: Some(StackArgs {
+                base_offset: 96,
+                increment: 8,
+            }),
+            ret_stack_pop: 0,
         },
     ]
 }
