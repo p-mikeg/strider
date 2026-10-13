@@ -178,8 +178,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             })
         };
         let isa_mode_switch_vn = lifter.sleigh_regs().name_to_vn("ISAModeSwitch");
-        // Capture and carry are paired BOTH ways; mirror of the carry-side
-        // check in `Builder::with_flow_context`.
+        // Capture and carry are paired BOTH ways: `name_to_vn` answers `None`
+        // for a misspelling rather than erroring, so a one-directional check
+        // would pass vacuously while the mode bit is never captured.
         debug_assert_eq!(
             isa_mode_switch_vn.is_some(),
             lifter.arch.isa_mode_var().is_some(),

@@ -61,6 +61,11 @@ pub enum LoadFilter {
     /// `.got.plt` is NOT included. Lazy binding rewrites those slots on the
     /// first call through each one, so their load-time contents are the PLT
     /// resolver stub rather than the callee, whatever the image claims.
+    ///
+    /// A section of either name is carved out only where the link really maps
+    /// it writable and not as TLS (`SHF_ALLOC | SHF_WRITE`, no `SHF_TLS`), and
+    /// `relocate = false` is refused outright: it denies the very claim this
+    /// filter makes.
     ImmutableAndRelocatedGot,
     /// Every allocatable mapping, `.data` / `.got` / `.data.rel.ro` included.
     AllAllocatable,
