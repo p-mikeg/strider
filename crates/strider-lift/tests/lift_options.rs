@@ -10,6 +10,15 @@ fn lift_options_default() {
     assert!(d.compact);
 }
 
+/// Both tables are borrowed, so the default borrows one shared empty table
+/// rather than allocating a pair per call.
+#[test]
+fn default_options_share_their_empty_tables() {
+    let (a, b) = (LiftOptions::default(), LiftOptions::default());
+    assert!(std::ptr::eq(a.per_address_ccs, b.per_address_ccs));
+    assert!(std::ptr::eq(a.cfg.known_targets, b.cfg.known_targets));
+}
+
 /// A `per_address_ccs` override names registers the lifted function itself may
 /// never touch.  Its INTEGER argument registers are read through
 /// `read_variable`, which hard-fails on an untracked varnode, so they must be
@@ -37,11 +46,11 @@ fn per_address_cc_integer_arg_registers_are_seeded() {
     let mut per_address_ccs = rustc_hash::FxHashMap::default();
     per_address_ccs.insert(0x1006u64, override_cc);
     let opts = LiftOptions {
-        per_address_ccs,
+        per_address_ccs: &per_address_ccs,
         ..LiftOptions::default()
     };
     let cfg = lifter
-        .build_cfg(0x1000u64.into(), &opts.cfg, &opts.per_address_ccs)
+        .build_cfg(0x1000u64.into(), &opts.cfg, opts.per_address_ccs)
         .expect("cfg");
     let f = lifter
         .build_ir_with(&cfg, cc, &opts)
@@ -81,11 +90,11 @@ fn an_override_this_function_never_calls_seeds_nothing() {
     // 0x9000 is not a call target of this function.
     per_address_ccs.insert(0x9000u64, override_cc);
     let opts = LiftOptions {
-        per_address_ccs,
+        per_address_ccs: &per_address_ccs,
         ..LiftOptions::default()
     };
     let cfg = lifter
-        .build_cfg(0x1000u64.into(), &opts.cfg, &opts.per_address_ccs)
+        .build_cfg(0x1000u64.into(), &opts.cfg, opts.per_address_ccs)
         .expect("cfg");
     let f = lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function;
     assert!(

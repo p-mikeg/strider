@@ -33,7 +33,7 @@ fn run_at(
             fn_max_size: Some(fn_max_size),
             ..Default::default()
         },
-        per_address_ccs,
+        per_address_ccs: &per_address_ccs,
         ..LiftOptions::default()
     };
     let mut strider = Strider::new(arch, sleigh, None).unwrap();

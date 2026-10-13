@@ -121,7 +121,9 @@ pub struct PyCfgOptions {
     #[pyo3(get)]
     pub allow_code_before_start_addr: bool,
     /// Indirect-branch answers supplied by the caller, as
-    /// `{dispatch_address: [target_address, ...] | "return"}`.
+    /// `{dispatch_address: [target_address, ...] | "return"}`, in the Python
+    /// form the getter hands back; `seated` is the same table as
+    /// `strider_cfg` reads it.
     ///
     /// A listed site seats these answers directly instead of deferring to the
     /// classifier. `"return"` seats the site as a function return, which the
@@ -146,27 +148,16 @@ pub struct PyCfgOptions {
     /// which shares the tables themselves.
     known_targets_view: Arc<MappingView>,
     call_other_abis_view: Arc<MappingView>,
-    /// `known_targets` in `strider_cfg`'s own form, seated once. Shared with
-    /// every clone, as the table it is built from is.
-    seated: Arc<OnceLock<SeatedTargets>>,
+    /// `known_targets` in `strider_cfg`'s own form, seated at construction:
+    /// every analyse through this object BORROWS it, so neither the seating
+    /// nor a copy is charged per call. Shared with every clone, as the table
+    /// it is built from is.
+    pub(crate) seated: Arc<SeatedTargets>,
 }
 
-/// `known_targets` as `strider_cfg::CfgOptions` takes it.
+/// `known_targets` as `strider_cfg::CfgOptions` borrows it.
 pub(crate) type SeatedTargets =
     rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets>;
-
-impl PyCfgOptions {
-    /// The seated table, built on the first analyse that reads it: one options
-    /// object serves every call, and seating per call charges a seeded table's
-    /// conversion to each analysis.
-    ///
-    /// The caller clones the result regardless, `strider_cfg::CfgOptions`
-    /// taking the table by value; the memo saves the conversion, not the copy.
-    pub(crate) fn seated_known_targets(&self) -> &SeatedTargets {
-        self.seated
-            .get_or_init(|| crate::strider_cls::seat_known_targets(&self.known_targets))
-    }
-}
 
 #[pymethods]
 impl PyCfgOptions {
@@ -185,6 +176,7 @@ impl PyCfgOptions {
         data_ranges: Vec<(u64, u64)>,
     ) -> PyResult<Self> {
         reject_zero_max_size(function_max_size)?;
+        let seated = crate::strider_cls::seat_known_targets(&known_targets.0);
         Ok(Self {
             function_max_size,
             allow_code_before_start_addr,
@@ -199,7 +191,7 @@ impl PyCfgOptions {
             data_ranges: data_ranges_from(data_ranges),
             known_targets_view: Arc::default(),
             call_other_abis_view: Arc::default(),
-            seated: Arc::default(),
+            seated: Arc::new(seated),
         })
     }
 
@@ -497,11 +489,10 @@ impl PyLifterOptions {
         regs: &rsleigh::SleighRegs,
         target: crate::strider_cls::SourceArch,
     ) -> PyResult<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>> {
-        crate::strider_cls::build_per_address_ccs(
-            self.per_address_ccs.clone().unwrap_or_default(),
-            regs,
-            target,
-        )
+        match &self.per_address_ccs {
+            Some(table) => crate::strider_cls::build_per_address_ccs(table, regs, target),
+            None => Ok(rustc_hash::FxHashMap::default()),
+        }
     }
 }
 

@@ -3,8 +3,12 @@ use rustc_hash::FxHashMap;
 use crate::indirect_resolver::ResolvedTargets;
 use crate::types::PcodeInsnAddr;
 
-#[derive(Clone, Default, Debug)]
-pub struct CfgOptions {
+/// Shared empty table, so options with no seats borrow rather than allocate.
+static NO_KNOWN_TARGETS: FxHashMap<PcodeInsnAddr, ResolvedTargets> =
+    FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
+
+#[derive(Clone, Debug)]
+pub struct CfgOptions<'a> {
     /// `Some(n)`: an unconditional branch to `>= start + n` is a tail call.
     /// `Some(0)` is coerced to unbounded by [`crate::Builder::for_arch`].
     pub fn_max_size: Option<u64>,
@@ -16,7 +20,10 @@ pub struct CfgOptions {
     /// A `BranchIndirect` listed here seats its cached terminator directly;
     /// every other site defers via `UnresolvedIndirectBranch`.  Read through
     /// [`CfgOptions::seated`], never indexed directly.
-    pub known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    ///
+    /// Borrowed: a caller seeds a binary-wide table once and analyses one
+    /// function per call, so owning it is the whole table per call.
+    pub known_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     /// Caller classifications for user-op names, consulted before the built-in
     /// tables.  One override governs both the region terminator and the
     /// emitted node.
@@ -59,7 +66,19 @@ impl DataRanges {
     }
 }
 
-impl CfgOptions {
+impl Default for CfgOptions<'_> {
+    fn default() -> Self {
+        Self {
+            fn_max_size: None,
+            allow_code_before_start_addr: false,
+            known_targets: &NO_KNOWN_TARGETS,
+            call_other_overrides: Default::default(),
+            data_ranges: DataRanges::default(),
+        }
+    }
+}
+
+impl CfgOptions<'_> {
     /// The answer seated for `addr`, falling back to the machine address alone.
     ///
     /// An entry at p-code index 0 seats any `BranchIndirect` in that machine
@@ -82,17 +101,21 @@ mod tests {
     use super::*;
     use crate::ResolvedTarget;
 
-    fn seated_over(entries: &[(PcodeInsnAddr, u64)]) -> CfgOptions {
+    fn seated_over(entries: &[(PcodeInsnAddr, u64)]) -> FxHashMap<PcodeInsnAddr, ResolvedTargets> {
+        entries
+            .iter()
+            .map(|&(k, target)| {
+                (
+                    k,
+                    ResolvedTargets::Single(ResolvedTarget::new(target, None)),
+                )
+            })
+            .collect()
+    }
+
+    fn opts_over(known: &FxHashMap<PcodeInsnAddr, ResolvedTargets>) -> CfgOptions<'_> {
         CfgOptions {
-            known_targets: entries
-                .iter()
-                .map(|&(k, target)| {
-                    (
-                        k,
-                        ResolvedTargets::Single(ResolvedTarget::new(target, None)),
-                    )
-                })
-                .collect(),
+            known_targets: known,
             ..CfgOptions::default()
         }
     }
@@ -104,9 +127,27 @@ mod tests {
         }
     }
 
+    /// Options over a caller's table name that table, so neither building nor
+    /// cloning them copies it.
+    #[test]
+    fn options_borrow_the_callers_table() {
+        let known = seated_over(&[(PcodeInsnAddr::at_machine_start(0x1000), 0x2000)]);
+        let opts = opts_over(&known);
+        assert!(std::ptr::eq(opts.known_targets, &known));
+        assert!(std::ptr::eq(opts.clone().known_targets, &known));
+    }
+
+    #[test]
+    fn default_options_share_one_empty_table() {
+        let (a, b) = (CfgOptions::default(), CfgOptions::default());
+        assert!(a.known_targets.is_empty());
+        assert!(std::ptr::eq(a.known_targets, b.known_targets));
+    }
+
     #[test]
     fn seated_falls_back_to_the_machine_start_key() {
-        let opts = seated_over(&[(PcodeInsnAddr::at_machine_start(0x1000), 0x2000)]);
+        let known = seated_over(&[(PcodeInsnAddr::at_machine_start(0x1000), 0x2000)]);
+        let opts = opts_over(&known);
         let mid = PcodeInsnAddr {
             machine_addr: 0x1000.into(),
             insn_index: 3,
@@ -125,7 +166,8 @@ mod tests {
             machine_addr: 0x1000.into(),
             insn_index: 3,
         };
-        let opts = seated_over(&[(start, 0x2000), (mid, 0x3000)]);
+        let known = seated_over(&[(start, 0x2000), (mid, 0x3000)]);
+        let opts = opts_over(&known);
         assert_eq!(target_of(opts.seated(mid)), Some(0x3000));
         assert_eq!(target_of(opts.seated(start)), Some(0x2000));
     }
