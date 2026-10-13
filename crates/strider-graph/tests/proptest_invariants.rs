@@ -558,8 +558,8 @@ fn compaction_sizes_its_arenas_up_front() {
 
     let keep: Vec<NodeId> = reachable_from(&g, [root]).into_iter().collect();
     let (_, allocs) = count_allocs(|| g.retain_reachable_stale_cache(keep));
-    // Five sized blocks, the survivor list and the two pools' doubling; sizing
-    // none of them costs about eleven blocks per arena on top.
+    // Five sized blocks, the survivor list and the two pools' doubling.  An
+    // arena that grew by doubling instead costs several blocks per arena more.
     assert!(
         allocs <= 40,
         "compacting {} nodes took {allocs} allocations: a sized arena grew by \
