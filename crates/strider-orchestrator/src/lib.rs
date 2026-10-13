@@ -566,17 +566,18 @@ pub struct AnalyzeResult {
     pub undecodable_branch_targets: Vec<PcodeInsnAddr>,
     /// Sites whose answer nothing verified.
     ///
-    /// Three shapes land here. A seated `Switch` holding exactly the caller's
+    /// Four shapes land here. A seated `Switch` holding exactly the caller's
     /// `known_targets` and nothing derived: not unresolved (the caller
     /// asserted the answer), but seating changes the CFG the classifier
     /// reads, so a stale seed can stop the selector deriving and take the
-    /// site's real arms with it. And a site CONSUMED at CFG-build time,
+    /// site's real arms with it. A second: a site CONSUMED at CFG-build time,
     /// whether the answer came from a seed or from the classifier: a
     /// `LinkRegister` answer becomes a `Return` and a single target outside
     /// the function becomes a `TailCall`, leaving no placeholder and no
     /// anchor, so a dispatch that had more arms leaves no other trace. A
-    /// `LinkRegister` seat the CLASSIFIER derived lands here only when its
-    /// proof rested on `return_slots_survive_untracked_writes`: the seated
+    /// third: a `LinkRegister` seat the CLASSIFIER derived, which lands here
+    /// only when its proof rested on
+    /// `return_slots_survive_untracked_writes`: the seated
     /// `Return` carries a return site, so each round re-checks it, and a
     /// re-check that holds without the claim is a proof. An ARM
     /// `push {lr}; ... bl ...; pop {pc}` return is the ordinary shape that is
@@ -586,7 +587,7 @@ pub struct AnalyzeResult {
     /// channel, and with it a false [`AnalyzeResult::is_complete`], reads
     /// "complete but unverified" there rather than "incomplete".
     ///
-    /// A third: an arm a mode-less re-derivation discovered at a site whose
+    /// A fourth: an arm a mode-less re-derivation discovered at a site whose
     /// other arms all carry the flowing mode. A dispatch that commits a mode
     /// has it evaluated per arm, so those modes came from a caller seed at a
     /// dispatch committing none. It is seated and it decodes, but nothing
