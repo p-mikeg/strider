@@ -179,10 +179,10 @@ pub(crate) fn is_register_space_access(insn: &rsleigh::Insn) -> bool {
 /// The gate is what keeps the tracked set a nesting family. A computed offset
 /// need not land on a declared boundary: one that straddles two registers, or
 /// lands past the end of the register file, names no register at all. Seeding
-/// such a slot puts a
-/// varnode that only PARTIALLY overlaps a real register into the tracked set,
-/// where `dedup_overlapping_largest` keeps both and models them as
-/// non-aliasing: a write to one is invisible to a read of the other.
+/// such a slot puts a varnode that only PARTIALLY overlaps a real register
+/// into the tracked set, where `dedup_overlapping_largest` keeps both and
+/// models them as non-aliasing: a write to one is invisible to a read of the
+/// other.
 ///
 /// The slice itself is returned, not its container, because the width is the
 /// access width. [`enclosing_register`] is what the tracked set is seeded

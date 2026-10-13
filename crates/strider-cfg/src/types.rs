@@ -66,9 +66,10 @@ pub enum RegionTerminator {
     /// `paciasp`, `bti`, alignment padding), decoding fell into an
     /// already-discovered region, the region is the first half of a split, it
     /// closed on an explicit `Branch` opcode, or decoding fell through onto
-    /// bytes that hold no instruction (unmapped, rejected, or marked data by
-    /// [`crate::CfgOptions::data_ranges`]) and the region edges to a
-    /// `TailCall` stub there.
+    /// bytes that hold no instruction, unmapped or marked data by
+    /// [`crate::CfgOptions::data_ranges`], and the region edges to a
+    /// `TailCall` stub there.  A fall-through onto Sleigh-REJECTED bytes with
+    /// no preceding call is an `Err` on the whole build instead.
     Unconditional,
     /// Two outgoing edges; the one whose target region CONTAINS
     /// `true_target` is the taken side, the other the fall-through.

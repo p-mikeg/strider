@@ -558,7 +558,8 @@ impl<'f> Matcher<'f> {
         for (j, next) in per_pat.iter().enumerate().skip(1) {
             let mut new_acc: Vec<Vec<usize>> = Vec::new();
             let graph = self.function().graph();
-            // Captures both sides always bind. Agreement implies
+            // Captures every match of `next` binds, and that some fixed prefix
+            // position binds in every accumulated row. Agreement implies
             // the two bindings resolve to the same node (equal values share a
             // producer, and the other arm compares nodes outright), so grouping
             // by those nodes is a necessary condition: only rows in the same

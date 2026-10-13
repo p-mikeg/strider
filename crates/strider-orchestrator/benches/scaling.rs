@@ -89,8 +89,9 @@ fn target_of(
     }
 }
 
-/// Decoding from inside an already-decoded function is what the fixtures'
-/// symbol addresses do, so both entry points below allow it.
+/// A fixture's symbols sit above code the same object holds, so a branch below
+/// the entry is an edge to follow rather than a tail call: both entry points
+/// below allow it.
 const CFG_OPTS: fn() -> strider_cfg::CfgOptions<'static> = || strider_cfg::CfgOptions {
     allow_code_before_start_addr: true,
     ..Default::default()
@@ -130,9 +131,9 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     function
 }
 
-/// `analyze_case` plus the indirect-branch resolution loop: one re-lift per
-/// level of discovery, so the difference between the two groups is what the
-/// loop costs.
+/// `analyze_case` plus the indirect-branch resolution loop (one re-lift per
+/// level of discovery), the appended classifier post-pass and the return
+/// settling, which together are the difference between the two groups.
 fn resolve_case(c: Case) -> strider_orchestrator::AnalyzeResult {
     let path = binary_path(c.arch_name, c.case);
     let obj = strider_reader::load_elf(&path).expect("load_elf");
