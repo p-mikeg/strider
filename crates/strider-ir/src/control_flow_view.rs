@@ -1005,22 +1005,30 @@ mod tests {
 
     #[test]
     fn dominator_tree_build_is_near_linear_on_an_error_ladder() {
+        // Fastest of three, so a scheduling hiccup on one build cannot move
+        // the ratio.
         fn build_tree(n: usize) -> std::time::Duration {
-            let f = error_ladder(n).expect("ladder builds");
-            let start = std::time::Instant::now();
-            let tree = control_dominator_tree(&f);
-            let elapsed = start.elapsed();
-            assert!(tree.contains(f.entry()));
-            elapsed
+            (0..3)
+                .map(|_| {
+                    let f = error_ladder(n).expect("ladder builds");
+                    let start = std::time::Instant::now();
+                    let tree = control_dominator_tree(&f);
+                    let elapsed = start.elapsed();
+                    assert!(tree.contains(f.entry()));
+                    elapsed
+                })
+                .min()
+                .expect("three samples")
         }
         build_tree(500);
         let small = build_tree(1_000);
         let large = build_tree(16_000);
-        // Linear would be 16x; quadratic 256x. The bound sits well above 16x
-        // because the per-node cost itself grows with the working set: the
-        // same measurement runs 2-3x slower per node at 16k rungs than at 1k.
+        // 16x the rungs is the linear answer; this build measures 17-18x (the
+        // per-node cost itself grows ~1.1x over the range), and the iterative
+        // solver it replaced -- `control_dominators` above, still the oracle --
+        // measures 67x and up. The bound is the geometric midpoint.
         assert!(
-            large.as_secs_f64() < small.as_secs_f64() * 80.0,
+            large.as_secs_f64() < small.as_secs_f64() * 35.0,
             "16x the rungs cost {:.1}x the build ({small:?} -> {large:?})",
             large.as_secs_f64() / small.as_secs_f64(),
         );
