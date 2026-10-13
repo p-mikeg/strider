@@ -16,8 +16,9 @@ sea-of-nodes IR `strider-lift` builds from it.
   `start_addr`, ending at its `RegionTerminator`. `contains_addr` decides which
   bytes it owns, down to the pcode index, since a region can end mid-pcode
   sequence.
-- `CfgOptions`: `fn_max_size` / `allow_code_before_start_addr` bound the
-  function, `known_targets` seats indirect-branch answers a caller derived,
+- `CfgOptions<'a>`: `fn_max_size` / `allow_code_before_start_addr` bound the
+  function, `known_targets` (borrowed, so a binary-wide table costs nothing
+  per function) seats indirect-branch answers a caller derived,
   `call_other_overrides` classifies user-op names, and `data_ranges` names
   address ranges that hold data and are never decoded.
 - `FlowVars` / `FlowContext`: the sla's flowing decode context, discovered once

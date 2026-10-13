@@ -226,7 +226,7 @@ pub(crate) fn analyze_with_known_targets(
         ResolvedTargets::Multiple(targets.iter().copied().map(Into::into).collect()),
     );
     let cfg_opts = strider_cfg::CfgOptions {
-        known_targets,
+        known_targets: &known_targets,
         ..Default::default()
     };
     let cfg = driver

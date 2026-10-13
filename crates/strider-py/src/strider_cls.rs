@@ -150,26 +150,28 @@ pub(crate) fn build_cc(
     }
 }
 
+/// Borrowed: the table is read once per analyse and consuming it would cost a
+/// copy of every `CallingConvention` in it.
 pub(crate) fn build_per_address_ccs(
-    per_address_ccs_py: std::collections::HashMap<u64, PyCallingConvention>,
+    per_address_ccs_py: &std::collections::HashMap<u64, PyCallingConvention>,
     regs: &rsleigh::SleighRegs,
     target: SourceArch,
 ) -> PyResult<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>> {
     per_address_ccs_py
-        .into_iter()
-        .map(|(addr, py_cc)| {
+        .iter()
+        .map(|(&addr, py_cc)| {
             check_source_arch(
                 py_cc.source_arch,
                 target,
                 format_args!("the custom per-address CallingConvention at {addr:#x}"),
             )?;
-            let mut built = match py_cc.inner {
+            let mut built = match &py_cc.inner {
                 crate::cc::CcImpl::Preset(preset) => preset.build(regs).map_err(|e| {
                     into_strider_err(anyhow::anyhow!(
                         "per-address CC at {addr:#x} unresolved: {e:?}"
                     ))
                 })?,
-                crate::cc::CcImpl::Custom(built) => *built,
+                crate::cc::CcImpl::Custom(built) => *built.clone(),
             };
             // Applied after ABI resolution so it works uniformly for
             // preset and custom CCs.
@@ -296,7 +298,7 @@ fn overrides_from(
 /// whether or not the classifier runs.
 pub(crate) fn seat_known_targets(
     known_targets: &std::collections::HashMap<u64, crate::options::KnownTarget>,
-) -> rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets> {
+) -> crate::options::SeatedTargets {
     known_targets
         .iter()
         .map(|(&addr, answer)| {
@@ -322,11 +324,11 @@ pub(crate) fn seat_known_targets(
 pub(crate) fn cfg_options_from(
     opts: &PyCfgOptions,
     target: SourceArch,
-) -> PyResult<strider_cfg::CfgOptions> {
+) -> PyResult<strider_cfg::CfgOptions<'_>> {
     Ok(strider_cfg::CfgOptions {
         fn_max_size: opts.function_max_size,
         allow_code_before_start_addr: opts.allow_code_before_start_addr,
-        known_targets: opts.seated_known_targets().clone(),
+        known_targets: &opts.seated,
         call_other_overrides: overrides_from(&opts.call_other_abis, target)?,
         data_ranges: opts.data_ranges.clone(),
     })
@@ -338,7 +340,7 @@ pub(crate) fn cfg_options_from(
 ///
 /// A site the build CONSUMED leaves no terminator to find, so the two seated
 /// lists carry it instead, the way `Strider::analyze` reads them.
-fn seeded_sites(opts: &strider_cfg::CfgOptions, cfg: &strider_cfg::Cfg) -> Vec<u64> {
+fn seeded_sites(opts: &strider_cfg::CfgOptions<'_>, cfg: &strider_cfg::Cfg) -> Vec<u64> {
     let consumed = cfg
         .link_register_seated()
         .iter()
@@ -770,8 +772,11 @@ impl PyLifter {
             crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
         }
         let target = try_borrow_lifter(&slf, py)?.source_arch();
-        let cfg_opts = match &opts {
-            Some(o) => cfg_options_from(&o.borrow(py), target)?,
+        // The borrow outlives `cfg_opts`, which holds the seeded table rather
+        // than a copy of it.
+        let opts_ref = opts.as_ref().map(|o| o.borrow(py));
+        let cfg_opts = match &opts_ref {
+            Some(o) => cfg_options_from(o, target)?,
             None => strider_cfg::CfgOptions::default(),
         };
         let inner = with_pending_control_flow(|| {
@@ -848,14 +853,15 @@ impl PyLifter {
         // are read here rather than with the rest of the options: nothing
         // between the two points runs Python, and `CfgOptions` is get-only, so
         // it is the same object either way.
-        let lift_opts = {
-            let opts_ref = opts.borrow(py);
-            let cfg_ref = opts_ref.cfg.borrow(py);
-            strider_orchestrator::LiftOptions {
-                cfg: cfg_options_from(&cfg_ref, target)?,
-                per_address_ccs: per_address_built,
-                compact,
-            }
+        // The two borrows outlive `lift_opts`, which holds the seeded table
+        // rather than a copy of it; both are read-only, and `CfgOptions` is
+        // get-only, so nothing can take them `&mut` meanwhile.
+        let opts_ref = opts.borrow(py);
+        let cfg_ref = opts_ref.cfg.borrow(py);
+        let lift_opts = strider_orchestrator::LiftOptions {
+            cfg: cfg_options_from(&cfg_ref, target)?,
+            per_address_ccs: &per_address_built,
+            compact,
         };
         // The fixed-point loop runs without the GIL either way: a pipeline's
         // boxed passes are `Send`, so a closure capturing one satisfies

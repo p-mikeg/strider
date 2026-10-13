@@ -39,7 +39,7 @@ fn decoded_addrs(cfg: &Cfg) -> Vec<u64> {
     v
 }
 
-fn bounded(size: u64) -> CfgOptions {
+fn bounded(size: u64) -> CfgOptions<'static> {
     CfgOptions {
         fn_max_size: Some(size),
         ..CfgOptions::default()
@@ -243,12 +243,15 @@ fn a_seeded_arm_into_a_data_range_is_an_undecodable_seeded_target() {
     // 0x1000 bx r3 ; 0x1004 bx lr ; 0x1008 .word (data)
     let words = [0xe12f_ff13, 0xe12f_ff1e, 0xe1a0_0000];
     let site = PcodeInsnAddr::at_machine_start(0x1000);
-    let mut opts = bounded(0xc);
-    opts.data_ranges = DataRanges::new(std::iter::once(0x1008..0x100c));
-    opts.known_targets.insert(
+    let known = rustc_hash::FxHashMap::from_iter([(
         site,
         ResolvedTargets::Multiple(vec![0x1004.into(), 0x1008.into()]),
-    );
+    )]);
+    let opts = CfgOptions {
+        data_ranges: DataRanges::new(std::iter::once(0x1008..0x100c)),
+        known_targets: &known,
+        ..bounded(0xc)
+    };
     let cfg = build(&SleighArch::arm(), le_words(&words), 0x1000, &opts).expect("build");
     assert!(!decoded_addrs(&cfg).contains(&0x1008));
     assert_eq!(

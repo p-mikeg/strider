@@ -21,7 +21,7 @@ fn lift(
     let cc = cc.build(lifter.sleigh_regs()).expect("cc");
     let opts = LiftOptions::default();
     let cfg = lifter
-        .build_cfg(0x1000u64.into(), &opts.cfg, &opts.per_address_ccs)
+        .build_cfg(0x1000u64.into(), &opts.cfg, opts.per_address_ccs)
         .expect("cfg");
     lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function
 }

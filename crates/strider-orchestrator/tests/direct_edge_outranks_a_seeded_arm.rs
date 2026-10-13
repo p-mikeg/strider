@@ -55,7 +55,7 @@ fn a_direct_edge_keeps_the_bytes_a_seeded_arm_claims_in_the_other_mode() {
         .build_cfg(
             BASE,
             &CfgOptions {
-                known_targets: known,
+                known_targets: &known,
                 ..CfgOptions::default()
             },
         )
