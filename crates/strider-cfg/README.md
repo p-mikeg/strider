@@ -48,7 +48,7 @@ two different instruction streams. The stepped-over start is reported on
 
 Within a region decoding is strictly sequential. `Sleigh::lift_one` takes
 `&mut self` and carries context-register state (ARM/Thumb mode and IT-block
-state, MIPS16, ppc `vle`) that a decoded instruction can itself commit at a
+state, MIPS16, ppc `linkreg`) that a decoded instruction can itself commit at a
 later address, so lifting out of order returns the wrong instructions. x86
 declares its decode vars flowing but no constructor commits one (no
 `globalset`), so a prefix changes the context only within its own instruction.
