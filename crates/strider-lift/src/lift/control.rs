@@ -117,6 +117,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Lifts a return, recording the address it jumps to against the `Return`
     /// node in [`super::LiftOutcome::return_sites`].  Nothing in the CFG
     /// checked that address is the caller's.
+    ///
+    /// The p-code `Return`'s input is a fabricated target, the popped return
+    /// address on a stack-push ISA, not an ABI return slot: the `Return`
+    /// node's values come from the convention instead.
     pub(super) fn handle_sleigh_return(
         &mut self,
         region_id: strider_cfg::RegionId,
