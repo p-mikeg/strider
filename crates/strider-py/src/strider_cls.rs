@@ -294,7 +294,7 @@ fn overrides_from(
 
 /// Seat caller-supplied indirect-branch answers at the CFG level, so they apply
 /// whether or not the classifier runs.
-pub(crate) fn seat_known_targets(
+fn seat_known_targets(
     known_targets: &std::collections::HashMap<u64, crate::options::KnownTarget>,
 ) -> rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets> {
     known_targets
@@ -326,7 +326,7 @@ pub(crate) fn cfg_options_from(
     Ok(strider_cfg::CfgOptions {
         fn_max_size: opts.function_max_size,
         allow_code_before_start_addr: opts.allow_code_before_start_addr,
-        known_targets: opts.seated_known_targets().clone(),
+        known_targets: seat_known_targets(&opts.known_targets),
         call_other_overrides: overrides_from(&opts.call_other_abis, target)?,
         data_ranges: opts.data_ranges.clone(),
     })
