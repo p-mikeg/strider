@@ -532,8 +532,8 @@ Rendering:
   known targets: 32.0 ms to 1.6 ms), and `LifterOptions.per_address_ccs` is
   served the same way.
 - A seeded `known_targets` table is seated into the CFG builder's own form
-  once per options object rather than per `analyze` (20,000 entries: 2.1 ms to
-  1.1 ms; 200,000: 34.7 ms to 19.3 ms), and reading
+  once per options object rather than per `analyze` (20,000 entries: the
+  table's share of an `analyze` 1.07 ms to 0.88 ms), and reading
   `LifterOptions.per_address_ccs` costs a view lookup rather than a fresh dict
   of fresh objects (20,000 entries: 3.9 ms to 0.05 ms per read).
 - `pcode_at` keeps what each sweep decoded, so a walk over a function's
