@@ -12,13 +12,6 @@ use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind};
 use crate::walk::{DefUseSuccs, PostOrder, RawDefUseSuccs};
 use crate::{Function, Graph, IRViewer};
 
-#[cfg(test)]
-thread_local! {
-    /// Def-use post-order walks actually performed, the unit the order-memo
-    /// test counts.
-    pub(crate) static POSTORDER_WALKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
 bitflags::bitflags! {
     /// `OUTPUT_KILLED`: the node lost the last use of one of its outputs, so
     /// it may now be dead.  `NEEDS_RECANON`: its inputs changed, so it may now
@@ -69,6 +62,10 @@ pub struct EditFunction<'g> {
     live_entries: u64,
     /// [`Self::postorder`] and the [`Self::edits`] reading it was walked at.
     order_memo: std::cell::RefCell<Option<(u64, Vec<NodeId>)>>,
+    /// Def-use post-order walks actually performed, the unit the order-memo
+    /// test counts.
+    #[cfg(test)]
+    postorder_walks: std::cell::Cell<u64>,
 }
 
 impl<'g> EditFunction<'g> {
@@ -81,6 +78,8 @@ impl<'g> EditFunction<'g> {
             generation: 0,
             live_entries: 0,
             order_memo: std::cell::RefCell::new(None),
+            #[cfg(test)]
+            postorder_walks: std::cell::Cell::new(0),
         }
     }
 
@@ -156,7 +155,7 @@ impl<'g> EditFunction<'g> {
         let mut memo = self.order_memo.borrow_mut();
         if memo.as_ref().is_none_or(|&(stamp, _)| stamp != at) {
             #[cfg(test)]
-            POSTORDER_WALKS.with(|c| c.set(c.get() + 1));
+            self.postorder_walks.set(self.postorder_walks.get() + 1);
             let order: Vec<NodeId> = PostOrder::new(
                 DefUseSuccs::new(self.function.graph(), &self.state.live_nodes),
                 self.state.roots.iter(),
@@ -808,25 +807,24 @@ mod tests {
         let add = function.producer(sum);
 
         let mut ctx = EditFunction::new(&mut function);
-        super::POSTORDER_WALKS.with(|c| c.set(0));
         let first = ctx.postorder();
         let second = ctx.postorder();
         assert_eq!(first, second);
         assert_eq!(
-            super::POSTORDER_WALKS.with(std::cell::Cell::get),
+            ctx.postorder_walks.get(),
             1,
             "two reads with no edit between them must share one walk"
         );
 
         let three = ctx.build_int_const(3u64, ValueType::I64).unwrap();
         assert_eq!(
-            super::POSTORDER_WALKS.with(std::cell::Cell::get),
+            ctx.postorder_walks.get(),
             1,
             "a fresh node is not read until the order is asked for again"
         );
         let after_create = ctx.postorder();
         assert_eq!(
-            super::POSTORDER_WALKS.with(std::cell::Cell::get),
+            ctx.postorder_walks.get(),
             2,
             "a node entering the live set re-walks"
         );
@@ -838,22 +836,14 @@ mod tests {
         let slot = ctx.function().node_input_id_at(add, 1).unwrap();
         ctx.update_input(slot, three);
         ctx.postorder();
-        assert_eq!(
-            super::POSTORDER_WALKS.with(std::cell::Cell::get),
-            3,
-            "a moved use re-walks"
-        );
+        assert_eq!(ctx.postorder_walks.get(), 3, "a moved use re-walks");
         let two_node = ctx.producer(two);
         ctx.clean();
         assert!(
             !ctx.postorder().contains(&two_node),
             "the re-walk after the orphan is culled drops it"
         );
-        assert_eq!(
-            super::POSTORDER_WALKS.with(std::cell::Cell::get),
-            4,
-            "a killed node re-walks"
-        );
+        assert_eq!(ctx.postorder_walks.get(), 4, "a killed node re-walks");
     }
 
     /// Modelled with an off-spine data cone that no entry-reachable node
