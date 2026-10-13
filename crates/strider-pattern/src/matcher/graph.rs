@@ -20,6 +20,10 @@ pub(crate) const MAX_PATTERN_NODES: usize = 256;
 /// Saturating, and never below the raw node count, so a cyclic or multi-sink
 /// graph still reports its size.
 ///
+/// An alternation's inputs are alternatives rather than operands, run one at a
+/// time with the frame unwound between them, so it costs its DEEPEST arm, not
+/// their sum.
+///
 /// Taken over every node rather than from the root, which is not derived yet
 /// and may not exist.
 fn unfolded_nodes(graph: &PatGraph) -> usize {
@@ -33,11 +37,15 @@ fn unfolded_nodes(graph: &PatGraph) -> usize {
         let strider_graph::Vertex::Node(node) = vertex else {
             continue;
         };
-        let own = graph
+        let inputs = graph
             .node_inputs(node)
             .into_iter()
-            .map(|value| size.get(&graph.producer(value)).copied().unwrap_or(1))
-            .fold(1usize, usize::saturating_add);
+            .map(|value| size.get(&graph.producer(value)).copied().unwrap_or(1));
+        let own = if graph.node_kind(node).alternation {
+            1usize.saturating_add(inputs.max().unwrap_or(0))
+        } else {
+            inputs.fold(1usize, usize::saturating_add)
+        };
         deepest = deepest.max(own);
         size.insert(node, own);
     }
