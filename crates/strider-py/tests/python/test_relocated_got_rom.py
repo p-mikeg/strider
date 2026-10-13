@@ -9,6 +9,7 @@ unmapped the load stays opaque and every address derived from it is unknown.
 
 from __future__ import annotations
 
+import pytest
 import strider
 import strider._strider as ext
 
@@ -95,7 +96,7 @@ def test_add_elf_makes_the_claim_per_image(tmp_path):
     _image_with_a_got(first, 0x400000, b"\x11" * 8)
     _image_with_a_got(second, 0x500000, b"\x22" * 8)
 
-    elf = ext._load_elf_from_segments(str(first), False, True)
+    elf = ext._load_elf_from_segments(str(first), True, True)
     assert elf.ro_reader().read(0x401000, 8) == b"\x11" * 8
 
     elf.add_elf(str(second), False, False)
@@ -108,7 +109,46 @@ def test_add_elf_makes_the_claim_per_image(tmp_path):
 
     third = tmp_path / "third.elf"
     _image_with_a_got(third, 0x600000, b"\x33" * 8)
-    elf.add_elf(str(third), False, True)
+    elf.add_elf(str(third), True, True)
     assert elf.ro_reader().read(0x601000, 8) == b"\x33" * 8, (
         "a merge that does make the claim serves its own GOT"
     )
+
+
+def test_the_claim_is_refused_without_relocations(tmp_path):
+    """`relocated_got_is_rom` claims the loader has relocated those slots and
+    `apply_relocations=False` denies it. Served anyway, the slot reads 0 on a
+    PIE and a dispatch through it folds to address 0 with nothing reported
+    unresolved, so the pair is refused rather than answered."""
+    for call in (
+        lambda: strider.lift.load_elf(
+            _elf_relocs(), apply_relocations=False, relocated_got_is_rom=True
+        ),
+        lambda: strider.lift.load_elf(
+            _elf_relocs(),
+            from_segments=False,
+            apply_relocations=False,
+            relocated_got_is_rom=True,
+        ),
+        lambda: ext._load_elf_from_segments(_elf_relocs(), False, True),
+        lambda: ext._load_elf_from_sections(_elf_relocs(), False, True),
+        # The constructors default `apply_relocations` to False, so the flag
+        # alone is the contradiction there.
+        lambda: ext._load_elf_from_segments(_elf_relocs(), relocated_got_is_rom=True),
+    ):
+        with pytest.raises(strider.StriderError) as excinfo:
+            call()
+        message = str(excinfo.value)
+        assert "relocated_got_is_rom" in message and "apply_relocations" in message
+
+
+def test_add_elf_refuses_the_claim_without_relocations(tmp_path):
+    first, second = tmp_path / "first.elf", tmp_path / "second.elf"
+    _image_with_a_got(first, 0x400000, b"\x11" * 8)
+    _image_with_a_got(second, 0x500000, b"\x22" * 8)
+    elf = ext._load_elf_from_segments(str(first), True, True)
+    with pytest.raises(strider.StriderError) as excinfo:
+        elf.add_elf(str(second), False, True)
+    assert "relocated_got_is_rom" in str(excinfo.value)
+    # Refused before anything merged: the handle is unchanged.
+    assert elf.ro_reader().read(0x501000, 8) is None

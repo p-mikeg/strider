@@ -432,7 +432,8 @@ class ElfLifter(Lifter):
 
         `relocated_got_is_rom` is `load_elf`'s unchecked claim, made for THIS
         image only: it does not inherit the handle's, since one shared
-        object's link says nothing about another's.
+        object's link says nothing about another's. It contradicts
+        `apply_relocations=False` here too, and the pair raises `StriderError`.
 
         Raises `StriderError` if the new ELF maps code over an address already
         loaded with different bytes (two ELFs at the same base cannot merge)."""
@@ -501,7 +502,9 @@ def load_elf(
     it is wrong wherever a slot is rewritten after the loader has run, and the
     fold is then wrong too. It is what resolves a PIC jump table whose base
     comes out of the GOT. `.got.plt` is never served, lazy binding rewriting
-    those slots on the first call through each one.
+    those slots on the first call through each one. It contradicts
+    `apply_relocations=False`, which says the loader has NOT run, and the pair
+    raises `StriderError`.
 
     Raises `FileNotFoundError` when `path` does not exist, and `ValueError`
     when the file is not an ELF, or its architecture or ABI is unsupported.

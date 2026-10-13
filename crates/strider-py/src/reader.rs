@@ -226,6 +226,9 @@ fn elf_to_mem_regions(
 /// caller's claim that nothing rewrites them once the loader has run. Never
 /// `.got.plt`; see [`LoadFilter::ImmutableAndRelocatedGot`].
 ///
+/// Refuses it together with `apply_relocations=False`, which denies that same
+/// claim.
+///
 /// Shares one backing buffer with [`elf_to_mem_regions`]: the ROM is a filter
 /// over the same bytes.
 fn elf_to_rom_regions(
@@ -234,6 +237,16 @@ fn elf_to_rom_regions(
     apply_relocations: bool,
     relocated_got_is_rom: bool,
 ) -> PyResult<Vec<MemRegion>> {
+    if relocated_got_is_rom && !apply_relocations {
+        return Err(into_strider_err(anyhow::anyhow!(
+            "relocated_got_is_rom=True claims the loader has already relocated \
+             `.got` / `.data.rel.ro`, and apply_relocations=False says it has not. \
+             Served unrelocated, those slots read as their on-disk bytes, which is 0 \
+             on a PIE (the address lives in the relocation addend), and a dispatch \
+             through one folds to address 0 with nothing reported unresolved. Pass \
+             apply_relocations=True, or relocated_got_is_rom=False"
+        )));
+    }
     let filter = if relocated_got_is_rom {
         LoadFilter::ImmutableAndRelocatedGot
     } else {
@@ -825,7 +838,8 @@ impl PyLoadedElf {
     ///
     /// `relocated_got_is_rom` is per image, and does not inherit the handle's:
     /// the claim is about one shared object's link, so a RELRO main image says
-    /// nothing about a library merged into it.
+    /// nothing about a library merged into it.  With `apply_relocations=False`
+    /// it is refused, the two denying each other.
     ///
     /// Errors if the new ELF maps code over an address already loaded with
     /// DIFFERENT bytes: `add_elf` places shared objects at distinct addresses,
@@ -980,7 +994,8 @@ fn load_elf_impl(
 ///
 /// `relocated_got_is_rom` additionally serves `.got` / `.data.rel.ro` as
 /// read-only memory, which constant-folds a load through them; see
-/// [`elf_to_rom_regions`].
+/// [`elf_to_rom_regions`].  `apply_relocations` defaults to `false` here, so
+/// it has to be passed alongside: the pair without it is refused.
 #[pyfunction]
 #[pyo3(name = "_load_elf_from_segments", signature = (path, apply_relocations=false, relocated_got_is_rom=false))]
 pub fn load_elf_from_segments(
