@@ -74,6 +74,12 @@ def test_a_rewrite_the_guard_cannot_see_raises_rather_than_panics(tmp_path):
         lifter.entry_point()
 
 
+def test_an_elf_declaring_no_entry_answers_zero(x86_memory_elf):
+    """An `ET_REL` object carries `e_entry == 0`, which is the answer rather
+    than an error or the first symbol."""
+    assert strider.lift.load_elf(str(x86_memory_elf)).entry_point() == 0
+
+
 def test_a_fifo_is_rejected_rather_than_blocking(tmp_path):
     """Opening a FIFO read-only blocks until a writer appears, so `load_elf`
     on one never returned. The check stats first, which does not open."""
