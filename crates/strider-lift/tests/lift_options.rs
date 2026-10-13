@@ -10,8 +10,8 @@ fn lift_options_default() {
     assert!(d.compact);
 }
 
-/// Both tables are borrowed, so the default borrows one shared empty table
-/// rather than allocating a pair per call.
+/// `Default` cannot hand out a borrow of a temporary, so both tables come
+/// from one `static` empty one, shared by every default.
 #[test]
 fn default_options_share_their_empty_tables() {
     let (a, b) = (LiftOptions::default(), LiftOptions::default());

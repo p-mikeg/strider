@@ -20,8 +20,8 @@ use anyhow::{anyhow, bail};
 
 use crate::Result;
 
-/// Shared empty table, so a builder with no overrides borrows rather than
-/// allocates.
+/// What a builder with no overrides lends: an owned default cannot hand out a
+/// borrow of a temporary.
 static NO_PER_ADDRESS_CCS: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention> =
     rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
 

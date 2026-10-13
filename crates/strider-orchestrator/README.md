@@ -76,9 +76,8 @@ Two verdicts freeze a single site, leaving the loop to run on without it:
 A converged CFG may be incomplete, and `AnalyzeResult` says so six ways.
 `is_complete()` is the question "may this be incomplete?"; none of the six
 answers it alone, so it reads all of them. A false `is_complete()` over
-`unverified_seeded_sites` alone reads "complete but unverified": an ARM
-`push {lr}; ... bl ...; pop {pc}` return is on that channel, and its seat
-stands.
+`unverified_seeded_sites` alone reads "complete but unverified": a return
+whose re-check rests on a claim is on that channel, and its seat stands.
 
 - `unresolved_indirect_branches`: a live `IndirectBranch` placeholder, a seated
   `Switch` whose selector no longer derives, a site still growing when the cap

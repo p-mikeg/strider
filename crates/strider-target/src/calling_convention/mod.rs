@@ -37,6 +37,11 @@ pub struct CallingConvention {
     /// on PowerPC, the vector window is appended so the float positions stay
     /// put, and the `*_linux_kernel` flavours drop it.  Empty where floats are
     /// stack-passed (i386 cdecl).
+    ///
+    /// Adding an entry RENUMBERS the `Call`'s flat argument list: every
+    /// collected stack argument moves up one slot, so a public `call().arg(n)`
+    /// query reads a different operand.  `FunctionBuilder::new` also tracks
+    /// each entry on EVERY function, whether or not the function names it.
     arg_passing_regs_float: &'static [&'static str],
     /// Excludes the stack pointer.  The float half matters as much as the
     /// integer one: without the entries covering it, a post-call read of a
@@ -532,10 +537,9 @@ const X86_CDECL_BASE: CallingConvention = CallingConvention {
     // argument.  Its SSE class (`__m128`) is NOT modelled, though the psABI
     // passes the first three such arguments in XMM0-XMM2 (`gcc -m32 -msse2
     // -O2` reads a 4-argument `__m128` function's fourth from `0x4(%esp)`):
-    // naming them here would push every STACK argument three slots up the
-    // `Call`'s flat argument list, renumbering `arg(n)` on an arch whose
-    // arguments are otherwise all stack-passed.  A callee still reads its own
-    // XMM0-2 correctly; only a caller's vector argument setup goes unrooted.
+    // naming them here would renumber `arg(n)` on an arch whose arguments are
+    // otherwise all stack-passed.  A callee still reads its own XMM0-2
+    // correctly; only a caller's vector argument setup goes unrooted.
     arg_passing_regs_float: &[],
     callee_saved_regs: &["EBX", "ESI", "EDI", "EBP"],
     ret_val_regs: &["EAX", "EDX"],
@@ -565,9 +569,8 @@ const X86_CDECL_BASE: CallingConvention = CallingConvention {
 /// to them, for the `*_linux_kernel` flavours: a PowerPC Linux kernel is built
 /// `-mno-altivec -mno-vsx`, so no vector register carries an argument or a
 /// result there.  Naming them anyway would seed twelve 16-byte varnodes on
-/// every function (`FunctionBuilder::new` tracks every argument and return
-/// register) and push each collected stack argument twelve slots up the
-/// `Call`'s flat argument list.
+/// every function and renumber `arg(n)`, neither of which the kernel's own
+/// code can produce.
 const PPC32_SCALAR_ARGS_F: &[&str] = &["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"];
 const PPC64_SCALAR_ARGS_F: &[&str] = &[
     "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13",

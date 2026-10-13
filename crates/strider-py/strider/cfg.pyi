@@ -176,8 +176,7 @@ class Cfg:
 
         The answer to "may this be incomplete?", which none of the six gives
         alone. `False` is not always a loss: `unverified_seeded_sites` holds
-        answers that are complete but unverified, and an ARM
-        `push {lr}; ... bl ...; pop {pc}` return is one of them, since its
+        answers that are complete but unverified, among them a return whose
         re-check rests on `assumptions.return_slots_survive_untracked_writes`
         instead of proving the seat. `False` over that channel alone reads
         "complete but unverified". Read whichever channel is non-empty to tell
