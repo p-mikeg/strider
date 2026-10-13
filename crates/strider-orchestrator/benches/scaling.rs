@@ -91,7 +91,7 @@ fn target_of(
 
 /// Decoding from inside an already-decoded function is what the fixtures'
 /// symbol addresses do, so both entry points below allow it.
-const CFG_OPTS: fn() -> strider_cfg::CfgOptions = || strider_cfg::CfgOptions {
+const CFG_OPTS: fn() -> strider_cfg::CfgOptions<'static> = || strider_cfg::CfgOptions {
     allow_code_before_start_addr: true,
     ..Default::default()
 };

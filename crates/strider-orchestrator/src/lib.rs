@@ -3,6 +3,7 @@ pub use strider_opt as opt;
 pub use strider_lift::LiftOptions;
 pub use strider_lift::lift::{LiftOutcome, Lifter};
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use rustc_hash::FxHashMap;
@@ -134,29 +135,26 @@ where
         &mut self,
         entry: u64,
         cc: &strider_target::BuiltCallingConvention,
-        lift_opts: &LiftOptions,
+        lift_opts: &LiftOptions<'_>,
         opt_opts: &OptOptions,
         pipeline: Option<strider_opt::OptimizerPipeline>,
     ) -> Result<AnalyzeResult> {
         // Built once and reused across re-lifts (`run` takes `&self`).
         let pipeline = &with_classify(pipeline.unwrap_or_else(strider_opt::default_pipeline));
         let start_addr = MachineInsnAddr::from(entry);
-        // Carried across iterations; only `known_targets` mutates. Seeded from
-        // the caller's answers, which the loop then grows: `apply_resolutions`
-        // re-unions the seed every round. A seed asserts the site is settled,
-        // which suppresses the report of an unclassifiable seated `Switch`
-        // until the site outgrows the seed; it does not suppress a loss of what
-        // the classifier derives, nor a live placeholder.
-        let mut working = LiftOptions {
-            // Cloned whole: naming the fields here would silently drop any
-            // field added to `CfgOptions` later from the whole re-lift loop.
-            cfg: lift_opts.cfg.clone(),
-            per_address_ccs: lift_opts.per_address_ccs.clone(),
-            // Finalize-only knob; the post-loop step reads
-            // `lift_opts.compact` directly. Pinned false so no future edit
-            // can read a stale duplicate off `working`.
-            compact: false,
-        };
+        // The seat set the loop works on, carried across iterations. Seeded
+        // from the caller's answers, which the loop then grows:
+        // `apply_resolutions` re-unions the seed every round. A seed asserts
+        // the site is settled, which suppresses the report of an
+        // unclassifiable seated `Switch` until the site outgrows the seed; it
+        // does not suppress a loss of what the classifier derives, nor a live
+        // placeholder.
+        //
+        // Copy-on-write: a function with nothing to resolve never copies the
+        // caller's table, which a whole-binary seed makes O(binary) per
+        // analysis.
+        let mut working_targets: Cow<'_, FxHashMap<PcodeInsnAddr, ResolvedTargets>> =
+            Cow::Borrowed(lift_opts.cfg.known_targets);
 
         let (
             mut cfg,
@@ -165,7 +163,13 @@ where
             mut switch_anchors,
             mut resolutions,
             mut returns,
-        ) = self.build_lift(start_addr, cc, &working, opt_opts, pipeline)?;
+        ) = self.build_lift(
+            start_addr,
+            cc,
+            &working_opts(lift_opts, &working_targets),
+            opt_opts,
+            pipeline,
+        )?;
         // Snapshotted in lockstep with `function`, and BEFORE `resolutions` is
         // moved into `apply_resolutions`. Read off the function, not the
         // classification map, which any post-pass can rewrite.
@@ -183,8 +187,7 @@ where
         // carries the sites the loop abandoned, which take no further
         // classification and whose seat is removed or cut down to the arms
         // that survived.
-        let mut derived_incomplete: Vec<PcodeInsnAddr> =
-            seated_arm_losses(&cfg, &working.cfg.known_targets);
+        let mut derived_incomplete: Vec<PcodeInsnAddr> = seated_arm_losses(&cfg, &working_targets);
         let mut still_growing: Vec<PcodeInsnAddr> = Vec::new();
         // Sticky: the flag fires on the round that seats the guessed arm, and
         // every later round finds that arm already in `known_targets` and so
@@ -216,7 +219,7 @@ where
             cfg.isa_mode_conflicts(),
             &DispatchAnchors::new(&cfg),
             &mut abandoned,
-            &mut working.cfg.known_targets,
+            &mut working_targets,
         );
         // `cfg` was built from the seats just stripped, so it still carries
         // them. Converging on it would publish a `Switch` at a site the report
@@ -241,8 +244,8 @@ where
             }
             let flowing = flowing_isa_bits(&cfg, &unresolved, &switch_anchors);
             let progress = apply_resolutions(
-                &mut working.cfg.known_targets,
-                &lift_opts.cfg.known_targets,
+                working_targets.to_mut(),
+                lift_opts.cfg.known_targets,
                 &unresolved,
                 &switch_anchors,
                 // Taken, not cloned: every `break` out of this loop sets
@@ -261,7 +264,7 @@ where
                 // so no member of the cycle is trustworthy: stop resolving the
                 // site, rather than failing the function.
                 if *seen > 1 && !abandoned.contains(addr) {
-                    abandon_site(&mut working.cfg.known_targets, &mut abandoned, *addr);
+                    abandon_site(working_targets.to_mut(), &mut abandoned, *addr);
                     derived_incomplete.push(*addr);
                 }
             }
@@ -278,20 +281,26 @@ where
                 switch_anchors,
                 resolutions,
                 returns,
-            ) = self.build_lift(start_addr, cc, &working, opt_opts, pipeline)?;
+            ) = self.build_lift(
+                start_addr,
+                cc,
+                &working_opts(lift_opts, &working_targets),
+                opt_opts,
+                pipeline,
+            )?;
             live_indirect = live_dispatch_sites(&function);
             // BEFORE `abandon_undecodable`, which drops the site or its bad
             // arms from `known_targets`, the map `seated_arm_losses` looks the
             // site up in. Reversed, every site abandoned this round loses its
             // arm-loss report, and for a classifier-derived table that is the
             // only channel that fires.
-            derived_incomplete.extend(seated_arm_losses(&cfg, &working.cfg.known_targets));
+            derived_incomplete.extend(seated_arm_losses(&cfg, &working_targets));
             let mut dropped_seats = abandon_undecodable(
                 cfg.undecodable_seeded_targets(),
                 cfg.isa_mode_conflicts(),
                 &DispatchAnchors::new(&cfg),
                 &mut abandoned,
-                &mut working.cfg.known_targets,
+                &mut working_targets,
             );
             seats_stale = !dropped_seats.is_empty();
             derived_incomplete.append(&mut dropped_seats);
@@ -312,11 +321,11 @@ where
         // grew past its seed "exactly the seed".
         let mut final_targets = None;
         if !converged {
-            let mut folded = working.cfg.known_targets.clone();
+            let mut folded = (*working_targets).clone();
             let flowing = flowing_isa_bits(&cfg, &unresolved, &switch_anchors);
             let progress = apply_resolutions(
                 &mut folded,
-                &lift_opts.cfg.known_targets,
+                lift_opts.cfg.known_targets,
                 &unresolved,
                 &switch_anchors,
                 resolutions,
@@ -334,14 +343,14 @@ where
         }
 
         let budget_exhausted: &[PcodeInsnAddr] = if converged { &[] } else { &still_growing };
-        let settled = final_targets.as_ref().unwrap_or(&working.cfg.known_targets);
+        let settled = final_targets.as_ref().unwrap_or(&working_targets);
 
         let mut unresolved_indirect_branches = live_unresolved_branches(
             &live_indirect,
             &unresolved,
             &switch_anchors,
             &unclassified,
-            &lift_opts.cfg.known_targets,
+            lift_opts.cfg.known_targets,
             settled,
             DerivedChannels {
                 budget_exhausted,
@@ -356,7 +365,7 @@ where
         // rides this channel.
         returns.unverified.retain(|addr| {
             !matches!(
-                seed_for(&lift_opts.cfg.known_targets, *addr),
+                seed_for(lift_opts.cfg.known_targets, *addr),
                 Some(ResolvedTargets::LinkRegister)
             )
         });
@@ -367,7 +376,7 @@ where
             &cfg,
             &switch_anchors,
             &unclassified,
-            &lift_opts.cfg.known_targets,
+            lift_opts.cfg.known_targets,
             settled,
         );
         // Derived once from the final cfg, then extended with the rounds'
@@ -424,7 +433,7 @@ where
         &mut self,
         start_addr: MachineInsnAddr,
         cc: &strider_target::BuiltCallingConvention,
-        working: &LiftOptions,
+        working: &LiftOptions<'_>,
         opt_opts: &OptOptions,
         pipeline: &strider_opt::OptimizerPipeline,
     ) -> Result<(
@@ -446,7 +455,7 @@ where
 
         // A `BranchIndirect` outside `known_targets` is deferred here and
         // resolved at the full-function IR level by the classifier post-pass.
-        let cfg = lifter.build_cfg(start_addr, &working.cfg, &working.per_address_ccs)?;
+        let cfg = lifter.build_cfg(start_addr, &working.cfg, working.per_address_ccs)?;
         // `cc` is moved all the way into `Function::default_cc`, but the
         // resolve loop calls this again on the next re-lift, so the clone is
         // unavoidable here.
@@ -1050,6 +1059,26 @@ fn merge_isa_bit(a: Option<bool>, b: Option<bool>) -> Option<Option<bool>> {
     }
 }
 
+/// The caller's options over the loop's own seat set, with compaction pinned
+/// off: the post-loop finalize step reads `lift_opts.compact` directly, so no
+/// future edit can read a stale duplicate here.
+///
+/// Cloned whole: naming the other fields would silently drop any field added
+/// to [`strider_cfg::CfgOptions`] later from the whole re-lift loop.
+fn working_opts<'t>(
+    lift_opts: &'t LiftOptions<'t>,
+    known_targets: &'t FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+) -> LiftOptions<'t> {
+    LiftOptions {
+        cfg: strider_cfg::CfgOptions {
+            known_targets,
+            ..lift_opts.cfg.clone()
+        },
+        per_address_ccs: lift_opts.per_address_ccs,
+        compact: false,
+    }
+}
+
 /// Stops the loop resolving `site`, dropping its seat.
 ///
 /// Both keys go, and both are marked: a caller can only spell the MACHINE
@@ -1151,7 +1180,7 @@ fn abandon_undecodable(
     clashing_targets: &[PcodeInsnAddr],
     dispatch_anchors: &DispatchAnchors,
     abandoned: &mut rustc_hash::FxHashSet<PcodeInsnAddr>,
-    known_targets: &mut FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    known_targets: &mut Cow<'_, FxHashMap<PcodeInsnAddr, ResolvedTargets>>,
 ) -> Vec<PcodeInsnAddr> {
     let addrs = |sites: &[PcodeInsnAddr]| -> rustc_hash::FxHashSet<u64> {
         sites.iter().map(|a| a.machine_addr.addr).collect()
@@ -1221,9 +1250,9 @@ fn abandon_undecodable(
             abandoned.insert(key);
         }
         if kept.is_empty() {
-            known_targets.remove(&site);
+            known_targets.to_mut().remove(&site);
         } else {
-            known_targets.insert(site, resolved_from(kept));
+            known_targets.to_mut().insert(site, resolved_from(kept));
         }
         // The anchor, not the entry's key: an address no anchor in this run
         // uses would ride into `unresolved_indirect_branches` naming nothing.
@@ -2653,6 +2682,7 @@ mod tests {
         known.insert(site, multiple(&[(0x2000, None), (0x9000, None)]));
         let mut abandoned = rustc_hash::FxHashSet::default();
 
+        let mut known = Cow::Owned(known);
         let hit = abandon_undecodable(
             &[undecodable(site, 0x9000)],
             &[],
@@ -2681,6 +2711,7 @@ mod tests {
         known.insert(other, multiple(&[(0x9000, None)]));
         let mut abandoned = rustc_hash::FxHashSet::default();
 
+        let mut known = Cow::Owned(known);
         let hit = abandon_undecodable(
             &[undecodable(bad, 0x9000)],
             &[],
@@ -2710,6 +2741,7 @@ mod tests {
         );
         let mut abandoned = rustc_hash::FxHashSet::default();
 
+        let mut known = Cow::Owned(known);
         let hit = abandon_undecodable(
             &[],
             &[pcode_addr(0x3000)],
@@ -2740,6 +2772,7 @@ mod tests {
         known.insert(start, multiple(&[(0x2000, None), (0x3000, None)]));
         let mut abandoned = rustc_hash::FxHashSet::default();
 
+        let mut known = Cow::Owned(known);
         let hit = abandon_undecodable(
             &[],
             &[pcode_addr(0x3000)],
@@ -2767,6 +2800,7 @@ mod tests {
         );
         let mut abandoned = rustc_hash::FxHashSet::default();
 
+        let mut known = Cow::Owned(known);
         let hit = abandon_undecodable(
             &[],
             &[pcode_addr(0x3000)],
@@ -2787,6 +2821,7 @@ mod tests {
         known.insert(pcode_addr(0x5000), ResolvedTargets::LinkRegister);
         let mut abandoned = rustc_hash::FxHashSet::default();
 
+        let mut known = Cow::Owned(known);
         let hit = abandon_undecodable(
             &[undecodable(pcode_addr(0x7000), 0x9000)],
             &[pcode_addr(0x8000)],

@@ -29,7 +29,7 @@ fn an_arm_the_cfg_cannot_seat_is_reported_unresolved() {
     );
     let lift_opts = LiftOptions {
         cfg: CfgOptions {
-            known_targets: known,
+            known_targets: &known,
             ..CfgOptions::default()
         },
         ..LiftOptions::default()

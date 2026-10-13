@@ -428,7 +428,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             cc,
             cfg,
             all_vns,
-            &opts.per_address_ccs,
+            opts.per_address_ccs,
             &opts.cfg.call_other_overrides,
         )?;
 

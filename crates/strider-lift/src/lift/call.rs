@@ -206,7 +206,7 @@ mod tests {
         let reader = rsleigh::mem_readers::BufMemReader::new(code, 0x1000);
         let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)?;
         let mut lifter = crate::lift::Lifter::new(arch, sleigh)?;
-        let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg, &opts.per_address_ccs)?;
+        let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg, opts.per_address_ccs)?;
         Ok(lifter.build_ir_with(&cfg, cc, opts)?.function)
     }
 
@@ -316,7 +316,7 @@ mod tests {
         let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)?;
         let mut lifter = crate::lift::Lifter::new(arch, sleigh)?;
         let cc = strider_target::CallingConvention::powerpc_sysv32().build(lifter.sleigh_regs())?;
-        let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg, &opts.per_address_ccs)?;
+        let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg, opts.per_address_ccs)?;
         Ok(lifter.build_ir_with(&cfg, cc, opts)?.function)
     }
 

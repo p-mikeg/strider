@@ -3,6 +3,7 @@
 //! instead of failing the whole function.
 
 use rsleigh::mem_readers::BufMemReader;
+use rustc_hash::FxHashMap;
 use strider_cfg::{Builder, Cfg, CfgOptions, PcodeInsnAddr, RegionTerminator, ResolvedTargets};
 use strider_target::SleighArch;
 
@@ -15,11 +16,14 @@ fn build(bytes: &[u8], arms: &[u64]) -> anyhow::Result<Cfg> {
     let mut sleigh =
         rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), BufMemReader::new(code, BASE))
             .expect("create Sleigh");
-    let mut opts = CfgOptions::default();
-    opts.known_targets.insert(
+    let known = FxHashMap::from_iter([(
         PcodeInsnAddr::at_machine_start(BASE),
         ResolvedTargets::Multiple(arms.iter().map(|&a| a.into()).collect()),
-    );
+    )]);
+    let opts = CfgOptions {
+        known_targets: &known,
+        ..CfgOptions::default()
+    };
     Builder::for_arch(&arch, &mut sleigh, BASE, &opts).build()
 }
 
@@ -165,11 +169,14 @@ fn undecodable_bytes_reached_without_an_arm_still_fail_the_function() {
         BufMemReader::new(bytes.to_vec(), BASE),
     )
     .expect("create Sleigh");
-    let mut opts = CfgOptions::default();
-    opts.known_targets.insert(
+    let known = FxHashMap::from_iter([(
         PcodeInsnAddr::at_machine_start(0x1002),
         ResolvedTargets::Multiple(vec![0x1004.into(), 0x1007.into()]),
-    );
+    )]);
+    let opts = CfgOptions {
+        known_targets: &known,
+        ..CfgOptions::default()
+    };
     assert!(
         Builder::for_arch(&arch, &mut sleigh, BASE, &opts)
             .build()
@@ -186,16 +193,17 @@ fn build_sites(bytes: &[u8], size: u64, sites: &[(u64, &[u64])]) -> anyhow::Resu
         BufMemReader::new(bytes.to_vec(), BASE),
     )
     .expect("create Sleigh");
-    let mut opts = CfgOptions {
-        fn_max_size: Some(size),
-        ..CfgOptions::default()
-    };
-    for &(site, arms) in sites {
-        opts.known_targets.insert(
+    let known = FxHashMap::from_iter(sites.iter().map(|&(site, arms)| {
+        (
             PcodeInsnAddr::at_machine_start(site),
             ResolvedTargets::Multiple(arms.iter().map(|&a| a.into()).collect()),
-        );
-    }
+        )
+    }));
+    let opts = CfgOptions {
+        fn_max_size: Some(size),
+        known_targets: &known,
+        ..CfgOptions::default()
+    };
     Builder::for_arch(&arch, &mut sleigh, BASE, &opts).build()
 }
 
@@ -322,17 +330,18 @@ fn an_edge_decoded_off_an_arm_does_not_take_bytes_an_earlier_arm_decoded() {
     let flow = FlowVars::discover(&sleigh).unwrap();
     sleigh.set_context_at(base, "TMode", 0).unwrap();
     let mode = flow.snapshot(&sleigh, base);
-    let mut opts = CfgOptions {
-        fn_max_size: Some(0x20),
-        ..CfgOptions::default()
-    };
-    opts.known_targets.insert(
+    let known = FxHashMap::from_iter([(
         PcodeInsnAddr::at_machine_start(base),
         ResolvedTargets::Multiple(vec![
             ResolvedTarget::new(0x10004, Some(true)),
             ResolvedTarget::new(0x10008, None),
         ]),
-    );
+    )]);
+    let opts = CfgOptions {
+        fn_max_size: Some(0x20),
+        known_targets: &known,
+        ..CfgOptions::default()
+    };
     let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
         .with_flow_context(&flow, mode)
         .build()

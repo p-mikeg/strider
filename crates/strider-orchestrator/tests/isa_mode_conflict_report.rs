@@ -59,7 +59,7 @@ fn a_conflict_one_round_raised_survives_a_later_round_that_does_not() {
     );
     let lift_opts = LiftOptions {
         cfg: CfgOptions {
-            known_targets: known,
+            known_targets: &known,
             ..CfgOptions::default()
         },
         ..LiftOptions::default()

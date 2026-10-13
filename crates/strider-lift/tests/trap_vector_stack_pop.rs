@@ -22,7 +22,7 @@ fn call_stack_pop(bytes: Vec<u8>) -> Option<u128> {
         .expect("systemv");
     let opts = LiftOptions::default();
     let cfg = lifter
-        .build_cfg(0x1000u64.into(), &opts.cfg, &opts.per_address_ccs)
+        .build_cfg(0x1000u64.into(), &opts.cfg, opts.per_address_ccs)
         .expect("cfg");
     let f = lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function;
 

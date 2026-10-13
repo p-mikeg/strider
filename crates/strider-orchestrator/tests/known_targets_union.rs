@@ -37,7 +37,7 @@ fn arms_with(
     }
     let opts = strider_orchestrator::LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            known_targets: known,
+            known_targets: &known,
             ..Default::default()
         },
         ..Default::default()
@@ -158,7 +158,7 @@ fn x64_main_with_seed(seed: Vec<u64>) -> (Vec<u64>, Vec<PcodeInsnAddr>, Vec<Pcod
     );
     let opts = strider_orchestrator::LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            known_targets: known,
+            known_targets: &known,
             ..Default::default()
         },
         ..Default::default()
@@ -204,7 +204,7 @@ fn a_seeded_site_is_still_reported_unverified_with_resolution_off() {
     );
     let opts = strider_orchestrator::LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            known_targets: known,
+            known_targets: &known,
             ..Default::default()
         },
         ..Default::default()

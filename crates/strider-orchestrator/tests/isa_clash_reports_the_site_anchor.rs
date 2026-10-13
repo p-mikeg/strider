@@ -77,7 +77,7 @@ fn a_clash_on_a_machine_start_seed_is_reported_at_the_branchind_anchor() {
     );
     let lift_opts = LiftOptions {
         cfg: CfgOptions {
-            known_targets: known,
+            known_targets: &known,
             ..CfgOptions::default()
         },
         ..LiftOptions::default()

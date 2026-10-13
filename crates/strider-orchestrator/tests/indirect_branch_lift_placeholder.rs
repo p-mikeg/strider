@@ -148,7 +148,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
 
     let cfg_opts2 = strider_cfg::CfgOptions {
         fn_max_size: Some(0x100),
-        known_targets: known,
+        known_targets: &known,
         ..Default::default()
     };
     let cfg = strider
@@ -252,7 +252,7 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
 
     let cfg_opts2 = strider_cfg::CfgOptions {
         fn_max_size: Some(0x100),
-        known_targets: known,
+        known_targets: &known,
         ..Default::default()
     };
     let cfg = strider
