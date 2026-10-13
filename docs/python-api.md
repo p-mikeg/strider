@@ -26,8 +26,10 @@ strider.__version__
 
 ```python
 prog = strider.lift.load_elf("fixtures/out/x86/switch.elf")
-# Detects the architecture and calling convention from the ELF header.
-# Override for kernels or custom ABIs:
+# Detects the architecture and calling convention from the ELF header. A
+# PowerPC kernel image is detected too, by an e_entry at or above KERNELBASE.
+# Override for another kernel ABI (x86's has no header bit to read) or a
+# custom one:
 #   load_elf(path, arch=sleigh.SleighArch.x86_64(), cc=sleigh.CallingConvention.x86_64_systemv())
 # from_segments=True (default) walks PT_LOAD; False forces per-section regions.
 # apply_relocations=True (default) patches relocations in place, and also
@@ -36,6 +38,8 @@ prog = strider.lift.load_elf("fixtures/out/x86/switch.elf")
 # relocated_got_is_rom=True additionally serves .got / .data.rel.ro as
 # READ-ONLY memory, so a load through a GOT slot folds. Off by default: it
 # claims no slot is rewritten once the loader has run, which nothing checks.
+# It is refused with apply_relocations=False, which denies that same claim:
+# the slots would read as their on-disk bytes, 0 on a PIE.
 ```
 
 `load_elf` returns an `ElfLifter`: a lifter that also carries the symbol table,
@@ -451,7 +455,11 @@ return value when nested as a value), `.output(slot)` (a specific output).
 
 A call's float arguments come after its integer ones: on x86-64 SysV `.arg(6)`
 is XMM0, the first float argument, since the convention declares six integer
-argument registers. The incoming-argument patterns (`function_arg` /
+argument registers. A vector window, where the convention has one, follows the
+floats, and collected stack arguments follow all of them, so the index depends
+on the convention in force: the first stack argument is `8+25` under the
+userland PPC64 presets and `8+13` under their `*_linux_kernel` flavours, which
+name no vector register. The incoming-argument patterns (`function_arg` /
 `function_arg_float`) index the two classes separately.
 
 If slots: `.cond(p)`, `.ctrl(p)`, `.true_branch(p)` / `.false_branch(p)` (what
@@ -459,8 +467,10 @@ an edge leads to), `.capture_true(c)` / `.capture_false(c)` (bind the edge for
 constraints).
 
 A query refuses a pattern of more than 256 nodes, counting those nested through
-`.true_branch` / `.false_branch`, and one nested deeper than the thread's stack
-allows: both raise `StriderError`.
+`.true_branch` / `.false_branch` and counting a shared sub-pattern once per
+slot that reaches it, and one nested deeper than the thread's stack allows:
+both raise `StriderError`. An alternation counts as its deepest arm, since the
+arms are alternatives rather than operands.
 
 ### The shared builder vocabulary
 
@@ -918,7 +928,9 @@ when all of them are empty:
   only your `known_targets`, every site the CFG consumed as a tail call, and a
   site consumed as a return because your own `"return"` seat consumed it, so a
   seeded ARM `pop {pc}` epilogue lands here and not in `unresolved`. A return
-  the classifier derived is re-checked each round instead.
+  the classifier derived is re-checked each round instead, and lands here only
+  where that re-check needs
+  `assumptions.return_slots_survive_untracked_writes`.
 - `cfg.isa_mode_conflicts()`: addresses two paths reached in different ISA
   modes. Always empty outside the four 32-bit ARM and four MIPS presets.
 - `cfg.interior_branch_targets()`: branch targets off every instruction
