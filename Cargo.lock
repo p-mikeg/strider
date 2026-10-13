@@ -1273,6 +1273,7 @@ name = "strider-ir-test-utils"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "cranelift-entity",
  "proptest",
  "rsleigh",
  "strider-ir",
