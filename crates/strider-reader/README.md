@@ -25,9 +25,12 @@ not read a mapping the program can write.
   `elf_get_loadable_regions(&file)` serves a caller holding only a parsed file,
   copying each mapping.
 - Section helpers under `elf::`: `RegionSource` / `LoadFilter` pick what a
-  region set is cut from, `ElfSectionLayout` lays out an ET_REL's colliding
-  sections and mints each undefined symbol's `extern_address`, `OpdTable`
-  resolves a ppc64 ELFv1 function symbol through its `.opd` descriptor, and
+  region set is cut from; `ImmutableAndRelocatedGot` requires `relocate`, that
+  being the claim it makes, and serves only a `.got` / `.data.rel.ro` the
+  loader really maps writable. `ElfSectionLayout` lays out an ET_REL's
+  colliding sections and mints each undefined symbol's `extern_address`,
+  `OpdTable` resolves a ppc64 ELFv1 function symbol through its `.opd`
+  descriptor, and
   `mapping_symbol_data_ranges` turns an ARM or AArch64 image's `$d` marks into
   the data ranges a CFG build must not decode. The relocation machinery itself
   is crate-private; it is reached through `OwnedElf::regions(.., relocate)`.

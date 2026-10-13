@@ -107,9 +107,11 @@ Strider:
   policy. `Pat` is the Python class, not a Rust type. Both recursion limits are
   `MAX_PATTERN_NODES` (256, `matcher/graph.rs`): a pattern over that many nodes
   tree-unfolded, so a shared sub-pattern counts once per consumer and the nodes
-  of `IfPat::with_true` / `with_false` branch patterns count too, and
-  operands or alternations nested that deep (or past a 1 MiB lowering stack
-  budget, `MAX_PATTERN_STACK`) are refused through the reject channel
+  of `IfPat::with_true` / `with_false` branch patterns count too, while an
+  alternation costs its DEEPEST arm, its inputs being alternatives run one at a
+  time with the frame unwound between them, and operands or alternations nested
+  that deep (or past a 1 MiB lowering stack budget, `MAX_PATTERN_STACK`) are
+  refused through the reject channel
   (`Pattern.root: Result<NodeId, String>`, surfaced by `Pattern::root()`), not
   by overflowing the stack. `MatcherBuilder::finish` reports a cyclic wiring
   through the same channel. `TemplatePat` is implemented for `Captured<P>` only

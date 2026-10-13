@@ -284,7 +284,9 @@ Rendering:
 - `OwnedElf::function_entry` is gone; build an `OpdTable` over a
   `checked_file` instead, which is what every caller already did.
 - `elf::LoadFilter` gains `ImmutableAndRelocatedGot`, so a match over it stops
-  compiling.
+  compiling. `OwnedElf::regions` errors for that filter with `relocate=false`:
+  the filter claims the loader has relocated `.got` / `.data.rel.ro`, which
+  `relocate=false` denies.
 - `BuiltCallingConvention` gains `entry_address_vn`, the register an ABI
   guarantees holds the function's own entry address on entry to it (PPC64
   ELFv2 `r12`, MIPS abicalls `t9`), which the lift binds to the entry address;
@@ -312,8 +314,13 @@ Rendering:
 - `load_elf(relocated_got_is_rom=True)` / `add_elf(relocated_got_is_rom=True)`
   serve `.got` and `.data.rel.ro` as read-only memory, so a load through a GOT
   slot folds to the address it holds. Off by default: it is a claim about the
-  runtime that the image cannot prove. `.got.plt` is never served, lazy
-  binding rewriting those slots.
+  runtime that the image cannot prove. Only a section of those names the loader
+  really maps writable is served; `.got.plt` never is, lazy binding rewriting
+  those slots. The flag with `apply_relocations=False` is refused: the claim is
+  that the loader has relocated those slots, which the other flag denies, and
+  served anyway a slot reads as its on-disk bytes, 0 on a PIE where the address
+  lives in the relocation addend, so a dispatch folds to `iconst[0x0]` with
+  nothing reported unresolved.
 - `LifterOptions(assumptions=AssumptionOptions(...))` tunes memory precision;
   [docs/python-api.md](docs/python-api.md#2-analyzing-a-function) says what
   each claim buys. `AssumptionOptions.none()` makes none of them.
@@ -358,6 +365,13 @@ Rendering:
   or an i386 PC thunk needs its own `per_address_ccs` entry, built with
   `CallingConvention.custom(..., ret_stack_pop=4 + imm16)` or with the thunk's
   register left out of `callee_saved_regs`.
+- `CallingConvention.powerpc_sysv32_linux_kernel()`,
+  `powerpc64_elf_v1_linux_kernel()` and `powerpc64_elf_v2_linux_kernel()`, the
+  kernel-internal PowerPC flavours, which name no vector register.
+  `load_elf` picks one when `e_entry` is at or above `KERNELBASE`
+  (`0xc000_0000` on ppc32, `0xc000_0000_0000_0000` on ppc64), independently of
+  the ELFv1/ELFv2 choice. x86's kernel ABI has no header bit to read and still
+  needs an explicit `cc=`.
 - `CfgOptions(call_other_abis={name: CallOtherAbi})` reclassifies a Sleigh
   user-op: `CallOtherAbi.noop()` / `pure()` / `mem_clobber()` / `no_return()`,
   or `CallOtherAbi.custom(sleigh, implicit_reads=, implicit_writes=,
@@ -582,8 +596,9 @@ Lifting and memory:
   alone on x86 and x86-64, where the SDM leaves the rest of the container as it
   was: the output was widened to the container and written whole, so
   `mov eax,0x12345678; in ax,dx; shr eax,16; ret` returned a shift of the
-  intrinsic's opaque result instead of `0x1234`. Every other architecture
-  redefines those bytes without the sla saying so, and keeps the
+  intrinsic's opaque result instead of `0x1234`. Decided per register file:
+  every other architecture redefines those bytes without the sla saying so, and
+  so does an x86 MMX write to its enclosing 10-byte x87 `ST`, so both keep the
   whole-container clobber.
 - A calling convention names the register holding the function's own entry
   address (PPC64 ELFv2 `r12`, MIPS abicalls `t9`) and the lift binds it, so
@@ -605,11 +620,18 @@ Lifting and memory:
   PPC64 stack-argument base is 112 bytes on ELFv1 and 96 on ELFv2, where every
   PPC64 stack argument was read at the wrong offset.
 - A callee-saved `d8`-`d15` preserves 64 bits, not the whole `q` register.
-- The PowerPC conventions pass vector arguments in `v2`-`v13` and return a
-  vector in `v2` (ELFv2 a homogeneous vector aggregate in `v2`-`v9`), where no
-  preset named a vector register at all and DCE deleted every AltiVec/VSX
-  result and every caller's vector argument setup. An ELFv2 `__float128` or
-  IEEE `long double` return comes back in `v2` too.
+- The USERLAND PowerPC conventions pass vector arguments in `v2`-`v13` and
+  return a vector in `v2` (ELFv2 a homogeneous vector aggregate in `v2`-`v9`),
+  where no preset named a vector register at all and DCE deleted every
+  AltiVec/VSX result and every caller's vector argument setup. An ELFv2
+  `__float128` or IEEE `long double` return comes back in `v2` too. The three
+  `*_linux_kernel` flavours name no part of it, PowerPC Linux being built
+  `-mno-altivec -mno-vsx`, so a function that never touches a vector seeds no
+  16-byte varnode. The window follows the float one, so under the userland
+  presets a collected stack argument's `call().arg(n)` moves up: the first is
+  `8+25` on PPC64 and `8+20` on PPC32, where it was `8+13` and `8+8`. The
+  kernel flavours move no float or integer position, so `arg(n)` numbers below
+  the window as before.
 - `BuiltCallingConvention::validate` rejects a stack-pointer SUB-register in a
   register list, as its byte-level disjointness rule always claimed; `ESP`
   beside `RSP` was accepted and made the stack pointer `arg 0`.
@@ -668,7 +690,11 @@ Optimizer and analysis:
   machinery a load's address goes through, so a write through a frame pointer
   reloaded off the stack is checked against the saved slot. What is left, a
   store at no locatable stack address and any callee or user-op, is the claim
-  `AssumptionOptions::return_slots_survive_untracked_writes` carries.
+  `AssumptionOptions::return_slots_survive_untracked_writes` carries. A guess
+  is not a placement, so it bears on the answer only with that claim cleared:
+  the guess picks one phi arm, and a prologue's own `push lr` through a merged
+  SP otherwise read as a write to the return slot, which reported a genuine
+  return.
 
 Indirect branches and the CFG:
 
@@ -707,6 +733,12 @@ Indirect branches and the CFG:
   each round's IR.
 - A return a CALLER seeded is reported on `unverified_seeded_sites` alone; it
   was also reported as an unverified return, which the caller had asserted.
+- A `Return` the CLASSIFIER seated rides `unverified_seeded_sites` when only
+  `return_slots_survive_untracked_writes` carried its proof. Each seat is
+  re-verified with that claim cleared, so a `push {lr}; bl; pop {pc}` no longer
+  comes out complete with every channel empty while the same site reports once
+  the claim is off. The seat stands, so the site is still a return rather than
+  an unresolved dispatch.
 - A region starting mid-machine-instruction keeps the decode context those
   bytes were lifted in: the region-start reset re-decoded the instruction the
   region continues and spliced a second constructor's p-code onto the half
@@ -745,9 +777,12 @@ Patterns:
   two fanned-out sub-patterns between operands no longer reports the same match
   twice (`bool_and(float_is_nan(_), float_is_nan(_))` gave two hits on one
   root).
-- A `first_of` cut is scoped to the root attempt rather than to one invocation
-  of the alternation, which made the two mirror spellings of a commutative
-  query answer differently.
+- A `first_of` cut is scoped to the root attempt, and keyed on the IR node the
+  alternation was offered, rather than to one invocation of it. Scoped per
+  invocation, the two mirror spellings of a commutative query answered
+  differently; keyed on the pattern node alone, a commutative ordering or an
+  `any_input` slot re-offering the alternation a DIFFERENT node cut the arm
+  holding the match.
 - `inputs_of_width` checks the matched node's own inputs. Pushing the width
   onto the input producers landed it on an alternation's ARMS and on the far
   side of a cast walked through under `ignore_casts`, so
@@ -759,7 +794,9 @@ Patterns:
   per consumer: the engine walks a vertex's producer once per slot reaching it,
   so a sub-pattern feeding both operands of a chain of adds cost 2^depth walks
   and stack frames, and a 12-node pattern overflowed a 2 MiB thread instead of
-  being refused.
+  being refused. An alternation's inputs are alternatives, run one at a time
+  with the frame unwound between them, so it is charged its DEEPEST arm rather
+  than their sum, which refused patterns the engine runs.
 - An `if_else` branch sub-pattern backtracks into its later bindings, and its
   captures are visible to join constraints; replacing a branch drops the old
   branch's captures.
@@ -947,8 +984,9 @@ mnemonic group. A caller sees these only in the lift of the named instructions.
 - x86 `extractps` and VEX `vpextrw` take their SDM destination forms, and the
   `fsgsbase` and `incssp` register operands require ModRM mod=3.
 - x86-64 `rdfsbase`, `rdgsbase`, `rdpid`, `wrfsbase`, `wrgsbase`, `incssp` and
-  `rdssp` honour `REX.B`; `rdsspd` decodes, and `incssp` no longer truncates
-  its count to a byte.
+  `rdssp` honour `REX.B`; `rdsspd` decodes rather than as a reserved NOP, and
+  `incssp` scales its byte count at the pointer width, where the multiply
+  wrapped inside that byte.
 - x86-64 `VMREAD` / `VMWRITE` take 64-bit operands in long mode, and `GETSEC`
   clears the upper halves of its results.
 - A decode whose own context commit changes a value, an out-of-band context
