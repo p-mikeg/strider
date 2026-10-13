@@ -128,6 +128,10 @@ pub struct AssumptionOptions {
     /// the address spine DOES place is checked against the slot whatever this
     /// says; a guessed location is not a placement, so clearing this is what
     /// brings one in.  Default ON.
+    ///
+    /// The shape that needs it is an ARM `push {lr}; ... bl ...; pop {pc}`
+    /// return: the call in between writes memory the walk cannot place, and
+    /// only this claim carries the walk back to the `lr` spill.
     pub return_slots_survive_untracked_writes: bool,
 }
 
