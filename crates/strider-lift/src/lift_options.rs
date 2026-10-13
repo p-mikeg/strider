@@ -1,7 +1,7 @@
 use rustc_hash::FxHashMap;
 
-/// Shared empty table, so options with no overrides borrow rather than
-/// allocate.
+/// What `Default` lends: it hands out a `&'a`, which it cannot borrow from a
+/// temporary.
 static NO_PER_ADDRESS_CCS: FxHashMap<u64, strider_target::BuiltCallingConvention> =
     FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
 
