@@ -12,7 +12,7 @@ from strider._api import _arch_and_cc_for_elf, _ElfHeader
 
 SRC = "fixtures/out/mips32le/arithmetic.elf"
 
-#: `clang --target=mips64el-linux-gnuabin32 -O2 -c` emits exactly this.
+#: `EF_MIPS_ABI2` plus the O32-shaped arch bits an n32 object carries.
 _N32_FLAGS = 0x8000_0027
 
 

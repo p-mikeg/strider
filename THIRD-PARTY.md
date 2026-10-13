@@ -2,7 +2,7 @@
 
 Strider itself is MIT (see [LICENSE](LICENSE)). The components below are
 redistributed with it: the GHIDRA Sleigh decoder and its Rust bindings are
-compiled into the Python extension module, about sixty Rust crates are linked
+compiled into the Python extension module, sixty Rust crates are linked
 into it statically, and two JavaScript bundles are inlined into every `.html`
 graph as well as compiled in.
 

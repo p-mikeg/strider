@@ -48,7 +48,7 @@ sudo apt install clang lld gcc-i686-linux-gnu \
 ```
 
 Not `gcc-multilib`: it conflicts with the aarch64, arm and powerpc64le cross
-compilers, so the one line above fails to resolve with it in place (checked on
-Ubuntu 22.04). `gcc-i686-linux-gnu` is what the `x86` arches want anyway. On a
+compilers, so the one line above fails to resolve with it in place.
+`gcc-i686-linux-gnu` is what the `x86` arches want anyway. On a
 host without that package they fall back to host `gcc -m32`, which
 `gcc-multilib` supplies, so install it alone there.
