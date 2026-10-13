@@ -430,9 +430,9 @@ Rendering:
 - `strider_reader::elf::{RegionSource, LoadFilter, ElfSectionLayout, OpdTable}`.
 - `ValueType::ALL`, `Strider::{user_op_names, rom, arch}`,
   `dot::DotEmitter::node_raw_label` and `strider_opt::apply_rules_count_with`.
-- `SleighArch::callother_output_is_exact`: whether a `CallOther` output
+- `SleighArch::callother_output_is_exact_in`: whether a `CallOther` output
   narrower than its tracked container leaves the rest of that container alone,
-  true on x86 and x86-64 only.
+  true on x86 and x86-64 outside the x87 register file.
 - `[profile.release]` sets `overflow-checks = true`, so the shipped wheel
   traps on arithmetic overflow.
 
