@@ -34,7 +34,7 @@ fn a_site_the_loop_abandoned_is_republished_without_its_seat() {
     );
     let lift_opts = LiftOptions {
         cfg: CfgOptions {
-            known_targets: known,
+            known_targets: &known,
             ..CfgOptions::default()
         },
         ..LiftOptions::default()

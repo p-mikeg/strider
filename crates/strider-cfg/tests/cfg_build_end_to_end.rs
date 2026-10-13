@@ -698,7 +698,7 @@ fn with_known_targets_link_register_overrides_to_return() {
     known.insert(unresolved_addr, ResolvedTargets::LinkRegister);
 
     let opts = CfgOptions {
-        known_targets: known,
+        known_targets: &known,
         ..CfgOptions::default()
     };
     let cfg_v2 = build_from_bytes_opts(jmp_rax_bytes(), 0x1000, &opts);
@@ -732,7 +732,7 @@ fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
 
     let opts = CfgOptions {
         fn_max_size: Some(0x100),
-        known_targets: known,
+        known_targets: &known,
         ..CfgOptions::default()
     };
     // Must succeed: a mixed Multiple defers via UnresolvedIndirectBranch.
@@ -768,7 +768,7 @@ fn known_single_oob_target_produces_tail_call() {
 
     let opts = CfgOptions {
         fn_max_size: Some(0x100),
-        known_targets: known,
+        known_targets: &known,
         ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(jmp_rax_bytes(), 0x1000, &opts);
@@ -813,7 +813,7 @@ fn known_multiple_in_range_targets_produces_switch() {
 
     let opts = CfgOptions {
         fn_max_size: Some(0x100),
-        known_targets: known,
+        known_targets: &known,
         ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
@@ -853,7 +853,7 @@ fn a_switch_arm_interior_to_a_sibling_arm_is_dropped() {
         ResolvedTargets::Multiple(vec![0x1002.into(), 0x1005.into()]),
     );
     let opts = CfgOptions {
-        known_targets: known,
+        known_targets: &known,
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
@@ -913,7 +913,7 @@ fn a_switch_arm_shadowed_by_an_overlapping_region_is_dropped() {
         ResolvedTargets::Multiple(vec![0x1002.into(), 0x1008.into()]),
     );
     let opts = CfgOptions {
-        known_targets: known,
+        known_targets: &known,
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
@@ -960,7 +960,7 @@ fn a_switch_arm_inside_a_zero_pcode_op_instruction_is_dropped() {
         ResolvedTargets::Multiple(vec![0x1002.into(), 0x1005.into()]),
     );
     let opts = CfgOptions {
-        known_targets: known,
+        known_targets: &known,
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
@@ -1032,7 +1032,7 @@ fn re_imposing_a_context_over_an_it_block_builds() {
             ResolvedTargets::Multiple(vec![target.into()]),
         );
         let opts = CfgOptions {
-            known_targets: known,
+            known_targets: &known,
             ..CfgOptions::default()
         };
         Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)

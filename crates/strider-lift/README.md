@@ -20,9 +20,10 @@ register modelled as an SSA variable.
   (each Sleigh `RETURN`'s pcode address, its `Return` node and the address it
   jumps to, which only a check against the optimised IR can confirm is the
   caller's).
-- `LiftOptions`: the `CfgOptions` to decode with, `per_address_ccs` for direct
-  call targets, and `compact`, which this crate only carries for the
-  orchestrator to read after the pipeline.
+- `LiftOptions<'a>`: the `CfgOptions` to decode with, `per_address_ccs`
+  (borrowed, as `CfgOptions::known_targets` is) for direct call targets, and
+  `compact`, which this crate only carries for the orchestrator to read after
+  the pipeline.
 - `FunctionLifter`, internal: the per-function context holding the
   `FunctionBuilder`, the varnode-to-container map, and the per-instruction
   constant tracker.

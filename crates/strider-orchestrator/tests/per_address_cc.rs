@@ -33,7 +33,7 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
             .unwrap(),
     );
     let lift_opts = LiftOptions {
-        per_address_ccs: overrides,
+        per_address_ccs: &overrides,
         ..LiftOptions::default()
     };
 

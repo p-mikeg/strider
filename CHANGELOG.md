@@ -244,6 +244,16 @@ Rendering:
   value.
 - `CfgOptions` gains public `call_other_overrides` and `data_ranges` fields,
   so a struct literal needs `..Default::default()`.
+- `strider_cfg::CfgOptions<'a>` and `strider_lift::LiftOptions<'a>` carry a
+  lifetime: `CfgOptions::known_targets` is a `&'a FxHashMap<PcodeInsnAddr,
+  ResolvedTargets>` and `LiftOptions::per_address_ccs` a `&'a FxHashMap<u64,
+  BuiltCallingConvention>`, as `Builder::with_per_address_ccs` already was.
+  A struct literal must name a borrow (`known_targets: &known`), and
+  `Default` borrows one shared empty table instead of allocating. Both took
+  their map by value, so every `analyze` with a seeded table copied the whole
+  table twice. `strider_cfg::Builder::for_arch` takes `&'a CfgOptions<'a>`,
+  and code forwarding `LiftOptions::per_address_ccs` to `Lifter::build_cfg`
+  passes it as it stands rather than by reference.
 - `strider_cfg::ResolvedTargets` carries `ResolvedTarget { addr, isa_bit }`, so
   a `known_targets` map needs `ResolvedTarget::from(addr)`.
 - `AnalyzeResult` gains `unverified_seeded_sites`, `interior_branch_targets`,

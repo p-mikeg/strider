@@ -140,7 +140,7 @@ fn switch_with_const_index_collapses_through_default_pipeline() {
         ResolvedTargets::Multiple(target_addrs.clone().into_iter().map(Into::into).collect()),
     );
     let cfg_opts = strider_cfg::CfgOptions {
-        known_targets,
+        known_targets: &known_targets,
         ..Default::default()
     };
     let cfg = strider

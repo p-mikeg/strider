@@ -93,7 +93,7 @@ impl ArmSeed {
 pub struct Builder<'a, R: rsleigh::MemReader> {
     pub(super) sleigh: &'a mut rsleigh::Sleigh<R>,
     pub(super) start_addr: MachineInsnAddr,
-    pub(super) options: &'a CfgOptions,
+    pub(super) options: &'a CfgOptions<'a>,
     /// [`CfgOptions::fn_max_size`] with `Some(0)` read as unbounded: a
     /// zero-length bound would pin every decode at `start_addr`.
     pub(super) fn_max_size: Option<u64>,
@@ -186,7 +186,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         arch: &strider_target::SleighArch,
         sleigh: &'a mut rsleigh::Sleigh<R>,
         start_addr: u64,
-        options: &'a CfgOptions,
+        options: &'a CfgOptions<'a>,
     ) -> Self {
         Self {
             sleigh,
@@ -1081,7 +1081,7 @@ mod tests {
     fn build_cfg(
         bytes: Vec<u8>,
         base: u64,
-        options: &crate::CfgOptions,
+        options: &crate::CfgOptions<'_>,
     ) -> crate::Result<crate::Cfg> {
         let arch = strider_target::SleighArch::x86_64();
         let mut sleigh = make_sleigh_over(bytes, base);
@@ -1332,7 +1332,7 @@ mod tests {
             crate::ResolvedTargets::Multiple(vec![0x1005.into(), 0x1002.into()]),
         );
         let opts = crate::CfgOptions {
-            known_targets,
+            known_targets: &known_targets,
             ..crate::CfgOptions::default()
         };
 
@@ -1381,7 +1381,7 @@ mod tests {
             crate::ResolvedTargets::Multiple(vec![0x1005.into(), 0x100c.into()]),
         );
         let opts = crate::CfgOptions {
-            known_targets,
+            known_targets: &known_targets,
             ..crate::CfgOptions::default()
         };
 
@@ -1412,7 +1412,7 @@ mod tests {
             crate::ResolvedTargets::Multiple(vec![0x1005.into(), 0x1002.into()]),
         );
         let opts = crate::CfgOptions {
-            known_targets,
+            known_targets: &known_targets,
             ..crate::CfgOptions::default()
         };
 
@@ -1442,7 +1442,7 @@ mod tests {
             crate::ResolvedTargets::Multiple(vec![0x1005.into(), 0x1005.into(), 0x1002.into()]),
         );
         let opts = crate::CfgOptions {
-            known_targets,
+            known_targets: &known_targets,
             ..crate::CfgOptions::default()
         };
 
@@ -1539,7 +1539,7 @@ mod tests {
             crate::ResolvedTargets::Multiple(vec![0x1002.into(), 0x9000.into()]),
         );
         let opts = crate::CfgOptions {
-            known_targets,
+            known_targets: &known_targets,
             ..crate::CfgOptions::default()
         };
 
@@ -1573,7 +1573,7 @@ mod tests {
         );
         let opts = crate::CfgOptions {
             fn_max_size: Some(0x10),
-            known_targets,
+            known_targets: &known_targets,
             ..crate::CfgOptions::default()
         };
 
@@ -1607,7 +1607,7 @@ mod tests {
             crate::ResolvedTargets::Multiple(vec![0x1005.into(), 0x100d.into()]),
         );
         let opts = crate::CfgOptions {
-            known_targets,
+            known_targets: &known_targets,
             ..crate::CfgOptions::default()
         };
 
@@ -1691,7 +1691,7 @@ mod tests {
             ]),
         );
         let opts = crate::CfgOptions {
-            known_targets,
+            known_targets: &known_targets,
             ..crate::CfgOptions::default()
         };
         let cfg = super::Builder::for_arch(&arch, &mut sleigh, base, &opts)

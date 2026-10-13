@@ -73,7 +73,7 @@ fn a_split_carries_the_isa_mode_to_the_first_half() {
     );
     let lift_opts = LiftOptions {
         cfg: CfgOptions {
-            known_targets: known,
+            known_targets: &known,
             ..CfgOptions::default()
         },
         ..LiftOptions::default()

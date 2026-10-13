@@ -277,7 +277,7 @@ fn analyze_with_opts(
     let lift_opts = strider_orchestrator::LiftOptions {
         cfg: strider_cfg::CfgOptions {
             allow_code_before_start_addr: true,
-            known_targets: known,
+            known_targets: &known,
             ..Default::default()
         },
         ..strider_orchestrator::LiftOptions::default()
