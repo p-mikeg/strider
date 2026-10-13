@@ -1,6 +1,6 @@
 //! A `CallOther` whose pcode output is a sub-register writes that slice, not
-//! the whole enclosing register: `in ax,dx` leaves RAX bits 16..63 alone, and
-//! widening the output to its container turned them into the intrinsic's
+//! the whole enclosing register: `in ax,dx` leaves RAX bits 16..63 alone,
+//! where widening the output to its container makes them the intrinsic's
 //! opaque result.
 
 use strider_ir::{IRViewer, IRWalker};

@@ -310,9 +310,8 @@ impl SleighArch {
     /// Elsewhere the slice write would read bytes the machine redefines.
     /// AArch64 zeroes them and the fork's sla emits the zext, so a slice write
     /// is sound there, but it reads the incoming register first and that read
-    /// becomes a phantom argument carrier. ARM32, MIPS and PowerPC have not
-    /// been scanned for the class at all. All three keep the whole-container
-    /// clobber, which is opaque rather than wrong.
+    /// becomes a phantom argument carrier. ARM32, MIPS and PowerPC keep the
+    /// whole-container clobber too, which is opaque rather than wrong.
     #[must_use]
     pub fn callother_output_is_exact_in(&self, container: &rsleigh::Vn) -> bool {
         matches!(self.preset, ArchPreset::X86 | ArchPreset::X86_64) && container.size != 10
@@ -547,10 +546,8 @@ mod tests {
         }
     }
 
-    /// Only the arches whose machine preserves the bytes outside a narrower
-    /// pcodeop destination are exact; every other preset keeps the
-    /// whole-container clobber. On x86 the x87 register file is excluded even
-    /// so, since an MMX write redefines the bytes a slice write would preserve.
+    /// The rule on [`super::SleighArch::callother_output_is_exact_in`], pinned
+    /// per preset and over the x87 exclusion within x86.
     #[test]
     fn callother_output_is_exact_only_where_the_machine_preserves_the_rest() {
         use super::ArchPreset;

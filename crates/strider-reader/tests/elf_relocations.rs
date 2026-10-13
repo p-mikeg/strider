@@ -959,8 +959,9 @@ fn overlapping_mappings_load_unrelocated() {
 }
 
 /// An `SHT_REL` `R_386_RELATIVE` keeps `image_base + A` in its own field, so
-/// with the base modelled as 0 the bytes are already right. Recording a hole
-/// over them unserved a read-only `.rodata` table whose every word was correct.
+/// with the base modelled as 0 the bytes are already right and no hole is
+/// recorded over them: a read-only `.rodata` table whose every word is correct
+/// stays served.
 #[test]
 fn an_implicit_addend_relative_in_a_read_only_mapping_serves_its_field() {
     let slot_init = vec![0x88, 0x11, 0x00, 0x00];

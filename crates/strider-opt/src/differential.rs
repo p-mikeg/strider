@@ -465,7 +465,7 @@ impl Gen<'_> {
             }
             10 => self.bor(b, eqab, slt),
             11 => {
-                // thumb
+                // Thumb's carry test through a widened flag: `zext(c) == 0`.
                 let zb =
                     b.build_single_output_pure(NodeKind::Extend(ExtendOp::ZeroExtend), [c], zty);
                 let z0 = b.build_int_const(0u128, zty).unwrap();
@@ -1004,7 +1004,6 @@ fn the_pipeline_preserves_dag_semantics() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // CFG-level differential fuzzer.
 
 #[derive(Debug, PartialEq)]
@@ -1312,7 +1311,6 @@ fn the_pipeline_preserves_cfg_semantics() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Targeted proofs.
 
 /// `op(C1, C2)` at I256 with both constants past the u128 carrier. The

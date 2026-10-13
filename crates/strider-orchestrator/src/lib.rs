@@ -193,20 +193,16 @@ where
         // every later round finds that arm already in `known_targets` and so
         // assumes nothing.
         let mut assumed_modes: Vec<PcodeInsnAddr> = Vec::new();
-        // Sticky for the same reason `derived_incomplete` is: a round's
-        // inexact edge fed the classifier, whose derived targets persist into
-        // every later round, so a final CFG without one does not mean none was
-        // used.
+        // The four direct-edge channels are sticky for one reason: a round's
+        // inexact or stubbed edge fed the classifier, whose derived targets
+        // persist into every later round, so a final CFG without that edge does
+        // not mean none was used.
         let mut interior: Vec<PcodeInsnAddr> = cfg.interior_branch_targets().to_vec();
-        // Sticky as `interior` is, and for a sharper reason: `abandon_undecodable`
-        // drops the very site whose seat raised the clash, so the NEXT round
-        // rebuilds without the edge that decoded those bytes twice. Reading the
-        // final cfg alone launders the round that decoded them.
+        // Sharper for this one: `abandon_undecodable` drops the very site whose
+        // seat raised the clash, so the NEXT round rebuilds without the edge
+        // that decoded those bytes twice.
         let mut isa_conflicts: Vec<PcodeInsnAddr> = cfg.isa_mode_conflicts().to_vec();
-        // Sticky as `interior` is: a stub seated in one round is a target the
-        // classifier then read, whether or not the final cfg still seats it.
         let mut unmapped: Vec<PcodeInsnAddr> = cfg.unmapped_branch_targets().to_vec();
-        // Sticky as `unmapped` is.
         let mut undecodable: Vec<PcodeInsnAddr> = cfg.undecodable_branch_targets().to_vec();
         // Sites this loop has given up on: their answer never settled, or it
         // named an address that would not decode. Abandoning one leaves its

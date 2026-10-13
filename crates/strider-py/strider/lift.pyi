@@ -126,7 +126,8 @@ class LifterOptions:
     @property
     def compact(self) -> bool: ...
     # A read-only VIEW onto what the constructor stored, built once and handed
-    # out unchanged, as the `CfgOptions` tables are.
+    # out unchanged. Unlike the `CfgOptions` tables, it is not shared with a
+    # clone: `with_cfg` resets it.
     @property
     def per_address_ccs(self) -> Optional[Mapping[int, CallingConvention]]: ...
     @property
