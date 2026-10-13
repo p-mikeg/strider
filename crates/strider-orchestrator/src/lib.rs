@@ -1449,8 +1449,8 @@ fn settle_return_sites(
     let mut live = Vec::with_capacity(sites.len());
     let mut edit = strider_opt::EditFunction::new(function);
     {
-        // The one claim cleared, the other six as given: this measures what
-        // THIS claim bought, not what the floor would answer.
+        // This claim cleared and every other as given: it measures what THIS
+        // claim bought, not what the floor would answer.
         let without_claim = strider_opt::AssumptionOptions {
             return_slots_survive_untracked_writes: false,
             ..assumptions.clone()

@@ -535,8 +535,7 @@ const X86_CDECL_BASE: CallingConvention = CallingConvention {
     arg_passing_regs: &[],
     // Intel386 psABI: scalar floats go on the stack like every other cdecl
     // argument.  Its SSE class (`__m128`) is NOT modelled, though the psABI
-    // passes the first three such arguments in XMM0-XMM2 (`gcc -m32 -msse2
-    // -O2` reads a 4-argument `__m128` function's fourth from `0x4(%esp)`):
+    // passes the first three such arguments in XMM0-XMM2:
     // naming them here would renumber `arg(n)` on an arch whose arguments are
     // otherwise all stack-passed.  A callee still reads its own XMM0-2
     // correctly; only a caller's vector argument setup goes unrooted.
@@ -600,10 +599,10 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
     callee_saved_regs: &[
         // r13 is the userland TLS thread pointer, reserved and never written
         // there.  In the ppc64 Linux kernel it is the per-CPU `paca` pointer,
-        // which `setup_paca`, `setjmp` / `longjmp`, `restore_gprs` and 204
-        // `mfsprg r13,1` interrupt-entry sites of a 6.6 ppc64le `vmlinux`
-        // write, and a task migrating inside a callee resumes on another
-        // CPU's paca.  Listed callee-saved anyway: the equality is then an
+        // which `setup_paca`, `setjmp` / `longjmp`, `restore_gprs` and every
+        // `mfsprg r13,1` interrupt entry write, and a task migrating inside a
+        // callee resumes on another CPU's paca.  Listed callee-saved anyway:
+        // the equality is then an
         // address-identity claim the kernel does not make, while the call's
         // memory clobber already cuts every load through it.
         //
@@ -981,8 +980,7 @@ impl CallingConvention {
         // the linkage area from 48 to 32 bytes.  Register usage matches ELFv1.
         CallingConvention {
             // 32-byte linkage area plus the same 8-doubleword parameter save
-            // area.  Measured against `powerpc64le-linux-gnu-gcc`: a 16-argument
-            // call stores arguments 9..16 at r1+96..152.  GHIDRA's
+            // area, so arguments past the eighth start at r1+96.  GHIDRA's
             // ppc_64_le.cspec says 112, which is the ELFv1 figure copied over.
             stack_args: Some(StackArgs {
                 base_offset: 96,
@@ -990,9 +988,9 @@ impl CallingConvention {
             }),
             // ELFv2 2.2.3.3 returns a homogeneous float aggregate of up to
             // eight members in f1-f8 and a homogeneous VECTOR aggregate of up
-            // to eight in v2-v9 (`vs34`-`vs41`);
-            // `powerpc64le-linux-gnu-gcc -O1` reads members 7 and 8 straight
-            // out of f7/f8.  ELFv1 returns either aggregate through a hidden
+            // to eight in v2-v9 (`vs34`-`vs41`), so the whole window carries a
+            // result and not just its first member.  ELFv1 returns either
+            // aggregate through a hidden
             // pointer, so the base's f1:f2 pair (`long double`,
             // `_Complex double`) plus v2 is the whole story there.
             ret_val_regs_float: &[

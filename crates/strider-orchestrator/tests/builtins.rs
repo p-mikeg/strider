@@ -5,8 +5,8 @@
 //! bit sequence the back-end inlined instead (the SWAR multiply on x86-32 and
 //! ppc64be, `bsr` + `xor` for x86 clz, `x & -x` for ctz).
 //!
-//! An empty function already walks to 5-9 nodes, so a node count is no
-//! evidence; each of the three alternatives below is absent from one.
+//! A node count is no evidence, an empty function already walking to several;
+//! each of the three alternatives below is absent from one.
 
 mod common;
 use common::*;
