@@ -833,7 +833,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     ///
     /// Decoding MUST stay sequential within a region: `Sleigh::lift_one`
     /// takes `&mut self` and carries context-register state (ARM/Thumb mode
-    /// and IT-block state, MIPS16 mode, ppc `vle`) that a decoded instruction
+    /// and IT-block state, MIPS16 mode, ppc `linkreg`) that a decoded instruction
     /// can itself commit at a later address, so lifting out of order yields
     /// wrong instructions.
     ///
