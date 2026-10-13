@@ -42,8 +42,8 @@ fn an_image_without_mapping_symbols_has_no_data_ranges() {
 }
 
 /// A run of `$d` marks with no code mark between them is one span, not one
-/// nested range per mark: emitting k of them also made the scan for each one's
-/// end quadratic in the run.
+/// nested range per mark, which also keeps the scan for each one's end from
+/// costing the rest of the run.
 #[test]
 fn a_run_of_data_marks_is_one_range() {
     use object::write::{Object, Symbol, SymbolSection};

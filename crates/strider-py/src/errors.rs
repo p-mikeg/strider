@@ -11,7 +11,8 @@ create_exception!(
      `STRIDER_BACKTRACE=1` folds the backtrace into the message too.  Most \
      argument errors raise this too, not a built-in: the exceptions are an \
      argument the conversion itself rejects (`TypeError` for the wrong type, \
-     `OverflowError` for an int out of range), a range-checked constructor \
+     `OverflowError` for an int out of range, though an `entry` out of range \
+     is caught and named through this one), a range-checked constructor \
      argument such as `CfgOptions(function_max_size=0)` (`ValueError`), and a \
      missing file (`FileNotFoundError`)."
 );

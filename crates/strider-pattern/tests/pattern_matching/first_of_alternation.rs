@@ -94,9 +94,9 @@ fn first_of_reports_only_the_first_matching_arm() {
 /// Counts continuations reaching the root guard: `one_of` is multiplicative in
 /// the number of nested alternations, `first_of` cuts at the first match.
 ///
-/// The root capture is load-bearing: a pattern binding nothing a caller can see
-/// has one answer per root, and `find_all` then stops at the first
-/// configuration instead of driving them all.
+/// The root capture is what keeps the count meaningful: a pattern binding
+/// nothing a caller can see has one answer per root, and `find_all` then stops
+/// at the first configuration instead of driving them all.
 fn root_continuations(f: &strider_ir::Function, ordered: bool) -> usize {
     let n = Arc::new(AtomicUsize::new(0));
     let seen = Arc::clone(&n);

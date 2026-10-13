@@ -359,9 +359,9 @@ fn replacing_a_refused_if_branch_drops_its_refusal() {
     assert!(error_of(&still_refused).contains("If branch pattern is not matchable"));
 }
 
-/// A chain of `k` adds over one shared leaf, offered as `arms` alternatives of
-/// one alternation. Each arm is the SAME vertex, so the alternation's own cost
-/// is one arm's, not the sum.
+/// A chain of `k` adds, each over a fresh leaf, offered as `arms` alternatives
+/// of one alternation. Every arm is the SAME vertex, so the alternation's own
+/// cost is one arm's, not the sum: `2k + 1` nodes tree-unfolded.
 fn shared_alternation(arms: usize, k: usize) -> Pattern {
     let mut b = MatcherBuilder::new();
     let mut o = b.leaf(KindSpec::Any);
@@ -389,7 +389,7 @@ fn an_alternations_arms_are_charged_at_their_deepest_not_their_sum() {
             let function = add_5_3();
             assert!(
                 Matcher::new(&function).find_all(&pat).is_ok(),
-                "{arms} arms of 41 nodes each run one at a time",
+                "{arms} arms of 81 unfolded nodes each run one at a time",
             );
         })
         .join()

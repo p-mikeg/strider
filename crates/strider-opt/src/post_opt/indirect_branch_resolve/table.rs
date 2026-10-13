@@ -148,11 +148,11 @@ pub(crate) fn classify_dispatch_value(
 /// `(x<<2) | (x>>30)`, `x>>30` has the tightest interval but does not dominate.
 ///
 /// SHALLOWEST here is target-rooted, nearest the dispatch value, not
-/// entry-rooted. It, not the deepest, is load-bearing: it sits just below the
-/// address arithmetic with every guard/mask/shift applied, so enumerating it
-/// visits exactly the reachable slots.  A deeper (further-from-dispatch) node's bound can be
-/// looser, and enumerating out-of-bounds slots defers a branch that should have
-/// resolved.
+/// entry-rooted, and it is the one enumerated rather than the deepest: it sits
+/// just below the address arithmetic with every guard/mask/shift applied, so
+/// enumerating it visits exactly the reachable slots.  A deeper
+/// (further-from-dispatch) node's bound can be looser, and enumerating
+/// out-of-bounds slots defers a branch that should have resolved.
 ///
 /// The cone traverses THROUGH a load the evaluator can fold (const-base rodata,
 /// SP-rooted stack) into its address, and stops at reg/GOT-based loads (vtable,

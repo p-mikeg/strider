@@ -7,7 +7,8 @@ use anyhow::{anyhow, bail};
 
 use crate::Result;
 
-/// Whether this is the op a region can be ended as `NoReturn` at.
+/// Whether `seal_at_call_not_returning` may end a region here.  Not the only
+/// `NoReturn` emitter: see [`RegionTerminator::NoReturn`].
 fn is_call(insn: &RegionInstruction) -> bool {
     matches!(
         insn.insn.opcode,
