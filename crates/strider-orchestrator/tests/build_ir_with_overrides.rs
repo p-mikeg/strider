@@ -47,7 +47,7 @@ fn build_ir_with_applies_per_address_override() {
             &cfg,
             cc,
             &LiftOptions {
-                per_address_ccs: built,
+                per_address_ccs: &built,
                 ..LiftOptions::default()
             },
         )

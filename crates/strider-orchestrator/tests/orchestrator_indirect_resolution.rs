@@ -102,7 +102,7 @@ fn analyze_seats_pre_seeded_known_targets_from_lift_options() {
     known.insert(site, strider_cfg::ResolvedTargets::Single(0x1004.into()));
     let lift_opts = LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            known_targets: known,
+            known_targets: &known,
             ..Default::default()
         },
         ..LiftOptions::default()
