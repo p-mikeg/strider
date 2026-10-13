@@ -402,13 +402,6 @@ impl MatcherBuilder {
         self.core.kind_mut(out.node).force_ordered = true;
     }
 
-    /// Sets `bits` on every value input consumed by `out`'s producer.
-    pub fn constrain_input_widths(&mut self, out: PatValueRef, bits: u32) {
-        for (pn, po) in self.core.input_producers(out.node) {
-            self.core.output_mut(pn, po).width = Some(bits);
-        }
-    }
-
     /// Materialises every staged node in producer-before-consumer order.
     /// Single-rootedness and acyclicity are resolved here and reported at
     /// match time.
