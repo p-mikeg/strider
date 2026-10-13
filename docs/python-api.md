@@ -930,7 +930,12 @@ when all of them are empty:
   seeded ARM `pop {pc}` epilogue lands here and not in `unresolved`. A return
   the classifier derived is re-checked each round instead, and lands here only
   where that re-check needs
-  `assumptions.return_slots_survive_untracked_writes`.
+  `assumptions.return_slots_survive_untracked_writes`, which defaults `True`.
+  An ARM `push {lr}; ... bl ...; pop {pc}` return does need it: the call in
+  between writes memory the check cannot place, so the check assumes the `lr`
+  spill survived rather than proving it. The seat stands and the site is still
+  a return, so a `False` `is_complete()` over this channel alone means
+  "complete but unverified", not "incomplete".
 - `cfg.isa_mode_conflicts()`: addresses two paths reached in different ISA
   modes. Always empty outside the four 32-bit ARM and four MIPS presets.
 - `cfg.interior_branch_targets()`: branch targets off every instruction

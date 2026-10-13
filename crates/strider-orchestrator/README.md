@@ -75,7 +75,10 @@ Two verdicts freeze a single site, leaving the loop to run on without it:
 
 A converged CFG may be incomplete, and `AnalyzeResult` says so six ways.
 `is_complete()` is the question "may this be incomplete?"; none of the six
-answers it alone, so it reads all of them.
+answers it alone, so it reads all of them. A false `is_complete()` over
+`unverified_seeded_sites` alone reads "complete but unverified": an ARM
+`push {lr}; ... bl ...; pop {pc}` return is on that channel, and its seat
+stands.
 
 - `unresolved_indirect_branches`: a live `IndirectBranch` placeholder, a seated
   `Switch` whose selector no longer derives, a site still growing when the cap
@@ -88,9 +91,11 @@ answers it alone, so it reads all of them.
   out-of-function target became a `TailCall`, leaving no placeholder and no
   anchor to report through (a `Return` the classifier derived instead carries a
   return site, which every round re-checks, and reaches this channel only where
-  that re-check rests on `return_slots_survive_untracked_writes`); and an arm
-  seated on the mode a caller seed gave its siblings, which nobody evaluated
-  for that arm.
+  that re-check rests on `return_slots_survive_untracked_writes`, which an ARM
+  `push {lr}; ... bl ...; pop {pc}` return does need: the call in between
+  writes memory the walk cannot place, so the re-check assumes the spill rather
+  than proving it, and the seat still stands); and an arm seated on the mode a
+  caller seed gave its siblings, which nobody evaluated for that arm.
 - `isa_mode_conflicts`, `interior_branch_targets`, `unmapped_branch_targets`
   and `undecodable_branch_targets`: losses no indirect site owns, since a
   direct edge produces them too. An address two edges reached in different

@@ -109,9 +109,10 @@ where
     /// nodes still in the function. So does an abandoned site, one seated on
     /// only the arms of a proved answer its fold could take, and one naming a
     /// target that will not decode or that leads to code that will not. A site
-    /// the CFG consumed as a `Return` or
-    /// `TailCall` leaves no placeholder and is named in
-    /// [`AnalyzeResult::unverified_seeded_sites`], and in both if it grew before
+    /// the CFG consumed as a `Return` or `TailCall` leaves no placeholder and
+    /// is named in [`AnalyzeResult::unverified_seeded_sites`], unless it is a
+    /// `Return` whose re-check proved the seat without
+    /// `return_slots_survive_untracked_writes`, and in both if it grew before
     /// narrowing to `LinkRegister`. Only [`AnalyzeResult::is_complete`], which
     /// reads all six channels, answers "may this be incomplete?".
     ///
@@ -568,7 +569,13 @@ pub struct AnalyzeResult {
     /// `LinkRegister` seat the CLASSIFIER derived lands here only when its
     /// proof rested on `return_slots_survive_untracked_writes`: the seated
     /// `Return` carries a return site, so each round re-checks it, and a
-    /// re-check that holds without the claim is a proof.
+    /// re-check that holds without the claim is a proof. An ARM
+    /// `push {lr}; ... bl ...; pop {pc}` return is the ordinary shape that is
+    /// not: the call in between writes memory the walk cannot place, and only
+    /// that claim, which defaults ON, carries the walk back to the `lr`
+    /// spill. The seat stands and the site is still a return, so this
+    /// channel, and with it a false [`AnalyzeResult::is_complete`], reads
+    /// "complete but unverified" there rather than "incomplete".
     ///
     /// A third: an arm a mode-less re-derivation discovered at a site whose
     /// other arms all carry the flowing mode. A dispatch that commits a mode
@@ -585,9 +592,11 @@ impl AnalyzeResult {
     /// This is the question "may this result be incomplete?", which needs all
     /// six and which none of them answers alone. `false` is NOT always a
     /// loss: `unverified_seeded_sites` holds answers that are complete but
-    /// that nothing verified, so a site consumed as a `Return` (an ARM
-    /// `pop {pc}` dispatch, say) clears it. Read whichever channel is
-    /// non-empty to tell the cases apart.
+    /// that nothing verified, and an ARM `push {lr}; ... bl ...; pop {pc}`
+    /// return is there, because its re-check rests on
+    /// `return_slots_survive_untracked_writes` instead of proving the seat.
+    /// `false` over that channel alone reads "complete but unverified". Read
+    /// whichever channel is non-empty to tell the cases apart.
     #[must_use]
     pub fn is_complete(&self) -> bool {
         self.unresolved_indirect_branches.is_empty()

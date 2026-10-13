@@ -144,11 +144,16 @@ class Cfg:
         """Dispatch addresses nothing verified: a site seated with exactly the
         `known_targets` you supplied and nothing the classifier derived, every
         site the CFG consumed outright as a tail call, and a site consumed as a
-        return because YOUR `"return"` seat is what consumed it. A return the
-        classifier derived is re-checked against each round's IR instead, so it
-        is not here.
+        return, either because YOUR `"return"` seat is what consumed it or
+        because the re-check of a seat the classifier derived needs
+        `assumptions.return_slots_survive_untracked_writes`, which defaults
+        `True`. An ARM `push {lr}; ... bl ...; pop {pc}` return needs it: the
+        call in between writes memory the check cannot place, so the check
+        assumes the `lr` spill survived rather than proving it. The seat stands
+        and the site is still a return, so that is "complete but unverified",
+        not "incomplete".
 
-        Not unresolved (you asserted the answer), but nothing checked it.
+        Not unresolved (nothing contradicts the answer), but nothing checked it.
         Seating a seed changes the CFG the classifier reads, so a stale or
         wrong seed can stop it deriving and take the site's real arms with it.
         These are the sites where that cannot be ruled out. For a `build_cfg`
@@ -166,10 +171,12 @@ class Cfg:
 
         The answer to "may this be incomplete?", which none of the six gives
         alone. `False` is not always a loss: `unverified_seeded_sites` holds
-        answers that are complete but unverified, so a site your seed consumed
-        as a return (an ARM `pop {pc}` epilogue) makes this `False` with
-        nothing missing. Read whichever channel is non-empty to tell the cases
-        apart.
+        answers that are complete but unverified, and an ARM
+        `push {lr}; ... bl ...; pop {pc}` return is one of them, since its
+        re-check rests on `assumptions.return_slots_survive_untracked_writes`
+        instead of proving the seat. `False` over that channel alone reads
+        "complete but unverified". Read whichever channel is non-empty to tell
+        the cases apart.
 
         On a `build_cfg` CFG `unresolved` is every indirect branch that build
         left without an outgoing edge, since `build_cfg` resolves none of them,
