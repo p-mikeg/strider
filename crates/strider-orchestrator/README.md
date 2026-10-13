@@ -87,8 +87,10 @@ answers it alone, so it reads all of them.
   CONSUMED, where a caller's `LinkRegister` seat became a `Return` and a lone
   out-of-function target became a `TailCall`, leaving no placeholder and no
   anchor to report through (a `Return` the classifier derived instead carries a
-  return site, which every round re-checks); and an arm seated on the mode a
-  caller seed gave its siblings, which nobody evaluated for that arm.
+  return site, which every round re-checks, and reaches this channel only where
+  that re-check rests on `return_slots_survive_untracked_writes`); and an arm
+  seated on the mode a caller seed gave its siblings, which nobody evaluated
+  for that arm.
 - `isa_mode_conflicts`, `interior_branch_targets`, `unmapped_branch_targets`
   and `undecodable_branch_targets`: losses no indirect site owns, since a
   direct edge produces them too. An address two edges reached in different
