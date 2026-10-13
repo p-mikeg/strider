@@ -285,10 +285,6 @@ Rendering:
   `checked_file` instead, which is what every caller already did.
 - `elf::LoadFilter` gains `ImmutableAndRelocatedGot`, so a match over it stops
   compiling.
-- `strider-opt` no longer depends on petgraph: the jump-table index classifier
-  climbs the `Dominators` `graph_algorithms::dominance::dominators` builds, and
-  `mem_ssa::layout` orders its memory graph with
-  `graph_algorithms::dominance::immediate_dominators` and `DomIntervals`.
 - `BuiltCallingConvention` gains `entry_address_vn`, the register an ABI
   guarantees holds the function's own entry address on entry to it (PPC64
   ELFv2 `r12`, MIPS abicalls `t9`), which the lift binds to the entry address;
@@ -464,6 +460,10 @@ Rendering:
   terminator; and a `Region` that drops an arm's memory effect, which is
   `UnmergedMemoryEffect` rather than the `MemoryRewind` whose message describes
   a reader taking a stale state.
+- `strider-opt` no longer depends on petgraph: the jump-table index classifier
+  climbs the `Dominators` `graph_algorithms::dominance::dominators` builds, and
+  `mem_ssa::layout` orders its memory graph with
+  `graph_algorithms::dominance::immediate_dominators` and `DomIntervals`.
 
 ### Performance
 
