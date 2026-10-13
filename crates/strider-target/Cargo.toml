@@ -14,7 +14,8 @@ rsleigh.workspace = true
 anyhow.workspace = true
 
 [features]
-# `SleighArch::probe_regs`, a register table read off an empty image.
+# `SleighArch::probe_regs`, a register table read off an empty image, and
+# `ArchPreset::arch`.
 test-util = []
 
 [dev-dependencies]

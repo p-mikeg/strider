@@ -38,7 +38,10 @@ pub struct CallingConvention {
     /// put, and the `*_linux_kernel` flavours drop it.  Empty where floats are
     /// stack-passed (i386 cdecl).
     arg_passing_regs_float: &'static [&'static str],
-    /// Excludes the stack pointer.
+    /// Excludes the stack pointer.  The float half matters as much as the
+    /// integer one: without the entries covering it, a post-call read of a
+    /// register the callee really preserved resolves to a `Call` output
+    /// instead of to the incoming value.
     callee_saved_regs: &'static [&'static str],
     /// In positional order.
     ret_val_regs: &'static [&'static str],

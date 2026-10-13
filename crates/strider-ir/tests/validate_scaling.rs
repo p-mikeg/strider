@@ -49,9 +49,10 @@ fn validate_is_near_linear_in_a_joins_predecessor_count() {
     time_validate(1_000);
     let small = time_validate(2_000);
     let large = time_validate(32_000);
-    // 16x the predecessors: linear is 16x, quadratic 256x. The bound sits
-    // between them, so a return to the per-arm walk fails outright while the
-    // linear walk's own per-node drift does not.
+    // 16x the predecessors: linear is 16x, quadratic 256x. The measured
+    // quadratic walk was 104x and the linear one 44x, so a bound of 80 fails
+    // outright on a return to the per-arm walk while the linear walk's own
+    // per-node drift does not reach it.
     assert!(
         large.as_secs_f64() < small.as_secs_f64() * 80.0,
         "16x the predecessors cost {:.1}x the validate ({small:?} -> {large:?}): \
