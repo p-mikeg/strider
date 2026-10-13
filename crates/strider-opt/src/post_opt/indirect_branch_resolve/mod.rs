@@ -33,7 +33,12 @@ pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 /// fails closed on a partial proof, never under-approximating.  `Load(sp)` for
 /// a `pop pc`-style return, which a `push X; pop pc` tail call shares the shape
 /// of, is classified only where [`ReturnTargets`] follows the slot back to a
-/// store of the entry link register.
+/// store of the entry link register.  That walk is the one place a
+/// call-boundary relaxation reaches a decoded target, and it is the orchestrator
+/// that keeps the answer honest: the seated `Return` carries a return site, and
+/// a site re-verified only because
+/// `return_slots_survive_untracked_writes` holds rides
+/// `AnalyzeResult::unverified_seeded_sites`.
 ///
 /// Of `assumptions` the table walk honours `stack_global_disjoint` and the
 /// allocation identity `noalias_allocators` gives `decompose`.  The

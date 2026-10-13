@@ -163,7 +163,7 @@ where
             mut unresolved,
             mut switch_anchors,
             mut resolutions,
-            mut unverified_returns,
+            mut returns,
         ) = self.build_lift(start_addr, cc, &working, opt_opts, pipeline)?;
         // Snapshotted in lockstep with `function`, and BEFORE `resolutions` is
         // moved into `apply_resolutions`. Read off the function, not the
@@ -276,7 +276,7 @@ where
                 unresolved,
                 switch_anchors,
                 resolutions,
-                unverified_returns,
+                returns,
             ) = self.build_lift(start_addr, cc, &working, opt_opts, pipeline)?;
             live_indirect = live_dispatch_sites(&function);
             // BEFORE `abandon_undecodable`, which drops the site or its bad
@@ -353,13 +353,13 @@ where
         // `unverified_seeded_sites` names that seat; a seat the classifier
         // derived carries its own proof. So only a return nothing vouched for
         // rides this channel.
-        unverified_returns.retain(|addr| {
+        returns.unverified.retain(|addr| {
             !matches!(
                 seed_for(&lift_opts.cfg.known_targets, *addr),
                 Some(ResolvedTargets::LinkRegister)
             )
         });
-        unresolved_indirect_branches.append(&mut unverified_returns);
+        unresolved_indirect_branches.append(&mut returns.unverified);
         unresolved_indirect_branches.sort_unstable();
         unresolved_indirect_branches.dedup();
         let mut unverified_seeded = unverified_seeded_sites(
@@ -378,6 +378,9 @@ where
                 .into_iter()
                 .filter(|addr| settled.contains_key(addr)),
         );
+        // Read off the final round, like the unverified half: the seat in hand
+        // is that round's, and so is the verification of it.
+        unverified_seeded.append(&mut returns.claimed);
         unverified_seeded.sort_unstable();
         unverified_seeded.dedup();
 
@@ -429,7 +432,7 @@ where
         UnresolvedAnchors,
         UnresolvedAnchors,
         IndirectResolutions,
-        Vec<PcodeInsnAddr>,
+        ReturnVerdicts,
     )> {
         // Destructured to split the borrow: `lifter` goes out `&mut` while
         // the optimiser ctx holds `&rom`.
@@ -465,8 +468,12 @@ where
         ctx.options = opt_opts.clone();
         pipeline.run(&mut function, &mut ctx)?;
         let resolutions = std::mem::take(&mut ctx.indirect_resolutions);
-        let unverified_returns =
-            settle_return_sites(&mut function, &return_sites, &opt_opts.assumptions);
+        let returns = settle_return_sites(
+            &mut function,
+            &return_sites,
+            &opt_opts.assumptions,
+            cfg.link_register_seated(),
+        );
 
         Ok((
             cfg,
@@ -474,7 +481,7 @@ where
             unresolved,
             switch_anchors,
             resolutions,
-            unverified_returns,
+            returns,
         ))
     }
 }
@@ -557,10 +564,11 @@ pub struct AnalyzeResult {
     /// whether the answer came from a seed or from the classifier: a
     /// `LinkRegister` answer becomes a `Return` and a single target outside
     /// the function becomes a `TailCall`, leaving no placeholder and no
-    /// anchor, so a dispatch that had more arms leaves no other trace. Only a
-    /// CALLER's `LinkRegister` seat: the seated `Return` carries a return
-    /// site, so each round re-checks it, and a derivation the classifier made
-    /// is an unambiguous target set by contract.
+    /// anchor, so a dispatch that had more arms leaves no other trace. A
+    /// `LinkRegister` seat the CLASSIFIER derived lands here only when its
+    /// proof rested on `return_slots_survive_untracked_writes`: the seated
+    /// `Return` carries a return site, so each round re-checks it, and a
+    /// re-check that holds without the claim is a proof.
     ///
     /// A third: an arm a mode-less re-derivation discovered at a site whose
     /// other arms all carry the flowing mode. A dispatch that commits a mode
@@ -1245,10 +1253,9 @@ fn unverified_seeded_sites(
     // `Return`, leaving no placeholder and no `Switch` anchor, so the filter
     // above cannot see it and no other channel names it either. The seat is
     // the only record that a caller's answer replaced whatever the classifier
-    // would have derived. Only a CALLER's: the seated `Return` carries a
+    // would have derived. Only a CALLER's here: the seated `Return` carries a
     // return site, so `settle_return_sites` re-checks every seat against the
-    // round's own IR, and a classifier derivation is an unambiguous target set
-    // by contract.
+    // round's own IR and names the ones whose verdict rested on a claim.
     out.extend(
         cfg.link_register_seated()
             .iter()
@@ -1377,21 +1384,45 @@ fn live_unresolved_branches(
     out
 }
 
+/// What one round's return-site verification found.
+struct ReturnVerdicts {
+    /// Sites whose target is not the function's entry return address.
+    unverified: Vec<PcodeInsnAddr>,
+    /// Seated sites verified only because a claim holds.
+    claimed: Vec<PcodeInsnAddr>,
+}
+
 /// The return sites whose target is not the function's entry return address,
-/// after taking each target off the `Return` [`Strider::build_lift`] anchored
-/// it on.
+/// then, of the ones in `seated`, those verified only because
+/// `return_slots_survive_untracked_writes` holds. Each target is taken back off
+/// the `Return` [`Strider::build_lift`] anchored it on.
+///
+/// A site in `seated` had its terminator DECIDED by the verification: the
+/// dispatch was a `BranchIndirect` the classifier seated as a return, so a
+/// verdict resting on the claim decided a CFG edge and has to be reported. A
+/// `Return` the lifter emitted from the p-code op carries no such edge, so the
+/// same claim under it is not reported.
 ///
 /// A site the pipeline culled took its `Return` with it.
 fn settle_return_sites(
     function: &mut strider_ir::Function,
     sites: &[strider_lift::lift::ReturnSite],
     assumptions: &strider_opt::AssumptionOptions,
-) -> Vec<PcodeInsnAddr> {
+    seated: &[PcodeInsnAddr],
+) -> ReturnVerdicts {
     let mut unverified = Vec::new();
+    let mut claimed = Vec::new();
     let mut live = Vec::with_capacity(sites.len());
     let mut edit = strider_opt::EditFunction::new(function);
     {
+        // The one claim cleared, the other six as given: this measures what
+        // THIS claim bought, not what the floor would answer.
+        let without_claim = strider_opt::AssumptionOptions {
+            return_slots_survive_untracked_writes: false,
+            ..assumptions.clone()
+        };
         let mut targets = strider_opt::ReturnTargets::new(edit.function(), assumptions);
+        let mut proven = strider_opt::ReturnTargets::new(edit.function(), &without_claim);
         for &(addr, ret, _) in sites {
             if !edit.is_live(ret) {
                 continue;
@@ -1403,6 +1434,11 @@ fn settle_return_sites(
                 .expect("an anchored Return carries its target last");
             if !targets.returns_to_caller(ret, target) {
                 unverified.push(addr);
+            } else if assumptions.return_slots_survive_untracked_writes
+                && seated.contains(&addr)
+                && !proven.returns_to_caller(ret, target)
+            {
+                claimed.push(addr);
             }
             live.push((ret, anchored));
         }
@@ -1411,7 +1447,10 @@ fn settle_return_sites(
         edit.truncate_node_inputs(ret, anchored);
     }
     edit.clean();
-    unverified
+    ReturnVerdicts {
+        unverified,
+        claimed,
+    }
 }
 
 /// Every reachable `IndirectBranch` placeholder and seated `Switch`.
