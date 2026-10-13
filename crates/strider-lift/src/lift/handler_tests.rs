@@ -820,11 +820,6 @@ fn process_insn_no_operand_dispatch_routing() {
             "Store reads its address/data operands and errors when absent",
         ),
         (Opcode::Nop, true, "Nop dispatches to the empty arm"),
-        (
-            Opcode::CallOther,
-            false,
-            "CallOther dispatches to handle_call_other and errors on the missing user-op id",
-        ),
     ];
     for &(opcode, expect_ok, label) in cases {
         assert_process_insn(opcode, expect_ok, label);

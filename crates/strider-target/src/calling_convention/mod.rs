@@ -1105,9 +1105,10 @@ impl CallingConvention {
     pub const fn x86_linux_kernel() -> Self {
         // Kernel-internal presets exist for x86 32-bit and PowerPC; every
         // other supported arch's kernel CC has the same register SET as its
-        // userland preset, so callers pick that directly.  One register's ROLE
-        // still differs: ppc64 r13 is the per-CPU `paca` pointer, not the
-        // userland TLS pointer (`POWERPC64_ELF_BASE`).
+        // userland preset, so callers pick that directly.  A role can differ
+        // without the set doing so, which is part of why PowerPC has its own:
+        // ppc64 r13 is the per-CPU `paca` pointer there, not the userland TLS
+        // pointer (`POWERPC64_ELF_BASE`).
         //
         // A register-level syscall footprint lives in `call_other_abi` only
         // where the sla leaves the trap opaque (`syscall`, `svc`, `sc`).  x86

@@ -318,8 +318,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
 
     /// Enqueue `addr` as a strider-*resolved indirect* target of `parent`,
     /// resolved from the branch at `branch_site`.  Sleigh never flowed the mode
-    /// here, so decode in the function mode (default transients: a target is a
-    /// region start, where IT-block/register-list state is fresh) with the
+    /// here, so decode in the function mode (default transients: unlike a
+    /// direct edge, no source region's context reaches a resolved target, so
+    /// IT-block and register-list state start fresh) with the
     /// ISA-mode var set to what the branch commits: an interworking branch's own
     /// bit (`isa_bit`), else the mode flowing INTO the branch, so a `mov pc` in a
     /// Thumb region of an otherwise-ARM function keeps Thumb.
@@ -586,9 +587,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         } = &mut region.terminator
         else {
             // An x86 branch to an address one prefix into an instruction (a
-            // `je` over a `lock`) re-enters the same instruction's decode: the
-            // owner already runs that stream from a byte earlier, so the edge
-            // is exact and nothing is stepped over.
+            // `je` over a `lock`) re-enters the same instruction's decode, and
+            // the edge is exact where that instruction is the owner's FIRST:
+            // an owner starting earlier runs instructions the taken path does
+            // not.
             let benign = self.is_benign_prefix_reentry(owner, addr);
             let edge = self.region_graph.add_edge(parent, owner, ());
             self.non_boundary_seats.insert(edge, addr);
@@ -974,7 +976,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 }
             }
             // The bytes themselves, which `UndecodableTarget` cannot name: it
-            // carries the ARM, and the arm decodes. Read off the error rather
+            // carries the ARM, and an arm that LED to the bytes decodes. Read
+            // off the error rather
             // than from `address`, the failure being able to sit several
             // instructions into the region this item decoded.
             if seeded_by.is_some()
@@ -1022,9 +1025,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         let mut reported = rustc_hash::FxHashSet::default();
         self.undecodable_seeded
             .retain(|&(_, bad)| reported.insert(bad));
-        // Two producers push each of these: the explore-path stub and the
-        // fall-through seal, which checks the region map only after `lift_code`
-        // fails.
+        // Several producers push each of these, among them the explore-path
+        // stub and the fall-through seal, which checks the region map only
+        // after `lift_code` fails, so one address can arrive twice.
         for report in [
             &mut self.interior_branch_targets,
             &mut self.unmapped_branch_targets,
