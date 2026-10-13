@@ -110,6 +110,8 @@ impl PipelineState {
 /// passes, so one pipeline drives any number of calls.
 #[pyclass(name = "OptimizerPipeline", module = "strider.opt")]
 pub struct PyOptimizerPipeline {
+    /// A `Mutex` and not a `RefCell`: a `#[pyclass]` that is not
+    /// `unsendable` requires `Send`.
     state: Mutex<PipelineState>,
 }
 
