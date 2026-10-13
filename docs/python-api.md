@@ -917,8 +917,9 @@ cfg.fingerprint_pcode(n)               # [(address, p-code)] for a Node's finger
 cfg.is_complete()                      # all six channels below are empty
 ```
 
-Six channels report where a CFG may be incomplete, and `is_complete()` is true
-when all of them are empty:
+A converged CFG is never silently incomplete, but it reports through six
+channels, and a consumer asking "may this be incomplete?" reads all six, which
+is what `is_complete()` does:
 
 - `unresolved`, the third field of `analyze`'s result: indirect branches with
   no complete answer, such as a site that lost a successor, one whose answer
@@ -935,7 +936,10 @@ when all of them are empty:
   between writes memory the check cannot place, so the check assumes the `lr`
   spill survived rather than proving it. The seat stands and the site is still
   a return, so a `False` `is_complete()` over this channel alone means
-  "complete but unverified", not "incomplete".
+  "complete but unverified", not "incomplete". One shape on this channel is no
+  dispatch you seeded: an arm a mode-less re-derivation found at a site whose
+  other arms all carry the flowing ISA mode is seated on the mode a caller's
+  seed gave its siblings, and nobody evaluated that arm's own.
 - `cfg.isa_mode_conflicts()`: addresses two paths reached in different ISA
   modes. Always empty outside the four 32-bit ARM and four MIPS presets.
 - `cfg.interior_branch_targets()`: branch targets off every instruction
@@ -948,8 +952,12 @@ when all of them are empty:
   rejects or a range `data_ranges` marks as data. The branch leaves through an
   empty tail-call stub; the call ends as no-return.
 
-All but `unverified_seeded_sites` accumulate across resolution rounds, so a
-loss in an early round stays reported.
+The four channels a direct edge also produces (`isa_mode_conflicts`,
+`interior_branch_targets`, `unmapped_branch_targets`,
+`undecodable_branch_targets`) accumulate across resolution rounds, so a loss in
+an early round stays reported. `unresolved` and `unverified_seeded_sites` are
+read off the final round instead, the mode-less arms excepted: those accumulate
+and are then filtered to the sites still seated.
 
 `CfgOptions` (passed via `LifterOptions.cfg` or `Lifter.build_cfg`) tunes CFG
 construction:
