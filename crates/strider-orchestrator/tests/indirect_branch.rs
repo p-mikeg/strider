@@ -188,12 +188,12 @@ fn indirect_branch_resolved_ppc32le() {
     assert_indirect_goto_resolves_with_the_got_served(Arch::Ppc32le);
 }
 #[test]
-#[ignore = "ppc64-be: stack-array dispatch unresolved; the lifter shape is uncharacterised and needs a one-shot pcode trace to identify which classifier arm is missing"]
 fn indirect_branch_resolved_ppc64be() {
-    assert_indirect_goto_resolves_to_both_labels(Arch::Ppc64be);
+    // Same shape as ppc32le: the label table is a `.data.rel.ro` the
+    // immutable-only ROM leaves unmapped, so the base never folds without it.
+    assert_indirect_goto_resolves_with_the_got_served(Arch::Ppc64be);
 }
 #[test]
-#[ignore = "ppc64-le: stack-array dispatch unresolved; the lifter shape is uncharacterised and needs a one-shot pcode trace to identify which classifier arm is missing"]
 fn indirect_branch_resolved_ppc64le() {
-    assert_indirect_goto_resolves_to_both_labels(Arch::Ppc64le);
+    assert_indirect_goto_resolves_with_the_got_served(Arch::Ppc64le);
 }
