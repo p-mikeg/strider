@@ -38,6 +38,37 @@ fn validate_rejects_sp_in_arg_passing_regs() {
     );
 }
 
+/// The link register is in `callee_saved_regs` so `InitialVar(lr)` propagates
+/// through a call site; a `Some` `link_register_vn` missing from that list is
+/// the one state the lifter cannot represent.
+#[test]
+fn validate_rejects_a_link_register_outside_callee_saved() {
+    let lr = vn(0x58);
+    let cc = BuiltCallingConvention {
+        callee_saved_regs: vec![vn(0x20)],
+        stack_vn: vn(0x40),
+        link_register_vn: Some(lr),
+        ..Default::default()
+    };
+    let msg = cc
+        .validate()
+        .expect_err("a link register outside callee_saved_regs must be rejected")
+        .to_string();
+    assert!(
+        msg.contains("link_register_vn") && msg.contains("callee_saved_regs"),
+        "error must name both, got: {msg}",
+    );
+    // Listed, it validates.
+    BuiltCallingConvention {
+        callee_saved_regs: vec![vn(0x20), lr],
+        stack_vn: vn(0x40),
+        link_register_vn: Some(lr),
+        ..Default::default()
+    }
+    .validate()
+    .expect("a listed link register validates");
+}
+
 #[test]
 fn validate_rejects_arg_overlapping_callee_saved() {
     let shared = vn(0x10);
