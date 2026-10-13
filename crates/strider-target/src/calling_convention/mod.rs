@@ -35,7 +35,8 @@ pub struct CallingConvention {
     /// then `v2..13` on PowerPC64 ELF and `f1..8` then `v2..13` on 32-bit SysV
     /// PowerPC).  Where the float and vector banks are physically distinct, as
     /// on PowerPC, the vector window is appended so the float positions stay
-    /// put.  Empty where floats are stack-passed (i386 cdecl).
+    /// put, and the `*_linux_kernel` flavours drop it.  Empty where floats are
+    /// stack-passed (i386 cdecl).
     arg_passing_regs_float: &'static [&'static str],
     /// Excludes the stack pointer.
     callee_saved_regs: &'static [&'static str],
@@ -557,6 +558,19 @@ const X86_CDECL_BASE: CallingConvention = CallingConvention {
     entry_address_reg_name: None,
 };
 
+/// The float windows without the AltiVec window the userland presets append
+/// to them, for the `*_linux_kernel` flavours: a PowerPC Linux kernel is built
+/// `-mno-altivec -mno-vsx`, so no vector register carries an argument or a
+/// result there.  Naming them anyway would seed twelve 16-byte varnodes on
+/// every function (`FunctionBuilder::new` tracks every argument and return
+/// register) and push each collected stack argument twelve slots up the
+/// `Call`'s flat argument list.
+const PPC32_SCALAR_ARGS_F: &[&str] = &["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"];
+const PPC64_SCALAR_ARGS_F: &[&str] = &[
+    "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13",
+];
+const PPC_SCALAR_RET_F: &[&str] = &["f1", "f2"];
+
 /// Base for `powerpc64_elf_v1` and `powerpc64_elf_v2`, which differ in
 /// `stack_args.base_offset` (ELFv1's 48-byte linkage area vs ELFv2's 32, each
 /// plus the 64-byte parameter save area) and in `ret_val_regs_float`.
@@ -571,7 +585,8 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
     // `callee_saved_regs` for the `vN` spelling), byte-disjoint from f0-f31.
     // Appended AFTER the floats so the float positions do not shift: a vector
     // argument's own ordinal is not its index here, the same positional
-    // approximation `arm_aapcs` documents.
+    // approximation `arm_aapcs` documents.  `*_linux_kernel` drops the window
+    // (`PPC64_SCALAR_ARGS_F`).
     arg_passing_regs_float: &[
         "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13", "vs34",
         "vs35", "vs36", "vs37", "vs38", "vs39", "vs40", "vs41", "vs42", "vs43", "vs44", "vs45",
@@ -1082,10 +1097,11 @@ impl CallingConvention {
     /// Returns the Linux kernel-internal CC for x86 32-bit (`-mregparm=3`).
     #[must_use]
     pub const fn x86_linux_kernel() -> Self {
-        // The only kernel-internal preset: every other supported arch's kernel CC
-        // has the same register SET as its userland preset, so callers pick that
-        // directly.  One register's ROLE still differs: ppc64 r13 is the per-CPU
-        // `paca` pointer, not the userland TLS pointer (`POWERPC64_ELF_BASE`).
+        // Kernel-internal presets exist for x86 32-bit and PowerPC; every
+        // other supported arch's kernel CC has the same register SET as its
+        // userland preset, so callers pick that directly.  One register's ROLE
+        // still differs: ppc64 r13 is the per-CPU `paca` pointer, not the
+        // userland TLS pointer (`POWERPC64_ELF_BASE`).
         //
         // A register-level syscall footprint lives in `call_other_abi` only
         // where the sla leaves the trap opaque (`syscall`, `svc`, `sc`).  x86
@@ -1099,6 +1115,38 @@ impl CallingConvention {
         CallingConvention {
             arg_passing_regs: &["EAX", "EDX", "ECX"],
             ..X86_CDECL_BASE
+        }
+    }
+
+    /// Returns the Linux kernel-internal CC for 32-bit PowerPC System V.
+    #[must_use]
+    pub const fn powerpc_sysv32_linux_kernel() -> Self {
+        CallingConvention {
+            arg_passing_regs_float: PPC32_SCALAR_ARGS_F,
+            ret_val_regs_float: PPC_SCALAR_RET_F,
+            ..Self::powerpc_sysv32()
+        }
+    }
+
+    /// Returns the Linux kernel-internal CC for PowerPC 64-bit ELFv1.
+    #[must_use]
+    pub const fn powerpc64_elf_v1_linux_kernel() -> Self {
+        CallingConvention {
+            arg_passing_regs_float: PPC64_SCALAR_ARGS_F,
+            ret_val_regs_float: PPC_SCALAR_RET_F,
+            ..POWERPC64_ELF_BASE
+        }
+    }
+
+    /// Returns the Linux kernel-internal CC for PowerPC 64-bit ELFv2.
+    #[must_use]
+    pub const fn powerpc64_elf_v2_linux_kernel() -> Self {
+        CallingConvention {
+            arg_passing_regs_float: PPC64_SCALAR_ARGS_F,
+            // ELFv2 2.2.3.3's homogeneous float aggregate, without the
+            // homogeneous VECTOR aggregate the userland preset also returns.
+            ret_val_regs_float: &["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"],
+            ..Self::powerpc64_elf_v2()
         }
     }
 }
