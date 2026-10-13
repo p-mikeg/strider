@@ -602,8 +602,7 @@ impl AnalyzeResult {
     /// This is the question "may this result be incomplete?", which needs all
     /// six and which none of them answers alone. `false` is NOT always a
     /// loss: `unverified_seeded_sites` holds answers that are complete but
-    /// that nothing verified, and an ARM `push {lr}; ... bl ...; pop {pc}`
-    /// return is there, because its re-check rests on
+    /// that nothing verified, among them a return whose re-check rests on
     /// `return_slots_survive_untracked_writes` instead of proving the seat.
     /// `false` over that channel alone reads "complete but unverified". Read
     /// whichever channel is non-empty to tell the cases apart.
