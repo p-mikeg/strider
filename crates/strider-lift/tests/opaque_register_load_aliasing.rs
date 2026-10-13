@@ -32,7 +32,7 @@ fn an_opaque_register_load_does_not_forward_across_a_named_register_write() {
         .expect("cc");
     let opts = strider_lift::LiftOptions::default();
     let cfg = lifter
-        .build_cfg(0x1000u64.into(), &opts.cfg, &opts.per_address_ccs)
+        .build_cfg(0x1000u64.into(), &opts.cfg, opts.per_address_ccs)
         .expect("cfg");
     let f = lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function;
 

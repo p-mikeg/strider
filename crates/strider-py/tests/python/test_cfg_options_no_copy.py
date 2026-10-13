@@ -1,10 +1,10 @@
-"""A large `known_targets` / `call_other_abis` table costs its build, not one
-deep copy per attribute read.
+"""A large `known_targets` / `call_other_abis` table costs its build, and
+nothing per analyse: it is seated once, at construction, and every analyse
+borrows that one table.
 
 The kernel-sweep shape seeds tens of thousands of answers once and then
 analyses thousands of functions through the same `LifterOptions`; a table
-rebuilt on every read makes each of those analyses O(table) again, on top of
-the seating pass that is genuinely per-analyse.
+rebuilt, re-seated or copied per call makes each of those analyses O(table).
 """
 
 from __future__ import annotations
@@ -19,13 +19,14 @@ _ENTRIES = 20_000
 _RUNS = 7
 
 
+def _opts(entries: int):
+    targets = {0x800000 + i * 4: [0x900000 + i * 4] for i in range(entries)}
+    return strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(known_targets=targets))
+
+
 def _seeded():
     prog = strider.lift.load_elf(str(fixture_path("x86", "arithmetic")))
-    targets = {0x800000 + i * 4: [0x900000 + i * 4] for i in range(_ENTRIES)}
-    opts = strider.lift.LifterOptions(
-        cfg=strider.cfg.CfgOptions(known_targets=targets)
-    )
-    return prog, opts
+    return prog, _opts(_ENTRIES)
 
 
 def _median_analyze_ms(prog, target, opts) -> float:
@@ -50,6 +51,27 @@ def test_analyzing_by_symbol_does_not_copy_the_seeded_tables():
     assert by_symbol < by_address + 6.0, (
         f"analyze('add') costs {by_symbol:.2f} ms against {by_address:.2f} ms "
         f"by address with {_ENTRIES} known_targets"
+    )
+
+
+def test_a_seeded_table_costs_nothing_per_analyse():
+    """The table is borrowed, not copied or re-seated, so the cost of an
+    analysis does not depend on how large the seeded table is."""
+    prog, seeded = _seeded()
+    addr = prog.symbol("add").address
+    empty = _median_analyze_ms(prog, addr, strider.lift.LifterOptions())
+    with_table = _median_analyze_ms(prog, addr, seeded)
+    assert with_table < empty + 0.4, (
+        f"{_ENTRIES} known_targets cost {with_table:.2f} ms an analysis "
+        f"against {empty:.2f} ms with no table"
+    )
+
+    ten_times = _opts(_ENTRIES * 10)
+    bigger = _median_analyze_ms(prog, addr, ten_times)
+    assert bigger < with_table + 0.4, (
+        f"a {_ENTRIES * 10}-entry table costs {bigger:.2f} ms an analysis "
+        f"against {with_table:.2f} ms for {_ENTRIES} entries, so the table is "
+        f"being copied per call"
     )
 
 

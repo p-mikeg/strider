@@ -40,16 +40,22 @@ fn a_dropped_arm_region_is_removed_and_the_function_lifts() {
     let cc = strider_target::CallingConvention::arm_aapcs()
         .build(lifter.sleigh_regs())
         .expect("aapcs");
-    let mut opts = strider_lift::LiftOptions::default();
-    opts.cfg.known_targets.insert(
+    let known = rustc_hash::FxHashMap::from_iter([(
         strider_cfg::PcodeInsnAddr::at_machine_start(DISPATCH),
         strider_cfg::ResolvedTargets::Multiple(vec![
             strider_cfg::ResolvedTarget::new(ARM, Some(false)),
             strider_cfg::ResolvedTarget::new(ARM, Some(true)),
         ]),
-    );
+    )]);
+    let opts = strider_lift::LiftOptions {
+        cfg: strider_cfg::CfgOptions {
+            known_targets: &known,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     let cfg = lifter
-        .build_cfg(BASE.into(), &opts.cfg, &opts.per_address_ccs)
+        .build_cfg(BASE.into(), &opts.cfg, opts.per_address_ccs)
         .expect("cfg");
 
     assert_eq!(

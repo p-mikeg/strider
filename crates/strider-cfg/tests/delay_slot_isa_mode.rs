@@ -53,7 +53,7 @@ fn build(
         .build()
 }
 
-fn bounded(size: u64) -> CfgOptions {
+fn bounded(size: u64) -> CfgOptions<'static> {
     CfgOptions {
         fn_max_size: Some(size),
         ..CfgOptions::default()
@@ -108,11 +108,14 @@ fn a_mips16_arm_at_a_slot_does_not_corrupt_a_later_decode_of_its_branch() {
     let run = |arms: Vec<ResolvedTarget>| {
         let mut s = engine(bytes.clone(), 0x1000);
         let flow = FlowVars::discover(&s).unwrap();
-        let mut opts = bounded(0x28);
-        opts.known_targets.insert(
+        let known = rustc_hash::FxHashMap::from_iter([(
             PcodeInsnAddr::at_machine_start(0x1000),
             ResolvedTargets::Multiple(arms),
-        );
+        )]);
+        let opts = CfgOptions {
+            known_targets: &known,
+            ..bounded(0x28)
+        };
         let cfg = build(&mut s, &flow, 0x1000, 0, &opts).expect("build");
         lens_at(&cfg, 0x1008)
     };
