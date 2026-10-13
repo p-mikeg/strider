@@ -825,8 +825,8 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         class: MEM_CLOBBER,
     },
     // ARM32 NEON ops `ARMneon.sinc` names outside its `Vector*` / `Float*`
-    // groups.  `vrev` (`:5286-5322`, `Qd = vrev(Qm, esize)`), the saturating
-    // pair (`:5078-5079`, `Dd = SatQ(Dd, esize, unsigned)`), and the SHA-256
+    // groups.  `vrev` (`:5289-5325`, `Qd = vrev(Qm, esize)`), the saturating
+    // pair (`:5081-5082`, `Dd = SatQ(Dd, esize, unsigned)`), and the SHA-256
     // message schedule (`:681`, `Qd = SHA256ScheduleUpdate0(Qd, Qm)`) are all
     // register-to-register with listed operands.  Arch-scoped because `vrev`
     // and `SatQ` are generic enough for another spec to reuse the spelling.

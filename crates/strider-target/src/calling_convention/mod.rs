@@ -1106,7 +1106,7 @@ impl CallingConvention {
         // A register-level syscall footprint lives in `call_other_abi` only
         // where the sla leaves the trap opaque (`syscall`, `svc`, `sc`).  x86
         // `int 0x80` is NOT one: its `swi` row carries no registers, and the
-        // sla's trailing `call [intloc]` (`ia.sinc:3667`) is what clobbers
+        // sla's trailing `call [intloc]` (`ia.sinc:3669`) is what clobbers
         // EAX/ECX/EDX, as an ordinary `Call` under the function's default
         // convention.
         //
