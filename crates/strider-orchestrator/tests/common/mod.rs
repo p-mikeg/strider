@@ -287,7 +287,7 @@ pub(crate) fn fixture_strider(
 }
 
 /// A [`strider_orchestrator::opt::ReadOnlyMemory`] over a region set loaded
-/// under a filter [`strider_reader::ElfFileMemReader`] does not build.
+/// under a filter that [`strider_reader::ElfFileMemReader`] does not build.
 struct RegionRom(strider_reader::MemRegionsLookupTable);
 
 impl strider_orchestrator::opt::ReadOnlyMemory for RegionRom {
