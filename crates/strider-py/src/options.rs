@@ -146,6 +146,23 @@ pub struct PyCfgOptions {
     /// which shares the tables themselves.
     known_targets_view: Arc<MappingView>,
     call_other_abis_view: Arc<MappingView>,
+    /// `known_targets` in `strider_cfg`'s own form, seated once. Shared with
+    /// every clone, as the table it is built from is.
+    seated: Arc<OnceLock<SeatedTargets>>,
+}
+
+/// `known_targets` as `strider_cfg::CfgOptions` takes it.
+pub(crate) type SeatedTargets =
+    rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets>;
+
+impl PyCfgOptions {
+    /// The seated table, built on the first analyse that reads it: seating a
+    /// 20k-entry answer table costs more than the analysis it feeds, and one
+    /// options object serves every call.
+    pub(crate) fn seated_known_targets(&self) -> &SeatedTargets {
+        self.seated
+            .get_or_init(|| crate::strider_cls::seat_known_targets(&self.known_targets))
+    }
 }
 
 #[pymethods]
@@ -179,6 +196,7 @@ impl PyCfgOptions {
             data_ranges: data_ranges_from(data_ranges),
             known_targets_view: Arc::default(),
             call_other_abis_view: Arc::default(),
+            seated: Arc::default(),
         })
     }
 
