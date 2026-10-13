@@ -92,7 +92,8 @@ class AssumptionOptions:
         ...
     @staticmethod
     def none() -> "AssumptionOptions":
-        """Every claim cleared: the sound floor under any input.
+        """Every claim cleared: the sound floor of these fields under any
+        input, forwarding solely what the IR structurally proves.
 
         Three of the seven default `True`, so this is not
         `AssumptionOptions()`.

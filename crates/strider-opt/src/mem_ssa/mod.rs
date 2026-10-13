@@ -22,9 +22,13 @@
 //! memo entry carries that ancestor and a reader outside it takes the
 //! conservative answer instead.
 //!
-//! An entry that dropped no `Cycle` and took no conservative answer holds for
-//! the location whatever the start was, so [`WalkAnswers`] carries it to the
-//! next query and prunes its subtree there.
+//! An entry that dropped no `Cycle` and took no conservative answer is carried
+//! to the next query by [`WalkAnswers`], which prunes its subtree there.  Every
+//! recalled answer is sound, but recall is not answer-preserving: it reports no
+//! `Cycle`, so a back-edge arm an earlier query resolved on its own votes as a
+//! real answer and can turn a transparent `MemPhi` into a clobber boundary.
+//! An answer is therefore usually deeper than the per-call walk's and sometimes
+//! shallower, and depends on which starts were queried before it.
 
 mod layout;
 
@@ -37,8 +41,9 @@ use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer};
 
-/// One location's start-independent walk answers by memory value.  Valid while
-/// no def's verdict for the location changes, the same window as [`Answers`].
+/// One location's carried walk answers by memory value.  Valid while no def's
+/// verdict for the location changes, the same window as [`Answers`].  Every
+/// answer is sound; none is guaranteed to be the per-call walk's.
 ///
 /// Without it every query re-walks its own chain, so `L` loads over `S` defs
 /// cost `L * S`.
@@ -377,10 +382,12 @@ impl MemSsaWalk<'_, '_> {
         ))
     }
 
-    /// Carries every start-independent result of one walk into `answers`: the
-    /// entries that dropped no `Cycle` and took no conservative answer, plus,
-    /// when the start reached no clobber at all, every clean node in its cone,
-    /// since a clobber anywhere in a cone reaches the start as one.
+    /// Carries one walk's carriable results into `answers`: the entries that
+    /// dropped no `Cycle` and took no conservative answer, plus, when the start
+    /// bottomed out `Clean`, every clean node in its cone, since a clobber
+    /// anywhere in a cone reaches the start as one.  A `Cycle` start is
+    /// excluded: it reached no clobber either, but only under the ancestor it
+    /// cycled to.
     fn publish(
         &self,
         memo: &FxHashMap<ValueId, Resolve>,
