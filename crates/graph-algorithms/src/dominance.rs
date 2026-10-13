@@ -235,8 +235,9 @@ where
 
 /// Lengauer-Tarjan over a depth-first preorder numbering: `parent[w]` is `w`'s
 /// spanning-tree parent and `preds(w)` yields the preorder numbers of `w`'s
-/// predecessors, asked for each `w` exactly once. The result is indexed by
-/// preorder number, the root at 0 and its own immediate dominator.
+/// predecessors, asked at most once for each `w` and never for the root, so a
+/// destructive closure (`std::mem::take`) is a valid one. The result is indexed
+/// by preorder number, the root at 0 and its own immediate dominator.
 ///
 /// Every vertex must be numbered, i.e. reachable from the root, and every
 /// number `preds` yields must be in range.

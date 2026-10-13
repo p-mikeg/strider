@@ -20,9 +20,10 @@ types.
   kernel-internal ones: `x86_linux_kernel` and the three PowerPC
   `*_linux_kernel` flavours. `build(&regs)` resolves the names to varnodes.
   Every other architecture's kernel ABI has its userland preset's register
-  SET, so a caller picks that directly; one register's ROLE still differs,
-  ppc64 `r13` being the per-CPU `paca` pointer rather than the userland TLS
-  pointer. Float and vector arguments have their own positional list,
+  SET, so a caller picks that directly. A role can still differ without the
+  set doing so, which is why PowerPC has presets of its own: ppc64 `r13` is the
+  per-CPU `paca` pointer there rather than the userland TLS pointer. Float and
+  vector arguments have their own positional list,
   `arg_passing_regs_float`, drawn from a register file the integer list never
   names; where the float and vector banks are physically distinct, as on
   PowerPC, the vector window (`v2`-`v13`) follows the floats, and the PowerPC

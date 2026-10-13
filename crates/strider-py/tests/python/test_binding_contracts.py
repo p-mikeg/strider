@@ -1,5 +1,4 @@
-"""Contracts the Rust bindings answer for, each one a shape that answered
-differently before.
+"""Contracts the Rust bindings answer for.
 
 The options views hand out immutable values, `build_cfg` reports only the seeds
 it seated, `pcode_at` answers the same whatever order the calls came in,
@@ -35,8 +34,9 @@ _STRAIGHT = bytes([0x48, 0x31, 0xC0, 0xC3])
 
 
 def _image_state(prog):
-    """`repr` and a symbol count miss a merge that replaced region bytes in
-    place, so the bytes at every symbol are part of the state."""
+    """The handle's state for comparison: `repr` and a symbol count miss a
+    merge that replaced region bytes in place, so the bytes at every symbol
+    are part of it."""
     syms = sorted((s.name, s.address) for s in prog.iter_symbols())
     return (repr(prog.reader()), syms, [prog.read(a & ~1, 16) for _, a in syms])
 
@@ -51,8 +51,8 @@ def _x86_64(code: bytes, base: int = _BASE):
 
 
 def test_known_targets_values_cannot_be_edited():
-    """The proxy blocks its keys; a list value took an edit the analysis never
-    read, so two option objects reading the same gave different CFGs."""
+    """The proxy blocks its keys, and a list value is read back immutable, so
+    an edit through one cannot reach the table the analysis reads."""
     opts = strider.cfg.CfgOptions(known_targets={_DISPATCH: [0x2000]})
     assert opts.known_targets[_DISPATCH] == (0x2000,)
     with pytest.raises(AttributeError):
@@ -74,8 +74,9 @@ def test_per_address_ccs_is_one_memoised_view():
 
 
 def test_a_seed_the_build_seated_nowhere_is_not_reported():
-    """A whole-binary answer table made every `build_cfg(...).is_complete()`
-    False and named addresses the function does not dispatch from."""
+    """`build_cfg` reports only the seeds it seated, so a whole-binary answer
+    table leaves `is_complete()` True and names no address the function does
+    not dispatch from."""
     opts = strider.cfg.CfgOptions(known_targets={0xDEAD0000: [0xDEAD1000]})
     cfg = _x86_64(_STRAIGHT).build_cfg(_BASE, opts)
     assert cfg.unverified_seeded_sites() == []
@@ -109,8 +110,8 @@ def _arm():
 
 @pytest.mark.parametrize("addr", [0x1000, 0x1004, 0x1008, 0x100C])
 def test_pcode_at_does_not_depend_on_earlier_calls(addr):
-    """A backward `blx` decoded by a longer sweep pinned Thumb at its target,
-    so the same call answered differently, or raised, by history."""
+    """`pcode_at` answers the same whatever order the calls came in, a
+    backward `blx` pinning Thumb at its target for a longer sweep."""
     expected = _arm().pcode_at(_BASE, addr)
     assert expected, "a decoded address answers p-code"
     walked = _arm()
@@ -119,8 +120,8 @@ def test_pcode_at_does_not_depend_on_earlier_calls(addr):
 
 
 def test_walking_a_stream_decodes_it_once():
-    """Every call used to re-decode from the entry, so a per-address walk was
-    quadratic."""
+    """One sweep serves a whole function's instructions, so a per-address walk
+    is linear rather than a decode from the entry per call."""
     count = 4000
     lifter = _x86_64(bytes([0x48, 0x83, 0xC0, 0x01]) * count)  # add rax,1
     addrs = [_BASE + 4 * i for i in range(count)]
@@ -147,8 +148,8 @@ def test_walking_a_stream_decodes_it_once():
 
 
 def test_an_add_elf_that_cannot_rebuild_merges_nothing():
-    """The merge committed first, so a `_rebuild` that raised left `symbol`
-    and `read` seeing the new ELF while the decoder kept the old snapshot."""
+    """A `_rebuild` that raises leaves the handle whole: `symbol`, `read` and
+    the decoder all see the pre-merge ELF."""
     import threading
 
     prog = strider.lift.load_elf(str(fixture_path("x86", "memory")))
@@ -173,8 +174,8 @@ def test_an_add_elf_that_cannot_rebuild_merges_nothing():
 
 
 def test_re_merging_a_loaded_image_does_nothing():
-    """The doc promised a byte-identical re-merge was a no-op; it appended
-    every region and every symbol again."""
+    """A byte-identical re-merge is a no-op: no region and no symbol is
+    appended twice."""
     path = str(fixture_path("x86", "memory"))
     prog = strider.lift.load_elf(path)
     before = _image_state(prog)
@@ -187,8 +188,8 @@ def test_re_merging_a_loaded_image_does_nothing():
 
 @pytest.mark.parametrize("entry", [-1, 2**64, "add"])
 def test_analyze_and_build_cfg_answer_the_same_for_a_bad_entry(entry):
-    """`build_cfg` raised `OverflowError` where `analyze` raised the
-    `StriderError` naming the real cause."""
+    """Both raise the `StriderError` naming the real cause, not a bare
+    `OverflowError`."""
     lifter = _x86_64(_STRAIGHT)
     with pytest.raises(strider.StriderError, match="`entry`") as analyzed:
         lifter.analyze(entry, CallingConvention.x86_64_systemv())
@@ -303,8 +304,9 @@ def test_a_different_register_table_is_still_refused():
 
 
 def test_a_pattern_shared_into_an_exponential_tree_is_refused():
-    """Every operand lowers eagerly, so the matcher's node cap was reached only
-    after 2**n closures existed."""
+    """A `Pat` shared into an exponential tree is refused before it is
+    lowered: every operand lowers eagerly, so the node cap alone would be
+    reached only after 2**n closures existed."""
     q = var(Capture("x"))
     for _ in range(24):
         q = int_add(q, q)
