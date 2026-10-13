@@ -16,26 +16,7 @@ use strider_ir::node::{ExtendOp, NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
-pub(crate) struct Rng(pub u64);
-impl Rng {
-    pub fn next(&mut self) -> u64 {
-        let mut x = self.0;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.0 = x;
-        x
-    }
-    pub fn below(&mut self, n: usize) -> usize {
-        (self.next() % n as u64) as usize
-    }
-    pub fn u128(&mut self) -> u128 {
-        (u128::from(self.next()) << 64) | u128::from(self.next())
-    }
-    pub fn chance(&mut self, pct: u64) -> bool {
-        self.next() % 100 < pct
-    }
-}
+use crate::test_support::Rng;
 
 pub(crate) const TYPES: &[(u32, ValueType)] = &[
     (1, ValueType::I8),
