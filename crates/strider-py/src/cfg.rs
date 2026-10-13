@@ -369,6 +369,11 @@ impl PyCfg {
     /// and the site is still a return, so that is "complete but unverified",
     /// not "incomplete".
     ///
+    /// A fourth shape is not a dispatch you seeded: an arm a mode-less
+    /// re-derivation found at a site whose other arms all carry the flowing
+    /// ISA mode. It is seated on the mode a caller's seed gave its siblings,
+    /// and nobody evaluated that arm's own.
+    ///
     /// Not unresolved (nothing contradicts the answer), but nothing checked it.
     /// Seating a seed changes the CFG the classifier reads, so a stale or wrong
     /// seed can stop it deriving and take the site's real arms with it. These
