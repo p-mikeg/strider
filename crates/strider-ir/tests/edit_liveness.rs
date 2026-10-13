@@ -5,32 +5,9 @@
 //! so its `FunctionBuilder` is a different type from the crate's own unit
 //! tests'.
 
-use std::collections::BTreeSet;
-
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{EditFunction, FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
-use strider_ir_test_utils::{RegisterSet, reg_vn};
-
-/// The cached live set and roots against a fresh walk of the same graph.
-fn assert_live_matches_reachable(edit: &EditFunction) {
-    use cranelift_entity::EntityRef;
-    let entry = edit.entry();
-    let info = strider_ir::walk::GraphWalkInfo::compute_full(edit.function().graph(), entry);
-
-    let fresh_live: BTreeSet<usize> = info.live_nodes.iter().map(|n| n.index()).collect();
-    let cached_live: BTreeSet<usize> = edit.live_snapshot().iter().map(|n| n.index()).collect();
-    assert_eq!(
-        cached_live, fresh_live,
-        "cached live_nodes must equal the entry-reachable set"
-    );
-
-    let fresh_roots: BTreeSet<usize> = info.roots.into_iter().map(|n| n.index()).collect();
-    let cached_roots: BTreeSet<usize> = edit.roots_snapshot().iter().map(|n| n.index()).collect();
-    assert_eq!(
-        cached_roots, fresh_roots,
-        "cached roots must equal the input-less reachable set"
-    );
-}
+use strider_ir_test_utils::{RegisterSet, assert_live_matches_reachable, reg_vn};
 
 /// `replace_value` unions the old producer's asm-fingerprint into the
 /// new one and redirects every use.

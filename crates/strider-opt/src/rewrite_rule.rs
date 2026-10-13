@@ -390,32 +390,8 @@ mod tests {
         );
     }
 
-    use std::collections::BTreeSet;
+    use strider_ir_test_utils::assert_live_matches_reachable;
     use strider_pattern::{template, var};
-
-    /// After any edits plus `clean()`, the cached live/roots state must
-    /// equal a fresh `GraphWalkInfo::compute_full(entry)` AS SETS: root
-    /// ORDER legitimately differs.
-    fn assert_live_matches_reachable(edit: &EditFunction) {
-        use cranelift_entity::EntityRef;
-        let entry = edit.entry();
-        let info = strider_ir::walk::GraphWalkInfo::compute_full(edit.function().graph(), entry);
-
-        let fresh_live: BTreeSet<usize> = info.live_nodes.iter().map(|n| n.index()).collect();
-        let cached_live: BTreeSet<usize> = edit.live_snapshot().iter().map(|n| n.index()).collect();
-        assert_eq!(
-            cached_live, fresh_live,
-            "cached live_nodes must equal the entry-reachable set"
-        );
-
-        let fresh_roots: BTreeSet<usize> = info.roots.into_iter().map(|n| n.index()).collect();
-        let cached_roots: BTreeSet<usize> =
-            edit.roots_snapshot().iter().map(|n| n.index()).collect();
-        assert_eq!(
-            cached_roots, fresh_roots,
-            "cached roots must equal the input-less reachable set"
-        );
-    }
 
     fn match_root<L: MatchPat + 'static>(function: &strider_ir::Function, lhs: L) -> super::NodeId {
         let m = Matcher::new(function);
