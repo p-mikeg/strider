@@ -292,14 +292,20 @@ impl SleighArch {
         }
     }
 
-    /// Whether a `CallOther` whose pcode output is a sub-register may be
-    /// lifted as a write of that slice alone, leaving the enclosing register's
-    /// other bytes as they were.
+    /// Whether a `CallOther` whose pcode output is a sub-register of
+    /// `container` may be lifted as a write of that slice alone, leaving the
+    /// enclosing register's other bytes as they were.
     ///
     /// It may only where the machine leaves them alone and the sla says so by
     /// writing the slice alone: x86 8- and 16-bit GPR destinations and legacy
     /// SSE into a VEX-widened register (a 32-bit destination zero-extends, and
     /// the sla emits that zext itself).
+    ///
+    /// The x87 `ST` registers, the only 10-byte register on either x86 preset,
+    /// are not among them: their `MM` slices are a differently-typed view, and
+    /// an MMX write redefines the sign and exponent a slice write would
+    /// preserve. `ST0`/`ST1` are float return registers, so those bits would be
+    /// returned.
     ///
     /// Elsewhere the slice write would read bytes the machine redefines.
     /// AArch64 zeroes them and the fork's sla emits the zext, so a slice write
@@ -308,8 +314,8 @@ impl SleighArch {
     /// been scanned for the class at all. All three keep the whole-container
     /// clobber, which is opaque rather than wrong.
     #[must_use]
-    pub fn callother_output_is_exact(&self) -> bool {
-        matches!(self.preset, ArchPreset::X86 | ArchPreset::X86_64)
+    pub fn callother_output_is_exact_in(&self, container: &rsleigh::Vn) -> bool {
+        matches!(self.preset, ArchPreset::X86 | ArchPreset::X86_64) && container.size != 10
     }
 
     /// Registers the sla declares for its own semantics rather than as
@@ -543,16 +549,28 @@ mod tests {
 
     /// Only the arches whose machine preserves the bytes outside a narrower
     /// pcodeop destination are exact; every other preset keeps the
-    /// whole-container clobber.
+    /// whole-container clobber. On x86 the x87 register file is excluded even
+    /// so, since an MMX write redefines the bytes a slice write would preserve.
     #[test]
     fn callother_output_is_exact_only_where_the_machine_preserves_the_rest() {
         use super::ArchPreset;
+        // RAX and ST0.
+        let gpr = rsleigh::Vn {
+            addr_space: rsleigh::VnSpace::REGISTER,
+            addr_off: 0,
+            size: 8,
+        };
+        let st0 = rsleigh::Vn { size: 10, ..gpr };
         for preset in ArchPreset::ALL {
             let expected = matches!(preset, ArchPreset::X86 | ArchPreset::X86_64);
             assert_eq!(
-                preset.arch().callother_output_is_exact(),
+                preset.arch().callother_output_is_exact_in(&gpr),
                 expected,
                 "{preset:?}",
+            );
+            assert!(
+                !preset.arch().callother_output_is_exact_in(&st0),
+                "{preset:?} x87 container",
             );
         }
     }
