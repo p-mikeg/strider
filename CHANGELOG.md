@@ -176,10 +176,8 @@ Rendering:
 - The `int`, `bool`, `int_binary_op`, `int_cmp_op` and `bool_binary_op`
   capture kinds of `int_const_with!` / `bool_const_with!` /
   `float_const_with!` are gone.
-- `MatcherBuilder::constrain_input_widths` is gone: it landed the width on an
-  alternation's arms and past a cast walk, so the constraint it wrote was not
-  the one asked for. Pin a width on the one vertex that must carry it with
-  `MatcherBuilder::set_value_width`.
+- `MatcherBuilder::constrain_input_widths` is gone; pin a width on the one
+  vertex that must carry it with `MatcherBuilder::set_value_width`.
 - `NodeKind::Switch(SwitchTableId)` and `NodeKind::Call { cc: Option<CcId> }`
   carry their case table and override convention. `SideTables::{switch_targets,
   set_call_cc, call_other_name, set_call_other_name}` moved to `Function`;
@@ -239,21 +237,18 @@ Rendering:
   `dot::GraphDot::as_dot_with_state` is gone (`as_dot` remains): the state it
   handed back only maps nodes under `cfg(test)`, so a production caller got
   nothing usable.
-- `strider_cfg::Builder::for_arch` takes `options: &'a CfgOptions`, and
-  `with_per_address_ccs` takes `&'a FxHashMap<..>` rather than the map by
-  value.
 - `CfgOptions` gains public `call_other_overrides` and `data_ranges` fields,
   so a struct literal needs `..Default::default()`.
 - `strider_cfg::CfgOptions<'a>` and `strider_lift::LiftOptions<'a>` carry a
   lifetime: `CfgOptions::known_targets` is a `&'a FxHashMap<PcodeInsnAddr,
   ResolvedTargets>` and `LiftOptions::per_address_ccs` a `&'a FxHashMap<u64,
-  BuiltCallingConvention>`, as `Builder::with_per_address_ccs` already was.
-  A struct literal must name a borrow (`known_targets: &known`), and
-  `Default` borrows one shared empty table instead of allocating. Both took
-  their map by value, so every `analyze` with a seeded table copied the whole
-  table twice. `strider_cfg::Builder::for_arch` takes `&'a CfgOptions<'a>`,
-  and code forwarding `LiftOptions::per_address_ccs` to `Lifter::build_cfg`
-  passes it as it stands rather than by reference.
+  BuiltCallingConvention>`. Both took their map by value, so every `analyze`
+  with a seeded table copied the whole table twice. A struct literal must name
+  a borrow (`known_targets: &known`), and `Default` borrows one shared empty
+  table instead of allocating. `strider_cfg::Builder::for_arch` takes
+  `&'a CfgOptions<'a>` and `with_per_address_ccs` a `&'a FxHashMap<..>`, and
+  code forwarding `LiftOptions::per_address_ccs` to `Lifter::build_cfg` passes
+  it as it stands rather than by reference.
 - `strider_cfg::ResolvedTargets` carries `ResolvedTarget { addr, isa_bit }`, so
   a `known_targets` map needs `ResolvedTarget::from(addr)`.
 - `AnalyzeResult` gains `unverified_seeded_sites`, `interior_branch_targets`,
@@ -277,6 +272,12 @@ Rendering:
   argument `q8` is rejected.
 - `CallingConvention::x86_64_all_preserving` is gone on both surfaces; use
   `CallingConvention::x86_64_systemv().preserves_all()`.
+- A `Call`'s flat argument list is longer on the userland PowerPC presets,
+  which now name `v2`-`v13` for vector arguments, so a `call().arg(n)` query
+  reads a different operand on both surfaces: a collected stack argument's
+  first position is `8+25` on PPC64 and `8+20` on PPC32, where it was `8+13`
+  and `8+8`. The three `*_linux_kernel` flavours name no vector register, so
+  nothing moves there.
 - `SleighArch::probe_regs` needs the `test-util` feature.
 - The ARM processor-mode `CallOther` rows apply to the ARM32 presets only, and
   a processor-mode switch (`setUserMode`, `setFIQMode`, ...) clobbers
@@ -288,8 +289,8 @@ Rendering:
   `apply_elf_relocations` and `apply_elf_relocations_autoload` are gone; use
   `OwnedElf::regions(source, filter, relocate)`. `MemRegion::data` /
   `data_mut` are gone; a region serves bytes through `read`.
-- `ElfFileMemReader::from_bytes`, `::from_path`, `::from_elf` and
-  `::check_unchanged` are gone, and `elf::relocations` is private.
+- `ElfFileMemReader::from_bytes` and `::from_path` are gone, and
+  `elf::relocations` is private.
   `::from_object(&obj)` is the one constructor and it copies each mapping, so
   the reader has nothing to stat: `from_bytes(b)` is `object::File::parse(b)`
   then `::from_object(&obj)`, and `from_path(p)` is `load_elf(p)` then
@@ -331,16 +332,14 @@ Rendering:
   runtime that the image cannot prove. Only a section of those names the loader
   really maps writable is served; `.got.plt` never is, lazy binding rewriting
   those slots. The flag with `apply_relocations=False` is refused: the claim is
-  that the loader has relocated those slots, which the other flag denies, and
-  served anyway a slot reads as its on-disk bytes, 0 on a PIE where the address
-  lives in the relocation addend, so a dispatch folds to `iconst[0x0]` with
-  nothing reported unresolved.
+  that the loader has relocated those slots, which the other flag denies.
 - `LifterOptions(assumptions=AssumptionOptions(...))` tunes memory precision;
   [docs/python-api.md](docs/python-api.md#2-analyzing-a-function) says what
   each claim buys. `AssumptionOptions.none()` makes none of them.
 - `cfg.is_complete()` and six incompleteness channels:
   `unresolved`, `cfg.unverified_seeded_sites()` (answers exactly the caller's
-  `known_targets`, and sites consumed as a return or tail call),
+  `known_targets`, sites consumed as a tail call, returns the caller seeded,
+  and a classifier-seated return whose proof rested on a claim),
   `cfg.isa_mode_conflicts()` (addresses reached in two ISA modes),
   `cfg.interior_branch_targets()` (targets off every instruction boundary,
   including overlapping decodes), `cfg.unmapped_branch_targets()` (direct
@@ -476,11 +475,8 @@ Rendering:
 - The optimizer skips a pass whose last run changed nothing until the graph
   changes.
 - The indirect-branch resolution loop is one round per level of discovery.
-  The partial-function lookahead that seated sites between rounds is gone: it
-  seated 3 sites across 18,667 sampled kernel functions and all 2,718 fixture
-  functions, none of them withdrawn, and digests of the raw IR, the asm
-  fingerprints, the CFG and all six report channels over those 21,385
-  functions are byte-identical without it at the same wall time.
+  The partial-function lookahead that seated sites between rounds is gone: the
+  ordinary rounds seat what it did, so the result is unchanged.
 - `validate` rejects IR it used to accept: a non-phi node that is its own
   transitive producer; the memory, `InitialVar` and `LostStore` checks above; an
   integer operation mixing operand widths; a `CcId` or `SwitchTableId` no
@@ -488,9 +484,10 @@ Rendering:
   terminator; and a `Region` that drops an arm's memory effect, which is
   `UnmergedMemoryEffect` rather than the `MemoryRewind` whose message describes
   a reader taking a stale state.
-- `strider-opt` no longer depends on petgraph: the jump-table index classifier
-  climbs the `Dominators` `graph_algorithms::dominance::dominators` builds, and
-  `mem_ssa::layout` orders its memory graph with
+- `strider-opt` no longer depends on petgraph either, no public item of its
+  own changing: the jump-table index classifier climbs the `Dominators`
+  `graph_algorithms::dominance::dominators` builds, and `mem_ssa::layout`
+  orders its memory graph with
   `graph_algorithms::dominance::immediate_dominators` and `DomIntervals`.
 
 ### Performance
@@ -511,7 +508,8 @@ Rendering:
   size: the builder borrows it and the lift seeds only the overrides this
   CFG's call targets select (10,000 entries over `mov eax,1; ret`: `build_cfg`
   3.24 ms to 9.8 us, `build_ir_with` 561 us to 16 us, both now flat in the
-  table size).
+  table size). From Python each `analyze` still resolves every entry's ABI
+  against the register table, which 10,000 entries cost 5.4 ms.
 - A pattern query no longer doubles per nested failing branch pattern (a
   40-`If` graph with no match: 14.6 s to 0.001 s), and a commutative node whose
   two inputs are one value tries one operand order.
@@ -559,11 +557,11 @@ Rendering:
   read-only `mappingproxy` instead of copying the table (`analyze` with 20,000
   known targets: 32.0 ms to 1.6 ms), and `LifterOptions.per_address_ccs` is
   served the same way.
-- A seeded `known_targets` table is seated into the CFG builder's own form
-  once per options object rather than per `analyze` (20,000 entries: the
-  table's share of an `analyze` 1.07 ms to 0.88 ms), and reading
-  `LifterOptions.per_address_ccs` costs a view lookup rather than a fresh dict
-  of fresh objects (20,000 entries: 3.9 ms to 0.05 ms per read).
+- A seeded `known_targets` table costs an `analyze` nothing: the option tables
+  are borrowed rather than owned, `PyCfgOptions` seats the table into the CFG
+  builder's own form at construction and lends it per call, and the resolve
+  loop copies it only where it seats a target (20,000 entries: 0.95 ms an
+  `analyze` to nothing).
 - `pcode_at` keeps what each sweep decoded, so a walk over a function's
   instructions decodes it once instead of re-sweeping from the entry per
   address.
@@ -641,14 +639,11 @@ Lifting and memory:
   `__float128` or IEEE `long double` return comes back in `v2` too. The three
   `*_linux_kernel` flavours name no part of it, PowerPC Linux being built
   `-mno-altivec -mno-vsx`, so a function that never touches a vector seeds no
-  16-byte varnode. The window follows the float one, so under the userland
-  presets a collected stack argument's `call().arg(n)` moves up: the first is
-  `8+25` on PPC64 and `8+20` on PPC32, where it was `8+13` and `8+8`. The
-  kernel flavours move no float or integer position, so `arg(n)` numbers below
-  the window as before.
+  16-byte varnode. The vector window follows the float one, which moves the
+  stack-argument positions listed under Breaking, Rust.
 - `BuiltCallingConvention::validate` rejects a stack-pointer SUB-register in a
-  register list, as its byte-level disjointness rule always claimed; `ESP`
-  beside `RSP` was accepted and made the stack pointer `arg 0`.
+  register list, the disjointness rule being by byte range; `ESP` beside `RSP`
+  was accepted and made the stack pointer `arg 0`.
 - A `per_address_ccs` override naming an integer argument register outside the
   function's own convention lifts.
 - An ARM32 function with a NEON register and a call analyses.
@@ -915,13 +910,11 @@ Python and the explorer:
 - `build_cfg` reports only the `known_targets` seeds it seated, so a
   whole-binary answer table no longer makes every `is_complete()` False and
   name addresses the function does not dispatch from.
-- `build_cfg` raises the `StriderError` naming the cause for a bad `entry`,
-  as `analyze` does; it raised a bare `OverflowError`.
 - `pcode_at` answers the same whatever order the calls came in: a reused sweep
   engine re-decoded an address a later instruction had already pinned a decode
   mode at (an ARM backward `blx`).
-- `add_elf` does nothing when the image is already fully loaded byte for byte,
-  which the doc already promised; it appended every region and symbol again.
+- `add_elf` does nothing when the image is already fully loaded byte for byte;
+  it appended every region and symbol again.
   It also refuses off the handle's thread before merging anything, so a rebuild
   that cannot run no longer leaves `symbol` and `read` seeing an ELF the
   decoder does not.
@@ -1018,8 +1011,6 @@ mnemonic group. A caller sees these only in the lift of the named instructions.
   engine decodes as its source does, up to `MAX_CONTEXT_COMMITS` (4096)
   commits; past that the log is dropped and
   `Sleigh::clone_would_replay_context` says which of the two a clone gets.
-- The committed patch series matches FORK.md's regeneration command again, so
-  each patch's subject names its own change.
 
 ## 0.1.0
 
