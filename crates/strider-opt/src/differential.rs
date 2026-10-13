@@ -1,6 +1,12 @@
 //! Differential fuzzer: random IR, evaluated by an independent p-code
 //! reference interpreter before and after optimisation.
 //!
+//! Both generators emit integer arithmetic, compares, extend/truncate,
+//! popcount/lzcount, phis and `If` / `Return` / `Unreachable` control, and
+//! nothing else: no `Load`, `Store`, `Call`, `CallOther`, `Switch` or float
+//! node, so `LoadForward`, `StoreDead`, the memory and SP-alias analyses and
+//! every float fold are outside what this checks.
+//!
 //! `FUZZ_N` seeds (`FUZZ_START` first, `FUZZ_STEPS` nodes per DAG) scale a run
 //! past the committed default; `FUZZ_PASS` runs `cf` / `kb` / `flag` alone
 //! instead of the whole pipeline.
@@ -875,12 +881,14 @@ fn input_value(rng: &mut Rng, ty: ValueType) -> u128 {
     }) & m
 }
 
-/// Returns a description of the first mismatch.
+/// Returns the number of compared (trial, return value) pairs, or a
+/// description of the first mismatch. A pair whose reference value is `None`
+/// -- division by zero, `INT_MIN / -1` -- is not comparable and not counted.
 pub(crate) fn check_seed(
     seed: u64,
     steps: usize,
     run: &dyn Fn(&mut strider_ir::Function) -> crate::Result<()>,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     let (mut f, _) = build_random_fn(seed, steps);
     let before_text = f.to_text(false);
     let rets = return_values(&f);
@@ -925,6 +933,7 @@ pub(crate) fn check_seed(
     if after.len() != rets.len() {
         return Err(format!("seed {seed}: return arity changed"));
     }
+    let mut compared = 0usize;
     for t in 0..ntrials {
         let vec = &vectors[t];
         let sp = &specials[t];
@@ -939,9 +948,9 @@ pub(crate) fn check_seed(
         let mut memo = FxHashMap::default();
         for (k, &v) in after.iter().enumerate() {
             let got = ref_eval(&f, v, &inputs, &mut memo);
-            if let Some(want) = expected[t][k]
-                && got != Some(want)
-            {
+            let Some(want) = expected[t][k] else { continue };
+            compared += 1;
+            if got != Some(want) {
                 let mut ins = Vec::new();
                 for i in 0..4 {
                     ins.push(format!("{:#x}", inputs(i, ValueType::I128)));
@@ -953,7 +962,7 @@ pub(crate) fn check_seed(
             }
         }
     }
-    Ok(())
+    Ok(compared)
 }
 
 /// Random integer DAGs: every return value agrees with the reference
@@ -974,6 +983,7 @@ fn the_pipeline_preserves_dag_semantics() {
         .unwrap_or(25);
     let which = std::env::var("FUZZ_PASS").unwrap_or_default();
     let mut failures = Vec::new();
+    let mut compared = 0usize;
     for seed in start..start + n {
         let run = |f: &mut strider_ir::Function| -> crate::Result<()> {
             let mut p = crate::OptimizerPipeline::new();
@@ -989,7 +999,7 @@ fn the_pipeline_preserves_dag_semantics() {
             check_seed(seed, steps, &run)
         }));
         match r {
-            Ok(Ok(())) => {}
+            Ok(Ok(c)) => compared += c,
             Ok(Err(e)) => failures.push(e),
             Err(_) => failures.push(format!("seed {seed}: PANIC")),
         }
@@ -997,6 +1007,12 @@ fn the_pipeline_preserves_dag_semantics() {
             break;
         }
     }
+    // A floor on the yield: a generator change or an early `?` that stops
+    // producing comparable return values fails here rather than reading green.
+    assert!(
+        compared >= n as usize * 450,
+        "only {compared} value comparisons over {n} seeds"
+    );
     if !failures.is_empty() {
         panic!(
             "{} failures:\n{}",
@@ -1247,17 +1263,19 @@ fn the_pipeline_preserves_cfg_semantics() {
                 let mut outcomes = Vec::new();
                 let mut rng = Rng(seed | 1);
                 let vecs: Vec<Vec<u128>> = (0..16)
-                    .map(|_| (0..4).map(|_| u128::from(rng.next() % 6)).collect())
+                    .map(|_| (0..4).map(|_| u128::from(rng.next())).collect())
                     .collect();
                 for vec in &vecs {
-                    outcomes.push(run_cfg(&f, &|i, _| vec[i]));
+                    outcomes.push(run_cfg(&f, &|i, ty| {
+                        input_value(&mut Rng(vec[i] as u64 | 1), ty)
+                    }));
                 }
                 crate::default_pipeline()
                     .run(&mut f, &mut crate::OptCtx::new(None))
                     .map_err(|e| format!("seed {seed}: pipeline error {e:#}\n{before_text}"))?;
                 let mut cmp = 0;
                 for (vec, want) in vecs.iter().zip(&outcomes) {
-                    let got = run_cfg(&f, &|i, _| vec[i]);
+                    let got = run_cfg(&f, &|i, ty| input_value(&mut Rng(vec[i] as u64 | 1), ty));
                     match want {
                         Outcome::Ret(_) => {
                             cmp += 1;
@@ -1293,7 +1311,16 @@ fn the_pipeline_preserves_cfg_semantics() {
             break;
         }
     }
-    eprintln!("built {built} compared {compared}");
+    // Floors on the yield. `build_random_cfg` bails for most seeds, so a
+    // change that drops it to none must not read as a pass.
+    assert!(
+        built >= n as usize / 5,
+        "only {built} of {n} seeds built a CFG"
+    );
+    assert!(
+        compared >= built * 4,
+        "{built} CFGs yielded only {compared} returning runs"
+    );
     if !failures.is_empty() {
         panic!(
             "{} failures:\n{}",
@@ -1306,9 +1333,19 @@ fn the_pipeline_preserves_cfg_semantics() {
 // ---------------------------------------------------------------------------
 // Targeted proofs.
 
-/// `op(C1, C2)` at I256 with both constants past the u128 carrier.
+/// `op(C1, C2)` at I256 with both constants past the u128 carrier. The
+/// pipeline leaves a `ConstValue::Wide` operand unfolded, so what the run must
+/// preserve is the operation and both operands' limbs, unswapped by
+/// const-on-right and untruncated by the u128 carrier.
 #[test]
 fn a_wide_constant_does_not_ping_pong_across_const_on_right() {
+    fn le_limbs(f: &strider_ir::Function, v: ValueId) -> Vec<u64> {
+        f.int_const_wide_le_bytes(f.producer(v))
+            .unwrap_or_else(|| panic!("{v:?} is not a wide constant"))
+            .chunks_exact(8)
+            .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+            .collect()
+    }
     let w1 = [1u64, 2, 3, 4];
     let w2 = [5u64, 6, 7, 8];
     for op in [IntBinaryOp::And, IntBinaryOp::Add, IntBinaryOp::Xor] {
@@ -1329,6 +1366,22 @@ fn a_wide_constant_does_not_ping_pong_across_const_on_right() {
         crate::default_pipeline()
             .run(&mut f, &mut crate::OptCtx::new(None))
             .unwrap_or_else(|e| panic!("{op:?}: {e:#}"));
+        let ret = return_values(&f);
+        assert_eq!(ret.len(), 1, "{op:?}: return arity");
+        let node = f.producer(ret[0]);
+        assert_eq!(
+            *f.node_kind(node),
+            NodeKind::IntBinaryOp(op),
+            "{op:?}: the wide operation is gone\n{}",
+            f.to_text(false)
+        );
+        let ins = f.node_inputs(node);
+        assert_eq!(
+            [le_limbs(&f, ins[0]), le_limbs(&f, ins[1])],
+            [w1.to_vec(), w2.to_vec()],
+            "{op:?}: operand limbs\n{}",
+            f.to_text(false)
+        );
     }
 }
 
