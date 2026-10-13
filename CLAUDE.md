@@ -271,7 +271,7 @@ when both IR slots hold the same value.
     does not abort the interpreter.
 - `Sleigh::lift_one(&mut self)` is NOT stateless: it carries context-register
   state a decoded instruction can commit at a later address (ARM/Thumb and
-  IT-block state, MIPS16, ppc `vle`), so per-region decoding must stay
+  IT-block state, MIPS16, ppc `linkreg`), so per-region decoding must stay
   sequential (`RegionBuilder::build`). x86 declares its decode variables
   flowing but no constructor commits one, so nothing there orders a decode.
 - Register aliasing (x86 rax/eax/ax, AArch64 q/d/s, x87 ST*, ...) is handled in
