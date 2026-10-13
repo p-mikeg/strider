@@ -31,7 +31,7 @@ def test_reader_error_on_missing_elf_path():
 def test_reader_error_on_unknown_symbol(x86_memory_elf):
     """An unknown symbol name raises StriderError, not KeyError or a panic."""
     elf = strider.lift.load_elf(str(x86_memory_elf))
-    with pytest.raises(strider.StriderError):
+    with pytest.raises(strider.StriderError, match="not found in any ELF"):
         elf.symbol("definitely_not_a_real_symbol_xyz")
 
 
