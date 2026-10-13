@@ -53,13 +53,14 @@ struct Ctx<'a> {
     pat: &'a Pattern,
     /// [`Matcher::satisfied`], borrowed for the walk.
     satisfied: &'a Cell<u64>,
-    /// Per `first_of` node, the arm that first produced a match in this
-    /// attempt. The cut is scoped to the attempt, not to one invocation of the
-    /// alternation: a sibling operand enumerated INSIDE the alternation's
-    /// invocation and one enumerated around it must leave the same arms, or
-    /// the query answers differently by which slot it spells the alternation
-    /// in.
-    first_match_cut: RefCell<FxHashMap<PatNodeId, usize>>,
+    /// Per `first_of` node and IR node it was offered, the arm that first
+    /// produced a match in this attempt. The cut is scoped to the attempt
+    /// rather than to one invocation of the alternation, so a sibling operand
+    /// enumerated INSIDE the alternation's invocation and one enumerated around
+    /// it leave the same arms; the IR node is part of the key because a
+    /// commutative ordering or an `any_input` slot re-offers the same pat node
+    /// a DIFFERENT IR node, for which an earlier arm's match proves nothing.
+    first_match_cut: RefCell<FxHashMap<(PatNodeId, NodeId), usize>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -72,12 +73,15 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    fn cut_arm(&self, node: PatNodeId) -> Option<usize> {
-        self.first_match_cut.borrow().get(&node).copied()
+    fn cut_arm(&self, node: PatNodeId, ir: NodeId) -> Option<usize> {
+        self.first_match_cut.borrow().get(&(node, ir)).copied()
     }
 
-    fn record_cut_arm(&self, node: PatNodeId, arm: usize) {
-        self.first_match_cut.borrow_mut().entry(node).or_insert(arm);
+    fn record_cut_arm(&self, node: PatNodeId, ir: NodeId, arm: usize) {
+        self.first_match_cut
+            .borrow_mut()
+            .entry((node, ir))
+            .or_insert(arm);
     }
 
     #[inline]
@@ -335,7 +339,7 @@ fn try_match_at(
         if !bind_all_captures(bindings, nd, out_weight, ir_node, root_value) {
             return false;
         }
-        let cut = ctx.cut_arm(pat_node);
+        let cut = ctx.cut_arm(pat_node, ir_node);
         for (arm, alt) in inputs.iter().enumerate() {
             // An arm past the one that already matched in this attempt is not
             // re-offered just because a sibling operand moved on.
@@ -372,7 +376,7 @@ fn try_match_at(
             // arm reaching `k` but rejected by a guard above falls through to
             // the next arm.
             if nd.first_match && ctx.satisfied.get() > before {
-                ctx.record_cut_arm(pat_node, arm);
+                ctx.record_cut_arm(pat_node, ir_node, arm);
                 break;
             }
         }
