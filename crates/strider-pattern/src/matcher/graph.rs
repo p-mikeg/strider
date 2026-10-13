@@ -11,9 +11,8 @@ pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
 /// operands are matched inside the deepest frame of its earlier operands'
 /// subtrees and the stack grows with the TREE-UNFOLDED node count, not the
 /// depth: a vertex feeding several slots is walked once per slot, which is what
-/// [`unfolded_nodes`] charges. Measured on a debug build at the cap, 255 nested
-/// `If` branches take about 1.45 MiB and a 255-node add chain about 1.15 MiB,
-/// so the 2 MiB a spawned thread gets keeps a factor of about 1.4.
+/// [`unfolded_nodes`] charges. The cap keeps the deepest pattern a query can
+/// describe inside the 2 MiB a spawned thread gets by default.
 pub(crate) const MAX_PATTERN_NODES: usize = 256;
 
 /// Nodes a match attempt recurses through: every vertex once per consumer slot
