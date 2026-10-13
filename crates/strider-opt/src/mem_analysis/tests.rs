@@ -3060,17 +3060,7 @@ mod store_index {
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
     use super::super::test_sp as sp;
-
-    struct Rng(u64);
-
-    impl Rng {
-        fn next(&mut self, bound: u64) -> u64 {
-            self.0 ^= self.0 << 13;
-            self.0 ^= self.0 >> 7;
-            self.0 ^= self.0 << 17;
-            self.0 % bound
-        }
-    }
+    use crate::test_support::Rng;
 
     /// A random run of stores through every address class, calls and an
     /// opaque user-op, plus the addresses a probe can take.
@@ -3087,8 +3077,8 @@ mod store_index {
         let opaque = b.build_load(cell, rsleigh::VnSpace::RAM, ValueType::I32)?;
         let mut addresses = vec![opaque];
         for _ in 0..40 {
-            let k = rng.next(24) as i64 - 12;
-            let addr = match rng.next(7) {
+            let k = rng.below(24) as i64 - 12;
+            let addr = match rng.below(7) {
                 0 | 1 => {
                     let k = b.build_int_const(k as u64, ValueType::I32)?;
                     b.build_int_binary_operation(sp_value, k, IntBinaryOp::Add, ValueType::I32)?
@@ -3101,7 +3091,7 @@ mod store_index {
                 4 => b.build_int_const((0xFFFF_F000u64).wrapping_add(k as u64), ValueType::I32)?,
                 5 => opaque,
                 _ => {
-                    if rng.next(2) == 0 {
+                    if rng.below(2) == 0 {
                         let target = b.build_int_const(0x2000u64, ValueType::I32)?;
                         b.build_call(target, &[], &[], 0)?;
                     } else {
@@ -3116,8 +3106,8 @@ mod store_index {
                 ValueType::I16,
                 ValueType::I32,
                 ValueType::I64,
-            ][rng.next(4) as usize];
-            let data = b.build_int_const(rng.next(100), ty)?;
+            ][rng.below(4)];
+            let data = b.build_int_const(rng.next() % 100, ty)?;
             b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         }
         b.build_return(None, &[])?;

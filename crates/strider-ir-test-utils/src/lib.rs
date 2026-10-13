@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{
@@ -18,6 +18,33 @@ pub trait IrWalkerEx: IRWalker {
 }
 
 impl<T: IRWalker + ?Sized> IrWalkerEx for T {}
+
+/// An [`EditFunction`](strider_ir::EditFunction)'s cached live set and roots
+/// against a fresh entry walk of the same graph, AS SETS: root ORDER
+/// legitimately differs.
+///
+/// # Panics
+///
+/// If either cached set disagrees with the walk.
+pub fn assert_live_matches_reachable(edit: &strider_ir::EditFunction) {
+    use cranelift_entity::EntityRef;
+    let entry = edit.entry();
+    let info = strider_ir::walk::GraphWalkInfo::compute_full(edit.function().graph(), entry);
+
+    let fresh_live: BTreeSet<usize> = info.live_nodes.iter().map(|n| n.index()).collect();
+    let cached_live: BTreeSet<usize> = edit.live_snapshot().iter().map(|n| n.index()).collect();
+    assert_eq!(
+        cached_live, fresh_live,
+        "cached live_nodes must equal the entry-reachable set"
+    );
+
+    let fresh_roots: BTreeSet<usize> = info.roots.into_iter().map(|n| n.index()).collect();
+    let cached_roots: BTreeSet<usize> = edit.roots_snapshot().iter().map(|n| n.index()).collect();
+    assert_eq!(
+        cached_roots, fresh_roots,
+        "cached roots must equal the input-less reachable set"
+    );
+}
 
 /// Builder shorthands for shapes that aren't primitive in the IR.
 pub trait IrBuilderEx: IRBuilderExt {
