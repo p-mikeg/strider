@@ -23,10 +23,10 @@ use crate::mem_analysis::{
 ///
 /// A RAM store the address spine does not place on the entry stack, and any
 /// callee or user-op, rest on one claim,
-/// [`AssumptionOptions::return_slots_survive_untracked_writes`](crate::AssumptionOptions):
+/// [`AssumptionOptions::return_slots_survive_untracked_writes`](crate::AssumptionOptions::return_slots_survive_untracked_writes):
 /// code that breaks it smashes its own stack. `AssumptionOptions::none` clears
-/// it: such a store's address is then located the way a load's is, and one no
-/// location is reached for clobbers the slot.
+/// it: such a store's address is then located the way a load's is, and a store
+/// no location is reached for is taken to clobber the slot.
 pub struct ReturnTargets<'f> {
     function: &'f Function,
     assumptions: &'f crate::AssumptionOptions,
