@@ -50,7 +50,7 @@ fn make_unresolved_indirect_branch_cfg() -> (
 /// The lifter inspects the region's terminator and emits an
 /// `IndirectBranch(target_value)` placeholder wired to `target_vn` at slot 2
 /// (slots 0/1 are control/memory). Dispatching `BranchIndirect` to
-/// `handle_return` instead yields an ABI Return whose inputs are the
+/// `handle_sleigh_return` instead yields an ABI Return whose inputs are the
 /// convention's `ret_val_regs`, dropping the dispatch varnode.
 #[test]
 fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
@@ -200,7 +200,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
 ///
 /// Sealing the region as `Unconditional` drops the trailing `BranchIndirect`
 /// p-code insn from it. Left in place, the
-/// IR per-region loop routes it through `handle_return` (Return and
+/// IR per-region loop routes it through `handle_sleigh_return` (Return and
 /// BranchIndirect share a dispatch arm) and the region both returns AND
 /// carries a forward control edge (`return; goto succ`), a mis-lift the
 /// validator does not catch.
