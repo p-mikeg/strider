@@ -130,8 +130,12 @@ fn matching_allocates_per_configuration_not_per_node_visited() {
     assert_eq!(orderings, 1 << (LEAVES - 1), "every ordering is explored");
     // One dedup key per configuration reaching the root, and nothing for the
     // 15 pat nodes each of them walked.
+    // One dedup key per configuration reaching the root, and nothing for the
+    // 15 pat nodes each of them walked. The floor is that same key: below it
+    // the orderings stopped reaching the root at all, which is how the old
+    // `<= 16` form went vacuous.
     assert!(
-        allocations <= orderings + 16,
+        (orderings..=orderings + 16).contains(&allocations),
         "{allocations} allocations over {orderings} orderings"
     );
 
