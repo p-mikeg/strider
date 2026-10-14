@@ -558,3 +558,50 @@ fn x86_empty_footprint_rows_are_pure_or_mem_clobber() {
         }
     }
 }
+
+/// Every name in the FXSAVE / XSAVE footprint resolves on both x86 widths.
+/// An unresolvable name is a hard error at lift time, and the sla declares
+/// `XMM8`-`XMM15` in the block it shares between the two widths, so the one
+/// list has to work for both.
+#[test]
+fn the_x86_extended_state_footprint_resolves_on_both_widths() {
+    for preset in [ArchPreset::X86, ArchPreset::X86_64] {
+        let regs = regs_for(preset);
+        for name in ["_fxrstor", "xrstor64", "_fxsave", "xsaves"] {
+            let abi = expect_call(classify(preset, name));
+            let built = abi
+                .build(&regs)
+                .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e:?}"));
+            let moved = if name.contains("rstor") {
+                built.implicit_writes.len()
+            } else {
+                built.implicit_reads.len()
+            };
+            assert!(
+                moved >= 24,
+                "{preset:?}/{name}: moves {moved} registers, expected the \
+                 x87 + SSE + AVX state"
+            );
+        }
+    }
+}
+
+/// A restore writes the state; a save only reads it. A restore that declared
+/// no writes left the incoming value of every one of these live across it.
+#[test]
+fn a_restore_writes_the_state_a_save_reads_it() {
+    let regs = regs_for(ArchPreset::X86_64);
+    let restore = expect_call(classify(ArchPreset::X86_64, "_fxrstor"))
+        .build(&regs)
+        .expect("fxrstor builds");
+    assert!(
+        !restore.implicit_writes.is_empty(),
+        "fxrstor writes nothing"
+    );
+
+    let save = expect_call(classify(ArchPreset::X86_64, "_fxsave"))
+        .build(&regs)
+        .expect("fxsave builds");
+    assert!(save.implicit_writes.is_empty(), "fxsave writes a register");
+    assert!(!save.implicit_reads.is_empty(), "fxsave reads nothing");
+}
