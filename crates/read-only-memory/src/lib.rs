@@ -11,8 +11,11 @@
 ///
 /// `Send` is what `strider-py` needs to drop the GIL around `analyze` with
 /// `Python::allow_threads`, which requires everything the closure captures to
-/// be `Send`. Nothing in the workspace needs the `Sync` half.
-pub trait ReadOnlyMemory: Send + Sync {
+/// be `Send`. `Sync` was carried alongside it and nothing ever needed it: no
+/// `&dyn ReadOnlyMemory` crosses a thread in the workspace, and requiring it
+/// barred an impl holding a `RefCell` memo, which the single-threaded design
+/// otherwise invites.
+pub trait ReadOnlyMemory: Send {
     /// Fills `buf` with the bytes at `[addr, addr + buf.len())`.
     ///
     /// Fill-all-or-error: no partial fill, no truncation. Bytes are copied

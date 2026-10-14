@@ -22,7 +22,7 @@ impl PySleigh {
         let sleigh = crate::strider_cls::build_orch_sleigh(&arch, reader)?;
         let regs = sleigh
             .regs()
-            .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::regs failed: {e:?}")))?;
+            .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::regs failed: {e:#}")))?;
         Ok(Self {
             arch_name: arch.preset_name,
             source_arch: crate::strider_cls::SourceArch::new(arch.inner, arch.preset_name),

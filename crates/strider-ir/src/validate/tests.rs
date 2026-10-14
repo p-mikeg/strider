@@ -684,7 +684,7 @@ fn graph_invariants_tolerates_unreachable_zero_predecessor_region() {
 }
 
 #[test]
-fn asm_fingerprint_check_off_by_default_accepts_empty_fingerprints() {
+fn an_unreachable_unstamped_node_is_not_flagged() {
     let mut s = spine();
     // Unstamped, but unreachable from entry.
     let _const_node = int_const(&mut s.f, 7, ValueType::I64);
@@ -692,7 +692,7 @@ fn asm_fingerprint_check_off_by_default_accepts_empty_fingerprints() {
         s.f.graph_mut()
             .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
     stamp(&mut s.f, u);
-    validate(&s.f).expect("default validate is unaffected");
+    validate(&s.f).expect("an unreachable node needs no fingerprint");
 }
 
 #[test]
