@@ -133,6 +133,7 @@ pub(crate) fn apply_elf_relocations_with(
     loaded_with: super::sections::LoadFilter,
     layout: &super::sections::ElfSectionLayout,
     writable: &AddressRanges,
+    executable: &AddressRanges,
 ) -> Result<Vec<MemRegion>> {
     let owners = super::sections::loaded_section_indices(obj, layout, loaded_with)?;
     // One lookup per relocation instead of a scan of every region; an ET_REL
@@ -152,6 +153,7 @@ pub(crate) fn apply_elf_relocations_with(
         regions,
         region_index: &region_index,
         writable,
+        executable,
         endian_le: matches!(obj.endianness(), object::Endianness::Little),
         insn_le: matches!(obj.endianness(), object::Endianness::Little)
             || obj.architecture() == A::Aarch64,
@@ -184,6 +186,7 @@ struct Ctx<'a, 'd> {
     regions: &'a [MemRegion],
     region_index: &'a RegionIndex,
     writable: &'a AddressRanges,
+    executable: &'a AddressRanges,
     endian_le: bool,
     /// Byte order of an instruction field: A64 instructions are little-endian
     /// whatever `EI_DATA` says, and only data follows it. ARM BE32 instructions
@@ -902,7 +905,14 @@ impl PatchSink<'_> {
     }
 
     /// A relocation whose value is not computed: a hole over the field on
-    /// every region in `covering`, unless the field is writable at runtime.
+    /// every region in `covering`, unless the field is writable and NOT
+    /// executable at runtime.
+    ///
+    /// Writable data the program rewrites anyway is not worth a hole.  A
+    /// writable EXECUTABLE field is a different thing: `CodeAndReadOnly` keeps
+    /// an RWX mapping on purpose (firmware, `ld -N`), so those bytes reach the
+    /// decoder, and serving them unrelocated hands it a plausible wrong
+    /// instruction with nothing said about it.
     fn unmodelled(
         &mut self,
         ctx: &Ctx<'_, '_>,
@@ -914,7 +924,9 @@ impl PatchSink<'_> {
         let RelocationFlags::Elf { r_type } = reloc.flags() else {
             unreachable!("an ELF relocation carries ELF flags");
         };
-        if !ctx.writable.touches(field_addr, size_bytes) {
+        if !ctx.writable.touches(field_addr, size_bytes)
+            || ctx.executable.touches(field_addr, size_bytes)
+        {
             self.push(&covering, Patch::hole(field_addr, size_bytes, r_type));
         }
         self.scratch = covering;
@@ -1363,7 +1375,7 @@ mod tests {
                 false,
             )
             .expect("regions");
-        let (mut regions, writable) = (image.regions, image.writable);
+        let (mut regions, writable, executable) = (image.regions, image.writable, image.executable);
 
         let bytes = |regions: &[MemRegion]| -> Vec<Vec<u8>> {
             regions
@@ -1375,9 +1387,10 @@ mod tests {
                 })
                 .collect()
         };
-        apply_elf_relocations_with(&mut regions, &obj, filter, &layout, &writable).expect("apply");
+        apply_elf_relocations_with(&mut regions, &obj, filter, &layout, &writable, &executable)
+            .expect("apply");
         let once = bytes(&regions);
-        apply_elf_relocations_with(&mut regions, &obj, filter, &layout, &writable)
+        apply_elf_relocations_with(&mut regions, &obj, filter, &layout, &writable, &executable)
             .expect("re-apply");
         assert_eq!(once, bytes(&regions));
     }

@@ -219,6 +219,7 @@ impl OwnedElf {
                 filter,
                 layout,
                 &image.writable,
+                &image.executable,
             )?;
             image.regions.extend(got);
         }

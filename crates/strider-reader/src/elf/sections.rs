@@ -183,6 +183,11 @@ pub(crate) struct LoadedImage {
     /// view that did not know about it would serve the accepted mapping's
     /// file-initial bytes for an address that is RW at runtime.
     pub(crate) writable: AddressRanges,
+    /// Every executable mapping the walk saw.  A field that is writable AND
+    /// executable is code the program may rewrite, so an uncomputed relocation
+    /// over one stays a hole: the bytes reach the decoder, where serving them
+    /// unrelocated is a wrong instruction rather than stale data.
+    pub(crate) executable: AddressRanges,
 }
 
 impl LoadedImage {
@@ -190,6 +195,12 @@ impl LoadedImage {
     fn note_writable(&mut self, start: u64, size: u64) {
         if size != 0 {
             self.writable.0.push((start, start.saturating_add(size)));
+        }
+    }
+
+    fn note_executable(&mut self, start: u64, size: u64) {
+        if size != 0 {
+            self.executable.0.push((start, start.saturating_add(size)));
         }
     }
 
@@ -896,6 +907,7 @@ pub(crate) fn collect_regions(
         }
         _ => LoadedImage {
             writable: AddressRanges::merged(image.writable.0),
+            executable: AddressRanges::merged(image.executable.0),
             ..image
         },
     })
@@ -1028,6 +1040,9 @@ fn collect_loadable_segments<'d>(
         if p_flags & object::elf::PF_W != 0 {
             out.note_writable(seg.address(), seg.size());
         }
+        if p_flags & object::elf::PF_X != 0 {
+            out.note_executable(seg.address(), seg.size());
+        }
         if !filter.segment_accepts(p_flags) {
             continue;
         }
@@ -1088,9 +1103,13 @@ fn collect_loadable_sections_dedup(
         let bit = |flag: u32| sh_flags & u64::from(flag) != 0;
         // `SHF_TLS` is excluded for the reason [`ElfSectionLayout::new`] gives:
         // its `sh_addr` names nothing in the flat address space.
-        if bit(object::elf::SHF_ALLOC) && bit(object::elf::SHF_WRITE) && !bit(object::elf::SHF_TLS)
-        {
-            out.note_writable(layout.section_base(&sec), sec.size());
+        if bit(object::elf::SHF_ALLOC) && !bit(object::elf::SHF_TLS) {
+            if bit(object::elf::SHF_WRITE) {
+                out.note_writable(layout.section_base(&sec), sec.size());
+            }
+            if bit(object::elf::SHF_EXECINSTR) {
+                out.note_executable(layout.section_base(&sec), sec.size());
+            }
         }
     }
     let mut budget = CopyBudget::default();
