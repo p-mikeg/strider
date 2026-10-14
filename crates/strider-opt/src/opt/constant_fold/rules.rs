@@ -700,8 +700,8 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
     ]
 }
 
-/// Const-eval and absorbing-element rules for the I1 boolean ops and all float
-/// ops.
+/// Const-eval rules for the I1 boolean ops and all float ops. The absorbing
+/// element lives in `build_identity_rules` (`or_all_ones_rule`), not here.
 fn build_bool_float_rules() -> Vec<crate::BoxedRule> {
     let (op, l, r, v, x) = (
         Capture::new(),

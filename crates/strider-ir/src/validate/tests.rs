@@ -907,6 +907,94 @@ fn graph_invariants_dangling_switch_table_id_detected() {
     });
 }
 
+/// The width-agreement rule had no assertion anywhere, so an edit to its
+/// `checked` table or its bitcast arm would have passed the suite. Both arms
+/// are pinned: an operand narrower than the output, and a bitcast between
+/// types of different size.
+#[test]
+fn graph_invariants_arithmetic_width_mismatch_detected() {
+    let mut s = spine();
+    let (_, narrow) = int_const(&mut s.f, 1, ValueType::I8);
+    let (_, wide) = int_const(&mut s.f, 2, ValueType::I32);
+    // `Add` pins every operand to the output width, unlike a shift's count.
+    let bad = s.f.graph_mut().create_node(
+        NodeKind::IntBinaryOp(crate::IntBinaryOp::Add),
+        [narrow, wide],
+        [ValueKind::Typed(ValueType::I32)],
+    );
+    let [sum] = s.f.node_outputs_exact::<1>(bad).unwrap();
+    let _ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, sum], []);
+
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::ArithmeticWidthMismatch {
+                operand_idx: 0,
+                operand_width: 8,
+                expected_width: 32,
+                ..
+            }
+        )
+    });
+}
+
+/// A shift's COUNT is unconstrained in p-code, so only operand 0 carries the
+/// width: the rule must NOT fire on a narrow count.
+#[test]
+fn graph_invariants_a_shift_count_may_be_narrower_than_the_output() {
+    let mut s = spine();
+    let (_, value) = int_const(&mut s.f, 0xff, ValueType::I32);
+    let (_, count) = int_const(&mut s.f, 3, ValueType::I8);
+    let shl = s.f.graph_mut().create_node(
+        NodeKind::IntBinaryOp(crate::IntBinaryOp::ShiftLeft),
+        [value, count],
+        [ValueKind::Typed(ValueType::I32)],
+    );
+    let [out] = s.f.node_outputs_exact::<1>(shl).unwrap();
+    let _ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, out], []);
+
+    assert_no_validation_err(&s.f, |e| {
+        matches!(e, ValidationError::ArithmeticWidthMismatch { .. })
+    });
+}
+
+/// A zero-arm `Switch` is the one `ValidationError` with no test, and it can
+/// never be the only error: `Switch`'s signature head is one Control, so the
+/// arity check reports `NodeOutputCountMismatch` for the same node in the
+/// same call. Both are pinned so a signature change cannot silently leave
+/// only one of them.
+#[test]
+fn graph_invariants_empty_switch_targets_detected_beside_the_arity_error() {
+    let mut s = spine();
+    let (_, addr) = int_const(&mut s.f, 0x1000, ValueType::I64);
+    let table = s.f.add_switch_table(vec![0x2000]);
+    let sw =
+        s.f.graph_mut()
+            .create_node(NodeKind::Switch(table), [s.entry_ctrl, addr], []);
+    let _ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
+    let _ = sw;
+
+    assert_validation_err(&s.f, |e| {
+        matches!(e, ValidationError::EmptySwitchTargets { .. })
+    });
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::NodeOutputCountMismatch {
+                expected: 1,
+                actual: 0,
+                ..
+            }
+        )
+    });
+}
+
 #[test]
 fn graph_invariants_dangling_cc_id_detected() {
     let mut s = spine();
