@@ -340,4 +340,8 @@ the view is read-only all the way down. A `CfgOptions` seats its
 `known_targets` into `strider_cfg`'s own form at construction and every
 `analyze` BORROWS that table (`strider_cfg::CfgOptions.known_targets` and
 `strider_lift::LiftOptions.per_address_ccs` are `&FxHashMap`), so a seeded
-table costs a sweep nothing per function.
+table costs a sweep nothing per function. `per_address_ccs` needs the lift's
+`SleighRegs` to resolve, so it cannot be seated at construction: the built
+table is memoized behind the shared `PerAddressCcs`, which is where it has to
+live because `ElfLifter.analyze` derives fresh options per call through
+`with_cfg`. The first `analyze` pays the build, the rest borrow it.
