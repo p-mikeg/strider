@@ -264,7 +264,12 @@ when both IR slots hold the same value.
     `Arc<Mutex<_>>`, so a clone shares the region memo and the wrapper is
     still `Send`; `_LoadedElf` holds two of those and a `Mutex` symbol table.
     Everything else moves, so a REPL or notebook that introspects off-thread
-    does not abort the interpreter.
+    does not abort the interpreter. `analyze` holds the GIL when `mem`/`rom`
+    is a Python object (its adapter retakes the GIL per read regardless), so
+    finalisation waits for it; a DAEMON thread analysing through a Python
+    reader is still terminated inside the callback and the unwind through Rust
+    aborts, which no Rust-side check can intercept (`Py_IsFinalizing` is 3.13+
+    and outside `abi3-py39`).
 - `Sleigh::lift_one(&mut self)` is NOT stateless: it carries context-register
   state a decoded instruction can commit at a later address (ARM/Thumb and
   IT-block state, MIPS16, ppc `linkreg`), so per-region decoding must stay
