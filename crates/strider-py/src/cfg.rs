@@ -525,7 +525,7 @@ impl PyCfg {
         self.with_sleigh(py, |sleigh| {
             let regs = sleigh
                 .regs()
-                .map_err(|e| into_strider_err(anyhow::anyhow!("{e:?}")))?;
+                .map_err(|e| into_strider_err(anyhow::anyhow!("{e:#}")))?;
             let g = self.inner.region_graph();
             let mut out = HashMap::new();
             for idx in g.node_indices() {

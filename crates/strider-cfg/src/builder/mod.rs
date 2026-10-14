@@ -659,9 +659,13 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// before the prefix too, so the taken path is not the stream the branch
     /// jumps to.
     ///
-    /// Only on an arch with no ISA-mode context (x86 / x86-64), where a
-    /// byte-granular prefix exists and a throwaway decode cannot leak mode
-    /// state. Off it, an interior target is a real overlap.
+    /// Gated on the arch declaring no ISA-mode var, so a throwaway decode
+    /// cannot leak mode state. That admits more than x86 and x86-64 -- every
+    /// arch without one, AArch64 and PowerPC among them -- but only a
+    /// byte-granular instruction prefix can produce the shape, so the length
+    /// check below rejects every fixed-width arch before the throwaway decode
+    /// matters. Where the gate does bite, an interior target is a real
+    /// overlap.
     fn is_benign_prefix_reentry(&mut self, owner: NodeIndex, addr: PcodeInsnAddr) -> bool {
         if self.arch.isa_mode_var().is_some() {
             return false;

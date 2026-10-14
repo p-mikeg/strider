@@ -814,6 +814,12 @@ impl CallingConvention {
             // widest form so an s/d/q access slices out of one container.
             arg_passing_regs_float: &["q0", "q1", "q2", "q3", "q4", "q5", "q6", "q7"],
             callee_saved_regs: &[
+                // AAPCS64 6.1.1 makes x30 (LR) volatile, not callee-saved. It
+                // is listed because a conforming callee restores it before
+                // returning, which is what a caller's view needs: treating it
+                // as clobbered would lose the return address across every
+                // call. The same choice is documented at the PPC and MIPS
+                // presets.
                 "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30",
                 // AAPCS64 6.1.2 preserves only the LOW 64 bits of v8-v15, so
                 // these name the `d` views; naming `q8`-`q15` would claim the

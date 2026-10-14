@@ -14,16 +14,22 @@ import pytest
 
 import strider
 
-#: Long enough that an unchecked sweep runs for seconds past the interrupt
-#: (~2.5 MB/s), short enough to bound the test.
-_REGION = 8 * 1024 * 1024
+#: Long enough that an unchecked sweep runs for tens of seconds past the
+#: interrupt (~2.5 MB/s), short enough to bound the test: an interrupted run
+#: returns in ~0.5 s whatever the size.
+_REGION = 64 * 1024 * 1024
 
 _BASE = 0x1000
 
 _AFTER = 0.5
 
-#: Generous against a loaded machine, still far under the whole sweep.
-_DEADLINE = 2.0
+#: The property is that the interrupt lands MID-sweep, so the deadline has to
+#: sit well below the time a full sweep takes -- otherwise an implementation
+#: that never checked signals until it finished would pass too. Measured
+#: latency is ~0 s and a whole 64 MB sweep is ~25 s, so 8 s separates the two
+#: even with several times the load. The earlier 2.0 s against an 8 MB region
+#: (~3.2 s) left no such margin and failed under load.
+_DEADLINE = 8.0
 
 
 @pytest.mark.skipif(not hasattr(signal, "setitimer"), reason="POSIX timers only")
