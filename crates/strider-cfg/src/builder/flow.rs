@@ -1,8 +1,9 @@
 //! Flowing decode context, GHIDRA-style: each flowing var is a per-address
 //! fact.
 //!
-//! A sla marks some context variables as *flowing*: the ISA mode (ARM `TMode`,
-//! ppc `vle`) plus per-instruction decode internals (condition eval, IT-block
+//! A sla marks some context variables as *flowing*: the ISA mode (ARM
+//! `TMode`; on PowerPC the committed one is `linkreg`, not `vle`) plus
+//! per-instruction decode internals (condition eval, IT-block
 //! state, register-list iteration, x86 operand/address size) Sleigh flows
 //! along straight-line code. x86 declares dozens of them flowing but no
 //! constructor commits one (no `globalset`), so snapshotting and pinning there

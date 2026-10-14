@@ -179,7 +179,10 @@ pub(super) fn check_function_invariants_arith_widths(
             _ => usize::MAX,
         };
         // A bitcast reinterprets the SAME bits, so the two types must be the
-        // same SIZE. Compare bytes, not bits: `I1` and `I8` share a byte.
+        // same SIZE. Bytes rather than bits only because that is what every
+        // float type is measured in; the two agree for every admissible
+        // (int, float) pair here, no float having a one-byte size for `I1` to
+        // collide with.
         if matches!(kind, NodeKind::IntBitsToFloat | NodeKind::FloatBitsToInt) {
             let inp = graph
                 .node_inputs(node)
@@ -311,6 +314,11 @@ pub(super) fn check_function_invariants_switch(
         };
         let n_out = graph.node_outputs(node).len();
         if n_out == 0 {
+            // Never the only error: `Switch`'s signature head is one Control,
+            // so `local_typing`'s arity check reports
+            // `NodeOutputCountMismatch` for the same node in the same call.
+            // Kept because it names WHICH arity rule a zero-arm `Switch`
+            // breaks, which the generic count does not.
             errs.push(ValidationError::EmptySwitchTargets { node });
         } else if n_out != targets.len() {
             errs.push(ValidationError::SwitchTargetArityMismatch {

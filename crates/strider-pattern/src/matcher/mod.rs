@@ -177,6 +177,11 @@ impl<'f> Matcher<'f> {
         // Binding no VISIBLE capture, every configuration shares one signature,
         // so the first to reach the root is the whole answer for that root and
         // driving the rest only to discard them is waste.
+        // `bound_captures` never yields an internal capture: the one
+        // `Capture::internal()` caller writes `PatValue::identity`, not
+        // `captures`, and the constructor is `pub(crate)`. So this reads
+        // "binds no capture", and an all-internal pattern is not a shape that
+        // reaches here.
         let first_only = pat.bound_captures().all(|c| c.is_internal());
         Ok(self
             .candidates(pat, root)
@@ -265,8 +270,14 @@ impl<'f> Matcher<'f> {
             } else {
                 // An output whose anchor repeats the one already tried imposes
                 // the same constraint set, so it can only re-derive bindings
-                // the dedup set already holds. Both control outputs of an `If`
-                // root resolve to one vertex, which is the common case.
+                // the dedup set already holds.
+                //
+                // `IfPat::lower` declares a vertex per control slot and
+                // `root_output_vertex_for` picks by slot, so an `If` root's
+                // two outputs resolve to DIFFERENT vertices; what skips the
+                // second is `anchor_repeats`' `as_value()` clause, not its
+                // `prev == cur` one, which would answer "not a repeat" for
+                // one shared vertex anyway.
                 let mut anchored: Option<ValueId> = None;
                 for &out_id in outputs {
                     if let Some(prev) = anchored
