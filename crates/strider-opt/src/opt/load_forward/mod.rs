@@ -155,6 +155,16 @@ fn try_forward_load(
         // materialises up to I128.  Bail on wider stores rather than fail; a
         // wide-store-to-narrow-load forward is exotic.
         && store_data_ty.byte_size() <= 16
+        // `narrow` reshapes by the FUNCTION's byte order, which is the data
+        // order.  The REGISTER space has its own: they differ on ARM BE8,
+        // where the sla's register block is little-endian under big-endian
+        // data (`SleighArch::register_endianness`).  Reshaping a mirrored
+        // register slot there would take the wrong half, so the opaque
+        // register path -- already the imprecise fallback -- does not reshape.
+        && !matches!(
+            edit.node_kind(load),
+            NodeKind::Load(rsleigh::VnSpace::REGISTER)
+        )
     {
         narrow(edit, store_data, load)?
     } else {

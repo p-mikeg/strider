@@ -2206,3 +2206,50 @@ fn no_assumption_lifts_the_ram_premise() -> Result<()> {
     crate::test_support::assert_returns_const(&fg, 1);
     Ok(())
 }
+
+/// `narrow` reshapes by the function's byte order, which is the DATA order.
+/// The REGISTER space has its own, and the two differ on ARM BE8, where the
+/// sla's register block is little-endian under big-endian data. Reshaping a
+/// mirrored register slot by the data order would take the wrong half, so a
+/// register-space load is not narrowed at all. The RAM twin of this graph
+/// forwards, which is what makes the space the discriminator.
+#[test]
+fn a_register_space_load_is_not_narrowed_from_a_wider_store() -> Result<()> {
+    let build = |space: rsleigh::VnSpace| -> Result<strider_ir::Function> {
+        let sp = sp32_vn();
+        let mut b = sp_frame(sp)
+            .endianness(Endianness::Big)
+            .build_fn_single_region()?;
+        let addr = b.build_int_const(0x40u64, ValueType::I32)?;
+        let wide = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32)?;
+        b.build_store(addr, wide, space)?;
+        let loaded = b.build_load(addr, space, ValueType::I8)?;
+        b.build_return(Some(loaded), &[])?;
+        b.set_lift_addr(None);
+        b.build()
+    };
+    let run = |fg: &mut strider_ir::Function| -> Result<usize> {
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(PhiCollapse);
+        pipeline.add(RegionCollapse);
+        pipeline.add(LoadForward::default());
+        pipeline.run(fg, &mut crate::OptCtx::at_floor(None))?;
+        Ok(fg.count_kind(|k| matches!(k, NodeKind::Load(_))))
+    };
+
+    let mut ram = build(rsleigh::VnSpace::RAM)?;
+    assert_eq!(
+        run(&mut ram)?,
+        0,
+        "the RAM twin narrows: the data order is the function's"
+    );
+
+    let mut reg = build(rsleigh::VnSpace::REGISTER)?;
+    assert_eq!(
+        run(&mut reg)?,
+        1,
+        "the register space keeps its Load: its byte order is not the \
+         function's on BE8"
+    );
+    Ok(())
+}
