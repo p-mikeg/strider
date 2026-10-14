@@ -99,6 +99,10 @@ pub(crate) enum Field {
     PpcBranch14,
     /// A PowerPC 16-bit field addressed directly by `r_offset`.
     PpcHalf16(Half),
+    /// A PowerPC `half16ds` field: the DS form's 14 bits at bit 2, leaving the
+    /// instruction's own extended opcode in bits 1:0 (`ld` / `std` 0, `ldu` 1,
+    /// `lwa` 2).  Patching those turns one instruction into another.
+    PpcHalf16Ds(Half),
     /// MIPS `J` / `JAL` `instr_index`.
     Mips26,
     /// MIPS 16-bit immediate, the low half of the instruction word.
@@ -112,7 +116,7 @@ impl Field {
     pub(crate) fn width(self) -> usize {
         match self {
             Field::Data { bytes, .. } => usize::from(bytes),
-            Field::PpcHalf16(_) => 2,
+            Field::PpcHalf16(_) | Field::PpcHalf16Ds(_) => 2,
             _ => 4,
         }
     }
@@ -279,20 +283,18 @@ pub(crate) fn classify(arch: A, r_type: u32) -> Option<Kind> {
                 elf::R_PPC_REL16_LO => C(V::Pcrel, F::PpcHalf16(Half::Lo)),
                 elf::R_PPC_REL16_HI => C(V::Pcrel, F::PpcHalf16(Half::Hi)),
                 elf::R_PPC_REL16_HA => C(V::Pcrel, F::PpcHalf16(Half::Ha)),
-                elf::R_PPC64_ADDR16_DS if ppc64 => C(V::Abs, F::PpcHalf16(Half::Signed)),
-                elf::R_PPC64_ADDR16_LO_DS if ppc64 => C(V::Abs, F::PpcHalf16(Half::Lo)),
+                elf::R_PPC64_ADDR16_DS if ppc64 => C(V::Abs, F::PpcHalf16Ds(Half::Signed)),
+                elf::R_PPC64_ADDR16_LO_DS if ppc64 => C(V::Abs, F::PpcHalf16Ds(Half::Lo)),
                 elf::R_PPC64_ADDR16_HIGH if ppc64 => C(V::Abs, F::PpcHalf16(Half::Hi)),
                 elf::R_PPC64_ADDR16_HIGHA if ppc64 => C(V::Abs, F::PpcHalf16(Half::Ha)),
                 elf::R_PPC64_ADDR16_HIGHER if ppc64 => C(V::Abs, F::PpcHalf16(Half::Higher)),
                 elf::R_PPC64_ADDR16_HIGHERA if ppc64 => C(V::Abs, F::PpcHalf16(Half::HigherA)),
                 elf::R_PPC64_ADDR16_HIGHEST if ppc64 => C(V::Abs, F::PpcHalf16(Half::Highest)),
                 elf::R_PPC64_ADDR16_HIGHESTA if ppc64 => C(V::Abs, F::PpcHalf16(Half::HighestA)),
-                elf::R_PPC64_TOC16 | elf::R_PPC64_TOC16_DS if ppc64 => {
-                    C(V::TocRelative, F::PpcHalf16(Half::Signed))
-                }
-                elf::R_PPC64_TOC16_LO | elf::R_PPC64_TOC16_LO_DS if ppc64 => {
-                    C(V::TocRelative, F::PpcHalf16(Half::Lo))
-                }
+                elf::R_PPC64_TOC16 if ppc64 => C(V::TocRelative, F::PpcHalf16(Half::Signed)),
+                elf::R_PPC64_TOC16_DS if ppc64 => C(V::TocRelative, F::PpcHalf16Ds(Half::Signed)),
+                elf::R_PPC64_TOC16_LO if ppc64 => C(V::TocRelative, F::PpcHalf16(Half::Lo)),
+                elf::R_PPC64_TOC16_LO_DS if ppc64 => C(V::TocRelative, F::PpcHalf16Ds(Half::Lo)),
                 elf::R_PPC64_TOC16_HI if ppc64 => C(V::TocRelative, F::PpcHalf16(Half::Hi)),
                 elf::R_PPC64_TOC16_HA if ppc64 => C(V::TocRelative, F::PpcHalf16(Half::Ha)),
                 elf::R_PPC64_TOC if ppc64 => C(V::Toc, data(8, false)),
@@ -491,6 +493,11 @@ pub(crate) fn encode(field: Field, raw: u64, value: u64, target: Isa, p: u64) ->
             (raw & !0xfffc) | (value & 0xfffc)
         }
         Field::PpcHalf16(half) => half16(half, value)?,
+        Field::PpcHalf16Ds(half) => {
+            let imm = half16(half, value)?;
+            (imm & 3 == 0).then_some(())?;
+            (raw & 3) | (imm & 0xfffc)
+        }
         Field::MipsHalf16(half) => (raw & !0xffff) | half16(half, value)?,
         Field::Mips26 => {
             // `J` keeps the top four bits of the delay slot's address.
@@ -520,4 +527,80 @@ fn half16(half: Half, value: u64) -> Option<u64> {
         Half::MipsHighest => value.wrapping_add(0x8000_8000_8000) >> 48,
     };
     Some(v & 0xffff)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{A, Field, Half, Isa, Kind, classify, encode};
+
+    /// `lwa r3,0x5040(r9)` assembles to `e8 69 50 42`: the halfword at
+    /// `r_offset` is `0x5042`, whose low two bits are the DS form's extended
+    /// opcode (`ld`/`std` 0, `ldu` 1, `lwa` 2) and not part of the field.
+    /// Overwriting them turns `lwa` into `ld`, a 32-bit sign-extending load
+    /// read as a 64-bit one.
+    #[test]
+    fn a_ds_field_keeps_the_instructions_extended_opcode() {
+        let lwa = 0x5042;
+        assert_eq!(
+            encode(Field::PpcHalf16Ds(Half::Lo), lwa, 0x1234, Isa::Arm, 0),
+            Some(0x1236),
+            "the patched DS field keeps XO=2"
+        );
+        // The non-DS field is the whole halfword, so it legitimately does not.
+        assert_eq!(
+            encode(Field::PpcHalf16(Half::Lo), lwa, 0x1234, Isa::Arm, 0),
+            Some(0x1234)
+        );
+    }
+
+    /// A DS field holds a 4-byte-aligned value; binutils refuses anything
+    /// else rather than truncating it into the opcode.
+    #[test]
+    fn a_misaligned_ds_value_is_refused() {
+        for off in 1..4 {
+            assert_eq!(
+                encode(
+                    Field::PpcHalf16Ds(Half::Lo),
+                    0x5042,
+                    0x1234 + off,
+                    Isa::Arm,
+                    0
+                ),
+                None,
+                "0x{:x} is not 4-byte aligned",
+                0x1234 + off
+            );
+        }
+    }
+
+    /// Every `half16ds` type, and only those, classifies to the DS field.  The
+    /// `_DS` types used to share an arm with their non-DS siblings.
+    #[test]
+    fn only_the_ds_relocations_take_the_ds_field() {
+        let ds = [
+            object::elf::R_PPC64_ADDR16_DS,
+            object::elf::R_PPC64_ADDR16_LO_DS,
+            object::elf::R_PPC64_TOC16_DS,
+            object::elf::R_PPC64_TOC16_LO_DS,
+        ];
+        for r_type in ds {
+            let kind = classify(A::PowerPc64, r_type).expect("classified");
+            assert!(
+                matches!(kind, Kind::Compute(_, Field::PpcHalf16Ds(_))),
+                "r_type {r_type} is a half16ds, got {kind:?}"
+            );
+        }
+        for r_type in [
+            object::elf::R_PPC64_ADDR16_LO,
+            object::elf::R_PPC64_TOC16,
+            object::elf::R_PPC64_TOC16_LO,
+            object::elf::R_PPC64_TOC16_HA,
+        ] {
+            let kind = classify(A::PowerPc64, r_type).expect("classified");
+            assert!(
+                matches!(kind, Kind::Compute(_, Field::PpcHalf16(_))),
+                "r_type {r_type} is a plain half16, got {kind:?}"
+            );
+        }
+    }
 }
