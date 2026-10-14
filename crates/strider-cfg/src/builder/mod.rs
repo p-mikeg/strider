@@ -133,6 +133,12 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// target decodes in ([`Self::enqueue_resolved`]).  Empty unless
     /// [`Self::with_flow_context`] supplies it.
     pub(super) function_mode: FlowContext,
+    /// `inst_next` of every instruction THIS build decoded: the only addresses
+    /// at which a `globalset` in the code under construction can have
+    /// committed flowing context.  A snapshot anywhere else answers with
+    /// whatever a PREVIOUS `build_cfg` on this engine left behind, so
+    /// [`Self::enqueue`] reads the engine only here.
+    pub(super) committed_next: rustc_hash::FxHashSet<u64>,
     /// The pspec default of each `noflow` var that changes a decode; see
     /// [`Self::with_transient_defaults`].
     pub(super) transient_defaults: &'a [(&'static str, u32)],
@@ -209,6 +215,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             isa_mode_conflicts: Vec::new(),
             interior_branch_targets: Vec::new(),
             non_boundary_seats: rustc_hash::FxHashMap::default(),
+            committed_next: rustc_hash::FxHashSet::default(),
             link_register_seated: Vec::new(),
             tail_call_seated: Vec::new(),
             per_address_ccs: &NO_PER_ADDRESS_CCS,
@@ -297,13 +304,29 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         addr: PcodeInsnAddr,
         source_addr: u64,
     ) {
-        let mut carried = self.flow_vars.snapshot(self.sleigh, addr.machine_addr.addr);
+        // Per-instruction decode state (ARM/Thumb ITSTATE, MIPS16 register-list
+        // iteration) flows only to `inst_next`, and strider needs it there: a
+        // sla lifts an IT-predicated instruction as a conditional branch over
+        // itself, so an IT block really does become several regions and the
+        // edges between them carry the state the `IT` committed.
+        //
+        // So read the engine, but ONLY at an address this build committed. A
+        // snapshot anywhere else answers with whatever a PREVIOUS `build_cfg`
+        // on this engine left there, and `pin_at` would then diff that
+        // snapshot against itself and write nothing, adopting a stale
+        // `globalset` instead of resetting it. The entry pin cannot undo that:
+        // the forward paint stops at the next commit of the same var. Off the
+        // flowed path the baseline is the function's own entry context, which
+        // is what `enqueue_resolved` uses.
+        let mut carried = if self.committed_next.contains(&addr.machine_addr.addr) {
+            self.flow_vars.snapshot(self.sleigh, addr.machine_addr.addr)
+        } else {
+            self.function_mode.clone()
+        };
         // A direct edge switches no ISA mode, so the child decodes in the
-        // parent's. The child's own snapshot reads the pspec DEFAULT for a
-        // target the mode has not straight-line flowed to yet (a forward
-        // branch), so take the ISA-mode var from the parent region's context at
-        // `source_addr`; the rest keep the snapshot, a target inside an IT
-        // block needing the in-block state the `IT` committed there.
+        // parent's, which need not be the entry's: take the ISA-mode var from
+        // the parent region's context at `source_addr` so a Thumb region of an
+        // otherwise-ARM function hands Thumb on.
         if let Some(var) = self.arch.isa_mode_var() {
             self.flow_vars
                 .take_var_at(&mut carried, self.sleigh, source_addr, var);
@@ -1734,8 +1757,10 @@ mod tests {
         );
     }
 
-    /// A direct edge needs exactly one var of the parent's context, so a second
-    /// full snapshot of `source_addr` is wasted work on every CFG edge.
+    /// A direct edge needs exactly one var of the parent's context: the
+    /// ISA-mode bit. It reads NO snapshot of the target, which would both cost
+    /// a read per flow var per edge and answer with whatever a previous
+    /// `build_cfg` on this engine committed there.
     #[test]
     fn enqueue_reads_one_parent_context_var_per_edge() {
         use crate::builder::flow::CONTEXT_READS;
@@ -1750,15 +1775,66 @@ mod tests {
         let per_snapshot = CONTEXT_READS.with(std::cell::Cell::get);
         assert!(per_snapshot > 1, "premise: the ARM sla flows several vars");
 
+        // A real entry context, as `build_cfg` supplies: the ISA-mode var is
+        // taken out of it, so an empty one would make the count vacuous.
+        let function_mode = flow.snapshot(&sleigh, 0x1000);
         let opts = crate::CfgOptions::default();
         let mut b = super::Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
-            .with_flow_context(&flow, crate::builder::flow::FlowContext::default());
+            .with_flow_context(&flow, function_mode);
         CONTEXT_READS.with(|n| n.set(0));
         b.enqueue(None, addr(0x1000, 0), 0x1000);
         assert_eq!(
             CONTEXT_READS.with(std::cell::Cell::get),
-            per_snapshot + 1,
-            "one snapshot of the target plus the parent's ISA-mode var",
+            1,
+            "the parent's ISA-mode var, and no snapshot of the target",
+        );
+    }
+
+    /// `enqueue` reads the engine only at an address THIS build committed.
+    /// Anywhere else a snapshot answers with whatever a previous `build_cfg`
+    /// on the same engine left there, and the entry pin cannot undo it: the
+    /// forward paint stops at the next commit of the same var.
+    #[test]
+    fn enqueue_ignores_a_context_commit_this_build_did_not_make() {
+        let arch = strider_target::SleighArch::arm();
+        let reader = rsleigh::mem_readers::BufMemReader::new(vec![0u8; 0x100], 0x1000);
+        let mut sleigh =
+            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
+        let flow = crate::FlowVars::discover(&sleigh).expect("discover flow vars");
+
+        // Pure IT-block state: `enqueue` takes only the ISA-mode var from the
+        // parent, so this one comes from the baseline either way.
+        let victim = "cond_mask";
+        assert!(flow.contains(victim), "the ARM sla flows {victim}");
+        assert_ne!(arch.isa_mode_var(), Some(victim));
+
+        let function_mode = flow.snapshot(&sleigh, 0x1000);
+        let clean = flow.value_of(&function_mode, victim).expect("read");
+
+        // A previous function's `globalset`, still held forward at the target.
+        let stale = clean ^ 1;
+        sleigh
+            .set_context_at(0x1040, victim, stale)
+            .expect("commit a stale context");
+
+        let opts = crate::CfgOptions::default();
+        let mut b = super::Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
+            .with_flow_context(&flow, function_mode);
+        b.enqueue(None, addr(0x1040, 0), 0x1000);
+        assert_eq!(
+            flow.value_of(&b.work_queue.last().expect("queued").carried, victim),
+            Some(clean),
+            "a commit this build never made must not be carried",
+        );
+
+        // The same address once this build has decoded into it: its own commit
+        // is what the edges inside a split IT block need.
+        b.committed_next.insert(0x1040);
+        b.enqueue(None, addr(0x1040, 0), 0x1000);
+        assert_eq!(
+            flow.value_of(&b.work_queue.last().expect("queued").carried, victim),
+            Some(stale),
+            "this build's own commit IS carried",
         );
     }
 
