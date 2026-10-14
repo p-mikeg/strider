@@ -379,7 +379,7 @@ impl From<&PyAssumptionOptions> for AssumptionOptions {
             assume_incoming_args_survive_calls: a.assume_incoming_args_survive_calls,
             distinct_sp_bases_disjoint: a.distinct_sp_bases_disjoint,
             callee_preserves_stack_args: a.callee_preserves_stack_args,
-            noalias_allocators: Arc::new(a.noalias_allocators.iter().copied().collect()),
+            noalias_allocators: a.noalias_allocators.iter().copied().collect(),
             escape_analysis: a.escape_analysis,
             return_slots_survive_untracked_writes: a.return_slots_survive_untracked_writes,
         }
