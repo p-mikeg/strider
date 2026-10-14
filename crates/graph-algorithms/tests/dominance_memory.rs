@@ -3,7 +3,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-use graph_algorithms::dominance::{DomTree, dominance_frontiers};
+use graph_algorithms::dominance::{DomRelation, DomTree, dominance_frontiers};
 
 thread_local! {
     static LIVE: Cell<isize> = const { Cell::new(0) };
@@ -50,11 +50,17 @@ const JOINS: u32 = 1 << 17;
 /// climb records one pair per entry.
 struct WideJoin;
 
-impl DomTree for WideJoin {
+impl DomRelation for WideJoin {
     type Node = u32;
     fn nodes(&self) -> impl Iterator<Item = u32> + '_ {
         0..3 + JOINS
     }
+    fn immediate_dominator(&self, n: u32) -> Option<u32> {
+        (n != 0).then_some(0)
+    }
+}
+
+impl DomTree for WideJoin {
     fn predecessors(&self, n: u32) -> impl Iterator<Item = u32> + '_ {
         let preds: &'static [u32] = match n {
             0 => &[],
@@ -62,9 +68,6 @@ impl DomTree for WideJoin {
             _ => &[1, 2],
         };
         preds.iter().copied()
-    }
-    fn immediate_dominator(&self, n: u32) -> Option<u32> {
-        (n != 0).then_some(0)
     }
 }
 

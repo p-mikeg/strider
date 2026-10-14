@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use graph_algorithms::dominance::{
-    DomIntervals, DomTree, dominance_frontiers, dominator_tree_preorder, dominators,
+    DomIntervals, DomRelation, DomTree, dominance_frontiers, dominator_tree_preorder, dominators,
     immediate_dominators, phi_placement,
 };
 
@@ -16,16 +16,19 @@ struct Mock {
     idom: HashMap<u32, u32>,
 }
 
-impl DomTree for Mock {
+impl DomRelation for Mock {
     type Node = u32;
     fn nodes(&self) -> impl Iterator<Item = u32> + '_ {
         self.nodes.iter().copied()
     }
-    fn predecessors(&self, n: u32) -> impl Iterator<Item = u32> + '_ {
-        self.preds.get(&n).into_iter().flatten().copied()
-    }
     fn immediate_dominator(&self, n: u32) -> Option<u32> {
         self.idom.get(&n).copied()
+    }
+}
+
+impl DomTree for Mock {
+    fn predecessors(&self, n: u32) -> impl Iterator<Item = u32> + '_ {
+        self.preds.get(&n).into_iter().flatten().copied()
     }
 }
 
