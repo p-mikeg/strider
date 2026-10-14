@@ -121,6 +121,14 @@ fn escape_dot_label_keep_breaks(s: &str) -> String {
     escape_label_inner(s, true)
 }
 
+/// The Unicode bidirectional formatting characters: the overrides and
+/// embeddings (U+202A-U+202E), the isolates (U+2066-U+2069), and the marks
+/// (U+200E / U+200F / U+061C).
+fn is_bidi_format(c: char) -> bool {
+    matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+                | '\u{200e}' | '\u{200f}' | '\u{061c}')
+}
+
 fn escape_label_inner(s: &str, keep_breaks: bool) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -139,7 +147,12 @@ fn escape_label_inner(s: &str, keep_breaks: bool) -> String {
             '\t' => out.push('\t'),
             // Doubled, so Graphviz renders the four characters rather than
             // reading `\x` as an escape of its own.
-            c if c.is_control() => {
+            // Control characters, and the bidirectional formatting ones a
+            // label would otherwise carry verbatim into the rendered page,
+            // where they reorder the text around them. No label source today
+            // carries attacker-controlled text -- they are node kinds, hex and
+            // Sleigh register names -- so this is a boundary, not a fix.
+            c if c.is_control() || is_bidi_format(c) => {
                 // Writing to a `String` is infallible; the discard is for
                 // `unused_must_use`.
                 let _ = write!(out, "\\\\x{:02x}", c as u32);
@@ -428,6 +441,13 @@ mod label_tests {
             // The boundary on each side: neither is a control character.
             ("a b", "a b"),
             ("a\u{a0}b", "a\u{a0}b"),
+            // Bidi formatting: not control characters, but they reorder the
+            // text around them in the rendered page.
+            ("a\u{202e}b", "a\\\\x202eb"),
+            ("a\u{2066}b", "a\\\\x2066b"),
+            ("a\u{200f}b", "a\\\\x200fb"),
+            // Ordinary non-ASCII stays verbatim.
+            ("a\u{5d0}b", "a\u{5d0}b"),
         ] {
             assert_eq!(escape_dot_label(input), want, "input {input:?}");
         }

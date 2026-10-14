@@ -22,9 +22,19 @@ pub trait ReadOnlyMemory: Send {
     /// raw, with NO endianness swap; a caller wanting an integer decodes them
     /// per the target's endianness itself.
     ///
+    /// An EMPTY `buf` reads nothing and returns `Ok(())` whatever `addr` is,
+    /// including an unmapped one: there is no byte to resolve, so no impl has
+    /// to decide whether the address exists. The four impls in this workspace
+    /// disagreed on it while no caller issued one.
+    ///
+    /// `addr + buf.len()` is computed in `u64` and MUST NOT wrap: a range
+    /// that overflows the address space is out of bounds, never an error-free
+    /// wrap to low memory.
+    ///
     /// # Errors
     ///
-    /// When the address is unmapped or the range runs past the mapped region.
+    /// When the address is unmapped, the range runs past the mapped region, or
+    /// `addr + buf.len()` would overflow.
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()>;
 }
 

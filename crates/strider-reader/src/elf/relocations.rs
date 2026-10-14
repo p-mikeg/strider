@@ -323,6 +323,12 @@ fn got_regions(got: &BTreeMap<u64, (u64, usize)>, endian_le: bool) -> Result<Vec
     let mut out = Vec::new();
     let mut run: Option<(u64, Vec<u8>)> = None;
     for (&addr, &(value, width)) in got {
+        // `got_or_plt_slot_reloc_size` yields only 4 or 8 today, so this
+        // cannot fire -- but both slices below index blind, and `8 - width`
+        // underflows for a wider one. Its twin `Patch::new` already checks.
+        if width == 0 || width > 8 {
+            anyhow::bail!("GOT slot at {addr:#x} has width {width}, not 1..=8");
+        }
         let bytes = if endian_le {
             value.to_le_bytes()[..width].to_vec()
         } else {
@@ -1059,10 +1065,15 @@ fn resolve_symbol_target(
         local: sym.is_local(),
         weak_undefined: sym.is_weak() && sym.is_undefined(),
         gp_disp: matches!(arch, A::Mips | A::Mips64) && sym.name() == Ok("_gp_disp"),
-        in_opd: sym
-            .section_index()
-            .and_then(|i| obj.section_by_index(i).ok())
-            .is_some_and(|sec| sec.name() == Ok(".opd")),
+        // ppc64 ELFv1 only, and the arch test comes first: the name lookup
+        // below reads `.shstrtab` and this runs once per relocation, so on
+        // every other arch it was a string compare per relocation for a field
+        // nothing reads. `gp_disp` above short-circuits the same way.
+        in_opd: arch == A::PowerPc64
+            && sym
+                .section_index()
+                .and_then(|i| obj.section_by_index(i).ok())
+                .is_some_and(|sec| sec.name() == Ok(".opd")),
         ppc64_local_entry: if arch == A::PowerPc64 && !sym.is_undefined() {
             ppc64_local_entry_offset(st_other)
         } else {
