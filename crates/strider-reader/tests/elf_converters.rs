@@ -12,6 +12,61 @@ fn parse(bytes: &[u8]) -> object::File<'_> {
     object::File::parse(bytes).expect("parse synthetic ELF")
 }
 
+/// A one-section `ET_REL` object, which is what routes the loader down the
+/// section walk. The five tests below differed only in these three fields and
+/// in whether the section's bytes exist on disk.
+///
+/// `payload` reserves real bytes and points `sh_offset` at them; `None` points
+/// it past EOF, so `data()` fails for the section.
+fn one_section_rel(name: &[u8], sh_flags: u64, sh_addr: u64, payload: Option<&[u8]>) -> Vec<u8> {
+    use object::write::elf::{FileHeader, SectionHeader, Writer};
+    use object::{Endianness, elf};
+
+    let mut buf = Vec::new();
+    {
+        let mut w = Writer::new(Endianness::Little, true, &mut buf);
+        let _null = w.reserve_null_section_index();
+        let name = w.add_section_name(name);
+        let _sec = w.reserve_section_index();
+        let _shstr = w.reserve_shstrtab_section_index();
+
+        w.reserve_file_header();
+        let data_off = payload.map(|p| w.reserve(p.len(), 1));
+        w.reserve_shstrtab();
+        w.reserve_section_headers();
+
+        w.write_file_header(&FileHeader {
+            os_abi: elf::ELFOSABI_SYSV,
+            abi_version: 0,
+            e_type: elf::ET_REL,
+            e_machine: elf::EM_X86_64,
+            e_entry: 0,
+            e_flags: 0,
+        })
+        .expect("write file header");
+        if let Some(p) = payload {
+            w.write(p);
+        }
+        w.write_shstrtab();
+        w.write_null_section_header();
+        w.write_section_header(&SectionHeader {
+            name: Some(name),
+            sh_type: elf::SHT_PROGBITS,
+            sh_flags,
+            sh_addr,
+            // Past EOF on every buffer these tests build.
+            sh_offset: data_off.map_or(0xdead_beef, |o| o as u64),
+            sh_size: payload.map_or(4, |p| p.len() as u64),
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        });
+        w.write_shstrtab_section_header();
+    }
+    buf
+}
+
 #[test]
 fn elf_code_and_readonly_sections_include_text_and_rodata_exclude_data_and_bss() {
     let bytes = build_elf_with_sections(&[
@@ -41,47 +96,7 @@ fn elf_code_and_readonly_sections_include_text_and_rodata_exclude_data_and_bss()
 /// the end of the buffer.
 #[test]
 fn code_and_readonly_preset_propagates_data_error() {
-    use object::write::elf::{FileHeader, SectionHeader, Writer};
-    use object::{Endianness, elf};
-
-    let mut buf = Vec::new();
-    {
-        let mut w = Writer::new(Endianness::Little, true, &mut buf);
-        let _null = w.reserve_null_section_index();
-        let name = w.add_section_name(b".broken");
-        let _sec = w.reserve_section_index();
-        let _shstr = w.reserve_shstrtab_section_index();
-
-        w.reserve_file_header();
-        w.reserve_shstrtab();
-        w.reserve_section_headers();
-
-        w.write_file_header(&FileHeader {
-            os_abi: elf::ELFOSABI_SYSV,
-            abi_version: 0,
-            // ET_REL is what routes the loader down the section walk.
-            e_type: elf::ET_REL,
-            e_machine: elf::EM_X86_64,
-            e_entry: 0,
-            e_flags: 0,
-        })
-        .expect("write file header");
-        w.write_shstrtab();
-        w.write_null_section_header();
-        w.write_section_header(&SectionHeader {
-            name: Some(name),
-            sh_type: elf::SHT_PROGBITS,
-            sh_flags: u64::from(elf::SHF_ALLOC),
-            sh_addr: 0x1000,
-            sh_offset: 0xdead_beef, // past EOF -> data() must fail
-            sh_size: 4,
-            sh_link: 0,
-            sh_info: 0,
-            sh_addralign: 1,
-            sh_entsize: 0,
-        });
-        w.write_shstrtab_section_header();
-    }
+    let buf = one_section_rel(b".broken", u64::from(object::elf::SHF_ALLOC), 0x1000, None);
     let obj = parse(&buf);
     let err = elf_get_loadable_regions(&obj)
         .expect_err("malformed accepted section must surface an error");
@@ -100,51 +115,13 @@ fn code_and_readonly_preset_propagates_data_error() {
 /// no `object::Error`, but `addr + len` overflows by 3.
 #[test]
 fn code_and_readonly_preset_propagates_region_overflow() {
-    use object::write::elf::{FileHeader, SectionHeader, Writer};
-    use object::{Endianness, elf};
-
-    let payload = [0u8, 0, 0, 0]; // 4 bytes of data on disk
-
-    let mut buf = Vec::new();
-    {
-        let mut w = Writer::new(Endianness::Little, true, &mut buf);
-        let _null = w.reserve_null_section_index();
-        let name = w.add_section_name(b".overflow");
-        let _sec = w.reserve_section_index();
-        let _shstr = w.reserve_shstrtab_section_index();
-
-        w.reserve_file_header();
-        let data_off = w.reserve(payload.len(), 1);
-        w.reserve_shstrtab();
-        w.reserve_section_headers();
-
-        w.write_file_header(&FileHeader {
-            os_abi: elf::ELFOSABI_SYSV,
-            abi_version: 0,
-            // ET_REL is what routes the loader down the section walk.
-            e_type: elf::ET_REL,
-            e_machine: elf::EM_X86_64,
-            e_entry: 0,
-            e_flags: 0,
-        })
-        .expect("write file header");
-        w.write(&payload);
-        w.write_shstrtab();
-        w.write_null_section_header();
-        w.write_section_header(&SectionHeader {
-            name: Some(name),
-            sh_type: elf::SHT_PROGBITS,
-            sh_flags: u64::from(elf::SHF_ALLOC),
-            sh_addr: u64::MAX - 1,
-            sh_offset: data_off as u64,
-            sh_size: payload.len() as u64,
-            sh_link: 0,
-            sh_info: 0,
-            sh_addralign: 1,
-            sh_entsize: 0,
-        });
-        w.write_shstrtab_section_header();
-    }
+    let payload = [0u8, 0, 0, 0];
+    let buf = one_section_rel(
+        b".overflow",
+        u64::from(object::elf::SHF_ALLOC),
+        u64::MAX - 1,
+        Some(&payload),
+    );
     let obj = parse(&buf);
     let err = elf_get_loadable_regions(&obj)
         .expect_err("addr+len overflow must surface as RegionOverflow");
@@ -164,48 +141,12 @@ fn code_and_readonly_preset_propagates_region_overflow() {
 /// rejected-and-malformed as an empty `Ok`.
 #[test]
 fn code_and_readonly_preset_skips_rejected_malformed_section() {
-    use object::write::elf::{FileHeader, SectionHeader, Writer};
-    use object::{Endianness, elf};
-
-    let mut buf = Vec::new();
-    {
-        let mut w = Writer::new(Endianness::Little, true, &mut buf);
-        let _null = w.reserve_null_section_index();
-        let name = w.add_section_name(b".broken");
-        let _sec = w.reserve_section_index();
-        let _shstr = w.reserve_shstrtab_section_index();
-
-        w.reserve_file_header();
-        w.reserve_shstrtab();
-        w.reserve_section_headers();
-
-        w.write_file_header(&FileHeader {
-            os_abi: elf::ELFOSABI_SYSV,
-            abi_version: 0,
-            // ET_REL is what routes the loader down the section walk.
-            e_type: elf::ET_REL,
-            e_machine: elf::EM_X86_64,
-            e_entry: 0,
-            e_flags: 0,
-        })
-        .expect("write file header");
-        w.write_shstrtab();
-        w.write_null_section_header();
-        w.write_section_header(&SectionHeader {
-            name: Some(name),
-            sh_type: elf::SHT_PROGBITS,
-            // Writable, so the code+rodata preset rejects it.
-            sh_flags: u64::from(elf::SHF_ALLOC) | u64::from(elf::SHF_WRITE),
-            sh_addr: 0x1000,
-            sh_offset: 0xdead_beef, // past EOF -> data() would fail if read
-            sh_size: 4,
-            sh_link: 0,
-            sh_info: 0,
-            sh_addralign: 1,
-            sh_entsize: 0,
-        });
-        w.write_shstrtab_section_header();
-    }
+    let buf = one_section_rel(
+        b".broken",
+        u64::from(object::elf::SHF_ALLOC) | u64::from(object::elf::SHF_WRITE),
+        0x1000,
+        None,
+    );
     let obj = parse(&buf);
 
     // Writable, so the code+rodata preset rejects it before reading.
@@ -303,48 +244,12 @@ fn allocatable_sections_include_text_rodata_data_and_exclude_bss() {
 /// filter: the section here is writable, so only this preset accepts it.
 #[test]
 fn allocatable_preset_propagates_data_error() {
-    use object::write::elf::{FileHeader, SectionHeader, Writer};
-    use object::{Endianness, elf};
-
-    let mut buf = Vec::new();
-    {
-        let mut w = Writer::new(Endianness::Little, true, &mut buf);
-        let _null = w.reserve_null_section_index();
-        let name = w.add_section_name(b".broken_writable");
-        let _sec = w.reserve_section_index();
-        let _shstr = w.reserve_shstrtab_section_index();
-
-        w.reserve_file_header();
-        w.reserve_shstrtab();
-        w.reserve_section_headers();
-
-        w.write_file_header(&FileHeader {
-            os_abi: elf::ELFOSABI_SYSV,
-            abi_version: 0,
-            // ET_REL is what routes the loader down the section walk.
-            e_type: elf::ET_REL,
-            e_machine: elf::EM_X86_64,
-            e_entry: 0,
-            e_flags: 0,
-        })
-        .expect("write file header");
-        w.write_shstrtab();
-        w.write_null_section_header();
-        w.write_section_header(&SectionHeader {
-            name: Some(name),
-            sh_type: elf::SHT_PROGBITS,
-            // Accepted by the allocatable preset, rejected by code+rodata.
-            sh_flags: u64::from(elf::SHF_ALLOC) | u64::from(elf::SHF_WRITE),
-            sh_addr: 0x1000,
-            sh_offset: 0xdead_beef, // past EOF -> data() must fail
-            sh_size: 4,
-            sh_link: 0,
-            sh_info: 0,
-            sh_addralign: 1,
-            sh_entsize: 0,
-        });
-        w.write_shstrtab_section_header();
-    }
+    let buf = one_section_rel(
+        b".broken_writable",
+        u64::from(object::elf::SHF_ALLOC) | u64::from(object::elf::SHF_WRITE),
+        0x1000,
+        None,
+    );
     let err = common::try_regions(&buf, LoadFilter::AllAllocatable)
         .expect_err("malformed accepted section must surface an error");
     assert!(
@@ -356,51 +261,13 @@ fn allocatable_preset_propagates_data_error() {
 /// The overflow propagation contract, re-pinned through the allocatable filter.
 #[test]
 fn allocatable_preset_propagates_region_overflow() {
-    use object::write::elf::{FileHeader, SectionHeader, Writer};
-    use object::{Endianness, elf};
-
-    let payload = [0u8, 0, 0, 0]; // 4 bytes of data on disk
-
-    let mut buf = Vec::new();
-    {
-        let mut w = Writer::new(Endianness::Little, true, &mut buf);
-        let _null = w.reserve_null_section_index();
-        let name = w.add_section_name(b".overflow_writable");
-        let _sec = w.reserve_section_index();
-        let _shstr = w.reserve_shstrtab_section_index();
-
-        w.reserve_file_header();
-        let data_off = w.reserve(payload.len(), 1);
-        w.reserve_shstrtab();
-        w.reserve_section_headers();
-
-        w.write_file_header(&FileHeader {
-            os_abi: elf::ELFOSABI_SYSV,
-            abi_version: 0,
-            // ET_REL is what routes the loader down the section walk.
-            e_type: elf::ET_REL,
-            e_machine: elf::EM_X86_64,
-            e_entry: 0,
-            e_flags: 0,
-        })
-        .expect("write file header");
-        w.write(&payload);
-        w.write_shstrtab();
-        w.write_null_section_header();
-        w.write_section_header(&SectionHeader {
-            name: Some(name),
-            sh_type: elf::SHT_PROGBITS,
-            sh_flags: u64::from(elf::SHF_ALLOC) | u64::from(elf::SHF_WRITE),
-            sh_addr: u64::MAX - 1,
-            sh_offset: data_off as u64,
-            sh_size: payload.len() as u64,
-            sh_link: 0,
-            sh_info: 0,
-            sh_addralign: 1,
-            sh_entsize: 0,
-        });
-        w.write_shstrtab_section_header();
-    }
+    let payload = [0u8, 0, 0, 0];
+    let buf = one_section_rel(
+        b".overflow_writable",
+        u64::from(object::elf::SHF_ALLOC) | u64::from(object::elf::SHF_WRITE),
+        u64::MAX - 1,
+        Some(&payload),
+    );
     let err = common::try_regions(&buf, LoadFilter::AllAllocatable)
         .expect_err("addr+len overflow must surface as RegionOverflow");
     let msg = err.to_string();
