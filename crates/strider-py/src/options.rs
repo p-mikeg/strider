@@ -82,6 +82,14 @@ impl<'py, T: FromPyObject<'py>> FromPyObject<'py> for MapArg<T> {
 ///
 /// The authority is the Rust map beside it, which no mutation here would
 /// reach, so every value in the proxy is immutable too.
+///
+/// Read-only to ordinary access only. `MappingProxyType` wraps a dict, and
+/// `gc.get_referents(view)[0]` hands that dict back mutably -- CPython gives
+/// no way to hide an object's referents. Writing to it desynchronizes the view
+/// from the Rust map, which keeps answering every `analyze`; a value fed back
+/// through a constructor is re-extracted and re-validated like any other, so
+/// the reach is a caller confusing itself about its own options, not getting
+/// an unchecked value into the analysis.
 #[derive(Default)]
 struct MappingView(OnceLock<PyObject>);
 

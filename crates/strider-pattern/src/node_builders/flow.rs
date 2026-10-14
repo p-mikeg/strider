@@ -545,11 +545,17 @@ impl IfPat {
     /// # Every binding per branch
     ///
     /// `pat` enumerates: every commutative ordering and every existential slot
-    /// it can bind produces its own outer match, exactly as it would standalone,
-    /// and the two branches combine, so `N` true bindings against `M` false ones
-    /// are `N * M` matches. Enumerating is what lets a binding rejected by the
-    /// other branch or by a guard above fall through to the next one instead of
-    /// losing the match.
+    /// it can bind produces its own outer match, and the two branches combine,
+    /// so `N` true bindings against `M` false ones are `N * M` matches.
+    /// Enumerating is what lets a binding rejected by the other branch or by a
+    /// guard above fall through to the next one instead of losing the match.
+    ///
+    /// Not quite "as it would standalone": a branch pattern is driven through
+    /// `match_at_into`, which stops at the first OUTPUT of a multi-output root
+    /// that reaches the continuation, where `matches_at_node` would go on to
+    /// the rest. No lost match has been constructed from it -- the only guard
+    /// outside the branch walk runs before it and cannot see that binding --
+    /// but the two are not the same enumeration.
     ///
     /// # Refusal
     ///
