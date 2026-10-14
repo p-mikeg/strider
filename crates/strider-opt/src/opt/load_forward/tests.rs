@@ -2039,8 +2039,7 @@ fn narrowing_across_an_allocator_never_outlives_noalias_allocators() -> Result<(
     let mut fg = b.build()?;
 
     let mut relaxed = crate::OptCtx::new(None);
-    relaxed.options.assumptions.noalias_allocators =
-        std::sync::Arc::new([ALLOCATOR].into_iter().collect());
+    relaxed.options.assumptions.noalias_allocators = [ALLOCATOR].into_iter().collect();
     crate::test_support::standard_test().run(&mut fg, &mut relaxed)?;
 
     let mut sound = crate::OptCtx::new(None);

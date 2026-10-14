@@ -100,7 +100,7 @@ pub struct AssumptionOptions {
     /// Passes that must hold without the claim read a heap base as a may-alias
     /// opaque pointer rather than a distinct allocation, so setting this
     /// widens what folds, never what a permanent rewrite names.
-    pub noalias_allocators: std::sync::Arc<rustc_hash::FxHashSet<u64>>,
+    pub noalias_allocators: rustc_hash::FxHashSet<u64>,
     /// When the function's frame is provably private (no stack address escapes
     /// to any callee), forward a spill `Load` across a `Call` and step it past
     /// an opaque (`Anchor`) store. Both rest on the same axiom: nothing outside
@@ -153,7 +153,7 @@ impl AssumptionOptions {
             assume_incoming_args_survive_calls: false,
             distinct_sp_bases_disjoint: false,
             callee_preserves_stack_args: false,
-            noalias_allocators: std::sync::Arc::default(),
+            noalias_allocators: rustc_hash::FxHashSet::default(),
             escape_analysis: false,
             return_slots_survive_untracked_writes: false,
         }
@@ -167,7 +167,7 @@ impl Default for AssumptionOptions {
             assume_incoming_args_survive_calls: true,
             distinct_sp_bases_disjoint: false,
             callee_preserves_stack_args: false,
-            noalias_allocators: std::sync::Arc::default(),
+            noalias_allocators: rustc_hash::FxHashSet::default(),
             escape_analysis: false,
             return_slots_survive_untracked_writes: true,
         }

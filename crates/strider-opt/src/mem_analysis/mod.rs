@@ -1479,7 +1479,7 @@ pub(crate) struct MemOptions {
     /// ([`crate::AssumptionOptions::noalias_allocators`]).  Analyzers over one
     /// `Function` may hold different sets; [`decompose`] states what that costs
     /// the shared `memory_offsets` memo.
-    noalias_allocators: std::sync::Arc<FxHashSet<u64>>,
+    noalias_allocators: FxHashSet<u64>,
 }
 
 impl MemOptions {
@@ -1494,7 +1494,7 @@ impl MemOptions {
     /// [`classify_addr`] drops the heap class under an empty set.
     pub(crate) fn call_blocking(
         stack_global_disjoint: bool,
-        noalias_allocators: &std::sync::Arc<FxHashSet<u64>>,
+        noalias_allocators: &FxHashSet<u64>,
     ) -> Self {
         Self {
             stack_global_disjoint,
@@ -1503,7 +1503,7 @@ impl MemOptions {
             callee_preserves_stack_args: false,
             escape_analysis: false,
             call_relaxations: true,
-            noalias_allocators: std::sync::Arc::clone(noalias_allocators),
+            noalias_allocators: noalias_allocators.clone(),
         }
     }
 
@@ -1532,7 +1532,7 @@ impl MemOptions {
             callee_preserves_stack_args: false,
             escape_analysis: false,
             call_relaxations: false,
-            noalias_allocators: std::sync::Arc::default(),
+            noalias_allocators: FxHashSet::default(),
         }
     }
 
