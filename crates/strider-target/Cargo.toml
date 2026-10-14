@@ -12,6 +12,7 @@ readme = "README.md"
 [dependencies]
 rsleigh.workspace = true
 anyhow.workspace = true
+rustc-hash.workspace = true
 
 [features]
 # `SleighArch::probe_regs`, a register table read off an empty image, and

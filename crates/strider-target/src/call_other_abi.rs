@@ -118,32 +118,36 @@ impl From<CallOtherClass> for CallOtherOverride {
 /// Per-analysis, the way a calling convention is: it states what one binary's
 /// build of the op does. The tables hold what is true of the ARCHITECTURE.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct CallOtherOverrides(Vec<(String, CallOtherOverride)>);
+pub struct CallOtherOverrides(rustc_hash::FxHashMap<String, CallOtherOverride>);
 
 impl CallOtherOverrides {
     /// # Errors
-    /// If a name appears twice. `get` takes the first, so a duplicate would
-    /// silently drop the later correction.
+    /// If a name appears twice. The first wins, so a duplicate would silently
+    /// drop the later correction.
     pub fn new(entries: Vec<(String, CallOtherOverride)>) -> Result<Self, String> {
-        for (i, (name, _)) in entries.iter().enumerate() {
-            if entries[..i].iter().any(|(n, _)| n == name) {
+        let mut map = rustc_hash::FxHashMap::with_capacity_and_hasher(
+            entries.len(),
+            rustc_hash::FxBuildHasher,
+        );
+        for (name, over) in entries {
+            if map.contains_key(&name) {
                 return Err(format!("duplicate call-other override for {name:?}"));
             }
+            map.insert(name, over);
         }
-        Ok(Self(entries))
+        Ok(Self(map))
     }
 
-    /// Linear: an override set is a handful of names, sized by what one caller
-    /// had to correct.
+    /// Keyed: `get` runs once per `CALLOTHER` occurrence from four lifter
+    /// stages, and the set is sized by the caller's `call_other_abis`, which a
+    /// sweep can seed in bulk. Both factors are the caller's, so neither is a
+    /// handful by construction.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<CallOtherLookup<'_>> {
-        self.0
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, o)| match o {
-                CallOtherOverride::Class(c) => CallOtherLookup::Class(*c),
-                CallOtherOverride::Built(abi) => CallOtherLookup::Built(abi),
-            })
+        self.0.get(name).map(|o| match o {
+            CallOtherOverride::Class(c) => CallOtherLookup::Class(*c),
+            CallOtherOverride::Built(abi) => CallOtherLookup::Built(abi),
+        })
     }
 }
 
