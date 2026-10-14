@@ -1,4 +1,4 @@
-use graph_algorithms::dominance::{DomTree, Dominators, Frontiers};
+use graph_algorithms::dominance::{DomRelation, DomTree, Dominators, Frontiers};
 use petgraph::Direction::Incoming;
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::{Cfg, RegionId};
@@ -8,16 +8,19 @@ struct CfgDomTree<'a> {
     doms: &'a Dominators<RegionId>,
 }
 
-impl DomTree for CfgDomTree<'_> {
+impl DomRelation for CfgDomTree<'_> {
     type Node = RegionId;
     fn nodes(&self) -> impl Iterator<Item = RegionId> + '_ {
         self.cfg.region_ids()
     }
-    fn predecessors(&self, n: RegionId) -> impl Iterator<Item = RegionId> + '_ {
-        self.cfg.region_graph().neighbors_directed(n, Incoming)
-    }
     fn immediate_dominator(&self, n: RegionId) -> Option<RegionId> {
         self.doms.immediate_dominator(n)
+    }
+}
+
+impl DomTree for CfgDomTree<'_> {
+    fn predecessors(&self, n: RegionId) -> impl Iterator<Item = RegionId> + '_ {
+        self.cfg.region_graph().neighbors_directed(n, Incoming)
     }
 }
 
