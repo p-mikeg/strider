@@ -112,7 +112,11 @@ impl PeepholePass for DeadBranchElimination {
                     .iter()
                     .position(|&t| u128::from(t) == k)
                 else {
-                    return Ok(PeepholeRewrite::NoChange); // exhaustive table => shouldn't happen
+                    // Reachable: a `Switch`'s arms "need not cover every
+                    // dispatch value" (`node_signature.rs`), a site the
+                    // resolver seated early holding one arm and widening in a
+                    // later round.
+                    return Ok(PeepholeRewrite::NoChange);
                 };
                 let live_ctrl = edit.node_outputs(root)[i];
 
