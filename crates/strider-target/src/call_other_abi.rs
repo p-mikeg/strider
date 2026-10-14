@@ -916,6 +916,60 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             no_return: false,
         }),
     },
+    // FXSAVE / FXRSTOR and the XSAVE / XSAVEC / XSAVEOPT / XSAVES / XRSTOR /
+    // XRSTORS family move the x87, SSE and AVX register state to and from a
+    // memory area (SDM Vol 2A).  The sla emits each as a void pcodeop with no
+    // output (`ia.sinc:6166`, `:5029`), so this table is the only model of the
+    // registers they touch.  A restore declaring none left the INCOMING value
+    // of every one of them live across it, so `fxrstor (%rdi); movaps
+    // %xmm0,(%rsi)` stored `InitialVar(XMM0)` rather than what was restored.
+    //
+    // `ST0`-`ST7` cover `MM0`-`MM7`, which the sla overlays at the same
+    // offsets and the lifter folds into their largest container.  The AVX
+    // halves are `YMMn_H` (`ia.sinc:155`), `XMMn` being the low overlay.
+    CallOtherRow {
+        preset_arches: X86_BOTH,
+        op_names: &[
+            "_fxrstor",
+            "_fxrstor64",
+            "xrstor",
+            "xrstor64",
+            "xrstors",
+            "xrstors64",
+        ],
+        class: CallOtherClass::Call(CallOtherAbi {
+            // XRSTOR takes the component bitmap in EDX:EAX; FXRSTOR does not,
+            // and reading two more registers than it does costs a fold, not an
+            // answer.
+            implicit_reads: &["EAX", "EDX"],
+            implicit_writes: X86_EXTENDED_STATE,
+            clobbers_memory: true,
+            no_return: false,
+        }),
+    },
+    // The save direction: the same state read rather than written, so no pass
+    // can take one of these registers dead across it.
+    CallOtherRow {
+        preset_arches: X86_BOTH,
+        op_names: &[
+            "_fxsave",
+            "_fxsave64",
+            "xsave",
+            "xsave64",
+            "xsavec",
+            "xsavec64",
+            "xsaveopt",
+            "xsaveopt64",
+            "xsaves",
+            "xsaves64",
+        ],
+        class: CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: X86_EXTENDED_STATE,
+            implicit_writes: &[],
+            clobbers_memory: true,
+            no_return: false,
+        }),
+    },
 ];
 
 const MIPS32_BOTH: &[crate::ArchPreset] =
@@ -927,6 +981,61 @@ const MIPS_ALL: &[crate::ArchPreset] = &[
     crate::ArchPreset::MipsLe32,
     crate::ArchPreset::MipsBe64,
     crate::ArchPreset::MipsLe64,
+];
+
+/// The x87 / SSE / AVX register state the FXSAVE and XSAVE families move.
+/// The sla declares all of it for both x86 widths in one block
+/// (`ia.sinc:93`, `:140`, `:155`), so one list serves `X86_BOTH`.
+const X86_EXTENDED_STATE: &[&str] = &[
+    "ST0",
+    "ST1",
+    "ST2",
+    "ST3",
+    "ST4",
+    "ST5",
+    "ST6",
+    "ST7",
+    "XMM0",
+    "XMM1",
+    "XMM2",
+    "XMM3",
+    "XMM4",
+    "XMM5",
+    "XMM6",
+    "XMM7",
+    "XMM8",
+    "XMM9",
+    "XMM10",
+    "XMM11",
+    "XMM12",
+    "XMM13",
+    "XMM14",
+    "XMM15",
+    "YMM0_H",
+    "YMM1_H",
+    "YMM2_H",
+    "YMM3_H",
+    "YMM4_H",
+    "YMM5_H",
+    "YMM6_H",
+    "YMM7_H",
+    "YMM8_H",
+    "YMM9_H",
+    "YMM10_H",
+    "YMM11_H",
+    "YMM12_H",
+    "YMM13_H",
+    "YMM14_H",
+    "YMM15_H",
+    "MXCSR",
+    "FPUControlWord",
+    "FPUStatusWord",
+    "FPUTagWord",
+    "FPULastInstructionOpcode",
+    "FPUDataPointer",
+    "FPUInstructionPointer",
+    "FPUPointerSelector",
+    "FPUDataSelector",
 ];
 
 const X86_BOTH: &[crate::ArchPreset] = &[crate::ArchPreset::X86, crate::ArchPreset::X86_64];
@@ -1208,25 +1317,9 @@ static ARCH_INDEPENDENT_TABLE: &[(&str, CallOtherClass)] = &[
     ("InterruptDescriptorTableRegister", MEM_CLOBBER),
     ("LocalDescriptorTableRegister", MEM_CLOBBER),
     ("TaskRegister", MEM_CLOBBER),
-    // FXSAVE/FXRSTOR and the XSAVE / XSAVEC / XSAVEOPT / XSAVES / XRSTOR
-    // / XRSTORS family (plus 64-bit forms) read or write a large in-memory
-    // state area.
-    ("_fxrstor", MEM_CLOBBER),
-    ("_fxrstor64", MEM_CLOBBER),
-    ("_fxsave", MEM_CLOBBER),
-    ("_fxsave64", MEM_CLOBBER),
-    ("xrstor", MEM_CLOBBER),
-    ("xrstor64", MEM_CLOBBER),
-    ("xrstors", MEM_CLOBBER),
-    ("xrstors64", MEM_CLOBBER),
-    ("xsave", MEM_CLOBBER),
-    ("xsave64", MEM_CLOBBER),
-    ("xsavec", MEM_CLOBBER),
-    ("xsavec64", MEM_CLOBBER),
-    ("xsaveopt", MEM_CLOBBER),
-    ("xsaveopt64", MEM_CLOBBER),
-    ("xsaves", MEM_CLOBBER),
-    ("xsaves64", MEM_CLOBBER),
+    // FXSAVE / FXRSTOR and the XSAVE / XRSTOR family carry a register
+    // footprint -- the state they move IS the x87 / SSE / AVX registers -- so
+    // they live in `ARCH_SPECIFIC_TABLE`.
     // CLFLUSH, INVLPG, INVPCID: cache / TLB maintenance, relevant to
     // memory ordering.
     ("clflush", MEM_CLOBBER),
