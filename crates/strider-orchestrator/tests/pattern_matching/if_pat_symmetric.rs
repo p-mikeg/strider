@@ -37,7 +37,7 @@ fn inverted_cond_matches_after_if_cond_inversion() {
     let r = strider_orchestrator::opt::run_one(
         &IfCondInversion::new(),
         &mut function,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
+        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
     )
     .expect("opt");
     assert!(
@@ -97,7 +97,7 @@ fn captured_if_node_id_works_after_canonicalisation() {
     strider_orchestrator::opt::run_one(
         &IfCondInversion::new(),
         &mut g_inverted,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
+        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
     )
     .expect("opt");
     let m_i = a::unique(&g_inverted, build_pat());
@@ -119,7 +119,7 @@ fn shared_capture_across_cond_and_branch_must_agree() {
     strider_orchestrator::opt::run_one(
         &IfCondInversion::new(),
         &mut g_inverted,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
+        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
     )
     .expect("opt");
     let c = Capture::new();

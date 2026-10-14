@@ -53,7 +53,7 @@ fn new_builds_pass_that_inverts() -> Result<()> {
     let r = crate::pipeline::run_one(
         &IfCondInversion::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(r.changed(), "constructed pass should invert the cond");
 
@@ -69,12 +69,16 @@ fn two_independent_instances_each_invert() -> Result<()> {
     let pass_b = IfCondInversion::new();
 
     let (mut fg_a, if_a) = build_if_with_neg_cond()?;
-    assert!(crate::pipeline::run_one(&pass_a, &mut fg_a, &mut crate::OptCtx::new(None))?.changed());
+    assert!(
+        crate::pipeline::run_one(&pass_a, &mut fg_a, &mut crate::OptCtx::at_floor(None))?.changed()
+    );
     let cond_a = fg_a.producer(fg_a.graph().node_inputs_exact::<2>(if_a)?[1]);
     assert!(!is_i1_xor_with_one(&fg_a, cond_a));
 
     let (mut fg_b, if_b) = build_if_with_neg_cond()?;
-    assert!(crate::pipeline::run_one(&pass_b, &mut fg_b, &mut crate::OptCtx::new(None))?.changed());
+    assert!(
+        crate::pipeline::run_one(&pass_b, &mut fg_b, &mut crate::OptCtx::at_floor(None))?.changed()
+    );
     let cond_b = fg_b.producer(fg_b.graph().node_inputs_exact::<2>(if_b)?[1]);
     assert!(!is_i1_xor_with_one(&fg_b, cond_b));
     Ok(())
@@ -86,13 +90,13 @@ fn idempotent_after_one_application() -> Result<()> {
     let first = crate::pipeline::run_one(
         &IfCondInversion::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(first.changed());
     let second = crate::pipeline::run_one(
         &IfCondInversion::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(!second.changed(), "second pass must be a no-op");
     Ok(())
@@ -117,7 +121,7 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
     let r = crate::pipeline::run_one(
         &IfCondInversion::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(
         !r.changed(),
@@ -148,7 +152,7 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
     crate::pipeline::run_one(
         &IfCondInversion::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
 
     let [value0_post, value1_post] = fg.node_outputs_exact::<2>(if_node)?;
@@ -194,7 +198,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
     let r = crate::pipeline::run_one(
         &IfCondInversion::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(r.changed());
 
@@ -270,7 +274,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     let r = crate::pipeline::run_one(
         &IfCondInversion::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(r.changed());
 
@@ -355,7 +359,7 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
     let r = crate::pipeline::run_one(
         &IfCondInversion::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(
         r.changed(),

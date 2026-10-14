@@ -407,7 +407,14 @@ pub(crate) fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Func
     // The reader serves raw bytes; `LoadReadOnly` decodes them with the
     // function's own endianness, so big-endian fixtures fold correctly.
     let p = strider_orchestrator::opt::default_pipeline();
-    let mut ctx = strider_orchestrator::opt::OptCtx::new(Some(&rom_for_opt));
+    let mut ctx = strider_orchestrator::opt::OptCtx::at_floor(Some(&rom_for_opt));
+    // `Default` is the sound floor, so the harness states the claims its
+    // assertions rest on: these cases spill arguments across calls, and both
+    // detecting the slot afterwards and forwarding it into the callee's
+    // argument need the stack to be disjoint from the globals it is
+    // interleaved with.
+    ctx.options.assumptions.stack_global_disjoint = true;
+    ctx.options.assumptions.assume_incoming_args_survive_calls = true;
     p.run(&mut function, &mut ctx)
         .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));
     function

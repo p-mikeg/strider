@@ -318,7 +318,7 @@ mod tests {
         let mut fg = add_two_consts();
         let pass = ScriptedPass::new(match_nothing, true, true);
         let mut edit = crate::EditFunction::new(&mut fg);
-        let mut octx = crate::pipeline::OptCtx::new(None);
+        let mut octx = crate::pipeline::OptCtx::at_floor(None);
         let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
         assert!(pass.visit_log.borrow().is_empty());
@@ -329,7 +329,7 @@ mod tests {
         let mut fg = add_two_consts();
         let pass = ScriptedPass::new(match_add, true, false);
         let mut edit = crate::EditFunction::new(&mut fg);
-        let mut octx = crate::pipeline::OptCtx::new(None);
+        let mut octx = crate::pipeline::OptCtx::at_floor(None);
         let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         assert!(!pass.visit_log.borrow().is_empty());
@@ -356,7 +356,7 @@ mod tests {
         .unwrap();
         let pass = ScriptedPass::new(match_add, true, false);
         let mut edit = crate::EditFunction::new(&mut fg);
-        let mut octx = crate::pipeline::OptCtx::new(None);
+        let mut octx = crate::pipeline::OptCtx::at_floor(None);
         let _ = run_peephole(&pass, &mut edit, &mut octx).unwrap();
         let log = pass.visit_log.borrow().clone();
         assert_eq!(log.len(), 2, "exactly two visits, no re-enqueue: {log:?}");
@@ -374,7 +374,7 @@ mod tests {
         .unwrap();
         let pass = ScriptedPass::new(match_add, true, true);
         let mut edit = crate::EditFunction::new(&mut fg);
-        let mut octx = crate::pipeline::OptCtx::new(None);
+        let mut octx = crate::pipeline::OptCtx::at_floor(None);
         let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         // The exact count depends on worklist dedup policy; only the lower
@@ -398,7 +398,7 @@ mod tests {
             ..ScriptedPass::new(match_add, true, true)
         };
         let mut edit = crate::EditFunction::new(&mut fg);
-        let mut octx = crate::pipeline::OptCtx::new(None);
+        let mut octx = crate::pipeline::OptCtx::at_floor(None);
         // The next id to be handed out is the new `Add`'s.
         let new_node_idx = edit.graph_ref().next_node_id().index() as u32;
         let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
@@ -448,7 +448,7 @@ mod tests {
             ..ScriptedPass::new(match_add, false, false)
         };
         let mut edit = crate::EditFunction::new(&mut fg);
-        let mut octx = crate::pipeline::OptCtx::new(None);
+        let mut octx = crate::pipeline::OptCtx::at_floor(None);
         let r = run_peephole(&pass, &mut edit, &mut octx);
         assert!(r.is_err(), "errored pass must surface error");
         let msg = format!("{:?}", r.unwrap_err());
@@ -470,7 +470,7 @@ mod tests {
             ..ScriptedPass::new(match_add, true, true)
         };
         let mut edit = crate::EditFunction::new(&mut fg);
-        let mut octx = crate::pipeline::OptCtx::new(None);
+        let mut octx = crate::pipeline::OptCtx::at_floor(None);
         let err = run_peephole(&pass, &mut edit, &mut octx)
             .expect_err("a non-confluent pass must error, not hang");
         let msg = format!("{err:#}");
