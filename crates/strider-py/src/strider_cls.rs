@@ -502,6 +502,17 @@ struct SweepSleigh {
     /// `sleigh`'s own, which its LOAD / STORE space ids resolve against.
     space_ids: rsleigh::SpaceIds,
     /// `machine addr -> joined p-code`, for every address this sweep decoded.
+    ///
+    /// ponytail: unbounded, so RSS grows with the swept RANGE -- measured
+    /// +400 MB over an 8 MiB sweep, ~50 bytes an instruction. It cannot
+    /// simply be capped: an address already passed is answered from here
+    /// precisely BECAUSE re-decoding it would answer in whatever mode a later
+    /// instruction pinned, so an evicted entry has to drop the engine with it
+    /// and re-sweep from `entry`, and a cap alone turns a sequential sweep
+    /// into O(range^2). The bounded form is a window plus a reset on a miss
+    /// below `cursor`, which also has to stay distinguishable from the
+    /// genuinely-mid-instruction case `stepped_past` reports. A fresh
+    /// `Lifter` releases it meanwhile.
     answers: std::collections::HashMap<u64, String>,
     /// Where the engine will decode next: `entry` before the first sweep, one
     /// past the last instruction decoded after that.
