@@ -554,3 +554,36 @@ fn x86_64_got64_and_gotpc64_address_the_slot_together() {
     table.read_exact(slot, &mut held).expect("the GOT slot");
     assert_eq!(u64::from_le_bytes(held), symbol_address(&bytes, "g"));
 }
+
+/// A writable section is left alone because nothing folds data the program
+/// rewrites; a writable EXECUTABLE one is not data. `CodeAndReadOnly` keeps an
+/// RWX mapping on purpose (firmware, `ld -N`), so its bytes reach the decoder,
+/// and an uncomputed relocation there has to stay a hole rather than hand the
+/// decoder a plausible wrong instruction with nothing said about it.
+#[test]
+fn an_uncomputed_relocation_in_writable_code_is_still_a_hole() {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let rwx = obj.add_section(Vec::new(), b".text.rwx".to_vec(), SectionKind::Text);
+    obj.append_section_data(rwx, &[0xb8, 0x11, 0x22, 0x33, 0x44, 0xc3], 1);
+    // SectionKind::Text is RX; this is the RWX mapping the filter keeps.
+    obj.section_mut(rwx).flags = object::SectionFlags::Elf {
+        sh_flags: u64::from(elf::SHF_ALLOC | elf::SHF_EXECINSTR | elf::SHF_WRITE),
+    };
+    let tls = undefined(&mut obj, "tls_var");
+    reloc(&mut obj, rwx, 1, tls, 0, elf::R_X86_64_TPOFF32);
+    let bytes = obj.write().expect("write");
+
+    let table = relocated(&bytes);
+    let insn = common::section_base(&bytes, ".text.rwx");
+    let mut buf = [0u8; 6];
+    let err = table
+        .read_exact(insn, &mut buf)
+        .expect_err("writable code keeps the hole")
+        .to_string();
+    assert!(err.contains("relocation of type 23"), "got: {err}");
+    assert_eq!(
+        table.read(insn, &mut buf),
+        Some(1),
+        "only the opcode before the field is served"
+    );
+}
