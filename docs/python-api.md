@@ -257,8 +257,11 @@ its names back:
 prog.add_symbol_file("vmlinux.debug")   # its symbols, none of its bytes
 prog.add_symbols({                      # names that live in no ELF at all
     "handle_irq": 0xffffffff81001200,
-    "irq_table":  (0xffffffff81800000, 0x400),   # (address, size)
-})                                      # is_function=False for data names
+})
+prog.add_symbols(                       # is_function is per CALL, not per name
+    {"irq_table": (0xffffffff81800000, 0x400)},   # (address, size)
+    is_function=False,
+)
 ```
 
 `add_symbol_file` is for a separate debug or symbol file: `objcopy
