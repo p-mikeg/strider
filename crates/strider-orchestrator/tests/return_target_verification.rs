@@ -202,27 +202,31 @@ fn arm_a_single_register_pop_into_the_pc_is_a_return() {
     );
 }
 
-/// The slot surviving the call rests on
-/// `return_slots_survive_untracked_writes`, so the seat it decides is named on
-/// the unverified channel: the answer is one target, but nothing proved it.
+/// A verdict that rests on a claim the caller made is not reported as
+/// anything: the claim is the answer's premise, so under it the site verifies
+/// and the CFG is complete. Clearing the claim is how you audit that, which
+/// `assert_reported_only_without_assumptions` covers for the shapes above.
+///
+/// Both pops below rest on the claim equally -- the single-register
+/// `ldr pc, [sp], #4` and the ordinary `pop {r4, pc}` -- so neither rides a
+/// channel, where only the first one used to.
 #[test]
-fn arm_a_pop_into_the_pc_seated_on_a_claim_is_reported_as_unverified() {
-    let result = analyze(Arch::Arm, le32(&[0xe52d_e004, 0xeb00_03fd, 0xe49d_f004]));
-    assert_eq!(
-        seeded(&result),
-        vec![BASE + 8],
-        "the proof passed a call on a claim",
-    );
-    assert!(!result.is_complete());
-    // A return the lifter seated carries no claimed CFG edge, so the identical
-    // claim on an ordinary `pop {r4, pc}` stays off the channel.
-    assert_eq!(
-        seeded(&analyze(
-            Arch::Arm,
-            le32(&[0xe92d_4010, 0xeb00_03fd, 0xe8bd_8010]),
-        )),
-        Vec::<u64>::new(),
-    );
+fn a_return_verified_under_a_claim_rides_no_channel() {
+    for bytes in [
+        le32(&[0xe52d_e004, 0xeb00_03fd, 0xe49d_f004]),
+        le32(&[0xe92d_4010, 0xeb00_03fd, 0xe8bd_8010]),
+    ] {
+        let result = analyze(Arch::Arm, bytes.clone());
+        assert_eq!(seeded(&result), Vec::<u64>::new());
+        assert_eq!(unresolved(&result), Vec::<u64>::new());
+        assert!(result.is_complete());
+
+        let floor = analyze_with(Arch::Arm, bytes, &no_assumptions());
+        assert!(
+            !floor.is_complete(),
+            "the floor cannot walk the slot back through the call",
+        );
+    }
 }
 
 #[test]
@@ -652,5 +656,58 @@ fn x86_64_a_realigned_frame_whose_saved_stack_pointer_may_be_overwritten_is_repo
         bytes,
         ret,
         "a store the alignment may place on the saved %r10",
+    );
+}
+
+/// A caller's `"return"` seed silences a site only where the CFG build
+/// actually CONSUMED it, which `Cfg::link_register_seated` records and
+/// `unverified_seeded_sites` reads. A site whose terminator came from the
+/// p-code `RETURN` op is never in that list, so a seed over one used to drop
+/// it from `unresolved` while nothing else named it: all six channels empty
+/// and `is_complete()` true over a CFG missing the edge control takes.
+#[test]
+fn a_return_seed_over_a_pcode_return_does_not_silence_it() {
+    // push rax ; ret -- the `ret` goes to rax, not to the caller.
+    let bytes = vec![0x50, 0xc3];
+    let ret_site = BASE + 1;
+
+    let unseeded = analyze(Arch::X64, bytes.clone());
+    assert_eq!(
+        unresolved(&unseeded),
+        vec![ret_site],
+        "unseeded, the return is reported",
+    );
+
+    let mut known: rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets> =
+        rustc_hash::FxHashMap::default();
+    known.insert(
+        strider_cfg::PcodeInsnAddr {
+            machine_addr: strider_cfg::MachineInsnAddr::from(ret_site),
+            insn_index: 0,
+        },
+        strider_cfg::ResolvedTargets::LinkRegister,
+    );
+    let (mut strider, cc) = common::strider_over_bytes(Arch::X64, bytes, BASE, None);
+    let lift_opts = strider_orchestrator::LiftOptions {
+        cfg: strider_cfg::CfgOptions {
+            fn_max_size: Some(2),
+            known_targets: &known,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let seeded_result = strider
+        .analyze(BASE, &cc, &lift_opts, &claiming_return_slots(), None)
+        .expect("analyze");
+    assert!(
+        !seeded_result.is_complete(),
+        "a seed the CFG never consumed cannot vouch for the return",
+    );
+    assert!(
+        unresolved(&seeded_result).contains(&ret_site)
+            || seeded(&seeded_result).contains(&ret_site),
+        "the site must ride one of the channels; unresolved {:x?} seeded {:x?}",
+        unresolved(&seeded_result),
+        seeded(&seeded_result),
     );
 }
