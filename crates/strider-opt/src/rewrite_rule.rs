@@ -64,6 +64,16 @@ fn rewrite_rule_impl(
     rhs: Template,
 ) -> impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
     move |edit: &mut EditFunction<'_>, node: NodeId| -> Result<Option<ValueId>> {
+        // The root check before anything is allocated. A fold table tries
+        // every rule at every candidate node, and `Matcher::new` plus
+        // `match_at` allocate per attempt, so a rule whose root cannot match
+        // used to pay for the attempt and be rejected inside. ~40 of the 60
+        // `ConstantFold` rules are rooted on one `IntBinaryOp` variant, which
+        // the peephole's own `matches_kind` gate cannot separate: it is a
+        // discriminant, identical for all of them.
+        if !lhs.root_admits_kind(edit.function().node_kind(node)) {
+            return Ok(None);
+        }
         // Keep the matcher borrow tight so the function can be mutated
         // afterwards. The snapshotted footprint (root, interior, captured
         // leaves) is the rewrite's proof: the interior nodes get culled, so
