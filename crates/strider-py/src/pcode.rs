@@ -14,7 +14,7 @@ pub(crate) fn lift_one_text<R: rsleigh::MemReader>(
 ) -> PyResult<(String, usize)> {
     let lift = sleigh
         .lift_one(addr)
-        .map_err(|e| into_strider_err(anyhow::anyhow!("lift_one at {addr:#x} failed: {e:?}")))?;
+        .map_err(|e| into_strider_err(anyhow::anyhow!("lift_one at {addr:#x} failed: {e:#}")))?;
     let text = lift
         .insns
         .iter()

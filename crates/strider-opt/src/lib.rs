@@ -36,6 +36,12 @@ pub use opt::load_readonly::LoadReadOnly;
 pub use opt::phi_collapse::PhiCollapse;
 pub use opt::region_collapse::RegionCollapse;
 pub use pipeline::{OptCtx, OptimizationResult, Optimizer, OptimizerPipeline, PostOptimizer};
+// The object-safe clone shims are public SUPERtraits of `Optimizer` /
+// `PostOptimizer` but live in a private module, so `clone_box` was unnameable
+// downstream: a consumer holding a `Box<dyn Optimizer + Send>` out of
+// `OptimizerPipeline::passes` could not clone it, which is most of what that
+// accessor is for.
+pub use pipeline::{OptimizerClone, PostOptimizerClone};
 #[cfg(any(test, feature = "test-util"))]
 pub use pipeline::{run_one, run_one_unvalidated, run_post};
 pub use post_opt::call_stack_args::CallStackArgCollect;

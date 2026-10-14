@@ -188,7 +188,7 @@ impl PyCfgOptions {
                     .map(|(name, abi)| (name, abi.0))
                     .collect(),
             ),
-            data_ranges: data_ranges_from(data_ranges),
+            data_ranges: data_ranges_from(data_ranges)?,
             known_targets_view: Arc::default(),
             call_other_abis_view: Arc::default(),
             seated: Arc::new(seated),
@@ -208,11 +208,14 @@ impl PyCfgOptions {
     }
 
     /// This object with `data_ranges` replaced, sharing both tables.
-    fn with_data_ranges(&self, data_ranges: Vec<(u64, u64)>) -> Self {
-        Self {
-            data_ranges: data_ranges_from(data_ranges),
+    ///
+    /// # Errors
+    /// As the constructor does, for a range that ends at or below its start.
+    fn with_data_ranges(&self, data_ranges: Vec<(u64, u64)>) -> PyResult<Self> {
+        Ok(Self {
+            data_ranges: data_ranges_from(data_ranges)?,
             ..self.clone()
-        }
+        })
     }
 
     /// This object with the mapping-symbol data ranges of `elf`, unless it
@@ -269,8 +272,24 @@ impl PyCfgOptions {
     }
 }
 
-fn data_ranges_from(ranges: Vec<(u64, u64)>) -> strider_cfg::DataRanges {
-    strider_cfg::DataRanges::new(ranges.into_iter().map(|(start, end)| start..end))
+/// # Errors
+/// If a range ends at or below its start. `start..end` with `end <= start` is
+/// empty, so it used to be accepted and silently drop the range the caller
+/// meant to name -- the literal pool it marks then decodes as instructions,
+/// which is the failure `data_ranges` exists to prevent. Every other
+/// range-checked ctor argument raises, so this one does too.
+fn data_ranges_from(ranges: Vec<(u64, u64)>) -> PyResult<strider_cfg::DataRanges> {
+    for &(start, end) in &ranges {
+        if end <= start {
+            return Err(crate::errors::into_strider_err(anyhow::anyhow!(
+                "data_ranges: ({start:#x}, {end:#x}) is empty; a range runs \
+                 start..end with end > start"
+            )));
+        }
+    }
+    Ok(strider_cfg::DataRanges::new(
+        ranges.into_iter().map(|(start, end)| start..end),
+    ))
 }
 
 /// Render a bool the Python way, so a `repr` reads as an eval-able constructor

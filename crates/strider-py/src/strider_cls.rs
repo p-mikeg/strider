@@ -244,7 +244,7 @@ pub(crate) fn build_orch_sleigh(
     reader: AnyMemReader,
 ) -> PyResult<rsleigh::Sleigh<AnyMemReader>> {
     rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader)
-        .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))
+        .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:#}")))
 }
 
 /// Shared so `optimize` and `analyze` agree about every assumption knob.
