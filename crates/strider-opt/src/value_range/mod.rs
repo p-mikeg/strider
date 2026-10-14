@@ -540,6 +540,12 @@ impl<'f> RangeMap<'f> {
 
         // `hi` survives every hop, so one accumulated mask decides all the
         // `Truncate`s at once.
+        //
+        // Not `Hop::lift`: that maps ONE hop's interval, while this folds a
+        // ladder of them into a single mask and flag before lifting once. The
+        // match below is exhaustive on purpose -- a new `Hop` has to decide
+        // whether it folds, and a catch-all would silently treat it as
+        // `SameValue`.
         let mut cur = value;
         let mut trunc_mask = u128::MAX;
         let mut upper_only = false;

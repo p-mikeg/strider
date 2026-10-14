@@ -45,7 +45,7 @@ impl<N: Copy + Eq + Hash> DomRelation for Dominators<N> {
 /// Cytron dominance frontiers: `DF(x)` is the set of nodes `b` where `x`
 /// dominates a predecessor of `b` but does not strictly dominate `b`.
 ///
-/// `root` is required because [`DomTree::immediate_dominator`] returns `None`
+/// `root` is required because [`DomRelation::immediate_dominator`] returns `None`
 /// for both the root and unreachable nodes. The root's stop condition is the
 /// virtual node ABOVE it, so a climb from one of its predecessors passes
 /// through the root itself: a root with a predecessor REACHABLE from it is in
@@ -110,7 +110,7 @@ pub fn dominance_frontiers<G: DomTree>(g: &G, root: G::Node) -> Frontiers<G::Nod
 /// dominator. Nodes unreachable from `root` are excluded.
 ///
 /// Only the after-idom invariant is load-bearing. Sibling order happens to
-/// follow [`DomTree::nodes`] order; don't depend on it.
+/// follow [`DomRelation::nodes`] order; don't depend on it.
 #[must_use]
 pub fn dominator_tree_preorder<G: DomRelation>(g: &G, root: G::Node) -> Vec<G::Node> {
     dominator_tree_walk(g, root).preorder
@@ -719,7 +719,7 @@ mod tests {
         assert_eq!(fr[&2], vec![3, 4]);
     }
 
-    /// [`DomTree::nodes`] must yield each node once: the climb's dedup is
+    /// [`DomRelation::nodes`] must yield each node once: the climb's dedup is
     /// per-`b`, so a repeated `b` is walked again and its frontier entries
     /// appear twice.
     #[test]

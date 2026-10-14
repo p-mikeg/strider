@@ -70,7 +70,15 @@ pub(crate) fn eval_node_const(
             operands_carry(function, &[l, r], ty)?;
             eval_int_binary(op, resolve(l)?, resolve(r)?, ty)
         }
-        NodeKind::IntUnaryOp(op) => eval_int_unary(op, resolve(ins.get(0).copied()?)?, out_ty?),
+        NodeKind::IntUnaryOp(op) => {
+            let ty = out_ty?;
+            let v = ins.get(0).copied()?;
+            // Checked like the binary arm: `IntUnaryOp` pins its operand to
+            // the output width, and `validate` rejects a node that does not,
+            // but this folds mid-pipeline where nothing has validated yet.
+            operands_carry(function, &[v], ty)?;
+            eval_int_unary(op, resolve(v)?, ty)
+        }
         NodeKind::Truncate | NodeKind::Extend(ExtendOp::ZeroExtend) => {
             out_ty?.get_unsigned_int(resolve(ins.get(0).copied()?)?)
         }

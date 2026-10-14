@@ -689,6 +689,14 @@ pub(crate) fn alias_verdict(
         // into assuming they address disjoint regions, which stack-arg
         // detection relies on: incoming-arg slots above the entry SP do not
         // overlap frame locals rooted at an alignment-masked SP.
+        //
+        // The test is `lb != sb`, which is WIDER than that justification: it
+        // also calls two distinct alignment anchors disjoint from each other,
+        // which nothing proves. Unreachable today because `detect_stack_args`
+        // is the only reader and filters `base != initial_sp` before probing,
+        // so one side is always the entry SP. A second reader needs the
+        // `at_or_below_entry_sp` proof `in_own_frame` does for the same
+        // geometric fact, not this comparison.
         (StackRooted { base: lb, .. }, StackRooted { base: sb, .. }) => {
             if lb == sb {
                 offset_range_verdict(load, store)
