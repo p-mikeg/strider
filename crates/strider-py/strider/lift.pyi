@@ -239,10 +239,18 @@ class Lifter:
         for the six channels, and `Cfg.is_complete` to test them all.
 
         Runs the fixed-point loop with the GIL released, so other Python
-        threads keep running. One consequence: a DAEMON thread sitting inside
-        this call when the interpreter starts finalizing is killed while it
-        holds no GIL, and the forced unwind out of the released region aborts
-        the process. Analyse on non-daemon threads, and join them.
+        threads keep running -- except where `mem` or `rom` is a Python object,
+        whose adapter takes the GIL back on every read anyway; there the GIL is
+        held, so finalization waits for the analysis the way any other Python
+        call does.
+
+        A DAEMON thread running an analysis when the interpreter starts
+        finalizing is still unsafe with a Python `mem` or `rom`: the thread is
+        terminated inside your `read` callback, and the unwind passes through
+        Rust frames, which aborts or segfaults the process. CPython hangs a
+        pure-Python daemon thread safely instead, so this is a cost of the
+        Rust frames below the callback and no exception can be raised for it.
+        Analyse on non-daemon threads and join them, which is clean.
         """
         ...
     def optimize(
