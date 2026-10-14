@@ -654,7 +654,6 @@ mod cfg_tests {
 #[cfg(test)]
 mod heap_tests {
     use crate::mem_analysis::*;
-    use std::sync::Arc;
     use strider_ir::node::{ValueId, ValueType};
     use strider_ir::{Function, FunctionBuilder, IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, stack_args_at};
@@ -701,10 +700,10 @@ mod heap_tests {
     fn built(
         mut b: FunctionBuilder,
         allocators: &[u64],
-    ) -> crate::Result<(Function, Arc<FxHashSet<u64>>)> {
+    ) -> crate::Result<(Function, FxHashSet<u64>)> {
         b.set_lift_addr(None);
         let fg = b.build()?;
-        Ok((fg, Arc::new(allocators.iter().copied().collect())))
+        Ok((fg, allocators.iter().copied().collect()))
     }
 
     /// Like [`built`], but first runs `PhiCollapse`/`RegionCollapse` so a
@@ -713,7 +712,7 @@ mod heap_tests {
     fn built_collapsed(
         mut b: FunctionBuilder,
         allocators: &[u64],
-    ) -> crate::Result<(Function, Arc<FxHashSet<u64>>)> {
+    ) -> crate::Result<(Function, FxHashSet<u64>)> {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         let mut p = crate::OptimizerPipeline::new();
@@ -722,7 +721,7 @@ mod heap_tests {
         p.run(&mut fg, &mut crate::OptCtx::new(None))?;
         // That run decomposed against an empty set; these queries use `allocators`.
         fg.side_tables().clear_memory_slots();
-        Ok((fg, Arc::new(allocators.iter().copied().collect())))
+        Ok((fg, allocators.iter().copied().collect()))
     }
 
     /// A prologue: drops SP by `bytes`, so a slot at `entry_sp - k` for
@@ -1102,7 +1101,7 @@ mod heap_tests {
             .expect("load");
         let mem = fg.node_inputs(load)[0];
         let assumptions = crate::AssumptionOptions {
-            noalias_allocators: Arc::clone(&na),
+            noalias_allocators: na.clone(),
             ..Default::default()
         };
         let cfg = MemAnalyzer::new(
@@ -1165,7 +1164,7 @@ mod heap_tests {
         let mut fg = b.build()?;
 
         let mut ctx = crate::OptCtx::new(None);
-        ctx.options.assumptions.noalias_allocators = Arc::new([MALLOC].into_iter().collect());
+        ctx.options.assumptions.noalias_allocators = [MALLOC].into_iter().collect();
         crate::test_support::standard_test().run(&mut fg, &mut ctx)?;
 
         let ret = crate::test_support::return_value(fg.graph())?;
@@ -1206,7 +1205,7 @@ mod heap_tests {
         let mut fg = b.build()?;
 
         let mut ctx = crate::OptCtx::new(None);
-        ctx.options.assumptions.noalias_allocators = Arc::new([MALLOC].into_iter().collect());
+        ctx.options.assumptions.noalias_allocators = [MALLOC].into_iter().collect();
         crate::test_support::standard_test().run(&mut fg, &mut ctx)?;
 
         let ret = crate::test_support::return_value(fg.graph())?;
@@ -1763,7 +1762,7 @@ mod heap_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         let mut ctx = crate::OptCtx::new(None);
-        ctx.options.assumptions.noalias_allocators = Arc::new(allocators.iter().copied().collect());
+        ctx.options.assumptions.noalias_allocators = allocators.iter().copied().collect();
         let mut pipeline = crate::OptimizerPipeline::new();
         pipeline.add(crate::PhiCollapse);
         pipeline.add(crate::RegionCollapse);
@@ -3122,7 +3121,7 @@ mod store_index {
     /// and every setting the candidates read.
     #[test]
     fn the_index_never_hides_a_clobber() -> crate::Result<()> {
-        let allocators = std::sync::Arc::default();
+        let allocators = FxHashSet::default();
         for seed in 0..60 {
             let (fg, addresses) = random_chain(seed)?;
             let layout = MemLayout::build(&fg).expect("one region is laid out");

@@ -2007,8 +2007,7 @@ fn a_heap_verdict_from_an_earlier_run_does_not_open_the_slot_map() {
     let site = sole_indirect_branch(&fg);
     let resolve = |fg: &mut Function, allocators: &[u64]| {
         let mut ctx = crate::OptCtx::new(None);
-        ctx.options.assumptions.noalias_allocators =
-            std::sync::Arc::new(allocators.iter().copied().collect());
+        ctx.options.assumptions.noalias_allocators = allocators.iter().copied().collect();
         p.run(fg, &mut ctx).unwrap();
         ctx.indirect_resolutions.get(&site).cloned().flatten()
     };
