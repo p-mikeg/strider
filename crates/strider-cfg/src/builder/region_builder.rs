@@ -437,6 +437,14 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             insn: insn.clone(),
             len: lift_res.machine_insn_len as u32,
         });
+        // `inst_next`: the one address this instruction's `globalset` can
+        // commit flowing context at, so the only one `Builder::enqueue` may
+        // trust a snapshot of.  See `Builder::committed_next`.
+        self.builder.committed_next.insert(
+            addr.machine_addr
+                .addr
+                .wrapping_add(u64::from(lift_res.machine_insn_len as u32)),
+        );
 
         match insn.opcode {
             rsleigh::Opcode::Branch => self.process_branch(insn, addr, lift_res),
