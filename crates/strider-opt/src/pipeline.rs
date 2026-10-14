@@ -764,3 +764,18 @@ mod tests {
         assert_eq!(p.name(), "ConstantFold");
     }
 }
+
+#[cfg(test)]
+mod clone_shim_tests {
+    /// `clone_box` is reachable by NAME, not only through the blanket impl: a
+    /// consumer holding a pass out of `OptimizerPipeline::passes` has to be
+    /// able to clone it, and the shim traits live in this private module.
+    #[test]
+    fn a_pass_out_of_passes_can_be_cloned_by_name() {
+        use crate::{Optimizer, OptimizerClone};
+        let pipeline = crate::default_pipeline();
+        let first: &(dyn Optimizer + Send) = &**pipeline.passes().first().expect("a pass");
+        let cloned: Box<dyn Optimizer + Send> = OptimizerClone::clone_box(first);
+        assert_eq!(cloned.name(), first.name());
+    }
+}

@@ -27,8 +27,11 @@
 //! recalled answer is sound, but recall is not answer-preserving: it reports no
 //! `Cycle`, so a back-edge arm an earlier query resolved on its own votes as a
 //! real answer and can turn a transparent `MemPhi` into a clobber boundary.
-//! An answer is therefore usually deeper than the per-call walk's and sometimes
-//! shallower, and depends on which starts were queried before it.
+//! An answer is therefore usually deeper than a cold per-call walk's and
+//! sometimes shallower, and depends on which starts were queried before it.
+//! "Deeper" is the CONSERVATIVE direction here -- a clobber boundary found
+//! earlier rather than later -- so neither outcome is unsound; what varies is
+//! how much a query folds, not whether its answer holds.
 
 mod layout;
 

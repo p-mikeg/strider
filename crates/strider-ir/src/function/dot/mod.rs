@@ -31,6 +31,10 @@ pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
         NodeKind::New => "component",
 
         NodeKind::Return | NodeKind::IndirectBranch => "doublecircle",
+        // Every other control kind is distinctive, so these two were the only
+        // ones falling to the catch-all and drawing as a plain value box.
+        NodeKind::Switch(_) => "trapezium",
+        NodeKind::Unreachable => "Msquare",
 
         NodeKind::IntConst(_) | NodeKind::FloatConst(_) => "ellipse",
 
@@ -56,7 +60,8 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
         NodeKind::CPoolRef => "#2a1a3a",         // violet: JVM metadata
         NodeKind::New => "#103a2a",              // dark green: allocation
 
-        NodeKind::Return | NodeKind::IndirectBranch => "#103a10",
+        NodeKind::Return | NodeKind::IndirectBranch | NodeKind::Switch(_) => "#103a10",
+        NodeKind::Unreachable => "#3a1030", // magenta: a sink control cannot leave
 
         NodeKind::FloatConst(_)
         | NodeKind::FloatBinaryOp(_)

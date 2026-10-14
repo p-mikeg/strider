@@ -213,6 +213,9 @@ class CfgOptions:
     one is reported through `Cfg.undecodable_branch_targets`, never decoded.
     The instruction at the entry address decodes even inside one.
     `ElfLifter.analyze` fills it from the ELF's mapping symbols when empty.
+    A range that ends at or below its start raises `StriderError`: it names no
+    address, and accepting it silently dropped the pool the caller meant to
+    mark.
     """
 
     # Read-only: these are getters with no setter, so a plain attribute

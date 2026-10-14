@@ -118,7 +118,7 @@ impl PyFunction {
         *self.assumptions.borrow_mut() = options.assumptions.clone();
         ctx.options = options;
         pipeline.run(&mut function, &mut ctx).map_err(|e| {
-            crate::errors::into_strider_err(anyhow::anyhow!("{label} failed: {e:?}"))
+            crate::errors::into_strider_err(anyhow::anyhow!("{label} failed: {e:#}"))
         })?;
         Ok(())
     }
