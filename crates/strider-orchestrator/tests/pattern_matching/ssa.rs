@@ -85,14 +85,14 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     pre.add(strider_orchestrator::opt::RegionCollapse);
     pre.run(
         &mut function,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
+        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
     )
     .expect("phi collapse");
 
     strider_orchestrator::opt::run_post(
         &FunctionArgDetect,
         &mut function,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
+        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
     )
     .expect("FunctionArgDetect");
     function
@@ -221,7 +221,7 @@ fn phi_input_from_edge_ties_value_to_its_branch() {
     pre.add(strider_orchestrator::opt::RegionCollapse);
     pre.run(
         &mut function,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
+        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
     )
     .expect("collapse");
 
@@ -414,7 +414,7 @@ fn phi_input_from_edge_ties_memphi_memory_to_its_branch() {
     pre.add(strider_orchestrator::opt::RegionCollapse);
     pre.run(
         &mut function,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
+        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
     )
     .expect("collapse");
 
@@ -471,7 +471,7 @@ fn collapsed_phi_diamond() -> strider_ir::Function {
     pre.add(strider_orchestrator::opt::RegionCollapse);
     pre.run(
         &mut function,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
+        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
     )
     .expect("collapse");
     function

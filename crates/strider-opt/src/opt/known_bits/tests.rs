@@ -24,7 +24,8 @@ fn known_bits_and_mask_then_and() -> Result<()> {
 fn known_bits_const_no_change() -> Result<()> {
     let mut fg = make_fn(|b| Ok(b.build_int_const(42u64, ValueType::I64).unwrap()))?;
     assert!(
-        !crate::pipeline::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::new(None))?.changed()
+        !crate::pipeline::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::at_floor(None))?
+            .changed()
     );
     Ok(())
 }
@@ -780,7 +781,7 @@ fn cone_steps_for_tip_fold(depth: u64) -> Result<u64> {
     let mut fg = b.build()?;
     super::CONE_STEPS.with(|c| c.set(0));
     assert!(
-        crate::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::new(None))?.changed(),
+        crate::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::at_floor(None))?.changed(),
         "the `& 0` tip must fold"
     );
     Ok(super::CONE_STEPS.with(std::cell::Cell::get))
@@ -807,7 +808,7 @@ fn cone_steps_for_nested_folds(depth: u64) -> Result<u64> {
     let mut fg = b.build()?;
     super::CONE_STEPS.with(|c| c.set(0));
     assert!(
-        crate::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::new(None))?.changed(),
+        crate::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::at_floor(None))?.changed(),
         "every level is fully known, so the chain folds"
     );
     Ok(super::CONE_STEPS.with(std::cell::Cell::get))
@@ -866,7 +867,7 @@ fn fold_absorbs_exactly_the_contributor_cone_addrs() -> Result<()> {
         b.build_int_binary_operation(ored, zero, IntBinaryOp::And, ValueType::I8)
     })?;
 
-    crate::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::new(None))?;
+    crate::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::at_floor(None))?;
     let folded = fg.producer(return_value(fg.graph())?);
     // The sentinel is the `InitialVar` producing `x`: a cone member, not
     // descended through.
@@ -915,7 +916,7 @@ fn diamond_folds_absorb_exactly_their_shared_cone_addrs() -> Result<()> {
         b.build_int_binary_operation(live_a, live_b, IntBinaryOp::Or, ValueType::I8)
     })?;
 
-    crate::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::new(None))?;
+    crate::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let mut by_value: Vec<(u128, Vec<u64>)> = fg
         .walk_kind(|k| matches!(k, NodeKind::IntConst(_)))
@@ -1132,7 +1133,7 @@ fn a_surviving_cone_node_keeps_its_own_fingerprint() -> Result<()> {
 
     let y_node = fg.producer(y);
     let before = fingerprint_of(&fg, y_node);
-    crate::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::new(None))?;
+    crate::run_one(&KnownBits, &mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let ret = fg
         .walk_kind(|k| matches!(k, NodeKind::Return))

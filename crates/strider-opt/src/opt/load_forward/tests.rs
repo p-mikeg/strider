@@ -58,7 +58,7 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -89,7 +89,7 @@ fn non_forwardable_load_is_narrowed_to_initial_memory() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let load = fg
         .walk_kind(|k| matches!(k, NodeKind::Load(_)))
@@ -132,7 +132,7 @@ fn spill_over_opaque_store(knob: bool, escape: bool) -> Result<strider_ir::Funct
         Ok(())
     })?;
 
-    let mut ctx = crate::OptCtx::new(None);
+    let mut ctx = crate::OptCtx::at_floor(None);
     ctx.options.assumptions.escape_analysis = knob;
     crate::test_support::standard_test().run(&mut fg, &mut ctx)?;
     Ok(fg)
@@ -190,7 +190,7 @@ fn forward_does_not_cross_address_spaces() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let load = fg
         .walk_kind(|k| matches!(k, NodeKind::Load(_)))
@@ -223,7 +223,7 @@ fn forward_takes_nearest_of_two_same_offset_stores() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -253,7 +253,7 @@ fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load[sp+4] should be forwarded away");
@@ -284,7 +284,7 @@ fn does_not_forward_across_distinct_sp_bases_at_equal_offset() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -315,7 +315,7 @@ fn forward_skips_non_aliasing_store() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -341,7 +341,7 @@ fn bail_on_overlapping_store() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -367,7 +367,7 @@ fn bail_on_narrower_store_inside_wider_load_range() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -394,7 +394,7 @@ fn bail_on_narrower_same_address_store_between_wide_store_and_load() -> Result<(
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -419,7 +419,7 @@ fn bail_on_type_mismatch() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 1, "type mismatch must prevent forwarding");
@@ -557,7 +557,7 @@ fn forwards_constant_address_load_across_disjoint_const_store() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -590,7 +590,7 @@ fn forwards_anchor_load_with_same_id_store_no_interferer() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     // Only the `p = Load(IntConst(0x100))` address-producer may remain.
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -629,7 +629,7 @@ fn does_not_forward_anchor_load_across_different_anchor_interferer() -> Result<(
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert!(
@@ -665,7 +665,7 @@ fn bail_on_call_between() -> Result<()> {
     let mut fg = b.build()?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -697,7 +697,7 @@ fn call_other_blocks_forwarding_even_over_private_frame() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut ctx = crate::OptCtx::new(None);
+    let mut ctx = crate::OptCtx::at_floor(None);
     ctx.options.assumptions.escape_analysis = true;
     crate::test_support::standard_test().run(&mut fg, &mut ctx)?;
 
@@ -757,7 +757,7 @@ fn per_branch_stores_same_offset_do_not_forward_and_synthesize_no_phi() -> Resul
     // `standard_test` leaves the `If(const true)` diamond and its MemPhi
     // standing; DeadBranchElimination would collapse them.
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -817,7 +817,7 @@ fn three_predecessor_memphi_blocks_forwarding_no_phi() -> Result<()> {
     let phis_before = reachable_anonymous_phi_count(&fg);
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -872,7 +872,7 @@ fn dominating_store_across_collapsible_merge_forwards_with_no_phi() -> Result<()
     let phis_before = reachable_anonymous_phi_count(&fg);
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -931,7 +931,7 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
     let mut fg = b.build()?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -996,7 +996,7 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
     let mut fg = b.build()?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load must be forwarded");
@@ -1034,7 +1034,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add(LoadForward::default());
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -1074,7 +1074,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -1125,7 +1125,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add(LoadForward::default());
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -1215,7 +1215,7 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
     prep.add(ConstantFold::new());
     prep.add(PhiCollapse);
     prep.add(RegionCollapse);
-    prep.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    prep.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let total_truncate_before = fg
         .graph()
@@ -1235,7 +1235,7 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
     crate::pipeline::run_one(
         &LoadForward::default(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -1308,7 +1308,7 @@ fn load_forward_never_increases_phi_count() -> Result<()> {
 
     // Collapse trivial phis first so the baseline is the graph LoadForward
     // actually sees.
-    crate::test_support::cf_rp_pipeline().run(&mut fg, &mut crate::OptCtx::new(None))?;
+    crate::test_support::cf_rp_pipeline().run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let total_phis_before = fg
         .graph()
@@ -1319,7 +1319,7 @@ fn load_forward_never_increases_phi_count() -> Result<()> {
     crate::pipeline::run_one(
         &LoadForward::default(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
 
     let total_phis_after = fg
@@ -1357,7 +1357,7 @@ fn forwards_spill_across_call_when_frame_private() -> Result<()> {
         Ok(())
     })?;
 
-    let mut octx = crate::OptCtx::new(None);
+    let mut octx = crate::OptCtx::at_floor(None);
     octx.options.assumptions.escape_analysis = true;
     crate::test_support::standard_test().run(&mut fg, &mut octx)?;
 
@@ -1404,7 +1404,7 @@ fn spill_across_call_with_register(held_is_frame_address: bool) -> Result<stride
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
-    let mut octx = crate::OptCtx::new(None);
+    let mut octx = crate::OptCtx::at_floor(None);
     octx.options.assumptions.escape_analysis = true;
     crate::test_support::standard_test().run(&mut fg, &mut octx)?;
     Ok(fg)
@@ -1447,7 +1447,7 @@ fn spill_not_forwarded_across_call_by_default() -> Result<()> {
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
-    crate::test_support::standard_test().run(&mut fg, &mut crate::OptCtx::new(None))?;
+    crate::test_support::standard_test().run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
     assert_eq!(
         fg.count_kind(|k| matches!(k, NodeKind::Load(_))),
         1,
@@ -1476,7 +1476,7 @@ fn spill_not_forwarded_across_call_when_frame_escapes() -> Result<()> {
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
-    let mut octx = crate::OptCtx::new(None);
+    let mut octx = crate::OptCtx::at_floor(None);
     octx.options.assumptions.escape_analysis = true;
     crate::test_support::standard_test().run(&mut fg, &mut octx)?;
     assert_eq!(
@@ -1501,7 +1501,7 @@ fn global_load_not_forwarded_across_call() -> Result<()> {
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
-    let mut octx = crate::OptCtx::new(None);
+    let mut octx = crate::OptCtx::at_floor(None);
     octx.options.assumptions.escape_analysis = true;
     crate::test_support::standard_test().run(&mut fg, &mut octx)?;
     assert_eq!(
@@ -1528,7 +1528,7 @@ fn spill_not_forwarded_across_call_other() -> Result<()> {
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
-    let mut octx = crate::OptCtx::new(None);
+    let mut octx = crate::OptCtx::at_floor(None);
     octx.options.assumptions.escape_analysis = true;
     crate::test_support::standard_test().run(&mut fg, &mut octx)?;
     assert_eq!(
@@ -1569,7 +1569,7 @@ fn spill_in_the_outgoing_arg_area_does_not_forward_across_a_call() -> Result<()>
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut octx = crate::OptCtx::new(None);
+    let mut octx = crate::OptCtx::at_floor(None);
     octx.options.assumptions.escape_analysis = true;
     crate::test_support::standard_test().run(&mut fg, &mut octx)?;
 
@@ -1620,7 +1620,7 @@ fn spill_above_the_outgoing_arg_area_still_forwards_across_a_call() -> Result<()
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut octx = crate::OptCtx::new(None);
+    let mut octx = crate::OptCtx::at_floor(None);
     octx.options.assumptions.escape_analysis = true;
     crate::test_support::standard_test().run(&mut fg, &mut octx)?;
 
@@ -1659,7 +1659,7 @@ fn spill_below_the_arg_window(offset: i64) -> Result<strider_ir::Function> {
     b.build_return(Some(reload), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
-    let mut octx = crate::OptCtx::new(None);
+    let mut octx = crate::OptCtx::at_floor(None);
     octx.options.assumptions.escape_analysis = true;
     crate::test_support::standard_test().run(&mut fg, &mut octx)?;
     Ok(fg)
@@ -1727,7 +1727,7 @@ fn stack_top_spill_across_call(preserves_stack_args: bool) -> Result<u128> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut octx = crate::OptCtx::new(None);
+    let mut octx = crate::OptCtx::at_floor(None);
     octx.options.assumptions.escape_analysis = true;
     octx.options.assumptions.callee_preserves_stack_args = preserves_stack_args;
     crate::test_support::standard_test().run(&mut fg, &mut octx)?;
@@ -1791,7 +1791,7 @@ fn one_window_answers_reloads_on_either_side_of_it() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut octx = crate::OptCtx::new(None);
+    let mut octx = crate::OptCtx::at_floor(None);
     octx.options.assumptions.escape_analysis = true;
     crate::test_support::standard_test().run(&mut fg, &mut octx)?;
 
@@ -1884,7 +1884,7 @@ fn load_below_nested_loops_is_not_narrowed_past_the_exit_merge() -> Result<()> {
     crate::pipeline::run_one(
         &crate::LoadForward::default(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
 
     let load = fg
@@ -1907,7 +1907,7 @@ fn load_below_nested_loops_is_not_narrowed_past_the_exit_merge() -> Result<()> {
 fn nested_loop_exit_merge_never_forwards_the_store_after_phi_collapse() -> Result<()> {
     let (mut fg, _merge, loaded) = nested_loop_exit_merge_graph()?;
 
-    let mut ctx = crate::OptCtx::new(None);
+    let mut ctx = crate::OptCtx::at_floor(None);
     for _ in 0..3 {
         crate::pipeline::run_one(&crate::LoadForward::default(), &mut fg, &mut ctx)?;
         crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut ctx)?;
@@ -1942,11 +1942,11 @@ fn narrowing_across_a_call_never_outlives_escape_analysis() -> Result<()> {
         Ok(())
     })?;
 
-    let mut relaxed = crate::OptCtx::new(None);
+    let mut relaxed = crate::OptCtx::at_floor(None);
     relaxed.options.assumptions.escape_analysis = true;
     crate::test_support::standard_test().run(&mut fg, &mut relaxed)?;
 
-    let mut sound = crate::OptCtx::new(None);
+    let mut sound = crate::OptCtx::at_floor(None);
     sound.options.assumptions = crate::AssumptionOptions::none();
     crate::test_support::standard_test().run(&mut fg, &mut sound)?;
 
@@ -1981,9 +1981,9 @@ fn narrowing_past_a_global_store_never_outlives_stack_global_disjoint() -> Resul
         Ok(())
     })?;
 
-    crate::test_support::standard_test().run(&mut fg, &mut crate::OptCtx::new(None))?;
+    crate::test_support::standard_test().run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
-    let mut sound = crate::OptCtx::new(None);
+    let mut sound = crate::OptCtx::at_floor(None);
     sound.options.assumptions = crate::AssumptionOptions::none();
     crate::test_support::standard_test().run(&mut fg, &mut sound)?;
 
@@ -2038,11 +2038,11 @@ fn narrowing_across_an_allocator_never_outlives_noalias_allocators() -> Result<(
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut relaxed = crate::OptCtx::new(None);
+    let mut relaxed = crate::OptCtx::at_floor(None);
     relaxed.options.assumptions.noalias_allocators = [ALLOCATOR].into_iter().collect();
     crate::test_support::standard_test().run(&mut fg, &mut relaxed)?;
 
-    let mut sound = crate::OptCtx::new(None);
+    let mut sound = crate::OptCtx::at_floor(None);
     sound.options.assumptions = crate::AssumptionOptions::none();
     crate::test_support::standard_test().run(&mut fg, &mut sound)?;
 
@@ -2106,7 +2106,7 @@ fn narrowing_that_makes_twin_loads_reruns_the_fixed_point() -> Result<()> {
     let mut p = OptimizerPipeline::new();
     p.add(PhiCollapse);
     p.add(LoadForward::default());
-    p.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    p.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let ret = crate::test_support::return_value(fg.graph())?;
     assert!(
@@ -2128,7 +2128,7 @@ mod scaling {
         crate::pipeline::run_one(
             &crate::LoadForward::default(),
             &mut fg,
-            &mut crate::OptCtx::new(None),
+            &mut crate::OptCtx::at_floor(None),
         )?;
         Ok(crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get)
             + crate::mem_ssa::CLIMB_STEPS.with(std::cell::Cell::get))
@@ -2200,7 +2200,7 @@ fn no_assumption_lifts_the_ram_premise() -> Result<()> {
         b.build_store(register, one, rsleigh::VnSpace::RAM)?;
         b.build_load(register, rsleigh::VnSpace::RAM, ValueType::I32)
     })?;
-    let mut ctx = crate::OptCtx::new(None);
+    let mut ctx = crate::OptCtx::at_floor(None);
     ctx.options.assumptions = crate::AssumptionOptions::none();
     crate::test_support::standard_test().run(&mut fg, &mut ctx)?;
     crate::test_support::assert_returns_const(&fg, 1);

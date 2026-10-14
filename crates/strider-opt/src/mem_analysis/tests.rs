@@ -626,7 +626,8 @@ mod cfg_tests {
         let mut p = OptimizerPipeline::new();
         p.add(PhiCollapse);
         p.add(RegionCollapse);
-        p.run(&mut f, &mut OptCtx::new(None)).expect("collapse");
+        p.run(&mut f, &mut OptCtx::at_floor(None))
+            .expect("collapse");
 
         let store = super::only_store(&f);
         let load = f
@@ -718,7 +719,7 @@ mod heap_tests {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        p.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
         // That run decomposed against an empty set; these queries use `allocators`.
         fg.side_tables().clear_memory_slots();
         Ok((fg, allocators.iter().copied().collect()))
@@ -1163,7 +1164,7 @@ mod heap_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
 
-        let mut ctx = crate::OptCtx::new(None);
+        let mut ctx = crate::OptCtx::at_floor(None);
         ctx.options.assumptions.noalias_allocators = [MALLOC].into_iter().collect();
         crate::test_support::standard_test().run(&mut fg, &mut ctx)?;
 
@@ -1204,7 +1205,7 @@ mod heap_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
 
-        let mut ctx = crate::OptCtx::new(None);
+        let mut ctx = crate::OptCtx::at_floor(None);
         ctx.options.assumptions.noalias_allocators = [MALLOC].into_iter().collect();
         crate::test_support::standard_test().run(&mut fg, &mut ctx)?;
 
@@ -1761,7 +1762,7 @@ mod heap_tests {
     fn run_load_forward(mut b: FunctionBuilder, allocators: &[u64]) -> crate::Result<Function> {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
-        let mut ctx = crate::OptCtx::new(None);
+        let mut ctx = crate::OptCtx::at_floor(None);
         ctx.options.assumptions.noalias_allocators = allocators.iter().copied().collect();
         let mut pipeline = crate::OptimizerPipeline::new();
         pipeline.add(crate::PhiCollapse);
@@ -1865,7 +1866,7 @@ mod arg_window_bounds {
         let mut collapse = crate::OptimizerPipeline::new();
         collapse.add(crate::PhiCollapse);
         collapse.add(crate::RegionCollapse);
-        collapse.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        collapse.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
         let _ = sp_val;
 
         let call = fg
@@ -1976,7 +1977,7 @@ mod arg_window_complexity {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        p.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
@@ -2044,7 +2045,7 @@ mod arg_window_complexity {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        p.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
@@ -2123,9 +2124,9 @@ mod arg_window_complexity {
         let mut pipe = crate::OptimizerPipeline::new();
         pipe.add(crate::PhiCollapse);
         pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        pipe.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
-        let mut octx = crate::OptCtx::new(None);
+        let mut octx = crate::OptCtx::at_floor(None);
         octx.options.assumptions.escape_analysis = true;
         WALK_STEPS.with(|c| c.set(0));
         let result = crate::pipeline::run_one(&crate::LoadForward::default(), &mut fg, &mut octx)?;
@@ -2182,7 +2183,7 @@ mod arg_window_complexity {
         let mut pipe = crate::OptimizerPipeline::new();
         pipe.add(crate::PhiCollapse);
         pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        pipe.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
         let analyzer = MemAnalyzer::new(
             MemOptions::call_blocking(true, &Default::default()).with_escape_analysis(true),
@@ -2258,7 +2259,7 @@ mod spine_memo {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        p.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
         Ok((fg, chain))
     }
 
@@ -2339,7 +2340,7 @@ mod arg_window_visibility {
         let mut pipe = crate::OptimizerPipeline::new();
         pipe.add(crate::PhiCollapse);
         pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        pipe.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
@@ -2403,7 +2404,7 @@ mod arg_window_visibility {
         let mut pipe = crate::OptimizerPipeline::new();
         pipe.add(crate::PhiCollapse);
         pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        pipe.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
@@ -2466,7 +2467,7 @@ mod arg_window_visibility {
         let mut pipe = crate::OptimizerPipeline::new();
         pipe.add(crate::PhiCollapse);
         pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        pipe.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
@@ -2521,7 +2522,7 @@ mod arg_window_visibility {
         let mut pipe = crate::OptimizerPipeline::new();
         pipe.add(crate::PhiCollapse);
         pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        pipe.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
@@ -2579,7 +2580,7 @@ mod arg_window_visibility {
         let mut pipe = crate::OptimizerPipeline::new();
         pipe.add(crate::PhiCollapse);
         pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        pipe.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
@@ -2652,7 +2653,7 @@ mod arg_window_visibility {
         let mut pipe = crate::OptimizerPipeline::new();
         pipe.add(crate::PhiCollapse);
         pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        pipe.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
@@ -2711,7 +2712,7 @@ mod arg_window_visibility {
         let mut pipe = crate::OptimizerPipeline::new();
         pipe.add(crate::PhiCollapse);
         pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        pipe.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
@@ -3000,7 +3001,7 @@ mod modular_offset_tests {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        p.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
         let load_node = fg.producer(loaded);
         let store_node = fg

@@ -123,8 +123,10 @@ fn classify_with(
 }
 
 /// [`classify_with`] under the default assumptions and no ISA mode.
+/// At the sound floor: a case that needs a claim passes it through
+/// [`classify_with`] instead of inheriting one here.
 fn classify(f: &Function, rom: Option<&dyn ReadOnlyMemory>) -> Option<ResolvedTargets> {
-    classify_with(f, rom, &crate::AssumptionOptions::default(), None)
+    classify_with(f, rom, &crate::AssumptionOptions::none(), None)
 }
 
 #[test]
@@ -357,7 +359,7 @@ fn classify_table_dispatch_resolves_guarded_shift_narrowed_loaded_index() {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut g, &mut crate::OptCtx::new(None)).unwrap();
+        p.run(&mut g, &mut crate::OptCtx::at_floor(None)).unwrap();
     }
 
     let rom = MockRom::strided(
@@ -617,7 +619,8 @@ fn classify_table_dispatch_resolves_a_bound_held_by_a_guarded_sibling() {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut function, &mut crate::OptCtx::new(None)).unwrap();
+        p.run(&mut function, &mut crate::OptCtx::at_floor(None))
+            .unwrap();
     }
 
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
@@ -702,7 +705,8 @@ fn classify_table_dispatch_with_if_guard_bound_returns_multiple() {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut function, &mut crate::OptCtx::new(None)).unwrap();
+        p.run(&mut function, &mut crate::OptCtx::at_floor(None))
+            .unwrap();
     }
 
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
@@ -898,7 +902,8 @@ fn classify_table_dispatch_guarded_direct_load_target() {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut function, &mut crate::OptCtx::new(None)).unwrap();
+        p.run(&mut function, &mut crate::OptCtx::at_floor(None))
+            .unwrap();
     }
     let result = classify(&function, None);
     assert_eq!(
@@ -962,7 +967,8 @@ fn classify_table_dispatch_decoy_offpath_value_not_enumerated() {
         p.add(crate::KnownBits);
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut function, &mut crate::OptCtx::new(None)).unwrap();
+        p.run(&mut function, &mut crate::OptCtx::at_floor(None))
+            .unwrap();
     }
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let result = classify(&function, Some(&rom));
@@ -987,7 +993,7 @@ fn finish_stack_array(mut fg: strider_ir::Function) -> (strider_ir::Function, Va
     p.add(KnownBits);
     p.add(PhiCollapse);
     p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
+    p.run(&mut fg, &mut crate::OptCtx::at_floor(None)).unwrap();
     let load = fg
         .graph()
         .all_node_ids()
@@ -1290,11 +1296,15 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
     wire_stack_dispatch(targets.len(), base_offset, stride, sp_val, &mut b, arg_vn);
     let (fg, _load_value) = finish_stack_array(b.build().unwrap());
 
-    // The default assumptions prove the global store disjoint.
+    // Claimed, the global store is proven disjoint.
+    let claimed = crate::AssumptionOptions {
+        stack_global_disjoint: true,
+        ..crate::AssumptionOptions::none()
+    };
     let mut expected = targets.to_vec();
     expected.sort_unstable();
     assert_eq!(
-        classify(&fg, None),
+        classify_with(&fg, None, &claimed, None),
         Some(ResolvedTargets::Multiple(
             expected.into_iter().map(Into::into).collect()
         )),
@@ -1464,7 +1474,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
     pipeline.add_post_pass(StackOffsetDetect);
     pipeline.add(LoadForward::default());
 
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -1591,7 +1601,7 @@ fn classify_table_dispatch_resolves_a_bitfield_index_under_its_guard() {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut g, &mut crate::OptCtx::new(None)).unwrap();
+        p.run(&mut g, &mut crate::OptCtx::at_floor(None)).unwrap();
     }
 
     let rom = MockRom::strided(0x4000, 4, (0..32).map(|i| 0x5000 + 0x10 * i).collect(), 4);
@@ -1694,7 +1704,7 @@ fn classify_pass_rederives_a_seated_switch_from_its_selector() {
     let mut g = b.build().unwrap();
 
     let rom = MockRom::strided(0x4000, 4, vec![0x1000, 0x2000], 4);
-    let mut ctx = crate::OptCtx::new(Some(&rom));
+    let mut ctx = crate::OptCtx::at_floor(Some(&rom));
     crate::run_post(&super::super::IndirectBranchClassify, &mut g, &mut ctx).expect("classify");
 
     assert_eq!(
@@ -1922,9 +1932,9 @@ fn rederive_seated_switch(mut g: Function, switch: NodeId) -> Option<ResolvedTar
     prep.add(PhiCollapse);
     prep.add(ConstantFold::new());
     prep.add(RegionCollapse);
-    prep.run(&mut g, &mut crate::OptCtx::new(Some(&rom)))
+    prep.run(&mut g, &mut crate::OptCtx::at_floor(Some(&rom)))
         .expect("prep");
-    let mut ctx = crate::OptCtx::new(Some(&rom));
+    let mut ctx = crate::OptCtx::at_floor(Some(&rom));
     crate::run_post(&super::super::IndirectBranchClassify, &mut g, &mut ctx).expect("classify");
     ctx.indirect_resolutions
         .get(&switch)
@@ -2006,7 +2016,7 @@ fn a_heap_verdict_from_an_earlier_run_does_not_open_the_slot_map() {
     p.add_post_pass(super::super::IndirectBranchClassify);
     let site = sole_indirect_branch(&fg);
     let resolve = |fg: &mut Function, allocators: &[u64]| {
-        let mut ctx = crate::OptCtx::new(None);
+        let mut ctx = crate::OptCtx::at_floor(None);
         ctx.options.assumptions.noalias_allocators = allocators.iter().copied().collect();
         p.run(fg, &mut ctx).unwrap();
         ctx.indirect_resolutions.get(&site).cloned().flatten()

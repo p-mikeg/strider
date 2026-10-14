@@ -29,7 +29,7 @@ fn constant_fold_add_consts_preserves_fingerprints() {
         strider_orchestrator::opt::run_one(
             &ConstantFold::new(),
             &mut fg,
-            &mut strider_orchestrator::opt::OptCtx::new(None)
+            &mut strider_orchestrator::opt::OptCtx::at_floor(None)
         )
         .unwrap()
         .changed()
@@ -65,7 +65,7 @@ fn constant_fold_x_xor_x_preserves_fingerprints() {
         strider_orchestrator::opt::run_one(
             &ConstantFold::new(),
             &mut fg,
-            &mut strider_orchestrator::opt::OptCtx::new(None)
+            &mut strider_orchestrator::opt::OptCtx::at_floor(None)
         )
         .unwrap()
         .changed()
@@ -111,7 +111,7 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
     let _ = strider_orchestrator::opt::run_one(
         &ConstantFold::new(),
         &mut fg,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
+        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
     )
     .unwrap();
     // Whatever value reaches the Return must carry the outer-And's

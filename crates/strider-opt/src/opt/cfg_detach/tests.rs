@@ -131,7 +131,7 @@ fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::Result<(
         "false_region should now have 2 ctrl inputs after surgery"
     );
 
-    let result = crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::new(None))?;
+    let result = crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::at_floor(None))?;
     assert!(
         result.changed(),
         "CfgDetach must report Changed when it removes an unreachable predecessor"
@@ -205,7 +205,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     // cond=false, so the true branch is left reachable only via the detached If.
     simulate_dbe_redirect_without_strip(&mut fg, false)?;
 
-    let result = crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::new(None))?;
+    let result = crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::at_floor(None))?;
     assert!(result.changed(), "CfgDetach must report Changed");
 
     assert_eq!(
@@ -276,7 +276,7 @@ fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
 
     simulate_dbe_redirect_without_strip(&mut fg, false)?;
 
-    let result = crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::new(None))?;
+    let result = crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::at_floor(None))?;
     assert!(result.changed(), "CfgDetach must report Changed");
 
     assert_eq!(
@@ -342,7 +342,7 @@ fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::Result<()
     simulate_dbe_redirect_without_strip(&mut fg, false)?; // outer If
     simulate_dbe_redirect_without_strip(&mut fg, true)?; // inner If
 
-    let result = crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::new(None))?;
+    let result = crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::at_floor(None))?;
     assert!(result.changed(), "CfgDetach must report Changed");
 
     assert_eq!(
@@ -421,7 +421,7 @@ fn cfg_detach_visits_control_dead_but_data_reachable_region() -> crate::Result<(
         "dead Region IS in the general graph walk (data-reachable)"
     );
 
-    let result = crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::new(None))?;
+    let result = crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::at_floor(None))?;
     assert!(result.changed(), "CfgDetach must report Changed");
     assert_eq!(
         fg.node_inputs(dead_region).len(),

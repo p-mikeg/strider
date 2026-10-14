@@ -43,7 +43,8 @@ fn single_value_phi_collapses() -> crate::Result<()> {
     let lone_value = phi_inputs[1];
 
     let changed =
-        crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::new(None))?.changed();
+        crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::at_floor(None))?
+            .changed();
     assert!(changed, "single-value phi must collapse");
 
     let ret_val = fg.node_inputs(find_return(&fg))[2];
@@ -103,7 +104,8 @@ fn multi_value_all_equal_phi_collapses() -> crate::Result<()> {
     );
 
     let changed =
-        crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::new(None))?.changed();
+        crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::at_floor(None))?
+            .changed();
     assert!(changed, "all-equal phi must collapse");
 
     let ret_val = fg.node_inputs(find_return(&fg))[2];
@@ -139,7 +141,8 @@ fn chained_single_pred_phis_cascade_to_base_value() -> crate::Result<()> {
     let mut fg = b.build()?;
 
     let changed =
-        crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::new(None))?.changed();
+        crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::at_floor(None))?
+            .changed();
     assert!(changed, "chained trivial phis must collapse");
 
     let ret_val = fg.node_inputs(find_return(&fg))[2];
@@ -185,7 +188,7 @@ fn loop_carried_self_ref_phi_collapses() -> crate::Result<()> {
         "the header phi carries [token, initial, self-ref]"
     );
 
-    crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let ret_val = fg.node_inputs(find_return(&fg))[2];
     assert!(
@@ -241,7 +244,7 @@ fn genuine_two_value_phi_unchanged() -> crate::Result<()> {
 
     // Not asserting on the pass result: other single-pred phis (entry/branch
     // MemPhis) do collapse, so `Changed` is expected either way.
-    crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let ret_val_after = fg.node_inputs(find_return(&fg))[2];
     assert_eq!(
@@ -291,7 +294,8 @@ fn single_value_mem_phi_collapses() -> crate::Result<()> {
     );
 
     let changed =
-        crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::new(None))?.changed();
+        crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut crate::OptCtx::at_floor(None))?
+            .changed();
     assert!(changed, "single-value MemPhi must collapse");
 
     // The cascade collapses body's MemPhi and then entry's, so the Store ends
@@ -336,7 +340,7 @@ fn a_cascading_sweep_converges_in_one_iteration() -> crate::Result<()> {
     let phis = |fg: &strider_ir::Function| fg.count_kind(|k| matches!(k, NodeKind::Phi));
     assert!(phis(&fg) >= 5, "setup expects a phi per join");
 
-    let mut ctx = crate::OptCtx::new(None);
+    let mut ctx = crate::OptCtx::at_floor(None);
     let mut edit = crate::EditFunction::new(&mut fg);
     edit.cull_dead();
     let mut sweeps = Vec::new();
@@ -401,7 +405,7 @@ fn count_live(fg: &strider_ir::Function, pred: impl Fn(&NodeKind) -> bool) -> us
 }
 
 fn run(fg: &mut strider_ir::Function) -> crate::Result<bool> {
-    Ok(crate::pipeline::run_one(&PhiCollapse, fg, &mut crate::OptCtx::new(None))?.changed())
+    Ok(crate::pipeline::run_one(&PhiCollapse, fg, &mut crate::OptCtx::at_floor(None))?.changed())
 }
 
 fn return_value_kind(fg: &strider_ir::Function) -> NodeKind {

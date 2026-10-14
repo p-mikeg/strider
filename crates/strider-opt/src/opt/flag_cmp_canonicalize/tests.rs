@@ -64,7 +64,7 @@ fn ppc_cr_bit_test_canonicalizes_to_intcmp() -> Result<()> {
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
 
     let if_node = fg
@@ -116,7 +116,7 @@ fn ppc_cr_bit_test_canonicalizes_through_a_ne_zero_branch() -> Result<()> {
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
 
     let if_node = fg
@@ -183,7 +183,7 @@ fn ppc_cr_bit_canonicalize_preserves_pack_fingerprints() -> Result<()> {
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
 
     // The bit-3 `Less(idx, 8)` is the only reachable `Less` once the pack is culled.
@@ -232,7 +232,7 @@ fn ppc_cr_bit_test_selects_middle_eq_bit() -> Result<()> {
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
 
     let if_node = fg
@@ -404,11 +404,15 @@ fn two_independent_instances_each_canonicalize() -> Result<()> {
     let pass_b = FlagCmpCanonicalize::new();
 
     let (mut fg_a, if_a, a_a, b_a) = build_if_with_flag_cond(|_fb, zr, _ng, _cy, _ov| Ok(zr))?;
-    assert!(crate::pipeline::run_one(&pass_a, &mut fg_a, &mut crate::OptCtx::new(None))?.changed());
+    assert!(
+        crate::pipeline::run_one(&pass_a, &mut fg_a, &mut crate::OptCtx::at_floor(None))?.changed()
+    );
     assert_if_cond_is_intcmp(fg_a.graph(), if_a, IntCmpOp::Equal, a_a, b_a);
 
     let (mut fg_b, if_b, a_b, b_b) = build_if_with_flag_cond(|_fb, zr, _ng, _cy, _ov| Ok(zr))?;
-    assert!(crate::pipeline::run_one(&pass_b, &mut fg_b, &mut crate::OptCtx::new(None))?.changed());
+    assert!(
+        crate::pipeline::run_one(&pass_b, &mut fg_b, &mut crate::OptCtx::at_floor(None))?.changed()
+    );
     assert_if_cond_is_intcmp(fg_b.graph(), if_b, IntCmpOp::Equal, a_b, b_b);
     Ok(())
 }
@@ -422,7 +426,7 @@ fn flag_cmp_ne_rewrites_to_neg_int_equal() -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(r.changed(), "pass should rewrite the NE flag tree");
 
@@ -441,7 +445,7 @@ fn flag_cmp_hi_rewrites_to_int_less_swapped() -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(r.changed(), "pass should rewrite the HI flag tree");
 
@@ -463,12 +467,12 @@ fn flag_cmp_hi_rewrites_after_constant_fold_runs_first() -> Result<()> {
     crate::pipeline::run_one(
         &crate::ConstantFold::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(
         r.changed(),
@@ -491,12 +495,12 @@ fn flag_cmp_ls_rewrites_to_neg_int_less_swapped() -> Result<()> {
     crate::pipeline::run_one(
         &crate::ConstantFold::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(r.changed(), "pass should rewrite the LS flag tree");
 
@@ -519,7 +523,7 @@ fn flag_cmp_lt_rewrites_to_int_sless() -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(r.changed(), "pass should rewrite the LT flag tree");
 
@@ -539,7 +543,7 @@ fn flag_cmp_ge_rewrites_to_neg_int_sless() -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(r.changed(), "pass should rewrite the GE flag tree");
 
@@ -561,7 +565,7 @@ fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(r.changed(), "pass should rewrite the GT flag tree");
 
@@ -583,7 +587,7 @@ fn flag_cmp_le_rewrites_to_neg_int_sless_swapped() -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(r.changed(), "pass should rewrite the LE flag tree");
 
@@ -600,7 +604,7 @@ fn flag_cmp_cs_is_left_alone_as_bool_neg_int_less() -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(!r.changed(), "CS already canonical; pass must not fire");
 
@@ -623,7 +627,7 @@ fn flag_cmp_mi_is_left_alone_as_int_sless_diff() -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(
         !r.changed(),
@@ -654,12 +658,12 @@ fn flag_cmp_thumb_beq_reduces_to_int_equal() -> Result<()> {
     let _ = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     let _ = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
 
     assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Equal, a, b);
@@ -674,7 +678,7 @@ fn flag_cmp_vs_is_left_alone_as_sborrow() -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(!r.changed(), "VS already canonical; pass must not fire");
 
@@ -722,7 +726,7 @@ fn flag_cmp_decomposed_gt_rewrites_to_sless_swapped() -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(r.changed(), "decomposed GT should canonicalize");
     assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Sless, b, a);
@@ -757,7 +761,7 @@ fn flag_cmp_incomplete_tree_foreign_leaf_left_alone() -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(
         !r.changed(),
@@ -787,7 +791,7 @@ fn flag_cmp_decomposed_le_rewrites_to_neg_sless_swapped() -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(r.changed(), "decomposed LE should canonicalize");
     assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Sless, b, a);
@@ -807,7 +811,7 @@ fn flag_cmp_decomposed_hi_rewrites_to_less_swapped() -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(r.changed(), "decomposed HI should canonicalize");
     assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, b, a);
@@ -825,7 +829,7 @@ fn flag_cmp_decomposed_ls_rewrites_to_neg_less_swapped() -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(r.changed(), "decomposed LS should canonicalize");
     assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Less, b, a);
@@ -864,7 +868,7 @@ fn check_folded_ls_tree(ty: ValueType, n: u64) -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(
         r.changed(),
@@ -928,7 +932,7 @@ fn check_offset_folded_ls_tree(ty: ValueType, c1: u128, n: u64) -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(
         r.changed(),
@@ -988,7 +992,7 @@ fn check_folded_hi_tree(ty: ValueType, n: u64) -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(
         r.changed(),
@@ -1046,7 +1050,7 @@ fn check_offset_folded_hi_tree(ty: ValueType, c1: u128, n: u64) -> Result<()> {
     let r = crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     assert!(
         r.changed(),
@@ -1097,7 +1101,7 @@ fn flag_cmp_offset_folded_ls_tree_rejects_wrong_offset() -> Result<()> {
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     // Asserts the idiom survived rather than "nothing changed": the inner
     // `Equal(Add(b,C2),0)` is still reshaped to `Equal(b,-C2)` by the
@@ -1135,7 +1139,7 @@ fn eq_add_const_solves_for_x() -> Result<()> {
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
 
     let if_node = fg
@@ -1182,7 +1186,7 @@ fn eq_xor_const_solves_for_x() -> Result<()> {
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
 
     let if_node = fg
@@ -1218,7 +1222,7 @@ fn eq_neg_solves_for_x() -> Result<()> {
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
 
     let if_node = fg
@@ -1254,7 +1258,7 @@ fn sless_of_left_shift_is_a_sign_bit_test() -> Result<()> {
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
 
     let if_node = fg
@@ -1319,7 +1323,7 @@ fn sless_of_oversized_left_shift_is_not_a_sign_bit_test() -> Result<()> {
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
     let if_node = fg
         .walk_kind(|k| matches!(k, NodeKind::If))
@@ -1373,7 +1377,7 @@ fn wide_const_rewrites_skip_past_128_bits() -> Result<()> {
         let outcome = crate::pipeline::run_one(
             &FlagCmpCanonicalize::new(),
             &mut fg,
-            &mut crate::OptCtx::new(None),
+            &mut crate::OptCtx::at_floor(None),
         )?;
         assert!(
             !outcome.changed(),
@@ -1453,7 +1457,7 @@ fn cr_bit_test_declines_a_shift_past_the_width() -> Result<()> {
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
 
     let if_node = fg
@@ -1495,7 +1499,7 @@ fn cr_bit_test_declines_a_ne_zero_pack_carrying_a_higher_term() -> Result<()> {
     crate::pipeline::run_one(
         &FlagCmpCanonicalize::new(),
         &mut fg,
-        &mut crate::OptCtx::new(None),
+        &mut crate::OptCtx::at_floor(None),
     )?;
 
     let if_node = fg
@@ -1540,7 +1544,7 @@ fn a_chain_of_flag_tests_collapses_in_linear_time() -> Result<()> {
         crate::pipeline::run_one(
             &FlagCmpCanonicalize::new(),
             &mut fg,
-            &mut crate::OptCtx::new(None),
+            &mut crate::OptCtx::at_floor(None),
         )?;
         let elapsed = start.elapsed();
         let xors = fg

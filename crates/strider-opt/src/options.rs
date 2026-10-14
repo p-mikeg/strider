@@ -36,7 +36,8 @@ impl Default for OptOptions {
 /// [`assume_incoming_args_survive_calls`](Self::assume_incoming_args_survive_calls),
 /// without which a stack argument read after a call is not detected as one, and
 /// [`return_slots_survive_untracked_writes`](Self::return_slots_survive_untracked_writes),
-/// without which a return after any call is reported as unverified.
+/// without which a return after any call is reported as unverified.  A test
+/// takes the floor instead, through `OptCtx::at_floor`.
 #[derive(Debug, Clone)]
 pub struct AssumptionOptions {
     /// The stack and the global / constant-address regions (`.data`,
@@ -192,7 +193,8 @@ mod tests {
         assert!(a.noalias_allocators.is_empty());
     }
 
-    /// The pipeline's own defaults, which are NOT the sound floor.
+    /// The pipeline's own defaults, which are NOT the sound floor.  A test
+    /// reaches for the floor through `OptCtx::at_floor` instead.
     #[test]
     fn default_leaves_the_pipeline_claims_on() {
         let o = OptOptions::default();

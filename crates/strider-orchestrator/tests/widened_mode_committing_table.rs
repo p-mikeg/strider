@@ -25,7 +25,17 @@ fn analyze(arch: common::Arch, case: &str, fn_name: &str) -> Report {
             addr,
             &cc,
             &strider_orchestrator::LiftOptions::default(),
-            &strider_orchestrator::opt::OptOptions::default(),
+            // This file is about the ISA-mode channels, so the return channel
+            // is claimed quiet: at the floor these fixtures' own epilogues ride
+            // it and the controls below could not tell "no channel fired" from
+            // "the return channel fired".
+            &strider_orchestrator::opt::OptOptions {
+                assumptions: strider_opt::AssumptionOptions {
+                    return_slots_survive_untracked_writes: true,
+                    ..strider_opt::AssumptionOptions::none()
+                },
+                ..Default::default()
+            },
             None,
         )
         .expect("analyze");

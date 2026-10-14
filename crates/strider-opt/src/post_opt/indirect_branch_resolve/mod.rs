@@ -455,7 +455,7 @@ mod tests {
         let (mut function, _target) =
             empty_graph_returning(|fb| fb.build_int_const(0x1234u64, ValueType::I64).unwrap());
         let stale = function.entry();
-        let mut ctx = crate::OptCtx::new(None);
+        let mut ctx = crate::OptCtx::at_floor(None);
         ctx.indirect_resolutions.insert(stale, None);
         crate::run_post(&IndirectBranchClassify, &mut function, &mut ctx).expect("classify");
         assert!(

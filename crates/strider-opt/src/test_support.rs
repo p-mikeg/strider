@@ -42,7 +42,7 @@ pub(crate) fn run_to_fixed_point(
     fg: &mut strider_ir::Function,
 ) -> crate::Result<usize> {
     let mut iterations = 0;
-    while crate::run_one(pass, fg, &mut crate::OptCtx::new(None))?.changed() {
+    while crate::run_one(pass, fg, &mut crate::OptCtx::at_floor(None))?.changed() {
         iterations += 1;
     }
     Ok(iterations)
@@ -87,14 +87,14 @@ pub(crate) fn standard_test() -> OptimizerPipeline {
 /// An [`crate::OptCtx`] with `stack_global_disjoint` cleared. The other
 /// default-on claim, `assume_incoming_args_survive_calls`, stays set.
 pub(crate) fn octx_structural_only() -> crate::OptCtx<'static> {
-    let mut ctx = crate::OptCtx::new(None);
+    let mut ctx = crate::OptCtx::at_floor(None);
     ctx.options.assumptions.stack_global_disjoint = false;
     ctx
 }
 
 /// An [`crate::OptCtx`] at the pipeline default, `stack_global_disjoint` set.
 pub(crate) fn octx_stack_global_disjoint() -> crate::OptCtx<'static> {
-    let mut ctx = crate::OptCtx::new(None);
+    let mut ctx = crate::OptCtx::at_floor(None);
     ctx.options.assumptions.stack_global_disjoint = true;
     ctx
 }
@@ -395,7 +395,7 @@ pub(crate) mod memory_shapes {
         let mut collapse = crate::OptimizerPipeline::new();
         collapse.add(crate::PhiCollapse);
         collapse.add(crate::RegionCollapse);
-        collapse.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        collapse.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
         Ok(fg)
     }
 

@@ -18,10 +18,14 @@ fn run(function: &mut Function) {
     // and PhiCollapse drops the read_variable(sp) phi, giving the production
     // shape the post-pass sees.
     crate::test_support::cf_rp_pipeline()
-        .run(function, &mut crate::OptCtx::new(None))
+        .run(function, &mut crate::OptCtx::at_floor(None))
         .expect("canonicalize must not error");
-    crate::pipeline::run_post(&StackOffsetDetect, function, &mut crate::OptCtx::new(None))
-        .expect("must not error");
+    crate::pipeline::run_post(
+        &StackOffsetDetect,
+        function,
+        &mut crate::OptCtx::at_floor(None),
+    )
+    .expect("must not error");
 }
 
 /// Builds `store [sp-4] = 0x42; load [sp-4]; return loaded`.
@@ -217,7 +221,7 @@ fn a_pipeline_without_post_passes_still_stamps_the_decomposition() {
     let sp = stack_vn_x86();
     let mut function = stack_store_load_return(sp);
     crate::test_support::cf_rp_pipeline()
-        .run(&mut function, &mut crate::OptCtx::new(None))
+        .run(&mut function, &mut crate::OptCtx::at_floor(None))
         .expect("must not error");
     assert!(
         stamped_count(&function) > 0,
