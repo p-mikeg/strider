@@ -863,24 +863,36 @@ impl PyLifter {
             per_address_ccs: &per_address_built,
             compact,
         };
-        // The fixed-point loop runs without the GIL either way: a pipeline's
+        // The fixed-point loop runs without the GIL where it can: a pipeline's
         // boxed passes are `Send`, so a closure capturing one satisfies
         // `allow_threads`'s `Ungil` bound. Holding it would stall every other
         // Python thread for the length of an analysis, which is what an
         // explorer serving in the background would feel.
+        //
+        // Not where the reader is a Python object. Such an adapter takes the
+        // GIL back on EVERY memory read, so dropping it buys almost no
+        // parallelism there, and doing so lets a worker thread call into the
+        // interpreter while the main thread finalises it: `Python::with_gil`
+        // after `Py_Finalize` aborts or segfaults the process, which no
+        // `StriderError` can catch. Holding the GIL instead makes
+        // finalisation wait for the analysis, the way any other Python call
+        // does. `py_deps` is empty exactly on the owned-data path.
         let result = {
             let mut lifter = try_borrow_lifter_mut(&slf, py)?;
             lifter.bump_context_gen();
+            let reader_calls_python = !lifter.py_deps.is_empty();
             // Reborrow before the closure so its captured type is a plain
             // `&mut Strider`, not the GIL-bound `PyRefMut`, which embeds a
             // `!Send` `Python<'_>` marker and would fail `Ungil`.
             let inner = lifter.inner.get_mut()?;
-            prefer_pending_control_flow(
+            let outcome = if reader_calls_python {
+                inner.analyze(entry, &cc_built, &lift_opts, &opt_opts, custom_pipeline)
+            } else {
                 py.allow_threads(|| {
                     inner.analyze(entry, &cc_built, &lift_opts, &opt_opts, custom_pipeline)
                 })
-                .map_err(into_strider_err),
-            )?
+            };
+            prefer_pending_control_flow(outcome.map_err(into_strider_err))?
         };
         // Destructured, never `..`: a channel added to `AnalyzeResult` has to
         // be handled here rather than dropping silently out of
