@@ -33,36 +33,24 @@ pub struct DominatorTree<K: EntityRef> {
 
 impl<K: EntityRef + Hash> DominatorTree<K> {
     /// Over the vertices `succs` reaches from `root`.
+    ///
+    /// The children-adjacency DFS lives in `graph-algorithms`, which owns
+    /// dominance: this used to hand-roll a second one because the old
+    /// `DomTree` bound demanded `predecessors` and so excluded that crate's
+    /// own `Dominators`. The spans come back keyed by node and are copied into
+    /// a `SecondaryMap` once, so a query stays a dense index rather than a
+    /// hash lookup.
     fn compute<I: IntoIterator<Item = K>>(root: K, succs: impl FnMut(K) -> I) -> Self {
         let doms = graph_algorithms::dominance::dominators(root, succs);
-        let mut edges: Vec<(K, K)> = doms
-            .vertices()
-            .iter()
-            .filter_map(|&v| doms.immediate_dominator(v).map(|d| (d, v)))
-            .collect();
-        edges.sort_unstable_by_key(|&(d, v)| (d.index(), v.index()));
+        let walk = graph_algorithms::dominance::dominator_tree_walk(&doms, root);
         let mut span: SecondaryMap<K, (u32, u32)> = SecondaryMap::new();
-        let mut preorder = Vec::new();
-        let mut clock = 1u32;
-        let mut stack = vec![(root, false)];
-        while let Some((vertex, done)) = stack.pop() {
-            if done {
-                span[vertex].1 = clock;
-            } else {
-                span[vertex].0 = clock;
-                preorder.push(vertex);
-                stack.push((vertex, true));
-                let lo = edges.partition_point(|&(d, _)| d.index() < vertex.index());
-                stack.extend(
-                    edges[lo..]
-                        .iter()
-                        .take_while(|&&(d, _)| d == vertex)
-                        .map(|&(_, child)| (child, false)),
-                );
-            }
-            clock += 1;
+        for (&vertex, &interval) in &walk.span {
+            span[vertex] = interval;
         }
-        Self { span, preorder }
+        Self {
+            span,
+            preorder: walk.preorder,
+        }
     }
 
     pub(crate) fn root(&self) -> K {
