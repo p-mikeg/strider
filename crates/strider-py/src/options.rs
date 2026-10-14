@@ -448,6 +448,32 @@ impl PyAssumptionOptions {
     }
 }
 
+/// A caller's `per_address_ccs` table and the resolution taken from it.
+///
+/// One object behind an `Arc`, because `ElfLifter.analyze` derives fresh
+/// options through `with_cfg` on every call to seat the ELF's data ranges: a
+/// memo on the options themselves is written on the throwaway and rebuilt
+/// next call, and cloning the table there is O(entries) in `Py` handle bumps.
+pub struct PerAddressCcs {
+    py: HashMap<u64, PyCallingConvention>,
+    built: std::sync::Mutex<Option<BuiltPerAddressCcs>>,
+}
+
+impl PerAddressCcs {
+    fn new(py: HashMap<u64, PyCallingConvention>) -> Self {
+        Self {
+            py,
+            built: std::sync::Mutex::default(),
+        }
+    }
+}
+
+/// A resolved `per_address_ccs` table and the arch it was resolved against.
+type BuiltPerAddressCcs = (
+    crate::strider_cls::SourceArch,
+    std::sync::Arc<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>,
+);
+
 /// Lift, optimize, and CFG knobs for one `analyze` call.
 #[pyclass(name = "LifterOptions", module = "strider.lift")]
 pub struct PyLifterOptions {
@@ -462,7 +488,9 @@ pub struct PyLifterOptions {
     pub compact: bool,
     /// Per-target-address calling-convention overrides (preset or custom
     /// CCs accepted); `None`/omitted means no overrides.
-    pub per_address_ccs: Option<HashMap<u64, PyCallingConvention>>,
+    /// Shared so the table and its resolution both survive `with_cfg`; see
+    /// [`PerAddressCcs`].
+    pub per_address_ccs: Option<std::sync::Arc<PerAddressCcs>>,
     /// Run the indirect-branch classifier (default `True`). `False` leaves
     /// every site an `IndirectBranch` placeholder, so you can supply your own
     /// answers via `CfgOptions(known_targets=...)`, or inspect the raw
@@ -483,16 +511,30 @@ impl PyLifterOptions {
         Self::new(py, None, None, true, None, true, None)
     }
 
-    /// The overrides resolved against `regs`.
+    /// The overrides resolved against `regs`, built once per arch.
     pub(crate) fn built_per_address_ccs(
         &self,
         regs: &rsleigh::SleighRegs,
         target: crate::strider_cls::SourceArch,
-    ) -> PyResult<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>> {
-        match &self.per_address_ccs {
-            Some(table) => crate::strider_cls::build_per_address_ccs(table, regs, target),
-            None => Ok(rustc_hash::FxHashMap::default()),
+    ) -> PyResult<std::sync::Arc<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>>
+    {
+        let Some(table) = &self.per_address_ccs else {
+            return Ok(std::sync::Arc::default());
+        };
+        let mut slot = table
+            .built
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((cached, built)) = slot.as_ref()
+            && *cached == target
+        {
+            return Ok(std::sync::Arc::clone(built));
         }
+        let built = std::sync::Arc::new(crate::strider_cls::build_per_address_ccs(
+            &table.py, regs, target,
+        )?);
+        *slot = Some((target, std::sync::Arc::clone(&built)));
+        Ok(built)
     }
 }
 
@@ -541,7 +583,7 @@ impl PyLifterOptions {
             cfg,
             assumptions,
             compact,
-            per_address_ccs,
+            per_address_ccs: per_address_ccs.map(|t| std::sync::Arc::new(PerAddressCcs::new(t))),
             resolve_indirect_branches,
             pipeline,
             per_address_ccs_view: MappingView::default(),
@@ -553,7 +595,7 @@ impl PyLifterOptions {
     #[getter]
     fn per_address_ccs<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
         match &self.per_address_ccs {
-            Some(table) => self.per_address_ccs_view.get(py, table).map(Some),
+            Some(table) => self.per_address_ccs_view.get(py, &table.py).map(Some),
             None => Ok(None),
         }
     }
