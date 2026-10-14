@@ -58,7 +58,9 @@ strider.explore.shutdown(port)
   relocation strider does not compute stops any read that reaches it. ppc64
   ELFv1 symbols resolve through their `.opd` descriptors.
   `prog.add_symbol_file(path)` and `prog.add_symbols({name: addr})` name the
-  functions of a stripped image. Images are memory-mapped; `STRIDER_NO_MMAP=1`
+  functions of a stripped image, `prog.add_elf(path)` merges a second one, and
+  `prog.symbol_at(addr)`, `symbol_opt(name)`, `iter_symbols()`,
+  `endianness` and `is_arm_be8` read what an image carries. Images are memory-mapped; `STRIDER_NO_MMAP=1`
   reads them instead. `load_elf(relocated_got_is_rom=True)` serves `.got` and
   `.data.rel.ro` as read-only, so a load through a GOT slot folds.
 - **Completeness you can check.** `cfg.is_complete()` reads six channels: an
@@ -66,6 +68,9 @@ strider.explore.shutdown(port)
   caller's rides there too), a site settled only by your own seed, an address
   reached in two ISA modes, and a branch target off an instruction boundary,
   outside the image, or on bytes that hold no instruction.
+  `function.validate()` reports three more shapes: a memory read that skips a
+  memory effect on its path, an `InitialVar` naming a varnode the function
+  never minted or typed against it wrongly, and a `Store` only a `Load` takes.
 - **Mixed instruction sets.** Each address decodes in the ISA mode of the edge
   that reached it, and a resolved indirect target carries its own mode, so
   ARM/Thumb interworking and MIPS16 code decode correctly.
@@ -75,21 +80,38 @@ strider.explore.shutdown(port)
   `$d` mapping symbols mark its literal pools automatically, and
   `CfgOptions(data_ranges=...)` names ranges the symbols miss.
 - **ABIs.** `CallingConvention.custom(sleigh, ...)`, `cc.preserves_all()` /
-  `cc.preserves_regs()` and `arm_aapcs_soft`, applied per callee through
+  `cc.preserves_regs()`, `arm_aapcs_soft`, and the kernel-internal PowerPC
+  flavours `powerpc_sysv32_linux_kernel()`, `powerpc64_elf_v1_linux_kernel()`
+  and `powerpc64_elf_v2_linux_kernel()`, which name no vector register and
+  which `load_elf` picks when `e_entry` is at or above `KERNELBASE`. Applied
+  per callee through
   `LifterOptions(per_address_ccs=...)`. Analysis never reads a callee, so a
   callee that pops its caller's stack (`ret $imm16`) or an i386 PC thunk needs
   such an entry. `CfgOptions(call_other_abis=...)` classifies a Sleigh user-op
   strider has no ABI for; `prog.user_op_names()` lists the ones the
   architecture can emit.
+- **Smaller graphs.** A `Call` carries an output per clobbered REGISTER rather
+  than per tracked Sleigh varnode, and a Sleigh temporary gets a phi only
+  where one is live across a region boundary. On the 24 largest x86-64
+  functions of a release binary the lifted graph loses 26% of its nodes and
+  49% of its values to the first and a further 21% / 16% to the second, with
+  `build_ir` 1.31x faster and `analyze` 1.24x. A `Call`'s output slots are
+  therefore numbered differently than in 0.1.0, which a query reading
+  `.output(slot)` positionally has to follow. Asm fingerprints also no longer
+  name an instruction whose only contribution was dead code, such as a flag
+  computation a rewrite discarded.
 - **Memory precision.** `LifterOptions(assumptions=AssumptionOptions(...))`
   states claims about the code the analysis cannot check;
-  `AssumptionOptions.none()` makes none of them.
+  `AssumptionOptions.none()` makes none of them. A control cycle that never
+  exits (`while (1)`, a spin loop) is anchored at lift time, so its stores and
+  their operands stay in the graph where 0.1.0 dropped them.
 - **Queries.** `first_of`, and `one_of` in any slot; `field` and `code_ptr` for
   the shapes `ConstantFold` leaves; `find_unique_value`; `JoinPredicate` for
   relations of your own; float arguments; `load().non_stack()` /
   `store().heap_only()`; `.ordered()` on any binary pattern; a raw int wherever
-  a constant goes. The builders share one vocabulary, declared in the stubs as
-  `runtime_checkable` protocols.
+  a constant goes, up to 2^128-1; `indirect_branch().target(list)` and
+  `switch().selector(list)`. The builders share one vocabulary, declared in
+  the stubs as `runtime_checkable` protocols.
 - **Optimizer.** `ConstantFold` turns sums of scaled copies (`x + (x << 1)`)
   into one `x * C`, `PhiCollapse` folds cycles of phis carrying one value, and
   a pass that changed nothing is skipped until the graph changes.
@@ -112,7 +134,9 @@ strider.explore.shutdown(port)
 The query API was renamed, so the 0.1.0 quickstart's pattern lines no longer
 run: `add` is
 `int_add`, a bare string is no longer a capture operand (`Capture` is), and
-`hit.const_uint(c)` is `hit.uint(c)`. `hit[c]` returns a `BoundCapture`, so
+`hit.const_uint(c)` is `hit.uint(c)`. A `Node` was renamed the same way --
+`const_uint` / `const_int` / `const_bool` are `uint` / `sint` / `boolean` --
+and `wide_const_bytes()` returns `bytes`. `hit[c]` returns a `BoundCapture`, so
 `hit[c] is None` is always false; test `c in hit`. `prog.symbol(name)` returns a
 `Symbol` (`name`, `address`, `size`, `end`, `is_function`, `region`,
 `is_thumb`) where 0.1.0 returned a bare address, so arithmetic on one needs

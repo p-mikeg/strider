@@ -103,5 +103,19 @@ backtrace into the message too.
   and what to check when a pattern does not match.
 - The [quickstart](../README.md#quickstart) is this pipeline end to end in
   Python, and the [README](../README.md) indexes the rest of the guides and the
-  runnable examples. [CHANGELOG.md](../CHANGELOG.md) lists what 0.2.0 added over
-  0.1.0, breaking entries first.
+  runnable examples.
+
+## Coming from 0.1.0
+
+[What's new in 0.2.0](../README.md#whats-new-in-020) is the summary and
+[CHANGELOG.md](../CHANGELOG.md) the full list, breaking entries first. The four
+that change what existing code sees, rather than adding to it:
+
+- Every `AssumptionOptions` claim is a premise the analysis cannot check, and
+  three of them default on. `AssumptionOptions.none()` is the floor.
+- A `Call`'s output slots are numbered per clobbered register now, so a query
+  reading `.output(slot)` positionally has to follow.
+- `cfg.is_complete()` reads six channels; an empty `unresolved` is not a
+  complete answer on its own.
+- A `Match`/`Node` constant reads back as `uint` / `sint` / `boolean`, where
+  0.1.0 spelled them `const_uint` / `const_int` / `const_bool`.
