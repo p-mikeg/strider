@@ -65,6 +65,26 @@ pub struct Pattern {
 }
 
 impl Pattern {
+    /// Whether the root vertex's kind spec can admit `kind`.
+    ///
+    /// A pre-filter for a caller trying MANY patterns at one node, as the fold
+    /// rule table does: `Matcher::new` plus `match_at` allocate per attempt
+    /// and the root check happens inside, so a rule whose root cannot match
+    /// still paid for the attempt. `discriminant` alone does not separate
+    /// them -- every `IntBinaryOp` shares one -- so this compares the spec,
+    /// payload included.
+    ///
+    /// `true` for a refused pattern and for an alternation root, so the
+    /// reject or the arm walk still reaches `match_at`.
+    #[must_use]
+    pub fn root_admits_kind(&self, kind: &strider_ir::node::NodeKind) -> bool {
+        let Ok(root) = self.root() else {
+            return true;
+        };
+        let vertex = self.graph.node_kind(root);
+        vertex.alternation || vertex.kind.matches(kind)
+    }
+
     /// Seal point of [`MatcherBuilder`](crate::matcher::MatcherBuilder):
     /// resolves and memoizes the match root.
     pub(crate) fn from_graph(graph: PatGraph, nested_nodes: usize) -> Self {
