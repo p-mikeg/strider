@@ -20,8 +20,22 @@ fn le16(words: &[u16]) -> Vec<u8> {
     words.iter().flat_map(|w| w.to_le_bytes()).collect()
 }
 
+/// `return_slots_survive_untracked_writes` claimed, which is the configuration
+/// this file is about: it is what carries the slot walk back through a call, so
+/// without it every non-leaf epilogue is reported and none of the shapes below
+/// distinguish anything.  `no_assumptions` is the other side of each pair.
 fn analyze(arch: Arch, bytes: Vec<u8>) -> strider_orchestrator::AnalyzeResult {
-    analyze_with(arch, bytes, &Default::default())
+    analyze_with(arch, bytes, &claiming_return_slots())
+}
+
+fn claiming_return_slots() -> strider_opt::OptOptions {
+    strider_opt::OptOptions {
+        assumptions: strider_opt::AssumptionOptions {
+            return_slots_survive_untracked_writes: true,
+            ..strider_opt::AssumptionOptions::none()
+        },
+        ..Default::default()
+    }
 }
 
 fn analyze_with(
@@ -58,8 +72,8 @@ fn no_assumptions() -> strider_opt::OptOptions {
 }
 
 /// The return at `BASE + ret_offset` is reported under
-/// `AssumptionOptions::none()`, and passes for lack of that floor under the
-/// defaults.
+/// `AssumptionOptions::none()`, and passes for lack of that floor once
+/// `return_slots_survive_untracked_writes` is claimed.
 fn assert_reported_only_without_assumptions(
     arch: Arch,
     bytes: Vec<u8>,
@@ -75,7 +89,7 @@ fn assert_reported_only_without_assumptions(
     assert!(!floor.is_complete(), "{what}");
     assert!(
         analyze(arch, bytes).is_complete(),
-        "{what}: the default claim is what lets it pass"
+        "{what}: the claim is what lets it pass"
     );
 }
 

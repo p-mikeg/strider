@@ -283,7 +283,7 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
         .expect("ir")
         .function;
     let pipeline = strider_orchestrator::opt::default_pipeline();
-    let mut ctx = strider_orchestrator::opt::OptCtx::new(None);
+    let mut ctx = strider_orchestrator::opt::OptCtx::at_floor(None);
     pipeline.run(&mut single, &mut ctx).expect("pipeline");
     let single_pass_has_indirect = single.walk().any(|n| {
         matches!(

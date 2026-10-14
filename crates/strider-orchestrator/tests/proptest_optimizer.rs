@@ -61,7 +61,7 @@ proptest! {
         let pre: HashMap<NodeId, Vec<u64>> = collect_fingerprints(&fg);
 
         let pipeline: OptimizerPipeline = default_pipeline();
-        let run_res = pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None));
+        let run_res = pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::at_floor(None));
         prop_assert!(
             run_res.is_ok(),
             "default_pipeline should not error on strategy-generated graph: {:?}",

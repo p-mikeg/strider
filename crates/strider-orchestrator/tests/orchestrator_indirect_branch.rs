@@ -273,6 +273,27 @@ fn analyze_with_opts(
     known: rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets>,
     resolve: bool,
 ) -> anyhow::Result<strider_orchestrator::AnalyzeResult> {
+    analyze_claiming(
+        arch,
+        case,
+        fn_name,
+        known,
+        resolve,
+        strider_opt::AssumptionOptions::none(),
+    )
+}
+
+/// `analyze_with_opts` with a claim stated: every case in this file but one
+/// resolves at the sound floor, so the claim lives at the call site that needs
+/// it rather than in the shared helper.
+fn analyze_claiming(
+    arch: common::Arch,
+    case: &str,
+    fn_name: &str,
+    known: rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets>,
+    resolve: bool,
+    assumptions: strider_opt::AssumptionOptions,
+) -> anyhow::Result<strider_orchestrator::AnalyzeResult> {
     let (mut strider, cc, addr) = common::fixture_strider(arch, case, fn_name);
     let lift_opts = strider_orchestrator::LiftOptions {
         cfg: strider_cfg::CfgOptions {
@@ -284,7 +305,7 @@ fn analyze_with_opts(
     };
     let opt_opts = strider_orchestrator::opt::OptOptions {
         resolve_indirect_branches: resolve,
-        ..Default::default()
+        assumptions,
     };
     strider.analyze(addr, &cc, &lift_opts, &opt_opts, None)
 }
@@ -378,12 +399,20 @@ fn resolution_off_still_reports_the_surviving_placeholders() {
 /// the fixture.
 #[test]
 fn a_masked_loop_index_is_bounded_by_its_back_edge() {
-    let result = analyze_with_opts(
+    // The arms resolve at the floor; the claim is for this fixture's OWN
+    // epilogue, whose return slot the floor cannot walk back to, so without it
+    // the return rides `unresolved_indirect_branches` and the last assertion
+    // below cannot hold.
+    let result = analyze_claiming(
         common::Arch::X64,
         "switch_masked_loop",
         "masked_loop_switch",
         Default::default(),
         true,
+        strider_opt::AssumptionOptions {
+            return_slots_survive_untracked_writes: true,
+            ..strider_opt::AssumptionOptions::none()
+        },
     )
     .expect("converges");
     assert_eq!(

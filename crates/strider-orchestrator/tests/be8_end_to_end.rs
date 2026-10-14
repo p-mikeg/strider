@@ -69,7 +69,7 @@ fn analyze(case: &str, fn_name: &str, opt: Opt) -> Function {
         .unwrap_or_else(|e| panic!("build_ir {fn_name}: {e:?}"))
         .function;
     let rom = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader");
-    let mut ctx = strider_orchestrator::opt::OptCtx::new(Some(&rom));
+    let mut ctx = strider_orchestrator::opt::OptCtx::at_floor(Some(&rom));
     match opt {
         Opt::Full => strider_orchestrator::opt::default_pipeline()
             .run(&mut function, &mut ctx)

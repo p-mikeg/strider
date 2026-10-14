@@ -35,7 +35,7 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
     let mut fg = b.build()?;
 
     let pass = FunctionArgDetect;
-    crate::pipeline::run_post(&pass, &mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_post(&pass, &mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
@@ -82,9 +82,9 @@ fn rerunning_pass_is_idempotent_no_duplicate_carriers() -> Result<()> {
     let mut fg = b.build()?;
 
     let pass = FunctionArgDetect;
-    crate::pipeline::run_post(&pass, &mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_post(&pass, &mut fg, &mut crate::OptCtx::at_floor(None))?;
     let after_first = fg.side_tables().arg_index_to_values(0).to_vec();
-    crate::pipeline::run_post(&pass, &mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_post(&pass, &mut fg, &mut crate::OptCtx::at_floor(None))?;
     let after_second = fg.side_tables().arg_index_to_values(0).to_vec();
 
     assert_eq!(
@@ -120,7 +120,7 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
     // ConstantFold normalises the address before detection runs.
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(!arg0_nodes.is_empty(), "arg 0 should be registered (stack)");
@@ -158,7 +158,7 @@ fn aligned_sp_load_is_not_a_stack_arg() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     assert!(
         fg.side_tables().arg_index_to_values(0).is_empty(),
@@ -206,7 +206,7 @@ fn detects_ten_contiguous_stack_args() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     for i in 0..N {
         assert!(
@@ -237,7 +237,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(!arg0_nodes.is_empty(), "arg 0 (sp+4) should be registered");
@@ -287,7 +287,7 @@ fn stack_arg_load_chain_is_narrowed_without_changing_detection() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let arg0 = fg.side_tables().arg_index_to_values(0).to_vec();
     assert_eq!(arg0.len(), 1, "Load[sp+4] registered as arg 0");
@@ -344,7 +344,7 @@ fn memphi_shadow_disqualifies() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
@@ -375,7 +375,7 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert_eq!(
@@ -423,7 +423,7 @@ fn wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let arg0 = fg.side_tables().arg_index_to_values(0);
     assert_eq!(arg0.len(), 1, "wide arg (double) at sp+4 is ordinal 0");
@@ -479,7 +479,7 @@ fn span_four_wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let arg0 = fg.side_tables().arg_index_to_values(0);
     assert_eq!(
@@ -566,7 +566,11 @@ fn second_and_third_register_args_recorded_at_their_indices() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    crate::pipeline::run_post(&FunctionArgDetect, &mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_post(
+        &FunctionArgDetect,
+        &mut fg,
+        &mut crate::OptCtx::at_floor(None),
+    )?;
 
     for (idx, vn) in [(0u32, r0), (1, r1), (2, r2)] {
         let carriers = fg.side_tables().arg_index_to_values(idx);
@@ -616,7 +620,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let arg0 = fg.side_tables().arg_index_to_values(0);
     assert!(!arg0.is_empty(), "arg 0 (rdi) should be registered");
@@ -662,7 +666,7 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
@@ -695,7 +699,7 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
@@ -756,7 +760,7 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
@@ -782,7 +786,7 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     assert_eq!(
         fg.side_tables().iter_arg_indices().count(),
@@ -819,7 +823,7 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
@@ -855,7 +859,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
@@ -955,7 +959,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
@@ -991,7 +995,7 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
@@ -1040,7 +1044,7 @@ fn call_other_on_the_chain_blocks_under_either_survival_setting() -> Result<()> 
     let mut fg_default = new_fn()?;
     let mut p_default = cf_rp_pipeline();
     p_default.add_post_pass(FunctionArgDetect);
-    p_default.run(&mut fg_default, &mut crate::OptCtx::new(None))?;
+    p_default.run(&mut fg_default, &mut crate::OptCtx::at_floor(None))?;
     assert!(
         fg_default.side_tables().arg_index_to_values(0).is_empty(),
         "default (incoming args survive calls): a CallOther on the chain still \
@@ -1050,7 +1054,7 @@ fn call_other_on_the_chain_blocks_under_either_survival_setting() -> Result<()> 
     let mut fg_conservative = new_fn()?;
     let mut p_conservative = cf_rp_pipeline();
     p_conservative.add_post_pass(FunctionArgDetect);
-    let mut octx_conservative = crate::OptCtx::new(None);
+    let mut octx_conservative = crate::OptCtx::at_floor(None);
     octx_conservative
         .options
         .assumptions
@@ -1095,11 +1099,15 @@ fn incoming_args_survive_calls_toggle_gates_arg_across_call() -> Result<()> {
     };
     let mut p_default = cf_rp_pipeline();
     p_default.add_post_pass(FunctionArgDetect);
-    p_default.run(&mut fg_default, &mut crate::OptCtx::new(None))?;
+    let mut octx_claimed = crate::OptCtx::at_floor(None);
+    octx_claimed
+        .options
+        .assumptions
+        .assume_incoming_args_survive_calls = true;
+    p_default.run(&mut fg_default, &mut octx_claimed)?;
     assert!(
         !fg_default.side_tables().arg_index_to_values(0).is_empty(),
-        "default (incoming args survive calls): Load[sp+4] across a plain Call \
-         is detected as arg 0",
+        "survival claimed: Load[sp+4] across a plain Call is detected as arg 0",
     );
 
     let mut fg_conservative = {
@@ -1113,7 +1121,7 @@ fn incoming_args_survive_calls_toggle_gates_arg_across_call() -> Result<()> {
     };
     let mut p_conservative = cf_rp_pipeline();
     p_conservative.add_post_pass(FunctionArgDetect);
-    let mut octx_conservative = crate::OptCtx::new(None);
+    let mut octx_conservative = crate::OptCtx::at_floor(None);
     octx_conservative
         .options
         .assumptions
@@ -1154,7 +1162,7 @@ fn arg_detection_does_not_narrow_a_load_past_a_call() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let mem_in = fg.node_inputs(fg.producer(loaded))[0];
     let kind = fg.node_kind(fg.producer(mem_in));
@@ -1194,7 +1202,7 @@ fn memory_clobbering_call_other_blocks_regardless_of_the_survival_flag() -> Resu
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     assert!(
         fg.side_tables().arg_index_to_values(0).is_empty(),
@@ -1225,7 +1233,7 @@ fn rerunning_the_default_pipeline_keeps_one_carrier_per_stack_arg() -> Result<()
     let pipeline = crate::default_pipeline();
     let mut previous: Option<Vec<ValueId>> = None;
     for run in 1..=3 {
-        pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
         let carriers = fg.side_tables().arg_index_to_values(0).to_vec();
         assert_eq!(
             carriers.len(),
@@ -1241,8 +1249,8 @@ fn rerunning_the_default_pipeline_keeps_one_carrier_per_stack_arg() -> Result<()
 }
 
 /// The narrowing is permanent, so it may rest on nothing a later run can
-/// disclaim: a default run must leave the global store on the argument load's
-/// memory chain, where an `AssumptionOptions::none()` run also finds it.
+/// disclaim: even a run claiming `stack_global_disjoint` must leave the global
+/// store on the argument load's memory chain, where a floor run also finds it.
 #[test]
 fn narrowing_does_not_bake_in_stack_global_disjoint() -> Result<()> {
     let sp = stack_vn();
@@ -1259,14 +1267,13 @@ fn narrowing_does_not_bake_in_stack_global_disjoint() -> Result<()> {
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
-    cf_rp_pipeline().run(&mut fg, &mut crate::OptCtx::new(None))?;
+    cf_rp_pipeline().run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
-    let mut default_run = crate::OptCtx::new(None);
-    assert!(
-        default_run.options.assumptions.stack_global_disjoint,
-        "the claim this rewire must not inherit is on by default"
-    );
-    crate::pipeline::run_post(&FunctionArgDetect, &mut fg, &mut default_run)?;
+    // The claim this rewire must not inherit, made explicitly: `Default` is
+    // the floor, so a run that could bake it in has to opt in first.
+    let mut claiming_run = crate::OptCtx::at_floor(None);
+    claiming_run.options.assumptions.stack_global_disjoint = true;
+    crate::pipeline::run_post(&FunctionArgDetect, &mut fg, &mut claiming_run)?;
 
     let load = fg.producer(loaded);
     let mem = fg.node_inputs(load)[0];
@@ -1286,7 +1293,11 @@ fn detecting_across_call_diamonds_costs_near_linear_work() -> Result<()> {
         let mut fg = crate::test_support::memory_shapes::argument_reads_between_calls(n)?;
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
         crate::mem_ssa::CLIMB_STEPS.with(|c| c.set(0));
-        crate::pipeline::run_post(&FunctionArgDetect, &mut fg, &mut crate::OptCtx::new(None))?;
+        crate::pipeline::run_post(
+            &FunctionArgDetect,
+            &mut fg,
+            &mut crate::OptCtx::at_floor(None),
+        )?;
         Ok(crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get)
             + crate::mem_ssa::CLIMB_STEPS.with(std::cell::Cell::get))
     };

@@ -116,7 +116,7 @@ fn canonicalize(f: &mut strider_ir::Function) {
     p.add(crate::IfCondInversion::new());
     p.add(crate::PhiCollapse);
     p.add(crate::RegionCollapse);
-    p.run(f, &mut crate::OptCtx::new(None)).unwrap();
+    p.run(f, &mut crate::OptCtx::at_floor(None)).unwrap();
 }
 
 /// `(true_edge_consumer, false_edge_consumer)` of the sole `If`: the
@@ -2137,9 +2137,10 @@ fn guard_survives_region_collapse_at_nonregion_consumer() {
         .expect("If node");
     let true_ctrl = f.node_outputs(if_node)[0];
 
-    let changed = crate::pipeline::run_one(&RegionCollapse, &mut f, &mut crate::OptCtx::new(None))
-        .unwrap()
-        .changed();
+    let changed =
+        crate::pipeline::run_one(&RegionCollapse, &mut f, &mut crate::OptCtx::at_floor(None))
+            .unwrap()
+            .changed();
     assert!(changed, "dispatch Region must collapse");
 
     let consumer = f

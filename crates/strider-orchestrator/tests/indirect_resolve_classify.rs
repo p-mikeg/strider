@@ -220,7 +220,7 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
     let p = strider_orchestrator::opt::default_pipeline();
     p.run(
         &mut function,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
+        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
     )
     .expect("optimizer pipeline");
 

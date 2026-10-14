@@ -55,7 +55,7 @@ pub(crate) fn function_arg_reg() -> (Function, rsleigh::Vn) {
     strider_orchestrator::opt::run_post(
         &FunctionArgDetect,
         &mut function,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
+        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
     )
     .expect("FunctionArgDetect");
     (function, reg)

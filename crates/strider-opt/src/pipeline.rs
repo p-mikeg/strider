@@ -47,6 +47,22 @@ impl<'mem> OptCtx<'mem> {
             indirect_resolutions: rustc_hash::FxHashMap::default(),
         }
     }
+
+    /// [`Self::new`] with every claim cleared
+    /// ([`crate::AssumptionOptions::none`]), which is what a test wants: a
+    /// case that needs a claim states it, so no test rests on a claim by
+    /// inheriting one. `new` keeps the production defaults.
+    #[cfg(any(test, feature = "test-util"))]
+    #[must_use]
+    pub fn at_floor(rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>) -> Self {
+        Self {
+            options: crate::OptOptions {
+                assumptions: crate::AssumptionOptions::none(),
+                ..crate::OptOptions::default()
+            },
+            ..Self::new(rom)
+        }
+    }
 }
 
 /// A single IR optimization pass. Returns
@@ -414,7 +430,7 @@ mod tests {
         let mut function = one_const_fn(3);
         let pipeline = crate::default_pipeline();
         let before = function.walk().count();
-        pipeline.run(&mut function, &mut OptCtx::new(None))?;
+        pipeline.run(&mut function, &mut OptCtx::at_floor(None))?;
         let after = function.walk().count();
         // An already-folded constant cannot fold further, so the reachable
         // count is stable. Pins that `run` does not mutate the graph beyond
@@ -447,7 +463,7 @@ mod tests {
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(AlwaysChanged);
         let err = pipeline
-            .run(&mut function, &mut OptCtx::new(None))
+            .run(&mut function, &mut OptCtx::at_floor(None))
             .expect_err("pipeline must bail out on a non-monotone pass");
         assert!(
             err.to_string().contains("did not converge"),
@@ -491,7 +507,7 @@ mod tests {
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(AlwaysChangedUnattributed);
         let err = pipeline
-            .run(&mut function, &mut OptCtx::new(None))
+            .run(&mut function, &mut OptCtx::at_floor(None))
             .expect_err("the pass never converges");
         assert!(
             err.to_string().contains("asm-fingerprint"),
@@ -526,7 +542,7 @@ mod tests {
             function.side_tables().memory_decomp(returned).1.is_some(),
             "the memo is installed"
         );
-        crate::pipeline::run_one(&NoOp, &mut function, &mut OptCtx::new(None))?;
+        crate::pipeline::run_one(&NoOp, &mut function, &mut OptCtx::at_floor(None))?;
         assert!(
             function.side_tables().memory_decomp(returned).1.is_none(),
             "run_one must clear a memo derived under another configuration"
@@ -594,7 +610,7 @@ mod tests {
             runs: Arc::clone(&rewrites),
         });
         pipeline.add(CountsRuns(Arc::clone(&counted)));
-        pipeline.run(&mut one_const_fn(1), &mut OptCtx::new(None))?;
+        pipeline.run(&mut one_const_fn(1), &mut OptCtx::at_floor(None))?;
         assert_eq!(rewrites.load(Ordering::Relaxed), 4);
         assert_eq!(counted.load(Ordering::Relaxed), 3);
         Ok(())
@@ -629,7 +645,7 @@ mod tests {
         let mut function = one_const_fn(1);
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(HidesAnEdit);
-        let _ = pipeline.run(&mut function, &mut OptCtx::new(None));
+        let _ = pipeline.run(&mut function, &mut OptCtx::at_floor(None));
     }
 
     /// A pipeline carrying a post-pass must still produce a graph that
@@ -658,7 +674,7 @@ mod tests {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold::new());
         p.add_post_pass(CallStackArgCollect);
-        p.run(&mut function, &mut OptCtx::new(None))?;
+        p.run(&mut function, &mut OptCtx::at_floor(None))?;
         Ok(())
     }
 
@@ -707,7 +723,7 @@ mod tests {
         p.add(RegionCollapse);
         p.add(DeadBranchElimination);
         p.add(LoadForward::default());
-        p.run(&mut function, &mut OptCtx::new(None))?;
+        p.run(&mut function, &mut OptCtx::at_floor(None))?;
 
         let val = crate::test_support::return_value(function.graph())?;
         let kind = *function.kind_of_value(val);
@@ -732,7 +748,7 @@ mod tests {
             }
             Ok(acc)
         })?;
-        crate::default_pipeline().run(&mut function, &mut OptCtx::new(None))?;
+        crate::default_pipeline().run(&mut function, &mut OptCtx::at_floor(None))?;
         // The chain folds to a single `IntConst(50)`.
         assert!(
             function.walk().count() < 20,

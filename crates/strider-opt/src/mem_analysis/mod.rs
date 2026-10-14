@@ -1991,7 +1991,7 @@ fn collapse_phis(fg: &mut strider_ir::Function) {
     let mut p = crate::OptimizerPipeline::new();
     p.add(crate::PhiCollapse);
     p.add(crate::RegionCollapse);
-    p.run(fg, &mut crate::OptCtx::new(None))
+    p.run(fg, &mut crate::OptCtx::at_floor(None))
         .expect("phi collapse");
 }
 
