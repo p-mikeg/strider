@@ -235,6 +235,27 @@ pub fn trap_is_unconditional(name: &str, to_mask: Option<u128>) -> bool {
 const PURE: CallOtherClass = CallOtherClass::PURE;
 const MEM_CLOBBER: CallOtherClass = CallOtherClass::MEM_CLOBBER;
 
+/// A PowerPC `Rc=1` "dot" form whose only modelled effect is the CR0 write
+/// the ISA defines for it.  The sla emits these as a bare void pcodeop with no
+/// `cr0flags(...)`, unlike `stwcx.` / `stdcx.`, so without this the condition
+/// register keeps whatever a previous instruction left in it and a `bne cr0`
+/// after one folds on a stale value.  `cr0` is a fixed Sleigh name on all four
+/// PPC presets.
+const PPC_DOT_CR0: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+    implicit_reads: &[],
+    implicit_writes: &["cr0"],
+    clobbers_memory: false,
+    no_return: false,
+});
+
+/// [`PPC_DOT_CR0`] for a dot form that also has external memory effects.
+const PPC_DOT_CR0_MEM: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+    implicit_reads: &[],
+    implicit_writes: &["cr0"],
+    clobbers_memory: true,
+    no_return: false,
+});
+
 /// ARM A-profile processor-mode switch: every mode banks R13/R14 and FIQ also
 /// banks R8-R12 (ARM ARM DDI 0406C B1.3.2), so the values live across one are
 /// not the ones that came in.  `ARM.sinc` defines `r13_svc` / `r14_svc` and
@@ -350,7 +371,7 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     ("dataCacheBlockFlush", MEM_CLOBBER),
     ("dataCacheBlockInvalidate", MEM_CLOBBER),
     ("dataCacheBlockStore", MEM_CLOBBER),
-    ("icswxDotOp", MEM_CLOBBER),
+    ("icswxDotOp", PPC_DOT_CR0_MEM),
     ("instructionCacheBlockInvalidate", MEM_CLOBBER),
     ("instructionCacheCongruenceClassInvalidate", MEM_CLOBBER),
     ("message", MEM_CLOBBER),
@@ -382,7 +403,7 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     // this table names fixed registers.
     ("slbMoveFromEntryESID", PURE),
     ("slbMoveFromEntryVSID", PURE),
-    ("slbfeeDotOp", PURE),
+    ("slbfeeDotOp", PPC_DOT_CR0),
     // Cache-touch and stream-stop are prefetch hints;
     // wrtee/clearHistory/mtfsf change MSR, branch-history, or FPSCR state
     // strider does not track.  No memory or value effect to model.

@@ -605,3 +605,37 @@ fn a_restore_writes_the_state_a_save_reads_it() {
     assert!(save.implicit_writes.is_empty(), "fxsave writes a register");
     assert!(!save.implicit_reads.is_empty(), "fxsave reads nothing");
 }
+
+/// `slbfee.` and `icswx.` are `Rc=1` forms the Power ISA defines as setting
+/// CR0, and the sla emits each as a bare void pcodeop with no `cr0flags(...)`
+/// (`ppc_isa.sinc:1587`, `ppc_a2.sinc:52`), so the table is the only model of
+/// it. `stwcx.` is the contrast: its sla body does emit `cr0flags`, which is
+/// why it correctly declares nothing here.
+#[test]
+fn ppc_dot_forms_the_sla_leaves_unflagged_declare_cr0() {
+    for preset in [
+        ArchPreset::Ppc32Be,
+        ArchPreset::Ppc32Le,
+        ArchPreset::Ppc64Be,
+        ArchPreset::Ppc64Le,
+    ] {
+        let regs = regs_for(preset);
+        for name in ["slbfeeDotOp", "icswxDotOp"] {
+            let built = expect_call(classify(preset, name))
+                .build(&regs)
+                .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e:?}"));
+            assert_eq!(
+                built.implicit_writes.len(),
+                1,
+                "{preset:?}/{name} writes CR0 and nothing else modellable"
+            );
+        }
+        let stwcx = expect_call(classify(preset, "storeWordConditionalIndexed"))
+            .build(&regs)
+            .expect("stwcx builds");
+        assert!(
+            stwcx.implicit_writes.is_empty(),
+            "{preset:?}: stwcx.'s sla body sets CR0 itself"
+        );
+    }
+}
