@@ -7,19 +7,39 @@ use rustc_hash::{FxHashMap, FxHashSet};
 /// empty frontier.
 pub type Frontiers<N> = FxHashMap<N, Vec<N>>;
 
-/// The immediate-dominator relation as an INPUT to the frontier and preorder
-/// algorithms below; [`dominators`] computes one.
-pub trait DomTree {
+/// The immediate-dominator relation alone, which is all the tree walks below
+/// need; [`dominators`] computes one and satisfies this.
+///
+/// Split from [`DomTree`] because demanding `predecessors` of every consumer
+/// put this crate's own [`Dominators`] outside its own walks, which is why
+/// `strider-ir` used to hand-roll a second children-DFS.
+pub trait DomRelation {
     type Node: Copy + Eq + Hash;
 
     /// Each node exactly once. Order is unspecified; determinism is the
     /// implementor's to provide.
     fn nodes(&self) -> impl Iterator<Item = Self::Node> + '_;
 
-    fn predecessors(&self, n: Self::Node) -> impl Iterator<Item = Self::Node> + '_;
-
     /// `None` for the root and for any node unreachable from it.
     fn immediate_dominator(&self, n: Self::Node) -> Option<Self::Node>;
+}
+
+/// [`DomRelation`] plus the predecessor edges, which only
+/// [`dominance_frontiers`] needs.
+pub trait DomTree: DomRelation {
+    fn predecessors(&self, n: Self::Node) -> impl Iterator<Item = Self::Node> + '_;
+}
+
+impl<N: Copy + Eq + Hash> DomRelation for Dominators<N> {
+    type Node = N;
+
+    fn nodes(&self) -> impl Iterator<Item = N> + '_ {
+        self.vertices().iter().copied()
+    }
+
+    fn immediate_dominator(&self, n: N) -> Option<N> {
+        Dominators::immediate_dominator(self, n)
+    }
 }
 
 /// Cytron dominance frontiers: `DF(x)` is the set of nodes `b` where `x`
@@ -92,7 +112,32 @@ pub fn dominance_frontiers<G: DomTree>(g: &G, root: G::Node) -> Frontiers<G::Nod
 /// Only the after-idom invariant is load-bearing. Sibling order happens to
 /// follow [`DomTree::nodes`] order; don't depend on it.
 #[must_use]
-pub fn dominator_tree_preorder<G: DomTree>(g: &G, root: G::Node) -> Vec<G::Node> {
+pub fn dominator_tree_preorder<G: DomRelation>(g: &G, root: G::Node) -> Vec<G::Node> {
+    dominator_tree_walk(g, root).preorder
+}
+
+/// One walk of the dominator tree: the preorder and the enter/exit interval
+/// per node, from one children-adjacency build and one DFS.
+///
+/// The intervals make `enter[a] <= enter[b] && exit[b] <= exit[a]` an O(1)
+/// dominance test, which is what a consumer keeping its own numbering wants.
+/// Nodes unreachable from `root` appear in neither.
+///
+/// Numbering starts at 1, so `(0, 0)` is free to mean "absent" for a consumer
+/// copying these into a dense map that default-fills. At 0 the root's interval
+/// would be `(0, _)` and it would test as dominating every unfilled entry.
+pub struct DomTreeWalk<N> {
+    /// Every node after its immediate dominator.
+    pub preorder: Vec<N>,
+    /// `(enter, exit)` per node, absent for an unreachable one.
+    pub span: FxHashMap<N, (u32, u32)>,
+}
+
+/// See [`DomTreeWalk`]. The single owner of the children-adjacency DFS over an
+/// idom relation; `dominator_tree_preorder` and `strider-ir`'s interval tree
+/// both come through here.
+#[must_use]
+pub fn dominator_tree_walk<G: DomRelation>(g: &G, root: G::Node) -> DomTreeWalk<G::Node> {
     debug_assert!(
         g.immediate_dominator(root).is_none(),
         "root must have no immediate dominator: a node inside the tree walks \
@@ -105,20 +150,38 @@ pub fn dominator_tree_preorder<G: DomTree>(g: &G, root: G::Node) -> Vec<G::Node>
         }
     }
     let mut preorder = Vec::new();
+    let mut span: FxHashMap<G::Node, (u32, u32)> = FxHashMap::default();
     // A well-formed idom relation pushes every node once, so this only bites
     // on a malformed one: a repeat in `nodes()`, or an idom cycle, which
     // without the dedup grows `preorder` and `stack` without bound.
     let mut seen: FxHashSet<G::Node> = FxHashSet::default();
     seen.insert(root);
-    let mut stack = vec![root];
-    while let Some(r) = stack.pop() {
-        preorder.push(r);
-        if let Some(ch) = children.get(&r) {
+    let mut clock = 1u32;
+    // `(node, entered)`: the second visit closes the interval, so one stack
+    // carries both directions of the DFS.
+    let mut stack = vec![(root, false)];
+    while let Some((n, entered)) = stack.pop() {
+        if entered {
+            span.entry(n).and_modify(|s| s.1 = clock);
+            clock += 1;
+            continue;
+        }
+        preorder.push(n);
+        span.insert(n, (clock, clock));
+        clock += 1;
+        stack.push((n, true));
+        if let Some(ch) = children.get(&n) {
             // Reverse so children come off the stack in `nodes()` order.
-            stack.extend(ch.iter().rev().copied().filter(|c| seen.insert(*c)));
+            stack.extend(
+                ch.iter()
+                    .rev()
+                    .copied()
+                    .filter(|c| seen.insert(*c))
+                    .map(|c| (c, false)),
+            );
         }
     }
-    preorder
+    DomTreeWalk { preorder, span }
 }
 
 /// Iterated dominance frontier / SSA phi placement (Cytron et al., Fig. 11):
@@ -362,16 +425,19 @@ mod tests {
         idom: FxHashMap<u32, u32>,
     }
 
-    impl DomTree for Mock {
+    impl DomRelation for Mock {
         type Node = u32;
         fn nodes(&self) -> impl Iterator<Item = u32> + '_ {
             self.nodes.iter().copied()
         }
-        fn predecessors(&self, n: u32) -> impl Iterator<Item = u32> + '_ {
-            self.preds.get(&n).into_iter().flatten().copied()
-        }
         fn immediate_dominator(&self, n: u32) -> Option<u32> {
             self.idom.get(&n).copied()
+        }
+    }
+
+    impl DomTree for Mock {
+        fn predecessors(&self, n: u32) -> impl Iterator<Item = u32> + '_ {
+            self.preds.get(&n).into_iter().flatten().copied()
         }
     }
 
@@ -532,11 +598,17 @@ mod tests {
 
     /// `0 -> {1, 2} ->` each of `joins` joins: both arms carry every join in
     /// their frontier, so each arm's frontier grows to `joins` entries.
-    impl DomTree for WideJoin {
+    impl DomRelation for WideJoin {
         type Node = Counted;
         fn nodes(&self) -> impl Iterator<Item = Counted> + '_ {
             (0..3 + self.joins).map(Counted)
         }
+        fn immediate_dominator(&self, n: Counted) -> Option<Counted> {
+            (n.0 != 0).then_some(Counted(0))
+        }
+    }
+
+    impl DomTree for WideJoin {
         fn predecessors(&self, n: Counted) -> impl Iterator<Item = Counted> + '_ {
             let preds: &'static [u32] = match n.0 {
                 0 => &[],
@@ -544,9 +616,6 @@ mod tests {
                 _ => &[1, 2],
             };
             preds.iter().copied().map(Counted)
-        }
-        fn immediate_dominator(&self, n: Counted) -> Option<Counted> {
-            (n.0 != 0).then_some(Counted(0))
         }
     }
 
@@ -583,20 +652,10 @@ mod tests {
         n: u32,
     }
 
-    impl DomTree for ErrorLadder {
+    impl DomRelation for ErrorLadder {
         type Node = u32;
         fn nodes(&self) -> impl Iterator<Item = u32> + '_ {
             0..=self.n
-        }
-        fn predecessors(&self, b: u32) -> impl Iterator<Item = u32> + '_ {
-            let preds: Vec<u32> = if b == self.n {
-                (0..self.n).collect()
-            } else if b == 0 {
-                vec![]
-            } else {
-                vec![b - 1]
-            };
-            preds.into_iter()
         }
         fn immediate_dominator(&self, n: u32) -> Option<u32> {
             IDOM_CALLS.with(|c| c.set(c.get() + 1));
@@ -607,6 +666,19 @@ mod tests {
             } else {
                 Some(n - 1)
             }
+        }
+    }
+
+    impl DomTree for ErrorLadder {
+        fn predecessors(&self, b: u32) -> impl Iterator<Item = u32> + '_ {
+            let preds: Vec<u32> = if b == self.n {
+                (0..self.n).collect()
+            } else if b == 0 {
+                vec![]
+            } else {
+                vec![b - 1]
+            };
+            preds.into_iter()
         }
     }
 
@@ -674,5 +746,77 @@ mod tests {
         assert_eq!(place[&3].len(), 2);
         assert!(place[&3].contains(&'a') && place[&3].contains(&'b'));
         assert_eq!(place.len(), 1, "both φs land only at the join");
+    }
+}
+
+#[cfg(test)]
+mod walk_tests {
+    use super::{DomRelation, dominator_tree_walk};
+    use rustc_hash::FxHashMap;
+
+    struct Rel {
+        nodes: Vec<u32>,
+        idom: FxHashMap<u32, u32>,
+    }
+
+    impl DomRelation for Rel {
+        type Node = u32;
+        fn nodes(&self) -> impl Iterator<Item = u32> + '_ {
+            self.nodes.iter().copied()
+        }
+        fn immediate_dominator(&self, n: u32) -> Option<u32> {
+            self.idom.get(&n).copied()
+        }
+    }
+
+    /// `(0, 0)` has to stay free: a consumer copies these into a dense map
+    /// that default-fills, and at a zero-based clock the root's interval would
+    /// test as dominating every unfilled entry.
+    #[test]
+    fn numbering_starts_at_one_so_zero_can_mean_absent() {
+        // 0 -> 1 -> 2, plus 9 unreachable.
+        let rel = Rel {
+            nodes: vec![0, 1, 2],
+            idom: [(1u32, 0u32), (2, 1)].into_iter().collect(),
+        };
+        let walk = dominator_tree_walk(&rel, 0);
+        assert_eq!(walk.preorder, vec![0, 1, 2]);
+        for n in [0u32, 1, 2] {
+            let (enter, exit) = walk.span[&n];
+            assert!(enter >= 1, "node {n} enters at {enter}, 0 is the sentinel");
+            assert!(exit >= enter);
+        }
+        assert!(
+            !walk.span.contains_key(&9),
+            "an unreachable node has no span"
+        );
+
+        let dominates = |a: u32, b: u32| {
+            let (ae, ax) = walk.span[&a];
+            let (be, bx) = walk.span[&b];
+            ae <= be && bx <= ax
+        };
+        assert!(dominates(0, 2) && dominates(1, 2) && dominates(0, 0));
+        assert!(!dominates(2, 1) && !dominates(2, 0));
+    }
+
+    /// `dominators` is this crate's own idom source, and the old `DomTree`
+    /// bound excluded it from its own walks by demanding `predecessors`.
+    #[test]
+    fn the_crates_own_dominators_satisfies_the_walk() {
+        let succs = |n: u32| match n {
+            0 => vec![1, 2],
+            1 | 2 => vec![3],
+            _ => vec![],
+        };
+        let doms = super::dominators(0u32, succs);
+        let walk = dominator_tree_walk(&doms, 0);
+        assert_eq!(walk.preorder.len(), 4);
+        assert_eq!(walk.preorder[0], 0);
+        let (re, rx) = walk.span[&0];
+        for n in [1u32, 2, 3] {
+            let (e, x) = walk.span[&n];
+            assert!(re <= e && x <= rx, "the root dominates {n}");
+        }
     }
 }
