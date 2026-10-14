@@ -1,11 +1,15 @@
-//! Differential fuzzer: random IR, evaluated by an independent p-code
-//! reference interpreter before and after optimisation.
+//! Differential fuzzer: random IR, evaluated by a p-code reference
+//! interpreter before and after optimisation.
 //!
-//! Both generators emit integer arithmetic, compares, extend/truncate,
-//! popcount/lzcount, phis and `If` / `Return` / `Unreachable` control, and
-//! nothing else: no `Load`, `Store`, `Call`, `CallOther`, `Switch` or float
-//! node, so `LoadForward`, `StoreDead`, the memory and SP-alias analyses and
-//! every float fold are outside what this checks.
+//! A CONSISTENCY oracle, not an independent one: `ref_eval` runs on both
+//! sides, so a misconception it shares with a pass is invisible here. What it
+//! catches is a pass changing the meaning of a graph.
+//!
+//! Both generators emit integer arithmetic, compares, shifts,
+//! extend/truncate, popcount/lzcount, phis and `If` / `Return` /
+//! `Unreachable` control, and nothing else: no `Load`, `Store`, `Call`,
+//! `CallOther`, `Switch` or float node, so `LoadForward`, the memory and
+//! SP-alias analyses and every float fold are outside what this checks.
 //!
 //! Four environment variables scale a run past the committed default:
 //! `FUZZ_N` seeds, `FUZZ_START` the first of them, `FUZZ_STEPS` nodes per DAG,
@@ -1023,11 +1027,16 @@ fn run_cfg_checked(
     check: &mut dyn FnMut(strider_ir::node::NodeId, ValueId, u128),
 ) -> Outcome {
     use strider_ir::IRWalker;
+    // High enough that `Diverge` means a loop rather than "longer than the
+    // budget", which is what lets the comparison assert on it: at 400 a
+    // long-but-finite loop read as non-termination and the arm had to be
+    // exempt.  Raising it to 20 000 reclassifies only a handful of seeds.
+    const REF_STEP_BUDGET: usize = 20_000;
     let live: rustc_hash::FxHashSet<strider_ir::node::NodeId> = f.walk().collect();
     let mut phi_env: FxHashMap<strider_ir::node::NodeId, Option<u128>> = FxHashMap::default();
     let entry = f.entry();
     let mut ctrl = f.node_outputs(entry)[0];
-    for _ in 0..400 {
+    for _ in 0..REF_STEP_BUDGET {
         let uses: Vec<(strider_ir::node::NodeId, u32)> = f
             .value_uses(ctrl)
             .filter(|(n, _)| live.contains(n))
@@ -1156,11 +1165,41 @@ fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
                 IntBinaryOp::And,
                 IntBinaryOp::Mul,
                 IntBinaryOp::Or,
-            ][rng.below(5)];
+                // A shift by a constant is what `value_range` reads as a
+                // scaled hop; without one `ScaleOp` and `const_scale` were
+                // unreachable from this generator, and the range oracle below
+                // never exercised them.  The count deliberately reaches the
+                // output width and past it.
+                IntBinaryOp::ShiftLeft,
+                IntBinaryOp::ShiftRight,
+                IntBinaryOp::SShiftRight,
+            ][rng.below(8)];
+            let shifting = matches!(
+                op,
+                IntBinaryOp::ShiftLeft | IntBinaryOp::ShiftRight | IntBinaryOp::SShiftRight
+            );
+            let rhs = if shifting {
+                // 0..=w+1: at and past the width, where the saturating count
+                // and the lifter's `|W` guard matter.
+                let w = ty.bit_width() as u128 + 2;
+                b.build_int_const(u128::from(rng.next()) % w, ty).ok()?
+            } else {
+                other
+            };
             let nv = if rng.chance(20) {
                 b.build_int_const(u128::from(rng.next() % 3), ty).ok()?
+            } else if rng.chance(15) && ty == ValueType::I32 {
+                // A truncate / extend round trip: the cast ladder `Hop` walks,
+                // and the only shape here that changes width.
+                let narrow = b.build_single_output_pure(NodeKind::Truncate, [vj], ValueType::I8);
+                let ext = if rng.chance(50) {
+                    ExtendOp::ZeroExtend
+                } else {
+                    ExtendOp::SignExtend
+                };
+                b.build_single_output_pure(NodeKind::Extend(ext), [narrow], ty)
             } else {
-                b.build_int_binary_operation(vj, other, op, ty).ok()?
+                b.build_int_binary_operation(vj, rhs, op, ty).ok()?
             };
             b.write_variable(&vns[j], nv).ok()?;
         }
@@ -1268,13 +1307,26 @@ fn the_pipeline_preserves_cfg_semantics() {
                             }
                         }
                         Outcome::Unreachable => {
-                            if !matches!(got, Outcome::Unreachable | Outcome::Diverge) {
+                            if !matches!(got, Outcome::Unreachable) {
                                 return Err(format!(
                                     "seed {seed}: unreachable became {got:?}\n{before_text}"
                                 ));
                             }
                         }
-                        Outcome::Diverge => {}
+                        // Folding a non-terminating loop into a `Return` is a
+                        // miscompile, and the one `DeadBranchElimination`'s
+                        // exit-free-cycle guard and `LoadForward`'s back-edge
+                        // handling exist to prevent.  `Unreachable` is the
+                        // other honest answer: an exit-free cycle anchors one.
+                        Outcome::Diverge => {
+                            if !matches!(got, Outcome::Diverge | Outcome::Unreachable) {
+                                return Err(format!(
+                                    "seed {seed}: a non-terminating run became \
+                                     {got:?}\n{before_text}\nAFTER:\n{}",
+                                    f.to_text(false)
+                                ));
+                            }
+                        }
                     }
                 }
                 Ok((true, cmp))
