@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use object::{Object, ObjectSymbol, SymbolKind};
 use strider_orchestrator::Strider;
+use strider_orchestrator::opt::ReadOnlyMemory;
 use strider_reader::ElfFileMemReader;
 use strider_target::{BuiltCallingConvention, CallingConvention as Cc, SleighArch as Sa};
 
@@ -226,15 +227,48 @@ impl Fixture {
     /// An engine over the image with a second view of it as the optimiser's
     /// ROM, and the arch's convention built against that engine.
     pub fn strider(&self) -> (Strider<ElfFileMemReader>, BuiltCallingConvention) {
-        let obj = self.file();
+        let rom = ElfFileMemReader::from_object(&self.file()).expect("rom reader");
+        self.strider_over(Box::new(rom))
+    }
+
+    /// [`Self::strider`] whose ROM also serves the relocated GOT
+    /// (`LoadFilter::ImmutableAndRelocatedGot`), the opt-in a PIC dispatch
+    /// whose table base is loaded through the GOT needs.
+    pub fn strider_serving_got(&self) -> (Strider<ElfFileMemReader>, BuiltCallingConvention) {
+        let regions = self
+            .elf
+            .regions(
+                strider_reader::elf::RegionSource::Auto,
+                strider_reader::elf::LoadFilter::ImmutableAndRelocatedGot,
+                true,
+            )
+            .expect("rom regions");
+        self.strider_over(Box::new(RegionRom(
+            strider_reader::MemRegionsLookupTable::new(regions),
+        )))
+    }
+
+    fn strider_over(
+        &self,
+        rom: Box<dyn ReadOnlyMemory>,
+    ) -> (Strider<ElfFileMemReader>, BuiltCallingConvention) {
         let arch = (self.arch.sleigh)();
-        let mem = ElfFileMemReader::from_object(&obj).expect("mem reader");
-        let rom = ElfFileMemReader::from_object(&obj).expect("rom reader");
+        let mem = ElfFileMemReader::from_object(&self.file()).expect("mem reader");
         let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem).expect("sleigh");
-        let strider = Strider::new(arch, sleigh, Some(Box::new(rom))).expect("Strider::new");
+        let strider = Strider::new(arch, sleigh, Some(rom)).expect("Strider::new");
         let cc = (self.arch.cc)()
             .build(strider.sleigh_regs())
             .expect("build cc");
         (strider, cc)
+    }
+}
+
+/// A ROM over a region set loaded under a filter that [`ElfFileMemReader`]
+/// does not build.
+struct RegionRom(strider_reader::MemRegionsLookupTable);
+
+impl ReadOnlyMemory for RegionRom {
+    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+        self.0.read_exact(addr, buf)
     }
 }
