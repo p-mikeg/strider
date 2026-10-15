@@ -335,9 +335,6 @@ pub(crate) fn count_int_binop(
 ) -> usize {
     function.count_kind(|k| matches!(k, NodeKind::IntBinaryOp(o) if *o == op))
 }
-pub(crate) fn count_int_unop(function: &strider_ir::Function, op: strider_ir::IntUnaryOp) -> usize {
-    function.count_kind(|k| matches!(k, NodeKind::IntUnaryOp(o) if *o == op))
-}
 pub(crate) fn count_int_cmp(function: &strider_ir::Function, op: strider_ir::IntCmpOp) -> usize {
     function.count_kind(|k| matches!(k, NodeKind::IntCmpOp(o) if *o == op))
 }
@@ -346,18 +343,6 @@ pub(crate) fn count_float_binop(
     op: strider_ir::FloatBinaryOp,
 ) -> usize {
     function.count_kind(|k| matches!(k, NodeKind::FloatBinaryOp(o) if *o == op))
-}
-pub(crate) fn count_float_unop(
-    function: &strider_ir::Function,
-    op: strider_ir::FloatUnaryOp,
-) -> usize {
-    function.count_kind(|k| matches!(k, NodeKind::FloatUnaryOp(o) if *o == op))
-}
-pub(crate) fn count_float_cmp(
-    function: &strider_ir::Function,
-    op: strider_ir::FloatCmpOp,
-) -> usize {
-    function.count_kind(|k| matches!(k, NodeKind::FloatCmpOp(o) if *o == op))
 }
 
 pub(crate) fn count_switches(function: &strider_ir::Function) -> usize {
@@ -454,114 +439,6 @@ pub(crate) fn words_image(words: &[u32], endian: strider_target::Endianness) -> 
     v
 }
 
-/// Counts the distinct control-flow paths converging at any `Return` node.
-///
-/// Some ABIs (PPC, aarch64) share the function epilogue: at `-O0` the
-/// compiler routes every source-level `return` through one `blr`/`ret`, so
-/// the IR has one `Return` fed by a `Region` merging the individual paths,
-/// and `count_returns` would report 1 even with two source-level returns.
-/// This counts the `Region`'s immediate fan-in instead (not transitively
-/// expanded through a nested `Region`), giving a lower bound on the number
-/// of source-level return paths; sufficient for the "at least 2 paths"
-/// assertions in this suite.
-pub(crate) fn count_return_paths(function: &strider_ir::Function) -> usize {
-    let mut total = 0usize;
-    for nid in function.walk() {
-        if !matches!(function.node_kind(nid), NodeKind::Return) {
-            continue;
-        }
-        // Return inputs: [Control, Memory, ...return values].  Slot 0 is the
-        // Control predecessor.
-        let inputs = function.node_inputs(nid);
-        let Some(ctrl_value) = inputs.get(0).copied() else {
-            // A Return with no inputs is malformed; the validator would catch
-            // it.  Treat as a single path so we don't silently drop it.
-            total += 1;
-            continue;
-        };
-        // Step through control-ordered ops interposed on the epilogue (an ARM
-        // `bx lr` models `setISAMode` as a CallOther just before the `Return`)
-        // to the merging Region, whose immediate fan-in is the path count.
-        let mut pred = function.producer(ctrl_value);
-        loop {
-            match function.node_kind(pred) {
-                // Region's control inputs form the leading run of its input
-                // list (see node_signature: `inputs: []; in_tail: CTRL`), so
-                // the total input count IS the predecessor count.
-                NodeKind::Region => {
-                    total += function.node_inputs(pred).len();
-                    break;
-                }
-                NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
-                    match function.node_inputs(pred).get(0).copied() {
-                        Some(ctrl) => pred = function.producer(ctrl),
-                        None => {
-                            total += 1;
-                            break;
-                        }
-                    }
-                }
-                _ => {
-                    total += 1;
-                    break;
-                }
-            }
-        }
-    }
-    total
-}
-/// Counts loop headers in the lifted CFG.
-///
-/// A "loop header" here is a `Region` whose predecessor set contains at
-/// least one back-edge: a predecessor that is itself reachable from the
-/// `Region` via forward control flow.  This is independent of any `VarPhi`
-/// count, which can drop to zero when every tracked variable is
-/// loop-invariant (e.g. a register read in the loop header but never
-/// modified by the body; `PhiCollapse`'s self-ref rule then collapses the
-/// phi to the entry value).
-pub(crate) fn count_loops(function: &strider_ir::Function) -> usize {
-    use entity_utils::DenseEntitySet;
-    let mut count = 0;
-    let reachable: DenseEntitySet<strider_ir::node::NodeId> = function.walk().collect();
-    for n in function.graph().all_node_ids() {
-        if !reachable.contains(n) {
-            continue;
-        }
-        if !matches!(function.node_kind(n), NodeKind::Region) {
-            continue;
-        }
-        // Back-edge detection: from each predecessor, walk forward
-        // through Control outputs.  If we land back on `n`, that
-        // predecessor closes a loop.
-        let preds: Vec<_> = function.node_inputs(n).into_iter().collect();
-        let has_back_edge = preds.iter().any(|&pred_value| {
-            let pred = function.producer(pred_value);
-            let mut seen: DenseEntitySet<strider_ir::node::NodeId> = DenseEntitySet::new();
-            let mut stack = vec![pred];
-            while let Some(cur) = stack.pop() {
-                if !seen.insert(cur) {
-                    continue;
-                }
-                for &out in function.node_outputs(cur) {
-                    if !function.value_kind(out).is_control() {
-                        continue;
-                    }
-                    for (consumer, _) in function.graph().value_uses(out) {
-                        if consumer == n {
-                            return true;
-                        }
-                        stack.push(consumer);
-                    }
-                }
-            }
-            false
-        });
-        if has_back_edge {
-            count += 1;
-        }
-    }
-    count
-}
 pub(crate) fn count_loads(function: &strider_ir::Function) -> usize {
     function.count_kind(|k| matches!(k, NodeKind::Load(_)))
 }
