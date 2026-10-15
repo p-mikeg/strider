@@ -74,4 +74,4 @@ Overrides are per-analysis, the way a calling convention is: the table states
 what the architecture does, an override states what one binary's build of the
 op does.
 
-Depends only on `rsleigh` and `anyhow`.
+Depends only on `rsleigh`, `anyhow` and `rustc-hash`.

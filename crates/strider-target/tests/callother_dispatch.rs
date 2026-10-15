@@ -577,10 +577,30 @@ fn the_x86_extended_state_footprint_resolves_on_both_widths() {
             } else {
                 built.implicit_reads.len()
             };
-            assert!(
-                moved >= 24,
+            // 8 ST + 32 XMM + 32 YMM_H + 8 K + 4 BND + BNDCFGU + BNDSTATUS
+            // + 3 IA32_PL*_SSP + MXCSR + 8 FPU words. An inequality here
+            // admitted dropping the whole AVX half, which is the stale
+            // upper-lane read this row exists to model.
+            assert_eq!(
+                moved, 98,
                 "{preset:?}/{name}: moves {moved} registers, expected the \
-                 x87 + SSE + AVX state"
+                 x87 + SSE + AVX + AVX-512 state"
+            );
+            // Identity, not just arity: `regs_to_vns` is a 1:1 map with no
+            // dedup, so a name repeated in the list keeps the count while
+            // silently dropping a register from the footprint.
+            let vns = if name.contains("rstor") {
+                &built.implicit_writes
+            } else {
+                &built.implicit_reads
+            };
+            let distinct: rustc_hash::FxHashSet<_> = vns.iter().collect();
+            assert_eq!(
+                distinct.len(),
+                98,
+                "{preset:?}/{name}: {} of 98 names resolve to distinct \
+                 varnodes, so one is duplicated",
+                distinct.len()
             );
         }
     }
@@ -625,8 +645,8 @@ fn ppc_dot_forms_the_sla_leaves_unflagged_declare_cr0() {
                 .build(&regs)
                 .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e:?}"));
             assert_eq!(
-                built.implicit_writes.len(),
-                1,
+                built.implicit_writes,
+                vec![regs.name_to_vn("cr0").expect("cr0 is a PowerPC register")],
                 "{preset:?}/{name} writes CR0 and nothing else modellable"
             );
         }
@@ -637,5 +657,47 @@ fn ppc_dot_forms_the_sla_leaves_unflagged_declare_cr0() {
             stwcx.implicit_writes.is_empty(),
             "{preset:?}: stwcx.'s sla body sets CR0 itself"
         );
+    }
+}
+
+/// Every name in the PowerPC FPSCR / MSR footprints resolves on each PPC
+/// preset. `CallOtherAbi::build` short-circuits on the first unresolvable
+/// name, so one misspelling turns every function containing the instruction
+/// into a hard lift failure, which nothing else here would catch.
+///
+/// `MoveToFPSCRField*` reaches only the ppc64 presets (`ppc_isa.sinc`, which
+/// only the `ppc_64_isa*` slaspecs include), but the register NAMES come from
+/// `ppc_common.sinc` and resolve on all four, which is what this pins.
+#[test]
+fn ppc_fpscr_and_msr_footprints_resolve_on_every_ppc_preset() {
+    for preset in [
+        ArchPreset::Ppc32Be,
+        ArchPreset::Ppc32Le,
+        ArchPreset::Ppc64Be,
+        ArchPreset::Ppc64Le,
+    ] {
+        let regs = regs_for(preset);
+        for name in [
+            "MoveToFPSCRFields",
+            "MoveToFPSCRFields1",
+            "MoveToFPSCRFieldImmediate",
+            "MoveToFPSCRFieldImmediate1",
+            "WriteExternalEnable",
+            "WriteExternalEnableImmediate",
+        ] {
+            let built = expect_call(classify(preset, name))
+                .build(&regs)
+                .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e:?}"));
+            assert!(
+                !built.implicit_writes.is_empty(),
+                "{preset:?}/{name} models a register write"
+            );
+            let distinct: rustc_hash::FxHashSet<_> = built.implicit_writes.iter().collect();
+            assert_eq!(
+                distinct.len(),
+                built.implicit_writes.len(),
+                "{preset:?}/{name}: a name is duplicated in the footprint"
+            );
+        }
     }
 }

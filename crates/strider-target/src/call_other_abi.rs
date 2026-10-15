@@ -245,6 +245,98 @@ const MEM_CLOBBER: CallOtherClass = CallOtherClass::MEM_CLOBBER;
 /// register keeps whatever a previous instruction left in it and a `bne cr0`
 /// after one folds on a stale value.  `cr0` is a fixed Sleigh name on all four
 /// PPC presets.
+const PPC_MSR: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+    implicit_reads: &[],
+    implicit_writes: &["MSR"],
+    clobbers_memory: false,
+    no_return: false,
+});
+
+/// Every FPSCR bit `mtfsf` can rewrite (`FM=0xff`), which `setSummaryFPSCR`
+/// and `mcrfs` read back directly.
+const PPC_FPSCR: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+    implicit_reads: &[],
+    implicit_writes: &[
+        "fp_fx",
+        "fp_fex",
+        "fp_vx",
+        "fp_ox",
+        "fp_ux",
+        "fp_zx",
+        "fp_xx",
+        "fp_vxsnan",
+        "fp_vxisi",
+        "fp_vxidi",
+        "fp_vxzdz",
+        "fp_vximz",
+        "fp_vxvc",
+        "fp_fr",
+        "fp_fi",
+        "fp_c",
+        "fp_cc0",
+        "fp_cc1",
+        "fp_cc2",
+        "fp_cc3",
+        "fp_reserve1",
+        "fp_vxsoft",
+        "fp_vxsqrt",
+        "fp_vxcvi",
+        "fp_ve",
+        "fp_oe",
+        "fp_ue",
+        "fp_ze",
+        "fp_xe",
+        "fp_ni",
+        "fp_rn0",
+        "fp_rn1",
+    ],
+    clobbers_memory: false,
+    no_return: false,
+});
+
+/// `mtfsf.` / `mtfsfi.`: the FPSCR write plus the CR1 the `Rc=1` form sets.
+const PPC_FPSCR_CR1: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+    implicit_reads: &[],
+    implicit_writes: &[
+        "fp_fx",
+        "fp_fex",
+        "fp_vx",
+        "fp_ox",
+        "fp_ux",
+        "fp_zx",
+        "fp_xx",
+        "fp_vxsnan",
+        "fp_vxisi",
+        "fp_vxidi",
+        "fp_vxzdz",
+        "fp_vximz",
+        "fp_vxvc",
+        "fp_fr",
+        "fp_fi",
+        "fp_c",
+        "fp_cc0",
+        "fp_cc1",
+        "fp_cc2",
+        "fp_cc3",
+        "fp_reserve1",
+        "fp_vxsoft",
+        "fp_vxsqrt",
+        "fp_vxcvi",
+        "fp_ve",
+        "fp_oe",
+        "fp_ue",
+        "fp_ze",
+        "fp_xe",
+        "fp_ni",
+        "fp_rn0",
+        "fp_rn1",
+        "cr1",
+    ],
+    clobbers_memory: false,
+    no_return: false,
+});
+
+/// `slbfee.` / `icswx.`: the sla emits no `cr0flags`.
 const PPC_DOT_CR0: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
     implicit_reads: &[],
     implicit_writes: &["cr0"],
@@ -408,12 +500,28 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     ("slbMoveFromEntryESID", PURE),
     ("slbMoveFromEntryVSID", PURE),
     ("slbfeeDotOp", PPC_DOT_CR0),
-    // Cache-touch and stream-stop are prefetch hints;
-    // wrtee/clearHistory/mtfsf change MSR, branch-history, or FPSCR state
-    // strider does not track.  No memory or value effect to model.
-    ("MoveToFPSCRFields", NoOp),
-    ("WriteExternalEnable", NoOp),
-    ("WriteExternalEnableImmediate", NoOp),
+    // Cache-touch and stream-stop are prefetch hints, and `clearHistory`
+    // clears a branch-history buffer only a pcodeop with its own output reads.
+    // No memory or value effect to model.
+    //
+    // The rows below are NOT inert: each userop is a bare void pcodeop, yet
+    // the sla models the FPSCR bits (`ppc_common.sinc:43`) and MSR (`:52`) as
+    // real registers it reads back itself, in `setSummaryFPSCR` (`:1671`) and
+    // `mfmsr` (`ppc_embedded.sinc:93`). Undeclared, a read either side of one
+    // folds to the same value.
+    //
+    // Narrow reach, unlike `wrtee` / `wrteei`: `mtfsf` ITSELF is modelled in
+    // p-code (`ppc_instructions.sinc:2507`, which pins `BIT_25=0 & BIT_16=0`
+    // and emits `packFPSCR` / `unpackFPSCR`), so these `MoveToFPSCRField*`
+    // pcodeops exist only in `ppc_isa.sinc`, included only by the
+    // `ppc_64_isa*` slaspecs. They therefore fire on the Power ISA 2.06
+    // `L=1` / `W=1` forms on the ppc64 presets, and never on ppc32.
+    ("MoveToFPSCRFieldImmediate", PPC_FPSCR),
+    ("MoveToFPSCRFieldImmediate1", PPC_FPSCR_CR1),
+    ("MoveToFPSCRFields", PPC_FPSCR),
+    ("MoveToFPSCRFields1", PPC_FPSCR_CR1),
+    ("WriteExternalEnable", PPC_MSR),
+    ("WriteExternalEnableImmediate", PPC_MSR),
     ("clearHistory", NoOp),
     ("dataCacheBlockTouch", NoOp),
     ("dataCacheBlockTouchForStore", NoOp),
@@ -1052,6 +1160,63 @@ const X86_EXTENDED_STATE: &[&str] = &[
     "YMM13_H",
     "YMM14_H",
     "YMM15_H",
+    // XSAVE state component 5 (opmask) and 7 (Hi16_ZMM). ia.sinc declares
+    // both in the block it shares between the widths, and both are disjoint
+    // from every name above, so no container write reaches them.
+    "K0",
+    "K1",
+    "K2",
+    "K3",
+    "K4",
+    "K5",
+    "K6",
+    "K7",
+    "XMM16",
+    "XMM17",
+    "XMM18",
+    "XMM19",
+    "XMM20",
+    "XMM21",
+    "XMM22",
+    "XMM23",
+    "XMM24",
+    "XMM25",
+    "XMM26",
+    "XMM27",
+    "XMM28",
+    "XMM29",
+    "XMM30",
+    "XMM31",
+    "YMM16_H",
+    "YMM17_H",
+    "YMM18_H",
+    "YMM19_H",
+    "YMM20_H",
+    "YMM21_H",
+    "YMM22_H",
+    "YMM23_H",
+    "YMM24_H",
+    "YMM25_H",
+    "YMM26_H",
+    "YMM27_H",
+    "YMM28_H",
+    "YMM29_H",
+    "YMM30_H",
+    "YMM31_H",
+    // Component 3/4 (MPX bounds + config) and 12 (CET supervisor shadow
+    // stacks). `BND0`-`BND3` are read back by the sla itself (`mpx.sinc:53`,
+    // `:119`) and `IA32_PL0_SSP` by `SETSSBSY` (`cet.sinc:73`). `SSP` is NOT
+    // here: it is loaded from `IA32_PLx_SSP` on a privilege transition and
+    // sits in no XSAVE area.
+    "BND0",
+    "BND1",
+    "BND2",
+    "BND3",
+    "BNDCFGU",
+    "BNDSTATUS",
+    "IA32_PL0_SSP",
+    "IA32_PL1_SSP",
+    "IA32_PL2_SSP",
     "MXCSR",
     "FPUControlWord",
     "FPUStatusWord",
@@ -1328,6 +1493,17 @@ static ARCH_INDEPENDENT_TABLE: &[(&str, CallOtherClass)] = &[
     // register write (MTC0 via setCopReg), cp0-thread write (MTTR), and
     // TLB writes / invalidation (TLBWI/TLBWR/TLBINV): external system
     // state.  TLB READS are PURE, above.
+    //
+    // KNOWN GAP, `setCopReg`: the memory clobber is not the whole effect.
+    // `mtc0` passes the CP0 register as an attached-register operand
+    // (`mips.sinc:704`, `mips32Instructions.sinc:454`) while `mfc0` reads that
+    // same varnode directly (`:420`), so two `mfc0 $x, Status` either side of
+    // an `mtc0 ... Status` fold to one value. The register is
+    // instruction-encoded, which this table cannot name; closing it needs a
+    // lifter rule treating a register-space operand of `setCopReg` as a
+    // clobber. MIPS16 is unaffected: both directions go through
+    // `getCopReg`/`setCopReg` with the register NUMBER as an immediate, and
+    // `getCopReg` has no row, so that lift fails closed.
     ("TLB_invalidate", MEM_CLOBBER),
     ("TLB_invalidate_flush", MEM_CLOBBER),
     ("TLB_write_indexed_entry", MEM_CLOBBER),
