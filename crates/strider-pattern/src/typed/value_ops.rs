@@ -528,7 +528,8 @@ macro_rules! value_op_factories {
         float_unary_factory!($bound, Sqrt, float_sqrt, concat!($verb, " a float square root `√x`."));
         float_unary_factory!($bound, Ceil, float_ceil, concat!($verb, " a float ceiling `⌈x⌉`."));
         float_unary_factory!($bound, Floor, float_floor, concat!($verb, " a float floor `⌊x⌋`."));
-        float_unary_factory!($bound, Round, float_round, concat!($verb, " a float round-to-nearest-even."));
+        float_unary_factory!($bound, Round, float_round,
+            concat!($verb, " a float round to nearest, ties away from zero."));
 
         binary_factory!($bound, FloatCmpFixed, FloatCmpOp, Equal, float_eq,
             concat!($verb, " a float equality `lhs == rhs`. Commutative."));
