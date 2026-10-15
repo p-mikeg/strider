@@ -1,11 +1,11 @@
-"""Adding a new arch means adding a row to ARCHES; conftest.py parametrises
-the `arch_id` fixture over it.
+"""The arches are the fixtures/arch/*.mk stems. `load_elf` infers each one's
+arch and calling convention, except for the two in `_OVERRIDES`.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable
+import pathlib
+from typing import Callable, Optional
 
 import pytest
 
@@ -14,36 +14,22 @@ from strider import pattern as pat
 from strider.pattern import anything, var, Capture
 
 
-@dataclass(frozen=True)
-class ArchSpec:
-    id: str
-    arch_factory: Callable[[], "strider.sleigh.SleighArch"]
-    cc_factory: Callable[[], "strider.sleigh.CallingConvention"]
+_FIXTURES = pathlib.Path(__file__).resolve().parents[5] / "fixtures"
 
+ARCH_DIRS: list[str] = sorted(p.stem for p in (_FIXTURES / "arch").glob("*.mk"))
 
-
-ARCHES: list[ArchSpec] = [
-    ArchSpec("x86", strider.sleigh.SleighArch.x86, strider.sleigh.CallingConvention.x86_cdecl),
-    # Same Sleigh as x86, but its fixtures live in fixtures/out/x86_kernel/
-    # and are compiled with -mregparm=3 to match x86_linux_kernel.
-    ArchSpec("x86_kernel", strider.sleigh.SleighArch.x86, strider.sleigh.CallingConvention.x86_linux_kernel),
-    ArchSpec("x64", strider.sleigh.SleighArch.x86_64, strider.sleigh.CallingConvention.x86_64_systemv),
-    ArchSpec("aarch64", strider.sleigh.SleighArch.aarch64, strider.sleigh.CallingConvention.aarch64_aapcs64),
-    ArchSpec("aarch64be", strider.sleigh.SleighArch.aarch64be, strider.sleigh.CallingConvention.aarch64_aapcs64),
-    ArchSpec("arm", strider.sleigh.SleighArch.arm, strider.sleigh.CallingConvention.arm_aapcs),
-    ArchSpec("arm_be", strider.sleigh.SleighArch.arm_be, strider.sleigh.CallingConvention.arm_aapcs),
-    ArchSpec("arm_thumb", strider.sleigh.SleighArch.arm_thumb, strider.sleigh.CallingConvention.arm_aapcs),
-    ArchSpec("mips32le", strider.sleigh.SleighArch.mipsle32, strider.sleigh.CallingConvention.mips_o32),
-    ArchSpec("mips32be", strider.sleigh.SleighArch.mipsbe32, strider.sleigh.CallingConvention.mips_o32),
-]
-
-_BY_ID: dict[str, ArchSpec] = {a.id: a for a in ARCHES}
-
-
-def arch_spec(arch_id: str) -> ArchSpec:
-    if arch_id not in _BY_ID:
-        raise KeyError(f"unknown arch_id {arch_id!r}; supported: {sorted(_BY_ID)}")
-    return _BY_ID[arch_id]
+_OVERRIDES: dict[
+    str,
+    tuple[
+        Optional[Callable[[], strider.sleigh.SleighArch]],
+        Optional[Callable[[], strider.sleigh.CallingConvention]],
+    ],
+] = {
+    # `-mregparm=3` leaves no trace in the ELF.
+    "x86_kernel": (None, strider.sleigh.CallingConvention.x86_linux_kernel),
+    # Nothing in the ELF says `-mthumb`; decode as the Rust roster does.
+    "arm_thumb": (strider.sleigh.SleighArch.arm_thumb, None),
+}
 
 
 def analyze(
@@ -55,28 +41,26 @@ def analyze(
 ):
     """Lift fixtures/out/<arch>/<case>.elf::<fn_name> under the default
     optimiser pipeline (which already includes LoadReadOnly), returning
-    the Function.  Skips if the fixture or symbol is missing.
+    the Function. A missing fixture or symbol fails the test.
 
     Unresolved indirect branches stay as `IndirectBranch` placeholders
     instead of failing the run: pattern-shape tests don't depend on
     resolution, which is covered by the dedicated jump-table tests.
     """
-    spec = arch_spec(arch_id)
     elf = fixtures_dir / arch_id / f"{case}.elf"
     if not elf.exists():
-        pytest.skip(f"fixture missing: {elf}")
+        pytest.fail(f"fixture missing: {elf} (run `make -C fixtures ARCH={arch_id}`)")
     loaded = strider.lift.load_elf(str(elf))
+    symbol = loaded.symbol_opt(fn_name)
+    if symbol is None:
+        pytest.fail(f"symbol {fn_name!r} not present in {elf}")
+    arch_ctor, cc_ctor = _OVERRIDES.get(arch_id, (None, None))
+    arch = arch_ctor() if arch_ctor else loaded.arch
+    cc = cc_ctor() if cc_ctor else loaded.cc
     mem = loaded.reader()
-    try:
-        addr = loaded.symbol(fn_name).address
-    except Exception:
-        pytest.skip(f"symbol {fn_name!r} not present in {elf}")
-    arch = spec.arch_factory()
-    cc = spec.cc_factory()
-
     lift = strider.lift.lifter(arch, mem, rom=mem)
     _cfg, function, _unresolved = lift.analyze(
-        addr,
+        symbol.address,
         cc,
         opts=strider.lift.LifterOptions(
             cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
