@@ -144,6 +144,9 @@ pub(super) struct RegionBuilder<'b, 'a: 'b, R: rsleigh::MemReader> {
     /// The machine instruction this region decoded last, whose commits the
     /// next sequential decode reads.
     last_lift: Option<u64>,
+    /// The one address [`Self::rederive_flow`] has already made this build's
+    /// own, so the next sequential decode does not redo it.
+    validated: Option<u64>,
 }
 
 impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
@@ -161,6 +164,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             parent_edge,
             isa_mode,
             last_lift: None,
+            validated: None,
         }
     }
 
@@ -248,9 +252,84 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         Ok(wrote)
     }
 
-    /// Re-lifting an address is cheap: `Sleigh` memoises recently-parsed
-    /// instructions.
+    /// Makes the committable flow context at `at` this build's own: erase each
+    /// var to what THIS build puts there, then re-lift `from` so that
+    /// instruction's own `globalset` lands again.
+    ///
+    /// Never a live snapshot of `at` itself, which is the value an earlier
+    /// build may have committed. What to erase TO differs by flow class,
+    /// because `set_context_at` is `ContextDatabase::setVariable` and paints
+    /// FORWARD to the next change point:
+    ///
+    /// - [`FlowCommit::NoFlow`] erases to the pspec DEFAULT. The engine's own
+    ///   `noflow` commit covers one address, so painting a live IT state
+    ///   forward would predicate everything after it, and a `cond_shft`
+    ///   shifted by the next instruction can land on a `cond_full` no `thfcc`
+    ///   constructor covers, failing the decode outright. The default is what
+    ///   an un-committed address already holds, so painting it forward changes
+    ///   nothing, and a committed address beyond `at` gets its value back from
+    ///   its own predecessor's decode.
+    /// - [`FlowCommit::Flowing`] erases to the value in force at `from`, which
+    ///   is what would have flowed to `at` had nothing been committed there.
+    ///   The default is wrong here: it would cancel a mode this build's own
+    ///   earlier instruction established and hold only where the committing
+    ///   instruction is the immediate predecessor.
+    ///
+    /// Re-lifting is cheap: `Sleigh` memoises recently-parsed instructions,
+    /// and `oneInstruction` applies a cached parse's commits too.
+    fn rederive_flow(&mut self, at: u64, from: u64) -> Result<()> {
+        let vars = self.builder.flow_commit_defaults;
+        if vars.is_empty() {
+            return Ok(());
+        }
+        let mut wrote = false;
+        for &(name, flow, default) in vars {
+            let want = match flow {
+                strider_target::FlowCommit::NoFlow => default,
+                strider_target::FlowCommit::Flowing => {
+                    self.builder.sleigh.get_context_at(from, name)?
+                }
+            };
+            if self.builder.sleigh.get_context_at(at, name)? != want {
+                self.builder.sleigh.set_context_at(at, name, want)?;
+                wrote = true;
+            }
+        }
+        if wrote {
+            self.lift_unheld(from)?;
+        }
+        Ok(())
+    }
+
+    /// Re-derives the context at `addr` before this region decodes it, for an
+    /// address `lift_one` reaches without having just recorded it.
+    ///
+    /// Defensive: no live caller reaches past the first TWO guards, so only the
+    /// region-map guard is unreachable. `build`'s loop arrives at
+    /// `prev + machine_insn_len`, which `lift_one` already recorded in
+    /// `validated`, and a region's first address has no `last_lift` (a split
+    /// re-lifts nothing and a seeded target starts a fresh `RegionBuilder`).
+    /// The first address needs nothing anyway: `explore` pinned it.
+    fn hold_flow(&mut self, addr: u64) -> Result<()> {
+        if self.validated == Some(addr) {
+            return Ok(());
+        }
+        let Some(prev) = self.last_lift else {
+            return Ok(());
+        };
+        // Sealed onto rather than decoded: `build` discards this lift.
+        if self
+            .builder
+            .start_addr_to_region_id
+            .contains_key(&PcodeInsnAddr::at_machine_start(addr))
+        {
+            return Ok(());
+        }
+        self.rederive_flow(addr, prev)
+    }
+
     fn lift_one(&mut self, addr: u64) -> Result<rsleigh::LiftRes> {
+        self.hold_flow(addr)?;
         self.hold_transients(addr)?;
         self.hold_isa_mode(addr)?;
         let mut lift = self.lift_unheld(addr)?;
@@ -258,6 +337,30 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             lift = self.lift_unheld(addr)?;
         }
         self.last_lift = Some(addr);
+        // `inst_next` of an instruction THIS build decoded, which is what
+        // `Builder::enqueue` may trust a snapshot of. Recorded HERE, not in
+        // `process_new_insn`, which runs only from the per-p-code-op loop: an
+        // instruction lifting to ZERO ops never reaches it, and ARM `enterx`
+        // is exactly that shape while committing `TEEMode` at its own
+        // `inst_next`. `checked_add` so an instruction at the top of the
+        // address space cannot seed a wrapped low address.
+        // `as u64` not `as u32`: `machine_insn_len` is a `usize`, and narrowing
+        // it first would wrap a huge length into a small one and defeat the
+        // `checked_add`. A zero length would make `next == addr`, erasing the
+        // context at the address just decoded and recording an instruction's own
+        // start as a commit point; `next_pcode_addr` rejects that length too, but
+        // only once the region does not close first.
+        let len = lift.machine_insn_len as u64;
+        if let Some(next) = (len > 0).then(|| addr.checked_add(len)).flatten() {
+            // Re-derived NOW, while `addr` is still the last instruction
+            // decoded, so whatever sits at `next` afterwards is exactly what
+            // THIS decode committed. That is what lets `Builder::enqueue`
+            // trust a snapshot here even for a fall-through this region does
+            // not go on to decode itself.
+            self.rederive_flow(next, addr)?;
+            self.validated = Some(next);
+            self.builder.committed_next.insert(next);
+        }
         Ok(lift)
     }
 
@@ -437,15 +540,6 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             insn: insn.clone(),
             len: lift_res.machine_insn_len as u32,
         });
-        // `inst_next`: the one address this instruction's `globalset` can
-        // commit flowing context at, so the only one `Builder::enqueue` may
-        // trust a snapshot of.  See `Builder::committed_next`.
-        self.builder.committed_next.insert(
-            addr.machine_addr
-                .addr
-                .wrapping_add(u64::from(lift_res.machine_insn_len as u32)),
-        );
-
         match insn.opcode {
             rsleigh::Opcode::Branch => self.process_branch(insn, addr, lift_res),
             rsleigh::Opcode::CondBranch => self.process_cond_branch(insn, addr, lift_res),

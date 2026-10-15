@@ -182,6 +182,16 @@ macro_rules! arch_ctor {
     };
 }
 
+/// Whether the sla declares a committed context var as flowing, which decides
+/// what [`SleighArch::flow_commit_vars`] re-derives its value from.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FlowCommit {
+    /// Confined to one address, so the pspec default is the erase target.
+    NoFlow,
+    /// Painted forward to persist, so the predecessor's value is.
+    Flowing,
+}
+
 impl SleighArch {
     pub fn sla_spec(&self) -> rsleigh::sla_spec::SlaSpec {
         self.sla_spec
@@ -239,6 +249,90 @@ impl SleighArch {
         }
     }
 
+    /// The context vars whose value AT AN ADDRESS a constructor commits, and
+    /// which therefore have to be re-derived from this build's own decode
+    /// rather than read out of the engine.
+    ///
+    /// Each var paired with whether the sla declares it FLOWING, which decides
+    /// what the erase re-derives FROM.
+    ///
+    /// A `noflow` commit covers one address
+    /// (`ParserContext::applyCommits` gives it `setContextRegion(a, a+1)`), so
+    /// its value at `inst_next` is a fact of one instruction's decode and the
+    /// pspec default is the right erase target. A FLOWING commit is
+    /// `setContextChangePoint`: it paints forward because it is MEANT to
+    /// persist, so erasing it to the default would destroy it at every
+    /// `inst_next` and re-establish it only where the committing instruction
+    /// happens to be the predecessor -- which decoded the second ThumbEE
+    /// instruction after an ARM `enterx` as plain Thumb. A flowing var is
+    /// therefore erased to the value in force at the PREDECESSOR, reproducing
+    /// the flow, and the re-lift then re-applies any commit of its own.
+    ///
+    /// Both classes must be listed. `Builder::committed_next` licenses
+    /// `Builder::enqueue` to trust a snapshot of every flowing var at a
+    /// recorded `inst_next`, and `FlowVars::pin_at` cannot clean one up: a
+    /// forward paint stops at the next CHANGE POINT of that var, which is
+    /// exactly where an earlier build's commit sits. Leaving ARM `TEEMode`
+    /// out let a stale ThumbEE mode survive into a later `build_cfg` and drop
+    /// a `Store`.
+    ///
+    /// Named directly, not via the flow-var views: ARM's `condit` is a
+    /// `noflow` field spanning bits 5..13, so one name clears the whole
+    /// IT-block state, where the six overlapping flowing views that tile those
+    /// bits would each need separate care.
+    ///
+    /// ARM `LRset` is `noflow` and committed at `inst_next` too, but belongs to
+    /// [`Self::transient_decode_vars`], which erases it to the default WITHOUT
+    /// a re-lift because a `mov lr, pc` state must not survive a region
+    /// boundary at all.
+    ///
+    /// Only ARM among the presets here. x86 and AArch64 contain no `globalset`
+    /// at all; MIPS commits `ISA_MODE` only at a `jalx` call target, which
+    /// analysis never decodes, and its `PAIR_INSTRUCTION_FLAG` / `ext_delay`
+    /// are `noflow` and go to [`Self::transient_decode_vars`]; PowerPC's
+    /// `linkreg` IS committed to a differing value by `mtlr`
+    /// (`ppc_embedded.sinc:155`) and is flowing, but every constructor it
+    /// selects emits p-code identical to its `linkreg=0` twin, so a stale
+    /// value cannot change the lift.
+    #[must_use]
+    pub fn flow_commit_vars(&self) -> &'static [(&'static str, FlowCommit)] {
+        match self.preset {
+            ArchPreset::Arm
+            | ArchPreset::ArmBe
+            | ArchPreset::ArmBeKernel
+            | ArchPreset::ArmThumb => &[
+                ("condit", FlowCommit::NoFlow),
+                ("TEEMode", FlowCommit::Flowing),
+            ],
+            _ => &[],
+        }
+    }
+
+    /// Whether any constructor in this sla `globalset`s a FLOWING context
+    /// variable at an address another instruction then decodes in.
+    ///
+    /// Only the ARM family. Verified against every language dir rsleigh
+    /// ships: x86 and AArch64 contain no `globalset` at all; MIPS commits
+    /// `ISA_MODE` only at a `jalx` CALL target, which analysis never decodes;
+    /// and PowerPC's `linkreg` IS committed to a differing value by `mtlr`
+    /// (`ppc_embedded.sinc:155`) but is itself flowing, so a region start's
+    /// pin covers it, and every constructor it selects emits p-code identical
+    /// to its `linkreg=0` twin. ARM commits `TEEMode` and the IT-block
+    /// `condit` group at `inst_next`, and `TMode` both at `inst_next` and at a
+    /// branch TARGET (`ARMinstructions.sinc:677`,
+    /// `ARMTHUMBinstructions.sinc:1544`).
+    ///
+    /// Reported, not used: the per-instruction re-derivation is gated on
+    /// [`Self::flow_commit_vars`] being non-empty, which is the narrower
+    /// `noflow`-only set.
+    #[must_use]
+    pub fn commits_flow_context(&self) -> bool {
+        matches!(
+            self.preset,
+            ArchPreset::Arm | ArchPreset::ArmBe | ArchPreset::ArmBeKernel | ArchPreset::ArmThumb
+        )
+    }
+
     /// Whether the sla decodes a branch together with its delay slot, one
     /// `lift_one` spanning both.
     #[must_use]
@@ -255,6 +349,11 @@ impl SleighArch {
     /// Context vars the sla declares `noflow` that still change which
     /// constructor matches, so a value committed by one function is a decode
     /// change for the next on a reused engine and a cold entry must clear them.
+    ///
+    /// Erased to the pspec default with NO re-lift, which is what separates
+    /// these from [`Self::flow_commit_vars`]: a `mov lr, pc` state must not
+    /// survive a region boundary at all, where a committed IT state has to be
+    /// re-derived rather than cleared.
     ///
     /// `FlowVars` cannot see these: it takes the sla's FLOWING set, and these
     /// are excluded from it by definition. ARM's `LRset` picks `call [pc]` over
@@ -281,12 +380,11 @@ impl SleighArch {
             ArchPreset::Arm
             | ArchPreset::ArmBe
             | ArchPreset::ArmBeKernel
-            // `condit` is deliberately absent: its bits 5..13 are tiled by the
-            // FLOWING `itmode` / `cond_base` / `cond_full` / `cond_true` /
-            // `cond_mask` / `cond_shft`, which `FlowVars` already resets, so
-            // listing it would write those same bits a second time. Being
-            // `noflow` its real lifetime is one instruction, which a
-            // forward-painting context write cannot express.
+            // `condit` is deliberately absent: it belongs to
+            // `flow_commit_vars`, which RE-DERIVES it by re-lifting the owning
+            // instruction. These are cleared with no re-lift, including at a
+            // region start, which destroys an IT state the predecessor
+            // legitimately committed.
             | ArchPreset::ArmThumb => &["LRset", "REToverride", "CALLoverride"],
             _ => &[],
         }
@@ -492,7 +590,23 @@ impl SleighArch {
 
 #[cfg(test)]
 mod tests {
-    use super::SleighArch;
+    use super::{ArchPreset, SleighArch};
+
+    /// The two lists are one fact. `commits_flow_context` reports it,
+    /// `flow_commit_vars` acts on it, and nothing else ties them together, so
+    /// a preset added to one and not the other would decode against whatever
+    /// an earlier build left.
+    #[test]
+    fn a_preset_that_commits_flow_context_names_the_vars_to_re_derive() {
+        for preset in ArchPreset::ALL {
+            let arch = preset.arch();
+            assert_eq!(
+                arch.commits_flow_context(),
+                !arch.flow_commit_vars().is_empty(),
+                "{preset:?} reports one answer and lists the other"
+            );
+        }
+    }
 
     /// `arm_thumb` is `arm-linux-gnueabihf-gcc -mthumb` over the full-ARM-state
     /// `SLA_SPEC_ARM8_LE`, not a Cortex-M: its own fixture
