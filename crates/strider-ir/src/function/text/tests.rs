@@ -572,3 +572,52 @@ fn every_node_kind_prints() {
         return %v0, %v1, %v3, %v5, %v7, %v9, %v11, %v13, %v15, %v17, %v19, %v21, %v23, %v25, %v27, %v29, %v31, %v33, %v35, %v37, %v39, %v41, %v43, %v45, %v47, %v49, %v51, %v53, %v55, %v57, %v59, %v61, %v63, %v65, %v67, %v69, %v71
     "#]].assert_eq(&f.to_text(true));
 }
+
+/// Only a varnode the arch names changes spelling; layout and ids do not.
+#[test]
+fn named_text_respells_each_register_varnode_and_nothing_else() {
+    let mut net = Net::new(vec![reg(0), reg(0x38)]);
+    let x = net.initial_var(reg(0x38));
+    let target = net.int(0x40_1000, ValueType::I64, 0x1000);
+    let call = net.plain(
+        NodeKind::Call { cc: None },
+        &[(0, 0), (1, 0), (target, 0), (x, 0)],
+        &[CTRL, MEM, I64],
+        &[0x1000],
+    );
+    net.call_ccs.push((
+        call,
+        strider_target::BuiltCallingConvention {
+            ret_val_regs: vec![reg(0)],
+            ..Default::default()
+        },
+    ));
+    net.plain(
+        NodeKind::Return,
+        &[(call, 0), (call, 1), (call, 2)],
+        &[],
+        &[0x1004],
+    );
+    net.value_vns.push(((call, 2), reg(0)));
+    let (f, _) = net.build(false);
+    let regs = strider_target::SleighArch::x86_64()
+        .probe_regs()
+        .expect("x86-64 registers");
+    let named = f.to_text_named(true, &regs);
+    assert!(named.contains("tracked [RAX, RDI]\n"), "{named}");
+    assert!(named.contains(" = initial_var[RDI]"), "{named}");
+    assert!(
+        named.contains(":i64<RAX> = call[ret_val_regs=[RAX]] "),
+        "{named}"
+    );
+    assert!(
+        named.contains(" stack_vn=%:0xffffffffffff0000:8 "),
+        "a varnode no register names keeps its spelling: {named}"
+    );
+    assert_eq!(
+        named,
+        f.to_text(true)
+            .replace("%:0x38:8", "RDI")
+            .replace("%:0x0:8", "RAX")
+    );
+}
