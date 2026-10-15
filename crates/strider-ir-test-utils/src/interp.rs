@@ -20,6 +20,7 @@
 
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
+use std::rc::Rc;
 
 use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
@@ -58,25 +59,56 @@ pub struct Env<'a> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Unsupported(pub String);
 
+/// A returned value or a call argument.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Slot {
+    Known(u128),
+    /// A division by zero, `INT_MIN / -1`, or a value computed from one. Any
+    /// value refines it.
+    Undefined,
+    /// A value the interpreter cannot produce.
+    Unsupported(String),
+}
+
+impl Slot {
+    fn of(r: Eval<Option<u128>>) -> Self {
+        match r {
+            Ok(Some(x)) => Self::Known(x),
+            Ok(None) => Self::Undefined,
+            Err(Unsupported(why)) => Self::Unsupported(why),
+        }
+    }
+
+    /// Whether `opt`, from the optimised run, may stand for this raw slot;
+    /// `None` when this slot is `Unsupported` and so checks nothing.
+    #[must_use]
+    pub fn admits(&self, opt: &Self) -> Option<bool> {
+        match self {
+            Self::Known(x) => Some(*opt == Self::Known(*x)),
+            Self::Undefined => Some(true),
+            Self::Unsupported(_) => None,
+        }
+    }
+}
+
 /// A call as its callee saw it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallRecord {
     pub target: u128,
-    /// `None` for a value the interpreter cannot produce, or an undefined one.
-    pub args: Vec<Option<u128>>,
-    /// Bytes written since the previous call, outside [`Env::private`].
+    pub args: Vec<Slot>,
+    /// Bytes written since the previous call that clobbers memory, outside
+    /// [`Env::private`].
     pub writes: BTreeMap<u64, u8>,
 }
 
-/// How a run ended. `writes` holds the bytes written since the last call,
-/// outside [`Env::private`]; earlier ones are in that call's record.
+/// How a run ended. `writes` holds the bytes written since the last call that
+/// clobbers memory, outside [`Env::private`]; earlier ones are in that call's
+/// record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Return {
-        /// One per `Return` slot. `None` for a slot that is not an integer, one
-        /// the interpreter cannot produce, or an undefined value (a division by
-        /// zero, `INT_MIN / -1`).
-        values: Vec<Option<u128>>,
+        /// One per `Return` slot.
+        values: Vec<Slot>,
         writes: BTreeMap<u64, u8>,
         calls: Vec<CallRecord>,
     },
@@ -178,8 +210,8 @@ pub fn run_observed(
     Ok(Outcome::Diverge)
 }
 
-/// Memory at one point of a run: the bytes written since the last call, over
-/// what that call, or the entry state, left.
+/// Memory at one point of a run: the bytes written since the last call that
+/// clobbers memory, over what that call, or the entry state, left.
 #[derive(Clone, Debug, Default)]
 struct Mem {
     written: BTreeMap<u64, u8>,
@@ -193,10 +225,10 @@ struct Machine<'a, 'e> {
     live: strider_ir::walk::NodeIdSet,
     /// Values that change as control moves: phis, memory phis, call outputs.
     now: FxHashMap<ValueId, Eval<Option<u128>>>,
-    mem_now: FxHashMap<ValueId, Eval<Mem>>,
+    mem_now: FxHashMap<ValueId, Eval<Rc<Mem>>>,
     /// Every other value, over the current `now` and `mem_now`.
     ints: FxHashMap<ValueId, Option<u128>>,
-    mems: FxHashMap<ValueId, Mem>,
+    mems: FxHashMap<ValueId, Rc<Mem>>,
     calls: Vec<CallRecord>,
 }
 
@@ -257,7 +289,7 @@ impl<'a, 'e> Machine<'a, 'e> {
     fn settle(
         &mut self,
         ints: Vec<(ValueId, Eval<Option<u128>>)>,
-        mems: Vec<(ValueId, Eval<Mem>)>,
+        mems: Vec<(ValueId, Eval<Rc<Mem>>)>,
     ) {
         let mut replaced = false;
         for (v, r) in ints {
@@ -343,23 +375,23 @@ impl<'a, 'e> Machine<'a, 'e> {
         Ok(r)
     }
 
-    fn mem(&mut self, v: ValueId) -> Eval<Mem> {
+    fn mem(&mut self, v: ValueId) -> Eval<Rc<Mem>> {
         if let Some(r) = self.mem_now.get(&v) {
             return r.clone();
         }
         if let Some(m) = self.mems.get(&v) {
-            return Ok(m.clone());
+            return Ok(Rc::clone(m));
         }
         let f = self.f;
         let node = f.producer(v);
         let mem = match *f.node_kind(node) {
-            NodeKind::InitialMemory => Mem::default(),
+            NodeKind::InitialMemory => Rc::default(),
             NodeKind::Store(space) => {
                 if space != rsleigh::VnSpace::RAM {
                     return unsupported(format!("a store to {space:?}"));
                 }
                 let ins: Vec<ValueId> = f.node_inputs(node).into_iter().collect();
-                let mut mem = self.mem(ins[0])?;
+                let prev = self.mem(ins[0])?;
                 let Some(at) = self.int(ins[1])? else {
                     return unsupported("a store to an undefined address");
                 };
@@ -367,6 +399,9 @@ impl<'a, 'e> Machine<'a, 'e> {
                     return unsupported("a store of an undefined value");
                 };
                 let size = int_type(f, ins[2])?.bit_width().div_ceil(8);
+                // The one copy a store makes: `prev` stays cached for its
+                // other readers.
+                let mut mem = Mem::clone(&prev);
                 // Little-endian value bytes, then into address order.
                 let mut bytes = data.to_le_bytes()[..size].to_vec();
                 if f.endianness() == Endianness::Big {
@@ -375,11 +410,11 @@ impl<'a, 'e> Machine<'a, 'e> {
                 for (i, byte) in bytes.into_iter().enumerate() {
                     mem.written.insert((at as u64).wrapping_add(i as u64), byte);
                 }
-                mem
+                Rc::new(mem)
             }
             other => return unsupported(format!("{} as a memory state", label(&other))),
         };
-        self.mems.insert(v, mem.clone());
+        self.mems.insert(v, Rc::clone(&mem));
         Ok(mem)
     }
 
@@ -444,11 +479,11 @@ impl<'a, 'e> Machine<'a, 'e> {
         let Some(target) = self.int(ins[2])? else {
             return unsupported("a call to an undefined target");
         };
-        // An argument the interpreter cannot produce is recorded as unknown:
-        // the callee reads none of them.
+        // The callee reads none of them, so an unsupported one does not stop
+        // the run.
         let args = ins[4..]
             .iter()
-            .map(|&arg| self.int(arg).ok().flatten())
+            .map(|&arg| Slot::of(self.int(arg)))
             .collect();
         let before = self.mem(ins[1])?;
         let writes = self.snapshot(&before);
@@ -462,10 +497,10 @@ impl<'a, 'e> Machine<'a, 'e> {
         let after = if f.get_cc(node).preserves_memory {
             before
         } else {
-            Mem {
+            Rc::new(Mem {
                 written: BTreeMap::new(),
                 calls: k,
-            }
+            })
         };
         let seed = self.env.seed;
         let ints = outs[2..]
@@ -498,9 +533,8 @@ impl<'a, 'e> Machine<'a, 'e> {
         let ins: Vec<ValueId> = f.node_inputs(node).into_iter().collect();
         let mut values = Vec::with_capacity(ins.len() - 2);
         for &v in &ins[2..] {
-            // A slot the interpreter cannot produce reads as unknown.
-            let value = self.int(v).ok().flatten();
-            if let Some(x) = value {
+            let value = Slot::of(self.int(v));
+            if let Slot::Known(x) = value {
                 observe(node, v, x);
             }
             values.push(value);
@@ -617,6 +651,7 @@ fn compare(op: IntCmpOp, a: u128, b: u128, ty: ValueType) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::Slot::Known;
     use super::*;
     use crate::{MockRom, RegisterSet, make_empty_fn, make_empty_fn_endian, reg_vn};
     use strider_ir::node::ValueKind;
@@ -637,7 +672,7 @@ mod tests {
         }
     }
 
-    fn returned(f: &Function, env: &Env<'_>) -> Vec<Option<u128>> {
+    fn returned(f: &Function, env: &Env<'_>) -> Vec<Slot> {
         match run(f, env).expect("the function runs") {
             Outcome::Return { values, .. } => values,
             other => panic!("ended {other:?}"),
@@ -661,7 +696,7 @@ mod tests {
             Ok(b.function().node_outputs(node)[0])
         })
         .expect("a shift with a wider count is valid IR");
-        assert_eq!(returned(&f, &env(&|_| 0, None)), vec![Some(0)]);
+        assert_eq!(returned(&f, &env(&|_| 0, None)), vec![Known(0)]);
     }
 
     /// `i = start; do i += step while i != stop; return i`.
@@ -698,7 +733,7 @@ mod tests {
     fn a_loop_runs_until_it_exits() {
         assert_eq!(
             returned(&counting_loop(0, 1, 5), &env(&|_| 0, None)),
-            vec![Some(5)]
+            vec![Known(5)]
         );
     }
 
@@ -723,7 +758,7 @@ mod tests {
             .unwrap();
             assert_eq!(
                 returned(&f, &env(&|_| 0, None)),
-                vec![Some(first)],
+                vec![Known(first)],
                 "{endianness:?}"
             );
         }
@@ -739,7 +774,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             returned(&f, &env(&|_| 0, Some(&rom))),
-            vec![Some(0x0403_0201)]
+            vec![Known(0x0403_0201)]
         );
     }
 
@@ -766,7 +801,7 @@ mod tests {
         match run(&f, &env(&|_| 0, Some(&rom))).expect("the function runs") {
             Outcome::Return { values, calls, .. } => {
                 let noise_byte = u128::from(noise(SEED, 0x5000, 1) as u8);
-                assert_eq!(values, vec![Some(0x5a), Some(noise_byte)]);
+                assert_eq!(values, vec![Known(0x5a), Known(noise_byte)]);
                 assert_eq!(
                     calls,
                     vec![CallRecord {
@@ -803,8 +838,239 @@ mod tests {
     fn a_switch_takes_the_arm_its_selector_names() {
         assert_eq!(
             returned(&two_way_switch(), &env(&|_| 0x200, None)),
-            vec![Some(2)]
+            vec![Known(2)]
         );
-        assert!(run(&two_way_switch(), &env(&|_| 0x300, None)).is_err());
+        assert_eq!(
+            run(&two_way_switch(), &env(&|_| 0x300, None)),
+            Err(Unsupported("a switch selector naming no arm".into()))
+        );
+    }
+
+    #[test]
+    fn a_raw_slot_admits_only_what_refines_it() {
+        assert_eq!(Known(1).admits(&Known(1)), Some(true));
+        assert_eq!(Known(1).admits(&Slot::Undefined), Some(false));
+        assert_eq!(Slot::Undefined.admits(&Known(7)), Some(true));
+        assert_eq!(Slot::Unsupported(String::new()).admits(&Known(7)), None);
+    }
+
+    #[test]
+    fn a_return_slot_tells_undefined_from_unsupported() {
+        let x = reg_vn(0x1000, 4);
+        let mut b = RegisterSet::new()
+            .tracked(x)
+            .build_fn_single_region()
+            .unwrap();
+        let v = b.read_variable(&x).unwrap();
+        let zero = b.build_int_const(0u32, ValueType::I32).unwrap();
+        let undefined = b
+            .build_int_binary_operation(v, zero, IntBinaryOp::Div, ValueType::I32)
+            .unwrap();
+        let float = b.build_float_const(0, ValueType::F32);
+        b.build_return(None, &[undefined, float]).unwrap();
+        let values = returned(&b.build().unwrap(), &env(&|_| 5, None));
+        assert_eq!(values[0], Slot::Undefined);
+        assert!(matches!(values[1], Slot::Unsupported(_)), "{values:?}");
+    }
+
+    #[test]
+    fn private_bytes_are_left_out_of_the_writes() {
+        let f = make_empty_fn(|b| {
+            for at in [0x5000u64, 0x7000] {
+                let at = b.build_int_const(at, ValueType::I64)?;
+                let byte = b.build_int_const(0xabu8, ValueType::I8)?;
+                b.build_store(at, byte, rsleigh::VnSpace::RAM)?;
+            }
+            b.build_int_const(0u8, ValueType::I8)
+        })
+        .unwrap();
+        let env = Env {
+            private: Some(0x7000..=0x7fff),
+            ..env(&|_| 0, None)
+        };
+        match run(&f, &env).expect("the function runs") {
+            Outcome::Return { writes, .. } => {
+                assert_eq!(writes, BTreeMap::from([(0x5000, 0xab)]));
+            }
+            other => panic!("ended {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_memory_preserving_call_keeps_memory() {
+        let mut b = RegisterSet::new().build_fn_single_region().unwrap();
+        let heap = b.build_int_const(0x5000u64, ValueType::I64).unwrap();
+        let byte = b.build_int_const(0xabu8, ValueType::I8).unwrap();
+        b.build_store(heap, byte, rsleigh::VnSpace::RAM).unwrap();
+        let cc = strider_target::BuiltCallingConvention {
+            preserves_memory: true,
+            ..b.function().default_cc().clone()
+        };
+        let target = b.build_int_const(0x9000u64, ValueType::I64).unwrap();
+        b.build_call_cc(target, Some(&cc)).unwrap();
+        let kept = b
+            .build_load(heap, rsleigh::VnSpace::RAM, ValueType::I8)
+            .unwrap();
+        b.build_return(None, &[kept]).unwrap();
+        let f = b.build().unwrap();
+        let written = BTreeMap::from([(0x5000, 0xab)]);
+        assert_eq!(
+            run(&f, &env(&|_| 0, None)),
+            Ok(Outcome::Return {
+                values: vec![Known(0xab)],
+                writes: written.clone(),
+                calls: vec![CallRecord {
+                    target: 0x9000,
+                    args: Vec::new(),
+                    writes: written,
+                }],
+            })
+        );
+    }
+
+    /// `a, b = b, a` three times: each phi reads its input before any is
+    /// written.
+    #[test]
+    fn phis_on_one_edge_take_their_inputs_together() {
+        let (a, b_vn, i) = (reg_vn(0x1000, 4), reg_vn(0x1010, 4), reg_vn(0x1020, 4));
+        let mut b = RegisterSet::new()
+            .tracked(a)
+            .tracked(b_vn)
+            .tracked(i)
+            .build_fn()
+            .unwrap();
+        let entry = b.create_region_all().unwrap();
+        let head = b.create_region_all().unwrap();
+        let exit = b.create_region_all().unwrap();
+        b.set_entry_region_all(entry).unwrap();
+        b.set_region(entry);
+        for (vn, value) in [(a, 1u32), (b_vn, 2), (i, 0)] {
+            let c = b.build_int_const(value, ValueType::I32).unwrap();
+            b.write_variable(&vn, c).unwrap();
+        }
+        b.build_branch(head).unwrap();
+        b.set_region(head);
+        let (cur_a, cur_b) = (
+            b.read_variable(&a).unwrap(),
+            b.read_variable(&b_vn).unwrap(),
+        );
+        b.write_variable(&a, cur_b).unwrap();
+        b.write_variable(&b_vn, cur_a).unwrap();
+        let cur_i = b.read_variable(&i).unwrap();
+        let one = b.build_int_const(1u32, ValueType::I32).unwrap();
+        let next = b
+            .build_int_binary_operation(cur_i, one, IntBinaryOp::Add, ValueType::I32)
+            .unwrap();
+        b.write_variable(&i, next).unwrap();
+        let three = b.build_int_const(3u32, ValueType::I32).unwrap();
+        let done = b
+            .build_int_cmp_operation(next, three, IntCmpOp::Equal, ValueType::I32)
+            .unwrap();
+        b.build_if(done, exit, head).unwrap();
+        b.set_region(exit);
+        let out = [
+            b.read_variable(&a).unwrap(),
+            b.read_variable(&b_vn).unwrap(),
+        ];
+        b.build_return(None, &out).unwrap();
+        let f = b.build().unwrap();
+        assert_eq!(returned(&f, &env(&|_| 0, None)), vec![Known(2), Known(1)]);
+    }
+
+    /// A trap reports what its optional memory input wrote after the last
+    /// call, and that call.
+    #[test]
+    fn a_trap_reports_its_writes_and_calls() {
+        let mut b = RegisterSet::new().build_fn_single_region().unwrap();
+        let heap = b.build_int_const(0x5000u64, ValueType::I64).unwrap();
+        let byte = b.build_int_const(0xabu8, ValueType::I8).unwrap();
+        b.build_store(heap, byte, rsleigh::VnSpace::RAM).unwrap();
+        let target = b.build_int_const(0x9000u64, ValueType::I64).unwrap();
+        b.build_call_cc(target, None).unwrap();
+        b.build_unreachable().unwrap();
+        let mut f = b.build().unwrap();
+        let only = |f: &Function, kind: fn(&NodeKind) -> bool| f.walk_kind(kind).next().unwrap();
+        let trap = only(&f, |k| matches!(k, NodeKind::Unreachable));
+        let call = only(&f, |k| matches!(k, NodeKind::Call { .. }));
+        // The builder's trap takes no memory; give it a store after the call.
+        let mut edit = strider_ir::EditFunction::new(&mut f);
+        let after_call = edit.function().node_outputs(call)[1];
+        let at = edit.build_int_const(0x5001u64, ValueType::I64).unwrap();
+        let byte = edit.build_int_const(0xcdu8, ValueType::I8).unwrap();
+        let store = edit.create_node(
+            NodeKind::Store(rsleigh::VnSpace::RAM),
+            [after_call, at, byte],
+            [ValueKind::Memory],
+        );
+        let stored = edit.function().node_outputs(store)[0];
+        edit.add_node_input(trap, stored).unwrap();
+        assert_eq!(
+            run(&f, &env(&|_| 0, None)),
+            Ok(Outcome::Unreachable {
+                writes: BTreeMap::from([(0x5001, 0xcd)]),
+                calls: vec![CallRecord {
+                    target: 0x9000,
+                    args: Vec::new(),
+                    writes: BTreeMap::from([(0x5000, 0xab)]),
+                }],
+            })
+        );
+    }
+
+    #[test]
+    fn observe_sees_tested_operands_and_returned_values() {
+        let x = reg_vn(0x1000, 4);
+        // if x < 10 { return x } else { return 0 }
+        let mut b = RegisterSet::new().tracked(x).build_fn().unwrap();
+        let entry = b.create_region_all().unwrap();
+        let then = b.create_region_all().unwrap();
+        let other = b.create_region_all().unwrap();
+        b.set_entry_region_all(entry).unwrap();
+        b.set_region(entry);
+        let v = b.read_variable(&x).unwrap();
+        let ten = b.build_int_const(10u32, ValueType::I32).unwrap();
+        let cond = b
+            .build_int_cmp_operation(v, ten, IntCmpOp::Less, ValueType::I32)
+            .unwrap();
+        b.build_if(cond, then, other).unwrap();
+        b.set_region(then);
+        b.build_return(None, &[v]).unwrap();
+        b.set_region(other);
+        let zero = b.build_int_const(0u32, ValueType::I32).unwrap();
+        b.build_return(None, &[zero]).unwrap();
+        let f = b.build().unwrap();
+        let mut seen = Vec::new();
+        run_observed(&f, &env(&|_| 3, None), &mut |at, _, value| {
+            seen.push((label(f.node_kind(at)), value));
+        })
+        .expect("the function runs");
+        let expected = [("If", 3), ("If", 10), ("Return", 3)];
+        assert_eq!(seen, expected.map(|(kind, value)| (kind.to_owned(), value)));
+    }
+
+    #[test]
+    fn an_undefined_branch_condition_diverges() {
+        let x = reg_vn(0x1000, 4);
+        let mut b = RegisterSet::new().tracked(x).build_fn().unwrap();
+        let entry = b.create_region_all().unwrap();
+        let then = b.create_region_all().unwrap();
+        let other = b.create_region_all().unwrap();
+        b.set_entry_region_all(entry).unwrap();
+        b.set_region(entry);
+        let v = b.read_variable(&x).unwrap();
+        let zero = b.build_int_const(0u32, ValueType::I32).unwrap();
+        let undefined = b
+            .build_int_binary_operation(v, zero, IntBinaryOp::Div, ValueType::I32)
+            .unwrap();
+        let cond = b
+            .build_int_cmp_operation(undefined, zero, IntCmpOp::Equal, ValueType::I32)
+            .unwrap();
+        b.build_if(cond, then, other).unwrap();
+        for region in [then, other] {
+            b.set_region(region);
+            b.build_return(None, &[zero]).unwrap();
+        }
+        let f = b.build().unwrap();
+        assert_eq!(run(&f, &env(&|_| 5, None)), Ok(Outcome::Diverge));
     }
 }

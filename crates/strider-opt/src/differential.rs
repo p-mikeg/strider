@@ -19,7 +19,7 @@
 use rustc_hash::FxHashMap;
 use strider_ir::node::{ExtendOp, NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp};
-use strider_ir_test_utils::interp::{self, EntryVar, Outcome};
+use strider_ir_test_utils::interp::{self, EntryVar, Outcome, Slot};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
 use crate::test_support::Rng;
@@ -722,8 +722,8 @@ fn input_value(rng: &mut Rng, ty: ValueType) -> u128 {
 }
 
 /// Returns the number of compared (trial, return value) pairs, or a
-/// description of the first mismatch. A pair whose reference value is `None`
-/// -- division by zero, `INT_MIN / -1` -- is not comparable and not counted.
+/// description of the first mismatch. A pair whose reference value is
+/// undefined -- division by zero, `INT_MIN / -1` -- is not counted.
 pub(crate) fn check_seed(
     seed: u64,
     steps: usize,
@@ -757,10 +757,13 @@ pub(crate) fn check_seed(
         }
     };
     let returned = |f: &strider_ir::Function, t: usize| match run_cfg(f, &|e| entry(t, e)) {
-        Outcome::Return { values, .. } => values,
-        other => panic!("seed {seed}: trial {t} ended {other:?}"),
+        Ok(Outcome::Return { values, .. }) => Ok(values),
+        other => Err(format!("trial {t} ended {other:?}")),
     };
-    let expected: Vec<Vec<Option<u128>>> = (0..ntrials).map(|t| returned(&f, t)).collect();
+    let expected = (0..ntrials)
+        .map(|t| returned(&f, t))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("seed {seed}: before the pipeline, {e}\n{before_text}"))?;
     if let Err(e) = run(&mut f) {
         return Err(format!("seed {seed}: pipeline error {e:#}\n{before_text}"));
     }
@@ -770,16 +773,28 @@ pub(crate) fn check_seed(
     }
     let mut compared = 0usize;
     for (t, wants) in expected.iter().enumerate() {
-        let gots = returned(&f, t);
-        for (k, (&want, &got)) in wants.iter().zip(&gots).enumerate() {
-            let Some(want) = want else { continue };
-            compared += 1;
-            if got != Some(want) {
-                return Err(format!(
-                    "seed {seed}: ret {k} trial {t}: want {want:#x} got {got:?}; entry seeds {:x?}\nBEFORE:\n{before_text}\nAFTER:\n{}",
-                    &vectors[t][..4],
-                    f.to_text(false)
-                ));
+        let gots = returned(&f, t).map_err(|e| {
+            format!(
+                "seed {seed}: after the pipeline, {e}\nBEFORE:\n{before_text}\nAFTER:\n{}",
+                f.to_text(false)
+            )
+        })?;
+        for (k, (want, got)) in wants.iter().zip(&gots).enumerate() {
+            match want.admits(got) {
+                Some(true) => compared += usize::from(matches!(want, Slot::Known(_))),
+                Some(false) => {
+                    return Err(format!(
+                        "seed {seed}: ret {k} trial {t}: want {want:x?} got {got:x?}; entry seeds {:x?}\nBEFORE:\n{before_text}\nAFTER:\n{}",
+                        &vectors[t][..4],
+                        f.to_text(false)
+                    ));
+                }
+                // The generator emits only kinds the interpreter runs.
+                None => {
+                    return Err(format!(
+                        "seed {seed}: ret {k} trial {t}: {want:?}\n{before_text}"
+                    ));
+                }
             }
         }
     }
@@ -849,10 +864,8 @@ fn the_pipeline_preserves_dag_semantics() {
 // CFG-level differential fuzzer.
 
 /// The reference runs' environment. The budget is high enough that `Diverge`
-/// means a loop rather than "longer than the budget", which is what lets the
-/// CFG comparison assert on it: at 400 a long-but-finite loop read as
-/// non-termination and the arm had to be exempt, and 20 000 reclassifies only
-/// a handful of seeds.
+/// means a loop, not a long finite run, so the CFG comparison can assert on
+/// it.
 fn reference_env(entry: &dyn Fn(EntryVar) -> u128) -> interp::Env<'_> {
     interp::Env {
         entry,
@@ -863,9 +876,53 @@ fn reference_env(entry: &dyn Fn(EntryVar) -> u128) -> interp::Env<'_> {
     }
 }
 
-fn run_cfg(f: &strider_ir::Function, entry: &dyn Fn(EntryVar) -> u128) -> Outcome {
+fn run_cfg(
+    f: &strider_ir::Function,
+    entry: &dyn Fn(EntryVar) -> u128,
+) -> Result<Outcome, interp::Unsupported> {
     interp::run(f, &reference_env(entry))
-        .unwrap_or_else(|why| panic!("the reference interpreter: {why:?}"))
+}
+
+/// Whether the optimised `got` may stand for the raw `want`: equal, except
+/// that anything refines an undefined raw slot.
+fn refines(want: &Outcome, got: &Outcome) -> Result<bool, String> {
+    let slots = |want: &[Slot], got: &[Slot]| -> Result<bool, String> {
+        if want.len() != got.len() {
+            return Ok(false);
+        }
+        for (w, g) in want.iter().zip(got) {
+            match w.admits(g) {
+                Some(true) => {}
+                Some(false) => return Ok(false),
+                None => return Err(format!("the reference cannot evaluate {w:?}")),
+            }
+        }
+        Ok(true)
+    };
+    let (
+        Outcome::Return {
+            values: wv,
+            writes: ww,
+            calls: wc,
+        },
+        Outcome::Return {
+            values: gv,
+            writes: gw,
+            calls: gc,
+        },
+    ) = (want, got)
+    else {
+        return Ok(false);
+    };
+    if ww != gw || wc.len() != gc.len() || !slots(wv, gv)? {
+        return Ok(false);
+    }
+    for (w, g) in wc.iter().zip(gc) {
+        if w.target != g.target || w.writes != g.writes || !slots(&w.args, &g.args)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
@@ -1028,26 +1085,34 @@ fn the_pipeline_preserves_cfg_semantics() {
                     .map(|_| (0..4).map(|_| u128::from(rng.next())).collect())
                     .collect();
                 for vec in &vecs {
-                    outcomes.push(run_cfg(&f, &|e| {
+                    let want = run_cfg(&f, &|e| {
                         input_value(&mut Rng(vec[e.index] as u64 | 1), e.ty)
-                    }));
+                    })
+                    .map_err(|why| {
+                        format!("seed {seed}: inputs {vec:?} before the pipeline: {why:?}\n{before_text}")
+                    })?;
+                    outcomes.push(want);
                 }
                 crate::default_pipeline()
                     .run(&mut f, &mut crate::OptCtx::at_floor(None))
                     .map_err(|e| format!("seed {seed}: pipeline error {e:#}\n{before_text}"))?;
                 let mut cmp = 0;
                 for (vec, want) in vecs.iter().zip(&outcomes) {
+                    let dump = |what: String| {
+                        format!(
+                            "seed {seed}: inputs {vec:?} {what}\nBEFORE:\n{before_text}\nAFTER:\n{}",
+                            f.to_text(false)
+                        )
+                    };
                     let got = run_cfg(&f, &|e| {
                         input_value(&mut Rng(vec[e.index] as u64 | 1), e.ty)
-                    });
+                    })
+                    .map_err(|why| dump(format!("after the pipeline: {why:?}")))?;
                     match want {
                         Outcome::Return { .. } => {
                             cmp += 1;
-                            if &got != want {
-                                return Err(format!(
-                                    "seed {seed}: inputs {vec:?} want {want:?} got {got:?}\nBEFORE:\n{before_text}\nAFTER:\n{}",
-                                    f.to_text(false)
-                                ));
+                            if !refines(want, &got).map_err(dump)? {
+                                return Err(dump(format!("want {want:?} got {got:?}")));
                             }
                         }
                         Outcome::Unreachable { .. } => {
