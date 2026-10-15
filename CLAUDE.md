@@ -123,8 +123,8 @@ Strider:
   (`Lifter` / `LiftOptions` / `LiftOutcome` at the crate root) and `strider-opt`
   re-exported as `opt`.
 - `strider-ir-test-utils`: `make_empty_fn` / `RegisterSet` builders,
-  `MockRom`, asm-fingerprint stamping, and the `proptest-gen`-gated
-  `proptest_gen` generator, shared by tests.
+  `MockRom`, asm-fingerprint stamping, the `interp` reference interpreter, and
+  the `proptest-gen`-gated `proptest_gen` generator, shared by tests.
 - `strider-py`: PyO3 bindings (`maturin develop` builds a wheel).
 
 ## Dependency graph (X -> Y = X depends on Y)
