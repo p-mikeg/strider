@@ -9,18 +9,20 @@
 //!
 //! An environment the interpreter cannot run (a `CallOther`, an unresolved
 //! indirect branch), or whose raw run yields a slot it cannot produce (a
-//! float), is skipped rather than silently passing. Every test asserts a floor
+//! float), is skipped rather than silently passing. Every sweep asserts a floor
 //! on how many functions were really compared; the named ones also allow no
 //! unproducible raw slot at all.
 
 mod common;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use common::fixtures::Fixture;
 use common::{Arch, lift_for_pipeline};
 use strider_ir::{Function, ReadOnlyMemory};
-use strider_ir_test_utils::interp::{self, CallRecord, EntryVar, Env, Outcome, Slot, mix};
+use strider_ir_test_utils::interp::{
+    self, CallRecord, Divergence, EntryVar, Env, Outcome, Slot, mix,
+};
 
 /// Where the stack pointer is planted, and how wide a window either side of it
 /// counts as the function's own frame. A spill there dies with the frame, so
@@ -108,7 +110,8 @@ struct Coverage {
 }
 
 /// Runs `raw` and `opt` in every environment of [`ENVS`]. An environment
-/// counts only when it checked something and left no raw slot unchecked.
+/// counts only when it checked something and left no raw slot unchecked; a
+/// skipped function names every reason its environments gave.
 fn compare(
     raw: &Function,
     opt: &Function,
@@ -117,14 +120,18 @@ fn compare(
 ) -> Verdict {
     let stack_vn = raw.default_cc().stack_vn;
     let mut compared = false;
-    let mut skipped = String::new();
+    let mut skipped = BTreeSet::new();
     for (seed, small) in ENVS {
         let entry = |e: EntryVar| entry_value(e, stack_vn, seed, small);
         let env = environment(&entry, rom, seed);
         let want = match interp::run(raw, &env) {
-            Ok(Outcome::Diverge(_)) => {
+            Ok(Outcome::Diverge(why)) => {
                 unchecked.diverged += 1;
-                skipped = "the raw run diverged".to_owned();
+                let why = match why {
+                    Divergence::StepBudget => "the raw run ran out of steps",
+                    Divergence::UndefinedBranch => "the raw run branched on an undefined value",
+                };
+                skipped.insert(why.to_owned());
                 continue;
             }
             Ok(outcome) => outcome,
@@ -132,7 +139,7 @@ fn compare(
             // divergence: folding float constants can remove what stopped the
             // raw run.
             Err(why) => {
-                skipped = why.0;
+                skipped.insert(why.0);
                 continue;
             }
         };
@@ -146,9 +153,9 @@ fn compare(
         };
         unchecked.slots += coverage.unchecked;
         if coverage.unchecked > 0 {
-            skipped = "raw slots the interpreter cannot produce".to_owned();
+            skipped.insert("raw slots the interpreter cannot produce".to_owned());
         } else if coverage.checked == 0 {
-            skipped = "nothing to check".to_owned();
+            skipped.insert("nothing to check".to_owned());
         } else {
             compared = true;
         }
@@ -156,7 +163,7 @@ fn compare(
     if compared {
         Verdict::Compared
     } else {
-        Verdict::Skipped(skipped)
+        Verdict::Skipped(skipped.into_iter().collect::<Vec<_>>().join("; "))
     }
 }
 
@@ -401,15 +408,15 @@ fn the_comparison_can_tell_two_functions_apart() {
     });
 }
 
-/// Below this share of compared functions an arch's sweep fails. The rest are
-/// skipped by reason and printed.
-const SWEEP_FLOOR_PERCENT: usize = 79;
-
-/// `analyze` refusals the fixtures produce, as `arch/case::function`.
-const KNOWN_ANALYZE_ERRORS: &[&str] = &[
+/// `analyze` refusals the fixtures produce, as `arch/case::function` and a
+/// fragment of the error.
+const KNOWN_ANALYZE_ERRORS: &[(&str, &str)] = &[
     // The symbol's recorded size ends before the hand-written `_start` does,
     // so the size-bounded lift runs off it.
-    "aarch64/zero_pcode_holes::_start",
+    (
+        "aarch64/zero_pcode_holes::_start",
+        "sequential decoding overflowed",
+    ),
 ];
 
 #[derive(Default)]
@@ -445,13 +452,13 @@ fn functions(obj: &object::File<'_>) -> BTreeMap<u64, (String, u64)> {
 
 /// Analyses every function of `arch`'s fixtures with production defaults and
 /// compares the optimised result with the raw lift of the same CFG.
-fn sweep_arch(arch: Arch) {
+fn sweep_arch(arch: Arch, floor_percent: usize) {
     on_interp_stack(|| {
         let mut tally = Tally::default();
         for fixture in Fixture::all(arch.fixture()) {
             sweep_fixture(&fixture, &mut tally);
         }
-        report(arch, &tally);
+        report(arch, &tally, floor_percent);
     });
 }
 
@@ -503,7 +510,7 @@ fn sweep_fixture(fixture: &Fixture, tally: &mut Tally) {
     }
 }
 
-fn report(arch: Arch, tally: &Tally) {
+fn report(arch: Arch, tally: &Tally, floor_percent: usize) {
     let name = arch.name();
     eprintln!(
         "{name}: {} functions, {} compared, {} analyze errors, {} environments \
@@ -525,43 +532,47 @@ fn report(arch: Arch, tally: &Tally) {
         tally.failures.join("\n=====\n")
     );
     let prefix = format!("{name}/");
-    let known: Vec<&str> = KNOWN_ANALYZE_ERRORS
+    let known: Vec<(&str, &str)> = KNOWN_ANALYZE_ERRORS
         .iter()
         .copied()
-        .filter(|k| k.starts_with(&prefix))
+        .filter(|(k, _)| k.starts_with(&prefix))
         .collect();
-    let refused = |k: &str, e: &str| e.starts_with(&format!("{k}: "));
+    let refused =
+        |(k, why): (&str, &str), e: &str| e.starts_with(&format!("{k}: ")) && e.contains(why);
     let unexpected: Vec<&str> = tally
         .analyze_errors
         .iter()
         .map(String::as_str)
-        .filter(|e| !known.iter().any(|k| refused(k, e)))
+        .filter(|e| !known.iter().any(|&k| refused(k, e)))
         .collect();
     assert!(
         unexpected.is_empty(),
         "analyze refused:\n{}",
         unexpected.join("\n")
     );
-    let stale: Vec<&str> = known
+    let stale: Vec<(&str, &str)> = known
         .iter()
         .copied()
-        .filter(|k| !tally.analyze_errors.iter().any(|e| refused(k, e)))
+        .filter(|&k| !tally.analyze_errors.iter().any(|e| refused(k, e)))
         .collect();
     assert!(
         stale.is_empty(),
         "no longer refused, drop from KNOWN_ANALYZE_ERRORS: {stale:?}"
     );
+    assert!(tally.attempted > 0, "{name}: no functions in the fixtures");
     assert!(
-        tally.compared * 100 >= tally.attempted * SWEEP_FLOOR_PERCENT,
+        tally.compared * 100 >= tally.attempted * floor_percent,
         "{name}: only {} of {} functions compared",
         tally.compared,
         tally.attempted
     );
 }
 
-/// One test per arch, so the harness runs them in parallel.
+/// One test per arch, so the harness runs them in parallel. Each names the
+/// share of the arch's functions, in percent, that must be compared: its
+/// measured share less 5. The rest are skipped by reason and printed.
 macro_rules! fixture_sweeps {
-    ($($test:ident => $arch:ident),+ $(,)?) => {
+    ($($test:ident => $arch:ident, $floor:literal),+ $(,)?) => {
         $(
             #[test]
             #[cfg_attr(
@@ -569,7 +580,7 @@ macro_rules! fixture_sweeps {
                 ignore = "release-only: analyses every function of the arch's fixtures"
             )]
             fn $test() {
-                sweep_arch(Arch::$arch);
+                sweep_arch(Arch::$arch, $floor);
             }
         )+
         /// The arches the sweep runs.
@@ -579,9 +590,9 @@ macro_rules! fixture_sweeps {
 }
 
 fixture_sweeps! {
-    every_x64_function_survives_the_pipeline => X64,
-    every_aarch64_function_survives_the_pipeline => Aarch64,
-    every_arm_function_survives_the_pipeline => Arm,
-    every_mips32be_function_survives_the_pipeline => Mips32be,
-    every_ppc32be_function_survives_the_pipeline => Ppc32be,
+    every_x64_function_survives_the_pipeline => X64, 85,
+    every_aarch64_function_survives_the_pipeline => Aarch64, 91,
+    every_arm_function_survives_the_pipeline => Arm, 91,
+    every_mips32be_function_survives_the_pipeline => Mips32be, 79,
+    every_ppc32be_function_survives_the_pipeline => Ppc32be, 86,
 }
