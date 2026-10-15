@@ -483,12 +483,11 @@ mod tests {
     }
 
     /// A 32-bit link-register function saving `lr` at `sp + 0x8000_0000` (off an
-    /// `And`-aligned SP when `aligned`), writing 4 bytes at `sp + 0x7FFF_FFFE`
-    /// when `clobber`, then branching through the reloaded slot.  Mod 2^32 the
-    /// clobber's top two bytes are the slot's bottom two.
+    /// `And`-aligned SP when `aligned`), writing 4 bytes at `sp + store` when
+    /// given, then branching through the reloaded slot.
     fn lr_saved_across_the_wrap(
         aligned: bool,
-        clobber: bool,
+        store: Option<u64>,
     ) -> (strider_ir::Function, NodeId, ValueId) {
         let sp = strider_ir_test_utils::stack_vn_x86();
         let lr = fake_reg_vn(0x4c, 4);
@@ -513,8 +512,8 @@ mod tests {
         };
         let slot = at(&mut b, frame, 0x8000_0000);
         b.build_store(slot, lr_val, rsleigh::VnSpace::RAM).unwrap();
-        if clobber {
-            let near = at(&mut b, sp_val, 0x7FFF_FFFE);
+        if let Some(off) = store {
+            let near = at(&mut b, sp_val, off);
             let junk = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32).unwrap();
             b.build_store(near, junk, rsleigh::VnSpace::RAM).unwrap();
         }
@@ -537,16 +536,21 @@ mod tests {
     fn a_store_wrapping_onto_the_saved_return_slot_clobbers_it() {
         let none = crate::AssumptionOptions::none();
         for aligned in [false, true] {
-            let (f, branch, target) = lr_saved_across_the_wrap(aligned, false);
+            let (f, branch, target) = lr_saved_across_the_wrap(aligned, None);
             assert!(
                 ReturnTargets::new(&f, &none).returns_to_caller(branch, target),
                 "control, aligned={aligned}: the untouched slot holds lr"
             );
-            let (f, branch, target) = lr_saved_across_the_wrap(aligned, true);
+            let (f, branch, target) = lr_saved_across_the_wrap(aligned, Some(0x7FFF_FFFE));
             assert!(
                 !ReturnTargets::new(&f, &none).returns_to_caller(branch, target),
                 "aligned={aligned}: sp+0x7FFF_FFFE overwrites the slot's low half mod 2^32"
             );
         }
+        let (f, branch, target) = lr_saved_across_the_wrap(false, Some(0x7FFF_FFFC));
+        assert!(
+            ReturnTargets::new(&f, &none).returns_to_caller(branch, target),
+            "sp+0x7FFF_FFFC ends where the slot starts"
+        );
     }
 }
