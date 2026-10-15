@@ -33,7 +33,8 @@ pub struct FunctionArgPat {
 }
 
 impl FunctionArgPat {
-    /// Register- versus stack-passed.
+    /// Register- versus stack-passed. A register selects the carrier whose
+    /// varnode contains it, so `EDI` selects the `RDI` argument.
     pub fn source(mut self, s: FunctionArgSource) -> Self {
         self.source = Some(s);
         self
@@ -82,7 +83,7 @@ impl FunctionArgPat {
                 };
                 match (expected, f.node_kind(node)) {
                     (FunctionArgSource::Register(want), NodeKind::InitialVar(actual)) => {
-                        want == f.initial_vn(*actual)
+                        vn_container::vn_contains(&f.initial_vn(*actual), &want)
                     }
                     (
                         FunctionArgSource::Stack {
@@ -170,7 +171,7 @@ pub fn any_function_arg() -> FunctionArgPat {
     FunctionArgPat::default().class(FunctionArgClass::Any)
 }
 
-/// Restricted to a register-passed `InitialVar(vn)`.
+/// Restricted to a register-passed `InitialVar` whose varnode contains `vn`.
 pub fn function_arg_reg(vn: rsleigh::Vn, idx: u32) -> FunctionArgPat {
     FunctionArgPat::default()
         .index(idx)
