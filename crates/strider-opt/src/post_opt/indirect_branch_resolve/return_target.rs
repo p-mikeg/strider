@@ -2,7 +2,7 @@
 //! entered with.
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{
     CtrlKey, DominatorTree, Function, IRViewer, IntBinaryOp, control_edge_dominator_tree,
 };
@@ -571,13 +571,15 @@ impl<'f> ReturnTargets<'f> {
                 },
             ));
         }
-        self.overlap(written, len, at, size, data)
+        self.overlap(function.value_type_opt(addr), written, len, at, size, data)
     }
 
     /// What a store of `len` bytes at `written` does to the `size` bytes at
-    /// `at`, carrying `data` out of an exact hit.
+    /// `at`, carrying `data` out of an exact hit. `ty` is the address type,
+    /// whose width the offsets wrap at.
     fn overlap(
         &self,
+        ty: Option<ValueType>,
         written: StackAddr,
         len: i128,
         at: StackAddr,
@@ -587,7 +589,7 @@ impl<'f> ReturnTargets<'f> {
         if written.base == at.base {
             return if written.offset == at.offset && len == size {
                 StoreEffect::Writes(data)
-            } else if written.offset < at.offset + size && at.offset < written.offset + len {
+            } else if ring_overlap(ty, written.offset, len, at.offset, size) {
                 StoreEffect::Clobbers
             } else {
                 StoreEffect::Passes
@@ -597,7 +599,7 @@ impl<'f> ReturnTargets<'f> {
         // offsets each base can stand at.
         match (self.entry_span(written), self.entry_span(at)) {
             (Some((w_lo, w_hi)), Some((a_lo, a_hi)))
-                if w_lo >= a_hi + size || a_lo >= w_hi + len =>
+                if !ring_overlap(ty, w_lo, w_hi - w_lo + len, a_lo, a_hi - a_lo + size) =>
             {
                 StoreEffect::Passes
             }
@@ -677,4 +679,17 @@ fn const_addend(function: &Function, add: NodeId) -> Option<(ValueId, i128)> {
         (None, Some(c)) => Some((r, c)),
         _ => None,
     }
+}
+
+/// Whether `[a, a + a_len)` and `[b, b + b_len)` share a byte mod 2^w, `w` the
+/// width of `ty`. An unknown width, or one past the `u128` carrier, overlaps.
+fn ring_overlap(ty: Option<ValueType>, a: i128, a_len: i128, b: i128, b_len: i128) -> bool {
+    let Some(mask) = ty
+        .filter(|ty| ty.is_integer() && ty.bit_width() <= 128)
+        .map(ValueType::bit_mask_u128)
+    else {
+        return true;
+    };
+    let ahead = |from: i128, to: i128| (to.wrapping_sub(from) as u128) & mask;
+    ahead(a, b) < a_len.max(0) as u128 || ahead(b, a) < b_len.max(0) as u128
 }

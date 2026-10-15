@@ -481,4 +481,72 @@ mod tests {
         );
         assert_eq!(classify_target_bare(&function, target), None);
     }
+
+    /// A 32-bit link-register function saving `lr` at `sp + 0x8000_0000` (off an
+    /// `And`-aligned SP when `aligned`), writing 4 bytes at `sp + 0x7FFF_FFFE`
+    /// when `clobber`, then branching through the reloaded slot.  Mod 2^32 the
+    /// clobber's top two bytes are the slot's bottom two.
+    fn lr_saved_across_the_wrap(
+        aligned: bool,
+        clobber: bool,
+    ) -> (strider_ir::Function, NodeId, ValueId) {
+        let sp = strider_ir_test_utils::stack_vn_x86();
+        let lr = fake_reg_vn(0x4c, 4);
+        let mut b = strider_ir_test_utils::sp_frame(sp)
+            .tracked(lr)
+            .link_register(lr)
+            .build_fn_single_region()
+            .expect("build_fn_single_region");
+        let sp_val = b.read_variable(&sp).unwrap();
+        let lr_val = b.read_variable(&lr).unwrap();
+        let frame = if aligned {
+            let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::I32).unwrap();
+            b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I32)
+                .unwrap()
+        } else {
+            sp_val
+        };
+        let at = |b: &mut FunctionBuilder, base: ValueId, off: u64| {
+            let c = b.build_int_const(off, ValueType::I32).unwrap();
+            b.build_int_binary_operation(base, c, IntBinaryOp::Add, ValueType::I32)
+                .unwrap()
+        };
+        let slot = at(&mut b, frame, 0x8000_0000);
+        b.build_store(slot, lr_val, rsleigh::VnSpace::RAM).unwrap();
+        if clobber {
+            let near = at(&mut b, sp_val, 0x7FFF_FFFE);
+            let junk = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32).unwrap();
+            b.build_store(near, junk, rsleigh::VnSpace::RAM).unwrap();
+        }
+        let target = b
+            .build_load(slot, rsleigh::VnSpace::RAM, ValueType::I32)
+            .unwrap();
+        let branch = b.build_indirect_branch(target).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        // The hand-built reads sit behind single-input `VarPhi`s.
+        let mut prep = crate::OptimizerPipeline::new();
+        prep.add(crate::PhiCollapse);
+        prep.add(crate::RegionCollapse);
+        prep.run(&mut function, &mut crate::OptCtx::at_floor(None))
+            .expect("prep");
+        (function, branch, target)
+    }
+
+    #[test]
+    fn a_store_wrapping_onto_the_saved_return_slot_clobbers_it() {
+        let none = crate::AssumptionOptions::none();
+        for aligned in [false, true] {
+            let (f, branch, target) = lr_saved_across_the_wrap(aligned, false);
+            assert!(
+                ReturnTargets::new(&f, &none).returns_to_caller(branch, target),
+                "control, aligned={aligned}: the untouched slot holds lr"
+            );
+            let (f, branch, target) = lr_saved_across_the_wrap(aligned, true);
+            assert!(
+                !ReturnTargets::new(&f, &none).returns_to_caller(branch, target),
+                "aligned={aligned}: sp+0x7FFF_FFFE overwrites the slot's low half mod 2^32"
+            );
+        }
+    }
 }
