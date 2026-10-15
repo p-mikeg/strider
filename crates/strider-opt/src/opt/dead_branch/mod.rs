@@ -183,8 +183,6 @@ thread_local! {
 
 thread_local! {
     /// [`escaping_nodes`] for the sweep in progress, shared by every root.
-    /// Not a field on the pass: `DeadBranchElimination` is a unit struct other
-    /// crates name as a value.
     static ESCAPES: RefCell<Option<EscapeSet>> = const { RefCell::new(None) };
 
     /// Nodes an exact walk found no terminator from, shared by every root of
