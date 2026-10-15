@@ -79,6 +79,9 @@ where
     /// Structural CFG build only: no lift, no optimisation, no
     /// indirect-branch resolution.
     ///
+    /// No per-address CCs are applied, so a direct call to a callee declared
+    /// `no_return` there does not end its region, where `analyze` stops at it.
+    ///
     /// # Errors
     ///
     /// Propagates CFG-build failures (see [`Lifter::build_cfg`]).
@@ -87,8 +90,7 @@ where
         entry: u64,
         cfg_opts: &strider_cfg::CfgOptions,
     ) -> Result<strider_cfg::Cfg> {
-        // Per-address CCs are a lift-time concept, threaded only through
-        // `analyze` / `build_lift`.
+        // No per-address CCs: `CfgOptions` cannot carry them yet.
         self.lifter.build_cfg(
             MachineInsnAddr::from(entry),
             cfg_opts,
