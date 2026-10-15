@@ -144,14 +144,13 @@ class Cfg:
         """Dispatch addresses nothing verified: a site seated with exactly the
         `known_targets` you supplied and nothing the classifier derived, every
         site the CFG consumed outright as a tail call, and a site consumed as a
-        return, either because YOUR `"return"` seat is what consumed it or
-        because the re-check of a seat the classifier derived needs
-        `assumptions.return_slots_survive_untracked_writes`, which defaults
-        `True`. An ARM `push {lr}; ... bl ...; pop {pc}` return needs it: the
-        call in between writes memory the check cannot place, so the check
-        assumes the `lr` spill survived rather than proving it. The seat stands
-        and the site is still a return, so that is "complete but unverified",
-        not "incomplete".
+        return because YOUR `"return"` seat is what consumed it, which is also
+        where a FAILED re-check of that seat lands: the seat decided a CFG
+        edge, so the site is not reported as unresolved. A `Return` the
+        CLASSIFIER derived rides no channel once
+        `assumptions.return_slots_survive_untracked_writes` (default `True`)
+        carries its proof; clearing that claim and re-running is how you audit
+        one.
 
         A fourth shape is not a dispatch you seeded: an arm a mode-less
         re-derivation found at a site whose other arms all carry the flowing
@@ -176,11 +175,11 @@ class Cfg:
 
         The answer to "may this be incomplete?", which none of the six gives
         alone. `False` is not always a loss: `unverified_seeded_sites` holds
-        answers that are complete but unverified, among them a return whose
-        re-check rests on `assumptions.return_slots_survive_untracked_writes`
-        instead of proving the seat. `False` over that channel alone reads
-        "complete but unverified". Read whichever channel is non-empty to tell
-        the cases apart.
+        answers that are complete but unverified, among them a site seated
+        with only your own `known_targets`. `False` over that channel alone
+        reads "complete but unverified", EXCEPT for a `"return"` seat whose
+        re-check failed, which lands there too. Read whichever channel is
+        non-empty to tell the cases apart.
 
         On a `build_cfg` CFG `unresolved` is every indirect branch that build
         left without an outgoing edge, since `build_cfg` resolves none of them,
