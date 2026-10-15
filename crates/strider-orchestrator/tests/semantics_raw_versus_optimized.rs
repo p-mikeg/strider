@@ -7,10 +7,11 @@
 //! arguments and visible memory, and every byte written outside the function's
 //! own frame has to come out the same.
 //!
-//! A function the interpreter cannot run (a `CallOther`, an unresolved
-//! indirect branch) is skipped rather than silently passing, a raw slot it
-//! cannot produce (a float) is counted rather than compared, and every test
-//! asserts a floor on how many functions were really compared.
+//! An environment the interpreter cannot run (a `CallOther`, an unresolved
+//! indirect branch), or whose raw run yields a slot it cannot produce (a
+//! float), is skipped rather than silently passing. Every test asserts a floor
+//! on how many functions were really compared; the named ones also allow no
+//! unproducible raw slot at all.
 
 mod common;
 
@@ -144,10 +145,7 @@ fn compare(
         };
         unchecked.slots += coverage.unchecked;
         if coverage.unchecked > 0 {
-            skipped = format!(
-                "{} raw slots the interpreter cannot produce",
-                coverage.unchecked
-            );
+            skipped = "raw slots the interpreter cannot produce".to_owned();
         } else if coverage.checked == 0 {
             skipped = "nothing to check".to_owned();
         } else {
@@ -301,6 +299,7 @@ fn sweep_named(cases: &[(&str, &[&str])], floor: usize) {
 fn sweep_named_here(cases: &[(&str, &[&str])], floor: usize) {
     let mut compared = 0usize;
     let mut unchecked = Unchecked::default();
+    let mut unchecked_in = Vec::new();
     let mut skipped = Vec::new();
     let mut failures = Vec::new();
     for arch in PILOT {
@@ -312,10 +311,14 @@ fn sweep_named_here(cases: &[(&str, &[&str])], floor: usize) {
                 let mut opt = raw.clone();
                 common::optimize(&mut opt, &rom)
                     .unwrap_or_else(|e| panic!("{at}: optimizer pipeline: {e:?}"));
+                let slots_before = unchecked.slots;
                 match compare(&raw, &opt, &rom, &mut unchecked) {
                     Verdict::Compared => compared += 1,
                     Verdict::Skipped(why) => skipped.push(format!("{at}: {why}")),
                     Verdict::Failed(e) => failures.push(format!("{at}: {e}")),
+                }
+                if unchecked.slots > slots_before {
+                    unchecked_in.push(at);
                 }
             }
         }
@@ -331,8 +334,8 @@ fn sweep_named_here(cases: &[(&str, &[&str])], floor: usize) {
     assert_eq!(
         unchecked.slots,
         0,
-        "raw slots the interpreter cannot produce; skipped:\n{}",
-        skipped.join("\n")
+        "raw slots the interpreter cannot produce, in:\n{}",
+        unchecked_in.join("\n")
     );
 }
 
@@ -390,6 +393,9 @@ fn the_comparison_can_tell_two_functions_apart() {
         let mut sub = sub.function;
         common::optimize(&mut sub, &rom).expect("the pipeline runs");
         let verdict = compare(&add.function, &sub, &rom, &mut Unchecked::default());
-        assert!(matches!(verdict, Verdict::Failed(_)), "add and sub agreed");
+        assert!(
+            matches!(&verdict, Verdict::Failed(e) if e.contains(": return slot ")),
+            "add and sub agreed on their return slot"
+        );
     });
 }
