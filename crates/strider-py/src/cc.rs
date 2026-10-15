@@ -105,7 +105,7 @@ impl PyCallingConvention {
 
     /// Build a calling convention from explicit register-name lists, for a
     /// binary whose ABI matches no built-in preset.  Names are resolved and
-    /// ABI invariants checked here, so a bad one raises `StriderError` at
+    /// most ABI invariants checked here, so a bad one raises `StriderError` at
     /// construction rather than at first use.
     ///
     /// Args:
@@ -133,7 +133,9 @@ impl PyCallingConvention {
     ///
     /// The frozen varnodes belong to `sleigh`'s architecture, so the result is
     /// usable only with a `Lifter` for that same arch; any other raises
-    /// `StriderError` at `analyze` time.
+    /// `StriderError` at `analyze` time.  So does a `stack_pointer` not as wide
+    /// as the arch's addresses, and a `stack_arg_increment` other than that
+    /// width.
     ///
     /// Chain `.no_return()` on the result to mark the callee as never-returning.
     #[classmethod]
