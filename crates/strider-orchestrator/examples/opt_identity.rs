@@ -1,8 +1,9 @@
-//! Runs `Strider::analyze` on every function symbol of every fixture ELF and
-//! prints one line per function: `<arch>/<case>::<symbol>@<addr> <digest>`. The
-//! digest covers the final function's raw DOT, its asm-fingerprints, the CFG
-//! DOT, the six report fields, and the error of a failed analysis. Two builds
-//! diff line for line; the summed analyze wall time goes to stderr.
+//! Runs `Strider::analyze` on every function symbol of every fixture ELF under
+//! an `ARCHES` directory (every one but `arm_be8`) and prints one line per
+//! function: `<arch>/<case>::<symbol>@<addr> <digest>`. The digest covers the
+//! final function's raw DOT, its asm-fingerprints, the CFG DOT, the six report
+//! fields, and the error of a failed analysis. Two builds diff line for line;
+//! the summed analyze wall time goes to stderr.
 //!
 //! ```text
 //! cargo run --release -p strider-orchestrator --example opt_identity > digests.txt

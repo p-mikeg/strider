@@ -323,9 +323,10 @@ fn got_regions(got: &BTreeMap<u64, (u64, usize)>, endian_le: bool) -> Result<Vec
     let mut out = Vec::new();
     let mut run: Option<(u64, Vec<u8>)> = None;
     for (&addr, &(value, width)) in got {
-        // `got_or_plt_slot_reloc_size` yields only 4 or 8 today, so this
-        // cannot fire -- but both slices below index blind, and `8 - width`
-        // underflows for a wider one. Its twin `Patch::new` already checks.
+        // `ElfSectionLayout::got_slot`, the only producer, yields the image's
+        // word, 4 or 8, so this cannot fire -- but both slices below index
+        // blind, and `8 - width` underflows for a wider one. Its twin
+        // `Patch::new` already checks.
         if width == 0 || width > 8 {
             anyhow::bail!("GOT slot at {addr:#x} has width {width}, not 1..=8");
         }

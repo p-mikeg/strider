@@ -582,9 +582,9 @@ struct CallOtherRow {
 static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // ARM Linux SVC: r7 = syscall number, r0..r6 = args, r0 = return. ARM's
     // Sleigh spec emits `software_interrupt` for SVC/SWI (the bare `swi`
-    // pcodeop is x86's INT, handled separately below). Arch-specific so it wins
-    // over the generic `software_interrupt` = MEM_CLOBBER fallback. All four
-    // 32-bit ARM presets share it; split the row if Thumb ever diverges.
+    // pcodeop is x86's INT, handled separately below). This is the only row
+    // naming `software_interrupt`. All four 32-bit ARM presets share it;
+    // split the row if Thumb ever diverges.
     CallOtherRow {
         preset_arches: ARM32_ALL,
         op_names: &["software_interrupt"],
@@ -2214,8 +2214,8 @@ mod tests {
 
     #[test]
     fn software_interrupt_on_arm_family_returns_linux_arm_abi() {
-        // ARM emits `software_interrupt` (not `swi`) for SVC; the arch-specific
-        // row wins over the generic MEM_CLOBBER fallback for all four presets.
+        // ARM emits `software_interrupt` (not `swi`) for SVC, which the ARM32
+        // row classifies for all four presets.
         for preset in [
             crate::ArchPreset::Arm,
             crate::ArchPreset::ArmBe,

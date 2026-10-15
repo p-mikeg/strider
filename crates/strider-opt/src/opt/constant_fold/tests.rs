@@ -198,8 +198,8 @@ fn fold_int_binary_two_consts_cases() -> Result<()> {
     Ok(())
 }
 
-/// `Xor(C, C)` with ONE interned constant on both inputs: two-constant
-/// folding, not a `x ^ x -> 0` identity, which the optimizer does not have.
+/// `Xor(C, C)` with ONE interned constant on both inputs folds to 0 through
+/// the `x ^ x -> 0` identity, which runs before two-constant evaluation.
 #[test]
 fn fold_int_xor_of_one_constant_twice() -> Result<()> {
     let mut fg = make_fn(|b| {

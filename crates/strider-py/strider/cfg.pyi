@@ -97,15 +97,17 @@ class Cfg:
         ...
     def interior_branch_targets(self) -> list[int]:
         """Branch targets interior to a region but off every boundary a region
-        can start at.
+        can start at, plus region starts a later decode stepped over.
 
-        No region can start there, since decoding from inside an instruction
-        yields a different stream; a branch into a MIPS delay slot is one, the
-        slot decoding as part of its branch. The edge is therefore seated on
-        the region that owns the bytes, whose instructions start earlier. A
-        direct edge can cause this,
-        not only a resolved indirect branch. Non-empty means this CFG claims a
-        successor the branch does not actually enter at.
+        No region can start at the first kind, since decoding from inside an
+        instruction yields a different stream; a branch into a MIPS delay slot
+        is one, the slot decoding as part of its branch. The edge is therefore
+        seated on the region that owns the bytes, whose instructions start
+        earlier. A direct edge can cause this, not only a resolved indirect
+        branch. The second kind is overlapping code: two regions own those
+        bytes with two different instruction streams. Non-empty means this
+        CFG claims a successor the branch does not actually enter at, or
+        decodes some bytes twice.
 
         Accumulated over every round `analyze` ran: the inexact edge fed the
         classifier, whose derived targets outlive it, so a later round that no

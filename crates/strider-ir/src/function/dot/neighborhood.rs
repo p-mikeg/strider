@@ -12,7 +12,8 @@ use crate::function::Function;
 use crate::node::NodeId;
 use crate::{IRViewer, IRWalker};
 
-/// Forward edges, which the IR doesn't index directly.
+/// Forward edges among the nodes `f.walk()` reaches, in walk order:
+/// `value_uses` also yields a dead consumer on an uncompacted graph.
 pub(super) fn build_consumers(f: &Function) -> FxHashMap<NodeId, Vec<NodeId>> {
     let mut consumers: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
     for node in f.walk() {
