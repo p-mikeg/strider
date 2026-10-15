@@ -1058,6 +1058,7 @@ fn scan_arg_window(
     hi: i128,
 ) -> ArgWindow {
     let mut scan = ArgStoreScan::new(
+        function,
         analyzer,
         options.without_call_relaxations(),
         geometry.mem_start,
@@ -1143,6 +1144,9 @@ pub(crate) struct ArgStoreScan<'a> {
     /// Chain start, for the `MemPhi` fallback probe.
     mem_start: ValueId,
     base: ValueId,
+    /// `base`'s type: offsets wrap at its width, so a covered range running
+    /// past the top of the signed range resumes at the bottom.
+    addr_ty: Option<ValueType>,
     /// The window `[lo, lo + size)` as one probe.
     lo: i128,
     size: i128,
@@ -1166,6 +1170,7 @@ pub(crate) struct ArgStoreScan<'a> {
 
 impl<'a> ArgStoreScan<'a> {
     pub(crate) fn new(
+        function: &Function,
         analyzer: &'a MemAnalyzer,
         options: MemOptions,
         mem_start: ValueId,
@@ -1178,6 +1183,7 @@ impl<'a> ArgStoreScan<'a> {
             options,
             mem_start,
             base,
+            addr_ty: function.value_type(base).ok(),
             lo,
             size: hi.saturating_sub(lo),
             cursor: Some(mem_start),
@@ -1192,6 +1198,7 @@ impl<'a> ArgStoreScan<'a> {
     /// What reaches `slot_off` on the call's memory chain.  Scans further along
     /// it only while what is scanned leaves `slot_off` uncovered.
     pub(crate) fn reach_at(&mut self, function: &Function, slot_off: i128) -> SlotReach {
+        let slot_off = wrap_to_addr_width(function, self.base, slot_off);
         while !range_covers(&self.covered, slot_off) {
             if self.advance(function) {
                 continue;
@@ -1218,7 +1225,7 @@ impl<'a> ArgStoreScan<'a> {
                     let end = slot_off.saturating_add(hit.size(function));
                     SlotReach::Anchored {
                         store: hit,
-                        whole: !range_overlaps(&self.covered, slot_off, end),
+                        whole: !self.overlaps_covered(slot_off, end),
                     }
                 }
                 // Anchored below the slot: it covers the slot without the
@@ -1266,13 +1273,26 @@ impl<'a> ArgStoreScan<'a> {
         // written, but a nearer store owns some of its bytes.
         if !range_covers(&self.covered, hit.store_offset) {
             self.anchored.insert(hit.store_offset, hit);
-            if range_overlaps(&self.covered, hit.store_offset, end) {
+            if self.overlaps_covered(hit.store_offset, end) {
                 self.overwritten.insert(hit.store_offset);
             }
         }
-        add_range(&mut self.covered, hit.store_offset, end);
+        self.cover(hit.store_offset, end);
         self.cursor = function.memory_input_of(def);
         true
+    }
+
+    fn cover(&mut self, start: i128, end: i128) {
+        for (s, e) in wrapped_ranges(self.addr_ty, start, end) {
+            add_range(&mut self.covered, s, e);
+        }
+    }
+
+    /// Whether any covered byte lies in `[start, end)`, mod 2^w.
+    fn overlaps_covered(&self, start: i128, end: i128) -> bool {
+        wrapped_ranges(self.addr_ty, start, end)
+            .into_iter()
+            .any(|(s, e)| range_overlaps(&self.covered, s, e))
     }
 }
 
@@ -1302,6 +1322,29 @@ fn classify_reaching_def(function: &Function, def: NodeId) -> SlotReach {
         // chain), so it hides whatever lies below it.
         _ => SlotReach::Blinded,
     }
+}
+
+/// `[start, end)` as at most two ranges inside the signed range `ty` reduces
+/// offsets into: address arithmetic wraps, so a range running past the top
+/// resumes at the bottom.  `start` is reduced, `end` need not be.  A width
+/// the reduction does not reach keeps the range whole.
+fn wrapped_ranges(ty: Option<ValueType>, start: i128, end: i128) -> [(i128, i128); 2] {
+    let whole = [(start, end), (0, 0)];
+    let Some(bits) = ty
+        .filter(|ty| ty.is_integer())
+        .map(ValueType::bit_width)
+        .filter(|&bits| bits < 127)
+    else {
+        return whole;
+    };
+    let top = 1i128 << (bits - 1);
+    if end <= top {
+        return whole;
+    }
+    let modulus = top << 1;
+    // A range wider than the circle covers all of it.
+    let end = end.min(start + modulus);
+    [(start, top), (-top, end - modulus)]
 }
 
 /// Adds `[start, end)` to a set of disjoint, non-touching `start -> end`
