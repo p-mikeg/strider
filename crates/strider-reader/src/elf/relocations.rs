@@ -430,17 +430,19 @@ fn apply_one_relocation(
             reloc.addend()
         };
         let value = apply_addend(target.addr, addend);
-        sink.record(
-            site_regions,
-            site_addr,
-            if pc_relative {
-                value.wrapping_sub(site_addr)
-            } else {
-                value
-            },
-            size_bytes,
-            endian_le,
-        );
+        let value = if pc_relative {
+            value.wrapping_sub(site_addr)
+        } else {
+            value
+        };
+        let field = Field::Data {
+            bytes: size_bytes as u8,
+            signed: pc_relative,
+        };
+        match fit(obj, field, value) {
+            Some(value) => sink.record(site_regions, site_addr, value, size_bytes, endian_le),
+            None => sink.unmodelled(ctx, site_regions, site_addr, size_bytes, reloc),
+        }
         return Ok(());
     }
 
