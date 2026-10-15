@@ -62,16 +62,24 @@ pub(crate) struct CfgReports {
 }
 
 impl CfgReports {
-    /// Every channel, which is what `is_complete` reads. The one place they
-    /// are enumerated, so a seventh cannot be left out of the answer.
+    /// Every channel, which is what `is_complete` reads. Destructured without
+    /// `..`, so a seventh field fails to compile here until it is listed.
     fn channels(&self) -> [&[u64]; 6] {
+        let Self {
+            unresolved,
+            unverified_seeded,
+            isa_mode_conflicts,
+            interior_branch_targets,
+            unmapped_branch_targets,
+            undecodable_branch_targets,
+        } = self;
         [
-            &self.unresolved,
-            &self.unverified_seeded,
-            &self.isa_mode_conflicts,
-            &self.interior_branch_targets,
-            &self.unmapped_branch_targets,
-            &self.undecodable_branch_targets,
+            unresolved,
+            unverified_seeded,
+            isa_mode_conflicts,
+            interior_branch_targets,
+            unmapped_branch_targets,
+            undecodable_branch_targets,
         ]
     }
 }
@@ -313,13 +321,17 @@ impl PyCfg {
         self.reports.isa_mode_conflicts.clone()
     }
 
-    /// Branch targets interior to a region but off every instruction boundary.
+    /// Branch targets interior to a region but off every instruction boundary,
+    /// plus region starts a later decode stepped over.
     ///
-    /// No region can start there (decoding from inside an instruction yields a
-    /// different stream), so the edge is seated on the region owning the
-    /// bytes, whose instructions start earlier. A direct edge can cause this,
-    /// not only a resolved indirect branch. Non-empty means this CFG claims a
-    /// successor the branch does not actually enter at.
+    /// No region can start at the first kind (decoding from inside an
+    /// instruction yields a different stream), so the edge is seated on the
+    /// region owning the bytes, whose instructions start earlier. A direct
+    /// edge can cause this, not only a resolved indirect branch. The second
+    /// kind is overlapping code: two regions own those bytes with two
+    /// different instruction streams. Non-empty means this CFG claims a
+    /// successor the branch does not actually enter at, or decodes some bytes
+    /// twice.
     ///
     /// Accumulated over every round `analyze` ran: the inexact edge fed the
     /// classifier, whose derived targets outlive it, so a later round that

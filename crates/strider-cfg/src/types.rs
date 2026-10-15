@@ -240,7 +240,8 @@ impl Region {
 /// `StableDiGraph` keeps `EdgeIndex` values valid across the removals
 /// `split_region` performs: it snapshots edge ids into a `Vec` and removes
 /// inside the loop, which a plain `Graph` would invalidate by swap-removing.
-/// No region is ever removed.
+/// `Builder::build` drops the unreachable regions, so region ids are not
+/// dense.
 pub(crate) type RegionGraph = StableDiGraph<Region, ()>;
 
 #[cfg(test)]
