@@ -1446,6 +1446,71 @@ fn classify_table_dispatch_one_stack_target_resolves() {
     }
 }
 
+/// A 32-bit two-entry stack table at `sp + 0x8000_0000`.  With `wrapped`, a
+/// newer 4-byte store at `sp + 0x7FFF_FFFE` follows the table: mod 2^32 its top
+/// two bytes are entry 0's bottom two.
+fn build_stack_table_across_the_wrap(wrapped: bool) -> Function {
+    let sp = sp32_vn();
+    let arg_vn = strider_ir_test_utils::reg_vn(0x8, 4);
+    let mut b = sp_frame(sp)
+        .tracked(arg_vn)
+        .build_fn_single_region()
+        .unwrap();
+    let sp_val = b.read_variable(&sp).unwrap();
+    let at = |b: &mut FunctionBuilder, off: u64| {
+        let c = b.build_int_const(off, ValueType::I32).unwrap();
+        b.build_int_binary_operation(sp_val, c, IntBinaryOp::Add, ValueType::I32)
+            .unwrap()
+    };
+    for (off, target) in [(0x8000_0000u64, 0x401190u64), (0x8000_0004, 0x401180)] {
+        let addr = at(&mut b, off);
+        let data = b.build_int_const(target, ValueType::I32).unwrap();
+        b.build_store(addr, data, VnSpace::RAM).unwrap();
+    }
+    if wrapped {
+        let addr = at(&mut b, 0x7FFF_FFFE);
+        let data = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32).unwrap();
+        b.build_store(addr, data, VnSpace::RAM).unwrap();
+    }
+    let arg = b.read_variable(&arg_vn).unwrap();
+    let one = b.build_int_const(1u64, ValueType::I32).unwrap();
+    let idx = b
+        .build_int_binary_operation(arg, one, IntBinaryOp::And, ValueType::I32)
+        .unwrap();
+    let four = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let scaled = b
+        .build_int_binary_operation(idx, four, IntBinaryOp::Mul, ValueType::I32)
+        .unwrap();
+    let table = at(&mut b, 0x8000_0000);
+    let addr = b
+        .build_int_binary_operation(table, scaled, IntBinaryOp::Add, ValueType::I32)
+        .unwrap();
+    let loaded = b.build_load(addr, VnSpace::RAM, ValueType::I32).unwrap();
+    b.build_indirect_branch(loaded).unwrap();
+    b.set_lift_addr(None);
+    finish_stack_array(b.build().unwrap()).0
+}
+
+/// The table is probed at `sp + 0x8000_0000`, which the evaluator holds at
+/// `-2^31`.  The newer store's bytes past `2^31` are entry 0's bytes mod 2^32,
+/// so entry 0 no longer holds its target and the site defers.
+#[test]
+fn classify_table_dispatch_sees_a_store_wrapping_onto_a_slot() {
+    assert_eq!(
+        classify(&build_stack_table_across_the_wrap(false), None),
+        Some(ResolvedTargets::Multiple(vec![
+            0x401180u64.into(),
+            0x401190u64.into(),
+        ])),
+        "control: both entries fold across the signed wrap"
+    );
+    assert_eq!(
+        classify(&build_stack_table_across_the_wrap(true), None),
+        None,
+        "entry 0 is partly the newer store's, so no stale target may fold"
+    );
+}
+
 #[test]
 fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;

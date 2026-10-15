@@ -293,8 +293,11 @@ const MAX_JOIN_DEPTH: u32 = 8;
 /// by agreement across them.  Without that, a probe below a join falls back to
 /// a per-probe walk of the whole chain, which is what the map exists to avoid.
 struct SlotMap {
-    /// Byte offset from the base -> the nearest store covering that byte.
+    /// Byte offset from the base, reduced by [`slot_key`] -> the nearest
+    /// store covering that byte.
     claims: FxHashMap<i128, Claim>,
+    /// The base's type, the width [`slot_key`] reduces by.
+    addr_ty: Option<ValueType>,
     /// The segment bottomed out at `InitialMemory`, so an unclaimed byte has no
     /// reaching store rather than one beyond the mapped part.
     complete: bool,
@@ -304,6 +307,19 @@ struct SlotMap {
     /// chain it cannot summarize.  Every unmapped probe would fall back to an
     /// uncapped walk, once per index, so the site defers instead.
     exhausted: bool,
+}
+
+/// Byte `byte` of an access at `offset`, reduced the way
+/// [`wrap_to_addr_width`](crate::mem_analysis::wrap_to_addr_width) reduces an
+/// offset: address arithmetic wraps, so bytes past the top of the signed
+/// range are the bytes at its bottom.  `None` past the `i128` carrier.
+fn slot_key(addr_ty: Option<ValueType>, offset: i128, byte: i128) -> Option<i128> {
+    let at = offset.checked_add(byte)?;
+    Some(
+        addr_ty
+            .and_then(|ty| ty.get_signed_int(at as u128))
+            .unwrap_or(at),
+    )
 }
 
 enum Reaching {
@@ -335,6 +351,7 @@ impl SlotMap {
         noalias_allocators: &FxHashSet<u64>,
     ) -> Self {
         let mut claims: FxHashMap<i128, Claim> = FxHashMap::default();
+        let addr_ty = function.value_type_opt(base);
         let mut cur = Some(mem);
         let mut rank = 0u32;
         let mut complete = false;
@@ -385,7 +402,7 @@ impl SlotMap {
                         }) if store_base == base => {
                             let size = store_value_byte_size(function, function.store_data(node));
                             for byte in 0..size {
-                                let Some(at) = offset.checked_add(byte) else {
+                                let Some(at) = slot_key(addr_ty, offset, byte) else {
                                     break;
                                 };
                                 claims.entry(at).or_insert(Claim { rank, offset, node });
@@ -412,6 +429,7 @@ impl SlotMap {
         exhausted |= arms.iter().any(|arm| arm.exhausted);
         Self {
             claims,
+            addr_ty,
             complete,
             arms,
             exhausted,
@@ -425,7 +443,7 @@ impl SlotMap {
         // The nearest store covering any probed byte is the nearest store
         // overlapping the probe at all.
         let nearest = (0..size)
-            .filter_map(|byte| self.claims.get(&offset.checked_add(byte)?))
+            .filter_map(|byte| self.claims.get(&slot_key(self.addr_ty, offset, byte)?))
             .min_by_key(|claim| claim.rank);
         match nearest {
             Some(claim) if claim.offset == offset => Reaching::Store(claim.node),
