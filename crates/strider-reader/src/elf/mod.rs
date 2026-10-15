@@ -4,6 +4,9 @@ pub mod reader;
 pub(crate) mod relocations;
 pub mod sections;
 
+#[cfg(test)]
+mod encodings_tests;
+
 pub use load::{OwnedElf, load_elf};
 pub use reader::ElfFileMemReader;
 pub use sections::{
