@@ -93,8 +93,7 @@ def test_optimize_invalidates_outstanding_handles():
 
     c = Capture()
     add_hits = fn.find_all(load().capture(c))
-    if not add_hits:
-        pytest.skip("no load node to hold a stale handle against")
+    assert add_hits, "array_sum loads its array elements"
     handle = add_hits[0]
     assert handle.node(c) is not None
 
