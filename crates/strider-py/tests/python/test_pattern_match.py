@@ -27,8 +27,9 @@ def test_find_all_load_with_addr_pattern():
     base, off = Capture(), Capture()
     pat = load(addr=int_add(var(base), var(off)))
     hits = g.find_all(pat, ignore_casts=True)
-    # Count depends on the optimization shape, so only pin "must not raise".
-    assert isinstance(hits, list)
+    # Each of the 11 raw loads addresses `base + offset`, matched in both
+    # operand orders.
+    assert len(hits) == 22
 
 
 def test_bool_binary_preserves_i1_guard_against_wide_and():
@@ -57,8 +58,7 @@ def test_add_commutes_and_ordered_pins_operands():
     g = _build_graph()
     commutative = g.find_all(int_add(anything(), anything()))
     ordered = g.find_all(int_binary("Add", anything(), anything()).ordered())
-    assert isinstance(commutative, list)
-    assert isinstance(ordered, list)
+    assert len(ordered) == 35
     assert len(commutative) >= len(ordered)
 
 
@@ -67,9 +67,8 @@ def test_match_get_uint_on_const():
     c = Capture()
     pat = int_const(c)
     hits = g.find_all(pat)
-    if hits:
-        v = hits[0].uint(c)
-        assert v is None or isinstance(v, int)
+    assert hits, "the raw array_sum keeps its constants"
+    assert isinstance(hits[0].uint(c), int)
 
 
 def test_match_readers_align_with_node():
@@ -104,8 +103,7 @@ def test_bound_capture_view_delegates_and_guards():
     g = _build_graph()
     c = Capture()
     hits = g.find_all(int_const(c))
-    if not hits:
-        return
+    assert hits
     m = hits[0]
     assert m[c].has is True
     assert m[c].uint == m.uint(c)
@@ -124,8 +122,7 @@ def test_match_getitem_view_agrees_with_uint():
     g = _build_graph()
     c = Capture()
     hits = g.find_all(int_const(c))
-    if not hits:
-        return
+    assert 0xFFFFFFFF in {m.uint(c) for m in hits}, "a high-bit constant to read"
     for m in hits:
         uint_val = m.uint(c)
         assert m[c].uint == uint_val
@@ -212,11 +209,11 @@ def test_find_all_with_when_predicate_mutating_graph_is_safe():
     # A deadlock surfaces as a hung test; the assertion below catches the
     # "ran but didn't error" silent-failure case instead.
     hits = g.find_all(pat)
-    if hits:
-        assert errors_caught, (
-            "Mutating call from inside .when() predicate must raise StriderError "
-            "(not deadlock and not silently succeed)"
-        )
+    assert hits
+    assert errors_caught, (
+        "Mutating call from inside .when() predicate must raise StriderError "
+        "(not deadlock and not silently succeed)"
+    )
 
 
 def test_when_predicate_keyboard_interrupt_propagates():

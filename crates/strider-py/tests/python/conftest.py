@@ -15,7 +15,7 @@ def _ensure_pyelftools():
     try:
         import elftools.elf.elffile  # noqa: F401
     except ImportError:
-        pytest.skip("pyelftools not installed (pip install pyelftools)")
+        pytest.fail("pyelftools is missing; run `uv sync --group dev`")
 
 
 def fixture_path(arch: str, case: str, ext: str = ".elf") -> pathlib.Path:
@@ -30,8 +30,7 @@ def fixture_path(arch: str, case: str, ext: str = ".elf") -> pathlib.Path:
 
 
 def symbol_addr(elf_path: pathlib.Path, name: str) -> int:
-    """Address of a function symbol. A missing symbol fails the test; a
-    missing pyelftools skips it."""
+    """Address of a function symbol; fails if the symbol is missing."""
     _ensure_pyelftools()
     import elftools.elf.elffile
     from elftools.elf.sections import SymbolTableSection
