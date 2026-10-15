@@ -802,7 +802,7 @@ class FunctionArgPat(NodePat):
         """Require the argument's position to be `i`."""
         ...
     def source_register(self, vn: Vn) -> "FunctionArgPat":
-        """Require the argument to arrive in register varnode `vn`."""
+        """Require the argument to arrive in register varnode `vn` or a register containing it."""
         ...
     def source_stack(self, space: VnSpace, offset: int) -> "FunctionArgPat":
         """Require the argument to arrive on the stack at `(space,
@@ -942,7 +942,7 @@ def any_function_arg() -> FunctionArgPat:
     """Start a function-argument pattern matching any argument index of
     either class."""
 def function_arg_reg(vn: Vn) -> FunctionArgPat:
-    """Match a function argument arriving in register varnode `vn`."""
+    """Match a function argument arriving in register varnode `vn` or a register containing it."""
 def function_arg_stack(space: VnSpace, offset: int) -> FunctionArgPat:
     """Match a function argument arriving on the stack at `(space,
     offset)`."""
