@@ -133,9 +133,9 @@ impl PyCallingConvention {
     ///
     /// The frozen varnodes belong to `sleigh`'s architecture, so the result is
     /// usable only with a `Lifter` for that same arch; any other raises
-    /// `StriderError` at `analyze` time.  So does a `stack_pointer` not as wide
-    /// as the arch's addresses, and a `stack_arg_increment` other than that
-    /// width.
+    /// `StriderError` at `analyze` time.  So do a `stack_pointer` not as wide as
+    /// the arch's addresses and, with `stack_arg_base` set, a
+    /// `stack_arg_increment` other than that width.
     ///
     /// Chain `.no_return()` on the result to mark the callee as never-returning.
     #[classmethod]
