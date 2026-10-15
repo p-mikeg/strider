@@ -504,11 +504,14 @@ def load_elf(
     `from_segments=True` (the default) walks PT_LOAD program headers, falling
     back to sections for relocatable objects; `from_segments=False` forces
     the section walk for section-granular regions. Override the detected
-    `arch=` / `cc=` for kernel or custom-ABI workflows. `apply_relocations`
-    (default `True`) applies relocations, which shared objects and PIE
-    binaries need; it also selects what is mapped, so `False` drops writable
-    non-executable sections rather than serving their on-disk bytes. A
-    writable-and-executable mapping is kept either way.
+    `arch=` / `cc=` for kernel or custom-ABI workflows. `arch=` alone keeps
+    the header's convention, and `analyze` raises `StriderError` when that
+    convention's stack geometry is another arch's.
+
+    `apply_relocations` (default `True`) applies relocations, which shared
+    objects and PIE binaries need; it also selects what is mapped, so `False`
+    drops writable non-executable sections rather than serving their on-disk
+    bytes. A writable-and-executable mapping is kept either way.
 
     `relocated_got_is_rom` (default `False`) additionally serves `.got` and
     `.data.rel.ro` as READ-ONLY memory, so a load through a GOT slot folds to
