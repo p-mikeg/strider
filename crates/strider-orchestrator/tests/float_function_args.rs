@@ -15,7 +15,8 @@ use strider_ir::IRViewer;
 use strider_ir::node::NodeKind;
 use strider_pattern::{Capture, Matcher, any_function_arg, function_arg, function_arg_float};
 
-/// Every arch whose ABI passes `double` in a float register.
+/// Every arch whose ABI passes `double` in a float register; i386 passes it
+/// on the stack.
 const FLOAT_ARG_ARCHES: &[Arch] = &[
     Arch::X64,
     Arch::Aarch64,
@@ -33,6 +34,20 @@ const FLOAT_ARG_ARCHES: &[Arch] = &[
     Arch::Ppc64be,
     Arch::Ppc64le,
 ];
+
+/// The list is exactly the arches whose convention has float carriers.
+#[test]
+fn float_arg_arches_are_the_float_carrying_conventions() {
+    for &arch in ALL_ARCHES {
+        let (_, cc, _) = fixture_strider(arch, "floats", "f64_arith");
+        assert_eq!(
+            FLOAT_ARG_ARCHES.contains(&arch),
+            !cc.arg_passing_regs_float.is_empty(),
+            "{}: FLOAT_ARG_ARCHES against its convention",
+            arch.name()
+        );
+    }
+}
 
 /// Varnode containment, as `FunctionBuilder` canonicalisation applies it: a
 /// carrier is the largest tracked container, so `q0` carries `d0`.
