@@ -2,18 +2,18 @@
 # add: int.add
 # ashr: int.sshift_right
 # bit_and: int.and
-# bit_not: int.xor with all ones
+# bit_not: int.xor and iconst[0xffffffff]|iconst[0xffffffffffffffff]
 # bit_or: int.or
 # bit_xor: int.xor
 # lshr: int.shift_right
 # mul: int.mul
-# negate: int.neg (0 - a folds to it too)
-# sdiv: int.sdiv, or a library call
+# negate: int.neg
+# sdiv: int.sdiv or call
 # shl: int.shift_left
-# smod: int.srem, int.sdiv (a - a/b*b), or a library call
-# sub: int.add of an int.neg
-# udiv: int.div, or a library call
-# umod: int.rem, int.div (a - a/b*b), or a library call
+# smod: int.srem or int.sdiv or call
+# sub: int.neg
+# udiv: int.div or call
+# umod: int.rem or int.div or call
 endian little
 default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[EBX, ESI, EDI, EBP] ret_val_regs=[EAX, EDX] ret_val_regs_float=[ST0, ST1, XMM0] stack_vn=ESP stack_args=4+4n ret_stack_pop=4 link_register_vn=none preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
 

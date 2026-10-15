@@ -1,11 +1,11 @@
 # arm_be8/calls: Strider::analyze, LiftOptions::default(), OptOptions::default()
-# apply_indirect: a call
-# fib_recursive: two self-calls and an if
-# mutual_a: a call and an if
-# mutual_b: a call and an if
-# nested_3deep: a call
-# pass_through: a call
-# repeat_call_pair: two calls
+# apply_indirect: call
+# fib_recursive: 2 call and if
+# mutual_a: call and if
+# mutual_b: call and if
+# nested_3deep: call
+# pass_through: call
+# repeat_call_pair: 2 call
 endian big
 default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] callee_saved_regs=[r4, r5, r6, r7, r8, r9, r10, r11, lr, d8, d9, d10, d11, d12, d13, d14, d15] ret_val_regs=[r0, r1] ret_val_regs_float=[d0, d1, d2, d3] stack_vn=sp stack_args=0+4n ret_stack_pop=0 link_register_vn=lr preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
 
