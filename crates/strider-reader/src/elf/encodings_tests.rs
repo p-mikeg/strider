@@ -27,6 +27,16 @@ fn value() -> impl Strategy<Value = u64> {
     ]
 }
 
+/// A `J` site anywhere, or up to 8 bytes below a 256 MiB boundary (the top
+/// of the address space included), where the delay slot is already past it.
+fn jump_site() -> impl Strategy<Value = u64> {
+    prop_oneof![
+        2 => any::<u64>(),
+        1 => (any::<u64>(), 1u64..=8).prop_map(|(x, k)| (x & !0x0fff_ffff).wrapping_sub(k)),
+        1 => (1u64..=8).prop_map(u64::wrapping_neg),
+    ]
+}
+
 /// The fields of the RELA-only arches, which keep no addend in the field.
 fn rela_only_field() -> impl Strategy<Value = Field> {
     use Half::{Ha, Hi, Higher, HigherA, Highest, HighestA, Lo, Signed, Whole};
@@ -136,6 +146,20 @@ proptest! {
         }
     }
 
+    /// A `BL` to a Thumb target becomes a `BLX`, whose H bit holds offset
+    /// bit 1; a jump there needs a veneer.
+    #[test]
+    fn arm_branch_into_thumb(call in any::<bool>(), raw in any::<u32>(), v in value()) {
+        let raw = u64::from(raw);
+        let field = Field::ArmBranch24 { call };
+        let encoded = encode(field, raw, v, Isa::Thumb, 0);
+        prop_assert_eq!(encoded.is_some(), call && within(v, -(1 << 25), 1 << 25));
+        if let Some(e) = encoded {
+            prop_assert_eq!(e & 0xfe00_0000, 0xfa00_0000);
+            prop_assert_eq!(implicit_addend(field, e), Some((v & !1) as i64));
+        }
+    }
+
     #[test]
     fn arm_prel31_round_trips(raw in any::<u32>(), v in value()) {
         let raw = u64::from(raw);
@@ -184,6 +208,22 @@ proptest! {
         }
     }
 
+    /// A Thumb `BL` to an ARM target becomes a `BLX`, taken from the PC
+    /// rounded down to a word; a jump there needs a veneer.
+    #[test]
+    fn thumb_branch_into_arm(call in any::<bool>(), raw in any::<u32>(), v in value()) {
+        let raw = u64::from(raw);
+        let field = Field::ThumbBranch { call };
+        let encoded = encode(field, raw, v, Isa::Arm, 0);
+        let offset = v.wrapping_add(2) & !3;
+        prop_assert_eq!(encoded.is_some(), call && within(offset, -(1 << 24), 1 << 24));
+        if let Some(e) = encoded {
+            prop_assert_eq!(implicit_addend(field, e), Some(offset as i64));
+            prop_assert_eq!(e & 0x1000, 0);
+            prop_assert_eq!(e & 0xf800_c000, raw & 0xf800_c000);
+        }
+    }
+
     /// `lui; daddiu; dsll 16; daddiu; dsll 16; daddiu` rebuilds a 64-bit value
     /// from its four halves, each immediate sign-extended.
     #[test]
@@ -202,6 +242,25 @@ proptest! {
         prop_assert_eq!(rebuilt, v);
     }
 
+    /// The plain halves are `v`'s 16-bit slices; the adjusted ones are those
+    /// of `v + 0x8000`, which a sign-extended `@l` brings back to `v`.
+    #[test]
+    fn ppc_halves_rebuild_the_value(v in value()) {
+        let half = |which: Half| {
+            encode(Field::PpcHalf16(which), 0, v, Isa::Same, 0)
+                .expect("an unchecked half never overflows")
+        };
+        let plain = (half(Half::Highest) << 48)
+            | (half(Half::Higher) << 32)
+            | (half(Half::Hi) << 16)
+            | half(Half::Lo);
+        prop_assert_eq!(plain, v);
+        let adjusted =
+            (half(Half::HighestA) << 48) | (half(Half::HigherA) << 32) | (half(Half::Ha) << 16);
+        let signed_lo = half(Half::Lo) as u16 as i16 as u64;
+        prop_assert_eq!(adjusted.wrapping_add(signed_lo), v);
+    }
+
     #[test]
     fn mips_branch_round_trips(raw in any::<u32>(), v in value()) {
         let raw = u64::from(raw);
@@ -216,13 +275,13 @@ proptest! {
     #[test]
     fn mips_jump_round_trips(
         raw in any::<u32>(),
-        p in any::<u32>(),
+        p in jump_site(),
         low in 0u64..(1 << 28),
         elsewhere in any::<bool>(),
     ) {
-        let (raw, p) = (u64::from(raw), u64::from(p));
+        let raw = u64::from(raw);
         // `J` reaches only the 256 MiB segment of its delay slot.
-        let segment = ((p + 4) >> 28) ^ u64::from(elsewhere);
+        let segment = (p.wrapping_add(4) >> 28) ^ u64::from(elsewhere);
         let v = (segment << 28) | low;
         let encoded = encode(Field::Mips26, raw, v, Isa::Same, p);
         prop_assert_eq!(encoded.is_some(), !elsewhere);
@@ -246,5 +305,82 @@ proptest! {
             let m = rela_only_mask(field);
             prop_assert_eq!(e & !m, raw & !m);
         }
+    }
+}
+
+/// gas's `@ha`, `@highera` and `@highesta`: the plain half of `v + 0x8000`.
+#[test]
+fn ppc_adjusted_halves_carry_into_the_half_above() {
+    use Half::{Ha, Hi, Higher, HigherA, Highest, HighestA};
+    for (v, half, want) in [
+        (0x0000_0001_ffff_8000, Hi, 0xffff),
+        (0x0000_0001_ffff_8000, Ha, 0),
+        (0x0000_0001_ffff_8000, Higher, 1),
+        (0x0000_0001_ffff_8000, HigherA, 2),
+        (0x0000_ffff_ffff_8000, Highest, 0),
+        (0x0000_ffff_ffff_8000, HighestA, 1),
+        (0xffff_ffff_ffff_8000, HighestA, 0),
+        (0x1234_5678_9abc_def0, Ha, 0x9abd),
+        (0x1234_5678_9abc_def0, HigherA, 0x5678),
+        (0x1234_5678_9abc_def0, HighestA, 0x1234),
+    ] {
+        assert_eq!(
+            encode(Field::PpcHalf16(half), 0, v, Isa::Same, 0),
+            Some(want),
+            "{half:?} of {v:#x}"
+        );
+    }
+}
+
+/// AArch64 page, low-12 and move-wide immediates, as the assembler encodes
+/// them over the instruction with a zero immediate.
+#[test]
+fn a64_immediates_match_the_assembler() {
+    let adrp = Field::A64Adr {
+        page: true,
+        check: true,
+    };
+    let adr = Field::A64Adr {
+        page: false,
+        check: true,
+    };
+    let movw = |group, check| Field::A64Movw { group, check };
+    let cases = [
+        // adrp x0, .+0x12345000
+        (adrp, 0x9000_0000, 0x1234_5000, 0xb009_1a20),
+        // adrp x0, .-0x1000
+        (adrp, 0x9000_0000, (-0x1000i64) as u64, 0xf0ff_ffe0),
+        // adr x1, .+5
+        (adr, 0x1000_0001, 5, 0x3000_0021),
+        // add x0, x0, #0xabc
+        (
+            Field::A64Lo12 { shift: 0 },
+            0x9100_0000,
+            0x1234_5abc,
+            0x912a_f000,
+        ),
+        // ldr x0, [x1, #0x238]
+        (
+            Field::A64Lo12 { shift: 3 },
+            0xf940_0020,
+            0x1234_5238,
+            0xf941_1c20,
+        ),
+        // movz x0, #0x1234, lsl #16
+        (movw(1, true), 0xd2a0_0000, 0x1234_5678, 0xd2a2_4680),
+        // movk x0, #0xdead, lsl #48
+        (
+            movw(3, false),
+            0xf2e0_0000,
+            0xdead_0000_0000_0000,
+            0xf2fb_d5a0,
+        ),
+    ];
+    for (field, raw, v, want) in cases {
+        assert_eq!(
+            encode(field, raw, v, Isa::Same, 0),
+            Some(want),
+            "{field:?} of {v:#x}"
+        );
     }
 }
