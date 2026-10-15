@@ -54,6 +54,9 @@ anyhow = "1.0"
 itertools = { version = "0.13.0", default-features = false }
 expect-test = "1.5.0"
 proptest = "1.5.0"
+# Tests only: strider-target's Ghidra oracle parses the vendored .cspec and
+# .ldefs files. Already in the lock as rsleigh's build dependency.
+roxmltree = "0.20.0"
 hashbrown = "0.16"
 bitflags = "2"
 # Benchmarks only.  Default features off: drops `plotters` (no plot generation
