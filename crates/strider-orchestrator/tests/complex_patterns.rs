@@ -219,12 +219,14 @@ fn bit_test_zero_assertions(function: &strider_ir::Function) {
         "expected >=1 IntCmp(Equal, And(_, single-bit-const), 0) match in bit_test_zero"
     );
     for h in &hits {
-        if let Some(n) = h.bindings().get_uint(mask, function) {
-            assert!(
-                n.is_power_of_two() && n != 0,
-                "captured mask {n:#x} is not a single-bit value"
-            );
-        }
+        let n = h
+            .bindings()
+            .get_uint(mask, function)
+            .expect("every hit binds the mask");
+        assert!(
+            n.is_power_of_two() && n != 0,
+            "captured mask {n:#x} is not a single-bit value"
+        );
     }
 }
 
