@@ -1387,6 +1387,7 @@ dependencies = [
  "anyhow",
  "memmap2",
  "object 0.38.1",
+ "proptest",
  "read-only-memory",
  "rsleigh",
  "tempfile",

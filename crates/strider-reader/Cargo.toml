@@ -21,4 +21,5 @@ workspace = true
 
 [dev-dependencies]
 object = { workspace = true, features = ["write"] }
+proptest.workspace = true
 tempfile = "3.10"
