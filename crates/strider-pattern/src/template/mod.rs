@@ -617,10 +617,10 @@ fn kind_admissible(want: ExpectedValueKind, got: ValueKind) -> bool {
     }
 }
 
-/// The value class an arithmetic or conversion kind's operands carry, from the
-/// operand slots of `strider_ir`'s node signature. `None` for a kind whose
-/// operands it leaves open, which also covers every kind
-/// [`input_width_relation`] relates nothing for.
+/// The value class an arithmetic or conversion kind's operands carry: a
+/// hand-written copy of the operand slots of `strider_ir`'s node signature,
+/// not read from it. `None` for a kind whose operands it leaves open, which
+/// also covers every kind [`input_width_relation`] relates nothing for.
 fn operand_class(kind: &NodeKind) -> Option<ExpectedValueKind> {
     match kind {
         NodeKind::IntUnaryOp(_)

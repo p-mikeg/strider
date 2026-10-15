@@ -304,11 +304,12 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// Re-derives the context at `addr` before this region decodes it, for an
     /// address `lift_one` reaches without having just recorded it.
     ///
-    /// Defensive: no live caller reaches past the first TWO guards, so only the
-    /// region-map guard is unreachable. `build`'s loop arrives at
-    /// `prev + machine_insn_len`, which `lift_one` already recorded in
-    /// `validated`, and a region's first address has no `last_lift` (a split
-    /// re-lifts nothing and a seeded target starts a fresh `RegionBuilder`).
+    /// Defensive: no live caller reaches past the first two guards, so the
+    /// region-map guard and the `rederive_flow` call are both unreachable.
+    /// `build`'s loop arrives at `prev + machine_insn_len`, which `lift_one`
+    /// already recorded in `validated`, and a region's first address has no
+    /// `last_lift` (a split re-lifts nothing and a seeded target starts a
+    /// fresh `RegionBuilder`).
     /// The first address needs nothing anyway: `explore` pinned it.
     fn hold_flow(&mut self, addr: u64) -> Result<()> {
         if self.validated == Some(addr) {
