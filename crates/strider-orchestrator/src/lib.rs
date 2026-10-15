@@ -978,8 +978,11 @@ fn combine_resolved(
     if matches!(a, ResolvedTargets::LinkRegister) && matches!(b, ResolvedTargets::LinkRegister) {
         return ResolvedTargets::LinkRegister;
     }
-    let from_single =
-        matches!(a, ResolvedTargets::Single(_)) || matches!(b, ResolvedTargets::Single(_));
+    let single_addr = |r: &ResolvedTargets| match r {
+        ResolvedTargets::Single(t) => Some(t.addr),
+        _ => None,
+    };
+    let single_addrs = [single_addr(a), single_addr(b)];
     let a_targets = concrete_targets(a);
     let b_targets = concrete_targets(b);
     let interworks = |side: &[strider_cfg::ResolvedTarget]| {
@@ -1030,6 +1033,7 @@ fn combine_resolved(
         true
     });
     targets.retain(|t| !contradicted.contains(&t.addr));
+    let from_single = matches!(targets.as_slice(), [t] if single_addrs.contains(&Some(t.addr)));
     resolved_from(targets, from_single)
 }
 
@@ -1042,9 +1046,9 @@ fn combine_resolved(
 /// here") where staging nothing would leave the previous round's answer
 /// seated as if it had never been contradicted.
 ///
-/// `Single` only when `from_single`, i.e. an input was one: the cfg seats an
-/// out-of-range `Single` as a tail call but defers an out-of-range arm, so a
-/// merge must not change which.
+/// `Single` only when `from_single`, i.e. the survivor is a `Single` input's
+/// target: the cfg seats an out-of-range `Single` as a tail call but defers an
+/// out-of-range arm, so a merge must not change which.
 fn resolved_from(targets: Vec<strider_cfg::ResolvedTarget>, from_single: bool) -> ResolvedTargets {
     match targets.as_slice() {
         [single] if from_single => ResolvedTargets::Single(*single),
@@ -2450,6 +2454,47 @@ mod tests {
             moded,
             multiple(&[(0x2000, Some(true))]),
             "through a known mode"
+        );
+    }
+
+    /// A merge answers `Single` only when the surviving target is the `Single`
+    /// input's own: an arm left over after the `Single`'s target is dropped
+    /// stays an arm.
+    #[test]
+    fn combine_resolved_keeps_a_surviving_table_arm_an_arm() {
+        let single =
+            |addr, bit| ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(addr, bit));
+        assert_eq!(
+            combine_resolved(
+                &single(0x2000, Some(true)),
+                &multiple(&[(0x2000, Some(false)), (0x3000, None)]),
+                None,
+            ),
+            multiple(&[(0x3000, None)]),
+            "the Single's target dropped as contradicted",
+        );
+        assert_eq!(
+            combine_resolved(
+                &single(0x2000, None),
+                &multiple(&[(0x3000, Some(true))]),
+                Some(false),
+            ),
+            multiple(&[(0x3000, Some(true))]),
+            "the Single's mode-less target dropped as guessed",
+        );
+        assert_eq!(
+            combine_resolved(&single(0x2000, None), &multiple(&[(0x2000, None)]), None),
+            single(0x2000, None),
+            "the Single's own target survives",
+        );
+        assert_eq!(
+            combine_resolved(
+                &multiple(&[(0x2000, None)]),
+                &multiple(&[(0x2000, None)]),
+                None,
+            ),
+            multiple(&[(0x2000, None)]),
+            "two one-arm tables",
         );
     }
 
