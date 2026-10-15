@@ -109,22 +109,8 @@ def count_int_binop(g, op: str) -> int:
     return count_pat(g, builder(anything(), anything()))
 
 
-def count_int_unop(g, op: str) -> int:
-    # `"BitNot"` is a back-compat spelling: `~x` lifts to
-    # `Xor(_, IntConst(all_ones))`, matched via `pat.int_not`.
-    if op == "Neg":
-        return count_pat(g, pat.int_neg(anything()))
-    if op == "BitNot":
-        return count_pat(g, pat.int_not(anything()))
-    raise ValueError(f"unknown int unop {op!r}")
-
-
 def count_calls(g) -> int:
     return count_pat(g, pat.call())
-
-
-def count_returns(g) -> int:
-    return count_pat(g, pat.ret())
 
 
 
