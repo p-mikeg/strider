@@ -247,7 +247,9 @@ impl<'f> Machine<'f> {
             }
             NodeKind::IntBinaryOp(op) => {
                 let a = mask(self.value(inputs[0])?, width);
-                let b = mask(self.value(inputs[1])?, width);
+                // A shift count keeps its own width; every other operand 1 has
+                // the output's.
+                let b = mask(self.value(inputs[1])?, self.width(inputs[1])?);
                 self.int_binary(op, a, b, width)?
             }
             NodeKind::IntCmpOp(op) => {
@@ -504,4 +506,30 @@ fn the_comparison_can_tell_two_functions_apart() {
     let add = run(&outcome.function, cc.stack_vn).expect("add runs");
     let sub = run(&optimized(Arch::X64, "arithmetic", "sub"), cc.stack_vn).expect("sub runs");
     assert_ne!(add.returns, sub.returns);
+}
+
+/// P-code clears a shift whose count reaches the width, and the count keeps its
+/// own width: an `I16` count of 256 on an `I8` shift is 256, not its low byte.
+#[test]
+fn a_shift_count_wider_than_its_output_is_not_truncated() {
+    use strider_ir::node::ValueKind;
+    use strider_ir::{IRBuilder as _, IRBuilderExt as _, ValueType};
+
+    let mut shl = None;
+    let f = strider_ir_test_utils::make_empty_fn(|b| {
+        let one = b.build_int_const(1u8, ValueType::I8)?;
+        let count = b.build_int_const(0x100u16, ValueType::I16)?;
+        // `build_int_binary_operation` pins both operands to the output width.
+        let node = b.create_node(
+            NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
+            [one, count],
+            [ValueKind::Typed(ValueType::I8)],
+        );
+        let v = b.function().node_outputs(node)[0];
+        shl = Some(v);
+        Ok(v)
+    })
+    .expect("a shift with a wider count is valid IR");
+    let mut m = Machine::new(&f, f.default_cc().stack_vn);
+    assert_eq!(m.value(shl.expect("built")), Ok(0));
 }
