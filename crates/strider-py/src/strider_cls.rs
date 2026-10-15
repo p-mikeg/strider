@@ -347,7 +347,7 @@ fn seeded_sites(opts: &strider_cfg::CfgOptions<'_>, cfg: &strider_cfg::Cfg) -> V
         .iter()
         .chain(cfg.tail_call_seated())
         .copied();
-    let mut out: Vec<u64> = cfg
+    let sites: Vec<strider_cfg::PcodeInsnAddr> = cfg
         .regions()
         .filter_map(|region| match &region.terminator {
             strider_cfg::RegionTerminator::Switch { addr, .. } => Some(*addr),
@@ -355,11 +355,8 @@ fn seeded_sites(opts: &strider_cfg::CfgOptions<'_>, cfg: &strider_cfg::Cfg) -> V
         })
         .chain(consumed)
         .filter(|&site| opts.seated(site).is_some())
-        .map(|site| site.machine_addr.addr)
         .collect();
-    out.sort_unstable();
-    out.dedup();
-    out
+    machine_addrs(&sites)
 }
 
 /// `addr` is not a machine-instruction boundary on the linear path from
@@ -372,8 +369,13 @@ fn stepped_past(entry: u64, addr: u64) -> PyErr {
     ))
 }
 
+/// Sorted and deduped: two p-code sites in one machine instruction are one
+/// address.
 pub(crate) fn machine_addrs(addrs: &[strider_cfg::PcodeInsnAddr]) -> Vec<u64> {
-    addrs.iter().map(|addr| addr.machine_addr.addr).collect()
+    let mut out: Vec<u64> = addrs.iter().map(|addr| addr.machine_addr.addr).collect();
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// Drain the pending-exception cell: an exception a Python callback stashed
