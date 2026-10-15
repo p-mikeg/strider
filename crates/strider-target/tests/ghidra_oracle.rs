@@ -78,8 +78,7 @@ const PPC64_LE: &str = "PowerPC/data/languages/ppc_64_le.cspec";
 /// Every preset, with the cspec Ghidra's ldefs gives its arch. A kernel
 /// flavour takes its userland prototype; x86's `-mregparm=3` takes
 /// `__regparm3`, ARM soft-float `__stdcall_softfp`. Ghidra gives a big-endian
-/// ELFv2 image `ppc_64_be.cspec`, so ELFv2 is held to both ppc64 files. A new
-/// preset needs a row here.
+/// ELFv2 image `ppc_64_be.cspec`, so ELFv2 is held to both ppc64 files.
 const PAIRINGS: &[Pairing] = &[
     Pairing {
         preset: "x86_64_systemv",
@@ -574,6 +573,24 @@ fn check(
     }
 }
 
+/// Every preset constructor `CallingConvention` defines has a `PAIRINGS` row.
+#[test]
+fn every_calling_convention_preset_is_paired() {
+    let defined: BTreeSet<&str> = include_str!("../src/calling_convention/mod.rs")
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("pub const fn ")?
+                .strip_suffix("() -> Self {")
+        })
+        .collect();
+    let paired: BTreeSet<&str> = PAIRINGS.iter().map(|p| p.preset).collect();
+    assert_eq!(
+        defined, paired,
+        "CallingConvention presets against PAIRINGS"
+    );
+}
+
 #[test]
 fn every_calling_convention_preset_agrees_with_its_ghidra_cspec() {
     let mut tables: HashMap<SleighArch, rsleigh::SleighRegs> = HashMap::new();
@@ -626,28 +643,28 @@ fn every_calling_convention_preset_agrees_with_its_ghidra_cspec() {
 
 /// The ldefs file and Ghidra language id each preset is.
 fn language(preset: ArchPreset) -> (&'static str, &'static str) {
-    const X86: &str = "x86/data/languages/x86.ldefs";
-    const ARM: &str = "ARM/data/languages/ARM.ldefs";
-    const AARCH64: &str = "AARCH64/data/languages/AARCH64.ldefs";
-    const MIPS: &str = "MIPS/data/languages/mips.ldefs";
-    const PPC: &str = "PowerPC/data/languages/ppc.ldefs";
+    const X86_LDEFS: &str = "x86/data/languages/x86.ldefs";
+    const ARM_LDEFS: &str = "ARM/data/languages/ARM.ldefs";
+    const AARCH64_LDEFS: &str = "AARCH64/data/languages/AARCH64.ldefs";
+    const MIPS_LDEFS: &str = "MIPS/data/languages/mips.ldefs";
+    const PPC_LDEFS: &str = "PowerPC/data/languages/ppc.ldefs";
     match preset {
-        ArchPreset::X86 => (X86, "x86:LE:32:default"),
-        ArchPreset::X86_64 => (X86, "x86:LE:64:default"),
-        ArchPreset::Arm => (ARM, "ARM:LE:32:v8"),
-        ArchPreset::ArmBe => (ARM, "ARM:BE:32:v8"),
-        ArchPreset::ArmBeKernel => (ARM, "ARM:LEBE:32:v8LEInstruction"),
-        ArchPreset::ArmThumb => (ARM, "ARM:LE:32:v8T"),
-        ArchPreset::Aarch64 => (AARCH64, "AARCH64:LE:64:v8A"),
-        ArchPreset::Aarch64Be => (AARCH64, "AARCH64:BE:64:v8A"),
-        ArchPreset::MipsBe32 => (MIPS, "MIPS:BE:32:default"),
-        ArchPreset::MipsLe32 => (MIPS, "MIPS:LE:32:default"),
-        ArchPreset::MipsBe64 => (MIPS, "MIPS:BE:64:default"),
-        ArchPreset::MipsLe64 => (MIPS, "MIPS:LE:64:default"),
-        ArchPreset::Ppc32Be => (PPC, "PowerPC:BE:32:default"),
-        ArchPreset::Ppc32Le => (PPC, "PowerPC:LE:32:default"),
-        ArchPreset::Ppc64Be => (PPC, "PowerPC:BE:64:A2ALT"),
-        ArchPreset::Ppc64Le => (PPC, "PowerPC:LE:64:A2ALT"),
+        ArchPreset::X86 => (X86_LDEFS, "x86:LE:32:default"),
+        ArchPreset::X86_64 => (X86_LDEFS, "x86:LE:64:default"),
+        ArchPreset::Arm => (ARM_LDEFS, "ARM:LE:32:v8"),
+        ArchPreset::ArmBe => (ARM_LDEFS, "ARM:BE:32:v8"),
+        ArchPreset::ArmBeKernel => (ARM_LDEFS, "ARM:LEBE:32:v8LEInstruction"),
+        ArchPreset::ArmThumb => (ARM_LDEFS, "ARM:LE:32:v8T"),
+        ArchPreset::Aarch64 => (AARCH64_LDEFS, "AARCH64:LE:64:v8A"),
+        ArchPreset::Aarch64Be => (AARCH64_LDEFS, "AARCH64:BE:64:v8A"),
+        ArchPreset::MipsBe32 => (MIPS_LDEFS, "MIPS:BE:32:default"),
+        ArchPreset::MipsLe32 => (MIPS_LDEFS, "MIPS:LE:32:default"),
+        ArchPreset::MipsBe64 => (MIPS_LDEFS, "MIPS:BE:64:default"),
+        ArchPreset::MipsLe64 => (MIPS_LDEFS, "MIPS:LE:64:default"),
+        ArchPreset::Ppc32Be => (PPC_LDEFS, "PowerPC:BE:32:default"),
+        ArchPreset::Ppc32Le => (PPC_LDEFS, "PowerPC:LE:32:default"),
+        ArchPreset::Ppc64Be => (PPC_LDEFS, "PowerPC:BE:64:A2ALT"),
+        ArchPreset::Ppc64Le => (PPC_LDEFS, "PowerPC:LE:64:A2ALT"),
     }
 }
 
