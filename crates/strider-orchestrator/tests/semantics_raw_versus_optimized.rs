@@ -87,7 +87,8 @@ fn environment<'a>(
 /// What comparing one function came to.
 enum Verdict {
     Compared,
-    Skipped(String),
+    /// Every reason the function's environments gave.
+    Skipped(BTreeSet<String>),
     Failed(String),
 }
 
@@ -163,7 +164,7 @@ fn compare(
     if compared {
         Verdict::Compared
     } else {
-        Verdict::Skipped(skipped.into_iter().collect::<Vec<_>>().join("; "))
+        Verdict::Skipped(skipped)
     }
 }
 
@@ -322,7 +323,10 @@ fn sweep_named_here(cases: &[(&str, &[&str])], floor: usize) {
                 let slots_before = unchecked.slots;
                 match compare(&raw, &opt, &rom, &mut unchecked) {
                     Verdict::Compared => compared += 1,
-                    Verdict::Skipped(why) => skipped.push(format!("{at}: {why}")),
+                    Verdict::Skipped(why) => {
+                        let why: Vec<String> = why.into_iter().collect();
+                        skipped.push(format!("{at}: {}", why.join("; ")));
+                    }
                     Verdict::Failed(e) => failures.push(format!("{at}: {e}")),
                 }
                 if unchecked.slots > slots_before {
@@ -454,21 +458,34 @@ fn functions(obj: &object::File<'_>) -> BTreeMap<u64, (String, u64)> {
     out
 }
 
+/// The ROM a sweep analyses over.
+#[derive(Clone, Copy)]
+enum Rom {
+    /// The immutable mappings, the production default.
+    Immutable,
+    /// Also the relocated GOT, without which PIC code's GOT-loaded branch
+    /// targets and table bases stay unresolved.
+    ServingGot,
+}
+
 /// Analyses every function of `arch`'s fixtures with production defaults and
 /// compares the optimised result with the raw lift of the same CFG.
-fn sweep_arch(arch: Arch, floor_percent: usize) {
+fn sweep_arch(arch: Arch, floor_percent: usize, rom: Rom) {
     on_interp_stack(|| {
         let mut tally = Tally::default();
         for fixture in Fixture::all(arch.fixture()) {
-            sweep_fixture(&fixture, &mut tally);
+            sweep_fixture(&fixture, rom, &mut tally);
         }
         report(arch, &tally, floor_percent);
     });
 }
 
-fn sweep_fixture(fixture: &Fixture, tally: &mut Tally) {
+fn sweep_fixture(fixture: &Fixture, rom: Rom, tally: &mut Tally) {
     let obj = fixture.file();
-    let (mut strider, cc) = fixture.strider();
+    let (mut strider, cc) = match rom {
+        Rom::Immutable => fixture.strider(),
+        Rom::ServingGot => fixture.strider_serving_got(),
+    };
     let data_ranges =
         strider_cfg::DataRanges::new(strider_reader::elf::mapping_symbol_data_ranges(&obj));
     for (addr, (name, size)) in functions(&obj) {
@@ -501,7 +518,11 @@ fn sweep_fixture(fixture: &Fixture, tally: &mut Tally) {
         let slots_before = tally.unchecked.slots;
         match compare(&raw, &result.function, rom, &mut tally.unchecked) {
             Verdict::Compared => tally.compared += 1,
-            Verdict::Skipped(why) => *tally.skipped.entry(why).or_default() += 1,
+            Verdict::Skipped(reasons) => {
+                for why in reasons {
+                    *tally.skipped.entry(why).or_default() += 1;
+                }
+            }
             Verdict::Failed(e) => tally.failures.push(format!(
                 "{at}: {e}\nRAW:\n{}\nOPTIMISED:\n{}",
                 raw.to_text(false),
@@ -573,10 +594,11 @@ fn report(arch: Arch, tally: &Tally, floor_percent: usize) {
 }
 
 /// One test per arch, so the harness runs them in parallel. Each names the
-/// share of the arch's functions, in percent, that must be compared: its
-/// measured share less 5. The rest are skipped by reason and printed.
+/// share of the arch's functions, in percent, that must be compared (its
+/// measured share less 3) and the ROM it analyses over: the GOT-serving one
+/// where PIC code needs it. The rest are skipped by reason and printed.
 macro_rules! fixture_sweeps {
-    ($($test:ident => $arch:ident, $floor:literal),+ $(,)?) => {
+    ($($test:ident => $arch:ident, $floor:literal, $rom:ident),+ $(,)?) => {
         $(
             #[test]
             #[cfg_attr(
@@ -584,7 +606,7 @@ macro_rules! fixture_sweeps {
                 ignore = "release-only: analyses every function of the arch's fixtures"
             )]
             fn $test() {
-                sweep_arch(Arch::$arch, $floor);
+                sweep_arch(Arch::$arch, $floor, Rom::$rom);
             }
         )+
         /// The arches the sweep runs.
@@ -593,25 +615,23 @@ macro_rules! fixture_sweeps {
 }
 
 fixture_sweeps! {
-    every_x86_function_survives_the_pipeline => X86, 82,
-    every_x86_kernel_function_survives_the_pipeline => X86Kernel, 83,
-    every_x64_function_survives_the_pipeline => X64, 85,
-    every_aarch64_function_survives_the_pipeline => Aarch64, 91,
-    every_aarch64be_function_survives_the_pipeline => Aarch64Be, 86,
-    every_arm_function_survives_the_pipeline => Arm, 91,
-    every_arm_be_function_survives_the_pipeline => ArmBe, 88,
-    every_arm_be8_function_survives_the_pipeline => ArmBe8, 88,
-    every_arm_thumb_function_survives_the_pipeline => ArmThumb, 91,
-    every_mips32le_function_survives_the_pipeline => Mips32le, 79,
-    every_mips32be_function_survives_the_pipeline => Mips32be, 79,
-    // n64 PIC code branches through a writable GOT, so those branches stay
-    // unresolved and the interpreter does not run them.
-    every_mips64le_function_survives_the_pipeline => Mips64le, 67,
-    every_mips64be_function_survives_the_pipeline => Mips64be, 67,
-    every_ppc32be_function_survives_the_pipeline => Ppc32be, 86,
-    every_ppc32le_function_survives_the_pipeline => Ppc32le, 87,
-    every_ppc64be_function_survives_the_pipeline => Ppc64be, 87,
-    every_ppc64le_function_survives_the_pipeline => Ppc64le, 85,
+    every_x86_function_survives_the_pipeline => X86, 84, Immutable,
+    every_x86_kernel_function_survives_the_pipeline => X86Kernel, 85, Immutable,
+    every_x64_function_survives_the_pipeline => X64, 87, Immutable,
+    every_aarch64_function_survives_the_pipeline => Aarch64, 93, Immutable,
+    every_aarch64be_function_survives_the_pipeline => Aarch64Be, 88, Immutable,
+    every_arm_function_survives_the_pipeline => Arm, 93, Immutable,
+    every_arm_be_function_survives_the_pipeline => ArmBe, 89, Immutable,
+    every_arm_be8_function_survives_the_pipeline => ArmBe8, 89, Immutable,
+    every_arm_thumb_function_survives_the_pipeline => ArmThumb, 93, Immutable,
+    every_mips32le_function_survives_the_pipeline => Mips32le, 81, Immutable,
+    every_mips32be_function_survives_the_pipeline => Mips32be, 81, Immutable,
+    every_mips64le_function_survives_the_pipeline => Mips64le, 82, ServingGot,
+    every_mips64be_function_survives_the_pipeline => Mips64be, 82, ServingGot,
+    every_ppc32be_function_survives_the_pipeline => Ppc32be, 88, Immutable,
+    every_ppc32le_function_survives_the_pipeline => Ppc32le, 90, ServingGot,
+    every_ppc64be_function_survives_the_pipeline => Ppc64be, 90, ServingGot,
+    every_ppc64le_function_survives_the_pipeline => Ppc64le, 88, ServingGot,
 }
 
 /// Arches the sweep leaves out, each with the reason.
@@ -619,6 +639,18 @@ const NOT_SWEPT: &[(Arch, &str)] = &[];
 
 #[test]
 fn the_sweep_covers_every_fixture_arch() {
+    for (i, &(arch, _)) in NOT_SWEPT.iter().enumerate() {
+        assert!(
+            common::ALL_ARCHES.contains(&arch),
+            "{}: not a fixture arch",
+            arch.name()
+        );
+        assert!(
+            NOT_SWEPT[..i].iter().all(|&(a, _)| a != arch),
+            "{}: listed twice in NOT_SWEPT",
+            arch.name()
+        );
+    }
     for &arch in common::ALL_ARCHES {
         let swept = SWEPT.contains(&arch);
         let excluded = NOT_SWEPT.iter().any(|&(a, _)| a == arch);
