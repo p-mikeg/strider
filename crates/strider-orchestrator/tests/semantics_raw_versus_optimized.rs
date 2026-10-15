@@ -417,6 +417,10 @@ const KNOWN_ANALYZE_ERRORS: &[(&str, &str)] = &[
         "aarch64/zero_pcode_holes::_start",
         "sequential decoding overflowed",
     ),
+    (
+        "aarch64be/zero_pcode_holes::_start",
+        "sequential decoding overflowed",
+    ),
 ];
 
 #[derive(Default)]
@@ -584,15 +588,44 @@ macro_rules! fixture_sweeps {
             }
         )+
         /// The arches the sweep runs.
-        #[allow(dead_code)]
         const SWEPT: &[Arch] = &[$(Arch::$arch),+];
     };
 }
 
 fixture_sweeps! {
+    every_x86_function_survives_the_pipeline => X86, 82,
+    every_x86_kernel_function_survives_the_pipeline => X86Kernel, 83,
     every_x64_function_survives_the_pipeline => X64, 85,
     every_aarch64_function_survives_the_pipeline => Aarch64, 91,
+    every_aarch64be_function_survives_the_pipeline => Aarch64Be, 86,
     every_arm_function_survives_the_pipeline => Arm, 91,
+    every_arm_be_function_survives_the_pipeline => ArmBe, 88,
+    every_arm_be8_function_survives_the_pipeline => ArmBe8, 88,
+    every_arm_thumb_function_survives_the_pipeline => ArmThumb, 91,
+    every_mips32le_function_survives_the_pipeline => Mips32le, 79,
     every_mips32be_function_survives_the_pipeline => Mips32be, 79,
+    // n64 PIC code branches through a writable GOT, so those branches stay
+    // unresolved and the interpreter does not run them.
+    every_mips64le_function_survives_the_pipeline => Mips64le, 67,
+    every_mips64be_function_survives_the_pipeline => Mips64be, 67,
     every_ppc32be_function_survives_the_pipeline => Ppc32be, 86,
+    every_ppc32le_function_survives_the_pipeline => Ppc32le, 87,
+    every_ppc64be_function_survives_the_pipeline => Ppc64be, 87,
+    every_ppc64le_function_survives_the_pipeline => Ppc64le, 85,
+}
+
+/// Arches the sweep leaves out, each with the reason.
+const NOT_SWEPT: &[(Arch, &str)] = &[];
+
+#[test]
+fn the_sweep_covers_every_fixture_arch() {
+    for &arch in common::ALL_ARCHES {
+        let swept = SWEPT.contains(&arch);
+        let excluded = NOT_SWEPT.iter().any(|&(a, _)| a == arch);
+        assert!(
+            swept != excluded,
+            "{}: must be in exactly one of SWEPT and NOT_SWEPT",
+            arch.name()
+        );
+    }
 }
