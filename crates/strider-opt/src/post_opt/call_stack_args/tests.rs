@@ -1237,6 +1237,50 @@ fn the_slot_after_the_offset_carrier_ends_collection() -> Result<()> {
     Ok(())
 }
 
+/// 32-bit: the call's SP is `sp + 0x8000_0000` and an older store fills its
+/// slot 0.  With `wrapped`, a nearer 4-byte store at `sp + 0x7FFF_FFFE` lands
+/// its top two bytes on slot 0's bottom two, mod 2^32.  The Call's input count.
+fn collect_under_a_store_across_the_wrap(wrapped: bool) -> Result<usize> {
+    let sp = stack_vn();
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(0, 4))
+        .build_fn_single_region()?;
+    let sp0 = b.read_variable(&sp)?;
+    let half = b.build_int_const(0x8000_0000u64, ValueType::I32)?;
+    let sp1 = b.build_int_binary_operation(sp0, half, IntBinaryOp::Add, ValueType::I32)?;
+    b.write_variable(&sp, sp1)?;
+    let arg0 = b.build_int_const(0x11u64, ValueType::I32)?;
+    b.build_store(sp1, arg0, rsleigh::VnSpace::RAM)?;
+    if wrapped {
+        let near = b.build_int_const(0x7FFF_FFFEu64, ValueType::I32)?;
+        let addr = b.build_int_binary_operation(sp0, near, IntBinaryOp::Add, ValueType::I32)?;
+        let patch = b.build_int_const(0x2222_2222u64, ValueType::I32)?;
+        b.build_store(addr, patch, rsleigh::VnSpace::RAM)?;
+    }
+    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    b.build_call_cc(target, None)?;
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    Ok(collect_call_inputs(&mut fg)?.len())
+}
+
+#[test]
+fn a_nearer_store_wrapping_onto_a_slot_leaves_it_uncollected() -> Result<()> {
+    assert_eq!(
+        collect_under_a_store_across_the_wrap(false)?,
+        5,
+        "control: ctrl + mem + target + sp + slot 0"
+    );
+    assert_eq!(
+        collect_under_a_store_across_the_wrap(true)?,
+        4,
+        "sp+0x7FFF_FFFE overwrites slot 0's low half mod 2^32, so the older \
+         store is not its value"
+    );
+    Ok(())
+}
+
 /// Doubling the calls may only double the work of collecting their arguments.
 #[test]
 fn collecting_across_call_diamonds_costs_near_linear_work() -> Result<()> {
