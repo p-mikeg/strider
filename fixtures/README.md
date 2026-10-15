@@ -15,6 +15,10 @@ running the test suite.
 Rebuilding is only needed when a case or an arch's flags change. See the header
 of `Makefile` for the `ARCH=` / `CASE=` selectors.
 
+Each `arch/<arch>.mk` is one row of `FIXTURE_ARCHES` in
+`crates/strider-orchestrator/tests/common/fixtures.rs`; `cargo test -p
+strider-orchestrator --test golden` fails until the two agree.
+
 ## Toolchains
 
 Every arch needs its own cross compiler. A missing one fails the build;
