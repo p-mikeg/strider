@@ -122,7 +122,7 @@ fn compare(
         let entry = |e: EntryVar| entry_value(e, stack_vn, seed, small);
         let env = environment(&entry, rom, seed);
         let want = match interp::run(raw, &env) {
-            Ok(Outcome::Diverge) => {
+            Ok(Outcome::Diverge(_)) => {
                 unchecked.diverged += 1;
                 skipped = "the raw run diverged".to_owned();
                 continue;
@@ -217,7 +217,7 @@ fn ending(outcome: &Outcome) -> &'static str {
     match outcome {
         Outcome::Return { .. } => "in a return",
         Outcome::Unreachable { .. } => "in a trap",
-        Outcome::Diverge => "by diverging",
+        Outcome::Diverge(_) => "by diverging",
     }
 }
 

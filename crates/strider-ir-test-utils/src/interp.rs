@@ -116,8 +116,16 @@ pub enum Outcome {
         writes: BTreeMap<u64, u8>,
         calls: Vec<CallRecord>,
     },
-    /// The step budget ran out, or a branch tested an undefined value.
-    Diverge,
+    Diverge(Divergence),
+}
+
+/// Why a run is [`Outcome::Diverge`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Divergence {
+    /// The run outlasted [`Env::step_budget`].
+    StepBudget,
+    /// An `If` or `Switch` tested an undefined value.
+    UndefinedBranch,
 }
 
 type Eval<T> = Result<T, Unsupported>;
@@ -187,14 +195,14 @@ pub fn run_observed(
                     }
                 }
                 let Some(c) = m.int(cond)? else {
-                    return Ok(Outcome::Diverge);
+                    return Ok(Outcome::Diverge(Divergence::UndefinedBranch));
                 };
                 // Output 0 is the taken arm.
                 ctrl = f.node_outputs(node)[usize::from(c == 0)];
             }
             NodeKind::Switch(_) => {
                 let Some(selector) = m.int(f.node_inputs(node)[1])? else {
-                    return Ok(Outcome::Diverge);
+                    return Ok(Outcome::Diverge(Divergence::UndefinedBranch));
                 };
                 ctrl = f.node_outputs(node)[m.switch_arm(node, selector)?];
             }
@@ -207,7 +215,7 @@ pub fn run_observed(
             other => return unsupported(format!("{} on the control path", label(&other))),
         }
     }
-    Ok(Outcome::Diverge)
+    Ok(Outcome::Diverge(Divergence::StepBudget))
 }
 
 /// Memory at one point of a run: the bytes written since the last call that
@@ -745,7 +753,7 @@ mod tests {
     fn a_loop_past_the_step_budget_diverges() {
         assert_eq!(
             run(&counting_loop(1, 2, 0), &env(&|_| 0, None)),
-            Ok(Outcome::Diverge)
+            Ok(Outcome::Diverge(Divergence::StepBudget))
         );
     }
 
@@ -1074,6 +1082,9 @@ mod tests {
             b.build_return(None, &[zero]).unwrap();
         }
         let f = b.build().unwrap();
-        assert_eq!(run(&f, &env(&|_| 5, None)), Ok(Outcome::Diverge));
+        assert_eq!(
+            run(&f, &env(&|_| 5, None)),
+            Ok(Outcome::Diverge(Divergence::UndefinedBranch))
+        );
     }
 }
