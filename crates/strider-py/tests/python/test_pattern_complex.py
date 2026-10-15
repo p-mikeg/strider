@@ -2,7 +2,7 @@
 * `mul_then_add` (patterns.c) is `a * b + c`, for commutative `add`.
 * `chained_xor_mask` (patterns.c) is `((x ^ k1) & m1) ^ k2`, for 3-deep
   capture chains.
-* `array_sum` (memory.c) is a load + add loop body, for back-references.
+* raw `xor eax, eax; xor eax, edi`, for back-references.
 """
 
 from __future__ import annotations
@@ -52,20 +52,18 @@ def test_multi_level_capture_chain(x86_memory_elf):
         assert off in h
 
 
-def test_back_reference_same_capture_twice(x86_memory_elf):
+def test_back_reference_same_capture_twice():
     """A repeated capture is a back-reference: `int_xor(v, v)` fires only
-    when both operands are the same value, so it must be a subset of
-    `int_xor(a, b)`.  Whether `array_sum` contains a zeroing xor at all is
-    codegen-dependent, so the subset bound is all this can assert.
-    """
-    g = _build_graph(x86_memory_elf, "array_sum")
-    pat = int_xor(Capture("v"), Capture("v"))
-    hits = g.find_all(pat)
-    assert isinstance(hits, list)
-
-    pat_distinct = int_xor(Capture("a"), Capture("b"))
-    hits_distinct = g.find_all(pat_distinct)
-    assert len(hits) <= len(hits_distinct)
+    when both operands are the same value."""
+    mem = strider.reader.BufferReader(0x1000, bytes.fromhex("31c0" "31f8" "c3"))
+    g = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem).analyze(
+        0x1000,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        opts=strider.lift.LifterOptions(pipeline=strider.opt.OptimizerPipeline.empty()),
+    ).function
+    assert len(g.find_all(int_xor(Capture("v"), Capture("v")))) == 1
+    # The self-xor once, the other one in both operand orders.
+    assert len(g.find_all(int_xor(Capture("a"), Capture("b")))) == 3
 
 
 def test_predicate_guard_filters_int_const(x86_memory_elf):

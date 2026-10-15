@@ -278,12 +278,8 @@ def test_analyze_many_reuse():
     for sym in list(s.functions()):
         if sym.name == "add":
             continue
-        try:
-            _cfg, other_function, _unresolved = s.analyze(sym.name)
-        except strider.StriderError:
-            # Data symbols / non-code names may not lift.
-            continue
-        assert other_function.node_count() >= 0
+        _cfg, other_function, _unresolved = s.analyze(sym.name)
+        assert other_function.node_count() > 0, sym.name
 
 
 def test_analyze_function_max_size_clips_mid_function():

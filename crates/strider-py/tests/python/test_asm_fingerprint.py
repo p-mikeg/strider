@@ -43,8 +43,7 @@ def test_asm_fingerprint_int_const_carries_addr():
     g = _arithmetic_add_graph()
     c = Capture()
     hits = g.find_all(int_const(c))
-    if not hits:
-        return  # constants can all fold away; that's fine
+    assert hits, "add keeps its constants"
     for m in hits:
         fp = m.asm_fingerprint(c)
         assert fp, f"int const capture must have >=1 fingerprint addr: {fp}"
