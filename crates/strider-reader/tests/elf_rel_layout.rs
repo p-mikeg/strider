@@ -116,15 +116,11 @@ fn linked_images_load_identically_to_before_the_et_rel_rebase() {
     ];
     for (arch, name, expected) in golden {
         let path = fixture(arch, name);
-        if !path.exists() {
-            // A missing fixture must be VISIBLE: a silent return reports as a pass.
-            eprintln!(
-                "SKIP {}: {} is not built; run `make -C fixtures`",
-                module_path!(),
-                path.display()
-            );
-            continue;
-        }
+        assert!(
+            path.exists(),
+            "{} is not built; run `make -C fixtures`",
+            path.display()
+        );
         let owned = strider_reader::load_elf(&path).unwrap();
         let obj = owned.checked_file().expect("the mapped file is unchanged");
         let layout = ElfSectionLayout::new(&obj);
@@ -167,15 +163,11 @@ fn every_allocatable_section_of_an_object_file_serves_its_own_bytes() {
     for arch in ["x64", "x86", "aarch64", "arm", "mips64le", "ppc64le"] {
         for case in ["tzcount", "switch", "globals", "elf_relocs"] {
             let path = fixture(arch, &format!("{case}.o"));
-            if !path.exists() {
-                // A missing fixture must be VISIBLE: a silent return reports as a pass.
-                eprintln!(
-                    "SKIP {}: {} is not built; run `make -C fixtures`",
-                    module_path!(),
-                    path.display()
-                );
-                continue;
-            }
+            assert!(
+                path.exists(),
+                "{} is not built; run `make -C fixtures`",
+                path.display()
+            );
             let owned = strider_reader::load_elf(&path).unwrap();
             let obj = owned.checked_file().expect("the mapped file is unchanged");
             let layout = ElfSectionLayout::new(&obj);
@@ -215,15 +207,11 @@ fn every_allocatable_section_of_an_object_file_serves_its_own_bytes() {
 #[test]
 fn object_file_symbols_resolve_into_their_own_section() {
     let path = fixture("x64", "tzcount.o");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return;
-    }
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let owned = strider_reader::load_elf(&path).unwrap();
     let obj = owned.checked_file().expect("the mapped file is unchanged");
     let layout = ElfSectionLayout::new(&obj);
@@ -260,15 +248,11 @@ fn object_file_symbols_resolve_into_their_own_section() {
 #[test]
 fn object_file_jump_table_is_mapped_and_relocated() {
     let path = fixture("x64", "switch.o");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return;
-    }
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let owned = strider_reader::load_elf(&path).unwrap();
     let obj = owned.checked_file().expect("the mapped file is unchanged");
     let layout = ElfSectionLayout::new(&obj);
@@ -334,15 +318,11 @@ fn object_file_jump_table_is_mapped_and_relocated() {
 #[test]
 fn a_rebased_writable_section_is_still_not_read_only_memory() {
     let path = fixture("x64", "elf_relocs.o");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return;
-    }
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let owned = strider_reader::load_elf(&path).unwrap();
     let obj = owned.checked_file().expect("the mapped file is unchanged");
     let layout = ElfSectionLayout::new(&obj);
@@ -538,15 +518,11 @@ fn an_et_rel_symbol_address_includes_its_sections_sh_addr() {
 #[test]
 fn a_linked_image_symbol_address_is_its_st_value() {
     let path = fixture("x64", "switch.elf");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return;
-    }
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let owned = strider_reader::load_elf(&path).unwrap();
     let obj = owned.checked_file().expect("the mapped file is unchanged");
     let layout = ElfSectionLayout::new(&obj);
@@ -612,19 +588,14 @@ fn an_object_file_leaves_address_zero_unmapped() {
     ]);
     let fixture_bytes = {
         let path = fixture("x64", "memory.o");
-        if path.exists() {
-            Some(std::fs::read(&path).unwrap())
-        } else {
-            // A missing fixture must be VISIBLE: a silent skip reports as a pass.
-            eprintln!(
-                "SKIP {}: {} is not built; run `make -C fixtures`",
-                module_path!(),
-                path.display()
-            );
-            None
-        }
+        assert!(
+            path.exists(),
+            "{} is not built; run `make -C fixtures`",
+            path.display()
+        );
+        std::fs::read(&path).unwrap()
     };
-    for bytes in [Some(synthetic), fixture_bytes].into_iter().flatten() {
+    for bytes in [synthetic, fixture_bytes] {
         let obj = object::File::parse(&bytes[..]).unwrap();
         assert_eq!(obj.kind(), object::ObjectKind::Relocatable);
         let reader = elf::ElfFileMemReader::from_object(&obj).unwrap();
