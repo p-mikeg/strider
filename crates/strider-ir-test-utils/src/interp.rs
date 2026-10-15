@@ -399,9 +399,12 @@ impl<'a, 'e> Machine<'a, 'e> {
                     return unsupported("a store of an undefined value");
                 };
                 let size = int_type(f, ins[2])?.bit_width().div_ceil(8);
-                // The one copy a store makes: `prev` stays cached for its
-                // other readers.
-                let mut mem = Mem::clone(&prev);
+                // A state only this store reads leaves the cache and is
+                // updated in place; one with other readers is copied.
+                if f.value_uses(ins[0]).count() == 1 && !self.mem_now.contains_key(&ins[0]) {
+                    self.mems.remove(&ins[0]);
+                }
+                let mut mem = Rc::unwrap_or_clone(prev);
                 // Little-endian value bytes, then into address order.
                 let mut bytes = data.to_le_bytes()[..size].to_vec();
                 if f.endianness() == Endianness::Big {
