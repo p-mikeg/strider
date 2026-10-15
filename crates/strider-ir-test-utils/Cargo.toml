@@ -20,6 +20,8 @@ strider-target = { workspace = true }
 cranelift-entity.workspace = true
 rsleigh.workspace = true
 anyhow.workspace = true
+# `interp`'s value maps.
+rustc-hash.workspace = true
 proptest = { workspace = true, optional = true }
 
 [features]
