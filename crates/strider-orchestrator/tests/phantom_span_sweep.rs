@@ -1,9 +1,8 @@
 //! Builds a CFG for every function symbol in every fixture ELF, in a debug
 //! build so `strider-cfg`'s region-segmentation `debug_assert!`s fire: no
 //! non-empty region has a phantom span, and `split_region` is never called on
-//! an empty region nor takes the hole/round-down branch.  A violation panics; a
-//! plain build error (a legit bail such as an unterminated function) is counted
-//! and skipped.
+//! an empty region nor takes the hole/round-down branch.  A violation panics,
+//! and every fixture function must build.
 //!
 //! `build_cfg` only: nothing here lifts, optimises, or resolves, so it makes no
 //! claim about `Strider::analyze`.  The orchestrator's own claims are covered
@@ -15,7 +14,7 @@
 
 mod common;
 
-use common::{ALL_ARCHES, Arch, driver_for_reader};
+use common::{ALL_ARCHES, driver_for_reader};
 use object::{Object, ObjectSymbol, SymbolKind};
 
 #[test]
@@ -23,6 +22,7 @@ use object::{Object, ObjectSymbol, SymbolKind};
 fn build_cfg_phantom_span_asserts_hold_for_every_fixture_function() {
     let mut total = 0usize;
     let mut built = 0usize;
+    let mut failed: Vec<String> = Vec::new();
     for &arch in ALL_ARCHES {
         let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/out")
@@ -54,22 +54,17 @@ fn build_cfg_phantom_span_asserts_hold_for_every_fixture_function() {
                 allow_code_before_start_addr: true,
                 ..Default::default()
             };
-            for raw in addrs {
-                // ARM/Thumb symbols carry the Thumb bit in the address LSB.
-                let addr = match arch {
-                    Arch::Arm | Arch::ArmThumb => raw & !1u64,
-                    _ => raw,
-                };
+            for addr in addrs {
+                // The ARM/Thumb interworking bit is the entry's ISA mode, which
+                // `Lifter::build_cfg` reads and masks off itself.
                 total += 1;
-                if ana
-                    .build_cfg(
-                        strider_cfg::MachineInsnAddr::from(addr),
-                        &cfg_opts,
-                        &Default::default(),
-                    )
-                    .is_ok()
-                {
-                    built += 1;
+                match ana.build_cfg(
+                    strider_cfg::MachineInsnAddr::from(addr),
+                    &cfg_opts,
+                    &Default::default(),
+                ) {
+                    Ok(_) => built += 1,
+                    Err(e) => failed.push(format!("{}@{addr:#x}: {e}", path.display())),
                 }
             }
         }
@@ -82,11 +77,10 @@ fn build_cfg_phantom_span_asserts_hold_for_every_fixture_function() {
         total > 0,
         "sweep found no functions; run `make -C fixtures`"
     );
-    // 2561/2720 = 94.2% when this floor was set; the rest are legit bails. A
-    // drop past 90% is a segmentation regression, not fixture drift.
-    let built_pct = 100.0 * built as f64 / total as f64;
     assert!(
-        built_pct >= 90.0,
-        "only {built}/{total} function CFGs built ({built_pct:.1}%), below the 90% floor"
+        failed.is_empty(),
+        "{} of {total} function CFGs failed to build:\n{}",
+        failed.len(),
+        failed.join("\n")
     );
 }
