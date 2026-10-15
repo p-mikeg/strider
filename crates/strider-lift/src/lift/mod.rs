@@ -77,6 +77,9 @@ pub struct Lifter<R: rsleigh::MemReader> {
     user_op_names: Vec<String>,
     /// This engine's address spaces, for [`Self::check_cfg_space_ids`].
     space_ids: rsleigh::SpaceIds,
+    /// This engine's addresses, in bytes: the width a convention's stack
+    /// geometry has to match.
+    ram_addr_size: u32,
     /// Flowing context vars, discovered once (constant per sla) and lent to
     /// every `build_cfg` so decode mode propagates along CFG edges.
     flow_vars: strider_cfg::FlowVars,
@@ -129,6 +132,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
                 "{arch:?}: \"ram\" has word size {ram_word_size}, and the lift indexes it in bytes"
             ));
         }
+        let ram_addr_size = ram.addr_size();
         let space_ids = sleigh.space_ids();
         let flow_vars = strider_cfg::FlowVars::discover(&sleigh)?;
         // Read on the still-fresh engine, so this is the pspec default, not a
@@ -155,6 +159,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             declared_reg_vns,
             user_op_names,
             space_ids,
+            ram_addr_size,
             flow_vars,
             entry_defaults,
             transient_defaults,
@@ -167,6 +172,13 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     #[must_use]
     pub fn user_op_names(&self) -> &[String] {
         &self.user_op_names
+    }
+
+    /// [`strider_target::BuiltCallingConvention::check_addr_size`] against this
+    /// engine's `ram`.
+    pub(crate) fn check_cc(&self, cc: &strider_target::BuiltCallingConvention) -> Result<()> {
+        cc.check_addr_size(self.ram_addr_size)
+            .map_err(|e| anyhow!("{:?}: {e}", self.arch.preset()))
     }
 
     #[must_use]
@@ -409,6 +421,11 @@ impl<R: rsleigh::MemReader> Lifter<R> {
 
     /// `cc` is the function default; a direct Call whose target appears in
     /// [`LiftOptions::per_address_ccs`] is built with that override instead.
+    ///
+    /// # Errors
+    ///
+    /// Among others, when `cc` or an override this `cfg` selects fails
+    /// [`strider_target::BuiltCallingConvention::check_addr_size`] for this arch.
     pub fn build_ir_with(
         &self,
         cfg: &strider_cfg::Cfg,
@@ -416,6 +433,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         opts: &LiftOptions,
     ) -> Result<LiftOutcome> {
         self.check_cfg_space_ids(cfg)?;
+        self.check_cc(&cc)?;
         // The CFG is rebuilt from scratch each lift, so the tracked set is
         // always scanned fresh.  `FunctionLifter::new` adds the stack vn; the
         // lifter is the SSoT for that.

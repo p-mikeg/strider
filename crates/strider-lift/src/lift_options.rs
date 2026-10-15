@@ -11,7 +11,8 @@ pub struct LiftOptions<'a> {
     pub cfg: strider_cfg::CfgOptions<'a>,
 
     /// Keyed by direct-call target address.  The CCs must already be resolved
-    /// against the same Sleigh register table as the function-default CC.
+    /// against the same Sleigh register table as the function-default CC, and
+    /// fit its arch the way that one must (`Lifter::build_ir_with`).
     ///
     /// Borrowed, as [`strider_cfg::CfgOptions::known_targets`] is.
     pub per_address_ccs: &'a FxHashMap<u64, strider_target::BuiltCallingConvention>,
