@@ -1035,3 +1035,31 @@ fn a_word_sized_rel32_that_does_not_fit_is_a_hole() {
         "a displacement past 32 signed bits must be a hole, not its low word"
     );
 }
+
+/// A mips64el `SHT_REL` entry's `r_info` is transposed in what `object`
+/// reports, so the hole over an unhandled one must take its type from the
+/// untransposed word: `R_MIPS_COPY`, not the symbol index 1.
+#[test]
+fn a_mips64el_rel_hole_names_the_relocation_type() {
+    let fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Little,
+            is_64: true,
+            e_machine: object::elf::EM_MIPS,
+            r_type: object::elf::R_MIPS_COPY,
+            defined_symbol: true,
+            slot_init: vec![0u8; 8],
+        },
+        // Read-only, so the unhandled relocation leaves a hole.
+        common::elf_fixture::RelPlacement {
+            slot_exec: true,
+            ..Default::default()
+        },
+    );
+    let table =
+        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
+    assert_eq!(
+        table.unmodelled_relocation_at(fx.slot_addr),
+        Some(object::elf::R_MIPS_COPY)
+    );
+}
