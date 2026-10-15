@@ -115,3 +115,6 @@ def test_the_last_region_filter_called_wins():
     # `stack_only` keeps an offset an earlier `stack_offset` pinned.
     assert roots(store().stack_offset(-8).stack_only()) == stack
     assert roots(store().stack_offset(0).stack_only()) == []
+    assert roots(store().non_stack()) == heap
+    assert roots(store().stack_only().non_stack()) == heap
+    assert roots(store().non_stack().stack_only()) == stack
