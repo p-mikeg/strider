@@ -4,7 +4,7 @@ import pytest
 
 import strider
 
-from .conftest import FIXTURES_DIR, fixture_path
+from .conftest import fixture_path
 
 
 
@@ -23,8 +23,6 @@ def test_load_elf_accepts_os_pathlike():
     """Every loader takes any `os.PathLike`, not just `str`, including a
     custom `__fspath__` object."""
     elf = fixture_path("x64", "arithmetic")
-    if not elf.exists():
-        pytest.skip("fixture not built")
 
     class Wrapper:
         def __fspath__(self) -> str:
@@ -381,9 +379,7 @@ def test_load_x64_object_file_lifts_tzcount():
     The regions have to carry the object's bytes: an empty memory map
     lifts an empty CFG instead of failing.
     """
-    obj = FIXTURES_DIR / "x64" / "tzcount.o"
-    if not obj.exists():
-        pytest.skip(f"fixture missing: {obj} (run `make CASE=tzcount` in fixtures/)")
+    obj = fixture_path("x64", "tzcount", ".o")
     # Relocations off: applying them stitches `tzcount` to its callees, which
     # extends the lifted body past its recorded `st_size`. Only the section
     # walk is under test here.
