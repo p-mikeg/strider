@@ -1,4 +1,5 @@
 import strider
+from strider.pattern import load
 
 from .conftest import symbol_addr
 
@@ -209,3 +210,25 @@ def test_lifter_optimize_folds_against_the_handles_rom():
 
     without = loads_after_manual_optimize(False)
     assert len(without.find_all(load())) == 1, "no rom, nothing to fold against"
+
+
+def test_a_rewriting_post_pass_restamps_stack_offsets():
+    """A fixed-point pass added with `add_post` that rewrites an address must
+    not leave the stack offsets an earlier post-pass stamped.  `LoadForward`
+    turns the `[rax+4]` load's address into `rsp + 12` after `StackOffsetDetect`
+    stamped it as no stack address."""
+    # lea rax,[rsp+8]; mov [rsp],rax; mov rax,[rsp]; mov eax,[rax+4]; ret
+    code = bytes.fromhex("488d442408" "48890424" "488b0424" "8b4004" "c3")
+    base = 0x1000
+    mem = strider.reader.BufferReader(base, code)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    _cfg, fn, _unresolved = lift.analyze(
+        base,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        opts=strider.lift.LifterOptions(pipeline=strider.opt.OptimizerPipeline.empty()),
+    )
+    pipe = strider.opt.OptimizerPipeline.empty()
+    pipe.add_post(strider.opt.StackOffsetDetect())
+    pipe.add_post(strider.opt.LoadForward())
+    lift.optimize(fn, pipe)
+    assert len(fn.find_all(load().stack_offset(12))) == 1

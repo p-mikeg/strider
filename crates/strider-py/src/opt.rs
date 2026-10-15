@@ -51,8 +51,8 @@ impl strider_orchestrator::opt::PostOptimizer for ForwardPostPass {
 }
 
 /// Lets a Python caller register an ordinary fixed-point pass via
-/// `OptimizerPipeline.add_post(...)`: runs it once, discarding its
-/// `Change`/`NoChange`.
+/// `OptimizerPipeline.add_post(...)`: runs it once.  The post-pass loop keeps
+/// the stack-slot stamps across post-passes, so a change drops them.
 struct OptAsPostPass(ErasedPass);
 
 impl Clone for OptAsPostPass {
@@ -67,7 +67,10 @@ impl strider_orchestrator::opt::PostOptimizer for OptAsPostPass {
         edit: &mut strider_opt::EditFunction<'_>,
         ctx: &mut strider_orchestrator::opt::OptCtx<'_>,
     ) -> strider_orchestrator::opt::Result<()> {
-        let _ = self.0.apply(edit, ctx)?;
+        if self.0.apply(edit, ctx)?.changed() {
+            // A rewrite can move an address off the base a stamp names.
+            edit.function().side_tables().clear_memory_slots();
+        }
         Ok(())
     }
 
