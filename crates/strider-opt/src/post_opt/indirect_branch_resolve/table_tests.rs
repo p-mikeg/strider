@@ -1446,10 +1446,9 @@ fn classify_table_dispatch_one_stack_target_resolves() {
     }
 }
 
-/// A 32-bit two-entry stack table at `sp + 0x8000_0000`.  With `wrapped`, a
-/// newer 4-byte store at `sp + 0x7FFF_FFFE` follows the table: mod 2^32 its top
-/// two bytes are entry 0's bottom two.
-fn build_stack_table_across_the_wrap(wrapped: bool) -> Function {
+/// A 32-bit two-entry stack table at `sp + table`, then, for `newer` of
+/// `(off, ty)`, a newer `ty` store at `sp + off`.
+fn build_stack_table_across_the_wrap(table: u64, newer: Option<(u64, ValueType)>) -> Function {
     let sp = sp32_vn();
     let arg_vn = strider_ir_test_utils::reg_vn(0x8, 4);
     let mut b = sp_frame(sp)
@@ -1462,14 +1461,14 @@ fn build_stack_table_across_the_wrap(wrapped: bool) -> Function {
         b.build_int_binary_operation(sp_val, c, IntBinaryOp::Add, ValueType::I32)
             .unwrap()
     };
-    for (off, target) in [(0x8000_0000u64, 0x401190u64), (0x8000_0004, 0x401180)] {
+    for (off, target) in [(table, 0x401190u64), (table + 4, 0x401180)] {
         let addr = at(&mut b, off);
         let data = b.build_int_const(target, ValueType::I32).unwrap();
         b.build_store(addr, data, VnSpace::RAM).unwrap();
     }
-    if wrapped {
-        let addr = at(&mut b, 0x7FFF_FFFE);
-        let data = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32).unwrap();
+    if let Some((off, ty)) = newer {
+        let addr = at(&mut b, off);
+        let data = b.build_int_const(0xDEAD_BEEFu64, ty).unwrap();
         b.build_store(addr, data, VnSpace::RAM).unwrap();
     }
     let arg = b.read_variable(&arg_vn).unwrap();
@@ -1481,7 +1480,7 @@ fn build_stack_table_across_the_wrap(wrapped: bool) -> Function {
     let scaled = b
         .build_int_binary_operation(idx, four, IntBinaryOp::Mul, ValueType::I32)
         .unwrap();
-    let table = at(&mut b, 0x8000_0000);
+    let table = at(&mut b, table);
     let addr = b
         .build_int_binary_operation(table, scaled, IntBinaryOp::Add, ValueType::I32)
         .unwrap();
@@ -1497,7 +1496,7 @@ fn build_stack_table_across_the_wrap(wrapped: bool) -> Function {
 #[test]
 fn classify_table_dispatch_sees_a_store_wrapping_onto_a_slot() {
     assert_eq!(
-        classify(&build_stack_table_across_the_wrap(false), None),
+        classify(&build_stack_table_across_the_wrap(0x8000_0000, None), None),
         Some(ResolvedTargets::Multiple(vec![
             0x401180u64.into(),
             0x401190u64.into(),
@@ -1505,9 +1504,34 @@ fn classify_table_dispatch_sees_a_store_wrapping_onto_a_slot() {
         "control: both entries fold across the signed wrap"
     );
     assert_eq!(
-        classify(&build_stack_table_across_the_wrap(true), None),
+        classify(
+            &build_stack_table_across_the_wrap(0x8000_0000, Some((0x7FFF_FFFE, ValueType::I32))),
+            None
+        ),
         None,
         "entry 0 is partly the newer store's, so no stale target may fold"
+    );
+}
+
+/// Entry 1 at `sp + 0x7FFF_FFFE` runs across the wrap, and a newer 2-byte store
+/// at `sp + 0x8000_0000` overwrites its top half mod 2^32.
+#[test]
+fn classify_table_dispatch_sees_a_store_past_the_wrap_onto_a_slot() {
+    assert_eq!(
+        classify(&build_stack_table_across_the_wrap(0x7FFF_FFFA, None), None),
+        Some(ResolvedTargets::Multiple(vec![
+            0x401180u64.into(),
+            0x401190u64.into(),
+        ])),
+        "control"
+    );
+    assert_eq!(
+        classify(
+            &build_stack_table_across_the_wrap(0x7FFF_FFFA, Some((0x8000_0000, ValueType::I16))),
+            None
+        ),
+        None,
+        "entry 1 is partly the newer store's"
     );
 }
 
