@@ -1044,11 +1044,18 @@ fn call_other_on_the_chain_blocks_under_either_survival_setting() -> Result<()> 
     let mut fg_default = new_fn()?;
     let mut p_default = cf_rp_pipeline();
     p_default.add_post_pass(FunctionArgDetect);
-    p_default.run(&mut fg_default, &mut crate::OptCtx::at_floor(None))?;
+    // The claim GRANTED is the only leg that proves anything: the `CallOther`
+    // arm of `def_clobbers` is unconditional, so at the floor it answers the
+    // same as a plain `Call` and the assertion rides `calls_block` instead.
+    let mut octx_claimed = crate::OptCtx::at_floor(None);
+    octx_claimed
+        .options
+        .assumptions
+        .assume_incoming_args_survive_calls = true;
+    p_default.run(&mut fg_default, &mut octx_claimed)?;
     assert!(
         fg_default.side_tables().arg_index_to_values(0).is_empty(),
-        "default (incoming args survive calls): a CallOther on the chain still \
-         marks the slot dirty",
+        "survival claimed: a CallOther on the chain still marks the slot dirty",
     );
 
     let mut fg_conservative = new_fn()?;
@@ -1162,7 +1169,14 @@ fn arg_detection_does_not_narrow_a_load_past_a_call() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
+    // Granted, so `alias_cfg` steps the `Call` and only `narrow_cfg` being
+    // pinned to `structural()` keeps the edge where it is.
+    let mut octx_claimed = crate::OptCtx::at_floor(None);
+    octx_claimed
+        .options
+        .assumptions
+        .assume_incoming_args_survive_calls = true;
+    pipeline.run(&mut fg, &mut octx_claimed)?;
 
     let mem_in = fg.node_inputs(fg.producer(loaded))[0];
     let kind = fg.node_kind(fg.producer(mem_in));
@@ -1173,12 +1187,14 @@ fn arg_detection_does_not_narrow_a_load_past_a_call() -> Result<()> {
     Ok(())
 }
 
-/// A user-op whose ABI declares it clobbers memory blocks the chain whatever
-/// `assume_incoming_args_survive_calls` says. That relaxation speaks for a
-/// conforming callee's frame discipline; a syscall handed a pointer into the
-/// incoming-argument area has none.
+/// A user-op whose ABI declares it clobbers memory blocks the chain under the
+/// survival claim, which is the load-bearing direction: that relaxation
+/// speaks for a conforming callee's frame discipline, and a syscall handed a
+/// pointer into the incoming-argument area has none. With the claim cleared
+/// any `Call` blocks anyway, which
+/// `call_other_on_the_chain_blocks_under_either_survival_setting` covers.
 #[test]
-fn memory_clobbering_call_other_blocks_regardless_of_the_survival_flag() -> Result<()> {
+fn memory_clobbering_call_other_blocks_under_the_survival_claim() -> Result<()> {
     let sp = sp32_vn();
     let mut b = sp_frame(sp)
         .stack_args(stack_args_at(0, 8))
@@ -1202,7 +1218,14 @@ fn memory_clobbering_call_other_blocks_regardless_of_the_survival_flag() -> Resu
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
+    // Granted: the flag cleared is the setting under which this holds for the
+    // wrong reason.
+    let mut octx_claimed = crate::OptCtx::at_floor(None);
+    octx_claimed
+        .options
+        .assumptions
+        .assume_incoming_args_survive_calls = true;
+    pipeline.run(&mut fg, &mut octx_claimed)?;
 
     assert!(
         fg.side_tables().arg_index_to_values(0).is_empty(),

@@ -1981,7 +1981,12 @@ fn narrowing_past_a_global_store_never_outlives_stack_global_disjoint() -> Resul
         Ok(())
     })?;
 
-    crate::test_support::standard_test().run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
+    // Granted, so the alias analyzer calls the global store disjoint and
+    // narrowing is possible at all. At the floor both analyzers agree and
+    // there is nothing for the rewire to outlive.
+    let mut relaxed = crate::OptCtx::at_floor(None);
+    relaxed.options.assumptions.stack_global_disjoint = true;
+    crate::test_support::standard_test().run(&mut fg, &mut relaxed)?;
 
     let mut sound = crate::OptCtx::at_floor(None);
     sound.options.assumptions = crate::AssumptionOptions::none();
