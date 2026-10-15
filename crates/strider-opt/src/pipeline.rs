@@ -137,9 +137,8 @@ pub fn run_one(
     Ok(result)
 }
 
-/// [`run_one`] without the validation, for the shape `DeadBranchElimination`
-/// leaves until `CfgDetach` strips the dead arm's predecessor slots, and for a
-/// bench timing the pass alone.
+/// [`run_one`] without the validation, for a fixture malformed on purpose and
+/// for a bench timing the pass alone.
 ///
 /// # Errors
 ///
