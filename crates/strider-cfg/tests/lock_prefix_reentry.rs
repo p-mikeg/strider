@@ -10,6 +10,17 @@ use strider_cfg::{Builder, Cfg, CfgOptions};
 use strider_target::SleighArch;
 
 fn build_x86(bytes: Vec<u8>) -> Cfg {
+    build_x86_with(bytes, &[])
+}
+
+/// `flow_commit_defaults` lent as `Lifter::build_cfg` lends it. Non-empty
+/// means this build re-derives committed context and `Builder::enqueue`
+/// therefore believes a snapshot of the engine, which is what bars the
+/// reentry probe's throwaway decode.
+fn build_x86_with(
+    bytes: Vec<u8>,
+    flow_commit_defaults: &[(&'static str, strider_target::FlowCommit, u32)],
+) -> Cfg {
     let arch = SleighArch::x86();
     let mut sleigh = Sleigh::new(
         arch.sla_spec(),
@@ -18,9 +29,14 @@ fn build_x86(bytes: Vec<u8>) -> Cfg {
     )
     .expect("sleigh");
     Builder::for_arch(&arch, &mut sleigh, 0x1000, &CfgOptions::default())
+        .with_flow_commit_defaults(flow_commit_defaults)
         .build()
         .expect("build")
 }
+
+/// The `lock`-prefix shape above, which is the only one that reaches the
+/// probe's decode and accepts it.
+const LOCK_REENTRY: [u8; 9] = [0x74, 0x01, 0xf0, 0x0f, 0xc1, 0x08, 0x89, 0xc8, 0xc3];
 
 fn interior(cfg: &Cfg) -> Vec<u64> {
     cfg.interior_branch_targets()
@@ -89,5 +105,33 @@ fn a_branch_into_a_real_instruction_interior_is_still_reported() {
         interior(&cfg),
         vec![0x1005],
         "a branch into a non-prefix instruction interior is a real overlap"
+    );
+}
+
+/// The probe lifts a MID-INSTRUCTION address out of band, and `oneInstruction`
+/// applies that constructor's `globalset`s with no `RegionBuilder` to
+/// re-derive them. So it must not run where `Builder::enqueue` believes a
+/// snapshot of the engine, which it does exactly where this build re-derives
+/// committed context.
+///
+/// Asserted on the difference the guard makes, not on a `false` return: the
+/// probe answers `false` for almost any address, so a test that only checks
+/// `false` passes whether the guard is there or not.
+#[test]
+fn lending_committed_context_bars_the_reentry_probe() {
+    assert!(
+        interior(&build_x86_with(LOCK_REENTRY.to_vec(), &[])).is_empty(),
+        "with nothing to re-derive the probe runs and the reentry is exact",
+    );
+    // `segover` is a real x86 flowing var (`ia.sinc:411`) that no constructor
+    // commits, standing in for an arch that does commit one: what is under
+    // test is the guard, not this var. It has to exist in the sla, because
+    // `rederive_flow` reads every name it is lent.
+    let lent = [("segover", strider_target::FlowCommit::NoFlow, 0u32)];
+    assert_eq!(
+        interior(&build_x86_with(LOCK_REENTRY.to_vec(), &lent)),
+        vec![0x1003],
+        "with committed context to re-derive the probe must be barred, so the \
+         reentry falls back to being reported as interior",
     );
 }
