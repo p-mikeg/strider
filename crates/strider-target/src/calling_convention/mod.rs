@@ -457,6 +457,44 @@ impl BuiltCallingConvention {
         }
         Ok(())
     }
+
+    /// Rejects a convention whose stack geometry is not that of an arch with
+    /// `addr_size`-byte addresses. A convention resolves by register name, and
+    /// one arch's names resolve on another: x86 `ESP` is a 4-byte view of
+    /// x86-64 `RSP`, ppc32 `r1` the whole 8-byte `r1` on ppc64.
+    ///
+    /// # Errors
+    ///
+    /// `stack_vn` is not `addr_size` bytes, a stack-arg slot is not one
+    /// `stack_vn` wide, or a convention with no link register pops less than
+    /// the return address its `call` pushed.
+    pub fn check_addr_size(&self, addr_size: u32) -> Result<()> {
+        let sp = self.stack_vn.size;
+        if sp != addr_size {
+            return Err(anyhow::anyhow!(
+                "BuiltCallingConvention: stack_vn {:?} is {sp} bytes, and this arch's \
+                 addresses are {addr_size}: the convention describes another arch",
+                self.stack_vn,
+            ));
+        }
+        if let Some(sa) = self.stack_args
+            && sa.increment != i128::from(sp)
+        {
+            return Err(anyhow::anyhow!(
+                "BuiltCallingConvention: stack-arg increment {} is not the {sp}-byte \
+                 stack slot of this arch",
+                sa.increment,
+            ));
+        }
+        if self.link_register_vn.is_none() && self.ret_stack_pop < i64::from(sp) {
+            return Err(anyhow::anyhow!(
+                "BuiltCallingConvention: ret_stack_pop {} is less than the {sp}-byte \
+                 return address a `call` pushes with no link register",
+                self.ret_stack_pop,
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Stack-arg layout: an unbounded series where the N-th stack argument sits
