@@ -1051,3 +1051,60 @@ fn a_mips64el_rel_hole_names_the_relocation_type() {
         Some(object::elf::R_MIPS_COPY)
     );
 }
+
+/// A sign-extended kseg address (`0xffff_ffff_8xxx_xxxx`) fits a 4-byte
+/// `R_MIPS_REL32` on MIPS64: the unsigned field takes either signedness, so
+/// the low word is patched rather than left a hole.
+#[test]
+fn a_mips64_rel32_to_a_kseg_address_is_patched() {
+    let fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Big,
+            is_64: true,
+            e_machine: object::elf::EM_MIPS,
+            r_type: object::elf::R_MIPS_REL32,
+            defined_symbol: true,
+            // A = -0x8000_0000, so S + A = 0xffff_ffff_8000_1000.
+            slot_init: 0x8000_0000u32.to_be_bytes().to_vec(),
+        },
+        // Read-only, so a field that did not fit would be a hole.
+        common::elf_fixture::RelPlacement {
+            slot_exec: true,
+            ..Default::default()
+        },
+    );
+    let regions = common::load_with_relocations(&fx.bytes);
+    assert_eq!(
+        read_u32_be(&regions, fx.slot_addr),
+        Some((fx.sym_addr as u32).wrapping_add(0x8000_0000)),
+    );
+    let table = strider_reader::MemRegionsLookupTable::new(regions);
+    assert_eq!(table.unmodelled_relocation_at(fx.slot_addr), None);
+}
+
+/// A big-endian MIPS64 type word carries `r_ssym` in its top byte, which is
+/// not part of the type: the hole names `R_MIPS_COPY`.
+#[test]
+fn a_mips64_be_hole_drops_r_ssym_from_the_type() {
+    let fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Big,
+            is_64: true,
+            e_machine: object::elf::EM_MIPS,
+            r_type: (1 << 24) | object::elf::R_MIPS_COPY,
+            defined_symbol: true,
+            slot_init: vec![0u8; 8],
+        },
+        // Read-only, so the unhandled relocation leaves a hole.
+        common::elf_fixture::RelPlacement {
+            slot_exec: true,
+            ..Default::default()
+        },
+    );
+    let table =
+        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
+    assert_eq!(
+        table.unmodelled_relocation_at(fx.slot_addr),
+        Some(object::elf::R_MIPS_COPY)
+    );
+}

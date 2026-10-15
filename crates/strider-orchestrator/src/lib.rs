@@ -2830,6 +2830,28 @@ mod tests {
         );
     }
 
+    /// The arm a clash leaves is still a table arm: the cfg seats an
+    /// out-of-range `Single` as a tail call but defers an out-of-range arm.
+    #[test]
+    fn an_isa_clash_leaves_a_one_arm_table_an_arm() {
+        let site = mid_insn_addr(0x1000);
+        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+        known.insert(site, multiple(&[(0x2000, None), (0x3000, None)]));
+        let mut abandoned = rustc_hash::FxHashSet::default();
+
+        let mut known = Cow::Owned(known);
+        let hit = abandon_undecodable(
+            &[],
+            &[pcode_addr(0x3000)],
+            &DispatchAnchors::from_addrs([]),
+            &mut abandoned,
+            &mut known,
+        );
+
+        assert_eq!(hit, vec![site]);
+        assert_eq!(known[&site], multiple(&[(0x2000, None)]));
+    }
+
     /// A caller can only spell the machine address, so a clash on its seat has
     /// to be reported and frozen under the `BRANCHIND`'s own anchor.
     #[test]

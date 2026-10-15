@@ -6,6 +6,8 @@ from strider import template as tpl
 
 from .conftest import built_function, built_lifter_and_function
 
+_RHS_CAPTURE = r"anything but var\(\) / anything\(\)"
+
 
 def _build_graph(symbol="array_sum"):
     return built_function("x86", "memory", symbol, optimize=False)
@@ -129,12 +131,12 @@ def test_capture_over_a_composite_rhs_raises():
     """On a RHS a capture stands for the value it matched, so it would replace
     the composite it wraps: every `x*4` became a plain `x`."""
     g, x = _x_times_4()
-    with pytest.raises(strider.StriderError, match="capture"):
+    with pytest.raises(strider.StriderError, match=_RHS_CAPTURE):
         g.rewrite(
             find=int_mul(var(x), int_const(4)),
             replace=int_shl(var(x), int_const(2)).capture(x),
         )
-    with pytest.raises(strider.StriderError, match="capture"):
+    with pytest.raises(strider.StriderError, match=_RHS_CAPTURE):
         g.rewrite(
             find=int_mul(var(x), int_const(4)),
             replace=tpl.int_add(
@@ -155,4 +157,23 @@ def test_capture_over_anything_rhs_is_the_captured_value():
     `var(x)`."""
     g, x = _x_times_4()
     assert g.rewrite(find=int_mul(var(x), int_const(4)), replace=anything().capture(x)) == 3
+    assert g.find_all(int_mul(var(x), int_const(4))) == []
+
+
+def test_capture_over_a_constant_or_a_capture_rhs_raises():
+    """`int_const` builds a node of its own and a chained capture wraps a
+    capture, so neither is a leaf a capture can stand in for."""
+    g, x = _x_times_4()
+    y = Capture()
+    for replace in (int_const(4).capture(x), var(x).capture(y).capture(x)):
+        with pytest.raises(strider.StriderError, match=_RHS_CAPTURE):
+            g.rewrite(find=int_mul(var(x), int_const(4)), replace=replace)
+    assert len(g.find_all(int_mul(var(x), int_const(4)))) == 3
+
+
+def test_capture_over_another_var_rhs_is_the_captured_value():
+    """`var(y).capture(x)` is `x`'s matched value; `y` builds nothing."""
+    g, x = _x_times_4()
+    y = Capture()
+    assert g.rewrite(find=int_mul(var(x), int_const(4)), replace=var(y).capture(x)) == 3
     assert g.find_all(int_mul(var(x), int_const(4))) == []

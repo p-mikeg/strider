@@ -1082,6 +1082,9 @@ fn function_arg_reg_matches_a_sub_register_of_the_carrier() {
     // Wider than the carrier: not contained.
     let wide = strider_ir_test_utils::reg_vn(0, 16);
     a::none(&function, function_arg_reg(wide, 0).build());
+    // Overlapping the carrier's top half and running past it: not contained.
+    let straddle = strider_ir_test_utils::reg_vn(4, 8);
+    a::none(&function, function_arg_reg(straddle, 0).build());
 }
 
 #[test]
