@@ -115,3 +115,29 @@ def test_the_two_argument_sources_do_not_answer_for_each_other():
         for off in range(0, 64, 4)
         if register_args.find_all(any_function_arg().source_stack(RAM, off))
     ]
+
+
+def test_a_sub_register_selects_the_argument_its_container_carries():
+    """The carrier is the full container (`RDI`, `XMM0`), so the ABI's narrower
+    spelling of it (`EDI`, the `double` lane `XMM0_Qa`) selects the same
+    argument."""
+    g = built_function("x64", "abi", "eight_int_args", optimize=False)
+    whole = [m.root for m in g.find_all(function_arg_reg(_reg("x64", "abi", "RDI")))]
+    assert len(whole) == 1
+    for name in ("EDI", "DI", "DIL"):
+        vn = _reg("x64", "abi", name)
+        assert [m.root for m in g.find_all(function_arg_reg(vn))] == whole
+        assert [
+            m.root for m in g.find_all(any_function_arg().source_register(vn))
+        ] == whole
+
+    floats = built_function("x64", "floats", "f64_arith")
+    xmm0 = [
+        m.root
+        for m in floats.find_all(function_arg_reg(_reg("x64", "floats", "XMM0")))
+    ]
+    assert len(xmm0) == 1
+    assert [
+        m.root
+        for m in floats.find_all(function_arg_reg(_reg("x64", "floats", "XMM0_Qa")))
+    ] == xmm0

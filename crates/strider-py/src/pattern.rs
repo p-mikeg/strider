@@ -4200,7 +4200,7 @@ impl PyFunctionArgPat {
         slf.index.replace(Some(i));
         slf
     }
-    /// Constrain to an argument sourced from register varnode `vn`.
+    /// Constrain to an argument sourced from register varnode `vn` or a register containing it.
     fn source_register(slf: PyRef<'_, Self>, vn: crate::sleigh::PyVn) -> PyRef<'_, Self> {
         slf.source
             .replace(Some(strider_ir::node::FunctionArgSource::Register(
@@ -4250,7 +4250,7 @@ pub fn any_function_arg() -> PyFunctionArgPat {
     PyFunctionArgPat::new()
 }
 
-/// Match a `FunctionArg` whose source is a specific register.
+/// Match a `FunctionArg` whose source is register `vn` or a register containing it.
 #[pyfunction]
 pub fn function_arg_reg(vn: crate::sleigh::PyVn) -> PyFunctionArgPat {
     let b = PyFunctionArgPat::new();

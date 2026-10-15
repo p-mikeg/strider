@@ -1062,6 +1062,28 @@ fn function_arg_reg_matches_only_register_carrier() {
     a::matches(&function, function_arg(0).build(), 1);
 }
 
+/// The carrier is the full container register, so a narrower view of it selects
+/// the same argument, as `initial_var_for` does.
+#[test]
+fn function_arg_reg_matches_a_sub_register_of_the_carrier() {
+    use strider_ir::node::FunctionArgSource;
+    use strider_pattern::{any_function_arg, function_arg_reg, initial_var_for};
+    let (function, _rax) = two_arg_carriers();
+    let eax = strider_ir_test_utils::reg_vn(0, 4);
+    a::matches(&function, initial_var_for(eax).into_pattern(), 1);
+    a::matches(&function, function_arg_reg(eax, 0).build(), 1);
+    a::matches(
+        &function,
+        any_function_arg()
+            .source(FunctionArgSource::Register(eax))
+            .build(),
+        1,
+    );
+    // Wider than the carrier: not contained.
+    let wide = strider_ir_test_utils::reg_vn(0, 16);
+    a::none(&function, function_arg_reg(wide, 0).build());
+}
+
 #[test]
 fn function_arg_stack_matches_only_stack_carrier() {
     use strider_pattern::function_arg_stack;
