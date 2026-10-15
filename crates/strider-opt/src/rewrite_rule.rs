@@ -847,7 +847,7 @@ mod tests {
         use strider_pattern::matcher::KindSpec;
         use strider_pattern::template::{TemplateBuilder, TemplateKind};
 
-        // Rewrites `Load(addr)` into `Load(addr, Store(addr, data, mem))`.
+        // Rewrites `Load(mem, addr)` into `Load(Store(mem, addr, data), addr)`.
         // Forwards nothing; purely a structural template exercise.
         let mut b = RegisterSet::new().build_fn_single_region().unwrap();
         b.set_lift_addr(Some(0x10));
@@ -876,20 +876,17 @@ mod tests {
             // input-less, so it becomes a root.
             let init_mem_node = tb.node(KindSpec::Exact(NodeKind::InitialMemory));
             let init_mem = tb.memory_output(init_mem_node, 0);
-            // Store(RAM), output [mem_out].  Slots wired addr/data/mem, NOT
-            // `expected_signature`'s [mem, addr, data]; `instantiate` does not
-            // check.
+            // Store(RAM): inputs [mem, addr, data], output [mem_out].
             let store_node = tb.node(KindSpec::Exact(NodeKind::Store(rsleigh::VnSpace::RAM)));
-            tb.input(store_node, 0, a);
-            tb.input(store_node, 1, data);
-            tb.input(store_node, 2, init_mem);
+            tb.input(store_node, 0, init_mem);
+            tb.input(store_node, 1, a);
+            tb.input(store_node, 2, data);
             let store_mem = tb.memory_output(store_node, 0);
-            // Load(RAM), output [value].  Slots wired addr/mem, likewise the
-            // reverse of `expected_signature`'s [mem, addr].
+            // Load(RAM): inputs [mem, addr], output [value].
             let load_n = tb.node(KindSpec::Exact(NodeKind::Load(rsleigh::VnSpace::RAM)));
             let a2 = tb.capture(addr_cap);
-            tb.input(load_n, 0, a2);
-            tb.input(load_n, 1, store_mem);
+            tb.input(load_n, 0, store_mem);
+            tb.input(load_n, 1, a2);
             let out = tb.value_output(load_n, 0);
             tb.set_value_ty(out, VT::I64);
             tb.finish()
@@ -908,7 +905,8 @@ mod tests {
         assert!(matches!(edit.node_kind(new_load), NodeKind::Load(_)));
         assert!(edit.is_live(new_load), "fresh Load is live");
 
-        let mem_in = edit.node_inputs(new_load)[1];
+        // `Load` inputs are [mem, addr].
+        let mem_in = edit.node_inputs(new_load)[0];
         let store_node = edit.producer(mem_in);
         assert!(
             matches!(edit.node_kind(store_node), NodeKind::Store(_)),
@@ -919,7 +917,8 @@ mod tests {
             "fresh interior Store is tracked live"
         );
 
-        let init_mem_in = edit.node_inputs(store_node)[2];
+        // `Store` inputs are [mem, addr, data].
+        let init_mem_in = edit.node_inputs(store_node)[0];
         let init_mem_node = edit.producer(init_mem_in);
         assert!(
             edit.is_root(init_mem_node),
