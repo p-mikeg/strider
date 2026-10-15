@@ -3056,29 +3056,77 @@ mod store_index {
     use crate::mem_analysis::*;
     use crate::mem_ssa::{MemLayout, Shape};
     use strider_ir::node::ValueType;
-    use strider_ir::{IRBuilderExt, IntBinaryOp};
+    use strider_ir::{FunctionBuilder, IRBuilderExt, IntBinaryOp, IntCmpOp};
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
     use super::super::test_sp as sp;
     use crate::test_support::Rng;
 
+    /// The listed allocator every chain calls.
+    const ALLOC: u64 = 0x3000;
+
+    /// The allocator's return register, apart from SP.
+    fn ret_reg() -> rsleigh::Vn {
+        rsleigh::Vn {
+            addr_off: 0x00,
+            addr_space: rsleigh::VnSpace::REGISTER,
+            size: 4,
+        }
+    }
+
+    fn alloc(b: &mut FunctionBuilder) -> crate::Result<ValueId> {
+        let target = b.build_int_const(ALLOC, ValueType::I32)?;
+        let (_call, rets) = b.build_call(target, &[], &[ret_reg()], 0)?;
+        Ok(rets[0])
+    }
+
     /// A random run of stores through every address class, calls and an
-    /// opaque user-op, plus the addresses a probe can take.
+    /// opaque user-op, plus the addresses a probe can take. The heap classes
+    /// come from `ALLOC`: a `Phi` of two allocations, whose identity is
+    /// unknown, and allocations in the run itself. One store in six is in
+    /// register space.
     fn random_chain(seed: u64) -> crate::Result<(Function, Vec<ValueId>)> {
         let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let sp = sp();
-        let mut b = strider_ir_test_utils::sp_frame(sp).build_fn_single_region()?;
+        let mut b = strider_ir_test_utils::sp_frame(sp)
+            .tracked(ret_reg())
+            .ret(ret_reg())
+            .build_fn()?;
+        let entry = b.create_region_all()?;
+        let left = b.create_region_all()?;
+        let right = b.create_region_all()?;
+        let join = b.create_region_all()?;
+        b.set_entry_region_all(entry)?;
+        b.record_register_arg_carriers();
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+        b.set_region(entry);
+        let entry_sp = b.read_variable(&sp)?;
+        let zero = b.build_int_const(0u64, ValueType::I32)?;
+        let cond = b.build_int_cmp_operation(entry_sp, zero, IntCmpOp::Equal, ValueType::I32)?;
+        b.build_if(cond, left, right)?;
+        for arm in [left, right] {
+            b.set_region(arm);
+            let p = alloc(&mut b)?;
+            b.write_variable(&ret_reg(), p)?;
+            b.build_branch(join)?;
+        }
+
+        b.set_region(join);
+        let merged = b.read_variable(&ret_reg())?;
+        let first = b.build_int_const(1u64, ValueType::I32)?;
+        b.build_store(merged, first, rsleigh::VnSpace::RAM)?;
+        let mut heaps = vec![merged];
         let sp_value = b.read_variable(&sp)?;
         let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::I32)?;
         let aligned =
             b.build_int_binary_operation(sp_value, mask, IntBinaryOp::And, ValueType::I32)?;
         let cell = b.build_int_const(0x9000u64, ValueType::I32)?;
         let opaque = b.build_load(cell, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        let mut addresses = vec![opaque];
+        let mut addresses = vec![opaque, merged];
         for _ in 0..40 {
             let k = rng.below(24) as i64 - 12;
-            let addr = match rng.below(7) {
+            let addr = match rng.below(9) {
                 0 | 1 => {
                     let k = b.build_int_const(k as u64, ValueType::I32)?;
                     b.build_int_binary_operation(sp_value, k, IntBinaryOp::Add, ValueType::I32)?
@@ -3090,6 +3138,17 @@ mod store_index {
                 3 => b.build_int_const((0x1000 + k) as u64, ValueType::I32)?,
                 4 => b.build_int_const((0xFFFF_F000u64).wrapping_add(k as u64), ValueType::I32)?,
                 5 => opaque,
+                6 => {
+                    let base = heaps[rng.below(heaps.len())];
+                    let k = b.build_int_const(k as u64, ValueType::I32)?;
+                    b.build_int_binary_operation(base, k, IntBinaryOp::Add, ValueType::I32)?
+                }
+                7 => {
+                    let p = alloc(&mut b)?;
+                    heaps.push(p);
+                    addresses.push(p);
+                    continue;
+                }
                 _ => {
                     if rng.below(2) == 0 {
                         let target = b.build_int_const(0x2000u64, ValueType::I32)?;
@@ -3108,26 +3167,34 @@ mod store_index {
                 ValueType::I64,
             ][rng.below(4)];
             let data = b.build_int_const(rng.next() % 100, ty)?;
-            b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+            let space = if rng.below(6) == 0 {
+                rsleigh::VnSpace::REGISTER
+            } else {
+                rsleigh::VnSpace::RAM
+            };
+            b.build_store(addr, data, space)?;
         }
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         super::super::collapse_phis(&mut fg);
+        // The collapse classified under an empty allocator set, and a
+        // `NotMemory` it left would answer the probes' `ALLOC` set.
+        fg.side_tables().clear_memory_slots();
         Ok((fg, addresses))
     }
 
     /// Over every prefix of the chain, the index offers a def at least as high
-    /// as the highest one the walker says clobbers, for every class of probe
-    /// and every setting the candidates read.
+    /// as the highest one the walker says clobbers, for every class of probe,
+    /// both spaces, and every setting the candidates read.
     #[test]
     fn the_index_never_hides_a_clobber() -> crate::Result<()> {
-        let allocators = FxHashSet::default();
+        let allocators: FxHashSet<u64> = [ALLOC].into_iter().collect();
         for seed in 0..60 {
             let (fg, addresses) = random_chain(seed)?;
-            let layout = MemLayout::build(&fg).expect("one region is laid out");
-            let stores = StoreIndex::build(&fg, &layout, &FxHashSet::default());
-            let analyzer = MemAnalyzer::new(MemOptions::structural());
+            let layout = MemLayout::build(&fg).expect("the chain is laid out");
+            let stores = StoreIndex::build(&fg, &layout, &allocators);
+            let analyzer = MemAnalyzer::new(MemOptions::call_blocking(false, &allocators));
             for sgd in [false, true] {
                 for dsbd in [false, true] {
                     let blocking = MemOptions {
@@ -3139,9 +3206,14 @@ mod store_index {
                         ..blocking.clone()
                     };
                     for options in [&blocking, &stepping] {
-                        for &addr in &addresses {
+                        for (i, &addr) in addresses.iter().enumerate() {
+                            let space = if i % 4 == 3 {
+                                rsleigh::VnSpace::REGISTER
+                            } else {
+                                rsleigh::VnSpace::RAM
+                            };
                             for size in [1, 4, 8] {
-                                let class = classify_addr(&fg, addr, &FxHashSet::default());
+                                let class = classify_addr(&fg, addr, &allocators);
                                 let probe = SizedAddr {
                                     class,
                                     size,
@@ -3151,7 +3223,7 @@ mod store_index {
                                     analyzer: &analyzer,
                                     options,
                                     load: probe,
-                                    load_space: rsleigh::VnSpace::RAM,
+                                    load_space: space,
                                     private_frame: std::cell::Cell::new(None),
                                 };
                                 let mut highest = None;
@@ -3161,30 +3233,19 @@ mod store_index {
                                     {
                                         highest = Some(pos);
                                     }
-                                    let offered = stores.candidate(
-                                        &probe,
-                                        rsleigh::VnSpace::RAM,
-                                        options,
-                                        0,
-                                        pos,
-                                    );
+                                    let offered = stores.candidate(&probe, space, options, 0, pos);
                                     assert!(
                                         offered >= highest,
-                                        "seed {seed}: {probe:?} up to {pos} offered {offered:?} \
-                                         below the clobber at {highest:?}"
+                                        "seed {seed}: {probe:?} in {space:?} up to {pos} offered \
+                                         {offered:?} below the clobber at {highest:?}"
                                     );
                                     if let Some(h) = highest {
                                         assert!(
                                             stores
-                                                .candidate(
-                                                    &probe,
-                                                    rsleigh::VnSpace::RAM,
-                                                    options,
-                                                    h,
-                                                    pos
-                                                )
+                                                .candidate(&probe, space, options, h, pos)
                                                 .is_some_and(|c| c >= h),
-                                            "seed {seed}: {probe:?} in {h}..={pos} hid the clobber"
+                                            "seed {seed}: {probe:?} in {space:?} in {h}..={pos} \
+                                             hid the clobber"
                                         );
                                     }
                                 }
