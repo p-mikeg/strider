@@ -306,7 +306,16 @@ pub(crate) fn lift_for_pipeline(
     (outcome, cc, rom_for_opt)
 }
 
-/// [`lift_for_pipeline`] followed by `default_pipeline`.
+/// [`lift_for_pipeline`] followed by [`optimize`].
+pub(crate) fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
+    let (outcome, _cc, rom_for_opt) = lift_for_pipeline(arch, case, fn_name);
+    let mut function = outcome.function;
+    optimize(&mut function, &rom_for_opt)
+        .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));
+    function
+}
+
+/// `default_pipeline` over the ELF's read-only mappings.
 ///
 /// The fixtures are compiler-emitted binaries from `fixtures/cases/*.c`, where
 /// globals never alias the stack frame, so the default
@@ -314,13 +323,14 @@ pub(crate) fn lift_for_pipeline(
 /// spill/reload forwarding the assertions depend on. Coverage with the
 /// assumption cleared belongs in unit tests with a directly-configured
 /// `OptCtx`.
-pub(crate) fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
-    let (outcome, _cc, rom_for_opt) = lift_for_pipeline(arch, case, fn_name);
-    let mut function = outcome.function;
+pub(crate) fn optimize(
+    function: &mut strider_ir::Function,
+    rom: &strider_reader::ElfFileMemReader,
+) -> strider_orchestrator::opt::Result<()> {
     // The reader serves raw bytes; `LoadReadOnly` decodes them with the
     // function's own endianness, so big-endian fixtures fold correctly.
     let p = strider_orchestrator::opt::default_pipeline();
-    let mut ctx = strider_orchestrator::opt::OptCtx::at_floor(Some(&rom_for_opt));
+    let mut ctx = strider_orchestrator::opt::OptCtx::at_floor(Some(rom));
     // `at_floor` assumes nothing, so the harness states the claims its
     // assertions rest on: these cases spill arguments across calls, and both
     // detecting the slot afterwards and forwarding it into the callee's
@@ -328,9 +338,7 @@ pub(crate) fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Func
     // interleaved with.
     ctx.options.assumptions.stack_global_disjoint = true;
     ctx.options.assumptions.assume_incoming_args_survive_calls = true;
-    p.run(&mut function, &mut ctx)
-        .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));
-    function
+    p.run(function, &mut ctx)
 }
 
 use strider_ir::node::NodeKind;
