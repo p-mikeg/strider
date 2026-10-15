@@ -1,7 +1,8 @@
 //! The presets against the Ghidra data they model: each calling convention
-//! against its compiler spec prototype. Ghidra is an oracle here, not a
-//! source: where it is wrong (ppc64 ELFv2's stack offset) or models less (no
-//! AltiVec), the preset keeps its own answer and `LEDGER` says why.
+//! against its compiler spec prototype, and each arch against its language
+//! definition row. Ghidra is an oracle here, not a source: where it is wrong
+//! (ppc64 ELFv2's stack offset) or models less (no AltiVec), the preset keeps
+//! its own answer and `LEDGER` says why.
 //!
 //! Register lists are compared as BYTES through the preset's own register
 //! table, so `XMM0_Qa` against `XMM0` or `s0..s15` against `d0..d7` is judged
@@ -21,7 +22,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
-use strider_target::{CallingConvention, SleighArch};
+use strider_target::{ArchPreset, CallingConvention, Endianness, SleighArch};
 
 /// `rel` under the vendored Ghidra processor tree.
 fn read(rel: &str) -> String {
@@ -621,4 +622,111 @@ fn every_calling_convention_preset_agrees_with_its_ghidra_cspec() {
         unexplained.join("\n"),
         stale.join("\n")
     );
+}
+
+/// The ldefs file and Ghidra language id each preset is.
+fn language(preset: ArchPreset) -> (&'static str, &'static str) {
+    const X86: &str = "x86/data/languages/x86.ldefs";
+    const ARM: &str = "ARM/data/languages/ARM.ldefs";
+    const AARCH64: &str = "AARCH64/data/languages/AARCH64.ldefs";
+    const MIPS: &str = "MIPS/data/languages/mips.ldefs";
+    const PPC: &str = "PowerPC/data/languages/ppc.ldefs";
+    match preset {
+        ArchPreset::X86 => (X86, "x86:LE:32:default"),
+        ArchPreset::X86_64 => (X86, "x86:LE:64:default"),
+        ArchPreset::Arm => (ARM, "ARM:LE:32:v8"),
+        ArchPreset::ArmBe => (ARM, "ARM:BE:32:v8"),
+        ArchPreset::ArmBeKernel => (ARM, "ARM:LEBE:32:v8LEInstruction"),
+        ArchPreset::ArmThumb => (ARM, "ARM:LE:32:v8T"),
+        ArchPreset::Aarch64 => (AARCH64, "AARCH64:LE:64:v8A"),
+        ArchPreset::Aarch64Be => (AARCH64, "AARCH64:BE:64:v8A"),
+        ArchPreset::MipsBe32 => (MIPS, "MIPS:BE:32:default"),
+        ArchPreset::MipsLe32 => (MIPS, "MIPS:LE:32:default"),
+        ArchPreset::MipsBe64 => (MIPS, "MIPS:BE:64:default"),
+        ArchPreset::MipsLe64 => (MIPS, "MIPS:LE:64:default"),
+        ArchPreset::Ppc32Be => (PPC, "PowerPC:BE:32:default"),
+        ArchPreset::Ppc32Le => (PPC, "PowerPC:LE:32:default"),
+        ArchPreset::Ppc64Be => (PPC, "PowerPC:BE:64:A2ALT"),
+        ArchPreset::Ppc64Le => (PPC, "PowerPC:LE:64:A2ALT"),
+    }
+}
+
+/// The rsleigh constant compiled from an ldefs `slafile`.
+fn sla(file: &str) -> rsleigh::sla_spec::SlaSpec {
+    use rsleigh::sla_spec::*;
+    match file {
+        "x86.sla" => SLA_SPEC_X86,
+        "x86-64.sla" => SLA_SPEC_X86_64,
+        "ARM8_le.sla" => SLA_SPEC_ARM8_LE,
+        "ARM8_be.sla" => SLA_SPEC_ARM8_BE,
+        "AARCH64.sla" => SLA_SPEC_AARCH64,
+        "AARCH64BE.sla" => SLA_SPEC_AARCH64BE,
+        "mips32be.sla" => SLA_SPEC_MIPS32BE,
+        "mips32le.sla" => SLA_SPEC_MIPS32LE,
+        "mips64be.sla" => SLA_SPEC_MIPS64BE,
+        "mips64le.sla" => SLA_SPEC_MIPS64LE,
+        "ppc_32_be.sla" => SLA_SPEC_PPC_32_BE,
+        "ppc_32_le.sla" => SLA_SPEC_PPC_32_LE,
+        "ppc_64_isa_altivec_be.sla" => SLA_SPEC_PPC_64_ISA_ALTIVEC_BE,
+        "ppc_64_isa_altivec_le.sla" => SLA_SPEC_PPC_64_ISA_ALTIVEC_LE,
+        other => panic!("no rsleigh constant mapped for {other}"),
+    }
+}
+
+/// The rsleigh constant parsed from an ldefs `processorspec`.
+fn pspec(file: &str) -> rsleigh::pspec::PSpec {
+    use rsleigh::pspec::*;
+    match file {
+        "x86.pspec" => PSPEC_X86,
+        "x86-64.pspec" => PSPEC_X86_64,
+        "ARMt.pspec" => PSPEC_ARMT,
+        "ARMtTHUMB.pspec" => PSPEC_ARMTTHUMB,
+        "AARCH64.pspec" => PSPEC_AARCH64,
+        "mips32.pspec" => PSPEC_MIPS32,
+        "mips64.pspec" => PSPEC_MIPS64,
+        "ppc_32.pspec" => PSPEC_PPC_32,
+        "ppc_64.pspec" => PSPEC_PPC_64,
+        other => panic!("no rsleigh constant mapped for {other}"),
+    }
+}
+
+/// Compared by value: `arm_thumb` uses `ARMCortex.pspec`, which sets the same
+/// context as Ghidra's `ARMtTHUMB.pspec`, so the two constants are equal.
+#[test]
+fn every_arch_preset_is_its_ghidra_ldefs_language() {
+    let mut wrong = Vec::new();
+    for &preset in ArchPreset::ALL {
+        let (ldefs, id) = language(preset);
+        let text = read(ldefs);
+        let doc = roxmltree::Document::parse(&text).unwrap_or_else(|e| panic!("{ldefs}: {e}"));
+        let rows: Vec<_> = doc
+            .descendants()
+            .filter(|n| n.has_tag_name("language") && n.attribute("id") == Some(id))
+            .collect();
+        let [lang] = rows[..] else {
+            panic!("{ldefs}: {} languages {id}", rows.len());
+        };
+        let arch = preset.arch();
+        let slafile = attr(ldefs, lang, "slafile");
+        if arch.sla_spec() != sla(&slafile) {
+            wrong.push(format!("{preset:?}: its sla is not {id}'s {slafile}"));
+        }
+        let processorspec = attr(ldefs, lang, "processorspec");
+        if arch.pspec() != pspec(&processorspec) {
+            wrong.push(format!(
+                "{preset:?}: its pspec is not {id}'s {processorspec}"
+            ));
+        }
+        let endian = match attr(ldefs, lang, "endian").as_str() {
+            "little" => Endianness::Little,
+            "big" => Endianness::Big,
+            other => panic!("{ldefs}: {id} has endian {other:?}"),
+        };
+        if arch.endianness() != endian {
+            wrong.push(format!(
+                "{preset:?}: data is not {endian:?}-endian as {id} says"
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
