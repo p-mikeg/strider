@@ -98,3 +98,22 @@ def test_optimize_updates_the_allocator_set_rewrite_uses():
     x, y = Capture(), Capture()
     g.rewrite(find=int_mul(var(x), var(y)), replace=var(x))
     assert len(g.find_all(store().heap_only())) == 1
+
+
+def test_the_last_region_filter_called_wins():
+    """One region filter, set in call order: `stack_only` after `heap_only`
+    selects the return-address push (`sp - 8`), not the heap store. Both
+    select one store, so only the node ids tell them apart."""
+    _lift, g = _heap_function()
+
+    def roots(p):
+        return [m.root for m in g.find_all(p)]
+
+    heap, stack = roots(store().heap_only()), roots(store().stack_only())
+    assert len(heap) == 1 and len(stack) == 1 and heap != stack
+    assert roots(store().heap_only().stack_only()) == stack
+    assert roots(store().stack_only().heap_only()) == heap
+    assert roots(store().heap_only().stack_offset(-8)) == stack
+    # `stack_only` keeps an offset an earlier `stack_offset` pinned.
+    assert roots(store().stack_offset(-8).stack_only()) == stack
+    assert roots(store().stack_offset(0).stack_only()) == []

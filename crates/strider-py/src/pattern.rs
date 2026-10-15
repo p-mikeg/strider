@@ -2667,7 +2667,8 @@ macro_rules! builder_slot_methods {
 // Field kinds: `pat` / `mem` (one operand slot), `multi` (an indexed operand
 // vector, the named compile fn deciding value or memory operand), `scalar`
 // (Copy), `scalar_clone`, `scalar_inner` (a Py wrapper stored via `.inner`),
-// and `flag` (no-arg bool setter).
+// `flag` (no-arg bool setter), and `region` (the four address-region setters,
+// recorded in call order).
 
 macro_rules! node_builder {
     // A macro call cannot sit in struct-field position, so the field decls
@@ -2705,6 +2706,9 @@ macro_rules! node_builder {
     };
     (@members $inner:ident [ $($acc:tt)* ] { flag $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
         node_builder!(@members $inner [ $($acc)* $name: bool, ] $($rest)*);
+    };
+    (@members $inner:ident [ $($acc:tt)* ] { region $name:ident } $($rest:tt)*) => {
+        node_builder!(@members $inner [ $($acc)* $name: Vec<RegionCall>, ] $($rest)*);
     };
 
     // Bound to a `let` first: an `if let` scrutinee keeps the `Ref` alive for
@@ -2766,6 +2770,17 @@ macro_rules! node_builder {
     (@apply $self:ident, $py:ident, $b:ident, { flag $name:ident: $m:ident = $doc:literal }) => {
         if $self.inner.borrow().$name {
             $b = $b.$m();
+        }
+    };
+    // In call order: the core setters decide which region filter survives.
+    (@apply $self:ident, $py:ident, $b:ident, { region $name:ident }) => {
+        for &__call in $self.inner.borrow().$name.iter() {
+            $b = match __call {
+                RegionCall::StackOffset(k) => $b.stack_offset(k),
+                RegionCall::StackOnly => $b.stack_only(),
+                RegionCall::NonStack => $b.non_stack(),
+                RegionCall::HeapOnly => $b.heap_only(),
+            };
         }
     };
 
@@ -2830,6 +2845,7 @@ macro_rules! node_builder {
     (@traverse $inner:ident, $visit:ident, { scalar_clone $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {};
     (@traverse $inner:ident, $visit:ident, { scalar_inner $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {};
     (@traverse $inner:ident, $visit:ident, { flag $name:ident: $m:ident = $doc:literal }) => {};
+    (@traverse $inner:ident, $visit:ident, { region $name:ident }) => {};
 
     // Mirrors `@traverse`: every slot reported there has to be droppable here,
     // or a cycle through it is uncollectable.
@@ -2852,6 +2868,7 @@ macro_rules! node_builder {
     (@clear $inner:ident, { scalar_clone $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {};
     (@clear $inner:ident, { scalar_inner $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {};
     (@clear $inner:ident, { flag $name:ident: $m:ident = $doc:literal }) => {};
+    (@clear $inner:ident, { region $name:ident }) => {};
 
     // pyo3's proc-macro cannot see through a nested macro item, so the setters
     // cannot be `node_builder!(@setter ...)` calls inside `#[pymethods]`.
@@ -2949,6 +2966,36 @@ macro_rules! node_builder {
             #[doc = $doc]
             fn $name<'py>(slf: PyRef<'py, Self>) -> PyRef<'py, Self> {
                 slf.inner.borrow_mut().$name = true;
+                slf
+            }
+        ] $($rest)*);
+    };
+    (@setters $ty:ident [ $($acc:tt)* ] { region $name:ident } $($rest:tt)*) => {
+        node_builder!(@setters $ty [ $($acc)*
+            /// Match only accesses whose address decomposes to exactly
+            /// `sp + k`. Replaces any region filter called before it.
+            fn stack_offset<'py>(slf: PyRef<'py, Self>, k: i128) -> PyRef<'py, Self> {
+                slf.inner.borrow_mut().$name.push(RegionCall::StackOffset(k));
+                slf
+            }
+            /// Keep only accesses whose address decomposes to a stack base,
+            /// keeping an offset an earlier `stack_offset` pinned.
+            fn stack_only<'py>(slf: PyRef<'py, Self>) -> PyRef<'py, Self> {
+                slf.inner.borrow_mut().$name.push(RegionCall::StackOnly);
+                slf
+            }
+            /// Keep only accesses proven heap-rooted or proven not
+            /// memory-rooted; an address with no decomposition verdict is
+            /// rejected. Replaces any region filter called before it.
+            fn non_stack<'py>(slf: PyRef<'py, Self>) -> PyRef<'py, Self> {
+                slf.inner.borrow_mut().$name.push(RegionCall::NonStack);
+                slf
+            }
+            /// Keep only accesses whose address decomposes to a heap base (a
+            /// pure allocator's return pointer). Replaces any region filter
+            /// called before it.
+            fn heap_only<'py>(slf: PyRef<'py, Self>) -> PyRef<'py, Self> {
+                slf.inner.borrow_mut().$name.push(RegionCall::HeapOnly);
                 slf
             }
         ] $($rest)*);
@@ -3113,6 +3160,16 @@ macro_rules! node_builder {
     };
 }
 
+/// One `load()` / `store()` region-filter call, replayed in call order onto
+/// the core builder.
+#[derive(Clone, Copy)]
+enum RegionCall {
+    StackOffset(i128),
+    StackOnly,
+    NonStack,
+    HeapOnly,
+}
+
 node_builder! {
     ty: PyLoadPat,
     inner: LoadInner,
@@ -3130,17 +3187,7 @@ node_builder! {
         { mem mem: mem
             = "Constrain the load's memory predecessor (a memory-producing sub-pattern)." },
         { scalar bit_width(u32 => u32): bit_width(n) = "Filter loads by value width in bits." },
-        { scalar stack_offset(i128 => i128): stack_offset(k)
-            = "Match only loads whose address decomposes to exactly `sp + k`." },
-        { flag stack_only: stack_only
-            = "Keep only accesses whose address decomposes to a stack base, an \
-               offset pinned by `stack_offset` included." },
-        { flag non_stack: non_stack
-            = "Keep only accesses proven heap-rooted or proven not memory-rooted; \
-               an address with no decomposition verdict is rejected." },
-        { flag heap_only: heap_only
-            = "Keep only accesses whose address decomposes to a heap base \
-               (a pure allocator's return pointer)." },
+        { region region },
     ],
 }
 
@@ -3171,17 +3218,7 @@ node_builder! {
             = "Restrict the match to a specific memory space." },
         { mem mem: mem = "Constrain the store's memory predecessor." },
         { scalar bit_width(u32 => u32): bit_width(n) = "Filter stores by data width in bits." },
-        { scalar stack_offset(i128 => i128): stack_offset(k)
-            = "Match only stores whose address decomposes to exactly `sp + k`." },
-        { flag stack_only: stack_only
-            = "Keep only accesses whose address decomposes to a stack base, an \
-               offset pinned by `stack_offset` included." },
-        { flag non_stack: non_stack
-            = "Keep only accesses proven heap-rooted or proven not memory-rooted; \
-               an address with no decomposition verdict is rejected." },
-        { flag heap_only: heap_only
-            = "Keep only accesses whose address decomposes to a heap base \
-               (a pure allocator's return pointer)." },
+        { region region },
     ],
 }
 
