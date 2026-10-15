@@ -931,8 +931,18 @@ impl PyLoadedElf {
         // would leave the entries before the bad one in `extra_symbols` while
         // the cache below still holds a table without them, so a corrected
         // retry adds each of those twice and `by_name` keeps the first.
+        //
+        // Snapshotted first, never iterated live: the per-entry `extract`
+        // below runs Python through `__index__`, and a dict that changes size
+        // or keys mid-iteration makes PyO3 PANIC, which surfaces as
+        // `PanicException`, a `BaseException` no `except Exception` catches.
+        // `iter` is `PyDict_Next` over raw storage and runs no Python, so the
+        // collect cannot be interrupted.  `copy` is not equivalent: its
+        // fast path is conditional on the subclass not overriding `__iter__`,
+        // and the `PyDict_Merge` fallback then honours an overridden `keys`.
+        let symbols: Vec<_> = symbols.iter().collect();
         let mut added = Vec::with_capacity(symbols.len());
-        for (name, value) in symbols.iter() {
+        for (name, value) in symbols {
             let name: String = name.extract()?;
             let (address, size) = if let Ok((a, n)) = value.extract::<(u64, u64)>() {
                 (a, (n != 0).then_some(n))
