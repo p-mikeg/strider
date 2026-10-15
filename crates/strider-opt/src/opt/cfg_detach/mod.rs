@@ -24,52 +24,60 @@ impl Optimizer for CfgDetach {
         edit: &mut crate::EditFunction<'_>,
         _ctx: &mut OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        let entry = edit.entry();
-        // Two different reachability notions here. A predecessor edge is dead
-        // iff its control producer is control-unreachable from entry, but the
-        // set we ITERATE is the general graph walk: a join that is only
-        // data-reachable (an escaping dead branch whose value still feeds a live
-        // phi) is still validator-visible and can carry a dead control slot.
-        let reachable = cfg_reachable(edit.function().graph(), entry);
+        strip_dead_predecessors(edit)
+    }
+}
 
-        let mut dead: FxHashMap<NodeId, Vec<u32>> = FxHashMap::default();
-        // The cached live set covers the same nodes as a fresh walk, so reuse
-        // its RPO rather than re-walking.
-        let regions: Vec<NodeId> = edit
-            .reverse_postorder_filter(|k| matches!(k, NodeKind::Region))
-            .collect();
-        for region in regions {
-            for (idx, input) in edit.node_inputs(region).into_iter().enumerate() {
-                let producer = edit.value_definition(input).0;
-                if !reachable.contains(producer) {
-                    dead.entry(region).or_default().push(idx as u32);
-                }
+/// Strips every `Region` predecessor slot whose control producer entry no
+/// longer reaches, with the matching `Phi` / `MemPhi` slots.
+pub(crate) fn strip_dead_predecessors(
+    edit: &mut crate::EditFunction<'_>,
+) -> Result<OptimizationResult> {
+    let entry = edit.entry();
+    // Two different reachability notions here. A predecessor edge is dead
+    // iff its control producer is control-unreachable from entry, but the
+    // set we ITERATE is the general graph walk: a join that is only
+    // data-reachable (an escaping dead branch whose value still feeds a live
+    // phi) is still validator-visible and can carry a dead control slot.
+    let reachable = cfg_reachable(edit.function().graph(), entry);
+
+    let mut dead: FxHashMap<NodeId, Vec<u32>> = FxHashMap::default();
+    // The cached live set covers the same nodes as a fresh walk, so reuse
+    // its RPO rather than re-walking.
+    let regions: Vec<NodeId> = edit
+        .reverse_postorder_filter(|k| matches!(k, NodeKind::Region))
+        .collect();
+    for region in regions {
+        for (idx, input) in edit.node_inputs(region).into_iter().enumerate() {
+            let producer = edit.value_definition(input).0;
+            if !reachable.contains(producer) {
+                dead.entry(region).or_default().push(idx as u32);
             }
         }
-
-        if dead.is_empty() {
-            return Ok(OptimizationResult::NoChange);
-        }
-
-        // Pass each region all its dead indices at once; batch removal is
-        // set-based, so index order does not matter.
-        //
-        // Severing a Region's LAST predecessor makes its whole control-dominated
-        // subgraph unreachable, but the incremental live-set bookkeeping tracks
-        // DATA orphaning only, so a `MemPhi` there survives in the cached live
-        // set (its value still feeds a consumer that is itself control-dead but
-        // not yet known to be). The memory-SSA walk would then hit a zero-arm
-        // `MemPhi` and trip its "clean chain bottoms out at InitialMemory"
-        // invariant, so resync from a fresh entry walk whenever a strip empties
-        // a region.
-        let mut emptied_a_region = false;
-        for (region, idxs) in dead {
-            edit.remove_region_predecessors(region, &idxs)?;
-            emptied_a_region |= edit.node_inputs(region).is_empty();
-        }
-        if emptied_a_region {
-            edit.resync_live_set();
-        }
-        Ok(OptimizationResult::Changed)
     }
+
+    if dead.is_empty() {
+        return Ok(OptimizationResult::NoChange);
+    }
+
+    // Pass each region all its dead indices at once; batch removal is
+    // set-based, so index order does not matter.
+    //
+    // Severing a Region's LAST predecessor makes its whole control-dominated
+    // subgraph unreachable, but the incremental live-set bookkeeping tracks
+    // DATA orphaning only, so a `MemPhi` there survives in the cached live
+    // set (its value still feeds a consumer that is itself control-dead but
+    // not yet known to be). The memory-SSA walk would then hit a zero-arm
+    // `MemPhi` and trip its "clean chain bottoms out at InitialMemory"
+    // invariant, so resync from a fresh entry walk whenever a strip empties
+    // a region.
+    let mut emptied_a_region = false;
+    for (region, idxs) in dead {
+        edit.remove_region_predecessors(region, &idxs)?;
+        emptied_a_region |= edit.node_inputs(region).is_empty();
+    }
+    if emptied_a_region {
+        edit.resync_live_set();
+    }
+    Ok(OptimizationResult::Changed)
 }

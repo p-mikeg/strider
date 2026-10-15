@@ -21,11 +21,10 @@ fn reachable_regions(fg: &strider_ir::Function) -> Vec<NodeId> {
         .collect()
 }
 
-/// DBE then CfgDetach, in the order the destructive pipeline uses.  A dead
-/// branch with no downstream join is never visited by CfgDetach and stays in
-/// the arena as an unreachable orphan.
+/// DBE then CfgDetach, which finds nothing to strip on a join DBE already
+/// stripped.
 fn destructive_teardown(fg: &mut strider_ir::Function) -> Result<()> {
-    crate::pipeline::run_one_unvalidated(&DeadBranchElimination, fg, &mut OptCtx::at_floor(None))?;
+    crate::pipeline::run_one(&DeadBranchElimination, fg, &mut OptCtx::at_floor(None))?;
     crate::pipeline::run_one(&CfgDetach, fg, &mut OptCtx::at_floor(None))?;
     Ok(())
 }
@@ -296,8 +295,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
 }
 
 /// The dead branch's `CallOther` advances memory into the join's `MemPhi`.  DBE
-/// detaches unconditionally, so only the CfgDetach + PhiCollapse follow-up
-/// restores a valid graph.
+/// detaches unconditionally.
 #[test]
 fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
     let mut fg = {
@@ -337,11 +335,7 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
         b.build()?
     };
 
-    crate::pipeline::run_one_unvalidated(
-        &DeadBranchElimination,
-        &mut fg,
-        &mut OptCtx::at_floor(None),
-    )?;
+    crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::at_floor(None))?;
     crate::pipeline::run_one(&CfgDetach, &mut fg, &mut OptCtx::at_floor(None))?;
     crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut OptCtx::at_floor(None))?;
 
@@ -611,7 +605,7 @@ fn make_const_header_loop(back_edge: bool) -> Result<strider_ir::Function> {
 fn escape_memo_does_not_survive_into_the_next_sweep() -> Result<()> {
     let mut acyclic = make_const_header_loop(false)?;
     assert!(
-        crate::pipeline::run_one_unvalidated(
+        crate::pipeline::run_one(
             &DeadBranchElimination,
             &mut acyclic,
             &mut OptCtx::at_floor(None)
@@ -721,12 +715,8 @@ fn constant_diamond_chain_never_walks_the_whole_cfg() -> Result<()> {
 
     super::FULL_WALKS.with(|c| c.set(0));
     assert!(
-        crate::pipeline::run_one_unvalidated(
-            &DeadBranchElimination,
-            &mut fg,
-            &mut OptCtx::at_floor(None)
-        )?
-        .changed(),
+        crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::at_floor(None))?
+            .changed(),
         "every constant branch must fold"
     );
     assert_eq!(
@@ -800,5 +790,21 @@ fn a_ring_whose_exits_are_all_dead_arms_walks_linearly() -> Result<()> {
             large as f64 / small as f64,
         );
     }
+    Ok(())
+}
+
+/// DBE alone over a constant diamond with a join and a `MemPhi`: the fold
+/// strips the dead arm's slots itself, so no `CfgDetach` is needed for valid IR.
+#[test]
+fn dead_branch_alone_leaves_a_joined_diamond_valid() -> Result<()> {
+    let mut fg = strider_ir_test_utils::mem_phi_with_two_stores();
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(DeadBranchElimination);
+    pipeline.run(&mut fg, &mut OptCtx::at_floor(None))?;
+    assert_eq!(
+        fg.count_kind(|k| matches!(k, NodeKind::If)),
+        0,
+        "the constant If folds"
+    );
     Ok(())
 }

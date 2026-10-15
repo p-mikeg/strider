@@ -310,7 +310,8 @@ opt_passes! {
             strider_orchestrator::opt::DeadBranchElimination,
             "Folds a branch with a constant selector (an `If` on a constant `I1`, \
              a `Switch` on a constant dispatch address), wiring the live successor \
-             past it and killing the branch node (destructive).";
+             past it and killing the branch node, and strips the dead arm's \
+             predecessor slots from the joins (destructive).";
         "CfgDetach" => PyCfgDetach = strider_orchestrator::opt::CfgDetach,
             "Removes dead `Region`-predecessor slots (and the matching `Phi` / \
              `MemPhi` value slots) once a folded `If` makes a predecessor \

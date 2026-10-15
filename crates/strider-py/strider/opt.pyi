@@ -114,7 +114,8 @@ class RegionCollapse:
 class DeadBranchElimination:
     """Folds a branch with a constant selector (an `If` on a constant `I1`,
     a `Switch` on a constant dispatch address), wiring the live successor past
-    it and killing the branch node."""
+    it and killing the branch node, and strips the dead arm's predecessor
+    slots from the joins."""
     def __init__(self) -> None:
         """Build the pass."""
         ...

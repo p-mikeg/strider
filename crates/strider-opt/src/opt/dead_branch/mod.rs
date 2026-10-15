@@ -12,6 +12,8 @@
 //! flowing into a live `MemPhi`), leaving it transiently reachable backward
 //! through data.  Validation runs only once the destructive pipeline converges,
 //! so that transient shape is never observed.
+//!
+//! Dead predecessor slots of the joins are stripped in the same pass.
 
 use std::cell::RefCell;
 
@@ -23,7 +25,9 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRViewer, IRWalker};
 
 use crate::error::Result;
-use crate::peephole::{PeepholePass, PeepholeRewrite};
+use crate::opt::cfg_detach::strip_dead_predecessors;
+use crate::peephole::{PeepholePass, PeepholeRewrite, run_peephole};
+use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
 
 #[cfg(test)]
 mod tests;
@@ -31,7 +35,28 @@ mod tests;
 #[derive(Clone, Copy)]
 pub struct DeadBranchElimination;
 
-impl PeepholePass for DeadBranchElimination {
+impl Optimizer for DeadBranchElimination {
+    fn apply(
+        &self,
+        edit: &mut crate::EditFunction<'_>,
+        ctx: &mut OptCtx<'_>,
+    ) -> Result<OptimizationResult> {
+        let folded = run_peephole(&DbeFold, edit, ctx)?;
+        if folded.changed() {
+            // The pipeline drains between passes; do the same before the strip.
+            edit.clean();
+            strip_dead_predecessors(edit)?;
+        }
+        Ok(folded)
+    }
+}
+
+/// The branch fold itself. The blanket `Optimizer` impl over `PeepholePass`
+/// forbids implementing both on [`DeadBranchElimination`].
+#[derive(Clone, Copy)]
+struct DbeFold;
+
+impl PeepholePass for DbeFold {
     fn matches_kind(&self, kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::If | NodeKind::Switch(_))
     }
