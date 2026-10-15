@@ -349,6 +349,7 @@ pub fn empty_builder() -> Result<FunctionBuilder> {
     RegisterSet::new().build_fn()
 }
 
+pub mod interp;
 mod tb;
 
 #[cfg(feature = "proptest-gen")]
