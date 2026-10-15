@@ -1397,6 +1397,7 @@ name = "strider-target"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "roxmltree",
  "rsleigh",
  "rustc-hash 2.1.2",
  "strider-target",

@@ -22,6 +22,8 @@ test-util = []
 [dev-dependencies]
 # Self dev-dependency: turns `test-util` on for the `tests/` targets only.
 strider-target = { workspace = true, features = ["test-util"] }
+# The vendored Ghidra .cspec / .ldefs the presets are checked against.
+roxmltree.workspace = true
 
 [lints]
 workspace = true
