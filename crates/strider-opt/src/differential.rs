@@ -1,7 +1,7 @@
-//! Differential fuzzer: random IR, evaluated by a p-code reference
-//! interpreter before and after optimisation.
+//! Differential fuzzer: random IR, run on the reference interpreter
+//! (`strider_ir_test_utils::interp`) before and after optimisation.
 //!
-//! A CONSISTENCY oracle, not an independent one: `ref_eval` runs on both
+//! A CONSISTENCY oracle, not an independent one: the interpreter runs on both
 //! sides, so a misconception it shares with a pass is invisible here. What it
 //! catches is a pass changing the meaning of a graph.
 //!
@@ -19,6 +19,7 @@
 use rustc_hash::FxHashMap;
 use strider_ir::node::{ExtendOp, NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir_test_utils::interp::{self, EntryVar, Outcome};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
 use crate::test_support::Rng;
@@ -36,153 +37,6 @@ pub(crate) const TYPES: &[(u32, ValueType)] = &[
 
 fn mask(ty: ValueType) -> u128 {
     ty.bit_mask_u128()
-}
-
-fn sext(v: u128, ty: ValueType) -> i128 {
-    ty.get_signed_int(v).unwrap()
-}
-
-/// Independent reference semantics.
-pub(crate) fn ref_eval(
-    f: &strider_ir::Function,
-    v: ValueId,
-    inputs: &dyn Fn(usize, ValueType) -> u128,
-    memo: &mut FxHashMap<ValueId, Option<u128>>,
-) -> Option<u128> {
-    if let Some(r) = memo.get(&v) {
-        return *r;
-    }
-    let node = f.producer(v);
-    let kind = *f.node_kind(node);
-    let ty = f.value_type_opt(v).unwrap();
-    let ins: Vec<ValueId> = f.node_inputs(node).into_iter().collect();
-    let m = mask(ty);
-    let w = ty.bit_width() as u32;
-    let r: Option<u128> = (|| {
-        Some(match kind {
-            NodeKind::IntConst(_) => f.int_const_u128(v).unwrap(),
-            NodeKind::InitialVar(id) => inputs(id.index(), ty) & m,
-            NodeKind::IntBinaryOp(op) => {
-                let a = ref_eval(f, ins[0], inputs, memo)?;
-                let b = ref_eval(f, ins[1], inputs, memo)?;
-                let bty = f.value_type_opt(ins[1]).unwrap();
-                assert_eq!(f.value_type_opt(ins[0]).unwrap(), ty, "{kind:?}");
-                match op {
-                    IntBinaryOp::Add => a.wrapping_add(b) & m,
-                    IntBinaryOp::Mul => a.wrapping_mul(b) & m,
-                    IntBinaryOp::And => a & b,
-                    IntBinaryOp::Or => a | b,
-                    IntBinaryOp::Xor => a ^ b,
-                    IntBinaryOp::ShiftLeft => {
-                        if b >= u128::from(w) {
-                            0
-                        } else {
-                            (a << b) & m
-                        }
-                    }
-                    IntBinaryOp::ShiftRight => {
-                        if b >= u128::from(w) {
-                            0
-                        } else {
-                            a >> b
-                        }
-                    }
-                    IntBinaryOp::SShiftRight => {
-                        let sa = sext(a, ty);
-                        if b >= u128::from(w) {
-                            if sa < 0 { m } else { 0 }
-                        } else {
-                            ((sa >> b) as u128) & m
-                        }
-                    }
-                    IntBinaryOp::Div => {
-                        assert_eq!(bty, ty);
-                        if b == 0 {
-                            return None;
-                        }
-                        a / b
-                    }
-                    IntBinaryOp::Rem => {
-                        if b == 0 {
-                            return None;
-                        }
-                        a % b
-                    }
-                    IntBinaryOp::Sdiv | IntBinaryOp::Srem => {
-                        let (sa, sb) = (sext(a, ty), sext(b, ty));
-                        if sb == 0 {
-                            return None;
-                        }
-                        let min = if w == 128 {
-                            i128::MIN
-                        } else {
-                            -(1i128 << (w - 1))
-                        };
-                        if sa == min && sb == -1 {
-                            return None;
-                        }
-                        let q = if op == IntBinaryOp::Sdiv {
-                            sa.checked_div(sb)?
-                        } else {
-                            sa.checked_rem(sb)?
-                        };
-                        (q as u128) & m
-                    }
-                }
-            }
-            NodeKind::IntUnaryOp(IntUnaryOp::Neg) => {
-                let a = ref_eval(f, ins[0], inputs, memo)?;
-                a.wrapping_neg() & m
-            }
-            NodeKind::IntCmpOp(op) => {
-                let a = ref_eval(f, ins[0], inputs, memo)?;
-                let b = ref_eval(f, ins[1], inputs, memo)?;
-                let t = f.value_type_opt(ins[0]).unwrap();
-                assert_eq!(f.value_type_opt(ins[1]).unwrap(), t);
-                let tw = t.bit_width() as u32;
-                let (sa, sb) = (sext(a, t), sext(b, t));
-                let (min, max) = if tw == 128 {
-                    (i128::MIN, i128::MAX)
-                } else {
-                    (-(1i128 << (tw - 1)), (1i128 << (tw - 1)) - 1)
-                };
-                u128::from(match op {
-                    IntCmpOp::Equal => a == b,
-                    IntCmpOp::Less => a < b,
-                    IntCmpOp::Sless => sa < sb,
-                    IntCmpOp::Carry => a.checked_add(b).is_none_or(|s| s > t.bit_mask_u128()),
-                    IntCmpOp::Scarry => sa.checked_add(sb).is_none_or(|s| s < min || s > max),
-                    IntCmpOp::Sborrow => sa.checked_sub(sb).is_none_or(|s| s < min || s > max),
-                })
-            }
-            NodeKind::Truncate => ref_eval(f, ins[0], inputs, memo)? & m,
-            NodeKind::Extend(ExtendOp::ZeroExtend) => ref_eval(f, ins[0], inputs, memo)?,
-            NodeKind::Extend(ExtendOp::SignExtend) => {
-                let t = f.value_type_opt(ins[0]).unwrap();
-                (sext(ref_eval(f, ins[0], inputs, memo)?, t) as u128) & m
-            }
-            NodeKind::Popcount => u128::from(ref_eval(f, ins[0], inputs, memo)?.count_ones()) & m,
-            NodeKind::Lzcount => {
-                let t = f.value_type_opt(ins[0]).unwrap();
-                let a = ref_eval(f, ins[0], inputs, memo)?;
-                let bits = (t.byte_size() * 8) as u32;
-                let lz = if a == 0 {
-                    bits
-                } else {
-                    a.leading_zeros() - (128 - bits)
-                };
-                u128::from(lz) & m
-            }
-            NodeKind::Phi => {
-                let data: Vec<ValueId> = f.phi_data_inputs(node).collect();
-                assert_eq!(data.len(), 1, "multi-arm phi");
-                ref_eval(f, data[0], inputs, memo)?
-            }
-            other => panic!("ref_eval: unsupported {other:?}"),
-        })
-    })();
-    memo.insert(v, r);
-    r
 }
 
 pub(crate) struct Gen<'r> {
@@ -893,25 +747,20 @@ pub(crate) fn check_seed(
                 .collect()
         })
         .collect();
-    let mut expected: Vec<Vec<Option<u128>>> = Vec::new();
-    for t in 0..ntrials {
-        let vec = &vectors[t];
-        let sp = &specials[t];
-        let inputs = |i: usize, ty: ValueType| {
-            let mut r = Rng(vec[i] as u64 | 1);
-            if t % 2 == 0 {
-                input_value(&mut r, ty)
-            } else {
-                sp[i]
-            }
-        };
-        let mut memo = FxHashMap::default();
-        expected.push(
-            rets.iter()
-                .map(|&v| ref_eval(&f, v, &inputs, &mut memo))
-                .collect(),
-        );
-    }
+    // Even trials draw each entry register through `input_value`, odd ones
+    // take a special value the interpreter masks to its width.
+    let entry = |t: usize, e: EntryVar| {
+        if t.is_multiple_of(2) {
+            input_value(&mut Rng(vectors[t][e.index] as u64 | 1), e.ty)
+        } else {
+            specials[t][e.index]
+        }
+    };
+    let returned = |f: &strider_ir::Function, t: usize| match run_cfg(f, &|e| entry(t, e)) {
+        Outcome::Return { values, .. } => values,
+        other => panic!("seed {seed}: trial {t} ended {other:?}"),
+    };
+    let expected: Vec<Vec<Option<u128>>> = (0..ntrials).map(|t| returned(&f, t)).collect();
     if let Err(e) = run(&mut f) {
         return Err(format!("seed {seed}: pipeline error {e:#}\n{before_text}"));
     }
@@ -920,29 +769,15 @@ pub(crate) fn check_seed(
         return Err(format!("seed {seed}: return arity changed"));
     }
     let mut compared = 0usize;
-    for t in 0..ntrials {
-        let vec = &vectors[t];
-        let sp = &specials[t];
-        let inputs = |i: usize, ty: ValueType| {
-            let mut r = Rng(vec[i] as u64 | 1);
-            if t % 2 == 0 {
-                input_value(&mut r, ty)
-            } else {
-                sp[i]
-            }
-        };
-        let mut memo = FxHashMap::default();
-        for (k, &v) in after.iter().enumerate() {
-            let got = ref_eval(&f, v, &inputs, &mut memo);
-            let Some(want) = expected[t][k] else { continue };
+    for (t, wants) in expected.iter().enumerate() {
+        let gots = returned(&f, t);
+        for (k, (&want, &got)) in wants.iter().zip(&gots).enumerate() {
+            let Some(want) = want else { continue };
             compared += 1;
             if got != Some(want) {
-                let mut ins = Vec::new();
-                for i in 0..4 {
-                    ins.push(format!("{:#x}", inputs(i, ValueType::I128)));
-                }
                 return Err(format!(
-                    "seed {seed}: ret {k} trial {t}: want {want:#x} got {got:?}; raw inputs(before per-type mask) {ins:?}\nBEFORE:\n{before_text}\nAFTER:\n{}",
+                    "seed {seed}: ret {k} trial {t}: want {want:#x} got {got:?}; entry seeds {:x?}\nBEFORE:\n{before_text}\nAFTER:\n{}",
+                    &vectors[t][..4],
                     f.to_text(false)
                 ));
             }
@@ -1013,120 +848,24 @@ fn the_pipeline_preserves_dag_semantics() {
 
 // CFG-level differential fuzzer.
 
-#[derive(Debug, PartialEq)]
-enum Outcome {
-    Ret(Vec<Option<u128>>),
-    Unreachable,
-    Diverge,
+/// The reference runs' environment. The budget is high enough that `Diverge`
+/// means a loop rather than "longer than the budget", which is what lets the
+/// CFG comparison assert on it: at 400 a long-but-finite loop read as
+/// non-termination and the arm had to be exempt, and 20 000 reclassifies only
+/// a handful of seeds.
+fn reference_env(entry: &dyn Fn(EntryVar) -> u128) -> interp::Env<'_> {
+    interp::Env {
+        entry,
+        rom: None,
+        seed: 0,
+        step_budget: 20_000,
+        private: None,
+    }
 }
 
-fn run_cfg(f: &strider_ir::Function, inputs: &dyn Fn(usize, ValueType) -> u128) -> Outcome {
-    run_cfg_checked(f, inputs, &mut |_, _, _| {})
-}
-
-fn run_cfg_checked(
-    f: &strider_ir::Function,
-    inputs: &dyn Fn(usize, ValueType) -> u128,
-    check: &mut dyn FnMut(strider_ir::node::NodeId, ValueId, u128),
-) -> Outcome {
-    use strider_ir::IRWalker;
-    // High enough that `Diverge` means a loop rather than "longer than the
-    // budget", which is what lets the comparison assert on it: at 400 a
-    // long-but-finite loop read as non-termination and the arm had to be
-    // exempt.  Raising it to 20 000 reclassifies only a handful of seeds.
-    const REF_STEP_BUDGET: usize = 20_000;
-    let live: rustc_hash::FxHashSet<strider_ir::node::NodeId> = f.walk().collect();
-    let mut phi_env: FxHashMap<strider_ir::node::NodeId, Option<u128>> = FxHashMap::default();
-    let entry = f.entry();
-    let mut ctrl = f.node_outputs(entry)[0];
-    for _ in 0..REF_STEP_BUDGET {
-        let uses: Vec<(strider_ir::node::NodeId, u32)> = f
-            .value_uses(ctrl)
-            .filter(|(n, _)| live.contains(n))
-            .collect();
-        assert_eq!(
-            uses.len(),
-            1,
-            "control value with {} live consumers",
-            uses.len()
-        );
-        let (node, slot) = uses[0];
-        match *f.node_kind(node) {
-            NodeKind::Region => {
-                let k = slot as usize;
-                let token = f.node_outputs(node)[1];
-                let phis: Vec<_> = f
-                    .value_uses(token)
-                    .map(|(n, _)| n)
-                    .filter(|n| live.contains(n) && matches!(f.node_kind(*n), NodeKind::Phi))
-                    .collect();
-                let mut new_vals = Vec::new();
-                for &phi in &phis {
-                    let data: Vec<ValueId> = f.phi_data_inputs(phi).collect();
-                    let mut memo = FxHashMap::default();
-                    new_vals.push(eval_env(f, data[k], inputs, &phi_env, &mut memo));
-                }
-                for (phi, v) in phis.into_iter().zip(new_vals) {
-                    phi_env.insert(phi, v);
-                }
-                ctrl = f.node_outputs(node)[0];
-            }
-            NodeKind::If => {
-                let cond = f.node_inputs(node)[1];
-                let mut memo = FxHashMap::default();
-                if matches!(f.node_kind(f.producer(cond)), NodeKind::IntCmpOp(_)) {
-                    for op in f.node_inputs(f.producer(cond)) {
-                        if let Some(val) = eval_env(f, op, inputs, &phi_env, &mut memo) {
-                            check(node, op, val);
-                        }
-                    }
-                }
-                let Some(c) = eval_env(f, cond, inputs, &phi_env, &mut memo) else {
-                    return Outcome::Diverge; // UB in the condition
-                };
-                ctrl = f.node_outputs(node)[if c != 0 { 0 } else { 1 }];
-            }
-            NodeKind::Return => {
-                let mut memo = FxHashMap::default();
-                let vals: Vec<Option<u128>> = f
-                    .node_inputs(node)
-                    .into_iter()
-                    .skip(2)
-                    .map(|v| eval_env(f, v, inputs, &phi_env, &mut memo))
-                    .collect();
-                for (v, val) in f.node_inputs(node).into_iter().skip(2).zip(&vals) {
-                    if let Some(val) = val {
-                        check(node, v, *val);
-                    }
-                }
-                return Outcome::Ret(vals);
-            }
-            NodeKind::Unreachable => return Outcome::Unreachable,
-            other => panic!("run_cfg: control reaches {other:?}"),
-        }
-    }
-    Outcome::Diverge
-}
-
-fn eval_env(
-    f: &strider_ir::Function,
-    v: ValueId,
-    inputs: &dyn Fn(usize, ValueType) -> u128,
-    phi_env: &FxHashMap<strider_ir::node::NodeId, Option<u128>>,
-    memo: &mut FxHashMap<ValueId, Option<u128>>,
-) -> Option<u128> {
-    // Seed the memo with every phi's current value, then reuse `ref_eval`.
-    let node = f.producer(v);
-    if matches!(f.node_kind(node), NodeKind::Phi) {
-        return *phi_env
-            .get(&node)
-            .expect("phi read before its region was entered");
-    }
-    for (&phi, &val) in phi_env {
-        let out = f.node_outputs(phi)[0];
-        memo.entry(out).or_insert(val);
-    }
-    ref_eval(f, v, inputs, memo)
+fn run_cfg(f: &strider_ir::Function, entry: &dyn Fn(EntryVar) -> u128) -> Outcome {
+    interp::run(f, &reference_env(entry))
+        .unwrap_or_else(|why| panic!("the reference interpreter: {why:?}"))
 }
 
 fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
@@ -1289,8 +1028,8 @@ fn the_pipeline_preserves_cfg_semantics() {
                     .map(|_| (0..4).map(|_| u128::from(rng.next())).collect())
                     .collect();
                 for vec in &vecs {
-                    outcomes.push(run_cfg(&f, &|i, ty| {
-                        input_value(&mut Rng(vec[i] as u64 | 1), ty)
+                    outcomes.push(run_cfg(&f, &|e| {
+                        input_value(&mut Rng(vec[e.index] as u64 | 1), e.ty)
                     }));
                 }
                 crate::default_pipeline()
@@ -1298,9 +1037,11 @@ fn the_pipeline_preserves_cfg_semantics() {
                     .map_err(|e| format!("seed {seed}: pipeline error {e:#}\n{before_text}"))?;
                 let mut cmp = 0;
                 for (vec, want) in vecs.iter().zip(&outcomes) {
-                    let got = run_cfg(&f, &|i, ty| input_value(&mut Rng(vec[i] as u64 | 1), ty));
+                    let got = run_cfg(&f, &|e| {
+                        input_value(&mut Rng(vec[e.index] as u64 | 1), e.ty)
+                    });
                     match want {
-                        Outcome::Ret(_) => {
+                        Outcome::Return { .. } => {
                             cmp += 1;
                             if &got != want {
                                 return Err(format!(
@@ -1309,8 +1050,8 @@ fn the_pipeline_preserves_cfg_semantics() {
                                 ));
                             }
                         }
-                        Outcome::Unreachable => {
-                            if !matches!(got, Outcome::Unreachable) {
+                        Outcome::Unreachable { .. } => {
+                            if !matches!(got, Outcome::Unreachable { .. }) {
                                 return Err(format!(
                                     "seed {seed}: unreachable became {got:?}\n{before_text}"
                                 ));
@@ -1465,7 +1206,7 @@ fn a_range_contains_every_runtime_value() {
         for _ in 0..24 {
             let vec: Vec<u128> = (0..4).map(|_| u128::from(rng.next() % 8)).collect();
             let mut bad: Option<String> = None;
-            run_cfg_checked(&f, &|i, _| vec[i], &mut |at, v, val| {
+            interp::run_observed(&f, &reference_env(&|e| vec[e.index]), &mut |at, v, val| {
                 if f.value_type_opt(v)
                     .is_none_or(|t| !t.is_integer() || t == ValueType::I1)
                 {
@@ -1485,7 +1226,8 @@ fn a_range_contains_every_runtime_value() {
                         f.to_text(false)
                     ));
                 }
-            });
+            })
+            .unwrap_or_else(|why| panic!("seed {seed}: the reference interpreter: {why:?}"));
             if let Some(b) = bad {
                 failures.push(b);
                 break;
