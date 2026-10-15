@@ -17,6 +17,7 @@ mod common;
 
 use std::collections::BTreeMap;
 
+use common::fixtures::Fixture;
 use common::{Arch, lift_for_pipeline};
 use strider_ir::{Function, ReadOnlyMemory};
 use strider_ir_test_utils::interp::{self, CallRecord, EntryVar, Env, Outcome, Slot, mix};
@@ -398,4 +399,189 @@ fn the_comparison_can_tell_two_functions_apart() {
             "add and sub agreed on their return slot"
         );
     });
+}
+
+/// Below this share of compared functions an arch's sweep fails. The rest are
+/// skipped by reason and printed.
+const SWEEP_FLOOR_PERCENT: usize = 79;
+
+/// `analyze` refusals the fixtures produce, as `arch/case::function`.
+const KNOWN_ANALYZE_ERRORS: &[&str] = &[
+    // The symbol's recorded size ends before the hand-written `_start` does,
+    // so the size-bounded lift runs off it.
+    "aarch64/zero_pcode_holes::_start",
+];
+
+#[derive(Default)]
+struct Tally {
+    attempted: usize,
+    compared: usize,
+    unchecked: Unchecked,
+    unchecked_in: Vec<String>,
+    skipped: BTreeMap<String, usize>,
+    analyze_errors: Vec<String>,
+    failures: Vec<String>,
+}
+
+/// The function symbols of `obj`, one per address, preferring one with a
+/// recorded size, as `ElfLifter.functions()` lists them.
+fn functions(obj: &object::File<'_>) -> BTreeMap<u64, (String, u64)> {
+    use object::{Object, ObjectSymbol, SymbolKind};
+    let mut out: BTreeMap<u64, (String, u64)> = BTreeMap::new();
+    for sym in obj.symbols() {
+        if sym.kind() != SymbolKind::Text || !sym.is_definition() {
+            continue;
+        }
+        let Ok(name) = sym.name() else { continue };
+        let slot = out
+            .entry(sym.address())
+            .or_insert_with(|| (name.to_owned(), sym.size()));
+        if slot.1 == 0 && sym.size() > 0 {
+            *slot = (name.to_owned(), sym.size());
+        }
+    }
+    out
+}
+
+/// Analyses every function of `arch`'s fixtures with production defaults and
+/// compares the optimised result with the raw lift of the same CFG.
+fn sweep_arch(arch: Arch) {
+    on_interp_stack(|| {
+        let mut tally = Tally::default();
+        for fixture in Fixture::all(arch.fixture()) {
+            sweep_fixture(&fixture, &mut tally);
+        }
+        report(arch, &tally);
+    });
+}
+
+fn sweep_fixture(fixture: &Fixture, tally: &mut Tally) {
+    let obj = fixture.file();
+    let (mut strider, cc) = fixture.strider();
+    let data_ranges =
+        strider_cfg::DataRanges::new(strider_reader::elf::mapping_symbol_data_ranges(&obj));
+    for (addr, (name, size)) in functions(&obj) {
+        tally.attempted += 1;
+        let at = format!("{}/{}::{name}", fixture.arch.dir, fixture.case);
+        // As the Python loader analyses a named symbol: its recorded size
+        // bounds the lift, and `$d` mapping symbols mark literal pools.
+        let opts = strider_orchestrator::LiftOptions {
+            cfg: strider_cfg::CfgOptions {
+                fn_max_size: (size > 0).then_some(size),
+                data_ranges: data_ranges.clone(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let options = strider_orchestrator::opt::OptOptions::default();
+        let result = match strider.analyze(addr, &cc, &opts, &options, None) {
+            Ok(result) => result,
+            Err(e) => {
+                tally.analyze_errors.push(format!("{at}: {e:#}"));
+                continue;
+            }
+        };
+        let raw = strider
+            .lifter()
+            .build_ir_with(&result.cfg, cc.clone(), &opts)
+            .unwrap_or_else(|e| panic!("{at}: lifting the analysed cfg: {e:#}"))
+            .function;
+        let rom = strider.rom().expect("a fixture Strider carries its ROM");
+        let slots_before = tally.unchecked.slots;
+        match compare(&raw, &result.function, rom, &mut tally.unchecked) {
+            Verdict::Compared => tally.compared += 1,
+            Verdict::Skipped(why) => *tally.skipped.entry(why).or_default() += 1,
+            Verdict::Failed(e) => tally.failures.push(format!(
+                "{at}: {e}\nRAW:\n{}\nOPTIMISED:\n{}",
+                raw.to_text(false),
+                result.function.to_text(false)
+            )),
+        }
+        if tally.unchecked.slots > slots_before {
+            tally.unchecked_in.push(at);
+        }
+    }
+}
+
+fn report(arch: Arch, tally: &Tally) {
+    let name = arch.name();
+    eprintln!(
+        "{name}: {} functions, {} compared, {} analyze errors, {} environments \
+         diverged, {} unchecked raw slots in {} functions",
+        tally.attempted,
+        tally.compared,
+        tally.analyze_errors.len(),
+        tally.unchecked.diverged,
+        tally.unchecked.slots,
+        tally.unchecked_in.len(),
+    );
+    for (why, n) in &tally.skipped {
+        eprintln!("  skipped {n}: {why}");
+    }
+    assert!(
+        tally.failures.is_empty(),
+        "{} functions changed meaning:\n{}",
+        tally.failures.len(),
+        tally.failures.join("\n=====\n")
+    );
+    let prefix = format!("{name}/");
+    let known: Vec<&str> = KNOWN_ANALYZE_ERRORS
+        .iter()
+        .copied()
+        .filter(|k| k.starts_with(&prefix))
+        .collect();
+    let refused = |k: &str, e: &str| e.starts_with(&format!("{k}: "));
+    let unexpected: Vec<&str> = tally
+        .analyze_errors
+        .iter()
+        .map(String::as_str)
+        .filter(|e| !known.iter().any(|k| refused(k, e)))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "analyze refused:\n{}",
+        unexpected.join("\n")
+    );
+    let stale: Vec<&str> = known
+        .iter()
+        .copied()
+        .filter(|k| !tally.analyze_errors.iter().any(|e| refused(k, e)))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "no longer refused, drop from KNOWN_ANALYZE_ERRORS: {stale:?}"
+    );
+    assert!(
+        tally.compared * 100 >= tally.attempted * SWEEP_FLOOR_PERCENT,
+        "{name}: only {} of {} functions compared",
+        tally.compared,
+        tally.attempted
+    );
+}
+
+/// One test per arch, so the harness runs them in parallel.
+macro_rules! fixture_sweeps {
+    ($($test:ident => $arch:ident),+ $(,)?) => {
+        $(
+            #[test]
+            #[cfg_attr(
+                debug_assertions,
+                ignore = "release-only: analyses every function of the arch's fixtures"
+            )]
+            fn $test() {
+                sweep_arch(Arch::$arch);
+            }
+        )+
+        /// The arches the sweep runs.
+        #[allow(dead_code)]
+        const SWEPT: &[Arch] = &[$(Arch::$arch),+];
+    };
+}
+
+fixture_sweeps! {
+    every_x64_function_survives_the_pipeline => X64,
+    every_aarch64_function_survives_the_pipeline => Aarch64,
+    every_arm_function_survives_the_pipeline => Arm,
+    every_mips32be_function_survives_the_pipeline => Mips32be,
+    every_ppc32be_function_survives_the_pipeline => Ppc32be,
 }
