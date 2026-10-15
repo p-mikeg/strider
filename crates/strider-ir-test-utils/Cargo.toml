@@ -15,13 +15,11 @@ publish.workspace = true
 # only the wheel, which never depends on this crate, resolves it without.
 strider-ir = { workspace = true, features = ["test-util"] }
 strider-target = { workspace = true }
-# `EntityRef::index`, for the id-set comparison in
-# `assert_live_matches_reachable`.
+# `EntityRef::index` for `assert_live_matches_reachable`; `interp`'s value
+# maps.
 cranelift-entity.workspace = true
 rsleigh.workspace = true
 anyhow.workspace = true
-# `interp`'s value maps.
-rustc-hash.workspace = true
 proptest = { workspace = true, optional = true }
 
 [features]

@@ -468,8 +468,9 @@ enum Rom {
     ServingGot,
 }
 
-/// Analyses every function of `arch`'s fixtures with production defaults and
-/// compares the optimised result with the raw lift of the same CFG.
+/// Analyses every function of `arch`'s fixtures with production defaults,
+/// over `rom` (the GOT-serving ROM for the PIC rows), and compares the
+/// optimised result with the raw lift of the same CFG.
 fn sweep_arch(arch: Arch, floor_percent: usize, rom: Rom) {
     on_interp_stack(|| {
         let mut tally = Tally::default();
@@ -652,7 +653,13 @@ fn the_sweep_covers_every_fixture_arch() {
         );
     }
     for &arch in common::ALL_ARCHES {
-        let swept = SWEPT.contains(&arch);
+        let rows = SWEPT.iter().filter(|&&a| a == arch).count();
+        assert!(
+            rows <= 1,
+            "{}: listed twice in fixture_sweeps!",
+            arch.name()
+        );
+        let swept = rows == 1;
         let excluded = NOT_SWEPT.iter().any(|&(a, _)| a == arch);
         assert!(
             swept != excluded,

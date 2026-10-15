@@ -1276,7 +1276,6 @@ dependencies = [
  "cranelift-entity",
  "proptest",
  "rsleigh",
- "rustc-hash 2.1.2",
  "strider-ir",
  "strider-target",
 ]
