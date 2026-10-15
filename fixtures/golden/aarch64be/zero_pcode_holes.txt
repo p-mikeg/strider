@@ -5,9 +5,9 @@ default_cc arg_passing_regs=[x0, x1, x2, x3, x4, x5, x6, x7] arg_passing_regs_fl
 == _start @0x210170
 unresolved_indirect_branches [0x21018c.1]
 cfg
-  0x210170 9 insns cbranch 0x21018c -> [0x210188, 0x21018c]
-  0x210188 0 insns goto -> [0x21018c]
-  0x21018c 2 insns return -> []
+  0x210170 9 ops cbranch 0x21018c -> [0x210188, 0x21018c]
+  0x210188 0 ops goto -> [0x21018c]
+  0x21018c 2 ops return -> []
 tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x8, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x31500:1]
 arg 1 [%v5]
 arg 2 [%v6]
@@ -58,9 +58,9 @@ return %v69, %v64, %v65, %v44, %v45, %v46, %v47, %v48
 
 == nop_fallthrough @0x210184
 cfg
-  0x210184 2 insns cbranch 0x21018c -> [0x210188, 0x21018c]
-  0x210188 0 insns goto -> [0x21018c]
-  0x21018c 2 insns return -> []
+  0x210184 2 ops cbranch 0x21018c -> [0x210188, 0x21018c]
+  0x210188 0 ops goto -> [0x21018c]
+  0x21018c 2 ops return -> []
 tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x31500:1]
 arg 0 [%v1]
 arg 1 [%v9]
@@ -85,10 +85,10 @@ return %v6, %v8, %v1, %v9, %v10, %v11, %v12, %v13
 
 == autiasp_split @0x210190
 cfg
-  0x210190 2 insns cbranch 0x210198 -> [0x210194, 0x210198]
-  0x210194 1 insns goto -> [0x210198]
-  0x210198 0 insns goto -> [0x21019c]
-  0x21019c 2 insns return -> []
+  0x210190 2 ops cbranch 0x210198 -> [0x210194, 0x210198]
+  0x210194 1 ops goto -> [0x210198]
+  0x210198 0 ops goto -> [0x21019c]
+  0x21019c 2 ops return -> []
 tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x31500:1]
 arg 0 [%v1]
 arg 1 [%v11]

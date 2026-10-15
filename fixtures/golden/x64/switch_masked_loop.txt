@@ -4,8 +4,8 @@ default_cc arg_passing_regs=[RDI, RSI, RDX, RCX, R8, R9] arg_passing_regs_float=
 
 == main @0x401020
 cfg
-  0x401020 0 insns goto -> [0x401024]
-  0x401024 32 insns return -> []
+  0x401020 0 ops goto -> [0x401024]
+  0x401024 32 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9d00:8, u:0xd400:4, u:0x23f00:4, u:0x58600:8, u:0x58700:1, u:0x58800:1]
 arg 1 [%v9]
 arg 2 [%v10]
@@ -52,9 +52,9 @@ return %v22, %v50, %v51, %v25, %v26, %v27, %v28, %v29
 
 == _start @0x401040
 cfg
-  0x401040 0 insns goto -> [0x401044]
-  0x401044 56 insns goto -> [0x401065]
-  0x401065 1 insns goto -> [0x401065]
+  0x401040 0 ops goto -> [0x401044]
+  0x401044 56 ops goto -> [0x401065]
+  0x401065 1 ops goto -> [0x401065]
 tracked [RAX, RCX, RDX, RSP, RBP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x4fc00:8, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x79900:8, u:0xaa700:8]
 arg 2 [%v22]
 float_arg 0 [%v23]
@@ -105,8 +105,8 @@ unreachable %v59, %v32
 
 == _dl_relocate_static_pie @0x401070
 cfg
-  0x401070 0 insns goto -> [0x401074]
-  0x401074 3 insns return -> []
+  0x401070 0 ops goto -> [0x401074]
+  0x401074 3 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7]
 arg 2 [%v3]
 float_arg 0 [%v4]
@@ -123,7 +123,7 @@ return %v0, %v1, %v2, %v3, %v4, %v5, %v6, %v7
 
 == masked_loop_sink @0x401130
 cfg
-  0x401130 7 insns return -> []
+  0x401130 7 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9300:8, u:0x9500:8]
 arg 0 [%v2]
 arg 2 [%v7]
@@ -145,17 +145,17 @@ return %v0, %v1, %v6, %v7, %v8, %v9, %v10, %v11
 
 == masked_loop_switch @0x401140
 cfg
-  0x401140 0 insns goto -> [0x401144]
-  0x401144 37 insns goto -> [0x401160]
-  0x401160 4 insns switch@0x401160.3 [0x401170, 0x401190, 0x401198, 0x4011a0, 0x4011a8, 0x4011ad] -> [0x401170, 0x401190, 0x401198, 0x4011a0, 0x4011a8, 0x4011ad]
-  0x401170 15 insns goto -> [0x401180]
-  0x401180 24 insns cbranch 0x401160 -> [0x401160, 0x40118b]
-  0x40118b 5 insns return -> []
-  0x401190 11 insns goto -> [0x401180]
-  0x401198 11 insns goto -> [0x401180]
-  0x4011a0 11 insns goto -> [0x401180]
-  0x4011a8 11 insns goto -> [0x401180]
-  0x4011ad 11 insns goto -> [0x401180]
+  0x401140 0 ops goto -> [0x401144]
+  0x401144 37 ops goto -> [0x401160]
+  0x401160 4 ops switch@0x401160.3 [0x401170, 0x401190, 0x401198, 0x4011a0, 0x4011a8, 0x4011ad]
+  0x401170 15 ops goto -> [0x401180]
+  0x401180 24 ops cbranch 0x401160 -> [0x401160, 0x40118b]
+  0x40118b 5 ops return -> []
+  0x401190 11 ops goto -> [0x401180]
+  0x401198 11 ops goto -> [0x401180]
+  0x4011a0 11 ops goto -> [0x401180]
+  0x4011a8 11 ops goto -> [0x401180]
+  0x4011ad 11 ops goto -> [0x401180]
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, R10, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x8f00:8, u:0x9600:8, u:0x9800:8, u:0xa200:8, u:0xa400:8, u:0xab00:8, u:0xad00:8, u:0x24000:8, u:0x25400:1, u:0x58600:4, u:0x58700:1, u:0x58800:1, u:0x7d400:4, u:0x7d600:4]
 arg 0 [%v3]
 float_arg 0 [%v20]

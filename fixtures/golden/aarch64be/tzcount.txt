@@ -4,14 +4,14 @@ default_cc arg_passing_regs=[x0, x1, x2, x3, x4, x5, x6, x7] arg_passing_regs_fl
 
 == tzcount @0x210170
 cfg
-  0x210170 8 insns goto -> [0x210184]
-  0x210184 12 insns cbranch 0x2101ac -> [0x210194, 0x2101ac]
-  0x210194 1 insns goto -> [0x210198]
-  0x210198 19 insns goto -> [0x2101ac]
-  0x2101ac 8 insns cbranch 0x2101d4 -> [0x2101b4, 0x2101d4]
-  0x2101b4 1 insns goto -> [0x2101b8]
-  0x2101b8 20 insns goto -> [0x210184]
-  0x2101d4 12 insns return -> []
+  0x210170 8 ops goto -> [0x210184]
+  0x210184 12 ops cbranch 0x2101ac -> [0x210194, 0x2101ac]
+  0x210194 1 ops goto -> [0x210198]
+  0x210198 19 ops goto -> [0x2101ac]
+  0x2101ac 8 ops cbranch 0x2101d4 -> [0x2101b4, 0x2101d4]
+  0x2101b4 1 ops goto -> [0x2101b8]
+  0x2101b8 20 ops goto -> [0x210184]
+  0x2101d4 12 ops return -> []
 tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x0:4, u:0x4800:1, u:0xbc00:8, u:0xc000:8, u:0x22c00:4, u:0x22e00:4, u:0x23400:8, u:0x23600:8, u:0x30800:4, u:0x30900:4, u:0x30b00:1, u:0x48d00:4, u:0x49f00:1, u:0x51a00:4, u:0x7b400:4, u:0x7b600:4, u:0x7ed00:1]
 arg 0 [%v4]
 arg 1 [%v51]
@@ -77,7 +77,7 @@ return %v43, %v34, %v50, %v51, %v52, %v53, %v54, %v55
 
 == main @0x2101e0
 cfg
-  0x2101e0 38 insns return -> []
+  0x2101e0 38 ops return -> []
 tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xcb00:8, u:0xef00:8, u:0x23400:8, u:0x23600:8, u:0x48200:8, u:0x48300:8, u:0x48500:8, u:0x48f00:4, u:0x74d00:8, u:0x74e00:8, u:0x74f00:8, u:0x75000:4]
 arg 1 [%v15]
 arg 2 [%v16]
