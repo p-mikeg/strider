@@ -461,7 +461,7 @@ pub(crate) fn encode(field: Field, raw: u64, value: u64, target: Isa, p: u64) ->
             let (hw1, hw2) = halfwords(raw);
             // `BLX` lands on a word boundary of the Thumb PC.
             let (v, blx) = match (target, call) {
-                (Isa::Arm, true) => (((value + 2) & !3) as i64, true),
+                (Isa::Arm, true) => ((value.wrapping_add(2) & !3) as i64, true),
                 (Isa::Arm, false) => return None,
                 _ => (v, false),
             };
@@ -569,6 +569,25 @@ mod tests {
                 None,
                 "0x{:x} is not 4-byte aligned",
                 0x1234 + off
+            );
+        }
+    }
+
+    /// A Thumb `BL` to an ARM function 1 or 2 bytes behind the site becomes
+    /// `BLX` with offset 0: `Align(PC, 4)` absorbs the difference.
+    #[test]
+    fn a_blx_offset_just_below_zero_rounds_to_zero() {
+        for value in [u64::MAX, u64::MAX - 1] {
+            assert_eq!(
+                encode(
+                    Field::ThumbBranch { call: true },
+                    0xf000_f800,
+                    value,
+                    Isa::Arm,
+                    0
+                ),
+                Some(0xf000_e800),
+                "value {value:#x}"
             );
         }
     }
