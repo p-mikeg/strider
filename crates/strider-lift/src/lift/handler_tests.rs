@@ -158,27 +158,124 @@ fn assert_lifts_one(opcode: Opcode, output: Option<Vn>, inputs: Vec<Vn>) {
     });
 }
 
-#[test]
-fn lift_int_add_of_consts() {
-    assert_lifts_one(
-        Opcode::IntAdd,
-        Some(reg(0)),
-        vec![const_vn(7, 4), const_vn(35, 4)],
-    );
+/// 1-byte register at the given REGISTER-space offset.
+fn byte_reg(off: u64) -> Vn {
+    Vn {
+        size: 1,
+        addr_off: off,
+        addr_space: VnSpace::REGISTER,
+    }
 }
 
-#[test]
-fn lift_bool_and_of_consts() {
-    assert_lifts_one(
-        Opcode::BoolAnd,
-        Some(reg(0)),
-        vec![const_vn(1, 1), const_vn(1, 1)],
-    );
+/// `value`'s producer tree: a tracked register's entry value prints as
+/// `r<offset>`, a constant as `<hex>:<type>`, any other node as
+/// `<kind>:<type>(<operands>)`.
+fn operand_tree(f: &strider_ir::Function, value: strider_ir::Value) -> String {
+    let node = f.producer(value);
+    let ty = f.value_type(value).expect("a typed value");
+    match f.node_kind(node) {
+        NodeKind::IntConst(_) => format!(
+            "{:#x}:{ty}",
+            f.int_const_u128(value).expect("a narrow constant")
+        ),
+        NodeKind::InitialVar(id) => format!("r{}", f.initial_vn(*id).addr_off),
+        NodeKind::Phi => format!(
+            "r{}",
+            f.get_vn_for_value(value).expect("a register phi").addr_off
+        ),
+        kind => {
+            let operands: Vec<String> = f.value_inputs(node).map(|v| operand_tree(f, v)).collect();
+            format!("{kind:?}:{ty}({})", operands.join(", "))
+        }
+    }
 }
 
+/// Each plain opcode's lowering, read back from the varnode it wrote.
 #[test]
-fn lift_popcount() {
-    assert_lifts_one(Opcode::Popcount, Some(reg(0)), vec![const_vn(0b1011, 4)]);
+fn plain_opcodes_lower_to_their_ir_shape() {
+    let (r0, r4, r8) = (reg(0), reg(4), reg(8));
+    let (b16, b17, b18) = (byte_reg(16), byte_reg(17), byte_reg(18));
+    let cases: &[(Opcode, Vn, &[Vn], &str)] = &[
+        (
+            Opcode::IntAdd,
+            r8,
+            &[r0, r4],
+            "IntBinaryOp(Add):i32(r0, r4)",
+        ),
+        (
+            Opcode::IntMul,
+            r8,
+            &[r0, r4],
+            "IntBinaryOp(Mul):i32(r0, r4)",
+        ),
+        (Opcode::IntZext, r8, &[b16], "Extend(ZeroExtend):i32(r16)"),
+        (Opcode::IntSext, r8, &[b16], "Extend(SignExtend):i32(r16)"),
+        (Opcode::IntZext, r8, &[const_vn(0xff, 1)], "0xff:i32"),
+        (Opcode::IntSext, r8, &[const_vn(0xff, 1)], "0xffffffff:i32"),
+        (Opcode::Copy, r8, &[r0], "r0"),
+        (Opcode::Copy, r8, &[const_vn(42, 4)], "0x2a:i32"),
+        (Opcode::Popcount, r8, &[r0], "Popcount:i32(r0)"),
+        (Opcode::Lzcount, r8, &[r0], "Lzcount:i32(r0)"),
+        (
+            Opcode::BoolAnd,
+            b18,
+            &[b16, b17],
+            "Extend(ZeroExtend):i8(IntBinaryOp(And):i1(Truncate:i1(r16), Truncate:i1(r17)))",
+        ),
+        (
+            Opcode::BoolOr,
+            b18,
+            &[b16, b17],
+            "Extend(ZeroExtend):i8(IntBinaryOp(Or):i1(Truncate:i1(r16), Truncate:i1(r17)))",
+        ),
+        (
+            Opcode::BoolXor,
+            b18,
+            &[b16, b17],
+            "Extend(ZeroExtend):i8(IntBinaryOp(Xor):i1(Truncate:i1(r16), Truncate:i1(r17)))",
+        ),
+        (
+            Opcode::BoolNeg,
+            b18,
+            &[b16],
+            "Extend(ZeroExtend):i8(IntBinaryOp(Xor):i1(Truncate:i1(r16), 0x1:i1))",
+        ),
+        (
+            Opcode::Subpiece,
+            b18,
+            &[const_vn(0x1234_5678, 4), const_vn(0, 4)],
+            "0x78:i8",
+        ),
+        (
+            Opcode::Subpiece,
+            b18,
+            &[r0, const_vn(1, 4)],
+            "Truncate:i8(IntBinaryOp(ShiftRight):i32(r0, 0x8:i32))",
+        ),
+        (
+            Opcode::Piece,
+            r8,
+            &[const_vn(0xAA, 2), const_vn(0xBB, 2)],
+            "IntBinaryOp(Or):i32(IntBinaryOp(ShiftLeft):i32(0xaa:i32, 0x10:i32), 0xbb:i32)",
+        ),
+    ];
+    for &(opcode, output, inputs, expected) in cases {
+        with_test_lifter_tracking(vec![r0, r4, r8, b16, b17, b18], |d, rid| {
+            let insn = Insn {
+                opcode,
+                output: Some(output),
+                inputs: inputs.to_vec().into(),
+            };
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
+                .unwrap_or_else(|e| panic!("{opcode:?} must lift: {e}"));
+            let written = d.read_vn(&output).expect("read back the output");
+            assert_eq!(
+                operand_tree(d.builder.function(), written),
+                expected,
+                "{opcode:?} over {inputs:?}"
+            );
+        });
+    }
 }
 
 /// No vendored sla emits `Insert` / `Extract`, and lowering them exactly past
@@ -202,44 +299,6 @@ fn lift_bit_field_opcodes_fail_closed() {
             );
         });
     }
-}
-
-#[test]
-fn lift_bool_or_of_consts() {
-    assert_lifts_one(
-        Opcode::BoolOr,
-        Some(reg(0)),
-        vec![const_vn(0, 1), const_vn(1, 1)],
-    );
-}
-
-#[test]
-fn lift_bool_neg_of_const() {
-    assert_lifts_one(Opcode::BoolNeg, Some(reg(0)), vec![const_vn(0, 1)]);
-}
-
-#[test]
-fn lift_int_copy_from_const() {
-    assert_lifts_one(Opcode::Copy, Some(reg(0)), vec![const_vn(42, 4)]);
-}
-
-#[test]
-fn lift_int_zext_extends_const() {
-    assert_lifts_one(Opcode::IntZext, Some(reg(0)), vec![const_vn(0xff, 1)]);
-}
-
-#[test]
-fn lift_int_sext_extends_const() {
-    assert_lifts_one(Opcode::IntSext, Some(reg(0)), vec![const_vn(0xff, 1)]);
-}
-
-#[test]
-fn lift_int_mul_of_consts() {
-    assert_lifts_one(
-        Opcode::IntMul,
-        Some(reg(0)),
-        vec![const_vn(6, 4), const_vn(7, 4)],
-    );
 }
 
 /// Narrow `IntNeg` lowers to `Xor(x, all_ones)` with the constant inline.
@@ -298,37 +357,6 @@ fn lift_int_neg_register_wide_lowers_to_xor_all_ones() {
             );
         });
     }
-}
-
-#[test]
-fn lift_truncate_extracts_low_bits() {
-    assert_lifts_one(
-        Opcode::Subpiece,
-        Some(Vn {
-            size: 1,
-            addr_off: 0,
-            addr_space: VnSpace::REGISTER,
-        }),
-        vec![const_vn(0x1234_5678, 4), const_vn(0, 4)],
-    );
-}
-
-#[test]
-fn lift_piece_concatenates() {
-    assert_lifts_one(
-        Opcode::Piece,
-        Some(Vn {
-            size: 4,
-            addr_off: 0,
-            addr_space: VnSpace::REGISTER,
-        }),
-        vec![const_vn(0xAA, 2), const_vn(0xBB, 2)],
-    );
-}
-
-#[test]
-fn lift_lzcount() {
-    assert_lifts_one(Opcode::Lzcount, Some(reg(0)), vec![const_vn(0xF, 4)]);
 }
 
 /// `clz w0, w0` on a 64-bit arch lifts to an 8-byte output over a 4-byte input.
