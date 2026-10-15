@@ -349,14 +349,22 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // flowed path the baseline is the function's own entry context, which
         // is what `enqueue_resolved` uses.
         // Trustworthy only where this build re-derived the context:
-        // `RegionBuilder::rederive_flow` erases each committed var at an
-        // `inst_next` to its pspec default and re-lifts the owning
-        // instruction, so what sits there is this build's commit whatever an
-        // earlier build left. At a branch target that is no decoded
-        // instruction's `inst_next` the engine may still hold an
-        // earlier `globalset`, and the honest answer is the function's own
-        // baseline.
-        let mut carried = if self.committed_next.contains(&addr.machine_addr.addr) {
+        // `RegionBuilder::rederive_flow` re-derives each `inst_next` it decodes
+        // through, so what sits there is this build's commit whatever an
+        // earlier build left. Two things are NOT that, and both take the
+        // function's own baseline: a branch target that is no decoded
+        // instruction's `inst_next`, where the engine may still hold an
+        // earlier `globalset`; and an arch naming no `flow_commit_vars`, where
+        // `rederive_flow` is a no-op and the snapshot would answer with
+        // whatever ANY decode left, including a throwaway one
+        // (`is_benign_prefix_reentry` lifts a mid-instruction address out of
+        // band, and `oneInstruction` applies its commits). The two conditions
+        // are disjoint by construction, pinned in `strider-target`: the probe
+        // runs only where `isa_mode_var` is `None`, and every preset naming
+        // `flow_commit_vars` has one.
+        let mut carried = if !self.flow_commit_defaults.is_empty()
+            && self.committed_next.contains(&addr.machine_addr.addr)
+        {
             self.flow_vars.snapshot(self.sleigh, addr.machine_addr.addr)
         } else {
             self.function_mode.clone()
@@ -698,12 +706,17 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// jumps to.
     ///
     /// Gated on the arch declaring no ISA-mode var, so a throwaway decode
-    /// cannot leak mode state. That admits more than x86 and x86-64 -- every
-    /// arch without one, AArch64 and PowerPC among them -- but only a
-    /// byte-granular instruction prefix can produce the shape, so the length
-    /// check below rejects every fixed-width arch before the throwaway decode
-    /// matters. Where the gate does bite, an interior target is a real
-    /// overlap.
+    /// cannot leak mode state, and so this cannot reach a preset whose
+    /// commits `Builder::enqueue` believes (see
+    /// `a_preset_that_commits_flow_context_names_the_vars_to_re_derive`).
+    ///
+    /// The gate admits every arch without a mode var, AArch64 and PowerPC
+    /// among them, and the length check is AFTER the decode, so it is not what
+    /// keeps them out: `oneInstruction` rejects a misaligned address itself,
+    /// which covers AArch64 (`define alignment=4`) but NOT PowerPC
+    /// (`alignment=2`), where an even-offset probe does decode. Only a
+    /// byte-granular instruction prefix produces the shape the length check
+    /// accepts, so elsewhere an interior target is a real overlap.
     fn is_benign_prefix_reentry(&mut self, owner: NodeIndex, addr: PcodeInsnAddr) -> bool {
         if self.arch.isa_mode_var().is_some() {
             return false;
@@ -739,7 +752,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         let Ok(tail) = self.sleigh.lift_one(target) else {
             return false;
         };
-        if target.saturating_add(tail.machine_insn_len as u64) != full_end {
+        // `checked_add`, so a tail ending at the top of the address space
+        // cannot saturate onto a different `full_end` and read as benign.
+        if (tail.machine_insn_len as u64).checked_add(target) != Some(full_end) {
             return false;
         }
         self.strip_atomic_markers(&full) == self.strip_atomic_markers(&tail.insns)
@@ -1862,9 +1877,18 @@ mod tests {
             .set_context_at(0x1040, victim, stale)
             .expect("commit a stale context");
 
+        // Lent as `Lifter::build_cfg` lends it: a snapshot is trusted only
+        // where `rederive_flow` has something to re-derive.
+        let fcd: Vec<_> = arch
+            .flow_commit_vars()
+            .iter()
+            .map(|&(name, f)| (name, f, sleigh.get_context_at(0, name).expect("default")))
+            .collect();
+
         let opts = crate::CfgOptions::default();
         let mut b = super::Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
-            .with_flow_context(&flow, function_mode);
+            .with_flow_context(&flow, function_mode)
+            .with_flow_commit_defaults(&fcd);
         b.enqueue(None, addr(0x1040, 0), 0x1000);
         assert_eq!(
             flow.value_of(&b.work_queue.last().expect("queued").carried, victim),
@@ -1880,6 +1904,48 @@ mod tests {
             flow.value_of(&b.work_queue.last().expect("queued").carried, victim),
             Some(stale),
             "this build's own commit IS carried",
+        );
+    }
+
+    /// On an arch naming no `flow_commit_vars`, `rederive_flow` is a no-op, so
+    /// `committed_next` vouches for nothing and a snapshot would answer with
+    /// whatever ANY decode left -- including `is_benign_prefix_reentry`'s
+    /// throwaway lift of a mid-instruction address, whose commits are nobody's
+    /// `inst_next` to re-derive. The baseline is the only honest answer there.
+    #[test]
+    fn enqueue_reads_the_engine_only_where_this_build_re_derives() {
+        let arch = strider_target::SleighArch::x86_64();
+        assert!(
+            arch.flow_commit_vars().is_empty(),
+            "x86-64 commits nothing to re-derive",
+        );
+        let reader = rsleigh::mem_readers::BufMemReader::new(vec![0u8; 0x100], 0x1000);
+        let mut sleigh =
+            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
+        let flow = crate::FlowVars::discover(&sleigh).expect("discover flow vars");
+        let victim = sleigh
+            .flow_context_vars()
+            .expect("flow vars")
+            .into_iter()
+            .next()
+            .expect("x86-64 declares flowing vars");
+
+        let function_mode = flow.snapshot(&sleigh, 0x1000);
+        let clean = flow.value_of(&function_mode, &victim).expect("read");
+        sleigh
+            .set_context_at(0x1040, &victim, clean ^ 1)
+            .expect("commit out of band");
+
+        let opts = crate::CfgOptions::default();
+        let mut b = super::Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
+            .with_flow_context(&flow, function_mode);
+        // Vouched for, and still not read: nothing re-derived it.
+        b.committed_next.insert(0x1040);
+        b.enqueue(None, addr(0x1040, 0), 0x1000);
+        assert_eq!(
+            flow.value_of(&b.work_queue.last().expect("queued").carried, &victim),
+            Some(clean),
+            "a snapshot was trusted on an arch that re-derives nothing",
         );
     }
 
