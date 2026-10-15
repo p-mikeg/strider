@@ -1,11 +1,11 @@
 # x86_kernel/calls: Strider::analyze, LiftOptions::default(), OptOptions::default()
-# apply_indirect: a call
-# fib_recursive: two self-calls and an if
-# mutual_a: a call and an if
-# mutual_b: a call and an if
-# nested_3deep: a call
-# pass_through: a call
-# repeat_call_pair: two calls
+# apply_indirect: call
+# fib_recursive: 2 call and if
+# mutual_a: call and if
+# mutual_b: call and if
+# nested_3deep: call
+# pass_through: call
+# repeat_call_pair: 2 call
 endian little
 default_cc arg_passing_regs=[EAX, EDX, ECX] arg_passing_regs_float=[] callee_saved_regs=[EBX, ESI, EDI, EBP] ret_val_regs=[EAX, EDX] ret_val_regs_float=[ST0, ST1, XMM0] stack_vn=ESP stack_args=4+4n ret_stack_pop=4 link_register_vn=none preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
 
