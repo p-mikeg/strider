@@ -1,11 +1,11 @@
 # x64/calls: Strider::analyze, LiftOptions::default(), OptOptions::default()
-# apply_indirect: a call
-# fib_recursive: two self-calls and an if
-# mutual_a: a call and an if
-# mutual_b: a call and an if
-# nested_3deep: a call
-# pass_through: a call
-# repeat_call_pair: two calls
+# apply_indirect: call
+# fib_recursive: 2 call and if
+# mutual_a: call and if
+# mutual_b: call and if
+# nested_3deep: call
+# pass_through: call
+# repeat_call_pair: 2 call
 endian little
 default_cc arg_passing_regs=[RDI, RSI, RDX, RCX, R8, R9] arg_passing_regs_float=[XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7] callee_saved_regs=[RBX, RBP, R12, R13, R14, R15] ret_val_regs=[RAX, RDX] ret_val_regs_float=[XMM0, XMM1, ST0, ST1] stack_vn=RSP stack_args=8+8n ret_stack_pop=8 link_register_vn=none preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
 

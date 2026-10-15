@@ -7,8 +7,8 @@
 //! optimised IR with registers named. An `analyze` error is pinned as its
 //! message.
 //!
-//! A golden detects change; it does not judge it. Review a re-bless as a
-//! diff:
+//! A golden detects change; beyond the `INTENT` rows it does not judge it.
+//! Review a re-bless as a diff:
 //!
 //! ```text
 //! UPDATE_EXPECT=1 cargo test -p strider-orchestrator --test golden
@@ -143,79 +143,226 @@ fn split_shared(text: &str) -> (String, String) {
     )
 }
 
-/// What each function's IR must show on every arch, carried over from the
-/// retired per-arch asserts so a re-bless cannot drop it. `(case, function,
-/// intent)`.
+/// `(token, n)`: at least `n` of `token` in a function's section, none if
+/// `n` is 0. A token is an IR op as printed (`call`, `load`, `iconst[0x61]`),
+/// `a|b` summing both; `cfg.back_edge` counts the CFG's DFS back edges and
+/// `cfg.return_path` sums each `return` region's in-edges, at least one each.
+type Need = (&'static str, usize);
+
+/// What each function must show on every arch: `(case, function, any)`, met
+/// when every need of one alternative holds. Checked against the golden text
+/// before it is compared or written, and printed in the case header.
 #[rustfmt::skip]
-const INTENT: &[(&str, &str, &str)] = &[
-    ("abi", "eight_int_args", "seven int.add"),
-    ("abi", "make_pair", "a return"),
-    ("abi", "mixed_args", "two loads and five int.add"),
-    ("abi", "point_sum", "an int.add"),
-    ("abi", "tail_caller", "a call or a return"),
-    ("arithmetic", "add", "int.add"),
-    ("arithmetic", "ashr", "int.sshift_right"),
-    ("arithmetic", "bit_and", "int.and"),
-    ("arithmetic", "bit_not", "int.xor with all ones"),
-    ("arithmetic", "bit_or", "int.or"),
-    ("arithmetic", "bit_xor", "int.xor"),
-    ("arithmetic", "lshr", "int.shift_right"),
-    ("arithmetic", "mul", "int.mul"),
-    ("arithmetic", "negate", "int.neg (0 - a folds to it too)"),
-    ("arithmetic", "sdiv", "int.sdiv, or a library call"),
-    ("arithmetic", "shl", "int.shift_left"),
-    ("arithmetic", "smod", "int.srem, int.sdiv (a - a/b*b), or a library call"),
-    ("arithmetic", "sub", "int.add of an int.neg"),
-    ("arithmetic", "udiv", "int.div, or a library call"),
-    ("arithmetic", "umod", "int.rem, int.div (a - a/b*b), or a library call"),
-    ("builtins", "clz32", "popcount or lzcount, a library call, or inlined bit ops"),
-    ("builtins", "clz64", "popcount or lzcount, a library call, or inlined bit ops"),
-    ("builtins", "ctz32", "popcount or lzcount, a library call, or inlined bit ops"),
-    ("builtins", "expect_branch", "an if"),
-    ("builtins", "popcount32", "popcount or lzcount, a library call, or inlined bit ops"),
-    ("builtins", "popcount64", "popcount or lzcount, a library call, or inlined bit ops"),
-    ("calls", "apply_indirect", "a call"),
-    ("calls", "fib_recursive", "two self-calls and an if"),
-    ("calls", "mutual_a", "a call and an if"),
-    ("calls", "mutual_b", "a call and an if"),
-    ("calls", "nested_3deep", "a call"),
-    ("calls", "pass_through", "a call"),
-    ("calls", "repeat_call_pair", "two calls"),
-    ("control", "abs_val", "an if"),
-    ("control", "clamp", "two ifs"),
-    ("control", "count_bits", "a loop with int.shift_right"),
-    ("control", "early_return", "a loop and two return paths"),
-    ("control", "factorial", "a loop"),
-    ("control", "max_val", "an if"),
-    ("control", "nested_loops", "two loops"),
-    ("control", "select_three", "two ifs"),
-    ("control", "sum_to_n", "a loop"),
-    ("floats", "f32_arith", "four float ops, a sub as float.add of float.neg"),
-    ("floats", "f32_compare", "two fcmp"),
-    ("floats", "f32_neg_abs", "float.neg or a sign-bit int.xor"),
-    ("floats", "f32_to_f64", "float_to_float"),
-    ("floats", "f64_arith", "four float ops, a sub as float.add of float.neg"),
-    ("floats", "f64_compare", "two fcmp"),
-    ("floats", "f64_to_f32", "float_to_float"),
-    ("floats", "float_to_int", "float_to_int"),
-    ("floats", "int_to_float", "int_to_float; ppc32 uses the magic-number sequence"),
-    ("globals", "branch_on_const_string", "the load folds to 0x79, or the if is gone"),
-    ("globals", "read_const_byte", "the load folds to iconst 0x61"),
-    ("globals", "read_const_int", "the load folds to iconst 0x12345678"),
-    ("globals", "runtime_const_idx", "the load and a bounds if survive"),
-    ("memory", "array_copy", "a load and a store in a loop"),
-    ("memory", "array_fill", "a store in a loop"),
-    ("memory", "array_sum", "a load in a loop"),
-    ("memory", "pointer_chase", "two loads"),
-    ("memory", "struct_field_load", "two loads"),
-    ("memory", "struct_field_store", "two stores"),
-    ("memory", "tagged_union_read", "a load"),
-    ("stack", "escape_via_ptr", "a stack store and the call"),
-    ("stack", "inplace_swap", "two loads and two stores"),
-    ("stack", "large_local_array", "a stack store in a loop"),
-    ("stack", "recursive_stack_growth", "a self-call and stores"),
-    ("stack", "volatile_three_writes", "three stores"),
+const INTENT: &[(&str, &str, &[&[Need]])] = &[
+    ("abi", "eight_int_args", &[&[("int.add", 7)]]),
+    ("abi", "make_pair", &[&[("return", 1)]]),
+    ("abi", "mixed_args", &[&[("load", 2), ("int.add", 5)]]),
+    ("abi", "point_sum", &[&[("int.add", 1)]]),
+    ("abi", "tail_caller", &[&[("call", 1)], &[("return", 1)]]),
+    ("arithmetic", "add", &[&[("int.add", 1)]]),
+    ("arithmetic", "ashr", &[&[("int.sshift_right", 1)]]),
+    ("arithmetic", "bit_and", &[&[("int.and", 1)]]),
+    ("arithmetic", "bit_not", &[&[("int.xor", 1), ("iconst[0xffffffff]|iconst[0xffffffffffffffff]", 1)]]),
+    ("arithmetic", "bit_or", &[&[("int.or", 1)]]),
+    ("arithmetic", "bit_xor", &[&[("int.xor", 1)]]),
+    ("arithmetic", "lshr", &[&[("int.shift_right", 1)]]),
+    ("arithmetic", "mul", &[&[("int.mul", 1)]]),
+    ("arithmetic", "negate", &[&[("int.neg", 1)]]),
+    ("arithmetic", "sdiv", &[&[("int.sdiv", 1)], &[("call", 1)]]),
+    ("arithmetic", "shl", &[&[("int.shift_left", 1)]]),
+    ("arithmetic", "smod", &[&[("int.srem", 1)], &[("int.sdiv", 1)], &[("call", 1)]]),
+    ("arithmetic", "sub", &[&[("int.neg", 1)]]),
+    ("arithmetic", "udiv", &[&[("int.div", 1)], &[("call", 1)]]),
+    ("arithmetic", "umod", &[&[("int.rem", 1)], &[("int.div", 1)], &[("call", 1)]]),
+    ("builtins", "clz32", BIT_COUNT),
+    ("builtins", "clz64", BIT_COUNT),
+    ("builtins", "ctz32", BIT_COUNT),
+    ("builtins", "expect_branch", &[&[("if", 1)]]),
+    ("builtins", "popcount32", BIT_COUNT),
+    ("builtins", "popcount64", BIT_COUNT),
+    ("calls", "apply_indirect", &[&[("call", 1)]]),
+    ("calls", "fib_recursive", &[&[("call", 2), ("if", 1)]]),
+    ("calls", "mutual_a", &[&[("call", 1), ("if", 1)]]),
+    ("calls", "mutual_b", &[&[("call", 1), ("if", 1)]]),
+    ("calls", "nested_3deep", &[&[("call", 1)]]),
+    ("calls", "pass_through", &[&[("call", 1)]]),
+    ("calls", "repeat_call_pair", &[&[("call", 2)]]),
+    ("control", "abs_val", &[&[("if", 1)]]),
+    ("control", "clamp", &[&[("if", 2)]]),
+    ("control", "count_bits", &[&[("cfg.back_edge", 1), ("int.shift_right", 1)]]),
+    ("control", "early_return", &[&[("cfg.back_edge", 1), ("cfg.return_path", 2)]]),
+    ("control", "factorial", &[&[("cfg.back_edge", 1)]]),
+    ("control", "max_val", &[&[("if", 1)]]),
+    ("control", "nested_loops", &[&[("cfg.back_edge", 2)]]),
+    ("control", "select_three", &[&[("if", 2)]]),
+    ("control", "sum_to_n", &[&[("cfg.back_edge", 1)]]),
+    ("floats", "f32_arith", &[&[("float.add|float.mul|float.div", 4)]]),
+    ("floats", "f32_compare", &[&[("fcmp.less|fcmp.equal", 2)]]),
+    ("floats", "f32_neg_abs", &[&[("float.neg", 1)], &[("int.xor", 1)]]),
+    ("floats", "f32_to_f64", &[&[("float_to_float", 1)]]),
+    ("floats", "f64_arith", &[&[("float.add|float.mul|float.div", 4)]]),
+    ("floats", "f64_compare", &[&[("fcmp.less|fcmp.equal", 2)]]),
+    ("floats", "f64_to_f32", &[&[("float_to_float", 1)]]),
+    ("floats", "float_to_int", &[&[("float_to_int", 1)]]),
+    // ppc32 converts by the magic-number subtraction.
+    ("floats", "int_to_float", &[&[("int_to_float", 1)], &[("float.add", 1), ("float.neg", 1), ("float_to_float", 1)]]),
+    ("globals", "branch_on_const_string", &[&[("iconst[0x79]", 1)], &[("if", 0)]]),
+    ("globals", "read_const_byte", &[&[("iconst[0x61]", 1)]]),
+    ("globals", "read_const_int", &[&[("iconst[0x12345678]", 1)]]),
+    ("globals", "runtime_const_idx", &[&[("load", 1), ("if", 1)]]),
+    ("memory", "array_copy", &[&[("load", 1), ("store", 1), ("cfg.back_edge", 1)]]),
+    ("memory", "array_fill", &[&[("store", 1), ("cfg.back_edge", 1)]]),
+    ("memory", "array_sum", &[&[("load", 1), ("cfg.back_edge", 1)]]),
+    ("memory", "pointer_chase", &[&[("load", 2)]]),
+    ("memory", "struct_field_load", &[&[("load", 2)]]),
+    ("memory", "struct_field_store", &[&[("store", 2)]]),
+    ("memory", "tagged_union_read", &[&[("load", 1)]]),
+    ("stack", "escape_via_ptr", &[&[("store", 1), ("call", 1)]]),
+    ("stack", "inplace_swap", &[&[("load", 2), ("store", 2)]]),
+    ("stack", "large_local_array", &[&[("store", 1), ("cfg.back_edge", 1)]]),
+    ("stack", "recursive_stack_growth", &[&[("call", 1), ("store", 1)]]),
+    ("stack", "volatile_three_writes", &[&[("store", 3)]]),
 ];
+
+/// A dedicated op, a library call, or the inlined bit sequence.
+#[rustfmt::skip]
+const BIT_COUNT: &[&[Need]] = &[
+    &[("popcount|lzcount", 1)],
+    &[("call", 1)],
+    &[("int.and|int.or|int.xor|int.shift_left|int.shift_right|int.sshift_right|int.neg", 2)],
+];
+
+/// `any` as printed in the case header.
+fn intent_text(any: &[&[Need]]) -> String {
+    let need = |&(token, n): &Need| match n {
+        0 => format!("no {token}"),
+        1 => token.to_owned(),
+        n => format!("{n} {token}"),
+    };
+    let all = |needs: &&[Need]| needs.iter().map(need).collect::<Vec<_>>().join(" and ");
+    any.iter().map(all).collect::<Vec<_>>().join(" or ")
+}
+
+/// The op of an IR line: the word after `=`, else the first word.
+fn op(line: &str) -> Option<&str> {
+    if line.starts_with(' ') {
+        return None;
+    }
+    let rhs = line.split_once(" = ").map_or(line, |(_, rhs)| rhs);
+    rhs.split(' ').next()
+}
+
+/// `(cfg.back_edge, cfg.return_path)` of a section's CFG lines.
+fn cfg_counts(section: &str) -> (usize, usize) {
+    let regions: Vec<(&str, bool, Vec<&str>)> = section
+        .lines()
+        .filter_map(|line| line.strip_prefix("  "))
+        .map(|line| {
+            let (head, list) = line.rsplit_once(" [").expect("a successor list");
+            let mut words = head.split(' ');
+            let start = words.next().expect("a start");
+            let returns = words.nth(2) == Some("return");
+            let successors = list
+                .trim_end_matches(']')
+                .split(", ")
+                .filter(|s| !s.is_empty())
+                .map(|s| s.split('/').next().unwrap_or(s))
+                .collect();
+            (start, returns, successors)
+        })
+        .collect();
+    let index: BTreeMap<&str, usize> = regions.iter().enumerate().map(|(i, r)| (r.0, i)).collect();
+    let successors: Vec<Vec<usize>> = regions
+        .iter()
+        .map(|r| r.2.iter().filter_map(|s| index.get(s).copied()).collect())
+        .collect();
+    let mut in_edges = vec![0usize; regions.len()];
+    for &s in successors.iter().flatten() {
+        in_edges[s] += 1;
+    }
+    let return_paths = regions
+        .iter()
+        .zip(&in_edges)
+        .filter(|(r, _)| r.1)
+        .map(|(_, &n)| n.max(1))
+        .sum();
+    // 0 unvisited, 1 on the DFS stack, 2 done.
+    let mut state = vec![0u8; regions.len()];
+    let mut back_edges = 0;
+    for root in 0..regions.len() {
+        if state[root] != 0 {
+            continue;
+        }
+        state[root] = 1;
+        let mut stack = vec![(root, 0)];
+        while let Some(top) = stack.last_mut() {
+            let (region, next) = *top;
+            match successors[region].get(next) {
+                Some(&s) => {
+                    top.1 += 1;
+                    match state[s] {
+                        0 => {
+                            state[s] = 1;
+                            stack.push((s, 0));
+                        }
+                        1 => back_edges += 1,
+                        _ => {}
+                    }
+                }
+                None => {
+                    state[region] = 2;
+                    stack.pop();
+                }
+            }
+        }
+    }
+    (back_edges, return_paths)
+}
+
+/// How many `token` a section shows; see [`Need`].
+fn count(section: &str, token: &str) -> usize {
+    match token {
+        "cfg.back_edge" => cfg_counts(section).0,
+        "cfg.return_path" => cfg_counts(section).1,
+        _ => section
+            .lines()
+            .skip(1)
+            .filter_map(op)
+            .filter(|op| {
+                let bare = op.split('[').next().unwrap_or(op);
+                token.split('|').any(|t| t == *op || t == bare)
+            })
+            .count(),
+    }
+}
+
+/// One line per `INTENT` row of `case` that `text` breaks or has no section
+/// for.
+fn broken_intents(case: &str, text: &str) -> Vec<String> {
+    let sections = sections(text);
+    let mut broken = Vec::new();
+    for &(_, function, any) in INTENT.iter().filter(|i| i.0 == case) {
+        let found: Vec<&str> = sections
+            .iter()
+            .filter(|(header, _)| header.split_once(" @").is_some_and(|h| h.0 == function))
+            .map(|(_, section)| *section)
+            .collect();
+        let holds = |section: &&str| {
+            any.iter().any(|all| {
+                all.iter().all(|&(token, n)| match n {
+                    0 => count(section, token) == 0,
+                    n => count(section, token) >= n,
+                })
+            })
+        };
+        if found.is_empty() {
+            broken.push(format!("{function}: no section"));
+        } else if !found.iter().all(holds) {
+            broken.push(format!("{function}: {} does not hold", intent_text(any)));
+        }
+    }
+    broken
+}
 
 /// The image's golden text, analysing its functions in address order on one
 /// engine.
@@ -254,8 +401,8 @@ fn golden_text(fixture: &Fixture) -> String {
         "# {}/{}: Strider::analyze, LiftOptions::default(), OptOptions::default()\n",
         fixture.arch.dir, fixture.case
     );
-    for (_, function, intent) in INTENT.iter().filter(|i| i.0 == fixture.case) {
-        let _ = writeln!(out, "# {function}: {intent}");
+    for (_, function, any) in INTENT.iter().filter(|i| i.0 == fixture.case) {
+        let _ = writeln!(out, "# {function}: {}", intent_text(any));
     }
     out.push_str(shared.as_deref().unwrap_or_default());
     out.push_str(&body);
@@ -293,11 +440,12 @@ fn describe_change(path: &Path, expected: &str, actual: &str) -> String {
 }
 
 /// Compares every image of `dir` with its golden, or writes it under
-/// `UPDATE_EXPECT`, and fails naming each image that changed and each golden
-/// left with no image.
+/// `UPDATE_EXPECT`, and fails naming each image that breaks an `INTENT` row,
+/// each that changed and each golden left with no image.
 fn check_arch(dir: &str) {
     let update = std::env::var_os("UPDATE_EXPECT").is_some();
     let golden_dir = fixtures_root().join("golden").join(dir);
+    let mut broken = Vec::new();
     let mut changed = Vec::new();
     let mut cases = Vec::new();
     for fixture in Fixture::all(fixture_arch(dir)) {
@@ -305,7 +453,13 @@ fn check_arch(dir: &str) {
         let shown = Path::new("fixtures/golden").join(dir).join(&file);
         let path = golden_dir.join(&file);
         let actual = golden_text(&fixture);
-        if update {
+        let intents = broken_intents(&fixture.case, &actual);
+        cases.push(fixture.case);
+        if !intents.is_empty() {
+            for intent in intents {
+                broken.push(format!("{}: {intent}", shown.display()));
+            }
+        } else if update {
             std::fs::create_dir_all(&golden_dir).expect("golden dir");
             expect_test::expect_file![path].assert_eq(&actual);
         } else {
@@ -318,8 +472,18 @@ fn check_arch(dir: &str) {
                 changed.push(describe_change(&shown, &expected, &actual));
             }
         }
-        cases.push(fixture.case);
     }
+    for (case, function, _) in INTENT {
+        if !cases.iter().any(|c| c == case) {
+            broken.push(format!("{dir} has no {case} image for {function}"));
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "{} INTENT row(s) no longer hold; a bless skips these images\n\n{}",
+        broken.len(),
+        broken.join("\n")
+    );
     if golden_dir.is_dir() {
         let is_txt = |p: &Path| p.extension().is_some_and(|e| e == "txt");
         for stale in stems(&golden_dir, is_txt)
@@ -426,7 +590,8 @@ fn ppc64le() {
 }
 
 /// Only an arch's test writes its golden directory, so this fails until a
-/// new roster row has a test above.
+/// new roster row has a test above. A first bless can race that write;
+/// re-run it.
 #[test]
 fn every_roster_arch_has_goldens() {
     let golden = stems(&fixtures_root().join("golden"), Path::is_dir);
@@ -436,7 +601,10 @@ fn every_roster_arch_has_goldens() {
 /// The stems of `dir`'s entries that pass `keep`, sorted.
 fn stems(dir: &Path, keep: impl Fn(&Path) -> bool) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(dir)
-        .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+        .unwrap_or_else(|e| {
+            let shown = dir.strip_prefix(fixtures_root()).unwrap_or(dir);
+            panic!("{}: {e}", Path::new("fixtures").join(shown).display())
+        })
         .map(|entry| entry.expect("a directory entry").path())
         .filter(|p| keep(p.as_path()))
         .map(|p| {
