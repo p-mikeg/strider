@@ -48,10 +48,10 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
         // shifts the surviving tail down, so a low-index split costs O(len)
         // and the long half keeps the buffer to be shifted again.
         //
-        // ponytail: repeated lowest-first splits of one region are therefore
-        // O(n^2) -- measured 9.6s against 0.21s highest-first at n=16000, every
-        // instruction a branch target. Both factors are needed and neither is
-        // free to change here: `process_branch_indirect` sorts arms `Reverse`
+        // Repeated lowest-first splits of one region are therefore O(n^2);
+        // measured 9.6s against 0.21s highest-first at n=16000, every
+        // instruction a branch target. Both factors are needed:
+        // `process_branch_indirect` sorts arms `Reverse`
         // so the LIFO explores lowest first, which is what lets `explore`
         // recognise a higher over-read arm as interior to an existing region
         // instead of decoding inside an instruction. The fix is a logical head

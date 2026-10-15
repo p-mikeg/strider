@@ -88,6 +88,10 @@ pub struct Lifter<R: rsleigh::MemReader> {
     /// ([`SleighArch::transient_decode_vars`]).  They are outside `flow_vars`
     /// by construction, so the builder resets them at each decode instead.
     transient_defaults: Vec<(&'static str, u32)>,
+    /// Each [`SleighArch::flow_commit_vars`] var with its flow class and pspec
+    /// default, read once per engine. A default is committed globally, so any
+    /// address reads the same value.
+    flow_commit_defaults: Vec<(&'static str, strider_target::FlowCommit, u32)>,
     /// The entry context each ISA mode last pinned, keyed by the mode value
     /// ([`SleighArch::entry_mode_context`]), `None` for an arch without one.
     entry_contexts: rustc_hash::FxHashMap<Option<u32>, strider_cfg::FlowContext>,
@@ -131,6 +135,14 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // leak.  The address is immaterial: a flowing var's default is committed
         // globally, so any address reads the same value.
         let entry_defaults = flow_vars.snapshot(&sleigh, 0);
+        // A hard error, unlike `transient_defaults` below: a named var the sla
+        // does not declare means this preset's list is wrong, and silently
+        // dropping it would leave the leak it exists to close.
+        let flow_commit_defaults: Vec<(&'static str, strider_target::FlowCommit, u32)> = arch
+            .flow_commit_vars()
+            .iter()
+            .map(|&(name, flow)| Ok((name, flow, sleigh.get_context_at(0, name)?)))
+            .collect::<Result<_>>()?;
         let transient_defaults = arch
             .transient_decode_vars()
             .iter()
@@ -146,6 +158,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             flow_vars,
             entry_defaults,
             transient_defaults,
+            flow_commit_defaults,
             entry_contexts: rustc_hash::FxHashMap::default(),
         })
     }
@@ -217,6 +230,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         strider_cfg::Builder::for_arch(&self.arch, &mut self.sleigh, decode_addr, cfg_opts)
             .with_flow_context(&self.flow_vars, function_mode)
             .with_transient_defaults(&self.transient_defaults)
+            .with_flow_commit_defaults(&self.flow_commit_defaults)
             .with_user_op_names(&self.user_op_names)
             .with_per_address_ccs(per_address_ccs)
             .build()
