@@ -1,3 +1,4 @@
 fixtures/out/**/*.o filter=lfs diff=lfs merge=lfs -text
 fixtures/out/**/*.elf filter=lfs diff=lfs merge=lfs -text
 docs/*.png filter=lfs diff=lfs merge=lfs -text
+fixtures/golden/** text eol=lf

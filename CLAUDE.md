@@ -32,6 +32,8 @@ cargo test --workspace --release   # a debug_assert hides from the debug run
 RUSTDOCFLAGS='-D rustdoc::broken_intra_doc_links' cargo doc --workspace --no-deps
 cargo +1.91.0 check --workspace --all-targets   # the declared MSRV
 cargo +1.91.0 check -p <crate> --all-targets    # every package on its own
+UPDATE_EXPECT=1 cargo test -p strider-orchestrator --test golden  # re-bless
+                                   # fixtures/golden, then review git diff
 cargo run --release -p strider-orchestrator --example dump_arch_cmps  # and
                                    # orchestrator_demo (plain and -- memory); the tree
                                    # must stay clean afterwards
