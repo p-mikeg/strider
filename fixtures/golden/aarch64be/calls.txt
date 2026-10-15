@@ -1,14 +1,21 @@
 # aarch64be/calls: Strider::analyze, LiftOptions::default(), OptOptions::default()
+# apply_indirect: a call
+# fib_recursive: two self-calls and an if
+# mutual_a: a call and an if
+# mutual_b: a call and an if
+# nested_3deep: a call
+# pass_through: a call
+# repeat_call_pair: two calls
 endian big
 default_cc arg_passing_regs=[x0, x1, x2, x3, x4, x5, x6, x7] arg_passing_regs_float=[q0, q1, q2, q3, q4, q5, q6, q7] callee_saved_regs=[x19, x20, x21, x22, x23, x24, x25, x26, x27, x28, x29, x30, d8, d9, d10, d11, d12, d13, d14, d15] ret_val_regs=[x0, x1] ret_val_regs_float=[q0, q1, q2, q3] stack_vn=sp stack_args=0+8n ret_stack_pop=0 link_register_vn=x30 preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
 
 == fib_recursive @0x210170
 cfg
-  0x210170 34 insns cbranch 0x21019c -> [0x21018c, 0x21019c]
-  0x21018c 1 insns goto -> [0x210190]
-  0x210190 7 insns goto -> [0x2101cc]
-  0x21019c 49 insns goto -> [0x2101cc]
-  0x2101cc 18 insns return -> []
+  0x210170 34 ops cbranch 0x21019c -> [0x21018c, 0x21019c]
+  0x21018c 1 ops goto -> [0x210190]
+  0x210190 7 ops goto -> [0x2101cc]
+  0x21019c 49 ops goto -> [0x2101cc]
+  0x2101cc 18 ops return -> []
 tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x2500:1, u:0x2600:1, u:0x2800:1, u:0xc000:8, u:0xcb00:8, u:0xef00:8, u:0x23400:8, u:0x23600:8, u:0x23a00:4, u:0x23c00:4, u:0x48200:8, u:0x48300:8, u:0x48500:8, u:0x48d00:4, u:0x48f00:4, u:0x74d00:8, u:0x74e00:8, u:0x74f00:8, u:0x75000:4, u:0x7b400:4, u:0x7b600:4]
 arg 0 [%v1]
 arg 1 [%v36]
@@ -106,11 +113,11 @@ return %v119, %v121, %v130, %v122, %v123, %v124, %v125, %v126
 
 == mutual_a @0x2101dc
 cfg
-  0x2101dc 35 insns cbranch 0x210208 -> [0x2101f8, 0x210208]
-  0x2101f8 1 insns goto -> [0x2101fc]
-  0x2101fc 5 insns goto -> [0x210220]
-  0x210208 26 insns goto -> [0x210220]
-  0x210220 18 insns return -> []
+  0x2101dc 35 ops cbranch 0x210208 -> [0x2101f8, 0x210208]
+  0x2101f8 1 ops goto -> [0x2101fc]
+  0x2101fc 5 ops goto -> [0x210220]
+  0x210208 26 ops goto -> [0x210220]
+  0x210220 18 ops return -> []
 tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x0:4, u:0x2500:1, u:0x2600:1, u:0x2800:1, u:0xc000:8, u:0xcb00:8, u:0xef00:8, u:0x22c00:4, u:0x22e00:4, u:0x23400:8, u:0x23600:8, u:0x48200:8, u:0x48300:8, u:0x48500:8, u:0x48d00:4, u:0x48f00:4, u:0x74d00:8, u:0x74e00:8, u:0x74f00:8, u:0x75000:4, u:0x7b400:4, u:0x7b600:4]
 arg 0 [%v1]
 arg 1 [%v35]
@@ -198,11 +205,11 @@ return %v82, %v84, %v93, %v85, %v86, %v87, %v88, %v89
 
 == mutual_b @0x210230
 cfg
-  0x210230 35 insns cbranch 0x21025c -> [0x21024c, 0x21025c]
-  0x21024c 1 insns goto -> [0x210250]
-  0x210250 5 insns goto -> [0x210274]
-  0x21025c 26 insns goto -> [0x210274]
-  0x210274 18 insns return -> []
+  0x210230 35 ops cbranch 0x21025c -> [0x21024c, 0x21025c]
+  0x21024c 1 ops goto -> [0x210250]
+  0x210250 5 ops goto -> [0x210274]
+  0x21025c 26 ops goto -> [0x210274]
+  0x210274 18 ops return -> []
 tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x0:4, u:0x2500:1, u:0x2600:1, u:0x2800:1, u:0xc000:8, u:0xcb00:8, u:0xef00:8, u:0x22c00:4, u:0x22e00:4, u:0x23400:8, u:0x23600:8, u:0x48200:8, u:0x48300:8, u:0x48500:8, u:0x48d00:4, u:0x48f00:4, u:0x74d00:8, u:0x74e00:8, u:0x74f00:8, u:0x75000:4, u:0x7b400:4, u:0x7b600:4]
 arg 0 [%v1]
 arg 1 [%v35]
@@ -290,7 +297,7 @@ return %v82, %v84, %v93, %v85, %v86, %v87, %v88, %v89
 
 == leaf @0x210284
 cfg
-  0x210284 22 insns return -> []
+  0x210284 22 ops return -> []
 tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc000:8, u:0x22c00:4, u:0x22e00:4, u:0x23400:8, u:0x23600:8, u:0x48d00:4]
 arg 0 [%v5]
 arg 1 [%v11]
@@ -318,7 +325,7 @@ return %v0, %v7, %v10, %v11, %v12, %v13, %v14, %v15
 
 == mid @0x21029c
 cfg
-  0x21029c 39 insns return -> []
+  0x21029c 39 ops return -> []
 tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xcb00:8, u:0xef00:8, u:0x23400:8, u:0x23600:8, u:0x48200:8, u:0x48300:8, u:0x48500:8, u:0x48f00:4, u:0x50b00:4, u:0x74d00:8, u:0x74e00:8, u:0x74f00:8, u:0x75000:4]
 arg 0 [%v13]
 arg 1 [%v20]
@@ -380,7 +387,7 @@ return %v35, %v36, %v61, %v38, %v39, %v40, %v41, %v42
 
 == nested_3deep @0x2102c4
 cfg
-  0x2102c4 48 insns return -> []
+  0x2102c4 48 ops return -> []
 tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xcb00:8, u:0xef00:8, u:0x23400:8, u:0x23600:8, u:0x48200:8, u:0x48300:8, u:0x48500:8, u:0x48f00:4, u:0x74d00:8, u:0x74e00:8, u:0x74f00:8, u:0x75000:4, u:0x7b400:4, u:0x7b600:4]
 arg 0 [%v13]
 arg 1 [%v20]
@@ -442,7 +449,7 @@ return %v35, %v36, %v65, %v38, %v39, %v40, %v41, %v42
 
 == pair_a @0x2102ec
 cfg
-  0x2102ec 27 insns return -> []
+  0x2102ec 27 ops return -> []
 tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc000:8, u:0x23400:8, u:0x23600:8, u:0x23a00:4, u:0x23c00:4, u:0x48d00:4]
 arg 0 [%v5]
 arg 1 [%v10]
@@ -473,7 +480,7 @@ return %v0, %v12, %v14, %v10, %v15, %v16, %v17, %v18
 
 == repeat_call_pair @0x21030c
 cfg
-  0x21030c 63 insns return -> []
+  0x21030c 63 ops return -> []
 tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc000:8, u:0xcb00:8, u:0xef00:8, u:0x23400:8, u:0x23600:8, u:0x23a00:4, u:0x23c00:4, u:0x48200:8, u:0x48300:8, u:0x48500:8, u:0x48d00:4, u:0x48f00:4, u:0x74d00:8, u:0x74e00:8, u:0x74f00:8, u:0x75000:4]
 arg 0 [%v13]
 arg 1 [%v18]
@@ -549,7 +556,7 @@ return %v72, %v73, %v99, %v75, %v76, %v77, %v78, %v79
 
 == pass_through @0x210354
 cfg
-  0x210354 37 insns return -> []
+  0x210354 37 ops return -> []
 tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xcb00:8, u:0xef00:8, u:0x23400:8, u:0x23600:8, u:0x48200:8, u:0x48300:8, u:0x48500:8, u:0x48f00:4, u:0x74d00:8, u:0x74e00:8, u:0x74f00:8, u:0x75000:4]
 arg 0 [%v13]
 arg 1 [%v20]
@@ -607,7 +614,7 @@ return %v35, %v36, %v37, %v38, %v39, %v40, %v41, %v42
 
 == apply_indirect @0x210378
 cfg
-  0x210378 41 insns return -> []
+  0x210378 41 ops return -> []
 tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc000:8, u:0xc200:8, u:0xef00:8, u:0x23400:8, u:0x23600:8, u:0x48200:8, u:0x48300:8, u:0x48500:8, u:0x48d00:4, u:0x74d00:8, u:0x74e00:8, u:0x74f00:8]
 arg 0 [%v13]
 arg 1 [%v17]
@@ -667,9 +674,9 @@ return %v37, %v38, %v39, %v40, %v41, %v42, %v43, %v44
 
 == main @0x2103a4
 cfg
-  0x2103a4 80 insns goto -> [0x210428]
-  0x210428 0 insns goto -> [0x21042c]
-  0x21042c 29 insns return -> []
+  0x2103a4 80 ops goto -> [0x210428]
+  0x210428 0 ops goto -> [0x21042c]
+  0x21042c 29 ops return -> []
 tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x0:4, u:0xc000:8, u:0xcb00:8, u:0xef00:8, u:0x23400:8, u:0x23600:8, u:0x3fd00:4, u:0x48200:8, u:0x48300:8, u:0x48500:8, u:0x48d00:4, u:0x48f00:4, u:0x74d00:8, u:0x74e00:8, u:0x74f00:8, u:0x75000:4]
 arg 1 [%v19]
 arg 2 [%v20]

@@ -4,7 +4,7 @@ default_cc arg_passing_regs=[x0, x1, x2, x3, x4, x5, x6, x7] arg_passing_regs_fl
 
 == mul_then_add @0x210170
 cfg
-  0x210170 34 insns return -> []
+  0x210170 34 ops return -> []
 tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc000:8, u:0x23400:8, u:0x23600:8, u:0x23a00:4, u:0x23c00:4, u:0x48d00:4, u:0x56c00:4]
 arg 0 [%v5]
 arg 1 [%v10]
@@ -42,7 +42,7 @@ return %v0, %v17, %v20, %v10, %v21, %v22, %v23, %v24
 
 == chained_xor_mask @0x21019c
 cfg
-  0x21019c 29 insns return -> []
+  0x21019c 29 ops return -> []
 tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc000:8, u:0x23400:8, u:0x23600:8, u:0x24200:4, u:0x3fd00:4, u:0x48d00:4, u:0x54500:4]
 arg 0 [%v5]
 arg 1 [%v15]
@@ -74,11 +74,11 @@ return %v0, %v7, %v14, %v15, %v16, %v17, %v18, %v19
 
 == if_returns_const @0x2101cc
 cfg
-  0x2101cc 19 insns cbranch 0x2101f0 -> [0x2101e0, 0x2101f0]
-  0x2101e0 1 insns goto -> [0x2101e4]
-  0x2101e4 4 insns goto -> [0x2101fc]
-  0x2101f0 4 insns goto -> [0x2101fc]
-  0x2101fc 12 insns return -> []
+  0x2101cc 19 ops cbranch 0x2101f0 -> [0x2101e0, 0x2101f0]
+  0x2101e0 1 ops goto -> [0x2101e4]
+  0x2101e4 4 ops goto -> [0x2101fc]
+  0x2101f0 4 ops goto -> [0x2101fc]
+  0x2101fc 12 ops return -> []
 tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x2400:1, u:0xc000:8, u:0x23400:8, u:0x23600:8, u:0x48d00:4, u:0x7b400:4, u:0x7b600:4]
 arg 0 [%v1]
 arg 1 [%v30]
@@ -124,12 +124,12 @@ return %v22, %v24, %v29, %v30, %v31, %v32, %v33, %v34
 
 == loop_with_invariant_load @0x210208
 cfg
-  0x210208 16 insns goto -> [0x21022c]
-  0x21022c 19 insns cbranch 0x210270 -> [0x21023c, 0x210270]
-  0x21023c 1 insns goto -> [0x210240]
-  0x210240 28 insns goto -> [0x210260]
-  0x210260 13 insns goto -> [0x21022c]
-  0x210270 12 insns return -> []
+  0x210208 16 ops goto -> [0x21022c]
+  0x21022c 19 ops cbranch 0x210270 -> [0x21023c, 0x210270]
+  0x21023c 1 ops goto -> [0x210240]
+  0x210240 28 ops goto -> [0x210260]
+  0x210260 13 ops goto -> [0x21022c]
+  0x210270 12 ops return -> []
 tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x0:4, u:0x2200:1, u:0xc000:8, u:0xc200:8, u:0xc700:8, u:0x22c00:4, u:0x22e00:4, u:0x23400:8, u:0x23600:8, u:0x23a00:4, u:0x23c00:4, u:0x48d00:4, u:0x7c200:4, u:0x7c400:4]
 arg 0 [%v4]
 arg 1 [%v24]
@@ -182,11 +182,11 @@ return %v28, %v19, %v37, %v24, %v38, %v39, %v40, %v41
 
 == recursive_with_accumulator @0x21027c
 cfg
-  0x21027c 36 insns cbranch 0x2102ac -> [0x21029c, 0x2102ac]
-  0x21029c 1 insns goto -> [0x2102a0]
-  0x2102a0 7 insns goto -> [0x2102c8]
-  0x2102ac 30 insns goto -> [0x2102c8]
-  0x2102c8 18 insns return -> []
+  0x21027c 36 ops cbranch 0x2102ac -> [0x21029c, 0x2102ac]
+  0x21029c 1 ops goto -> [0x2102a0]
+  0x2102a0 7 ops goto -> [0x2102c8]
+  0x2102ac 30 ops goto -> [0x2102c8]
+  0x2102c8 18 ops return -> []
 tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x2500:1, u:0x2600:1, u:0x2800:1, u:0xc000:8, u:0xcb00:8, u:0xef00:8, u:0x23400:8, u:0x23600:8, u:0x23a00:4, u:0x23c00:4, u:0x48200:8, u:0x48300:8, u:0x48500:8, u:0x48d00:4, u:0x48f00:4, u:0x74d00:8, u:0x74e00:8, u:0x74f00:8, u:0x75000:4, u:0x7b400:4, u:0x7b600:4]
 arg 0 [%v1]
 arg 1 [%v31]
@@ -278,7 +278,7 @@ return %v87, %v89, %v98, %v90, %v91, %v92, %v93, %v94
 
 == main @0x2102d8
 cfg
-  0x2102d8 117 insns return -> []
+  0x2102d8 117 ops return -> []
 tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x0:4, u:0xc000:8, u:0xc700:8, u:0xcb00:8, u:0xef00:8, u:0x23400:8, u:0x23600:8, u:0x3fd00:4, u:0x48200:8, u:0x48300:8, u:0x48500:8, u:0x48d00:4, u:0x48f00:4, u:0x54500:4, u:0x74d00:8, u:0x74e00:8, u:0x74f00:8, u:0x75000:4]
 arg 3 [%v22]
 arg 4 [%v23]

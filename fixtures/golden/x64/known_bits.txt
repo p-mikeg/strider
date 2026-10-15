@@ -4,8 +4,8 @@ default_cc arg_passing_regs=[RDI, RSI, RDX, RCX, R8, R9] arg_passing_regs_float=
 
 == main @0x401020
 cfg
-  0x401020 0 insns goto -> [0x401024]
-  0x401024 54 insns return -> []
+  0x401020 0 ops goto -> [0x401024]
+  0x401024 54 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9d00:8, u:0xd400:4, u:0x23f00:4, u:0x58600:8, u:0x58700:1, u:0x58800:1]
 arg 1 [%v13]
 arg 2 [%v14]
@@ -56,9 +56,9 @@ return %v26, %v54, %v55, %v29, %v30, %v31, %v32, %v33
 
 == _start @0x401050
 cfg
-  0x401050 0 insns goto -> [0x401054]
-  0x401054 56 insns goto -> [0x401075]
-  0x401075 1 insns goto -> [0x401075]
+  0x401050 0 ops goto -> [0x401054]
+  0x401054 56 ops goto -> [0x401075]
+  0x401075 1 ops goto -> [0x401075]
 tracked [RAX, RCX, RDX, RSP, RBP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x4fc00:8, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x79900:8, u:0xaa700:8]
 arg 2 [%v22]
 float_arg 0 [%v23]
@@ -109,8 +109,8 @@ unreachable %v59, %v32
 
 == _dl_relocate_static_pie @0x401080
 cfg
-  0x401080 0 insns goto -> [0x401084]
-  0x401084 3 insns return -> []
+  0x401080 0 ops goto -> [0x401084]
+  0x401084 3 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7]
 arg 2 [%v3]
 float_arg 0 [%v4]
@@ -127,8 +127,8 @@ return %v0, %v1, %v2, %v3, %v4, %v5, %v6, %v7
 
 == kb_or_then_mask @0x401140
 cfg
-  0x401140 0 insns goto -> [0x401144]
-  0x401144 25 insns return -> []
+  0x401140 0 ops goto -> [0x401144]
+  0x401144 25 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x58600:4, u:0x58700:1, u:0x58800:1]
 arg 2 [%v3]
 float_arg 0 [%v4]

@@ -22,6 +22,7 @@ const FLOAT_ARG_ARCHES: &[Arch] = &[
     Arch::Aarch64Be,
     Arch::Arm,
     Arch::ArmBe,
+    Arch::ArmBe8,
     Arch::ArmThumb,
     Arch::Mips32le,
     Arch::Mips32be,

@@ -1,11 +1,18 @@
 # x64/memory: Strider::analyze, LiftOptions::default(), OptOptions::default()
+# array_copy: a load and a store in a loop
+# array_fill: a store in a loop
+# array_sum: a load in a loop
+# pointer_chase: two loads
+# struct_field_load: two loads
+# struct_field_store: two stores
+# tagged_union_read: a load
 endian little
 default_cc arg_passing_regs=[RDI, RSI, RDX, RCX, R8, R9] arg_passing_regs_float=[XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7] callee_saved_regs=[RBX, RBP, R12, R13, R14, R15] ret_val_regs=[RAX, RDX] ret_val_regs_float=[XMM0, XMM1, ST0, ST1] stack_vn=RSP stack_args=8+8n ret_stack_pop=8 link_register_vn=none preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
 
 == main @0x401020
 cfg
-  0x401020 0 insns goto -> [0x401024]
-  0x401024 113 insns return -> []
+  0x401020 0 ops goto -> [0x401024]
+  0x401024 113 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9d00:8, u:0xd400:4, u:0xd500:8, u:0x58600:8, u:0x58700:1, u:0x58800:1]
 arg 3 [%v19]
 arg 5 [%v20]
@@ -105,9 +112,9 @@ return %v223, %v224, %v251, %v226, %v227, %v228, %v229, %v230
 
 == _start @0x4010d0
 cfg
-  0x4010d0 0 insns goto -> [0x4010d4]
-  0x4010d4 56 insns goto -> [0x4010f5]
-  0x4010f5 1 insns goto -> [0x4010f5]
+  0x4010d0 0 ops goto -> [0x4010d4]
+  0x4010d4 56 ops goto -> [0x4010f5]
+  0x4010f5 1 ops goto -> [0x4010f5]
 tracked [RAX, RCX, RDX, RSP, RBP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x4fc00:8, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x79900:8, u:0xaa700:8]
 arg 2 [%v22]
 float_arg 0 [%v23]
@@ -158,8 +165,8 @@ unreachable %v59, %v32
 
 == _dl_relocate_static_pie @0x401100
 cfg
-  0x401100 0 insns goto -> [0x401104]
-  0x401104 3 insns return -> []
+  0x401100 0 ops goto -> [0x401104]
+  0x401104 3 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7]
 arg 2 [%v3]
 float_arg 0 [%v4]
@@ -176,13 +183,13 @@ return %v0, %v1, %v2, %v3, %v4, %v5, %v6, %v7
 
 == array_sum @0x4011c0
 cfg
-  0x4011c0 0 insns goto -> [0x4011c4]
-  0x4011c4 10 insns cbranch 0x4011e0 -> [0x4011c9, 0x4011e0]
-  0x4011c9 13 insns goto -> [0x4011cf]
-  0x4011cf 0 insns goto -> [0x4011d0]
-  0x4011d0 34 insns cbranch 0x4011d0 -> [0x4011d0, 0x4011db]
-  0x4011db 3 insns return -> []
-  0x4011e0 13 insns return -> []
+  0x4011c0 0 ops goto -> [0x4011c4]
+  0x4011c4 10 ops cbranch 0x4011e0 -> [0x4011c9, 0x4011e0]
+  0x4011c9 13 ops goto -> [0x4011cf]
+  0x4011cf 0 ops goto -> [0x4011d0]
+  0x4011d0 34 ops cbranch 0x4011d0 -> [0x4011d0, 0x4011db]
+  0x4011db 3 ops return -> []
+  0x4011e0 13 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9300:8, u:0x9500:8, u:0x23f00:4, u:0x25200:1, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x7e300:8, u:0x7e500:8, u:0xe0800:8]
 arg 0 [%v18]
 arg 1 [%v1]
@@ -220,12 +227,12 @@ return %v22, %v6, %v27, %v20, %v8, %v9, %v10, %v11
 
 == array_fill @0x4011f0
 cfg
-  0x4011f0 0 insns goto -> [0x4011f4]
-  0x4011f4 10 insns cbranch 0x40120b -> [0x4011f9, 0x40120b]
-  0x4011f9 3 insns goto -> [0x4011fd]
-  0x4011fd 0 insns goto -> [0x401200]
-  0x401200 23 insns cbranch 0x401200 -> [0x401200, 0x40120b]
-  0x40120b 3 insns return -> []
+  0x4011f0 0 ops goto -> [0x4011f4]
+  0x4011f4 10 ops cbranch 0x40120b -> [0x4011f9, 0x40120b]
+  0x4011f9 3 ops goto -> [0x4011fd]
+  0x4011fd 0 ops goto -> [0x401200]
+  0x401200 23 ops cbranch 0x401200 -> [0x401200, 0x40120b]
+  0x40120b 3 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9300:8, u:0x9500:8, u:0xd400:4, u:0x25200:1, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x7e300:8, u:0x7e500:8, u:0xe0800:8]
 arg 0 [%v14]
 arg 1 [%v1]
@@ -265,11 +272,11 @@ return %v22, %v24, %v25, %v26, %v27, %v28, %v29, %v30
 
 == array_copy @0x401210
 cfg
-  0x401210 0 insns goto -> [0x401214]
-  0x401214 10 insns cbranch 0x40122f -> [0x401219, 0x40122f]
-  0x401219 12 insns goto -> [0x401220]
-  0x401220 30 insns cbranch 0x401220 -> [0x401220, 0x40122f]
-  0x40122f 3 insns return -> []
+  0x401210 0 ops goto -> [0x401214]
+  0x401214 10 ops cbranch 0x40122f -> [0x401219, 0x40122f]
+  0x401219 12 ops goto -> [0x401220]
+  0x401220 30 ops cbranch 0x401220 -> [0x401220, 0x40122f]
+  0x40122f 3 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9300:8, u:0x9500:8, u:0xa200:8, u:0xa400:8, u:0xd400:4, u:0x23f00:4, u:0x25200:1, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x7e300:8, u:0x7e500:8, u:0xe0800:8]
 arg 0 [%v17]
 arg 1 [%v21]
@@ -311,8 +318,8 @@ return %v25, %v27, %v28, %v1, %v29, %v30, %v31, %v32
 
 == pointer_chase @0x401230
 cfg
-  0x401230 0 insns goto -> [0x401234]
-  0x401234 8 insns return -> []
+  0x401230 0 ops goto -> [0x401234]
+  0x401234 8 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x23f00:4, u:0x24000:8]
 arg 0 [%v2]
 arg 2 [%v6]
@@ -333,8 +340,8 @@ return %v0, %v1, %v5, %v6, %v7, %v8, %v9, %v10
 
 == struct_field_load @0x401240
 cfg
-  0x401240 0 insns goto -> [0x401244]
-  0x401244 20 insns return -> []
+  0x401240 0 ops goto -> [0x401244]
+  0x401244 20 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x8f00:8, u:0x23f00:4, u:0x58600:4, u:0x58700:1, u:0x58800:1]
 arg 0 [%v2]
 arg 2 [%v9]
@@ -358,8 +365,8 @@ return %v0, %v1, %v8, %v9, %v10, %v11, %v12, %v13
 
 == struct_field_store @0x401250
 cfg
-  0x401250 0 insns goto -> [0x401254]
-  0x401254 8 insns return -> []
+  0x401250 0 ops goto -> [0x401254]
+  0x401254 8 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x8f00:8, u:0xd400:4]
 arg 0 [%v2]
 arg 1 [%v3]
@@ -386,8 +393,8 @@ return %v0, %v10, %v11, %v8, %v12, %v13, %v14, %v15
 
 == tagged_union_read @0x401260
 cfg
-  0x401260 0 insns goto -> [0x401264]
-  0x401264 19 insns return -> []
+  0x401260 0 ops goto -> [0x401264]
+  0x401264 19 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x23d00:1, u:0x23f00:4, u:0x58600:4, u:0x58700:1, u:0x58800:1]
 arg 0 [%v2]
 arg 2 [%v9]

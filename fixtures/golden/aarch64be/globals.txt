@@ -1,10 +1,14 @@
 # aarch64be/globals: Strider::analyze, LiftOptions::default(), OptOptions::default()
+# branch_on_const_string: the load folds to 0x79, or the if is gone
+# read_const_byte: the load folds to iconst 0x61
+# read_const_int: the load folds to iconst 0x12345678
+# runtime_const_idx: the load and a bounds if survive
 endian big
 default_cc arg_passing_regs=[x0, x1, x2, x3, x4, x5, x6, x7] arg_passing_regs_float=[q0, q1, q2, q3, q4, q5, q6, q7] callee_saved_regs=[x19, x20, x21, x22, x23, x24, x25, x26, x27, x28, x29, x30, d8, d9, d10, d11, d12, d13, d14, d15] ret_val_regs=[x0, x1] ret_val_regs_float=[q0, q1, q2, q3] stack_vn=sp stack_args=0+8n ret_stack_pop=0 link_register_vn=x30 preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
 
 == read_const_byte @0x210180
 cfg
-  0x210180 3 insns return -> []
+  0x210180 3 ops return -> []
 tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7]
 arg 1 [%v3]
 float_arg 0 [%v4]
@@ -23,7 +27,7 @@ return %v0, %v1, %v2, %v3, %v4, %v5, %v6, %v7
 
 == read_const_int @0x210188
 cfg
-  0x210188 6 insns return -> []
+  0x210188 6 ops return -> []
 tracked [pc, sp, x0, x1, x2, x3, x4, x5, x6, x7, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x54500:4]
 arg 1 [%v3]
 float_arg 0 [%v4]
@@ -42,7 +46,7 @@ return %v0, %v1, %v2, %v3, %v4, %v5, %v6, %v7
 
 == branch_on_const_string @0x210194
 cfg
-  0x210194 27 insns return -> []
+  0x210194 27 ops return -> []
 tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc000:8, u:0x23400:8, u:0x23600:8, u:0x23a00:4, u:0x23c00:4, u:0x48d00:4]
 arg 0 [%v5]
 arg 1 [%v10]
@@ -73,15 +77,15 @@ return %v0, %v12, %v14, %v10, %v15, %v16, %v17, %v18
 
 == runtime_const_idx @0x2101b4
 cfg
-  0x2101b4 11 insns cbranch 0x2101d8 -> [0x2101c4, 0x2101d8]
-  0x2101c4 1 insns goto -> [0x2101c8]
-  0x2101c8 16 insns cbranch 0x2101e4 -> [0x2101d4, 0x2101e4]
-  0x2101d4 1 insns goto -> [0x2101d8]
-  0x2101d8 4 insns goto -> [0x2101fc]
-  0x2101e4 3 insns goto -> [0x2101e8]
-  0x2101e8 0 insns goto -> [0x2101ec]
-  0x2101ec 10 insns goto -> [0x2101fc]
-  0x2101fc 12 insns return -> []
+  0x2101b4 11 ops cbranch 0x2101d8 -> [0x2101c4, 0x2101d8]
+  0x2101c4 1 ops goto -> [0x2101c8]
+  0x2101c8 16 ops cbranch 0x2101e4 -> [0x2101d4, 0x2101e4]
+  0x2101d4 1 ops goto -> [0x2101d8]
+  0x2101d8 4 ops goto -> [0x2101fc]
+  0x2101e4 3 ops goto -> [0x2101e8]
+  0x2101e8 0 ops goto -> [0x2101ec]
+  0x2101ec 10 ops goto -> [0x2101fc]
+  0x2101fc 12 ops return -> []
 tracked [pc, sp, NG, ZR, CY, OV, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x2400:1, u:0xae00:8, u:0xc000:8, u:0xda00:8, u:0xe300:8, u:0x23400:8, u:0x23600:8, u:0x30800:4, u:0x30900:4, u:0x30b00:1, u:0x48d00:4, u:0x49800:4, u:0x4db00:4, u:0x7b400:4, u:0x7b600:4, u:0x7ed00:1]
 arg 0 [%v1]
 arg 1 [%v44]
@@ -140,7 +144,7 @@ return %v36, %v38, %v43, %v44, %v45, %v46, %v47, %v48
 
 == main @0x210208
 cfg
-  0x210208 85 insns return -> []
+  0x210208 85 ops return -> []
 tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0x0:4, u:0xc000:8, u:0xcb00:8, u:0xef00:8, u:0x23400:8, u:0x23600:8, u:0x3fd00:4, u:0x48200:8, u:0x48300:8, u:0x48500:8, u:0x48d00:4, u:0x48f00:4, u:0x74d00:8, u:0x74e00:8, u:0x74f00:8, u:0x75000:4]
 arg 0 [%v18]
 arg 1 [%v19]
