@@ -993,3 +993,45 @@ fn an_implicit_addend_relative_in_a_read_only_mapping_serves_its_field() {
         assert_eq!(got.to_vec(), slot_init);
     }
 }
+
+/// `R_PPC64_REL32` is `S + A - P` in a 4-byte field. A displacement past
+/// +-2 GiB does not fit it, so the site is a hole rather than a truncated word;
+/// one that fits is still patched.
+#[test]
+fn a_word_sized_rel32_that_does_not_fit_is_a_hole() {
+    let fixture = |slot_addr: u64| {
+        common::elf_fixture::build_rel_elf_placed(
+            common::elf_fixture::RelOpts {
+                endian: object::Endianness::Big,
+                is_64: true,
+                e_machine: object::elf::EM_PPC64,
+                r_type: object::elf::R_PPC64_REL32,
+                defined_symbol: true,
+                slot_init: vec![0u8; 4],
+            },
+            // Read-only, so an uncomputed field is a hole and not skipped.
+            common::elf_fixture::RelPlacement {
+                slot_addr,
+                slot_exec: true,
+                ..Default::default()
+            },
+        )
+    };
+
+    let near = fixture(0x2000);
+    let regions = common::load_with_relocations(&near.bytes);
+    assert_eq!(
+        read_u32_be(&regions, near.slot_addr),
+        Some(near.sym_addr.wrapping_sub(near.slot_addr) as u32),
+        "a displacement that fits is patched"
+    );
+
+    let far = fixture(0x1_0000_2000);
+    let table =
+        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&far.bytes));
+    assert_eq!(
+        table.unmodelled_relocation_at(far.slot_addr),
+        Some(object::elf::R_PPC64_REL32),
+        "a displacement past 32 signed bits must be a hole, not its low word"
+    );
+}
