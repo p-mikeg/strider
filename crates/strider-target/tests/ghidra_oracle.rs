@@ -76,8 +76,9 @@ const PPC64_LE: &str = "PowerPC/data/languages/ppc_64_le.cspec";
 
 /// Every preset, with the cspec Ghidra's ldefs gives its arch. A kernel
 /// flavour takes its userland prototype; x86's `-mregparm=3` takes
-/// `__regparm3`. Ghidra gives a big-endian ELFv2 image `ppc_64_be.cspec`, so
-/// ELFv2 is held to both ppc64 files. A new preset needs a row here.
+/// `__regparm3`, ARM soft-float `__stdcall_softfp`. Ghidra gives a big-endian
+/// ELFv2 image `ppc_64_be.cspec`, so ELFv2 is held to both ppc64 files. A new
+/// preset needs a row here.
 const PAIRINGS: &[Pairing] = &[
     Pairing {
         preset: "x86_64_systemv",
@@ -123,7 +124,7 @@ const PAIRINGS: &[Pairing] = &[
         preset: "arm_aapcs_soft",
         cc: CallingConvention::arm_aapcs_soft,
         cspec: ARM,
-        prototype: None,
+        prototype: Some("__stdcall_softfp"),
         arches: &[SleighArch::arm],
     },
     Pairing {
@@ -283,7 +284,7 @@ const LEDGER: &[Divergence] = &[
         reason: "o32 preserves $f20-$f31; Ghidra's list stops at f30",
     },
     Divergence {
-        presets: &["arm_aapcs", "arm_aapcs_soft"],
+        presets: &["arm_aapcs"],
         items: &["callee-saved only in the cspec: pc"],
         reason: "Ghidra marks `pc` unaffected as the return view of `lr`; strider returns \
                  through `lr`",
@@ -305,34 +306,23 @@ const LEDGER: &[Divergence] = &[
     },
     Divergence {
         presets: &["arm_aapcs_soft"],
+        items: &["callee-saved only in strider: lr"],
+        reason: "the link-register tradeoff, which Ghidra's own VFP prototype makes",
+    },
+    Divergence {
+        presets: &["arm_aapcs_soft"],
         items: &[
-            "argument only in the cspec: s0",
-            "argument only in the cspec: s1",
-            "argument only in the cspec: s2",
-            "argument only in the cspec: s3",
-            "argument only in the cspec: s4",
-            "argument only in the cspec: s5",
-            "argument only in the cspec: s6",
-            "argument only in the cspec: s7",
-            "argument only in the cspec: s8",
-            "argument only in the cspec: s9",
-            "argument only in the cspec: s10",
-            "argument only in the cspec: s11",
-            "argument only in the cspec: s12",
-            "argument only in the cspec: s13",
-            "argument only in the cspec: s14",
-            "argument only in the cspec: s15",
-            "return only in the cspec: s0",
-            "return only in the cspec: s1",
-            "return only in the cspec: s2",
-            "return only in the cspec: s3",
-            "return only in the cspec: s4",
-            "return only in the cspec: s5",
-            "return only in the cspec: s6",
-            "return only in the cspec: s7",
+            "callee-saved only in strider: d8",
+            "callee-saved only in strider: d9",
+            "callee-saved only in strider: d10",
+            "callee-saved only in strider: d11",
+            "callee-saved only in strider: d12",
+            "callee-saved only in strider: d13",
+            "callee-saved only in strider: d14",
+            "callee-saved only in strider: d15",
         ],
-        reason: "soft-float passes and returns floats in core registers; Ghidra's ARM \
-                 prototype is the VFP one",
+        reason: "AAPCS preserves d8-d15 on a VFP core whatever the float ABI; Ghidra's \
+                 `__stdcall_softfp` names no VFP register",
     },
     Divergence {
         presets: &["powerpc64_elf_v2", "powerpc64_elf_v2_linux_kernel"],
@@ -384,21 +374,40 @@ fn prototype(cspec: &str, name: Option<&str>) -> Prototype {
     }
 }
 
+fn elements<'a, 'i>(
+    node: roxmltree::Node<'a, 'i>,
+) -> impl Iterator<Item = roxmltree::Node<'a, 'i>> {
+    node.children().filter(roxmltree::Node::is_element)
+}
+
 /// Every `<pentry>` under `list`, `<group>`s included: its register, the
-/// pieces of a `join`, or a stack slot. Anything else fails rather than
-/// vanishing from the comparison.
+/// pieces of a `join`, or a stack slot. `<rule>`s are skipped; anything else
+/// fails rather than vanishing from the comparison.
 fn carriers(
     cspec: &str,
     list: Option<roxmltree::Node<'_, '_>>,
 ) -> (Vec<String>, Vec<(i128, i128)>) {
+    let mut pentries = Vec::new();
+    for c in list.into_iter().flat_map(elements) {
+        match c.tag_name().name() {
+            "pentry" => pentries.push(c),
+            "group" => pentries.extend(elements(c).inspect(|p| {
+                assert!(
+                    p.has_tag_name("pentry"),
+                    "{cspec}: a <group> holding <{}>, which this test does not read",
+                    p.tag_name().name()
+                );
+            })),
+            "rule" => {}
+            tag => {
+                panic!("{cspec}: a parameter list holding <{tag}>, which this test does not read")
+            }
+        }
+    }
     let mut regs = Vec::new();
     let mut stack = Vec::new();
-    let pentries = list
-        .into_iter()
-        .flat_map(|l| l.descendants())
-        .filter(|n| n.has_tag_name("pentry"));
     for pentry in pentries {
-        for c in pentry.children().filter(roxmltree::Node::is_element) {
+        for c in elements(pentry) {
             match (c.tag_name().name(), c.attribute("space")) {
                 ("register", _) => regs.push(attr(cspec, c, "name")),
                 ("addr", Some("join")) => regs.extend(
@@ -465,7 +474,12 @@ fn resolve(
 
 fn named(regs: &rsleigh::SleighRegs, vns: &[rsleigh::Vn]) -> Vec<(String, rsleigh::Vn)> {
     vns.iter()
-        .map(|&vn| (regs.vn_to_name(vn).unwrap_or("<unnamed>").to_owned(), vn))
+        .map(|&vn| {
+            let name = regs
+                .vn_to_name(vn)
+                .unwrap_or_else(|| panic!("{vn:?} has no register name"));
+            (name.to_owned(), vn)
+        })
         .collect()
 }
 
@@ -485,7 +499,7 @@ fn check(
     regs: &rsleigh::SleighRegs,
     proto: &Prototype,
     seen: &mut BTreeSet<String>,
-    killed_and_saved: &mut Vec<String>,
+    killed_and_saved: &mut BTreeSet<String>,
 ) {
     let preset = pairing.preset;
     let cc = (pairing.cc)()
@@ -555,7 +569,7 @@ fn check(
 
     let killed = resolve(regs, pairing.cspec, &proto.killed);
     for r in holding(&killed, &byte_set(&saved)) {
-        killed_and_saved.push(format!("{preset}: {r}"));
+        killed_and_saved.insert(format!("{preset}: {r}"));
     }
 }
 
@@ -563,7 +577,7 @@ fn check(
 fn every_calling_convention_preset_agrees_with_its_ghidra_cspec() {
     let mut tables: HashMap<SleighArch, rsleigh::SleighRegs> = HashMap::new();
     let mut seen = BTreeSet::new();
-    let mut killed_and_saved = Vec::new();
+    let mut killed_and_saved = BTreeSet::new();
     for pairing in PAIRINGS {
         let proto = prototype(pairing.cspec, pairing.prototype);
         for arch in pairing.arches {
@@ -577,13 +591,17 @@ fn every_calling_convention_preset_agrees_with_its_ghidra_cspec() {
     assert!(
         killed_and_saved.is_empty(),
         "registers the cspec kills across a call that the preset keeps:\n{}",
-        killed_and_saved.join("\n")
+        Vec::from_iter(killed_and_saved).join("\n")
     );
     let mut reasons: BTreeMap<String, &str> = BTreeMap::new();
     for row in LEDGER {
         for preset in row.presets {
             for item in row.items {
-                reasons.insert(format!("{preset}: {item}"), row.reason);
+                let key = format!("{preset}: {item}");
+                assert!(
+                    reasons.insert(key.clone(), row.reason).is_none(),
+                    "{key} is in two ledger rows"
+                );
             }
         }
     }
