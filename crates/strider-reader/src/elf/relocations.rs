@@ -1372,12 +1372,11 @@ mod tests {
     fn applying_twice_serves_what_applying_once_served() {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/out/x64/elf_relocs.elf");
-        if !path.exists() {
-            // A missing fixture must be VISIBLE: a silent return reports as a
-            // pass.
-            eprintln!("SKIP {}: {} is not built", module_path!(), path.display());
-            return;
-        }
+        assert!(
+            path.exists(),
+            "{} is not built; run `make -C fixtures`",
+            path.display()
+        );
         let filter = super::super::sections::LoadFilter::AllAllocatable;
         let owned = crate::OwnedElf::open(&path).expect("open");
         let obj = owned.checked_file().expect("the mapped file is unchanged");

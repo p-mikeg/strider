@@ -491,15 +491,11 @@ fn default_loader_omits_data_rel_ro() {
     // The default filter excludes `.data.rel.ro` as writable, so the table is
     // unmapped without an explicit relocation pass.
     let path = fixture_path("x64", "elf_relocs");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return;
-    }
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let obj = strider_reader::load_elf(&path).expect("load_elf");
     let obj = obj.checked_file().expect("the mapped file is unchanged");
     let regions = strider_reader::elf::elf_get_loadable_regions(&obj).unwrap();
@@ -517,15 +513,11 @@ fn relocating_a_pre_resolved_binary_changes_nothing() {
     // and sit in the writable `.got` the fetch image does not map. Nothing to
     // apply, which is why relocation processing is opt-in.
     let path = fixture_path("x86", "control");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return; // skip if fixture not built
-    }
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let filter = strider_reader::elf::LoadFilter::CodeAndReadOnly;
     let before: Vec<Vec<u8>> = common::regions_of_file(&path, filter, false)
         .iter()
@@ -718,15 +710,11 @@ fn mips64el_ignores_a_relocation_kind_read_from_the_symbol_index() {
 #[test]
 fn a_read_straddling_a_relocated_site_serves_the_patched_bytes() {
     let path = fixture_path("x64", "elf_relocs");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return;
-    }
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let owned = strider_reader::load_elf(&path).expect("load_elf");
     let obj = owned.checked_file().expect("the mapped file is unchanged");
     let table = strider_reader::MemRegionsLookupTable::new(
