@@ -839,6 +839,8 @@ mod tests {
 
     /// A multi-output template: the RHS root `Load` consumes a fresh
     /// `Store`'s memory output. Both fresh interior nodes must be tracked.
+    /// The rewrite facade roots a template at a value, so it cannot put the
+    /// Store on the exit chain; the test threads it to the `Return` itself.
     #[test]
     fn track_multi_output_template_interior() {
         use super::rewrite_rule_runtime;
@@ -847,8 +849,8 @@ mod tests {
         use strider_pattern::matcher::KindSpec;
         use strider_pattern::template::{TemplateBuilder, TemplateKind};
 
-        // Rewrites `Load(mem, addr)` into `Load(Store(mem, addr, data), addr)`.
-        // Forwards nothing; purely a structural template exercise.
+        // Rewrites `Load(mem, addr)` into
+        // `Load(Store(InitialMemory, addr, 7), addr)`.
         let mut b = RegisterSet::new().build_fn_single_region().unwrap();
         b.set_lift_addr(Some(0x10));
         let addr = b.build_int_const(0x2000u64, VT::I64).unwrap();
@@ -954,6 +956,19 @@ mod tests {
                 "fresh RHS node {n:?} missing root fingerprint"
             );
         }
+
+        // `Return` inputs are [control, mem, ..].
+        let ret = edit
+            .live_of_kind(|k| matches!(k, NodeKind::Return))
+            .next()
+            .unwrap();
+        let mem_slot = edit.node_input_id_at(ret, 1).unwrap();
+        let store_mem = edit.memory_output_of(store_node).unwrap();
+        edit.redirect_input(mem_slot, store_mem);
+        edit.clean();
+        strider_ir::validate::validate(edit.function())
+            .map_err(|e| e.report(edit.function()))
+            .unwrap();
     }
 
     /// The RHS const dedup-REVIVES a node built earlier but culled as
