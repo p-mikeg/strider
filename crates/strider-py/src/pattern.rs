@@ -1367,9 +1367,20 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
         PatRepr::FloatCmp(op, l, r) => t_binop!(tpl::float_cmp, op, l, r),
         PatRepr::BoolBinary(op, l, r) => t_binop!(tpl::bool_binary, op, l, r),
         PatRepr::BoolNot(x) => t_un!(tpl::bool_not, x),
-        PatRepr::Captured(_inner, c) => {
-            // On a RHS a capture resolves to the matched LHS value, replacing
-            // whatever it wrapped, so the RHS drops `inner`.
+        PatRepr::Captured(inner, c) => {
+            // On a RHS a capture stands for the matched LHS value and replaces
+            // what it wraps, so only an operand-less leaf may be wrapped.
+            let leaf = inner
+                .bind(py)
+                .downcast::<PyPat>()
+                .is_ok_and(|p| matches!(&*p.borrow().repr, PatRepr::Var(_) | PatRepr::Any));
+            if !leaf {
+                return Err(into_strider_err(anyhow::anyhow!(
+                    "cannot use .capture() over a composite as a rewrite RHS: a RHS \
+                     capture stands for the value it matched and would replace the \
+                     composite; capture a var() instead"
+                )));
+            }
             let c = *c;
             DynTemplate(Box::new(move |b| b.capture(c)))
         }
