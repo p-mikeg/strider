@@ -2,9 +2,9 @@
 
 Strider itself is MIT (see [LICENSE](LICENSE)). The components below are
 redistributed with it: the GHIDRA Sleigh decoder and its Rust bindings are
-compiled into the Python extension module, sixty Rust crates are linked
-into it statically, and two JavaScript bundles are inlined into every `.html`
-graph as well as compiled in.
+compiled into the Python extension module, sixty third-party Rust crates are
+linked into it statically, and two JavaScript bundles are inlined into every
+`.html` graph as well as compiled in.
 
 Full licence texts that are too long to inline live under
 [`licenses/`](licenses); the wheel and the sdist carry this file and that
@@ -60,9 +60,9 @@ sdist and the repository.
 
 ## Rust crates
 
-Sixty crates are in `strider-py`'s normal dependency closure and are linked
-statically into the extension module. Their names, versions, SPDX expressions
-and licence texts are in
+Sixty third-party crates are in `strider-py`'s normal dependency closure and
+are linked statically into the extension module. Their names, versions, SPDX
+expressions and licence texts are in
 [`licenses/rust-crates.md`](licenses/rust-crates.md), which also carries the
 command that regenerates it. Nothing in that set is copyleft; the licences are
 MIT, Apache-2.0 (three crates with the LLVM exception), Unicode-3.0, Zlib, 0BSD

@@ -110,12 +110,12 @@ where
     /// nodes still in the function. So does an abandoned site, one seated on
     /// only the arms of a proved answer its fold could take, and one naming a
     /// target that will not decode or that leads to code that will not. A site
-    /// the CFG consumed as a `Return` or `TailCall` leaves no placeholder and
-    /// is named in [`AnalyzeResult::unverified_seeded_sites`], unless it is a
-    /// `Return` whose re-check proved the seat without
-    /// `return_slots_survive_untracked_writes`, and in both if it grew before
-    /// narrowing to `LinkRegister`. Only [`AnalyzeResult::is_complete`], which
-    /// reads all six channels, answers "may this be incomplete?".
+    /// the CFG consumed as a `Return` or `TailCall` leaves no placeholder: a
+    /// `TailCall` is named in [`AnalyzeResult::unverified_seeded_sites`]
+    /// whichever source derived it, a `Return` only where the CALLER seeded
+    /// it, and a site is in both if it grew before narrowing to
+    /// `LinkRegister`. Only [`AnalyzeResult::is_complete`], which reads all
+    /// six channels, answers "may this be incomplete?".
     ///
     /// `lift_opts.cfg.known_targets` is re-unioned into the working set every
     /// round and never mutated; a seed at an abandoned site is dropped from the
@@ -362,7 +362,11 @@ where
         // never in it, so dropping one here on the strength of a seed left it
         // in none of the six channels and `is_complete()` true over a CFG
         // missing the edge control takes.
-        let seated_returns = cfg.link_register_seated();
+        // Hashed: both lists are bounded by the region count and at the sound
+        // floor they can be the same set, so a slice scan per element is
+        // quadratic.
+        let seated_returns: rustc_hash::FxHashSet<_> =
+            cfg.link_register_seated().iter().copied().collect();
         returns.retain(|addr| {
             !seated_returns.contains(addr)
                 || !matches!(
@@ -559,28 +563,26 @@ pub struct AnalyzeResult {
     pub undecodable_branch_targets: Vec<PcodeInsnAddr>,
     /// Sites whose answer nothing verified.
     ///
-    /// Four shapes land here. A seated `Switch` holding exactly the caller's
+    /// Three shapes land here. A seated `Switch` holding exactly the caller's
     /// `known_targets` and nothing derived: not unresolved (the caller
     /// asserted the answer), but seating changes the CFG the classifier
     /// reads, so a stale seed can stop the selector deriving and take the
     /// site's real arms with it. A second: a site CONSUMED at CFG-build time,
-    /// whether the answer came from a seed or from the classifier: a
-    /// `LinkRegister` answer becomes a `Return` and a single target outside
-    /// the function becomes a `TailCall`, leaving no placeholder and no
-    /// anchor, so a dispatch that had more arms leaves no other trace. A
-    /// third: a `LinkRegister` seat the CLASSIFIER derived, which lands here
-    /// only when its proof rested on
-    /// `return_slots_survive_untracked_writes`: the seated
-    /// `Return` carries a return site, so each round re-checks it, and a
-    /// re-check that holds without the claim is a proof. An ARM
-    /// `push {lr}; ... bl ...; pop {pc}` return is the ordinary shape that is
-    /// not: the call in between writes memory the walk cannot place, and only
-    /// that claim, which defaults ON, carries the walk back to the `lr`
-    /// spill. The seat stands and the site is still a return, so this
-    /// channel, and with it a false [`AnalyzeResult::is_complete`], reads
-    /// "complete but unverified" there rather than "incomplete".
+    /// where a `LinkRegister` answer becomes a `Return` and a single target
+    /// outside the function becomes a `TailCall`, leaving no placeholder and
+    /// no anchor, so a dispatch that had more arms leaves no other trace. The
+    /// `TailCall` half lands here whichever source derived it; the `Return`
+    /// half only where the CALLER seeded the address. For a
+    /// `Return` the CALLER seeded, this is also where a FAILED re-check
+    /// lands: the seat decided a CFG edge, so the site is not reported as an
+    /// unresolved dispatch, and "nothing verified it" covers both the seat
+    /// nothing could check and the seat the round's own IR contradicted.
     ///
-    /// A fourth: an arm a mode-less re-derivation discovered at a site whose
+    /// A seat the CLASSIFIER derived rides no channel once
+    /// `return_slots_survive_untracked_writes` carries its proof; clearing
+    /// that claim and re-running is how a caller audits one.
+    ///
+    /// A third: an arm a mode-less re-derivation discovered at a site whose
     /// other arms all carry the flowing mode. A dispatch that commits a mode
     /// has it evaluated per arm, so those modes came from a caller seed at a
     /// dispatch committing none. It is seated and it decodes, but nothing
@@ -595,9 +597,10 @@ impl AnalyzeResult {
     /// This is the question "may this result be incomplete?", which needs all
     /// six and which none of them answers alone. `false` is NOT always a
     /// loss: `unverified_seeded_sites` holds answers that are complete but
-    /// that nothing verified, among them a return whose re-check rests on
-    /// `return_slots_survive_untracked_writes` instead of proving the seat.
-    /// `false` over that channel alone reads "complete but unverified". Read
+    /// that nothing verified, among them a `Switch` holding exactly a
+    /// caller's own `known_targets`. `false` over that channel alone reads
+    /// "complete but unverified", EXCEPT for a caller-seeded `Return` whose
+    /// re-check failed, which lands there too. Read
     /// whichever channel is non-empty to tell the cases apart.
     #[must_use]
     pub fn is_complete(&self) -> bool {
@@ -1284,9 +1287,9 @@ fn unverified_seeded_sites(
     // `Return`, leaving no placeholder and no `Switch` anchor, so the filter
     // above cannot see it and no other channel names it either. The seat is
     // the only record that a caller's answer replaced whatever the classifier
-    // would have derived. Only a CALLER's here: the seated `Return` carries a
-    // return site, so `settle_return_sites` re-checks every seat against the
-    // round's own IR and names the ones whose verdict rested on a claim.
+    // would have derived. Only a CALLER's here: a seat the classifier derived
+    // was its own answer, not an unchecked assertion, and `settle_return_sites`
+    // re-checks every seat against the round's own IR either way.
     out.extend(
         cfg.link_register_seated()
             .iter()

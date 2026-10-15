@@ -146,6 +146,11 @@ impl Function {
         if let Some(last) = trimmed.last_mut() {
             // Bits above the declared width are not part of the value.
             let spare = limb_count * 64 - ty.bit_width();
+            // Every current width puts `spare` in 0..64. A future one at or
+            // below `(limb_count - 1) * 64` would make this shift overflow,
+            // which panics in debug and, under this workspace's release
+            // `overflow-checks`, in release too.
+            debug_assert!(spare < 64, "{ty:?} leaves a whole spare limb");
             *last &= u64::MAX >> spare;
         }
         let cv = crate::node::const_value::ConstValue::Wide(trimmed.into_boxed_slice());

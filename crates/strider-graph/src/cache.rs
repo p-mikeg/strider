@@ -146,6 +146,13 @@ impl NodeCache {
         );
         if self.node_hashes[node] == HASH_NONE {
             self.insert_hashed(node, h);
+        } else if self.node_hashes[node] != h {
+            // Release-only path: the `debug_assert` above names the bug, but
+            // skipping the re-key left the node filed under its OLD hash, so
+            // a lookup under either hash misses it and it stays un-dedupable
+            // until the next `rebuild_cache`. Re-key instead.
+            self.invalidate(node);
+            self.insert_hashed(node, h);
         }
         None
     }

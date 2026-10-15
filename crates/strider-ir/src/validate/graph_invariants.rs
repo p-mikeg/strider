@@ -692,8 +692,12 @@ pub(super) fn check_function_invariants_memory_linearity(
     check_memory_order(ctx, &on_chain, errs);
 }
 
-/// Memory state follows control: every read of it takes the latest memory
-/// effect on each path in.
+/// Memory state follows control: every PINNED read of it takes the latest
+/// memory effect on each path in.
+///
+/// A `Load` is unpinned, so its own memory input is not judged here: a `Load`
+/// on an earlier token legitimately denotes the pre-store value, and the case
+/// where that leaves a write unobserved is `LostStore`'s.
 ///
 /// A control node's state is the nearest memory effect dominating it: the
 /// entry, a `Region` with a `MemPhi` on the chain, a `Call` whose convention

@@ -340,7 +340,7 @@ Rendering:
 - `cfg.is_complete()` and six incompleteness channels:
   `unresolved`, `cfg.unverified_seeded_sites()` (answers exactly the caller's
   `known_targets`, sites consumed as a tail call, returns the caller seeded,
-  and a classifier-seated return whose proof rested on a claim),
+  and an arm seated on a mode nobody evaluated),
   `cfg.isa_mode_conflicts()` (addresses reached in two ISA modes),
   `cfg.interior_branch_targets()` (targets off every instruction boundary,
   including overlapping decodes), `cfg.unmapped_branch_targets()` (direct
@@ -576,6 +576,12 @@ Rendering:
 
 Lifting and memory:
 
+- PowerPC `mtfsf` / `mtfsfi` (the Power ISA 2.06 `L=1` / `W=1` forms, on the
+  ppc64 presets) and
+  `wrtee` / `wrteei` declare the FPSCR and MSR registers they write, which the
+  sla reads back itself; a read either side of one folded to the same value.
+  The x86 `XSAVE` / `XRSTOR` footprint gained the opmask, high ZMM, MPX and
+  CET-supervisor state it moves.
 - A p-code `LOAD` / `STORE` in the REGISTER space reads or writes the register
   its folded address names, with a phi placed for it; it was lifted as opaque
   memory and the value vanished (ARM `vld1.N {dX[i]}`). One that does not fold
@@ -658,6 +664,8 @@ Lifting and memory:
 
 Optimizer and analysis:
 
+- IR validation runs its dataflow checks even when a node is missing an asm
+  fingerprint, so an error bundle can carry both.
 - A value tested for non-zero is no longer read as bit 0 of itself, which
   deleted packed comparisons above the tested bit.
 - Memory SSA no longer memoises a path-relative cycle verdict, which let a
@@ -743,12 +751,13 @@ Indirect branches and the CFG:
   each round's IR.
 - A return a CALLER seeded is reported on `unverified_seeded_sites` alone; it
   was also reported as an unverified return, which the caller had asserted.
-- A `Return` the CLASSIFIER seated rides `unverified_seeded_sites` when only
-  `return_slots_survive_untracked_writes` carried its proof. Each seat is
-  re-verified with that claim cleared, so a `push {lr}; bl; pop {pc}` no longer
-  comes out complete with every channel empty while the same site reports once
-  the claim is off. The seat stands, so the site is still a return rather than
-  an unresolved dispatch.
+- A `Return` the CLASSIFIER seated rides no channel once
+  `return_slots_survive_untracked_writes` carries its proof, so an ARM
+  `push {lr}; bl; pop {pc}` comes out complete with every channel empty.
+  Clearing that claim and re-running is how a caller audits one: the same site
+  reports with the claim off. A caller-seeded `Return` whose re-check FAILS is
+  reported on `unverified_seeded_sites`, not as an unresolved dispatch, because
+  the seat decided a CFG edge.
 - A region starting mid-machine-instruction keeps the decode context those
   bytes were lifted in: the region-start reset re-decoded the instruction the
   region continues and spliced a second constructor's p-code onto the half
@@ -773,6 +782,21 @@ Indirect branches and the CFG:
 - A reused engine decodes a function the same as a fresh one: ARM's
   `mov lr, pc` state and MIPS's `PAIR_INSTRUCTION_FLAG` and MIPS16e
   `ext_delay` no longer carry into the next decode.
+- A reused engine also re-derives the ARM context an instruction commits at a
+  LATER address, which outlived the `build_cfg` that produced it: the IT-block
+  state (`condit`) and the ThumbEE mode (`TEEMode`). Both are re-derived from
+  this build's own decode, so the bytes after an `IT` are predicated only where
+  this function's own `IT` predicates them, and a ThumbEE region decodes as
+  ThumbEE only where this function's own `enterx` entered it. Only the ARM
+  presets commit such a value: x86 and AArch64 commit nothing, MIPS commits the
+  ISA mode only at a `jalx` target analysis never decodes, and PowerPC's
+  `linkreg` selects constructors that emit identical p-code. An instruction
+  lifting to NO p-code ops (ARM `enterx`) now records its own commit too, where
+  the fallback used to overwrite it.
+- Two edges reaching one address with different IT state remains
+  first-decode-wins and unreported, which ARM calls UNPREDICTABLE.
+- `Cfg.isa_mode_conflicts()` is sorted and deduplicated, so an address
+  clashing on several edges appears once rather than once per arrival.
 - An `analyze` given a post-pass named `IndirectBranchClassify` still runs the
   real classifier.
 - Three inputs that crashed `build_cfg` raise `StriderError`: a malformed
@@ -839,6 +863,10 @@ Patterns:
 
 Loading:
 
+- A PT_LOAD segment declaring more file than it maps (`p_filesz > p_memsz`)
+  serves only the bytes it maps. The tail belonged to no mapping yet was
+  readable as program memory, and on a writable segment the read-only view
+  answered for it, since permissions are tracked on `p_memsz`.
 - The read-only view leaves out every address a writable mapping covers, in one
   image and across `add_elf`, so `LoadReadOnly` no longer folds a stale file
   byte.
@@ -880,6 +908,12 @@ Loading:
 
 Python and the explorer:
 
+- A mapping argument (`known_targets`, `call_other_abis`, `per_address_ccs`,
+  `add_symbols`) is snapshotted before its elements are converted. A `dict`
+  mutated during conversion, which a key's or value's `__index__` can do,
+  raised `PanicException`, a `BaseException` that `except Exception` does not
+  catch. `per_address_ccs` now also accepts any mapping, so the read-only
+  proxy its getter returns round-trips through the constructor.
 - `analyze` releases the GIL on a custom pipeline too, and `OptimizerPipeline`
   is usable from any thread and survives being applied.
 - A `Function` or `Cfg` moved to another thread no longer leaks its `Lifter`,
