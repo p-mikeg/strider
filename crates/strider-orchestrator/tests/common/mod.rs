@@ -223,19 +223,8 @@ pub(crate) fn fixture_strider(
     (strider, cc, fixture.symbol(fn_name))
 }
 
-/// A [`strider_orchestrator::opt::ReadOnlyMemory`] over a region set loaded
-/// under a filter that [`strider_reader::ElfFileMemReader`] does not build.
-struct RegionRom(strider_reader::MemRegionsLookupTable);
-
-impl strider_orchestrator::opt::ReadOnlyMemory for RegionRom {
-    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        self.0.read_exact(addr, buf)
-    }
-}
-
-/// [`fixture_strider`] whose ROM also serves the relocated GOT
-/// (`LoadFilter::ImmutableAndRelocatedGot`), the opt-in a PIC dispatch whose
-/// table base is loaded through the GOT needs.
+/// [`fixture_strider`] whose ROM also serves the relocated GOT; see
+/// [`fixtures::Fixture::strider_serving_got`].
 pub(crate) fn fixture_strider_serving_got(
     arch: Arch,
     case: &str,
@@ -246,26 +235,8 @@ pub(crate) fn fixture_strider_serving_got(
     u64,
 ) {
     let fixture = fixtures::Fixture::open(arch.fixture(), case);
-    let addr = fixture.symbol(fn_name);
-    let obj = fixture.file();
-    let sleigh_arch = arch.sleigh();
-    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
-    let rom = RegionRom(strider_reader::MemRegionsLookupTable::new(
-        fixture
-            .elf()
-            .regions(
-                strider_reader::elf::RegionSource::Auto,
-                strider_reader::elf::LoadFilter::ImmutableAndRelocatedGot,
-                true,
-            )
-            .expect("rom regions"),
-    ));
-    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
-        .expect("create sleigh");
-    let strider = strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(Box::new(rom)))
-        .expect("Strider::new");
-    let cc = arch.cc().build(strider.sleigh_regs()).expect("build cc");
-    (strider, cc, addr)
+    let (strider, cc) = fixture.strider_serving_got();
+    (strider, cc, fixture.symbol(fn_name))
 }
 
 /// Loads the (arch, case) ELF, builds a CFG at `fn_name`, and lifts it. The
