@@ -68,6 +68,13 @@ where
         self.lifter.sleigh()
     }
 
+    /// The engine `analyze` lifts with, the only one that can lift the CFG it
+    /// returns.
+    #[must_use]
+    pub fn lifter(&self) -> &Lifter<R> {
+        &self.lifter
+    }
+
     /// The read-only image `LoadReadOnly` folds against and the
     /// indirect-branch classifier reads jump tables from, so a caller running
     /// its own pipeline builds the same `OptCtx` `analyze` does.
