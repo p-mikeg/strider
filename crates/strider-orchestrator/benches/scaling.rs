@@ -10,11 +10,9 @@
 #![allow(clippy::useless_conversion)]
 
 use std::hint::black_box;
-use std::path::PathBuf;
 use strider_ir::IRViewer;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use object::{Object, ObjectSymbol};
 
 use strider_ir::node::{ValueKind, ValueType};
 use strider_ir::{IRBuilder, IRBuilderExt, IntBinaryOp};
@@ -22,6 +20,12 @@ use strider_ir_test_utils::{IrWalkerEx, RegisterSet, stack_vn_aarch64};
 use strider_orchestrator::opt::{
     ConstantFold, LoadForward, OptimizerPipeline, PhiCollapse, RegionCollapse,
 };
+
+#[allow(dead_code)]
+#[path = "../tests/common/fixtures.rs"]
+mod fixtures;
+
+use fixtures::{Fixture, fixture_arch};
 
 #[derive(Clone, Copy)]
 struct Case {
@@ -63,32 +67,6 @@ const CASES: &[Case] = &[
     },
 ];
 
-fn binary_path(arch_name: &str, case: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/out")
-        .join(arch_name)
-        .join(format!("{case}.elf"))
-}
-
-fn target_of(
-    arch_name: &str,
-) -> (
-    strider_target::SleighArch,
-    strider_target::CallingConvention,
-) {
-    match arch_name {
-        "x86" => (
-            strider_target::SleighArch::x86(),
-            strider_target::CallingConvention::x86_cdecl(),
-        ),
-        "x64" => (
-            strider_target::SleighArch::x86_64(),
-            strider_target::CallingConvention::x86_64_systemv(),
-        ),
-        _ => panic!("unsupported arch {arch_name}"),
-    }
-}
-
 /// A fixture's symbols sit above code the same object holds, so a branch below
 /// the entry is an edge to follow rather than a tail call: both entry points
 /// below allow it.
@@ -98,20 +76,17 @@ const CFG_OPTS: fn() -> strider_cfg::CfgOptions<'static> = || strider_cfg::CfgOp
 };
 
 fn analyze_case(c: Case) -> strider_ir::Function {
-    let path = binary_path(c.arch_name, c.case);
-    let obj = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = obj.checked_file().expect("the mapped file is unchanged");
-    let (sleigh_arch, cc) = target_of(c.arch_name);
+    let fixture = Fixture::open(fixture_arch(c.arch_name), c.case);
+    let obj = fixture.file();
+    let sleigh_arch = (fixture.arch.sleigh)();
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh");
     let mut ana = strider_orchestrator::Lifter::new(sleigh_arch, sleigh).expect("Lifter::new");
-    let cc = cc.build(ana.sleigh_regs()).expect("build cc");
-    let raw_addr = obj
-        .symbol_by_name(c.fn_name)
-        .unwrap_or_else(|| panic!("symbol {:?} not found in {path:?}", c.fn_name))
-        .address();
-    let addr = raw_addr;
+    let cc = (fixture.arch.cc)()
+        .build(ana.sleigh_regs())
+        .expect("build cc");
+    let addr = fixture.symbol(c.fn_name);
     let cfg = ana
         .build_cfg(
             strider_cfg::MachineInsnAddr::from(addr),
@@ -135,21 +110,9 @@ fn analyze_case(c: Case) -> strider_ir::Function {
 /// level of discovery), the appended classifier post-pass and the return
 /// settling, which together are the difference between the two groups.
 fn resolve_case(c: Case) -> strider_orchestrator::AnalyzeResult {
-    let path = binary_path(c.arch_name, c.case);
-    let obj = strider_reader::load_elf(&path).expect("load_elf");
-    let obj = obj.checked_file().expect("the mapped file is unchanged");
-    let (sleigh_arch, cc) = target_of(c.arch_name);
-    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
-    let rom = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader");
-    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
-        .expect("real sleigh");
-    let mut strider = strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(Box::new(rom)))
-        .expect("Strider::new");
-    let cc = cc.build(strider.sleigh_regs()).expect("build cc");
-    let addr = obj
-        .symbol_by_name(c.fn_name)
-        .unwrap_or_else(|| panic!("symbol {:?} not found in {path:?}", c.fn_name))
-        .address();
+    let fixture = Fixture::open(fixture_arch(c.arch_name), c.case);
+    let (mut strider, cc) = fixture.strider();
+    let addr = fixture.symbol(c.fn_name);
     let lift_opts = strider_orchestrator::LiftOptions {
         cfg: CFG_OPTS(),
         ..Default::default()
