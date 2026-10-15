@@ -188,7 +188,7 @@ class CallingConvention:
         they are appended after `arg_passing_regs`, so the first one is
         `arg(len(arg_passing_regs))` in a `call()` pattern.
 
-        Names are resolved and the ABI invariants checked here, so a bad one
+        Names are resolved and two ABI invariants checked here, so a bad one
         raises `StriderError` at construction: a `link_register` must also
         appear in `callee_saved_regs`, and `link_register=None` needs
         `ret_stack_pop` at least the pointer size for the return address
@@ -196,7 +196,9 @@ class CallingConvention:
 
         The resolved varnodes are frozen against `sleigh`'s architecture, so
         the result is usable only with a `Lifter` for that same arch; any
-        other raises `StriderError` at `analyze` time.
+        other raises `StriderError` at `analyze` time. So does a
+        `stack_pointer` not as wide as the arch's addresses, and a
+        `stack_arg_increment` other than that width.
         """
         ...
     def no_return(self) -> CallingConvention:
