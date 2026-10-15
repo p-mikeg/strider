@@ -54,7 +54,8 @@ fn one_section_rel(name: &[u8], sh_flags: u64, sh_addr: u64, payload: Option<&[u
             sh_type: elf::SHT_PROGBITS,
             sh_flags,
             sh_addr,
-            // Past EOF on every buffer these tests build.
+            // `None` is past EOF on every buffer these tests build; a
+            // `Some` is a real offset into the payload two callers pass.
             sh_offset: data_off.map_or(0xdead_beef, |o| o as u64),
             sh_size: payload.map_or(4, |p| p.len() as u64),
             sh_link: 0,
