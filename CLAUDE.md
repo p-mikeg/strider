@@ -249,7 +249,8 @@ when both IR slots hold the same value.
   That move is what lets `strider-py` drop the GIL around `analyze`, so
   separate handles on separate Python threads DO run in parallel.
   - `read-only-memory`: `ReadOnlyMemory: Send` so `strider-py` can drop the GIL
-    around `analyze`. The `Sync` half it also carries is unused.
+    around `analyze`. `Sync` is deliberately absent: nothing needed it, and
+    it barred an impl holding a `RefCell` memo.
   - `strider-pattern`: every boxed closure a pattern lowers to is `+ Send`, and
     `MatchPat` requires it, so a compiled `Pattern` moves with the `Pat` that
     owns it. A `.when()` predicate must therefore be `Send`: capture an
@@ -272,9 +273,33 @@ when both IR slots hold the same value.
     and outside `abi3-py39`).
 - `Sleigh::lift_one(&mut self)` is NOT stateless: it carries context-register
   state a decoded instruction can commit at a later address (ARM/Thumb and
-  IT-block state, MIPS16, ppc `linkreg`), so per-region decoding must stay
-  sequential (`RegionBuilder::build`). x86 declares its decode variables
-  flowing but no constructor commits one, so nothing there orders a decode.
+  IT-block state), so per-region decoding must stay sequential
+  (`RegionBuilder::build`). That state is also per-ADDRESS and survives
+  between `build_cfg` calls on one engine, so `RegionBuilder::rederive_flow`
+  erases each var `SleighArch::flow_commit_vars` names and re-lifts the owning
+  instruction, re-deriving the commit from this build's own decode.
+  `Lifter::build_cfg` lends that list, and dropping the lend makes the whole
+  mechanism inert, which `reused_lifter_rederives_flow_context` pins.
+  What it erases TO is per var and is load-bearing in both directions, which is
+  why each carries a `FlowCommit` class. A `noflow` commit covers one address
+  (`setContextRegion(a, a+1)`), so the pspec DEFAULT is right for ARM `condit`:
+  `set_context_at` paints FORWARD to the next change point, and writing a live
+  IT state forward predicates the code after it and can fail the decode
+  outright. A FLOWING commit is `setContextChangePoint`, painting forward
+  because it is MEANT to persist, so the default would destroy it: ARM
+  `TEEMode` is erased to the value in force at the PREDECESSOR, reproducing
+  the flow, and the re-lift re-applies `enterx`'s own commit. Both classes
+  must be listed. `pin_at` cannot substitute for a flowing var, because a
+  forward paint stops at the next CHANGE POINT of that var, which is exactly
+  where an earlier build's commit sits; leaving `TEEMode` out let a stale
+  ThumbEE mode survive into a later `build_cfg` and drop a `Store`.
+  Only ARM needs any of this: x86 and AArch64 declare flowing vars but no
+  constructor commits one; MIPS commits `ISA_MODE` only at a `jalx` call
+  target, which analysis never decodes; and ppc `linkreg` is committed by
+  `mtlr` but is itself flowing, and every constructor it selects emits the same
+  p-code either way.
+  NOT re-derived, and so still first-decode-wins: two edges reaching one
+  address with different IT state, which ARM calls UNPREDICTABLE.
 - Register aliasing (x86 rax/eax/ax, AArch64 q/d/s, x87 ST*, ...) is handled in
   the lifter's `read_vn` / `write_vn`: reads and writes go through the largest
   containing register with shift/mask for sub-register slices.
@@ -287,7 +312,12 @@ when both IR slots hold the same value.
   and reported, never an `Err`. Exhausting `MAX_RESOLUTION_ITERATIONS` while
   every site still grows is the discovery depth limit, and those sites come back
   as unresolved too. A `Return` whose folded target is not provably the entry
-  return address is reported there as well (`strider_opt::ReturnTargets`).
+  return address is reported there as well (`strider_opt::ReturnTargets`),
+  unless the CFG CONSUMED a caller's `LinkRegister` seat there
+  (`Cfg::link_register_seated`), in which case it rides
+  `unverified_seeded_sites` instead. A seat alone does not move it: a site whose
+  terminator came from the p-code `RETURN` op is in no `seated` list, and
+  dropping it on the strength of a seed would leave it in none of the six.
 - Analysis stays inside the function being lifted: nothing reads a callee's
   code. A callee's stack pop and clobbers come from its calling convention, so
   a callee-cleanup `ret $imm16` or an i386 PC thunk needs a `per_address_ccs`

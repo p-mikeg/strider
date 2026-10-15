@@ -34,9 +34,14 @@ pub fn vn_contains(outer: &rsleigh::Vn, inner: &rsleigh::Vn) -> bool {
 /// the other. No register file checked declares one: they all nest exactly.
 /// That discharges the REGISTER half; a computed register slot is held to the
 /// same shape upstream by `strider-lift`'s `register_slot`, which drops a slot
-/// [`smallest_enclosing`] cannot seat in a declared register. UNIQUE, a
-/// temporary arena, carries no such guarantee: a crossing pair of temporaries
-/// survives as two independent SSA variables.
+/// [`smallest_enclosing`] cannot seat in a declared register. UNIQUE nests
+/// too, by a different construction: `SleighCompile` hands out temporaries on
+/// a 256-byte stride and rejects a constructor temp wider than that, and the
+/// per-instruction uniquifier only ORs bits at or above 8, so every UNIQUE
+/// varnode is one 256-aligned block and a crossing pair cannot arise. The
+/// residual caveat is that the size check reads the DECLARED size, leaving an
+/// operand-dependent temp unchecked, bounded in practice by the widest
+/// selectable register.
 pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh::Vn> {
     let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<(usize, rsleigh::Vn)>> = FxHashMap::default();
     for (i, v) in all_used_variables.iter().enumerate() {

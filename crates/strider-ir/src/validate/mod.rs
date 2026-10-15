@@ -61,8 +61,15 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     check_function_invariants_terminator_reachable(function, &mut errs);
 
     // The dataflow checks schedule the graph, so they judge only one that
-    // passed every structural check.
-    if errs.is_empty() {
+    // passed every structural check. A missing asm fingerprint is side-table
+    // bookkeeping and cannot make scheduling unsafe, so it does not gate
+    // them: letting it would hide a real `LostStore` / `MemoryRewind` /
+    // `InputNotAvailable` behind one unstamped node, against this module's
+    // own rule that every check aggregates rather than failing fast.
+    if errs
+        .iter()
+        .all(|e| matches!(e, ValidationError::MissingAsmFingerprint { .. }))
+    {
         let ctx = ScheduleContext::new(function, &reachable);
         check_function_invariants_memory_linearity(&ctx, &mut errs);
         check_function_invariants_availability(&ctx, &mut errs);
