@@ -194,7 +194,9 @@ pub fn run_post(
     edit.clean();
     // One iteration of `run`'s post-pass loop, `memory_slots` included: that
     // loop keeps the filled slots as the user-facing per-node SSoT and clears
-    // only the frame-escape memo, which `CallStackArgCollect` invalidates.
+    // only the frame-escape memo, which `CallStackArgCollect` invalidates. No
+    // built-in post-pass rewires an address; strider-py's `OptAsPostPass`
+    // clears the slots itself when its pass changes the graph.
     edit.function().side_tables().clear_frame_escape();
     Ok(())
 }
@@ -373,10 +375,10 @@ impl OptimizerPipeline {
             edit.clean();
             if converged {
                 for opt in &self.post_passes {
-                    // `memory_offsets` survives between post-passes: no
-                    // post-pass mutation changes an address value's
-                    // decomposition, so the filled slots stay valid as the
-                    // user-facing per-node SSoT.
+                    // `memory_offsets` survives between post-passes as the
+                    // user-facing per-node SSoT: no built-in post-pass
+                    // rewires an address, and strider-py's `OptAsPostPass`
+                    // clears the slots itself when its pass changes the graph.
                     opt.apply(&mut edit, ctx)?;
                     edit.clean();
                     // `CallStackArgCollect` rewrites `Call` inputs, which is
