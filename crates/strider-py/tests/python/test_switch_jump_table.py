@@ -36,17 +36,14 @@ def test_orchestrator_resolves_jump_table_x86(x86_switch_elf):
 
 def test_case_bodies_match_add_const_pattern(x86_switch_elf):
     # Cases 0..4 and 6..7 are `return x + K`.  Case 5 calls `f(value->a)`,
-    # so it lifts to a Load + Call and K=6 must not match.  The threshold is
-    # loose because the optimiser is free to fold or reshape individual arms.
+    # so it lifts to a Load + Call and K=6 must not match.
     _lift, g = _run(x86_switch_elf)
-    seen_constants = set()
-    for k in range(1, 9):
-        hits = g.find_all(int_add(Capture("x"), int_const(k)), ignore_casts=True)
-        if hits:
-            seen_constants.add(k)
-    assert len(seen_constants) >= 4, (
-        f"expected >=4 of x+K (K=1..8) to survive in IR; saw {sorted(seen_constants)}"
-    )
+    seen_constants = {
+        k
+        for k in range(1, 9)
+        if g.find_all(int_add(Capture("x"), int_const(k)), ignore_casts=True)
+    }
+    assert seen_constants == {1, 2, 3, 4, 5, 7, 8}
 
 
 def test_case5_calls_helper_with_struct_field(x86_switch_elf):

@@ -15,7 +15,7 @@ from strider.pattern import (
     int_const, int_const_any_width, int_cmp, any_int_binary, any_int_cmp,
 )
 
-from .conftest import built_function, fixture_path
+from .conftest import built_function, fixture_path, lift_bytes
 
 
 def _patterns_graph():
@@ -129,8 +129,8 @@ def test_load_pat_finds_loads_in_real_graph():
 
 def test_load_pat_via_addr_chain():
     g = _switch_graph()
-    hits = g.find_all(load().addr(int_add(anything(), anything())))
-    assert isinstance(hits, list)
+    # Four of the five loads address `base + offset`.
+    assert len(g.find_all(load().addr(int_add(anything(), anything())))) == 4
 
 
 def test_store_stack_only_chain():
@@ -214,16 +214,18 @@ def test_int_const_any_width_handles_x64_zero_extended_neg50():
         "int_const should NOT match the zero-extended form; that is what "
         "int_const_any_width is for"
     )
-    assert len(g.find_all(int_const_any_width(-50))) >= 1
+    assert len(g.find_all(int_const_any_width(-50))) == 1
 
 
 def test_int_const_any_width_neg1_matches_at_every_width():
-    # -1 is all-ones at every width, and the zero-extension check covers the
-    # narrower-stored variants, so `int_const_any_width(-1)` fires on any
-    # function returning a negative literal.  Whether -1 appears in
-    # if_returns_const at all is compiler-dependent, so only pin "no raise".
-    g64 = _patterns_graph_for("x64")
-    assert isinstance(g64.find_all(int_const_any_width(-1)), list)
+    # `mov rax, -1` keeps -1 at I64; `mov eax, -1` zero-extends it to
+    # 0xffffffff at I64, which only the any-width form recognises.
+    full = lift_bytes(bytes.fromhex("48c7c0ffffffff" "c3"))
+    zext = lift_bytes(bytes.fromhex("b8ffffffff" "c3"))
+    assert len(full.find_all(int_const(-1))) == 1
+    assert len(full.find_all(int_const_any_width(-1))) == 1
+    assert len(zext.find_all(int_const(-1))) == 0
+    assert len(zext.find_all(int_const_any_width(-1))) == 1
 
 
 def test_int_const_any_width_takes_a_list():
@@ -237,14 +239,12 @@ def test_int_const_any_width_round_trips_via_match_int():
     c = Capture()
     g = _patterns_graph_for("x64")
     hits = g.find_all(int_const_any_width(-50).capture(c))
-    if not hits:
-        pytest.skip("no -50 constant in this graph (compiler may have folded it)")
+    assert len(hits) == 1
     # For the x64 zero-extended -50 the stored value is +4294967246 at U64
     # and sint does no further sign extension, so it recovers
     # +4294967246, not -50.  The pattern recognises the source-level value;
     # recovering the raw bit pattern is uint's job.
-    val = hits[0].uint(c)
-    assert val is not None
+    assert hits[0].uint(c) == 4294967246
 
 
 def test_int_cmp_concrete_op():
@@ -339,8 +339,7 @@ def test_get_vn_returns_vn_for_initial_var_capture():
     g = _control_graph("abs_val")
     c = Capture()
     hits = g.find_all(initial_var().capture(c))
-    if not hits:
-        pytest.skip("no InitialVar nodes in abs_val (compiler may have folded entry args)")
+    assert hits, "abs_val reads its argument"
     vn = hits[0].vn(c)
     assert vn is not None
     assert vn.space.name() in {"REGISTER", "RAM"}

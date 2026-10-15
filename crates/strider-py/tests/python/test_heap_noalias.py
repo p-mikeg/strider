@@ -25,12 +25,10 @@ def test_noalias_allocators_defaults_empty():
 
 
 def test_heap_only_builds_on_load_and_store():
-    # heap_only() produces a valid pattern the matcher accepts. With no
-    # allocators configured the fixture has no heap-classified access, so the
-    # result is an empty list rather than an error.
+    # With no allocators configured the fixture has no heap-classified access.
     g = built_function("x86", "memory", "array_sum")
-    assert isinstance(g.find_all(load().heap_only()), list)
-    assert isinstance(g.find_all(store().heap_only()), list)
+    assert g.find_all(load().heap_only()) == []
+    assert g.find_all(store().heap_only()) == []
 
 
 # x86-64: `call 0x1100; mov qword [rax], 42; ret`.  With 0x1100 declared a pure
