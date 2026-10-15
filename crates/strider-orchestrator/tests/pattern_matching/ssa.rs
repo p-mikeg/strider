@@ -607,21 +607,20 @@ fn negate_over_an_unbound_capture_drops_every_row() {
     );
 }
 
-/// No match when the arm value is a different constant.
+/// The false arm's constant is an input of the same phi, so only the edge
+/// constraint can reject it on the true edge.
 #[test]
-fn phi_input_from_edge_any_input_negative() {
+fn phi_input_from_edge_rejects_the_other_arms_constant() {
     let function = collapsed_phi_diamond();
+    for k in [1u64, 2] {
+        a::matches(&function, phi().any_input(int_const(k)).build(), 1);
+    }
     let m = Matcher::new(&function);
     let (t, ph, v) = (Capture::new(), Capture::new(), Capture::new());
     let guard = if_else().capture_true(t).build();
-    // 0xDEAD is on neither arm.
-    let phi_p = phi()
-        .any_input(int_const(0xDEADu64).capture(v))
-        .capture(ph)
-        .build();
-
-    let hits = m
-        .find_joined_constrained(
+    let on_true_edge = |k: u64| -> usize {
+        let phi_p = phi().any_input(int_const(k).capture(v)).capture(ph).build();
+        m.find_joined_constrained(
             &[&guard, &phi_p],
             &[JoinConstraint::PhiInputFromEdge {
                 phi: ph,
@@ -629,8 +628,12 @@ fn phi_input_from_edge_any_input_negative() {
                 value: v,
             }],
         )
-        .unwrap();
-    assert!(hits.is_empty(), "no arm merges 0xDEAD");
+        .unwrap()
+        .len()
+    };
+    // `reg == 0` takes the arm that writes 1.
+    assert_eq!(on_true_edge(1), 1);
+    assert_eq!(on_true_edge(2), 0, "2 merges on the false edge only");
 }
 
 /// A capture bound BOTH by a free-floating root and by `any_input` on the phi
