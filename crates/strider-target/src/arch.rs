@@ -327,10 +327,11 @@ impl SleighArch {
     ///   to its `linkreg=0` twin, which
     ///   `a_stale_linkreg_cannot_change_a_powerpc_lift` pins.
     /// - ARM commits `TEEMode` and the IT-block `condit` group at `inst_next`,
-    ///   and `TMode` both at `inst_next` and at a branch TARGET
-    ///   (`ARMinstructions.sinc:677`, `ARMTHUMBinstructions.sinc:1544`).
-    ///   `TMode` is covered by [`Self::isa_mode_var`] instead, re-imposed per
-    ///   instruction rather than re-derived.
+    ///   and `TMode` both at `inst_next` (`ARMTHUMBinstructions.sinc:1594`,
+    ///   `:2662`) and at a branch TARGET (`ARMinstructions.sinc:677`,
+    ///   `ARMTHUMBinstructions.sinc:1544`). `TMode` is covered by
+    ///   [`Self::isa_mode_var`] instead, re-imposed per instruction rather
+    ///   than re-derived.
     #[must_use]
     pub fn commits_flow_context(&self) -> bool {
         matches!(

@@ -359,9 +359,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // whatever ANY decode left, including a throwaway one
         // (`is_benign_prefix_reentry` lifts a mid-instruction address out of
         // band, and `oneInstruction` applies its commits). The two conditions
-        // are disjoint by construction, pinned in `strider-target`: the probe
-        // runs only where `isa_mode_var` is `None`, and every preset naming
-        // `flow_commit_vars` has one.
+        // are disjoint locally: `is_benign_prefix_reentry` returns early on a
+        // non-empty `flow_commit_defaults`, this same slice.
         let mut carried = if !self.flow_commit_defaults.is_empty()
             && self.committed_next.contains(&addr.machine_addr.addr)
         {
@@ -718,7 +717,11 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// byte-granular instruction prefix produces the shape the length check
     /// accepts, so elsewhere an interior target is a real overlap.
     fn is_benign_prefix_reentry(&mut self, owner: NodeIndex, addr: PcodeInsnAddr) -> bool {
-        if self.arch.isa_mode_var().is_some() {
+        // The second clause is what makes the disjointness with `enqueue`'s
+        // snapshot LOCAL rather than a coincidence of two per-preset tables:
+        // whatever `flow_commit_vars` grows to, a throwaway decode cannot run
+        // where a snapshot is believed.
+        if self.arch.isa_mode_var().is_some() || !self.flow_commit_defaults.is_empty() {
             return false;
         }
         let Some(region) = self.region_graph.node_weight(owner) else {
