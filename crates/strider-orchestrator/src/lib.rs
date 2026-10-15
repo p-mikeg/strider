@@ -876,6 +876,7 @@ fn adopt_known_modes(
     let interworking = modes.values().any(|&bit| bit != flowing_isa_bit);
     let known_addrs: rustc_hash::FxHashSet<u64> = known_targets.iter().map(|t| t.addr).collect();
     let mut assumed = false;
+    let from_single = matches!(targets, ResolvedTargets::Single(_));
     let kept: Vec<strider_cfg::ResolvedTarget> = concrete_targets(&targets)
         .iter()
         .filter_map(|t| match (t.isa_bit, modes.get(&t.addr)) {
@@ -891,7 +892,7 @@ fn adopt_known_modes(
             }),
         })
         .collect();
-    (resolved_from(kept), assumed)
+    (resolved_from(kept, from_single), assumed)
 }
 
 /// A resolved target as the convergence check sees it: `(address, isa_bit)`,
@@ -975,6 +976,8 @@ fn combine_resolved(
     if matches!(a, ResolvedTargets::LinkRegister) && matches!(b, ResolvedTargets::LinkRegister) {
         return ResolvedTargets::LinkRegister;
     }
+    let from_single =
+        matches!(a, ResolvedTargets::Single(_)) || matches!(b, ResolvedTargets::Single(_));
     let a_targets = concrete_targets(a);
     let b_targets = concrete_targets(b);
     let interworks = |side: &[strider_cfg::ResolvedTarget]| {
@@ -1025,7 +1028,7 @@ fn combine_resolved(
         true
     });
     targets.retain(|t| !contradicted.contains(&t.addr));
-    resolved_from(targets)
+    resolved_from(targets, from_single)
 }
 
 /// `targets` as a [`ResolvedTargets`], and the ONE place an EMPTY one is built.
@@ -1036,9 +1039,13 @@ fn combine_resolved(
 /// target has been contradicted (the enum spells no "nothing trustworthy
 /// here") where staging nothing would leave the previous round's answer
 /// seated as if it had never been contradicted.
-fn resolved_from(targets: Vec<strider_cfg::ResolvedTarget>) -> ResolvedTargets {
+///
+/// `Single` only when `from_single`, i.e. an input was one: the cfg seats an
+/// out-of-range `Single` as a tail call but defers an out-of-range arm, so a
+/// merge must not change which.
+fn resolved_from(targets: Vec<strider_cfg::ResolvedTarget>, from_single: bool) -> ResolvedTargets {
     match targets.as_slice() {
-        [single] => ResolvedTargets::Single(*single),
+        [single] if from_single => ResolvedTargets::Single(*single),
         _ => ResolvedTargets::Multiple(targets),
     }
 }
@@ -1248,7 +1255,11 @@ fn abandon_undecodable(
         if kept.is_empty() {
             known_targets.to_mut().remove(&site);
         } else {
-            known_targets.to_mut().insert(site, resolved_from(kept));
+            // Only a `Multiple` keeps arms here: a `Single` named a clashing
+            // target, its only one.
+            known_targets
+                .to_mut()
+                .insert(site, resolved_from(kept, false));
         }
         // The anchor, not the entry's key: an address no anchor in this run
         // uses would ride into `unresolved_indirect_branches` naming nothing.
@@ -1801,10 +1812,17 @@ mod tests {
     /// re-emits the placeholder and the site is reported unresolved.
     #[test]
     fn resolved_from_builds_the_unseatable_empty_multiple() {
-        assert_eq!(resolved_from(Vec::new()), ResolvedTargets::Multiple(vec![]));
         assert_eq!(
-            resolved_from(vec![0x2000.into()]),
+            resolved_from(Vec::new(), true),
+            ResolvedTargets::Multiple(vec![])
+        );
+        assert_eq!(
+            resolved_from(vec![0x2000.into()], true),
             ResolvedTargets::Single(0x2000.into()),
+        );
+        assert_eq!(
+            resolved_from(vec![0x2000.into()], false),
+            ResolvedTargets::Multiple(vec![0x2000.into()]),
         );
     }
 
@@ -2404,6 +2422,33 @@ mod tests {
                 .map(|&(addr, bit)| strider_cfg::ResolvedTarget::new(addr, bit))
                 .collect(),
         )
+    }
+
+    /// A one-arm table answer keeps its shape through a merge: the cfg seats an
+    /// out-of-range `Single` as a tail call but defers an out-of-range arm, so
+    /// whether a seed or a known mode passed through must not decide which.
+    #[test]
+    fn apply_resolutions_keeps_a_one_arm_multiple_a_multiple() {
+        let (_progress, seeded) = round(
+            None,
+            multiple(&[(0x2000, None)]),
+            Some(multiple(&[(0x2000, None)])),
+        );
+        assert_eq!(
+            seeded,
+            multiple(&[(0x2000, None)]),
+            "through the caller-seed union"
+        );
+        let (_progress, moded) = round(
+            Some(multiple(&[(0x2000, Some(true))])),
+            multiple(&[(0x2000, None)]),
+            None,
+        );
+        assert_eq!(
+            moded,
+            multiple(&[(0x2000, Some(true))]),
+            "through a known mode"
+        );
     }
 
     #[test]
