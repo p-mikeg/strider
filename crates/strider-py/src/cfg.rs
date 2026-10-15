@@ -325,13 +325,13 @@ impl PyCfg {
     /// plus region starts a later decode stepped over.
     ///
     /// No region can start at the first kind (decoding from inside an
-    /// instruction yields a different stream), so the edge is seated on the
-    /// region owning the bytes, whose instructions start earlier. A direct
-    /// edge can cause this, not only a resolved indirect branch. The second
-    /// kind is overlapping code: two regions own those bytes with two
-    /// different instruction streams. Non-empty means this CFG claims a
-    /// successor the branch does not actually enter at, or decodes some bytes
-    /// twice.
+    /// instruction yields a different stream). A direct branch keeps its edge,
+    /// wired to the region owning the bytes, whose instructions start earlier;
+    /// a `Switch` arm is dropped and wires no edge. The second kind is
+    /// overlapping code: two regions own those bytes with two different
+    /// instruction streams. Non-empty means this CFG claims a successor the
+    /// branch does not actually enter at, drops a table arm, or decodes some
+    /// bytes twice.
     ///
     /// Accumulated over every round `analyze` ran: the inexact edge fed the
     /// classifier, whose derived targets outlive it, so a later round that

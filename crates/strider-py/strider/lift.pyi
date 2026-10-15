@@ -218,9 +218,9 @@ class Lifter:
         """Build the control-flow graph of the function at `entry`, without
         lifting or optimising.
 
-        `LifterOptions.per_address_ccs` is not applied: a direct call to a callee
-        whose per-address convention is `no_return` does not end its region, so the
-        CFG can run on past a call where `analyze` stops.
+        `LifterOptions.per_address_ccs` is not applied: a direct call to a
+        callee whose per-address convention is `no_return` does not end its
+        region, so the CFG can run on past a call where `analyze` stops.
 
         Holds the GIL for the whole build, unlike `analyze`: decoding is short
         next to a full analysis, and it runs on the handle's own thread."""

@@ -58,7 +58,7 @@ _MEM_INDIRECT = bytes([0xFF, 0x24, 0xFD, 0x00, 0x20, 0x00, 0x00, 0xC3, 0xC3])
 )
 def test_a_seed_seated_past_p_code_op_0_is_unverified(seed):
     """A Python seed is keyed by machine address; the build records the site
-    at its `BranchIndirect`. The two must still meet."""
+    at its `BranchIndirect`."""
     cfg = _lifter(_MEM_INDIRECT).build_cfg(
         _BASE, strider.cfg.CfgOptions(known_targets={_BASE: seed})
     )

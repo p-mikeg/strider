@@ -101,13 +101,13 @@ class Cfg:
 
         No region can start at the first kind, since decoding from inside an
         instruction yields a different stream; a branch into a MIPS delay slot
-        is one, the slot decoding as part of its branch. The edge is therefore
-        seated on the region that owns the bytes, whose instructions start
-        earlier. A direct edge can cause this, not only a resolved indirect
-        branch. The second kind is overlapping code: two regions own those
-        bytes with two different instruction streams. Non-empty means this
-        CFG claims a successor the branch does not actually enter at, or
-        decodes some bytes twice.
+        is one, the slot decoding as part of its branch. A direct branch keeps
+        its edge, wired to the region that owns the bytes, whose instructions
+        start earlier; a `Switch` arm is dropped and wires no edge. The second
+        kind is overlapping code: two regions own those bytes with two
+        different instruction streams. Non-empty means this CFG claims a
+        successor the branch does not actually enter at, drops a table arm,
+        or decodes some bytes twice.
 
         Accumulated over every round `analyze` ran: the inexact edge fed the
         classifier, whose derived targets outlive it, so a later round that no
