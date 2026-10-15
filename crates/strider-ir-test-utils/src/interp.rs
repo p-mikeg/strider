@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
 use std::rc::Rc;
 
-use rustc_hash::FxHashMap;
+use cranelift_entity::SecondaryMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{
     ExtendOp, Function, IRViewer, IRWalker, IntBinaryOp, IntCmpOp, IntUnaryOp, ReadOnlyMemory,
@@ -232,11 +232,11 @@ struct Machine<'a, 'e> {
     env: &'a Env<'e>,
     live: strider_ir::walk::NodeIdSet,
     /// Values that change as control moves: phis, memory phis, call outputs.
-    now: FxHashMap<ValueId, Eval<Option<u128>>>,
-    mem_now: FxHashMap<ValueId, Eval<Rc<Mem>>>,
+    now: SecondaryMap<ValueId, Option<Eval<Option<u128>>>>,
+    mem_now: SecondaryMap<ValueId, Option<Eval<Rc<Mem>>>>,
     /// Every other value, over the current `now` and `mem_now`.
-    ints: FxHashMap<ValueId, Option<u128>>,
-    mems: FxHashMap<ValueId, Rc<Mem>>,
+    ints: SecondaryMap<ValueId, Option<Option<u128>>>,
+    mems: SecondaryMap<ValueId, Option<Rc<Mem>>>,
     calls: Vec<CallRecord>,
 }
 
@@ -246,10 +246,10 @@ impl<'a, 'e> Machine<'a, 'e> {
             f,
             env,
             live: f.walk().collect(),
-            now: FxHashMap::default(),
-            mem_now: FxHashMap::default(),
-            ints: FxHashMap::default(),
-            mems: FxHashMap::default(),
+            now: SecondaryMap::new(),
+            mem_now: SecondaryMap::new(),
+            ints: SecondaryMap::new(),
+            mems: SecondaryMap::new(),
             calls: Vec::new(),
         }
     }
@@ -301,10 +301,10 @@ impl<'a, 'e> Machine<'a, 'e> {
     ) {
         let mut replaced = false;
         for (v, r) in ints {
-            replaced |= self.now.insert(v, r).is_some();
+            replaced |= self.now[v].replace(r).is_some();
         }
         for (v, r) in mems {
-            replaced |= self.mem_now.insert(v, r).is_some();
+            replaced |= self.mem_now[v].replace(r).is_some();
         }
         if replaced {
             self.ints.clear();
@@ -315,10 +315,10 @@ impl<'a, 'e> Machine<'a, 'e> {
     /// `None` is an undefined value: a division by zero or `INT_MIN / -1`, or
     /// anything computed from one.
     fn int(&mut self, v: ValueId) -> Eval<Option<u128>> {
-        if let Some(r) = self.now.get(&v) {
+        if let Some(r) = &self.now[v] {
             return r.clone();
         }
-        if let Some(&r) = self.ints.get(&v) {
+        if let Some(r) = self.ints[v] {
             return Ok(r);
         }
         let f = self.f;
@@ -379,15 +379,15 @@ impl<'a, 'e> Machine<'a, 'e> {
             // A phi or call output not in `now` has not been produced yet.
             other => return unsupported(format!("{} as a value", label(&other))),
         };
-        self.ints.insert(v, r);
+        self.ints[v] = Some(r);
         Ok(r)
     }
 
     fn mem(&mut self, v: ValueId) -> Eval<Rc<Mem>> {
-        if let Some(r) = self.mem_now.get(&v) {
+        if let Some(r) = &self.mem_now[v] {
             return r.clone();
         }
-        if let Some(m) = self.mems.get(&v) {
+        if let Some(m) = &self.mems[v] {
             return Ok(Rc::clone(m));
         }
         let f = self.f;
@@ -409,8 +409,8 @@ impl<'a, 'e> Machine<'a, 'e> {
                 let size = int_type(f, ins[2])?.bit_width().div_ceil(8);
                 // A state only this store reads leaves the cache and is
                 // updated in place; one with other readers is copied.
-                if f.value_uses(ins[0]).count() == 1 && !self.mem_now.contains_key(&ins[0]) {
-                    self.mems.remove(&ins[0]);
+                if f.value_has_one_use(ins[0]) && self.mem_now[ins[0]].is_none() {
+                    self.mems[ins[0]] = None;
                 }
                 let mut mem = Rc::unwrap_or_clone(prev);
                 // Little-endian value bytes, then into address order.
@@ -425,7 +425,7 @@ impl<'a, 'e> Machine<'a, 'e> {
             }
             other => return unsupported(format!("{} as a memory state", label(&other))),
         };
-        self.mems.insert(v, Rc::clone(&mem));
+        self.mems[v] = Some(Rc::clone(&mem));
         Ok(mem)
     }
 
