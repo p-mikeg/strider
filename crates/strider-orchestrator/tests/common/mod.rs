@@ -9,8 +9,6 @@
     dead_code  // category test files won't use every helper
 )]
 
-use object::{Object, ObjectSymbol};
-use std::path::PathBuf;
 use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::IrWalkerEx;
 
@@ -208,13 +206,6 @@ pub(crate) fn analyze_with_known_targets(
     driver.build_ir(&cfg, cc).expect("build_ir").function
 }
 
-pub(crate) fn binary_path(arch: Arch, case: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/out")
-        .join(arch.name())
-        .join(format!("{case}.elf"))
-}
-
 /// A [`strider_orchestrator::Strider`] over `obj`'s image, with a second view
 /// of it as the optimiser's ROM.
 pub(crate) fn strider_over_object(
@@ -230,9 +221,9 @@ pub(crate) fn strider_over_object(
         .expect("Strider::new")
 }
 
-/// [`strider_over_object`] on the (arch, case) ELF, with `arch`'s calling
-/// convention and `fn_name`'s address. The address keeps its ARM-Thumb
-/// interworking bit: that bit IS the entry's ISA mode.
+/// [`fixtures::Fixture::strider`] on the (arch, case) ELF, with `fn_name`'s
+/// address. The address keeps its ARM-Thumb interworking bit: that bit IS the
+/// entry's ISA mode.
 pub(crate) fn fixture_strider(
     arch: Arch,
     case: &str,
@@ -242,20 +233,9 @@ pub(crate) fn fixture_strider(
     strider_target::BuiltCallingConvention,
     u64,
 ) {
-    let path = binary_path(arch, case);
-    if !path.exists() {
-        panic!("missing test binary {path:?}; run `make -C fixtures`");
-    }
-    let owned = strider_reader::load_elf(&path)
-        .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
-    let obj = owned.checked_file().expect("the mapped file is unchanged");
-    let addr = obj
-        .symbol_by_name(fn_name)
-        .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
-        .address();
-    let strider = strider_over_object(arch, &obj);
-    let cc = arch.cc().build(strider.sleigh_regs()).expect("build cc");
-    (strider, cc, addr)
+    let fixture = fixtures::Fixture::open(arch.fixture(), case);
+    let (strider, cc) = fixture.strider();
+    (strider, cc, fixture.symbol(fn_name))
 }
 
 /// A [`strider_orchestrator::opt::ReadOnlyMemory`] over a region set loaded
@@ -280,21 +260,14 @@ pub(crate) fn fixture_strider_serving_got(
     strider_target::BuiltCallingConvention,
     u64,
 ) {
-    let path = binary_path(arch, case);
-    if !path.exists() {
-        panic!("missing test binary {path:?}; run `make -C fixtures`");
-    }
-    let owned = strider_reader::load_elf(&path)
-        .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
-    let obj = owned.checked_file().expect("the mapped file is unchanged");
-    let addr = obj
-        .symbol_by_name(fn_name)
-        .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
-        .address();
+    let fixture = fixtures::Fixture::open(arch.fixture(), case);
+    let addr = fixture.symbol(fn_name);
+    let obj = fixture.file();
     let sleigh_arch = arch.sleigh();
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let rom = RegionRom(strider_reader::MemRegionsLookupTable::new(
-        owned
+        fixture
+            .elf()
             .regions(
                 strider_reader::elf::RegionSource::Auto,
                 strider_reader::elf::LoadFilter::ImmutableAndRelocatedGot,
@@ -322,28 +295,11 @@ pub(crate) fn lift_for_pipeline(
     strider_target::BuiltCallingConvention,
     strider_reader::ElfFileMemReader,
 ) {
-    let path = binary_path(arch, case);
-    if !path.exists() {
-        panic!(
-            "missing test binary {path:?}; run `make -C fixtures` (or \
-             `make -C fixtures ARCH={} CASE={case}` for just this case)",
-            arch.name()
-        );
-    }
-    let obj = strider_reader::load_elf(&path)
-        .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
-    let obj = obj.checked_file().expect("the mapped file is unchanged");
+    let fixture = fixtures::Fixture::open(arch.fixture(), case);
+    let obj = fixture.file();
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let (mut ana, cc) = driver_for_reader(arch, mem);
-    let raw_addr = obj
-        .symbol_by_name(fn_name)
-        .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
-        .address();
-    // The symbol address is passed through with its ARM-Thumb interworking bit
-    // intact: that bit IS the entry's ISA mode, and `Lifter::build_cfg` masks
-    // it off for decoding itself.  Masking here would decode every Thumb
-    // function as ARM.
-    let addr = raw_addr;
+    let addr = fixture.symbol(fn_name);
     let cfg_opts = strider_cfg::CfgOptions {
         allow_code_before_start_addr: true,
         ..Default::default()
