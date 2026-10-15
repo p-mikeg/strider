@@ -4,19 +4,19 @@ default_cc arg_passing_regs=[RDI, RSI, RDX, RCX, R8, R9] arg_passing_regs_float=
 
 == main @0x401020
 cfg
-  0x401020 0 insns goto -> [0x401024]
-  0x401024 24 insns goto -> [0x401038]
-  0x401038 28 insns switch@0x401042.3 [0x401050, 0x401070, 0x401078, 0x401090, 0x401098, 0x4010a0, 0x4010a8, 0x4010ad] -> [0x401050, 0x401070, 0x401078, 0x401090, 0x401098, 0x4010a0, 0x4010a8, 0x4010ad]
-  0x401050 5 insns goto -> [0x401058]
-  0x401058 29 insns cbranch 0x401038 -> [0x401038, 0x401067]
-  0x401067 16 insns return -> []
-  0x401070 4 insns goto -> [0x401058]
-  0x401078 7 insns goto -> [0x401058]
-  0x401090 4 insns goto -> [0x401058]
-  0x401098 4 insns goto -> [0x401058]
-  0x4010a0 4 insns goto -> [0x401058]
-  0x4010a8 4 insns goto -> [0x401058]
-  0x4010ad 3 insns goto -> [0x401058]
+  0x401020 0 ops goto -> [0x401024]
+  0x401024 24 ops goto -> [0x401038]
+  0x401038 28 ops switch@0x401042.3 [0x401050, 0x401070, 0x401078, 0x401090, 0x401098, 0x4010a0, 0x4010a8, 0x4010ad]
+  0x401050 5 ops goto -> [0x401058]
+  0x401058 29 ops cbranch 0x401038 -> [0x401038, 0x401067]
+  0x401067 16 ops return -> []
+  0x401070 4 ops goto -> [0x401058]
+  0x401078 7 ops goto -> [0x401058]
+  0x401090 4 ops goto -> [0x401058]
+  0x401098 4 ops goto -> [0x401058]
+  0x4010a0 4 ops goto -> [0x401058]
+  0x4010a8 4 ops goto -> [0x401058]
+  0x4010ad 3 ops goto -> [0x401058]
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x8f00:8, u:0x9600:8, u:0x9800:8, u:0x9d00:8, u:0xa200:8, u:0xa400:8, u:0xd400:4, u:0x23f00:4, u:0x24000:8, u:0x25200:1, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x7d400:4, u:0x7d600:4]
 arg 1 [%v8]
 arg 4 [%v9]
@@ -144,9 +144,9 @@ return %v136, %v141, %v142, %v117, %v123, %v124, %v131, %v132
 
 == _start @0x4010c0
 cfg
-  0x4010c0 0 insns goto -> [0x4010c4]
-  0x4010c4 56 insns goto -> [0x4010e5]
-  0x4010e5 1 insns goto -> [0x4010e5]
+  0x4010c0 0 ops goto -> [0x4010c4]
+  0x4010c4 56 ops goto -> [0x4010e5]
+  0x4010e5 1 ops goto -> [0x4010e5]
 tracked [RAX, RCX, RDX, RSP, RBP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x4fc00:8, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x79900:8, u:0xaa700:8]
 arg 2 [%v22]
 float_arg 0 [%v23]
@@ -197,8 +197,8 @@ unreachable %v59, %v32
 
 == _dl_relocate_static_pie @0x4010f0
 cfg
-  0x4010f0 0 insns goto -> [0x4010f4]
-  0x4010f4 3 insns return -> []
+  0x4010f0 0 ops goto -> [0x4010f4]
+  0x4010f4 3 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7]
 arg 2 [%v3]
 float_arg 0 [%v4]
@@ -215,8 +215,8 @@ return %v0, %v1, %v2, %v3, %v4, %v5, %v6, %v7
 
 == f @0x4011b0
 cfg
-  0x4011b0 0 insns goto -> [0x4011b4]
-  0x4011b4 6 insns return -> []
+  0x4011b0 0 ops goto -> [0x4011b4]
+  0x4011b4 6 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x8f00:8]
 arg 0 [%v2]
 arg 2 [%v7]
@@ -238,16 +238,16 @@ return %v0, %v1, %v6, %v7, %v8, %v9, %v10, %v11
 
 == dispatch_value @0x4011c0
 cfg
-  0x4011c0 0 insns goto -> [0x4011c4]
-  0x4011c4 14 insns switch@0x4011c7.3 [0x4011d0, 0x4011d8, 0x4011e0, 0x4011e8, 0x4011f0, 0x4011f8, 0x401200, 0x401204] -> [0x4011d0, 0x4011d8, 0x4011e0, 0x4011e8, 0x4011f0, 0x4011f8, 0x401200, 0x401204]
-  0x4011d0 6 insns return -> []
-  0x4011d8 6 insns return -> []
-  0x4011e0 6 insns return -> []
-  0x4011e8 6 insns return -> []
-  0x4011f0 6 insns return -> []
-  0x4011f8 9 insns return -> []
-  0x401200 6 insns return -> []
-  0x401204 6 insns return -> []
+  0x4011c0 0 ops goto -> [0x4011c4]
+  0x4011c4 14 ops switch@0x4011c7.3 [0x4011d0, 0x4011d8, 0x4011e0, 0x4011e8, 0x4011f0, 0x4011f8, 0x401200, 0x401204]
+  0x4011d0 6 ops return -> []
+  0x4011d8 6 ops return -> []
+  0x4011e0 6 ops return -> []
+  0x4011e8 6 ops return -> []
+  0x4011f0 6 ops return -> []
+  0x4011f8 9 ops return -> []
+  0x401200 6 ops return -> []
+  0x401204 6 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x8f00:8, u:0x9600:8, u:0x9800:8, u:0x23f00:4, u:0x24000:8, u:0x58600:4, u:0x58700:1, u:0x58800:1]
 arg 0 [%v2]
 arg 1 [%v20]

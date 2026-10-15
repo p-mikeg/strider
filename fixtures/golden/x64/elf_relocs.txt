@@ -4,8 +4,8 @@ default_cc arg_passing_regs=[RDI, RSI, RDX, RCX, R8, R9] arg_passing_regs_float=
 
 == helper_a @0x1030
 cfg
-  0x1030 0 insns goto -> [0x1034]
-  0x1034 6 insns return -> []
+  0x1030 0 ops goto -> [0x1034]
+  0x1034 6 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x8f00:8]
 arg 0 [%v2]
 arg 2 [%v7]
@@ -27,8 +27,8 @@ return %v0, %v1, %v6, %v7, %v8, %v9, %v10, %v11
 
 == helper_b @0x1040
 cfg
-  0x1040 0 insns goto -> [0x1044]
-  0x1044 6 insns return -> []
+  0x1040 0 ops goto -> [0x1044]
+  0x1044 6 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9100:8]
 arg 0 [%v2]
 arg 2 [%v7]
@@ -50,8 +50,8 @@ return %v0, %v1, %v6, %v7, %v8, %v9, %v10, %v11
 
 == helper_c @0x1050
 cfg
-  0x1050 0 insns goto -> [0x1054]
-  0x1054 6 insns return -> []
+  0x1050 0 ops goto -> [0x1054]
+  0x1054 6 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9100:8]
 arg 0 [%v2]
 arg 2 [%v7]
@@ -73,8 +73,8 @@ return %v0, %v1, %v6, %v7, %v8, %v9, %v10, %v11
 
 == helper_d @0x1060
 cfg
-  0x1060 0 insns goto -> [0x1064]
-  0x1064 6 insns return -> []
+  0x1060 0 ops goto -> [0x1064]
+  0x1064 6 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9100:8]
 arg 0 [%v2]
 arg 2 [%v7]
@@ -96,8 +96,8 @@ return %v0, %v1, %v6, %v7, %v8, %v9, %v10, %v11
 
 == dispatch_via_table @0x1070
 cfg
-  0x1070 0 insns goto -> [0x1074]
-  0x1074 43 insns return -> []
+  0x1070 0 ops goto -> [0x1074]
+  0x1074 43 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9300:8, u:0x9500:8, u:0x24000:8, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x79900:8]
 arg 0 [%v9]
 arg 1 [%v18]
@@ -149,8 +149,8 @@ return %v32, %v33, %v34, %v35, %v36, %v37, %v38, %v39
 
 == compute_via_helper @0x1090
 cfg
-  0x1090 0 insns goto -> [0x1094]
-  0x1094 24 insns return -> []
+  0x1090 0 ops goto -> [0x1094]
+  0x1094 24 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x58600:8, u:0x58700:1, u:0x58800:1]
 arg 0 [%v8]
 arg 1 [%v9]

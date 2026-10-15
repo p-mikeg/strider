@@ -3,7 +3,7 @@
 //! `OptOptions::default()`), one file per image:
 //! `fixtures/golden/<arch>/<case>.txt`. A function's section is
 //! `== <symbol> @<addr>`, each non-empty report channel, the CFG one region
-//! per line (start, instruction count, terminator, successors) and the
+//! per line (start, p-code op count, terminator, successors) and the
 //! optimised IR with registers named. An `analyze` error is pinned as its
 //! message.
 //!
@@ -62,7 +62,8 @@ fn terminator(terminator: &RegionTerminator) -> String {
     }
 }
 
-/// One line per region, by start.
+/// One line per region, by start. A switch's successors are printed only
+/// where they are not its sorted arms.
 fn cfg_lines(cfg: &Cfg, out: &mut String) {
     let graph = cfg.region_graph();
     let mut regions: Vec<_> = cfg.region_ids().collect();
@@ -72,15 +73,26 @@ fn cfg_lines(cfg: &Cfg, out: &mut String) {
         let mut successors: Vec<PcodeInsnAddr> =
             graph.neighbors(r).map(|s| graph[s].start_addr).collect();
         successors.sort_unstable();
-        let successors: Vec<String> = successors.iter().map(pc).collect();
-        let _ = writeln!(
+        let _ = write!(
             out,
-            "  {} {} insns {} -> [{}]",
+            "  {} {} ops {}",
             pc(&region.start_addr),
             region.insns.len(),
             terminator(&region.terminator),
-            successors.join(", ")
         );
+        if let RegionTerminator::Switch { targets, .. } = &region.terminator {
+            let mut arms: Vec<PcodeInsnAddr> = targets
+                .iter()
+                .map(|t| PcodeInsnAddr::at_machine_start(t.addr))
+                .collect();
+            arms.sort_unstable();
+            if arms == successors {
+                out.push('\n');
+                continue;
+            }
+        }
+        let successors: Vec<String> = successors.iter().map(pc).collect();
+        let _ = writeln!(out, " -> [{}]", successors.join(", "));
     }
 }
 
@@ -131,6 +143,80 @@ fn split_shared(text: &str) -> (String, String) {
     )
 }
 
+/// What each function's IR must show on every arch, carried over from the
+/// retired per-arch asserts so a re-bless cannot drop it. `(case, function,
+/// intent)`.
+#[rustfmt::skip]
+const INTENT: &[(&str, &str, &str)] = &[
+    ("abi", "eight_int_args", "seven int.add"),
+    ("abi", "make_pair", "a return"),
+    ("abi", "mixed_args", "two loads and five int.add"),
+    ("abi", "point_sum", "an int.add"),
+    ("abi", "tail_caller", "a call or a return"),
+    ("arithmetic", "add", "int.add"),
+    ("arithmetic", "ashr", "int.sshift_right"),
+    ("arithmetic", "bit_and", "int.and"),
+    ("arithmetic", "bit_not", "int.xor with all ones"),
+    ("arithmetic", "bit_or", "int.or"),
+    ("arithmetic", "bit_xor", "int.xor"),
+    ("arithmetic", "lshr", "int.shift_right"),
+    ("arithmetic", "mul", "int.mul"),
+    ("arithmetic", "negate", "int.neg (0 - a folds to it too)"),
+    ("arithmetic", "sdiv", "int.sdiv, or a library call"),
+    ("arithmetic", "shl", "int.shift_left"),
+    ("arithmetic", "smod", "int.srem, int.sdiv (a - a/b*b), or a library call"),
+    ("arithmetic", "sub", "int.add of an int.neg"),
+    ("arithmetic", "udiv", "int.div, or a library call"),
+    ("arithmetic", "umod", "int.rem, int.div (a - a/b*b), or a library call"),
+    ("builtins", "clz32", "popcount or lzcount, a library call, or inlined bit ops"),
+    ("builtins", "clz64", "popcount or lzcount, a library call, or inlined bit ops"),
+    ("builtins", "ctz32", "popcount or lzcount, a library call, or inlined bit ops"),
+    ("builtins", "expect_branch", "an if"),
+    ("builtins", "popcount32", "popcount or lzcount, a library call, or inlined bit ops"),
+    ("builtins", "popcount64", "popcount or lzcount, a library call, or inlined bit ops"),
+    ("calls", "apply_indirect", "a call"),
+    ("calls", "fib_recursive", "two self-calls and an if"),
+    ("calls", "mutual_a", "a call and an if"),
+    ("calls", "mutual_b", "a call and an if"),
+    ("calls", "nested_3deep", "a call"),
+    ("calls", "pass_through", "a call"),
+    ("calls", "repeat_call_pair", "two calls"),
+    ("control", "abs_val", "an if"),
+    ("control", "clamp", "two ifs"),
+    ("control", "count_bits", "a loop with int.shift_right"),
+    ("control", "early_return", "a loop and two return paths"),
+    ("control", "factorial", "a loop"),
+    ("control", "max_val", "an if"),
+    ("control", "nested_loops", "two loops"),
+    ("control", "select_three", "two ifs"),
+    ("control", "sum_to_n", "a loop"),
+    ("floats", "f32_arith", "four float ops, a sub as float.add of float.neg"),
+    ("floats", "f32_compare", "two fcmp"),
+    ("floats", "f32_neg_abs", "float.neg or a sign-bit int.xor"),
+    ("floats", "f32_to_f64", "float_to_float"),
+    ("floats", "f64_arith", "four float ops, a sub as float.add of float.neg"),
+    ("floats", "f64_compare", "two fcmp"),
+    ("floats", "f64_to_f32", "float_to_float"),
+    ("floats", "float_to_int", "float_to_int"),
+    ("floats", "int_to_float", "int_to_float; ppc32 uses the magic-number sequence"),
+    ("globals", "branch_on_const_string", "the load folds to 0x79, or the if is gone"),
+    ("globals", "read_const_byte", "the load folds to iconst 0x61"),
+    ("globals", "read_const_int", "the load folds to iconst 0x12345678"),
+    ("globals", "runtime_const_idx", "the load and a bounds if survive"),
+    ("memory", "array_copy", "a load and a store in a loop"),
+    ("memory", "array_fill", "a store in a loop"),
+    ("memory", "array_sum", "a load in a loop"),
+    ("memory", "pointer_chase", "two loads"),
+    ("memory", "struct_field_load", "two loads"),
+    ("memory", "struct_field_store", "two stores"),
+    ("memory", "tagged_union_read", "a load"),
+    ("stack", "escape_via_ptr", "a stack store and the call"),
+    ("stack", "inplace_swap", "two loads and two stores"),
+    ("stack", "large_local_array", "a stack store in a loop"),
+    ("stack", "recursive_stack_growth", "a self-call and stores"),
+    ("stack", "volatile_three_writes", "three stores"),
+];
+
 /// The image's golden text, analysing its functions in address order on one
 /// engine.
 fn golden_text(fixture: &Fixture) -> String {
@@ -168,6 +254,9 @@ fn golden_text(fixture: &Fixture) -> String {
         "# {}/{}: Strider::analyze, LiftOptions::default(), OptOptions::default()\n",
         fixture.arch.dir, fixture.case
     );
+    for (_, function, intent) in INTENT.iter().filter(|i| i.0 == fixture.case) {
+        let _ = writeln!(out, "# {function}: {intent}");
+    }
     out.push_str(shared.as_deref().unwrap_or_default());
     out.push_str(&body);
     out
@@ -204,25 +293,42 @@ fn describe_change(path: &Path, expected: &str, actual: &str) -> String {
 }
 
 /// Compares every image of `dir` with its golden, or writes it under
-/// `UPDATE_EXPECT`, and fails naming each image that changed.
+/// `UPDATE_EXPECT`, and fails naming each image that changed and each golden
+/// left with no image.
 fn check_arch(dir: &str) {
     let update = std::env::var_os("UPDATE_EXPECT").is_some();
+    let golden_dir = fixtures_root().join("golden").join(dir);
     let mut changed = Vec::new();
+    let mut cases = Vec::new();
     for fixture in Fixture::all(fixture_arch(dir)) {
-        let path = fixtures_root()
-            .join("golden")
-            .join(dir)
-            .join(format!("{}.txt", fixture.case));
+        let file = format!("{}.txt", fixture.case);
+        let shown = Path::new("fixtures/golden").join(dir).join(&file);
+        let path = golden_dir.join(&file);
         let actual = golden_text(&fixture);
-        let golden = expect_test::expect_file![path.clone()];
         if update {
-            std::fs::create_dir_all(path.parent().expect("a parent")).expect("golden dir");
-            golden.assert_eq(&actual);
+            std::fs::create_dir_all(&golden_dir).expect("golden dir");
+            expect_test::expect_file![path].assert_eq(&actual);
         } else {
-            let expected = golden.data();
+            let expected = match std::fs::read_to_string(&path) {
+                Ok(text) => text.replace("\r\n", "\n"),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+                Err(e) => panic!("{}: {e}", shown.display()),
+            };
             if expected != actual {
-                changed.push(describe_change(&path, &expected, &actual));
+                changed.push(describe_change(&shown, &expected, &actual));
             }
+        }
+        cases.push(fixture.case);
+    }
+    if golden_dir.is_dir() {
+        let is_txt = |p: &Path| p.extension().is_some_and(|e| e == "txt");
+        for stale in stems(&golden_dir, is_txt)
+            .into_iter()
+            .filter(|s| !cases.contains(s))
+        {
+            changed.push(format!(
+                "fixtures/golden/{dir}/{stale}.txt: no fixture image; delete it"
+            ));
         }
     }
     assert!(
@@ -235,13 +341,96 @@ fn check_arch(dir: &str) {
 }
 
 #[test]
+fn x86() {
+    check_arch("x86");
+}
+
+#[test]
+fn x86_kernel() {
+    check_arch("x86_kernel");
+}
+
+#[test]
 fn x64() {
     check_arch("x64");
 }
 
 #[test]
+fn aarch64() {
+    check_arch("aarch64");
+}
+
+#[test]
 fn aarch64be() {
     check_arch("aarch64be");
+}
+
+#[test]
+fn arm() {
+    check_arch("arm");
+}
+
+#[test]
+fn arm_be() {
+    check_arch("arm_be");
+}
+
+#[test]
+fn arm_be8() {
+    check_arch("arm_be8");
+}
+
+#[test]
+fn arm_thumb() {
+    check_arch("arm_thumb");
+}
+
+#[test]
+fn mips32le() {
+    check_arch("mips32le");
+}
+
+#[test]
+fn mips32be() {
+    check_arch("mips32be");
+}
+
+#[test]
+fn mips64le() {
+    check_arch("mips64le");
+}
+
+#[test]
+fn mips64be() {
+    check_arch("mips64be");
+}
+
+#[test]
+fn ppc32be() {
+    check_arch("ppc32be");
+}
+
+#[test]
+fn ppc32le() {
+    check_arch("ppc32le");
+}
+
+#[test]
+fn ppc64be() {
+    check_arch("ppc64be");
+}
+
+#[test]
+fn ppc64le() {
+    check_arch("ppc64le");
+}
+
+/// Only an arch's test writes its golden directory, so this fails until a
+/// new roster row has a test above.
+#[test]
+fn every_roster_arch_has_goldens() {
+    let golden = stems(&fixtures_root().join("golden"), Path::is_dir);
+    assert_eq!(roster_dirs(), golden, "a #[test] per FIXTURE_ARCHES row");
 }
 
 /// The stems of `dir`'s entries that pass `keep`, sorted.

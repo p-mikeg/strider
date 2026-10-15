@@ -4,8 +4,8 @@ default_cc arg_passing_regs=[RDI, RSI, RDX, RCX, R8, R9] arg_passing_regs_float=
 
 == main @0x401020
 cfg
-  0x401020 0 insns goto -> [0x401024]
-  0x401024 83 insns return -> []
+  0x401020 0 ops goto -> [0x401024]
+  0x401024 83 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9d00:8, u:0xd400:4, u:0x23f00:4, u:0x58600:8, u:0x58700:1, u:0x58800:1]
 arg 1 [%v13]
 arg 2 [%v14]
@@ -65,9 +65,9 @@ return %v59, %v87, %v88, %v62, %v63, %v64, %v65, %v66
 
 == _start @0x401070
 cfg
-  0x401070 0 insns goto -> [0x401074]
-  0x401074 56 insns goto -> [0x401095]
-  0x401095 1 insns goto -> [0x401095]
+  0x401070 0 ops goto -> [0x401074]
+  0x401074 56 ops goto -> [0x401095]
+  0x401095 1 ops goto -> [0x401095]
 tracked [RAX, RCX, RDX, RSP, RBP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x4fc00:8, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x79900:8, u:0xaa700:8]
 arg 2 [%v22]
 float_arg 0 [%v23]
@@ -118,8 +118,8 @@ unreachable %v59, %v32
 
 == _dl_relocate_static_pie @0x4010a0
 cfg
-  0x4010a0 0 insns goto -> [0x4010a4]
-  0x4010a4 3 insns return -> []
+  0x4010a0 0 ops goto -> [0x4010a4]
+  0x4010a4 3 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7]
 arg 2 [%v3]
 float_arg 0 [%v4]
@@ -136,12 +136,12 @@ return %v0, %v1, %v2, %v3, %v4, %v5, %v6, %v7
 
 == indirect_branch_resolved @0x401160
 cfg
-  0x401160 0 insns goto -> [0x401164]
-  0x401164 21 insns switch@0x401179.4 [0x401180, 0x401190] -> [0x401180, 0x401190]
-  0x401180 0 insns goto -> [0x401184]
-  0x401184 4 insns return -> []
-  0x401190 0 insns goto -> [0x401194]
-  0x401194 13 insns return -> []
+  0x401160 0 ops goto -> [0x401164]
+  0x401164 21 ops switch@0x401179.4 [0x401180, 0x401190]
+  0x401180 0 ops goto -> [0x401184]
+  0x401184 4 ops return -> []
+  0x401190 0 ops goto -> [0x401194]
+  0x401194 13 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9d00:8, u:0x9e00:8, u:0x9f00:8, u:0xa100:8, u:0xd500:8, u:0x24000:8, u:0x58600:4, u:0x58700:1, u:0x58800:1]
 arg 0 [%v11]
 arg 2 [%v23]
