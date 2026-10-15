@@ -497,10 +497,9 @@ class MemAccessPat(Protocol):
     The memory predecessor itself is `MemPat.mem`; this is the address side
     and the filters over what the address decomposes to.
 
-    `stack_offset`, `stack_only`, `non_stack` and `heap_only` are one
-    mutually-exclusive region filter: set at most one. Setting several does not
-    compose, and which survives is fixed by the builder, not by the order you
-    called them. `stack_only` does keep an offset `stack_offset` pinned.
+    `stack_offset`, `stack_only`, `non_stack` and `heap_only` set one region
+    filter, and the last one called wins, except that `stack_only` keeps an
+    offset an earlier `stack_offset` pinned.
     """
     def addr(self: _S, p: ValueLike) -> _S:
         """Constrain the address operand (`inputs[1]`)."""
