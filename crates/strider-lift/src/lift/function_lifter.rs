@@ -109,17 +109,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // `float_arg_slots` and truncates the call's float arguments there.
         // Only the overrides THIS cfg selects: a caller passes a binary-wide
         // table, and walking all of it costs the table per function.
-        let overrides: Vec<rsleigh::Vn> = override_call_targets(cfg)
-            .filter_map(|addr| per_address_ccs.get(&addr))
-            .flat_map(|o| {
-                o.arg_passing_regs
-                    .iter()
-                    .chain(o.arg_passing_regs_float.iter())
-            })
-            .copied()
-            .collect();
-        for v in overrides {
-            track(&mut all_vns, v);
+        for o in override_call_targets(cfg).filter_map(|addr| per_address_ccs.get(&addr)) {
+            lifter.check_cc(o)?;
+            for &v in o.arg_passing_regs.iter().chain(&o.arg_passing_regs_float) {
+                track(&mut all_vns, v);
+            }
         }
         // `FunctionBuilder::new` owns universe construction (seeding CC
         // registers, dropping enclosed sub-registers), so its `all_vns()` is
