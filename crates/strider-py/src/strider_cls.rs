@@ -339,25 +339,23 @@ pub(crate) fn cfg_options_from(
 /// while a seed at an address the function has no dispatch at seats nothing.
 ///
 /// A site the build CONSUMED leaves no terminator to find, so the two seated
-/// lists carry it instead, the way `Strider::analyze` reads them.
+/// lists carry it instead, the way `Strider::analyze` reads them. A site is
+/// recorded at its `BranchIndirect`, which a machine-start seed still seats.
 fn seeded_sites(opts: &strider_cfg::CfgOptions<'_>, cfg: &strider_cfg::Cfg) -> Vec<u64> {
     let consumed = cfg
         .link_register_seated()
         .iter()
-        .chain(cfg.tail_call_seated());
-    let seated: rustc_hash::FxHashSet<strider_cfg::PcodeInsnAddr> = cfg
+        .chain(cfg.tail_call_seated())
+        .copied();
+    let mut out: Vec<u64> = cfg
         .regions()
         .filter_map(|region| match &region.terminator {
             strider_cfg::RegionTerminator::Switch { addr, .. } => Some(*addr),
             _ => None,
         })
-        .chain(consumed.copied())
-        .collect();
-    let mut out: Vec<u64> = opts
-        .known_targets
-        .keys()
-        .filter(|addr| seated.contains(addr))
-        .map(|addr| addr.machine_addr.addr)
+        .chain(consumed)
+        .filter(|&site| opts.seated(site).is_some())
+        .map(|site| site.machine_addr.addr)
         .collect();
     out.sort_unstable();
     out.dedup();

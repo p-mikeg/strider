@@ -7,6 +7,8 @@ reports an unresolved branch in.
 
 from __future__ import annotations
 
+import pytest
+
 import strider
 
 _BASE = 0x1000
@@ -43,4 +45,26 @@ def test_a_seated_branch_clears_the_indirect_channel():
         _BASE, strider.cfg.CfgOptions(known_targets={_DISPATCH: "return"})
     )
     assert cfg.unverified_seeded_sites() == [_DISPATCH]
+    assert not cfg.is_complete()
+
+
+#: jmp qword [rdi*8 + 0x2000] ; ret ; ret. A memory-indirect jump's
+#: `BranchIndirect` comes after its address arithmetic, not at p-code op 0.
+_MEM_INDIRECT = bytes([0xFF, 0x24, 0xFD, 0x00, 0x20, 0x00, 0x00, 0xC3, 0xC3])
+
+
+@pytest.mark.parametrize(
+    "seed", [[0x1007, 0x1008], "return"], ids=["switch", "return"]
+)
+def test_a_seed_seated_past_p_code_op_0_is_unverified(seed):
+    """A Python seed is keyed by machine address; the build records the site
+    at its `BranchIndirect`. The two must still meet."""
+    cfg = _lifter(_MEM_INDIRECT).build_cfg(
+        _BASE, strider.cfg.CfgOptions(known_targets={_BASE: seed})
+    )
+    pcode = cfg.pcode_at(_BASE)
+    assert pcode is not None and not pcode.startswith("BranchIndirect"), (
+        "precondition: the site must not be p-code op 0"
+    )
+    assert cfg.unverified_seeded_sites() == [_BASE]
     assert not cfg.is_complete()
