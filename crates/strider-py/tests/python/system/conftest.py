@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-from ._helpers import ARCHES
+from ._helpers import ARCH_DIRS
 
 
 # Fixture binaries come from <repo>/fixtures/out (built by fixtures/Makefile).
@@ -17,6 +17,6 @@ def fixtures_dir() -> pathlib.Path:
     return FIXTURES_OUT
 
 
-@pytest.fixture(params=[a.id for a in ARCHES])
+@pytest.fixture(params=ARCH_DIRS)
 def arch_id(request) -> str:
     return request.param
