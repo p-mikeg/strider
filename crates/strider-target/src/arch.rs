@@ -308,23 +308,29 @@ impl SleighArch {
         }
     }
 
-    /// Whether any constructor in this sla `globalset`s a FLOWING context
-    /// variable at an address another instruction then decodes in.
+    /// Whether this sla commits a context value a later decode must not
+    /// believe, i.e. whether [`Self::flow_commit_vars`] has to name anything.
     ///
-    /// Only the ARM family. Verified against every language dir rsleigh
-    /// ships: x86 and AArch64 contain no `globalset` at all; MIPS commits
-    /// `ISA_MODE` only at a `jalx` CALL target, which analysis never decodes;
-    /// and PowerPC's `linkreg` IS committed to a differing value by `mtlr`
-    /// (`ppc_embedded.sinc:155`) but is itself flowing, so a region start's
-    /// pin covers it, and every constructor it selects emits p-code identical
-    /// to its `linkreg=0` twin. ARM commits `TEEMode` and the IT-block
-    /// `condit` group at `inst_next`, and `TMode` both at `inst_next` and at a
-    /// branch TARGET (`ARMinstructions.sinc:677`,
-    /// `ARMTHUMBinstructions.sinc:1544`).
+    /// Not the raw "does any constructor `globalset`" predicate, which is also
+    /// true of PowerPC. Verified against every language dir rsleigh ships:
     ///
-    /// Reported, not used: the per-instruction re-derivation is gated on
-    /// [`Self::flow_commit_vars`] being non-empty, which is the narrower
-    /// `noflow`-only set.
+    /// - x86 and AArch64 contain no `globalset` at all.
+    /// - MIPS commits `ISA_MODE` only at a `jalx` CALL target, which analysis
+    ///   never decodes; its `PAIR_INSTRUCTION_FLAG` and `ext_delay` are
+    ///   `noflow` and go to [`Self::transient_decode_vars`].
+    /// - PowerPC `linkreg` IS committed to a differing value, by `mtlr`
+    ///   (`ppc_embedded.sinc:155`) at `inst_next` and by ~45 constructors at
+    ///   `inst_start`, and it is FLOWING, so a region-start pin does NOT cover
+    ///   it: a forward paint stops at the next change point of that var, which
+    ///   is where the stale commit sits. It is excluded for one reason only,
+    ///   that every constructor a `linkreg=1` selects emits p-code identical
+    ///   to its `linkreg=0` twin, which
+    ///   `a_stale_linkreg_cannot_change_a_powerpc_lift` pins.
+    /// - ARM commits `TEEMode` and the IT-block `condit` group at `inst_next`,
+    ///   and `TMode` both at `inst_next` and at a branch TARGET
+    ///   (`ARMinstructions.sinc:677`, `ARMTHUMBinstructions.sinc:1544`).
+    ///   `TMode` is covered by [`Self::isa_mode_var`] instead, re-imposed per
+    ///   instruction rather than re-derived.
     #[must_use]
     pub fn commits_flow_context(&self) -> bool {
         matches!(
@@ -596,6 +602,12 @@ mod tests {
     /// `flow_commit_vars` acts on it, and nothing else ties them together, so
     /// a preset added to one and not the other would decode against whatever
     /// an earlier build left.
+    ///
+    /// Also that naming vars implies having an ISA-mode var, which is what
+    /// keeps `Builder::is_benign_prefix_reentry`'s throwaway decode away from
+    /// every preset whose commits are believed: that probe is gated on
+    /// `isa_mode_var` being `None`, and `Builder::enqueue` reads the engine
+    /// only where `flow_commit_vars` is non-empty, so the two are disjoint.
     #[test]
     fn a_preset_that_commits_flow_context_names_the_vars_to_re_derive() {
         for preset in ArchPreset::ALL {
@@ -604,6 +616,11 @@ mod tests {
                 arch.commits_flow_context(),
                 !arch.flow_commit_vars().is_empty(),
                 "{preset:?} reports one answer and lists the other"
+            );
+            assert!(
+                arch.flow_commit_vars().is_empty() || arch.isa_mode_var().is_some(),
+                "{preset:?} names vars to re-derive but has no ISA-mode var, so a \
+                 throwaway decode could reach an address whose commits are believed"
             );
         }
     }
