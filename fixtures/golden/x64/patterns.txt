@@ -4,8 +4,8 @@ default_cc arg_passing_regs=[RDI, RSI, RDX, RCX, R8, R9] arg_passing_regs_float=
 
 == main @0x401020
 cfg
-  0x401020 0 insns goto -> [0x401024]
-  0x401024 160 insns return -> []
+  0x401020 0 ops goto -> [0x401024]
+  0x401024 160 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9d00:8, u:0xd400:4, u:0x23f00:4, u:0x58600:8, u:0x58700:1, u:0x58800:1]
 arg 3 [%v15]
 arg 4 [%v16]
@@ -98,9 +98,9 @@ return %v166, %v194, %v195, %v169, %v170, %v171, %v172, %v173
 
 == _start @0x4010d0
 cfg
-  0x4010d0 0 insns goto -> [0x4010d4]
-  0x4010d4 56 insns goto -> [0x4010f5]
-  0x4010f5 1 insns goto -> [0x4010f5]
+  0x4010d0 0 ops goto -> [0x4010d4]
+  0x4010d4 56 ops goto -> [0x4010f5]
+  0x4010f5 1 ops goto -> [0x4010f5]
 tracked [RAX, RCX, RDX, RSP, RBP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x4fc00:8, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x79900:8, u:0xaa700:8]
 arg 2 [%v22]
 float_arg 0 [%v23]
@@ -151,8 +151,8 @@ unreachable %v59, %v32
 
 == _dl_relocate_static_pie @0x401100
 cfg
-  0x401100 0 insns goto -> [0x401104]
-  0x401104 3 insns return -> []
+  0x401100 0 ops goto -> [0x401104]
+  0x401104 3 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7]
 arg 2 [%v3]
 float_arg 0 [%v4]
@@ -169,8 +169,8 @@ return %v0, %v1, %v2, %v3, %v4, %v5, %v6, %v7
 
 == mul_then_add @0x4011c0
 cfg
-  0x4011c0 0 insns goto -> [0x4011c4]
-  0x4011c4 16 insns return -> []
+  0x4011c0 0 ops goto -> [0x4011c4]
+  0x4011c4 16 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9300:8, u:0x9500:8, u:0x5a500:8, u:0x96400:8, u:0x96500:8, u:0x96700:8, u:0x96a00:4]
 arg 0 [%v2]
 arg 1 [%v4]
@@ -197,8 +197,8 @@ return %v0, %v1, %v11, %v8, %v12, %v13, %v14, %v15
 
 == chained_xor_mask @0x4011d0
 cfg
-  0x4011d0 0 insns goto -> [0x4011d4]
-  0x4011d4 25 insns return -> []
+  0x4011d0 0 ops goto -> [0x4011d4]
+  0x4011d4 25 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x58600:4, u:0x58700:1, u:0x58800:1]
 arg 0 [%v2]
 arg 2 [%v9]
@@ -222,10 +222,10 @@ return %v0, %v1, %v8, %v9, %v10, %v11, %v12, %v13
 
 == if_returns_const @0x4011f0
 cfg
-  0x4011f0 0 insns goto -> [0x4011f4]
-  0x4011f4 18 insns cbranch 0x401203 -> [0x401200.7, 0x401203]
-  0x401200.7 1 insns goto -> [0x401203]
-  0x401203 3 insns return -> []
+  0x4011f0 0 ops goto -> [0x4011f4]
+  0x4011f4 18 ops cbranch 0x401203 -> [0x401200.7, 0x401203]
+  0x401200.7 1 ops goto -> [0x401203]
+  0x401203 3 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x26300:1, u:0x26400:1, u:0x26600:1, u:0x58600:4, u:0x58700:1, u:0x58800:1, u:0x7b900:4, u:0x7ba00:1, u:0xe0600:4]
 arg 0 [%v2]
 float_arg 0 [%v13]
@@ -250,13 +250,13 @@ return %v8, %v11, %v10, %v12, %v13, %v14, %v15, %v16
 
 == loop_with_invariant_load @0x401210
 cfg
-  0x401210 0 insns goto -> [0x401214]
-  0x401214 12 insns cbranch 0x401238 -> [0x401218, 0x401238]
-  0x401218 20 insns goto -> [0x40121d]
-  0x40121d 0 insns goto -> [0x401220]
-  0x401220 45 insns cbranch 0x401220 -> [0x401220, 0x40122e]
-  0x40122e 5 insns return -> []
-  0x401238 15 insns return -> []
+  0x401210 0 ops goto -> [0x401214]
+  0x401214 12 ops cbranch 0x401238 -> [0x401218, 0x401238]
+  0x401218 20 ops goto -> [0x40121d]
+  0x40121d 0 ops goto -> [0x401220]
+  0x401220 45 ops cbranch 0x401220 -> [0x401220, 0x40122e]
+  0x40122e 5 ops return -> []
+  0x401238 15 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x23f00:4, u:0x25200:1, u:0x26000:1, u:0x26200:1, u:0x58600:4, u:0x58700:1, u:0x58800:1, u:0x7e000:4, u:0x7e200:4, u:0xe0600:4]
 arg 0 [%v21]
 arg 1 [%v2]
@@ -298,10 +298,10 @@ return %v6, %v19, %v7, %v31, %v27, %v28, %v29, %v30
 
 == recursive_with_accumulator @0x401240
 cfg
-  0x401240 0 insns goto -> [0x401244]
-  0x401244 14 insns cbranch 0x401260 -> [0x40124a, 0x401260]
-  0x40124a 38 insns return -> []
-  0x401260 3 insns return -> []
+  0x401240 0 ops goto -> [0x401244]
+  0x401244 14 ops cbranch 0x401260 -> [0x40124a, 0x401260]
+  0x40124a 38 ops return -> []
+  0x401260 3 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9300:8, u:0x9500:8, u:0x26000:1, u:0x26200:1, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0xe0600:4]
 arg 0 [%v2]
 arg 1 [%v17]

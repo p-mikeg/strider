@@ -4,7 +4,7 @@ default_cc arg_passing_regs=[RDI, RSI, RDX, RCX, R8, R9] arg_passing_regs_float=
 
 == dispatch_unmasked.cold @0x401020
 cfg
-  0x401020 13 insns return -> []
+  0x401020 13 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x58600:4, u:0x58700:1, u:0x58800:1]
 arg 2 [%v3]
 float_arg 0 [%v4]
@@ -21,7 +21,7 @@ return %v0, %v1, %v2, %v3, %v4, %v5, %v6, %v7
 
 == dispatch_offset.cold @0x401024
 cfg
-  0x401024 13 insns return -> []
+  0x401024 13 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x58600:4, u:0x58700:1, u:0x58800:1]
 arg 2 [%v3]
 float_arg 0 [%v4]
@@ -38,8 +38,8 @@ return %v0, %v1, %v2, %v3, %v4, %v5, %v6, %v7
 
 == main @0x401030
 cfg
-  0x401030 0 insns goto -> [0x401034]
-  0x401034 316 insns return -> []
+  0x401030 0 ops goto -> [0x401034]
+  0x401034 316 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9d00:8, u:0xd400:4, u:0x23f00:4, u:0x58600:4, u:0x58700:1, u:0x58800:1]
 arg 2 [%v44]
 float_arg 0 [%v45]
@@ -97,9 +97,9 @@ return %v0, %v42, %v43, %v44, %v45, %v46, %v47, %v48
 
 == _start @0x401110
 cfg
-  0x401110 0 insns goto -> [0x401114]
-  0x401114 56 insns goto -> [0x401135]
-  0x401135 1 insns goto -> [0x401135]
+  0x401110 0 ops goto -> [0x401114]
+  0x401114 56 ops goto -> [0x401135]
+  0x401135 1 ops goto -> [0x401135]
 tracked [RAX, RCX, RDX, RSP, RBP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x4fc00:8, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x79900:8, u:0xaa700:8]
 arg 2 [%v22]
 float_arg 0 [%v23]
@@ -150,8 +150,8 @@ unreachable %v59, %v32
 
 == _dl_relocate_static_pie @0x401140
 cfg
-  0x401140 0 insns goto -> [0x401144]
-  0x401144 3 insns return -> []
+  0x401140 0 ops goto -> [0x401144]
+  0x401144 3 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7]
 arg 2 [%v3]
 float_arg 0 [%v4]
@@ -168,18 +168,18 @@ return %v0, %v1, %v2, %v3, %v4, %v5, %v6, %v7
 
 == dispatch_unmasked @0x401200
 cfg
-  0x401020 0 insns tailcall 0x401020 -> []
-  0x401200 0 insns goto -> [0x401204]
-  0x401204 13 insns cbranch 0x401020 -> [0x401020, 0x40120d]
-  0x40120d 6 insns switch@0x40120f.3 [0x401220, 0x401228, 0x401230, 0x401238, 0x401240, 0x401248, 0x401250, 0x401258] -> [0x401220, 0x401228, 0x401230, 0x401238, 0x401240, 0x401248, 0x401250, 0x401258]
-  0x401220 6 insns return -> []
-  0x401228 6 insns return -> []
-  0x401230 6 insns return -> []
-  0x401238 6 insns return -> []
-  0x401240 6 insns return -> []
-  0x401248 6 insns return -> []
-  0x401250 6 insns return -> []
-  0x401258 6 insns return -> []
+  0x401020 0 ops tailcall 0x401020 -> []
+  0x401200 0 ops goto -> [0x401204]
+  0x401204 13 ops cbranch 0x401020 -> [0x401020, 0x40120d]
+  0x40120d 6 ops switch@0x40120f.3 [0x401220, 0x401228, 0x401230, 0x401238, 0x401240, 0x401248, 0x401250, 0x401258]
+  0x401220 6 ops return -> []
+  0x401228 6 ops return -> []
+  0x401230 6 ops return -> []
+  0x401238 6 ops return -> []
+  0x401240 6 ops return -> []
+  0x401248 6 ops return -> []
+  0x401250 6 ops return -> []
+  0x401258 6 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x8f00:8, u:0x9600:8, u:0x9800:8, u:0x24000:8, u:0x25500:1, u:0x25700:1, u:0x58600:4, u:0x58700:1, u:0x58800:1, u:0x7d400:4, u:0x7d600:4]
 arg 0 [%v2]
 arg 1 [%v10]
@@ -270,18 +270,18 @@ return %v61, %v7, %v94, %v11, %v15, %v16, %v66, %v67
 
 == dispatch_offset @0x401260
 cfg
-  0x401024 0 insns tailcall 0x401024 -> []
-  0x401260 0 insns goto -> [0x401264]
-  0x401264 23 insns cbranch 0x401024 -> [0x401024, 0x401270]
-  0x401270 4 insns switch@0x401270.3 [0x401280, 0x401288, 0x401290, 0x401298, 0x4012a0, 0x4012a8, 0x4012b0, 0x4012b8] -> [0x401280, 0x401288, 0x401290, 0x401298, 0x4012a0, 0x4012a8, 0x4012b0, 0x4012b8]
-  0x401280 6 insns return -> []
-  0x401288 6 insns return -> []
-  0x401290 6 insns return -> []
-  0x401298 6 insns return -> []
-  0x4012a0 6 insns return -> []
-  0x4012a8 6 insns return -> []
-  0x4012b0 6 insns return -> []
-  0x4012b8 6 insns return -> []
+  0x401024 0 ops tailcall 0x401024 -> []
+  0x401260 0 ops goto -> [0x401264]
+  0x401264 23 ops cbranch 0x401024 -> [0x401024, 0x401270]
+  0x401270 4 ops switch@0x401270.3 [0x401280, 0x401288, 0x401290, 0x401298, 0x4012a0, 0x4012a8, 0x4012b0, 0x4012b8]
+  0x401280 6 ops return -> []
+  0x401288 6 ops return -> []
+  0x401290 6 ops return -> []
+  0x401298 6 ops return -> []
+  0x4012a0 6 ops return -> []
+  0x4012a8 6 ops return -> []
+  0x4012b0 6 ops return -> []
+  0x4012b8 6 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x8f00:8, u:0x9600:8, u:0x9800:8, u:0x24000:8, u:0x25500:1, u:0x25700:1, u:0x58600:4, u:0x58700:1, u:0x58800:1, u:0x7d400:4, u:0x7d600:4]
 arg 0 [%v2]
 arg 1 [%v13]
