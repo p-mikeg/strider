@@ -1,7 +1,7 @@
 import pytest
 
 import strider
-from strider.pattern import Capture, var, int_add, int_const, int_mul
+from strider.pattern import Capture, anything, var, int_add, int_const, int_mul, int_shl
 from strider import template as tpl
 
 from .conftest import built_function, built_lifter_and_function
@@ -115,3 +115,44 @@ def test_nested_template_string_operand_names_what_was_passed():
             find=int_add(var(x), int_const(0)),
             replace=tpl.int_add("x", 1),  # type: ignore[arg-type]
         )
+
+
+def _x_times_4():
+    """`array_sum` scales its index by 4 at three sites."""
+    g = _build_graph()
+    x = Capture()
+    assert len(g.find_all(int_mul(var(x), int_const(4)))) == 3
+    return g, x
+
+
+def test_capture_over_a_composite_rhs_raises():
+    """On a RHS a capture stands for the value it matched, so it would replace
+    the composite it wraps: every `x*4` became a plain `x`."""
+    g, x = _x_times_4()
+    with pytest.raises(strider.StriderError, match="capture"):
+        g.rewrite(
+            find=int_mul(var(x), int_const(4)),
+            replace=int_shl(var(x), int_const(2)).capture(x),
+        )
+    with pytest.raises(strider.StriderError, match="capture"):
+        g.rewrite(
+            find=int_mul(var(x), int_const(4)),
+            replace=tpl.int_add(
+                int_shl(var(x), int_const(2)).capture(x), tpl.int_const(0)
+            ),
+        )
+    assert len(g.find_all(int_mul(var(x), int_const(4)))) == 3
+
+
+def test_capture_over_a_var_rhs_is_the_captured_value():
+    g, x = _x_times_4()
+    assert g.rewrite(find=int_mul(var(x), int_const(4)), replace=var(x).capture(x)) == 3
+    assert g.find_all(int_mul(var(x), int_const(4))) == []
+
+
+def test_capture_over_anything_rhs_is_the_captured_value():
+    """`anything()` has no operands to drop, so `anything().capture(x)` is
+    `var(x)`."""
+    g, x = _x_times_4()
+    assert g.rewrite(find=int_mul(var(x), int_const(4)), replace=anything().capture(x)) == 3
+    assert g.find_all(int_mul(var(x), int_const(4))) == []
