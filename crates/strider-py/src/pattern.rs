@@ -1369,16 +1369,17 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
         PatRepr::BoolNot(x) => t_un!(tpl::bool_not, x),
         PatRepr::Captured(inner, c) => {
             // On a RHS a capture stands for the matched LHS value and replaces
-            // what it wraps, so only an operand-less leaf may be wrapped.
+            // what it wraps, so only a `var()` / `anything()` leaf, which builds
+            // nothing itself, may be wrapped.
             let leaf = inner
                 .bind(py)
                 .downcast::<PyPat>()
                 .is_ok_and(|p| matches!(&*p.borrow().repr, PatRepr::Var(_) | PatRepr::Any));
             if !leaf {
                 return Err(into_strider_err(anyhow::anyhow!(
-                    "cannot use .capture() over a composite as a rewrite RHS: a RHS \
-                     capture stands for the value it matched and would replace the \
-                     composite; capture a var() instead"
+                    "cannot use .capture() over anything but var() / anything() as a \
+                     rewrite RHS: a RHS capture stands for the value it matched and \
+                     would replace what it wraps; capture a var() instead"
                 )));
             }
             let c = *c;
