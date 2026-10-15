@@ -90,13 +90,23 @@ enum Verdict {
 /// What was left unchecked across the functions compared.
 #[derive(Default)]
 struct Unchecked {
-    /// Environments whose raw run passed the step budget.
+    /// Environments whose raw run diverged.
     diverged: usize,
     /// Raw return slots and call arguments the interpreter could not produce.
     slots: usize,
 }
 
-/// Runs `raw` and `opt` in every environment of [`ENVS`].
+/// How much one environment's comparison looked at.
+#[derive(Default)]
+struct Coverage {
+    /// Known raw slots, calls and written bytes that matched.
+    checked: usize,
+    /// Raw slots the interpreter could not produce.
+    unchecked: usize,
+}
+
+/// Runs `raw` and `opt` in every environment of [`ENVS`]. An environment
+/// counts only when it checked something and left no raw slot unchecked.
 fn compare(
     raw: &Function,
     opt: &Function,
@@ -112,7 +122,7 @@ fn compare(
         let want = match interp::run(raw, &env) {
             Ok(Outcome::Diverge) => {
                 unchecked.diverged += 1;
-                "the raw run passed the step budget".clone_into(&mut skipped);
+                skipped = "the raw run diverged".to_owned();
                 continue;
             }
             Ok(outcome) => outcome,
@@ -128,11 +138,21 @@ fn compare(
             Ok(outcome) => outcome,
             Err(why) => return Verdict::Failed(format!("ran raw but not optimised: {}", why.0)),
         };
-        match agree(&want, &got) {
-            Ok(slots) => unchecked.slots += slots,
+        let coverage = match agree(&want, &got) {
+            Ok(coverage) => coverage,
             Err(e) => return Verdict::Failed(format!("environment {seed}: {e}")),
+        };
+        unchecked.slots += coverage.unchecked;
+        if coverage.unchecked > 0 {
+            skipped = format!(
+                "{} raw slots the interpreter cannot produce",
+                coverage.unchecked
+            );
+        } else if coverage.checked == 0 {
+            skipped = "nothing to check".to_owned();
+        } else {
+            compared = true;
         }
-        compared = true;
     }
     if compared {
         Verdict::Compared
@@ -141,11 +161,11 @@ fn compare(
     }
 }
 
-/// `Err` when the optimised run differs from the raw one, else how many raw
-/// slots the interpreter could not produce and so went unchecked. The
-/// optimiser may refine an undefined raw value, and may append stack
-/// arguments to a call.
-fn agree(raw: &Outcome, opt: &Outcome) -> Result<usize, String> {
+/// `Err` when the optimised run differs from the raw one, else what the
+/// comparison covered. The optimiser may refine an undefined raw value, and
+/// may append stack arguments to a call.
+fn agree(raw: &Outcome, opt: &Outcome) -> Result<Coverage, String> {
+    let mut coverage = Coverage::default();
     match (raw, opt) {
         (
             Outcome::Return {
@@ -166,10 +186,9 @@ fn agree(raw: &Outcome, opt: &Outcome) -> Result<usize, String> {
                     opt_values.len()
                 ));
             }
-            let unchecked = calls_agree(raw_calls, opt_calls)?
-                + slots_agree("return slot", raw_values, opt_values)?;
-            writes_agree("at the return", raw_writes, opt_writes)?;
-            Ok(unchecked)
+            calls_agree(raw_calls, opt_calls, &mut coverage)?;
+            slots_agree("return slot", raw_values, opt_values, &mut coverage)?;
+            writes_agree("at the return", raw_writes, opt_writes, &mut coverage)?;
         }
         (
             Outcome::Unreachable {
@@ -181,41 +200,50 @@ fn agree(raw: &Outcome, opt: &Outcome) -> Result<usize, String> {
                 calls: opt_calls,
             },
         ) => {
-            let unchecked = calls_agree(raw_calls, opt_calls)?;
-            writes_agree("at the trap", raw_writes, opt_writes)?;
-            Ok(unchecked)
+            calls_agree(raw_calls, opt_calls, &mut coverage)?;
+            writes_agree("at the trap", raw_writes, opt_writes, &mut coverage)?;
         }
-        _ => Err(format!(
-            "raw ended {}, optimised {}",
-            ending(raw),
-            ending(opt)
-        )),
+        _ => {
+            return Err(format!(
+                "raw ended {}, optimised {}",
+                ending(raw),
+                ending(opt)
+            ));
+        }
     }
+    Ok(coverage)
 }
 
 fn ending(outcome: &Outcome) -> &'static str {
     match outcome {
         Outcome::Return { .. } => "in a return",
         Outcome::Unreachable { .. } => "in a trap",
-        Outcome::Diverge => "past the step budget",
+        Outcome::Diverge => "by diverging",
     }
 }
 
-/// Pairs each raw slot with the optimised one at its index; the count of raw
-/// slots that checked nothing.
-fn slots_agree(what: &str, raw: &[Slot], opt: &[Slot]) -> Result<usize, String> {
-    let mut unchecked = 0;
+/// Pairs each raw slot with the optimised one at its index.
+fn slots_agree(
+    what: &str,
+    raw: &[Slot],
+    opt: &[Slot],
+    coverage: &mut Coverage,
+) -> Result<(), String> {
     for (i, (r, o)) in raw.iter().zip(opt).enumerate() {
         match r.admits(o) {
-            Some(true) => {}
+            Some(true) => coverage.checked += usize::from(matches!(r, Slot::Known(_))),
             Some(false) => return Err(format!("{what} {i}: {r:x?} raw vs {o:x?} optimised")),
-            None => unchecked += 1,
+            None => coverage.unchecked += 1,
         }
     }
-    Ok(unchecked)
+    Ok(())
 }
 
-fn calls_agree(raw: &[CallRecord], opt: &[CallRecord]) -> Result<usize, String> {
+fn calls_agree(
+    raw: &[CallRecord],
+    opt: &[CallRecord],
+    coverage: &mut Coverage,
+) -> Result<(), String> {
     if raw.len() != opt.len() {
         return Err(format!(
             "{} calls raw vs {} optimised",
@@ -223,7 +251,6 @@ fn calls_agree(raw: &[CallRecord], opt: &[CallRecord]) -> Result<usize, String> 
             opt.len()
         ));
     }
-    let mut unchecked = 0;
     for (k, (r, o)) in raw.iter().zip(opt).enumerate() {
         if r.target != o.target {
             return Err(format!(
@@ -238,18 +265,24 @@ fn calls_agree(raw: &[CallRecord], opt: &[CallRecord]) -> Result<usize, String> 
                 o.args.len()
             ));
         }
-        unchecked += slots_agree(&format!("call {k} argument"), &r.args, &o.args)?;
-        writes_agree(&format!("at call {k}"), &r.writes, &o.writes)?;
+        coverage.checked += 1;
+        slots_agree(&format!("call {k} argument"), &r.args, &o.args, coverage)?;
+        writes_agree(&format!("at call {k}"), &r.writes, &o.writes, coverage)?;
     }
-    Ok(unchecked)
+    Ok(())
 }
 
-fn writes_agree(at: &str, raw: &BTreeMap<u64, u8>, opt: &BTreeMap<u64, u8>) -> Result<(), String> {
-    if raw == opt {
-        Ok(())
-    } else {
-        Err(format!("memory {at}: {raw:x?} raw vs {opt:x?} optimised"))
+fn writes_agree(
+    at: &str,
+    raw: &BTreeMap<u64, u8>,
+    opt: &BTreeMap<u64, u8>,
+    coverage: &mut Coverage,
+) -> Result<(), String> {
+    if raw != opt {
+        return Err(format!("memory {at}: {raw:x?} raw vs {opt:x?} optimised"));
     }
+    coverage.checked += raw.len();
+    Ok(())
 }
 
 /// The arches the named-function tests run on.
@@ -291,9 +324,14 @@ fn sweep_named_here(cases: &[(&str, &[&str])], floor: usize) {
     assert!(
         compared >= floor,
         "only {compared} functions were actually run, expected at least {floor} \
-         ({} environments passed the step budget, {} raw slots unchecked); skipped:\n{}",
+         ({} environments diverged); skipped:\n{}",
         unchecked.diverged,
+        skipped.join("\n")
+    );
+    assert_eq!(
         unchecked.slots,
+        0,
+        "raw slots the interpreter cannot produce; skipped:\n{}",
         skipped.join("\n")
     );
 }
@@ -351,13 +389,7 @@ fn the_comparison_can_tell_two_functions_apart() {
         let (sub, _, _) = lift_for_pipeline(Arch::X64, "arithmetic", "sub");
         let mut sub = sub.function;
         common::optimize(&mut sub, &rom).expect("the pipeline runs");
-        let stack_vn = add.function.default_cc().stack_vn;
-        let entry = |e: EntryVar| entry_value(e, stack_vn, 3, false);
-        let env = environment(&entry, &rom, 3);
-        let returns = |f: &Function| match interp::run(f, &env) {
-            Ok(Outcome::Return { values, .. }) => values,
-            other => panic!("ended {other:?}"),
-        };
-        assert_ne!(returns(&add.function), returns(&sub));
+        let verdict = compare(&add.function, &sub, &rom, &mut Unchecked::default());
+        assert!(matches!(verdict, Verdict::Failed(_)), "add and sub agreed");
     });
 }
