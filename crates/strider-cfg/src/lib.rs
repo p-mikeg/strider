@@ -103,6 +103,16 @@ impl Cfg {
 
     /// Addresses two edges reached carrying different ISA modes. One region
     /// owns the bytes, so the losing edge's path decodes in the other's mode.
+    /// Deduped by p-code address, so an address clashing on several edges
+    /// appears once per p-code index (`note_isa_mode_clash` can report a
+    /// mid-instruction index).
+    ///
+    /// The ISA MODE only. Two edges can also disagree on a non-mode committed
+    /// var (an edge into the middle of an ARM IT block agrees on the mode and
+    /// disagrees on `condit`), and that is NOT reported: the first
+    /// arrival to decode owns the bytes and the loser's path takes its
+    /// stream. ARM calls a branch into an IT block UNPREDICTABLE, so compiler
+    /// output does not produce it, but hand-written or obfuscated Thumb can.
     ///
     /// An edge the entry reaches without any seeded arm is decoded before
     /// every arm, so it wins over one, whose arm is then dropped

@@ -63,7 +63,11 @@ fn a_dropped_arm_region_is_removed_and_the_function_lifts() {
             .iter()
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),
-        vec![0x100c, ARM],
+        // Sorted and deduped by the builder: the channel is a SET of
+        // addresses, and one clashing on several edges appeared once per
+        // arrival. Work-queue order is the thing this channel exposes, so it
+        // must not also decide how the report reads.
+        vec![ARM, 0x100c],
         "the shape under test: the Thumb arm ran into ARM code and the ARM arm clashed with it",
     );
     let reachable = petgraph::visit::Walker::iter(

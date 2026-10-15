@@ -133,12 +133,29 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// target decodes in ([`Self::enqueue_resolved`]).  Empty unless
     /// [`Self::with_flow_context`] supplies it.
     pub(super) function_mode: FlowContext,
-    /// `inst_next` of every instruction THIS build decoded: the only addresses
-    /// at which a `globalset` in the code under construction can have
-    /// committed flowing context.  A snapshot anywhere else answers with
-    /// whatever a PREVIOUS `build_cfg` on this engine left behind, so
-    /// [`Self::enqueue`] reads the engine only here.
+    /// `inst_next` of every instruction THIS build decoded.
+    ///
+    /// Not "every address this build committed at": nothing here checks
+    /// whether the instruction committed anything, and a constructor can
+    /// commit at an address that is not its own `inst_next` (ARM `blx #imm`
+    /// commits `TMode` at the branch TARGET). What makes a snapshot here
+    /// trustworthy is that `RegionBuilder` re-derives the context at each
+    /// `inst_next` from the decode that recorded it, so the value the engine
+    /// holds there is this build's whatever an earlier one left. Anywhere else
+    /// [`Self::enqueue`] falls back to `function_mode`.
+    ///
+    /// That decode is not always one the build KEEPS: a fall-through onto an
+    /// existing region start, and an instruction `lift_code` then rejects as
+    /// `data_ranges`, both record their `inst_next` before being discarded. The
+    /// re-derivation still ran, so the value is some decode of this build's own
+    /// bytes rather than a stale one, but it is not necessarily the context the
+    /// owning region decodes `addr` in.
     pub(super) committed_next: rustc_hash::FxHashSet<u64>,
+    /// Each var in `SleighArch::flow_commit_vars` with its flow class and its
+    /// pspec default, so a value an EARLIER build committed can be erased
+    /// before this build's own decode re-derives it; see
+    /// [`Self::with_flow_commit_defaults`].
+    pub(super) flow_commit_defaults: &'a [(&'static str, strider_target::FlowCommit, u32)],
     /// The pspec default of each `noflow` var that changes a decode; see
     /// [`Self::with_transient_defaults`].
     pub(super) transient_defaults: &'a [(&'static str, u32)],
@@ -226,6 +243,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             flow_vars: &NO_FLOW_VARS,
             function_mode: FlowContext::default(),
             transient_defaults: &[],
+            flow_commit_defaults: &[],
             descent: None,
         }
     }
@@ -268,6 +286,18 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     #[must_use]
     pub fn with_transient_defaults(mut self, defaults: &'a [(&'static str, u32)]) -> Self {
         self.transient_defaults = defaults;
+        self
+    }
+
+    /// Lends the pspec defaults of `SleighArch::flow_commit_vars`. Fetching
+    /// them costs one context read per var per engine, so the lift engine
+    /// reads them once and lends them to every build.
+    #[must_use]
+    pub fn with_flow_commit_defaults(
+        mut self,
+        defaults: &'a [(&'static str, strider_target::FlowCommit, u32)],
+    ) -> Self {
+        self.flow_commit_defaults = defaults;
         self
     }
 
@@ -318,6 +348,14 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // the forward paint stops at the next commit of the same var. Off the
         // flowed path the baseline is the function's own entry context, which
         // is what `enqueue_resolved` uses.
+        // Trustworthy only where this build re-derived the context:
+        // `RegionBuilder::rederive_flow` erases each committed var at an
+        // `inst_next` to its pspec default and re-lifts the owning
+        // instruction, so what sits there is this build's commit whatever an
+        // earlier build left. At a branch target that is no decoded
+        // instruction's `inst_next` the engine may still hold an
+        // earlier `globalset`, and the honest answer is the function's own
+        // baseline.
         let mut carried = if self.committed_next.contains(&addr.machine_addr.addr) {
             self.flow_vars.snapshot(self.sleigh, addr.machine_addr.addr)
         } else {
@@ -1059,6 +1097,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             &mut self.interior_branch_targets,
             &mut self.unmapped_branch_targets,
             &mut self.undecodable_branch_targets,
+            // One address can clash on several edges; a consumer wants the set
+            // of addresses, not one entry per arrival.
+            &mut self.isa_mode_conflicts,
         ] {
             report.sort_unstable();
             report.dedup();

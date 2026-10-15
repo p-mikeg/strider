@@ -2,13 +2,19 @@
 //! fact.
 //!
 //! A sla marks some context variables as *flowing*: the ISA mode (ARM
-//! `TMode`; on PowerPC the committed one is `linkreg`, not `vle`) plus
-//! per-instruction decode internals (condition eval, IT-block
+//! `TMode`) plus per-instruction decode internals (condition eval, IT-block
 //! state, register-list iteration, x86 operand/address size) Sleigh flows
-//! along straight-line code. x86 declares dozens of them flowing but no
-//! constructor commits one (no `globalset`), so snapshotting and pinning there
-//! only read; only the mode-bit helpers are ARM/MIPS-specific, and nothing
-//! wires them to ppc `vle`.
+//! along straight-line code. Only some are ever `globalset`, and a committed
+//! value is a per-address fact this build must re-derive rather than read:
+//! `SleighArch::flow_commit_vars` names them, with the flow class that decides
+//! what each is erased to, and `RegionBuilder::rederive_flow` does the
+//! deriving. A pin cannot stand in for that on a FLOWING var: a forward paint
+//! stops at the next change point of that var, which is where an earlier
+//! build's commit sits. x86 declares dozens
+//! flowing but commits none, so snapshotting and pinning there only read;
+//! PowerPC's `linkreg` IS committed to a differing value by `mtlr`, but every
+//! constructor it selects emits the same p-code as its `linkreg=0` twin, so a
+//! stale value cannot change the lift.
 //!
 //! Like GHIDRA's `ContextDatabase`, the context is a value committed per
 //! address. Pin a cold entry back to the pspec defaults (undo a prior
