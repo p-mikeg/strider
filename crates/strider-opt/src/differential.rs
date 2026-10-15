@@ -958,7 +958,7 @@ fn the_pipeline_preserves_dag_semantics() {
     let n: u64 = std::env::var("FUZZ_N")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(300);
+        .unwrap_or(DEFAULT_FUZZ_SEEDS);
     let start: u64 = std::env::var("FUZZ_START")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -993,12 +993,9 @@ fn the_pipeline_preserves_dag_semantics() {
             break;
         }
     }
-    // A floor on the yield: a generator change or an early `?` that stops
-    // producing comparable return values fails here rather than reading green.
-    assert!(
-        compared >= n as usize * 450,
-        "only {compared} value comparisons over {n} seeds"
-    );
+    // Reported BEFORE the yield floors: three real failures drive the
+    // counters far below them, so asserting a floor first would report a
+    // miscompile as a yield message and discard its BEFORE/AFTER dumps.
     if !failures.is_empty() {
         panic!(
             "{} failures:\n{}",
@@ -1006,6 +1003,12 @@ fn the_pipeline_preserves_dag_semantics() {
             failures.join("\n=====\n")
         );
     }
+    // A floor on the yield: a generator change or an early `?` that stops
+    // producing comparable return values fails here rather than reading green.
+    assert!(
+        compared >= n as usize * 450,
+        "only {compared} value comparisons over {n} seeds"
+    );
 }
 
 // CFG-level differential fuzzer.
@@ -1266,7 +1269,7 @@ fn the_pipeline_preserves_cfg_semantics() {
     let n: u64 = std::env::var("FUZZ_N")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(300);
+        .unwrap_or(DEFAULT_FUZZ_SEEDS);
     let start: u64 = std::env::var("FUZZ_START")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -1316,10 +1319,16 @@ fn the_pipeline_preserves_cfg_semantics() {
                         // Folding a non-terminating loop into a `Return` is a
                         // miscompile, and the one `DeadBranchElimination`'s
                         // exit-free-cycle guard and `LoadForward`'s back-edge
-                        // handling exist to prevent.  `Unreachable` is the
-                        // other honest answer: an exit-free cycle anchors one.
+                        // handling exist to prevent.  `Unreachable` is not an
+                        // honest second answer: no pass here CONSTRUCTS one.
+                        // `Diverge` also covers budget exhaustion, so a long
+                        // but terminating run can reach a real sink once
+                        // folded. The same truncation already produced `Ret`,
+                        // which this arm already rejected, so accepting
+                        // `Unreachable` closed nothing and hid a rerouted
+                        // sink.
                         Outcome::Diverge => {
-                            if !matches!(got, Outcome::Diverge | Outcome::Unreachable) {
+                            if !matches!(got, Outcome::Diverge) {
                                 return Err(format!(
                                     "seed {seed}: a non-terminating run became \
                                      {got:?}\n{before_text}\nAFTER:\n{}",
@@ -1344,6 +1353,16 @@ fn the_pipeline_preserves_cfg_semantics() {
             break;
         }
     }
+    // Reported BEFORE the yield floors: three real failures drive the
+    // counters far below them, so asserting a floor first would report a
+    // miscompile as a yield message and discard its BEFORE/AFTER dumps.
+    if !failures.is_empty() {
+        panic!(
+            "{} failures:\n{}",
+            failures.len(),
+            failures.join("\n=====\n")
+        );
+    }
     // Floors on the yield. `build_random_cfg` bails for most seeds, so a
     // change that drops it to none must not read as a pass.
     assert!(
@@ -1354,13 +1373,6 @@ fn the_pipeline_preserves_cfg_semantics() {
         compared >= built * 4,
         "{built} CFGs yielded only {compared} returning runs"
     );
-    if !failures.is_empty() {
-        panic!(
-            "{} failures:\n{}",
-            failures.len(),
-            failures.join("\n=====\n")
-        );
-    }
 }
 
 // Targeted proofs.
@@ -1417,6 +1429,10 @@ fn a_wide_constant_does_not_ping_pong_across_const_on_right() {
     }
 }
 
+/// Seeds this test sweeps unless `FUZZ_N` overrides it, and the threshold the
+/// population floors below are asserted at.
+const DEFAULT_FUZZ_SEEDS: u64 = 300;
+
 /// Every `If` compare operand and every returned value of a random CFG lies
 /// inside the interval `RangeMap::range_of` claims for it, stride included.
 #[test]
@@ -1424,7 +1440,7 @@ fn a_range_contains_every_runtime_value() {
     let n: u64 = std::env::var("FUZZ_N")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(300);
+        .unwrap_or(DEFAULT_FUZZ_SEEDS);
     let start: u64 = std::env::var("FUZZ_START")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -1479,6 +1495,24 @@ fn a_range_contains_every_runtime_value() {
             break;
         }
     }
-    eprintln!("checks {checks} nontop {nontop}");
     assert!(failures.is_empty(), "{}", failures.join("\n=====\n"));
+    // Printed so the floor below can be re-baselined without editing this.
+    eprintln!("checks {checks} nontop {nontop}");
+    // `Interval::top` satisfies the soundness check for every value, so a
+    // `range_of` that answered `top` everywhere passed while proving nothing.
+    // Measured at the committed seed count: checks ~3.68M, nontop ~1.85M, so
+    // the ratio floor sits at half the measured margin.
+    //
+    // Population statistics, asserted only over the full seed range: a single
+    // CFG can legitimately check nothing, or have every range come out `top`
+    // (seed 5 does), and a narrowed `FUZZ_N` is how a real failure is
+    // bisected. Failing that run on an unrelated floor would read as a
+    // product defect.
+    if n >= DEFAULT_FUZZ_SEEDS {
+        assert!(checks > 0, "the range oracle compared nothing");
+        assert!(
+            nontop * 4 >= checks,
+            "only {nontop} of {checks} ranges were narrower than top"
+        );
+    }
 }
