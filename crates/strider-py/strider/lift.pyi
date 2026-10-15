@@ -140,7 +140,7 @@ class LifterOptions:
         cfg: Optional[CfgOptions] = ...,
         assumptions: Optional[AssumptionOptions] = ...,
         compact: bool = ...,
-        per_address_ccs: Optional[dict[int, CallingConvention]] = ...,
+        per_address_ccs: Optional[Mapping[int, CallingConvention]] = ...,
         resolve_indirect_branches: bool = ...,
         pipeline: Optional[OptimizerPipeline] = ...,
     ) -> None:

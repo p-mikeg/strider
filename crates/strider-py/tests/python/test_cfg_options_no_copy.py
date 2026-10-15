@@ -29,14 +29,18 @@ def _seeded():
     return prog, _opts(_ENTRIES)
 
 
-def _median_analyze_ms(prog, target, opts) -> float:
+def _fastest_analyze_ms(prog, target, opts) -> float:
+    """The FASTEST of `_RUNS`, not the median. An analyse here costs about as
+    much as the margins below allow, so a median taken while the rest of the
+    suite runs fails on load rather than on an O(table) cost. Scheduling can
+    only inflate a sample, so the floor still rises if the table is copied per
+    call."""
     times = []
     for _ in range(_RUNS):
         t = time.perf_counter()
         prog.analyze(target, opts=opts)
         times.append((time.perf_counter() - t) * 1000.0)
-    times.sort()
-    return times[len(times) // 2]
+    return min(times)
 
 
 def test_analyzing_by_symbol_does_not_copy_the_seeded_tables():
@@ -46,8 +50,8 @@ def test_analyzing_by_symbol_does_not_copy_the_seeded_tables():
     prog, opts = _seeded()
     addr = prog.symbol("add").address
 
-    by_address = _median_analyze_ms(prog, addr, opts)
-    by_symbol = _median_analyze_ms(prog, "add", opts)
+    by_address = _fastest_analyze_ms(prog, addr, opts)
+    by_symbol = _fastest_analyze_ms(prog, "add", opts)
     assert by_symbol < by_address + 6.0, (
         f"analyze('add') costs {by_symbol:.2f} ms against {by_address:.2f} ms "
         f"by address with {_ENTRIES} known_targets"
@@ -59,15 +63,15 @@ def test_a_seeded_table_costs_nothing_per_analyse():
     analysis does not depend on how large the seeded table is."""
     prog, seeded = _seeded()
     addr = prog.symbol("add").address
-    empty = _median_analyze_ms(prog, addr, strider.lift.LifterOptions())
-    with_table = _median_analyze_ms(prog, addr, seeded)
+    empty = _fastest_analyze_ms(prog, addr, strider.lift.LifterOptions())
+    with_table = _fastest_analyze_ms(prog, addr, seeded)
     assert with_table < empty + 0.4, (
         f"{_ENTRIES} known_targets cost {with_table:.2f} ms an analysis "
         f"against {empty:.2f} ms with no table"
     )
 
     ten_times = _opts(_ENTRIES * 10)
-    bigger = _median_analyze_ms(prog, addr, ten_times)
+    bigger = _fastest_analyze_ms(prog, addr, ten_times)
     assert bigger < with_table + 0.4, (
         f"a {_ENTRIES * 10}-entry table costs {bigger:.2f} ms an analysis "
         f"against {with_table:.2f} ms for {_ENTRIES} entries, so the table is "
