@@ -35,8 +35,22 @@ impl Function {
     /// Unreachable nodes are not printed, which is why [`Self::compact`]
     /// leaves the text unchanged.
     pub fn to_text(&self, fingerprints: bool) -> String {
+        self.to_text_with(fingerprints, &vn_str)
+    }
+
+    /// [`Self::to_text`] with each varnode `regs` names a register printed as
+    /// that name (`RDI` for `%:0x38:8`); any other varnode keeps its
+    /// `space:offset:size` spelling.
+    pub fn to_text_named(&self, fingerprints: bool, regs: &rsleigh::SleighRegs) -> String {
+        self.to_text_with(fingerprints, &|vn: &rsleigh::Vn| {
+            regs.vn_to_name(*vn)
+                .map_or_else(|| vn_str(vn), str::to_owned)
+        })
+    }
+
+    fn to_text_with(&self, fingerprints: bool, vn_name: VnName<'_>) -> String {
         let order = Orderer::new(self).run();
-        render(self, &attach_phis(self, order), fingerprints)
+        render(self, &attach_phis(self, order), fingerprints, vn_name)
     }
 }
 
@@ -256,6 +270,9 @@ fn attach_phis(f: &Function, seq: Vec<NodeId>) -> Vec<NodeId> {
 
 type Names = SecondaryMap<ValueId, Option<u32>>;
 
+/// How a varnode is spelled.
+type VnName<'a> = &'a dyn Fn(&rsleigh::Vn) -> String;
+
 fn push_name(out: &mut String, names: &Names, value: ValueId) {
     let _ = match names.get(value).copied().flatten() {
         Some(n) => write!(out, "%v{n}"),
@@ -263,7 +280,7 @@ fn push_name(out: &mut String, names: &Names, value: ValueId) {
     };
 }
 
-fn render(f: &Function, order: &[NodeId], fingerprints: bool) -> String {
+fn render(f: &Function, order: &[NodeId], fingerprints: bool, vn_name: VnName<'_>) -> String {
     let mut names: Names = SecondaryMap::new();
     let mut next = 0u32;
     for &node in order {
@@ -282,8 +299,8 @@ fn render(f: &Function, order: &[NodeId], fingerprints: bool) -> String {
             strider_target::Endianness::Big => "big",
         }
     );
-    let _ = writeln!(out, "tracked {}", vn_list(f.all_vns()));
-    let cc_fields = cc_fields(f.default_cc());
+    let _ = writeln!(out, "tracked {}", vn_list(f.all_vns(), vn_name));
+    let cc_fields = cc_fields(f.default_cc(), vn_name);
     out.push_str("default_cc");
     for (field, value) in &cc_fields {
         let _ = write!(out, " {field}={value}");
@@ -316,7 +333,7 @@ fn render(f: &Function, order: &[NodeId], fingerprints: bool) -> String {
             out.push_str(value_kind_str(f.value_kind(value)));
             if let Some(&id) = st.value_vn.get(&value) {
                 let _ = match f.initial_vn_opt(id) {
-                    Some(vn) => write!(out, "<{}>", vn_str(&vn)),
+                    Some(vn) => write!(out, "<{}>", vn_name(&vn)),
                     None => write!(out, "<?>"),
                 };
             }
@@ -325,7 +342,7 @@ fn render(f: &Function, order: &[NodeId], fingerprints: bool) -> String {
             out.push_str(" = ");
         }
         out.push_str(op_name(kind));
-        render_payload(f, node, &cc_fields, &mut out);
+        render_payload(f, node, &cc_fields, vn_name, &mut out);
         for (i, value) in f.node_inputs(node).into_iter().enumerate() {
             out.push_str(if i == 0 { " " } else { ", " });
             push_name(&mut out, &names, value);
@@ -383,12 +400,13 @@ fn render_payload(
     f: &Function,
     node: NodeId,
     default_cc: &[(&'static str, String)],
+    vn_name: VnName<'_>,
     out: &mut String,
 ) {
     match *f.node_kind(node) {
         NodeKind::InitialVar(id) => {
             let _ = match f.initial_vn_opt(id) {
-                Some(vn) => write!(out, "[{}]", vn_str(&vn)),
+                Some(vn) => write!(out, "[{}]", vn_name(&vn)),
                 None => write!(out, "[?]"),
             };
         }
@@ -429,7 +447,8 @@ fn render_payload(
             Some(cc) => {
                 out.push('[');
                 let mut first = true;
-                for ((field, value), (_, default)) in cc_fields(cc).iter().zip(default_cc) {
+                for ((field, value), (_, default)) in cc_fields(cc, vn_name).iter().zip(default_cc)
+                {
                     if value != default {
                         if !first {
                             out.push(' ');
@@ -578,8 +597,8 @@ fn vn_str(vn: &rsleigh::Vn) -> String {
     )
 }
 
-fn vn_list(vns: &[rsleigh::Vn]) -> String {
-    let items: Vec<String> = vns.iter().map(vn_str).collect();
+fn vn_list(vns: &[rsleigh::Vn], vn_name: VnName<'_>) -> String {
+    let items: Vec<String> = vns.iter().map(vn_name).collect();
     format!("[{}]", items.join(", "))
 }
 
@@ -602,7 +621,10 @@ fn const_str(value: &ConstValue) -> String {
 }
 
 /// Every field, in declaration order.
-fn cc_fields(cc: &strider_target::BuiltCallingConvention) -> Vec<(&'static str, String)> {
+fn cc_fields(
+    cc: &strider_target::BuiltCallingConvention,
+    vn_name: VnName<'_>,
+) -> Vec<(&'static str, String)> {
     let strider_target::BuiltCallingConvention {
         arg_passing_regs,
         arg_passing_regs_float,
@@ -619,12 +641,15 @@ fn cc_fields(cc: &strider_target::BuiltCallingConvention) -> Vec<(&'static str, 
         entry_address_vn,
     } = cc;
     vec![
-        ("arg_passing_regs", vn_list(arg_passing_regs)),
-        ("arg_passing_regs_float", vn_list(arg_passing_regs_float)),
-        ("callee_saved_regs", vn_list(callee_saved_regs)),
-        ("ret_val_regs", vn_list(ret_val_regs)),
-        ("ret_val_regs_float", vn_list(ret_val_regs_float)),
-        ("stack_vn", vn_str(stack_vn)),
+        ("arg_passing_regs", vn_list(arg_passing_regs, vn_name)),
+        (
+            "arg_passing_regs_float",
+            vn_list(arg_passing_regs_float, vn_name),
+        ),
+        ("callee_saved_regs", vn_list(callee_saved_regs, vn_name)),
+        ("ret_val_regs", vn_list(ret_val_regs, vn_name)),
+        ("ret_val_regs_float", vn_list(ret_val_regs_float, vn_name)),
+        ("stack_vn", vn_name(stack_vn)),
         (
             "stack_args",
             stack_args.map_or_else(
@@ -637,7 +662,7 @@ fn cc_fields(cc: &strider_target::BuiltCallingConvention) -> Vec<(&'static str, 
             "link_register_vn",
             link_register_vn
                 .as_ref()
-                .map_or_else(|| "none".to_owned(), vn_str),
+                .map_or_else(|| "none".to_owned(), vn_name),
         ),
         ("preserves_memory", preserves_memory.to_string()),
         (
@@ -649,7 +674,7 @@ fn cc_fields(cc: &strider_target::BuiltCallingConvention) -> Vec<(&'static str, 
             "entry_address_vn",
             entry_address_vn
                 .as_ref()
-                .map_or_else(|| "none".to_owned(), vn_str),
+                .map_or_else(|| "none".to_owned(), vn_name),
         ),
     ]
 }
