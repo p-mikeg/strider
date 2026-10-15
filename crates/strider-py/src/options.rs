@@ -68,13 +68,45 @@ impl<'py> FromPyObject<'py> for CallOtherAbiArg {
 /// round-trip through the constructor.
 pub struct MapArg<T>(pub T);
 
-impl<'py, T: FromPyObject<'py>> FromPyObject<'py> for MapArg<T> {
+impl<'py, K, V, S> FromPyObject<'py> for MapArg<HashMap<K, V, S>>
+where
+    K: FromPyObject<'py> + Eq + std::hash::Hash,
+    V: FromPyObject<'py>,
+    S: std::hash::BuildHasher + Default,
+{
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        if ob.is_instance_of::<PyDict>() {
-            return T::extract_bound(ob).map(Self);
+        // Two phases, because a per-element `extract` runs Python through
+        // `__index__`, and PyO3 PANICS if a dict changes size or keys while it
+        // is iterating it (`PanicException` is a `BaseException`, which no
+        // `except Exception` catches).
+        //
+        // `iter` is `PyDict_Next` over raw storage and runs no Python, so
+        // collecting cannot be interrupted and a `dict` SUBCLASS cannot narrow
+        // it.  `PyDict::copy` is not equivalent: its raw-storage fast path is
+        // conditional on the subclass not overriding `__iter__`, and the
+        // `PyDict_Merge` fallback then honours an overridden `keys`, so a
+        // subclass overriding both copies as `{}`.
+        //
+        // Phase two extracts from the `Vec`, so the Python it runs is
+        // iterating nothing.  The non-dict branch is not Python-free (`dict`
+        // runs `keys` and `__getitem__`) but completes before any extract.
+        // Values are the caller's own objects, so a list value is read live
+        // (`KnownTarget`'s `Vec<u64>`).
+        let items: Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)> = match ob.downcast::<PyDict>() {
+            Ok(d) => d.iter().collect(),
+            Err(_) => ob
+                .py()
+                .get_type_bound::<PyDict>()
+                .call1((ob,))?
+                .downcast_into::<PyDict>()?
+                .iter()
+                .collect(),
+        };
+        let mut out = HashMap::with_capacity_and_hasher(items.len(), S::default());
+        for (k, v) in items {
+            out.insert(K::extract_bound(&k)?, V::extract_bound(&v)?);
         }
-        let as_dict = ob.py().get_type_bound::<PyDict>().call1((ob,))?;
-        T::extract_bound(&as_dict).map(Self)
+        Ok(Self(out))
     }
 }
 
@@ -593,7 +625,7 @@ impl PyLifterOptions {
         cfg: Option<Py<PyCfgOptions>>,
         assumptions: Option<Py<PyAssumptionOptions>>,
         compact: bool,
-        per_address_ccs: Option<HashMap<u64, PyCallingConvention>>,
+        per_address_ccs: Option<MapArg<HashMap<u64, PyCallingConvention>>>,
         resolve_indirect_branches: bool,
         pipeline: Option<Py<PyOptimizerPipeline>>,
     ) -> PyResult<Self> {
@@ -610,7 +642,7 @@ impl PyLifterOptions {
             cfg,
             assumptions,
             compact,
-            per_address_ccs: per_address_ccs.map(|t| std::sync::Arc::new(PerAddressCcs::new(t))),
+            per_address_ccs: per_address_ccs.map(|t| std::sync::Arc::new(PerAddressCcs::new(t.0))),
             resolve_indirect_branches,
             pipeline,
             per_address_ccs_view: MappingView::default(),

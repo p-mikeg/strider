@@ -503,8 +503,8 @@ struct SweepSleigh {
     space_ids: rsleigh::SpaceIds,
     /// `machine addr -> joined p-code`, for every address this sweep decoded.
     ///
-    /// ponytail: unbounded, so RSS grows with the swept RANGE -- measured
-    /// +400 MB over an 8 MiB sweep, ~50 bytes an instruction. It cannot
+    /// Unbounded, so RSS grows with the number of instructions swept: one
+    /// rendered-p-code `String` per address. It cannot
     /// simply be capped: an address already passed is answered from here
     /// precisely BECAUSE re-decoding it would answer in whatever mode a later
     /// instruction pinned, so an evicted entry has to drop the engine with it
