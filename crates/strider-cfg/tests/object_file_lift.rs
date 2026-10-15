@@ -14,16 +14,12 @@ use strider_target::SleighArch;
 fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/out/x64/tzcount.o");
-    if !path.exists() {
-        // A missing fixture must be VISIBLE: a silent return reports as a pass
-        // and this file is the only coverage the ET_REL loader has.
-        eprintln!(
-            "SKIP {}: {} is not built; run `make -C fixtures`",
-            module_path!(),
-            path.display()
-        );
-        return;
-    }
+    // The only coverage the ET_REL loader has.
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
 
     let obj = strider_reader::load_elf(&path).expect("load tzcount.o");
     let obj = obj.checked_file().expect("the mapped file is unchanged");
