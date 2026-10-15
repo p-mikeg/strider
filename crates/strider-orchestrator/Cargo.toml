@@ -38,6 +38,8 @@ strider-ir-test-utils = { workspace = true, features = ["proptest-gen"] }
 strider-target = { workspace = true, features = ["test-util"] }
 paste = "1"
 criterion.workspace = true
+# `expect_file!` reads and blesses tests/golden.rs's fixtures/golden/.
+expect-test.workspace = true
 proptest.workspace = true
 dhat = "0.3"
 

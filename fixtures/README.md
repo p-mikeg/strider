@@ -19,6 +19,11 @@ Each `arch/<arch>.mk` is one row of `FIXTURE_ARCHES` in
 `crates/strider-orchestrator/tests/common/fixtures.rs`; `cargo test -p
 strider-orchestrator --test golden` fails until the two agree.
 
+`golden/<arch>/<case>.txt` pins what `Strider::analyze` makes of every function
+of `out/<arch>/<case>.elf`. After an intended change, re-bless and review the
+diff: `UPDATE_EXPECT=1 cargo test -p strider-orchestrator --test golden`, then
+`git diff fixtures/golden`.
+
 ## Toolchains
 
 Every arch needs its own cross compiler. A missing one fails the build;

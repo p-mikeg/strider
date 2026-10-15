@@ -1326,6 +1326,7 @@ dependencies = [
  "dhat",
  "dot",
  "entity-utils",
+ "expect-test",
  "object 0.38.1",
  "paste",
  "proptest",
