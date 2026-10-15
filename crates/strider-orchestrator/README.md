@@ -76,8 +76,9 @@ Two verdicts freeze a single site, leaving the loop to run on without it:
 A converged CFG may be incomplete, and `AnalyzeResult` says so six ways.
 `is_complete()` is the question "may this be incomplete?"; none of the six
 answers it alone, so it reads all of them. A false `is_complete()` over
-`unverified_seeded_sites` alone reads "complete but unverified": a return
-whose re-check rests on a claim is on that channel, and its seat stands.
+`unverified_seeded_sites` alone usually reads "complete but unverified": a
+`Switch` holding exactly the caller's seed is the plain case, except for a
+caller-seeded `Return` whose re-check failed, which lands there too.
 
 - `unresolved_indirect_branches`: a live `IndirectBranch` placeholder, a seated
   `Switch` whose selector no longer derives, a site still growing when the cap
@@ -88,12 +89,10 @@ whose re-check rests on a claim is on that channel, and its seat stands.
   `Switch` holding exactly the caller's seed and nothing derived; a site the CFG
   CONSUMED, where a caller's `LinkRegister` seat became a `Return` and a lone
   out-of-function target became a `TailCall`, leaving no placeholder and no
-  anchor to report through (a `Return` the classifier derived instead carries a
-  return site, which every round re-checks, and reaches this channel only where
-  that re-check rests on `return_slots_survive_untracked_writes`, which an ARM
-  `push {lr}; ... bl ...; pop {pc}` return does need: the call in between
-  writes memory the walk cannot place, so the re-check assumes the spill rather
-  than proving it, and the seat still stands); and an arm seated on the mode a
+  anchor to report through, which for a caller-seeded `Return` is also where a
+  FAILED re-check lands (a `Return` the CLASSIFIER derived rides no channel once
+  `return_slots_survive_untracked_writes` carries its proof; clearing that claim
+  and re-running is how a caller audits one); and an arm seated on the mode a
   caller seed gave its siblings, which nobody evaluated for that arm.
 - `isa_mode_conflicts`, `interior_branch_targets`, `unmapped_branch_targets`
   and `undecodable_branch_targets`: losses no indirect site owns, since a

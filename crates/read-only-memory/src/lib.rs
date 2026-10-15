@@ -22,10 +22,12 @@ pub trait ReadOnlyMemory: Send {
     /// raw, with NO endianness swap; a caller wanting an integer decodes them
     /// per the target's endianness itself.
     ///
-    /// An EMPTY `buf` reads nothing and returns `Ok(())` whatever `addr` is,
-    /// including an unmapped one: there is no byte to resolve, so no impl has
-    /// to decide whether the address exists. The four impls in this workspace
-    /// disagreed on it while no caller issued one.
+    /// An EMPTY `buf` still resolves `addr` wherever a region table answers:
+    /// `RegionIndex::covering` floors the length at 1, so an unmapped address
+    /// is an error rather than a vacuous `Ok(())`, which is what `# Errors`
+    /// below states. An impl that resolves nothing of its own (`MockRom`, a
+    /// Python `read`) may still answer `Ok(())`; no caller issues a
+    /// zero-length read.
     ///
     /// `addr + buf.len()` is computed in `u64` and MUST NOT wrap: a range
     /// that overflows the address space is out of bounds, never an error-free

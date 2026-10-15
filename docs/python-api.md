@@ -932,16 +932,15 @@ is what `is_complete()` does:
 - `cfg.unverified_seeded_sites()`: sites nothing verified. A site seated with
   only your `known_targets`, every site the CFG consumed as a tail call, and a
   site consumed as a return because your own `"return"` seat consumed it, so a
-  seeded ARM `pop {pc}` epilogue lands here and not in `unresolved`. A return
-  the classifier derived is re-checked each round instead, and lands here only
-  where that re-check needs
-  `assumptions.return_slots_survive_untracked_writes`, which defaults `True`.
-  An ARM `push {lr}; ... bl ...; pop {pc}` return does need it: the call in
-  between writes memory the check cannot place, so the check assumes the `lr`
-  spill survived rather than proving it. The seat stands and the site is still
-  a return, so a `False` `is_complete()` over this channel alone means
-  "complete but unverified", not "incomplete". One shape on this channel is no
-  dispatch you seeded: an arm a mode-less re-derivation found at a site whose
+  seeded ARM `pop {pc}` epilogue lands here and not in `unresolved`. That is
+  also where a FAILED re-check of your own seat lands, since the seat decided a
+  CFG edge. A return the classifier derived is re-checked each round and rides
+  no channel once `assumptions.return_slots_survive_untracked_writes` (default
+  `True`) carries its proof; clearing that claim and re-running is how you
+  audit one. So a `False` `is_complete()` over this channel alone means
+  "complete but unverified", except for a failed `"return"` seat. One shape on
+  this channel is no dispatch you seeded: an arm a mode-less re-derivation
+  found at a site whose
   other arms all carry the flowing ISA mode is seated on the mode a caller's
   seed gave its siblings, and nobody evaluated that arm's own.
 - `cfg.isa_mode_conflicts()`: addresses two paths reached in different ISA
