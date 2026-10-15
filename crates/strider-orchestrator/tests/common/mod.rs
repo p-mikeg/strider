@@ -18,6 +18,8 @@ use strider_ir_test_utils::IrWalkerEx;
 // (see `indirect_resolve_helpers/mod.rs`).
 pub(crate) mod indirect_resolve_helpers;
 
+pub(crate) mod fixtures;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Arch {
     X86,
@@ -31,6 +33,9 @@ pub(crate) enum Arch {
     Aarch64Be,
     Arm,
     ArmBe,
+    /// BE8: little-endian instructions, big-endian data
+    /// (`fixtures/arch/arm_be8.mk`).
+    ArmBe8,
     ArmThumb,
     Mips32le,
     Mips32be,
@@ -42,8 +47,7 @@ pub(crate) enum Arch {
     Ppc64le,
 }
 
-/// Every supported `Arch` variant, in `per_arch_test!` order. The canonical
-/// list for any test iterating the full arch matrix.
+/// Every `Arch`, in `FIXTURE_ARCHES` order.
 pub(crate) const ALL_ARCHES: &[Arch] = &[
     Arch::X86,
     Arch::X86Kernel,
@@ -52,6 +56,7 @@ pub(crate) const ALL_ARCHES: &[Arch] = &[
     Arch::Aarch64Be,
     Arch::Arm,
     Arch::ArmBe,
+    Arch::ArmBe8,
     Arch::ArmThumb,
     Arch::Mips32le,
     Arch::Mips32be,
@@ -73,6 +78,7 @@ impl Arch {
             Arch::Aarch64Be => "aarch64be",
             Arch::Arm => "arm",
             Arch::ArmBe => "arm_be",
+            Arch::ArmBe8 => "arm_be8",
             Arch::ArmThumb => "arm_thumb",
             Arch::Mips32le => "mips32le",
             Arch::Mips32be => "mips32be",
@@ -84,51 +90,17 @@ impl Arch {
             Arch::Ppc64le => "ppc64le",
         }
     }
-    pub(crate) fn sleigh(self) -> strider_target::SleighArch {
-        match self {
-            // x86_kernel uses the same Sleigh spec as x86; only the
-            // calling convention differs.
-            Arch::X86 | Arch::X86Kernel => strider_target::SleighArch::x86(),
-            Arch::X64 => strider_target::SleighArch::x86_64(),
-            Arch::Aarch64 => strider_target::SleighArch::aarch64(),
-            Arch::Aarch64Be => strider_target::SleighArch::aarch64be(),
-            Arch::Arm => strider_target::SleighArch::arm(),
-            Arch::ArmBe => strider_target::SleighArch::arm_be(),
-            Arch::ArmThumb => strider_target::SleighArch::arm_thumb(),
-            Arch::Mips32le => strider_target::SleighArch::mipsle32(),
-            Arch::Mips32be => strider_target::SleighArch::mipsbe32(),
-            Arch::Mips64le => strider_target::SleighArch::mipsle64(),
-            Arch::Mips64be => strider_target::SleighArch::mipsbe64(),
-            Arch::Ppc32be => strider_target::SleighArch::ppc32be(),
-            Arch::Ppc32le => strider_target::SleighArch::ppc32le(),
-            Arch::Ppc64be => strider_target::SleighArch::ppc64be(),
-            Arch::Ppc64le => strider_target::SleighArch::ppc64le(),
-        }
+
+    pub(crate) fn fixture(self) -> &'static fixtures::FixtureArch {
+        fixtures::fixture_arch(self.name())
     }
+
+    pub(crate) fn sleigh(self) -> strider_target::SleighArch {
+        (self.fixture().sleigh)()
+    }
+
     pub(crate) fn cc(self) -> strider_target::CallingConvention {
-        match self {
-            Arch::X86 => strider_target::CallingConvention::x86_cdecl(),
-            Arch::X86Kernel => strider_target::CallingConvention::x86_linux_kernel(),
-            Arch::X64 => strider_target::CallingConvention::x86_64_systemv(),
-            // AAPCS64 is byte-order independent; same CC for LE and BE AArch64.
-            Arch::Aarch64 | Arch::Aarch64Be => strider_target::CallingConvention::aarch64_aapcs64(),
-            // AAPCS32 is byte-order- and mode-independent; same CC for
-            // ARM (LE), ARM-BE, and Thumb.
-            Arch::Arm | Arch::ArmBe | Arch::ArmThumb => {
-                strider_target::CallingConvention::arm_aapcs()
-            }
-            // O32 ABI is the same on LE and BE 32-bit MIPS Linux.
-            Arch::Mips32le | Arch::Mips32be => strider_target::CallingConvention::mips_o32(),
-            // N64 ABI is the same on LE and BE 64-bit MIPS Linux.
-            Arch::Mips64le | Arch::Mips64be => strider_target::CallingConvention::mips_n64(),
-            // PowerPC SysV 32-bit is byte-order independent.
-            Arch::Ppc32be | Arch::Ppc32le => strider_target::CallingConvention::powerpc_sysv32(),
-            // PPC64: clang+lld defaults to ELFv2 for both BE and LE targets
-            // (no function descriptors), so both paths use the v2 CC.  Use
-            // the v1 preset only for explicit gcc-built ELFv1 binaries
-            // (function-descriptor handling is a future strider feature).
-            Arch::Ppc64be | Arch::Ppc64le => strider_target::CallingConvention::powerpc64_elf_v2(),
-        }
+        (self.fixture().cc)()
     }
 }
 
@@ -738,6 +710,7 @@ macro_rules! per_arch_test {
                 $crate::__one_arch_test!(Aarch64Be, aarch64be, $case, $fn_name, $assert { $($skip_arch: $reason),* });
                 $crate::__one_arch_test!(Arm,       arm,       $case, $fn_name, $assert { $($skip_arch: $reason),* });
                 $crate::__one_arch_test!(ArmBe,     arm_be,    $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(ArmBe8,    arm_be8,   $case, $fn_name, $assert { $($skip_arch: $reason),* });
                 $crate::__one_arch_test!(ArmThumb,  arm_thumb, $case, $fn_name, $assert { $($skip_arch: $reason),* });
                 $crate::__one_arch_test!(Mips32le,  mips32le,  $case, $fn_name, $assert { $($skip_arch: $reason),* });
                 $crate::__one_arch_test!(Mips32be,  mips32be,  $case, $fn_name, $assert { $($skip_arch: $reason),* });
@@ -747,6 +720,26 @@ macro_rules! per_arch_test {
                 $crate::__one_arch_test!(Ppc32le,   ppc32le,   $case, $fn_name, $assert { $($skip_arch: $reason),* });
                 $crate::__one_arch_test!(Ppc64be,   ppc64be,   $case, $fn_name, $assert { $($skip_arch: $reason),* });
                 $crate::__one_arch_test!(Ppc64le,   ppc64le,   $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                // A new `Arch` fails to compile here until it has an arm above.
+                const _: fn($crate::common::Arch) = |arch| match arch {
+                    $crate::common::Arch::X86
+                    | $crate::common::Arch::X86Kernel
+                    | $crate::common::Arch::X64
+                    | $crate::common::Arch::Aarch64
+                    | $crate::common::Arch::Aarch64Be
+                    | $crate::common::Arch::Arm
+                    | $crate::common::Arch::ArmBe
+                    | $crate::common::Arch::ArmBe8
+                    | $crate::common::Arch::ArmThumb
+                    | $crate::common::Arch::Mips32le
+                    | $crate::common::Arch::Mips32be
+                    | $crate::common::Arch::Mips64le
+                    | $crate::common::Arch::Mips64be
+                    | $crate::common::Arch::Ppc32be
+                    | $crate::common::Arch::Ppc32le
+                    | $crate::common::Arch::Ppc64be
+                    | $crate::common::Arch::Ppc64le => {}
+                };
             }
         }
     };
@@ -827,6 +820,7 @@ __define_scan_ignore!($ aarch64,    Aarch64);
 __define_scan_ignore!($ aarch64be,  Aarch64Be);
 __define_scan_ignore!($ arm,        Arm);
 __define_scan_ignore!($ armbe,      ArmBe);
+__define_scan_ignore!($ armbe8,     ArmBe8);
 __define_scan_ignore!($ armthumb,   ArmThumb);
 __define_scan_ignore!($ mips32le,   Mips32le);
 __define_scan_ignore!($ mips32be,   Mips32be);
