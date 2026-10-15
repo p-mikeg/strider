@@ -1015,15 +1015,18 @@ struct AcceptedSegment<'d> {
     data: &'d [u8],
 }
 
-/// One [`MemRegion`] per accepted PT_LOAD segment, from its file-backed bytes,
-/// in program-header order under **widest-wins dedup** on `p_vaddr`.
-/// Empty `data()` (a BSS-only segment, `p_filesz == 0`) has nothing to load and
-/// is skipped.
+/// One [`MemRegion`] per accepted PT_LOAD segment, from the bytes it both
+/// holds and maps, in program-header order under **widest-wins dedup** on
+/// `p_vaddr`. A segment with nothing to load is skipped: a BSS-only one
+/// (`p_filesz == 0`), and one mapping nothing (`p_memsz == 0`) however much
+/// file it holds.
 ///
 /// The dedup rule is the section walk's, resolved the other way: only one
 /// region per start address survives [`crate::MemRegionsLookupTable`], so
 /// keeping a narrower mapping would leave the bytes past its end unfetchable
-/// even though a wider mapping declares them.
+/// even though a wider mapping declares them. "Widest" is by MAPPED extent,
+/// so a segment declaring more file than it maps does not win on the strength
+/// of bytes that belong to no mapping.
 fn collect_loadable_segments<'d>(
     obj: &object::File<'d>,
     bytes: Option<&FileBytes>,
@@ -1047,12 +1050,31 @@ fn collect_loadable_segments<'d>(
             continue;
         }
         let data = seg.data().context("failed to parse ELF")?;
+        // `p_filesz` is what the FILE holds, `p_memsz` what the image MAPS.
+        // The gABI specifies only the `p_memsz > p_filesz` zero-fill
+        // direction and leaves the reverse undefined; `object` parses such an
+        // image happily, and the two real loaders disagree (Linux `elf_map`
+        // sizes the mapping from `p_filesz`, glibc rejects the segment). The
+        // mapped extent is taken as `p_memsz` because `writable` /
+        // `executable` are tracked on it, so serving the tail would let the
+        // ROM view (fetch regions minus `writable`) answer for the tail of a
+        // WRITABLE segment, and would answer a straddling fetch from the wrong
+        // one. Clamping under-approximates rather than over-serves: an
+        // address in the tail reads as unmapped.
+        // Saturating on a 32-bit host, where `p_memsz` can exceed
+        // `usize::MAX`: the `min` then yields `data.len()`, which is right,
+        // since a mapping that large clamps nothing.
+        let mapped = usize::try_from(seg.size())
+            .unwrap_or(usize::MAX)
+            .min(data.len());
+        let data = &data[..mapped];
         if data.is_empty() {
             continue;
         }
+        let (file_off, file_len) = seg.file_range();
         accepted.push(AcceptedSegment {
             addr: seg.address(),
-            file_range: seg.file_range(),
+            file_range: (file_off, file_len.min(seg.size())),
             data,
         });
     }
