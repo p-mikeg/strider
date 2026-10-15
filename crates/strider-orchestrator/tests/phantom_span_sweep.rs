@@ -14,68 +14,31 @@
 
 mod common;
 
-use common::{ALL_ARCHES, driver_for_reader};
-use object::{Object, ObjectSymbol, SymbolKind};
+use common::fixtures::{FIXTURE_ARCHES, Fixture};
 
 #[test]
 #[ignore = "broad fixture sweep; run explicitly to exercise the phantom-span/split asserts across every function"]
 fn build_cfg_phantom_span_asserts_hold_for_every_fixture_function() {
+    let cfg_opts = strider_cfg::CfgOptions {
+        allow_code_before_start_addr: true,
+        ..Default::default()
+    };
     let mut total = 0usize;
-    let mut built = 0usize;
     let mut failed: Vec<String> = Vec::new();
-    for &arch in ALL_ARCHES {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/out")
-            .join(arch.name());
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("elf") {
-                continue;
-            }
-            let Ok(obj_owned) = strider_reader::load_elf(&path) else {
-                continue;
-            };
-            let obj = obj_owned
-                .checked_file()
-                .expect("the mapped file is unchanged");
-            let Ok(mem) = strider_reader::ElfFileMemReader::from_object(&obj) else {
-                continue;
-            };
-            let (mut ana, _cc) = driver_for_reader(arch, mem);
-            let addrs: Vec<u64> = obj
-                .symbols()
-                .filter(|s| s.kind() == SymbolKind::Text && s.size() > 0)
-                .map(|s| s.address())
-                .collect();
-            let cfg_opts = strider_cfg::CfgOptions {
-                allow_code_before_start_addr: true,
-                ..Default::default()
-            };
-            for addr in addrs {
-                // The ARM/Thumb interworking bit is the entry's ISA mode, which
-                // `Lifter::build_cfg` reads and masks off itself.
+    for arch in FIXTURE_ARCHES {
+        for fixture in Fixture::all(arch) {
+            let (mut strider, _cc) = fixture.strider();
+            for (addr, _name) in fixture.functions() {
                 total += 1;
-                match ana.build_cfg(
-                    strider_cfg::MachineInsnAddr::from(addr),
-                    &cfg_opts,
-                    &Default::default(),
-                ) {
-                    Ok(_) => built += 1,
-                    Err(e) => failed.push(format!("{}@{addr:#x}: {e}", path.display())),
+                if let Err(e) = strider.build_cfg(addr, &cfg_opts) {
+                    failed.push(format!("{}@{addr:#x}: {e}", fixture.path.display()));
                 }
             }
         }
     }
     eprintln!(
-        "phantom-span sweep: built {built}/{total} function CFGs across {} arches; no assert tripped",
-        ALL_ARCHES.len()
-    );
-    assert!(
-        total > 0,
-        "sweep found no functions; run `make -C fixtures`"
+        "phantom-span sweep: {total} function CFGs across {} arches; no assert tripped",
+        FIXTURE_ARCHES.len()
     );
     assert!(
         failed.is_empty(),

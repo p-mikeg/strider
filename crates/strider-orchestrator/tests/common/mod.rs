@@ -206,21 +206,6 @@ pub(crate) fn analyze_with_known_targets(
     driver.build_ir(&cfg, cc).expect("build_ir").function
 }
 
-/// A [`strider_orchestrator::Strider`] over `obj`'s image, with a second view
-/// of it as the optimiser's ROM.
-pub(crate) fn strider_over_object(
-    arch: Arch,
-    obj: &object::File<'_>,
-) -> strider_orchestrator::Strider<strider_reader::ElfFileMemReader> {
-    let sleigh_arch = arch.sleigh();
-    let mem = strider_reader::ElfFileMemReader::from_object(obj).expect("mem reader");
-    let rom = strider_reader::ElfFileMemReader::from_object(obj).expect("rom reader");
-    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
-        .expect("create sleigh");
-    strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(Box::new(rom)))
-        .expect("Strider::new")
-}
-
 /// [`fixtures::Fixture::strider`] on the (arch, case) ELF, with `fn_name`'s
 /// address. The address keeps its ARM-Thumb interworking bit: that bit IS the
 /// entry's ISA mode.

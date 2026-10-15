@@ -14,9 +14,8 @@
 
 mod common;
 
-use common::{ALL_ARCHES, strider_over_object};
-use object::{Object, ObjectSymbol, SymbolKind};
-use strider_orchestrator::Strider;
+use common::fixtures::{FIXTURE_ARCHES, Fixture};
+use strider_orchestrator::{AnalyzeResult, Strider};
 use strider_reader::ElfFileMemReader;
 
 fn fingerprint(
@@ -35,7 +34,16 @@ fn fingerprint(
         Ok(result) => result,
         Err(e) => return format!("error: {e:#}"),
     };
-    let cfg = &result.cfg;
+    let AnalyzeResult {
+        cfg,
+        function,
+        unresolved_indirect_branches,
+        isa_mode_conflicts,
+        interior_branch_targets,
+        unmapped_branch_targets,
+        undecodable_branch_targets,
+        unverified_seeded_sites,
+    } = &result;
     let mut regions: Vec<String> = cfg
         .region_ids()
         .map(|r| {
@@ -59,13 +67,11 @@ fn fingerprint(
         .collect();
     regions.sort_unstable();
     format!(
-        "{regions:#?}\nunresolved {:?}\nunverified {:?}\nisa {:?}\ninterior {:?}\nunmapped {:?}\n{}",
-        result.unresolved_indirect_branches,
-        result.unverified_seeded_sites,
-        result.isa_mode_conflicts,
-        result.interior_branch_targets,
-        result.unmapped_branch_targets,
-        result.function.to_text(true),
+        "{regions:#?}\nunresolved {unresolved_indirect_branches:?}\n\
+         unverified {unverified_seeded_sites:?}\nisa {isa_mode_conflicts:?}\n\
+         interior {interior_branch_targets:?}\nunmapped {unmapped_branch_targets:?}\n\
+         undecodable {undecodable_branch_targets:?}\n{}",
+        function.to_text(true),
     )
 }
 
@@ -74,51 +80,28 @@ fn fingerprint(
 fn a_reused_strider_analyses_every_fixture_function_as_a_fresh_one_does() {
     let mut total = 0usize;
     let mut failures = Vec::new();
-    for &arch in ALL_ARCHES {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/out")
-            .join(arch.name());
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        let mut paths: Vec<_> = entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("elf"))
-            .collect();
-        paths.sort();
-        for path in paths {
-            let Ok(owned) = strider_reader::load_elf(&path) else {
-                continue;
-            };
-            let obj = owned.checked_file().expect("the mapped file is unchanged");
-            let mut addrs: Vec<u64> = obj
-                .symbols()
-                .filter(|s| s.kind() == SymbolKind::Text && s.size() > 0)
-                .map(|s| s.address())
-                .collect();
-            addrs.sort_unstable();
-            addrs.dedup();
-            let mut shared = strider_over_object(arch, &obj);
-            let cc = arch.cc().build(shared.sleigh_regs()).expect("cc");
-            let fresh: Vec<String> = addrs
+    for arch in FIXTURE_ARCHES {
+        for fixture in Fixture::all(arch) {
+            let functions = fixture.functions();
+            let (mut shared, cc) = fixture.strider();
+            let fresh: Vec<String> = functions
                 .iter()
-                .map(|&a| fingerprint(&mut strider_over_object(arch, &obj), &cc, a))
+                .map(|&(addr, _)| fingerprint(&mut fixture.strider().0, &cc, addr))
                 .collect();
             for pass in 1..=2 {
-                for (&addr, want) in addrs.iter().zip(&fresh) {
+                for (&(addr, _), want) in functions.iter().zip(&fresh) {
                     let got = fingerprint(&mut shared, &cc, addr);
                     if &got != want {
                         failures.push(format!(
                             "{} {addr:#x} pass {pass}:\nfresh:\n{want}\nshared:\n{got}",
-                            path.display()
+                            fixture.path.display()
                         ));
                     }
                 }
             }
-            total += addrs.len();
+            total += functions.len();
         }
-        eprintln!("{}: done, {total} functions so far", arch.name());
+        eprintln!("{}: done, {total} functions so far", arch.dir);
     }
     assert!(
         failures.is_empty(),
