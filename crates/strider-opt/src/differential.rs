@@ -1133,8 +1133,8 @@ fn the_pipeline_preserves_cfg_semantics() {
                         // which this arm already rejected, so accepting
                         // `Unreachable` closed nothing and hid a rerouted
                         // sink.
-                        Outcome::Diverge => {
-                            if !matches!(got, Outcome::Diverge) {
+                        Outcome::Diverge(_) => {
+                            if !matches!(got, Outcome::Diverge(_)) {
                                 return Err(format!(
                                     "seed {seed}: a non-terminating run became \
                                      {got:?}\n{before_text}\nAFTER:\n{}",
