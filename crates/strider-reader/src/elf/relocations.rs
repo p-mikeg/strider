@@ -932,6 +932,8 @@ impl PatchSink<'_> {
         let RelocationFlags::Elf { r_type } = reloc.flags() else {
             unreachable!("an ELF relocation carries ELF flags");
         };
+        // mips64el `SHT_REL` reports the real `r_sym` in `r_type`.
+        let r_type = mips_type_word(reloc, ctx.obj.architecture(), ctx.endian_le).unwrap_or(r_type);
         if !ctx.writable.touches(field_addr, size_bytes)
             || ctx.executable.touches(field_addr, size_bytes)
         {
