@@ -277,18 +277,12 @@ cfg.DotStyle = _t.Literal["dark", "dark_cfg", "empty"]  # type: ignore[attr-defi
 _export(cfg, "DotStyle")
 lift.StrPath = _mod_api.StrPath              # type: ignore[attr-defined]
 _export(lift, "StrPath")
-opt.MainOptimizerPass = _t.Union[tuple(  # type: ignore[attr-defined]
-    getattr(opt, _n) for _n in (
-        "ConstantFold", "KnownBits", "FlagCmpCanonicalize", "IfCondInversion",
-        "PhiCollapse", "RegionCollapse", "DeadBranchElimination", "CfgDetach",
-        "LoadForward", "LoadReadOnly",
-    )
-)]
-opt.PostOptimizerPass = _t.Union[tuple(  # type: ignore[attr-defined]
-    getattr(opt, _n) for _n in (
-        "StackOffsetDetect", "FunctionArgDetect", "CallStackArgCollect",
-    )
-)]
+opt.MainOptimizerPass = _t.Union[  # type: ignore[attr-defined]
+    tuple(getattr(opt, _n) for _n in opt._MAIN_PASS_NAMES)
+]
+opt.PostOptimizerPass = _t.Union[  # type: ignore[attr-defined]
+    tuple(getattr(opt, _n) for _n in opt._POST_PASS_NAMES)
+]
 opt.OptimizerPass = _t.Union[  # type: ignore[attr-defined]
     opt.MainOptimizerPass, opt.PostOptimizerPass
 ]
