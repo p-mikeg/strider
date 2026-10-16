@@ -124,19 +124,24 @@ fn ram(off: u64) -> VnAddr {
     }
 }
 
-fn row(out: &mut String, image: &str, view: &str, digest: Option<u64>) {
+/// The first line of `e`, which names the refusal.
+fn refusal(e: &anyhow::Error) -> String {
+    e.to_string().lines().next().unwrap_or_default().to_owned()
+}
+
+fn row(out: &mut String, image: &str, view: &str, digest: Result<u64, String>) {
     match digest {
-        Some(h) => writeln!(out, "{image} {view} {h:016x}"),
-        None => writeln!(out, "{image} {view} Err"),
+        Ok(h) => writeln!(out, "{image} {view} {h:016x}"),
+        Err(e) => writeln!(out, "{image} {view} Err {e}"),
     }
     .expect("write to a String");
 }
 
 /// Every view's row for `elf`.
 fn rows(out: &mut String, image: &str, elf: anyhow::Result<OwnedElf>) {
-    let Ok(elf) = elf else {
-        row(out, image, "parse", None);
-        return;
+    let elf = match elf {
+        Ok(elf) => elf,
+        Err(e) => return row(out, image, "parse", Err(refusal(&e))),
     };
     let mut every_view = Vec::new();
     for (source_name, source) in SOURCES {
@@ -156,17 +161,34 @@ fn rows(out: &mut String, image: &str, elf: anyhow::Result<OwnedElf>) {
                     )
                 });
                 let view = format!("{source_name}.{filter_name}.{reloc_name}");
-                row(out, image, &view, digest.ok());
+                row(out, image, &view, digest.map_err(|e| refusal(&e)));
             }
         }
+        // The barrier a ROM view built from these regions subtracts.
+        let writable = elf.writable_ranges(source).map(|ranges| {
+            let mut h = Fnv::default();
+            for (start, end) in ranges {
+                h.eat(&start.to_le_bytes());
+                h.eat(&end.to_le_bytes());
+            }
+            h.0
+        });
+        row(
+            out,
+            image,
+            &format!("{source_name}.writable"),
+            writable.map_err(|e| refusal(&e)),
+        );
     }
     // Every address some view maps, so a reader serving more than the views
     // shows.
     let ranges = merged(every_view);
     let obj = elf.checked_file().expect("parsed above");
     let reader = ElfFileMemReader::from_object(&obj);
-    let reader = reader.as_ref().ok();
-    let fetch = reader.map(|r| probe(&ranges, |a, b| MemReader::read(r, ram(a), b).ok(), |_| None));
+    let reader = reader.as_ref().map_err(refusal);
+    let fetch = reader
+        .clone()
+        .map(|r| probe(&ranges, |a, b| MemReader::read(r, ram(a), b).ok(), |_| None));
     let rom = reader.map(|r| {
         probe(
             &ranges,
