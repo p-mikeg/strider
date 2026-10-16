@@ -3186,7 +3186,7 @@ mod store_index {
                 ValueType::I32,
                 ValueType::I64,
             ][rng.below(4)];
-            let data = b.build_int_const(rng.next() % 100, ty)?;
+            let data = b.build_int_const(rng.next_u64() % 100, ty)?;
             let space = if rng.below(6) == 0 {
                 rsleigh::VnSpace::REGISTER
             } else {

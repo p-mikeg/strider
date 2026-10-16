@@ -125,7 +125,7 @@ Strider:
   re-exported as `opt`.
 - `strider-ir-test-utils`: `make_empty_fn` / `RegisterSet` builders,
   `MockRom`, asm-fingerprint stamping, the `interp` reference interpreter, the
-  brute-force `graph_oracle` (graph-algorithms' test oracle), and the
+  brute-force `graph_oracle` (also graph-algorithms' test oracle), and the
   `proptest-gen`-gated `proptest_gen` generator, shared by tests.
 - `strider-py`: PyO3 bindings (`maturin develop` builds a wheel).
 
@@ -162,7 +162,8 @@ dependency of `strider-cfg`, `strider-graph`, `strider-lift` and
 whose dominance tests check against `simple_fast`.
 
 Dev-dependencies are not in that graph, and are not a DAG:
-`strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it.
+`strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it,
+as does `graph-algorithms` (for `graph_oracle`), which `strider-ir` depends on.
 `strider-graph`, `strider-pattern` and `strider-target` also dev-depend on
 THEMSELVES, which is how their `tests/` integration targets get a feature
 (`test-injectors`, `test-util`) that `cfg(test)` cannot reach.
