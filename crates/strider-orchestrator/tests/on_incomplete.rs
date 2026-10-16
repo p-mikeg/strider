@@ -77,3 +77,17 @@ fn an_unmapped_entry_fails_under_either_policy() {
         );
     }
 }
+
+#[test]
+fn the_default_refuses_an_incomplete_result() {
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, jmp_rax(), BASE, None);
+    let r = strider.analyze(BASE, &cc, &AnalyzeOptions::default(), None);
+    let Err(AnalyzeError::Incomplete(sites)) = r else {
+        panic!("the default must refuse an unresolved dispatch");
+    };
+    let unresolved: Vec<u64> = sites
+        .of(Reason::UnresolvedBranch)
+        .map(|a| a.machine_addr.addr)
+        .collect();
+    assert_eq!(unresolved, [0x1003]);
+}

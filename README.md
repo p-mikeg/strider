@@ -68,7 +68,8 @@ strider.explore.shutdown(port)
   whose target is not provably the caller's rides there too), a site settled
   only by your own seed, an address reached in two ISA modes, and a branch
   target off an instruction boundary, outside the image, or on bytes that hold
-  no instruction.
+  no instruction, and `analyze` raises `IncompleteAnalysis` for such a result
+  unless told `on_incomplete=OnIncomplete.IGNORE`.
   `function.validate()` reports three more shapes: a memory read that skips a
   memory effect on its path, an `InitialVar` naming a varnode the function
   never minted or typed against it wrongly, and a `Store` only a `Load` takes.
