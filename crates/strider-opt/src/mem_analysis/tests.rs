@@ -417,14 +417,13 @@ mod alias_tests {
         distinct_sp_bases_disjoint: bool,
     ) -> AliasVerdict {
         let store_size = store_value_byte_size(f, f.store_data(store));
-        let store_class =
-            crate::mem_analysis::classify_addr(f, f.store_addr(store), &no_allocators());
         let assumptions = crate::AssumptionOptions {
             stack_global_disjoint: mode,
             distinct_sp_bases_disjoint,
             ..crate::AssumptionOptions::default()
         };
         let options = MemOptions::incoming_args(&assumptions);
+        let store_class = crate::mem_analysis::classify_addr(f, f.store_addr(store), &options);
         // The real width the store's own address carries. Passing `None` would
         // model IR the lifter cannot produce, and the wrap guard would then
         // never be exercised by any of these cases.
@@ -1622,10 +1621,10 @@ mod heap_tests {
         Ok(())
     }
 
-    /// A loop-carried pointer walk: the phi is one of its own arms' operands.
-    /// The frontier must terminate and still see only heap terminals.
-    #[test]
-    fn self_referential_phi_terminates() -> crate::Result<()> {
+    /// `p = malloc(); while p == 0 { p += 8 }; return p`, collapsed: the
+    /// returned phi is the allocation's walking pointer, one of its own arms'
+    /// operands.
+    fn walking_pointer() -> crate::Result<(Function, ValueId, FxHashSet<u64>)> {
         let sp = sp();
         let mut b = RegisterSet::new()
             .tracked(sp)
@@ -1662,6 +1661,14 @@ mod heap_tests {
         b.set_region(exit);
         b.build_return(Some(phi), &[])?;
         let (fg, na) = built_collapsed(b, &[MALLOC])?;
+        Ok((fg, phi, na))
+    }
+
+    /// The frontier of a loop-carried pointer walk terminates and still sees
+    /// only heap terminals.
+    #[test]
+    fn self_referential_phi_terminates() -> crate::Result<()> {
+        let (fg, phi, na) = walking_pointer()?;
         assert!(
             matches!(
                 decompose(&fg, phi, &na),
@@ -1825,6 +1832,60 @@ mod heap_tests {
         );
         Ok(())
     }
+
+    /// The structural analyzer reaching both allocations first must not take
+    /// heap disjointness from the configured one: both decompose under the
+    /// run's set, and only the policy differs.
+    #[test]
+    fn a_structural_query_first_keeps_heap_disjointness() -> crate::Result<()> {
+        let mut b = builder()?;
+        let p = alloc_call(&mut b, MALLOC)?;
+        let q = alloc_call(&mut b, KMEM_CACHE_ALLOC)?;
+        let two = b.build_int_const(2u64, ValueType::I64)?;
+        b.build_store(q, two, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        b.build_return(Some(loaded), &[])?;
+        let (fg, na) = built(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
+        let load = fg.producer(loaded);
+        let store = super::only_store(&fg);
+        let mem = fg.node_inputs(load)[0];
+
+        MemAnalyzer::new(MemOptions::structural(&na)).nearest_clobber(&fg, load, mem);
+        assert!(
+            matches!(
+                fg.side_tables().memory_class(p),
+                strider_ir::MemDecomp::Heap(_)
+            ),
+            "the structural walk commits the allocation as heap"
+        );
+        let configured = MemAnalyzer::new(MemOptions::call_blocking(false, &na));
+        assert_eq!(
+            configured.verdict(&fg, load, store),
+            AliasVerdict::Disjoint,
+            "two allocations stay disjoint after a structural query"
+        );
+        Ok(())
+    }
+
+    /// A heap phi read structurally first keeps its class for the configured
+    /// analyzer: both decompose under the run's set, and only the structural
+    /// one drops the heap class.
+    #[test]
+    fn a_heap_phi_read_structurally_first_stays_heap_opaque() -> crate::Result<()> {
+        let (fg, phi, na) = walking_pointer()?;
+        assert!(
+            matches!(classify_addr(&fg, phi, &MemOptions::structural(&na)), AddrClass::Anchor { value } if value == phi),
+            "the structural analyzer claims no heap class"
+        );
+        assert!(
+            matches!(
+                classify_addr(&fg, phi, &MemOptions::call_blocking(false, &na)),
+                AddrClass::HeapOpaque
+            ),
+            "the configured analyzer still sees heap memory of unknown identity"
+        );
+        Ok(())
+    }
 }
 
 /// The window is placed by adding an ABI-declared offset to a decomposed SP,
@@ -1922,11 +1983,11 @@ mod arg_window_bounds {
             sp_offset: 8,
             args: saturating_args().expect("declared above"),
         };
-        let analyzer = MemAnalyzer::new(MemOptions::structural());
+        let analyzer = MemAnalyzer::new(MemOptions::structural(&Default::default()));
         let window = scan_arg_window(
             &fg,
             &analyzer,
-            &MemOptions::structural(),
+            &MemOptions::structural(&Default::default()),
             &geometry,
             i128::MAX,
         );
@@ -3205,25 +3266,30 @@ mod store_index {
 
     /// Over every prefix of the chain, the index offers a def at least as high
     /// as the highest one the walker says clobbers, for every class of probe,
-    /// both spaces, and every setting the candidates read.
+    /// both spaces, and every setting the candidates read, structural included.
     #[test]
     fn the_index_never_hides_a_clobber() -> crate::Result<()> {
         let allocators: FxHashSet<u64> = [ALLOC].into_iter().collect();
+        let structural = MemOptions::structural(&allocators);
         let mut heap_near_top = 0;
         for seed in 0..60 {
             let (fg, addresses) = random_chain(seed)?;
+            let layout = MemLayout::build(&fg).expect("the chain is laid out");
+            let configured = MemAnalyzer::new(MemOptions::call_blocking(false, &allocators));
+            let narrow = MemAnalyzer::new(structural.clone());
             heap_near_top += addresses
                 .iter()
                 .filter(|&&a| {
                     matches!(
-                        classify_addr(&fg, a, &allocators),
+                        classify_addr(&fg, a, configured.options()),
                         AddrClass::HeapRooted { offset, .. } if offset.abs() >= 1 << 30
                     )
                 })
                 .count();
-            let layout = MemLayout::build(&fg).expect("the chain is laid out");
-            let stores = StoreIndex::build(&fg, &layout, &allocators);
-            let analyzer = MemAnalyzer::new(MemOptions::call_blocking(false, &allocators));
+            let stores = StoreIndex::build(&fg, &layout, configured.options());
+            // Structural puts every heap store in the anchor bucket.
+            let narrow_stores = StoreIndex::build(&fg, &layout, &structural);
+            let mut runs = vec![(&narrow, &narrow_stores, structural.clone())];
             for sgd in [false, true] {
                 for dsbd in [false, true] {
                     let blocking = MemOptions {
@@ -3234,50 +3300,51 @@ mod store_index {
                         calls_block: false,
                         ..blocking.clone()
                     };
-                    for options in [&blocking, &stepping] {
-                        for (i, &addr) in addresses.iter().enumerate() {
-                            let space = if i % 4 == 3 {
-                                rsleigh::VnSpace::REGISTER
-                            } else {
-                                rsleigh::VnSpace::RAM
-                            };
-                            for size in [1, 4, 8] {
-                                let class = classify_addr(&fg, addr, &allocators);
-                                let probe = SizedAddr {
-                                    class,
-                                    size,
-                                    addr_bits: addr_bit_width(&fg, addr),
-                                };
-                                let mut walker = MemWalker {
-                                    analyzer: &analyzer,
-                                    options,
-                                    load: probe,
-                                    load_space: space,
-                                    private_frame: std::cell::Cell::new(None),
-                                };
-                                let mut highest = None;
-                                for pos in 0..layout.len() as u32 {
-                                    if layout.shape_at(pos) == Shape::Def
-                                        && walker.def_clobbers(&fg, layout.node_at(pos))
-                                    {
-                                        highest = Some(pos);
-                                    }
-                                    let offered = stores.candidate(&probe, space, options, 0, pos);
-                                    assert!(
-                                        offered >= highest,
-                                        "seed {seed}: {probe:?} in {space:?} up to {pos} offered \
-                                         {offered:?} below the clobber at {highest:?}"
-                                    );
-                                    if let Some(h) = highest {
-                                        assert!(
-                                            stores
-                                                .candidate(&probe, space, options, h, pos)
-                                                .is_some_and(|c| c >= h),
-                                            "seed {seed}: {probe:?} in {space:?} in {h}..={pos} \
-                                             hid the clobber"
-                                        );
-                                    }
-                                }
+                    runs.push((&configured, &stores, blocking));
+                    runs.push((&configured, &stores, stepping));
+                }
+            }
+            for &(analyzer, stores, ref options) in &runs {
+                for (i, &addr) in addresses.iter().enumerate() {
+                    let space = if i % 4 == 3 {
+                        rsleigh::VnSpace::REGISTER
+                    } else {
+                        rsleigh::VnSpace::RAM
+                    };
+                    for size in [1, 4, 8] {
+                        let probe = SizedAddr {
+                            class: classify_addr(&fg, addr, analyzer.options()),
+                            size,
+                            addr_bits: addr_bit_width(&fg, addr),
+                        };
+                        let mut walker = MemWalker {
+                            analyzer,
+                            options,
+                            load: probe,
+                            load_space: space,
+                            private_frame: std::cell::Cell::new(None),
+                        };
+                        let mut highest = None;
+                        for pos in 0..layout.len() as u32 {
+                            if layout.shape_at(pos) == Shape::Def
+                                && walker.def_clobbers(&fg, layout.node_at(pos))
+                            {
+                                highest = Some(pos);
+                            }
+                            let offered = stores.candidate(&probe, space, options, 0, pos);
+                            assert!(
+                                offered >= highest,
+                                "seed {seed}: {probe:?} in {space:?} up to {pos} offered \
+                                 {offered:?} below the clobber at {highest:?}"
+                            );
+                            if let Some(h) = highest {
+                                assert!(
+                                    stores
+                                        .candidate(&probe, space, options, h, pos)
+                                        .is_some_and(|c| c >= h),
+                                    "seed {seed}: {probe:?} in {space:?} in {h}..={pos} \
+                                     hid the clobber"
+                                );
                             }
                         }
                     }
