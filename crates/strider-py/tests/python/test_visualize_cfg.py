@@ -35,12 +35,13 @@ def _serve_bg(target_kind, port, code=b"\x75\x01\x90\xc3", **kw):
             strider.sleigh.SleighArch.x86_64(),
             strider.reader.BufferReader(0x1000, code),
         )
-        cfg = lift.build_cfg(0x1000)
+        cfg = lift.build_cfg(0x1000, on_incomplete=strider.lift.OnIncomplete.IGNORE)
         if target_kind == "cfg":
             target = cfg
         else:
             target = lift.analyze(
-                0x1000, strider.sleigh.CallingConvention.x86_64_systemv()
+                0x1000, strider.sleigh.CallingConvention.x86_64_systemv(),
+                opts=strider.lift.LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE),
             ).function
         lift.visualize(target, port=port, **kw)
 
@@ -401,7 +402,11 @@ def _busy_pair():
         strider.sleigh.SleighArch.x86_64(),
         strider.reader.BufferReader(0x1000, _BUSY),
     )
-    res = lift.analyze(0x1000, strider.sleigh.CallingConvention.x86_64_systemv())
+    res = lift.analyze(
+        0x1000,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        opts=strider.lift.LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE),
+    )
     return res.cfg, res.function
 
 

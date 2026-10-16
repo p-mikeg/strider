@@ -14,7 +14,7 @@ fn a_direct_branch_out_of_the_image_is_reported_not_raised() {
 
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
     let result = strider
-        .analyze(BASE, &cc, &Default::default(), None)
+        .analyze(BASE, &cc, &common::ignoring(), None)
         .expect("an unmapped direct target must not fail the whole function");
 
     assert_eq!(

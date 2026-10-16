@@ -79,7 +79,7 @@ fn a_clash_on_a_machine_start_seed_is_reported_at_the_branchind_anchor() {
             known_targets: &known,
             ..CfgOptions::default()
         },
-        ..AnalyzeOptions::default()
+        ..common::ignoring()
     };
 
     // No rom: the table load does not fold, so the classifier stays silent and

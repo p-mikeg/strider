@@ -4,7 +4,6 @@
 //! the classification map cannot hide a live placeholder.
 mod common;
 
-use strider_orchestrator::AnalyzeOptions;
 use strider_orchestrator::opt::{EditFunction, OptCtx, PostOptimizer};
 
 mod user {
@@ -41,7 +40,7 @@ fn analyze_jmp_rax(pipeline: strider_orchestrator::opt::OptimizerPipeline) -> bo
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
     let (mut s, cc) = common::strider_over_bytes(common::Arch::X64, bytes, 0x1000, None);
     let r = s
-        .analyze(0x1000, &cc, &AnalyzeOptions::default(), Some(pipeline))
+        .analyze(0x1000, &cc, &common::ignoring(), Some(pipeline))
         .expect("analyze");
     r.incomplete()
         .of(strider_orchestrator::Reason::UnresolvedBranch)

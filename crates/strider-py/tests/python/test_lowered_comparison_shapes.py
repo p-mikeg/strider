@@ -32,7 +32,10 @@ def _function(arch: str, case: str, fn: str, *, optimize: bool):
     opts = (
         None
         if optimize
-        else strider.lift.LifterOptions(pipeline=strider.opt.OptimizerPipeline.empty())
+        else strider.lift.LifterOptions(
+            pipeline=strider.opt.OptimizerPipeline.empty(),
+            on_incomplete=strider.lift.OnIncomplete.IGNORE,
+        )
     )
     return prog.analyze(fn, opts=opts).function
 

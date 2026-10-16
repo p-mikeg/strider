@@ -182,12 +182,19 @@ def test_with_cfg_carries_over_every_other_field():
         escape_analysis=True,
         return_slots_survive_untracked_writes=False,
     )
+    # Away from the default, whichever it is.
+    on_incomplete = (
+        strider.lift.OnIncomplete.IGNORE
+        if strider.lift.LifterOptions().on_incomplete == strider.lift.OnIncomplete.ERROR
+        else strider.lift.OnIncomplete.ERROR
+    )
     opts = strider.lift.LifterOptions(
         cfg=strider.cfg.CfgOptions(function_max_size=64),
         compact=False,
         per_address_ccs={0x1000: strider.sleigh.CallingConvention.x86_64_systemv()},
         assumptions=assumptions,
         pipeline=pipeline,
+        on_incomplete=on_incomplete,
     )
 
     out = opts._with_cfg(strider.cfg.CfgOptions(function_max_size=128))
@@ -199,6 +206,7 @@ def test_with_cfg_carries_over_every_other_field():
     # Identity, not just presence: the carried-over pipeline must be the
     # SAME object, matching what passing `pipeline=opts.pipeline` did.
     assert out.pipeline is pipeline
+    assert out.on_incomplete == on_incomplete
 
     # `_with_cfg` copies, it does not mutate the receiver.
     assert opts.cfg.function_max_size == 64

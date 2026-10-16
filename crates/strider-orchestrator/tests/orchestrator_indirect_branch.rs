@@ -307,9 +307,9 @@ fn analyze_claiming(
             resolve_indirect_branches: resolve,
             assumptions,
         },
-        ..strider_orchestrator::AnalyzeOptions::default()
+        ..common::ignoring()
     };
-    strider.analyze(addr, &cc, &lift_opts, None)
+    Ok(strider.analyze(addr, &cc, &lift_opts, None)?)
 }
 
 #[test]

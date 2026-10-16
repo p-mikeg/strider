@@ -36,7 +36,7 @@ fn analyze(arch: common::Arch, case: &str, fn_name: &str) -> Report {
                     },
                     ..Default::default()
                 },
-                ..Default::default()
+                ..common::ignoring()
             },
             None,
         )
