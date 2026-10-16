@@ -264,6 +264,18 @@ pub trait IRViewer {
         self.node_inputs(node).get(2).copied()
     }
 
+    /// `Switch` dispatch value, slot 1 of `[control, selector, isa_mode?]`.
+    fn switch_selector(&self, node: NodeId) -> ValueId {
+        assert!(
+            matches!(self.node_kind(node), NodeKind::Switch(_)),
+            "switch_selector on a non-Switch node"
+        );
+        self.node_inputs(node)
+            .get(1)
+            .copied()
+            .expect("Switch has a [control, selector] head")
+    }
+
     /// Ascending-`NodeId` order.
     fn reachable_kind_iter<'a>(
         &'a self,
