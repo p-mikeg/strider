@@ -54,9 +54,9 @@ impl<N: Copy> PreOrderContext<N> {
         Self { stack: Vec::new() }
     }
 
-    /// Roots pop last-first, so a root no later root reaches is visited after
-    /// every later root. [`PostOrderContext::reset`] seeds its stack the same
-    /// way, and reversing its post-order restores source order.
+    /// Roots pop last-first, so a root no later root repeats or reaches is
+    /// visited after every later root. [`PostOrderContext::reset`] seeds its
+    /// stack the same way.
     pub(crate) fn reset(&mut self, roots: impl IntoIterator<Item = N>) {
         self.stack.clear();
         self.stack.extend(roots);
@@ -150,7 +150,8 @@ impl<N: Copy> PostOrderContext<N> {
     }
 
     /// Roots go on the stack in source order and pop last-first, so a root no
-    /// later root reaches precedes every later root in any derived RPO.
+    /// later root repeats or reaches precedes every later root in any derived
+    /// RPO.
     pub(crate) fn reset(&mut self, roots: impl IntoIterator<Item = N>) {
         self.stack.clear();
         self.stack
