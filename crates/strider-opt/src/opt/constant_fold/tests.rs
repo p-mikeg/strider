@@ -718,7 +718,7 @@ fn align_or_removal_skips_width_mismatched_operands() -> Result<()> {
     let [and_value] = edit
         .node_outputs_exact::<1>(and_node)
         .expect("binary op has 1 output");
-    edit.replace_value(narrowed, and_value)?;
+    edit.replace_value(narrowed, and_value);
 
     for (i, rule) in super::rules::build_rules().into_iter().enumerate() {
         assert!(

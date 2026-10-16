@@ -86,6 +86,8 @@
 - `EditFunction::replace_all_uses` is private: it left the old producer live
   and dropped its asm-fingerprint. `replace_value` does the same rewire and
   both of those.
+- `EditFunction::replace_value` returns `bool`, and `add_node_input` and
+  `remove_region_predecessors` return nothing: none of the three could fail.
 
 ### Changed, Python
 

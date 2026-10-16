@@ -146,7 +146,7 @@ impl PostOptimizer for CallStackArgCollect {
             let args = collect_stack_args(edit.function(), call_id, stack_args, &alias_cfg);
             edit.truncate_node_inputs(call_id, arity);
             for arg_value in &args {
-                edit.add_node_input(call_id, *arg_value)?;
+                edit.add_node_input(call_id, *arg_value);
             }
         }
         Ok(())

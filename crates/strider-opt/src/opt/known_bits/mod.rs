@@ -441,7 +441,7 @@ impl Optimizer for KnownBits {
 
         let mut result = OptimizationResult::NoChange;
         for (value, new_value) in folds {
-            if edit.replace_value(value, new_value)? {
+            if edit.replace_value(value, new_value) {
                 result = OptimizationResult::Changed;
             }
         }

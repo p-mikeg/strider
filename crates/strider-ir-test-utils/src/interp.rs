@@ -1016,7 +1016,7 @@ mod tests {
             [ValueKind::Memory],
         );
         let stored = edit.function().node_outputs(store)[0];
-        edit.add_node_input(trap, stored).unwrap();
+        edit.add_node_input(trap, stored);
         assert_eq!(
             run(&f, &env(&|_| 0, None)),
             Ok(Outcome::Unreachable {

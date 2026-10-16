@@ -172,7 +172,7 @@ fn try_forward_load(
     }
     // Redirecting the sole output leaves the Load dead; the automatic cull
     // removes it and its address cone.
-    let changed = edit.replace_value(load_value, forwarded)?;
+    let changed = edit.replace_value(load_value, forwarded);
     Ok(OptimizationResult::from_changed(changed || narrowed))
 }
 
