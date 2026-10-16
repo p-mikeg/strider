@@ -7,7 +7,7 @@ use crate::types::PcodeInsnAddr;
 /// temporary.
 static NO_KNOWN_TARGETS: FxHashMap<PcodeInsnAddr, ResolvedTargets> =
     FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
-static NO_CALL_TARGETS: FxHashSet<u64> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
+static NO_NO_RETURN_TARGETS: FxHashSet<u64> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
 
 /// The extent of the function being built, which decides when a branch leaves
 /// it.
@@ -104,7 +104,7 @@ impl Default for CfgOptions<'_> {
         Self {
             bound: FunctionBound::default(),
             known_targets: &NO_KNOWN_TARGETS,
-            no_return_targets: &NO_CALL_TARGETS,
+            no_return_targets: &NO_NO_RETURN_TARGETS,
             call_other_overrides: Default::default(),
             data_ranges: DataRanges::default(),
         }
