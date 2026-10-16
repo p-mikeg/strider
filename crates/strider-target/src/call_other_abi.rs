@@ -592,7 +592,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             implicit_reads: &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"],
             implicit_writes: &["r0"],
             // A kernel entry can read or write any user-mode memory, the user
-            // stack included, so StackOffsetDetect must break the Stack chain.
+            // stack included, so no stack load forwards across it.
             clobbers_memory: true,
             no_return: false,
         }),

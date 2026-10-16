@@ -55,11 +55,10 @@ fn initial_var_non_lr_returns_none() {
     assert_eq!(result, None);
 }
 
-/// `tmp = load[sp]; sp += 4; bx tmp` (ARM `pop {pc}`): after
-/// `StackOffsetDetect` rewrites the push as a stack store and `LoadForward`
-/// resolves the load against it, the loaded value is structurally
-/// `InitialVar(lr)`, so the LinkRegister arm matches on that structural shape
-/// alone. Pins ARM `pop {pc}`.
+/// `tmp = load[sp]; sp += 4; bx tmp` (ARM `pop {pc}`): after `LoadForward`
+/// resolves the load against the push's stack store, the loaded value is
+/// structurally `InitialVar(lr)`, so the LinkRegister arm matches on that
+/// structural shape alone. Pins ARM `pop {pc}`.
 ///
 /// Soundness across iterations rests on the classifier only ever adding
 /// known targets: a later iteration cannot retract an edge an earlier one
@@ -77,9 +76,9 @@ fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
 }
 
 /// `push 0x1000; pop pc` lifts to `Load(IntSub(InitialVar(sp), 4))` before
-/// optimisation. After `StackOffsetDetect` + `LoadForward` the load resolves
-/// to the stored constant, NOT `InitialVar(lr)`, so this must classify as
-/// `Single(0x1000)` (a tail call), not `LinkRegister`.
+/// optimisation. After `LoadForward` the load resolves to the stored constant,
+/// NOT `InitialVar(lr)`, so this must classify as `Single(0x1000)` (a tail
+/// call), not `LinkRegister`.
 ///
 /// Classification runs against the optimised (post-LoadForward) graph rather
 /// than the raw load shape: taking `Load[InitialVar(sp) + K]` for a return

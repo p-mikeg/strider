@@ -79,7 +79,7 @@ def test_clone_keeps_the_allocator_set_for_rewrite():
 
 
 def test_optimize_updates_the_allocator_set_rewrite_uses():
-    """`optimize` is the other writer of the remembered assumptions: a set
+    """`optimize` is the other writer of the recorded allocator set: a set
     handed to it must reach a later `rewrite`, even though `analyze` ran
     without one."""
     lift, g = _heap_function(allocators=())

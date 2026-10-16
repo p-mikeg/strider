@@ -73,15 +73,16 @@
   optimized with, where it used none and dropped every heap class.
 - `StackOffsetDetect` stamps under that recorded set, not `OptCtx`'s;
   `run_post`, `classify_sites`, `classify_target` and `ReturnTargets::new`
-  debug-assert that the allocator set they are handed is the recorded one.
+  debug-assert that the allocator set they are handed is the recorded one,
+  as does a built-in pass's `apply` called outside `run`.
 - `SideTables::clear_memory_slots` is gone: `invalidate_analyses` drops the
   memory classes and the frame-escape verdict together.
 - `default_pipeline()` drops `StackOffsetDetect`: a post-pass appended to it
-  no longer finds the memory classes filled; it calls
+  is no longer guaranteed to find the memory classes filled; it calls
   `refresh_memory_classes`.
 - `value_range::Interval`'s fields are private (`Interval::new`, `lo()`,
   `hi()`, `stride()`, `is_empty()`); `compute_value_ranges(f, &doms, &known)`
-  is `RangeMap::new(f)`, which builds both itself.
+  is `RangeMap::new(f)`, which builds both itself and returns `Result`.
 
 ### Changed, Python
 
