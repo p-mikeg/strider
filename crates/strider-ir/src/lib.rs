@@ -30,6 +30,9 @@ pub mod validate;
 mod viewer;
 pub mod walk;
 
+#[cfg(test)]
+mod test_cfgs;
+
 pub use crate::error::Result;
 pub use crate::node::const_value::ConstId;
 pub use builder::{FunctionBuilder, IRBuilder, IRBuilderExt};

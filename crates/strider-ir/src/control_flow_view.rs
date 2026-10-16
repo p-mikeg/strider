@@ -179,11 +179,14 @@ impl ControlSplitView<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::IRViewer;
     use crate::builder::IRBuilderExt;
     use crate::node::NodeKind;
-    use crate::{FunctionBuilder, IRViewer};
+    use crate::test_cfgs::{self, empty_builder};
     use cranelift_entity::EntityRef;
     use petgraph::visit::{GraphBase, IntoNeighbors};
+    use proptest::prelude::*;
+    use strider_ir_test_utils::graph_oracle;
 
     // petgraph's Cooper-Harvey-Kennedy `simple_fast` is the independent oracle
     // the interval trees below are matched against; nothing in production
@@ -267,14 +270,6 @@ mod tests {
         petgraph::algo::dominators::simple_fast(
             &ControlSplitView::new(function),
             CtrlKey::Node(function.entry()),
-        )
-    }
-
-    fn empty_builder() -> crate::error::Result<FunctionBuilder> {
-        FunctionBuilder::new(
-            vec![],
-            strider_target::BuiltCallingConvention::default(),
-            strider_target::Endianness::Little,
         )
     }
 
@@ -1020,5 +1015,132 @@ mod tests {
             "16x the rungs cost {:.1}x the build ({small:?} -> {large:?})",
             large.as_secs_f64() / small.as_secs_f64(),
         );
+    }
+
+    const CASES: u32 = if cfg!(debug_assertions) { 128 } else { 4096 };
+
+    /// One tree against the deletion definition of dominance, including the
+    /// exact preorder: siblings in depth-first discovery order.
+    fn check_tree<K: EntityRef + Hash + std::fmt::Debug>(
+        succs: &[Vec<u32>],
+        root: u32,
+        tree: &DominatorTree<K>,
+        key: fn(usize) -> K,
+    ) {
+        let dom = graph_oracle::dom_matrix(succs, root);
+        let reach = &dom[root as usize];
+        let (discovery, _) = graph_oracle::dfs_tree(succs, root);
+        let mut at = vec![usize::MAX; succs.len()];
+        for (i, &v) in discovery.iter().enumerate() {
+            at[v as usize] = i;
+        }
+        let idom = graph_oracle::idoms(&dom, root);
+        let want: Vec<K> = graph_oracle::tree_preorder(&idom, root, |v| at[v as usize])
+            .into_iter()
+            .map(|v| key(v as usize))
+            .collect();
+        assert_eq!(tree.preorder(), want.as_slice(), "preorder");
+        for (a, row) in dom.iter().enumerate() {
+            let ka = key(a);
+            assert_eq!(tree.span(ka).is_some(), reach[a], "{ka:?} in the tree");
+            for (b, &d) in row.iter().enumerate() {
+                let kb = key(b);
+                let verdict = (reach[a] && reach[b]).then_some(d);
+                assert_eq!(
+                    tree.dominance_verdict(ka, kb),
+                    verdict,
+                    "verdict({ka:?}, {kb:?})"
+                );
+                assert_eq!(
+                    tree.dominates(ka, kb),
+                    a == b || d,
+                    "dominates({ka:?}, {kb:?})"
+                );
+            }
+        }
+    }
+
+    /// Both trees of `f`.
+    fn check_trees(f: &Function) {
+        let root = u32::try_from(f.entry().index()).unwrap();
+        check_tree(
+            &test_cfgs::control_succs(f),
+            root,
+            &control_dominator_tree(f),
+            NodeId::new,
+        );
+        let root = u32::try_from(CtrlKey::Node(f.entry()).index()).unwrap();
+        check_tree(
+            &test_cfgs::split_succs(f),
+            root,
+            &control_edge_dominator_tree(f),
+            CtrlKey::new,
+        );
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(CASES))]
+
+        #[test]
+        fn dominator_trees_match_the_definition(terms in test_cfgs::arb_terms(10)) {
+            if let Some(f) = test_cfgs::build(&terms) {
+                check_trees(&f);
+            }
+        }
+    }
+
+    #[test]
+    fn dominator_trees_of_the_fixtures_match_the_definition() {
+        for f in [
+            diamond().expect("diamond builds"),
+            empty_true_arm().expect("empty_true_arm builds").0,
+            diamond_loop_and_empty_arm().expect("combined fixture builds"),
+            irreducible_with_orphan().expect("irreducible fixture builds"),
+        ] {
+            check_trees(&f);
+        }
+    }
+
+    /// A 100,000-region chain and a 50,000-arm join: no recursion, and the
+    /// answers a path and a fan-in must give.
+    #[test]
+    #[cfg_attr(debug_assertions, ignore = "release-only scale test")]
+    fn dominator_trees_scale_to_a_deep_chain_and_a_wide_join() {
+        let f = test_cfgs::chain(100_000).expect("chain builds");
+        let tree = control_dominator_tree(&f);
+        let regions: Vec<NodeId> = tree
+            .preorder()
+            .iter()
+            .copied()
+            .filter(|&n| matches!(f.node_kind(n), NodeKind::Region))
+            .collect();
+        assert_eq!(regions.len(), 100_000);
+        for pair in regions.windows(2) {
+            assert!(tree.dominates(pair[0], pair[1]) && !tree.dominates(pair[1], pair[0]));
+        }
+        let split = control_edge_dominator_tree(&f);
+        assert!(split.dominates(CtrlKey::Node(regions[0]), CtrlKey::Node(regions[99_999])));
+
+        let f = test_cfgs::wide_join(50_000).expect("join builds");
+        let tree = control_dominator_tree(&f);
+        let join = f
+            .graph()
+            .all_node_ids()
+            .find(|&n| {
+                matches!(f.node_kind(n), NodeKind::Region)
+                    && f.graph().node_inputs(n).into_iter().count() == 50_000
+            })
+            .expect("the join");
+        let regions: Vec<NodeId> = tree
+            .preorder()
+            .iter()
+            .copied()
+            .filter(|&n| matches!(f.node_kind(n), NodeKind::Region))
+            .collect();
+        assert_eq!(regions.len(), 50_002);
+        assert!(tree.dominates(regions[0], join));
+        for &arm in regions.iter().skip(1).filter(|&&n| n != join) {
+            assert!(!tree.dominates(arm, join));
+        }
     }
 }
