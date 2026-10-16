@@ -144,9 +144,9 @@ pub(super) struct RegionBuilder<'b, 'a: 'b, R: rsleigh::MemReader> {
     /// The machine instruction this region decoded last, whose commits the
     /// next sequential decode reads.
     last_lift: Option<u64>,
-    /// The one address [`Self::rederive_flow`] has already made this build's
-    /// own, so the next sequential decode does not redo it.
-    validated: Option<u64>,
+    /// `inst_next` of `last_lift`, whose flow context [`Self::rederive_flow`]
+    /// already made this build's own: the one address the next decode may be at.
+    expected_next: Option<u64>,
 }
 
 impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
@@ -164,7 +164,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             parent_edge,
             isa_mode,
             last_lift: None,
-            validated: None,
+            expected_next: None,
         }
     }
 
@@ -301,36 +301,12 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         Ok(())
     }
 
-    /// Re-derives the context at `addr` before this region decodes it, for an
-    /// address `lift_one` reaches without having just recorded it.
-    ///
-    /// Defensive: no live caller reaches past the first two guards, so the
-    /// region-map guard and the `rederive_flow` call are both unreachable.
-    /// `build`'s loop arrives at `prev + machine_insn_len`, which `lift_one`
-    /// already recorded in `validated`, and a region's first address has no
-    /// `last_lift` (a split re-lifts nothing and a seeded target starts a
-    /// fresh `RegionBuilder`).
-    /// The first address needs nothing anyway: `explore` pinned it.
-    fn hold_flow(&mut self, addr: u64) -> Result<()> {
-        if self.validated == Some(addr) {
-            return Ok(());
-        }
-        let Some(prev) = self.last_lift else {
-            return Ok(());
-        };
-        // Sealed onto rather than decoded: `build` discards this lift.
-        if self
-            .builder
-            .start_addr_to_region_id
-            .contains_key(&PcodeInsnAddr::at_machine_start(addr))
-        {
-            return Ok(());
-        }
-        self.rederive_flow(addr, prev)
-    }
-
+    /// Decodes `addr`: the region's first address, or `expected_next`.
     fn lift_one(&mut self, addr: u64) -> Result<rsleigh::LiftRes> {
-        self.hold_flow(addr)?;
+        debug_assert!(
+            self.last_lift.is_none() || self.expected_next == Some(addr),
+            "lift_one off the sequential path at {addr:#x}"
+        );
         self.hold_transients(addr)?;
         self.hold_isa_mode(addr)?;
         let mut lift = self.lift_unheld(addr)?;
@@ -359,7 +335,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             // trust a snapshot here even for a fall-through this region does
             // not go on to decode itself.
             self.rederive_flow(next, addr)?;
-            self.validated = Some(next);
+            self.expected_next = Some(next);
             self.builder.committed_next.insert(next);
         }
         Ok(lift)
