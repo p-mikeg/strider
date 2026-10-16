@@ -184,7 +184,10 @@ impl<'f> ReturnTargets<'f> {
                         let Some((operand, addend)) = const_addend(function, producer) else {
                             return false;
                         };
-                        let offset = wrap_to_addr_width(function, value, offset - addend);
+                        let Some(offset) = offset.checked_sub(addend) else {
+                            return false;
+                        };
+                        let offset = wrap_to_addr_width(function, value, offset);
                         out.push((
                             path,
                             Claim::EntrySp {
@@ -423,14 +426,18 @@ impl<'f> ReturnTargets<'f> {
         let (mut path, mut cur, mut accrued) = (path, value, 0i128);
         let found = loop {
             if let Some(&known) = self.guesses.get(&(path, cur)) {
-                break known.map(|offset| offset + accrued);
+                break known.and_then(|offset| offset.checked_add(accrued));
             }
             if !on_trail.insert((path, cur)) {
                 break None;
             }
             trail.push(((path, cur), accrued));
             if let Some(at) = self.spine(cur) {
-                break at.base.is_none().then_some(at.offset + accrued);
+                break at
+                    .base
+                    .is_none()
+                    .then_some(at.offset)
+                    .and_then(|offset| offset.checked_add(accrued));
             }
             let producer = function.producer(cur);
             match *function.node_kind(producer) {
@@ -438,7 +445,10 @@ impl<'f> ReturnTargets<'f> {
                     let Some((operand, addend)) = const_addend(function, producer) else {
                         break None;
                     };
-                    accrued += addend;
+                    let Some(sum) = accrued.checked_add(addend) else {
+                        break None;
+                    };
+                    accrued = sum;
                     cur = operand;
                 }
                 NodeKind::Phi => {
@@ -469,7 +479,9 @@ impl<'f> ReturnTargets<'f> {
         };
         let found = found.map(|offset| wrap_to_addr_width(function, value, offset));
         for (key, accrued) in trail {
-            let offset = found.map(|offset| wrap_to_addr_width(function, key.1, offset - accrued));
+            let offset = found
+                .and_then(|offset| offset.checked_sub(accrued))
+                .map(|offset| wrap_to_addr_width(function, key.1, offset));
             self.guesses.insert(key, offset);
         }
         found
@@ -600,9 +612,12 @@ impl<'f> ReturnTargets<'f> {
         }
         // Offsets off two different bases compare through the range of entry-SP
         // offsets each base can stand at.
+        let span = |lo: i128, hi: i128, len: i128| hi.checked_sub(lo)?.checked_add(len);
         match (self.entry_span(written), self.entry_span(at)) {
             (Some((w_lo, w_hi)), Some((a_lo, a_hi)))
-                if !ring_overlap(ty, w_lo, w_hi - w_lo + len, a_lo, a_hi - a_lo + size) =>
+                if span(w_lo, w_hi, len)
+                    .zip(span(a_lo, a_hi, size))
+                    .is_some_and(|(w_len, a_len)| !ring_overlap(ty, w_lo, w_len, a_lo, a_len)) =>
             {
                 StoreEffect::Passes
             }
@@ -620,8 +635,12 @@ impl<'f> ReturnTargets<'f> {
             let [l, r] = function.node_inputs_exact::<2>(and).ok()?;
             let mask = function.int_const_u128(if operand == l { r } else { l })?;
             let below = self.spine(operand)?;
-            lo += below.offset - ((1i128 << mask.trailing_zeros()) - 1);
-            hi += below.offset;
+            lo = lo.checked_add(
+                below
+                    .offset
+                    .checked_sub((1i128 << mask.trailing_zeros()) - 1)?,
+            )?;
+            hi = hi.checked_add(below.offset)?;
             base = below.base;
         }
         Some((lo, hi))
