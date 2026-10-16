@@ -6,6 +6,10 @@
     clippy::unreachable
 )]
 
+pub mod cases;
+pub mod oracle;
+
+use std::cell::Cell;
 use std::ops::ControlFlow;
 
 use cranelift_entity::{PrimaryMap, entity_impl};
@@ -23,9 +27,35 @@ struct Node {
 pub struct Graph {
     nodes: PrimaryMap<NodeId, Node>,
     nodes_by_name: std::collections::HashMap<String, NodeId>,
+    /// Calls to `try_successors`, the unit the scale tests count.
+    succ_calls: Cell<u64>,
 }
 
 impl Graph {
+    fn empty() -> Self {
+        Self {
+            nodes: PrimaryMap::new(),
+            nodes_by_name: std::collections::HashMap::default(),
+            succ_calls: Cell::new(0),
+        }
+    }
+
+    /// Nodes `0..n` named by index, successors in `edges` order.
+    pub fn from_edges(n: u32, edges: &[(u32, u32)]) -> Self {
+        let mut graph = Self::empty();
+        for v in 0..n {
+            graph.get_or_create(&v.to_string());
+        }
+        for &(a, b) in edges {
+            graph.add_succ(NodeId(a), NodeId(b));
+        }
+        graph
+    }
+
+    pub fn succ_calls(&self) -> u64 {
+        self.succ_calls.get()
+    }
+
     /// The first node named in the DSL input, by construction.
     pub const fn entry(&self) -> NodeId {
         NodeId(0)
@@ -66,10 +96,7 @@ impl Graph {
 /// Input is a literal at every call site, so a malformed line panics rather
 /// than returning an error.
 pub(crate) fn graph(input: &str) -> Graph {
-    let mut graph = Graph {
-        nodes: PrimaryMap::new(),
-        nodes_by_name: std::collections::HashMap::default(),
-    };
+    let mut graph = Graph::empty();
 
     for line in input.lines() {
         if line.trim().is_empty() {
@@ -113,6 +140,7 @@ impl GraphRef for &'_ Graph {
         node: Self::NodeId,
         f: impl FnMut(Self::NodeId) -> ControlFlow<()>,
     ) -> ControlFlow<()> {
+        self.succ_calls.set(self.succ_calls.get() + 1);
         self.nodes[node].succs.iter().copied().try_for_each(f)
     }
 }
