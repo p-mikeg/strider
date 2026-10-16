@@ -3,6 +3,7 @@
 
 mod common;
 
+use strider_cfg::PcodeInsnAddr;
 use strider_orchestrator::{AnalyzeError, AnalyzeOptions, AnalyzeResult, OnIncomplete, Reason};
 
 const BASE: u64 = 0x1000;
@@ -10,6 +11,14 @@ const BASE: u64 = 0x1000;
 /// `mov rax, [rdi]; jmp rax`: one dispatch nothing resolves.
 fn jmp_rax() -> Vec<u8> {
     vec![0x48, 0x8b, 0x07, 0xff, 0xe0]
+}
+
+/// Everything `jmp_rax` leaves incomplete.
+fn jmp_rax_incomplete() -> Vec<(PcodeInsnAddr, Reason)> {
+    vec![(
+        PcodeInsnAddr::at_machine_start(0x1003),
+        Reason::UnresolvedBranch,
+    )]
 }
 
 /// `mov rax, 42; ret`: complete.
@@ -33,11 +42,7 @@ fn error_refuses_what_ignore_returns() {
         panic!("an unresolved dispatch must be refused");
     };
     assert_eq!(&sites, ignored.incomplete());
-    let unresolved: Vec<u64> = sites
-        .of(Reason::UnresolvedBranch)
-        .map(|a| a.machine_addr.addr)
-        .collect();
-    assert_eq!(unresolved, [0x1003]);
+    assert_eq!(sites.iter().collect::<Vec<_>>(), jmp_rax_incomplete());
 }
 
 #[test]
@@ -85,9 +90,20 @@ fn the_default_refuses_an_incomplete_result() {
     let Err(AnalyzeError::Incomplete(sites)) = r else {
         panic!("the default must refuse an unresolved dispatch");
     };
-    let unresolved: Vec<u64> = sites
-        .of(Reason::UnresolvedBranch)
-        .map(|a| a.machine_addr.addr)
-        .collect();
-    assert_eq!(unresolved, [0x1003]);
+    assert_eq!(sites.iter().collect::<Vec<_>>(), jmp_rax_incomplete());
+}
+
+/// A sweep varies one field of a template it keeps.
+#[test]
+fn analyze_options_clone_into_a_variant() {
+    let template = AnalyzeOptions {
+        compact: false,
+        ..AnalyzeOptions::default()
+    };
+    let ignoring = AnalyzeOptions {
+        on_incomplete: OnIncomplete::Ignore,
+        ..template.clone()
+    };
+    assert!(!ignoring.compact);
+    assert!(format!("{template:?}").contains("on_incomplete: Error"));
 }
