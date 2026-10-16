@@ -23,7 +23,6 @@ fn validate_rejects_sp_in_arg_passing_regs() {
         link_register_vn: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        no_return: false,
         ..Default::default()
     };
     let res = cc.validate();
@@ -83,7 +82,6 @@ fn validate_rejects_arg_overlapping_callee_saved() {
         link_register_vn: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        no_return: false,
         ..Default::default()
     };
     let res = cc.validate();
@@ -112,7 +110,6 @@ fn validate_rejects_ret_int_overlapping_ret_float() {
         link_register_vn: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        no_return: false,
         ..Default::default()
     };
     let res = cc.validate();
@@ -137,7 +134,6 @@ fn validate_accepts_clean_layout() {
         link_register_vn: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        no_return: false,
         ..Default::default()
     }
     .validate()

@@ -144,7 +144,7 @@ fn switch_with_const_index_collapses_through_default_pipeline() {
         ..Default::default()
     };
     let cfg = strider
-        .build_cfg(MachineInsnAddr::from(base), &cfg_opts, &Default::default())
+        .build_cfg(MachineInsnAddr::from(base), &cfg_opts)
         .expect("cfg build");
 
     let outcome = strider.build_ir(&cfg, cc).expect("build_ir");

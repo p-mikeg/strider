@@ -48,7 +48,6 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
         link_register_vn: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        no_return: false,
         ..Default::default()
     };
     override_cc.validate().unwrap();

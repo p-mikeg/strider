@@ -25,9 +25,7 @@ fn call_outputs_name_no_unique_temporary() {
         .expect("systemv");
     let opts = LiftOptions::default();
     let mut lifter = lifter;
-    let cfg = lifter
-        .build_cfg(0x1000u64.into(), &opts.cfg, opts.per_address_ccs)
-        .expect("cfg");
+    let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg).expect("cfg");
     let f = lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function;
 
     assert!(
