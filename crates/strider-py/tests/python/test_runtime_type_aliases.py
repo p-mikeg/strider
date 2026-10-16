@@ -4,6 +4,8 @@ so `p.PatLike` works in an annotation evaluated without
 
 import typing
 
+import pytest
+
 import strider
 from strider import pattern as p
 
@@ -48,6 +50,34 @@ def test_valuety_is_exactly_the_rust_value_type_set():
         raise AssertionError("an unknown value type must be rejected")
     rust = {t.strip() for t in listed.split(",")}
     assert rust == {t.lower() for t in typing.get_args(p.ValueTy)}
+
+
+#: Each op-name parser and the `Literal` its argument is typed with.
+_OP_NAME_LITERALS = {
+    "int_cmp": "IntCmpOpName",
+    "int_binary": "IntBinaryOpName",
+    "bool_binary": "BoolBinaryOpName",
+    "float_binary": "FloatBinaryOpName",
+}
+
+
+@pytest.mark.parametrize("fn_name", sorted(_OP_NAME_LITERALS))
+def test_op_name_literals_cover_the_rust_names(fn_name):
+    """The `*OpName` Literals are hand-written against Rust op enums. The
+    rejection message lists the parser's canonical names, which an exhaustive
+    Rust `match` keeps complete, so the message is the Rust side. Every name a
+    Literal admits must also parse."""
+    fn = getattr(p, fn_name)
+    literal = set(typing.get_args(getattr(p, _OP_NAME_LITERALS[fn_name])))
+    try:
+        fn("not-an-op", p.anything(), p.anything())
+    except strider.StriderError as exc:
+        listed = str(exc).split("expected one of ", 1)[1]
+    else:
+        raise AssertionError("an unknown op name must be rejected")
+    assert {n.strip() for n in listed.split(",")} <= literal
+    for name in literal:
+        fn(name, p.anything(), p.anything())
 
 
 def test_the_valuety_stub_matches_the_runtime_alias():
