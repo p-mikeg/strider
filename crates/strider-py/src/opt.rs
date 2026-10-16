@@ -87,7 +87,7 @@ impl PyOptimizerPipeline {
         Self::new_with(OptimizerPipeline::new())
     }
 
-    /// The canonical default pipeline (every built-in pass).
+    /// The pipeline `analyze` runs when given none.
     #[classmethod]
     fn default(_cls: &Bound<'_, PyType>) -> Self {
         Self::new_full_default()

@@ -51,9 +51,10 @@ class OptimizerPipeline:
         ...
     @classmethod
     def default(cls) -> OptimizerPipeline:
-        """Every built-in pass exposed here, in the order `analyze` runs them
-        when no pipeline is supplied. `analyze` runs its indirect-branch
-        classifier after whatever pipeline it is given."""
+        """The pipeline `analyze` runs when no pipeline is supplied: every
+        built-in pass but `StackOffsetDetect`, whose records every run makes
+        after its post-passes. `analyze` runs its indirect-branch classifier
+        after whatever pipeline it is given."""
         ...
     @property
     def passes(self) -> list[str]:
