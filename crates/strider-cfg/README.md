@@ -18,6 +18,8 @@ sea-of-nodes IR `strider-lift` builds from it.
 - `CfgOptions<'a>`: `bound` (a `FunctionBound`) is the function's extent,
   `known_targets` (borrowed, so a binary-wide table costs nothing
   per function) seats indirect-branch answers a caller derived,
+  `derived_targets` (borrowed too) holds a resolver's own answers, which beat
+  `known_targets` at their exact key,
   `no_return_targets` (borrowed too) lists direct-call targets that never
   return, `call_other_overrides` classifies user-op names, and `data_ranges`
   names address ranges that hold data and are never decoded.
@@ -76,8 +78,8 @@ DROPS everything after the call), `TailCall` carrying the callee,
 ever have an outgoing edge.
 
 Classifying a `BranchIndirect` needs the IR, which sits above this crate, so a
-site is either seated from `known_targets` or deferred as
-`UnresolvedIndirectBranch`. A seat maps `LinkRegister` to `Return`, an
+site is either seated from `derived_targets` or `known_targets` or deferred
+as `UnresolvedIndirectBranch`. A seat maps `LinkRegister` to `Return`, an
 out-of-range `Single` to `TailCall`, and anything else to a `Switch`, an
 in-function `Single` included, so a later round can widen the site instead of
 latching its first answer. A deferral keeps the `target_vn` and

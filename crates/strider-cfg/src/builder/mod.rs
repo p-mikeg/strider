@@ -1551,6 +1551,79 @@ mod tests {
         );
     }
 
+    /// A resolver's own answer beats the caller's at the site, whichever key
+    /// the caller used, and one with no arms defers the site rather than
+    /// letting the caller's seed through.
+    #[test]
+    fn a_derived_answer_outranks_the_seed_and_an_empty_one_defers() {
+        let base = 0x1000u64;
+        let mut bytes = vec![0xc3u8; 0x30]; // ret everywhere
+        bytes[..2].copy_from_slice(&[0xff, 0x20]); // jmp [rax]
+        let branch = PcodeInsnAddr {
+            machine_addr: base.into(),
+            insn_index: branch_indirect_index(&bytes, base, base),
+        };
+        assert_ne!(
+            branch.insn_index, 0,
+            "precondition: the exact and machine-start keys must differ"
+        );
+        let arms = |cfg: &crate::Cfg| {
+            cfg.regions().find_map(|r| match &r.terminator {
+                RegionTerminator::Switch { targets, .. } => {
+                    Some(targets.iter().map(|t| t.addr).collect::<Vec<_>>())
+                }
+                _ => None,
+            })
+        };
+        let derived: rustc_hash::FxHashMap<_, _> = std::iter::once((
+            branch,
+            crate::ResolvedTargets::Multiple(vec![0x1020.into()]),
+        ))
+        .collect();
+        let empty: rustc_hash::FxHashMap<_, _> =
+            std::iter::once((branch, crate::ResolvedTargets::Multiple(Vec::new()))).collect();
+        for seed_key in [branch, PcodeInsnAddr::at_machine_start(base)] {
+            let known: rustc_hash::FxHashMap<_, _> = std::iter::once((
+                seed_key,
+                crate::ResolvedTargets::Multiple(vec![0x1010.into()]),
+            ))
+            .collect();
+            let cfg = build_cfg(
+                bytes.clone(),
+                base,
+                &crate::CfgOptions {
+                    known_targets: &known,
+                    derived_targets: &derived,
+                    ..crate::CfgOptions::default()
+                },
+            )
+            .expect("build");
+            assert_eq!(arms(&cfg), Some(vec![0x1020]), "{seed_key:?}");
+            let cfg = build_cfg(
+                bytes.clone(),
+                base,
+                &crate::CfgOptions {
+                    known_targets: &known,
+                    derived_targets: &empty,
+                    ..crate::CfgOptions::default()
+                },
+            )
+            .expect("build");
+            assert_eq!(
+                arms(&cfg),
+                None,
+                "{seed_key:?}: an empty answer seats nothing"
+            );
+            assert!(
+                cfg.regions().any(|r| matches!(
+                    &r.terminator,
+                    RegionTerminator::UnresolvedIndirectBranch { addr, .. } if *addr == branch
+                )),
+                "{seed_key:?}: an empty answer defers the site",
+            );
+        }
+    }
+
     /// Overlapping code: sequential decoding steps OVER a region start that is
     /// interior to an instruction it decodes, so two regions own those bytes
     /// with two different instruction streams.

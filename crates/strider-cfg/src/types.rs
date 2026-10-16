@@ -106,8 +106,8 @@ pub enum RegionTerminator {
         /// is `None` when the callee keeps its own entry mode.
         target: crate::ResolvedTarget,
     },
-    /// Jump table built from a `ResolvedTargets::Multiple` fed back via
-    /// `known_targets`.
+    /// Jump table built from a `ResolvedTargets::Multiple` seated from
+    /// `derived_targets` or `known_targets`.
     ///
     /// Every target is an instruction start inside the function bound. An arm
     /// out of the bound, or off every instruction boundary of a region decoded
