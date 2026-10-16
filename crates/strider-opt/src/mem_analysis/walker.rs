@@ -165,8 +165,8 @@ impl MemWalker<'_> {
     /// at the first `Call`, so the argument prefix ends there.
     ///
     /// The window itself is a property of the call, so the prefix walk is
-    /// memoised on the analyzer ([`super::arg_window::ArgWindow`]) and every later probe of the
-    /// same call is an interval test.
+    /// memoised on the analyzer ([`super::arg_window::ArgWindow`]) and every
+    /// later probe of the same call is an interval test.
     pub(super) fn in_outgoing_arg_area(&self, function: &Function, call: NodeId) -> bool {
         let AddrClass::StackRooted {
             base: load_base,
