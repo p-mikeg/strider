@@ -263,6 +263,21 @@ impl Default for OptimizerPipeline {
     }
 }
 
+/// Each pass cloned through its `clone_box`, so a clone runs the same passes
+/// in the same order.
+impl Clone for OptimizerPipeline {
+    fn clone(&self) -> Self {
+        Self {
+            passes: self.passes.iter().map(|pass| pass.clone_box()).collect(),
+            post_passes: self
+                .post_passes
+                .iter()
+                .map(|pass| pass.clone_box())
+                .collect(),
+        }
+    }
+}
+
 impl OptimizerPipeline {
     #[must_use]
     pub fn new() -> Self {
@@ -273,11 +288,21 @@ impl OptimizerPipeline {
     }
 
     pub fn add<O: Optimizer + Send + 'static>(&mut self, opt: O) {
-        self.passes.push(Box::new(opt));
+        self.add_boxed(Box::new(opt));
+    }
+
+    /// [`Self::add`] for a pass already boxed.
+    pub fn add_boxed(&mut self, pass: Box<dyn Optimizer + Send>) {
+        self.passes.push(pass);
     }
 
     pub fn add_post_pass<O: PostOptimizer + Send + 'static>(&mut self, opt: O) {
-        self.post_passes.push(Box::new(opt));
+        self.add_post_boxed(Box::new(opt));
+    }
+
+    /// [`Self::add_post_pass`] for a pass already boxed.
+    pub fn add_post_boxed(&mut self, pass: Box<dyn PostOptimizer + Send>) {
+        self.post_passes.push(pass);
     }
 
     /// The fixed-point passes in registration order.
@@ -407,6 +432,52 @@ mod tests {
         b.build_return(Some(v), &[]).unwrap();
         b.set_lift_addr(None);
         b.build().unwrap()
+    }
+
+    /// `Add(1, 2)` returned: ConstantFold folds it.
+    fn folding_fn() -> strider_ir::Function {
+        let mut b = strider_ir_test_utils::empty_builder().unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
+        b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let one = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let two = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let sum = b
+            .build_int_binary_operation(one, two, strider_ir::IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(sum), &[]).unwrap();
+        b.set_lift_addr(None);
+        b.build().unwrap()
+    }
+
+    /// A boxed pass reports its own name, and a clone runs the same passes in
+    /// the same order: the copy every Python-driven analysis runs.
+    #[test]
+    fn a_cloned_pipeline_of_boxed_passes_runs_as_the_original() -> crate::Result<()> {
+        let mut pipeline = crate::default_pipeline();
+        pipeline.add_boxed(Box::new(crate::ConstantFold::new()));
+        pipeline.add_post_boxed(Box::new(crate::StackOffsetDetect));
+        let names = |p: &super::OptimizerPipeline| {
+            (
+                p.passes().iter().map(|p| p.name()).collect::<Vec<_>>(),
+                p.post_passes().iter().map(|p| p.name()).collect::<Vec<_>>(),
+            )
+        };
+        let clone = pipeline.clone();
+        assert_eq!(names(&clone), names(&pipeline));
+        assert_eq!(names(&pipeline).1.last(), Some(&"StackOffsetDetect"));
+
+        let (mut a, mut b) = (folding_fn(), folding_fn());
+        pipeline.run(&mut a, &mut OptCtx::at_floor(None))?;
+        clone.run(&mut b, &mut OptCtx::at_floor(None))?;
+        assert!(
+            !a.walk()
+                .any(|n| matches!(a.node_kind(n), strider_ir::node::NodeKind::IntBinaryOp(_))),
+            "precondition: the passes ran",
+        );
+        assert_eq!(a.to_text(false), b.to_text(false));
+        Ok(())
     }
 
     /// A valid input graph must survive `run`'s final validation.
