@@ -93,10 +93,9 @@ impl FunctionArgPat {
                         NodeKind::Load(actual_space),
                     ) => {
                         // Both the address space, from the `Load` payload,
-                        // and the SP-relative offset, from the
-                        // `StackOffsetDetect`-populated side-table, must
-                        // agree. A carrier with no recorded offset is
-                        // rejected.
+                        // and the SP-relative offset, from the memory-class
+                        // side-table every pipeline run fills, must agree. A
+                        // carrier with no recorded offset is rejected.
                         if want_space != *actual_space {
                             return false;
                         }

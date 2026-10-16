@@ -21,6 +21,9 @@
   `StriderError`) when `Cfg.incomplete` would name anything, a seeded site
   included; pass `on_incomplete=OnIncomplete.IGNORE` for the old behaviour.
   Code that catches `StriderError` to skip a function now skips these too.
+- `OptimizerPipeline.default().post_passes` no longer lists
+  `StackOffsetDetect`; every run still records the stack and heap slots after
+  its post-passes.
 
 ### Breaking, Rust
 
@@ -73,6 +76,9 @@
   debug-assert that the allocator set they are handed is the recorded one.
 - `SideTables::clear_memory_slots` is gone: `invalidate_analyses` drops the
   memory classes and the frame-escape verdict together.
+- `default_pipeline()` drops `StackOffsetDetect`: a post-pass appended to it
+  no longer finds the memory classes filled; it calls
+  `refresh_memory_classes`.
 
 ### Changed, Python
 
