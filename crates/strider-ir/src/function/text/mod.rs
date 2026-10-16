@@ -38,9 +38,8 @@ impl Function {
         self.to_text_with(fingerprints, &vn_str)
     }
 
-    /// [`Self::to_text`] with each varnode `regs` names a register printed as
-    /// that name (`RDI` for `%:0x38:8`); any other varnode keeps its
-    /// `space:offset:size` spelling.
+    /// [`Self::to_text`], spelling each varnode `regs` names as that register
+    /// (`RDI` for `%:0x38:8`); any other keeps its `space:offset:size` form.
     pub fn to_text_named(&self, fingerprints: bool, regs: &rsleigh::SleighRegs) -> String {
         self.to_text_with(fingerprints, &|vn: &rsleigh::Vn| {
             regs.vn_to_name(*vn)
