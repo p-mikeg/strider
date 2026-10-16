@@ -1535,6 +1535,66 @@ fn classify_table_dispatch_sees_a_store_past_the_wrap_onto_a_slot() {
     );
 }
 
+/// A two-entry 32-bit table at `(sp + 0x7FFF_FFF0) + 0x20`, the second hop
+/// carrying the probe past `2^31`, stored through one constant each.  No
+/// `ConstantFold`, which would merge the two hops into one constant.
+fn stack_table_built_in_two_hops() -> Function {
+    let sp = sp32_vn();
+    let arg_vn = strider_ir_test_utils::reg_vn(0x8, 4);
+    let mut b = sp_frame(sp)
+        .tracked(arg_vn)
+        .build_fn_single_region()
+        .unwrap();
+    let sp_val = b.read_variable(&sp).unwrap();
+    let add = |b: &mut FunctionBuilder, base: ValueId, off: u64| {
+        let c = b.build_int_const(off, ValueType::I32).unwrap();
+        b.build_int_binary_operation(base, c, IntBinaryOp::Add, ValueType::I32)
+            .unwrap()
+    };
+    for (off, target) in [(0x8000_0010u64, 0x401190u64), (0x8000_0014, 0x401180)] {
+        let addr = add(&mut b, sp_val, off);
+        let data = b.build_int_const(target, ValueType::I32).unwrap();
+        b.build_store(addr, data, VnSpace::RAM).unwrap();
+    }
+    let near_top = add(&mut b, sp_val, 0x7FFF_FFF0);
+    let table = add(&mut b, near_top, 0x20);
+    let arg = b.read_variable(&arg_vn).unwrap();
+    let one = b.build_int_const(1u64, ValueType::I32).unwrap();
+    let idx = b
+        .build_int_binary_operation(arg, one, IntBinaryOp::And, ValueType::I32)
+        .unwrap();
+    let four = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let scaled = b
+        .build_int_binary_operation(idx, four, IntBinaryOp::Mul, ValueType::I32)
+        .unwrap();
+    let addr = b
+        .build_int_binary_operation(table, scaled, IntBinaryOp::Add, ValueType::I32)
+        .unwrap();
+    let loaded = b.build_load(addr, VnSpace::RAM, ValueType::I32).unwrap();
+    b.build_indirect_branch(loaded).unwrap();
+    b.set_lift_addr(None);
+    let mut fg = b.build().unwrap();
+    let mut p = OptimizerPipeline::new();
+    p.add(KnownBits);
+    p.add(PhiCollapse);
+    p.add(RegionCollapse);
+    p.run(&mut fg, &mut crate::OptCtx::at_floor(None)).unwrap();
+    fg
+}
+
+/// The evaluator reduces each hop, so a probe built in two hops past `2^31`
+/// names the slot the store's single constant does.
+#[test]
+fn classify_table_dispatch_reduces_a_probe_built_in_two_hops() {
+    assert_eq!(
+        classify(&stack_table_built_in_two_hops(), None),
+        Some(ResolvedTargets::table(vec![
+            0x401180u64.into(),
+            0x401190u64.into(),
+        ])),
+    );
+}
+
 #[test]
 fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
