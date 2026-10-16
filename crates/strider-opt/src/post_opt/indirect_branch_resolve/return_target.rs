@@ -8,7 +8,7 @@ use strider_ir::{
 };
 
 use crate::mem_analysis::{
-    MemExpr, MemKind, alignment_masked_operand, decompose, store_value_byte_size,
+    MemExpr, MemKind, alignment_masked_operand, decompose, ring_overlap, store_value_byte_size,
     wrap_to_addr_width,
 };
 
@@ -676,23 +676,6 @@ fn guards(function: &Function, cond: ValueId) -> impl Iterator<Item = (NodeId, b
 
 /// `(x, c)` for `Add(x, c)` with `c` a constant.
 fn const_addend(function: &Function, add: NodeId) -> Option<(ValueId, i128)> {
-    let [l, r] = function.node_inputs_exact::<2>(add).ok()?;
-    match (function.int_const_i128(r), function.int_const_i128(l)) {
-        (Some(c), _) => Some((l, c)),
-        (None, Some(c)) => Some((r, c)),
-        _ => None,
-    }
-}
-
-/// Whether `[a, a + a_len)` and `[b, b + b_len)` share a byte mod 2^w, `w` the
-/// width of `ty`. An unknown width, or one past the `u128` carrier, overlaps.
-fn ring_overlap(ty: Option<ValueType>, a: i128, a_len: i128, b: i128, b_len: i128) -> bool {
-    let Some(mask) = ty
-        .filter(|ty| ty.is_integer() && ty.bit_width() <= 128)
-        .map(ValueType::bit_mask_u128)
-    else {
-        return true;
-    };
-    let ahead = |from: i128, to: i128| (to.wrapping_sub(from) as u128) & mask;
-    ahead(a, b) < a_len.max(0) as u128 || ahead(b, a) < b_len.max(0) as u128
+    let (x, c) = crate::const_eval::var_and_const(function, add)?;
+    Some((x, function.int_const_i128(c)?))
 }

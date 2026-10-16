@@ -1,4 +1,6 @@
-//! Address-width arithmetic: offsets wrap at the address's bit width.
+//! Address-width arithmetic: offsets wrap at the address's bit width.  Where
+//! the width is unknown or past the `i128` carrier, a reduction or a split
+//! leaves the offset as it is and an overlap test answers `true`.
 
 use strider_ir::node::{ValueId, ValueType};
 use strider_ir::{Function, IRViewer};
@@ -12,23 +14,29 @@ pub(super) fn addr_bit_width(function: &Function, addr: ValueId) -> Option<u32> 
         .and_then(|ty| u32::try_from(ty.bit_width()).ok())
 }
 
-/// Machine address arithmetic is mod 2^bitwidth, so reduce an accumulated byte
-/// offset into `addr`'s signed range.  Unreduced, `(sp + 0x7FFFFFFF) +
-/// 0x7FFFFFFF` on a 32-bit target reads as `sp + 4294967294` instead of
-/// `sp - 2`, Disjoint from the slot it actually names.  An address wider than
-/// the i128 carrier keeps the raw sum.
-pub(crate) fn wrap_to_addr_width(function: &Function, addr: ValueId, offset: i128) -> i128 {
-    function
-        .value_type(addr)
-        .ok()
-        .and_then(|ty| ty.get_signed_int(offset as u128))
+/// `offset` reduced into `ty`'s signed range: machine address arithmetic is
+/// mod 2^bitwidth.
+pub(crate) fn reduce(ty: Option<ValueType>, offset: i128) -> i128 {
+    ty.and_then(|ty| ty.get_signed_int(offset as u128))
         .unwrap_or(offset)
+}
+
+/// [`reduce`] at `addr`'s width.  Unreduced, `(sp + 0x7FFFFFFF) +
+/// 0x7FFFFFFF` on a 32-bit target reads as `sp + 4294967294` instead of
+/// `sp - 2`, Disjoint from the slot it actually names.
+pub(crate) fn wrap_to_addr_width(function: &Function, addr: ValueId, offset: i128) -> i128 {
+    reduce(function.value_type(addr).ok(), offset)
+}
+
+/// Byte `byte` of an access at `offset`, reduced: bytes past the top of the
+/// signed range are the bytes at its bottom.  `None` past the `i128` carrier.
+pub(crate) fn slot_key(ty: Option<ValueType>, offset: i128, byte: i128) -> Option<i128> {
+    offset.checked_add(byte).map(|at| reduce(ty, at))
 }
 
 /// `[start, end)` as at most two ranges inside the signed range `ty` reduces
 /// offsets into: address arithmetic wraps, so a range running past the top
-/// resumes at the bottom.  `start` is reduced, `end` need not be.  A width
-/// the reduction does not reach keeps the range whole.
+/// resumes at the bottom.  `start` is reduced, `end` need not be.
 pub(super) fn wrapped_ranges(ty: Option<ValueType>, start: i128, end: i128) -> [(i128, i128); 2] {
     let whole = [(start, end), (0, 0)];
     let Some(bits) = ty
@@ -46,4 +54,23 @@ pub(super) fn wrapped_ranges(ty: Option<ValueType>, start: i128, end: i128) -> [
     // A range wider than the circle covers all of it.
     let end = end.min(start + modulus);
     [(start, top), (-top, end - modulus)]
+}
+
+/// Whether `[a, a + a_len)` and `[b, b + b_len)` share a byte mod 2^w, `w` the
+/// width of `ty`.
+pub(crate) fn ring_overlap(
+    ty: Option<ValueType>,
+    a: i128,
+    a_len: i128,
+    b: i128,
+    b_len: i128,
+) -> bool {
+    let Some(mask) = ty
+        .filter(|ty| ty.is_integer() && ty.bit_width() <= 128)
+        .map(ValueType::bit_mask_u128)
+    else {
+        return true;
+    };
+    let ahead = |from: i128, to: i128| (to.wrapping_sub(from) as u128) & mask;
+    ahead(a, b) < a_len.max(0) as u128 || ahead(b, a) < b_len.max(0) as u128
 }
