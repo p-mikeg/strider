@@ -2,7 +2,7 @@
 //! for the highest possible clobber of a location in a position range without
 //! visiting the range.
 //!
-//! Every answer is a superset: [`MemWalker::def_clobbers`] still decides each
+//! Every answer is a superset: [`super::walker::MemWalker::def_clobbers`] still decides each
 //! candidate.  A store is classified once, when the index is built; a store
 //! whose address a later rewrite can still change is one whose address
 //! depended on a load, which classifies as an `Anchor` and is a candidate for
@@ -14,9 +14,10 @@ use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{Function, IRViewer};
 
-use super::{
-    AddrClass, MemOptions, SizedAddr, addr_bit_width, classify_addr, store_value_byte_size,
-};
+use super::AddrClass;
+use super::alias::{SizedAddr, classify_addr};
+use super::analyzer::{MemOptions, store_value_byte_size};
+use super::ring::addr_bit_width;
 use crate::mem_ssa::{MemLayout, Shape};
 
 const NONE: u32 = u32::MAX;

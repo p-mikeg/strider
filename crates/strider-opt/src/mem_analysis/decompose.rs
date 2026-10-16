@@ -12,7 +12,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use strider_ir::node::{NodeId, NodeKind, ValueId, low_bits_mask_u128};
 use strider_ir::{Function, IRViewer, IntBinaryOp, MemDecomp};
 
-use super::{MemExpr, MemKind, wrap_to_addr_width};
+use super::ring::wrap_to_addr_width;
+use super::{MemExpr, MemKind};
 
 /// Memoized: a hit is O(1), a miss walks the address spine and caches the result.
 /// Sound because the fixed-point loop drains the memo after every changing
@@ -20,9 +21,9 @@ use super::{MemExpr, MemKind, wrap_to_addr_width};
 /// leave every address value's decomposition unchanged.
 ///
 /// The memo is per `function` and shared by walks under different
-/// `noalias_allocators` sets ([`MemOptions::structural`] holds an empty one
+/// `noalias_allocators` sets ([`super::analyzer::MemOptions::structural`] holds an empty one
 /// beside the configured analyzer).  A heap class read back under an empty set
-/// is dropped by [`classify_addr`].  A `NotMemory` committed under a smaller set
+/// is dropped by [`super::alias::classify_addr`].  A `NotMemory` committed under a smaller set
 /// is not: it answers a later walk under a larger one, so the configured walk
 /// must reach an address first.
 ///
@@ -55,7 +56,7 @@ pub(crate) fn decompose(
 #[cfg(test)]
 thread_local! {
     /// Total [`spine_walk`] iterations, the unit the spine-complexity test counts.
-    pub(crate) static SPINE_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    pub(super) static SPINE_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// Where a spine walk bottomed out.

@@ -2749,9 +2749,9 @@ struct GuardTally {
 /// `cfg_outputs` and `value_uses`, as in production; dominance over them is
 /// by definition rather than from the tree.
 ///
-/// Every guard spans `2^20..2^21` and no two share a bound, so no meet is
-/// empty and a missing or extra guard shows whenever it holds the highest
-/// `lo` or the lowest `hi`.
+/// Every guard spans `2^20..2^21`, so no meet is empty, and two guards almost
+/// never share a bound, so a missing or extra guard shows whenever it holds
+/// the highest `lo` or the lowest `hi`.
 fn check_guard_forest(f: &Function, rng: &mut crate::test_support::Rng, tally: &mut GuardTally) {
     use strider_ir_test_utils::graph_oracle;
     tally.functions += 1;

@@ -1,10 +1,14 @@
+//! `MemWalker`, the clobber predicate a memory-SSA climb asks per def.
+
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::{Function, IRViewer};
 
-use super::{
-    AddrClass, AliasVerdict, ArgWindowGeometry, MemAnalyzer, MemExpr, MemKind, MemOptions,
-    SizedAddr, alias_verdict, allocator_return_base, frame_escape, in_own_frame,
-};
+use super::alias::{SizedAddr, alias_verdict};
+use super::analyzer::{MemAnalyzer, MemOptions};
+use super::arg_window::ArgWindowGeometry;
+use super::decompose::allocator_return_base;
+use super::frame::in_own_frame;
+use super::{AddrClass, AliasVerdict, MemExpr, MemKind, frame_escape};
 
 /// The SP-aware [`crate::mem_ssa::find_nearest_clobber`] predicate carrier.
 pub(super) struct MemWalker<'a> {
@@ -151,7 +155,7 @@ impl MemWalker<'_> {
     /// cannot see past would end the prefix below the slot it wrote and let a
     /// load from a slot the callee owns forward across it.  A def the probe
     /// cannot see through therefore CONTINUES the window
-    /// ([`SlotReach::Blinded`]).
+    /// ([`super::arg_window::SlotReach::Blinded`]).
     ///
     /// Runs from inside a memory-SSA walk and starts one of its own, so the
     /// inner walk drops every `Call` relaxation: keeping them would re-enter
@@ -161,7 +165,7 @@ impl MemWalker<'_> {
     /// at the first `Call`, so the argument prefix ends there.
     ///
     /// The window itself is a property of the call, so the prefix walk is
-    /// memoised on the analyzer ([`ArgWindow`]) and every later probe of the
+    /// memoised on the analyzer ([`super::arg_window::ArgWindow`]) and every later probe of the
     /// same call is an interval test.
     pub(super) fn in_outgoing_arg_area(&self, function: &Function, call: NodeId) -> bool {
         let AddrClass::StackRooted {
