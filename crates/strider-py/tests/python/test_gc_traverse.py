@@ -100,6 +100,37 @@ def test_into_pat_operand_cycle_is_collectable():
     assert ref() is None, "cycle through a finished pattern's operand leaked"
 
 
+#: Every `Pat` wrapper; each holds the `Pat` it wraps.
+WRAPPERS = {
+    "capture": lambda q: q.capture("a"),
+    "when": lambda q: q.when(lambda m: True),
+    "ordered": lambda q: q.ordered(),
+    "of_width": lambda q: q.of_width(32),
+    "value_ty": lambda q: q.value_ty("i32"),
+}
+
+
+@pytest.mark.parametrize("wrapper", sorted(WRAPPERS))
+def test_a_cycle_through_each_wrapper_is_collectable(wrapper):
+    """wrapped -> inner -> predicate -> holder -> wrapped. Collectable only if
+    the wrapper reports the `Pat` it wraps."""
+
+    class Sentinel:
+        pass
+
+    sentinel = Sentinel()
+    ref = weakref.ref(sentinel)
+    holder = []
+    inner = p.int_add(p.anything(), p.anything()).when(
+        lambda m, _h=holder, _s=sentinel: bool(_h)
+    )
+    holder.append(WRAPPERS[wrapper](inner))
+    del sentinel, inner, holder
+    gc.collect()
+
+    assert ref() is None, f"cycle through .{wrapper}() leaked"
+
+
 def test_a_shared_spine_is_reported_once():
     """`base.capture(..)` shares one repr spine. Reporting an operand once per
     derived `Pat` tells the collector about references that do not exist,

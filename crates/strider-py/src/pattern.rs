@@ -770,7 +770,23 @@ impl PatRepr {
                     }
                 }
             }
-            _ => {}
+            PatRepr::Any
+            | PatRepr::Var(_)
+            | PatRepr::ValueOfWidth(_)
+            | PatRepr::IntConst(_)
+            | PatRepr::IntConstAnyWidth(_)
+            | PatRepr::IntConstAnyWidthAnyOf(_)
+            | PatRepr::IntConstAnyOf(_)
+            | PatRepr::BoolConst(_)
+            | PatRepr::FloatConst(_)
+            | PatRepr::AnyInt(_)
+            | PatRepr::AnyBool(_)
+            | PatRepr::AnyFloat(_)
+            | PatRepr::AnyIntConst(_)
+            | PatRepr::AnyBoolConst(_)
+            | PatRepr::AnyFloatConst(_)
+            | PatRepr::InitialVar
+            | PatRepr::InitialVarFor(_) => {}
         }
         Ok(())
     }
