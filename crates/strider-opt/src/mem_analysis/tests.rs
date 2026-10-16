@@ -696,14 +696,16 @@ mod heap_tests {
             .build_fn_single_region()
     }
 
-    /// The function and the allocator set every query over it must share.
+    /// The function, its memo reset under `allocators`, and that set.
     fn built(
         mut b: FunctionBuilder,
         allocators: &[u64],
     ) -> crate::Result<(Function, FxHashSet<u64>)> {
         b.set_lift_addr(None);
-        let fg = b.build()?;
-        Ok((fg, allocators.iter().copied().collect()))
+        let mut fg = b.build()?;
+        let set: FxHashSet<u64> = allocators.iter().copied().collect();
+        fg.side_tables_mut().reset_analyses(&set);
+        Ok((fg, set))
     }
 
     /// Like [`built`], but first runs `PhiCollapse`/`RegionCollapse` so a
@@ -719,9 +721,10 @@ mod heap_tests {
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
         p.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
-        // That run decomposed against an empty set; these queries use `allocators`.
-        fg.side_tables().clear_memory_slots();
-        Ok((fg, allocators.iter().copied().collect()))
+        // The collapse ran at the floor; these queries run under `allocators`.
+        let set: FxHashSet<u64> = allocators.iter().copied().collect();
+        fg.side_tables_mut().reset_analyses(&set);
+        Ok((fg, set))
     }
 
     /// A prologue: drops SP by `bytes`, so a slot at `entry_sp - k` for
@@ -1883,6 +1886,73 @@ mod heap_tests {
                 AddrClass::HeapOpaque
             ),
             "the configured analyzer still sees heap memory of unknown identity"
+        );
+        Ok(())
+    }
+
+    /// One store through a `MALLOC` allocation, unoptimized.
+    fn one_heap_store() -> crate::Result<Function> {
+        let mut b = builder()?;
+        let p = alloc_call(&mut b, MALLOC)?;
+        let one = b.build_int_const(1u64, ValueType::I64)?;
+        b.build_store(p, one, rsleigh::VnSpace::RAM)?;
+        b.build_return(None, &[])?;
+        b.set_lift_addr(None);
+        b.build()
+    }
+
+    /// How many stores `store().heap_only()` matches.
+    fn heap_stores(fg: &Function) -> usize {
+        strider_pattern::Matcher::new(fg)
+            .find_all(&strider_pattern::store().heap_only().build())
+            .expect("the query compiles")
+            .len()
+    }
+
+    /// `apply_rules_count` re-derives the memory classes under the set the
+    /// function was optimized with, so a heap store stays `heap_only`, also
+    /// after the compaction `analyze` ends with and a clone.
+    #[test]
+    fn a_rewrite_keeps_the_runs_heap_classes() -> crate::Result<()> {
+        let mut fg = one_heap_store()?;
+        let mut ctx = crate::OptCtx::at_floor(None);
+        ctx.options.assumptions.noalias_allocators = [MALLOC].into_iter().collect();
+        crate::default_pipeline().run(&mut fg, &mut ctx)?;
+        assert_eq!(heap_stores(&fg), 1, "the run classifies the store as heap");
+        fg.compact()?;
+        let mut fg = fg.clone();
+        let no_rules: &[crate::BoxedRule] = &[];
+        crate::apply_rules_count(&mut crate::EditFunction::new(&mut fg), no_rules)?;
+        assert_eq!(
+            heap_stores(&fg),
+            1,
+            "a rewrite keeps the run's allocator set"
+        );
+        Ok(())
+    }
+
+    /// A later run without the allocator records the empty set, and the heap
+    /// classes go with the set that made them.
+    #[test]
+    fn a_later_run_without_the_allocator_drops_its_heap_classes() -> crate::Result<()> {
+        let mut fg = one_heap_store()?;
+        let mut listed = crate::OptCtx::at_floor(None);
+        listed.options.assumptions.noalias_allocators = [MALLOC].into_iter().collect();
+        crate::default_pipeline().run(&mut fg, &mut listed)?;
+        assert_eq!(
+            heap_stores(&fg),
+            1,
+            "the listed run classifies the store as heap"
+        );
+        crate::default_pipeline().run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
+        assert!(
+            fg.side_tables().memory_allocators().is_empty(),
+            "a run's set replaces the last one"
+        );
+        assert_eq!(
+            heap_stores(&fg),
+            0,
+            "no heap class outlives its allocator set"
         );
         Ok(())
     }
@@ -3258,9 +3328,9 @@ mod store_index {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         super::super::collapse_phis(&mut fg);
-        // The collapse classified under an empty allocator set, and a
-        // `NotMemory` it left would answer the probes' `ALLOC` set.
-        fg.side_tables().clear_memory_slots();
+        // The collapse ran at the floor; the probes run under `{ALLOC}`.
+        fg.side_tables_mut()
+            .reset_analyses(&[ALLOC].into_iter().collect());
         Ok((fg, addresses))
     }
 
