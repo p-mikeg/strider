@@ -3085,7 +3085,8 @@ mod store_index {
     /// opaque user-op, plus the addresses a probe can take. The heap classes
     /// come from `ALLOC`: a `Phi` of two allocations, whose identity is
     /// unknown, and allocations in the run itself. One store in six is in
-    /// register space.
+    /// register space. Two arms add `k` to an SP or heap base plus `2^31 - 4`,
+    /// so their offsets straddle the top of the signed range and wrap.
     fn random_chain(seed: u64) -> crate::Result<(Function, Vec<ValueId>)> {
         let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let sp = sp();
@@ -3122,12 +3123,15 @@ mod store_index {
         let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::I32)?;
         let aligned =
             b.build_int_binary_operation(sp_value, mask, IntBinaryOp::And, ValueType::I32)?;
+        let near_top = b.build_int_const(0x7FFF_FFFCu64, ValueType::I32)?;
+        let sp_top =
+            b.build_int_binary_operation(sp_value, near_top, IntBinaryOp::Add, ValueType::I32)?;
         let cell = b.build_int_const(0x9000u64, ValueType::I32)?;
         let opaque = b.build_load(cell, rsleigh::VnSpace::RAM, ValueType::I32)?;
         let mut addresses = vec![opaque, merged];
         for _ in 0..40 {
             let k = rng.below(24) as i64 - 12;
-            let addr = match rng.below(9) {
+            let addr = match rng.below(11) {
                 0 | 1 => {
                     let k = b.build_int_const(k as u64, ValueType::I32)?;
                     b.build_int_binary_operation(sp_value, k, IntBinaryOp::Add, ValueType::I32)?
@@ -3149,6 +3153,21 @@ mod store_index {
                     heaps.push(p);
                     addresses.push(p);
                     continue;
+                }
+                8 => {
+                    let k = b.build_int_const(k as u64, ValueType::I32)?;
+                    b.build_int_binary_operation(sp_top, k, IntBinaryOp::Add, ValueType::I32)?
+                }
+                9 => {
+                    let base = heaps[rng.below(heaps.len())];
+                    let top = b.build_int_binary_operation(
+                        base,
+                        near_top,
+                        IntBinaryOp::Add,
+                        ValueType::I32,
+                    )?;
+                    let k = b.build_int_const(k as u64, ValueType::I32)?;
+                    b.build_int_binary_operation(top, k, IntBinaryOp::Add, ValueType::I32)?
                 }
                 _ => {
                     if rng.below(2) == 0 {
