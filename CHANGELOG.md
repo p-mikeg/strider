@@ -10,6 +10,8 @@
 - `CfgOptions(function_max_size=n, allow_code_before_start_addr=True)` raises
   `ValueError`; the flag had no effect beside a size. Options sized by
   `ElfLifter.analyze(<name>)` read `allow_code_before_start_addr` as `False`.
+- `CfgOptions.with_function_max_size`, `CfgOptions.with_data_ranges` and
+  `LifterOptions.with_cfg` are gone; pass the fields to the constructors.
 
 ### Breaking, Rust
 
