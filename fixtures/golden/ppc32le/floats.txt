@@ -1,4 +1,4 @@
-# ppc32le/floats: Strider::analyze, LiftOptions::default(), OptOptions::default()
+# ppc32le/floats: Strider::analyze, default options, incomplete reported
 # f32_arith: 4 float.add|float.mul|float.div
 # f32_compare: 2 fcmp.less|fcmp.equal
 # f32_neg_abs: float.neg or int.xor

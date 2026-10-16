@@ -1,4 +1,4 @@
-# mips64be/stack: Strider::analyze, LiftOptions::default(), OptOptions::default()
+# mips64be/stack: Strider::analyze, default options, incomplete reported
 # escape_via_ptr: store and call
 # inplace_swap: 2 load and 2 store
 # large_local_array: store and cfg.back_edge
