@@ -331,7 +331,7 @@ when both IR slots hold the same value.
   a callee-cleanup `ret $imm16` or an i386 PC thunk needs a `per_address_ccs`
   entry (see `CallingConvention::x86_cdecl`).
 - A converged CFG is never silently incomplete: `AnalyzeResult::incomplete()`
-  (the returned `Cfg`'s own `incompleteness()`) is one `Incompleteness` set of
+  (the returned `Cfg`'s own `incomplete()`) is one `Incompleteness` set of
   `(PcodeInsnAddr, Reason)`, six reasons, and `is_complete()` is "may this be
   incomplete?". Target reasons accumulate over the rounds; site reasons are
   the final round's. Each reason's contract is on `strider_cfg::Reason`.
@@ -362,8 +362,8 @@ Domain-namespaced submodules (`strider.ir`, `.lift`, `.cfg`, `.sleigh`,
 `strider.lift.lifter(arch, mem, rom=None)` builds the lift handle;
 `analyze(entry, cc, opts)` returns an `AnalyzeResult` with
 `.cfg` / `.function` / `.unresolved` (also unpackable as a 3-tuple), or raises
-`IncompleteAnalysis` (a `StriderError`, `.sites`) when `cfg.incomplete` would
-name anything, unless `LifterOptions(on_incomplete=OnIncomplete.IGNORE)`.
+`IncompleteAnalysis` (a `StriderError`, `.incomplete`) when `cfg.incomplete`
+would name anything, unless `LifterOptions(on_incomplete=OnIncomplete.IGNORE)`.
 Pattern queries (`find_all` / `find_unique`) and rendering
 (`Function.to_dot(pretty=)`) live on the returned objects. See the `.pyi` stubs
 for the typed surface.
