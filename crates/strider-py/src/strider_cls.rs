@@ -311,11 +311,10 @@ pub(crate) fn seat_known_targets(
             let seated = match answer {
                 crate::options::KnownTarget::Return => strider_cfg::ResolvedTargets::LinkRegister,
                 crate::options::KnownTarget::Targets(targets) => {
-                    strider_cfg::ResolvedTargets::Multiple(
+                    strider_cfg::ResolvedTargets::table(
                         targets
                             .iter()
-                            .map(|&t| strider_cfg::ResolvedTarget::new(t, None))
-                            .collect(),
+                            .map(|&t| strider_cfg::ResolvedTarget::new(t, None)),
                     )
                 }
             };
