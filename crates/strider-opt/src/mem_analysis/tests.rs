@@ -12,22 +12,19 @@ use strider_ir::{Function, IRViewer};
 
 /// The fixtures below build exactly one `Store`.
 #[cfg(test)]
-fn only_store(f: &strider_ir::Function) -> strider_ir::node::NodeId {
+fn only_store(f: &Function) -> NodeId {
     f.graph()
         .all_node_ids()
-        .find(|&n| matches!(f.node_kind(n), strider_ir::node::NodeKind::Store(_)))
+        .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
         .expect("one store")
 }
 
 /// What `CallStackArgCollect` runs under, claiming `stack_global_disjoint` as
 /// given.
 #[cfg(test)]
-fn call_blocking(
-    stack_global_disjoint: bool,
-    allocators: &rustc_hash::FxHashSet<u64>,
-) -> super::MemOptions {
-    super::MemOptions::for_purpose(
-        super::MemPurpose::CallStackArgs,
+fn call_blocking(stack_global_disjoint: bool, allocators: &FxHashSet<u64>) -> MemOptions {
+    MemOptions::for_purpose(
+        MemPurpose::CallStackArgs,
         &crate::AssumptionOptions {
             stack_global_disjoint,
             noalias_allocators: allocators.clone(),
@@ -39,12 +36,9 @@ fn call_blocking(
 /// What `LoadForward` runs under with `stack_global_disjoint` and
 /// `escape_analysis` claimed.
 #[cfg(test)]
-fn escaping(
-    callee_preserves_stack_args: bool,
-    allocators: &rustc_hash::FxHashSet<u64>,
-) -> super::MemOptions {
-    super::MemOptions::for_purpose(
-        super::MemPurpose::Forward,
+fn escaping(callee_preserves_stack_args: bool, allocators: &FxHashSet<u64>) -> MemOptions {
+    MemOptions::for_purpose(
+        MemPurpose::Forward,
         &crate::AssumptionOptions {
             stack_global_disjoint: true,
             escape_analysis: true,
@@ -2002,36 +1996,75 @@ mod heap_tests {
     }
 
     /// Each purpose honours exactly the claims its row of
-    /// `MemOptions::for_purpose` names, read off three verdicts: a spill
-    /// reloaded across an unlisted call, two allocations, and a stack slot
-    /// against a global.
+    /// `MemOptions::for_purpose` names, read off six verdicts: a spill
+    /// reloaded across an unlisted call and one across a listed allocator,
+    /// two allocations, a stack slot against a global, an entry-SP slot
+    /// against an alignment-masked one, and, in a second function whose ABI
+    /// passes stack arguments, the allocator's argument slot reloaded.
     #[test]
     fn each_purpose_honours_its_own_claims() -> crate::Result<()> {
         use crate::AssumptionOptions;
         use MemPurpose::*;
+        let sp_slot = |b: &mut FunctionBuilder, sp_val, off: i64| -> crate::Result<ValueId> {
+            let off = b.build_int_const(off as u64, ValueType::I64)?;
+            b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::I64)
+        };
         let mut b = builder()?;
         let sp_val = b.read_variable(&sp())?;
-        let slot_off = b.build_int_const((-8i64) as u64, ValueType::I64)?;
-        let slot =
-            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
+        let slot = sp_slot(&mut b, sp_val, -8)?;
         let seven = b.build_int_const(7u64, ValueType::I64)?;
         b.build_store(slot, seven, rsleigh::VnSpace::RAM)?;
         lower_sp(&mut b, sp_val, 64)?;
         let unlisted = b.build_int_const(0x2000u64, ValueType::I64)?;
         b.build_call(unlisted, &[], &[ret_reg()], 0)?;
         let reload = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let local = sp_slot(&mut b, sp_val, -16)?;
+        let nine = b.build_int_const(9u64, ValueType::I64)?;
+        b.build_store(local, nine, rsleigh::VnSpace::RAM)?;
         let p = alloc_call(&mut b, MALLOC)?;
+        let local_reload = b.build_load(local, rsleigh::VnSpace::RAM, ValueType::I64)?;
         let q = alloc_call(&mut b, MALLOC)?;
         let two = b.build_int_const(2u64, ValueType::I64)?;
         b.build_store(q, two, rsleigh::VnSpace::RAM)?;
         let from_p = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::I64)?;
         let global = b.build_int_const(0x9000u64, ValueType::I64)?;
         let from_global = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::I64)?;
-        let sum = b.build_int_binary_operation(reload, from_p, IntBinaryOp::Add, ValueType::I64)?;
-        let sum =
-            b.build_int_binary_operation(sum, from_global, IntBinaryOp::Add, ValueType::I64)?;
+        let mask = b.build_int_const((-16i64) as u64, ValueType::I64)?;
+        let aligned =
+            b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I64)?;
+        let aligned_slot = sp_slot(&mut b, aligned, 8)?;
+        let five = b.build_int_const(5u64, ValueType::I64)?;
+        b.build_store(aligned_slot, five, rsleigh::VnSpace::RAM)?;
+        let incoming = sp_slot(&mut b, sp_val, 8)?;
+        let from_incoming = b.build_load(incoming, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let mut sum = reload;
+        for v in [local_reload, from_p, from_global, from_incoming] {
+            sum = b.build_int_binary_operation(sum, v, IntBinaryOp::Add, ValueType::I64)?;
+        }
         b.build_return(Some(sum), &[])?;
         let (mut fg, _) = built_collapsed(b, &[])?;
+
+        // An earlier call on the chain would blind the allocator's argument
+        // window, so its argument slot gets a function of its own.
+        let mut b = RegisterSet::new()
+            .tracked(sp())
+            .tracked(ret_reg())
+            .arg(sp())
+            .ret(ret_reg())
+            .stack_vn(sp())
+            .stack_args(stack_args_at(0, 8))
+            .build_fn_single_region()?;
+        let sp_val = b.read_variable(&sp())?;
+        lower_sp(&mut b, sp_val, 64)?;
+        // Slot 0 of the allocator's stack arguments.
+        let arg_slot = sp_slot(&mut b, sp_val, -64)?;
+        let eleven = b.build_int_const(11u64, ValueType::I64)?;
+        b.build_store(arg_slot, eleven, rsleigh::VnSpace::RAM)?;
+        alloc_call(&mut b, MALLOC)?;
+        let arg_reload = b.build_load(arg_slot, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        b.build_return(Some(arg_reload), &[])?;
+        let (mut fa, _) = built_collapsed(b, &[])?;
+
         let store_of = |fg: &Function, data: u128| {
             fg.graph()
                 .all_node_ids()
@@ -2041,12 +2074,18 @@ mod heap_tests {
                 })
                 .expect("the store")
         };
-        let (spill, to_q) = (store_of(&fg, 7), store_of(&fg, 2));
-        let (reload, from_p, from_global) = (
-            fg.producer(reload),
-            fg.producer(from_p),
-            fg.producer(from_global),
+        let (spill, local_spill, to_q, to_aligned) = (
+            store_of(&fg, 7),
+            store_of(&fg, 9),
+            store_of(&fg, 2),
+            store_of(&fg, 5),
         );
+        let [reload, local_reload, from_p, from_global, from_incoming] =
+            [reload, local_reload, from_p, from_global, from_incoming].map(|v| fg.producer(v));
+        let (arg_spill, arg_reload) = (store_of(&fa, 11), fa.producer(arg_reload));
+        let forwards = |fg: &Function, analyzer: &MemAnalyzer, load: NodeId, spill: NodeId| {
+            analyzer.nearest_clobber(fg, load, fg.node_inputs(load)[0]) == spill
+        };
         let none = AssumptionOptions::none;
         let toggles = [
             none(),
@@ -2078,21 +2117,51 @@ mod heap_tests {
                 return_slots_survive_untracked_writes: true,
                 ..none()
             },
+            // `callee_preserves_stack_args` is inert without a relaxation
+            // that consults the argument window.
+            AssumptionOptions {
+                noalias_allocators: [MALLOC].into_iter().collect(),
+                callee_preserves_stack_args: true,
+                ..none()
+            },
         ];
         for a in &toggles {
             fg.side_tables_mut().reset_analyses(&a.noalias_allocators);
+            fa.side_tables_mut().reset_analyses(&a.noalias_allocators);
             for purpose in [Forward, IncomingArgs, CallStackArgs, TableWalk, Structural] {
                 let analyzer = MemAnalyzer::new(MemOptions::for_purpose(purpose, a));
-                let mem = fg.node_inputs(reload)[0];
-                let forwards = analyzer.nearest_clobber(&fg, reload, mem) == spill;
+                // An analyzer keeps the index of the first graph it reads.
+                let analyzer_a = MemAnalyzer::new(MemOptions::for_purpose(purpose, a));
                 let heap = analyzer.verdict(&fg, from_p, to_q) == AliasVerdict::Disjoint;
                 let global = analyzer.verdict(&fg, from_global, spill) == AliasVerdict::Disjoint;
+                let sp_bases =
+                    analyzer.verdict(&fg, from_incoming, to_aligned) == AliasVerdict::Disjoint;
                 let claims = purpose != Structural;
+                let no_call_blocks =
+                    purpose == IncomingArgs && a.assume_incoming_args_survive_calls;
+                let escapes = purpose == Forward && a.escape_analysis;
+                let allocator =
+                    !matches!(purpose, TableWalk | Structural) && !a.noalias_allocators.is_empty();
                 assert_eq!(
-                    forwards,
-                    (purpose == Forward && a.escape_analysis)
-                        || (purpose == IncomingArgs && a.assume_incoming_args_survive_calls),
+                    forwards(&fg, &analyzer, reload, spill),
+                    escapes || no_call_blocks,
                     "{purpose:?} forwarding across the call under {a:?}"
+                );
+                assert_eq!(
+                    forwards(&fg, &analyzer, local_reload, local_spill),
+                    allocator || escapes || no_call_blocks,
+                    "{purpose:?} forwarding across the allocator under {a:?}"
+                );
+                assert_eq!(
+                    forwards(&fa, &analyzer_a, arg_reload, arg_spill),
+                    (purpose == Forward && a.callee_preserves_stack_args && (allocator || escapes))
+                        || no_call_blocks,
+                    "{purpose:?} forwarding the allocator's argument slot under {a:?}"
+                );
+                assert_eq!(
+                    sp_bases,
+                    purpose == IncomingArgs && a.distinct_sp_bases_disjoint,
+                    "{purpose:?} distinct-SP-base disjointness under {a:?}"
                 );
                 assert_eq!(
                     heap,
@@ -3527,8 +3596,9 @@ mod refresh_tests {
 
     const MALLOC: u64 = 0x1000;
 
-    /// A heap store, a stack store and a global load, run through `pipeline`
-    /// with `MALLOC` listed.
+    /// A heap store, a stack store and a global store, run through `pipeline`
+    /// with `MALLOC` listed.  The one load is forwarded away, so once it is
+    /// gone no pass decomposes what is left.
     fn optimized(pipeline: &crate::OptimizerPipeline) -> crate::Result<Function> {
         let sp = stack_vn_x86_64();
         let ret = reg_vn(0, 8);
@@ -3546,10 +3616,12 @@ mod refresh_tests {
         b.build_store(rets[0], one, rsleigh::VnSpace::RAM)?;
         let off = b.build_int_const((-8i64) as u64, ValueType::I64)?;
         let slot = b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::I64)?;
-        b.build_store(slot, one, rsleigh::VnSpace::RAM)?;
+        let two = b.build_int_const(2u64, ValueType::I64)?;
+        b.build_store(slot, two, rsleigh::VnSpace::RAM)?;
+        let reload = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I64)?;
         let global = b.build_int_const(0x9000u64, ValueType::I64)?;
-        let loaded = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::I64)?;
-        b.build_return(Some(loaded), &[])?;
+        b.build_store(global, reload, rsleigh::VnSpace::RAM)?;
+        b.build_return(Some(reload), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         let mut ctx = crate::OptCtx::at_floor(None);
@@ -3565,13 +3637,23 @@ mod refresh_tests {
             .collect()
     }
 
+    /// The class of the store of `1`, the heap one.
+    fn heap_store_class(fg: &Function) -> MemDecomp {
+        let store = fg
+            .walk_kind(|k| matches!(k, NodeKind::Store(_)))
+            .find(|&n| fg.int_const_u128(fg.store_data(n)) == Some(1))
+            .expect("the heap store");
+        fg.side_tables().memory_class(fg.store_addr(store))
+    }
+
     /// No live access is left unclassified after a run or after a rewrite.
     #[test]
     fn every_access_is_classified_after_a_run_and_a_rewrite() -> crate::Result<()> {
         let mut fg = optimized(&crate::default_pipeline())?;
         let ran = classes(&fg);
-        assert_eq!(ran.len(), 3, "two stores and a load survive");
+        assert_eq!(ran.len(), 3, "the three stores survive, the load does not");
         assert!(!ran.contains(&MemDecomp::Unknown), "after the run: {ran:?}");
+        assert!(matches!(heap_store_class(&fg), MemDecomp::Heap(_)));
         let no_rules: &[crate::BoxedRule] = &[];
         crate::apply_rules_count(&mut crate::EditFunction::new(&mut fg), no_rules)?;
         let rewritten = classes(&fg);
@@ -3579,6 +3661,7 @@ mod refresh_tests {
             !rewritten.contains(&MemDecomp::Unknown),
             "after a rewrite: {rewritten:?}"
         );
+        assert!(matches!(heap_store_class(&fg), MemDecomp::Heap(_)));
         Ok(())
     }
 

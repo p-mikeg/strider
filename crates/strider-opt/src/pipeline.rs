@@ -631,6 +631,21 @@ mod tests {
         Ok(())
     }
 
+    /// `run_one_unvalidated` resets the memo as `run` does, set included.
+    #[test]
+    fn run_one_unvalidated_records_the_allocator_set() -> crate::Result<()> {
+        let mut function = one_const_fn(5);
+        let mut ctx = OptCtx::at_floor(None);
+        ctx.options.assumptions.noalias_allocators = [0x1000].into_iter().collect();
+        let pass = CountsRuns(std::sync::Arc::default());
+        super::run_one_unvalidated(&pass, &mut function, &mut ctx)?;
+        assert_eq!(
+            function.side_tables().memory_allocators(),
+            &ctx.options.assumptions.noalias_allocators
+        );
+        Ok(())
+    }
+
     /// Rewrites the returned value to a fresh constant on its first `edits`
     /// runs.
     #[derive(Clone)]

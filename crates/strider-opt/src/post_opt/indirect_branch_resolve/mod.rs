@@ -650,4 +650,87 @@ mod tests {
         let (f, branch, target) = lr_saved_at_the_carrier_limit(true);
         assert!(!ReturnTargets::new(&f, &none).returns_to_caller(branch, target));
     }
+
+    /// A 128-bit frame saving `sp + saved` at `sp + 0x40` and `lr` at
+    /// `Add(..Add(fp, addends[0]).., addends[n])`, `fp` the reloaded save, so
+    /// the slot is reached only through a guess.  When `junk` is given, a
+    /// store at `fp + junk` follows.
+    fn lr_saved_off_a_reloaded_sp(
+        saved: i128,
+        addends: &[i128],
+        junk: Option<i128>,
+    ) -> (strider_ir::Function, NodeId, ValueId) {
+        let sp = fake_reg_vn(0x20, 16);
+        let lr = fake_reg_vn(0x4c, 16);
+        let mut b = strider_ir_test_utils::sp_frame(sp)
+            .tracked(lr)
+            .link_register(lr)
+            .build_fn_single_region()
+            .expect("build_fn_single_region");
+        let sp_val = b.read_variable(&sp).unwrap();
+        let lr_val = b.read_variable(&lr).unwrap();
+        let add = |b: &mut FunctionBuilder, base: ValueId, off: i128| {
+            let c = b.build_int_const(off as u128, ValueType::I128).unwrap();
+            b.build_int_binary_operation(base, c, IntBinaryOp::Add, ValueType::I128)
+                .unwrap()
+        };
+        let save = add(&mut b, sp_val, 0x40);
+        let saved = add(&mut b, sp_val, saved);
+        b.build_store(save, saved, rsleigh::VnSpace::RAM).unwrap();
+        let fp = b
+            .build_load(save, rsleigh::VnSpace::RAM, ValueType::I128)
+            .unwrap();
+        let slot = addends.iter().fold(fp, |at, &off| add(&mut b, at, off));
+        b.build_store(slot, lr_val, rsleigh::VnSpace::RAM).unwrap();
+        if let Some(off) = junk {
+            let near = add(&mut b, fp, off);
+            let junk = b.build_int_const(0xDEAD_BEEFu64, ValueType::I128).unwrap();
+            b.build_store(near, junk, rsleigh::VnSpace::RAM).unwrap();
+        }
+        let target = b
+            .build_load(slot, rsleigh::VnSpace::RAM, ValueType::I128)
+            .unwrap();
+        let branch = b.build_indirect_branch(target).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        let mut prep = crate::OptimizerPipeline::new();
+        prep.add(crate::PhiCollapse);
+        prep.add(crate::RegionCollapse);
+        prep.run(&mut function, &mut crate::OptCtx::at_floor(None))
+            .expect("prep");
+        (function, branch, target)
+    }
+
+    /// Guessing and proving an offset past the `i128` carrier fails closed,
+    /// at each place the arithmetic can leave it; the controls stand at the
+    /// same edge without crossing it.
+    #[test]
+    fn an_offset_guessed_past_the_carrier_fails_closed() {
+        let none = crate::AssumptionOptions::none();
+        let verified = |saved, addends: &[i128], junk| {
+            let (f, branch, target) = lr_saved_off_a_reloaded_sp(saved, addends, junk);
+            ReturnTargets::new(&f, &none).returns_to_caller(branch, target)
+        };
+        assert!(verified(16, &[8, 8], Some(-64)), "control");
+        assert!(
+            verified(i128::MAX, &[-16], Some(-64)),
+            "control at the edge"
+        );
+        assert!(
+            !verified(i128::MAX, &[1], None),
+            "the slot's offset off the spine runs past the carrier"
+        );
+        assert!(
+            !verified(0, &[i128::MAX, 1], None),
+            "the addends sum past the carrier"
+        );
+        assert!(
+            !verified(i128::MAX, &[-16], Some(1)),
+            "a remembered guess plus the junk store's addend runs past it"
+        );
+        assert!(
+            !verified(i128::MAX, &[1, -1], None),
+            "the slot is in range, but the inner sum and its claim are not"
+        );
+    }
 }
