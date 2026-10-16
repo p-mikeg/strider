@@ -5,6 +5,9 @@ pub use strider_lift::lift::{LiftOutcome, Lifter};
 
 mod resolve;
 
+#[cfg(feature = "test-util")]
+pub use resolve::Classifier;
+
 use rustc_hash::FxHashMap;
 
 use anyhow::{Result, anyhow};
@@ -244,18 +247,13 @@ where
     ///
     /// As [`Self::analyze`].
     #[cfg(feature = "test-util")]
-    #[allow(clippy::type_complexity)]
     pub fn analyze_with_classifier(
         &mut self,
         entry: u64,
         cc: &strider_target::BuiltCallingConvention,
         opts: &AnalyzeOptions<'_>,
         pipeline: Option<strider_opt::OptimizerPipeline>,
-        classify: &dyn Fn(
-            &strider_ir::Function,
-            Option<&dyn ReadOnlyMemory>,
-            &OptOptions,
-        ) -> Result<strider_opt::ClassifiedSites>,
+        classify: Classifier<'_>,
     ) -> std::result::Result<AnalyzeResult, AnalyzeError> {
         self.analyze_with(entry, cc, opts, pipeline, classify)
     }
