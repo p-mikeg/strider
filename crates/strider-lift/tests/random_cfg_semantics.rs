@@ -66,17 +66,55 @@ impl Op {
         }
     }
 
-    /// A 32-bit write zero-extends.
-    fn run(self, rax: &mut u64, rcx: &mut u64) {
-        let (eax, ecx) = (*rax as u32, *rcx as u32);
+    /// Runs as the last point of `path`. A 32-bit write zero-extends.
+    fn run(self, rax: &mut Val, rcx: &mut Val, path: &[usize]) {
+        let now = path.len() - 1;
+        // Whether this op already ran since `origin`.
+        let again = |origin: usize| path[origin..now].contains(&path[now]);
+        let (eax, ecx) = (rax.bits as u32, rcx.bits as u32);
         match self {
-            Op::MovEax(k) => *rax = u64::from(k),
-            Op::AddEax(k) => *rax = u64::from(eax.wrapping_add(k)),
-            Op::AddEaxEcx => *rax = u64::from(eax.wrapping_add(ecx)),
-            Op::MovEcxEax => *rcx = u64::from(eax),
-            Op::AddEcx(k) => *rcx = u64::from(ecx.wrapping_add(k)),
+            Op::MovEax(k) => {
+                *rax = Val {
+                    bits: u64::from(k),
+                    origin: now,
+                    accumulated: false,
+                };
+            }
+            Op::AddEax(k) => {
+                rax.bits = u64::from(eax.wrapping_add(k));
+                rax.accumulated |= again(rax.origin);
+            }
+            Op::AddEaxEcx => {
+                let origin = rax.origin.min(rcx.origin);
+                *rax = Val {
+                    bits: u64::from(eax.wrapping_add(ecx)),
+                    origin,
+                    accumulated: rax.accumulated || rcx.accumulated || again(origin),
+                };
+            }
+            Op::MovEcxEax => {
+                *rcx = Val {
+                    bits: u64::from(eax),
+                    ..*rax
+                }
+            }
+            Op::AddEcx(k) => {
+                rcx.bits = u64::from(ecx.wrapping_add(k));
+                rcx.accumulated |= again(rcx.origin);
+            }
         }
     }
+}
+
+/// A register's value and its dependence chain: the path index the chain
+/// starts at (the `mov` of a constant that began it, or the entry), and
+/// whether an op of the chain ran more than once, so the value went round a
+/// loop and changed.
+#[derive(Clone, Copy, Debug)]
+struct Val {
+    bits: u64,
+    origin: usize,
+    accumulated: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -201,11 +239,19 @@ fn random_blocks(seed: u64) -> Vec<Block> {
         .collect()
 }
 
-/// A bit at or above the lowest one the body adds, so a loop of it exits
-/// within `2 << shift` iterations.
+/// The lowest bit the body adds, shifted up by `shift` while it stays in
+/// the register: adding `k` takes that bit through both values within
+/// `2 << shift` additions, so a loop of the latch alone exits.
 fn latch_mask(op: Option<Op>, shift: u32) -> u32 {
     match op {
-        Some(Op::AddEax(k) | Op::AddEcx(k)) if k != 0 => (k & k.wrapping_neg()).rotate_left(shift),
+        Some(Op::AddEax(k) | Op::AddEcx(k)) if k != 0 => {
+            let low = k & k.wrapping_neg();
+            if low.leading_zeros() >= shift {
+                low << shift
+            } else {
+                low
+            }
+        }
         _ => 1 << shift,
     }
 }
@@ -279,44 +325,80 @@ fn assemble(blocks: &[Block], base: u64) -> Vec<u8> {
 
 #[derive(Debug)]
 enum Run {
-    Returns(u64),
+    /// `rax` at the `ret`; whether its dependence chain crossed a back edge
+    /// (the path from where the chain starts repeats a point); whether the
+    /// value changed going round.
+    Returns {
+        rax: u64,
+        carried: bool,
+        accumulated: bool,
+    },
     /// Came back to a state it had been in: a loop forever.
     Loops,
-    /// Passed [`STEP_CAP`] points without returning.
+    /// Passed [`STEP_CAP`] points without returning or repeating a state.
     TooLong,
 }
 
-/// The run from the entry. A state is the point and the registers; the flags
-/// are set before every use. `path` gets the points passed, in order.
-fn simulate(blocks: &[Block], edi: u32, rax: u64, rcx: u64, path: &mut Vec<usize>) -> Run {
-    let (mut rax, mut rcx) = (rax, rcx);
+/// What the simulation saw: how the run ended, the points it passed and
+/// whether each `jz` was taken, in order.
+struct Sim {
+    run: Run,
+    path: Vec<usize>,
+    taken: Vec<bool>,
+}
+
+/// The run from the entry, for up to [`STEP_CAP`] points. A state is the
+/// point and the registers (the flags are set before every use); a run that
+/// repeats one is [`Run::Loops`], but goes on to the cap so `taken` is long.
+fn simulate(blocks: &[Block], edi: u32, rax: u64, rcx: u64) -> Sim {
+    let entry = |bits| Val {
+        bits,
+        origin: 0,
+        accumulated: false,
+    };
+    let (mut rax, mut rcx) = (entry(rax), entry(rcx));
+    let (mut path, mut taken) = (Vec::new(), Vec::new());
     let mut seen = HashSet::new();
+    let mut loops = false;
     let mut at = 0;
     while path.len() < STEP_CAP {
-        if !seen.insert((at, rax, rcx)) {
-            return Run::Loops;
-        }
+        loops |= !seen.insert((at, rax.bits, rcx.bits));
         path.push(at);
         let (op, term) = blocks[at / 3];
         if let (0, Some(op)) = (at % 3, op) {
-            op.run(&mut rax, &mut rcx);
+            op.run(&mut rax, &mut rcx, &path);
             at += 1;
             continue;
         }
         let to = match term {
-            Term::Ret => return Run::Returns(rax),
+            Term::Ret => {
+                let mut chain = path[rax.origin..].to_vec();
+                chain.sort_unstable();
+                chain.dedup();
+                let carried = chain.len() < path.len() - rax.origin;
+                let run = Run::Returns {
+                    rax: rax.bits,
+                    carried,
+                    accumulated: rax.accumulated,
+                };
+                return Sim { run, path, taken };
+            }
             Term::Jmp(to) => to,
             Term::Cond { other, .. } if at % 3 == 2 => other,
             Term::Cond {
-                reg, mask, taken, ..
+                reg,
+                mask,
+                taken: to,
+                ..
             } => {
                 let value = match reg {
-                    Reg::Eax => rax as u32,
-                    Reg::Ecx => rcx as u32,
+                    Reg::Eax => rax.bits as u32,
+                    Reg::Ecx => rcx.bits as u32,
                     Reg::Edi => edi,
                 };
+                taken.push(value & mask == 0);
                 if value & mask == 0 {
-                    taken
+                    to
                 } else {
                     To {
                         block: at / 3,
@@ -327,7 +409,8 @@ fn simulate(blocks: &[Block], edi: u32, rax: u64, rcx: u64, path: &mut Vec<usize
         };
         at = point(blocks, to);
     }
-    Run::TooLong
+    let run = if loops { Run::Loops } else { Run::TooLong };
+    Sim { run, path, taken }
 }
 
 /// Each program point's successors: a body falls through to its terminator,
@@ -405,18 +488,11 @@ fn cone(f: &Function, v: ValueId) -> NodeIdSet {
     seen
 }
 
-/// Whether `v` is computed through a value `Phi`, and through one a loop
-/// carries (one of its operands is computed from it).
-fn through_phi(f: &Function, v: ValueId) -> (bool, bool) {
-    let phis: Vec<_> = cone(f, v)
+/// Whether `v` is computed through a value `Phi`.
+fn through_phi(f: &Function, v: ValueId) -> bool {
+    cone(f, v)
         .iter()
-        .filter(|&n| matches!(f.node_kind(n), NodeKind::Phi))
-        .collect();
-    let carried = phis.iter().any(|&phi| {
-        let mut operands = f.node_inputs(phi).into_iter().skip(1);
-        operands.any(|i| cone(f, i).contains(phi))
-    });
-    (!phis.is_empty(), carried)
+        .any(|n| matches!(f.node_kind(n), NodeKind::Phi))
 }
 
 /// Counts that keep the draws honest: region-graph shapes per draw, then
@@ -445,8 +521,14 @@ struct Tally {
     loop_returns: u64,
     /// Returning runs whose `rax` is computed through a value `Phi`.
     phi_returns: u64,
-    /// ... through a `Phi` a loop carries.
+    /// Returning runs whose `rax` chain crossed a back edge.
     carried_returns: u64,
+    /// ... and changed going round.
+    accumulated_returns: u64,
+    /// `jz` outcomes compared with the interpreter's `If` conditions.
+    branches_compared: u64,
+    /// ... of them in runs that never return.
+    branches_in_endless_runs: u64,
 }
 
 impl Tally {
@@ -483,7 +565,7 @@ impl Tally {
     }
 
     /// The counts that must each reach the floor.
-    fn floored(&self) -> [u64; 12] {
+    fn floored(&self) -> [u64; 14] {
         [
             self.cyclic,
             self.irreducible,
@@ -497,6 +579,8 @@ impl Tally {
             self.loop_returns,
             self.phi_returns,
             self.carried_returns,
+            self.accumulated_returns,
+            self.branches_in_endless_runs,
         ]
     }
 }
@@ -584,8 +668,7 @@ fn random_control_flow_lifts_to_what_the_code_computes() {
         for (k, &edi) in EDIS.iter().enumerate() {
             let rax0 = interp::mix((g as u64) ^ ((k as u64) << 32));
             let rcx0 = interp::mix(rax0);
-            let mut path = Vec::new();
-            let want = simulate(blocks, edi, rax0, rcx0, &mut path);
+            let sim = simulate(blocks, edi, rax0, rcx0);
             let entry = |e: EntryVar| -> u128 {
                 match e.vn {
                     v if v == rdi => u128::from(edi),
@@ -599,7 +682,7 @@ fn random_control_flow_lifts_to_what_the_code_computes() {
                 entry: &entry,
                 rom: None,
                 seed: g as u64,
-                step_budget: if matches!(want, Run::TooLong) {
+                step_budget: if matches!(sim.run, Run::TooLong) {
                     CAPPED_BUDGET
                 } else {
                     STEP_BUDGET
@@ -607,35 +690,70 @@ fn random_control_flow_lifts_to_what_the_code_computes() {
                 private: None,
             };
             let mut ret = None;
-            let got = interp::run_observed(&f, &env, &mut |node, _, _| {
-                if matches!(f.node_kind(node), NodeKind::Return) {
-                    ret = Some(node);
+            let mut ifs = Vec::new();
+            let got = interp::run_observed(&f, &env, &mut |node, v, c| match f.node_kind(node) {
+                NodeKind::Return => ret = Some(node),
+                // An exit-free sink's `If` tests a constant.
+                NodeKind::If
+                    if v == f.node_inputs(node)[1]
+                        && !matches!(f.node_kind(f.producer(v)), NodeKind::IntConst(_)) =>
+                {
+                    ifs.push(c != 0);
                 }
+                _ => {}
             })
             .unwrap_or_else(|e| panic!("seed {g}, edi {edi:#x}: {e:?}\n{blocks:?}"));
-            match (want, got) {
-                (Run::Returns(want), Outcome::Return { values, .. }) => {
+            match (&sim.run, got) {
+                (
+                    &Run::Returns {
+                        rax: want,
+                        carried,
+                        accumulated,
+                    },
+                    Outcome::Return { values, .. },
+                ) => {
                     assert_eq!(
                         values[slot],
                         Slot::Known(u128::from(want)),
                         "seed {g}, edi {edi:#x}\n{blocks:?}"
                     );
                     tally.returned += 1;
-                    let mut points = path.clone();
+                    let mut points = sim.path.clone();
                     points.sort_unstable();
                     points.dedup();
-                    tally.loop_returns += u64::from(points.len() < path.len());
+                    tally.loop_returns += u64::from(points.len() < sim.path.len());
+                    tally.carried_returns += u64::from(carried);
+                    tally.accumulated_returns += u64::from(accumulated);
                     // A `Return`'s inputs are control, memory, then its slots.
                     let ret = ret.expect("a returned value is observed");
-                    let (phi, carried) = through_phi(&f, f.node_inputs(ret)[2 + slot]);
-                    tally.phi_returns += u64::from(phi);
-                    tally.carried_returns += u64::from(carried);
+                    tally.phi_returns += u64::from(through_phi(&f, f.node_inputs(ret)[2 + slot]));
                 }
                 (Run::Loops, Outcome::Diverge(Divergence::StepBudget)) => tally.diverged += 1,
                 (Run::TooLong, Outcome::Diverge(Divergence::StepBudget)) => tally.capped += 1,
                 (want, got) => {
                     panic!("seed {g}, edi {edi:#x}: want {want:?}, got {got:?}\n{blocks:?}")
                 }
+            }
+            // Each `jz` against the `If` the interpreter took for it, as far
+            // as both ran. Up to the cap, an endless run gives the
+            // interpreter budget for at least as many.
+            let n = sim.taken.len().min(ifs.len());
+            let lengths = match sim.run {
+                Run::Returns { .. } => ifs.len() == sim.taken.len(),
+                Run::Loops => ifs.len() >= sim.taken.len(),
+                Run::TooLong => true,
+            };
+            let first = (0..n).find(|&k| ifs[k] != sim.taken[k]);
+            assert!(
+                first.is_none() && lengths,
+                "seed {g}, edi {edi:#x}: {:?}: jz {first:?} differs, {} taken vs {} Ifs\n{blocks:?}",
+                sim.run,
+                sim.taken.len(),
+                ifs.len()
+            );
+            tally.branches_compared += n as u64;
+            if !matches!(sim.run, Run::Returns { .. }) {
+                tally.branches_in_endless_runs += n as u64;
             }
         }
     }
