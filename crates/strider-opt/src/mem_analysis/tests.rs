@@ -3086,7 +3086,7 @@ mod store_index {
     /// come from `ALLOC`: a `Phi` of two allocations, whose identity is
     /// unknown, and allocations in the run itself. One store in six is in
     /// register space. Two arms add `k` to an SP or heap base plus `2^31 - 4`,
-    /// so their offsets straddle the top of the signed range and wrap.
+    /// so their offsets straddle the top of the signed 32-bit range.
     fn random_chain(seed: u64) -> crate::Result<(Function, Vec<ValueId>)> {
         let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let sp = sp();
@@ -3210,8 +3210,18 @@ mod store_index {
     #[test]
     fn the_index_never_hides_a_clobber() -> crate::Result<()> {
         let allocators: FxHashSet<u64> = [ALLOC].into_iter().collect();
+        let mut heap_near_top = 0;
         for seed in 0..60 {
             let (fg, addresses) = random_chain(seed)?;
+            heap_near_top += addresses
+                .iter()
+                .filter(|&&a| {
+                    matches!(
+                        classify_addr(&fg, a, &allocators),
+                        AddrClass::HeapRooted { offset, .. } if offset.abs() >= 1 << 30
+                    )
+                })
+                .count();
             let layout = MemLayout::build(&fg).expect("the chain is laid out");
             let stores = StoreIndex::build(&fg, &layout, &allocators);
             let analyzer = MemAnalyzer::new(MemOptions::call_blocking(false, &allocators));
@@ -3275,6 +3285,7 @@ mod store_index {
                 }
             }
         }
+        assert!(heap_near_top > 0, "no heap probe straddles the top");
         Ok(())
     }
 }
