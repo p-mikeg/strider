@@ -72,8 +72,11 @@ The other options worth knowing about, all covered in
 `assumptions=AssumptionOptions(...)` states claims about the code that the
 analysis cannot check, and `AssumptionOptions.none()` makes none of them;
 `CfgOptions(known_targets=...)` seats indirect-branch answers of your own,
-`call_other_abis=` classifies a Sleigh user-op strider has no ABI for, and
-`data_ranges=` marks bytes that are data; `per_address_ccs=` names a callee's
+`call_other_abis=` classifies a Sleigh user-op strider has no ABI for,
+`data_ranges=` marks bytes that are data, and `no_return_targets=` lists
+callees that never return (at their even, decoded address: `addr & ~1` for
+Thumb or MIPS16); `function_max_size=` bounds the decode and raises beside
+`allow_code_before_start_addr=True`; `per_address_ccs=` names a callee's
 convention; `pipeline=` replaces the optimizer pass list outright.
 
 **One handle analyzes many functions.** The handle is the fixed setup:

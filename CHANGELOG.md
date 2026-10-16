@@ -8,10 +8,11 @@
   in `CfgOptions(no_return_targets=...)`, which `Lifter.build_cfg` honours
   too; it ignored a no-return `per_address_ccs` entry.
 - `CfgOptions(function_max_size=n, allow_code_before_start_addr=True)` raises
-  `ValueError`; the flag had no effect beside a size. Options sized by
-  `ElfLifter.analyze(<name>)` read `allow_code_before_start_addr` as `False`.
+  `ValueError`; the flag had no effect beside a size.
 - `CfgOptions.with_function_max_size`, `CfgOptions.with_data_ranges` and
   `LifterOptions.with_cfg` are gone; pass the fields to the constructors.
+  `ElfLifter.analyze(<name>)` still bounds the options by the symbol's size,
+  which leaves `allow_code_before_start_addr` `False`.
 
 ### Breaking, Rust
 
@@ -72,6 +73,8 @@
 
 - `Function::to_text_named`: `to_text` with registers spelled by name.
 - `Strider::lifter()`, the engine `analyze` lifts with.
+- `strider_cfg::seated_in`: the `known_targets` entry for a site, by its exact
+  key or else its instruction's p-code index 0, as the CFG seats it.
 - `BuiltCallingConvention::check_addr_size`.
 - `ALL` on every op enum (`IntBinaryOp::ALL`, `IntCmpOp::ALL`, ...): the
   variants in declaration order.
