@@ -151,7 +151,7 @@ fn analyze_seats_pre_seeded_known_targets_from_analyze_options() {
 fn outer_loop_resolves_via_stack_load_forward_for_x86_64_push_pop() {
     // `push imm32; pop rax; jmp rax` is structurally a tail call. After
     // StackOffsetDetect + LoadForward the placeholder's dispatch input
-    // folds to IntConst(K); IndirectBranchClassify reads that live input
+    // folds to IntConst(K); the classifier reads that live input
     // and classifies Single(K). K lies outside the function range (below
     // start_addr), so the orchestrator seats it as a tail call and the
     // rebuild lowers it to `Call(K) + Return`.
@@ -329,4 +329,36 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
         result_unresolved.is_empty(),
         "fully-resolved tail call must report no unresolved branches"
     );
+}
+
+/// The classifier runs after the pipeline, not inside it: a pipeline with no
+/// passes at all still has its constant dispatch resolved and seated.
+/// Mutation: in `build_round`, skip `classify` when `pipeline.post_passes()`
+/// is empty.
+#[test]
+fn a_pipeline_with_no_passes_still_classifies_every_site() {
+    // 0x1000: mov rax, 0x1010 ; 0x100a: jmp rax ; 0x1010: ret
+    let mut bytes = vec![0xc3u8; 0x20];
+    bytes[..10].copy_from_slice(&[0x48, 0xb8, 0x10, 0x10, 0, 0, 0, 0, 0, 0]);
+    bytes[10..12].copy_from_slice(&[0xff, 0xe0]);
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, 0x1000, None);
+    let result = strider
+        .analyze(
+            0x1000,
+            &cc,
+            &common::ignoring(),
+            Some(strider_orchestrator::opt::OptimizerPipeline::new()),
+        )
+        .expect("analyze");
+    let arms: Vec<Vec<u64>> = result
+        .cfg
+        .regions()
+        .filter_map(|r| match &r.terminator {
+            strider_cfg::RegionTerminator::Switch { targets, .. } => {
+                Some(targets.iter().map(|t| t.addr).collect())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arms, vec![vec![0x1010]], "the constant dispatch is seated");
 }
