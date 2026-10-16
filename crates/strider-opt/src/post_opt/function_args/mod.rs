@@ -38,7 +38,9 @@ impl PostOptimizer for FunctionArgDetect {
         let alias_cfg = MemAnalyzer::new(MemOptions::incoming_args(&opt_ctx.options.assumptions));
         // Detection reads `alias_cfg`; only the rewire reads this one (see
         // `mem_chain_is_dirty`).
-        let narrow_cfg = MemAnalyzer::new(MemOptions::structural());
+        let narrow_cfg = MemAnalyzer::new(MemOptions::structural(
+            &opt_ctx.options.assumptions.noalias_allocators,
+        ));
         detect_stack_args(edit, &alias_cfg, &narrow_cfg, stack_args, first_stack_arg);
         Ok(())
     }
@@ -178,8 +180,6 @@ fn mem_chain_is_dirty(
     let mem_token = edit
         .memory_input_of(load)
         .expect("a Load has a memory input (slot 0)");
-    // In this order, as in `try_forward_load`: the configured walk decomposes
-    // first, so `narrow_cfg`'s empty set commits no `NotMemory` over it.
     let clobber = alias_cfg.nearest_clobber(edit.function(), load, mem_token);
     let sound = narrow_cfg.nearest_clobber(edit.function(), load, mem_token);
     narrow_load_to(edit, load, sound);

@@ -34,23 +34,18 @@ pub(crate) struct MemOptions {
     /// ([`MemWalker::in_outgoing_arg_area`]), which the relaxations would
     /// otherwise re-enter.
     pub(super) call_relaxations: bool,
-    /// Callee addresses whose return is a fresh heap base
-    /// ([`crate::AssumptionOptions::noalias_allocators`]).  Analyzers over one
-    /// `Function` may hold different sets; [`decompose`] states what that costs
-    /// the shared `memory_offsets` memo.
+    /// Whether a heap class may be claimed at all; off, a heap address is an
+    /// [`AddrClass::Anchor`].
+    pub(super) heap_claims: bool,
+    /// Callee addresses whose return is a fresh heap base: always the run's
+    /// [`crate::AssumptionOptions::noalias_allocators`], whatever the policy,
+    /// since [`decompose`] memoises under it.
     pub(super) noalias_allocators: FxHashSet<u64>,
 }
 
 impl MemOptions {
     /// A `Call` on the memory chain clobbers the probed location, and
     /// distinct SP bases stay conservatively non-disjoint.
-    ///
-    /// The allocator set is a parameter, not a default: the `decompose` memo
-    /// lives on the `Function` keyed by `ValueId` alone, so an analyzer built
-    /// against a narrower set reads back a heap base another one cached and
-    /// answers `Disjoint` where its own configuration forbids it.  Only
-    /// [`MemOptions::structural`] is allowed that, and only because
-    /// [`classify_addr`] drops the heap class under an empty set.
     pub(crate) fn call_blocking(
         stack_global_disjoint: bool,
         noalias_allocators: &FxHashSet<u64>,
@@ -62,6 +57,7 @@ impl MemOptions {
             callee_preserves_stack_args: false,
             escape_analysis: false,
             call_relaxations: true,
+            heap_claims: true,
             noalias_allocators: noalias_allocators.clone(),
         }
     }
@@ -82,8 +78,9 @@ impl MemOptions {
     /// Every claim off, so a verdict holds under
     /// [`crate::AssumptionOptions::none`].  What a permanent rewire may name,
     /// modulo the per-`Call` `preserves_memory` CC flag, which is the caller's
-    /// assertion and outside [`crate::AssumptionOptions`].
-    pub(crate) fn structural() -> Self {
+    /// assertion and outside [`crate::AssumptionOptions`].  The set is still
+    /// the run's: a heap address decomposes as heap and reads as an `Anchor`.
+    pub(crate) fn structural(noalias_allocators: &FxHashSet<u64>) -> Self {
         Self {
             stack_global_disjoint: false,
             calls_block: true,
@@ -91,7 +88,8 @@ impl MemOptions {
             callee_preserves_stack_args: false,
             escape_analysis: false,
             call_relaxations: false,
-            noalias_allocators: FxHashSet::default(),
+            heap_claims: false,
+            noalias_allocators: noalias_allocators.clone(),
         }
     }
 
@@ -195,7 +193,7 @@ impl MemAnalyzer {
             .as_ref()?
             .get_or_init(|| {
                 MemLayout::build(function).map(|layout| MemIndex {
-                    stores: StoreIndex::build(function, &layout, &self.options.noalias_allocators),
+                    stores: StoreIndex::build(function, &layout, &self.options),
                     layout,
                 })
             })
@@ -318,11 +316,7 @@ impl MemAnalyzer {
     }
 
     fn load_sized(&self, function: &Function, load: NodeId) -> SizedAddr {
-        let class = classify_addr(
-            function,
-            function.load_addr(load),
-            &self.options.noalias_allocators,
-        );
+        let class = classify_addr(function, function.load_addr(load), &self.options);
         let (_, ty) = function
             .single_value_output(load)
             .expect("Load has 1 typed output per node signature");
@@ -336,11 +330,7 @@ impl MemAnalyzer {
     /// The store's address class paired with its stored width.
     pub(super) fn store_sized(&self, function: &Function, store: NodeId) -> SizedAddr {
         SizedAddr {
-            class: classify_addr(
-                function,
-                function.store_addr(store),
-                &self.options.noalias_allocators,
-            ),
+            class: classify_addr(function, function.store_addr(store), &self.options),
             size: store_value_byte_size(function, function.store_data(store)),
             addr_bits: addr_bit_width(function, function.store_addr(store)),
         }
