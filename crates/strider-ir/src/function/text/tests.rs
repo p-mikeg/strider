@@ -266,7 +266,7 @@ fn diamond_with_phi() {
         expect![[r#"
             endian little
             tracked [%:0x0:8, %:0x38:8]
-            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
+            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
             arg 0 [%v1]
             %v0:ctrl = entry
             %v1:i64 = initial_var[%:0x38:8]
@@ -339,7 +339,7 @@ fn loop_with_phi_and_mem_phi() {
         expect![[r#"
             endian little
             tracked []
-            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
+            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
             %v0:ctrl = entry
             %v1:i64 = iconst[0x0]  @{0x2000}
             %v2:mem = initial_memory
@@ -408,7 +408,7 @@ fn load_store_and_call_with_an_override_convention() {
         expect![[r#"
             endian little
             tracked [%:0x0:8, %:0x20:8]
-            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
+            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
             %v0:ctrl = entry
             %v1:mem = initial_memory
             %v2:i64 = iconst[0x401000]  @{0x3000}
@@ -448,7 +448,7 @@ fn switch_after_call_other() {
         expect![[r#"
             endian little
             tracked [%:0x38:8]
-            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
+            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
             %v0:ctrl = entry
             %v1:mem = initial_memory
             %v2:i64 = initial_var[%:0x38:8]
@@ -495,7 +495,7 @@ fn wide_and_float_constants() {
         expect![[r#"
             endian little
             tracked []
-            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
+            default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
             %v0:ctrl = entry
             %v1:mem = initial_memory
             %v2:i256 = iconst[0x8000000000000000000000000000000000000000000000001122334455667788]  @{0x5000}
@@ -532,7 +532,7 @@ fn every_node_kind_prints() {
     expect![[r#"
         endian big
         tracked []
-        default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false no_return=false entry_address_vn=none
+        default_cc arg_passing_regs=[] arg_passing_regs_float=[] callee_saved_regs=[] ret_val_regs=[] ret_val_regs_float=[] stack_vn=%:0xffffffffffff0000:8 stack_args=none ret_stack_pop=0 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
         %v0:ctrl = entry
         %v1:i64, %v2:ctrl = entry
         %v3:i64, %v4:ctrl = initial_memory
