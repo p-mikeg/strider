@@ -1,7 +1,6 @@
-//! `is_addr_tail_call` honours `fn_max_size` as the function's exact extent
-//! regardless of `allow_code_before_start_addr`, so a backward `jmp` below
-//! `start_addr` is a `RegionTerminator::TailCall` and the lift stays inside
-//! `[start_addr, start_addr + fn_max_size)`.  Following it instead pulls the
+//! A `FunctionBound::Size` is the function's exact extent, so a backward `jmp`
+//! below `start_addr` is a `RegionTerminator::TailCall` and the lift stays
+//! inside `[start_addr, start_addr + size)`.  Following it instead pulls the
 //! previous function's body in, which on real binaries surfaces as a live
 //! `IndirectBranch` placeholder from a branch in the NEIGHBOUR.
 //!
@@ -59,13 +58,11 @@ fn make_sleigh() -> Sleigh<BufMemReader<Vec<u8>>> {
 }
 
 /// The cfg builder must not decode any `prev_fn` byte when lifting
-/// `target_fn` under `fn_max_size`, even with the reach-back flag
-/// on. Proved by walking the lifted graph's asm-fingerprint addresses and
-/// asserting every contributor address lies in `[TARGET_FN, TARGET_FN_END)`.
+/// `target_fn` under a size bound. Proved by walking the lifted graph's
+/// asm-fingerprint addresses and asserting every contributor address lies in
+/// `[TARGET_FN, TARGET_FN_END)`.
 #[test]
 fn bounded_lift_does_not_walk_backward_into_prev_fn() {
-    // Reach-back ON, or the lower-bound check alone blocks the backward jmp
-    // and the extent rule is never exercised.
     let sleigh = make_sleigh();
     let regs = sleigh.regs().expect("regs");
     let cc = CallingConvention::x86_64_systemv()
@@ -73,8 +70,7 @@ fn bounded_lift_does_not_walk_backward_into_prev_fn() {
         .expect("build cc");
     let lift_opts = LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            fn_max_size: Some(TARGET_FN_SIZE),
-            allow_code_before_start_addr: true,
+            bound: strider_cfg::FunctionBound::size(TARGET_FN_SIZE),
             ..Default::default()
         },
         ..LiftOptions::default()
@@ -82,7 +78,7 @@ fn bounded_lift_does_not_walk_backward_into_prev_fn() {
     let mut strider = Strider::new(SleighArch::x86_64(), sleigh, None).unwrap();
     let function = strider
         .analyze(TARGET_FN, &cc, &lift_opts, &OptOptions::default(), None)
-        .expect("bounded lift with reach-back flag must complete without reaching prev_fn")
+        .expect("bounded lift must complete without reaching prev_fn")
         .function;
 
     // Filter out the empty-fingerprint kinds (Entry/InitialMemory/

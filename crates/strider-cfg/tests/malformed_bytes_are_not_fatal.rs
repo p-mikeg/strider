@@ -38,7 +38,7 @@ fn a_malformed_instruction_in_a_mips_delay_slot_is_an_error() {
     // used to disassemble through a walker owned by an unwound stack frame,
     // writing tens of kilobytes past it.
     let opts = CfgOptions {
-        fn_max_size: Some(0x100),
+        bound: strider_cfg::FunctionBound::size(0x100),
         ..CfgOptions::default()
     };
     let be = vec![0x14, 0x00, 0x00, 0x00, 0x46, 0xc9, 0x00, 0xac];
@@ -55,7 +55,7 @@ fn an_unparsed_aarch64_operand_is_an_error() {
     // answers with a null address space, which `generateLocation` dereferenced
     // while emitting p-code.
     let opts = CfgOptions {
-        fn_max_size: Some(0x40),
+        bound: strider_cfg::FunctionBound::size(0x40),
         ..CfgOptions::default()
     };
     build_is_an_error(
@@ -133,7 +133,7 @@ fn a_region_at_the_top_of_the_address_space_does_not_panic() {
     // A stub region seated at an address whose span overflows `u64` gave
     // `BTreeMap::range` two equal excluded bounds, which panics.
     let opts = CfgOptions {
-        fn_max_size: Some(0x10),
+        bound: strider_cfg::FunctionBound::size(0x10),
         ..CfgOptions::default()
     };
     let _ = build_succeeds(

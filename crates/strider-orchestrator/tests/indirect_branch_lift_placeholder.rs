@@ -120,7 +120,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
 
     let unresolved_addr = {
         let cfg_opts = strider_cfg::CfgOptions {
-            fn_max_size: Some(0x100),
+            bound: strider_cfg::FunctionBound::size(0x100),
             ..Default::default()
         };
         let cfg_v1 = strider
@@ -146,7 +146,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
     known.insert(unresolved_addr, ResolvedTargets::Single(oob_target.into()));
 
     let cfg_opts2 = strider_cfg::CfgOptions {
-        fn_max_size: Some(0x100),
+        bound: strider_cfg::FunctionBound::size(0x100),
         known_targets: &known,
         ..Default::default()
     };
@@ -223,7 +223,7 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
 
     let unresolved_addr = {
         let cfg_opts = strider_cfg::CfgOptions {
-            fn_max_size: Some(0x100),
+            bound: strider_cfg::FunctionBound::size(0x100),
             ..Default::default()
         };
         let cfg_v1 = strider
@@ -250,7 +250,7 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
     );
 
     let cfg_opts2 = strider_cfg::CfgOptions {
-        fn_max_size: Some(0x100),
+        bound: strider_cfg::FunctionBound::size(0x100),
         known_targets: &known,
         ..Default::default()
     };

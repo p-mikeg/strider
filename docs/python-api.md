@@ -139,7 +139,6 @@ run.
 ```python
 opts = strider.lift.LifterOptions(
     cfg=strider.cfg.CfgOptions(
-        allow_code_before_start_addr=True,
         function_max_size=0x400,       # how far past the entry to decode; None is unbounded
         known_targets={0x1234: [0x2000, 0x2010],   # this branch goes to these
                        0x1250: "return"},          # and this one returns
