@@ -347,77 +347,76 @@ impl OptimizerPipeline {
         ctx: &mut OptCtx<'_>,
     ) -> crate::Result<()> {
         const MAX_ITERS: u32 = 1024;
-        let capped;
         // A memo left by an earlier run was derived under that run's
         // allocator set.
         function
             .side_tables_mut()
             .reset_analyses(&ctx.options.assumptions.noalias_allocators);
-        {
-            // Scoped so the borrow of `function` is released before the
-            // validation step below.
+        // Scoped so the borrow of `function` ends before validation.
+        let converged = {
             let mut edit = crate::EditFunction::new(function);
             edit.cull_dead();
-            let mut iters: u32 = 0;
-            // Per pass, `edits()` after its last run when that run changed
-            // nothing.
-            let mut settled: Vec<Option<u64>> = vec![None; self.passes.len()];
-            let converged = loop {
-                let mut changed = false;
-                for (opt, settled) in self.passes.iter().zip(&mut settled) {
-                    if *settled == Some(edit.edits()) {
-                        continue;
-                    }
-                    let result = apply_checked(opt.as_ref(), &mut edit, ctx)?;
-                    *settled = (!result.changed()).then(|| edit.edits());
-                    if result.changed() {
-                        changed = true;
-                        // Drain after every changing pass so the next pass in
-                        // this iteration sees a culled graph, and invalidate the
-                        // SP-decomposition and frame-escape memos: a rewrite can
-                        // change or cull the value a cached verdict was computed
-                        // for.
-                        edit.clean();
-                        edit.function().side_tables().clear_memory_slots();
-                        edit.function().side_tables().clear_frame_escape();
-                    }
-                }
-                if !changed {
-                    break true;
-                }
-                iters += 1;
-                if iters >= MAX_ITERS {
-                    break false;
-                }
-            };
+            let converged = self.fixed_point(&mut edit, ctx, MAX_ITERS)?;
             // The caller keeps a capped graph, so drain it; the post-passes
             // read a converged one and are skipped.
             edit.clean();
             if converged {
                 for opt in &self.post_passes {
-                    // `memory_offsets` survives between post-passes as the
-                    // user-facing per-node SSoT: no built-in post-pass
-                    // rewires an address, and strider-py's `OptAsPostPass`
-                    // clears the slots itself when its pass changes the graph.
+                    // The memory classes survive between post-passes: no
+                    // built-in post-pass rewires an address, and strider-py's
+                    // `OptAsPostPass` invalidates them when its pass changes
+                    // the graph.
                     opt.apply(&mut edit, ctx)?;
                     edit.clean();
                     // `CallStackArgCollect` rewrites `Call` inputs, which is
                     // what the frame-escape walk reads.
                     edit.function().side_tables().clear_frame_escape();
                 }
-                // That SSoT is what `pattern`'s region filters read, and every
-                // changing pass above drained it.  A caller pipeline need not
-                // register `StackOffsetDetect`, so refill it here or
-                // `stack_only` matches nothing and says nothing.
-                crate::post_opt::stack_offset_detect::stamp_all(&mut edit);
+                // What `pattern`'s region filters read; every changing pass
+                // above drained it.
+                crate::mem_analysis::stamp_all(&mut edit);
             }
-            capped = !converged;
-        }
+            converged
+        };
         strider_ir::validate::validate(function).map_err(|e| e.report(function))?;
-        if capped {
-            anyhow::bail!("optimizer pipeline did not converge after {MAX_ITERS} iterations");
-        }
+        anyhow::ensure!(
+            converged,
+            "optimizer pipeline did not converge after {MAX_ITERS} iterations"
+        );
         Ok(())
+    }
+
+    /// Runs the passes until an iteration changes nothing (`true`) or
+    /// `max_iters` iterations have each changed something (`false`).
+    fn fixed_point(
+        &self,
+        edit: &mut crate::EditFunction<'_>,
+        ctx: &mut OptCtx<'_>,
+        max_iters: u32,
+    ) -> crate::Result<bool> {
+        // Per pass, `edits()` after its last run when that run changed nothing.
+        let mut settled: Vec<Option<u64>> = vec![None; self.passes.len()];
+        for _ in 0..max_iters {
+            let mut changed = false;
+            for (opt, settled) in self.passes.iter().zip(&mut settled) {
+                if *settled == Some(edit.edits()) {
+                    continue;
+                }
+                let result = apply_checked(opt.as_ref(), edit, ctx)?;
+                *settled = (!result.changed()).then(|| edit.edits());
+                if result.changed() {
+                    changed = true;
+                    // Drain so the next pass sees a culled graph, and drop the
+                    // memos a rewrite can invalidate.
+                    edit.clean();
+                    edit.function().side_tables().invalidate_analyses();
+                }
+            }
+            if !changed {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 
