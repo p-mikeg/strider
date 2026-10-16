@@ -7,8 +7,6 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use std::path::PathBuf;
-
 use common::elf_fixture::SectionSpec;
 use object::{Object, ObjectSection};
 use strider_reader::elf::{self, LoadFilter};
@@ -31,29 +29,6 @@ fn read_u64_le(regions: &[MemRegion], addr: u64) -> Option<u64> {
         .read_exact(addr, &mut buf)
         .ok()
         .map(|()| u64::from_le_bytes(buf))
-}
-
-/// `ranges` sorted, with everything overlapping or touching merged.
-fn merge(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
-    ranges.sort_unstable();
-    let mut out: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
-    for (lo, hi) in ranges {
-        match out.last_mut() {
-            Some(last) if lo <= last.1 => last.1 = last.1.max(hi),
-            _ => out.push((lo, hi)),
-        }
-    }
-    out
-}
-
-/// Every region's extent, ascending and merged.
-fn spans(regions: &[MemRegion]) -> Vec<(u64, u64)> {
-    merge(
-        regions
-            .iter()
-            .map(|r| (r.start_addr(), r.end_addr()))
-            .collect(),
-    )
 }
 
 /// `a` minus `b`, both merged and ascending.
@@ -255,8 +230,7 @@ fn the_opt_in_is_the_default_view_when_no_got_section_is_named() {
 /// opt-in must lift exactly `.got` out of it.
 #[test]
 fn a_linked_mips_pic_image_serves_only_its_got_under_the_opt_in() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/out/mips64le/indirect_branch.elf");
+    let path = common::fixtures_out().join("mips64le/indirect_branch.elf");
     // The only linked PIC image here, so a skip would leave the case untested.
     assert!(
         path.exists(),
@@ -313,69 +287,54 @@ fn a_linked_mips_pic_image_serves_only_its_got_under_the_opt_in() {
 /// section name creeping into the served set is caught wherever it appears.
 #[test]
 fn across_every_fixture_the_opt_in_only_adds_got_and_data_rel_ro_addresses() {
-    let out = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/out");
     let mut seen = 0usize;
-    let mut arches: Vec<PathBuf> = match std::fs::read_dir(&out) {
-        Ok(dirs) => dirs.flatten().map(|e| e.path()).collect(),
-        Err(_) => Vec::new(),
-    };
-    arches.sort();
-    for arch in arches {
-        let mut images: Vec<PathBuf> = std::fs::read_dir(&arch)
-            .expect("an arch directory")
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|e| e == "elf" || e == "o"))
-            .collect();
-        images.sort();
-        for path in images {
-            let owned = strider_reader::load_elf(&path).expect("load_elf");
-            let obj = owned.checked_file().expect("the mapped file is unchanged");
-            let layout = elf::ElfSectionLayout::new(&obj);
-            let allowed: Vec<(u64, u64)> = merge(
-                obj.sections()
-                    .filter(|s| {
-                        s.name().is_ok_and(|n| {
-                            n == ".got" || n == ".data.rel.ro" || n.starts_with(".data.rel.ro.")
-                        })
+    for path in common::fixture_images() {
+        let owned = strider_reader::load_elf(&path).expect("load_elf");
+        let obj = owned.checked_file().expect("the mapped file is unchanged");
+        let layout = elf::ElfSectionLayout::new(&obj);
+        let allowed: Vec<(u64, u64)> = common::merge_ranges(
+            obj.sections()
+                .filter(|s| {
+                    s.name().is_ok_and(|n| {
+                        n == ".got" || n == ".data.rel.ro" || n.starts_with(".data.rel.ro.")
                     })
-                    .map(|s| {
-                        let base = layout.section_base(&s);
-                        (base, base.saturating_add(s.size()))
-                    })
-                    .collect(),
-            );
+                })
+                .map(|s| {
+                    let base = layout.section_base(&s);
+                    (base, base.saturating_add(s.size()))
+                })
+                .collect(),
+        );
 
-            for source in [elf::RegionSource::Auto, elf::RegionSource::Sections] {
-                let default = owned.regions(source, DEFAULT, true).expect("regions");
-                let opted_in = owned.regions(source, OPT_IN, true).expect("regions");
-                let before = MemRegionsLookupTable::new(default.clone());
-                let after = MemRegionsLookupTable::new(opted_in.clone());
-                let name = path.display();
+        for source in [elf::RegionSource::Auto, elf::RegionSource::Sections] {
+            let default = owned.regions(source, DEFAULT, true).expect("regions");
+            let opted_in = owned.regions(source, OPT_IN, true).expect("regions");
+            let before = MemRegionsLookupTable::new(default.clone());
+            let after = MemRegionsLookupTable::new(opted_in.clone());
+            let name = path.display();
 
-                for region in &default {
-                    let len = (region.end_addr() - region.start_addr()) as usize;
-                    let (mut a, mut b) = (vec![0u8; len], vec![0u8; len]);
-                    let got_a = before.read(region.start_addr(), &mut a);
-                    let got_b = after.read(region.start_addr(), &mut b);
-                    assert_eq!(
-                        (got_a, a),
-                        (got_b, b),
-                        "{name}: bytes at {:#x} moved",
-                        region.start_addr()
-                    );
-                }
-
-                for (lo, hi) in subtract(&spans(&opted_in), &spans(&default)) {
-                    assert!(
-                        allowed.iter().any(|&(s, e)| s <= lo && hi <= e),
-                        "{name}: the opt-in added [{lo:#x}, {hi:#x}), \
-                         in no .got / .data.rel.ro: {allowed:#x?}"
-                    );
-                }
+            for region in &default {
+                let len = (region.end_addr() - region.start_addr()) as usize;
+                let (mut a, mut b) = (vec![0u8; len], vec![0u8; len]);
+                let got_a = before.read(region.start_addr(), &mut a);
+                let got_b = after.read(region.start_addr(), &mut b);
+                assert_eq!(
+                    (got_a, a),
+                    (got_b, b),
+                    "{name}: bytes at {:#x} moved",
+                    region.start_addr()
+                );
             }
-            seen += 1;
+
+            for (lo, hi) in subtract(&common::spans(&opted_in), &common::spans(&default)) {
+                assert!(
+                    allowed.iter().any(|&(s, e)| s <= lo && hi <= e),
+                    "{name}: the opt-in added [{lo:#x}, {hi:#x}), \
+                     in no .got / .data.rel.ro: {allowed:#x?}"
+                );
+            }
         }
+        seen += 1;
     }
     assert!(seen > 0, "no fixture is built; run `make -C fixtures`");
 }
