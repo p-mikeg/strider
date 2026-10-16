@@ -80,8 +80,8 @@ pub struct SideTables {
     /// (`StaleInitialVarIndex`).
     pub(crate) initial_var_index: FxHashMap<crate::node::InitialVnId, NodeId>,
     /// Whole-function frame-escape verdict, or `None` when not computed.
-    /// Cleared after every changing pass of the optimizer's fixed-point loop,
-    /// after every post-pass, and on compaction.
+    /// Cleared by [`Self::invalidate_analyses`], after every post-pass, and on
+    /// compaction.
     frame_escape: Cell<Option<bool>>,
     /// A stack address was held, at some `Call`, in a register the call
     /// clobbers.  The call node carries no such value, so this is the only
@@ -212,13 +212,14 @@ impl SideTables {
         self.memory_offsets.borrow_mut()[value] = MemDecomp::NotMemory;
     }
 
-    /// Drops every memoized decomposition, invalidating all [`MemoryId`]s.
-    /// A caller that rewires an address value's producers owes the call; the
-    /// fixed-point loop makes it after every changing pass.
+    /// Drops every graph-derived memo (the memory classes, invalidating all
+    /// [`MemoryId`]s, and the frame-escape verdict), keeping the allocator set.
+    /// A caller that rewires an address value's producers owes the call.
     #[inline]
-    pub fn clear_memory_slots(&self) {
+    pub fn invalidate_analyses(&self) {
         self.memory_offsets.borrow_mut().clear();
         *self.memory_interner.borrow_mut() = EntityInterner::new();
+        self.frame_escape.set(None);
     }
 
     /// The allocator set every memoized decomposition was computed under.
@@ -231,8 +232,7 @@ impl SideTables {
     /// graph-derived memo and records the set the new entries are computed
     /// under.
     pub fn reset_analyses(&mut self, allocators: &FxHashSet<u64>) {
-        self.clear_memory_slots();
-        self.clear_frame_escape();
+        self.invalidate_analyses();
         self.memory_allocators.clone_from(allocators);
     }
 
@@ -247,8 +247,8 @@ impl SideTables {
         self.frame_escape.set(Some(escapes));
     }
 
-    /// Invalidates the memo. The pipeline calls it after every changing pass of
-    /// the fixed-point loop and after every post-pass.
+    /// Invalidates the frame-escape verdict alone, for a post-pass that keeps
+    /// the memory classes.
     #[inline]
     pub fn clear_frame_escape(&self) {
         self.frame_escape.set(None);
@@ -420,6 +420,20 @@ mod tests {
         assert_eq!(st.memory_allocators(), &set);
         assert_eq!(st.memory_decomp(v), (MemDecomp::Unknown, None));
         assert_eq!(st.frame_escape(), None);
+    }
+
+    #[test]
+    fn invalidate_analyses_drops_the_memos_and_keeps_the_set() {
+        let mut st = SideTables::default();
+        let set: FxHashSet<u64> = [0x1000].into_iter().collect();
+        st.reset_analyses(&set);
+        let (base, v) = (ValueId::new(0), ValueId::new(1));
+        st.set_stack_slot(v, base, -8);
+        st.set_frame_escape(true);
+        st.invalidate_analyses();
+        assert_eq!(st.memory_decomp(v), (MemDecomp::Unknown, None));
+        assert_eq!(st.frame_escape(), None);
+        assert_eq!(st.memory_allocators(), &set, "the set survives");
     }
 
     // The union is order-independent, deduplicating and never dropping an entry.

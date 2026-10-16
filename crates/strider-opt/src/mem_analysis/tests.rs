@@ -3425,3 +3425,105 @@ mod store_index {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod refresh_tests {
+    use strider_ir::node::{IntBinaryOp, NodeKind, ValueType};
+    use strider_ir::{Function, IRBuilderExt, IRViewer, IRWalker, MemDecomp};
+    use strider_ir_test_utils::{RegisterSet, reg_vn, stack_vn_x86_64};
+
+    const MALLOC: u64 = 0x1000;
+
+    /// A heap store, a stack store and a global load, run through `pipeline`
+    /// with `MALLOC` listed.
+    fn optimized(pipeline: &crate::OptimizerPipeline) -> crate::Result<Function> {
+        let sp = stack_vn_x86_64();
+        let ret = reg_vn(0, 8);
+        let mut b = RegisterSet::new()
+            .tracked(sp)
+            .tracked(ret)
+            .arg(sp)
+            .ret(ret)
+            .stack_vn(sp)
+            .build_fn_single_region()?;
+        let sp_val = b.read_variable(&sp)?;
+        let target = b.build_int_const(MALLOC, ValueType::I64)?;
+        let (_call, rets) = b.build_call(target, &[], &[ret], 0)?;
+        let one = b.build_int_const(1u64, ValueType::I64)?;
+        b.build_store(rets[0], one, rsleigh::VnSpace::RAM)?;
+        let off = b.build_int_const((-8i64) as u64, ValueType::I64)?;
+        let slot = b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::I64)?;
+        b.build_store(slot, one, rsleigh::VnSpace::RAM)?;
+        let global = b.build_int_const(0x9000u64, ValueType::I64)?;
+        let loaded = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        b.build_return(Some(loaded), &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+        let mut ctx = crate::OptCtx::at_floor(None);
+        ctx.options.assumptions.noalias_allocators = [MALLOC].into_iter().collect();
+        pipeline.run(&mut fg, &mut ctx)?;
+        Ok(fg)
+    }
+
+    /// Every live `Load` / `Store` address, with its memory class.
+    fn classes(fg: &Function) -> Vec<MemDecomp> {
+        fg.walk_kind(|k| matches!(k, NodeKind::Load(_) | NodeKind::Store(_)))
+            .map(|n| fg.side_tables().memory_class(fg.node_inputs(n)[1]))
+            .collect()
+    }
+
+    /// No live access is left unclassified after a run or after a rewrite.
+    #[test]
+    fn every_access_is_classified_after_a_run_and_a_rewrite() -> crate::Result<()> {
+        let mut fg = optimized(&crate::default_pipeline())?;
+        let ran = classes(&fg);
+        assert_eq!(ran.len(), 3, "two stores and a load survive");
+        assert!(!ran.contains(&MemDecomp::Unknown), "after the run: {ran:?}");
+        let no_rules: &[crate::BoxedRule] = &[];
+        crate::apply_rules_count(&mut crate::EditFunction::new(&mut fg), no_rules)?;
+        let rewritten = classes(&fg);
+        assert!(
+            !rewritten.contains(&MemDecomp::Unknown),
+            "after a rewrite: {rewritten:?}"
+        );
+        Ok(())
+    }
+
+    /// An edit outside a pipeline leaves the class stale until a refresh.
+    #[test]
+    fn refresh_rederives_an_edited_address() -> crate::Result<()> {
+        let sp = stack_vn_x86_64();
+        let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+            let off = b.build_int_const((-16i64) as u64, ValueType::I64)?;
+            let addr =
+                b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::I64)?;
+            let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
+            b.build_return(Some(loaded), &[])?;
+            Ok(())
+        })?;
+        crate::default_pipeline().run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
+        let load = fg
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+            .expect("the load reads the entry stack and survives");
+        let addr = fg.load_addr(load);
+        let minus_16 = fg
+            .value_inputs(fg.producer(addr))
+            .find(|&v| fg.int_const_i128(v) == Some(-16))
+            .expect("the slot offset");
+        let offset = |fg: &Function| fg.stack_offset(load).map(|(_, k)| k);
+        assert_eq!(offset(&fg), Some(-16));
+        let mut edit = crate::EditFunction::new(&mut fg);
+        let minus_8 = edit.build_int_const((-8i64) as u64, ValueType::I64)?;
+        edit.replace_value(minus_16, minus_8)?;
+        assert_eq!(
+            offset(edit.function()),
+            Some(-16),
+            "stale before the refresh"
+        );
+        crate::refresh_memory_classes(&mut edit);
+        assert_eq!(offset(edit.function()), Some(-8));
+        Ok(())
+    }
+}

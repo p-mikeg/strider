@@ -71,6 +71,8 @@
 - `StackOffsetDetect` stamps under that recorded set, not `OptCtx`'s;
   `run_post`, `classify_sites`, `classify_target` and `ReturnTargets::new`
   debug-assert that the allocator set they are handed is the recorded one.
+- `SideTables::clear_memory_slots` is gone: `invalidate_analyses` drops the
+  memory classes and the frame-escape verdict together.
 
 ### Changed, Python
 
@@ -159,6 +161,8 @@
 - `SideTables::memory_allocators` / `reset_analyses`: the allocator set the
   memory classes were computed under, and the one verb that starts a new
   analysis.
+- `strider_opt::refresh_memory_classes`: re-derives what `stack_only()` /
+  `heap_only()` read after an edit made outside a pipeline.
 
 ## 0.2.0
 
