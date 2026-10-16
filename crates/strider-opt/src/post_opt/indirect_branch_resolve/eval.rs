@@ -148,11 +148,12 @@ impl<'a> Evaluator<'a> {
             (Abs::Const(_), Abs::Const(_)) => self.eval_const_node(value),
             (Abs::SpRel { base, offset }, Abs::Const(c))
             | (Abs::Const(c), Abs::SpRel { base, offset }) => {
-                // Signed, so a negative frame offset subtracts correctly.
+                // Signed, so a negative frame offset subtracts correctly;
+                // reduced, so the probe names the slot `decompose` does.
                 let delta = ty.get_signed_int(c)?;
                 Some(Abs::SpRel {
                     base,
-                    offset: offset.wrapping_add(delta),
+                    offset: crate::mem_analysis::reduce(Some(ty), offset.wrapping_add(delta)),
                 })
             }
             (Abs::SpRel { .. }, Abs::SpRel { .. }) => None,
