@@ -83,6 +83,9 @@
 - `value_range::Interval`'s fields are private (`Interval::new`, `lo()`,
   `hi()`, `stride()`, `is_empty()`); `compute_value_ranges(f, &doms, &known)`
   is `RangeMap::new(f)`, which builds both itself and returns `Result`.
+- `EditFunction::replace_all_uses` is private: it left the old producer live
+  and dropped its asm-fingerprint. `replace_value` does the same rewire and
+  both of those.
 
 ### Changed, Python
 
