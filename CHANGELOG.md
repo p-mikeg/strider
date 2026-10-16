@@ -19,6 +19,8 @@
 - A report list names each machine address once.
 - A post-pass that rewrites the graph drops the stack-slot stamps it may have
   invalidated.
+- An unknown op name in `int_cmp`, `int_binary`, `bool_binary` or
+  `float_binary` lists the accepted names in its error.
 
 ### Changed, Rust
 
