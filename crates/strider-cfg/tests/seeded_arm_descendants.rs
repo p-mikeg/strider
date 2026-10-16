@@ -49,8 +49,6 @@ fn undecodable(cfg: &Cfg) -> Vec<u64> {
 fn undecodable_bytes(cfg: &Cfg) -> Vec<u64> {
     cfg.incomplete()
         .of(strider_cfg::Reason::UndecodableTarget)
-        .collect::<Vec<_>>()
-        .iter()
         .map(|a| a.machine_addr.addr)
         .collect()
 }

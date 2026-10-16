@@ -63,15 +63,13 @@ fn resolves_to_both_labels(
         result
             .incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
-            .is_empty(),
+            .next()
+            .is_none(),
         "{}: unresolved {:#x?}",
         arch.name(),
         result
             .incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
-            .iter()
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),
     );

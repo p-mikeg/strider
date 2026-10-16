@@ -108,7 +108,7 @@ const IT_BLOCK: [u8; 8] = [0x04, 0xbf, 0x00, 0x20, 0x00, 0x20, 0x70, 0x47];
 /// A build that never decodes the `IT` must not inherit its commits. Before
 /// the per-instruction verification, the second build read the first's
 /// `condit` at 0x1004 and decoded a bare `movs` as a predicated one, inventing
-/// a CBRANCH and dropping the flag writes, with every report channel empty.
+/// a CBRANCH and dropping the flag writes, with nothing reported incomplete.
 #[test]
 fn an_earlier_builds_commit_does_not_change_this_builds_decode() {
     let mut eng = Engine::thumb(IT_BLOCK.to_vec());
@@ -194,8 +194,6 @@ fn an_edge_into_an_it_block_is_reported_not_silently_decided() {
     let clashes: Vec<u64> = cfg
         .incomplete()
         .of(strider_cfg::Reason::IsaModeConflict)
-        .collect::<Vec<_>>()
-        .iter()
         .map(|a| a.machine_addr.addr)
         .collect();
     assert!(

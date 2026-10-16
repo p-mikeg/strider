@@ -36,7 +36,7 @@ fn synthetic_bytes() -> Vec<u8> {
 }
 
 fn analyze() -> strider_ir::Function {
-    let lift_opts = AnalyzeOptions {
+    let opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(FN_SIZE),
             ..Default::default()
@@ -46,7 +46,7 @@ fn analyze() -> strider_ir::Function {
     let (mut strider, cc) =
         common::strider_over_bytes(common::Arch::X64, synthetic_bytes(), BASE, None);
     strider
-        .analyze(BASE, &cc, &lift_opts, None)
+        .analyze(BASE, &cc, &opts, None)
         .expect("self-loop at the entry must lift")
         .function
 }

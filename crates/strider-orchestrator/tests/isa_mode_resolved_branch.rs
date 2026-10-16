@@ -383,8 +383,8 @@ fn analyze_resolves_an_interworking_table_in_each_arm_mode() {
         result
             .incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
-            .is_empty(),
+            .next()
+            .is_none(),
         "the masked interworking table must resolve: {:#x?}",
         result
             .incomplete()

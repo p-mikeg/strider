@@ -24,10 +24,10 @@ fn analyze(arch: common::Arch, case: &str, fn_name: &str) -> Report {
         .analyze(
             addr,
             &cc,
-            // This file is about the ISA-mode channels, so the return channel
-            // is claimed quiet: at the floor these fixtures' own epilogues ride
-            // it and the controls below could not tell "no channel fired" from
-            // "the return channel fired".
+            // This file is about ISA-mode reports, so the return check is
+            // claimed quiet: at the floor these fixtures' own epilogues trip
+            // it and the controls below could not tell "nothing reported" from
+            // "the return check reported".
             &strider_orchestrator::AnalyzeOptions {
                 opt: strider_orchestrator::opt::OptOptions {
                     assumptions: strider_opt::AssumptionOptions {
@@ -139,7 +139,7 @@ fn mips32be_selector_that_stops_deriving_is_a_loss() {
     a_selector_that_stops_deriving_is_a_loss(common::Arch::Mips32be);
 }
 
-/// The same C source on an arch with no ISA-mode var: no channel fires.
+/// The same C source on an arch with no ISA-mode var: nothing is reported.
 #[test]
 fn x64_control_reports_nothing() {
     let r = analyze(common::Arch::X64, "switch", "main");

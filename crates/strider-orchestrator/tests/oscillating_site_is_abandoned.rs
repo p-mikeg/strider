@@ -83,14 +83,9 @@ fn a_site_that_narrows_twice_is_abandoned_and_reported() {
         result
             .incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
-            .iter()
             .any(|a| a.machine_addr.addr == SITE),
-        "the abandoned site is reported unresolved; got {:?}",
-        result
-            .incomplete()
-            .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>(),
+        "the abandoned site is reported unresolved; got {}",
+        result.incomplete(),
     );
     assert!(
         !result

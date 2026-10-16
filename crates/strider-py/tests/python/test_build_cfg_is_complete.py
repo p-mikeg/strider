@@ -41,13 +41,13 @@ def test_a_straight_line_build_is_still_complete():
     assert cfg.is_complete()
 
 
-def test_a_seated_branch_clears_the_indirect_channel():
+def test_a_seated_branch_leaves_only_its_seat_reported():
     """The seat is still `"unverified_seed"`, but no site is left edgeless."""
     cfg = _lifter(_INDIRECT).build_cfg(
         _BASE, strider.cfg.CfgOptions(known_targets={_DISPATCH: "return"}),
         on_incomplete=strider.lift.OnIncomplete.IGNORE,
     )
-    assert [a for a, r in cfg.incomplete if r == "unverified_seed"] == [_DISPATCH]
+    assert cfg.incomplete == [(_DISPATCH, "unverified_seed")]
     assert not cfg.is_complete()
 
 

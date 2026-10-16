@@ -1519,7 +1519,9 @@ pub(super) fn lift_bytes_with_opts(
     let mut lifter = Lifter::new(arch, sleigh)?;
     let cfg = lifter.build_cfg(0x1000u64.into(), &opts)?;
     let built = cc.build(lifter.sleigh_regs())?;
-    Ok(lifter.build_ir(&cfg, built)?.function)
+    Ok(lifter
+        .build_ir_with(&cfg, built, &opts, &rustc_hash::FxHashMap::default())?
+        .function)
 }
 
 /// A function bounded by symbol size whose last instruction is a call has no

@@ -70,7 +70,7 @@ fn a_split_carries_the_isa_mode_to_the_first_half() {
             arm(0x1048),
         ]),
     );
-    let lift_opts = AnalyzeOptions {
+    let opts = AnalyzeOptions {
         cfg: CfgOptions {
             known_targets: &known,
             ..CfgOptions::default()
@@ -83,11 +83,7 @@ fn a_split_carries_the_isa_mode_to_the_first_half() {
     // rebuilds: this is the build the clash is raised in, so it is the one the
     // split has to be visible in.
     let seeded = strider
-        .build_cfg(
-            BASE,
-            &lift_opts.cfg,
-            strider_orchestrator::OnIncomplete::Ignore,
-        )
+        .build_cfg(BASE, &opts.cfg, strider_orchestrator::OnIncomplete::Ignore)
         .expect("build_cfg");
     let starts: Vec<u64> = seeded
         .regions()
@@ -100,22 +96,18 @@ fn a_split_carries_the_isa_mode_to_the_first_half() {
     );
 
     let result = strider
-        .analyze(BASE, &cc, &lift_opts, None)
+        .analyze(BASE, &cc, &opts, None)
         .expect("a mode clash is a result, not an error");
     assert!(
         result
             .incomplete()
             .of(strider_orchestrator::Reason::IsaModeConflict)
-            .collect::<Vec<_>>()
-            .iter()
             .any(|a| a.machine_addr.addr == SPLIT_REGION),
         "the first half kept {SPLIT_REGION:#x} as its start, so the Thumb \
          arrival there clashes with the ARM mode it decoded in; got {:?}",
         result
             .incomplete()
             .of(strider_orchestrator::Reason::IsaModeConflict)
-            .collect::<Vec<_>>()
-            .iter()
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),
     );

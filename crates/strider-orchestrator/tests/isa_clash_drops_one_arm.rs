@@ -137,8 +137,6 @@ fn a_direct_flow_clash_costs_one_arm_and_leaves_the_table_seated() {
         result
             .incomplete()
             .of(strider_orchestrator::Reason::IsaModeConflict)
-            .collect::<Vec<_>>()
-            .iter()
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),
         vec![CLASH],
@@ -147,8 +145,6 @@ fn a_direct_flow_clash_costs_one_arm_and_leaves_the_table_seated() {
         result
             .incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
-            .iter()
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),
         vec![DISPATCH],

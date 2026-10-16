@@ -67,7 +67,7 @@ fn bounded_lift_does_not_walk_backward_into_prev_fn() {
     let cc = CallingConvention::x86_64_systemv()
         .build(&regs)
         .expect("build cc");
-    let lift_opts = AnalyzeOptions {
+    let opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(TARGET_FN_SIZE),
             ..Default::default()
@@ -76,7 +76,7 @@ fn bounded_lift_does_not_walk_backward_into_prev_fn() {
     };
     let mut strider = Strider::new(SleighArch::x86_64(), sleigh, None).unwrap();
     let function = strider
-        .analyze(TARGET_FN, &cc, &lift_opts, None)
+        .analyze(TARGET_FN, &cc, &opts, None)
         .expect("bounded lift must complete without reaching prev_fn")
         .function;
 

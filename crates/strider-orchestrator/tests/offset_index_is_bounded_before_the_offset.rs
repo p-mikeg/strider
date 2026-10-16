@@ -83,10 +83,10 @@ fn an_operand_below_an_offset_is_not_enumerated_as_the_index() {
     );
     if arms.is_empty() {
         assert!(
-            !r.incomplete()
+            r.incomplete()
                 .of(strider_orchestrator::Reason::UnresolvedBranch)
-                .collect::<Vec<_>>()
-                .is_empty(),
+                .next()
+                .is_some(),
             "an unseated dispatch is reported"
         );
     }
