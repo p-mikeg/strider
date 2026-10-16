@@ -220,7 +220,7 @@ fn narrow(
         Endianness::Little => store_data,
         Endianness::Big => {
             let shift_bits =
-                crate::mem_analysis::high_low_shift_bits(store_data_ty, load_ty, endianness);
+                crate::const_eval::high_low_shift_bits(store_data_ty, load_ty, endianness);
             let shift_const = edit.build_int_const(u128::from(shift_bits), store_data_ty)?;
             // `build_int_const` carries no contributor stamp, so attribute the
             // const by hand; every reachable node needs a fingerprint.
