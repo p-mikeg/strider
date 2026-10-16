@@ -25,11 +25,11 @@ use strider_target::{CallingConvention, SleighArch};
 const BASE: u64 = 0x1000;
 const TAIL_TARGET: u64 = 0x9000;
 
-/// x86_64 SystemV, caller-supplied `lift_opts`, default `OptOptions`.
+/// The function at `entry` under x86_64 SystemV and `opts`.
 fn run_at(
     sleigh: Sleigh<BufMemReader<Vec<u8>>>,
     entry: u64,
-    lift_opts: &AnalyzeOptions,
+    opts: &AnalyzeOptions,
 ) -> anyhow::Result<strider_ir::Function> {
     let arch = SleighArch::x86_64();
     let regs = sleigh.regs().expect("regs");
@@ -37,7 +37,7 @@ fn run_at(
         .build(&regs)
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None)?;
-    Ok(strider.analyze(entry, &cc, lift_opts, None)?.function)
+    Ok(strider.analyze(entry, &cc, opts, None)?.function)
 }
 
 /// `mov eax, 5; jmp 0x9000` at 0x1000 (10 bytes).  `jmp` target is
@@ -54,15 +54,15 @@ fn make_sleigh() -> Sleigh<BufMemReader<Vec<u8>>> {
 
 #[test]
 fn bounded_lift_handles_tail_call_terminator() {
-    let lift_opts = AnalyzeOptions {
+    let opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(10),
             ..Default::default()
         },
         ..AnalyzeOptions::default()
     };
-    let function = run_at(make_sleigh(), BASE, &lift_opts)
-        .expect("orchestrator must lift TailCall as Call+Return");
+    let function =
+        run_at(make_sleigh(), BASE, &opts).expect("orchestrator must lift TailCall as Call+Return");
 
     assert!(
         common::find_call_to(&function, TAIL_TARGET).is_some(),
@@ -97,14 +97,14 @@ fn bounded_lift_backward_jmp_with_size_bound_classifies_as_tail_call() {
     let reader = BufMemReader::new(bs, BASE);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
-    let lift_opts = AnalyzeOptions {
+    let opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(10),
             ..Default::default()
         },
         ..AnalyzeOptions::default()
     };
-    let function = run_at(sleigh, FN_START, &lift_opts)
+    let function = run_at(sleigh, FN_START, &opts)
         .expect("backward jmp under a size bound must classify as tail call");
 
     assert!(
@@ -143,14 +143,14 @@ fn bounded_lift_fall_through_past_size_bound_is_function_boundary_error() {
     let reader = BufMemReader::new(bs, BASE);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
-    let lift_opts = AnalyzeOptions {
+    let opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(2),
             ..Default::default()
         },
         ..AnalyzeOptions::default()
     };
-    let err = match run_at(sleigh, BASE, &lift_opts) {
+    let err = match run_at(sleigh, BASE, &opts) {
         Ok(_) => panic!(
             "fall-through past the size bound must surface as a function-boundary error, not Ok"
         ),
@@ -188,14 +188,14 @@ fn bounded_lift_keeps_cond_branch_with_both_targets_oob_as_two_tail_call_arms() 
     let reader = BufMemReader::new(bs, BASE);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
-    let lift_opts = AnalyzeOptions {
+    let opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(2),
             ..Default::default()
         },
         ..AnalyzeOptions::default()
     };
-    let function = run_at(sleigh, BASE, &lift_opts)
+    let function = run_at(sleigh, BASE, &opts)
         .expect("cond-branch with both OOB targets must lift as a conditional tail call");
 
     assert!(
@@ -243,14 +243,14 @@ fn bounded_lift_oob_taken_arm_lifts_as_conditional_tail_call() {
     let reader = BufMemReader::new(bs, BASE);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
-    let lift_opts = AnalyzeOptions {
+    let opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(0x10),
             ..Default::default()
         },
         ..AnalyzeOptions::default()
     };
-    let function = run_at(sleigh, BASE, &lift_opts)
+    let function = run_at(sleigh, BASE, &opts)
         .expect("cond-branch with one OOB arm must lift as a conditional tail call");
 
     assert!(

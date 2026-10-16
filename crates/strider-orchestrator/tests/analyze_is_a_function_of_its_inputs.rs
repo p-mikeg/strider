@@ -23,7 +23,7 @@ fn fingerprint(
     cc: &strider_target::BuiltCallingConvention,
     entry: u64,
 ) -> String {
-    let lift_opts = strider_orchestrator::AnalyzeOptions {
+    let opts = strider_orchestrator::AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::Open {
                 code_before_start: true,
@@ -32,7 +32,7 @@ fn fingerprint(
         },
         ..common::ignoring()
     };
-    let result = match strider.analyze(entry, cc, &lift_opts, None) {
+    let result = match strider.analyze(entry, cc, &opts, None) {
         Ok(result) => result,
         Err(e) => return format!("error: {e:#}"),
     };

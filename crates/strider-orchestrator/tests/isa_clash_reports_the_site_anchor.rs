@@ -2,7 +2,7 @@
 //!
 //! A caller can only spell the machine address, so its seat is keyed at p-code
 //! index 0 while ARM `bx` puts the `BRANCHIND` later in the instruction. The
-//! channels have to agree on one spelling of the site.
+//! reasons have to agree on one spelling of the site.
 
 use strider_cfg::{CfgOptions, PcodeInsnAddr, ResolvedTarget, ResolvedTargets};
 use strider_orchestrator::AnalyzeOptions;
@@ -74,7 +74,7 @@ fn a_clash_on_a_machine_start_seed_is_reported_at_the_branchind_anchor() {
             ResolvedTarget::new(KEPT_ARMS[1], None),
         ]),
     );
-    let lift_opts = AnalyzeOptions {
+    let opts = AnalyzeOptions {
         cfg: CfgOptions {
             known_targets: &known,
             ..CfgOptions::default()
@@ -86,7 +86,7 @@ fn a_clash_on_a_machine_start_seed_is_reported_at_the_branchind_anchor() {
     // the seed is the site's only answer.
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::Arm, bytes(), BASE, None);
     let result = strider
-        .analyze(BASE, &cc, &lift_opts, None)
+        .analyze(BASE, &cc, &opts, None)
         .expect("a mode clash is a result, not an error");
 
     let anchor = result
@@ -117,7 +117,7 @@ fn a_clash_on_a_machine_start_seed_is_reported_at_the_branchind_anchor() {
             .collect::<Vec<_>>(),
         vec![anchor],
         "the frozen site is named by its anchor, the address every other \
-         channel uses",
+         reason uses",
     );
     assert_eq!(
         result

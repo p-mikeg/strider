@@ -345,8 +345,8 @@ fn an_entry_instruction_inside_a_data_range_is_decoded() {
     assert!(
         cfg.incomplete()
             .of(strider_cfg::Reason::UndecodableTarget)
-            .collect::<Vec<_>>()
-            .is_empty()
+            .next()
+            .is_none()
     );
 
     let cfg = build(
