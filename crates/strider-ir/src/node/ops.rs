@@ -13,11 +13,9 @@ macro_rules! op_enum {
 
         impl $name {
             /// Every variant, in declaration order.
-            pub const ALL: [Self; [$(op_enum!(@unit $variant)),*].len()] =
-                [$(Self::$variant),*];
+            pub const ALL: [Self; [$($name::$variant),*].len()] = [$(Self::$variant),*];
         }
     };
-    (@unit $variant:ident) => { () };
 }
 
 op_enum! {

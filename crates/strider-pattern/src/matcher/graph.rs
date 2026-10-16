@@ -385,6 +385,7 @@ mod tests {
         (p, want)
     }
 
+    /// `total_nodes` is the larger of the raw count and the deepest unfolding.
     #[test]
     fn unfolded_node_count_matches_a_recursive_unfolding() {
         let cases = if cfg!(debug_assertions) {
