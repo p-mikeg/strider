@@ -193,38 +193,31 @@ impl MemAnalyzer {
                 walker: &mut walker,
                 stores: &index.stores,
             };
-            let found = if memoize {
-                let mut answers = self.answers.borrow_mut();
-                let answers = answers.entry((load, load_space)).or_default();
-                index
-                    .layout
-                    .nearest_clobber(function, start, &mut probe, answers)
-            } else {
-                index
-                    .layout
-                    .nearest_clobber(function, start, &mut probe, &mut Answers::default())
+            let mut memo = memoize.then(|| self.answers.borrow_mut());
+            let mut fresh = Answers::default();
+            let answers = match &mut memo {
+                Some(memo) => memo.entry((load, load_space)).or_default(),
+                None => &mut fresh,
             };
-            if let Some(clobber) = found {
+            if let Some(clobber) = index
+                .layout
+                .nearest_clobber(function, start, &mut probe, answers)
+            {
                 return clobber;
             }
         }
-        if memoize {
-            let mut answers = self.walk_answers.borrow_mut();
-            let answers = answers.entry((load, load_space)).or_default();
-            crate::mem_ssa::find_nearest_clobber(
-                function,
-                start,
-                &mut |f, d| walker.def_clobbers(f, d),
-                answers,
-            )
-        } else {
-            crate::mem_ssa::find_nearest_clobber(
-                function,
-                start,
-                &mut |f, d| walker.def_clobbers(f, d),
-                &mut WalkAnswers::default(),
-            )
-        }
+        let mut memo = memoize.then(|| self.walk_answers.borrow_mut());
+        let mut fresh = WalkAnswers::default();
+        let answers = match &mut memo {
+            Some(memo) => memo.entry((load, load_space)).or_default(),
+            None => &mut fresh,
+        };
+        crate::mem_ssa::find_nearest_clobber(
+            function,
+            start,
+            &mut |f, d| walker.def_clobbers(f, d),
+            answers,
+        )
     }
 
     /// [`ArgWindow::covers`] against the memo, scanning `call`'s window on a
