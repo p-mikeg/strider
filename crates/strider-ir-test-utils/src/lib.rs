@@ -349,14 +349,14 @@ pub fn empty_builder() -> Result<FunctionBuilder> {
     RegisterSet::new().build_fn()
 }
 
-/// Brute-force graph definitions, shared with graph-algorithms' own tests.
-#[path = "../../graph-algorithms/tests/common/oracle.rs"]
 pub mod graph_oracle;
 pub mod interp;
+mod rng;
 mod tb;
 
 #[cfg(feature = "proptest-gen")]
 pub mod proptest_gen;
+pub use rng::Rng;
 pub use tb::Tb;
 
 pub fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {

@@ -960,7 +960,7 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
             let other = if tyk == ty && rng.chance(50) {
                 vk
             } else {
-                b.build_int_const(u128::from(rng.next() % 4), ty).ok()?
+                b.build_int_const(u128::from(rng.next_u64() % 4), ty).ok()?
             };
             let op = [
                 IntBinaryOp::Add,
@@ -985,12 +985,12 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
                 // 0..=w+1: at and past the width, where the saturating count
                 // and the lifter's `|W` guard matter.
                 let w = ty.bit_width() as u128 + 2;
-                b.build_int_const(u128::from(rng.next()) % w, ty).ok()?
+                b.build_int_const(u128::from(rng.next_u64()) % w, ty).ok()?
             } else {
                 other
             };
             let nv = if rng.chance(20) {
-                b.build_int_const(u128::from(rng.next() % 3), ty).ok()?
+                b.build_int_const(u128::from(rng.next_u64() % 3), ty).ok()?
             } else if rng.chance(15) && ty == ValueType::I32 {
                 // A truncate / extend round trip: the cast ladder `Hop` walks,
                 // and the only shape here that changes width.
@@ -1026,12 +1026,12 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
                 let mut cond = match rng.below(5) {
                     0 => b.build_boolean_const(rng.chance(50)),
                     1 => {
-                        let c = b.build_int_const(u128::from(rng.next() % 3), ty).ok()?;
-                        let d = b.build_int_const(u128::from(rng.next() % 3), ty).ok()?;
+                        let c = b.build_int_const(u128::from(rng.next_u64() % 3), ty).ok()?;
+                        let d = b.build_int_const(u128::from(rng.next_u64() % 3), ty).ok()?;
                         b.build_int_cmp_operation(c, d, IntCmpOp::Equal, ty).ok()?
                     }
                     _ => {
-                        let c = b.build_int_const(u128::from(rng.next() % 5), ty).ok()?;
+                        let c = b.build_int_const(u128::from(rng.next_u64() % 5), ty).ok()?;
                         let op = [IntCmpOp::Equal, IntCmpOp::Less, IntCmpOp::Sless][rng.below(3)];
                         if rng.chance(50) {
                             b.build_int_cmp_operation(vj, c, op, ty).ok()?
@@ -1086,7 +1086,7 @@ fn the_pipeline_preserves_cfg_semantics() {
                 let mut outcomes = Vec::new();
                 let mut rng = Rng(seed | 1);
                 let vecs: Vec<Vec<u128>> = (0..16)
-                    .map(|_| (0..4).map(|_| u128::from(rng.next())).collect())
+                    .map(|_| (0..4).map(|_| u128::from(rng.next_u64())).collect())
                     .collect();
                 for vec in &vecs {
                     let want = run_cfg(&f, &|e| {
@@ -1273,7 +1273,7 @@ fn a_range_contains_every_runtime_value() {
         let mut ranges = crate::value_range::compute_value_ranges(&f, &doms, &known);
         let mut rng = Rng(seed | 1);
         for _ in 0..24 {
-            let vec: Vec<u128> = (0..4).map(|_| u128::from(rng.next() % 8)).collect();
+            let vec: Vec<u128> = (0..4).map(|_| u128::from(rng.next_u64() % 8)).collect();
             let mut bad: Option<String> = None;
             interp::run_observed(&f, &reference_env(&|e| vec[e.index]), &mut |at, v, val| {
                 if f.value_type_opt(v)

@@ -284,6 +284,7 @@ mod tests {
     use strider_graph::NodeId;
     use strider_ir::ConstId;
     use strider_ir::node::NodeKind;
+    use strider_ir_test_utils::Rng;
 
     #[test]
     fn builds_bipartite_add_shape() {
@@ -312,13 +313,6 @@ mod tests {
         assert_eq!(*order.last().unwrap(), root);
     }
 
-    fn draw(state: &mut u64, bound: usize) -> usize {
-        *state ^= *state << 13;
-        *state ^= *state >> 7;
-        *state ^= *state << 17;
-        (*state % bound as u64) as usize
-    }
-
     /// The tree unfolding of `n`, by memoised recursion.
     fn unfold(g: &PatGraph, n: NodeId, memo: &mut FxHashMap<NodeId, usize>) -> usize {
         if let Some(&s) = memo.get(&n) {
@@ -345,19 +339,19 @@ mod tests {
     ///
     /// `shapes` counts: the unfolding wins, the raw count wins, an alternation
     /// whose arms unfold to different sizes, a nested branch.
-    fn random_pattern(state: &mut u64, depth: u32, shapes: &mut [usize; 4]) -> (Pattern, usize) {
+    fn random_pattern(rng: &mut Rng, depth: u32, shapes: &mut [usize; 4]) -> (Pattern, usize) {
         let mut b = MatcherBuilder::new();
         let mut nested = 0usize;
         let mut vals: Vec<PatValueRef> = vec![b.leaf(KindSpec::Any)];
-        for _ in 0..draw(state, 12) {
-            let (l, r) = (vals[draw(state, vals.len())], vals[draw(state, vals.len())]);
-            let v = match draw(state, 5) {
+        for _ in 0..rng.below(12) {
+            let (l, r) = (vals[rng.below(vals.len())], vals[rng.below(vals.len())]);
+            let v = match rng.below(5) {
                 1 => b.unary(KindSpec::Any, l),
                 2 => b.binary(strider_ir::IntBinaryOp::Add, l, r),
                 3 => b.one_of(&[l, r]),
                 4 if depth < 2 => {
-                    let (t, t_total) = random_pattern(state, depth + 1, shapes);
-                    let (f, f_total) = random_pattern(state, depth + 1, shapes);
+                    let (t, t_total) = random_pattern(rng, depth + 1, shapes);
+                    let (f, f_total) = random_pattern(rng, depth + 1, shapes);
                     nested += t_total + f_total;
                     crate::if_else().with_true(t).with_false(f).compile(&mut b)
                 }
@@ -398,10 +392,10 @@ mod tests {
         } else {
             20_000
         };
-        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
         let mut shapes = [0usize; 4];
         for _ in 0..cases {
-            random_pattern(&mut state, 0, &mut shapes);
+            random_pattern(&mut rng, 0, &mut shapes);
         }
         assert!(
             shapes.iter().all(|&c| c >= cases / 20),

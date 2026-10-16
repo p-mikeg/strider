@@ -7,7 +7,6 @@
 )]
 
 pub mod cases;
-pub mod oracle;
 
 use std::cell::Cell;
 use std::ops::ControlFlow;

@@ -15,8 +15,8 @@ use std::ops::Range;
 use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::walk::NodeIdSet;
 use strider_ir::{Function, IRViewer};
-use strider_ir_test_utils::graph_oracle;
 use strider_ir_test_utils::interp::{self, Divergence, EntryVar, Env, Outcome, Slot};
+use strider_ir_test_utils::{Rng, graph_oracle};
 use strider_lift::LiftOptions;
 
 const BASE: u64 = 0x1000;
@@ -169,19 +169,12 @@ enum Term {
 
 type Block = (Option<Op>, Term);
 
-fn next(state: &mut u64) -> u64 {
-    *state ^= *state << 13;
-    *state ^= *state >> 7;
-    *state ^= *state << 17;
-    *state
-}
-
 fn random_blocks(seed: u64) -> Vec<Block> {
-    let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
-    let n = 1 + (next(&mut state) % MAX_BLOCKS) as usize;
-    let to = |state: &mut u64, blocks: Range<usize>| To {
-        block: blocks.start + (next(state) % blocks.len() as u64) as usize,
-        at: match next(state) % 8 {
+    let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+    let n = 1 + (rng.next_u64() % MAX_BLOCKS) as usize;
+    let to = |rng: &mut Rng, blocks: Range<usize>| To {
+        block: blocks.start + (rng.next_u64() % blocks.len() as u64) as usize,
+        at: match rng.next_u64() % 8 {
             0 | 1 => At::Terminator,
             2 | 3 => At::Tail,
             _ => At::Head,
@@ -189,15 +182,15 @@ fn random_blocks(seed: u64) -> Vec<Block> {
     };
     // Sparse definitions leave joins whose phi only the iterated frontier
     // places.
-    let empty = if next(&mut state).is_multiple_of(2) {
+    let empty = if rng.next_u64().is_multiple_of(2) {
         6
     } else {
         1
     };
     (0..n)
         .map(|b| {
-            let k = next(&mut state) as u32;
-            let op = match next(&mut state) % (9 + empty) {
+            let k = rng.next_u64() as u32;
+            let op = match rng.next_u64() % (9 + empty) {
                 0 => Some(Op::MovEax(k)),
                 1..=3 => Some(Op::AddEax(k)),
                 4 | 5 => Some(Op::AddEaxEcx),
@@ -205,36 +198,36 @@ fn random_blocks(seed: u64) -> Vec<Block> {
                 7 | 8 => Some(Op::AddEcx(k)),
                 _ => None,
             };
-            let term = match next(&mut state) % 10 {
+            let term = match rng.next_u64() % 10 {
                 _ if b + 1 == n => Term::Ret,
                 0 => Term::Ret,
-                1..=3 => Term::Jmp(to(&mut state, 0..n)),
+                1..=3 => Term::Jmp(to(&mut rng, 0..n)),
                 // A latch: test what the body wrote, branch back, exit forward.
                 4 | 5 if op.is_some() => Term::Cond {
                     reg: op.map_or(Reg::Edi, Op::writes),
-                    mask: latch_mask(op, next(&mut state) as u32 % 4),
+                    mask: latch_mask(op, rng.next_u64() as u32 % 4),
                     taken: To {
-                        block: if next(&mut state).is_multiple_of(2) {
+                        block: if rng.next_u64().is_multiple_of(2) {
                             b
                         } else {
-                            (next(&mut state) % (b as u64 + 1)) as usize
+                            (rng.next_u64() % (b as u64 + 1)) as usize
                         },
                         at: At::Head,
                     },
-                    other: to(&mut state, b + 1..n),
+                    other: to(&mut rng, b + 1..n),
                 },
                 _ => Term::Cond {
-                    reg: [Reg::Edi, Reg::Eax, Reg::Ecx][(next(&mut state) % 3) as usize],
-                    mask: 1 << (next(&mut state) % 4),
-                    taken: if next(&mut state).is_multiple_of(4) {
+                    reg: [Reg::Edi, Reg::Eax, Reg::Ecx][(rng.next_u64() % 3) as usize],
+                    mask: 1 << (rng.next_u64() % 4),
+                    taken: if rng.next_u64().is_multiple_of(4) {
                         To {
                             block: b,
                             at: At::Tail,
                         }
                     } else {
-                        to(&mut state, 0..n)
+                        to(&mut rng, 0..n)
                     },
-                    other: to(&mut state, 0..n),
+                    other: to(&mut rng, 0..n),
                 },
             };
             (op, term)

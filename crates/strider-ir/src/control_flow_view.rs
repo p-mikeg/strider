@@ -186,7 +186,7 @@ mod tests {
     use cranelift_entity::EntityRef;
     use petgraph::visit::{GraphBase, IntoNeighbors};
     use proptest::prelude::*;
-    use strider_ir_test_utils::graph_oracle;
+    use strider_ir_test_utils::{Rng, graph_oracle};
 
     // petgraph's Cooper-Harvey-Kennedy `simple_fast` is the independent oracle
     // the interval trees below are matched against; nothing in production
@@ -856,42 +856,22 @@ mod tests {
     /// irreducible edges and orphan regions. `None` when the draw is not a
     /// valid function, e.g. an exit-free cycle.
     fn random_cfg(seed: u64) -> Option<Function> {
-        let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
-        let mut next = move |bound: u64| {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            state % bound
-        };
-        let mut b = empty_builder().ok()?;
-        let n = 2 + next(8);
-        let regions: Vec<_> = (0..n)
-            .map(|_| b.create_region_all())
-            .collect::<crate::error::Result<_>>()
-            .ok()?;
-        b.set_entry_region_all(regions[0]).ok()?;
-        b.set_lift_addr(Some(0x5000));
-        for &region in &regions {
-            b.set_region(region);
-            let pick = regions[next(n) as usize];
-            let other = regions[next(n) as usize];
-            match next(10) {
-                0 => b.build_function_return().ok()?,
-                1 => b.build_unreachable().ok()?,
-                2 | 3 => b.build_branch(pick).ok()?,
-                4 => {
-                    let address = b.build_int_const(0u64, crate::node::ValueType::I64).ok()?;
-                    let third = regions[next(n) as usize];
-                    b.build_switch(address, &[(pick, 0), (other, 1), (third, 2)])
-                        .ok()?;
+        use test_cfgs::Term;
+        let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let n = 2 + rng.below(8);
+        let terms: Vec<Term> = (0..n)
+            .map(|_| {
+                let (pick, other) = (rng.below(n) as u8, rng.below(n) as u8);
+                match rng.below(10) {
+                    0 => Term::Return,
+                    1 => Term::Unreachable,
+                    2 | 3 => Term::Branch(pick),
+                    4 => Term::Switch(vec![pick, other, rng.below(n) as u8]),
+                    _ => Term::If(pick, other),
                 }
-                _ => {
-                    let cond = b.build_boolean_const(true);
-                    b.build_if(cond, pick, other).ok()?;
-                }
-            }
-        }
-        b.build().ok()
+            })
+            .collect();
+        test_cfgs::lower(&terms)?.build().ok()
     }
 
     /// The interval trees answer every query exactly as the idom chain walk:
