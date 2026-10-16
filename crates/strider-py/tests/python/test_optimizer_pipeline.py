@@ -236,3 +236,29 @@ def test_a_rewriting_post_pass_restamps_stack_offsets():
     pipe.add_post(strider.opt.LoadForward())
     lift.optimize(fn, pipe)
     assert len(fn.find_all(load().stack_offset(12))) == 1
+
+
+def test_a_python_default_pipeline_runs_as_the_rust_default(x86_memory_elf):
+    """`OptimizerPipeline.default()` holds the Rust default pipeline and every
+    analysis runs a copy, so analysing with it gives the function analysing
+    with no pipeline gives, every time."""
+    addr = symbol_addr(x86_memory_elf, "array_sum")
+    arch = strider.sleigh.SleighArch.x86()
+    cc = strider.sleigh.CallingConvention.x86_cdecl()
+    s = strider.lift.lifter(arch, strider.lift.load_elf(str(x86_memory_elf)).reader())
+    cfg = strider.cfg.CfgOptions(allow_code_before_start_addr=True)
+    builtin = s.analyze(addr, cc, opts=strider.lift.LifterOptions(cfg=cfg)).function
+    pipe = strider.opt.OptimizerPipeline.default()
+    opts = strider.lift.LifterOptions(cfg=cfg, pipeline=pipe)
+    first = s.analyze(addr, cc, opts=opts).function
+    second = s.analyze(addr, cc, opts=opts).function
+    assert first.to_text() == builtin.to_text() == second.to_text()
+
+
+def test_the_pass_name_tuples_cover_the_default_pipeline():
+    """The registry's names are the default pipeline's passes, and stay out
+    of `__all__`."""
+    p = strider.opt.OptimizerPipeline.default()
+    assert sorted(p.passes) == sorted(strider.opt._MAIN_PASS_NAMES)
+    assert set(p.post_passes) <= set(strider.opt._POST_PASS_NAMES)
+    assert not {"_MAIN_PASS_NAMES", "_POST_PASS_NAMES"} & set(strider.opt.__all__)
