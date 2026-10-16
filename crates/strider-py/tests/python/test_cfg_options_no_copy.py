@@ -112,7 +112,7 @@ def test_with_function_max_size_carries_both_tables():
         known_targets={0x1000: "return"},
         call_other_abis={"trap": abi},
     )
-    narrowed = opts.with_function_max_size(0x40)
+    narrowed = opts._with_function_max_size(0x40)
     assert narrowed.function_max_size == 0x40
     assert narrowed.allow_code_before_start_addr is False
     assert dict(narrowed.known_targets) == {0x1000: "return"}

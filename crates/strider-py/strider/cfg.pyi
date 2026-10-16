@@ -256,12 +256,9 @@ class CfgOptions:
         `function_max_size=0`, and for a size with
         `allow_code_before_start_addr=True`."""
         ...
-    def with_function_max_size(self, function_max_size: int) -> "CfgOptions":
-        """These options with `function_max_size` set, sharing its tables.
+    def _with_function_max_size(self, function_max_size: int) -> "CfgOptions":
+        """These options bounded to `function_max_size`, sharing both tables.
         Raises `ValueError` for `0`."""
-        ...
-    def with_data_ranges(self, data_ranges: Sequence[tuple[int, int]]) -> "CfgOptions":
-        """These options with `data_ranges` replaced, sharing its tables."""
         ...
     def _with_elf_data_ranges(self, elf: object) -> "CfgOptions":
         """These options with `elf`'s mapping-symbol data ranges, unless
