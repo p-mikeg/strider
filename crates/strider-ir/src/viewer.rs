@@ -403,8 +403,8 @@ pub trait IRWalker: IRViewer {
         self.walk().filter(move |&n| pred(self.node_kind(n)))
     }
 
-    /// Every producer before its consumers, roots first, over the reachable
-    /// set `info` captured.
+    /// Every producer before its consumers unless the use closes a
+    /// def-use cycle, a root first, over the reachable set `info` captured.
     fn reverse_postorder(&self, info: &crate::walk::GraphWalkInfo) -> Vec<NodeId> {
         info.reverse_postorder(self.function().graph())
     }

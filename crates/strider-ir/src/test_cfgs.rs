@@ -41,6 +41,12 @@ pub(crate) fn empty_builder() -> crate::error::Result<FunctionBuilder> {
 
 /// `None` when the draw is not a valid function, e.g. an exit-free cycle.
 pub(crate) fn build(terms: &[Term]) -> Option<Function> {
+    lower(terms)?.build().ok()
+}
+
+/// The regions `terms` describe, before validation: an exit-free cycle
+/// survives here.
+pub(crate) fn lower(terms: &[Term]) -> Option<FunctionBuilder> {
     let mut b = empty_builder().ok()?;
     let regions: Vec<_> = (0..terms.len())
         .map(|_| b.create_region_all())
@@ -66,7 +72,7 @@ pub(crate) fn build(terms: &[Term]) -> Option<Function> {
             }
         }
     }
-    b.build().ok()
+    Some(b)
 }
 
 /// `n` regions, each branching to the next; the last returns.
@@ -156,6 +162,32 @@ pub(crate) fn split_succs(f: &Function) -> Vec<Vec<u32>> {
                     .map(|(user, _)| index(CtrlKey::Node(user)))
                     .collect();
             }
+        }
+    }
+    succs
+}
+
+/// Every input's producer, plus control successors: what `walk_graph` follows.
+pub(crate) fn walk_succs(f: &Function) -> Vec<Vec<u32>> {
+    let g = f.graph();
+    let mut succs = control_succs(f);
+    for v in g.all_node_ids() {
+        succs[v.index()].extend(
+            g.node_inputs(v)
+                .into_iter()
+                .map(|x| index(g.value_definition(x).0)),
+        );
+    }
+    succs
+}
+
+/// Each output to its consumers, control included.
+pub(crate) fn def_use_succs(f: &Function) -> Vec<Vec<u32>> {
+    let g = f.graph();
+    let mut succs = vec![Vec::new(); node_slots(f)];
+    for v in g.all_node_ids() {
+        for &out in g.node_outputs(v) {
+            succs[v.index()].extend(g.value_uses(out).map(|(user, _)| index(user)));
         }
     }
     succs

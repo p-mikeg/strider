@@ -139,9 +139,9 @@ impl<'g> EditFunction<'g> {
     }
 
     /// Post-order over the cached live def->use graph: every node is yielded
-    /// after all of its consumers.  Roots are SEEDED in ascending `NodeId`
-    /// order, so the derived RPO starts at the lowest-id root; the post-order
-    /// itself reaches the highest-id root first.
+    /// after its consumers unless the use closes a def-use cycle.  Roots are
+    /// SEEDED in ascending `NodeId` order, so the derived RPO starts at the
+    /// lowest-id root; the post-order itself reaches the highest-id root first.
     ///
     /// Entry-global: covers only the entry-rooted graph.  A post-order seeded
     /// at a non-entry node must recompute roots from scratch (e.g.
@@ -166,8 +166,8 @@ impl<'g> EditFunction<'g> {
         memo.as_ref().expect("filled above").1.clone()
     }
 
-    /// Every producer precedes its consumers.  Same entry-global contract as
-    /// [`Self::postorder`].
+    /// Every producer precedes its consumers unless the use closes a def-use
+    /// cycle.  Same entry-global contract as [`Self::postorder`].
     pub fn reverse_postorder(&self) -> Vec<NodeId> {
         let mut v = self.postorder();
         v.reverse();
