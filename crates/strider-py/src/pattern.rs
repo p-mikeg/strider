@@ -2284,7 +2284,12 @@ fn lookup_op<Op: Copy>(
         return Ok(op);
     }
     Err(into_strider_err(anyhow::anyhow!(
-        "unknown {op_kind} variant {name:?}"
+        "unknown {op_kind} variant {name:?}: expected one of {}",
+        variants
+            .iter()
+            .map(|&op| canonical(op))
+            .collect::<Vec<_>>()
+            .join(", ")
     )))
 }
 
