@@ -598,6 +598,32 @@ mod tests {
         }
     }
 
+    /// `has_control_flow` and `is_terminator` are hand-written; the
+    /// signature is what they restate.
+    #[test]
+    fn control_predicates_agree_with_the_signature() {
+        let has_control = |l: &SlotList| {
+            l.head
+                .iter()
+                .chain(&l.tail)
+                .any(|s| s.kind == ExpectedValueKind::Control)
+        };
+        for k in &every_node_kind() {
+            let sig = expected_signature(k);
+            let control_in = has_control(&sig.inputs);
+            assert_eq!(
+                k.has_control_flow(),
+                control_in || has_control(&sig.outputs),
+                "has_control_flow for {k:?}"
+            );
+            assert_eq!(
+                k.is_terminator(),
+                control_in && sig.outputs.max_len == 0,
+                "is_terminator for {k:?}"
+            );
+        }
+    }
+
     /// Guards against an integer-only kind creeping into a tail that must
     /// admit Bool flag-register values.
     #[test]
