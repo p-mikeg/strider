@@ -132,9 +132,9 @@ mod tests {
     use rustc_hash::FxHashSet;
     use strider_ir::node::{ValueId, ValueType};
     use strider_ir::{IRBuilderExt, IntBinaryOp};
-    use strider_ir_test_utils::sp_arg_frame;
+    use strider_ir_test_utils::{sp_arg_frame, stack_vn_x86 as sp};
 
-    use super::super::{collapse_phis, test_sp as sp};
+    use super::super::collapse_phis;
 
     /// `Add(sp_v, off)` as an `I32` frame address.
     fn frame_off(
