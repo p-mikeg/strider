@@ -266,9 +266,10 @@ where
                     derived_incomplete.push(*addr);
                 }
             }
+            let changed = progress.changed();
             derived_incomplete.extend(progress.derived_incomplete);
             assumed_modes.extend(progress.assumed_modes);
-            if !progress.changed && !seats_stale {
+            if !changed && !seats_stale {
                 converged = true;
                 break;
             }
@@ -636,9 +637,6 @@ fn with_classify(mut pipeline: strider_opt::OptimizerPipeline) -> strider_opt::O
 /// One round's effect on the induced edge set.
 #[derive(Default)]
 struct Progress {
-    /// Some address's successor set differs from the previous round's: the
-    /// loop's progress signal.
-    changed: bool,
     /// Addresses whose successor set changed without losing ground, which
     /// includes a target taking a proved mode at an unchanged address set
     /// ([`narrows`]).
@@ -655,6 +653,14 @@ struct Progress {
     /// The arm set is whole, so this is an unverified answer rather than an
     /// incomplete one.
     assumed_modes: Vec<PcodeInsnAddr>,
+}
+
+impl Progress {
+    /// Some address's successor set differs from the previous round's: the
+    /// loop's progress signal.
+    fn changed(&self) -> bool {
+        !self.grew.is_empty() || !self.narrowed.is_empty()
+    }
 }
 
 /// Fold `resolutions` into `known_targets`, keyed back to pcode addresses
@@ -758,7 +764,6 @@ fn apply_resolutions(
         let next = target_keys(&targets);
         let narrowed = narrows(&prev, &next);
         if prev != next {
-            progress.changed = true;
             if narrowed {
                 progress.narrowed.push(addr);
             } else {
@@ -1672,7 +1677,7 @@ mod tests {
         )
         .expect("apply");
         assert!(
-            !progress.changed,
+            !progress.changed(),
             "identical re-classification must not report growth"
         );
         assert_eq!(
@@ -1698,7 +1703,7 @@ mod tests {
         )
         .expect("apply");
         assert!(
-            progress.changed,
+            progress.changed(),
             "an improved classification must be applied"
         );
         assert!(
@@ -1730,7 +1735,7 @@ mod tests {
         )
         .expect("apply");
         assert!(
-            progress.changed,
+            progress.changed(),
             "a first-time classification must register as growth"
         );
         assert_eq!(progress.grew, vec![addr]);
@@ -2088,7 +2093,7 @@ mod tests {
         .expect("apply");
         let elapsed = start.elapsed();
 
-        assert!(progress.changed);
+        assert!(progress.changed());
         assert!(
             elapsed < std::time::Duration::from_millis(100),
             "merging one resolution into {} accumulated targets took {elapsed:?}: \
@@ -2157,7 +2162,7 @@ mod tests {
             multiple(&[(0x2000, None), (0x2004, None)]),
             None,
         );
-        assert!(progress.changed);
+        assert!(progress.changed());
         assert_eq!(folded, multiple(&[(0x2000, None), (0x2004, None)]));
     }
 
@@ -2176,7 +2181,7 @@ mod tests {
             multiple(&[(0x2000, None), (0x2004, None)]),
             None,
         );
-        assert!(progress.changed);
+        assert!(progress.changed());
         assert_eq!(folded, multiple(&[(0x2000, Some(false)), (0x2004, None)]));
         assert!(
             progress.derived_incomplete.is_empty(),
@@ -2493,7 +2498,7 @@ mod tests {
             multiple(&[(0x2000, None), (0x3000, None)]),
             None,
         );
-        assert!(progress.changed);
+        assert!(progress.changed());
         assert!(
             progress.narrowed.is_empty(),
             "adding an address is discovery"
@@ -2511,7 +2516,7 @@ mod tests {
             multiple(&[(0x2000, None)]),
             None,
         );
-        assert!(progress.changed);
+        assert!(progress.changed());
         assert!(
             !progress.narrowed.is_empty(),
             "losing 0x3000 is not monotone discovery"
@@ -2531,7 +2536,7 @@ mod tests {
             ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(0x2000, Some(true))),
             Some(multiple(&[(0x2000, None)])),
         );
-        assert!(progress.changed);
+        assert!(progress.changed());
         assert!(
             progress.narrowed.is_empty(),
             "a None -> Some mode upgrade at a fixed address set is growth",
@@ -2551,7 +2556,7 @@ mod tests {
             multiple(&[(0x2000, Some(false))]),
             None,
         );
-        assert!(progress.changed);
+        assert!(progress.changed());
         assert!(
             !progress.narrowed.is_empty(),
             "Thumb -> ARM at one address is a flip"
@@ -2566,7 +2571,7 @@ mod tests {
             multiple(&[(0x2000, None), (0x4000, None)]),
             None,
         );
-        assert!(progress.changed);
+        assert!(progress.changed());
         assert!(!progress.narrowed.is_empty());
         assert!(progress.grew.is_empty());
     }
@@ -2590,7 +2595,7 @@ mod tests {
             None,
         );
         assert!(
-            !progress.changed,
+            !progress.changed(),
             "the fold matches the seated set, so this round converges",
         );
         assert_eq!(
@@ -2680,7 +2685,7 @@ mod tests {
             multiple(&[(0x3000, None)]),
             None,
         );
-        assert!(progress.changed);
+        assert!(progress.changed());
         assert!(
             !progress.narrowed.is_empty(),
             "swapping one successor for another is an oscillation, not growth",
@@ -2983,7 +2988,7 @@ mod tests {
         )
         .expect("fold");
 
-        assert!(!progress.changed);
+        assert!(!progress.changed());
         assert_eq!(
             target_keys(&known[&addr]),
             target_keys(&multiple(&[(0x2000, None)])),
