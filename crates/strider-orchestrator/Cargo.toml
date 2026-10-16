@@ -21,7 +21,13 @@ strider-target.workspace = true
 anyhow.workspace = true
 rustc-hash.workspace = true
 
+[features]
+# `Strider::analyze_with_classifier`, the classifier seam the loop's tests drive.
+test-util = []
+
 [dev-dependencies]
+# Self dev-dependency: turns `test-util` on for the `tests/` targets only.
+strider-orchestrator = { workspace = true, features = ["test-util"] }
 strider-reader = { workspace = true }
 # Used only by integration tests (pattern queries) and examples (HTML dumps).
 strider-pattern = { workspace = true }

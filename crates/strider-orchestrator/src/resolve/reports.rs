@@ -300,7 +300,12 @@ mod tests {
     fn live_unresolved_reports_live_unclassified_branch() {
         let (function, node) = fn_with_live_indirect_branch();
         let addr = pcode_addr(0x1000);
-        let live = crate::resolve::round::live_dispatch_sites(&function);
+        let live: FxHashSet<NodeId> =
+            strider_opt::classify_sites(&function, None, &strider_opt::OptOptions::default())
+                .expect("classify")
+                .sites
+                .into_iter()
+                .collect();
         assert_eq!(
             live_placeholders(&live, &vec![(addr, node)]),
             vec![addr],
@@ -320,7 +325,12 @@ mod tests {
             .walk()
             .find(|&n| matches!(function.node_kind(n), NodeKind::Entry))
             .expect("entry node");
-        let live = crate::resolve::round::live_dispatch_sites(&function);
+        let live: FxHashSet<NodeId> =
+            strider_opt::classify_sites(&function, None, &strider_opt::OptOptions::default())
+                .expect("classify")
+                .sites
+                .into_iter()
+                .collect();
         assert!(
             live_placeholders(&live, &vec![(pcode_addr(0x1000), non_indirect)]).is_empty(),
             "a dead / non-live IndirectBranch placeholder must not be reported"

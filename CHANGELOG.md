@@ -55,6 +55,11 @@
 - `CfgOptions` gains `derived_targets`, a resolver's own answers, which
   beat `known_targets` at their exact key; a literal naming every field
   passes `&strider_cfg::NO_TARGETS` for none.
+- `IndirectBranchClassify`, `OptCtx::indirect_resolutions` and
+  `OptimizerPipeline::has_post_pass` are gone, and `PostOptimizer` no longer
+  requires `Any`: `analyze` classifies every round after its pipeline,
+  whatever the pipeline, with `strider_opt::classify_sites(&function, rom,
+  &options)`, which returns a `ClassifiedSites`.
 
 ### Changed, Python
 
@@ -113,6 +118,7 @@
 ### Added, Rust
 
 - `Function::to_text_named`: `to_text` with registers spelled by name.
+- `IRViewer::switch_selector`: a `Switch`'s dispatch value.
 - `Strider::lifter()`, the engine `analyze` lifts with.
 - `strider_cfg::seated_in`: the `known_targets` entry for a site, by its exact
   key or else its instruction's p-code index 0, as the CFG seats it.

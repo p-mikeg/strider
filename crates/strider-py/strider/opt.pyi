@@ -47,8 +47,8 @@ class OptimizerPipeline:
     @classmethod
     def default(cls) -> OptimizerPipeline:
         """Every built-in pass exposed here, in the order `analyze` runs them
-        when no pipeline is supplied. `analyze` also appends its own
-        indirect-branch classifier, which is not one of these."""
+        when no pipeline is supplied. `analyze` runs its
+        indirect-branch classifier after whatever pipeline it is given."""
         ...
     @property
     def passes(self) -> list[str]:

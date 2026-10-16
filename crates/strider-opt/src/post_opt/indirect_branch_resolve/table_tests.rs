@@ -1769,10 +1769,14 @@ fn classify_table_dispatch_carries_each_arms_own_isa_mode() {
     }
 }
 
+fn floor() -> crate::OptOptions {
+    crate::OptCtx::at_floor(None).options
+}
+
 /// A seated `Switch` is re-derived from its retained selector, reporting no
 /// per-arm ISA mode: the node carries no mode input to fold.
 #[test]
-fn classify_pass_rederives_a_seated_switch_from_its_selector() {
+fn classify_sites_rederives_a_seated_switch_from_its_selector() {
     let mut b = strider_ir_test_utils::empty_builder().expect("empty_builder");
     let entry = b.create_region_all().unwrap();
     let a0 = b.create_region_all().unwrap();
@@ -1790,18 +1794,17 @@ fn classify_pass_rederives_a_seated_switch_from_its_selector() {
     b.set_region(a1);
     b.build_return(None, &[]).unwrap();
     b.set_lift_addr(None);
-    let mut g = b.build().unwrap();
+    let g = b.build().unwrap();
 
     let rom = MockRom::strided(0x4000, 4, vec![0x1000, 0x2000], 4);
-    let mut ctx = crate::OptCtx::at_floor(Some(&rom));
-    crate::run_post(&super::super::IndirectBranchClassify, &mut g, &mut ctx).expect("classify");
+    let found = super::super::classify_sites(&g, Some(&rom), &floor()).expect("classify");
 
     assert_eq!(
-        ctx.indirect_resolutions.get(&switch),
-        Some(&Some(ResolvedTargets::Multiple(vec![
+        found.resolved.get(&switch),
+        Some(&ResolvedTargets::Multiple(vec![
             strider_cfg::ResolvedTarget::new(0x1000, None),
             strider_cfg::ResolvedTarget::new(0x2000, None),
-        ]))),
+        ])),
         "the seated switch widens to both slots, with no ISA mode"
     );
 }
@@ -2023,12 +2026,12 @@ fn rederive_seated_switch(mut g: Function, switch: NodeId) -> Option<ResolvedTar
     prep.add(RegionCollapse);
     prep.run(&mut g, &mut crate::OptCtx::at_floor(Some(&rom)))
         .expect("prep");
-    let mut ctx = crate::OptCtx::at_floor(Some(&rom));
-    crate::run_post(&super::super::IndirectBranchClassify, &mut g, &mut ctx).expect("classify");
-    ctx.indirect_resolutions
-        .get(&switch)
-        .expect("the seated switch is reported")
-        .clone()
+    let found = super::super::classify_sites(&g, Some(&rom), &floor()).expect("classify");
+    assert!(
+        found.sites.contains(&switch),
+        "the seated switch is reported"
+    );
+    found.resolved.get(&switch).cloned()
 }
 
 /// The control: with the base reaching the dispatch unchanged on both paths it
@@ -2102,13 +2105,16 @@ fn a_heap_verdict_from_an_earlier_run_does_not_open_the_slot_map() {
     p.add(KnownBits);
     p.add(PhiCollapse);
     p.add(RegionCollapse);
-    p.add_post_pass(super::super::IndirectBranchClassify);
     let site = sole_indirect_branch(&fg);
     let resolve = |fg: &mut Function, allocators: &[u64]| {
         let mut ctx = crate::OptCtx::at_floor(None);
         ctx.options.assumptions.noalias_allocators = allocators.iter().copied().collect();
         p.run(fg, &mut ctx).unwrap();
-        ctx.indirect_resolutions.get(&site).cloned().flatten()
+        super::super::classify_sites(fg, None, &ctx.options)
+            .unwrap()
+            .resolved
+            .get(&site)
+            .cloned()
     };
     assert_eq!(
         resolve(&mut fg, &[MALLOC]),

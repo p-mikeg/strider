@@ -219,9 +219,10 @@ where
     /// not; it never suppresses what the classifier derives. `opts.compact`
     /// applies once, after the loop.
     ///
-    /// `pipeline` defaults to [`strider_opt::default_pipeline`];
-    /// [`strider_opt::IndirectBranchClassify`] is appended unless it already
-    /// runs.
+    /// `pipeline` defaults to [`strider_opt::default_pipeline`]. Every round
+    /// classifies the function's dispatch sites with
+    /// [`strider_opt::classify_sites`] after the pipeline, whatever pipeline
+    /// it is.
     ///
     /// # Errors
     ///
@@ -235,9 +236,43 @@ where
         opts: &AnalyzeOptions<'_>,
         pipeline: Option<strider_opt::OptimizerPipeline>,
     ) -> std::result::Result<AnalyzeResult, AnalyzeError> {
-        // Built once and reused across re-lifts (`run` takes `&self`).
-        let pipeline = &with_classify(pipeline.unwrap_or_else(strider_opt::default_pipeline));
-        let mut result = self.resolve(MachineInsnAddr::from(entry), cc, opts, pipeline)?;
+        self.analyze_with(entry, cc, opts, pipeline, &strider_opt::classify_sites)
+    }
+
+    /// [`Self::analyze`], classifying every round's dispatch sites with
+    /// `classify` in place of [`strider_opt::classify_sites`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::analyze`].
+    #[cfg(feature = "test-util")]
+    #[allow(clippy::type_complexity)]
+    pub fn analyze_with_classifier(
+        &mut self,
+        entry: u64,
+        cc: &strider_target::BuiltCallingConvention,
+        opts: &AnalyzeOptions<'_>,
+        pipeline: Option<strider_opt::OptimizerPipeline>,
+        classify: &dyn Fn(
+            &strider_ir::Function,
+            Option<&dyn ReadOnlyMemory>,
+            &OptOptions,
+        ) -> Result<strider_opt::ClassifiedSites>,
+    ) -> std::result::Result<AnalyzeResult, AnalyzeError> {
+        self.analyze_with(entry, cc, opts, pipeline, classify)
+    }
+
+    fn analyze_with(
+        &mut self,
+        entry: u64,
+        cc: &strider_target::BuiltCallingConvention,
+        opts: &AnalyzeOptions<'_>,
+        pipeline: Option<strider_opt::OptimizerPipeline>,
+        classify: resolve::Classifier<'_>,
+    ) -> std::result::Result<AnalyzeResult, AnalyzeError> {
+        let pipeline = pipeline.unwrap_or_else(strider_opt::default_pipeline);
+        let mut result =
+            self.resolve(MachineInsnAddr::from(entry), cc, opts, &pipeline, classify)?;
         opts.on_incomplete.check(result.incomplete())?;
         if opts.compact {
             result.function.compact()?;
@@ -273,16 +308,6 @@ impl AnalyzeResult {
     pub fn is_complete(&self) -> bool {
         self.incomplete().is_complete()
     }
-}
-
-/// `pipeline` running [`strider_opt::IndirectBranchClassify`], at most once: a
-/// caller-supplied pipeline that already registers it would otherwise repeat
-/// the pass's known-bits / dominator / value-range setup every re-lift round.
-fn with_classify(mut pipeline: strider_opt::OptimizerPipeline) -> strider_opt::OptimizerPipeline {
-    if !pipeline.has_post_pass::<strider_opt::IndirectBranchClassify>() {
-        pipeline.add_post_pass(strider_opt::IndirectBranchClassify);
-    }
-    pipeline
 }
 
 /// `targets` with each mode-less entry taking the ISA mode `known` already
@@ -764,19 +789,6 @@ mod tests {
             let merged = merge_resolved(&thumb, &arm, false);
             assert!(concrete_targets(&merged).is_empty());
         });
-    }
-
-    #[test]
-    fn classify_post_pass_is_registered_exactly_once() {
-        let mut already = strider_opt::OptimizerPipeline::new();
-        already.add_post_pass(strider_opt::IndirectBranchClassify);
-        assert_eq!(with_classify(already).post_passes().len(), 1);
-        assert_eq!(
-            with_classify(strider_opt::OptimizerPipeline::new())
-                .post_passes()
-                .len(),
-            1,
-        );
     }
 
     /// A merge answers `Single` only when the surviving target is the `Single`

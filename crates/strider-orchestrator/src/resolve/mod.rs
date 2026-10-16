@@ -15,7 +15,8 @@ use crate::{AnalyzeOptions, AnalyzeResult, Strider};
 use reports::{
     DerivedChannels, live_unresolved_branches, refusals, seated_arm_losses, unverified_seeded_sites,
 };
-use round::{Resolutions, Round, answered, flowing_isa_bits};
+pub(crate) use round::Classifier;
+use round::{Resolutions, Round, flowing_isa_bits};
 use sites::SiteTable;
 
 /// Caps the folds, so a run builds at most one more round than this.
@@ -71,6 +72,7 @@ where
         cc: &strider_target::BuiltCallingConvention,
         opts: &AnalyzeOptions<'_>,
         pipeline: &strider_opt::OptimizerPipeline,
+        classify: Classifier<'_>,
     ) -> Result<AnalyzeResult> {
         let mut st = LoopState::new(opts.cfg.known_targets);
         // Every round rebuilds the whole function from the seat set: cfg, lift
@@ -83,6 +85,7 @@ where
                 opts,
                 &st.sites.cfg_options(&opts.cfg),
                 pipeline,
+                classify,
             )?;
             // A stale round still carries a seat the loop has since withdrawn
             // or trimmed, so it is no answer even when nothing else moves.
@@ -146,12 +149,9 @@ impl<'s> LoopState<'s> {
     /// As [`SiteTable::fold`].
     fn fold(&mut self, round: &Round, resolutions: Resolutions) -> Result<bool> {
         let flowing = flowing_isa_bits(&round.cfg, &round.placeholders, &round.switches);
-        let progress = self.sites.fold(
-            &round.placeholders,
-            &round.switches,
-            answered(resolutions),
-            &flowing,
-        )?;
+        let progress =
+            self.sites
+                .fold(&round.placeholders, &round.switches, resolutions, &flowing)?;
         self.derived_incomplete
             .extend(self.sites.note_narrowed(&progress.narrowed));
         let changed = progress.changed();
@@ -190,8 +190,7 @@ impl<'s> LoopState<'s> {
             Termination::CapReached(resolutions) => {
                 let mut folded = self.sites.clone();
                 let flowing = flowing_isa_bits(&cfg, &placeholders, &switches);
-                let progress =
-                    folded.fold(&placeholders, &switches, answered(resolutions), &flowing)?;
+                let progress = folded.fold(&placeholders, &switches, resolutions, &flowing)?;
                 self.derived_incomplete.extend(progress.derived_incomplete);
                 self.assumed_modes.extend(progress.assumed_modes);
                 // Only the LAST round's growth: a site that settled earlier is

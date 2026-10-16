@@ -106,7 +106,6 @@ fn a_chain_of_tables_seats_one_level_per_round() {
     );
     let wide_runs = Arc::new(AtomicUsize::new(0));
     let mut pipeline = strider_orchestrator::opt::default_pipeline();
-    pipeline.add_post_pass(strider_orchestrator::opt::IndirectBranchClassify);
     pipeline.add_post_pass(CountWideRuns(Arc::clone(&wide_runs)));
     let result = strider
         .analyze(BASE, &cc, &common::ignoring(), Some(pipeline))

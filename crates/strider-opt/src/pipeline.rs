@@ -31,11 +31,6 @@ pub struct OptCtx<'mem> {
     /// jump table stored in the image does not decode.
     pub rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>,
     pub options: crate::OptOptions,
-    /// Every live `IndirectBranch` placeholder AND seated `Switch` visited
-    /// this run, mapped to `Some` when the dispatch target was recovered and
-    /// `None` when it stays unresolvable.
-    pub indirect_resolutions:
-        rustc_hash::FxHashMap<strider_ir::node::NodeId, Option<strider_cfg::ResolvedTargets>>,
 }
 
 impl<'mem> OptCtx<'mem> {
@@ -44,7 +39,6 @@ impl<'mem> OptCtx<'mem> {
         Self {
             rom,
             options: crate::OptOptions::default(),
-            indirect_resolutions: rustc_hash::FxHashMap::default(),
         }
     }
 
@@ -231,7 +225,7 @@ clone_box_shim! {
 /// Assumes the optimizer has converged: may rely on any canonical shape the
 /// in-loop passes settle on (e.g. `Add(_, Neg(_))` for subtraction) rather
 /// than re-normalising.
-pub trait PostOptimizer: PostOptimizerClone + std::any::Any {
+pub trait PostOptimizer: PostOptimizerClone {
     /// `edit` wraps the converged function.
     ///
     /// # Errors
@@ -295,16 +289,6 @@ impl OptimizerPipeline {
     #[must_use]
     pub fn post_passes(&self) -> &[Box<dyn PostOptimizer + Send>] {
         &self.post_passes
-    }
-
-    /// Whether a post-pass of type `P` is registered, by type rather than by
-    /// [`PostOptimizer::name`], which any pass can share.
-    #[must_use]
-    pub fn has_post_pass<P: PostOptimizer>(&self) -> bool {
-        self.post_passes.iter().any(|pass| {
-            let pass: &dyn std::any::Any = pass.as_ref();
-            pass.is::<P>()
-        })
     }
 
     /// Runs the passes to convergence, then each post-pass once in
