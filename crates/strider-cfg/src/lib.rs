@@ -36,7 +36,7 @@ pub(crate) fn flowing_isa_bit_at<R: rsleigh::MemReader>(
 pub use builder::{Builder, FlowContext, FlowVars};
 pub use incomplete::{Incompleteness, Reason};
 pub use indirect_resolver::{ResolvedTarget, ResolvedTargets};
-pub use options::{CfgOptions, DataRanges, FunctionBound, seated_in};
+pub use options::{CfgOptions, DataRanges, FunctionBound, NO_TARGETS, seated_in};
 pub use pcode_text::{insn_plain_text, insn_text};
 
 pub use query::IfRegionSuccessors;
