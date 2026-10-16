@@ -70,11 +70,6 @@ pub fn default_pipeline() -> OptimizerPipeline {
     p.add(DeadBranchElimination);
     p.add(CfgDetach);
     p.add(LoadForward::default());
-    // StackOffsetDetect runs first to pre-populate the SP-decomposition memo
-    // CallStackArgCollect reads, turning that pass's lookups into O(1) hits.
-    // `decompose` self-memoizes, so the order is a performance choice, not a
-    // correctness dependency.
-    p.add_post_pass(StackOffsetDetect);
     p.add_post_pass(CallStackArgCollect);
     p.add_post_pass(FunctionArgDetect);
     p

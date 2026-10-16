@@ -11,7 +11,7 @@ per_arch_test!("stack", "escape_via_ptr", escape_has_stack_offset);
 fn escape_has_stack_offset(function: &strider_ir::Function) {
     assert!(
         count_memory_offsets(function) >= 1,
-        "StackOffsetDetect should annotate >= 1 SP-relative Store/Load on \
+        "the pipeline should stamp >= 1 SP-relative Store/Load on \
          escape_via_ptr (&local forces a stack slot); got {}",
         count_memory_offsets(function)
     );
