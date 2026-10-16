@@ -839,6 +839,28 @@ impl ShapeGen {
         }
         m
     }
+
+    /// Every third merge's LAST arm becomes an edge to an arbitrary def, which
+    /// may enter a loop away from its header. The first arm is left alone, so
+    /// every def stays reachable from `InitialMemory`.
+    fn rewire_every_third_merge(&mut self) {
+        let phis: Vec<ValueId> = self
+            .values
+            .iter()
+            .copied()
+            .filter(|&v| matches!(self.fg.node_kind(self.fg.producer(v)), NodeKind::MemPhi))
+            .collect();
+        for (i, &p) in phis.iter().enumerate().filter(|(i, _)| i % 3 == 0) {
+            let node = self.fg.producer(p);
+            let arms = self.fg.phi_data_inputs(node).count();
+            let target = self.values[(i * 13 + 7) % self.values.len()];
+            let use_id = self
+                .fg
+                .node_input_id_at(node, arms)
+                .expect("a merge has an arm at its own arity");
+            self.fg.graph_mut().update_input(use_id, target);
+        }
+    }
 }
 
 /// The documented answer, computed the long way: the nearest dominator of the
@@ -1030,25 +1052,7 @@ fn the_walk_is_sound_on_random_irreducible_graphs() {
     for seed in 0..40 {
         let (mut shape, im) = ShapeGen::new(seed, true);
         shape.body(im, 0);
-        // Every third merge's LAST arm becomes an edge to an arbitrary def,
-        // which may enter a loop away from its header.  The first arm is left
-        // alone, so every def stays reachable from `InitialMemory`.
-        let phis: Vec<ValueId> = shape
-            .values
-            .iter()
-            .copied()
-            .filter(|&v| matches!(shape.fg.node_kind(shape.fg.producer(v)), NodeKind::MemPhi))
-            .collect();
-        for (i, &p) in phis.iter().enumerate().filter(|(i, _)| i % 3 == 0) {
-            let node = shape.fg.producer(p);
-            let arms = shape.fg.phi_data_inputs(node).count();
-            let target = shape.values[(i * 13 + 7) % shape.values.len()];
-            let use_id = shape
-                .fg
-                .node_input_id_at(node, arms)
-                .expect("a merge has an arm at its own arity");
-            shape.fg.graph_mut().update_input(use_id, target);
-        }
+        shape.rewire_every_third_merge();
         let ShapeGen {
             fg, slots, values, ..
         } = shape;
@@ -1103,4 +1107,53 @@ fn the_climb_matches_its_definition_on_random_graphs() {
             }
         }
     }
+}
+
+/// `build` lays out exactly the reducible memory graphs.
+#[test]
+fn a_layout_exists_iff_the_memory_graph_is_reducible() {
+    use strider_ir_test_utils::graph_oracle;
+    let seeds = if cfg!(debug_assertions) { 60 } else { 2_000 };
+    let (mut irreducible, mut rewired_reducible_loops, mut reducible_loops, mut acyclic) =
+        (0, 0, 0, 0);
+    for seed in 0..seeds {
+        let (mut shape, im) = ShapeGen::new(seed, true);
+        shape.body(im, 0);
+        if seed % 2 == 0 {
+            shape.rewire_every_third_merge();
+        }
+        // The fixture's own store, left out here, is a sink off
+        // `InitialMemory` and closes no cycle.
+        let nodes: Vec<NodeId> = shape.values.iter().map(|&v| shape.fg.producer(v)).collect();
+        let mut succs = vec![Vec::new(); nodes.len()];
+        for (i, &n) in nodes.iter().enumerate() {
+            for p in mem_preds(&shape.fg, n) {
+                let at = nodes.iter().position(|&m| m == p).expect("a generated def");
+                succs[at].push(i as u32);
+            }
+        }
+        let want = graph_oracle::is_reducible(&succs, 0);
+        assert_eq!(MemLayout::build(&shape.fg).is_some(), want, "seed {seed}");
+        let cyclic = (0..nodes.len() as u32).any(|v| graph_oracle::reaches(&succs, v, v));
+        match (want, seed % 2 == 0) {
+            (false, _) => irreducible += 1,
+            (true, true) if cyclic => rewired_reducible_loops += 1,
+            (true, _) if cyclic => reducible_loops += 1,
+            (true, _) => acyclic += 1,
+        }
+    }
+    let floor = seeds / 30;
+    assert!(
+        [
+            irreducible,
+            rewired_reducible_loops,
+            reducible_loops,
+            acyclic
+        ]
+        .iter()
+        .all(|&c| c >= floor),
+        "floor {floor}: {irreducible} irreducible, {rewired_reducible_loops} rewired \
+         reducible with a loop, {reducible_loops} other reducible with a loop, \
+         {acyclic} acyclic"
+    );
 }
