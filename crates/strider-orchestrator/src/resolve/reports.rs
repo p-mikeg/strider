@@ -170,7 +170,8 @@ pub(super) fn unverified_seeded_sites(
 }
 
 /// Whether the caller seeded `site`'s `Return`. A `[]` seed does not: it
-/// withdraws nothing, so a `Return` seated there is the classifier's.
+/// adds nothing to the classifier's answer, so a `Return` seated there is the
+/// classifier's.
 pub(super) fn caller_seeded_return(settled: &SiteTable<'_>, site: PcodeInsnAddr) -> bool {
     matches!(settled.seed(site), Some(ResolvedTargets::LinkRegister))
 }

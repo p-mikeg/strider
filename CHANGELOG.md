@@ -127,9 +127,10 @@
   come out sorted.
 - A `[]` seed no longer hides a return the classifier derives at that site,
   nor reports it `UnverifiedSeed`; a `LinkRegister` seed seats its `Return`
-  where the loop withdrew every derived target.
-- A target proved in both ISA modes at one dispatch stays dropped and
-  reported when three anchors share the address or a seed names it.
+  where a round's classifications contradict every target they name.
+- A target two classifications prove in opposite ISA modes at one dispatch
+  is reported however many anchors share it, and dropped unless a seed
+  names it.
 
 ### Added, Rust
 
