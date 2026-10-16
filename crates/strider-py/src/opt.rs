@@ -30,7 +30,7 @@ impl strider_orchestrator::opt::PostOptimizer for OptAsPostPass {
     ) -> strider_orchestrator::opt::Result<()> {
         if self.0.apply(edit, ctx)?.changed() {
             // A rewrite can move an address off the base a stamp names.
-            edit.function().side_tables().clear_memory_slots();
+            edit.function().side_tables().invalidate_analyses();
         }
         Ok(())
     }
