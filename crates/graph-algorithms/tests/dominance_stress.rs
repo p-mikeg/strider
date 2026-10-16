@@ -1,6 +1,7 @@
 //! The oracles here share NO code with the module under test: dominator sets
-//! come from the textbook iterative fixpoint `Dom(n) = {n} ∪ ⋂ Dom(pred)`, and
-//! DF / IDF from their definitions.
+//! come from the textbook iterative fixpoint `Dom(n) = {n} ∪ ⋂ Dom(pred)`, from
+//! the deletion definition (`common::oracle`) and from petgraph's
+//! `simple_fast`; DF / IDF from their definitions.
 
 mod common;
 
@@ -484,17 +485,26 @@ impl Id for u32 {
 }
 
 /// A vertex whose `Hash` counts calls: every map probe the dominance code
-/// makes hashes once, so the count is its work, independent of timing.
+/// makes hashes once, so the count is its work, independent of timing. The
+/// probe past `HASH_BUDGET` panics, so superlinear work fails fast rather
+/// than exhausting time or memory.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Counted(u32);
 
 thread_local! {
     static HASHES: Cell<u64> = const { Cell::new(0) };
+    static HASH_BUDGET: Cell<u64> = const { Cell::new(u64::MAX) };
 }
 
 impl Hash for Counted {
     fn hash<H: Hasher>(&self, h: &mut H) {
-        HASHES.with(|c| c.set(c.get() + 1));
+        let probes = HASHES.with(Cell::get) + 1;
+        let budget = HASH_BUDGET.with(Cell::get);
+        assert!(
+            probes <= budget,
+            "hash probes exceed the budget of {budget}"
+        );
+        HASHES.with(|c| c.set(probes));
         self.0.hash(h);
     }
 }
@@ -673,12 +683,56 @@ fn check_dominance(c: &Case) {
     }
 }
 
+/// Deep random graphs: everything against the definitions while the cubic
+/// oracle stays cheap, past that discovery order, one successor query per
+/// vertex and idoms against petgraph.
+fn check_large(c: &Case) {
+    if c.n <= 200 {
+        check_dominance(c);
+        return;
+    }
+    let n = c.n;
+    let succs = c.succs();
+    let reach = oracle::reachable(&succs, &[0], None);
+    let mut asked = vec![0u32; succs.len()];
+    let doms = dominators(0u32, |v| {
+        asked[v as usize] += 1;
+        succs[v as usize].clone()
+    });
+    let (discovery, _) = oracle::dfs_tree(&succs, 0);
+    assert!(doms.vertices() == discovery.as_slice(), "vertices, n {n}");
+    for (v, (&k, &r)) in asked.iter().zip(&reach).enumerate() {
+        assert_eq!(k, u32::from(r), "successors({v}) asked {k} times, n {n}");
+    }
+    let pg = cases::petgraph_of(c, &vec![true; succs.len()]);
+    let simple = petgraph::algo::dominators::simple_fast(&pg, NodeIndex::new(0));
+    for v in 0..n {
+        let theirs = simple
+            .immediate_dominator(NodeIndex::new(v as usize))
+            .map(|d| d.index() as u32);
+        assert_eq!(doms.immediate_dominator(v), theirs, "idom({v}), n {n}");
+    }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(CASES))]
 
     #[test]
     fn dominance_matches_its_definitions(c in cases::arb_case(10)) {
         check_dominance(&c);
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
+    #[test]
+    #[cfg_attr(debug_assertions, ignore = "release-only scale test")]
+    fn dominance_matches_on_deep_random_graphs(
+        n in prop_oneof![50u32..=200, 201u32..=2000],
+        seed in any::<u64>(),
+    ) {
+        check_large(&cases::large_case(n, seed));
     }
 }
 
@@ -690,6 +744,35 @@ fn dominance_matches_its_definitions_on_every_named_shape() {
             check_dominance(&c);
         }
     }
+}
+
+/// The loop oracles on the named shapes, against answers worked by hand.
+#[test]
+fn loop_oracles_hold_on_the_named_shapes() {
+    let mut loops: HashMap<&str, Vec<(u32, Vec<u32>)>> = HashMap::new();
+    for (name, c) in cases::shapes() {
+        if c.n == 0 {
+            continue;
+        }
+        let succs = c.succs();
+        let reducible = oracle::is_reducible(&succs, 0);
+        assert_eq!(reducible, name != "irreducible", "shape {name}");
+        let dom = oracle::dom_matrix(&succs, 0);
+        let found = (0..c.n)
+            .filter_map(|h| {
+                let body = oracle::natural_loop(&succs, &dom, h)?;
+                Some((h, (0..c.n).filter(|&v| body[v as usize]).collect()))
+            })
+            .collect();
+        loops.insert(name, found);
+    }
+    assert_eq!(loops["diamond"], []);
+    assert_eq!(loops["irreducible"], []);
+    assert_eq!(loops["self_loop"], [(0, vec![0])]);
+    assert_eq!(loops["back_edge_to_root"], [(0, vec![0, 1, 2])]);
+    assert_eq!(loops["root_on_a_pure_cycle"], [(0, vec![0, 1, 2])]);
+    assert_eq!(loops["nested_loops"], [(1, vec![1, 2, 3]), (2, vec![2, 3])]);
+    assert_eq!(loops["sibling_loops"], [(1, vec![1, 2]), (3, vec![3, 4])]);
 }
 
 /// `0 -> 2, 0 -> 1`: discovery visits 2 first, so the two sibling orders the
@@ -730,22 +813,32 @@ fn dominance_work_is_linear_on_million_vertex_graphs() {
         (N - 2, N as usize - 1, &[1]),
     ];
     for (shape, &(idom, entries, phis)) in expect.iter().enumerate() {
-        let succs: Vec<Vec<u32>> = (0..N).map(|v| scale_succs(shape, N, v)).collect();
-        let edges: u64 = succs.iter().map(|s| s.len() as u64).sum();
-        let preds = oracle::preds_of(&succs);
+        let mut preds: Vec<Vec<u32>> = vec![Vec::new(); N as usize];
+        let mut edges = 0u64;
+        for v in 0..N {
+            for w in scale_succs(shape, N, v) {
+                preds[w as usize].push(v);
+                edges += 1;
+            }
+        }
         HASHES.with(|c| c.set(0));
+        HASH_BUDGET.with(|c| c.set(64 * (u64::from(N) + edges)));
         let mut asked = 0u64;
         let doms = dominators(Counted(0), |v: Counted| {
             asked += 1;
-            succs[v.ix()]
-                .iter()
-                .map(|&w| Counted(w))
-                .collect::<Vec<_>>()
+            assert!(asked <= u64::from(N), "shape {shape}: a vertex asked twice");
+            scale_succs(shape, N, v.0).into_iter().map(Counted)
         });
+        // Each result is reduced to the numbers asserted below and dropped,
+        // so the peak holds one of them at a time.
         let fr = frontiers(&doms, &preds);
+        let fr_entries: usize = fr.values().map(Vec::len).sum();
         let placed = phi_placement(&fr, &HashMap::from([(0u8, vec![Counted(1)])]));
-        let order = preorder_ascending(&doms, &preds);
-        let span = spans(&doms);
+        drop(fr);
+        let mut got: Vec<u32> = placed.keys().map(|v| v.0).collect();
+        drop(placed);
+        let order_len = preorder_ascending(&doms, &preds).len();
+        let span_len = spans(&doms).len();
         let work = HASHES.with(Cell::get);
         assert_eq!(
             asked,
@@ -757,16 +850,11 @@ fn dominance_work_is_linear_on_million_vertex_graphs() {
             Some(Counted(idom)),
             "shape {shape}"
         );
-        assert_eq!(
-            fr.values().map(Vec::len).sum::<usize>(),
-            entries,
-            "shape {shape}"
-        );
-        let mut got: Vec<u32> = placed.keys().map(|v| v.0).collect();
+        assert_eq!(fr_entries, entries, "shape {shape}");
         got.sort_unstable();
         assert_eq!(got, phis, "shape {shape}");
         assert_eq!(
-            (order.len(), span.len()),
+            (order_len, span_len),
             (N as usize, N as usize),
             "shape {shape}"
         );
@@ -775,4 +863,5 @@ fn dominance_work_is_linear_on_million_vertex_graphs() {
             "shape {shape}: {work} hash probes for {N} vertices and {edges} edges"
         );
     }
+    HASH_BUDGET.with(|c| c.set(u64::MAX));
 }
