@@ -709,3 +709,55 @@ fn a_return_seed_over_a_pcode_return_does_not_silence_it() {
         seeded(&seeded_result),
     );
 }
+
+/// A `[]` seed withdraws nothing the classifier derives: the verified
+/// `Return` it seats over that seed is the classifier's, not the caller's,
+/// so the run is as complete as an unseeded one. Mutation: make
+/// `caller_seeded_return` read `settled.seed(site).is_some()`.
+#[test]
+fn an_empty_seed_leaves_a_derived_return_verified() {
+    // push {lr} ; [bl ;] ldr pc, [sp], #4
+    for words in [
+        &[0xe52d_e004, 0xe49d_f004][..],
+        &[0xe52d_e004, 0xeb00_03fd, 0xe49d_f004],
+    ] {
+        let bytes = le32(words);
+        let size = bytes.len() as u64;
+        let site = BASE + size - 4;
+        let unseeded = analyze(Arch::Arm, bytes.clone());
+        assert!(unseeded.is_complete(), "{words:x?}: unseeded");
+        assert!(
+            unseeded
+                .cfg
+                .link_register_seated()
+                .iter()
+                .any(|a| a.machine_addr.addr == site),
+            "{words:x?}: the classifier seats the return",
+        );
+        let mut known: rustc_hash::FxHashMap<
+            strider_cfg::PcodeInsnAddr,
+            strider_cfg::ResolvedTargets,
+        > = rustc_hash::FxHashMap::default();
+        known.insert(
+            strider_cfg::PcodeInsnAddr::at_machine_start(site),
+            strider_cfg::ResolvedTargets::Withdrawn,
+        );
+        let (mut strider, cc) = common::strider_over_bytes(Arch::Arm, bytes, BASE, None);
+        let opts = strider_orchestrator::AnalyzeOptions {
+            cfg: strider_cfg::CfgOptions {
+                bound: strider_cfg::FunctionBound::size(size),
+                known_targets: &known,
+                ..Default::default()
+            },
+            opt: claiming_return_slots(),
+            ..common::ignoring()
+        };
+        let seeded_result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
+        assert!(
+            seeded_result.is_complete(),
+            "{words:x?}: unresolved {:x?} seeded {:x?}",
+            unresolved(&seeded_result),
+            seeded(&seeded_result),
+        );
+    }
+}
