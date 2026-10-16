@@ -137,6 +137,8 @@
   variants in declaration order.
 - `Graph::NODE_RECORD_SIZE` / `VALUE_RECORD_SIZE`: the arena's bytes per node
   and per node output.
+- `OptimizerPipeline` is `Clone`, and `add_boxed` / `add_post_boxed` take a
+  pass already boxed.
 
 ## 0.2.0
 
