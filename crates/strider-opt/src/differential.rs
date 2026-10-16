@@ -1288,7 +1288,7 @@ fn a_range_contains_every_runtime_value() {
                     nontop += 1;
                 }
                 let ok =
-                    iv.lo <= val && val <= iv.hi && (val - iv.lo).is_multiple_of(iv.stride.max(1));
+                    iv.lo() <= val && val <= iv.hi() && (val - iv.lo()).is_multiple_of(iv.stride());
                 if !ok && bad.is_none() {
                     bad = Some(format!(
                         "seed {seed}: inputs {vec:?} value {v:?}={val:#x} at {at:?} outside {iv:?}\n{}",

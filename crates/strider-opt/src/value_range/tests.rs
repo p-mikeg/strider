@@ -7,6 +7,16 @@ use super::compute_value_ranges;
 use crate::analyze_known_bits;
 use crate::value_range::Interval;
 
+/// The stride is at least 1 by construction, and emptiness has one name.
+#[test]
+fn new_clamps_the_stride_and_empty_stays_empty() {
+    for (lo, hi) in [(0, 0), (3, 9), (5, 2)] {
+        assert_eq!(Interval::new(lo, hi, 0), Interval::new(lo, hi, 1));
+    }
+    assert!(super::EMPTY.is_empty());
+    assert_eq!(super::EMPTY.count(), 0);
+}
+
 /// The AP-join keeps the coarsest spacing every element of both sides obeys: a
 /// constant arm joined with a scaled one must not flatten it to dense, or a
 /// 6-entry table reads as 21 slots.
@@ -2236,22 +2246,19 @@ fn intersect_finds_the_first_common_residue() {
 /// provably dead code. `mul`/`shl` already preserve emptiness.
 #[test]
 fn shr_and_udiv_preserve_emptiness() {
-    let empty = Interval {
-        lo: 1,
-        hi: 0,
-        stride: 1,
-    };
-    assert_eq!(empty.count(), 0, "precondition: the interval is empty");
-    assert_eq!(empty.shr(1).count(), 0, "shr must not resurrect EMPTY");
-    assert_eq!(empty.udiv(2).count(), 0, "udiv must not resurrect EMPTY");
-    assert_eq!(
-        empty.shl(1, u128::MAX).count(),
-        0,
+    let empty = super::EMPTY;
+    for k in [0, 1, 7, 127] {
+        assert!(empty.shr(k).is_empty(), "shr {k}");
+    }
+    for c in [0, 1, 3, 1 << 40] {
+        assert!(empty.udiv(c).is_empty(), "udiv {c}");
+    }
+    assert!(
+        empty.shl(1, u128::MAX).is_empty(),
         "shl already preserved it"
     );
-    assert_eq!(
-        empty.mul(2, u128::MAX).count(),
-        0,
+    assert!(
+        empty.mul(2, u128::MAX).is_empty(),
         "mul already preserved it"
     );
 }
