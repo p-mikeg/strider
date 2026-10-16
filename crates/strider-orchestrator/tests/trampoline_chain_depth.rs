@@ -45,7 +45,7 @@ fn caveats(result: &strider_orchestrator::AnalyzeResult) -> String {
     )
 }
 
-/// Counts pipeline runs: one per round `analyze` builds.
+/// Counts pipeline runs: one per round whose pipeline converges.
 #[derive(Clone)]
 struct CountRounds(Arc<AtomicUsize>);
 
@@ -91,6 +91,23 @@ fn a_site_its_first_fold_consumes_settles_on_the_next_round() {
     bytes.extend_from_slice(&below.to_le_bytes());
     bytes.extend_from_slice(&[0xff, 0xe0]);
     let (result, rounds) = analyze(bytes);
+    // A tail call consumed at cfg build leaves no anchor to verify, so the
+    // site is reported unverified, and nothing else is.
+    let unverified: Vec<u64> = result
+        .unverified_seeded_sites
+        .iter()
+        .map(|site| site.machine_addr.addr)
+        .collect();
+    assert_eq!(unverified, [BASE + 5], "{}", caveats(&result));
+    assert!(
+        result.unresolved_indirect_branches.is_empty()
+            && result.isa_mode_conflicts.is_empty()
+            && result.interior_branch_targets.is_empty()
+            && result.unmapped_branch_targets.is_empty()
+            && result.undecodable_branch_targets.is_empty(),
+        "{}",
+        caveats(&result),
+    );
     assert!(
         result
             .cfg
