@@ -12,20 +12,7 @@ use strider_ir_test_utils::make_empty_fn;
 
 #[test]
 fn every_int_binary_op_validates() {
-    for op in [
-        IntBinaryOp::Add,
-        IntBinaryOp::Mul,
-        IntBinaryOp::Div,
-        IntBinaryOp::Sdiv,
-        IntBinaryOp::Rem,
-        IntBinaryOp::Srem,
-        IntBinaryOp::And,
-        IntBinaryOp::Or,
-        IntBinaryOp::Xor,
-        IntBinaryOp::ShiftLeft,
-        IntBinaryOp::ShiftRight,
-        IntBinaryOp::SShiftRight,
-    ] {
+    for op in IntBinaryOp::ALL {
         make_empty_fn(|fb| {
             let lhs = fb.build_int_const(1u64, ValueType::I64)?;
             let rhs = fb.build_int_const(2u64, ValueType::I64)?;
@@ -40,16 +27,17 @@ fn every_int_binary_op_validates() {
 
 #[test]
 fn every_int_unary_op_validates() {
-    // `Neg` is the only variant: bitwise complement is `Xor(x, all_ones)`.
-    let op = IntUnaryOp::Neg;
-    make_empty_fn(|fb| {
-        let x = fb.build_int_const(5u64, ValueType::I64)?;
-        let result = fb
-            .build_int_unary_operation(x, op, ValueType::I64)
-            .unwrap_or_else(|e| panic!("op {op:?} failed: {e}"));
-        Ok(result)
-    })
-    .unwrap_or_else(|e| panic!("op {op:?} invalid: {e}"));
+    // Bitwise complement is `Xor(x, all_ones)`, not a unary op.
+    for op in IntUnaryOp::ALL {
+        make_empty_fn(|fb| {
+            let x = fb.build_int_const(5u64, ValueType::I64)?;
+            let result = fb
+                .build_int_unary_operation(x, op, ValueType::I64)
+                .unwrap_or_else(|e| panic!("op {op:?} failed: {e}"));
+            Ok(result)
+        })
+        .unwrap_or_else(|e| panic!("op {op:?} invalid: {e}"));
+    }
 }
 
 #[test]
@@ -80,7 +68,7 @@ fn bool_ops_validate() {
 #[test]
 fn float_ops_validate() {
     // The lifter lowers `FloatSub` to `FloatAdd(a, Neg(b))`.
-    for op in [FloatBinaryOp::Add, FloatBinaryOp::Mul, FloatBinaryOp::Div] {
+    for op in FloatBinaryOp::ALL {
         make_empty_fn(|fb| {
             let a = fb.build_float_const(0x3FF0_0000_0000_0000u64, ValueType::F64); // 1.0
             let b = fb.build_float_const(0x4000_0000_0000_0000u64, ValueType::F64); // 2.0
@@ -91,14 +79,7 @@ fn float_ops_validate() {
         })
         .unwrap_or_else(|e| panic!("FloatBinaryOp::{op:?} invalid: {e}"));
     }
-    for op in [
-        FloatUnaryOp::Neg,
-        FloatUnaryOp::Abs,
-        FloatUnaryOp::Sqrt,
-        FloatUnaryOp::Ceil,
-        FloatUnaryOp::Floor,
-        FloatUnaryOp::Round,
-    ] {
+    for op in FloatUnaryOp::ALL {
         make_empty_fn(|fb| {
             let x = fb.build_float_const(0x3FF0_0000_0000_0000u64, ValueType::F64);
             let result = fb
@@ -201,14 +182,7 @@ fn const_then_return_validates() {
 #[test]
 fn every_int_cmp_op_validates() {
     // The lifter lowers LessEqual / SlessEqual / NotEqual into these six.
-    for op in [
-        IntCmpOp::Equal,
-        IntCmpOp::Less,
-        IntCmpOp::Sless,
-        IntCmpOp::Carry,
-        IntCmpOp::Scarry,
-        IntCmpOp::Sborrow,
-    ] {
+    for op in IntCmpOp::ALL {
         make_empty_fn(|b| {
             let lhs = b.build_int_const(1u64, ValueType::I32)?;
             let rhs = b.build_int_const(2u64, ValueType::I32)?;
