@@ -126,6 +126,17 @@ fn an_arm_that_branches_into_bytes_that_will_not_decode_is_dropped() {
     assert_no_dangling_successor(&cfg);
 }
 
+/// Bad arms are reported in the order their decode failed, which for one
+/// switch is lowest arm first.
+#[test]
+fn bad_arms_are_reported_in_the_order_they_failed() {
+    let cfg = build(&NOP_LED_ARM, &[0x1002, 0x1003, 0x1007])
+        .expect("bad arms must not fail the function");
+    assert_eq!(switch_arms(&cfg), [0x1002]);
+    assert_eq!(undecodable(&cfg), [0x1003, 0x1007]);
+    assert_no_dangling_successor(&cfg);
+}
+
 /// A second arm jumping into the first bad arm's code reaches the same
 /// undecodable bytes, so it goes too.
 ///
