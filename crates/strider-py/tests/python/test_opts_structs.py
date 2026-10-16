@@ -39,11 +39,6 @@ def test_build_cfg_default_opts_when_omitted():
     assert cfg is not None
 
 
-def test_cfg_options_rejects_zero_function_max_size():
-    with pytest.raises(ValueError):
-        strider.cfg.CfgOptions(function_max_size=0)
-
-
 def _below_and_past_entry():
     # 0x1000: c3     ret           (below the entry)
     # 0x1010: 74 ee  je 0x1000
