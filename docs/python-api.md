@@ -154,7 +154,8 @@ opts = strider.lift.LifterOptions(
         callee_preserves_stack_args=False,
     ),
     compact=True,                      # drop unreachable nodes at the end
-    resolve_indirect_branches=True,    # False leaves every site an IndirectBranch placeholder
+    resolve_indirect_branches=True,    # False leaves every site an IndirectBranch
+                                       # placeholder; pair it with IGNORE
     per_address_ccs=None,              # {callee_addr: CallingConvention}; keyed by
                                        # the direct-call TARGET, not the call site
     pipeline=None,                      # replace the optimizer pipeline for this call
@@ -921,6 +922,7 @@ cfg.pcode_at(addr)                     # one instruction's p-code as text, or No
                                        # when this CFG stored no decode for addr
 cfg.fingerprint_pcode(n)               # [(address, p-code)] for a Node's fingerprint
 cfg.incomplete                         # [(address, reason)], empty when complete
+cfg.is_complete()                      # whether incomplete is empty
 ```
 
 A converged CFG is never silently incomplete. `cfg.incomplete` lists every
@@ -932,7 +934,8 @@ incomplete?":
   site that lost a successor, one whose answer oscillated or narrowed, one
   still growing at the iteration cap, and a return whose target is not
   provably the caller's return address (`push rsi; ret`). The `unresolved`
-  field of `analyze`'s result holds exactly these addresses.
+  field of the result `analyze` returns (under `IGNORE`) holds exactly these
+  addresses.
 - `"unverified_seed"`: a site nothing verified. A site seated with only your
   `known_targets`, every site the CFG consumed as a tail call, and a site
   consumed as a return because your own `"return"` seat consumed it, so a
@@ -1014,7 +1017,7 @@ Match readers raise
 avoid that), and for a `Match` used after the function was reoptimized.
 
 By default `analyze` and `build_cfg` raise `strider.lift.IncompleteAnalysis`, a
-`StriderError`, for a result `cfg.incomplete` would name anything in: an
+`StriderError`, when `cfg.incomplete` would name anything: an
 unresolvable site, a site whose answer oscillates or shrank between rounds, a
 target chain deeper than the iteration cap, and every other reason. Its
 `.incomplete` is that list, every (machine address, reason); the message

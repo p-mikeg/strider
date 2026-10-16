@@ -266,6 +266,8 @@ where
     }
 }
 
+/// What [`Strider::analyze`] returns: the lifted function and the CFG it
+/// was lifted from.
 pub struct AnalyzeResult {
     /// The final round's CFG, the one `function` was lifted from, carrying
     /// this analysis's [`Incompleteness`] rather than that build's own.
@@ -298,9 +300,9 @@ impl AnalyzeResult {
 /// Doubles as a DEPTH limit: one iteration seats one LEVEL of indirect-branch
 /// discovery, so a chain of trampolines each jumping to the next needs one
 /// round per link. [`apply_resolutions`] reporting no change is the
-/// terminator for everything shallower. Exhausting the cap is a RESULT, never
-/// an error: the sites still growing are reported, and a site whose answer
-/// never settles is abandoned and reported the same way.
+/// terminator for everything shallower. Exhausting the cap is never
+/// [`AnalyzeError::Failed`]: the sites still growing are reported, and a site
+/// whose answer never settles is abandoned and reported the same way.
 const MAX_RESOLUTION_ITERATIONS: usize = 256;
 
 /// `pipeline` running [`strider_opt::IndirectBranchClassify`], at most once: a

@@ -36,8 +36,8 @@
   which panics on 0) or `Open { code_before_start }`. `Some(0)` used to read
   as unbounded, and the flag was ignored beside a size.
 - `LiftOptions` is gone. `Strider::analyze(entry, cc, &AnalyzeOptions,
-  pipeline)` takes `AnalyzeOptions { cfg, per_address_ccs, opt, compact }` in
-  place of `LiftOptions` and `OptOptions`, and
+  pipeline)` takes `AnalyzeOptions { cfg, per_address_ccs, opt, compact,
+  on_incomplete }` in place of `LiftOptions` and `OptOptions`, and
   `Lifter::build_ir_with(cfg, cc, &cfg_opts, &per_address_ccs)` takes the
   `CfgOptions` the cfg was built with.
 - `AnalyzeResult`'s six report fields and `Cfg::{isa_mode_conflicts,
@@ -45,9 +45,11 @@
   are gone: `AnalyzeResult::incomplete()` and `Cfg::incomplete()` return
   one `Incompleteness` of `(PcodeInsnAddr, Reason)`, read per reason with
   `of(reason)`. A `build_cfg` CFG also names its unresolved and seated sites.
-- `Strider::analyze` returns `AnalyzeError`, `Incomplete(Incompleteness)` or
-  `Failed(anyhow::Error)`, and `Strider::build_cfg` takes an `OnIncomplete`:
-  under `OnIncomplete::Error` a result that is not complete is refused.
+- `Strider::analyze` returns `Result<AnalyzeResult, AnalyzeError>`, the error
+  `Incomplete(Incompleteness)` or `Failed(anyhow::Error)`, and
+  `Strider::build_cfg` takes an `OnIncomplete` and returns
+  `Result<Cfg, AnalyzeError>`: under `OnIncomplete::Error` a result that is
+  not complete is refused.
 - `AnalyzeOptions::default()` refuses an incomplete result:
   `on_incomplete` defaults to `OnIncomplete::Error`.
 
@@ -57,7 +59,7 @@
   for the value `c` matched, so it silently replaced the composite with it.
   Over `var()` or `anything()` it is still that value.
 - `build_cfg` reports a seed seated past p-code op 0 (a memory-indirect `jmp`)
-  in `seeded_sites`; it went unreported.
+  as `"unverified_seed"`; it went unreported.
 - `load()` / `store()` region filters apply in call order, the last winning:
   `store().heap_only().stack_only()` matched the heap store.
 - `function_arg_reg` / `source_register` match a sub-register of the carrier
@@ -65,7 +67,8 @@
 - `analyze` refuses a calling convention whose stack geometry belongs to
   another arch (`x86_cdecl` on x86-64, ppc32 SysV on ppc64), including the
   header's convention under `load_elf(arch=...)`.
-- A report list names each machine address once.
+- `Cfg.incomplete` and `unresolved` name each machine address once per
+  reason.
 - A post-pass that rewrites the graph drops the stack-slot stamps it may have
   invalidated.
 - An unknown op name in `int_cmp`, `int_binary`, `bool_binary` or
@@ -74,9 +77,9 @@
 ### Added, Python
 
 - `LifterOptions(on_incomplete=)` and `Lifter.build_cfg(on_incomplete=)` take a
-  `strider.lift.OnIncomplete`; `OnIncomplete.ERROR` raises
+  `strider.lift.OnIncomplete`; `OnIncomplete.ERROR`, the default, raises
   `strider.lift.IncompleteAnalysis`, a `StriderError` whose `.incomplete` lists
-  `Cfg.incomplete`.
+  every `(address, reason)` as `Cfg.incomplete` does.
 
 ### Changed, Rust
 

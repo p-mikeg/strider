@@ -118,10 +118,15 @@ seat `UnverifiedSeed`. The four target reasons:
   that hold no instruction: Sleigh rejects them, or `CfgOptions::data_ranges`
   (an ELF's `$d` mapping symbols) marks them as data. A branch leaves through
   a `TailCall` stub; the call is ended as `NoReturn`, dropping any
-  instructions between it and the bytes. The instruction at the start address
-  decodes even inside a data range.
+  instructions between it and the bytes. A literal pool never decodes as code,
+  and a traceback table or an `abort` word no longer fails the build. Any
+  other fall-through into bytes Sleigh rejects is still an `Err` on the whole
+  build. The instruction at the start address decodes even inside a data
+  range.
 - `IsaModeConflict`: two edges reached an address carrying different ISA
-  modes, and the losing path decodes in the winner's. A direct edge the entry
+  modes, and the losing path decodes in the winner's. The mode only: a
+  disagreement on another committed var, such as `condit` into an IT block, is
+  not reported. A direct edge the entry
   reaches without an arm wins over an arm; otherwise the first decode wins by
   work-queue order, so neither decode can be trusted.
 - `InteriorTarget`: the off-boundary targets above, whose edge is inexact (a

@@ -116,7 +116,19 @@ that change what existing code sees, rather than adding to it:
   three of them default on. `AssumptionOptions.none()` is the floor.
 - A `Call`'s output slots are numbered per clobbered register now, so a query
   reading `.output(slot)` positionally has to follow.
-- `cfg.incomplete` lists every reason; an empty `unresolved` is not a
-  complete answer on its own.
+- `cfg.is_complete()` checks every reason a result can be incomplete; an
+  empty `unresolved` is not a complete answer on its own.
 - A `Match`/`Node` constant reads back as `uint` / `sint` / `boolean`, where
   0.1.0 spelled them `const_uint` / `const_int` / `const_bool`.
+
+## Coming from 0.2.0
+
+[CHANGELOG.md](../CHANGELOG.md) lists the unreleased changes, breaking entries
+first. The two that change what existing code sees:
+
+- `analyze` and `build_cfg` raise `strider.lift.IncompleteAnalysis`, a
+  `StriderError`, when `cfg.incomplete` would name anything, a seeded site
+  included. Pass `on_incomplete=strider.lift.OnIncomplete.IGNORE` to get
+  the result back as before.
+- The per-reason `Cfg` getters (`isa_mode_conflicts()` and the rest) are
+  gone: `cfg.incomplete` lists every `(address, reason)`.

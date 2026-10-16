@@ -167,8 +167,9 @@ decode in that mode too.
 `CfgOptions(known_targets={dispatch_addr: [target, ...]})` seats answers of your
 own, which the loop then grows from; a site that ends up holding nothing but
 your seed is listed in `cfg.incomplete` as `"unverified_seed"`, since seating
-can stop the classifier deriving. `LifterOptions(resolve_indirect_branches=False)` turns
-the classifier off and leaves every site for you to answer.
+can stop the classifier deriving. `LifterOptions(resolve_indirect_branches=False)`
+turns the classifier off and leaves every site for you to answer; pair it with
+`on_incomplete=OnIncomplete.IGNORE`, since every such site raises otherwise.
 
 ### Dispatch shapes that need an opt-in
 
@@ -189,7 +190,9 @@ does not carry:
 
 ### Dispatch shapes that do not resolve
 
-These shapes come back in `unresolved` rather than as an error:
+These shapes are reported as `"unresolved_branch"`, so `analyze` raises
+`IncompleteAnalysis` for them; under `on_incomplete=OnIncomplete.IGNORE` they
+come back in `unresolved` and the rest of the function lifts:
 
 - AArch64 big-endian stack-array dispatch whose table base is built through a
   `bfi` insert. Sleigh's lowering of `bfi` masks the SP-derived value, and the

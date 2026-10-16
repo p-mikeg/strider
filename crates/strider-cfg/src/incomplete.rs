@@ -26,23 +26,39 @@ pub enum Reason {
     /// siblings' seed proved.
     UnverifiedSeed,
     /// Reached in two ISA modes: one region owns the bytes, so the losing
-    /// edge's path decodes in the other mode.
+    /// edge's path decodes in the other mode. Held per p-code index, so a
+    /// clash noted mid-instruction is its own entry.
+    ///
+    /// The ISA MODE only. Two edges that agree on the mode but disagree on
+    /// another committed var (an edge into an ARM IT block, on `condit`) are
+    /// not reported: the first arrival owns the bytes. An edge the entry
+    /// reaches without a seeded arm wins over an arm, which is dropped; any
+    /// other pair is won by work-queue order, so neither decode is trusted.
     IsaModeConflict,
     /// Interior to a region but off every boundary one can start at (a MIPS
     /// delay slot too), or a region start a later decode stepped over. A
     /// direct branch keeps an inexact edge to the owning region; a `Switch`
     /// arm is dropped.
     InteriorTarget,
-    /// No bytes back it: the edge leaves through an empty `TailCall` stub.
+    /// No bytes back it: the edge leaves through an empty `TailCall` stub. The
+    /// address is the instruction that could not be read whole, so a MIPS
+    /// branch whose delay slot is unmapped names itself. An unmapped ENTRY
+    /// fails the whole build instead.
     UnmappedTarget,
     /// Holds no instruction: bytes Sleigh rejects, or
     /// [`CfgOptions::data_ranges`](crate::CfgOptions::data_ranges) marks. A
     /// branch leaves through a `TailCall` stub; a fall-through past a call
-    /// ends that call as `NoReturn`.
+    /// ends that call as `NoReturn`. Any other fall-through into data leaves
+    /// through a stub too; one into bytes Sleigh rejects fails the whole
+    /// build. Bytes reached off a seeded arm are
+    /// named here with no stub: the arm is dropped instead, and
+    /// [`Cfg::undecodable_seeded_targets`](crate::Cfg::undecodable_seeded_targets)
+    /// names it.
     UndecodableTarget,
 }
 
 impl Reason {
+    /// Every reason, in the order one address's entries sort.
     pub const ALL: [Reason; 6] = [
         Reason::UnresolvedBranch,
         Reason::UnverifiedSeed,
@@ -78,11 +94,13 @@ impl Reason {
 pub struct Incompleteness(BTreeSet<(PcodeInsnAddr, Reason)>);
 
 impl Incompleteness {
+    /// Whether nothing is named.
     #[must_use]
     pub fn is_complete(&self) -> bool {
         self.0.is_empty()
     }
 
+    /// Every entry, by address and then [`Reason`] order.
     pub fn iter(&self) -> impl Iterator<Item = (PcodeInsnAddr, Reason)> + '_ {
         self.0.iter().copied()
     }
@@ -94,6 +112,7 @@ impl Incompleteness {
             .map(|(addr, _)| addr)
     }
 
+    /// Names `addr` for `reason`; a repeat is a no-op.
     pub fn insert(&mut self, addr: PcodeInsnAddr, reason: Reason) {
         self.0.insert((addr, reason));
     }
