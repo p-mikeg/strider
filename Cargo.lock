@@ -469,6 +469,7 @@ dependencies = [
  "petgraph",
  "proptest",
  "rustc-hash 2.1.2",
+ "strider-ir-test-utils",
 ]
 
 [[package]]

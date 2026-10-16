@@ -2,6 +2,7 @@
 
 use petgraph::graph::{DiGraph, NodeIndex};
 use proptest::prelude::*;
+use strider_ir_test_utils::Rng;
 
 /// Vertices `0..n`; dominance roots at 0, walks at `roots`.
 #[derive(Clone, Debug)]
@@ -71,13 +72,8 @@ pub fn arb_case(max_n: u32) -> impl Strategy<Value = Case> {
 /// reachable part. Vertices are relabelled at random with 0 fixed and the
 /// edge order shuffled, so neither ids nor order follow the construction.
 pub fn large_case(n: u32, seed: u64) -> Case {
-    let mut state = seed | 1;
-    let mut below = |bound: u32| {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        (state % u64::from(bound)) as u32
-    };
+    let mut rng = Rng(seed | 1);
+    let mut below = |bound: u32| rng.below(bound as usize) as u32;
     let k = n - below(n / 10 + 1);
     let mut edges = Vec::new();
     for v in 1..k {

@@ -83,7 +83,7 @@ pub(crate) fn reachable_topo<N, V>(
 #[cfg(test)]
 mod tests {
     use strider_graph::{Graph, NeverCacheable, NodeId, ValueId};
-    use strider_ir_test_utils::graph_oracle;
+    use strider_ir_test_utils::{Rng, graph_oracle};
 
     use super::reachable_topo;
 
@@ -95,33 +95,24 @@ mod tests {
         50_000
     };
 
-    fn next(state: &mut u64, bound: u64) -> u64 {
-        *state ^= *state << 13;
-        *state ^= *state >> 7;
-        *state ^= *state << 17;
-        *state % bound
-    }
-
     /// Up to ten nodes, each reading up to two earlier outputs; one graph in
     /// three then has a first input rewired to a node at or after it.
-    fn random_graph(state: &mut u64) -> (G, Vec<NodeId>) {
+    fn random_graph(rng: &mut Rng) -> (G, Vec<NodeId>) {
         let mut g = G::new();
-        let n = 1 + next(state, 10) as usize;
+        let n = 1 + rng.below(10);
         let mut nodes: Vec<NodeId> = Vec::with_capacity(n);
         let mut outs: Vec<ValueId> = Vec::with_capacity(n);
         for i in 0..n {
-            let arity = if i == 0 { 0 } else { next(state, 3) };
-            let inputs: Vec<ValueId> = (0..arity)
-                .map(|_| outs[next(state, i as u64) as usize])
-                .collect();
+            let arity = if i == 0 { 0 } else { rng.below(3) };
+            let inputs: Vec<ValueId> = (0..arity).map(|_| outs[rng.below(i)]).collect();
             let node = g.create_node(0, inputs, [0]);
             outs.push(g.node_outputs(node)[0]);
             nodes.push(node);
         }
-        if next(state, 3) == 0 {
-            let i = next(state, n as u64) as usize;
+        if rng.below(3) == 0 {
+            let i = rng.below(n);
             if let Ok(slot) = g.node_input_id_at(nodes[i], 0) {
-                let j = i + next(state, (n - i) as u64) as usize;
+                let j = i + rng.below(n - i);
                 g.update_input(slot, outs[j]);
             }
         }
@@ -152,17 +143,17 @@ mod tests {
     /// own or not.
     #[test]
     fn reachable_topo_matches_a_brute_force_cone() {
-        let mut state = 0x2545_F491_4F6C_DD1D;
+        let mut rng = Rng(0x2545_F491_4F6C_DD1D);
         // Acyclic, cyclic in the cone, cyclic only outside it, a cone of five
         // nodes or more, a node reading one producer twice.
         let mut shapes = [0u64; 5];
         for case in 0..CASES {
-            let (g, nodes) = random_graph(&mut state);
+            let (g, nodes) = random_graph(&mut rng);
             let preds = producers(&g, &nodes);
             // The last node half the time, for cones of more than a few.
-            let root = match next(&mut state, 2) {
+            let root = match rng.below(2) {
                 0 => nodes.len() as u32 - 1,
-                _ => next(&mut state, nodes.len() as u64) as u32,
+                _ => rng.below(nodes.len()) as u32,
             };
             let cone = graph_oracle::reachable(&preds, &[root], None);
             let on_cycle: Vec<bool> = (0..nodes.len() as u32)

@@ -3,36 +3,9 @@ use anyhow::anyhow;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::{Graph, IRViewer, Value};
 
-pub(crate) use strider_ir_test_utils::{make_empty_fn as make_fn, make_fn_with_var};
+pub(crate) use strider_ir_test_utils::{Rng, make_empty_fn as make_fn, make_fn_with_var};
 
 use crate::{ConstantFold, LoadForward, Optimizer, OptimizerPipeline, PhiCollapse, RegionCollapse};
-
-/// xorshift64 over an explicit state, so a failing fixture replays from its
-/// seed alone. State `0` is a fixed point: seeds are forced odd.
-pub(crate) struct Rng(pub u64);
-
-impl Rng {
-    pub(crate) fn next(&mut self) -> u64 {
-        let mut x = self.0;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.0 = x;
-        x
-    }
-
-    pub(crate) fn below(&mut self, n: usize) -> usize {
-        (self.next() % n as u64) as usize
-    }
-
-    pub(crate) fn u128(&mut self) -> u128 {
-        (u128::from(self.next()) << 64) | u128::from(self.next())
-    }
-
-    pub(crate) fn chance(&mut self, pct: u64) -> bool {
-        self.next() % 100 < pct
-    }
-}
 
 /// Runs `pass` until a run reports no change, each iteration with a fresh
 /// default `OptCtx`. Returns the number of iterations that DID report a
