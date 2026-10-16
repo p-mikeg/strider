@@ -1,6 +1,6 @@
 //! Bytes that hold no instruction, reached by a direct branch or past a call,
-//! are a result, not an error: the rest of the function lifts and the address
-//! is reported.
+//! are reported, not a failure: the rest of the function lifts and the
+//! address is reported.
 
 mod common;
 
@@ -34,7 +34,7 @@ fn reported(result: &strider_orchestrator::AnalyzeResult) -> Vec<u64> {
 }
 
 #[test]
-fn a_branch_to_glibcs_ppc_abort_word_is_reported_not_raised() {
+fn a_branch_to_glibcs_ppc_abort_word_is_reported_not_failed() {
     // 0x1000 beq 0x1008 ; 0x1004 blr ; 0x1008 .long 0
     let result = analyze(&[0x4182_0008, 0x4e80_0020, 0]);
     assert_eq!(reported(&result), vec![0x1008]);
