@@ -870,14 +870,15 @@ impl PyLifter {
         // are read here rather than with the rest of the options: nothing
         // between the two points runs Python, and `CfgOptions` is get-only, so
         // it is the same object either way.
-        // The two borrows outlive `lift_opts`, which holds the seeded table
+        // The two borrows outlive `analyze_opts`, which holds the seeded table
         // rather than a copy of it; both are read-only, and `CfgOptions` is
         // get-only, so nothing can take them `&mut` meanwhile.
         let opts_ref = opts.borrow(py);
         let cfg_ref = opts_ref.cfg.borrow(py);
-        let lift_opts = strider_orchestrator::LiftOptions {
+        let analyze_opts = strider_orchestrator::AnalyzeOptions {
             cfg: cfg_options_from(&cfg_ref, target)?,
             per_address_ccs: &per_address_built,
+            opt: opt_opts,
             compact,
         };
         // The fixed-point loop runs without the GIL where it can: a pipeline's
@@ -903,11 +904,9 @@ impl PyLifter {
             // `!Send` `Python<'_>` marker and would fail `Ungil`.
             let inner = lifter.inner.get_mut()?;
             let outcome = if reader_calls_python {
-                inner.analyze(entry, &cc_built, &lift_opts, &opt_opts, custom_pipeline)
+                inner.analyze(entry, &cc_built, &analyze_opts, custom_pipeline)
             } else {
-                py.allow_threads(|| {
-                    inner.analyze(entry, &cc_built, &lift_opts, &opt_opts, custom_pipeline)
-                })
+                py.allow_threads(|| inner.analyze(entry, &cc_built, &analyze_opts, custom_pipeline))
             };
             prefer_pending_control_flow(outcome.map_err(into_strider_err))?
         };
@@ -949,7 +948,7 @@ impl PyLifter {
             PyFunction::new(
                 function,
                 cfg_obj.clone_ref(py),
-                opt_opts.assumptions.clone(),
+                analyze_opts.opt.assumptions.clone(),
             ),
         )?;
         let result = analyze_result_type(py)?

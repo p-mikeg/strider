@@ -88,13 +88,7 @@ fn analyze(endian: Endianness, offset: u64) -> (Function, Vns) {
         })
         .collect());
     let function = strider
-        .analyze(
-            BASE + offset,
-            &cc,
-            &Default::default(),
-            &Default::default(),
-            None,
-        )
+        .analyze(BASE + offset, &cc, &Default::default(), None)
         .expect("analyze")
         .function;
     (function, vns)

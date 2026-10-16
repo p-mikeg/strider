@@ -47,14 +47,11 @@ fn a_dropped_arm_region_is_removed_and_the_function_lifts() {
             strider_cfg::ResolvedTarget::new(ARM, Some(true)),
         ]),
     )]);
-    let opts = strider_lift::LiftOptions {
-        cfg: strider_cfg::CfgOptions {
-            known_targets: &known,
-            ..Default::default()
-        },
+    let opts = strider_cfg::CfgOptions {
+        known_targets: &known,
         ..Default::default()
     };
-    let cfg = lifter.build_cfg(BASE.into(), &opts.cfg).expect("cfg");
+    let cfg = lifter.build_cfg(BASE.into(), &opts).expect("cfg");
 
     assert_eq!(
         cfg.isa_mode_conflicts()
@@ -80,6 +77,6 @@ fn a_dropped_arm_region_is_removed_and_the_function_lifts() {
     );
 
     lifter
-        .build_ir_with(&cfg, cc, &opts)
+        .build_ir_with(&cfg, cc, &opts, &rustc_hash::FxHashMap::default())
         .expect("the function lifts");
 }

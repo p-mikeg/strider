@@ -116,7 +116,7 @@ fn analyze(elf: &OwnedElf, entry: u64) -> strider_ir::Function {
         .build(strider.sleigh_regs())
         .expect("cc");
     strider
-        .analyze(entry, &cc, &Default::default(), &Default::default(), None)
+        .analyze(entry, &cc, &Default::default(), None)
         .expect("analyze")
         .function
 }

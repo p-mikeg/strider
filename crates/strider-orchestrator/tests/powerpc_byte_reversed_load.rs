@@ -33,7 +33,7 @@ fn returned_r3(arch: Arch, body: &[u32]) -> Option<u128> {
     let rom = strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes.clone());
     let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, Some(Box::new(rom)));
     let f = strider
-        .analyze(BASE, &cc, &Default::default(), &Default::default(), None)
+        .analyze(BASE, &cc, &Default::default(), None)
         .expect("analyze")
         .function;
     let ret = f

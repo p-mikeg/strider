@@ -3,7 +3,6 @@
 //! tracked temporary makes every call region a def site for all of them.
 
 use strider_ir::{IRViewer, IRWalker};
-use strider_lift::LiftOptions;
 
 #[test]
 fn call_outputs_name_no_unique_temporary() {
@@ -23,10 +22,11 @@ fn call_outputs_name_no_unique_temporary() {
     let cc = strider_target::CallingConvention::x86_64_systemv()
         .build(lifter.sleigh_regs())
         .expect("systemv");
-    let opts = LiftOptions::default();
     let mut lifter = lifter;
-    let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg).expect("cfg");
-    let f = lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function;
+    let cfg = lifter
+        .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
+        .expect("cfg");
+    let f = lifter.build_ir(&cfg, cc).expect("ir").function;
 
     assert!(
         f.all_vns()

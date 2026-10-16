@@ -59,8 +59,7 @@ fn resolves_to_both_labels(
         .analyze(
             entry,
             &cc,
-            &strider_orchestrator::LiftOptions::default(),
-            &strider_orchestrator::opt::OptOptions::default(),
+            &strider_orchestrator::AnalyzeOptions::default(),
             None,
         )
         .unwrap_or_else(|e| panic!("analyze on {}: {e:?}", arch.name()));

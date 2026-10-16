@@ -12,8 +12,7 @@
 
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::AnalyzeOptions;
 
 mod common;
 
@@ -33,13 +32,7 @@ fn a_neon_lane_round_trip_returns_its_argument() {
     let (mut strider, cc) =
         common::strider_over_bytes(common::Arch::Arm, ROUND_TRIP.to_vec(), BASE, None);
     let result = strider
-        .analyze(
-            BASE,
-            &cc,
-            &LiftOptions::default(),
-            &OptOptions::default(),
-            None,
-        )
+        .analyze(BASE, &cc, &AnalyzeOptions::default(), None)
         .expect("analyze");
     let f = &result.function;
 

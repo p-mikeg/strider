@@ -4,8 +4,8 @@
 //! the classification map cannot hide a live placeholder.
 mod common;
 
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::opt::{EditFunction, OptCtx, OptOptions, PostOptimizer};
+use strider_orchestrator::AnalyzeOptions;
+use strider_orchestrator::opt::{EditFunction, OptCtx, PostOptimizer};
 
 mod user {
     /// A caller's own post-pass that happens to be called
@@ -41,13 +41,7 @@ fn analyze_jmp_rax(pipeline: strider_orchestrator::opt::OptimizerPipeline) -> bo
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
     let (mut s, cc) = common::strider_over_bytes(common::Arch::X64, bytes, 0x1000, None);
     let r = s
-        .analyze(
-            0x1000,
-            &cc,
-            &LiftOptions::default(),
-            &OptOptions::default(),
-            Some(pipeline),
-        )
+        .analyze(0x1000, &cc, &AnalyzeOptions::default(), Some(pipeline))
         .expect("analyze");
     r.unresolved_indirect_branches
         .iter()

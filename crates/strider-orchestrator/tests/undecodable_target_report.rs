@@ -13,7 +13,7 @@ fn be_words(words: &[u32]) -> Vec<u8> {
 fn analyze(words: &[u32]) -> strider_orchestrator::AnalyzeResult {
     let (mut strider, cc) =
         common::strider_over_bytes(common::Arch::Ppc32be, be_words(words), BASE, None);
-    let lift_opts = strider_orchestrator::LiftOptions {
+    let lift_opts = strider_orchestrator::AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(u64::try_from(words.len() * 4).expect("size")),
             ..Default::default()
@@ -21,7 +21,7 @@ fn analyze(words: &[u32]) -> strider_orchestrator::AnalyzeResult {
         ..Default::default()
     };
     strider
-        .analyze(BASE, &cc, &lift_opts, &Default::default(), None)
+        .analyze(BASE, &cc, &lift_opts, None)
         .expect("bytes that hold no instruction must not fail the whole function")
 }
 
@@ -54,7 +54,7 @@ fn data_after_a_nop_after_a_call_lifts() {
     // 0x1000 call 0x2005 ; 0x1005 nop ; 0x1006 data (decodes as `ret`)
     let bytes = vec![0xe8, 0x00, 0x10, 0x00, 0x00, 0x90, 0xc3];
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
-    let lift_opts = strider_orchestrator::LiftOptions {
+    let lift_opts = strider_orchestrator::AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(7),
             data_ranges: strider_cfg::DataRanges::new(std::iter::once(0x1006..0x1007)),
@@ -63,7 +63,7 @@ fn data_after_a_nop_after_a_call_lifts() {
         ..Default::default()
     };
     let result = strider
-        .analyze(BASE, &cc, &lift_opts, &Default::default(), None)
+        .analyze(BASE, &cc, &lift_opts, None)
         .expect("a stub reached only through an empty region still lifts");
     assert_eq!(reported(&result), vec![0x1006]);
 }

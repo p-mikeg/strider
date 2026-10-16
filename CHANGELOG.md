@@ -27,6 +27,11 @@
   `bound: FunctionBound`, either `Size(NonZeroU64)` (`FunctionBound::size(n)`,
   which panics on 0) or `Open { code_before_start }`. `Some(0)` used to read
   as unbounded, and the flag was ignored beside a size.
+- `LiftOptions` is gone. `Strider::analyze(entry, cc, &AnalyzeOptions,
+  pipeline)` takes `AnalyzeOptions { cfg, per_address_ccs, opt, compact }` in
+  place of `LiftOptions` and `OptOptions`, and
+  `Lifter::build_ir_with(cfg, cc, &cfg_opts, &per_address_ccs)` takes the
+  `CfgOptions` the cfg was built with.
 
 ### Changed, Python
 

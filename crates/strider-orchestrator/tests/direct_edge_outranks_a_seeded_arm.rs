@@ -8,8 +8,7 @@
 //! the loop abandoned.
 
 use strider_cfg::{CfgOptions, PcodeInsnAddr, RegionTerminator, ResolvedTarget, ResolvedTargets};
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::AnalyzeOptions;
 
 mod common;
 
@@ -81,11 +80,10 @@ fn a_direct_edge_keeps_the_bytes_a_seeded_arm_claims_in_the_other_mode() {
         .analyze(
             BASE,
             &cc,
-            &LiftOptions {
+            &AnalyzeOptions {
                 cfg: CfgOptions::default(),
-                ..LiftOptions::default()
+                ..AnalyzeOptions::default()
             },
-            &OptOptions::default(),
             None,
         )
         .expect("a mode clash is a result, not an error");

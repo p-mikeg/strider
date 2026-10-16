@@ -22,7 +22,7 @@ fn d1_after(arch: Arch, insn: u32) -> (Option<u128>, Option<u128>) {
     let bytes = words_image(&words, arch.sleigh().endianness());
     let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, None);
     let f = strider
-        .analyze(BASE, &cc, &Default::default(), &Default::default(), None)
+        .analyze(BASE, &cc, &Default::default(), None)
         .expect("analyze")
         .function;
     let ret = f

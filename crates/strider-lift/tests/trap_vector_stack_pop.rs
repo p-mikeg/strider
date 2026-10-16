@@ -3,7 +3,6 @@
 //! register any other intrinsic wrote keeps the convention's pop.
 
 use strider_ir::{IRViewer, IRWalker};
-use strider_lift::LiftOptions;
 
 /// The post-call stack adjust, read off `mov rax,rsp; ret`: `None` when the
 /// returned RAX IS the `Call`'s own SP input, `Some(c)` when it is
@@ -20,9 +19,10 @@ fn call_stack_pop(bytes: Vec<u8>) -> Option<u128> {
     let cc = strider_target::CallingConvention::x86_64_systemv()
         .build(lifter.sleigh_regs())
         .expect("systemv");
-    let opts = LiftOptions::default();
-    let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg).expect("cfg");
-    let f = lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function;
+    let cfg = lifter
+        .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
+        .expect("cfg");
+    let f = lifter.build_ir(&cfg, cc).expect("ir").function;
 
     let call = f
         .walk_kind(|k| matches!(k, strider_ir::node::NodeKind::Call { .. }))

@@ -3,7 +3,6 @@
 //! 8-byte `r1` on ppc64. The lift refuses a convention whose stack geometry is
 //! not its arch's.
 
-use strider_lift::LiftOptions;
 use strider_target::{
     ArchPreset, BuiltCallingConvention, CallingConvention as Cc, SleighArch as Sa,
 };
@@ -32,12 +31,13 @@ fn lift_built_at(
     if let Some((addr, o)) = over {
         per_address_ccs.insert(addr, o.build(lifter.sleigh_regs())?);
     }
-    let opts = LiftOptions {
-        per_address_ccs: &per_address_ccs,
-        ..LiftOptions::default()
-    };
-    let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg)?;
-    lifter.build_ir_with(&cfg, built, &opts)?;
+    let cfg = lifter.build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())?;
+    lifter.build_ir_with(
+        &cfg,
+        built,
+        &strider_cfg::CfgOptions::default(),
+        &per_address_ccs,
+    )?;
     Ok(())
 }
 

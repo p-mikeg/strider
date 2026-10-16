@@ -1,5 +1,4 @@
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::AnalyzeOptions;
 
 mod common;
 
@@ -14,13 +13,13 @@ fn x86_64_mov_then_ret_bytes() -> (Vec<u8>, u64) {
 
 fn run_with(compact: bool) -> strider_ir::Function {
     let (bytes, entry) = x86_64_mov_then_ret_bytes();
-    let lift_opts = LiftOptions {
+    let lift_opts = AnalyzeOptions {
         compact,
-        ..LiftOptions::default()
+        ..AnalyzeOptions::default()
     };
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, entry, None);
     strider
-        .analyze(entry, &cc, &lift_opts, &OptOptions::default(), None)
+        .analyze(entry, &cc, &lift_opts, None)
         .unwrap()
         .function
 }
@@ -73,4 +72,21 @@ fn compact_preserves_reachable_pattern_matches() {
         compact_matches, noncompact_matches,
         "ret() match count must be invariant under compaction"
     );
+}
+
+/// What `Default` is documented to be, and its tables are one shared static
+/// rather than an allocation per call.
+#[test]
+fn default_analyze_options_compact_and_share_their_empty_tables() {
+    let (a, b) = (AnalyzeOptions::default(), AnalyzeOptions::default());
+    assert!(a.compact);
+    assert_eq!(
+        a.cfg.bound,
+        strider_cfg::FunctionBound::Open {
+            code_before_start: false
+        }
+    );
+    assert!(a.cfg.known_targets.is_empty() && a.per_address_ccs.is_empty());
+    assert!(std::ptr::eq(a.per_address_ccs, b.per_address_ccs));
+    assert!(std::ptr::eq(a.cfg.known_targets, b.cfg.known_targets));
 }

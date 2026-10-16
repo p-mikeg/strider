@@ -35,8 +35,8 @@ fn add_chain_snippet_fingerprints_are_exact_snippet_addresses() {
     // ({0x1000, 0x1003, 0x1006, 0x1009, 0x100c}), so every reachable
     // non-exempt node's fingerprint must fall entirely inside it.
     use rsleigh::mem_readers::BufMemReader;
-    use strider_orchestrator::opt::OptOptions;
-    use strider_orchestrator::{LiftOptions, Strider};
+
+    use strider_orchestrator::{AnalyzeOptions, Strider};
 
     let base = 0x1000u64;
     let bytes = vec![
@@ -57,13 +57,7 @@ fn add_chain_snippet_fingerprints_are_exact_snippet_addresses() {
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
     let result = strider
-        .analyze(
-            base,
-            &cc,
-            &LiftOptions::default(),
-            &OptOptions::default(),
-            None,
-        )
+        .analyze(base, &cc, &AnalyzeOptions::default(), None)
         .expect("analyze");
     assert!(result.unresolved_indirect_branches.is_empty());
     let function = result.function;

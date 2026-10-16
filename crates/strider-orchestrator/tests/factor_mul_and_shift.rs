@@ -6,8 +6,7 @@
 //! leaving mul-with-shift and shift-with-shift alone left those sums unfactored.
 
 use strider_ir::IRViewer;
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::AnalyzeOptions;
 
 mod common;
 
@@ -18,13 +17,7 @@ const BASE: u64 = 0x1000;
 fn folded_coefficient(bytes: Vec<u8>) -> Option<u128> {
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
     let r = strider
-        .analyze(
-            BASE,
-            &cc,
-            &LiftOptions::default(),
-            &OptOptions::default(),
-            None,
-        )
+        .analyze(BASE, &cc, &AnalyzeOptions::default(), None)
         .expect("analyze");
     let f = &r.function;
     let muls: Vec<_> = f

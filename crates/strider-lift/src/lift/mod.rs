@@ -1,7 +1,5 @@
 use anyhow::{Result, anyhow};
 
-use crate::lift_options::LiftOptions;
-
 mod arithmetic;
 mod boolean;
 mod call;
@@ -407,17 +405,30 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         Ok(())
     }
 
-    /// [`Self::build_ir_with`] under default [`LiftOptions`].
+    /// [`Self::build_ir_with`] under [`strider_cfg::CfgOptions::default`] and no
+    /// CC overrides: the right pairing only for a `cfg` built with no
+    /// `call_other_overrides`.
     pub fn build_ir(
         &self,
         cfg: &strider_cfg::Cfg,
         cc: strider_target::BuiltCallingConvention,
     ) -> Result<LiftOutcome> {
-        self.build_ir_with(cfg, cc, &LiftOptions::default())
+        self.build_ir_with(
+            cfg,
+            cc,
+            &strider_cfg::CfgOptions::default(),
+            &rustc_hash::FxHashMap::default(),
+        )
     }
 
-    /// `cc` is the function default; a direct Call whose target appears in
-    /// [`LiftOptions::per_address_ccs`] is built with that override instead.
+    /// `cfg_opts` is what `cfg` was built with: the lift classifies each
+    /// `CallOther` under its `call_other_overrides`, as the build did. `cc` is
+    /// the function default; a direct Call whose target is in
+    /// `per_address_ccs` is built with that override instead. The overrides
+    /// must be built against this engine's registers and fit its arch, as
+    /// `cc` must.
+    ///
+    /// Never errs on incompleteness: [`strider_cfg::Cfg`] reports that itself.
     ///
     /// # Errors
     ///
@@ -427,7 +438,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         &self,
         cfg: &strider_cfg::Cfg,
         cc: strider_target::BuiltCallingConvention,
-        opts: &LiftOptions,
+        cfg_opts: &strider_cfg::CfgOptions,
+        per_address_ccs: &rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Result<LiftOutcome> {
         self.check_cfg_space_ids(cfg)?;
         self.check_cc(&cc)?;
@@ -439,7 +451,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // convention, so it must be seeded before the universe is frozen.  Set
         // membership, not a scan: the Vec is the SSoT for order only.
         let mut seen: rustc_hash::FxHashSet<rsleigh::Vn> = all_vns.iter().copied().collect();
-        for vn in self.call_other_footprint_vns(cfg, &opts.cfg.call_other_overrides) {
+        for vn in self.call_other_footprint_vns(cfg, &cfg_opts.call_other_overrides) {
             if seen.insert(vn) {
                 all_vns.push(vn);
             }
@@ -457,8 +469,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             cc,
             cfg,
             all_vns,
-            opts.per_address_ccs,
-            &opts.cfg.call_other_overrides,
+            per_address_ccs,
+            &cfg_opts.call_other_overrides,
         )?;
 
         // Semi-pruned SSA phi placement: iterated dominance frontier of each

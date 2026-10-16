@@ -35,22 +35,14 @@ fn arms_with(
             ),
         );
     }
-    let opts = strider_orchestrator::LiftOptions {
+    let opts = strider_orchestrator::AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             known_targets: &known,
             ..Default::default()
         },
         ..Default::default()
     };
-    let r = strider
-        .analyze(
-            addr,
-            &cc,
-            &opts,
-            &strider_orchestrator::opt::OptOptions::default(),
-            None,
-        )
-        .expect("analyze");
+    let r = strider.analyze(addr, &cc, &opts, None).expect("analyze");
     let mut arms = vec![];
     let mut starts = vec![];
     for n in r.cfg.region_graph().node_indices() {
@@ -156,22 +148,14 @@ fn x64_main_with_seed(seed: Vec<u64>) -> (Vec<u64>, Vec<PcodeInsnAddr>, Vec<Pcod
         PcodeInsnAddr::at_machine_start(seed[0]),
         ResolvedTargets::Multiple(seed.iter().map(|&t| ResolvedTarget::new(t, None)).collect()),
     );
-    let opts = strider_orchestrator::LiftOptions {
+    let opts = strider_orchestrator::AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             known_targets: &known,
             ..Default::default()
         },
         ..Default::default()
     };
-    let r = strider
-        .analyze(
-            addr,
-            &cc,
-            &opts,
-            &strider_orchestrator::opt::OptOptions::default(),
-            None,
-        )
-        .expect("analyze");
+    let r = strider.analyze(addr, &cc, &opts, None).expect("analyze");
     let mut arms = vec![];
     for n in r.cfg.region_graph().node_indices() {
         let region = r.cfg.region_graph().node_weight(n).unwrap();
@@ -202,20 +186,18 @@ fn a_seeded_site_is_still_reported_unverified_with_resolution_off() {
         PcodeInsnAddr::at_machine_start(DISPATCH),
         ResolvedTargets::Multiple(vec![ResolvedTarget::new(addr, None)]),
     );
-    let opts = strider_orchestrator::LiftOptions {
+    let opts = strider_orchestrator::AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             known_targets: &known,
             ..Default::default()
         },
+        opt: strider_orchestrator::opt::OptOptions {
+            resolve_indirect_branches: false,
+            ..Default::default()
+        },
         ..Default::default()
     };
-    let opt_opts = strider_orchestrator::opt::OptOptions {
-        resolve_indirect_branches: false,
-        ..Default::default()
-    };
-    let r = strider
-        .analyze(addr, &cc, &opts, &opt_opts, None)
-        .expect("analyze");
+    let r = strider.analyze(addr, &cc, &opts, None).expect("analyze");
 
     assert_eq!(
         r.unverified_seeded_sites

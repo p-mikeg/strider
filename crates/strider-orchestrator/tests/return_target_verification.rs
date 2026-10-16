@@ -51,15 +51,16 @@ fn analyze_with(
         BASE
     };
     let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, None);
-    let lift_opts = strider_orchestrator::LiftOptions {
+    let lift_opts = strider_orchestrator::AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(size),
             ..Default::default()
         },
+        opt: opt_opts.clone(),
         ..Default::default()
     };
     strider
-        .analyze(entry, &cc, &lift_opts, opt_opts, None)
+        .analyze(entry, &cc, &lift_opts, None)
         .expect("analyze")
 }
 
@@ -688,16 +689,17 @@ fn a_return_seed_over_a_pcode_return_does_not_silence_it() {
         strider_cfg::ResolvedTargets::LinkRegister,
     );
     let (mut strider, cc) = common::strider_over_bytes(Arch::X64, bytes, BASE, None);
-    let lift_opts = strider_orchestrator::LiftOptions {
+    let lift_opts = strider_orchestrator::AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(2),
             known_targets: &known,
             ..Default::default()
         },
+        opt: claiming_return_slots(),
         ..Default::default()
     };
     let seeded_result = strider
-        .analyze(BASE, &cc, &lift_opts, &claiming_return_slots(), None)
+        .analyze(BASE, &cc, &lift_opts, None)
         .expect("analyze");
     assert!(
         !seeded_result.is_complete(),

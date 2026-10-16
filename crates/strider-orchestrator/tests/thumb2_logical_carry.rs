@@ -25,13 +25,7 @@ fn carry_after(r1: [u16; 2], primed: u16, insn: [u16; 2]) -> Option<u128> {
     let bytes = halves.iter().flat_map(|h| h.to_le_bytes()).collect();
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::ArmThumb, bytes, BASE, None);
     let f = strider
-        .analyze(
-            BASE | 1,
-            &cc,
-            &Default::default(),
-            &Default::default(),
-            None,
-        )
+        .analyze(BASE | 1, &cc, &Default::default(), None)
         .expect("analyze")
         .function;
     let ret = f

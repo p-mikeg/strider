@@ -494,7 +494,7 @@ fn sweep_fixture(fixture: &Fixture, rom: Rom, tally: &mut Tally) {
         let at = format!("{}/{}::{name}", fixture.arch.dir, fixture.case);
         // As the Python loader analyses a named symbol: its recorded size
         // bounds the lift, and `$d` mapping symbols mark literal pools.
-        let opts = strider_orchestrator::LiftOptions {
+        let opts = strider_orchestrator::AnalyzeOptions {
             cfg: strider_cfg::CfgOptions {
                 bound: std::num::NonZeroU64::new(size)
                     .map_or_else(Default::default, strider_cfg::FunctionBound::Size),
@@ -503,8 +503,7 @@ fn sweep_fixture(fixture: &Fixture, rom: Rom, tally: &mut Tally) {
             },
             ..Default::default()
         };
-        let options = strider_orchestrator::opt::OptOptions::default();
-        let result = match strider.analyze(addr, &cc, &opts, &options, None) {
+        let result = match strider.analyze(addr, &cc, &opts, None) {
             Ok(result) => result,
             Err(e) => {
                 tally.analyze_errors.push(format!("{at}: {e:#}"));
@@ -513,7 +512,7 @@ fn sweep_fixture(fixture: &Fixture, rom: Rom, tally: &mut Tally) {
         };
         let raw = strider
             .lifter()
-            .build_ir_with(&result.cfg, cc.clone(), &opts)
+            .build_ir_with(&result.cfg, cc.clone(), &opts.cfg, opts.per_address_ccs)
             .unwrap_or_else(|e| panic!("{at}: lifting the analysed cfg: {e:#}"))
             .function;
         let rom = strider.rom().expect("a fixture Strider carries its ROM");

@@ -23,8 +23,7 @@ use strider_cfg::MachineInsnAddr;
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::IrWalkerEx;
-use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+use strider_orchestrator::{AnalyzeOptions, Strider};
 
 const BASE: u64 = 0x1000;
 
@@ -74,13 +73,7 @@ fn narrow_alias_write_folds_to_zero_in_ret_val_register() {
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
     let result = strider
-        .analyze(
-            BASE,
-            &cc,
-            &LiftOptions::default(),
-            &OptOptions::default(),
-            None,
-        )
+        .analyze(BASE, &cc, &AnalyzeOptions::default(), None)
         .expect("analyze");
     assert!(result.unresolved_indirect_branches.is_empty());
     let function = result.function;

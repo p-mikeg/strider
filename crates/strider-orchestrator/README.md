@@ -10,17 +10,17 @@ re-run the whole thing until the control-flow graph stops changing.
   `rsleigh::Sleigh` and an optional read-only image (what `LoadReadOnly` folds
   against and what the jump-table classifier reads tables from; `None` disables
   both).
-- `Strider::analyze(entry, cc, lift_opts, opt_opts, pipeline)` -> `AnalyzeResult`:
-  the loop below. `pipeline` defaults to `strider_opt::default_pipeline`, and
-  `strider_opt::IndirectBranchClassify` is appended as a post-pass unless the
-  supplied pipeline already runs it. `lift_opts.compact` applies once after the
-  loop.
+- `Strider::analyze(entry, cc, opts, pipeline)` -> `AnalyzeResult`: the loop
+  below. `opts` is an `AnalyzeOptions` (`cfg`, `per_address_ccs`, `opt`,
+  `compact`); `compact` applies once after the loop. `pipeline` defaults to
+  `strider_opt::default_pipeline`, and `strider_opt::IndirectBranchClassify` is
+  appended as a post-pass unless the supplied pipeline already runs it.
 - `Strider::build_cfg(entry, cfg_opts)`: a structural decode only, no lift, no
   optimisation, no resolution.
 - Accessors that let a caller run its own pipeline against the same state:
   `arch`, `sleigh`, `sleigh_regs`, `user_op_names`, `rom`.
 - Re-exports, so a caller needs one dependency: `strider_opt` as `opt`, and
-  `Lifter` / `LiftOptions` / `LiftOutcome` from `strider-lift`.
+  `Lifter` / `LiftOutcome` from `strider-lift`.
 
 ## One round
 

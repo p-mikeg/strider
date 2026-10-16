@@ -1,28 +1,3 @@
-use strider_lift::LiftOptions;
-
-#[test]
-fn lift_options_default() {
-    let d = LiftOptions::default();
-    assert_eq!(
-        d.cfg.bound,
-        strider_cfg::FunctionBound::Open {
-            code_before_start: false
-        }
-    );
-    assert!(d.cfg.known_targets.is_empty());
-    assert!(d.per_address_ccs.is_empty());
-    assert!(d.compact);
-}
-
-/// `Default` cannot hand out a borrow of a temporary, so both tables come
-/// from one `static` empty one, shared by every default.
-#[test]
-fn default_options_share_their_empty_tables() {
-    let (a, b) = (LiftOptions::default(), LiftOptions::default());
-    assert!(std::ptr::eq(a.per_address_ccs, b.per_address_ccs));
-    assert!(std::ptr::eq(a.cfg.known_targets, b.cfg.known_targets));
-}
-
 /// A `per_address_ccs` override names registers the lifted function itself may
 /// never touch.  Its INTEGER argument registers are read through
 /// `read_variable`, which hard-fails on an untracked varnode, so they must be
@@ -49,13 +24,10 @@ fn per_address_cc_integer_arg_registers_are_seeded() {
     override_cc.arg_passing_regs = vec![edi];
     let mut per_address_ccs = rustc_hash::FxHashMap::default();
     per_address_ccs.insert(0x1006u64, override_cc);
-    let opts = LiftOptions {
-        per_address_ccs: &per_address_ccs,
-        ..LiftOptions::default()
-    };
-    let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg).expect("cfg");
+    let opts = strider_cfg::CfgOptions::default();
+    let cfg = lifter.build_cfg(0x1000u64.into(), &opts).expect("cfg");
     let f = lifter
-        .build_ir_with(&cfg, cc, &opts)
+        .build_ir_with(&cfg, cc, &opts, &per_address_ccs)
         .expect("an override's integer argument register must be tracked")
         .function;
     assert!(
@@ -91,12 +63,12 @@ fn an_override_this_function_never_calls_seeds_nothing() {
     let mut per_address_ccs = rustc_hash::FxHashMap::default();
     // 0x9000 is not a call target of this function.
     per_address_ccs.insert(0x9000u64, override_cc);
-    let opts = LiftOptions {
-        per_address_ccs: &per_address_ccs,
-        ..LiftOptions::default()
-    };
-    let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg).expect("cfg");
-    let f = lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function;
+    let opts = strider_cfg::CfgOptions::default();
+    let cfg = lifter.build_cfg(0x1000u64.into(), &opts).expect("cfg");
+    let f = lifter
+        .build_ir_with(&cfg, cc, &opts, &per_address_ccs)
+        .expect("ir")
+        .function;
     assert!(
         !f.all_vns()
             .iter()

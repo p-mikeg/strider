@@ -8,10 +8,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::opt::{
-    EditFunction, OptCtx, OptOptions, PostOptimizer, default_pipeline,
-};
+use strider_orchestrator::AnalyzeOptions;
+use strider_orchestrator::opt::{EditFunction, OptCtx, PostOptimizer, default_pipeline};
 
 mod common;
 
@@ -63,13 +61,7 @@ fn analyze(bytes: Vec<u8>) -> (strider_orchestrator::AnalyzeResult, usize) {
     let mut pipeline = default_pipeline();
     pipeline.add_post_pass(CountRounds(Arc::clone(&rounds)));
     let result = strider
-        .analyze(
-            BASE,
-            &cc,
-            &LiftOptions::default(),
-            &OptOptions::default(),
-            Some(pipeline),
-        )
+        .analyze(BASE, &cc, &AnalyzeOptions::default(), Some(pipeline))
         .expect("a chain deeper than the cap is a result, not an error");
     (result, rounds.load(Ordering::Relaxed))
 }
