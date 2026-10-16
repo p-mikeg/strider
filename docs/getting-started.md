@@ -49,8 +49,10 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    `LifterOptions(pipeline=...)` replaces the pass list outright.
 6. **Resolve** the indirect branches: classify each one against the optimized
    IR, feed the targets back, re-lift, and repeat until the edge set stops
-   changing. What is left over is reported, never raised, and so is a return
-   whose target is not provably the caller's. `cfg.incomplete` lists what is
+   changing. What is left over, and a return whose target is not provably the
+   caller's, makes `analyze` raise `IncompleteAnalysis` naming it;
+   `on_incomplete=OnIncomplete.IGNORE` returns the result instead.
+   `cfg.incomplete` lists what is
    left and `cfg.is_complete()` is the one-call question;
    [python-api.md](python-api.md#12-the-cfg-stridercfg) describes each reason.
 7. **Query** it, or **rewrite** it if you want the graph changed rather than
