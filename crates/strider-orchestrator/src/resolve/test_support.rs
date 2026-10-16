@@ -4,7 +4,7 @@ use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 use strider_ir::node::NodeId;
 
 thread_local! {
-    /// Targets [`crate::visit`] read on this thread.
+    /// Targets [`super::merge::visit`] read on this thread.
     pub(crate) static TARGET_VISITS: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
