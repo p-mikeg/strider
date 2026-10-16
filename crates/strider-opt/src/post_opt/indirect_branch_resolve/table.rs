@@ -101,8 +101,8 @@ pub(crate) fn classify_dispatch_value(
     // moment a value fails to fold, which fails closed.  A stride wider than
     // `usize` (a scaled wide-type range) defers rather than silently stepping by
     // 1 and enumerating the full dense span.
-    let step = usize::try_from(range.stride).ok()?.max(1);
-    let mut targets: Vec<ResolvedTarget> = (range.lo..=range.hi)
+    let step = usize::try_from(range.stride()).ok()?;
+    let mut targets: Vec<ResolvedTarget> = (range.lo()..=range.hi())
         .step_by(step)
         .map(|x| {
             // One memo for both roots: they are siblings over one dispatch
@@ -339,12 +339,12 @@ fn offsets_keep_range(
                 ) else {
                     return true;
                 };
-                let lo = range.lo.wrapping_add(offset) & mask;
-                let hi = range.hi.wrapping_add(offset) & mask;
-                if lo > hi || hi - lo != range.hi - range.lo {
+                let lo = range.lo().wrapping_add(offset) & mask;
+                let hi = range.hi().wrapping_add(offset) & mask;
+                if lo > hi || hi - lo != range.hi() - range.lo() {
                     return false;
                 }
-                range = Interval { lo, hi, ..range };
+                range = Interval::new(lo, hi, range.stride());
             }
             _ => return true,
         }
@@ -444,7 +444,7 @@ fn bounded_index(
 /// cannot represent its top, so every interval there would read as narrowed.
 fn index_bound_ok(ty: strider_ir::node::ValueType, iv: Interval) -> bool {
     crate::opt::known_bits::type_mask_u128(ty).is_some_and(|mask| {
-        iv.hi >= iv.lo && iv.hi < mask && iv.count() <= u128::from(MAX_TABLE_ENTRIES)
+        !iv.is_empty() && iv.hi() < mask && iv.count() <= u128::from(MAX_TABLE_ENTRIES)
     })
 }
 

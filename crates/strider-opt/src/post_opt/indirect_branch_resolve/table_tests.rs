@@ -425,7 +425,7 @@ fn decompose_index_picks_shallowest_narrowed_index() {
         &rustc_hash::FxHashSet::default(),
     ) {
         Some(hit) => assert_eq!(
-            (hit.range.lo, hit.range.hi, hit.rebase),
+            (hit.range.lo(), hit.range.hi(), hit.rebase),
             (0, 7, 0),
             "must pick the shallow narrowed [0,7] index, not the deeper [0,63]"
         ),
