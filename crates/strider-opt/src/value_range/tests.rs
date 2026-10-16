@@ -3,8 +3,7 @@ use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntCmpOp, control_dominator_tree};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
 
-use super::compute_value_ranges;
-use crate::analyze_known_bits;
+use super::RangeMap;
 use crate::value_range::Interval;
 
 /// The stride is at least 1 by construction, and emptiness has one name.
@@ -113,9 +112,7 @@ fn upper_exclusive(iv: Interval, width_mask: u128) -> Option<u64> {
 
 /// `value`'s interval at `region`, from a fresh analysis of `f`.
 fn range_at(f: &Function, value: ValueId, region: NodeId) -> Interval {
-    let doms = control_dominator_tree(f);
-    let known = analyze_known_bits(f).unwrap();
-    compute_value_ranges(f, &doms, &known).range_of(value, region)
+    RangeMap::new(f).unwrap().range_of(value, region)
 }
 
 /// Brings a hand-built fixture to the converged IR shape the range analysis
@@ -298,9 +295,7 @@ fn guard_propagates_through_a_mask_of_known_zero_bits() {
         let mut f = b.build().unwrap();
         canonicalize(&mut f);
         let (dispatch_node, _exit) = if_edge_consumers(&f);
-        let doms = control_dominator_tree(&f);
-        let known = analyze_known_bits(&f).unwrap();
-        let mut ranges = compute_value_ranges(&f, &doms, &known);
+        let mut ranges = RangeMap::new(&f).unwrap();
         ranges.range_of(masked, dispatch_node)
     };
     let iv = range(0xffff_fffc);
@@ -334,9 +329,7 @@ fn guard_propagates_through_shift_right() {
 #[test]
 fn scaled_range_scans_the_operand_guards_once() {
     let (f, scaled, dispatch) = build_guarded_scaled(8, ValueType::I32, IntBinaryOp::Div, 2);
-    let doms = control_dominator_tree(&f);
-    let known = analyze_known_bits(&f).unwrap();
-    let mut ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = RangeMap::new(&f).unwrap();
     crate::value_range::GUARD_SCANS.with(|c| c.set(0));
     let iv = ranges.range_of(scaled, dispatch);
     assert_eq!((iv.lo, iv.hi), (0, 3));
@@ -706,9 +699,7 @@ fn known_bits_mask_bounds_index_everywhere() {
     let other_node = f.graph().producer(other_ctrl);
     let entry_node = f.entry();
 
-    let doms = control_dominator_tree(&f);
-    let known = analyze_known_bits(&f).unwrap();
-    let mut ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = RangeMap::new(&f).unwrap();
 
     let iv_entry = ranges.range_of(idx, entry_node);
     assert_eq!(iv_entry.hi, 7, "KnownBits bound: hi must be 7 in entry");
@@ -1012,9 +1003,7 @@ fn inverted_less_guard_bounds_index_on_false_edge() {
     // IfCondInversion swaps the branches, so dispatch is now the TRUE edge.
     let (dispatch_node, oob_node) = if_edge_consumers(&f);
 
-    let doms = control_dominator_tree(&f);
-    let known = analyze_known_bits(&f).unwrap();
-    let mut ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = RangeMap::new(&f).unwrap();
 
     let type_mask = ValueType::I32.bit_mask_u128();
     assert!(
@@ -1195,9 +1184,7 @@ fn sibling_region_not_dominated_is_top() {
     let dispatch_node = edge_consumer(guard_if, 0); // true edge of the guard
     let right_node = edge_consumer(flag_if, 1); // false edge -> sibling right
 
-    let doms = control_dominator_tree(&f);
-    let known = analyze_known_bits(&f).unwrap();
-    let mut ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = RangeMap::new(&f).unwrap();
 
     let iv_dispatch = ranges.range_of(raw_idx, dispatch_node);
     assert_eq!(
@@ -1616,9 +1603,7 @@ fn two_sibling_guard_regions_give_independent_bounds() {
     let da_node = true_edge_consumer_of_guard(8);
     let db_node = true_edge_consumer_of_guard(16);
 
-    let doms = control_dominator_tree(&f);
-    let known = analyze_known_bits(&f).unwrap();
-    let mut ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = RangeMap::new(&f).unwrap();
 
     let iv_a = ranges.range_of(idx, da_node);
     assert_eq!(iv_a.lo, 0, "dispatch_a lo must be 0");
@@ -1979,9 +1964,7 @@ fn const_lhs_less_guard_bounds_false_edge() {
     // Bare `Less` cond: no swap, so `above` is the true-edge consumer.
     let (above_node, below_node) = if_edge_consumers(&f);
 
-    let doms = control_dominator_tree(&f);
-    let known = analyze_known_bits(&f).unwrap();
-    let mut ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = RangeMap::new(&f).unwrap();
 
     let type_mask = ValueType::I32.bit_mask_u128();
     assert!(
@@ -2480,9 +2463,7 @@ fn a_guard_lookup_does_not_scale_with_guard_count() {
     let mut probes = Vec::new();
     for k in [4usize, 32] {
         let (f, idx, leaf) = build_guard_fan(k);
-        let doms = control_dominator_tree(&f);
-        let known = analyze_known_bits(&f).unwrap();
-        let mut ranges = compute_value_ranges(&f, &doms, &known);
+        let mut ranges = RangeMap::new(&f).unwrap();
         assert_eq!(
             ranges.guards[&idx].len(),
             k,
@@ -2536,9 +2517,7 @@ fn build_guard_sequence(n: usize) -> (strider_ir::Function, Vec<(ValueId, NodeId
     b.set_lift_addr(None);
     let mut f = b.build().unwrap();
     canonicalize(&mut f);
-    let known = analyze_known_bits(&f).unwrap();
-    let doms = control_dominator_tree(&f);
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let ranges = RangeMap::new(&f).unwrap();
     let sites = values
         .iter()
         .map(|v| {
@@ -2558,9 +2537,7 @@ fn build_guard_sequence(n: usize) -> (strider_ir::Function, Vec<(ValueId, NodeId
 fn guard_lookups_over_sequential_sites_cost_linear_total() {
     fn probes(n: usize) -> u64 {
         let (f, sites) = build_guard_sequence(n);
-        let doms = control_dominator_tree(&f);
-        let known = analyze_known_bits(&f).unwrap();
-        let mut ranges = compute_value_ranges(&f, &doms, &known);
+        let mut ranges = RangeMap::new(&f).unwrap();
         crate::value_range::GUARD_PROBES.with(|c| c.set(0));
         for &(value, node) in &sites {
             let iv = ranges.range_of(value, node);

@@ -18,16 +18,14 @@ use strider_cfg::ResolvedTargets;
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::MockRom;
-use strider_orchestrator::opt::value_range::compute_value_ranges;
-use strider_orchestrator::opt::{analyze_known_bits, classify_target};
+use strider_orchestrator::opt::classify_target;
+use strider_orchestrator::opt::value_range::RangeMap;
 
 fn classify_target_with_rom(
     view: &strider_ir::Function,
     rom: Option<&dyn strider_orchestrator::opt::ReadOnlyMemory>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
-    let known = analyze_known_bits(view)?;
-    let doms = strider_ir::control_dominator_tree(view);
-    let mut ranges = compute_value_ranges(view, &doms, &known);
+    let mut ranges = RangeMap::new(view)?;
     let branch = view
         .walk()
         .find(|&n| matches!(view.node_kind(n), NodeKind::IndirectBranch))
@@ -212,7 +210,7 @@ fn jump_table_zero_bound_returns_none() {
 // Both resolve through the default pipeline:
 //   1. (both) `RegionCollapse` removes the single-predecessor dispatch
 //      Region so the If's control feeds the `IndirectBranch` placeholder
-//      directly. `compute_value_ranges` keys each guard by the unique
+//      directly. `RangeMap::new` keys each guard by the unique
 //      control consumer of the guarded If-edge, so the guard's dominance
 //      survives the collapse.
 //   2. (both) the guard is modelled on both If edges and for a constant on
