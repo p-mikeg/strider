@@ -49,7 +49,7 @@ fn clean_merges_structural_twin_left_by_a_rewrite() {
     {
         let mut ef = EditFunction::new(&mut fg);
         // add2 becomes Add(a, c1), a twin of add1.
-        ef.replace_all_uses(c2, c1).unwrap();
+        ef.replace_value(c2, c1).unwrap();
         ef.clean(); // merges the twin
     }
 
@@ -109,7 +109,7 @@ fn clean_does_not_merge_when_output_type_differs() {
         let mut ef = EditFunction::new(&mut fg);
         // t16 becomes Truncate(a):I16: same input as t32 but a different
         // output width, so canonicalization must keep them separate.
-        ef.replace_all_uses(bb, a).unwrap();
+        ef.replace_value(bb, a).unwrap();
         ef.clean();
     }
 
