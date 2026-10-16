@@ -59,13 +59,7 @@ fn analyze(offset: u64) -> (Function, strider_target::BuiltCallingConvention) {
     );
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X86, bytes, BASE, Some(rom));
     let function = strider
-        .analyze(
-            BASE + offset,
-            &cc,
-            &Default::default(),
-            &Default::default(),
-            None,
-        )
+        .analyze(BASE + offset, &cc, &Default::default(), None)
         .expect("analyze")
         .function;
     (function, cc)

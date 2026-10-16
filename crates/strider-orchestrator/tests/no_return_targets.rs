@@ -2,8 +2,7 @@
 //! `build_cfg` and `analyze` alike.
 
 use strider_cfg::{Cfg, CfgOptions, RegionTerminator};
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::AnalyzeOptions;
 
 mod common;
 
@@ -36,12 +35,12 @@ fn a_no_return_callee_ends_the_region_in_build_cfg_and_analyze() {
     let built = strider.build_cfg(BASE, &cfg_opts).expect("build_cfg");
     assert_eq!(*entry_terminator(&built), RegionTerminator::NoReturn);
 
-    let lift_opts = LiftOptions {
+    let lift_opts = AnalyzeOptions {
         cfg: cfg_opts,
-        ..LiftOptions::default()
+        ..AnalyzeOptions::default()
     };
     let result = strider
-        .analyze(BASE, &cc, &lift_opts, &OptOptions::default(), None)
+        .analyze(BASE, &cc, &lift_opts, None)
         .expect("analyze");
     assert_eq!(*entry_terminator(&result.cfg), RegionTerminator::NoReturn);
     assert!(
@@ -78,13 +77,13 @@ fn a_per_address_cc_on_a_no_return_callee_still_ends_the_region() {
     let built = strider.build_cfg(BASE, &cfg_opts).expect("build_cfg");
     assert_eq!(*entry_terminator(&built), RegionTerminator::NoReturn);
 
-    let lift_opts = LiftOptions {
+    let lift_opts = AnalyzeOptions {
         cfg: cfg_opts,
         per_address_ccs: &overrides,
-        ..LiftOptions::default()
+        ..AnalyzeOptions::default()
     };
     let result = strider
-        .analyze(BASE, &cc, &lift_opts, &OptOptions::default(), None)
+        .analyze(BASE, &cc, &lift_opts, None)
         .expect("analyze");
     assert_eq!(*entry_terminator(&result.cfg), RegionTerminator::NoReturn);
     assert!(result.unresolved_indirect_branches.is_empty());

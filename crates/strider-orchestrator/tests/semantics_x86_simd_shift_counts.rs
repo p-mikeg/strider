@@ -95,7 +95,7 @@ fn returned_rax(bytes: Vec<u8>) -> u128 {
         .build(strider.sleigh_regs())
         .expect("cc");
     let f = strider
-        .analyze(BASE, &cc, &Default::default(), &Default::default(), None)
+        .analyze(BASE, &cc, &Default::default(), None)
         .expect("analyze")
         .function;
     let ret = f

@@ -18,8 +18,7 @@
 
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::AnalyzeOptions;
 
 mod common;
 
@@ -37,17 +36,17 @@ fn synthetic_bytes() -> Vec<u8> {
 }
 
 fn analyze() -> strider_ir::Function {
-    let lift_opts = LiftOptions {
+    let lift_opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(FN_SIZE),
             ..Default::default()
         },
-        ..LiftOptions::default()
+        ..AnalyzeOptions::default()
     };
     let (mut strider, cc) =
         common::strider_over_bytes(common::Arch::X64, synthetic_bytes(), BASE, None);
     strider
-        .analyze(BASE, &cc, &lift_opts, &OptOptions::default(), None)
+        .analyze(BASE, &cc, &lift_opts, None)
         .expect("self-loop at the entry must lift")
         .function
 }

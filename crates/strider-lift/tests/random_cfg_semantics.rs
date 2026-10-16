@@ -17,7 +17,6 @@ use strider_ir::walk::NodeIdSet;
 use strider_ir::{Function, IRViewer};
 use strider_ir_test_utils::interp::{self, Divergence, EntryVar, Env, Outcome, Slot};
 use strider_ir_test_utils::{Rng, graph_oracle};
-use strider_lift::LiftOptions;
 
 const BASE: u64 = 0x1000;
 /// Bytes per generated function.
@@ -612,7 +611,6 @@ fn random_control_flow_lifts_to_what_the_code_computes() {
     )
     .expect("sleigh");
     let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
-    let opts = LiftOptions::default();
     let mut tally = Tally::default();
     for (g, blocks) in functions.iter().enumerate() {
         let base = BASE + g as u64 * SPAN;
@@ -623,7 +621,7 @@ fn random_control_flow_lifts_to_what_the_code_computes() {
         let (rdi, rcx) = (cc.arg_passing_regs[0], cc.arg_passing_regs[3]);
         let (rax, rsp) = (cc.ret_val_regs[0], cc.stack_vn);
         let cfg = lifter
-            .build_cfg(base.into(), &opts.cfg)
+            .build_cfg(base.into(), &strider_cfg::CfgOptions::default())
             .unwrap_or_else(|e| panic!("seed {g}: cfg: {e:#}\n{blocks:?}"));
         let succs = successors(blocks);
         let reach = graph_oracle::reachable(&succs, &[0], None);
@@ -665,7 +663,7 @@ fn random_control_flow_lifts_to_what_the_code_computes() {
         tally.shapes(&rsuccs, root, &eax_defs, ids_after);
 
         let f = lifter
-            .build_ir_with(&cfg, cc, &opts)
+            .build_ir(&cfg, cc)
             .unwrap_or_else(|e| panic!("seed {g}: lift: {e:#}\n{blocks:?}"))
             .function;
         if let Err(e) = strider_ir::validate::validate(&f) {

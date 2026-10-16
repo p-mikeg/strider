@@ -143,9 +143,7 @@ fn seating_cost(count: usize) -> (usize, usize) {
         .build(lifter.sleigh_regs())
         .expect("cc");
     super::exit_free_sink::SINK_VISITS.with(|v| v.set(0));
-    let outcome = lifter
-        .build_ir_with(&cfg, cc, &crate::LiftOptions::default())
-        .expect("lift");
+    let outcome = lifter.build_ir(&cfg, cc).expect("lift");
     let visits = super::exit_free_sink::SINK_VISITS.with(std::cell::Cell::get);
     (visits, sinks(&outcome.function))
 }

@@ -34,13 +34,7 @@ fn analyze(endian: Endianness, offset: u64) -> Function {
     let (mut strider, cc) =
         common::strider_over_bytes(arch, words_image(WORDS, endian), BASE, None);
     strider
-        .analyze(
-            BASE + offset,
-            &cc,
-            &Default::default(),
-            &Default::default(),
-            None,
-        )
+        .analyze(BASE + offset, &cc, &Default::default(), None)
         .expect("analyze")
         .function
 }

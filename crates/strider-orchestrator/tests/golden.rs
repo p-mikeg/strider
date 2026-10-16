@@ -1,7 +1,6 @@
 //! Pins what `Strider::analyze` makes of every function of the committed
-//! fixtures under production defaults (`LiftOptions::default()`,
-//! `OptOptions::default()`), one file per image:
-//! `fixtures/golden/<arch>/<case>.txt`. A function's section is
+//! fixtures under production defaults (`AnalyzeOptions::default()`), one
+//! file per image: `fixtures/golden/<arch>/<case>.txt`. A function's section is
 //! `== <symbol> @<addr>`, each non-empty report channel, the CFG one region
 //! per line (start, p-code op count, terminator, successors) and the
 //! optimised IR with registers named. An `analyze` error is pinned as its
@@ -27,8 +26,7 @@ use std::path::Path;
 use common::ALL_ARCHES;
 use common::fixtures::{FIXTURE_ARCHES, Fixture, fixture_arch, fixtures_root};
 use strider_cfg::{Cfg, PcodeInsnAddr, RegionTerminator, ResolvedTarget};
-use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{AnalyzeResult, LiftOptions};
+use strider_orchestrator::{AnalyzeOptions, AnalyzeResult};
 
 /// `<addr>`, or `<addr>.<index>` past a machine instruction's first op.
 fn pc(addr: &PcodeInsnAddr) -> String {
@@ -374,13 +372,7 @@ fn golden_text(fixture: &Fixture) -> String {
     let mut body = String::new();
     for (addr, name) in fixture.functions() {
         let _ = writeln!(body, "\n== {name} @{addr:#x}");
-        let result = match strider.analyze(
-            addr,
-            &cc,
-            &LiftOptions::default(),
-            &OptOptions::default(),
-            None,
-        ) {
+        let result = match strider.analyze(addr, &cc, &AnalyzeOptions::default(), None) {
             Ok(result) => result,
             Err(e) => {
                 let _ = writeln!(body, "error: {e:#}");

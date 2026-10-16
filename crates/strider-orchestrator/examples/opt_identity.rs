@@ -21,8 +21,7 @@ use std::time::Duration;
 
 use dot::{DotStyle, GraphDot};
 use strider_ir::IRWalker;
-use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+use strider_orchestrator::{AnalyzeOptions, Strider};
 use strider_reader::ElfFileMemReader;
 
 #[allow(dead_code)]
@@ -49,13 +48,7 @@ fn digest_one(
     totals: &mut Totals,
 ) -> Result<()> {
     let t0 = std::time::Instant::now();
-    let result = strider.analyze(
-        addr,
-        cc,
-        &LiftOptions::default(),
-        &OptOptions::default(),
-        None,
-    );
+    let result = strider.analyze(addr, cc, &AnalyzeOptions::default(), None);
     totals.elapsed += t0.elapsed();
     totals.functions += 1;
     let mut text = String::new();

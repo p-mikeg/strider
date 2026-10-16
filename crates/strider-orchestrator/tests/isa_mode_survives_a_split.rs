@@ -13,8 +13,7 @@
 //! later site can arrive after the split has happened.
 
 use strider_cfg::{CfgOptions, PcodeInsnAddr, ResolvedTarget, ResolvedTargets};
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::AnalyzeOptions;
 
 mod common;
 
@@ -71,12 +70,12 @@ fn a_split_carries_the_isa_mode_to_the_first_half() {
             arm(0x1048),
         ]),
     );
-    let lift_opts = LiftOptions {
+    let lift_opts = AnalyzeOptions {
         cfg: CfgOptions {
             known_targets: &known,
             ..CfgOptions::default()
         },
-        ..LiftOptions::default()
+        ..AnalyzeOptions::default()
     };
 
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::Arm, bytes(), BASE, None);
@@ -95,7 +94,7 @@ fn a_split_carries_the_isa_mode_to_the_first_half() {
     );
 
     let result = strider
-        .analyze(BASE, &cc, &lift_opts, &OptOptions::default(), None)
+        .analyze(BASE, &cc, &lift_opts, None)
         .expect("a mode clash is a result, not an error");
     assert!(
         result

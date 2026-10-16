@@ -2,8 +2,7 @@
 //! `analyze` must report the site rather than converge on the smaller answer.
 
 use strider_cfg::{CfgOptions, PcodeInsnAddr, ResolvedTargets};
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::AnalyzeOptions;
 
 mod common;
 
@@ -27,17 +26,17 @@ fn an_arm_the_cfg_cannot_seat_is_reported_unresolved() {
         branch,
         ResolvedTargets::Multiple(vec![0x1005.into(), 0x1002.into()]),
     );
-    let lift_opts = LiftOptions {
+    let lift_opts = AnalyzeOptions {
         cfg: CfgOptions {
             known_targets: &known,
             ..CfgOptions::default()
         },
-        ..LiftOptions::default()
+        ..AnalyzeOptions::default()
     };
 
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, base, None);
     let result = strider
-        .analyze(base, &cc, &lift_opts, &OptOptions::default(), None)
+        .analyze(base, &cc, &lift_opts, None)
         .expect("a dropped arm is a result, not an error");
 
     let seated: Vec<u64> = result

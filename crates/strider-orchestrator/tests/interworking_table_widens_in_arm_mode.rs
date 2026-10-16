@@ -18,8 +18,7 @@
 //! ```
 mod common;
 
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::AnalyzeOptions;
 
 const BASE: u64 = 0x10054;
 const TEXT: &[u8] = &[
@@ -54,13 +53,7 @@ fn widened_thumb_arms_keep_their_mode() {
     let (mut s, cc) =
         common::strider_over_bytes(common::Arch::Arm, bytes, BASE, Some(Box::new(Rom)));
     let r = s
-        .analyze(
-            0x10058,
-            &cc,
-            &LiftOptions::default(),
-            &OptOptions::default(),
-            None,
-        )
+        .analyze(0x10058, &cc, &AnalyzeOptions::default(), None)
         .expect("analyze");
     let mut arms: Vec<(u64, Option<bool>)> = r
         .cfg
