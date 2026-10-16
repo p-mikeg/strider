@@ -1,6 +1,5 @@
 //! Address classes and the pairwise alias verdict between a load and a store.
 
-use rustc_hash::FxHashSet;
 use strider_ir::node::ValueId;
 use strider_ir::{Function, IRViewer};
 
@@ -9,15 +8,9 @@ use super::analyzer::MemOptions;
 use super::decompose::decompose;
 use super::{AddrClass, AliasVerdict, MemExpr, MemKind};
 
-pub(super) fn classify_addr(
-    function: &Function,
-    addr: ValueId,
-    noalias_allocators: &FxHashSet<u64>,
-) -> AddrClass {
-    // A heap class needs a listed allocator, so with none configured it is
-    // another analyzer's, read back out of the shared `decompose` memo.
-    let decomposed = decompose(function, addr, noalias_allocators)
-        .filter(|e| e.kind == MemKind::Stack || !noalias_allocators.is_empty());
+pub(super) fn classify_addr(function: &Function, addr: ValueId, options: &MemOptions) -> AddrClass {
+    let decomposed = decompose(function, addr, &options.noalias_allocators)
+        .filter(|e| e.kind == MemKind::Stack || options.heap_claims);
     match decomposed {
         Some(MemExpr { base, offset, kind }) => match kind {
             MemKind::Heap => AddrClass::HeapRooted { base, offset },
