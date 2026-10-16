@@ -2,10 +2,16 @@
 //! needs one round per link and the iteration cap is the depth limit.
 //!
 //! Pins both halves of that: a chain within the cap converges on every link,
-//! and one past it comes back as a report rather than an error.
+//! and one past it comes back as a report rather than an error. Each test also
+//! pins how many rounds `analyze` built to get there.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use strider_orchestrator::LiftOptions;
-use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::opt::{
+    EditFunction, OptCtx, OptOptions, PostOptimizer, default_pipeline,
+};
 
 mod common;
 
@@ -39,23 +45,67 @@ fn caveats(result: &strider_orchestrator::AnalyzeResult) -> String {
     )
 }
 
-fn analyze(links: u64) -> strider_orchestrator::AnalyzeResult {
-    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, chain(links), BASE, None);
-    strider
+/// Counts pipeline runs: one per round `analyze` builds.
+#[derive(Clone)]
+struct CountRounds(Arc<AtomicUsize>);
+
+impl PostOptimizer for CountRounds {
+    fn apply(&self, _edit: &mut EditFunction<'_>, _ctx: &mut OptCtx<'_>) -> anyhow::Result<()> {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+/// `analyze` over `bytes` at `BASE`, and the rounds it built.
+fn analyze(bytes: Vec<u8>) -> (strider_orchestrator::AnalyzeResult, usize) {
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
+    let rounds = Arc::new(AtomicUsize::new(0));
+    let mut pipeline = default_pipeline();
+    pipeline.add_post_pass(CountRounds(Arc::clone(&rounds)));
+    let result = strider
         .analyze(
             BASE,
             &cc,
             &LiftOptions::default(),
             &OptOptions::default(),
-            None,
+            Some(pipeline),
         )
-        .expect("a chain deeper than the cap is a result, not an error")
+        .expect("a chain deeper than the cap is a result, not an error");
+    (result, rounds.load(Ordering::Relaxed))
+}
+
+/// Nothing to fold: the first round is the answer.
+#[test]
+fn a_function_with_no_dispatch_is_built_once() {
+    let (result, rounds) = analyze(chain(0));
+    assert!(result.is_complete(), "{}", caveats(&result));
+    assert_eq!(rounds, 1);
+}
+
+/// `mov eax, <below the entry> ; jmp rax`: the first fold seats a tail call,
+/// which consumes the site, so the next round has nothing left to fold.
+#[test]
+fn a_site_its_first_fold_consumes_settles_on_the_next_round() {
+    let below = u32::try_from(BASE - 0x100).expect("32-bit immediate");
+    let mut bytes = vec![0xb8];
+    bytes.extend_from_slice(&below.to_le_bytes());
+    bytes.extend_from_slice(&[0xff, 0xe0]);
+    let (result, rounds) = analyze(bytes);
+    assert!(
+        result
+            .cfg
+            .regions()
+            .any(|r| matches!(r.terminator, strider_cfg::RegionTerminator::TailCall { .. })),
+        "{}",
+        caveats(&result),
+    );
+    assert_eq!(rounds, 2);
 }
 
 #[test]
 fn every_link_of_a_chain_within_the_cap_is_seated() {
     let links = 8;
-    let result = analyze(links);
+    let (result, rounds) = analyze(chain(links));
     assert!(result.is_complete(), "{}", caveats(&result));
     for i in 0..=links {
         assert!(
@@ -66,16 +116,22 @@ fn every_link_of_a_chain_within_the_cap_is_seated() {
             "link {i} never got a region",
         );
     }
+    assert_eq!(
+        rounds, 9,
+        "one round per link, and one whose fold changes nothing"
+    );
 }
 
 /// The cap is 256 seated levels: the last chain that fits converges, and the
 /// first that does not reports its frontier instead of failing the function.
+/// Both spend the whole cap: 256 folds, so 257 builds.
 #[test]
 fn the_iteration_cap_is_the_chain_depth_it_seats() {
-    let fits = analyze(256);
+    let (fits, fits_rounds) = analyze(chain(256));
     assert!(fits.is_complete(), "{}", caveats(&fits));
+    assert_eq!(fits_rounds, 257);
 
-    let over = analyze(257);
+    let (over, over_rounds) = analyze(chain(257));
     assert!(!over.is_complete());
     assert_eq!(
         over.unresolved_indirect_branches
@@ -85,4 +141,5 @@ fn the_iteration_cap_is_the_chain_depth_it_seats() {
         vec![BASE + 256 * LINK + 5],
         "the frontier `jmp rax` is the one still growing when the cap ran out",
     );
+    assert_eq!(over_rounds, 257);
 }
