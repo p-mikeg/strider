@@ -6,10 +6,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::{CfgOptions, PcodeInsnAddr, ResolvedTargets, seated_in};
 use strider_ir::node::NodeId;
 
-use super::round::Anchors;
-use crate::{
-    adopt_known_modes, combine_resolved, merge_resolved, narrows, target_keys, targets_of,
+use super::merge::{
+    adopt_known_modes, merge_derived, narrows, target_keys, targets_of, union_with_seed,
 };
+use super::round::Anchors;
 
 /// The seat of a site the loop gave up on: no arms, so the cfg defers it, over
 /// a caller's seed too.
@@ -22,7 +22,7 @@ pub(super) fn withdrawn() -> ResolvedTargets {
 pub(super) struct Progress {
     /// Addresses whose successor set changed without losing ground, which
     /// includes a target taking a proved mode at an unchanged address set
-    /// ([`narrows`]).
+    /// (`narrows`).
     pub(super) grew: Vec<PcodeInsnAddr>,
     /// Addresses that LOST a successor, so the signal is not monotone there.
     pub(super) narrowed: Vec<PcodeInsnAddr>,
@@ -179,7 +179,7 @@ impl<'s> SiteTable<'s> {
                 .extend(targets_of(&targets).map(|(target, _bit)| target));
             staged
                 .entry(addr)
-                .and_modify(|e| *e = merge_resolved(e, &targets, flowing_at(addr)))
+                .and_modify(|e| *e = merge_derived(e, &targets, flowing_at(addr)))
                 .or_insert(targets);
         }
         // Across rounds, this round's staged set REPLACES the previous round's
@@ -202,7 +202,7 @@ impl<'s> SiteTable<'s> {
             // mode only if the caller built one, and filtering it against a
             // mode-bearing classification would delete the whole caller answer.
             let targets = match self.seed(addr) {
-                Some(seed) => combine_resolved(seed, &targets, None),
+                Some(seed) => union_with_seed(seed, &targets),
                 None => targets,
             };
             let seated: FxHashSet<Option<u64>> =
@@ -239,11 +239,11 @@ impl<'s> SiteTable<'s> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resolve::merge::{TargetKey, concrete_targets};
     use crate::resolve::test_support::{
         TARGET_VISITS, assert_linear_visits, fn_with_live_indirect_branch, mid_insn_addr, multiple,
         pcode_addr,
     };
-    use crate::{TargetKey, concrete_targets};
     use std::collections::BTreeSet;
 
     /// The classifier's answers as the tests write them, `None` for a site it
