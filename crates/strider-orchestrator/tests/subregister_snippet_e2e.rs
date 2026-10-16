@@ -75,7 +75,13 @@ fn narrow_alias_write_folds_to_zero_in_ret_val_register() {
     let result = strider
         .analyze(BASE, &cc, &AnalyzeOptions::default(), None)
         .expect("analyze");
-    assert!(result.unresolved_indirect_branches.is_empty());
+    assert!(
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
+            .is_empty()
+    );
     let function = result.function;
 
     // ret-val inputs start at slot 2, after [control, memory].

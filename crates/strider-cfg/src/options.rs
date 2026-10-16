@@ -63,7 +63,7 @@ pub struct CfgOptions<'a> {
     pub call_other_overrides: strider_target::call_other_abi::CallOtherOverrides,
     /// Bytes the image marks as data (ELF `$d` mapping symbols), which the
     /// builder decodes only for the instruction at the start address; see
-    /// [`crate::Cfg::undecodable_branch_targets`].
+    /// [`crate::Reason::UndecodableTarget`].
     pub data_ranges: DataRanges,
 }
 

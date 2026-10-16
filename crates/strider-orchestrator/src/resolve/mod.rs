@@ -6,7 +6,7 @@ use std::borrow::Cow;
 
 use anyhow::Result;
 use rustc_hash::{FxHashMap, FxHashSet};
-use strider_cfg::{PcodeInsnAddr, ResolvedTargets, seated_in};
+use strider_cfg::{Incompleteness, PcodeInsnAddr, Reason, ResolvedTargets, seated_in};
 
 use crate::{
     AnalyzeResult, DerivedChannels, DispatchAnchors, IndirectResolutions, abandon_site,
@@ -45,15 +45,10 @@ pub(crate) struct LoopState<'s> {
     /// Sticky: the flag fires on the round that seats the guessed arm, and
     /// every later round finds that arm already seated.
     assumed_modes: Vec<PcodeInsnAddr>,
-    /// The four direct-edge reports, sticky: a round's inexact or stubbed edge
-    /// fed the classifier, whose answers persist into every later round, so a
-    /// final cfg without that edge does not mean none was used.
-    interior: Vec<PcodeInsnAddr>,
-    /// Sharper for this one: `abandon_undecodable` drops the site whose seat
-    /// raised the clash, so the next round rebuilds without that edge.
-    isa_conflicts: Vec<PcodeInsnAddr>,
-    unmapped: Vec<PcodeInsnAddr>,
-    undecodable: Vec<PcodeInsnAddr>,
+    /// Every round's target reasons, sticky: a round's inexact or stubbed
+    /// edge fed the classifier, whose answers persist into every later round,
+    /// so a final cfg without that edge does not mean none was used.
+    incomplete: Incompleteness,
     /// Rounds folded into `working`.
     pub(crate) folds: usize,
 }
@@ -67,10 +62,7 @@ impl<'s> LoopState<'s> {
             narrow_rounds: FxHashMap::default(),
             derived_incomplete: Vec::new(),
             assumed_modes: Vec::new(),
-            interior: Vec::new(),
-            isa_conflicts: Vec::new(),
-            unmapped: Vec::new(),
-            undecodable: Vec::new(),
+            incomplete: Incompleteness::default(),
             folds: 0,
         }
     }
@@ -88,21 +80,16 @@ impl<'s> LoopState<'s> {
         // fires.
         self.derived_incomplete
             .extend(seated_arm_losses(cfg, &self.working));
+        let clashing: Vec<PcodeInsnAddr> =
+            cfg.incompleteness().of(Reason::IsaModeConflict).collect();
         let dropped = abandon_undecodable(
             cfg.undecodable_seeded_targets(),
-            cfg.isa_mode_conflicts(),
+            &clashing,
             &DispatchAnchors::new(cfg),
             &mut self.abandoned,
             &mut self.working,
         );
-        self.interior
-            .extend_from_slice(cfg.interior_branch_targets());
-        self.isa_conflicts
-            .extend_from_slice(cfg.isa_mode_conflicts());
-        self.unmapped
-            .extend_from_slice(cfg.unmapped_branch_targets());
-        self.undecodable
-            .extend_from_slice(cfg.undecodable_branch_targets());
+        self.incomplete.absorb(cfg.incompleteness());
         let stale = !dropped.is_empty();
         self.derived_incomplete.extend(dropped);
         stale
@@ -203,12 +190,12 @@ impl<'s> LoopState<'s> {
             },
         );
         // A caller that seeded `return` asserted the answer, and
-        // `unverified_seeded_sites` names that seat -- but only for a seat the
+        // `UnverifiedSeed` names that seat -- but only for a seat the
         // CFG build actually CONSUMED, which is what `link_register_seated`
         // records. A site whose terminator came from the p-code `RETURN` op is
         // never in it, so dropping one here on the strength of a seed left it
-        // in none of the six channels and `is_complete()` true over a CFG
-        // missing the edge control takes.
+        // under no reason and `is_complete()` true over a CFG missing the edge
+        // control takes.
         // Hashed: both lists are bounded by the region count and at the sound
         // floor they can be the same set, so a slice scan per element is
         // quadratic.
@@ -232,22 +219,16 @@ impl<'s> LoopState<'s> {
                 .into_iter()
                 .filter(|addr| settled.contains_key(addr)),
         );
+        let mut incomplete = self.incomplete;
+        for addr in unresolved {
+            incomplete.insert(addr, Reason::UnresolvedBranch);
+        }
+        for addr in unverified {
+            incomplete.insert(addr, Reason::UnverifiedSeed);
+        }
         Ok(AnalyzeResult {
-            cfg,
+            cfg: cfg.with_incompleteness(incomplete),
             function,
-            unresolved_indirect_branches: sorted(unresolved),
-            isa_mode_conflicts: sorted(self.isa_conflicts),
-            interior_branch_targets: sorted(self.interior),
-            unmapped_branch_targets: sorted(self.unmapped),
-            undecodable_branch_targets: sorted(self.undecodable),
-            unverified_seeded_sites: sorted(unverified),
         })
     }
-}
-
-/// `v` sorted and deduplicated.
-fn sorted(mut v: Vec<PcodeInsnAddr>) -> Vec<PcodeInsnAddr> {
-    v.sort_unstable();
-    v.dedup();
-    v
 }

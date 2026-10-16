@@ -65,46 +65,39 @@ Two verdicts freeze a single site, leaving the loop to run on without it:
   and its placeholder left live.
 - A site naming a target that failed to decode, or that led to code that did,
   is abandoned whole: the bound that produced it is what is wrong, so no arm of
-  that answer stands. The site is reported; the address that failed is named in
-  no channel, since the CFG reports the arm it was reached from and not the
+  that answer stands. The site is reported; the address that failed is listed
+  under no reason, since the CFG reports the arm it was reached from and not the
   bytes. A site naming an address two edges reached in different ISA modes loses
   just that arm, since any two edges raise a clash, direct ones included. Either
   way the site is frozen, taking no further classification.
 
-## Six channels
+## One incompleteness set
 
-A converged CFG may be incomplete, and `AnalyzeResult` says so six ways.
-`is_complete()` is the question "may this be incomplete?"; none of the six
-answers it alone, so it reads all of them. A false `is_complete()` over
-`unverified_seeded_sites` alone usually reads "complete but unverified": a
-`Switch` holding exactly the caller's seed is the plain case, except for a
-caller-seeded `Return` whose re-check failed, which lands there too.
+A converged CFG may be incomplete, and `AnalyzeResult::incomplete()` says
+where and why: one `Incompleteness` of `(PcodeInsnAddr, Reason)`, stored in
+the returned `Cfg`. `is_complete()` is the question "may this be
+incomplete?". `false` over `UnverifiedSeed` alone usually reads "complete but
+unverified": a `Switch` holding exactly the caller's seed is the plain case,
+except for a caller-seeded `Return` whose re-check failed, which lands there
+too.
 
-- `unresolved_indirect_branches`: a live `IndirectBranch` placeholder, a seated
-  `Switch` whose selector no longer derives, a site still growing when the cap
-  ran out, a site whose fold dropped a successor the classifier proved, a site
-  whose answer narrowed in any round, a site the loop abandoned, and a return
-  whose folded target is not provably the entry return address.
-- `unverified_seeded_sites`: answers that are whole but that nothing verified. A
-  `Switch` holding exactly the caller's seed and nothing derived; a site the CFG
-  CONSUMED, where a caller's `LinkRegister` seat became a `Return` and a lone
-  out-of-function target became a `TailCall`, leaving no placeholder and no
-  anchor to report through, which for a caller-seeded `Return` is also where a
-  FAILED re-check lands (a `Return` the CLASSIFIER derived rides no channel once
-  `return_slots_survive_untracked_writes` carries its proof; clearing that claim
-  and re-running is how a caller audits one); and an arm seated on the mode a
-  caller seed gave its siblings, which nobody evaluated for that arm.
-- `isa_mode_conflicts`, `interior_branch_targets`, `unmapped_branch_targets`
-  and `undecodable_branch_targets`: losses no indirect site owns, since a
-  direct edge produces them too. An address two edges reached in different
-  modes, a target off every instruction boundary, a target the image had no
-  bytes for, seated as an empty `TailCall` stub, and bytes that hold no
-  instruction (Sleigh rejects them, or `CfgOptions::data_ranges` marks them),
-  reached by a branch, which leaves through a `TailCall` stub, or by a
-  fall-through past a call, which ends that call as no-return. All four
-  accumulate across rounds rather than being read off the final CFG: the round
-  that decoded an address twice fed the classifier whether or not a later
-  rebuild still carries that edge.
+- `UnresolvedBranch`: a live `IndirectBranch` placeholder, a seated `Switch`
+  whose selector no longer derives, a site still growing when the cap ran out,
+  a site whose fold dropped a successor the classifier proved, a site whose
+  answer narrowed in any round, a site the loop abandoned, and a return whose
+  folded target is not provably the entry return address.
+- `UnverifiedSeed`: answers that are whole but that nothing verified. A
+  `Switch` holding exactly the caller's seed and nothing derived; a site the
+  CFG CONSUMED, where a caller's `LinkRegister` seat became a `Return` and a
+  lone out-of-function target became a `TailCall` (for a caller-seeded
+  `Return` also where a FAILED re-check lands; a `Return` the CLASSIFIER
+  derived is not listed once `return_slots_survive_untracked_writes` carries
+  its proof); and an arm seated on the mode a caller seed gave its siblings.
+- `IsaModeConflict`, `InteriorTarget`, `UnmappedTarget`, `UndecodableTarget`:
+  losses no indirect site owns, since a direct edge produces them too. They
+  are absorbed from every round's `Cfg` rather than read off the final one:
+  the round that decoded an address twice fed the classifier whether or not a
+  later rebuild still carries that edge.
 
 A caller seed asserts the site is settled, which suppresses the unclassifiable
 seated `Switch` report until the site outgrows the seed. It suppresses nothing

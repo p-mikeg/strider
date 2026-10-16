@@ -50,7 +50,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Keep `result` observable so nothing is optimised away.
     println!(
         "analyzed {SYMBOL} @ {addr:#x}: {} unresolved",
-        result.unresolved_indirect_branches.len()
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
+            .len()
     );
     Ok(())
 }

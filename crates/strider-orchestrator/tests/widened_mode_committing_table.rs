@@ -2,7 +2,7 @@
 //! its loop closes is re-derived through its seated `Switch`, which carries
 //! that mode input. Every widened arm is seated in the mode its own table word
 //! commits, so none is a guess inherited from its siblings and
-//! `unverified_seeded_sites` stays clear of the site.
+//! `UnverifiedSeed` stays clear of the site.
 //!
 //! Only an arch with an ISA-mode var has a mode to evaluate, which is why these
 //! run on MIPS and the same C source on x86-64 is the control.
@@ -58,8 +58,16 @@ fn analyze(arch: common::Arch, case: &str, fn_name: &str) -> Report {
     Report {
         arms,
         modes,
-        unresolved: addrs(&r.unresolved_indirect_branches),
-        unverified: addrs(&r.unverified_seeded_sites),
+        unresolved: addrs(
+            &r.incomplete()
+                .of(strider_orchestrator::Reason::UnresolvedBranch)
+                .collect::<Vec<_>>(),
+        ),
+        unverified: addrs(
+            &r.incomplete()
+                .of(strider_orchestrator::Reason::UnverifiedSeed)
+                .collect::<Vec<_>>(),
+        ),
     }
 }
 
