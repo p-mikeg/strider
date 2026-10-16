@@ -55,10 +55,10 @@ impl Default for AnalyzeOptions<'_> {
 /// is not complete.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum OnIncomplete {
-    /// Refuse it: [`AnalyzeError::Incomplete`] names the sites.
+    /// Refuse it: [`AnalyzeError::Incomplete`] names the incomplete set.
     #[default]
     Error,
-    /// Return it: its [`Incompleteness`] names the sites.
+    /// Return it: its [`Incompleteness`] names the incomplete set.
     Ignore,
 }
 
@@ -75,7 +75,7 @@ impl OnIncomplete {
 /// Why [`Strider::analyze`] or [`Strider::build_cfg`] returned no result.
 #[derive(Debug)]
 pub enum AnalyzeError {
-    /// The analysis finished but cannot vouch for these sites, and
+    /// The analysis finished but cannot vouch for this incomplete set, and
     /// [`OnIncomplete::Error`] refused it.
     Incomplete(Incompleteness),
     /// Decode, lift, optimisation or validation failed.
@@ -85,7 +85,7 @@ pub enum AnalyzeError {
 impl std::fmt::Display for AnalyzeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AnalyzeError::Incomplete(sites) => write!(f, "incomplete analysis: {sites}"),
+            AnalyzeError::Incomplete(incomplete) => write!(f, "incomplete analysis: {incomplete}"),
             // The whole chain: this error offers no `source()` to walk.
             AnalyzeError::Failed(e) => write!(f, "{e:#}"),
         }
@@ -608,7 +608,8 @@ fn targets_of(r: &ResolvedTargets) -> impl Iterator<Item = TargetKey> + '_ {
 }
 
 /// `side`, counting each target read in tests: the unit the fold's cost
-/// bounds are stated in.
+/// bounds are stated in. Every target-slice read in the fold must go through
+/// it, or the cost tests cannot see that read.
 fn visit(
     side: &[strider_cfg::ResolvedTarget],
 ) -> impl Iterator<Item = &strider_cfg::ResolvedTarget> + '_ {
