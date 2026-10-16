@@ -357,6 +357,8 @@ fn broken_intents(case: &str, text: &str) -> Vec<String> {
         };
         if found.is_empty() {
             broken.push(format!("{function}: no section"));
+        } else if found.iter().any(|s| s.contains("\nerror: ")) {
+            broken.push(format!("{function}: analyze failed"));
         } else if !found.iter().all(holds) {
             broken.push(format!("{function}: {} does not hold", intent_text(any)));
         }
@@ -671,4 +673,16 @@ fn every_fixture_has_functions() {
             );
         }
     }
+}
+
+#[test]
+fn an_analyze_error_breaks_every_intent_row() {
+    let text = "header\n== branch_on_const_string @0x1000\nerror: lift failed\n";
+    assert_eq!(
+        broken_intents("globals", text)
+            .iter()
+            .filter(|b| b.starts_with("branch_on_const_string"))
+            .count(),
+        1
+    );
 }
