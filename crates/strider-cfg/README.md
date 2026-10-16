@@ -104,7 +104,7 @@ decode keeps the bytes, the edge is wired, and the clash is reported.
 
 ## Nothing is dropped silently
 
-A completed `Cfg` may be incomplete, and `incompleteness()` says where and
+A completed `Cfg` may be incomplete, and `incomplete()` says where and
 why: one sorted set of `(PcodeInsnAddr, Reason)`. A build resolves nothing,
 so every dispatch it left without an edge is `UnresolvedBranch` and every
 seat `UnverifiedSeed`. The four target reasons:

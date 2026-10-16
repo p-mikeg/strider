@@ -176,7 +176,7 @@ where
     /// # Errors
     ///
     /// [`AnalyzeError::Incomplete`] when `on_incomplete` refuses
-    /// [`strider_cfg::Cfg::incompleteness`]; [`AnalyzeError::Failed`] for a
+    /// [`strider_cfg::Cfg::incomplete`]; [`AnalyzeError::Failed`] for a
     /// build failure (see [`Lifter::build_cfg`]).
     pub fn build_cfg(
         &mut self,
@@ -187,7 +187,7 @@ where
         let cfg = self
             .lifter
             .build_cfg(MachineInsnAddr::from(entry), cfg_opts)?;
-        on_incomplete.check(cfg.incompleteness())?;
+        on_incomplete.check(cfg.incomplete())?;
         Ok(cfg)
     }
 
@@ -280,7 +280,7 @@ impl AnalyzeResult {
     /// rounds rebuild, and the final round's site reasons.
     #[must_use]
     pub fn incomplete(&self) -> &Incompleteness {
-        self.cfg.incompleteness()
+        self.cfg.incomplete()
     }
 
     /// Whether [`Self::incomplete`] is empty. `false` over

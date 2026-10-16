@@ -164,7 +164,7 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// The ISA-mode bit flowing into each indirect-branch site, sampled at the
     /// site's seal; see [`Self::sample_flowing_isa_bit`].
     pub(super) flowing_isa_bits: BTreeMap<PcodeInsnAddr, bool>,
-    /// What this build cannot vouch for; see [`Cfg::incompleteness`].
+    /// What this build cannot vouch for; see [`Cfg::incomplete`].
     pub(super) incomplete: crate::Incompleteness,
     /// The address each [`Self::seat_non_boundary_target`] edge was seated for.
     /// Every other edge targets a region starting exactly at its own address,
@@ -1248,7 +1248,7 @@ mod tests {
         let cfg = build_cfg(bytes, base, &crate::CfgOptions::default())
             .expect("an unmapped direct target must not fail the whole function");
         assert_eq!(
-            cfg.incompleteness()
+            cfg.incomplete()
                 .of(crate::Reason::UnmappedTarget)
                 .collect::<Vec<_>>(),
             [PcodeInsnAddr::at_machine_start(target)],
@@ -1271,7 +1271,7 @@ mod tests {
         let cfg = build_cfg(bytes, base, &crate::CfgOptions::default())
             .expect("an unmapped arm must not fail the whole function");
         assert_eq!(
-            cfg.incompleteness()
+            cfg.incomplete()
                 .of(crate::Reason::UnmappedTarget)
                 .collect::<Vec<_>>(),
             [PcodeInsnAddr::at_machine_start(target)],
@@ -1584,7 +1584,7 @@ mod tests {
             "the overlap this pins must actually happen",
         );
         assert_eq!(
-            cfg.incompleteness()
+            cfg.incomplete()
                 .of(crate::Reason::InteriorTarget)
                 .collect::<Vec<_>>(),
             &[addr(0x1014, 0)]
@@ -1613,7 +1613,7 @@ mod tests {
         let cfg = build_cfg(bytes, base, &crate::CfgOptions::default()).expect("build");
 
         assert_eq!(
-            cfg.incompleteness()
+            cfg.incomplete()
                 .of(crate::Reason::InteriorTarget)
                 .collect::<Vec<_>>(),
             &[addr(0x1004, 0)]
@@ -1712,7 +1712,7 @@ mod tests {
         let cfg = build_cfg(bytes, base, &opts).expect("build");
         assert_every_switch_target_has_an_arm(&cfg);
         assert_eq!(
-            cfg.incompleteness()
+            cfg.incomplete()
                 .of(crate::Reason::InteriorTarget)
                 .collect::<Vec<_>>(),
             &[addr(0x1005, 0)],

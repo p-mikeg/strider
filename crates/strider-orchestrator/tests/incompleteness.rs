@@ -25,7 +25,7 @@ fn analyze_reports_an_unresolved_dispatch_through_its_cfg() {
         machine(r.incomplete()),
         [(0x1003, Reason::UnresolvedBranch)]
     );
-    assert!(std::ptr::eq(r.incomplete(), r.cfg.incompleteness()));
+    assert!(std::ptr::eq(r.incomplete(), r.cfg.incomplete()));
     assert!(!r.is_complete());
 }
 
@@ -45,11 +45,7 @@ fn a_resolved_table_leaves_the_returned_cfg_complete() {
         )),
         "precondition: the table is seated"
     );
-    assert!(
-        r.cfg.incompleteness().is_complete(),
-        "{}",
-        r.cfg.incompleteness()
-    );
+    assert!(r.cfg.incomplete().is_complete(), "{}", r.cfg.incomplete());
 }
 
 #[test]
@@ -63,7 +59,7 @@ fn build_cfg_names_each_dispatch_it_leaves_and_each_seed_it_seats() {
         )
         .expect("build_cfg");
     assert_eq!(
-        machine(cfg.incompleteness()),
+        machine(cfg.incomplete()),
         [(0x1003, Reason::UnresolvedBranch)]
     );
 
@@ -83,7 +79,7 @@ fn build_cfg_names_each_dispatch_it_leaves_and_each_seed_it_seats() {
         )
         .expect("build_cfg");
     assert_eq!(
-        machine(seeded.incompleteness()),
+        machine(seeded.incomplete()),
         [(0x1003, Reason::UnverifiedSeed)]
     );
 }

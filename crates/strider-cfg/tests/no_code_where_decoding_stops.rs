@@ -65,7 +65,7 @@ fn an_undecodable_word_after_a_call_ends_the_call_as_no_return() {
         RegionTerminator::NoReturn
     );
     assert_eq!(
-        cfg.incompleteness()
+        cfg.incomplete()
             .of(strider_cfg::Reason::UndecodableTarget)
             .collect::<Vec<_>>(),
         &[at(0x1004)]
@@ -97,7 +97,7 @@ fn a_direct_branch_to_an_undecodable_word_is_reported_not_fatal() {
     )
     .expect("a branch to a word that does not decode must not fail the function");
     assert_eq!(
-        cfg.incompleteness()
+        cfg.incomplete()
             .of(strider_cfg::Reason::UndecodableTarget)
             .collect::<Vec<_>>(),
         &[at(0x1008)]
@@ -129,7 +129,7 @@ fn a_zero_pcode_op_run_between_a_call_and_bad_bytes_still_ends_the_call() {
         RegionTerminator::NoReturn
     );
     assert_eq!(
-        cfg.incompleteness()
+        cfg.incomplete()
             .of(strider_cfg::Reason::UndecodableTarget)
             .collect::<Vec<_>>(),
         &[at(0x1006)]
@@ -153,7 +153,7 @@ fn a_branch_into_the_zero_pcode_op_run_past_a_call_keeps_a_successor() {
     )
     .expect("build");
     assert_eq!(
-        cfg.incompleteness()
+        cfg.incomplete()
             .of(strider_cfg::Reason::UndecodableTarget)
             .collect::<Vec<_>>(),
         &[at(0x1008)]
@@ -184,7 +184,7 @@ fn a_zero_pcode_op_run_between_a_call_and_a_data_range_still_ends_the_call() {
         RegionTerminator::NoReturn
     );
     assert_eq!(
-        cfg.incompleteness()
+        cfg.incomplete()
             .of(strider_cfg::Reason::UndecodableTarget)
             .collect::<Vec<_>>(),
         &[at(0x1008)]
@@ -250,7 +250,7 @@ fn a_literal_pool_after_a_call_is_never_decoded() {
         .expect("the call decodes");
     assert_eq!(call_region.terminator, RegionTerminator::NoReturn);
     assert_eq!(
-        cfg.incompleteness()
+        cfg.incomplete()
             .of(strider_cfg::Reason::UndecodableTarget)
             .collect::<Vec<_>>(),
         &[at(0x1010)]
@@ -266,7 +266,7 @@ fn a_direct_branch_into_a_data_range_is_reported_not_decoded() {
     let cfg = build(&SleighArch::arm(), le_words(&words), 0x1000, &opts).expect("build");
     assert!(!decoded_addrs(&cfg).contains(&0x1008));
     assert_eq!(
-        cfg.incompleteness()
+        cfg.incomplete()
             .of(strider_cfg::Reason::UndecodableTarget)
             .collect::<Vec<_>>(),
         &[at(0x1008)]
@@ -317,7 +317,7 @@ fn one_data_address_two_edges_reach_is_reported_once() {
     opts.data_ranges = DataRanges::new(std::iter::once(0x1014..0x1018));
     let cfg = build(&SleighArch::arm(), le_words(&words), 0x1000, &opts).expect("build");
     assert_eq!(
-        cfg.incompleteness()
+        cfg.incomplete()
             .of(strider_cfg::Reason::UndecodableTarget)
             .collect::<Vec<_>>(),
         &[at(0x1014)]
@@ -343,7 +343,7 @@ fn an_entry_instruction_inside_a_data_range_is_decoded() {
     .expect("the entry instruction decodes whatever the data ranges say");
     assert_eq!(decoded_addrs(&cfg), vec![0x1000]);
     assert!(
-        cfg.incompleteness()
+        cfg.incomplete()
             .of(strider_cfg::Reason::UndecodableTarget)
             .collect::<Vec<_>>()
             .is_empty()
@@ -372,7 +372,7 @@ fn a_data_range_past_the_entry_instruction_still_governs_its_fall_through() {
     .expect("build");
     assert_eq!(decoded_addrs(&cfg), vec![0x1000]);
     assert_eq!(
-        cfg.incompleteness()
+        cfg.incomplete()
             .of(strider_cfg::Reason::UndecodableTarget)
             .collect::<Vec<_>>(),
         &[at(0x1004)]

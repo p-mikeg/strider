@@ -80,8 +80,7 @@ impl<'s> LoopState<'s> {
         // fires.
         self.derived_incomplete
             .extend(seated_arm_losses(cfg, &self.working));
-        let clashing: Vec<PcodeInsnAddr> =
-            cfg.incompleteness().of(Reason::IsaModeConflict).collect();
+        let clashing: Vec<PcodeInsnAddr> = cfg.incomplete().of(Reason::IsaModeConflict).collect();
         let dropped = abandon_undecodable(
             cfg.undecodable_seeded_targets(),
             &clashing,
@@ -89,7 +88,7 @@ impl<'s> LoopState<'s> {
             &mut self.abandoned,
             &mut self.working,
         );
-        self.incomplete.absorb(cfg.incompleteness());
+        self.incomplete.absorb(cfg.incomplete());
         let stale = !dropped.is_empty();
         self.derived_incomplete.extend(dropped);
         stale
