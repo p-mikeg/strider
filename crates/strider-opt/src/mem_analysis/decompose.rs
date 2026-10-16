@@ -21,11 +21,12 @@ use super::{MemExpr, MemKind};
 /// leave every address value's decomposition unchanged.
 ///
 /// The memo is per `function` and shared by walks under different
-/// `noalias_allocators` sets ([`super::analyzer::MemOptions::structural`] holds an empty one
-/// beside the configured analyzer).  A heap class read back under an empty set
-/// is dropped by [`super::alias::classify_addr`].  A `NotMemory` committed under a smaller set
-/// is not: it answers a later walk under a larger one, so the configured walk
-/// must reach an address first.
+/// `noalias_allocators` sets
+/// ([`super::analyzer::MemOptions::structural`] holds an empty one beside the
+/// configured analyzer).  A heap class read back under an empty set is
+/// dropped by [`super::alias::classify_addr`].  A `NotMemory` committed under
+/// a smaller set is not: it answers a later walk under a larger one, so the
+/// configured walk must reach an address first.
 ///
 /// The memo is also the verdict `strider-pattern`'s region filters read, so it
 /// holds the configured set's answers.
