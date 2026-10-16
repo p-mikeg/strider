@@ -12,11 +12,14 @@ re-run the whole thing until the control-flow graph stops changing.
   both).
 - `Strider::analyze(entry, cc, opts, pipeline)` -> `AnalyzeResult`: the loop
   below. `opts` is an `AnalyzeOptions` (`cfg`, `per_address_ccs`, `opt`,
-  `compact`); `compact` applies once after the loop. `pipeline` defaults to
-  `strider_opt::default_pipeline`, and `strider_opt::IndirectBranchClassify` is
-  appended as a post-pass unless the supplied pipeline already runs it.
-- `Strider::build_cfg(entry, cfg_opts)`: a structural decode only, no lift, no
-  optimisation, no resolution.
+  `compact`, `on_incomplete`); `compact` applies once after the loop. `pipeline`
+  defaults to `strider_opt::default_pipeline`, and
+  `strider_opt::IndirectBranchClassify` is appended as a post-pass unless the
+  supplied pipeline already runs it. Under `on_incomplete:
+  OnIncomplete::Error`, the default, a result that is not complete comes back
+  as `AnalyzeError::Incomplete`.
+- `Strider::build_cfg(entry, cfg_opts, on_incomplete)`: a structural decode
+  only, no lift, no optimisation, no resolution.
 - Accessors that let a caller run its own pipeline against the same state:
   `arch`, `sleigh`, `sleigh_regs`, `user_op_names`, `rom`.
 - Re-exports, so a caller needs one dependency: `strider_opt` as `opt`, and

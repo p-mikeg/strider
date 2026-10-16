@@ -422,7 +422,8 @@ fn analyze_result_type(py: Python<'_>) -> PyResult<PyObject> {
                 "__doc__",
                 "What Lifter.analyze returns: (cfg, function, unresolved). \
                  `unresolved` holds the machine addresses cfg.incomplete names \
-                 \"unresolved_branch\", and a non-empty list is not an error. \
+                 \"unresolved_branch\"; a non-empty list reaches the caller only \
+                 under OnIncomplete.IGNORE. \
                  Empty means fully resolved, NOT that the answer is complete: \
                  cfg.incomplete lists every reason and cfg.is_complete() tests it.",
             )?;

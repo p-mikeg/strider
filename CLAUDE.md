@@ -313,18 +313,19 @@ when both IR slots hold the same value.
   `FunctionBuilder::new` dedups tracked varnodes into their largest containers;
   `Function::new` sorts them, which is what fixes `InitialVnId` numbering.
 - Indirect-branch resolution is a re-lift fixed-point loop in `Strider::analyze`
-  that converges on the induced edge set; unresolvable branches are a result
-  (`Reason::UnresolvedBranch`), not an error. Every narrowing is reported
-  there, and a site that NARROWS twice has an unstable answer: it is abandoned
-  and reported, never an `Err`. Exhausting `MAX_RESOLUTION_ITERATIONS` while
-  every site still grows is the discovery depth limit, and those sites come back
-  as unresolved too. A `Return` whose folded target is not provably the entry
-  return address is reported there as well (`strider_opt::ReturnTargets`),
-  unless the CFG CONSUMED a caller's `LinkRegister` seat there
-  (`Cfg::link_register_seated`), in which case it is `UnverifiedSeed` instead.
-  A seat alone does not move it: a site whose terminator came from the p-code
-  `RETURN` op is in no `seated` list, and dropping it on the strength of a seed
-  would leave it under no reason.
+  that converges on the induced edge set; unresolvable branches are reported
+  (`Reason::UnresolvedBranch`), and `analyze` refuses an incomplete result
+  unless `AnalyzeOptions::on_incomplete` is `Ignore`. Every narrowing is
+  reported there, and a site that NARROWS twice has an unstable answer: it is
+  abandoned and reported, never an `Err`. Exhausting `MAX_RESOLUTION_ITERATIONS`
+  while every site still grows is the discovery depth limit, and those sites
+  come back as unresolved too. A `Return` whose folded target is not provably
+  the entry return address is reported there as well
+  (`strider_opt::ReturnTargets`), unless the CFG CONSUMED a caller's
+  `LinkRegister` seat there (`Cfg::link_register_seated`), in which case it is
+  `UnverifiedSeed` instead. A seat alone does not move it: a site whose
+  terminator came from the p-code `RETURN` op is in no `seated` list, and
+  dropping it on the strength of a seed would leave it under no reason.
 - Analysis stays inside the function being lifted: nothing reads a callee's
   code. A callee's stack pop and clobbers come from its calling convention, so
   a callee-cleanup `ret $imm16` or an i386 PC thunk needs a `per_address_ccs`
@@ -360,9 +361,12 @@ Domain-namespaced submodules (`strider.ir`, `.lift`, `.cfg`, `.sleigh`,
 `__all__`) plus the single top-level `strider.StriderError`.
 `strider.lift.lifter(arch, mem, rom=None)` builds the lift handle;
 `analyze(entry, cc, opts)` returns an `AnalyzeResult` with
-`.cfg` / `.function` / `.unresolved` (also unpackable as a 3-tuple). Pattern
-queries (`find_all` / `find_unique`) and rendering (`Function.to_dot(pretty=)`)
-live on the returned objects. See the `.pyi` stubs for the typed surface.
+`.cfg` / `.function` / `.unresolved` (also unpackable as a 3-tuple), or raises
+`IncompleteAnalysis` (a `StriderError`, `.sites`) when `cfg.incomplete` would
+name anything, unless `LifterOptions(on_incomplete=OnIncomplete.IGNORE)`.
+Pattern queries (`find_all` / `find_unique`) and rendering
+(`Function.to_dot(pretty=)`) live on the returned objects. See the `.pyi` stubs
+for the typed surface.
 
 `add_elf(path, apply_relocations=True)` defaults the same way `load_elf` does,
 so a second image does not silently serve unrelocated bytes, and re-merging an
