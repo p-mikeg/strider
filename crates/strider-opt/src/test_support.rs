@@ -99,8 +99,9 @@ pub(crate) fn find_unique_if(graph: &Graph) -> NodeId {
     first
 }
 
-/// Memory-graph shapes the scaling tests analyse at two sizes, each built over
-/// 64-bit constant addresses so no SP phi needs collapsing first.
+/// Memory-graph shapes the memory tests share. The scaling tests analyse most
+/// at two sizes, each built over 64-bit constant addresses so no SP phi needs
+/// collapsing first.
 pub(crate) mod memory_shapes {
     use strider_ir::node::ValueType;
     use strider_ir::{FunctionBuilder, IRBuilderExt, IntBinaryOp, Value};
@@ -419,5 +420,37 @@ pub(crate) mod memory_shapes {
             }
             Ok(())
         })
+    }
+
+    /// A value spilled to the stack TOP, exactly where outgoing slot 0 sits, and
+    /// reloaded after a call. The store is indistinguishable from an argument
+    /// push, so the reload is pinned unless `callee_preserves_stack_args`
+    /// empties the argument window.
+    ///
+    /// ```text
+    /// sp' = sp - 64        ; this function's frame
+    /// store 0x42 -> sp'+0  ; scratch spill, or f's arg0
+    /// call f
+    /// load  sp'+0
+    /// ```
+    /// Returns the builder, its terminator not yet built, and the reload.
+    pub(crate) fn stack_top_spill() -> crate::Result<(FunctionBuilder, Value)> {
+        let sp = strider_ir_test_utils::stack_vn_x86();
+        let mut b = sp_frame(sp)
+            .stack_args(strider_ir_test_utils::stack_args_at(0, 4))
+            .build_fn_single_region()?;
+        let entry_sp = b.read_variable(&sp)?;
+        let frame = b.build_int_const((-64i64) as u64, ValueType::I32)?;
+        let call_sp =
+            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::I32)?;
+        b.write_variable(&sp, call_sp)?;
+        let zero = b.build_int_const(0u64, ValueType::I32)?;
+        let slot0 =
+            b.build_int_binary_operation(call_sp, zero, IntBinaryOp::Add, ValueType::I32)?;
+        let spilled = b.build_int_const(0x42u64, ValueType::I32)?;
+        b.build_store(slot0, spilled, rsleigh::VnSpace::RAM)?;
+        call32(&mut b)?;
+        let reload = b.build_load(slot0, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        Ok((b, reload))
     }
 }

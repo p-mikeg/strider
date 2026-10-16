@@ -22,28 +22,6 @@ pub(crate) use stamp::stamp_all;
 #[cfg(test)]
 pub(crate) use walker::WALK_STEPS;
 
-// What the test modules reach through `use crate::mem_analysis::*`.
-#[cfg(test)]
-use alias::{SizedAddr, alias_verdict, classify_addr, offsets_comparable, ranges_disjoint};
-#[cfg(test)]
-use arg_window::{ArgWindowGeometry, scan_arg_window};
-#[cfg(test)]
-use decompose::{SPINE_STEPS, is_alignment_mask};
-#[cfg(test)]
-use frame::in_own_frame;
-#[cfg(test)]
-use index::StoreIndex;
-#[cfg(test)]
-use ring::addr_bit_width;
-#[cfg(test)]
-use rustc_hash::FxHashSet;
-#[cfg(test)]
-use strider_ir::node::{NodeId, NodeKind};
-#[cfg(test)]
-use strider_ir::{Function, IRViewer};
-#[cfg(test)]
-use walker::MemWalker;
-
 /// Which memory region a decomposed base roots in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MemKind {
@@ -107,23 +85,6 @@ impl AddrClass {
             Constant { addr } => Some(addr),
             HeapOpaque | Anchor { .. } => None,
         }
-    }
-}
-
-/// The allocator set for the tests that configure none.
-#[cfg(test)]
-pub(crate) fn no_allocators() -> FxHashSet<u64> {
-    FxHashSet::default()
-}
-
-/// The 4-byte x86 SP varnode the tests in this module tree share. `heap_tests`
-/// keeps its own 8-byte one, which is a different fixture, not a duplicate.
-#[cfg(test)]
-pub(crate) fn test_sp() -> rsleigh::Vn {
-    rsleigh::Vn {
-        addr_off: 0x20,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
     }
 }
 
