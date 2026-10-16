@@ -146,22 +146,19 @@ fn with_test_lifter_arch_cc(
     f(&mut driver, region_id);
 }
 
-fn assert_lifts_one(opcode: Opcode, output: Option<Vn>, inputs: Vec<Vn>) {
-    with_test_lifter(|d, rid| {
-        let insn = Insn {
-            opcode,
-            output,
-            inputs: inputs.into(),
-        };
-        d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-            .unwrap_or_else(|e| panic!("process_insn failed for {opcode:?}: {e}"));
-    });
-}
-
 /// 1-byte register at the given REGISTER-space offset.
 fn byte_reg(off: u64) -> Vn {
     Vn {
         size: 1,
+        addr_off: off,
+        addr_space: VnSpace::REGISTER,
+    }
+}
+
+/// 8-byte register at the given REGISTER-space offset.
+fn qword_reg(off: u64) -> Vn {
+    Vn {
+        size: 8,
         addr_off: off,
         addr_space: VnSpace::REGISTER,
     }
@@ -195,6 +192,7 @@ fn operand_tree(f: &strider_ir::Function, value: strider_ir::Value) -> String {
 fn plain_opcodes_lower_to_their_ir_shape() {
     let (r0, r4, r8) = (reg(0), reg(4), reg(8));
     let (b16, b17, b18) = (byte_reg(16), byte_reg(17), byte_reg(18));
+    let q24 = qword_reg(24);
     let cases: &[(Opcode, Vn, &[Vn], &str)] = &[
         (
             Opcode::IntAdd,
@@ -264,9 +262,185 @@ fn plain_opcodes_lower_to_their_ir_shape() {
             &[const_vn(0xAA, 2), const_vn(0x80BB, 2)],
             "IntBinaryOp(Or):i32(IntBinaryOp(ShiftLeft):i32(0xaa:i32, 0x10:i32), 0x80bb:i32)",
         ),
+        (
+            Opcode::IntAnd,
+            r8,
+            &[r0, r4],
+            "IntBinaryOp(And):i32(r0, r4)",
+        ),
+        (
+            Opcode::IntXor,
+            r8,
+            &[r0, r4],
+            "IntBinaryOp(Xor):i32(r0, r4)",
+        ),
+        (Opcode::IntOr, r8, &[r0, r4], "IntBinaryOp(Or):i32(r0, r4)"),
+        (
+            Opcode::IntDiv,
+            r8,
+            &[r0, r4],
+            "IntBinaryOp(Div):i32(r0, r4)",
+        ),
+        (
+            Opcode::IntSdiv,
+            r8,
+            &[r0, r4],
+            "IntBinaryOp(Sdiv):i32(r0, r4)",
+        ),
+        (
+            Opcode::IntRight,
+            r8,
+            &[r0, r4],
+            "IntBinaryOp(ShiftRight):i32(r0, r4)",
+        ),
+        (
+            Opcode::IntSright,
+            r8,
+            &[r0, r4],
+            "IntBinaryOp(SShiftRight):i32(r0, r4)",
+        ),
+        (
+            Opcode::IntLeft,
+            r8,
+            &[r0, r4],
+            "IntBinaryOp(ShiftLeft):i32(r0, r4)",
+        ),
+        (
+            Opcode::IntRem,
+            r8,
+            &[r0, r4],
+            "IntBinaryOp(Rem):i32(r0, r4)",
+        ),
+        (
+            Opcode::IntSrem,
+            r8,
+            &[r0, r4],
+            "IntBinaryOp(Srem):i32(r0, r4)",
+        ),
+        (
+            Opcode::IntCarry,
+            b18,
+            &[r0, r4],
+            "Extend(ZeroExtend):i8(IntCmpOp(Carry):i1(r0, r4))",
+        ),
+        (
+            Opcode::IntEqual,
+            b18,
+            &[r0, r4],
+            "Extend(ZeroExtend):i8(IntCmpOp(Equal):i1(r0, r4))",
+        ),
+        (
+            Opcode::IntLess,
+            b18,
+            &[r0, r4],
+            "Extend(ZeroExtend):i8(IntCmpOp(Less):i1(r0, r4))",
+        ),
+        (
+            Opcode::IntSless,
+            b18,
+            &[r0, r4],
+            "Extend(ZeroExtend):i8(IntCmpOp(Sless):i1(r0, r4))",
+        ),
+        (
+            Opcode::IntScarry,
+            b18,
+            &[r0, r4],
+            "Extend(ZeroExtend):i8(IntCmpOp(Scarry):i1(r0, r4))",
+        ),
+        (
+            Opcode::IntSborrow,
+            b18,
+            &[r0, r4],
+            "Extend(ZeroExtend):i8(IntCmpOp(Sborrow):i1(r0, r4))",
+        ),
+        (Opcode::Int2Comp, r8, &[r0], "IntUnaryOp(Neg):i32(r0)"),
+        (
+            Opcode::FloatAdd,
+            r8,
+            &[r0, r4],
+            "FloatBitsToInt:i32(FloatBinaryOp(Add):f32(IntBitsToFloat:f32(r0), IntBitsToFloat:f32(r4)))",
+        ),
+        (
+            Opcode::FloatMul,
+            r8,
+            &[r0, r4],
+            "FloatBitsToInt:i32(FloatBinaryOp(Mul):f32(IntBitsToFloat:f32(r0), IntBitsToFloat:f32(r4)))",
+        ),
+        (
+            Opcode::FloatDiv,
+            r8,
+            &[r0, r4],
+            "FloatBitsToInt:i32(FloatBinaryOp(Div):f32(IntBitsToFloat:f32(r0), IntBitsToFloat:f32(r4)))",
+        ),
+        (
+            Opcode::FloatNeg,
+            r8,
+            &[r0],
+            "FloatBitsToInt:i32(FloatUnaryOp(Neg):f32(IntBitsToFloat:f32(r0)))",
+        ),
+        (
+            Opcode::FloatAbs,
+            r8,
+            &[r0],
+            "FloatBitsToInt:i32(FloatUnaryOp(Abs):f32(IntBitsToFloat:f32(r0)))",
+        ),
+        (
+            Opcode::FloatSqrt,
+            r8,
+            &[r0],
+            "FloatBitsToInt:i32(FloatUnaryOp(Sqrt):f32(IntBitsToFloat:f32(r0)))",
+        ),
+        (
+            Opcode::FloatCeil,
+            r8,
+            &[r0],
+            "FloatBitsToInt:i32(FloatUnaryOp(Ceil):f32(IntBitsToFloat:f32(r0)))",
+        ),
+        (
+            Opcode::FloatFloor,
+            r8,
+            &[r0],
+            "FloatBitsToInt:i32(FloatUnaryOp(Floor):f32(IntBitsToFloat:f32(r0)))",
+        ),
+        (
+            Opcode::FloatRound,
+            r8,
+            &[r0],
+            "FloatBitsToInt:i32(FloatUnaryOp(Round):f32(IntBitsToFloat:f32(r0)))",
+        ),
+        (
+            Opcode::FloatEqual,
+            b18,
+            &[r0, r4],
+            "Extend(ZeroExtend):i8(FloatCmpOp(Equal):i1(IntBitsToFloat:f32(r0), IntBitsToFloat:f32(r4)))",
+        ),
+        (
+            Opcode::FloatLess,
+            b18,
+            &[r0, r4],
+            "Extend(ZeroExtend):i8(FloatCmpOp(Less):i1(IntBitsToFloat:f32(r0), IntBitsToFloat:f32(r4)))",
+        ),
+        (
+            Opcode::FloatInt2Float,
+            q24,
+            &[r0],
+            "FloatBitsToInt:i64(IntToFloat:f64(r0))",
+        ),
+        (
+            Opcode::FloatFloat2Float,
+            q24,
+            &[r0],
+            "FloatBitsToInt:i64(FloatToFloat:f64(IntBitsToFloat:f32(r0)))",
+        ),
+        (
+            Opcode::FloatTrunc,
+            r8,
+            &[q24],
+            "FloatToInt:i32(IntBitsToFloat:f64(r24))",
+        ),
     ];
     for &(opcode, output, inputs, expected) in cases {
-        with_test_lifter_tracking(vec![r0, r4, r8, b16, b17, b18], |d, rid| {
+        with_test_lifter_tracking(vec![r0, r4, r8, b16, b17, b18, q24], |d, rid| {
             let insn = Insn {
                 opcode,
                 output: Some(output),
@@ -436,25 +610,6 @@ fn popcount_keeps_its_input_width() {
             "the operand must keep its own 4-byte width",
         );
     });
-}
-
-#[test]
-fn lift_float_add_of_consts() {
-    with_test_lifter(|d, rid| {
-        let insn = Insn {
-            opcode: Opcode::FloatAdd,
-            output: Some(reg(0)),
-            // 4-byte varnodes read as F32; const space carries any bits.
-            inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
-        };
-        d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
-            .unwrap();
-    });
-}
-
-#[test]
-fn lift_float_neg() {
-    assert_lifts_one(Opcode::FloatNeg, Some(reg(0)), vec![const_vn(0, 4)]);
 }
 
 // `VnSpace::by_id` expects inputs[0] to hold a raw pointer to a Sleigh
