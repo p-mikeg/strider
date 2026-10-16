@@ -23,7 +23,7 @@ static NO_PER_ADDRESS_CCS: FxHashMap<u64, strider_target::BuiltCallingConvention
 
 /// [`Strider::analyze`]'s options. `Default` decodes an unbounded function
 /// with no seeds and no CC overrides, optimises under
-/// [`OptOptions::default`], and compacts.
+/// [`OptOptions::default`], compacts, and refuses an incomplete result.
 pub struct AnalyzeOptions<'a> {
     pub cfg: strider_cfg::CfgOptions<'a>,
     /// Keyed by direct-call target address, read by the lift only. Built
@@ -55,9 +55,9 @@ impl Default for AnalyzeOptions<'_> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum OnIncomplete {
     /// Refuse it: [`AnalyzeError::Incomplete`] names the sites.
+    #[default]
     Error,
     /// Return it: its [`Incompleteness`] names the sites.
-    #[default]
     Ignore,
 }
 
@@ -201,13 +201,15 @@ where
     /// Every narrowing is reported, and a site that narrows twice has an
     /// unstable answer: it is abandoned.
     ///
-    /// What the loop cannot settle is a result, not an error: it comes back in
-    /// [`AnalyzeResult::incomplete`], an unresolved site with its placeholder
-    /// still in the function. A site the CFG consumed as a `Return` or
-    /// `TailCall` leaves no placeholder, so it is [`Reason::UnverifiedSeed`] (a
-    /// `TailCall` whichever source derived it, a `Return` only where the
-    /// CALLER seeded it), and also [`Reason::UnresolvedBranch`] if it grew
-    /// before narrowing to `LinkRegister`.
+    /// What the loop cannot settle is reported: in
+    /// [`AnalyzeError::Incomplete`] under the default [`OnIncomplete::Error`],
+    /// or in [`AnalyzeResult::incomplete`] under [`OnIncomplete::Ignore`], an
+    /// unresolved site with its placeholder still in the function. A site the
+    /// CFG consumed as a `Return` or `TailCall` leaves no placeholder, so it is
+    /// [`Reason::UnverifiedSeed`] (a `TailCall` whichever source derived it, a
+    /// `Return` only where the CALLER seeded it), and also
+    /// [`Reason::UnresolvedBranch`] if it grew before narrowing to
+    /// `LinkRegister`.
     ///
     /// `opts.cfg.known_targets` is re-unioned into the working set every
     /// round and never mutated; a seed at an abandoned site is dropped from the

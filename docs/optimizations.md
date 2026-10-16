@@ -145,10 +145,10 @@ that pipeline already lists it (the Rust API can; `strider.opt` does not expose
 it). After optimizing, Strider classifies each unresolved indirect branch
 against the clean IR, feeds any newly discovered targets back in, and re-lifts,
 repeating until the set of edges stops changing. Whatever still cannot be
-resolved comes back as the `unresolved` list from `analyze`, never as an
-exception. It is one of the six reasons
-[python-api.md](python-api.md#12-the-cfg-stridercfg) describes, which
-`cfg.incomplete` lists together.
+resolved makes `analyze` raise `IncompleteAnalysis` by default, or comes back as
+the `unresolved` list under `on_incomplete=OnIncomplete.IGNORE`. It is one of
+the six reasons [python-api.md](python-api.md#12-the-cfg-stridercfg) describes,
+which `cfg.incomplete` lists together.
 
 An indirect CALL is not resolved and not reported: its target stays the `Call`
 node's input value, for a query to read.

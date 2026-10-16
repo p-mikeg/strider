@@ -115,8 +115,8 @@ argument accepts.
 result = prog.analyze("dispatch_value")     # by symbol name (ElfLifter) or address
 cfg, function, unresolved = result           # an AnalyzeResult, a named 3-tuple
 result.cfg, result.function, result.unresolved   # or read the fields
-# unresolved: machine addresses of indirect branches that stayed unresolved
-# (a list, not an error).
+# unresolved: machine addresses of indirect branches that stayed unresolved;
+# by default any incompleteness raises IncompleteAnalysis instead
 ```
 
 A plain `Lifter` needs an address and a calling convention:
@@ -159,7 +159,7 @@ opts = strider.lift.LifterOptions(
                                        # the direct-call TARGET, not the call site
     pipeline=None,                      # replace the optimizer pipeline for this call
     on_incomplete=None,                # OnIncomplete.ERROR raises IncompleteAnalysis,
-                                       # IGNORE returns the result; None: the default
+                                       # IGNORE returns the result; None: ERROR
 )
 prog.analyze("dispatch_value", opts=opts)
 ```
@@ -1013,9 +1013,14 @@ Match readers raise
 `StriderError` for an unbound capture (use `has()` or the `_opt` readers to
 avoid that), and for a `Match` used after the function was reoptimized.
 
-`analyze` never raises for an indirect branch. An unresolvable site, a site
-whose answer oscillates or shrank between rounds, and a target chain deeper than
-the iteration cap all come back in `unresolved` instead.
+By default `analyze` and `build_cfg` raise `strider.lift.IncompleteAnalysis`, a
+`StriderError`, for a result `cfg.incomplete` would name anything in: an
+unresolvable site, a site whose answer oscillates or shrank between rounds, a
+target chain deeper than the iteration cap, and every other reason. Its
+`.sites` is that list. `LifterOptions(on_incomplete=OnIncomplete.IGNORE)` (or
+`build_cfg(..., on_incomplete=OnIncomplete.IGNORE)`) returns the result
+instead. A site you seed with `known_targets` is then `"unverified_seed"`,
+which raises too, so a seeded re-run that must succeed passes `IGNORE`.
 
 The message is the error and its causes; `.backtrace` holds the message and the
 Rust backtrace, so a sweep can log it without re-running:

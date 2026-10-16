@@ -36,9 +36,10 @@ class AnalyzeResult(NamedTuple):
     compares equal to the plain tuple.
 
     `unresolved` holds the machine addresses `cfg.incomplete` names
-    `"unresolved_branch"`, and a non-empty list is not an error. Empty means
-    fully resolved, NOT that the answer is complete: `cfg.incomplete` lists
-    every reason, and `cfg.is_complete()` tests it.
+    `"unresolved_branch"`; a non-empty list reaches the caller only under
+    `OnIncomplete.IGNORE`. Empty means fully resolved, NOT that the answer is
+    complete: `cfg.incomplete` lists every reason, and `cfg.is_complete()`
+    tests it.
     """
 
     cfg: Cfg
@@ -129,7 +130,7 @@ class LifterOptions:
     replaces the default optimizer pipeline for the calls these options drive.
     `on_incomplete` decides what a result `cfg.incomplete` names anything in
     becomes (`OnIncomplete.ERROR` raises `IncompleteAnalysis`, `IGNORE`
-    returns it); `None` takes the default, `IGNORE`.
+    returns it); `None` takes the default, `ERROR`.
     """
 
     # Read-only: these are getters with no setter, so a plain attribute

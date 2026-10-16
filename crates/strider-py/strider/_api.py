@@ -298,12 +298,16 @@ class ElfLifter(Lifter):
     It carries the ELF's memory as both code reader and read-only image, plus
     the symbol table (`symbol`, `symbol_at`, `symbols`, `entry_point`,
     `functions`) and an `analyze(target)` that accepts a symbol name. Analyse
-    many functions by calling `analyze` repeatedly:
+    many functions by calling `analyze` repeatedly; `IGNORE` returns an
+    incomplete result rather than raising `IncompleteAnalysis`:
 
     ```python
     lift = strider.lift.load_elf("path/to/file.elf")
+    keep = strider.lift.LifterOptions(
+        on_incomplete=strider.lift.OnIncomplete.IGNORE
+    )
     for sym in lift.functions():
-        cfg, function, unresolved = lift.analyze(sym.address)
+        cfg, function, unresolved = lift.analyze(sym.address, opts=keep)
     ```
     """
 
