@@ -58,11 +58,7 @@ fn analyze(case: &str, fn_name: &str, opt: Opt) -> Function {
         ..Default::default()
     };
     let cfg = lifter
-        .build_cfg(
-            strider_cfg::MachineInsnAddr::from(addr),
-            &cfg_opts,
-            &Default::default(),
-        )
+        .build_cfg(strider_cfg::MachineInsnAddr::from(addr), &cfg_opts)
         .unwrap_or_else(|e| panic!("build_cfg {fn_name}: {e:?}"));
     let mut function = lifter
         .build_ir(&cfg, cc)

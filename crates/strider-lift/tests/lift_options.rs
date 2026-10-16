@@ -49,9 +49,7 @@ fn per_address_cc_integer_arg_registers_are_seeded() {
         per_address_ccs: &per_address_ccs,
         ..LiftOptions::default()
     };
-    let cfg = lifter
-        .build_cfg(0x1000u64.into(), &opts.cfg, opts.per_address_ccs)
-        .expect("cfg");
+    let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg).expect("cfg");
     let f = lifter
         .build_ir_with(&cfg, cc, &opts)
         .expect("an override's integer argument register must be tracked")
@@ -93,9 +91,7 @@ fn an_override_this_function_never_calls_seeds_nothing() {
         per_address_ccs: &per_address_ccs,
         ..LiftOptions::default()
     };
-    let cfg = lifter
-        .build_cfg(0x1000u64.into(), &opts.cfg, opts.per_address_ccs)
-        .expect("cfg");
+    let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg).expect("cfg");
     let f = lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function;
     assert!(
         !f.all_vns()

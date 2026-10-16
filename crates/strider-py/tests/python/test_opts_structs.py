@@ -181,3 +181,30 @@ def test_none_clears_every_claim():
 def test_none_differs_from_the_default_group():
     assert strider.lift.AssumptionOptions().stack_global_disjoint is True
     assert strider.lift.AssumptionOptions.none().stack_global_disjoint is False
+
+
+# call 0x1080 ; jmp rax, with a `ret` at the callee
+CALL_THEN_JMP_RAX = b"\xe8\x7b\x00\x00\x00\xff\xe0" + b"\xcc" * 0x79 + b"\xc3"
+
+
+def test_a_no_return_target_ends_the_call_in_build_cfg_and_analyze():
+    """`build_cfg` ignored the no-return mark `analyze` honoured, and decoded
+    the `jmp rax` after the call."""
+    mem = strider.reader.BufferReader(0x1000, CALL_THEN_JMP_RAX)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    cfg_opts = strider.cfg.CfgOptions(function_max_size=0x40, no_return_targets=[0x1080])
+    built = lift.build_cfg(0x1000, cfg_opts)
+    assert built.region_at(0x1005) is None
+    assert built.is_complete()
+    result = lift.analyze(
+        0x1000,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        strider.lift.LifterOptions(cfg=cfg_opts),
+    )
+    assert result.cfg.region_at(0x1005) is None
+    assert result.unresolved == []
+
+
+def test_no_return_targets_read_back_as_a_frozenset():
+    opts = strider.cfg.CfgOptions(no_return_targets=[0x2000, 0x2000, 0x1000])
+    assert opts.no_return_targets == frozenset({0x1000, 0x2000})

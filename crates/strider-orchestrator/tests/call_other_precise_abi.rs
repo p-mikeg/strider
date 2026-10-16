@@ -19,7 +19,6 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
         .build_cfg(
             strider_cfg::MachineInsnAddr::from(entry),
             &strider_cfg::CfgOptions::default(),
-            &Default::default(),
         )
         .expect("cfg");
     let outcome = strider_h.build_ir(&cfg, cc).expect("build_ir");
@@ -88,7 +87,6 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
         .build_cfg(
             strider_cfg::MachineInsnAddr::from(entry),
             &strider_cfg::CfgOptions::default(),
-            &Default::default(),
         )
         .expect("cfg");
     let outcome = strider_h.build_ir(&cfg, cc).expect("build_ir");

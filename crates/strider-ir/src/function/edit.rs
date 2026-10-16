@@ -712,7 +712,6 @@ pub(crate) mod test_fixtures {
             link_register_vn: None,
             preserves_memory: false,
             preserves_all_registers: false,
-            no_return: false,
             ..Default::default()
         };
         let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little)

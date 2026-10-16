@@ -41,7 +41,6 @@ fn make_unresolved_indirect_branch_cfg() -> (
         .build_cfg(
             MachineInsnAddr::from(base),
             &strider_cfg::CfgOptions::default(),
-            &Default::default(),
         )
         .expect("cfg build must succeed under the cfg-time placeholder lift deferral");
     (driver, cfg, cc)
@@ -125,7 +124,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
             ..Default::default()
         };
         let cfg_v1 = strider
-            .build_cfg(MachineInsnAddr::from(base), &cfg_opts, &Default::default())
+            .build_cfg(MachineInsnAddr::from(base), &cfg_opts)
             .expect("initial cfg build");
         cfg_v1
             .regions()
@@ -152,7 +151,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
         ..Default::default()
     };
     let cfg = strider
-        .build_cfg(MachineInsnAddr::from(base), &cfg_opts2, &Default::default())
+        .build_cfg(MachineInsnAddr::from(base), &cfg_opts2)
         .expect("cfg with Single(oob) known_target");
 
     let has_tail_call = cfg
@@ -228,7 +227,7 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
             ..Default::default()
         };
         let cfg_v1 = strider
-            .build_cfg(MachineInsnAddr::from(base), &cfg_opts, &Default::default())
+            .build_cfg(MachineInsnAddr::from(base), &cfg_opts)
             .expect("initial cfg build");
         cfg_v1
             .regions()
@@ -256,7 +255,7 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
         ..Default::default()
     };
     let cfg = strider
-        .build_cfg(MachineInsnAddr::from(base), &cfg_opts2, &Default::default())
+        .build_cfg(MachineInsnAddr::from(base), &cfg_opts2)
         .expect("cfg with Single(intra) known_target");
 
     // An in-function single target seats as a one-arm `Switch`, not a bare

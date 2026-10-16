@@ -529,7 +529,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             rsleigh::Opcode::BranchIndirect => self.process_branch_indirect(insn, addr),
             rsleigh::Opcode::CallOther => self.process_call_other(insn),
             rsleigh::Opcode::Call => self.process_call(insn, addr, lift_res),
-            // The target is a register, so no per-address CC applies and
+            // The target is a register, so no no-return mark applies and
             // `process_call`'s lookup would read a register offset as an
             // address. The return address still decides whether any
             // in-function code follows.
@@ -549,8 +549,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// terminator.  Two cases end the region as `NoReturn`, which the IR
     /// lifter lowers to `Call + Unreachable`:
     ///
-    /// 1. The target's per-address CC is flagged `no_return` (`exit`/`abort`),
-    ///    which ends the region wherever the return address lands.
+    /// 1. The target is in [`crate::CfgOptions::no_return_targets`]
+    ///    (`exit`/`abort`), which ends the region wherever the return address
+    ///    lands.
     /// 2. The return address is outside `[start, start + fn_max_size)`, so no
     ///    in-function code follows: an unmarked no-return callee (FreeBSD
     ///    `exit1`), or the function ends at the call.
@@ -562,7 +563,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     ) -> Result<InsnOutcome> {
         // A direct call's target is its first pcode input, a code-space address
         // constant. Guarded on the space, or a register offset reads as an
-        // address and picks up another target's CC.
+        // address and can match a no-return target.
         let default_code_space = self.builder.sleigh.default_code_space();
         let target_no_return = insn
             .inputs
@@ -570,9 +571,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             .filter(|target_vn| target_vn.addr_space == default_code_space)
             .is_some_and(|target_vn| {
                 self.builder
-                    .per_address_ccs
-                    .get(&target_vn.addr_off)
-                    .is_some_and(|cc| cc.no_return)
+                    .options
+                    .no_return_targets
+                    .contains(&target_vn.addr_off)
             });
         let return_oob = self.is_branch_tail_call_nocheck(next_pcode_addr(addr, lift_res)?);
         if target_no_return || return_oob {
@@ -1299,20 +1300,17 @@ mod tests {
     }
 
     /// A `Call` whose target varnode is not in code space: its offset is a
-    /// register number, and reading it as an address picks up an unrelated
-    /// target's CC.
+    /// register number, and reading it as an address can match a no-return
+    /// target.
     #[test]
     fn a_call_target_outside_code_space_is_not_read_as_an_address() {
+        let no_return: rustc_hash::FxHashSet<u64> = [0x10].into_iter().collect();
+        let opts = CfgOptions {
+            no_return_targets: &no_return,
+            ..CfgOptions::default()
+        };
         let mut sleigh = make_sleigh();
-        let mut ccs = rustc_hash::FxHashMap::default();
-        ccs.insert(
-            0x10,
-            strider_target::BuiltCallingConvention {
-                no_return: true,
-                ..Default::default()
-            },
-        );
-        let mut b = make_builder(0x1000, &mut sleigh).with_per_address_ccs(&ccs);
+        let mut b = make_builder_opts(0x1000, &mut sleigh, &opts);
         let mut rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         let insn = rsleigh::Insn {
             opcode: rsleigh::Opcode::Call,

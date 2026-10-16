@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Breaking, Python
+
+- `CallingConvention.no_return()` is gone. List a callee that never returns
+  in `CfgOptions(no_return_targets=...)`, which `Lifter.build_cfg` honours
+  too; it ignored a no-return `per_address_ccs` entry.
+
+### Breaking, Rust
+
+- `BuiltCallingConvention::no_return` is gone, replaced by
+  `CfgOptions::no_return_targets`, so `Strider::build_cfg` ends a call to one
+  as `analyze` does. `Lifter::build_cfg` loses its `per_address_ccs` argument
+  and `Builder::with_per_address_ccs` is gone: the CFG reads no calling
+  convention.
+- `to_text` drops `no_return=` from the `default_cc` line and from a call's
+  override, so a call to a no-return target prints as a plain `call`.
+
 ### Changed, Python
 
 - A `.capture(c)` over a composite on a rewrite RHS raises: on a RHS it stands

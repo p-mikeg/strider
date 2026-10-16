@@ -21,7 +21,6 @@ fn make_cc(
         link_register_vn: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        no_return: false,
         ..Default::default()
     }
 }

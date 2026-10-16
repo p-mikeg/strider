@@ -860,8 +860,9 @@ lft.call_other_abi("rdtsc")            # how one is classified, or None
 space (`VnSpace.RAM`, `.REGISTER`, `.CONST`, `.UNIQUE`). `CallingConvention`
 presets (`x86_64_systemv()`, ...) describe argument passing, and
 `CallingConvention.custom(sleigh, ...)` states an ABI they do not cover from
-register names. `.no_return()`, `.preserves_all()` and `.preserves_regs()`
-derive a variant of a convention for a per-address override. `CallOtherAbi`
+register names. `.preserves_all()` and `.preserves_regs()` derive a variant
+of a convention for a per-address override; a callee that never returns goes
+in `CfgOptions(no_return_targets=...)` instead. `CallOtherAbi`
 describes one Sleigh user-op, for `CfgOptions(call_other_abis=...)`. `Sleigh`
 exposes the raw register table when you need it without a lifter, and resolves
 the names both `custom` constructors take.
@@ -972,6 +973,7 @@ strider.cfg.CfgOptions(
     known_targets={0x401000: [0x401020, 0x401040]},   # your own answers, seated
     call_other_abis={"syscall": sleigh.CallOtherAbi.mem_clobber()},   # per user-op
     data_ranges=[(0x401100, 0x401108)],               # [start, end) never decoded
+    no_return_targets=[0x401200],                     # direct-call targets that never return
 )
 # with_function_max_size(n) / with_data_ranges(r) return a changed copy.
 ```

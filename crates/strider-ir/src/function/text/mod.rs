@@ -636,7 +636,6 @@ fn cc_fields(
         link_register_vn,
         preserves_memory,
         preserves_all_registers,
-        no_return: _,
         entry_address_vn,
     } = cc;
     vec![

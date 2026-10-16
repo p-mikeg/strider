@@ -88,11 +88,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
         .expect("build cc");
     let addr = fixture.symbol(c.fn_name);
     let cfg = ana
-        .build_cfg(
-            strider_cfg::MachineInsnAddr::from(addr),
-            &CFG_OPTS(),
-            &Default::default(),
-        )
+        .build_cfg(strider_cfg::MachineInsnAddr::from(addr), &CFG_OPTS())
         .expect("Cfg build");
     let mut function = ana.build_ir(&cfg, cc).expect("build_ir").function;
     let rom_for_opt =

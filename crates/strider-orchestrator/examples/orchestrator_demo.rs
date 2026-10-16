@@ -50,11 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or_else(|| format!("'{symbol}' symbol not found in binary {binary_path}"))?
         .address();
 
-    let cfg = lifter.build_cfg(
-        strider_cfg::MachineInsnAddr::from(addr),
-        &cfg_options,
-        &rustc_hash::FxHashMap::default(),
-    )?;
+    let cfg = lifter.build_cfg(strider_cfg::MachineInsnAddr::from(addr), &cfg_options)?;
 
     let dot = dot::GraphDot::new(cfg.dot_dumper(lifter.sleigh()), dot::DotStyle::dark_cfg());
     dot.dump_as_html(format!("{prefix}cfg.html"))?;

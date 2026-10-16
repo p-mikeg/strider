@@ -20,11 +20,6 @@ use anyhow::{anyhow, bail};
 
 use crate::Result;
 
-/// What a builder with no overrides lends: an owned default cannot hand out a
-/// borrow of a temporary.
-static NO_PER_ADDRESS_CCS: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention> =
-    rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
-
 #[cfg(test)]
 thread_local! {
     /// Regions [`Builder::find_region_containing_addr`] tested for containment
@@ -119,10 +114,6 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// LIFO for seeded arms, drained only once no direct edge is left; see
     /// [`Self::next_work_item`].
     pub(super) seeded_queue: Vec<WorkItem>,
-    /// CC overrides for CALL TARGETS, keyed by target machine address.  Only
-    /// `no_return` is read here.
-    pub(super) per_address_ccs:
-        &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     /// Indexed by `user_op_id`.  `None` until [`Self::build`] fetches the
     /// table off the engine, which [`Self::with_user_op_names`] pre-empts.
     pub(super) user_op_names: Option<std::borrow::Cow<'a, [String]>>,
@@ -235,7 +226,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             committed_next: rustc_hash::FxHashSet::default(),
             link_register_seated: Vec::new(),
             tail_call_seated: Vec::new(),
-            per_address_ccs: &NO_PER_ADDRESS_CCS,
             user_op_names: None,
             // A single-shot build on a fresh engine has no cross-function
             // context to leak; a reused engine supplies the vars via
@@ -308,17 +298,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     #[must_use]
     pub fn with_user_op_names(mut self, user_op_names: &'a [String]) -> Self {
         self.user_op_names = Some(std::borrow::Cow::Borrowed(user_op_names));
-        self
-    }
-
-    /// Borrowed: a caller passes a binary-wide table and builds one CFG per
-    /// function, so cloning it is the whole table per function.
-    #[must_use]
-    pub fn with_per_address_ccs(
-        mut self,
-        per_address_ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
-    ) -> Self {
-        self.per_address_ccs = per_address_ccs;
         self
     }
 

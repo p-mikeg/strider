@@ -1,7 +1,7 @@
 //! `Builder::build` driven by hand-crafted byte sequences, covering the
 //! boundary shapes a real binary rarely reaches.
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
@@ -32,38 +32,10 @@ fn build_from_bytes_opts(bytes: Vec<u8>, start: u64, opts: &CfgOptions) -> Cfg {
         .expect("Builder::build on synthetic bytes")
 }
 
-fn build_from_bytes_ccs(
-    bytes: Vec<u8>,
-    start: u64,
-    per_address_ccs: &FxHashMap<u64, strider_target::BuiltCallingConvention>,
-) -> Cfg {
-    let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, start);
-    Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
-        .with_per_address_ccs(per_address_ccs)
-        .build()
-        .expect("Builder::build on synthetic bytes")
-}
-
-/// Flags each `target` address `no_return`.
-fn no_return_ccs(targets: &[u64]) -> FxHashMap<u64, strider_target::BuiltCallingConvention> {
-    targets
-        .iter()
-        .map(|&a| {
-            (
-                a,
-                strider_target::BuiltCallingConvention {
-                    no_return: true,
-                    ..Default::default()
-                },
-            )
-        })
-        .collect()
-}
-
-/// A `no_return` call terminates its region even MID-function, where the
-/// return address is in-bounds and the structural function-end fallback cannot
-/// fire.  Without the flag the same call falls through to the trailing `ret`.
+/// A call to a `no_return_targets` address ends its region even MID-function,
+/// where the return address is in-bounds and the structural function-end
+/// fallback cannot fire.  Without the mark the same call falls through to the
+/// trailing `ret`.
 #[test]
 fn direct_call_to_no_return_target_terminates_region_mid_function() {
     // 0x1000: call 0x2005, a far target chosen so it cannot coincide with
@@ -80,12 +52,17 @@ fn direct_call_to_no_return_target_terminates_region_mid_function() {
         "unmarked mid-function call falls through to the ret"
     );
 
-    // Flagged `no_return`: the region now ends AT the call.
-    let cfg = build_from_bytes_ccs(bytes, 0x1000, &no_return_ccs(&[0x2005]));
+    // Marked no-return: the region now ends AT the call.
+    let no_return: FxHashSet<u64> = [0x2005].into_iter().collect();
+    let opts = CfgOptions {
+        no_return_targets: &no_return,
+        ..CfgOptions::default()
+    };
+    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
     assert_eq!(
         cfg.region_graph()[cfg.entry()].terminator,
         RegionTerminator::NoReturn,
-        "a call to a no_return-flagged target terminates the region"
+        "a call to a no-return target terminates the region"
     );
 }
 

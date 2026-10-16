@@ -63,6 +63,18 @@ impl<'py> FromPyObject<'py> for CallOtherAbiArg {
     }
 }
 
+/// Any iterable of addresses.
+pub struct AddrSetArg(pub rustc_hash::FxHashSet<u64>);
+
+impl<'py> FromPyObject<'py> for AddrSetArg {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        ob.iter()?
+            .map(|item| item?.extract::<u64>())
+            .collect::<PyResult<_>>()
+            .map(Self)
+    }
+}
+
 /// A mapping argument. Any mapping, not only a `dict`: the `known_targets` /
 /// `call_other_abis` getters hand back a read-only proxy, and that has to
 /// round-trip through the constructor.
@@ -181,6 +193,8 @@ pub struct PyCfgOptions {
     /// `Lifter.call_other_abi(name)` reads back what strider already makes of
     /// one.
     pub call_other_abis: Arc<HashMap<String, PyCallOtherAbi>>,
+    /// `no_return_targets` as `strider_cfg` borrows it, shared with every clone.
+    pub(crate) no_return_targets: Arc<rustc_hash::FxHashSet<u64>>,
     /// Address ranges `(start, end)` the image marks as data, decoded only for
     /// the entry instruction.
     pub data_ranges: strider_cfg::DataRanges,
@@ -207,13 +221,15 @@ impl PyCfgOptions {
     #[pyo3(signature = (*, function_max_size = None, allow_code_before_start_addr = false,
                         known_targets = MapArg(HashMap::new()),
                         call_other_abis = MapArg(HashMap::new()),
-                        data_ranges = Vec::new()))]
+                        data_ranges = Vec::new(),
+                        no_return_targets = AddrSetArg(rustc_hash::FxHashSet::default())))]
     fn new(
         function_max_size: Option<u64>,
         allow_code_before_start_addr: bool,
         known_targets: MapArg<HashMap<u64, KnownTarget>>,
         call_other_abis: MapArg<HashMap<String, CallOtherAbiArg>>,
         data_ranges: Vec<(u64, u64)>,
+        no_return_targets: AddrSetArg,
     ) -> PyResult<Self> {
         reject_zero_max_size(function_max_size)?;
         let seated = crate::strider_cls::seat_known_targets(&known_targets.0);
@@ -229,6 +245,7 @@ impl PyCfgOptions {
                     .collect(),
             ),
             data_ranges: data_ranges_from(data_ranges)?,
+            no_return_targets: Arc::new(no_return_targets.0),
             known_targets_view: Arc::default(),
             call_other_abis_view: Arc::default(),
             seated: Arc::new(seated),
@@ -247,7 +264,7 @@ impl PyCfgOptions {
             .collect()
     }
 
-    /// This object with `data_ranges` replaced, sharing both tables.
+    /// This object with `data_ranges` replaced, sharing its tables.
     ///
     /// # Errors
     /// As the constructor does, for a range that ends at or below its start.
@@ -285,7 +302,16 @@ impl PyCfgOptions {
         self.call_other_abis_view.get(py, &*self.call_other_abis)
     }
 
-    /// This object with `function_max_size` set, sharing both tables rather
+    /// Direct-call targets that never return, as a `frozenset`.
+    #[getter]
+    fn no_return_targets<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Bound<'py, pyo3::types::PyFrozenSet>> {
+        pyo3::types::PyFrozenSet::new_bound(py, self.no_return_targets.iter())
+    }
+
+    /// This object with `function_max_size` set, sharing its tables rather
     /// than rebuilding them through Python.
     fn with_function_max_size(&self, function_max_size: u64) -> PyResult<Self> {
         reject_zero_max_size(Some(function_max_size))?;
@@ -296,18 +322,19 @@ impl PyCfgOptions {
     }
 
     fn __repr__(&self) -> String {
-        // The two maps render as counts: a seeded table is what decides the
+        // The tables render as counts: a seeded table is what decides the
         // successor set, so a `repr` that omits it describes a different
         // analysis than the one that ran.
         format!(
             "CfgOptions(function_max_size={:?}, allow_code_before_start_addr={}, \
              known_targets={{{} entries}}, call_other_abis={{{} entries}}, \
-             data_ranges=[{} ranges])",
+             data_ranges=[{} ranges], no_return_targets={{{} entries}})",
             self.function_max_size,
             py_bool(self.allow_code_before_start_addr),
             self.known_targets.len(),
             self.call_other_abis.len(),
             self.data_ranges.ranges().len(),
+            self.no_return_targets.len(),
         )
     }
 }

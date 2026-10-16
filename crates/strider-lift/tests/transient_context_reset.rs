@@ -25,7 +25,7 @@ fn a_noflow_decode_var_does_not_leak_into_the_next_function() {
     };
     let terminators = |lifter: &mut Lifter<BufMemReader<Vec<u8>>>, entry: u64| -> Vec<String> {
         let cfg = lifter
-            .build_cfg(entry.into(), &Default::default(), &Default::default())
+            .build_cfg(entry.into(), &Default::default())
             .expect("build_cfg");
         cfg.regions()
             .map(|r| format!("{:?}", r.terminator))
@@ -108,9 +108,7 @@ fn a_noflow_decode_var_does_not_leak_into_a_second_build_of_the_same_function() 
             ..Default::default()
         };
         let mut terminators = || -> Vec<String> {
-            let cfg = lifter
-                .build_cfg(entry.into(), &opts, &Default::default())
-                .expect("build_cfg");
+            let cfg = lifter.build_cfg(entry.into(), &opts).expect("build_cfg");
             let mut t: Vec<String> = cfg
                 .regions()
                 .map(|r| format!("{:?} {:?}", r.start_addr, r.terminator))
@@ -150,7 +148,7 @@ fn sorted_terminators(
         fn_max_size: Some(size),
         ..Default::default()
     };
-    let cfg = lifter.build_cfg(entry.into(), &opts, &Default::default())?;
+    let cfg = lifter.build_cfg(entry.into(), &opts)?;
     let mut t: Vec<String> = cfg
         .regions()
         .map(|r| format!("{:?} {:?}", r.start_addr, r.terminator))

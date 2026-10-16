@@ -20,9 +20,7 @@ fn lift(
     let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
     let cc = cc.build(lifter.sleigh_regs()).expect("cc");
     let opts = LiftOptions::default();
-    let cfg = lifter
-        .build_cfg(0x1000u64.into(), &opts.cfg, opts.per_address_ccs)
-        .expect("cfg");
+    let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg).expect("cfg");
     lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function
 }
 
