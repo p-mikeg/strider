@@ -2,12 +2,21 @@
 //! come from the textbook iterative fixpoint `Dom(n) = {n} ∪ ⋂ Dom(pred)`, and
 //! DF / IDF from their definitions.
 
-use std::collections::{HashMap, HashSet};
+mod common;
 
+use std::cell::Cell;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::hash::{Hash, Hasher};
+
+use common::cases::{self, Case};
+use common::oracle;
 use graph_algorithms::dominance::{
-    DomIntervals, DomRelation, DomTree, dominance_frontiers, dominator_tree_preorder, dominators,
-    immediate_dominators, phi_placement,
+    DomIntervals, DomRelation, DomTree, Dominators, Frontiers, dominance_frontiers,
+    dominator_tree_preorder, dominator_tree_walk, dominators, immediate_dominators, phi_placement,
 };
+use petgraph::graph::NodeIndex;
+use proptest::prelude::*;
+use rustc_hash::FxHashMap;
 
 /// Predecessors and idoms are both explicit; the idom map is oracle-computed.
 struct Mock {
@@ -455,4 +464,315 @@ fn dominators_of_an_error_ladder_scale_near_linearly() {
         "8x the rungs cost {:.1}x ({small:?} -> {large:?})",
         large.as_secs_f64() / small.as_secs_f64(),
     );
+}
+
+const CASES: u32 = if cfg!(debug_assertions) { 256 } else { 8192 };
+
+/// The vertex types the checks run over.
+trait Id: Copy + Eq + Hash + std::fmt::Debug {
+    fn at(i: u32) -> Self;
+    fn ix(self) -> usize;
+}
+
+impl Id for u32 {
+    fn at(i: u32) -> Self {
+        i
+    }
+    fn ix(self) -> usize {
+        self as usize
+    }
+}
+
+/// A vertex whose `Hash` counts calls: every map probe the dominance code
+/// makes hashes once, so the count is its work, independent of timing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Counted(u32);
+
+thread_local! {
+    static HASHES: Cell<u64> = const { Cell::new(0) };
+}
+
+impl Hash for Counted {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        HASHES.with(|c| c.set(c.get() + 1));
+        self.0.hash(h);
+    }
+}
+
+impl Id for Counted {
+    fn at(i: u32) -> Self {
+        Self(i)
+    }
+    fn ix(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Lift's view: every vertex in ascending order, the crate's own idoms, and
+/// explicit predecessors (duplicates and unreachable ones included).
+struct Lifted<'a, N> {
+    doms: &'a Dominators<N>,
+    preds: &'a [Vec<u32>],
+}
+
+impl<N: Id> DomRelation for Lifted<'_, N> {
+    type Node = N;
+    fn nodes(&self) -> impl Iterator<Item = N> + '_ {
+        (0..self.preds.len() as u32).map(N::at)
+    }
+    fn immediate_dominator(&self, v: N) -> Option<N> {
+        self.doms.immediate_dominator(v)
+    }
+}
+
+impl<N: Id> DomTree for Lifted<'_, N> {
+    fn predecessors(&self, v: N) -> impl Iterator<Item = N> + '_ {
+        self.preds[v.ix()].iter().map(|&p| N::at(p))
+    }
+}
+
+/// The frontiers lift computes.
+fn frontiers<N: Id>(doms: &Dominators<N>, preds: &[Vec<u32>]) -> Frontiers<N> {
+    dominance_frontiers(&Lifted { doms, preds }, N::at(0))
+}
+
+/// The preorder lift walks: siblings ascending by vertex.
+fn preorder_ascending<N: Id>(doms: &Dominators<N>, preds: &[Vec<u32>]) -> Vec<N> {
+    dominator_tree_preorder(&Lifted { doms, preds }, N::at(0))
+}
+
+/// The preorder strider-ir walks: siblings in depth-first discovery order.
+fn preorder_by_discovery<N: Id>(doms: &Dominators<N>) -> Vec<N> {
+    dominator_tree_preorder(doms, N::at(0))
+}
+
+/// `(enter, exit)` of each reachable vertex.
+fn spans<N: Id>(doms: &Dominators<N>) -> FxHashMap<N, (u32, u32)> {
+    dominator_tree_walk(doms, N::at(0)).span
+}
+
+/// Every dominance answer rooted at 0, against the definitions and petgraph.
+fn check_dominance(c: &Case) {
+    let succs = c.succs();
+    let preds = oracle::preds_of(&succs);
+    let dom = oracle::dom_matrix(&succs, 0);
+    let reach = dom[0].clone();
+    let idom = oracle::idoms(&dom, 0);
+
+    let mut asked = vec![0u32; succs.len()];
+    let doms = dominators(0u32, |v| {
+        asked[v as usize] += 1;
+        succs[v as usize].clone()
+    });
+    let (discovery, parent) = oracle::dfs_tree(&succs, 0);
+    assert_eq!(doms.vertices(), discovery.as_slice(), "vertices, {c:?}");
+    for (v, (&n, &r)) in asked.iter().zip(&reach).enumerate() {
+        assert_eq!(n, u32::from(r), "successors({v}) asked {n} times, {c:?}");
+    }
+    let pg = cases::petgraph_of(c, &vec![true; succs.len()]);
+    let simple = petgraph::algo::dominators::simple_fast(&pg, NodeIndex::new(0));
+    for (v, &want) in idom.iter().enumerate() {
+        assert_eq!(doms.immediate_dominator(v as u32), want, "idom({v}), {c:?}");
+        let theirs = simple
+            .immediate_dominator(NodeIndex::new(v))
+            .map(|d| d.index() as u32);
+        assert_eq!(theirs, want, "petgraph idom({v}), {c:?}");
+    }
+
+    let mut num = vec![u32::MAX; succs.len()];
+    for (i, &v) in discovery.iter().enumerate() {
+        num[v as usize] = i as u32;
+    }
+    let raw = immediate_dominators(&parent, |w| {
+        preds[discovery[w as usize] as usize]
+            .iter()
+            .filter(|&&p| reach[p as usize])
+            .map(|&p| num[p as usize])
+            .collect::<Vec<u32>>()
+    });
+    for (w, &v) in discovery.iter().enumerate().skip(1) {
+        assert_eq!(
+            Some(discovery[raw[w] as usize]),
+            idom[v as usize],
+            "raw idom({v}), {c:?}"
+        );
+    }
+    let intervals = DomIntervals::new(&raw);
+    for &a in &discovery {
+        for &b in &discovery {
+            let got = intervals.dominates(num[a as usize], num[b as usize]);
+            assert_eq!(
+                got, dom[a as usize][b as usize],
+                "intervals: {a} dom {b}, {c:?}"
+            );
+        }
+    }
+
+    let df = oracle::frontiers(&succs, &dom, 0);
+    let fr = frontiers(&doms, &preds);
+    for (v, want) in df.iter().enumerate() {
+        let got = fr.get(&(v as u32)).cloned().unwrap_or_default();
+        let set: BTreeSet<u32> = got.iter().copied().collect();
+        assert_eq!(set.len(), got.len(), "DF({v}) repeats in {got:?}, {c:?}");
+        assert_eq!(&set, want, "DF({v}), {c:?}");
+    }
+    let sites: HashMap<usize, Vec<u32>> = c.defs.iter().cloned().enumerate().collect();
+    let placed = phi_placement(&fr, &sites);
+    for (var, defs) in c.defs.iter().enumerate() {
+        let got: BTreeSet<u32> = placed
+            .iter()
+            .filter(|(_, vars)| vars.contains(&var))
+            .map(|(&v, _)| v)
+            .collect();
+        assert_eq!(
+            got,
+            oracle::iterated_frontier(&df, defs),
+            "phis of {defs:?}, {c:?}"
+        );
+    }
+
+    let mut at_discovery = vec![usize::MAX; succs.len()];
+    for (i, &v) in discovery.iter().enumerate() {
+        at_discovery[v as usize] = i;
+    }
+    let by_discovery = oracle::tree_preorder(&idom, 0, |v| at_discovery[v as usize]);
+    assert_eq!(
+        preorder_by_discovery(&doms),
+        by_discovery,
+        "discovery preorder, {c:?}"
+    );
+    let ascending = oracle::tree_preorder(&idom, 0, |v| v as usize);
+    assert_eq!(
+        preorder_ascending(&doms, &preds),
+        ascending,
+        "ascending preorder, {c:?}"
+    );
+    let span = spans(&doms);
+    for (a, row) in dom.iter().enumerate() {
+        assert_eq!(
+            span.contains_key(&(a as u32)),
+            reach[a],
+            "span of {a}, {c:?}"
+        );
+        let Some(&(ae, ax)) = span.get(&(a as u32)) else {
+            continue;
+        };
+        assert!(1 <= ae && ae < ax, "span of {a} is ({ae}, {ax}), {c:?}");
+        for (b, &d) in row.iter().enumerate() {
+            let Some(&(be, bx)) = span.get(&(b as u32)) else {
+                continue;
+            };
+            let encloses = ae <= be && bx <= ax;
+            assert_eq!(encloses, d, "span({a}) encloses span({b}), {c:?}");
+            let nested = encloses || (be <= ae && ax <= bx);
+            assert!(
+                nested || ax < be || bx < ae,
+                "spans of {a} and {b} overlap, {c:?}"
+            );
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(CASES))]
+
+    #[test]
+    fn dominance_matches_its_definitions(c in cases::arb_case(10)) {
+        check_dominance(&c);
+    }
+}
+
+#[test]
+fn dominance_matches_its_definitions_on_every_named_shape() {
+    for (name, c) in cases::shapes() {
+        if c.n > 0 {
+            println!("shape {name}");
+            check_dominance(&c);
+        }
+    }
+}
+
+/// `0 -> 2, 0 -> 1`: discovery visits 2 first, so the two sibling orders the
+/// two consumers walk differ.
+#[test]
+fn sibling_order_follows_discovery_or_vertex_as_asked() {
+    let succs = [vec![2, 1], vec![], vec![]];
+    let doms = dominators(0u32, |v| succs[v as usize].clone());
+    let preds = oracle::preds_of(&succs);
+    assert_eq!(preorder_by_discovery(&doms), [0, 2, 1]);
+    assert_eq!(preorder_ascending(&doms, &preds), [0, 1, 2]);
+}
+
+/// A chain, an error ladder (each rung also edges into one sink), a star,
+/// and a cycle back to vertex 1.
+fn scale_succs(shape: usize, n: u32, v: u32) -> Vec<u32> {
+    match shape {
+        0 => (v + 1 < n).then_some(v + 1).into_iter().collect(),
+        1 if v + 2 < n => vec![v + 1, n - 1],
+        1 if v + 2 == n => vec![n - 1],
+        2 if v == 0 => (1..n).collect(),
+        3 => vec![if v + 1 < n { v + 1 } else { 1 }],
+        _ => Vec::new(),
+    }
+}
+
+/// Successors asked once per vertex, and hash probes linear in the graph,
+/// across the dominators, frontiers, placement and tree walks.
+#[test]
+#[cfg_attr(debug_assertions, ignore = "release-only scale test")]
+fn dominance_work_is_linear_on_million_vertex_graphs() {
+    const N: u32 = 1_000_000;
+    // (idom of N - 1, frontier entries, phis for one definition at 1)
+    let expect: [(u32, usize, &[u32]); 4] = [
+        (N - 2, 0, &[]),
+        (0, N as usize - 2, &[N - 1]),
+        (0, 0, &[]),
+        (N - 2, N as usize - 1, &[1]),
+    ];
+    for (shape, &(idom, entries, phis)) in expect.iter().enumerate() {
+        let succs: Vec<Vec<u32>> = (0..N).map(|v| scale_succs(shape, N, v)).collect();
+        let edges: u64 = succs.iter().map(|s| s.len() as u64).sum();
+        let preds = oracle::preds_of(&succs);
+        HASHES.with(|c| c.set(0));
+        let mut asked = 0u64;
+        let doms = dominators(Counted(0), |v: Counted| {
+            asked += 1;
+            succs[v.ix()]
+                .iter()
+                .map(|&w| Counted(w))
+                .collect::<Vec<_>>()
+        });
+        let fr = frontiers(&doms, &preds);
+        let placed = phi_placement(&fr, &HashMap::from([(0u8, vec![Counted(1)])]));
+        let order = preorder_ascending(&doms, &preds);
+        let span = spans(&doms);
+        let work = HASHES.with(Cell::get);
+        assert_eq!(
+            asked,
+            u64::from(N),
+            "shape {shape}: successors asked once each"
+        );
+        assert_eq!(
+            doms.immediate_dominator(Counted(N - 1)),
+            Some(Counted(idom)),
+            "shape {shape}"
+        );
+        assert_eq!(
+            fr.values().map(Vec::len).sum::<usize>(),
+            entries,
+            "shape {shape}"
+        );
+        let mut got: Vec<u32> = placed.keys().map(|v| v.0).collect();
+        got.sort_unstable();
+        assert_eq!(got, phis, "shape {shape}");
+        assert_eq!(
+            (order.len(), span.len()),
+            (N as usize, N as usize),
+            "shape {shape}"
+        );
+        assert!(
+            work < 64 * (u64::from(N) + edges),
+            "shape {shape}: {work} hash probes for {N} vertices and {edges} edges"
+        );
+    }
 }
