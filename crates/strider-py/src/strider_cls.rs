@@ -340,31 +340,6 @@ pub(crate) fn cfg_options_from(
     })
 }
 
-/// The caller's seeds this build actually seated, which is what `analyze`
-/// reports: no classifier ran, so a seated seed is an answer nothing checked,
-/// while a seed at an address the function has no dispatch at seats nothing.
-///
-/// A site the build CONSUMED leaves no terminator to find, so the two seated
-/// lists carry it instead, the way `Strider::analyze` reads them. A site is
-/// recorded at its `BranchIndirect`, which a machine-start seed still seats.
-fn seeded_sites(opts: &strider_cfg::CfgOptions<'_>, cfg: &strider_cfg::Cfg) -> Vec<u64> {
-    let consumed = cfg
-        .link_register_seated()
-        .iter()
-        .chain(cfg.tail_call_seated())
-        .copied();
-    let sites: Vec<strider_cfg::PcodeInsnAddr> = cfg
-        .regions()
-        .filter_map(|region| match &region.terminator {
-            strider_cfg::RegionTerminator::Switch { addr, .. } => Some(*addr),
-            _ => None,
-        })
-        .chain(consumed)
-        .filter(|&site| opts.seated(site).is_some())
-        .collect();
-    machine_addrs(&sites)
-}
-
 /// `addr` is not a machine-instruction boundary on the linear path from
 /// `entry`, which a sweep only discovers by stepping over it.
 fn stepped_past(entry: u64, addr: u64) -> PyErr {
@@ -377,8 +352,13 @@ fn stepped_past(entry: u64, addr: u64) -> PyErr {
 
 /// Sorted and deduped: two p-code sites in one machine instruction are one
 /// address.
-pub(crate) fn machine_addrs(addrs: &[strider_cfg::PcodeInsnAddr]) -> Vec<u64> {
-    let mut out: Vec<u64> = addrs.iter().map(|addr| addr.machine_addr.addr).collect();
+pub(crate) fn machine_addrs(
+    addrs: impl IntoIterator<Item = strider_cfg::PcodeInsnAddr>,
+) -> Vec<u64> {
+    let mut out: Vec<u64> = addrs
+        .into_iter()
+        .map(|addr| addr.machine_addr.addr)
+        .collect();
     out.sort_unstable();
     out.dedup();
     out
@@ -441,15 +421,10 @@ fn analyze_result_type(py: Python<'_>) -> PyResult<PyObject> {
             nt.setattr(
                 "__doc__",
                 "What Lifter.analyze returns: (cfg, function, unresolved). \
-                 `unresolved` holds the machine addresses of indirect branches \
-                 that could not be resolved, and a non-empty list is not an \
-                 error. Empty means fully resolved, NOT that the answer is \
-                 complete: it is one of six incompleteness channels, the \
-                 others being cfg.unverified_seeded_sites(), \
-                 cfg.isa_mode_conflicts(), cfg.interior_branch_targets(), \
-                 cfg.unmapped_branch_targets() and \
-                 cfg.undecodable_branch_targets(). cfg.is_complete() tests all \
-                 six.",
+                 `unresolved` holds the machine addresses cfg.incomplete names \
+                 \"unresolved_branch\", and a non-empty list is not an error. \
+                 Empty means fully resolved, NOT that the answer is complete: \
+                 cfg.incomplete lists every reason and cfg.is_complete() tests it.",
             )?;
             PyResult::Ok(nt.unbind())
         })
@@ -805,8 +780,7 @@ impl PyLifter {
                 .build_cfg(entry, &cfg_opts)
                 .map_err(into_strider_err)
         })?;
-        let seeded = seeded_sites(&cfg_opts, &inner);
-        Ok(PyCfg::new(py, inner, slf, seeded))
+        Ok(PyCfg::new(py, inner, slf))
     }
 
     /// Lift, optimise and resolve the function at `entry`, returning an
@@ -818,8 +792,8 @@ impl PyLifter {
     /// accepts a symbol name and supplies a default `cc`), and on lift
     /// failure.
     ///
-    /// An empty `unresolved` is not a complete answer: see `AnalyzeResult`
-    /// for the six channels, and `Cfg.is_complete` to test them all.
+    /// An empty `unresolved` is not a complete answer: `Cfg.incomplete` lists
+    /// every reason, and `Cfg.is_complete` tests it.
     ///
     /// Runs the fixed-point loop with the GIL released, so other Python
     /// threads keep running. One consequence: a DAEMON thread sitting inside
@@ -910,38 +884,18 @@ impl PyLifter {
             };
             prefer_pending_control_flow(outcome.map_err(into_strider_err))?
         };
-        // Destructured, never `..`: a channel added to `AnalyzeResult` has to
-        // be handled here rather than dropping silently out of
-        // `Cfg.is_complete`.
-        let strider_orchestrator::AnalyzeResult {
-            cfg,
-            function,
-            unresolved_indirect_branches,
-            isa_mode_conflicts,
-            interior_branch_targets,
-            unmapped_branch_targets,
-            undecodable_branch_targets,
-            unverified_seeded_sites,
-        } = result;
-        let unresolved = machine_addrs(&unresolved_indirect_branches);
+        let unresolved = machine_addrs(
+            result
+                .incomplete()
+                .of(strider_cfg::Reason::UnresolvedBranch),
+        );
+        let strider_orchestrator::AnalyzeResult { cfg, function } = result;
 
         // Surface anything a Python callback stashed while the GIL was
         // released.
         check_pending_control_flow()?;
 
-        // From the result, not from `cfg`: five of the six accumulate over
-        // the resolver's rounds and `cfg` is only the final one, and
-        // `unverified_seeded` is read against the settled seed set, which
-        // `cfg` does not carry.
-        let reports = crate::cfg::CfgReports {
-            unresolved: unresolved.clone(),
-            unverified_seeded: machine_addrs(&unverified_seeded_sites),
-            isa_mode_conflicts: machine_addrs(&isa_mode_conflicts),
-            interior_branch_targets: machine_addrs(&interior_branch_targets),
-            unmapped_branch_targets: machine_addrs(&unmapped_branch_targets),
-            undecodable_branch_targets: machine_addrs(&undecodable_branch_targets),
-        };
-        let cfg_obj = Py::new(py, PyCfg::with_reports(py, cfg, slf.clone_ref(py), reports))?;
+        let cfg_obj = Py::new(py, PyCfg::new(py, cfg, slf.clone_ref(py)))?;
 
         let py_function = Py::new(
             py,

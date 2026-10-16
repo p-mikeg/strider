@@ -44,7 +44,11 @@ fn a_no_return_callee_ends_the_region_in_build_cfg_and_analyze() {
         .expect("analyze");
     assert_eq!(*entry_terminator(&result.cfg), RegionTerminator::NoReturn);
     assert!(
-        result.unresolved_indirect_branches.is_empty(),
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
+            .is_empty(),
         "the jmp rax after the call is never decoded"
     );
 }
@@ -86,7 +90,13 @@ fn a_per_address_cc_on_a_no_return_callee_still_ends_the_region() {
         .analyze(BASE, &cc, &lift_opts, None)
         .expect("analyze");
     assert_eq!(*entry_terminator(&result.cfg), RegionTerminator::NoReturn);
-    assert!(result.unresolved_indirect_branches.is_empty());
+    assert!(
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
+            .is_empty()
+    );
     let function = &result.function;
     let call = function
         .graph()

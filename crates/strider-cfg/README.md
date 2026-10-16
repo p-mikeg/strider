@@ -43,8 +43,8 @@ rather than decoding a second copy of them.
 Overlapping code is the exception, and the only one. Sequential decoding steps
 over a region start interior to an instruction it decodes, the fall-through
 check being by exact start address, and those bytes then have two owners with
-two different instruction streams. The stepped-over start is reported on
-`interior_branch_targets`.
+two different instruction streams. The stepped-over start is reported as
+`Reason::InteriorTarget`.
 
 Within a region decoding is strictly sequential. `Sleigh::lift_one` takes
 `&mut self` and carries context-register state (ARM/Thumb mode and IT-block
@@ -104,40 +104,36 @@ decode keeps the bytes, the edge is wired, and the clash is reported.
 
 ## Nothing is dropped silently
 
-A completed `Cfg` may be incomplete, and says so through seven getters. Read them
-all: they overlap in cause and not in content.
+A completed `Cfg` may be incomplete, and `incompleteness()` says where and
+why: one sorted set of `(PcodeInsnAddr, Reason)`. A build resolves nothing,
+so every dispatch it left without an edge is `UnresolvedBranch` and every
+seat `UnverifiedSeed`. The four target reasons:
 
-- `undecodable_seeded_targets`: a seeded target that would not decode, or that
-  leads to code that would not, with the dispatch site it was an arm of. A
-  seeded target is a misclassification, so its edge is dropped and reported.
-  The entry names the ARM; the bytes that would not decode are on
-  `undecodable_branch_targets`. "Leads to" stops at the next dispatch, so an
-  arm reaching those bytes only back through another table keeps its edge.
-  Bytes Sleigh rejects on a path from the entry through no arm still fail the
-  whole build.
-- `unmapped_branch_targets`: a DIRECT branch or a sequential fall-through to an
-  address the reader has no bytes for. It leaves through an empty `TailCall`
-  stub, so the regions that did decode survive. A MIPS branch whose delay slot
-  is unmapped reports the branch's own address. An unmapped ENTRY is still an
+- `UnmappedTarget`: a DIRECT branch or a sequential fall-through to an address
+  the reader has no bytes for. It leaves through an empty `TailCall` stub, so
+  the regions that did decode survive. A MIPS branch whose delay slot is
+  unmapped reports the branch's own address. An unmapped ENTRY is still an
   `Err` on the whole build.
-- `undecodable_branch_targets`: a direct branch, or a fall-through past a call,
-  to bytes that hold no instruction: Sleigh rejects them, or
-  `CfgOptions::data_ranges` (an ELF's `$d` mapping symbols) marks them as data.
-  A branch leaves through a `TailCall` stub; the call is ended as `NoReturn`,
-  dropping any instructions between it and the bytes. A literal pool never
-  decodes as code, and a traceback table or an `abort` word no longer fails the
-  build. The instruction at the start address decodes even inside a data range.
-- `isa_mode_conflicts`: two edges reached an address carrying different ISA
+- `UndecodableTarget`: a direct branch, or a fall-through past a call, to bytes
+  that hold no instruction: Sleigh rejects them, or `CfgOptions::data_ranges`
+  (an ELF's `$d` mapping symbols) marks them as data. A branch leaves through
+  a `TailCall` stub; the call is ended as `NoReturn`, dropping any
+  instructions between it and the bytes. The instruction at the start address
+  decodes even inside a data range.
+- `IsaModeConflict`: two edges reached an address carrying different ISA
   modes, and the losing path decodes in the winner's. A direct edge the entry
   reaches without an arm wins over an arm; otherwise the first decode wins by
   work-queue order, so neither decode can be trusted.
-- `interior_branch_targets`: the off-boundary targets above, whose edge is
-  inexact (a direct branch) or absent (a dropped `Switch` arm), plus a region
-  start a later decode stepped over.
-- `link_register_seated` and `tail_call_seated`: sites a seated answer consumed
-  at build time. No placeholder and no `Switch` anchor survives, so nothing
-  later can tell a genuine `bx lr` or tail call from a dispatch collapsed to its
-  first derived answer.
+- `InteriorTarget`: the off-boundary targets above, whose edge is inexact (a
+  direct branch) or absent (a dropped `Switch` arm), plus a region start a
+  later decode stepped over.
+
+Three lists stay beside it as resolver inputs. `undecodable_seeded_targets`:
+a seeded target that would not decode, or that leads to code that would not,
+with the dispatch site it was an arm of; the bytes themselves are
+`UndecodableTarget`. "Leads to" stops at the next dispatch. And
+`link_register_seated` / `tail_call_seated`: sites a seated answer consumed
+at build time, which leave no placeholder and no `Switch` anchor.
 
 Depends only on `strider-target`, `dot`, `rsleigh`, `anyhow`, `petgraph` and
 `rustc-hash`.

@@ -1114,7 +1114,9 @@ fn fallthrough_off_the_end_of_the_mapped_image_seats_a_stub() {
     let cfg = build_from_bytes(vec![0x48u8, 0x31, 0xc0], 0x1000);
 
     assert_eq!(
-        cfg.unmapped_branch_targets(),
+        cfg.incompleteness()
+            .of(strider_cfg::Reason::UnmappedTarget)
+            .collect::<Vec<_>>(),
         &[PcodeInsnAddr::at_machine_start(0x1003)],
         "the unmapped fall-through is reported, not silently dropped"
     );
@@ -1137,7 +1139,9 @@ fn one_unmapped_address_two_edges_reach_is_reported_once() {
     // which the image has no bytes for.
     let cfg = build_from_bytes(vec![0x74, 0x04, 0xeb, 0x04, 0xc3, 0xc3, 0x31, 0xc0], 0x1000);
     assert_eq!(
-        cfg.unmapped_branch_targets(),
+        cfg.incompleteness()
+            .of(strider_cfg::Reason::UnmappedTarget)
+            .collect::<Vec<_>>(),
         &[PcodeInsnAddr::at_machine_start(0x1008)],
     );
 }
@@ -1152,7 +1156,9 @@ fn a_fallthrough_straddling_the_end_of_the_mapped_image_seats_a_stub() {
     let cfg = build_from_bytes(vec![0x48u8, 0x31, 0xc0, 0x48], 0x1000);
 
     assert_eq!(
-        cfg.unmapped_branch_targets(),
+        cfg.incompleteness()
+            .of(strider_cfg::Reason::UnmappedTarget)
+            .collect::<Vec<_>>(),
         &[PcodeInsnAddr::at_machine_start(0x1003)],
         "the straddling fall-through is reported, not silently dropped"
     );

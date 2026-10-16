@@ -1,5 +1,6 @@
 pub use strider_opt as opt;
 
+pub use strider_cfg::{Incompleteness, Reason};
 pub use strider_lift::lift::{LiftOutcome, Lifter};
 
 mod resolve;
@@ -141,17 +142,13 @@ where
     /// Every narrowing is reported, and a site that narrows twice has an
     /// unstable answer: it is abandoned.
     ///
-    /// Unresolvable branches are a result, not an error: they come back in
-    /// [`AnalyzeResult::unresolved_indirect_branches`] with their placeholder
-    /// nodes still in the function. So does an abandoned site, one seated on
-    /// only the arms of a proved answer its fold could take, and one naming a
-    /// target that will not decode or that leads to code that will not. A site
-    /// the CFG consumed as a `Return` or `TailCall` leaves no placeholder: a
-    /// `TailCall` is named in [`AnalyzeResult::unverified_seeded_sites`]
-    /// whichever source derived it, a `Return` only where the CALLER seeded
-    /// it, and a site is in both if it grew before narrowing to
-    /// `LinkRegister`. Only [`AnalyzeResult::is_complete`], which reads all
-    /// six channels, answers "may this be incomplete?".
+    /// What the loop cannot settle is a result, not an error: it comes back in
+    /// [`AnalyzeResult::incomplete`], an unresolved site with its placeholder
+    /// still in the function. A site the CFG consumed as a `Return` or
+    /// `TailCall` leaves no placeholder, so it is [`Reason::UnverifiedSeed`] (a
+    /// `TailCall` whichever source derived it, a `Return` only where the
+    /// CALLER seeded it), and also [`Reason::UnresolvedBranch`] if it grew
+    /// before narrowing to `LinkRegister`.
     ///
     /// `opts.cfg.known_targets` is re-unioned into the working set every
     /// round and never mutated; a seed at an abandoned site is dropped from the
@@ -205,122 +202,29 @@ where
 }
 
 pub struct AnalyzeResult {
-    /// The FINAL iteration's CFG, i.e. the one `function` was lifted from.
+    /// The final round's CFG, the one `function` was lifted from, carrying
+    /// this analysis's [`Incompleteness`] rather than that build's own.
     pub cfg: strider_cfg::Cfg,
-    /// May still contain `IndirectBranch` placeholders for any site in
-    /// `unresolved_indirect_branches`.
+    /// May still hold an `IndirectBranch` placeholder at a
+    /// [`Reason::UnresolvedBranch`] site.
     pub function: strider_ir::Function,
-    /// Sorted and deduplicated: live placeholders, seated `Switch`es whose
-    /// selector stopped deriving, sites still growing when the cap ran out,
-    /// sites whose answer lost a proved successor, narrowed in any round, or
-    /// was abandoned, and returns whose target is not provably the caller's
-    /// return address. A return a caller seeded with `LinkRegister` is not one
-    /// of those: the caller asserted that answer, and
-    /// `unverified_seeded_sites` names the seat.
-    ///
-    /// Empty means fully resolved, but not that the answer is complete: a site
-    /// the CFG consumed as a `Return` or `TailCall` leaves no placeholder and is
-    /// reported through `unverified_seeded_sites`, and here as well when its
-    /// answer narrowed to get there.
-    pub unresolved_indirect_branches: Vec<PcodeInsnAddr>,
-    /// Addresses ANY round's cfg reached carrying two different ISA modes.
-    ///
-    /// One region owns the bytes, decoded in whichever mode won the work
-    /// queue, so the losing edge's path is not the instruction stream it
-    /// believes. These are not indirect-branch sites (a direct edge produces
-    /// them too), so they are reported here rather than in
-    /// `unresolved_indirect_branches`. Non-empty means part of some round's
-    /// decode was in a mode a path into it disagreed with; the classifier ran
-    /// on that decode whether or not the final cfg still carries the edge.
-    pub isa_mode_conflicts: Vec<PcodeInsnAddr>,
-    /// Branch targets interior to a region but off every boundary a region can
-    /// start at.
-    ///
-    /// No region can start there: decoding from inside an instruction yields a
-    /// different stream. A branch into a MIPS delay slot is one too, since the
-    /// slot decodes as part of its branch. What `cfg` does about it depends on
-    /// the branch. A direct one keeps its edge, seated on the region that OWNS
-    /// the bytes, whose instructions start earlier, so `cfg` claims a successor
-    /// the branch does not enter at. A `Switch` arm is dropped and no edge is
-    /// wired, so `cfg` claims FEWER successors than the table named, and a
-    /// table left with no arm degrades to an unresolved site. Overlapping code
-    /// puts an already-decoded region's start inside an instruction a later
-    /// region decodes, and reports that start here too: two regions then own
-    /// those bytes with two different instruction streams.
-    ///
-    /// Like `isa_mode_conflicts` a direct edge produces these, so they are
-    /// reported here rather than in `unresolved_indirect_branches`.
-    pub interior_branch_targets: Vec<PcodeInsnAddr>,
-    /// Direct-branch targets and fall-throughs ANY round's cfg had no bytes
-    /// for.
-    ///
-    /// Each is seated as an empty `TailCall` stub, so the branch keeps an edge
-    /// and the regions that did decode survive; nothing past the stub is known.
-    /// A firmware or shellcode buffer the branch leaves, a partially-mapped
-    /// image, an `ET_REL` object with an unrelocated `jmp`, a ROM built from a
-    /// symbol subset. Like `interior_branch_targets` a direct edge produces
-    /// these, so they are reported here rather than in
-    /// `unresolved_indirect_branches`.
-    pub unmapped_branch_targets: Vec<PcodeInsnAddr>,
-    /// Addresses ANY round's cfg reached that hold no instruction: bytes Sleigh
-    /// rejects, or bytes `CfgOptions::data_ranges` marks as data.
-    ///
-    /// A direct branch there leaves through an empty `TailCall` stub, as an
-    /// unmapped target does. A fall-through past a call ends that call as
-    /// no-return, which is what a callee nobody marked no-return leaves behind
-    /// (a literal pool, a traceback table, a deliberately invalid word), and
-    /// nothing proves the callee really does not return. Like
-    /// `unmapped_branch_targets` a direct edge produces these.
-    pub undecodable_branch_targets: Vec<PcodeInsnAddr>,
-    /// Sites whose answer nothing verified.
-    ///
-    /// Three shapes land here. A seated `Switch` holding exactly the caller's
-    /// `known_targets` and nothing derived: not unresolved (the caller
-    /// asserted the answer), but seating changes the CFG the classifier
-    /// reads, so a stale seed can stop the selector deriving and take the
-    /// site's real arms with it. A second: a site CONSUMED at CFG-build time,
-    /// where a `LinkRegister` answer becomes a `Return` and a single target
-    /// outside the function becomes a `TailCall`, leaving no placeholder and
-    /// no anchor, so a dispatch that had more arms leaves no other trace. The
-    /// `TailCall` half lands here whichever source derived it; the `Return`
-    /// half only where the CALLER seeded the address. For a
-    /// `Return` the CALLER seeded, this is also where a FAILED re-check
-    /// lands: the seat decided a CFG edge, so the site is not reported as an
-    /// unresolved dispatch, and "nothing verified it" covers both the seat
-    /// nothing could check and the seat the round's own IR contradicted.
-    ///
-    /// A seat the CLASSIFIER derived rides no channel once
-    /// `return_slots_survive_untracked_writes` carries its proof; clearing
-    /// that claim and re-running is how a caller audits one.
-    ///
-    /// A third: an arm a mode-less re-derivation discovered at a site whose
-    /// other arms all carry the flowing mode. A dispatch that commits a mode
-    /// has it evaluated per arm, so those modes came from a caller seed at a
-    /// dispatch committing none. It is seated and it decodes, but nothing
-    /// evaluated that arm's own mode.
-    pub unverified_seeded_sites: Vec<PcodeInsnAddr>,
 }
 
 impl AnalyzeResult {
-    /// Whether all six report channels are empty, i.e. the CFG carries no
-    /// caveat at all.
-    ///
-    /// This is the question "may this result be incomplete?", which needs all
-    /// six and which none of them answers alone. `false` is NOT always a
-    /// loss: `unverified_seeded_sites` holds answers that are complete but
-    /// that nothing verified, among them a `Switch` holding exactly a
-    /// caller's own `known_targets`. `false` over that channel alone reads
-    /// "complete but unverified", EXCEPT for a caller-seeded `Return` whose
-    /// re-check failed, which lands there too. Read
-    /// whichever channel is non-empty to tell the cases apart.
+    /// What this analysis cannot vouch for: every round's target reasons,
+    /// since an inexact or stubbed edge fed the classifier whatever later
+    /// rounds rebuild, and the final round's site reasons.
+    #[must_use]
+    pub fn incomplete(&self) -> &Incompleteness {
+        self.cfg.incompleteness()
+    }
+
+    /// Whether [`Self::incomplete`] is empty. `false` over
+    /// [`Reason::UnverifiedSeed`] alone reads "complete but unverified",
+    /// except for a caller-seeded `Return` whose re-check failed.
     #[must_use]
     pub fn is_complete(&self) -> bool {
-        self.unresolved_indirect_branches.is_empty()
-            && self.unverified_seeded_sites.is_empty()
-            && self.isa_mode_conflicts.is_empty()
-            && self.interior_branch_targets.is_empty()
-            && self.unmapped_branch_targets.is_empty()
-            && self.undecodable_branch_targets.is_empty()
+        self.incomplete().is_complete()
     }
 }
 
@@ -951,7 +855,7 @@ fn abandon_undecodable(
                 .insert(site, resolved_from(kept, false));
         }
         // The anchor, not the entry's key: an address no anchor in this run
-        // uses would ride into `unresolved_indirect_branches` naming nothing.
+        // uses would be reported unresolved naming nothing.
         out.push(anchor);
     }
     out

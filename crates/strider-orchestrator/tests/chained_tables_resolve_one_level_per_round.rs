@@ -116,7 +116,10 @@ fn a_chain_of_tables_seats_one_level_per_round() {
     assert!(
         result.is_complete(),
         "unresolved {:?}",
-        result.unresolved_indirect_branches
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
     );
     let seated = result
         .cfg
@@ -233,6 +236,9 @@ fn a_table_the_whole_function_bounds_tighter_seats_the_tighter_answer() {
     assert!(
         result.is_complete(),
         "unresolved {:?}",
-        result.unresolved_indirect_branches
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
     );
 }

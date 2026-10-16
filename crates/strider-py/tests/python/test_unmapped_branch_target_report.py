@@ -1,7 +1,7 @@
 """A direct branch out of the mapped image is a result, not an error.
 
 The regions that did decode survive and the target is reported, so Python has
-to read the channel to learn the CFG stops at the edge of the buffer.
+to read `Cfg.incomplete` to learn the CFG stops at the edge of the buffer.
 """
 
 from __future__ import annotations
@@ -23,15 +23,15 @@ def test_analyze_reports_the_unmapped_target() -> None:
     result = _lifter().analyze(
         BASE, strider.sleigh.CallingConvention.x86_64_systemv()
     )
-    assert result.cfg.unmapped_branch_targets() == [TARGET]
+    assert [a for a, r in result.cfg.incomplete if r == "unmapped_target"] == [TARGET]
     assert not result.cfg.is_complete()
 
 
 def test_build_cfg_reports_the_unmapped_target() -> None:
-    """The only non-empty channel here, so `is_complete` answers on it alone."""
+    """The only reason here, so `is_complete` answers on it alone."""
     cfg = _lifter().build_cfg(BASE)
-    assert cfg.unmapped_branch_targets() == [TARGET]
-    assert cfg.unverified_seeded_sites() == []
-    assert cfg.isa_mode_conflicts() == []
-    assert cfg.interior_branch_targets() == []
+    assert [a for a, r in cfg.incomplete if r == "unmapped_target"] == [TARGET]
+    assert [a for a, r in cfg.incomplete if r == "unverified_seed"] == []
+    assert [a for a, r in cfg.incomplete if r == "isa_mode_conflict"] == []
+    assert [a for a, r in cfg.incomplete if r == "interior_target"] == []
     assert not cfg.is_complete()

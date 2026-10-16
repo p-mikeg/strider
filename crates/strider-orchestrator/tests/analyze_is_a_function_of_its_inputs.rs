@@ -36,16 +36,7 @@ fn fingerprint(
         Ok(result) => result,
         Err(e) => return format!("error: {e:#}"),
     };
-    let AnalyzeResult {
-        cfg,
-        function,
-        unresolved_indirect_branches,
-        isa_mode_conflicts,
-        interior_branch_targets,
-        unmapped_branch_targets,
-        undecodable_branch_targets,
-        unverified_seeded_sites,
-    } = &result;
+    let AnalyzeResult { cfg, function } = &result;
     let mut regions: Vec<String> = cfg
         .region_ids()
         .map(|r| {
@@ -69,10 +60,8 @@ fn fingerprint(
         .collect();
     regions.sort_unstable();
     format!(
-        "{regions:#?}\nunresolved {unresolved_indirect_branches:?}\n\
-         unverified {unverified_seeded_sites:?}\nisa {isa_mode_conflicts:?}\n\
-         interior {interior_branch_targets:?}\nunmapped {unmapped_branch_targets:?}\n\
-         undecodable {undecodable_branch_targets:?}\n{}",
+        "{regions:#?}\nincomplete {:?}\n{}",
+        result.incomplete(),
         function.to_text(true),
     )
 }

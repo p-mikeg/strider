@@ -54,7 +54,9 @@ fn a_dropped_arm_region_is_removed_and_the_function_lifts() {
     let cfg = lifter.build_cfg(BASE.into(), &opts).expect("cfg");
 
     assert_eq!(
-        cfg.isa_mode_conflicts()
+        cfg.incompleteness()
+            .of(strider_cfg::Reason::IsaModeConflict)
+            .collect::<Vec<_>>()
             .iter()
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),
