@@ -370,14 +370,16 @@ live on the returned objects. See the `.pyi` stubs for the typed surface.
 so a second image does not silently serve unrelocated bytes, and re-merging an
 image already fully loaded does nothing. `CfgOptions` exposes `known_targets` /
 `call_other_abis`, and `LifterOptions` its `per_address_ccs`, as a memoized
-`types.MappingProxyType` over the shared table, not a fresh dict per read: the
+`types.MappingProxyType` over the shared table, and `no_return_targets` as a
+memoized `frozenset`, not a fresh dict per read: the
 authority is the Rust map, and a seeded 20k-entry table would otherwise cost
 milliseconds on every attribute access. `known_targets` values are tuples, so
 the view is read-only all the way down. A `CfgOptions` seats its
 `known_targets` and `no_return_targets` into `strider_cfg`'s own form at
 construction and every `analyze` BORROWS those tables
 (`strider_cfg::CfgOptions.known_targets` and
-`strider_lift::LiftOptions.per_address_ccs` are `&FxHashMap`), so a seeded
+`strider_lift::LiftOptions.per_address_ccs` are `&FxHashMap`,
+`strider_cfg::CfgOptions.no_return_targets` a `&FxHashSet`), so a seeded
 table costs a sweep nothing per function. `per_address_ccs` needs the lift's
 `SleighRegs` to resolve, so it cannot be seated at construction: the built
 table is memoized behind the shared `PerAddressCcs`, which is where it has to
