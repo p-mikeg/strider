@@ -170,7 +170,7 @@ def test_pipeline_override_runs_custom_pipeline():
 
 
 def test_with_cfg_carries_over_every_other_field():
-    """`with_cfg` replaces only `cfg`.
+    """`_with_cfg` replaces only `cfg`.
 
     Fields are read-only, so overriding the nested `CfgOptions` once meant
     re-listing every field; anything forgotten silently reverted to its
@@ -195,7 +195,7 @@ def test_with_cfg_carries_over_every_other_field():
         pipeline=pipeline,
     )
 
-    out = opts.with_cfg(strider.cfg.CfgOptions(function_max_size=128))
+    out = opts._with_cfg(strider.cfg.CfgOptions(function_max_size=128))
 
     assert out.cfg.function_max_size == 128
     assert out.compact is False
@@ -205,7 +205,7 @@ def test_with_cfg_carries_over_every_other_field():
     # SAME object, matching what passing `pipeline=opts.pipeline` did.
     assert out.pipeline is pipeline
 
-    # `with_cfg` copies, it does not mutate the receiver.
+    # `_with_cfg` copies, it does not mutate the receiver.
     assert opts.cfg.function_max_size == 64
 
 
