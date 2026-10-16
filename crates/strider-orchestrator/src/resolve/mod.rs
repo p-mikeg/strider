@@ -49,6 +49,8 @@ pub(crate) struct LoopState<'s> {
     /// fed the classifier, whose answers persist into every later round, so a
     /// final cfg without that edge does not mean none was used.
     interior: Vec<PcodeInsnAddr>,
+    /// Sharper for this one: `abandon_undecodable` drops the site whose seat
+    /// raised the clash, so the next round rebuilds without that edge.
     isa_conflicts: Vec<PcodeInsnAddr>,
     unmapped: Vec<PcodeInsnAddr>,
     undecodable: Vec<PcodeInsnAddr>,
