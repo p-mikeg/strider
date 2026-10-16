@@ -1,7 +1,18 @@
+use super::alias::{SizedAddr, alias_verdict, classify_addr, offsets_comparable, ranges_disjoint};
+use super::arg_window::{ArgWindowGeometry, scan_arg_window};
+use super::decompose::{SPINE_STEPS, is_alignment_mask};
+use super::frame::in_own_frame;
+use super::index::StoreIndex;
+use super::ring::addr_bit_width;
+use super::walker::MemWalker;
+use super::*;
+use rustc_hash::FxHashSet;
+use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::{Function, IRViewer};
+
 /// The fixtures below build exactly one `Store`.
 #[cfg(test)]
 fn only_store(f: &strider_ir::Function) -> strider_ir::node::NodeId {
-    use strider_ir::IRViewer;
     f.graph()
         .all_node_ids()
         .find(|&n| matches!(f.node_kind(n), strider_ir::node::NodeKind::Store(_)))
@@ -46,12 +57,10 @@ fn escaping(
 
 #[cfg(test)]
 mod decompose_tests {
-    use crate::mem_analysis::*;
+    use super::*;
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
-    use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, sp_arg_frame};
-
-    use super::super::test_sp as sp;
+    use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, sp_arg_frame, stack_vn_x86 as sp};
 
     /// The post-`ConstantFold` shape of `x - k`, i.e. `Add(x, IntConst(-k))`.
     fn sub_off(
@@ -74,7 +83,7 @@ mod decompose_tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let live_sp = crate::test_support::return_value(fg.graph())?;
-        let r = decompose(&fg, live_sp, &no_allocators());
+        let r = decompose(&fg, live_sp, &Default::default());
         assert!(matches!(r, Some(MemExpr { offset: 0, .. })));
         let _ = sp_val;
         Ok(())
@@ -90,7 +99,7 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let r = decompose(&fg, addr, &no_allocators());
+        let r = decompose(&fg, addr, &Default::default());
         assert!(matches!(r, Some(MemExpr { offset: -4, .. })));
         Ok(())
     }
@@ -112,7 +121,7 @@ mod decompose_tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         assert_eq!(
-            decompose(&fg, twice, &no_allocators()).map(|e| e.offset),
+            decompose(&fg, twice, &Default::default()).map(|e| e.offset),
             Some(-2),
             "two 0x7FFFFFFF bumps of a 32-bit pointer land at sp - 2"
         );
@@ -130,8 +139,8 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let r1 = decompose(&fg, addr, &no_allocators());
-        let r2 = decompose(&fg, addr, &no_allocators());
+        let r1 = decompose(&fg, addr, &Default::default());
+        let r2 = decompose(&fg, addr, &Default::default());
         assert!(matches!(
             (&r1, &r2),
             (
@@ -162,7 +171,7 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        assert!(decompose(&fg, c, &no_allocators()).is_none());
+        assert!(decompose(&fg, c, &Default::default()).is_none());
         Ok(())
     }
 
@@ -179,7 +188,7 @@ mod decompose_tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
 
-        let off = |v| decompose(&fg, v, &no_allocators()).map(|e| e.offset);
+        let off = |v| decompose(&fg, v, &Default::default()).map(|e| e.offset);
         assert_eq!(off(s1), Some(-4), "s1 = sp - 4");
         assert_eq!(off(s2), Some(-12), "s2 = sp - 12");
         assert_eq!(off(s3), Some(-24), "s3 = sp - 24");
@@ -219,7 +228,7 @@ mod decompose_tests {
         // Do NOT collapse phis: the multi-predecessor loop-header Phi has to
         // survive or the cone contains no cycle.
 
-        let truth = |v: ValueId| -> Option<MemExpr> { decompose(&fg, v, &no_allocators()) };
+        let truth = |v: ValueId| -> Option<MemExpr> { decompose(&fg, v, &Default::default()) };
         let t_phi = truth(sp_phi);
         let t_dec = truth(sp_dec);
         let t_global = truth(global);
@@ -238,7 +247,7 @@ mod decompose_tests {
             [sp_dec, global, sp_phi],
         ] {
             for v in order {
-                let got = decompose(&fg, v, &no_allocators());
+                let got = decompose(&fg, v, &Default::default());
                 let want = if v == sp_phi {
                     t_phi
                 } else if v == sp_dec {
@@ -293,7 +302,7 @@ mod decompose_tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
 
-        let r = decompose(&fg, sp_at_c, &no_allocators());
+        let r = decompose(&fg, sp_at_c, &Default::default());
         assert!(
             r.is_none(),
             "expected None for VarPhi(sp) with a non-SP-rooted predecessor, got {r:?}"
@@ -316,7 +325,7 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let r = decompose(&fg, aligned, &no_allocators());
+        let r = decompose(&fg, aligned, &Default::default());
         // Offset 0 because alignment can shift the value by 0..7 bytes: no
         // constant delta to pin, only a stable `ValueId` later decompositions
         // can reference.
@@ -352,9 +361,9 @@ mod decompose_tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let aligned_dec =
-            decompose(&fg, aligned, &no_allocators()).expect("aligned must decompose");
+            decompose(&fg, aligned, &Default::default()).expect("aligned must decompose");
         let post_sub_dec =
-            decompose(&fg, post_sub, &no_allocators()).expect("post_sub must decompose");
+            decompose(&fg, post_sub, &Default::default()).expect("post_sub must decompose");
         let MemExpr {
             base: aligned_base,
             offset: aligned_off,
@@ -391,7 +400,7 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let r = decompose(&fg, current, &no_allocators());
+        let r = decompose(&fg, current, &Default::default());
         assert!(matches!(r, Some(MemExpr { offset: 0, .. })));
         Ok(())
     }
@@ -411,7 +420,7 @@ mod decompose_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let MemExpr { offset, .. } = decompose(&fg, current, &no_allocators())
+        let MemExpr { offset, .. } = decompose(&fg, current, &Default::default())
             .expect("5000-node chain must decompose without stack-overflowing");
         assert_eq!(
             offset, N as i128,
@@ -423,8 +432,8 @@ mod decompose_tests {
 
 #[cfg(test)]
 mod alias_tests {
+    use super::*;
     use crate::mem_analysis::store_value_byte_size;
-    use crate::mem_analysis::*;
     use strider_ir::node::{NodeKind, ValueType};
     use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{make_sp_fn, stack_vn_x86};
@@ -459,7 +468,7 @@ mod alias_tests {
             ..crate::AssumptionOptions::default()
         };
         let options = MemOptions::for_purpose(MemPurpose::IncomingArgs, &assumptions);
-        let store_class = crate::mem_analysis::classify_addr(f, f.store_addr(store), &options);
+        let store_class = classify_addr(f, f.store_addr(store), &options);
         // The real width the store's own address carries. Passing `None` would
         // model IR the lifter cannot produce, and the wrap guard would then
         // never be exercised by any of these cases.
@@ -602,7 +611,7 @@ mod alias_tests {
 
 #[cfg(test)]
 mod ranges_tests {
-    use crate::mem_analysis::ranges_disjoint;
+    use super::ranges_disjoint;
 
     #[test]
     fn ranges_disjoint_returns_true_for_non_overlapping() {
@@ -628,7 +637,7 @@ mod ranges_tests {
 
 #[cfg(test)]
 mod cfg_tests {
-    use crate::mem_analysis::*;
+    use super::*;
     use crate::{OptCtx, OptimizerPipeline, PhiCollapse, RegionCollapse};
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
@@ -689,34 +698,19 @@ mod cfg_tests {
 
 #[cfg(test)]
 mod heap_tests {
-    use crate::mem_analysis::*;
+    use super::*;
     use strider_ir::node::{ValueId, ValueType};
     use strider_ir::{Function, FunctionBuilder, IRBuilderExt, IntBinaryOp};
-    use strider_ir_test_utils::{RegisterSet, stack_args_at};
+    use strider_ir_test_utils::{RegisterSet, reg_vn, stack_args_at, stack_vn_x86_64 as sp};
 
-    fn sp() -> rsleigh::Vn {
-        rsleigh::Vn {
-            addr_off: 0x20,
-            addr_space: rsleigh::VnSpace::REGISTER,
-            size: 8,
-        }
-    }
     /// A return register distinct from SP, to receive an allocator's pointer.
     fn ret_reg() -> rsleigh::Vn {
-        rsleigh::Vn {
-            addr_off: 0x00,
-            addr_space: rsleigh::VnSpace::REGISTER,
-            size: 8,
-        }
+        reg_vn(0x00, 8)
     }
     /// A second call output register, e.g. a caller-saved reg the allocator
     /// clobbers.
     fn clobber_reg() -> rsleigh::Vn {
-        rsleigh::Vn {
-            addr_off: 0x08,
-            addr_space: rsleigh::VnSpace::REGISTER,
-            size: 8,
-        }
+        reg_vn(0x08, 8)
     }
 
     const MALLOC: u64 = 0x1000;
@@ -2120,7 +2114,7 @@ mod heap_tests {
 /// neither of which this crate bounds.
 #[cfg(test)]
 mod arg_window_bounds {
-    use crate::mem_analysis::*;
+    use super::*;
     use strider_ir::node::{NodeKind, ValueType};
     use strider_ir::{IRBuilderExt, IRWalker, IntBinaryOp};
     use strider_ir_test_utils::{sp_frame, stack_args_at};
@@ -2227,7 +2221,7 @@ mod arg_window_bounds {
 /// it must not start a walk that can re-enter it.
 #[cfg(test)]
 mod arg_window_complexity {
-    use crate::mem_analysis::*;
+    use super::*;
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{sp_frame, stack_args_at};
@@ -2513,7 +2507,7 @@ mod arg_window_complexity {
 /// every node it passes through, not just the query root.
 #[cfg(test)]
 mod spine_memo {
-    use crate::mem_analysis::*;
+    use super::*;
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::sp_arg_frame;
@@ -2549,7 +2543,7 @@ mod spine_memo {
         for (i, v) in chain.iter().rev().enumerate() {
             let want = -4 * (len - i) as i128;
             assert_eq!(
-                decompose(&fg, *v, &no_allocators()).map(|e| e.offset),
+                decompose(&fg, *v, &Default::default()).map(|e| e.offset),
                 Some(want),
                 "link {i} from the bottom is sp{want}"
             );
@@ -2576,7 +2570,7 @@ mod spine_memo {
 /// forwards across the call.
 #[cfg(test)]
 mod arg_window_visibility {
-    use crate::mem_analysis::*;
+    use super::*;
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{sp_frame, stack_args_at};
@@ -2756,45 +2750,15 @@ mod arg_window_visibility {
         Ok(())
     }
 
-    /// The relaxation's motivating shape: a register value spilled to the
-    /// stack TOP, exactly where outgoing slot 0 sits, and reloaded after the
-    /// call.  The store is indistinguishable from an argument push, so the
-    /// window opens over it and the reload is pinned unless the caller opts
-    /// into `callee_preserves_stack_args`.
-    ///
-    /// ```text
-    /// sp' = sp - 64        ; this function's frame
-    /// store V -> sp'+0     ; scratch spill, or f's arg0
-    /// call f
-    /// load  sp'+0
-    /// ```
+    /// The relaxation's motivating shape: whether the reload in
+    /// [`crate::test_support::memory_shapes::stack_top_spill`] has the spill as
+    /// its nearest clobber.
     fn spill_at_the_stack_top_forwards(relaxed: bool) -> crate::Result<bool> {
-        let sp = strider_ir_test_utils::stack_vn_x86();
-        let mut b = sp_frame(sp)
-            .stack_args(stack_args_at(0, 4))
-            .build_fn_single_region()?;
-        let entry_sp = b.read_variable(&sp)?;
-        let frame = b.build_int_const((-64i64) as u64, ValueType::I32)?;
-        let call_sp =
-            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::I32)?;
-        b.write_variable(&sp, call_sp)?;
-
-        let zero = b.build_int_const(0u64, ValueType::I32)?;
-        let slot0 =
-            b.build_int_binary_operation(call_sp, zero, IntBinaryOp::Add, ValueType::I32)?;
-        let spilled = b.build_int_const(0x42u64, ValueType::I32)?;
-        b.build_store(slot0, spilled, rsleigh::VnSpace::RAM)?;
-        let f = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(f, &[], &[], 0)?;
-
-        let loaded = b.build_load(slot0, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let (mut b, loaded) = crate::test_support::memory_shapes::stack_top_spill()?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
-        let mut pipe = crate::OptimizerPipeline::new();
-        pipe.add(crate::PhiCollapse);
-        pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
+        collapse_phis(&mut fg);
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
@@ -2994,7 +2958,7 @@ mod arg_window_visibility {
 
 #[cfg(test)]
 mod own_frame_tests {
-    use crate::mem_analysis::*;
+    use super::*;
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{sp_frame, stack_args_at};
@@ -3171,7 +3135,7 @@ mod own_frame_tests {
 
 #[cfg(test)]
 mod comparability_tests {
-    use crate::mem_analysis::*;
+    use super::*;
 
     fn probe(size: i128) -> SizedAddr {
         SizedAddr {
@@ -3233,12 +3197,10 @@ mod comparability_tests {
 
 #[cfg(test)]
 mod modular_offset_tests {
-    use crate::mem_analysis::*;
+    use super::*;
     use strider_ir::node::{NodeKind, ValueType};
     use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
-    use strider_ir_test_utils::sp_arg_frame;
-
-    use super::super::test_sp as sp;
+    use strider_ir_test_utils::{sp_arg_frame, stack_vn_x86 as sp};
 
     /// Address arithmetic is mod 2^32 here, so `sp+0x7FFFFFFE` and
     /// `sp+0x80000000` name slots two bytes apart and their four-byte accesses
@@ -3287,7 +3249,6 @@ mod modular_offset_tests {
 /// constant address it may equal.
 #[test]
 fn only_a_top_reaching_run_is_an_alignment_mask() {
-    use super::is_alignment_mask;
     for (m, width) in [
         (0xFFFF_FFFF_FFFF_FFF0u128, 64),
         (0xFFFF_FFF0, 32),
@@ -3315,26 +3276,20 @@ fn only_a_top_reaching_run_is_an_alignment_mask() {
 
 #[cfg(test)]
 mod store_index {
-    use crate::mem_analysis::*;
+    use super::*;
     use crate::mem_ssa::{MemLayout, Shape};
     use strider_ir::node::ValueType;
     use strider_ir::{FunctionBuilder, IRBuilderExt, IntBinaryOp, IntCmpOp};
-    use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
+    use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, reg_vn, stack_vn_x86 as sp};
 
-    use super::super::test_sp as sp;
     use crate::test_support::Rng;
 
     /// The listed allocator every chain calls.
     const ALLOC: u64 = 0x3000;
 
-    /// The allocator's return register, a register slot disjoint from
-    /// `test_sp`.
+    /// The allocator's return register, disjoint from the SP.
     fn ret_reg() -> rsleigh::Vn {
-        rsleigh::Vn {
-            addr_off: 0x00,
-            addr_space: rsleigh::VnSpace::REGISTER,
-            size: 4,
-        }
+        reg_vn(0x00, 4)
     }
 
     fn alloc(b: &mut FunctionBuilder) -> crate::Result<ValueId> {

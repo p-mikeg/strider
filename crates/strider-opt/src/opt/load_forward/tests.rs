@@ -1688,39 +1688,10 @@ fn spill_in_the_abi_reserved_area_does_not_forward_across_a_call() -> Result<()>
     Ok(())
 }
 
-/// A register value spilled to the stack TOP, exactly where outgoing slot 0
-/// sits, then reloaded after the call and stored.  The spill is
-/// indistinguishable from an argument push, so the reload is pinned unless
-/// `callee_preserves_stack_args` empties the argument window.
-///
-/// ```text
-/// sp' = sp - 64        ; this function's frame
-/// store 0x42 -> sp'+0  ; scratch spill, or f's arg0
-/// call f
-/// store [sp'+0] -> 0x9000
-/// ```
+/// [`crate::test_support::memory_shapes::stack_top_spill`] with the reload
+/// stored: the `Load`s left after the standard pipeline.
 fn stack_top_spill_across_call(preserves_stack_args: bool) -> Result<u128> {
-    let sp = sp32_vn();
-    let stack_args = strider_target::StackArgs {
-        base_offset: 0,
-        increment: 4,
-    };
-    let mut b = sp_frame(sp)
-        .stack_args(Some(stack_args))
-        .build_fn_single_region()?;
-    let entry_sp = b.read_variable(&sp)?;
-    let frame = b.build_int_const((-64i64) as u64, ValueType::I32)?;
-    let call_sp =
-        b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::I32)?;
-    b.write_variable(&sp, call_sp)?;
-
-    let zero = b.build_int_const(0u64, ValueType::I32)?;
-    let slot0 = b.build_int_binary_operation(call_sp, zero, IntBinaryOp::Add, ValueType::I32)?;
-    let spilled = b.build_int_const(0x42u64, ValueType::I32)?;
-    b.build_store(slot0, spilled, rsleigh::VnSpace::RAM)?;
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-    b.build_call(target, &[], &[], 0)?;
-    let reload = b.build_load(slot0, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let (mut b, reload) = crate::test_support::memory_shapes::stack_top_spill()?;
     let field = b.build_int_const(0x9000u64, ValueType::I32)?;
     b.build_store(field, reload, rsleigh::VnSpace::RAM)?;
     b.build_return(None, &[])?;
