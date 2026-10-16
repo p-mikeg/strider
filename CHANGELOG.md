@@ -20,6 +20,13 @@
 - A post-pass that rewrites the graph drops the stack-slot stamps it may have
   invalidated.
 
+### Changed, Rust
+
+- `FunctionArgPat::source` matches a sub-register of the carrier, as
+  `function_arg_reg` does in Python.
+- `Lifter` refuses a calling convention whose stack geometry belongs to
+  another arch, so `Strider::analyze` does too.
+
 ### Fixed
 
 - A stack-held jump-table slot, a return slot and a stack-arg slot each see
