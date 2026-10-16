@@ -105,16 +105,20 @@ def test_known_targets_still_reads_back():
     }
 
 
-def test_with_function_max_size_carries_both_tables():
+def test_with_function_max_size_carries_every_table():
     abi = strider.sleigh.CallOtherAbi.no_return()
     opts = strider.cfg.CfgOptions(
         allow_code_before_start_addr=True,
         known_targets={0x1000: "return"},
         call_other_abis={"trap": abi},
+        data_ranges=[(0x10, 0x18)],
+        no_return_targets=[0x2000],
     )
     narrowed = opts._with_function_max_size(0x40)
     assert narrowed.function_max_size == 0x40
     assert narrowed.allow_code_before_start_addr is False
     assert dict(narrowed.known_targets) == {0x1000: "return"}
     assert list(narrowed.call_other_abis) == ["trap"]
+    assert narrowed.data_ranges == [(0x10, 0x18)]
+    assert narrowed.no_return_targets == {0x2000}
     assert opts.function_max_size is None
