@@ -1,8 +1,9 @@
 //! Pins every byte each fixture and crafted image serves, under every region
 //! source, load filter and relocation setting, and through both
-//! `ElfFileMemReader` views. One row per (image, view) in
-//! `tests/data/read_digest.txt`: an FNV-1a over each served address's 1- and
-//! 8-byte reads and the relocation type of a hole there, or `Err` when the
+//! `ElfFileMemReader` views, plus each region source's writable ranges. One
+//! row per (image, view) in `tests/data/read_digest.txt`: an FNV-1a over each
+//! served address's 1-, 2-, 4- and 8-byte reads (or why each served nothing)
+//! and the relocation type of a hole there, or `Err` and the refusal when the
 //! load fails.
 //!
 //! Release only: it reads every mapped address of every image. Re-bless, then
@@ -93,28 +94,48 @@ fn merged(mut all: Vec<Range<u64>>) -> Vec<Range<u64>> {
     out
 }
 
-/// Hashes every address of `ranges` that serves a byte or holds a hole.
+/// Hashes every address of `ranges` that is `present` or holds a hole: the
+/// 1-, 2-, 4- and 8-byte reads there, each the bytes it served or the reason
+/// it served none, and the hole's relocation type.
 fn probe(
     ranges: &[Range<u64>],
-    read: impl Fn(u64, &mut [u8]) -> Option<usize>,
+    present: impl Fn(u64) -> bool,
+    read: impl Fn(u64, &mut [u8]) -> Result<usize, u8>,
     hole_at: impl Fn(u64) -> Option<u32>,
 ) -> u64 {
     let mut h = Fnv::default();
     for addr in ranges.iter().cloned().flatten() {
-        let mut one = [0u8; 1];
-        let n = read(addr, &mut one);
         let hole = hole_at(addr);
-        if n.is_none() && hole.is_none() {
+        if !present(addr) && hole.is_none() {
             continue;
         }
-        let mut eight = [0u8; 8];
-        let m = read(addr, &mut eight);
         h.eat(&addr.to_le_bytes());
-        h.eat_opt(n.map(|n| &one[..n]));
-        h.eat_opt(m.map(|m| &eight[..m]));
+        for len in [1, 2, 4, 8] {
+            let mut buf = [0u8; 8];
+            let buf = &mut buf[..len];
+            match read(addr, buf) {
+                Ok(n) => h.eat_opt(Some(&buf[..n])),
+                Err(why) => h.eat(&[2, why]),
+            }
+        }
         h.eat_opt(hole.map(u32::to_le_bytes).as_ref().map(|b| &b[..]));
     }
     h.0
+}
+
+/// Why `ElfFileMemReader`'s ROM view refused a read. The trait reports only
+/// an error, so this reads its message.
+fn rom_refusal(e: &anyhow::Error) -> u8 {
+    let msg = e.to_string();
+    if msg.contains("writable mapping") {
+        1
+    } else if msg.contains("relocation of type") {
+        2
+    } else if msg.contains("not mapped") || msg.contains("spans past mapped memory") {
+        3
+    } else {
+        panic!("unclassified ROM refusal: {msg}")
+    }
 }
 
 fn ram(off: u64) -> VnAddr {
@@ -156,7 +177,8 @@ fn rows(out: &mut String, image: &str, elf: anyhow::Result<OwnedElf>) {
                     let table = MemRegionsLookupTable::new(regions);
                     probe(
                         &ranges,
-                        |a, b| table.read(a, b),
+                        |a| table.read(a, &mut [0]).is_some(),
+                        |a, b| table.read(a, b).ok_or(0),
                         |a| table.unmodelled_relocation_at(a),
                     )
                 });
@@ -186,13 +208,25 @@ fn rows(out: &mut String, image: &str, elf: anyhow::Result<OwnedElf>) {
     let obj = elf.checked_file().expect("parsed above");
     let reader = ElfFileMemReader::from_object(&obj);
     let reader = reader.as_ref().map_err(refusal);
-    let fetch = reader
-        .clone()
-        .map(|r| probe(&ranges, |a, b| MemReader::read(r, ram(a), b).ok(), |_| None));
+    let fetched = |r: &ElfFileMemReader, a| MemReader::read(r, ram(a), &mut [0]).is_ok();
+    let fetch = reader.clone().map(|r| {
+        probe(
+            &ranges,
+            |a| fetched(r, a),
+            |a, b| MemReader::read(r, ram(a), b).map_err(|_| 0),
+            |_| None,
+        )
+    });
+    // Over the fetch image, so a ROM refusal there is hashed with its reason.
     let rom = reader.map(|r| {
         probe(
             &ranges,
-            |a, b| ReadOnlyMemory::read(r, a, b).is_ok().then_some(b.len()),
+            |a| fetched(r, a),
+            |a, b| {
+                ReadOnlyMemory::read(r, a, b)
+                    .map(|()| b.len())
+                    .map_err(|e| rom_refusal(&e))
+            },
             |_| None,
         )
     });
