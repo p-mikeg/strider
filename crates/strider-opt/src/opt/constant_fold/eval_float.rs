@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn eval_f80_binary_returns_none() {
         let zero = 0u64;
-        for op in [FloatBinaryOp::Add, FloatBinaryOp::Mul, FloatBinaryOp::Div] {
+        for op in FloatBinaryOp::ALL {
             assert_eq!(eval_float_binary(op, zero, zero, ValueType::F80), None);
         }
     }
@@ -110,21 +110,14 @@ mod tests {
     #[test]
     fn eval_f80_cmp_returns_none() {
         let zero = 0u64;
-        for op in [FloatCmpOp::Equal, FloatCmpOp::Less] {
+        for op in FloatCmpOp::ALL {
             assert_eq!(eval_float_cmp(op, zero, zero, ValueType::F80), None);
         }
     }
 
     #[test]
     fn eval_f80_unary_returns_none() {
-        for op in [
-            FloatUnaryOp::Neg,
-            FloatUnaryOp::Abs,
-            FloatUnaryOp::Sqrt,
-            FloatUnaryOp::Ceil,
-            FloatUnaryOp::Floor,
-            FloatUnaryOp::Round,
-        ] {
+        for op in FloatUnaryOp::ALL {
             assert_eq!(eval_float_unary(op, 0, ValueType::F80), None);
         }
     }

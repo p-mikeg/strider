@@ -113,32 +113,10 @@ impl Gen<'_> {
     }
 
     pub fn step(&mut self, b: &mut FunctionBuilder) {
-        const BIN: [IntBinaryOp; 12] = [
-            IntBinaryOp::Add,
-            IntBinaryOp::And,
-            IntBinaryOp::Or,
-            IntBinaryOp::Xor,
-            IntBinaryOp::Div,
-            IntBinaryOp::Sdiv,
-            IntBinaryOp::Rem,
-            IntBinaryOp::Srem,
-            IntBinaryOp::ShiftRight,
-            IntBinaryOp::SShiftRight,
-            IntBinaryOp::ShiftLeft,
-            IntBinaryOp::Mul,
-        ];
-        const CMP: [IntCmpOp; 6] = [
-            IntCmpOp::Equal,
-            IntCmpOp::Sless,
-            IntCmpOp::Less,
-            IntCmpOp::Carry,
-            IntCmpOp::Scarry,
-            IntCmpOp::Sborrow,
-        ];
         let ty = self.pick_ty();
         match self.rng.below(40) {
             0..=11 => {
-                let op = BIN[self.rng.below(BIN.len())];
+                let op = IntBinaryOp::ALL[self.rng.below(IntBinaryOp::ALL.len())];
                 let x = self.var_or_val(b, ty);
                 let y = self.val(b, ty);
                 let v = b.build_int_binary_operation(x, y, op, ty).unwrap();
@@ -159,7 +137,7 @@ impl Gen<'_> {
                 self.push(v, ty);
             }
             14..=16 => {
-                let op = CMP[self.rng.below(CMP.len())];
+                let op = IntCmpOp::ALL[self.rng.below(IntCmpOp::ALL.len())];
                 let x = self.var_or_val(b, ty);
                 let y = self.val(b, ty);
                 let v = b.build_int_cmp_operation(x, y, op, ty).unwrap();
@@ -859,6 +837,32 @@ fn the_pipeline_preserves_dag_semantics() {
         compared >= n as usize * 450,
         "only {compared} value comparisons over {n} seeds"
     );
+}
+
+/// `Gen::step` draws an op by index into `ALL`, so a reordered or added
+/// variant changes every seed's graph: re-measure the yield floors then.
+#[test]
+fn the_op_rosters_keep_their_seeded_order() {
+    use IntBinaryOp::*;
+    use IntCmpOp::*;
+    assert_eq!(
+        IntBinaryOp::ALL,
+        [
+            Add,
+            And,
+            Or,
+            Xor,
+            Div,
+            Sdiv,
+            Rem,
+            Srem,
+            ShiftRight,
+            SShiftRight,
+            ShiftLeft,
+            Mul
+        ]
+    );
+    assert_eq!(IntCmpOp::ALL, [Equal, Sless, Less, Carry, Scarry, Sborrow]);
 }
 
 // CFG-level differential fuzzer.
