@@ -79,6 +79,9 @@
 - `default_pipeline()` drops `StackOffsetDetect`: a post-pass appended to it
   no longer finds the memory classes filled; it calls
   `refresh_memory_classes`.
+- `value_range::Interval`'s fields are private (`Interval::new`, `lo()`,
+  `hi()`, `stride()`, `is_empty()`); `compute_value_ranges(f, &doms, &known)`
+  is `RangeMap::new(f)`, which builds both itself.
 
 ### Changed, Python
 

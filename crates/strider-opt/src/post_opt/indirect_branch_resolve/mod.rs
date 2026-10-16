@@ -190,9 +190,7 @@ pub fn classify_sites(
         return Ok(ClassifiedSites { sites, resolved });
     }
     // Computed once, since the graph does not change here.
-    let known = crate::opt::known_bits::analyze(f)?;
-    let doms = strider_ir::control_dominator_tree(f);
-    let mut ranges = crate::value_range::compute_value_ranges(f, &doms, &known);
+    let mut ranges = crate::value_range::RangeMap::new(f)?;
     for &node in &sites {
         // A seated `Switch` is re-derived from its retained selector, which
         // reads as a wider table once a loop back-edge through its own arms

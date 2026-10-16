@@ -15,17 +15,6 @@ use strider_ir_test_utils::{
     MockRom, RegisterSet, sp_frame, stack_vn_aarch64 as sp64, stack_vn_x86 as sp32_vn,
 };
 
-fn make_known_and_doms(
-    fg: &Function,
-) -> (
-    crate::KnownBitsMap,
-    strider_ir::DominatorTree<strider_ir::node::NodeId>,
-) {
-    let known = crate::analyze_known_bits(fg).expect("kb analyze");
-    let doms = strider_ir::control_dominator_tree(fg);
-    (known, doms)
-}
-
 pub(super) struct RecordingRom {
     inner: MockRom,
     log: Mutex<Vec<(u64, usize)>>,
@@ -110,8 +99,7 @@ fn classify_with(
     assumptions: &crate::AssumptionOptions,
     mode_value: Option<ValueId>,
 ) -> Option<ResolvedTargets> {
-    let (known, doms) = make_known_and_doms(f);
-    let mut ranges = crate::value_range::compute_value_ranges(f, &doms, &known);
+    let mut ranges = crate::value_range::RangeMap::new(f).unwrap();
     classify_table_dispatch(
         f,
         sole_indirect_branch(f),
@@ -415,8 +403,7 @@ fn decompose_index_picks_shallowest_narrowed_index() {
     });
     let branch = sole_indirect_branch(&g);
     let target_value = g.indirect_branch_target(branch);
-    let (known, doms) = make_known_and_doms(&g);
-    let mut ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
+    let mut ranges = crate::value_range::RangeMap::new(&g).unwrap();
     match decompose_index(
         &g,
         &mut ranges,
@@ -1921,8 +1908,7 @@ mod stack_table_cost {
     ) -> (Vec<u64>, u64) {
         let targets: Vec<u64> = (0..entries as u64).map(|i| 0x401000 + i * 0x10).collect();
         let (fg, _load) = build(&targets, -8 * entries as i64, 8);
-        let (known, doms) = make_known_and_doms(&fg);
-        let mut ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
+        let mut ranges = crate::value_range::RangeMap::new(&fg).unwrap();
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
         super::super::super::eval::SLOT_MAP_STEPS.with(|c| c.set(0));
         let result = classify_table_dispatch(
@@ -1967,8 +1953,7 @@ mod stack_table_cost {
         wire_stack_dispatch(targets.len(), -32, 8, sp_val, &mut b, arg_vn);
         let (fg, _load) = finish_stack_array(b.build().unwrap());
 
-        let (known, doms) = make_known_and_doms(&fg);
-        let mut ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
+        let mut ranges = crate::value_range::RangeMap::new(&fg).unwrap();
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
         super::super::super::eval::SLOT_MAP_STEPS.with(|c| c.set(0));
         let result = classify_table_dispatch(

@@ -356,7 +356,7 @@ enum MemoSlot {
 /// Per-`(value, region)` integer ranges.
 pub struct RangeMap<'f> {
     function: &'f strider_ir::Function,
-    doms: &'f DominatorTree<NodeId>,
+    doms: DominatorTree<NodeId>,
     /// Per guarded value, the interval proven AT each guard node: an `If`'s
     /// guarded successor edge, or a `Region` every one of whose predecessor
     /// edges bounds the value (a merge whose arms all constrain it).
@@ -385,6 +385,22 @@ pub struct RangeMap<'f> {
 }
 
 impl<'f> RangeMap<'f> {
+    /// The ranges of `function`: builds the flow-insensitive KnownBits bases,
+    /// extracts per-`If` guard facts, then recovers guards at a merge every
+    /// predecessor of which bounds the same value.
+    ///
+    /// # Errors
+    ///
+    /// Propagates a KnownBits failure.
+    pub fn new(function: &'f strider_ir::Function) -> crate::Result<Self> {
+        let known = crate::opt::known_bits::analyze(function)?;
+        Ok(build(
+            function,
+            strider_ir::control_dominator_tree(function),
+            &known,
+        ))
+    }
+
     /// Range of `value` valid within `region`.
     ///
     /// A multi-input phi unions each arm's range in that arm's predecessor
@@ -969,12 +985,9 @@ fn add_guard(
         .or_insert(interval);
 }
 
-/// Builds the flow-insensitive KnownBits bases, extracts per-`If` guard facts,
-/// then recovers guards at a merge every predecessor of which bounds the same
-/// value.
-pub fn compute_value_ranges<'f>(
+fn build<'f>(
     function: &'f strider_ir::Function,
-    doms: &'f DominatorTree<NodeId>,
+    doms: DominatorTree<NodeId>,
     known: &KnownBitsMap,
 ) -> RangeMap<'f> {
     let mut kb_bounds: SecondaryMap<ValueId, Option<Interval>> = SecondaryMap::new();
@@ -1095,7 +1108,7 @@ pub fn compute_value_ranges<'f>(
 
     let guard_forests = guards
         .iter()
-        .map(|(&value, by_node)| (value, GuardForest::new(doms, by_node)))
+        .map(|(&value, by_node)| (value, GuardForest::new(&doms, by_node)))
         .collect();
     RangeMap {
         function,
