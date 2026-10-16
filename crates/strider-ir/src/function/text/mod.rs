@@ -619,7 +619,7 @@ fn const_str(value: &ConstValue) -> String {
     }
 }
 
-/// Every field, in declaration order.
+/// The printed fields, in declaration order.
 fn cc_fields(
     cc: &strider_target::BuiltCallingConvention,
     vn_name: VnName<'_>,
@@ -636,7 +636,7 @@ fn cc_fields(
         link_register_vn,
         preserves_memory,
         preserves_all_registers,
-        no_return,
+        no_return: _,
         entry_address_vn,
     } = cc;
     vec![
@@ -668,7 +668,6 @@ fn cc_fields(
             "preserves_all_registers",
             preserves_all_registers.to_string(),
         ),
-        ("no_return", no_return.to_string()),
         (
             "entry_address_vn",
             entry_address_vn
