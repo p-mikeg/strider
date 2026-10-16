@@ -7,9 +7,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::{Cfg, PcodeInsnAddr, RegionTerminator, ResolvedTargets, UndecodableTarget};
 use strider_ir::node::NodeId;
 
-use super::merge::visit;
 use super::round::Anchors;
 use super::sites::SiteTable;
+use super::visit;
 
 /// Sites whose seated `Switch` holds FEWER arms than their seat asked for.
 ///
