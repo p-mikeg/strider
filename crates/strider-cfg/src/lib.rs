@@ -1,5 +1,6 @@
 mod builder;
 mod dot;
+mod incomplete;
 mod indirect_resolver;
 mod neighborhood;
 mod options;
@@ -33,6 +34,7 @@ pub(crate) fn flowing_isa_bit_at<R: rsleigh::MemReader>(
 }
 
 pub use builder::{Builder, FlowContext, FlowVars};
+pub use incomplete::{Incompleteness, Reason};
 pub use indirect_resolver::{ResolvedTarget, ResolvedTargets};
 pub use options::{CfgOptions, DataRanges, FunctionBound, seated_in};
 pub use pcode_text::{insn_plain_text, insn_text};
@@ -53,10 +55,7 @@ pub struct Cfg {
     pub(crate) region_graph: RegionGraph,
     pub(crate) entry: NodeIndex,
     pub(crate) undecodable_seeded: Vec<UndecodableTarget>,
-    pub(crate) isa_mode_conflicts: Vec<types::PcodeInsnAddr>,
-    pub(crate) interior_branch_targets: Vec<types::PcodeInsnAddr>,
-    pub(crate) unmapped_branch_targets: Vec<types::PcodeInsnAddr>,
-    pub(crate) undecodable_branch_targets: Vec<types::PcodeInsnAddr>,
+    pub(crate) incomplete: Incompleteness,
     pub(crate) link_register_seated: Vec<types::PcodeInsnAddr>,
     pub(crate) tail_call_seated: Vec<types::PcodeInsnAddr>,
     pub(crate) function_isa_bit: Option<bool>,
@@ -91,8 +90,7 @@ impl Cfg {
     /// one, an arm looping to its own header) says nothing about its own bound.
     ///
     /// The ARM is what each entry names, and an arm that led to the bytes
-    /// decodes fine; the bytes are on
-    /// [`Self::undecodable_branch_targets`].
+    /// decodes fine; the bytes are reported as [`Reason::UndecodableTarget`].
     ///
     /// Each carries the site it was seated from: the same address reached from
     /// another site decodes in that site's own committed context, so the
@@ -101,87 +99,22 @@ impl Cfg {
         &self.undecodable_seeded
     }
 
-    /// Addresses two edges reached carrying different ISA modes. One region
-    /// owns the bytes, so the losing edge's path decodes in the other's mode.
-    /// Deduped by p-code address, so an address clashing on several edges
-    /// appears once per p-code index (`note_isa_mode_clash` can report a
-    /// mid-instruction index).
+    /// What this build cannot vouch for, each address with its [`Reason`].
     ///
-    /// The ISA MODE only. Two edges can also disagree on a non-mode committed
-    /// var (an edge into the middle of an ARM IT block agrees on the mode and
-    /// disagrees on `condit`), and that is NOT reported: the first
-    /// arrival to decode owns the bytes and the loser's path takes its
-    /// stream. ARM calls a branch into an IT block UNPREDICTABLE, so compiler
-    /// output does not produce it, but hand-written or obfuscated Thumb can.
-    ///
-    /// An edge the entry reaches without any seeded arm is decoded before
-    /// every arm, so it wins over one, whose arm is then dropped
-    /// (`Builder::drop_refused_switch_arms`). Any other pair, including an arm
-    /// against a direct edge found while decoding another arm's code, is won
-    /// by whichever decoded first in work-queue order, so a caller that cares
-    /// must treat those as unresolved rather than trusting either decode.
-    pub fn isa_mode_conflicts(&self) -> &[types::PcodeInsnAddr] {
-        &self.isa_mode_conflicts
+    /// A build resolves nothing, so its site reasons are every dispatch it
+    /// left without an edge and every answer it seated. The CFG
+    /// `Strider::analyze` returns carries that analysis's set instead
+    /// ([`Self::with_incompleteness`]).
+    pub fn incompleteness(&self) -> &Incompleteness {
+        &self.incomplete
     }
 
-    /// Branch targets interior to a region but off every region-start
-    /// boundary, which no split can express, plus region starts a later decode
-    /// stepped over. A branch into a MIPS delay slot lands here too: the slot
-    /// is a machine instruction, but it decodes as part of its branch.
-    ///
-    /// A DIRECT branch keeps its edge, wired to the region that OWNS those
-    /// bytes, whose stream starts earlier, so the arm is not the instruction
-    /// stream the branch jumps to. A `Switch` arm is dropped and no edge is
-    /// wired, which is right for the over-approximated jump-table entry that
-    /// produces it. A stepped-over region start is neither: those bytes have
-    /// two owners with two different instruction streams.
-    ///
-    /// Sorted and deduplicated.
-    pub fn interior_branch_targets(&self) -> &[types::PcodeInsnAddr] {
-        &self.interior_branch_targets
-    }
-
-    /// Addresses the reader has no bytes for, a direct branch target or a
-    /// sequential fall-through, each seated as an empty `TailCall` stub so the
-    /// edge survives and so does every region that did decode.
-    ///
-    /// The address is the instruction that could not be read whole, so a MIPS
-    /// branch whose delay slot is unmapped reports the branch's own, mapped,
-    /// address.
-    ///
-    /// A buffer whose window the branch leaves, a partially-mapped image, an
-    /// unrelocated `jmp`: the callee is real code somewhere, just not here, so
-    /// modelling it as a call out of the function is the closest the CFG can
-    /// come. Nothing was decoded there, so no successor of it is known either.
-    ///
-    /// Failing the whole function stays the answer when the ENTRY is unmapped.
-    ///
-    /// Sorted and deduplicated: a direct branch and a fall-through can reach
-    /// one address.
-    pub fn unmapped_branch_targets(&self) -> &[types::PcodeInsnAddr] {
-        &self.unmapped_branch_targets
-    }
-
-    /// Addresses a direct branch or a fall-through past a call reached that
-    /// hold no instruction: bytes Sleigh rejects, or bytes
-    /// [`CfgOptions::data_ranges`] marks as data.
-    ///
-    /// A direct branch leaves through an empty `TailCall` stub, as an unmapped
-    /// target does. A fall-through past a call ends that call as `NoReturn`,
-    /// which is what a callee nobody marked no-return leaves behind: a literal
-    /// pool, a traceback table, a deliberately invalid word. Any other
-    /// fall-through into data leaves through a stub too; one into bytes Sleigh
-    /// rejects is still an `Err` on the whole build.
-    ///
-    /// Code decoded off a seeded arm reports its bytes here too, with NO stub
-    /// and no edge: the arm is dropped instead, and named on
-    /// [`Self::undecodable_seeded_targets`], which carries the arm rather than
-    /// these bytes.
-    ///
-    /// Sorted and deduplicated: a direct branch and a fall-through can reach
-    /// one address.
-    pub fn undecodable_branch_targets(&self) -> &[types::PcodeInsnAddr] {
-        &self.undecodable_branch_targets
+    /// This CFG reporting `incomplete` in place of its own build's: how an
+    /// analysis over several builds reports through the one it returns.
+    #[must_use]
+    pub fn with_incompleteness(mut self, incomplete: Incompleteness) -> Self {
+        self.incomplete = incomplete;
+        self
     }
 
     /// Sites seated as a `Return` because the answer was `LinkRegister`.

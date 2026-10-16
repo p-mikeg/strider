@@ -27,7 +27,9 @@ fn a_branch_into_an_instruction_interior_is_reported() {
         .expect("analyze");
 
     assert_eq!(
-        out.interior_branch_targets
+        out.incomplete()
+            .of(strider_orchestrator::Reason::InteriorTarget)
+            .collect::<Vec<_>>()
             .iter()
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),

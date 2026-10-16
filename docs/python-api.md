@@ -918,49 +918,48 @@ cfg.neighborhood_dot(cfg.entry(), depth=5)   # local region subgraph
 cfg.pcode_at(addr)                     # one instruction's p-code as text, or None
                                        # when this CFG stored no decode for addr
 cfg.fingerprint_pcode(n)               # [(address, p-code)] for a Node's fingerprint
-cfg.is_complete()                      # all six channels below are empty
+cfg.incomplete                         # [(address, reason)], empty when complete
 ```
 
-A converged CFG is never silently incomplete, but it reports through six
-channels, and a consumer asking "may this be incomplete?" reads all six, which
-is what `is_complete()` does:
+A converged CFG is never silently incomplete. `cfg.incomplete` lists every
+machine address it cannot vouch for, with one of six reasons
+(`strider.cfg.INCOMPLETE_REASONS`), and `cfg.is_complete()` is "may this be
+incomplete?":
 
-- `unresolved`, the third field of `analyze`'s result: indirect branches with
-  no complete answer, such as a site that lost a successor, one whose answer
-  oscillated or narrowed, one still growing at the iteration cap, and a return
-  whose target is not provably the caller's return address (`push rsi; ret`).
-- `cfg.unverified_seeded_sites()`: sites nothing verified. A site seated with
-  only your `known_targets`, every site the CFG consumed as a tail call, and a
-  site consumed as a return because your own `"return"` seat consumed it, so a
-  seeded ARM `pop {pc}` epilogue lands here and not in `unresolved`. That is
-  also where a FAILED re-check of your own seat lands, since the seat decided a
-  CFG edge. A return the classifier derived is re-checked each round and rides
-  no channel once `assumptions.return_slots_survive_untracked_writes` (default
-  `True`) carries its proof; clearing that claim and re-running is how you
-  audit one. So a `False` `is_complete()` over this channel alone means
-  "complete but unverified", except for a failed `"return"` seat. One shape on
-  this channel is no dispatch you seeded: an arm a mode-less re-derivation
-  found at a site whose
+- `"unresolved_branch"`: an indirect branch with no complete answer, such as a
+  site that lost a successor, one whose answer oscillated or narrowed, one
+  still growing at the iteration cap, and a return whose target is not
+  provably the caller's return address (`push rsi; ret`). The `unresolved`
+  field of `analyze`'s result holds exactly these addresses.
+- `"unverified_seed"`: a site nothing verified. A site seated with only your
+  `known_targets`, every site the CFG consumed as a tail call, and a site
+  consumed as a return because your own `"return"` seat consumed it, so a
+  seeded ARM `pop {pc}` epilogue lands here and not under
+  `"unresolved_branch"`. That is also where a FAILED re-check of your own seat
+  lands, since the seat decided a CFG edge. A return the classifier derived is
+  re-checked each round and is not listed once
+  `assumptions.return_slots_survive_untracked_writes` (default `True`) carries
+  its proof; clearing that claim and re-running is how you audit one. So a
+  `False` `is_complete()` over this reason alone means "complete but
+  unverified", except for a failed `"return"` seat. One shape here is no
+  dispatch you seeded: an arm a mode-less re-derivation found at a site whose
   other arms all carry the flowing ISA mode is seated on the mode a caller's
   seed gave its siblings, and nobody evaluated that arm's own.
-- `cfg.isa_mode_conflicts()`: addresses two paths reached in different ISA
-  modes. Always empty outside the four 32-bit ARM and four MIPS presets.
-- `cfg.interior_branch_targets()`: branch targets off every instruction
-  boundary, whose edge is seated on the region owning the bytes and is
-  therefore not exact.
-- `cfg.unmapped_branch_targets()`: direct-branch targets and fall-throughs no
-  byte of the image backs, each seated as an empty tail-call stub.
-- `cfg.undecodable_branch_targets()`: addresses a direct branch or a
-  fall-through past a call reached that hold no instruction, either bytes Sleigh
-  rejects or a range `data_ranges` marks as data. The branch leaves through an
-  empty tail-call stub; the call ends as no-return.
+- `"isa_mode_conflict"`: an address two paths reached in different ISA modes.
+  Never listed outside the four 32-bit ARM and four MIPS presets.
+- `"interior_target"`: a branch target off every instruction boundary, whose
+  edge is seated on the region owning the bytes and is therefore not exact.
+- `"unmapped_target"`: a direct-branch target or fall-through no byte of the
+  image backs, seated as an empty tail-call stub.
+- `"undecodable_target"`: an address a direct branch or a fall-through past a
+  call reached that holds no instruction, either bytes Sleigh rejects or a
+  range `data_ranges` marks as data. The branch leaves through an empty
+  tail-call stub; the call ends as no-return.
 
-The four channels a direct edge also produces (`isa_mode_conflicts`,
-`interior_branch_targets`, `unmapped_branch_targets`,
-`undecodable_branch_targets`) accumulate across resolution rounds, so a loss in
-an early round stays reported. `unresolved` and `unverified_seeded_sites` are
-read off the final round instead, the mode-less arms excepted: those accumulate
-and are then filtered to the sites still seated.
+The four target reasons, which a direct edge also produces, accumulate across
+resolution rounds, so a loss in an early round stays listed. The two site
+reasons are read off the final round instead, the mode-less arms excepted:
+those accumulate and are then filtered to the sites still seated.
 
 `CfgOptions` (passed via `LifterOptions.cfg` or `Lifter.build_cfg`) tunes CFG
 construction:
@@ -985,8 +984,8 @@ both raises `ValueError`.
 resolution loop, which unions its own findings on top, so it composes with
 `resolve_indirect_branches=False`. A seeded site drops out of `unresolved`
 even when the classifier could not read it. A wrong seed can stop the
-classifier deriving the site's real arms; `cfg.unverified_seeded_sites()` names
-the sites where that cannot be ruled out.
+classifier deriving the site's real arms; `cfg.incomplete` names the sites
+where that cannot be ruled out as `"unverified_seed"`.
 
 `data_ranges` marks bytes that are data, such as an ARM literal pool.
 `ElfLifter.analyze` fills it from the ELF's ARM and AArch64 `$d` mapping

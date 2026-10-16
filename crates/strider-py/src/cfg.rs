@@ -12,7 +12,7 @@ use crate::dot::{DEFAULT_CFG_STYLE, dot_style_for, render};
 use crate::errors::into_strider_err;
 use crate::node::PyNode;
 use crate::reader::AnyMemReader;
-use crate::strider_cls::{PyLifter, machine_addrs};
+use crate::strider_cls::PyLifter;
 
 /// Control-flow graph of a single function, from `Lifter.build_cfg` or
 /// `Lifter.analyze`. Renders to Graphviz dot / dark-themed HTML, and serves
@@ -31,57 +31,6 @@ pub struct PyCfg {
     /// `machine_addr -> joined p-code text`.
     pcode_map: OnceLock<HashMap<u64, String>>,
     region_index: OnceLock<RegionIndex>,
-    reports: CfgReports,
-}
-
-/// The incompleteness channels as `analyze` reported them. Read from here
-/// rather than from `inner`, which is the FINAL round's CFG: a round that
-/// raised a report and was then rebuilt without the edge that raised it
-/// leaves nothing behind in `inner`.
-///
-/// `unresolved`, `isa_mode_conflicts`, `interior_branch_targets`,
-/// `unmapped_branch_targets` and `undecodable_branch_targets` accumulate over the resolver's rounds, so a later
-/// round cannot launder an earlier loss; `unverified_seeded` is derived once
-/// from the final CFG.
-pub(crate) struct CfgReports {
-    /// The same list `AnalyzeResult.unresolved` carries, held here so
-    /// `is_complete` can test all six channels from one object. For a
-    /// `build_cfg` result it is read off the regions instead, since no
-    /// resolver ran to report one: every site that build left an
-    /// `UnresolvedIndirectBranch`.
-    pub(crate) unresolved: Vec<u64>,
-    /// For a `build_cfg` result this is every seed that build SEATED: no
-    /// classifier ran, so nothing checked any of them, while a seed the CFG
-    /// had no dispatch for seats nothing. `analyze` narrows it to the seeds
-    /// its resolver could not confirm.
-    pub(crate) unverified_seeded: Vec<u64>,
-    pub(crate) isa_mode_conflicts: Vec<u64>,
-    pub(crate) interior_branch_targets: Vec<u64>,
-    pub(crate) unmapped_branch_targets: Vec<u64>,
-    pub(crate) undecodable_branch_targets: Vec<u64>,
-}
-
-impl CfgReports {
-    /// Every channel, which is what `is_complete` reads. Destructured without
-    /// `..`, so a seventh field fails to compile here until it is listed.
-    fn channels(&self) -> [&[u64]; 6] {
-        let Self {
-            unresolved,
-            unverified_seeded,
-            isa_mode_conflicts,
-            interior_branch_targets,
-            unmapped_branch_targets,
-            undecodable_branch_targets,
-        } = self;
-        [
-            unresolved,
-            unverified_seeded,
-            isa_mode_conflicts,
-            interior_branch_targets,
-            unmapped_branch_targets,
-            undecodable_branch_targets,
-        ]
-    }
 }
 
 /// Region starts in address order, plus the longest span any region covers:
@@ -91,32 +40,6 @@ impl CfgReports {
 struct RegionIndex {
     starts: Vec<(strider_cfg::PcodeInsnAddr, strider_cfg::RegionId)>,
     max_span: u64,
-}
-
-/// Machine addresses of the branches this build left unresolved, sorted and
-/// deduped. The `build_cfg` stand-in for `AnalyzeResult.unresolved`: no
-/// resolver ran, so the regions are the only record that a site has no
-/// outgoing edge.
-fn unresolved_indirect_sites(cfg: &strider_cfg::Cfg) -> Vec<u64> {
-    let g = cfg.region_graph();
-    let mut out: Vec<u64> = g
-        .node_indices()
-        .filter_map(|idx| {
-            match &g
-                .node_weight(idx)
-                .expect("node_indices() only yields present nodes")
-                .terminator
-            {
-                strider_cfg::RegionTerminator::UnresolvedIndirectBranch { addr, .. } => {
-                    Some(addr.machine_addr.addr)
-                }
-                _ => None,
-            }
-        })
-        .collect();
-    out.sort_unstable();
-    out.dedup();
-    out
 }
 
 /// Over-estimating costs probes, never a missed owner.
@@ -133,32 +56,23 @@ fn span_upper_bound(region: &strider_cfg::Region) -> u64 {
     .saturating_sub(start)
 }
 
-impl PyCfg {
-    /// The `build_cfg` path: one build, no resolver, so that build's own
-    /// reports are the whole accumulation.
-    pub(crate) fn new(
-        py: Python<'_>,
-        inner: strider_cfg::Cfg,
-        lifter: Py<PyLifter>,
-        seeded: Vec<u64>,
-    ) -> Self {
-        let reports = CfgReports {
-            unresolved: unresolved_indirect_sites(&inner),
-            unverified_seeded: seeded,
-            isa_mode_conflicts: machine_addrs(inner.isa_mode_conflicts()),
-            interior_branch_targets: machine_addrs(inner.interior_branch_targets()),
-            unmapped_branch_targets: machine_addrs(inner.unmapped_branch_targets()),
-            undecodable_branch_targets: machine_addrs(inner.undecodable_branch_targets()),
-        };
-        Self::with_reports(py, inner, lifter, reports)
-    }
+/// `incomplete` at machine-address granularity, sorted and deduplicated: what
+/// `Cfg.incomplete` reads.
+pub(crate) fn incomplete_sites(
+    incomplete: &strider_cfg::Incompleteness,
+) -> Vec<(u64, &'static str)> {
+    let sites: std::collections::BTreeSet<(u64, strider_cfg::Reason)> = incomplete
+        .iter()
+        .map(|(addr, reason)| (addr.machine_addr.addr, reason))
+        .collect();
+    sites
+        .into_iter()
+        .map(|(addr, reason)| (addr, reason.name()))
+        .collect()
+}
 
-    pub(crate) fn with_reports(
-        py: Python<'_>,
-        inner: strider_cfg::Cfg,
-        lifter: Py<PyLifter>,
-        reports: CfgReports,
-    ) -> Self {
+impl PyCfg {
+    pub(crate) fn new(py: Python<'_>, inner: strider_cfg::Cfg, lifter: Py<PyLifter>) -> Self {
         let arch_name = lifter.borrow(py).arch_name;
         Self {
             inner,
@@ -166,7 +80,6 @@ impl PyCfg {
             arch_name,
             pcode_map: OnceLock::new(),
             region_index: OnceLock::new(),
-            reports,
         }
     }
 
@@ -305,115 +218,41 @@ impl PyCfg {
         self.lifter.clone_ref(py)
     }
 
-    /// Machine addresses this CFG reached carrying two different ISA modes.
+    /// Every machine address this CFG cannot vouch for, with why, sorted and
+    /// deduplicated. Empty is complete.
     ///
-    /// One region owns the bytes, decoded in whichever mode the work queue
-    /// reached first, so the losing path's arm is not the instruction stream it
-    /// believes. A direct edge can cause this, not only a resolved indirect
-    /// branch, which is why it is reported here rather than in `unresolved`.
-    /// Non-empty means part of this CFG is decoded in a mode some path into it
-    /// disagrees with.
+    /// `"unresolved_branch"` and `"unverified_seed"` name a dispatch site, the
+    /// address `CfgOptions(known_targets=...)` seeds; the other four a branch
+    /// target, which a direct edge reaches too:
     ///
-    /// Accumulated over every round `analyze` ran: a clash decodes the bytes
-    /// twice and costs the site, whose next round rebuilds without the edge
-    /// that raised it, so the final CFG alone would launder the report.
-    fn isa_mode_conflicts(&self) -> Vec<u64> {
-        self.reports.isa_mode_conflicts.clone()
+    /// - `"unresolved_branch"`: an indirect branch with no complete successor
+    ///   set, among them a return whose target is not provably the caller's.
+    /// - `"unverified_seed"`: a seated answer nothing verified, such as a site
+    ///   seated with only your `known_targets`, every tail call the CFG
+    ///   consumed, and your own `"return"` seat (where a failed re-check of it
+    ///   lands too).
+    /// - `"isa_mode_conflict"`: reached in two ISA modes; the losing path
+    ///   decodes in the other.
+    /// - `"interior_target"`: off every instruction boundary, or a region
+    ///   start a later decode stepped over.
+    /// - `"unmapped_target"`: no byte of the image backs it.
+    /// - `"undecodable_target"`: holds no instruction, or `data_ranges` marks
+    ///   it as data.
+    ///
+    /// From `build_cfg` this is that one build: every dispatch it left without
+    /// an edge and every seed it seated. From `analyze` the target reasons
+    /// accumulate over the resolver's rounds and the site reasons are the
+    /// final round's.
+    #[getter]
+    fn incomplete(&self) -> Vec<(u64, &'static str)> {
+        incomplete_sites(self.inner.incompleteness())
     }
 
-    /// Branch targets interior to a region but off every instruction boundary,
-    /// plus region starts a later decode stepped over.
-    ///
-    /// No region can start at the first kind (decoding from inside an
-    /// instruction yields a different stream). A direct branch keeps its edge,
-    /// wired to the region owning the bytes, whose instructions start earlier;
-    /// a `Switch` arm is dropped and wires no edge. The second kind is
-    /// overlapping code: two regions own those bytes with two different
-    /// instruction streams. Non-empty means this CFG claims a successor the
-    /// branch does not actually enter at, drops a table arm, or decodes some
-    /// bytes twice.
-    ///
-    /// Accumulated over every round `analyze` ran: the inexact edge fed the
-    /// classifier, whose derived targets outlive it, so a later round that
-    /// no longer carries the edge does not undo what it cost.
-    fn interior_branch_targets(&self) -> Vec<u64> {
-        self.reports.interior_branch_targets.clone()
-    }
-
-    /// Direct-branch targets no byte of this image backs.
-    ///
-    /// Each is seated as an empty tail-call stub, so the branch keeps an edge
-    /// and every region that did decode survives; nothing past the stub is
-    /// known. A buffer whose window the branch leaves, a partially-mapped
-    /// image, an unrelocated `jmp`, a ROM built from a symbol subset. A direct
-    /// edge produces these, so they are reported here rather than in
-    /// `unresolved`.
-    ///
-    /// Accumulated over every round `analyze` ran.
-    fn unmapped_branch_targets(&self) -> Vec<u64> {
-        self.reports.unmapped_branch_targets.clone()
-    }
-
-    /// Addresses a direct branch or a fall-through past a call reached that
-    /// hold no instruction: bytes Sleigh rejects, or a range
-    /// `CfgOptions.data_ranges` marks as data.
-    ///
-    /// A direct branch there keeps an edge to an empty tail-call stub. A
-    /// fall-through past a call ends that call as no-return, which is what a
-    /// callee nobody marked no-return leaves behind (a literal pool, a
-    /// traceback table, a deliberately invalid word), though nothing proves it
-    /// never returns.
-    ///
-    /// Accumulated over every round `analyze` ran.
-    fn undecodable_branch_targets(&self) -> Vec<u64> {
-        self.reports.undecodable_branch_targets.clone()
-    }
-
-    /// Dispatch addresses nothing verified: a site seated with exactly the
-    /// `known_targets` you supplied and nothing the classifier derived, every
-    /// site the CFG consumed outright as a tail call, and a site consumed as a
-    /// return because YOUR `"return"` seat consumed it, which is also where a
-    /// FAILED re-check of that seat lands: the seat decided a CFG edge, so the
-    /// site is not reported as unresolved. A `Return` the CLASSIFIER derived
-    /// rides no channel once
-    /// `assumptions.return_slots_survive_untracked_writes` (default `True`)
-    /// carries its proof; clearing that claim and re-running is how you audit
-    /// one.
-    ///
-    /// A fourth shape is not a dispatch you seeded: an arm a mode-less
-    /// re-derivation found at a site whose other arms all carry the flowing
-    /// ISA mode. It is seated on the mode a caller's seed gave its siblings,
-    /// and nobody evaluated that arm's own.
-    ///
-    /// Not unresolved (nothing contradicts the answer), but nothing checked it.
-    /// Seating a seed changes the CFG the classifier reads, so a stale or wrong
-    /// seed can stop it deriving and take the site's real arms with it. These
-    /// are the sites where that cannot be ruled out. For a `build_cfg` result
-    /// it is every seed the build SEATED, since no classifier ran to check any
-    /// of them; a seed at an address the function dispatches from nowhere
-    /// seats nothing and is not reported.
-    fn unverified_seeded_sites(&self) -> Vec<u64> {
-        self.reports.unverified_seeded.clone()
-    }
-
-    /// Whether all six incompleteness channels are empty: the `unresolved`
-    /// of the `AnalyzeResult` this CFG came from, `unverified_seeded_sites`,
-    /// `isa_mode_conflicts`, `interior_branch_targets`,
-    /// `unmapped_branch_targets` and `undecodable_branch_targets`.
-    ///
-    /// The answer to "may this be incomplete?", which none of the six gives
-    /// alone. `False` is not always a loss: `unverified_seeded_sites` holds
-    /// answers that are complete but unverified, among them a site seated with
-    /// only your own `known_targets`. `False` over that channel alone reads
-    /// "complete but unverified", EXCEPT for a `"return"` seat whose re-check
-    /// failed, which lands there too. Read whichever channel is non-empty to
-    /// tell the cases apart.
-    ///
-    /// On a `build_cfg` CFG `unresolved` is every indirect branch that build
-    /// left without an outgoing edge, since `build_cfg` resolves none of them,
-    /// and `unverified_seeded_sites` holds the seeds it seated.
+    /// Whether `incomplete` is empty. `False` over `"unverified_seed"` alone
+    /// reads "complete but unverified", except for a `"return"` seat whose
+    /// re-check failed.
     fn is_complete(&self) -> bool {
-        self.reports.channels().iter().all(|c| c.is_empty())
+        self.inner.incompleteness().is_complete()
     }
 
     /// Exposes the strong `lifter` back-reference so the cyclic GC can see a
@@ -584,7 +423,14 @@ impl PyCfg {
     }
 }
 
-pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCfg>()?;
+    m.add(
+        "INCOMPLETE_REASONS",
+        pyo3::types::PyTuple::new_bound(
+            py,
+            strider_cfg::Reason::ALL.map(strider_cfg::Reason::name),
+        ),
+    )?;
     Ok(())
 }

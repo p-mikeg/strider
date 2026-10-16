@@ -63,11 +63,12 @@ strider.explore.shutdown(port)
   `endianness` and `is_arm_be8` read what an image carries. Images are memory-mapped; `STRIDER_NO_MMAP=1`
   reads them instead. `load_elf(relocated_got_is_rom=True)` serves `.got` and
   `.data.rel.ro` as read-only, so a load through a GOT slot folds.
-- **Completeness you can check.** `cfg.is_complete()` reads six channels: an
-  unresolved indirect branch (a return whose target is not provably the
-  caller's rides there too), a site settled only by your own seed, an address
-  reached in two ISA modes, and a branch target off an instruction boundary,
-  outside the image, or on bytes that hold no instruction.
+- **Completeness you can check.** `cfg.incomplete` lists every site the
+  analysis cannot vouch for, with why: an unresolved indirect branch (a return
+  whose target is not provably the caller's rides there too), a site settled
+  only by your own seed, an address reached in two ISA modes, and a branch
+  target off an instruction boundary, outside the image, or on bytes that hold
+  no instruction.
   `function.validate()` reports three more shapes: a memory read that skips a
   memory effect on its path, an `InitialVar` naming a varnode the function
   never minted or typed against it wrongly, and a `Store` only a `Load` takes.
