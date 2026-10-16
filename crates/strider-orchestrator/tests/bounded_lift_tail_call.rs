@@ -1,5 +1,5 @@
-//! With `fn_max_size` set, the cfg builder classifies any direct `jmp` whose
-//! target lies outside `[start, start+fn_max_size)` as
+//! With the size bound set, the cfg builder classifies any direct `jmp` whose
+//! target lies outside `[start, start+size)` as
 //! `RegionTerminator::TailCall { target }` (no successor edge), which the IR
 //! layer lowers as `Call(IntConst(target)) + Return`.  Routing the trailing
 //! `Opcode::Branch` through the generic `handle_branch` path instead errors
@@ -84,7 +84,7 @@ fn bounded_lift_handles_tail_call_terminator() {
 /// `Call(IntConst(<backward_target>)) + Return`. Following the jmp into the
 /// adjacent bytes instead balloons the graph to tens of thousands of nodes.
 #[test]
-fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
+fn bounded_lift_backward_jmp_with_size_bound_classifies_as_tail_call() {
     // 0x1000..0x1080: NOP padding (the "previous function").
     // 0x1080..0x108A: our function: `mov eax, 5; jmp 0x1000`.
     // jmp 0x1000 from 0x1080+5 (insn after `mov`) = rel32 of
@@ -124,17 +124,17 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
 }
 
 /// A function whose body has no explicit terminator inside the bound and
-/// whose fall-through crosses `start + fn_max_size` is a
+/// whose fall-through crosses `start + size` is a
 /// **function-boundary error**, not a tail call: a legitimate tail call
 /// has an explicit `jmp <oob>` / `je <oob>` opcode, reaching
 /// `is_branch_tail_call_nocheck` via `process_branch` /
 /// `process_cond_branch`. Sequential fall-through past the bound means
-/// `fn_max_size` is too small or the function is unterminated; silently
+/// the size bound is too small or the function is unterminated; silently
 /// treating that as a tail call hides the bug (the user-reported
 /// `tzcount.o` reproducer). The cfg builder must instead surface a clear
 /// "function-boundary error" / "sequential decoding overflowed" message.
 #[test]
-fn bounded_lift_fall_through_past_fn_max_size_is_function_boundary_error() {
+fn bounded_lift_fall_through_past_size_bound_is_function_boundary_error() {
     // 0x1000..0x1002: `xor eax, eax` (2 bytes, >=1 pcode op).
     // 0x1002..0x1008: `lock cmpxchg %r14, 0x58(%rbx)` (multi-pcode-op,
     //   intra-insn CONST branches).
@@ -155,7 +155,7 @@ fn bounded_lift_fall_through_past_fn_max_size_is_function_boundary_error() {
     };
     let err = match run_at(sleigh, BASE, &lift_opts) {
         Ok(_) => panic!(
-            "fall-through past fn_max_size must surface as a function-boundary error, not Ok"
+            "fall-through past the size bound must surface as a function-boundary error, not Ok"
         ),
         Err(e) => e,
     };
@@ -171,14 +171,14 @@ fn bounded_lift_fall_through_past_fn_max_size_is_function_boundary_error() {
 }
 
 /// Conditional branch whose taken AND fall-through targets both lie past
-/// `start + fn_max_size`. The conditional must SURVIVE: the cfg builder
+/// `start + size`. The conditional must SURVIVE: the cfg builder
 /// lowers each OOB arm as a synthetic tail-call stub, so the IR carries
 /// an `If` dispatching between two `Call(IntConst(target)) + Return` arms
 /// with distinct targets. Each Call's asm fingerprint names the
 /// conditional-branch instruction that proves the call happens.
 #[test]
 fn bounded_lift_keeps_cond_branch_with_both_targets_oob_as_two_tail_call_arms() {
-    // 0x1000: `je 0x1080` (rel8 = +0x7E, both targets OOB at fn_max_size=2).
+    // 0x1000: `je 0x1080` (rel8 = +0x7E, both targets OOB at a size bound of 2).
     //   taken target: 0x1002 + 0x7E = 0x1080.
     //   fall-through: 0x1002 (also OOB at end_exclusive=0x1002).
     // The condition (ZF) is an InitialVar, so no pass can fold the If.
@@ -235,7 +235,7 @@ fn bounded_lift_oob_taken_arm_lifts_as_conditional_tail_call() {
     // 0x1000: 85 FF   test edi, edi   (condition depends on the arg reg,
     //                                  no pass can constant-fold the If)
     // 0x1002: 74 7C   je 0x1080       (taken 0x1004+0x7C=0x1080, OOB at
-    //                                  fn_max_size=0x10)
+    //                                  a size bound of 0x10)
     // 0x1004: C3      ret             (in-range fall-through)
     const BASE: u64 = 0x1000;
     const JE_ADDR: u64 = 0x1002;

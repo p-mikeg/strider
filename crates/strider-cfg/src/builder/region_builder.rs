@@ -1599,7 +1599,7 @@ mod tests {
     }
 
     #[test]
-    fn nocheck_below_start_with_fn_max_size_no_allow_is_tail_call() {
+    fn nocheck_below_start_with_size_bound_no_allow_is_tail_call() {
         let opts = CfgOptions {
             bound: crate::FunctionBound::size(0x100),
             ..CfgOptions::default()
@@ -1619,7 +1619,7 @@ mod tests {
     }
 
     #[test]
-    fn nocheck_at_fn_max_size_boundary() {
+    fn nocheck_at_size_bound() {
         let opts = CfgOptions {
             bound: crate::FunctionBound::size(0x100),
             ..CfgOptions::default()
@@ -1632,7 +1632,7 @@ mod tests {
     }
 
     #[test]
-    fn fn_max_size_plus_start_addr_overflow_treats_inside_range_as_non_tail_call() {
+    fn size_bound_plus_start_addr_overflow_treats_inside_range_as_non_tail_call() {
         let start_addr = u64::MAX - 0x100;
         let max_size = 0x1000u64;
         let opts = CfgOptions {

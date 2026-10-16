@@ -211,7 +211,7 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
     use strider_ir_test_utils::IrWalkerEx;
 
     let base = 0x1000u64;
-    let intra_target = 0x1002u64; // within [base, base + fn_max_size)
+    let intra_target = 0x1002u64; // within [base, base + size)
 
     // 0x1000: `jmp rax` (0xff 0xe0). 0x1002: `ret` (0xc3), the resolved
     // intra-function target. Trailing int3 padding for speculative look-ahead.
