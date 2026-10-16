@@ -200,7 +200,7 @@ fn build_sites(bytes: &[u8], size: u64, sites: &[(u64, &[u64])]) -> anyhow::Resu
         )
     }));
     let opts = CfgOptions {
-        fn_max_size: Some(size),
+        bound: strider_cfg::FunctionBound::size(size),
         known_targets: &known,
         ..CfgOptions::default()
     };
@@ -338,7 +338,7 @@ fn an_edge_decoded_off_an_arm_does_not_take_bytes_an_earlier_arm_decoded() {
         ]),
     )]);
     let opts = CfgOptions {
-        fn_max_size: Some(0x20),
+        bound: strider_cfg::FunctionBound::size(0x20),
         known_targets: &known,
         ..CfgOptions::default()
     };

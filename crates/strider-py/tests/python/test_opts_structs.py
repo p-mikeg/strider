@@ -44,6 +44,50 @@ def test_cfg_options_rejects_zero_function_max_size():
         strider.cfg.CfgOptions(function_max_size=0)
 
 
+def _below_and_past_entry():
+    # 0x1000: c3     ret           (below the entry)
+    # 0x1010: 74 ee  je 0x1000
+    # 0x1012: eb 0c  jmp 0x1020
+    # 0x1020: c3     ret           (16 bytes past the entry)
+    buf = bytearray([0xCC] * 0x21)
+    buf[0x00] = 0xC3
+    buf[0x10:0x14] = bytes([0x74, 0xEE, 0xEB, 0x0C])
+    buf[0x20] = 0xC3
+    mem = strider.reader.BufferReader(0x1000, bytes(buf))
+    return strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+
+
+@pytest.mark.parametrize(
+    ("size", "allow", "expected"),
+    [
+        # expected: (function_max_size, allow_code_before_start_addr,
+        #            decodes below the entry, decodes past 16 bytes), or the
+        #            ValueError message.
+        (None, False, (None, False, False, True)),
+        (None, True, (None, True, True, True)),
+        (0, False, "> 0"),
+        (0, True, "> 0"),
+        (0x10, False, (0x10, False, False, False)),
+        (0x10, True, "allow_code_before_start_addr"),
+    ],
+)
+def test_cfg_options_bound_kwargs(size, allow, expected):
+    """Every `function_max_size` / `allow_code_before_start_addr` pair: a size
+    fixes the extent, so the flag beside it is refused rather than ignored."""
+    if isinstance(expected, str):
+        with pytest.raises(ValueError, match=expected):
+            strider.cfg.CfgOptions(function_max_size=size, allow_code_before_start_addr=allow)
+        return
+    opts = strider.cfg.CfgOptions(function_max_size=size, allow_code_before_start_addr=allow)
+    cfg = _below_and_past_entry().build_cfg(0x1010, opts)
+    assert (
+        opts.function_max_size,
+        opts.allow_code_before_start_addr,
+        cfg.pcode_at(0x1000) is not None,
+        cfg.pcode_at(0x1020) is not None,
+    ) == expected
+
+
 def test_lifter_options_defaults_are_not_shared_mutable():
     """Two default `LifterOptions()` must not share one mutable default
     `CfgOptions` object across construction sites."""

@@ -1503,7 +1503,7 @@ pub(super) fn lift_bytes(
     lift_bytes_with_opts(arch, cc, bytes, strider_cfg::CfgOptions::default())
 }
 
-/// [`lift_bytes`] under caller-chosen CFG options: `fn_max_size` is what
+/// [`lift_bytes`] under caller-chosen CFG options: the size bound is what
 /// decides whether a trailing call falls through or ends the function.
 pub(super) fn lift_bytes_with_opts(
     arch: strider_target::SleighArch,
@@ -1536,7 +1536,7 @@ fn trailing_call_sinks_into_unreachable_direct_and_indirect() {
         ("call rax", vec![0xffu8, 0xd0]),
     ] {
         let opts = strider_cfg::CfgOptions {
-            fn_max_size: Some(bytes.len() as u64),
+            bound: strider_cfg::FunctionBound::size(bytes.len() as u64),
             ..strider_cfg::CfgOptions::default()
         };
         let f = lift_bytes_with_opts(

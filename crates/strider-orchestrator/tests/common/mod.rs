@@ -257,7 +257,9 @@ pub(crate) fn lift_for_pipeline(
     let (mut ana, cc) = driver_for_reader(arch, mem);
     let addr = fixture.symbol(fn_name);
     let cfg_opts = strider_cfg::CfgOptions {
-        allow_code_before_start_addr: true,
+        bound: strider_cfg::FunctionBound::Open {
+            code_before_start: true,
+        },
         ..Default::default()
     };
     let cfg = ana
