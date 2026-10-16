@@ -17,7 +17,7 @@ use reports::{
     DerivedChannels, caller_seeded_return, live_unresolved_branches, refusals, seated_arm_losses,
     unverified_seeded_sites,
 };
-pub(crate) use round::Classifier;
+pub use round::Classifier;
 use round::{Resolutions, Round, flowing_isa_bits};
 use sites::SiteTable;
 
@@ -30,6 +30,16 @@ use sites::SiteTable;
 /// [`crate::AnalyzeError::Failed`]: the sites still growing are reported, and
 /// a site whose answer never settles is withdrawn and reported the same way.
 const MAX_RESOLUTION_ITERATIONS: usize = 256;
+
+/// `items`, counting each read in tests: the unit the fold's cost bounds are
+/// stated in. Every target read in the fold must go through it, or the cost
+/// tests cannot see that read.
+fn visit<I: IntoIterator>(items: I) -> impl Iterator<Item = I::Item> {
+    items.into_iter().inspect(|_| {
+        #[cfg(test)]
+        test_support::TARGET_VISITS.with(|v| v.set(v.get() + 1));
+    })
+}
 
 /// Why the loop stopped.
 enum Termination {

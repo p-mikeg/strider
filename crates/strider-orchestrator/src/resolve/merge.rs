@@ -3,15 +3,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::{ResolvedTarget, ResolvedTargets};
 
-/// `items`, counting each read in tests: the unit the fold's cost bounds are
-/// stated in. Every target read in the fold must go through it, or the cost
-/// tests cannot see that read.
-pub(super) fn visit<I: IntoIterator>(items: I) -> impl Iterator<Item = I::Item> {
-    items.into_iter().inspect(|_| {
-        #[cfg(test)]
-        super::test_support::TARGET_VISITS.with(|v| v.set(v.get() + 1));
-    })
-}
+use super::visit;
 
 /// `targets` with each mode-less entry taking the ISA mode `known` already
 /// proved for that address.
@@ -68,7 +60,7 @@ pub(super) fn adopt_known_modes(
 
 /// Two classifications proved different ISA modes for one target.
 #[derive(Debug, PartialEq, Eq)]
-pub(super) struct Contradiction;
+struct Contradiction;
 
 /// The caller's `seed` unioned with the loop's answer `derived` at one site,
 /// by address and under no mode filter: a seed carries a mode only if the
