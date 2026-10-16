@@ -18,7 +18,7 @@ pub(super) type Resolutions = FxHashMap<NodeId, ResolvedTargets>;
 
 /// What a round classifies its dispatch sites with:
 /// [`strider_opt::classify_sites`], or a test's stand-in.
-pub(crate) type Classifier<'c> = &'c dyn Fn(
+pub type Classifier<'c> = &'c dyn Fn(
     &strider_ir::Function,
     Option<&dyn ReadOnlyMemory>,
     &strider_opt::OptOptions,

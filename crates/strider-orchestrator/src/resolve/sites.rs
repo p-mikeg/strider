@@ -8,8 +8,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::{CfgOptions, PcodeInsnAddr, ResolvedTargets, seated_from, seated_in};
 use strider_ir::node::NodeId;
 
-use super::merge::{adopt_known_modes, merge_derived, union_with_seed, visit};
+use super::merge::{adopt_known_modes, merge_derived, union_with_seed};
 use super::round::Anchors;
+use super::visit;
 
 /// One fold's effect on the induced edge set.
 #[derive(Default)]
