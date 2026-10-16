@@ -9,12 +9,12 @@ use super::ring::wrap_to_addr_width;
 /// Does the access `[base + offset, base + offset + size)` lie wholly in THIS
 /// function's own frame?
 ///
-/// [`super::frame_escape`] proves only that no address of this frame escaped from this
-/// function's BODY.  At the entry SP plus the ABI's stack-argument base and
-/// above lies the CALLER's outgoing-argument block, which the caller may hold or
-/// have leaked a pointer into; nothing here can reveal that, so a callee must be
-/// assumed able to write it.  Below that bound is this frame plus the reserved
-/// area the ABI gives the callee to scratch.
+/// [`super::frame_escape`] proves only that no address of this frame escaped
+/// from this function's BODY.  At the entry SP plus the ABI's stack-argument
+/// base and above lies the CALLER's outgoing-argument block, which the caller
+/// may hold or have leaked a pointer into; nothing here can reveal that, so a
+/// callee must be assumed able to write it.  Below that bound is this frame
+/// plus the reserved area the ABI gives the callee to scratch.
 ///
 /// `base_offset` is the first incoming slot on every supported ABI and
 /// `validate` rejects a negative one, so the stack always grows away from it:
@@ -48,14 +48,14 @@ pub(super) fn in_own_frame(function: &Function, base: ValueId, offset: i128, siz
 
 /// Whether `value` is the entry SP displaced by a non-positive amount.
 ///
-/// Follows the spine shapes [`super::decompose::decompose`] does (`Add(x, const)` and an
-/// alignment `And`), accumulating the constants an anchor would otherwise
-/// discard, and through a `Phi`, where EVERY arm must qualify because the join
-/// could take any of them. The accumulated displacement is compared at the
-/// address width, so a chain that wraps is judged on the address it really
-/// forms. Anything else, a positive displacement, a revisited value (a
-/// loop-carried base) or an exhausted budget answers `false`, which only ever
-/// costs precision.
+/// Follows the spine shapes [`super::decompose::decompose`] does
+/// (`Add(x, const)` and an alignment `And`), accumulating the constants an
+/// anchor would otherwise discard, and through a `Phi`, where EVERY arm must
+/// qualify because the join could take any of them. The accumulated
+/// displacement is compared at the address width, so a chain that wraps is
+/// judged on the address it really forms. Anything else, a positive
+/// displacement, a revisited value (a loop-carried base) or an exhausted budget
+/// answers `false`, which only ever costs precision.
 fn at_or_below_entry_sp(function: &Function, value: ValueId, acc: i128) -> bool {
     /// A real SP spine is a handful of links; this only bounds a pathological one.
     const MAX_STEPS: usize = 256;

@@ -2,11 +2,11 @@
 //! for the highest possible clobber of a location in a position range without
 //! visiting the range.
 //!
-//! Every answer is a superset: [`super::walker::MemWalker::def_clobbers`] still decides each
-//! candidate.  A store is classified once, when the index is built; a store
-//! whose address a later rewrite can still change is one whose address
-//! depended on a load, which classifies as an `Anchor` and is a candidate for
-//! every location.
+//! Every answer is a superset: [`super::walker::MemWalker::def_clobbers`] still
+//! decides each candidate.  A store is classified once, when the index is
+//! built; a store whose address a later rewrite can still change is one whose
+//! address depended on a load, which classifies as an `Anchor` and is a
+//! candidate for every location.
 
 use std::collections::BTreeMap;
 
