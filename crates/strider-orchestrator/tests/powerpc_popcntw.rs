@@ -17,7 +17,7 @@ fn popcntw_counts_the_ones_in_a_word() {
         let bytes = words_image(&WORDS, arch.sleigh().endianness());
         let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, None);
         let f = strider
-            .analyze(BASE, &cc, &Default::default(), &Default::default(), None)
+            .analyze(BASE, &cc, &Default::default(), None)
             .unwrap_or_else(|e| panic!("{arch:?}: {e}"))
             .function;
         let ret = f

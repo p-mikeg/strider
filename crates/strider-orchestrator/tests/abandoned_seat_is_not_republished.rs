@@ -7,8 +7,7 @@
 //! call unresolved.
 
 use strider_cfg::{CfgOptions, PcodeInsnAddr, RegionTerminator, ResolvedTarget, ResolvedTargets};
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::AnalyzeOptions;
 
 mod common;
 
@@ -32,12 +31,12 @@ fn a_site_the_loop_abandoned_is_republished_without_its_seat() {
             ResolvedTarget::new(UNMAPPED_ARM, None),
         ]),
     );
-    let lift_opts = LiftOptions {
+    let lift_opts = AnalyzeOptions {
         cfg: CfgOptions {
             known_targets: &known,
             ..CfgOptions::default()
         },
-        ..LiftOptions::default()
+        ..AnalyzeOptions::default()
     };
 
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
@@ -53,7 +52,7 @@ fn a_site_the_loop_abandoned_is_republished_without_its_seat() {
     );
 
     let result = strider
-        .analyze(BASE, &cc, &lift_opts, &OptOptions::default(), None)
+        .analyze(BASE, &cc, &lift_opts, None)
         .expect("an undecodable seeded arm is a result, not an error");
 
     assert!(

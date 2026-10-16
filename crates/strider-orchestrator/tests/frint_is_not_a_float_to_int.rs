@@ -14,8 +14,7 @@
 
 use strider_ir::IRViewer;
 use strider_ir::node::NodeKind;
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::AnalyzeOptions;
 
 mod common;
 
@@ -29,13 +28,7 @@ fn rounding_to_integral_does_not_lift_as_a_conversion_to_integer() {
     let (mut strider, cc) =
         common::strider_over_bytes(common::Arch::Aarch64, FRINTP_RET.to_vec(), BASE, None);
     let result = strider
-        .analyze(
-            BASE,
-            &cc,
-            &LiftOptions::default(),
-            &OptOptions::default(),
-            None,
-        )
+        .analyze(BASE, &cc, &AnalyzeOptions::default(), None)
         .expect("frintp must still lift");
     let f = &result.function;
 
