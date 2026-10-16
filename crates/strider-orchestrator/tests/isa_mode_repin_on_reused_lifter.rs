@@ -46,11 +46,7 @@ fn lifter(arch: common::Arch, bytes: Vec<u8>, base: u64) -> Lifter<BufMemReader<
 
 fn build(lifter: &mut Lifter<BufMemReader<Vec<u8>>>, entry: u64) -> Cfg {
     lifter
-        .build_cfg(
-            MachineInsnAddr::from(entry),
-            &CfgOptions::default(),
-            &Default::default(),
-        )
+        .build_cfg(MachineInsnAddr::from(entry), &CfgOptions::default())
         .expect("build_cfg on the probe bytes")
 }
 

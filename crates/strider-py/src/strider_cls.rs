@@ -137,13 +137,6 @@ pub(crate) fn build_cc(
         target,
         format_args!("this custom CallingConvention"),
     )?;
-    if cc.no_return {
-        return Err(into_strider_err(anyhow::anyhow!(
-            "a `no_return()` CallingConvention describes a CALLEE that never \
-             returns, which is meaningless for the function being analysed; \
-             pass it through LifterOptions(per_address_ccs={{addr: cc}}) instead"
-        )));
-    }
     match &cc.inner {
         crate::cc::CcImpl::Preset(preset) => preset.build(regs).map_err(into_strider_err),
         crate::cc::CcImpl::Custom(built) => Ok(*built.clone()),
@@ -165,7 +158,7 @@ pub(crate) fn build_per_address_ccs(
                 target,
                 format_args!("the custom per-address CallingConvention at {addr:#x}"),
             )?;
-            let mut built = match &py_cc.inner {
+            let built = match &py_cc.inner {
                 crate::cc::CcImpl::Preset(preset) => preset.build(regs).map_err(|e| {
                     into_strider_err(anyhow::anyhow!(
                         "per-address CC at {addr:#x} unresolved: {e:?}"
@@ -173,9 +166,6 @@ pub(crate) fn build_per_address_ccs(
                 })?,
                 crate::cc::CcImpl::Custom(built) => *built.clone(),
             };
-            // Applied after ABI resolution so it works uniformly for
-            // preset and custom CCs.
-            built.no_return = py_cc.no_return;
             Ok((addr, built))
         })
         .collect::<PyResult<_>>()
@@ -329,6 +319,7 @@ pub(crate) fn cfg_options_from(
         fn_max_size: opts.function_max_size,
         allow_code_before_start_addr: opts.allow_code_before_start_addr,
         known_targets: &opts.seated,
+        no_return_targets: &opts.no_return_targets,
         call_other_overrides: overrides_from(&opts.call_other_abis, target)?,
         data_ranges: opts.data_ranges.clone(),
     })
@@ -767,10 +758,6 @@ impl PyLifter {
 
     /// Build the control-flow graph of the function at `entry`, without
     /// lifting or optimising.  Raises `StriderError` on a build failure.
-    ///
-    /// `LifterOptions.per_address_ccs` is not applied: a direct call to a
-    /// callee whose per-address convention is `no_return` does not end its
-    /// region, so the CFG can run on past a call where `analyze` stops.
     ///
     /// Holds the GIL for the whole build, unlike `analyze`: decoding is short
     /// next to a full analysis, and it runs on the handle's own thread.

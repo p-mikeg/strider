@@ -35,7 +35,6 @@ fn raw_builder(
         link_register_vn: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        no_return: false,
         ..Default::default()
     };
     // Mirror the lifter and track the stack vn: `build_call` reads SP from the
@@ -490,7 +489,6 @@ fn build_call_cc_float_args_are_positional_slices() -> Result<()> {
         link_register_vn: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        no_return: false,
         entry_address_vn: None,
     };
     let mut b = FunctionBuilder::new(vec![q0, r0, sp], cc, strider_target::Endianness::Little)?;
@@ -2218,7 +2216,6 @@ mod build_call_with_cc {
             link_register_vn: None,
             preserves_memory: false,
             preserves_all_registers: false,
-            no_return: false,
             ..Default::default()
         };
 
@@ -2603,7 +2600,6 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
         link_register_vn: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        no_return: false,
         ..Default::default()
     };
     let mut b = FunctionBuilder::new(vec![rdi, rsi, sp], cc, strider_target::Endianness::Little)?;
@@ -2646,7 +2642,6 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
         link_register_vn: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        no_return: false,
         ..Default::default()
     };
     // `FunctionBuilder::new` seeds edi then drops it as enclosed by rdi, so

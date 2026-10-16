@@ -47,7 +47,6 @@ pub(super) fn empty_cc() -> strider_target::BuiltCallingConvention {
         link_register_vn: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        no_return: false,
         ..Default::default()
     }
 }
@@ -1518,7 +1517,7 @@ pub(super) fn lift_bytes_with_opts(
         rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
     )?;
     let mut lifter = Lifter::new(arch, sleigh)?;
-    let cfg = lifter.build_cfg(0x1000u64.into(), &opts, &rustc_hash::FxHashMap::default())?;
+    let cfg = lifter.build_cfg(0x1000u64.into(), &opts)?;
     let built = cc.build(lifter.sleigh_regs())?;
     Ok(lifter.build_ir(&cfg, built)?.function)
 }

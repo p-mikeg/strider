@@ -21,11 +21,7 @@ fn lift_sole_indirect_branch(
         _ => base,
     };
     let cfg = driver
-        .build_cfg(
-            MachineInsnAddr::from(entry),
-            &CfgOptions::default(),
-            &Default::default(),
-        )
+        .build_cfg(MachineInsnAddr::from(entry), &CfgOptions::default())
         .expect("build_cfg");
     let function = driver.build_ir(&cfg, cc).expect("build_ir").function;
     let branch = function
@@ -156,11 +152,7 @@ fn decode_stream<R: rsleigh::MemReader>(
     addr: u64,
 ) -> Vec<rsleigh::Insn> {
     let cfg = driver
-        .build_cfg(
-            MachineInsnAddr::from(addr),
-            &CfgOptions::default(),
-            &Default::default(),
-        )
+        .build_cfg(MachineInsnAddr::from(addr), &CfgOptions::default())
         .expect("build_cfg");
     cfg.regions()
         .flat_map(|r| r.insns.iter().map(|ri| ri.insn.clone()))

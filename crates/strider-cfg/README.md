@@ -10,8 +10,7 @@ sea-of-nodes IR `strider-lift` builds from it.
 - `Builder::for_arch(arch, sleigh, start_addr, opts).build()` -> `Cfg`. A work
   queue seeded with the entry drives decoding: each item either decodes a new
   region or routes an edge to an existing one. `with_flow_context` lends the
-  sla's flowing context vars plus the function's own decode mode;
-  `with_per_address_ccs` supplies calling conventions for call targets.
+  sla's flowing context vars plus the function's own decode mode.
 - `Region`, the graph's node: maximal straight-line pcode entered only at
   `start_addr`, ending at its `RegionTerminator`. `contains_addr` decides which
   bytes it owns, down to the pcode index, since a region can end mid-pcode
@@ -19,8 +18,9 @@ sea-of-nodes IR `strider-lift` builds from it.
 - `CfgOptions<'a>`: `fn_max_size` / `allow_code_before_start_addr` bound the
   function, `known_targets` (borrowed, so a binary-wide table costs nothing
   per function) seats indirect-branch answers a caller derived,
-  `call_other_overrides` classifies user-op names, and `data_ranges` names
-  address ranges that hold data and are never decoded.
+  `no_return_targets` (borrowed too) lists direct-call targets that never
+  return, `call_other_overrides` classifies user-op names, and `data_ranges`
+  names address ranges that hold data and are never decoded.
 - `FlowVars` / `FlowContext`: the sla's flowing decode context, discovered once
   per sla and lent to every build.
 - Queries on `Cfg` (`regions`, `region_ids`, `region_predecessors`,
@@ -68,9 +68,9 @@ region, a zero-pcode-op instruction such as `nop` or `endbr64`, the first half
 of a split, or a fall-through onto bytes that hold no instruction, which edges
 to a `TailCall` stub), `CondBranch` carrying the taken target, `Return`,
 `NoReturn` (a CallOther classified as a `BUG()`-class trap, a call whose target
-has a no-return calling convention, a call whose return address is out of
-range, or a call whose fall-through reaches bytes that hold no instruction,
-which also DROPS everything after the call), `TailCall` carrying the callee,
+is in `no_return_targets`, a call whose return address is out of range, or a
+call whose fall-through reaches bytes that hold no instruction, which also
+DROPS everything after the call), `TailCall` carrying the callee,
 `Switch` carrying a jump table's arms and the dispatch address, and
 `UnresolvedIndirectBranch`. Only `Unconditional`, `CondBranch` and `Switch`
 ever have an outgoing edge.

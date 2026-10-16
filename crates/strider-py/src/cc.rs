@@ -23,8 +23,6 @@ pub struct PyCallingConvention {
     /// The arch a `custom(...)` convention resolved its register names
     /// against; `None` for a preset, which resolves at consumption time.
     pub(crate) source_arch: Option<crate::strider_cls::SourceArch>,
-    /// Only meaningful when this CC is resolved as a per-address override.
-    pub(crate) no_return: bool,
 }
 
 forall_preset!(
@@ -65,7 +63,6 @@ impl PyCallingConvention {
             },
             preset_name: self.preset_name,
             source_arch: self.source_arch,
-            no_return: self.no_return,
         }
     }
 
@@ -83,23 +80,6 @@ impl PyCallingConvention {
             },
             preset_name: self.preset_name,
             source_arch: self.source_arch,
-            no_return: self.no_return,
-        }
-    }
-
-    /// A copy of this convention marked no-return, for a callee that never
-    /// returns (`exit` / `abort` / `panic` / `__stack_chk_fail`).
-    ///
-    /// Use it as a per-address CC override, e.g.
-    /// `CallingConvention.x86_64_systemv().no_return()`.  A call to such a
-    /// target terminates its region, so the unreachable fall-through is not
-    /// lifted.
-    fn no_return(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            preset_name: self.preset_name,
-            source_arch: self.source_arch,
-            no_return: true,
         }
     }
 
@@ -136,8 +116,6 @@ impl PyCallingConvention {
     /// `StriderError` at `analyze` time.  So do a `stack_pointer` not as wide as
     /// the arch's addresses and, with `stack_arg_base` set, a
     /// `stack_arg_increment` other than that width.
-    ///
-    /// Chain `.no_return()` on the result to mark the callee as never-returning.
     #[classmethod]
     #[pyo3(signature = (
         sleigh,
@@ -218,7 +196,6 @@ impl PyCallingConvention {
             link_register_vn: lr_vn,
             preserves_memory,
             preserves_all_registers: false,
-            no_return: false,
             // A custom convention makes no entry-register promise; only the
             // presets that carry an ABI guarantee do.
             entry_address_vn: None,
@@ -230,7 +207,6 @@ impl PyCallingConvention {
             inner: CcImpl::Custom(Box::new(built)),
             preset_name: "custom",
             source_arch: Some(source_arch),
-            no_return: false,
         })
     }
 
