@@ -46,6 +46,8 @@ def test_symbol_entry_carries_every_cfg_field(x86_memory_elf):
         allow_code_before_start_addr=True,
         known_targets={0x1000: "return"},
         call_other_abis={"swi": strider.sleigh.CallOtherAbi.no_return()},
+        data_ranges=[(0x10, 0x18)],
+        no_return_targets=[0x2000],
     )
     narrowed = opts._with_function_max_size(0x100)
     assert narrowed.function_max_size == 0x100
@@ -60,3 +62,20 @@ def test_symbol_entry_carries_every_cfg_field(x86_memory_elf):
     # The symbol path is what reaches for it; a lift through it must survive.
     prog = strider.lift.load_elf(str(x86_memory_elf))
     prog.analyze("array_sum", opts=strider.lift.LifterOptions(cfg=opts))
+
+
+def test_symbol_entry_honours_a_no_return_target(x86_calls_elf):
+    """`repeat_call_pair` calls `pair_a` twice; marking `pair_a` no-return
+    ends the lift at the first call, through the symbol path too."""
+    pair_a = symbol_addr(x86_calls_elf, "pair_a")
+    after_first_call = 0x4011F5
+    prog = strider.lift.load_elf(str(x86_calls_elf))
+    plain = prog.analyze("repeat_call_pair")
+    assert plain.cfg.region_at(after_first_call) is not None
+    marked = prog.analyze(
+        "repeat_call_pair",
+        opts=strider.lift.LifterOptions(
+            cfg=strider.cfg.CfgOptions(no_return_targets=[pair_a])
+        ),
+    )
+    assert marked.cfg.region_at(after_first_call) is None
