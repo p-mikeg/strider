@@ -334,7 +334,7 @@ pub(crate) fn cfg_options_from(
     Ok(strider_cfg::CfgOptions {
         bound: opts.bound,
         known_targets: &opts.seated,
-        no_return_targets: &opts.no_return_targets,
+        no_return_targets: &opts.no_return_targets.set,
         call_other_overrides: overrides_from(&opts.call_other_abis, target)?,
         data_ranges: opts.data_ranges.clone(),
     })
