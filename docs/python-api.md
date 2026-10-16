@@ -1021,7 +1021,8 @@ By default `analyze` and `build_cfg` raise `strider.lift.IncompleteAnalysis`, a
 unresolvable site, a site whose answer oscillates or shrank between rounds, a
 target chain deeper than the iteration cap, and every other reason. Its
 `.incomplete` is that list, every (machine address, reason); the message
-spells p-code indices and shows the first eight. `LifterOptions(on_incomplete=OnIncomplete.IGNORE)` (or
+spells p-code indices and shows the first eight.
+`LifterOptions(on_incomplete=OnIncomplete.IGNORE)` (or
 `build_cfg(..., on_incomplete=OnIncomplete.IGNORE)`) returns the result
 instead. A site you seed with `known_targets` is then `"unverified_seed"`,
 which raises too, so a seeded re-run that must succeed passes `IGNORE`.

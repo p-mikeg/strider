@@ -112,7 +112,7 @@ fn a_chain_of_tables_seats_one_level_per_round() {
         .analyze(BASE, &cc, &common::ignoring(), Some(pipeline))
         .expect("analyze");
 
-    assert!(result.is_complete(), "unresolved {}", result.incomplete());
+    assert!(result.is_complete(), "incomplete: {}", result.incomplete());
     let seated = result
         .cfg
         .regions()
@@ -225,5 +225,5 @@ fn a_table_the_whole_function_bounds_tighter_seats_the_tighter_answer() {
         arms_at(L1 + 5),
         (0..ARMS).map(|i| RETS + i).collect::<Vec<_>>()
     );
-    assert!(result.is_complete(), "unresolved {}", result.incomplete());
+    assert!(result.is_complete(), "incomplete: {}", result.incomplete());
 }

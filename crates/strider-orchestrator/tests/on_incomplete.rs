@@ -38,11 +38,11 @@ fn analyze(bytes: Vec<u8>, on_incomplete: OnIncomplete) -> Result<AnalyzeResult,
 #[test]
 fn error_refuses_what_ignore_returns() {
     let ignored = analyze(jmp_rax(), OnIncomplete::Ignore).expect("Ignore returns the result");
-    let Err(AnalyzeError::Incomplete(sites)) = analyze(jmp_rax(), OnIncomplete::Error) else {
+    let Err(AnalyzeError::Incomplete(incomplete)) = analyze(jmp_rax(), OnIncomplete::Error) else {
         panic!("an unresolved dispatch must be refused");
     };
-    assert_eq!(&sites, ignored.incomplete());
-    assert_eq!(sites.iter().collect::<Vec<_>>(), jmp_rax_incomplete());
+    assert_eq!(&incomplete, ignored.incomplete());
+    assert_eq!(incomplete.iter().collect::<Vec<_>>(), jmp_rax_incomplete());
 }
 
 #[test]
@@ -58,11 +58,12 @@ fn build_cfg_refuses_under_error_only() {
     let cfg = strider
         .build_cfg(BASE, &opts, OnIncomplete::Ignore)
         .expect("Ignore returns the cfg");
-    let Err(AnalyzeError::Incomplete(sites)) = strider.build_cfg(BASE, &opts, OnIncomplete::Error)
+    let Err(AnalyzeError::Incomplete(incomplete)) =
+        strider.build_cfg(BASE, &opts, OnIncomplete::Error)
     else {
         panic!("an unresolved dispatch must be refused");
     };
-    assert_eq!(&sites, cfg.incomplete());
+    assert_eq!(&incomplete, cfg.incomplete());
 }
 
 /// A failure is not an incompleteness, whatever the policy.
@@ -87,10 +88,10 @@ fn an_unmapped_entry_fails_under_either_policy() {
 fn the_default_refuses_an_incomplete_result() {
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, jmp_rax(), BASE, None);
     let r = strider.analyze(BASE, &cc, &AnalyzeOptions::default(), None);
-    let Err(AnalyzeError::Incomplete(sites)) = r else {
+    let Err(AnalyzeError::Incomplete(incomplete)) = r else {
         panic!("the default must refuse an unresolved dispatch");
     };
-    assert_eq!(sites.iter().collect::<Vec<_>>(), jmp_rax_incomplete());
+    assert_eq!(incomplete.iter().collect::<Vec<_>>(), jmp_rax_incomplete());
 }
 
 /// A sweep varies one field of a template it keeps.

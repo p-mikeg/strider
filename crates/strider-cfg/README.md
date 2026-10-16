@@ -126,9 +126,9 @@ seat `UnverifiedSeed`. The four target reasons:
 - `IsaModeConflict`: two edges reached an address carrying different ISA
   modes, and the losing path decodes in the winner's. The mode only: a
   disagreement on another committed var, such as `condit` into an IT block, is
-  not reported. A direct edge the entry
-  reaches without an arm wins over an arm; otherwise the first decode wins by
-  work-queue order, so neither decode can be trusted.
+  not reported. A direct edge the entry reaches without an arm wins over an
+  arm; otherwise the first decode wins by work-queue order, so neither decode
+  can be trusted.
 - `InteriorTarget`: the off-boundary targets above, whose edge is inexact (a
   direct branch) or absent (a dropped `Switch` arm), plus a region start a
   later decode stepped over.

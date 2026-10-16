@@ -1,4 +1,4 @@
-//! A direct branch out of the mapped image is a result, not an error: the
+//! A direct branch out of the mapped image is reported, not a failure: the
 //! regions that did decode survive and the target is reported.
 
 mod common;
@@ -7,7 +7,7 @@ const BASE: u64 = 0x1000;
 const TARGET: u64 = 0x4000_1005;
 
 #[test]
-fn a_direct_branch_out_of_the_image_is_reported_not_raised() {
+fn a_direct_branch_out_of_the_image_is_reported_not_failed() {
     // 0x1000: jmp 0x40001005, then `ret` filler.
     let mut bytes = vec![0xe9, 0x00, 0x00, 0x00, 0x40];
     bytes.extend_from_slice(&[0xc3; 8]);
