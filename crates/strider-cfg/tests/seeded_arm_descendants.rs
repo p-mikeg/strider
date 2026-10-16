@@ -18,7 +18,7 @@ fn build(bytes: &[u8], arms: &[u64]) -> anyhow::Result<Cfg> {
             .expect("create Sleigh");
     let known = FxHashMap::from_iter([(
         PcodeInsnAddr::at_machine_start(BASE),
-        ResolvedTargets::Multiple(arms.iter().map(|&a| a.into()).collect()),
+        ResolvedTargets::table(arms.iter().map(|&a| strider_cfg::ResolvedTarget::from(a))),
     )]);
     let opts = CfgOptions {
         known_targets: &known,
@@ -183,7 +183,7 @@ fn undecodable_bytes_reached_without_an_arm_still_fail_the_function() {
     .expect("create Sleigh");
     let known = FxHashMap::from_iter([(
         PcodeInsnAddr::at_machine_start(0x1002),
-        ResolvedTargets::Multiple(vec![0x1004.into(), 0x1007.into()]),
+        ResolvedTargets::table(vec![0x1004.into(), 0x1007.into()]),
     )]);
     let opts = CfgOptions {
         known_targets: &known,
@@ -208,7 +208,7 @@ fn build_sites(bytes: &[u8], size: u64, sites: &[(u64, &[u64])]) -> anyhow::Resu
     let known = FxHashMap::from_iter(sites.iter().map(|&(site, arms)| {
         (
             PcodeInsnAddr::at_machine_start(site),
-            ResolvedTargets::Multiple(arms.iter().map(|&a| a.into()).collect()),
+            ResolvedTargets::table(arms.iter().map(|&a| strider_cfg::ResolvedTarget::from(a))),
         )
     }));
     let opts = CfgOptions {
@@ -344,7 +344,7 @@ fn an_edge_decoded_off_an_arm_does_not_take_bytes_an_earlier_arm_decoded() {
     let mode = flow.snapshot(&sleigh, base);
     let known = FxHashMap::from_iter([(
         PcodeInsnAddr::at_machine_start(base),
-        ResolvedTargets::Multiple(vec![
+        ResolvedTargets::table(vec![
             ResolvedTarget::new(0x10004, Some(true)),
             ResolvedTarget::new(0x10008, None),
         ]),

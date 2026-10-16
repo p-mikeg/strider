@@ -1153,8 +1153,8 @@ fn classify_table_dispatch_two_stack_targets_resolves() {
     expected.sort_unstable();
     assert_eq!(
         result,
-        Some(ResolvedTargets::Multiple(
-            expected.into_iter().map(Into::into).collect()
+        Some(ResolvedTargets::table(
+            expected.into_iter().map(strider_cfg::ResolvedTarget::from)
         ))
     );
 }
@@ -1228,8 +1228,8 @@ fn classify_table_dispatch_across_mem_phi_resolves() {
     expected.sort_unstable();
     assert_eq!(
         result,
-        Some(ResolvedTargets::Multiple(
-            expected.into_iter().map(Into::into).collect()
+        Some(ResolvedTargets::table(
+            expected.into_iter().map(strider_cfg::ResolvedTarget::from)
         ))
     );
 }
@@ -1259,8 +1259,8 @@ fn classify_table_dispatch_aligned_stack_resolves() {
     expected.sort_unstable();
     assert_eq!(
         result,
-        Some(ResolvedTargets::Multiple(
-            expected.into_iter().map(Into::into).collect()
+        Some(ResolvedTargets::table(
+            expected.into_iter().map(strider_cfg::ResolvedTarget::from)
         ))
     );
 }
@@ -1305,8 +1305,8 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
     expected.sort_unstable();
     assert_eq!(
         classify_with(&fg, None, &claimed, None),
-        Some(ResolvedTargets::Multiple(
-            expected.into_iter().map(Into::into).collect()
+        Some(ResolvedTargets::table(
+            expected.into_iter().map(strider_cfg::ResolvedTarget::from)
         )),
         "StackGlobalDisjoint proves the global store disjoint from the \
          SP-rooted array; the table must resolve",
@@ -1497,7 +1497,7 @@ fn build_stack_table_across_the_wrap(table: u64, newer: Option<(u64, ValueType)>
 fn classify_table_dispatch_sees_a_store_wrapping_onto_a_slot() {
     assert_eq!(
         classify(&build_stack_table_across_the_wrap(0x8000_0000, None), None),
-        Some(ResolvedTargets::Multiple(vec![
+        Some(ResolvedTargets::table(vec![
             0x401180u64.into(),
             0x401190u64.into(),
         ])),
@@ -1519,7 +1519,7 @@ fn classify_table_dispatch_sees_a_store_wrapping_onto_a_slot() {
 fn classify_table_dispatch_sees_a_store_past_the_wrap_onto_a_slot() {
     assert_eq!(
         classify(&build_stack_table_across_the_wrap(0x7FFF_FFFA, None), None),
-        Some(ResolvedTargets::Multiple(vec![
+        Some(ResolvedTargets::table(vec![
             0x401180u64.into(),
             0x401190u64.into(),
         ])),
@@ -1696,8 +1696,8 @@ fn classify_table_dispatch_resolves_a_bitfield_index_under_its_guard() {
     let rom = MockRom::strided(0x4000, 4, (0..32).map(|i| 0x5000 + 0x10 * i).collect(), 4);
     assert_eq!(
         classify(&g, Some(&rom)),
-        Some(ResolvedTargets::Multiple(
-            [0x5000u64, 0x5010, 0x5020, 0x5030].map(Into::into).to_vec()
+        Some(ResolvedTargets::table(
+            [0x5000u64, 0x5010, 0x5020, 0x5030].map(strider_cfg::ResolvedTarget::from)
         )),
     );
 }
@@ -1801,7 +1801,7 @@ fn classify_sites_rederives_a_seated_switch_from_its_selector() {
 
     assert_eq!(
         found.resolved.get(&switch),
-        Some(&ResolvedTargets::Multiple(vec![
+        Some(&ResolvedTargets::table(vec![
             strider_cfg::ResolvedTarget::new(0x1000, None),
             strider_cfg::ResolvedTarget::new(0x2000, None),
         ])),
@@ -2041,7 +2041,7 @@ fn seated_switch_rederives_when_the_table_base_survives_the_merge() {
     let (g, switch) = seated_switch_over_merged_base(false);
     assert_eq!(
         rederive_seated_switch(g, switch),
-        Some(ResolvedTargets::Multiple(vec![
+        Some(ResolvedTargets::table(vec![
             strider_cfg::ResolvedTarget::new(0x1000, None),
             strider_cfg::ResolvedTarget::new(0x2000, None),
         ])),
@@ -2118,7 +2118,7 @@ fn a_heap_verdict_from_an_earlier_run_does_not_open_the_slot_map() {
     };
     assert_eq!(
         resolve(&mut fg, &[MALLOC]),
-        Some(ResolvedTargets::Multiple(vec![
+        Some(ResolvedTargets::table(vec![
             0x401180u64.into(),
             0x401190u64.into()
         ])),

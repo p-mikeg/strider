@@ -24,7 +24,7 @@ fn an_arm_the_cfg_cannot_seat_is_reported_unresolved() {
     let mut known = rustc_hash::FxHashMap::default();
     known.insert(
         branch,
-        ResolvedTargets::Multiple(vec![0x1005.into(), 0x1002.into()]),
+        ResolvedTargets::table(vec![0x1005.into(), 0x1002.into()]),
     );
     let opts = AnalyzeOptions {
         cfg: CfgOptions {

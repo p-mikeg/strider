@@ -35,7 +35,7 @@ fn analyze_flapping(bytes: Vec<u8>, opts: &AnalyzeOptions<'_>) -> (AnalyzeResult
         let n = round.get();
         round.set(n + 1);
         let targets = if n.is_multiple_of(2) {
-            ResolvedTargets::Multiple(vec![
+            ResolvedTargets::table(vec![
                 ResolvedTarget::new(STABLE_ARM, None),
                 ResolvedTarget::new(FLAPPING_ARM, None),
             ])
@@ -100,7 +100,7 @@ fn a_seeded_site_that_narrows_twice_is_withdrawn_over_its_seed() {
     bytes[..2].copy_from_slice(&[0xff, 0x20]); // 0x1000: jmp [rax]
     let known: rustc_hash::FxHashMap<_, _> = std::iter::once((
         PcodeInsnAddr::at_machine_start(BASE),
-        ResolvedTargets::Multiple(vec![ResolvedTarget::new(STABLE_ARM, None)]),
+        ResolvedTargets::table(vec![ResolvedTarget::new(STABLE_ARM, None)]),
     ))
     .collect();
     let opts = AnalyzeOptions {

@@ -706,7 +706,7 @@ fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
         unresolved_addr,
-        ResolvedTargets::Multiple(vec![0x1004, 0x9000].into_iter().map(Into::into).collect()),
+        ResolvedTargets::table([0x1004, 0x9000].map(strider_cfg::ResolvedTarget::from)),
     );
 
     let opts = CfgOptions {
@@ -787,7 +787,7 @@ fn known_multiple_in_range_targets_produces_switch() {
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
         unresolved_addr,
-        ResolvedTargets::Multiple(vec![0x1004, 0x1008].into_iter().map(Into::into).collect()),
+        ResolvedTargets::table([0x1004, 0x1008].map(strider_cfg::ResolvedTarget::from)),
     );
 
     let opts = CfgOptions {
@@ -829,7 +829,7 @@ fn a_switch_arm_interior_to_a_sibling_arm_is_dropped() {
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
         site,
-        ResolvedTargets::Multiple(vec![0x1002.into(), 0x1005.into()]),
+        ResolvedTargets::table(vec![0x1002.into(), 0x1005.into()]),
     );
     let opts = CfgOptions {
         known_targets: &known,
@@ -885,11 +885,11 @@ fn a_switch_arm_shadowed_by_an_overlapping_region_is_dropped() {
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
         PcodeInsnAddr::at_machine_start(0x1000),
-        ResolvedTargets::Multiple(vec![0x1005.into(), 0x2000.into()]),
+        ResolvedTargets::table(vec![0x1005.into(), 0x2000.into()]),
     );
     known.insert(
         PcodeInsnAddr::at_machine_start(0x2000),
-        ResolvedTargets::Multiple(vec![0x1002.into(), 0x1008.into()]),
+        ResolvedTargets::table(vec![0x1002.into(), 0x1008.into()]),
     );
     let opts = CfgOptions {
         known_targets: &known,
@@ -936,7 +936,7 @@ fn a_switch_arm_inside_a_zero_pcode_op_instruction_is_dropped() {
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
         PcodeInsnAddr::at_machine_start(base),
-        ResolvedTargets::Multiple(vec![0x1002.into(), 0x1005.into()]),
+        ResolvedTargets::table(vec![0x1002.into(), 0x1005.into()]),
     );
     let opts = CfgOptions {
         known_targets: &known,
@@ -1008,7 +1008,7 @@ fn re_imposing_a_context_over_an_it_block_builds() {
         let mut known = FxHashMap::default();
         known.insert(
             PcodeInsnAddr::at_machine_start(0x1000),
-            ResolvedTargets::Multiple(vec![target.into()]),
+            ResolvedTargets::table(vec![target.into()]),
         );
         let opts = CfgOptions {
             known_targets: &known,

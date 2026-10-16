@@ -26,7 +26,7 @@ fn a_site_the_loop_abandoned_is_republished_without_its_seat() {
     let mut known = rustc_hash::FxHashMap::default();
     known.insert(
         PcodeInsnAddr::at_machine_start(SITE),
-        ResolvedTargets::Multiple(vec![
+        ResolvedTargets::table(vec![
             ResolvedTarget::new(GOOD_ARM, None),
             ResolvedTarget::new(UNMAPPED_ARM, None),
         ]),
