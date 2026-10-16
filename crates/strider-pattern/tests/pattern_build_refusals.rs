@@ -263,11 +263,11 @@ fn if_chain(n: usize) -> strider_ir::Function {
         for phi in phis {
             let out = e.function().node_outputs(phi)[0];
             let only = e.function().node_inputs(phi)[1];
-            e.replace_value(out, only).unwrap();
+            e.replace_value(out, only);
         }
         let pred = e.function().node_inputs(r)[0];
         let ctrl = e.function().node_outputs(r)[0];
-        e.replace_value(ctrl, pred).unwrap();
+        e.replace_value(ctrl, pred);
         e.kill_node(r);
     }
     e.clean();

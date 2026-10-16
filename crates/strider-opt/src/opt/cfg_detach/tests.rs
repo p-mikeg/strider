@@ -46,7 +46,7 @@ fn simulate_dbe_redirect_without_strip(
     // non-`Drop` type trips `clippy::drop_non_drop`).
     {
         let mut edit = crate::EditFunction::new(fg);
-        edit.replace_value(live_ctrl, ctrl_value)?;
+        edit.replace_value(live_ctrl, ctrl_value);
         edit.kill_node(if_node);
     }
     Ok(())

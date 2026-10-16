@@ -116,7 +116,7 @@ impl PeepholePass for DbeFold {
                 // condition cone.  Absorb it into the surviving control source.
                 edit.absorb_fingerprint(ctrl_value, cond_value);
 
-                edit.replace_value(live_ctrl, ctrl_value)?;
+                edit.replace_value(live_ctrl, ctrl_value);
                 edit.kill_node(root);
                 Ok(PeepholeRewrite::Changed { new_node: None })
             }
@@ -152,7 +152,7 @@ impl PeepholePass for DbeFold {
                 // Same proof-completeness rationale as the `If` arm, with the
                 // constant dispatch address in place of the condition.
                 edit.absorb_fingerprint(ctrl_value, addr_value);
-                edit.replace_value(live_ctrl, ctrl_value)?;
+                edit.replace_value(live_ctrl, ctrl_value);
                 edit.kill_node(root);
                 Ok(PeepholeRewrite::Changed { new_node: None })
             }

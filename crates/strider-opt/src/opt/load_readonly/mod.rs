@@ -89,7 +89,7 @@ fn try_fold_const_load_at(
     // once the Load is replaced, so absorb its fingerprint first.
     let addr_value = edit.load_addr(node_id);
     edit.absorb_fingerprint(new_value, addr_value);
-    edit.replace_value(data_value, new_value)
+    Ok(edit.replace_value(data_value, new_value))
 }
 
 #[cfg(test)]

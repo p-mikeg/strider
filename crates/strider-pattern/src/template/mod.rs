@@ -791,7 +791,7 @@ mod tests {
             super::instantiate(rhs, &mut ef, &bindings, root, &[root], root_ty)?
         };
         let [old_value] = fx.node_outputs_exact::<1>(root).unwrap();
-        EditFunction::new(fx).replace_value(old_value, new_value)?;
+        EditFunction::new(fx).replace_value(old_value, new_value);
         strider_ir::validate::validate(fx).expect("a rewritten function must be valid IR");
         Ok(fx.producer(new_value))
     }

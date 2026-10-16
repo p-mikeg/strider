@@ -137,7 +137,7 @@ fn rewrite_rule_impl(
 
         // `replace_value` absorbs the old root's fingerprint, redirects every
         // use, and enqueues the orphaned old root for the cull.
-        let changed = edit.replace_value(root_value, new_value)?;
+        let changed = edit.replace_value(root_value, new_value);
         Ok(changed.then_some(new_value))
     }
 }
