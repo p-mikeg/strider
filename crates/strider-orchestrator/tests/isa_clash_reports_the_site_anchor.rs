@@ -62,41 +62,53 @@ fn bytes() -> Vec<u8> {
     b
 }
 
-#[test]
-fn a_clash_on_a_machine_start_seed_is_reported_at_the_branchind_anchor() {
-    let mut known = rustc_hash::FxHashMap::default();
-    known.insert(
-        PcodeInsnAddr::at_machine_start(DISPATCH),
-        ResolvedTargets::Multiple(vec![
-            ResolvedTarget::new(THUMB_ARM, Some(true)),
-            ResolvedTarget::new(CLASH, None),
-            ResolvedTarget::new(KEPT_ARMS[0], None),
-            ResolvedTarget::new(KEPT_ARMS[1], None),
-        ]),
-    );
+/// The caller's answer at the dispatch: four arms, one of them the clash.
+fn dispatch_seed() -> ResolvedTargets {
+    ResolvedTargets::Multiple(vec![
+        ResolvedTarget::new(THUMB_ARM, Some(true)),
+        ResolvedTarget::new(CLASH, None),
+        ResolvedTarget::new(KEPT_ARMS[0], None),
+        ResolvedTarget::new(KEPT_ARMS[1], None),
+    ])
+}
+
+/// No rom: the table load does not fold, so the classifier stays silent and
+/// the seeds are the only answers.
+fn analyze(
+    known: &rustc_hash::FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+) -> strider_orchestrator::AnalyzeResult {
     let opts = AnalyzeOptions {
         cfg: CfgOptions {
-            known_targets: &known,
+            known_targets: known,
             ..CfgOptions::default()
         },
         ..common::ignoring()
     };
-
-    // No rom: the table load does not fold, so the classifier stays silent and
-    // the seed is the site's only answer.
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::Arm, bytes(), BASE, None);
-    let result = strider
+    strider
         .analyze(BASE, &cc, &opts, None)
-        .expect("a mode clash is a result, not an error");
+        .expect("a mode clash is a result, not an error")
+}
 
-    let anchor = result
+/// The dispatch's `BRANCHIND` anchor, read off its trimmed `Switch`.
+fn switch_anchor(result: &strider_orchestrator::AnalyzeResult) -> PcodeInsnAddr {
+    result
         .cfg
         .regions()
         .find_map(|r| match &r.terminator {
             strider_cfg::RegionTerminator::Switch { addr, .. } => Some(*addr),
             _ => None,
         })
-        .expect("the trimmed seat is still a Switch");
+        .expect("the trimmed seat is still a Switch")
+}
+
+#[test]
+fn a_clash_on_a_machine_start_seed_is_reported_at_the_branchind_anchor() {
+    let known: rustc_hash::FxHashMap<_, _> =
+        std::iter::once((PcodeInsnAddr::at_machine_start(DISPATCH), dispatch_seed())).collect();
+    let result = analyze(&known);
+
+    let anchor = switch_anchor(&result);
     assert_ne!(
         anchor.insn_index, 0,
         "precondition: ARM `bx` must put its BRANCHIND past p-code index 0, \
@@ -126,4 +138,30 @@ fn a_clash_on_a_machine_start_seed_is_reported_at_the_branchind_anchor() {
             .collect::<Vec<_>>(),
         vec![anchor]
     );
+}
+
+/// A binary-wide seed table holds other functions' sites, and can hold an
+/// address that is no dispatch at all. A seed there whose table names this
+/// function's clash is no site of this function: it is neither reported nor
+/// frozen here.
+#[test]
+fn a_seed_that_is_no_dispatch_here_is_not_reported_for_its_clash() {
+    // Another function's site; this function's `and r0, r0, #3`.
+    for stray in [0x9000, 0x1008] {
+        let mut known = rustc_hash::FxHashMap::default();
+        known.insert(PcodeInsnAddr::at_machine_start(DISPATCH), dispatch_seed());
+        known.insert(
+            PcodeInsnAddr::at_machine_start(stray),
+            ResolvedTargets::Multiple(vec![ResolvedTarget::new(CLASH, None)]),
+        );
+        let result = analyze(&known);
+        assert_eq!(
+            result
+                .incomplete()
+                .of(strider_orchestrator::Reason::UnresolvedBranch)
+                .collect::<Vec<_>>(),
+            vec![switch_anchor(&result)],
+            "a seed at {stray:#x} names no site of this function",
+        );
+    }
 }

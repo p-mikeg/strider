@@ -29,28 +29,31 @@ re-run the whole thing until the control-flow graph stops changing.
 
 ## One round
 
-`build_round` is the unit the loop repeats: build the CFG from the current
-`known_targets`, lift it, run the pipeline. Every `BranchIndirect` the CFG could
-not seat became an `IndirectBranch` placeholder anchored to its pcode address,
-and every `Switch` the CFG did seat kept an anchor of its own so a table can
-still widen. The `IndirectBranchClassify` post-pass walks the optimised IR and
-answers each anchor with a `ResolvedTargets`, or with `None` for a site it
-cannot derive.
+`build_round` is the unit the loop repeats: build the CFG from the caller's
+`known_targets` and the loop's own seats, lift it, run the pipeline. Every
+`BranchIndirect` the CFG could not seat became an `IndirectBranch` placeholder
+anchored to its pcode address, and every `Switch` the CFG did seat kept an
+anchor of its own so a table can still widen. The `IndirectBranchClassify`
+post-pass walks the optimised IR and answers each anchor with a
+`ResolvedTargets`, or with `None` for a site it cannot derive.
 
 The classifier only REPORTS targets. Nothing rewrites the graph in place: the
-orchestrator folds the answers into `known_targets` and rebuilds the CFG from
+orchestrator folds the answers into its own seats and rebuilds the CFG from
 them, so a resolved branch becomes a real CFG edge and the next round's IR is
 lifted with that edge present. That is what makes a chain of trampolines
 resolve: one round seats one level of discovery.
 
 ## The fixed-point loop
 
-`apply_resolutions` folds a round's classifications into `known_targets` and
-reports what changed. Two anchors sharing one pcode address merge within the
-round; across rounds the staged set replaces the previous entry. The caller's
-own seed is unioned back in by address every round, and the caller's map is
-never mutated. A seated `Switch` keeps the ISA mode its instruction commits, so
-a widened arm is evaluated in its own mode; a re-derivation reporting no mode
+`SiteTable::fold` folds a round's classifications into the loop's own seats
+and reports what changed. The CFG reads those seats as
+`CfgOptions::derived_targets`, which beat the caller's `known_targets` at
+their exact key; the caller's table is borrowed, never copied or edited, so a
+binary-wide seed table costs a function nothing. Two anchors sharing one pcode
+address merge within the round; across rounds the staged set replaces the
+previous seat. The caller's own seed is unioned back in by address every
+round. A seated `Switch` keeps the ISA mode its instruction commits, so a
+widened arm is evaluated in its own mode; a re-derivation reporting no mode
 adopts the mode already proved for that address, rather than re-decoding proved
 arms in whatever mode flows into the branch.
 
@@ -66,8 +69,8 @@ Two verdicts freeze a single site, leaving the loop to run on without it:
 - A site that NARROWS twice is abandoned. Every narrowing is reported
   unresolved, since nothing tells a tighter proof of an over-approximated index
   bound from a lost arm; a second means the answer depends on what the previous
-  round seated, so no member of the cycle is trustworthy. Its seat is dropped
-  and its placeholder left live.
+  round seated, so no member of the cycle is trustworthy. Its seat is withdrawn,
+  which defers it over any caller seed, and its placeholder left live.
 - A site naming a target that failed to decode, or that led to code that did,
   is abandoned whole: the bound that produced it is what is wrong, so no arm of
   that answer stands. The site is reported; the address that failed is listed
