@@ -8,7 +8,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::{CfgOptions, PcodeInsnAddr, ResolvedTargets, seated_from, seated_in};
 use strider_ir::node::NodeId;
 
-use super::merge::{adopt_known_modes, merge_derived, union_with_seed};
+use super::merge::{adopt_known_modes, drop_contradicted, merge_derived, union_with_seed};
 use super::round::Anchors;
 use super::visit;
 
@@ -196,23 +196,9 @@ impl<'s> SiteTable<'s> {
         // `Progress::derived_incomplete`.
         let mut progress = Progress::default();
         for (addr, targets) in staged {
-            let contradicted: FxHashSet<u64> = proved
-                .get(&addr)
-                .map(|proved_at| {
-                    visit(proved_at)
-                        .filter(|&&(target, bit)| bit && proved_at.contains(&(target, false)))
-                        .map(|&(target, _)| target)
-                        .collect()
-                })
-                .unwrap_or_default();
-            let targets = if contradicted.is_empty() {
-                targets
-            } else {
-                ResolvedTargets::table(
-                    visit(targets.arms())
-                        .filter(|t| !contradicted.contains(&t.addr))
-                        .copied(),
-                )
+            let (targets, contradicted) = match proved.get(&addr) {
+                Some(proved_at) => drop_contradicted(targets, proved_at),
+                None => (targets, false),
             };
             let seat = self.seat(addr);
             // A re-derivation reports no mode where the dispatch commits none,
@@ -231,7 +217,7 @@ impl<'s> SiteTable<'s> {
             let seated: FxHashSet<Option<u64>> = visit(targets.successors())
                 .map(|(target, _bit)| target)
                 .collect();
-            let derived_dropped = !contradicted.is_empty()
+            let derived_dropped = contradicted
                 || reported
                     .get(&addr)
                     .into_iter()
