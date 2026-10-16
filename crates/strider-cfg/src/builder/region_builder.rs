@@ -301,7 +301,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         Ok(())
     }
 
-    /// Decodes `addr`: the region's first address, or `expected_next`.
+    /// Decodes `addr`: the region's first address, whose carried context
+    /// `Builder::explore` pinned, or `expected_next`.
     fn lift_one(&mut self, addr: u64) -> Result<rsleigh::LiftRes> {
         debug_assert!(
             self.last_lift.is_none() || self.expected_next == Some(addr),
@@ -328,16 +329,17 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         // start as a commit point; `next_pcode_addr` rejects that length too, but
         // only once the region does not close first.
         let len = lift.machine_insn_len as u64;
-        if let Some(next) = (len > 0).then(|| addr.checked_add(len)).flatten() {
+        let next = (len > 0).then(|| addr.checked_add(len)).flatten();
+        if let Some(next) = next {
             // Re-derived NOW, while `addr` is still the last instruction
             // decoded, so whatever sits at `next` afterwards is exactly what
             // THIS decode committed. That is what lets `Builder::enqueue`
             // trust a snapshot here even for a fall-through this region does
             // not go on to decode itself.
             self.rederive_flow(next, addr)?;
-            self.expected_next = Some(next);
             self.builder.committed_next.insert(next);
         }
+        self.expected_next = next;
         Ok(lift)
     }
 

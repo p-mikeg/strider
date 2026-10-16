@@ -38,8 +38,8 @@ const STEP_BUDGET: usize = 4 * STEP_CAP;
 /// A region spans at most two points, so an interpreter run that returns
 /// within this many control nodes is one the simulation would have finished.
 const CAPPED_BUDGET: usize = STEP_CAP / 2;
-/// Points an interpreter run that spends all of [`CAPPED_BUDGET`] has passed,
-/// at most three control nodes each.
+/// The fewest points an interpreter run that spends all of [`CAPPED_BUDGET`]
+/// has passed, since a point costs at most three control nodes.
 const CAPPED_POINTS: usize = CAPPED_BUDGET / 3;
 
 #[derive(Clone, Copy, Debug)]
