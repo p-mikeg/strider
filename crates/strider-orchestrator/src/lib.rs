@@ -24,6 +24,7 @@ static NO_PER_ADDRESS_CCS: FxHashMap<u64, strider_target::BuiltCallingConvention
 /// [`Strider::analyze`]'s options. `Default` decodes an unbounded function
 /// with no seeds and no CC overrides, optimises under
 /// [`OptOptions::default`], compacts, and refuses an incomplete result.
+#[derive(Clone, Debug)]
 pub struct AnalyzeOptions<'a> {
     pub cfg: strider_cfg::CfgOptions<'a>,
     /// Keyed by direct-call target address, read by the lift only. Built
@@ -34,7 +35,7 @@ pub struct AnalyzeOptions<'a> {
     pub opt: OptOptions,
     /// Drops unreachable nodes once the loop settles.
     pub compact: bool,
-    /// What a result [`AnalyzeResult::is_complete`] says no to becomes.
+    /// Whether an incomplete result is returned or refused.
     pub on_incomplete: OnIncomplete,
 }
 
