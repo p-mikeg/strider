@@ -504,11 +504,9 @@ fn seed_still_covers(
         return false;
     };
     let seeded: rustc_hash::FxHashSet<u64> =
-        concrete_targets(seed).iter().map(|t| t.addr).collect();
+        visit(concrete_targets(seed)).map(|t| t.addr).collect();
     settled.get(&addr).is_none_or(|final_targets| {
-        concrete_targets(final_targets)
-            .iter()
-            .all(|t| seeded.contains(&t.addr))
+        visit(concrete_targets(final_targets)).all(|t| seeded.contains(&t.addr))
     })
 }
 
@@ -539,19 +537,17 @@ fn adopt_known_modes(
         return (targets, false);
     };
     let known_targets = concrete_targets(known);
-    let modes: FxHashMap<u64, bool> = known_targets
-        .iter()
+    let modes: FxHashMap<u64, bool> = visit(known_targets)
         .filter_map(|t| t.isa_bit.map(|bit| (t.addr, bit)))
         .collect();
     if modes.is_empty() || matches!(targets, ResolvedTargets::LinkRegister) {
         return (targets, false);
     }
     let interworking = modes.values().any(|&bit| bit != flowing_isa_bit);
-    let known_addrs: rustc_hash::FxHashSet<u64> = known_targets.iter().map(|t| t.addr).collect();
+    let known_addrs: rustc_hash::FxHashSet<u64> = visit(known_targets).map(|t| t.addr).collect();
     let mut assumed = false;
     let from_single = matches!(targets, ResolvedTargets::Single(_));
-    let kept: Vec<strider_cfg::ResolvedTarget> = concrete_targets(&targets)
-        .iter()
+    let kept: Vec<strider_cfg::ResolvedTarget> = visit(concrete_targets(&targets))
         .filter_map(|t| match (t.isa_bit, modes.get(&t.addr)) {
             (Some(_), _) => Some(*t),
             (None, Some(&bit)) => Some(strider_cfg::ResolvedTarget::new(t.addr, Some(bit))),
@@ -605,7 +601,18 @@ fn targets_of(r: &ResolvedTargets) -> impl Iterator<Item = TargetKey> + '_ {
         ResolvedTargets::Multiple(ts) => (None, ts.as_slice()),
     };
     head.into_iter()
-        .chain(tail.iter().map(|t| (Some(t.addr), t.isa_bit)))
+        .chain(visit(tail).map(|t| (Some(t.addr), t.isa_bit)))
+}
+
+/// `side`, counting each target read in tests: the unit the fold's cost
+/// bounds are stated in.
+fn visit(
+    side: &[strider_cfg::ResolvedTarget],
+) -> impl Iterator<Item = &strider_cfg::ResolvedTarget> + '_ {
+    side.iter().inspect(|_| {
+        #[cfg(test)]
+        tests::TARGET_VISITS.with(|v| v.set(v.get() + 1));
+    })
 }
 
 /// The concrete targets of a classification (empty for `LinkRegister`).
@@ -657,15 +664,13 @@ fn combine_resolved(
     let a_targets = concrete_targets(a);
     let b_targets = concrete_targets(b);
     let interworks = |side: &[strider_cfg::ResolvedTarget]| {
-        flowing_isa_bit.is_some_and(|flowing| {
-            side.iter()
-                .any(|t| t.isa_bit.is_some_and(|bit| bit != flowing))
-        })
+        flowing_isa_bit
+            .is_some_and(|flowing| visit(side).any(|t| t.isa_bit.is_some_and(|bit| bit != flowing)))
     };
     let a_interworks = interworks(a_targets);
     let b_interworks = interworks(b_targets);
     let addrs = |side: &[strider_cfg::ResolvedTarget]| -> rustc_hash::FxHashSet<u64> {
-        side.iter().map(|t| t.addr).collect()
+        visit(side).map(|t| t.addr).collect()
     };
     let a_addrs = addrs(a_targets);
     let b_addrs = addrs(b_targets);
@@ -675,14 +680,9 @@ fn combine_resolved(
                    other_addrs: &rustc_hash::FxHashSet<u64>| {
         other_interworks && !own_interworks && t.isa_bit.is_none() && !other_addrs.contains(&t.addr)
     };
-    let mut targets: Vec<strider_cfg::ResolvedTarget> = a_targets
-        .iter()
+    let mut targets: Vec<strider_cfg::ResolvedTarget> = visit(a_targets)
         .filter(|t| !guessed(t, a_interworks, b_interworks, &b_addrs))
-        .chain(
-            b_targets
-                .iter()
-                .filter(|t| !guessed(t, b_interworks, a_interworks, &a_addrs)),
-        )
+        .chain(visit(b_targets).filter(|t| !guessed(t, b_interworks, a_interworks, &a_addrs)))
         .copied()
         .collect();
     targets.sort_by_key(|t| t.addr);
@@ -1165,6 +1165,32 @@ mod tests {
     use super::*;
     use strider_cfg::MachineInsnAddr;
 
+    thread_local! {
+        /// Targets [`visit`] read on this thread.
+        pub(super) static TARGET_VISITS: std::cell::Cell<usize> =
+            const { std::cell::Cell::new(0) };
+    }
+
+    /// `run(n)`'s target visits at two sizes 8x apart: linear is 8x the
+    /// visits, quadratic 64x.
+    fn assert_linear_visits(what: &str, run: impl Fn(u64)) {
+        let visits = |n| {
+            TARGET_VISITS.with(|v| v.set(0));
+            run(n);
+            TARGET_VISITS.with(std::cell::Cell::get)
+        };
+        let small = visits(1_000);
+        let large = visits(8_000);
+        assert!(
+            small >= 1_000,
+            "{what}: {small} visits cannot read every arm"
+        );
+        assert!(
+            large < small * 9,
+            "{what}: 8x the arms cost {large} visits against {small}",
+        );
+    }
+
     fn pcode_addr(machine: u64) -> PcodeInsnAddr {
         PcodeInsnAddr {
             machine_addr: MachineInsnAddr::from(machine),
@@ -1573,26 +1599,20 @@ mod tests {
     #[test]
     fn merge_resolved_does_not_go_quadratic_in_arm_count() {
         use strider_cfg::ResolvedTarget;
-        const ARMS: u64 = 20_000;
-        let thumb = ResolvedTargets::Multiple(
-            (0..ARMS)
-                .map(|i| ResolvedTarget::new(0x2_0000 + i * 4, Some(true)))
-                .collect(),
-        );
-        let arm = ResolvedTargets::Multiple(
-            (0..ARMS)
-                .map(|i| ResolvedTarget::new(0x2_0000 + i * 4, Some(false)))
-                .collect(),
-        );
-        let start = std::time::Instant::now();
-        let merged = merge_resolved(&thumb, &arm, false);
-        let elapsed = start.elapsed();
-        assert!(concrete_targets(&merged).is_empty());
-        assert!(
-            elapsed < std::time::Duration::from_millis(500),
-            "merging {ARMS} contradicted arms took {elapsed:?}: the drop is \
-             quadratic in arms",
-        );
+        assert_linear_visits("merging contradicted arms", |arms| {
+            let thumb = ResolvedTargets::Multiple(
+                (0..arms)
+                    .map(|i| ResolvedTarget::new(0x2_0000 + i * 4, Some(true)))
+                    .collect(),
+            );
+            let arm = ResolvedTargets::Multiple(
+                (0..arms)
+                    .map(|i| ResolvedTarget::new(0x2_0000 + i * 4, Some(false)))
+                    .collect(),
+            );
+            let merged = merge_resolved(&thumb, &arm, false);
+            assert!(concrete_targets(&merged).is_empty());
+        });
     }
 
     /// Scales ARMS at one site, where
@@ -1602,49 +1622,40 @@ mod tests {
     #[test]
     fn apply_resolutions_does_not_go_quadratic_in_arms_at_one_site() {
         use strider_cfg::ResolvedTarget;
-        const ARMS: u64 = 20_000;
         let (_function, node) = fn_with_live_indirect_branch();
         let addr = pcode_addr(0x1000);
         let anchors: UnresolvedAnchors = vec![(addr, node)];
-        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        known.insert(
-            addr,
-            ResolvedTargets::Multiple(
-                (0..ARMS)
-                    .map(|i| ResolvedTarget::new(0x2_0000 + i * 4, Some(true)))
-                    .collect(),
-            ),
-        );
-        let mut resolutions: IndirectResolutions = FxHashMap::default();
-        resolutions.insert(
-            node,
-            Some(ResolvedTargets::Multiple(
-                (0..ARMS * 2)
-                    .map(|i| ResolvedTarget::new(0x2_0000 + i * 4, None))
-                    .collect(),
-            )),
-        );
-
-        let start = std::time::Instant::now();
-        let progress = apply_resolutions(
-            &mut known,
-            &FxHashMap::default(),
-            &anchors,
-            &Vec::new(),
-            resolutions,
-            &FxHashMap::default(),
-            &rustc_hash::FxHashSet::default(),
-        )
-        .expect("apply");
-        let elapsed = start.elapsed();
-
-        assert_eq!(progress.derived_incomplete, vec![addr]);
-        assert!(
-            elapsed < std::time::Duration::from_millis(500),
-            "folding {ARMS} seated arms against {} re-derived ones took \
-             {elapsed:?}: the per-site fold is quadratic in arms",
-            ARMS * 2,
-        );
+        assert_linear_visits("folding seated arms against re-derived ones", |arms| {
+            let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+            known.insert(
+                addr,
+                ResolvedTargets::Multiple(
+                    (0..arms)
+                        .map(|i| ResolvedTarget::new(0x2_0000 + i * 4, Some(true)))
+                        .collect(),
+                ),
+            );
+            let mut resolutions: IndirectResolutions = FxHashMap::default();
+            resolutions.insert(
+                node,
+                Some(ResolvedTargets::Multiple(
+                    (0..arms * 2)
+                        .map(|i| ResolvedTarget::new(0x2_0000 + i * 4, None))
+                        .collect(),
+                )),
+            );
+            let progress = apply_resolutions(
+                &mut known,
+                &FxHashMap::default(),
+                &anchors,
+                &Vec::new(),
+                resolutions,
+                &FxHashMap::default(),
+                &rustc_hash::FxHashSet::default(),
+            )
+            .expect("apply");
+            assert_eq!(progress.derived_incomplete, vec![addr]);
+        });
     }
 
     #[test]
@@ -1725,42 +1736,52 @@ mod tests {
     }
 
     /// Merging one classification must not touch the targets already
-    /// accumulated for every other address. The ceiling is a blowup guard, not
-    /// a pin on the linear cost: it clears by three orders of magnitude.
+    /// accumulated for every other address.
     #[test]
     fn apply_resolutions_does_not_go_quadratic_in_accumulated_targets() {
         let (_function, node) = fn_with_live_indirect_branch();
-        let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        for i in 0..200_000u64 {
-            known.insert(
-                pcode_addr(0x10_0000 + i * 4),
-                ResolvedTargets::Single((0x20_0000 + i * 4).into()),
-            );
-        }
         let addr = pcode_addr(0x1000);
         let unresolved: UnresolvedAnchors = vec![(addr, node)];
-        let mut resolutions: IndirectResolutions = FxHashMap::default();
-        resolutions.insert(node, Some(ResolvedTargets::Single(0x2000.into())));
-
-        let start = std::time::Instant::now();
-        let progress = apply_resolutions(
-            &mut known,
-            &FxHashMap::default(),
-            &unresolved,
-            &Vec::new(),
-            resolutions,
-            &FxHashMap::default(),
-            &rustc_hash::FxHashSet::default(),
-        )
-        .expect("apply");
-        let elapsed = start.elapsed();
-
-        assert!(progress.changed());
-        assert!(
-            elapsed < std::time::Duration::from_millis(100),
-            "merging one resolution into {} accumulated targets took {elapsed:?}: \
-             the whole induced edge set is being rebuilt",
-            known.len(),
+        let visits = |accumulated: u64| {
+            let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = (0..accumulated)
+                .map(|i| {
+                    (
+                        pcode_addr(0x10_0000 + i * 4),
+                        ResolvedTargets::Multiple(vec![
+                            (0x20_0000 + i * 8).into(),
+                            (0x20_0004 + i * 8).into(),
+                        ]),
+                    )
+                })
+                .collect();
+            let mut resolutions: IndirectResolutions = FxHashMap::default();
+            resolutions.insert(
+                node,
+                Some(ResolvedTargets::Multiple(vec![
+                    0x2000.into(),
+                    0x2004.into(),
+                ])),
+            );
+            TARGET_VISITS.with(|v| v.set(0));
+            let progress = apply_resolutions(
+                &mut known,
+                &FxHashMap::default(),
+                &unresolved,
+                &Vec::new(),
+                resolutions,
+                &FxHashMap::default(),
+                &rustc_hash::FxHashSet::default(),
+            )
+            .expect("apply");
+            assert!(progress.changed());
+            TARGET_VISITS.with(std::cell::Cell::get)
+        };
+        let alone = visits(1);
+        assert!(alone > 0, "the merge reads its own targets");
+        assert_eq!(
+            visits(200_000),
+            alone,
+            "merging one resolution reads targets of other addresses",
         );
     }
 
