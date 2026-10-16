@@ -40,14 +40,14 @@ def test_override_reaches_the_decode(x86_memory_elf):
 
 def test_symbol_entry_carries_every_cfg_field(x86_memory_elf):
     """`ElfLifter.analyze(<name>)` narrows `CfgOptions` to the symbol's
-    recorded size through `with_function_max_size`, the single carrier; a
+    recorded size through `_with_function_max_size`, the single carrier; a
     field it forgets is silently dropped."""
     opts = strider.cfg.CfgOptions(
         allow_code_before_start_addr=True,
         known_targets={0x1000: "return"},
         call_other_abis={"swi": strider.sleigh.CallOtherAbi.no_return()},
     )
-    narrowed = opts.with_function_max_size(0x100)
+    narrowed = opts._with_function_max_size(0x100)
     assert narrowed.function_max_size == 0x100
     carried = {n for n in dir(opts) if not n.startswith("_") and not callable(getattr(opts, n))}
     carried -= {"function_max_size", "allow_code_before_start_addr"}

@@ -382,4 +382,4 @@ table costs a sweep nothing per function. `per_address_ccs` needs the lift's
 `SleighRegs` to resolve, so it cannot be seated at construction: the built
 table is memoized behind the shared `PerAddressCcs`, which is where it has to
 live because `ElfLifter.analyze` derives fresh options per call through
-`with_cfg`. The first `analyze` pays the build, the rest borrow it.
+`_with_cfg`. The first `analyze` pays the build, the rest borrow it.

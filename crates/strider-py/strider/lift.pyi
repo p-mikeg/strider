@@ -127,7 +127,7 @@ class LifterOptions:
     def compact(self) -> bool: ...
     # A read-only VIEW onto what the constructor stored, built once and handed
     # out unchanged. Unlike the `CfgOptions` tables, it is not shared with a
-    # clone: `with_cfg` resets it.
+    # clone: `_with_cfg` resets it.
     @property
     def per_address_ccs(self) -> Optional[Mapping[int, CallingConvention]]: ...
     @property
@@ -146,7 +146,7 @@ class LifterOptions:
     ) -> None:
         """Build the options; every field defaults."""
         ...
-    def with_cfg(self, cfg: CfgOptions) -> LifterOptions:
+    def _with_cfg(self, cfg: CfgOptions) -> LifterOptions:
         """A copy of these options with `cfg` replaced."""
         ...
 

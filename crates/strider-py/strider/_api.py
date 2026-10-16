@@ -505,11 +505,11 @@ class ElfLifter(Lifter):
             addr = sym.address
             # An unrecorded symbol size leaves the lift unbounded.
             if opts.cfg.function_max_size is None and sym.size is not None:
-                # `with_function_max_size` carries every other field over on
+                # `_with_function_max_size` carries every other field over on
                 # the Rust side: rebuilding `CfgOptions` from its attributes
                 # drops whatever this call forgets, and copies the seeded
                 # tables through Python on every analyse.
-                opts = opts.with_cfg(opts.cfg.with_function_max_size(sym.size))
+                opts = opts._with_cfg(opts.cfg._with_function_max_size(sym.size))
         elif isinstance(target, int):
             addr = target
         else:
@@ -519,7 +519,7 @@ class ElfLifter(Lifter):
             )
         # A literal pool inside the function decodes as plausible instructions;
         # the ELF's mapping symbols are the only record that it is data.
-        opts = opts.with_cfg(opts.cfg._with_elf_data_ranges(self._elf))
+        opts = opts._with_cfg(opts.cfg._with_elf_data_ranges(self._elf))
 
         # The raw address passes through: `Lifter::build_cfg` reads its low bit
         # per function and masks `decode_addr` itself.

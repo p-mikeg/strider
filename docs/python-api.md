@@ -974,7 +974,6 @@ strider.cfg.CfgOptions(
     data_ranges=[(0x401100, 0x401108)],               # [start, end) never decoded
     no_return_targets=[0x401200],                     # direct-call targets that never return
 )
-# with_function_max_size(n) / with_data_ranges(r) return a changed copy.
 ```
 
 `known_targets` seats indirect-branch answers in the CFG builder and seeds the

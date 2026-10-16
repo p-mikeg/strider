@@ -279,17 +279,6 @@ impl PyCfgOptions {
             .collect()
     }
 
-    /// This object with `data_ranges` replaced, sharing its tables.
-    ///
-    /// # Errors
-    /// As the constructor does, for a range that ends at or below its start.
-    fn with_data_ranges(&self, data_ranges: Vec<(u64, u64)>) -> PyResult<Self> {
-        Ok(Self {
-            data_ranges: data_ranges_from(data_ranges)?,
-            ..self.clone()
-        })
-    }
-
     /// This object with the mapping-symbol data ranges of `elf`, unless it
     /// already names some. Shares the ELF's table rather than copying it
     /// through Python on every analyse.
@@ -328,7 +317,7 @@ impl PyCfgOptions {
 
     /// This object bounded to `function_max_size`, sharing its tables rather
     /// than rebuilding them through Python. The size replaces the whole bound.
-    fn with_function_max_size(&self, function_max_size: u64) -> PyResult<Self> {
+    fn _with_function_max_size(&self, function_max_size: u64) -> PyResult<Self> {
         Ok(Self {
             bound: function_bound(Some(function_max_size), false)?,
             ..self.clone()
@@ -551,7 +540,7 @@ impl PyAssumptionOptions {
 /// A caller's `per_address_ccs` table and the resolution taken from it.
 ///
 /// One object behind an `Arc`, because `ElfLifter.analyze` derives fresh
-/// options through `with_cfg` on every call to seat the ELF's data ranges: a
+/// options through `_with_cfg` on every call to seat the ELF's data ranges: a
 /// memo on the options themselves is written on the throwaway and rebuilt
 /// next call, and cloning the table there is O(entries) in `Py` handle bumps.
 pub struct PerAddressCcs {
@@ -588,7 +577,7 @@ pub struct PyLifterOptions {
     pub compact: bool,
     /// Per-target-address calling-convention overrides (preset or custom
     /// CCs accepted); `None`/omitted means no overrides.
-    /// Shared so the table and its resolution both survive `with_cfg`; see
+    /// Shared so the table and its resolution both survive `_with_cfg`; see
     /// [`PerAddressCcs`].
     pub per_address_ccs: Option<std::sync::Arc<PerAddressCcs>>,
     /// Run the indirect-branch classifier (default `True`). `False` leaves
@@ -701,9 +690,7 @@ impl PyLifterOptions {
     }
 
     /// These options with `cfg` replaced and every other field carried over.
-    /// The supported way to override the nested `CfgOptions`, since the fields
-    /// are read-only.
-    fn with_cfg(&self, py: Python<'_>, cfg: Py<PyCfgOptions>) -> Self {
+    fn _with_cfg(&self, py: Python<'_>, cfg: Py<PyCfgOptions>) -> Self {
         Self {
             cfg,
             assumptions: self.assumptions.clone_ref(py),
