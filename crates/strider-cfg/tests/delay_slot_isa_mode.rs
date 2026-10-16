@@ -110,7 +110,7 @@ fn a_mips16_arm_at_a_slot_does_not_corrupt_a_later_decode_of_its_branch() {
         let flow = FlowVars::discover(&s).unwrap();
         let known = rustc_hash::FxHashMap::from_iter([(
             PcodeInsnAddr::at_machine_start(0x1000),
-            ResolvedTargets::Multiple(arms),
+            ResolvedTargets::table(arms),
         )]);
         let opts = CfgOptions {
             known_targets: &known,

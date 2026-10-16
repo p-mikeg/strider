@@ -60,6 +60,11 @@
   requires `Any`: `analyze` classifies every round after its pipeline,
   whatever the pipeline, with `strider_opt::classify_sites(&function, rom,
   &options)`, which returns a `ClassifiedSites`.
+- `ResolvedTargets::Multiple` holds `Arms`, non-empty and sorted by
+  `(addr, isa_bit)` with no exact duplicate, built by
+  `ResolvedTargets::table`; `table([])` is the new `Withdrawn`, which seats
+  no arm and defers its site. `arms()`, `successors()` and `narrows_to()`
+  read any variant.
 
 ### Changed, Python
 
@@ -95,6 +100,8 @@
   `function_arg_reg` does in Python.
 - `Lifter` refuses a calling convention whose stack geometry belongs to
   another arch, so `Strider::analyze` does too.
+- A seed naming one address in both ISA modes decodes it in base mode first,
+  not in the order listed.
 
 ### Fixed
 
@@ -114,6 +121,9 @@
   site of the function because its table names an address decoded in two
   ISA modes there; and keeps the caller's seed of a `BranchIndirect` whose
   sibling in the same instruction it gave up on.
+- A seed listing one address twice seats one arm, a seed's `Switch` arms
+  come out sorted, and a `[]` seed no longer hides a derived return at that
+  site.
 
 ### Added, Rust
 
