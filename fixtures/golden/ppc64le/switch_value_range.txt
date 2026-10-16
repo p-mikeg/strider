@@ -191,7 +191,7 @@ float_arg 20 [%v78]
 return %v58, %v25, %v62, %v23, %v63, %v64, %v65, %v66, %v67, %v68, %v69, %v70, %v71, %v72, %v73, %v74, %v75, %v76, %v77, %v78
 
 == dispatch_offset @0x100007e0
-unresolved_indirect_branches [0x10000840]
+unresolved_branch [0x10000840]
 cfg
   0x100007e0 37 ops cbranch 0x100008c4 -> [0x10000818, 0x100008c4]
   0x10000818 27 ops unresolved@0x10000840 -> []

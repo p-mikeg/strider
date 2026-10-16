@@ -306,7 +306,7 @@ float_arg 19 [%v45]
 return %v46, %v47, %v48, %v49, %v50, %v51, %v52
 
 == 00000000.plt_pic32.helper_a @0x103fc
-unresolved_indirect_branches [0x10408]
+unresolved_branch [0x10408]
 cfg
   0x103fc 6 ops unresolved@0x10408 -> []
 tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r30, CTR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x19c00:4, u:0x21400:4]

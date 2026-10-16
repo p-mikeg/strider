@@ -75,7 +75,7 @@ arg 0 [%v2]
 return %v0, %v1, %v6, %v7, %v8, %v9
 
 == masked_loop_switch @0x120000ac0
-unresolved_indirect_branches [0x120000b28.5]
+unresolved_branch [0x120000b28.5]
 cfg
   0x120000ac0 35 ops cbranch 0x120000b88 -> [0x120000b00, 0x120000b88]
   0x120000b00 11 ops cbranch 0x120000b54 -> [0x120000b14, 0x120000b54]
