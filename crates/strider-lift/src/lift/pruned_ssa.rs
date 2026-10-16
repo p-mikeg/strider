@@ -228,7 +228,71 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             Opcode::Return | Opcode::BranchIndirect => self.record_cc_return_reads(exp),
             // Write no tracked variable.
             Opcode::Branch | Opcode::CondBranch | Opcode::Nop | Opcode::MultiEqual => {}
-            _ => {
+            // Write only their pcode output. Listed, not `_`, so a new opcode
+            // must be classified here as in the dispatcher.
+            Opcode::Copy
+            | Opcode::Load
+            | Opcode::IntEqual
+            | Opcode::IntNotEqual
+            | Opcode::IntSless
+            | Opcode::IntSlessEqual
+            | Opcode::IntLess
+            | Opcode::IntLessEqual
+            | Opcode::IntZext
+            | Opcode::IntSext
+            | Opcode::IntAdd
+            | Opcode::IntSub
+            | Opcode::IntCarry
+            | Opcode::IntScarry
+            | Opcode::IntSborrow
+            | Opcode::Int2Comp
+            | Opcode::IntNeg
+            | Opcode::IntXor
+            | Opcode::IntAnd
+            | Opcode::IntOr
+            | Opcode::IntLeft
+            | Opcode::IntRight
+            | Opcode::IntSright
+            | Opcode::IntMul
+            | Opcode::IntDiv
+            | Opcode::IntSdiv
+            | Opcode::IntRem
+            | Opcode::IntSrem
+            | Opcode::BoolNeg
+            | Opcode::BoolXor
+            | Opcode::BoolAnd
+            | Opcode::BoolOr
+            | Opcode::FloatEqual
+            | Opcode::FloatNotEqual
+            | Opcode::FloatLess
+            | Opcode::FloatLessEqual
+            | Opcode::FloatNan
+            | Opcode::FloatAdd
+            | Opcode::FloatDiv
+            | Opcode::FloatMul
+            | Opcode::FloatSub
+            | Opcode::FloatNeg
+            | Opcode::FloatAbs
+            | Opcode::FloatSqrt
+            | Opcode::FloatInt2Float
+            | Opcode::FloatFloat2Float
+            | Opcode::FloatTrunc
+            | Opcode::FloatCeil
+            | Opcode::FloatFloor
+            | Opcode::FloatRound
+            | Opcode::Indirect
+            | Opcode::Piece
+            | Opcode::Subpiece
+            | Opcode::Cast
+            | Opcode::PtrAdd
+            | Opcode::PtrSub
+            | Opcode::SegmentOp
+            | Opcode::CPoolRef
+            | Opcode::New
+            | Opcode::Insert
+            | Opcode::Extract
+            | Opcode::Popcount
+            | Opcode::Lzcount => {
                 if let Some(out) = insn.output.as_ref() {
                     self.add_def(out, r, defs, exp);
                 }
