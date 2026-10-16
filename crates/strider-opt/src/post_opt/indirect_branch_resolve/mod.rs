@@ -147,85 +147,85 @@ fn link_register_return(
     }
 }
 
-/// Classifies every live `IndirectBranch` placeholder into
-/// [`OptCtx::indirect_resolutions`], and re-derives every live `Switch` from
-/// its retained selector.  Never mutates the graph.
+/// Every live dispatch site of a function, and what was recovered for each.
+#[derive(Debug, Default)]
+pub struct ClassifiedSites {
+    /// Every reachable `IndirectBranch` placeholder and seated `Switch`.
+    pub sites: Vec<NodeId>,
+    /// The sites a target set was recovered for.
+    pub resolved: rustc_hash::FxHashMap<NodeId, ResolvedTargets>,
+}
+
+/// Classifies every live `IndirectBranch` placeholder, and re-derives every
+/// live `Switch` from its retained selector. Reads `f` only.
 ///
-/// Must run as a post-pass: a dispatch value only becomes classifiable once the
-/// optimizer has folded it into a recognizable shape.
+/// `options` are the ones `f` was optimised under: the table walk reads the
+/// memory-class memo the pipeline stamped under `options.assumptions`. With
+/// `!options.resolve_indirect_branches`, `resolved` is empty.
+///
+/// A dispatch value only becomes classifiable once the optimizer has folded
+/// it into a recognizable shape, so `f` is the converged function.
+///
+/// # Errors
+///
+/// The known-bits analysis failing.
+pub fn classify_sites(
+    f: &strider_ir::Function,
+    rom: Option<&dyn ReadOnlyMemory>,
+    options: &crate::OptOptions,
+) -> crate::Result<ClassifiedSites> {
+    let sites: Vec<NodeId> = f
+        .walk_kind(|k| matches!(k, NodeKind::IndirectBranch | NodeKind::Switch(_)))
+        .collect();
+    let mut resolved = rustc_hash::FxHashMap::default();
+    // Most functions have neither kind, so the setup below is skipped then.
+    if !options.resolve_indirect_branches || sites.is_empty() {
+        return Ok(ClassifiedSites { sites, resolved });
+    }
+    // Computed once, since the graph does not change here.
+    let known = crate::opt::known_bits::analyze(f)?;
+    let doms = strider_ir::control_dominator_tree(f);
+    let mut ranges = crate::value_range::compute_value_ranges(f, &doms, &known);
+    for &node in &sites {
+        // A seated `Switch` is re-derived from its retained selector, which
+        // reads as a wider table once a loop back-edge through its own arms
+        // closes; it carries the mode its instruction commits, so a widened
+        // arm is evaluated in its own mode.
+        let targets = if matches!(f.node_kind(node), NodeKind::Switch(_)) {
+            table::classify_dispatch_value(
+                f,
+                node,
+                f.switch_selector(node),
+                rom,
+                &mut ranges,
+                &options.assumptions,
+                f.switch_isa_mode(node),
+            )
+        } else {
+            classify_target(f, node, rom, &mut ranges, &options.assumptions)
+        };
+        if let Some(targets) = targets {
+            resolved.insert(node, targets);
+        }
+    }
+    Ok(ClassifiedSites { sites, resolved })
+}
+
+/// [`classify_sites`] as a post-pass, answering through
+/// [`OptCtx::indirect_resolutions`].
 #[derive(Clone)]
 pub struct IndirectBranchClassify;
 
 impl PostOptimizer for IndirectBranchClassify {
     fn apply(&self, edit: &mut EditFunction<'_>, ctx: &mut OptCtx<'_>) -> crate::Result<()> {
-        let function = edit.function();
-
-        // Most functions have neither a placeholder nor a seated `Switch`, so
-        // one walk collects both kinds and the KnownBits / dominator /
-        // value-range setup below is skipped when it finds nothing.
-        let sites: Vec<NodeId> = function
-            .walk_kind(|k| matches!(k, NodeKind::IndirectBranch | NodeKind::Switch(_)))
+        let ClassifiedSites {
+            sites,
+            mut resolved,
+        } = classify_sites(edit.function(), ctx.rom, &ctx.options)?;
+        ctx.indirect_resolutions = sites
+            .into_iter()
+            .map(|node| (node, resolved.remove(&node)))
             .collect();
-
-        // Off leaves every site a placeholder, but each one still has to be
-        // REPORTED: the orchestrator derives its live-placeholder set from
-        // `indirect_resolutions`, so returning before the inserts below would
-        // report no unresolved branch while placeholders are live. A seated
-        // `Switch` is already resolved and reports nothing as unresolved, but
-        // it is exactly the site nothing verified, and the unverified-seed
-        // report reads the same map to name it.
-        if !ctx.options.resolve_indirect_branches {
-            ctx.indirect_resolutions = sites.into_iter().map(|node| (node, None)).collect();
-            return Ok(());
-        }
-
-        let mut resolutions: rustc_hash::FxHashMap<_, _> = rustc_hash::FxHashMap::default();
-        if !sites.is_empty() {
-            // Computed once, since the graph does not change during this pass.
-            let known = crate::opt::known_bits::analyze(function)?;
-            let doms = strider_ir::control_dominator_tree(function);
-            let mut ranges = crate::value_range::compute_value_ranges(function, &doms, &known);
-
-            for node in sites {
-                // An already-seated `Switch` is re-derived from its retained
-                // selector, which reads as a wider table once a loop back-edge
-                // through its own arms closes. The orchestrator REPLACES the
-                // seated set with this one, adopting per address the ISA mode
-                // it already proved, and the `Switch` carries the mode its
-                // instruction commits, so a widened arm is evaluated in its own
-                // mode. `None` keeps the seated arms and REPORTS the site
-                // unresolved: they may be a proper subset.
-                let resolved = if matches!(function.node_kind(node), NodeKind::Switch(_)) {
-                    // Fail closed like every other bail on this path: an absent
-                    // node is not an unresolved one, so `continue` here would
-                    // leave the seated arms unreported.
-                    let Some(&selector) = function.node_inputs(node).get(1) else {
-                        resolutions.insert(node, None);
-                        continue;
-                    };
-                    table::classify_dispatch_value(
-                        function,
-                        node,
-                        selector,
-                        ctx.rom,
-                        &mut ranges,
-                        &ctx.options.assumptions,
-                        function.switch_isa_mode(node),
-                    )
-                } else {
-                    classify_target(
-                        function,
-                        node,
-                        ctx.rom,
-                        &mut ranges,
-                        &ctx.options.assumptions,
-                    )
-                };
-                resolutions.insert(node, resolved);
-            }
-        }
-        ctx.indirect_resolutions = resolutions;
-
         Ok(())
     }
 }
@@ -448,20 +448,69 @@ mod tests {
         assert_eq!(result, None);
     }
 
-    /// The pass publishes what it found on every exit, so a second run over an
-    /// `OptCtx` carrying an earlier run's map never leaves a stale site behind.
+    /// Mutation: walk every node (`f.walk().collect()`) instead of the two
+    /// dispatch kinds.
     #[test]
-    fn classify_pass_republishes_on_a_site_free_function() {
-        let (mut function, _target) =
+    fn classify_sites_lists_nothing_on_a_site_free_function() {
+        let (function, _target) =
             empty_graph_returning(|fb| fb.build_int_const(0x1234u64, ValueType::I64).unwrap());
-        let stale = function.entry();
-        let mut ctx = crate::OptCtx::at_floor(None);
-        ctx.indirect_resolutions.insert(stale, None);
-        crate::run_post(&IndirectBranchClassify, &mut function, &mut ctx).expect("classify");
-        assert!(
-            ctx.indirect_resolutions.is_empty(),
-            "a function with no branch site publishes an empty map"
+        let found =
+            classify_sites(&function, None, &crate::OptOptions::default()).expect("classify");
+        assert!(found.sites.is_empty() && found.resolved.is_empty());
+    }
+
+    /// `jmp rax` over an entry value: listed, with nothing recovered.
+    /// Mutation: insert `ResolvedTargets::LinkRegister` for every site the
+    /// recognisers leave `None`.
+    #[test]
+    fn classify_sites_lists_a_site_it_cannot_resolve() {
+        let rax = fake_reg_vn(0x0, 8);
+        let mut b = RegisterSet::new()
+            .tracked(rax)
+            .build_fn_single_region()
+            .expect("RegisterSet::build_fn_single_region");
+        let target = b.read_variable(&rax).expect("read rax");
+        let branch = b.build_indirect_branch(target).expect("indirect");
+        b.set_lift_addr(None);
+        let function = b.build().expect("build");
+
+        let found =
+            classify_sites(&function, None, &crate::OptOptions::default()).expect("classify");
+        assert_eq!(found.sites, vec![branch]);
+        assert!(found.resolved.is_empty());
+    }
+
+    /// With resolution off every site is still listed, so the orchestrator
+    /// still reports it, and nothing is recovered. Mutation: drop the
+    /// `!options.resolve_indirect_branches ||` guard.
+    #[test]
+    fn classify_sites_resolves_nothing_with_resolution_off() {
+        let mut b = strider_ir_test_utils::empty_builder().expect("empty_builder");
+        let region = b.create_region_all().expect("create_region");
+        b.set_entry_region_all(region).expect("set_entry");
+        b.set_region(region);
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let target = b.build_int_const(0x8000u64, ValueType::I64).unwrap();
+        let branch = b.build_indirect_branch(target).expect("build_branch");
+        b.set_lift_addr(None);
+        let function = b.build().expect("build");
+
+        let on = classify_sites(&function, None, &crate::OptOptions::default()).expect("on");
+        assert_eq!(
+            on.resolved.get(&branch),
+            Some(&ResolvedTargets::Single(0x8000.into()))
         );
+        let off = classify_sites(
+            &function,
+            None,
+            &crate::OptOptions {
+                resolve_indirect_branches: false,
+                ..crate::OptOptions::default()
+            },
+        )
+        .expect("off");
+        assert_eq!(off.sites, vec![branch]);
+        assert!(off.resolved.is_empty());
     }
 
     #[test]
