@@ -77,7 +77,7 @@ fn lift_snippet(arch: SleighArch) -> strider_ir::Function {
         ..Default::default()
     };
     let cfg = lifter
-        .build_cfg(MachineInsnAddr::from(BASE), &opts, &Default::default())
+        .build_cfg(MachineInsnAddr::from(BASE), &opts)
         .expect("cfg");
     lifter.build_ir(&cfg, cc).expect("build_ir").function
 }
