@@ -45,6 +45,7 @@ struct Net {
     args: Vec<(u32, Out)>,
     names: Vec<(u64, &'static str)>,
     call_ccs: Vec<(usize, strider_target::BuiltCallingConvention)>,
+    default_cc: strider_target::BuiltCallingConvention,
 }
 
 impl Net {
@@ -57,6 +58,7 @@ impl Net {
             args: Vec::new(),
             names: Vec::new(),
             call_ccs: Vec::new(),
+            default_cc: strider_target::BuiltCallingConvention::default(),
         };
         net.node(|_| NodeKind::Entry, &[], &[CTRL], &[]);
         net.node(|_| NodeKind::InitialMemory, &[], &[MEM], &[]);
@@ -114,7 +116,7 @@ impl Net {
     /// Node ids by spec index.
     fn build(&self, reverse: bool) -> (Function, Vec<NodeId>) {
         let mut f = Function::new(
-            strider_target::BuiltCallingConvention::default(),
+            self.default_cc.clone(),
             strider_target::Endianness::Little,
             self.tracked.clone(),
         );
@@ -577,6 +579,7 @@ fn every_node_kind_prints() {
 #[test]
 fn named_text_respells_each_register_varnode_and_nothing_else() {
     let mut net = Net::new(vec![reg(0), reg(0x38)]);
+    net.default_cc.link_register_vn = Some(reg(0x38));
     let x = net.initial_var(reg(0x38));
     let target = net.int(0x40_1000, ValueType::I64, 0x1000);
     let call = net.plain(
@@ -589,6 +592,8 @@ fn named_text_respells_each_register_varnode_and_nothing_else() {
         call,
         strider_target::BuiltCallingConvention {
             ret_val_regs: vec![reg(0)],
+            link_register_vn: Some(reg(0x38)),
+            entry_address_vn: Some(reg(0)),
             ..Default::default()
         },
     ));
@@ -606,8 +611,9 @@ fn named_text_respells_each_register_varnode_and_nothing_else() {
     let named = f.to_text_named(true, &regs);
     assert!(named.contains("tracked [RAX, RDI]\n"), "{named}");
     assert!(named.contains(" = initial_var[RDI]"), "{named}");
+    assert!(named.contains(" link_register_vn=RDI "), "{named}");
     assert!(
-        named.contains(":i64<RAX> = call[ret_val_regs=[RAX]] "),
+        named.contains(":i64<RAX> = call[ret_val_regs=[RAX] entry_address_vn=RAX] "),
         "{named}"
     );
     assert!(
