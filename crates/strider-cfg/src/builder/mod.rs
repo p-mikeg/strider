@@ -990,10 +990,17 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         if self.user_op_names.is_none() {
             self.user_op_names = Some(std::borrow::Cow::Owned(self.sleigh.user_op_names()?));
         }
+        let lost_successor = self.drain()?;
+        self.finish(lost_successor)
+    }
+
+    /// Decodes the entry and everything it reaches. Returns the regions
+    /// decoded off an arm whose successor would not decode, each with that
+    /// failure.
+    fn drain(&mut self) -> Result<Vec<(NodeIndex, anyhow::Error)>> {
         let entry = self.start_pcode_addr();
         self.enqueue(None, entry, entry.machine_addr.addr);
-        // Regions decoded off an arm whose successor would not decode.
-        let mut lost_successor: Vec<(NodeIndex, anyhow::Error)> = Vec::new();
+        let mut lost_successor = Vec::new();
         while let Some(WorkItem {
             parent: parent_region,
             addr: address,
@@ -1004,62 +1011,82 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             let Err(e) = self.explore(parent_region, address, carried, seeded_by) else {
                 continue;
             };
-            let is_arm = seeded_by.is_some_and(|s| s.is_arm(parent_region, address));
-            // A direct branch out of the mapped image (a firmware window, a
-            // partially-mapped file, an unrelocated `jmp`) names bytes nobody
-            // can supply, and one to bytes that hold no instruction (glibc's
-            // PowerPC `abort` word, a literal pool) names nothing to decode.
-            // The function is not broken by either, so the edge leaves through
-            // a `TailCall` stub and the address is reported; every region that
-            // did decode survives. Undecodable bytes under a seeded arm are the
-            // arm's misclassification instead, handled below.
-            //
-            // The ENTRY has no parent to hang the stub off, and a function
-            // whose first instruction does not exist has nothing to analyse,
-            // so it stays an `Err`.
-            if !is_arm && let Some(parent) = parent_region {
-                let report = if is_unmapped_start(&e, address) {
-                    Some(&mut self.unmapped_branch_targets)
-                } else if seeded_by.is_none() && not_code_at(&e, address).is_some() {
-                    Some(&mut self.undecodable_branch_targets)
-                } else {
-                    None
-                };
-                if let Some(report) = report {
-                    report.push(address);
-                    let stub = self.tail_call_stub(address)?;
-                    self.region_graph.add_edge(parent, stub, ());
-                    continue;
-                }
-            }
-            // The bytes themselves, which `UndecodableTarget` cannot name: it
-            // carries the ARM, and an arm that LED to the bytes decodes. Read
-            // off the error rather
-            // than from `address`, the failure being able to sit several
-            // instructions into the region this item decoded.
-            if seeded_by.is_some()
-                && let Some(bad) = not_code_addr(&e)
-            {
-                self.undecodable_branch_targets
-                    .push(PcodeInsnAddr::at_machine_start(bad));
-            }
-            // Under a seeded arm it is a misclassification, not a broken
-            // function: drop the arm and report it against the site that named
-            // it, so the caller freezes that site alone.
-            let Some(seed) = seeded_by else {
-                return Err(e);
+            self.record_failure(parent_region, address, seeded_by, e, &mut lost_successor)?;
+        }
+        Ok(lost_successor)
+    }
+
+    /// Triages a work item `explore` could not decode. One failure can both
+    /// report its bytes and drop its arm, so these are checks in sequence, not
+    /// one verdict. `Err` is a failure no report covers.
+    fn record_failure(
+        &mut self,
+        parent_region: Option<NodeIndex>,
+        address: PcodeInsnAddr,
+        seeded_by: Option<ArmSeed>,
+        e: anyhow::Error,
+        lost_successor: &mut Vec<(NodeIndex, anyhow::Error)>,
+    ) -> Result<()> {
+        let is_arm = seeded_by.is_some_and(|s| s.is_arm(parent_region, address));
+        // A direct branch out of the mapped image (a firmware window, a
+        // partially-mapped file, an unrelocated `jmp`) names bytes nobody
+        // can supply, and one to bytes that hold no instruction (glibc's
+        // PowerPC `abort` word, a literal pool) names nothing to decode.
+        // The function is not broken by either, so the edge leaves through
+        // a `TailCall` stub and the address is reported; every region that
+        // did decode survives. Undecodable bytes under a seeded arm are the
+        // arm's misclassification instead, handled below.
+        //
+        // The ENTRY has no parent to hang the stub off, and a function
+        // whose first instruction does not exist has nothing to analyse,
+        // so it stays an `Err`.
+        if !is_arm && let Some(parent) = parent_region {
+            let report = if is_unmapped_start(&e, address) {
+                Some(&mut self.unmapped_branch_targets)
+            } else if seeded_by.is_none() && not_code_at(&e, address).is_some() {
+                Some(&mut self.undecodable_branch_targets)
+            } else {
+                None
             };
-            self.undecodable_seeded.push((
-                seed.switch,
-                crate::UndecodableTarget {
-                    site: seed.site,
-                    target: seed.arm,
-                },
-            ));
-            if let Some(parent) = parent_region.filter(|_| !is_arm) {
-                lost_successor.push((parent, e));
+            if let Some(report) = report {
+                report.push(address);
+                let stub = self.tail_call_stub(address)?;
+                self.region_graph.add_edge(parent, stub, ());
+                return Ok(());
             }
         }
+        // The bytes themselves, which `UndecodableTarget` cannot name: it
+        // carries the ARM, and an arm that LED to the bytes decodes. Read
+        // off the error rather than from `address`, the failure being able to
+        // sit several instructions into the region this item decoded.
+        if seeded_by.is_some()
+            && let Some(bad) = not_code_addr(&e)
+        {
+            self.undecodable_branch_targets
+                .push(PcodeInsnAddr::at_machine_start(bad));
+        }
+        // Under a seeded arm it is a misclassification, not a broken
+        // function: drop the arm and report it against the site that named
+        // it, so the caller freezes that site alone.
+        let Some(seed) = seeded_by else {
+            return Err(e);
+        };
+        self.undecodable_seeded.push((
+            seed.switch,
+            crate::UndecodableTarget {
+                site: seed.site,
+                target: seed.arm,
+            },
+        ));
+        if let Some(parent) = parent_region.filter(|_| !is_arm) {
+            lost_successor.push((parent, e));
+        }
+        Ok(())
+    }
+
+    /// Drops the arms the lost successors refuse and every region the entry no
+    /// longer reaches, then seals the cfg.
+    fn finish(mut self, lost_successor: Vec<(NodeIndex, anyhow::Error)>) -> Result<Cfg> {
         self.refuse_arms_reaching(lost_successor.iter().map(|(region, _)| *region));
         self.drop_refused_switch_arms();
         let start_addr = self.start_pcode_addr();
