@@ -241,7 +241,8 @@ impl GraphWalkInfo {
         }
     }
 
-    /// Every node is yielded after all of its consumers.
+    /// Every node is yielded after its consumers, unless the use closes a
+    /// def-use cycle.
     pub fn postorder<'a>(&'a self, graph: &'a Graph) -> DefUsePostorder<'a> {
         PostOrder::new(
             DefUseSuccs::new(graph, &self.live_nodes),
@@ -249,7 +250,8 @@ impl GraphWalkInfo {
         )
     }
 
-    /// Every producer strictly before its consumers, roots first.
+    /// Every producer before its consumers unless the use closes a def-use
+    /// cycle (a loop's `Region` or phi), a root first.
     pub fn reverse_postorder(&self, graph: &Graph) -> Vec<NodeId> {
         let mut rpo: Vec<_> = self.postorder(graph).collect();
         rpo.reverse();
@@ -327,9 +329,14 @@ pub fn memory_reachable(function: &Function, entry: NodeId) -> Vec<NodeId> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
     use crate::node::{NodeKind, ValueKind, ValueType};
+    use crate::test_cfgs;
     use cranelift_entity::EntityRef;
+    use proptest::prelude::*;
+    use strider_ir_test_utils::graph_oracle;
 
     fn make_entry(graph: &mut Graph) -> (NodeId, ValueId) {
         let entry = graph.create_node(NodeKind::Entry, [], [ValueKind::Control]);
@@ -1170,5 +1177,142 @@ mod tests {
             unique.len(),
             "no node visited twice despite the back-edge cycle: {mem:?}"
         );
+    }
+
+    const CASES: u32 = if cfg!(debug_assertions) { 128 } else { 4096 };
+
+    /// Each covered node once, a root first, and every def-use edge forward
+    /// unless it closes a cycle.
+    fn check_order(rpo: &[u32], du: &[Vec<u32>], covered: &[bool], roots: &BTreeSet<u32>) {
+        let mut pos = vec![usize::MAX; covered.len()];
+        for (i, &v) in rpo.iter().enumerate() {
+            assert_eq!(pos[v as usize], usize::MAX, "{v} twice in {rpo:?}");
+            pos[v as usize] = i;
+        }
+        for (v, &c) in covered.iter().enumerate() {
+            assert_eq!(pos[v] != usize::MAX, c, "node {v} ordered iff covered");
+        }
+        if let Some(first) = rpo.first() {
+            assert!(roots.contains(first), "the order starts at a root");
+        }
+        for (u, ss) in du.iter().enumerate() {
+            for &v in ss {
+                if covered[u] && pos[u] > pos[v as usize] {
+                    assert!(
+                        graph_oracle::reaches(du, v, u as u32),
+                        "use {u}->{v} runs backward without closing a cycle"
+                    );
+                }
+            }
+        }
+    }
+
+    /// `cfg_reachable` and `stranded_nodes` against reachability over the
+    /// control edges; `f` need not validate.
+    fn check_control_walks(f: &Function) {
+        let entry = f.entry();
+        let e = u32::try_from(entry.index()).unwrap();
+        let ctl = test_cfgs::control_succs(f);
+        let reach = graph_oracle::reachable(&ctl, &[e], None);
+        let g = f.graph();
+        let got = cfg_reachable(g, entry);
+        let stranded = stranded_nodes(g, entry);
+        let exits: Vec<u32> = (0..ctl.len())
+            .filter(|&v| {
+                let n = NodeId::new(v);
+                reach[v]
+                    && (g.node_kind(n).is_terminator()
+                        || cfg_outputs(g, n).any(|o| g.value_uses(o).next().is_none()))
+            })
+            .map(|v| v as u32)
+            .collect();
+        for (v, &r) in reach.iter().enumerate() {
+            assert_eq!(got.contains(NodeId::new(v)), r, "cfg_reachable({v})");
+            let escapes = exits
+                .iter()
+                .any(|&x| x == v as u32 || graph_oracle::reaches(&ctl, v as u32, x));
+            assert_eq!(
+                stranded.contains(NodeId::new(v)),
+                r && !escapes,
+                "stranded({v})"
+            );
+        }
+    }
+
+    /// The control walks, the live set, its roots, and both def-use orders
+    /// against index-graph oracles.
+    fn check_walks(f: &mut Function) {
+        check_control_walks(f);
+        let entry = f.entry();
+        let e = u32::try_from(entry.index()).unwrap();
+        let g = f.graph();
+        let live = graph_oracle::reachable(&test_cfgs::walk_succs(f), &[e], None);
+        let info = GraphWalkInfo::compute_full(g, entry);
+        for (v, &l) in live.iter().enumerate() {
+            assert_eq!(info.live_nodes.contains(NodeId::new(v)), l, "live({v})");
+        }
+        let roots: BTreeSet<u32> = (0..live.len())
+            .filter(|&v| live[v] && g.node_inputs(NodeId::new(v)).is_empty())
+            .map(|v| v as u32)
+            .collect();
+        let got_roots: BTreeSet<u32> = info.roots.iter().map(|n| n.index() as u32).collect();
+        assert_eq!(got_roots, roots, "roots");
+        let du: Vec<Vec<u32>> = test_cfgs::def_use_succs(f)
+            .into_iter()
+            .enumerate()
+            .map(|(v, ss)| {
+                if live[v] {
+                    ss.into_iter().filter(|&w| live[w as usize]).collect()
+                } else {
+                    Vec::new()
+                }
+            })
+            .collect();
+        let root_list: Vec<u32> = roots.iter().copied().collect();
+        let covered = graph_oracle::reachable(&du, &root_list, None);
+        let rpo: Vec<u32> = info
+            .reverse_postorder(g)
+            .iter()
+            .map(|n| n.index() as u32)
+            .collect();
+        check_order(&rpo, &du, &covered, &roots);
+
+        let edit = crate::EditFunction::new(f);
+        let rpo: Vec<u32> = edit
+            .reverse_postorder()
+            .iter()
+            .map(|n| n.index() as u32)
+            .collect();
+        check_order(&rpo, &du, &covered, &roots);
+        assert_eq!(
+            rpo.first(),
+            roots.iter().next(),
+            "the lowest-id root comes first"
+        );
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(CASES))]
+
+        #[test]
+        fn walks_match_their_definitions(terms in test_cfgs::arb_terms(10)) {
+            if let Some(b) = test_cfgs::lower(&terms) {
+                check_control_walks(b.function());
+                if let Ok(mut f) = b.build() {
+                    check_walks(&mut f);
+                }
+            }
+        }
+    }
+
+    /// A 100,000-region chain walks without recursion.
+    #[test]
+    #[cfg_attr(debug_assertions, ignore = "release-only scale test")]
+    fn walks_scale_to_a_deep_chain() {
+        let f = test_cfgs::chain(100_000).expect("chain builds");
+        let info = GraphWalkInfo::compute_full(f.graph(), f.entry());
+        let rpo = info.reverse_postorder(f.graph());
+        assert_eq!(rpo.len(), info.live_nodes.iter().count());
+        assert!(stranded_nodes(f.graph(), f.entry()).iter().next().is_none());
     }
 }
