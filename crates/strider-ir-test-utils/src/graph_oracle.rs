@@ -168,8 +168,8 @@ pub fn tree_preorder(idom: &[Option<u32>], root: u32, key: impl Fn(u32) -> usize
 }
 
 /// `h` plus every vertex `h` dominates that reaches a back edge into `h`
-/// without passing `h`;
-/// `None` when no edge into `h` comes from a vertex `h` dominates.
+/// without passing `h`; `None` when no edge into `h` comes from a vertex `h`
+/// dominates.
 pub fn natural_loop(succs: &[Vec<u32>], dom: &[Vec<bool>], h: u32) -> Option<Vec<bool>> {
     let preds = preds_of(succs);
     let row = &dom[h as usize];

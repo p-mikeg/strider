@@ -966,37 +966,6 @@ mod tests {
         b.build()
     }
 
-    #[test]
-    fn dominator_tree_build_is_near_linear_on_an_error_ladder() {
-        // Fastest of three, so a scheduling hiccup on one build cannot move
-        // the ratio.
-        fn build_tree(n: usize) -> std::time::Duration {
-            (0..3)
-                .map(|_| {
-                    let f = error_ladder(n).expect("ladder builds");
-                    let start = std::time::Instant::now();
-                    let tree = control_dominator_tree(&f);
-                    let elapsed = start.elapsed();
-                    assert!(tree.contains(f.entry()));
-                    elapsed
-                })
-                .min()
-                .expect("three samples")
-        }
-        build_tree(500);
-        let small = build_tree(1_000);
-        let large = build_tree(16_000);
-        // 16x the rungs is the linear answer; this build measures 17-18x (the
-        // per-node cost itself grows ~1.1x over the range), and the iterative
-        // solver it replaced -- `control_dominators` above, still the oracle --
-        // measures 67x and up. The bound is the geometric midpoint.
-        assert!(
-            large.as_secs_f64() < small.as_secs_f64() * 35.0,
-            "16x the rungs cost {:.1}x the build ({small:?} -> {large:?})",
-            large.as_secs_f64() / small.as_secs_f64(),
-        );
-    }
-
     const CASES: u32 = if cfg!(debug_assertions) { 128 } else { 4096 };
     /// Regions and switch arms per draw: release draws deeper trees.
     const SHAPE: (usize, usize) = if cfg!(debug_assertions) {
@@ -1128,11 +1097,12 @@ mod tests {
         }
     }
 
-    /// A 100,000-region chain and a 50,000-arm join: no recursion, one
-    /// successor call per vertex, and the answers a path and a fan-in must give.
+    /// A 100,000-region chain, a 50,000-arm join and a 50,000-rung error
+    /// ladder: no recursion, one successor call per vertex, and the answers a
+    /// path and a fan-in must give.
     #[test]
     #[cfg_attr(debug_assertions, ignore = "release-only scale test")]
-    fn dominator_trees_scale_to_a_deep_chain_and_a_wide_join() {
+    fn dominator_trees_scale_to_a_chain_a_join_and_a_ladder() {
         let f = test_cfgs::chain(100_000)
             .and_then(FunctionBuilder::build)
             .expect("chain builds");
@@ -1172,6 +1142,29 @@ mod tests {
         assert!(tree.dominates(regions[0], join));
         for &arm in regions.iter().skip(1).filter(|&&n| n != join) {
             assert!(!tree.dominates(arm, join));
+        }
+
+        let f = error_ladder(50_000).expect("ladder builds");
+        assert_each_vertex_asked_once(&f);
+        let tree = control_dominator_tree(&f);
+        let err = f
+            .graph()
+            .all_node_ids()
+            .find(|&n| {
+                matches!(f.node_kind(n), NodeKind::Region)
+                    && f.graph().node_inputs(n).into_iter().count() == 50_000
+            })
+            .expect("the error region");
+        let regions: Vec<NodeId> = tree
+            .preorder()
+            .iter()
+            .copied()
+            .filter(|&n| matches!(f.node_kind(n), NodeKind::Region))
+            .collect();
+        assert_eq!(regions.len(), 50_002);
+        assert!(tree.dominates(regions[0], err));
+        for &rung in regions.iter().skip(1).filter(|&&n| n != err) {
+            assert!(!tree.dominates(rung, err));
         }
     }
 }

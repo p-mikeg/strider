@@ -440,33 +440,6 @@ fn dom_intervals_answer_the_idom_chain() {
     }
 }
 
-/// `if (c) goto err;` `n` times: a chain whose every vertex also edges into
-/// one sink.
-#[test]
-fn dominators_of_an_error_ladder_scale_near_linearly() {
-    fn ladder(n: u32) -> std::time::Duration {
-        let start = std::time::Instant::now();
-        let got = dominators(0u32, |v| match v {
-            v if v + 1 < n => vec![n, v + 1],
-            v if v + 1 == n => vec![n],
-            _ => Vec::new(),
-        });
-        let elapsed = start.elapsed();
-        assert_eq!(got.immediate_dominator(n), Some(0));
-        assert_eq!(got.immediate_dominator(n - 1), Some(n - 2));
-        elapsed
-    }
-    ladder(5_000);
-    let small = ladder(25_000);
-    let large = ladder(200_000);
-    // Linear would be 8x; quadratic 64x.
-    assert!(
-        large.as_secs_f64() < small.as_secs_f64() * 24.0,
-        "8x the rungs cost {:.1}x ({small:?} -> {large:?})",
-        large.as_secs_f64() / small.as_secs_f64(),
-    );
-}
-
 const CASES: u32 = if cfg!(debug_assertions) { 256 } else { 8192 };
 
 /// The vertex types the checks run over.
@@ -486,8 +459,8 @@ impl Id for u32 {
 
 /// A vertex whose `Hash` counts calls: every map probe the dominance code
 /// makes hashes once, so the count is its work, independent of timing. The
-/// probe past `HASH_BUDGET` panics, so superlinear work fails fast rather
-/// than exhausting time or memory.
+/// probe that reaches `HASH_BUDGET` panics, so superlinear work fails fast
+/// rather than exhausting time or memory.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Counted(u32);
 
@@ -500,10 +473,7 @@ impl Hash for Counted {
     fn hash<H: Hasher>(&self, h: &mut H) {
         let probes = HASHES.with(Cell::get) + 1;
         let budget = HASH_BUDGET.with(Cell::get);
-        assert!(
-            probes <= budget,
-            "hash probes exceed the budget of {budget}"
-        );
+        assert!(probes < budget, "hash probes reach the budget of {budget}");
         HASHES.with(|c| c.set(probes));
         self.0.hash(h);
     }
@@ -839,7 +809,6 @@ fn dominance_work_is_linear_on_million_vertex_graphs() {
         drop(placed);
         let order_len = preorder_ascending(&doms, &preds).len();
         let span_len = spans(&doms).len();
-        let work = HASHES.with(Cell::get);
         assert_eq!(
             asked,
             u64::from(N),
@@ -857,10 +826,6 @@ fn dominance_work_is_linear_on_million_vertex_graphs() {
             (order_len, span_len),
             (N as usize, N as usize),
             "shape {shape}"
-        );
-        assert!(
-            work < 64 * (u64::from(N) + edges),
-            "shape {shape}: {work} hash probes for {N} vertices and {edges} edges"
         );
     }
     HASH_BUDGET.with(|c| c.set(u64::MAX));

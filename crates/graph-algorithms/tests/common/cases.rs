@@ -121,7 +121,7 @@ pub fn large_case(n: u32, seed: u64) -> Case {
     }
 }
 
-/// Every shape the owner named, so none depends on the generator's luck.
+/// Named shapes, so none depends on the generator's luck.
 pub fn shapes() -> Vec<(&'static str, Case)> {
     let complete: Vec<(u32, u32)> = (0..6)
         .flat_map(|i| (i + 1..6).map(move |j| (i, j)))
