@@ -1,4 +1,4 @@
-use strider_ir::node::{ExtendOp, NodeKind, ValueId, ValueType};
+use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{Function, IRViewer, ReadOnlyMemory};
 use strider_target::Endianness;
 
@@ -136,6 +136,17 @@ pub(crate) fn eval_node_const(
     }
 }
 
+/// `(x, c)` for a two-operand node with exactly one operand `c` an integer
+/// constant that fits `u128`.
+pub(crate) fn var_and_const(function: &Function, node: NodeId) -> Option<(ValueId, ValueId)> {
+    let [a, b] = function.node_inputs_exact::<2>(node).ok()?;
+    match (function.int_const_u128(a), function.int_const_u128(b)) {
+        (None, Some(_)) => Some((a, b)),
+        (Some(_), None) => Some((b, a)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::eval_node_const;
@@ -180,6 +191,33 @@ mod tests {
             None,
             "a register-space load must not read the image"
         );
+    }
+
+    /// The split names the variable whichever side the constant sits on, and
+    /// takes no side when both operands, or neither, are constants.
+    #[test]
+    fn var_and_const_needs_exactly_one_constant() {
+        use strider_ir::IntBinaryOp;
+        use strider_ir_test_utils::make_empty_fn;
+        let ty = ValueType::I64;
+        let mut built = None;
+        let function = make_empty_fn(|b| {
+            let addr = b.build_int_const(0x2000u64, ty)?;
+            let x = b.build_load(addr, rsleigh::VnSpace::RAM, ty)?;
+            let c = b.build_int_const(8u64, ty)?;
+            let d = b.build_int_const(16u64, ty)?;
+            let mut add = |l, r| b.build_int_binary_operation(l, r, IntBinaryOp::Add, ty);
+            let sums = [add(x, c)?, add(c, x)?, add(c, d)?, add(x, x)?];
+            built = Some((x, c, sums));
+            sums.into_iter().try_fold(x, add)
+        })
+        .expect("make_empty_fn");
+        let (x, c, [xc, cx, cc, xx]) = built.expect("built");
+        let split = |v| super::var_and_const(&function, function.producer(v));
+        assert_eq!(split(xc), Some((x, c)));
+        assert_eq!(split(cx), Some((x, c)));
+        assert_eq!(split(cc), None, "two constants leave no variable side");
+        assert_eq!(split(xx), None, "no constant side");
     }
 
     fn build_add_5_100() -> (strider_ir::Function, strider_ir::node::ValueId) {
