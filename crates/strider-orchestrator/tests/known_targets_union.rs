@@ -27,12 +27,7 @@ fn arms_with(
         // machine-address key is what a caller can spell.
         known.insert(
             PcodeInsnAddr::at_machine_start(DISPATCH),
-            ResolvedTargets::Multiple(
-                targets
-                    .into_iter()
-                    .map(|t| ResolvedTarget::new(t, None))
-                    .collect(),
-            ),
+            ResolvedTargets::table(targets.into_iter().map(|t| ResolvedTarget::new(t, None))),
         );
     }
     let opts = strider_orchestrator::AnalyzeOptions {
@@ -150,7 +145,7 @@ fn x64_main_with_seed(seed: Vec<u64>) -> (Vec<u64>, Vec<PcodeInsnAddr>, Vec<Pcod
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
         PcodeInsnAddr::at_machine_start(seed[0]),
-        ResolvedTargets::Multiple(seed.iter().map(|&t| ResolvedTarget::new(t, None)).collect()),
+        ResolvedTargets::table(seed.iter().map(|&t| ResolvedTarget::new(t, None))),
     );
     let opts = strider_orchestrator::AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
@@ -192,7 +187,7 @@ fn a_seeded_site_is_still_reported_unverified_with_resolution_off() {
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(
         PcodeInsnAddr::at_machine_start(DISPATCH),
-        ResolvedTargets::Multiple(vec![ResolvedTarget::new(addr, None)]),
+        ResolvedTargets::table(vec![ResolvedTarget::new(addr, None)]),
     );
     let opts = strider_orchestrator::AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {

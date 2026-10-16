@@ -7,9 +7,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::{Cfg, PcodeInsnAddr, RegionTerminator, ResolvedTargets, UndecodableTarget};
 use strider_ir::node::NodeId;
 
-use super::merge::{concrete_targets, resolved_from, visit};
+use super::merge::visit;
 use super::round::Anchors;
-use super::sites::{SiteTable, withdrawn};
+use super::sites::SiteTable;
 
 /// Sites whose seated `Switch` holds FEWER arms than their seat asked for.
 ///
@@ -29,10 +29,7 @@ pub(super) fn seated_arm_losses(cfg: &Cfg, sites: &SiteTable<'_>) -> Vec<PcodeIn
             continue;
         };
         let seated: FxHashSet<u64> = targets.iter().map(|t| t.addr).collect();
-        if concrete_targets(asked)
-            .iter()
-            .any(|t| !seated.contains(&t.addr))
-        {
+        if asked.arms().iter().any(|t| !seated.contains(&t.addr)) {
             out.push(*addr);
         }
     }
@@ -81,7 +78,7 @@ pub(super) fn refusals(
         return Vec::new();
     }
     let names = |seat: &ResolvedTargets, bad: &FxHashSet<u64>| {
-        concrete_targets(seat).iter().any(|t| bad.contains(&t.addr))
+        seat.arms().iter().any(|t| bad.contains(&t.addr))
     };
     let candidates: BTreeSet<PcodeInsnAddr> = anchors
         .into_iter()
@@ -93,22 +90,17 @@ pub(super) fn refusals(
         .filter_map(|site| {
             let seat = sites.seat(site)?;
             if bad_arms.get(&site).is_some_and(|bad| names(seat, bad)) {
-                return Some((site, withdrawn()));
+                return Some((site, ResolvedTargets::Withdrawn));
             }
+            // Only a table keeps arms here: a `Single` named a clashing
+            // target, its only one, and a table left with none is `Withdrawn`.
             names(seat, &clashing).then(|| {
-                let kept: Vec<_> = concrete_targets(seat)
+                let kept = seat
+                    .arms()
                     .iter()
                     .filter(|t| !clashing.contains(&t.addr))
-                    .copied()
-                    .collect();
-                // Only a table keeps arms here: a `Single` named a clashing
-                // target, its only one.
-                let keep = if kept.is_empty() {
-                    withdrawn()
-                } else {
-                    resolved_from(kept, false)
-                };
-                (site, keep)
+                    .copied();
+                (site, ResolvedTargets::table(kept))
             })
         })
         .collect()
@@ -125,10 +117,10 @@ pub(super) fn seed_still_covers(sites: &SiteTable<'_>, site: PcodeInsnAddr) -> b
     let Some(seed) = sites.seed(site) else {
         return false;
     };
-    let seeded: FxHashSet<u64> = visit(concrete_targets(seed)).map(|t| t.addr).collect();
+    let seeded: FxHashSet<u64> = visit(seed.arms()).map(|t| t.addr).collect();
     sites
         .seat(site)
-        .is_none_or(|settled| visit(concrete_targets(settled)).all(|t| seeded.contains(&t.addr)))
+        .is_none_or(|settled| visit(settled.arms()).all(|t| seeded.contains(&t.addr)))
 }
 
 /// Seated `Switch` sites whose arms are exactly what the caller seeded and
@@ -467,7 +459,7 @@ mod tests {
                 &SiteTable::new(&seeds),
                 [site]
             ),
-            vec![(site, withdrawn())],
+            vec![(site, ResolvedTargets::Withdrawn)],
             "an over-approximated table bound is no verdict on one arm, so no \
              arm of that answer survives",
         );
@@ -490,7 +482,7 @@ mod tests {
                 &SiteTable::new(&seeds),
                 [bad, other]
             ),
-            vec![(bad, withdrawn())],
+            vec![(bad, ResolvedTargets::Withdrawn)],
         );
     }
 
@@ -550,7 +542,7 @@ mod tests {
         )]);
         assert_eq!(
             refusals(&[], &[pcode_addr(0x3000)], &SiteTable::new(&seeds), [site]),
-            vec![(site, withdrawn())],
+            vec![(site, ResolvedTargets::Withdrawn)],
         );
     }
 

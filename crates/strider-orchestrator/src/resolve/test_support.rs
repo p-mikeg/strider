@@ -47,12 +47,18 @@ pub(crate) fn mid_insn_addr(machine: u64) -> PcodeInsnAddr {
 }
 
 pub(crate) fn multiple(targets: &[(u64, Option<bool>)]) -> ResolvedTargets {
-    ResolvedTargets::Multiple(
+    ResolvedTargets::table(
         targets
             .iter()
-            .map(|&(addr, bit)| strider_cfg::ResolvedTarget::new(addr, bit))
-            .collect(),
+            .map(|&(addr, bit)| strider_cfg::ResolvedTarget::new(addr, bit)),
     )
+}
+
+/// `t`'s successors as a set: what the convergence check compares.
+pub(crate) fn successor_set(
+    t: &ResolvedTargets,
+) -> std::collections::BTreeSet<(Option<u64>, Option<bool>)> {
+    t.successors().collect()
 }
 
 /// Minimal valid function: entry region terminating in one `IndirectBranch`

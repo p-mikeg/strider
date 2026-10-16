@@ -753,7 +753,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             crate::ResolvedTargets::Single(t)
                 if !self.is_branch_tail_call_nocheck(PcodeInsnAddr::at_machine_start(t.addr)) =>
             {
-                crate::ResolvedTargets::Multiple(vec![t])
+                crate::ResolvedTargets::table([t])
             }
             other => other,
         };
@@ -780,9 +780,15 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                     target: crate::ResolvedTarget::new(target.addr, target.isa_bit),
                 })?;
             }
-            crate::ResolvedTargets::Multiple(targets) => {
-                // An empty target set carries no dispatch information; an
-                // out-of-range one has no per-target tail-call escape; one
+            // Nothing trustworthy: deferred exactly as a site with no answer.
+            crate::ResolvedTargets::Withdrawn => {
+                self.finish_current_region(RegionTerminator::UnresolvedIndirectBranch {
+                    target_vn,
+                    addr,
+                })?;
+            }
+            crate::ResolvedTargets::Multiple(arms) => {
+                // An out-of-range arm has no per-target tail-call escape; one
                 // interior to a region but off every instruction boundary can
                 // neither be split out nor found by `switch_arm_regions` at lift
                 // time.  Deferring beats failing the whole function over one
@@ -795,7 +801,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // `Builder::seat_non_boundary_target` reports the one discovered
                 // after seating, so the loss is reported either way.
                 let mut deferred = false;
-                for target in &targets {
+                for target in arms.iter() {
                     let a = PcodeInsnAddr::at_machine_start(target.addr);
                     if self.builder.addr_is_interior_non_boundary(a) {
                         self.builder
@@ -806,7 +812,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                         deferred = true;
                     }
                 }
-                if targets.is_empty() || deferred {
+                if deferred {
                     self.finish_current_region(RegionTerminator::UnresolvedIndirectBranch {
                         target_vn,
                         addr,
@@ -815,7 +821,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 }
                 let region = self.finish_current_region(RegionTerminator::Switch {
                     target_vn,
-                    targets: targets.clone(),
+                    targets: arms.to_vec(),
                     addr,
                 })?;
                 // Each target decodes in the ISA mode the branch committed
@@ -829,11 +835,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // them; decoding the lower arm first gives `explore` a region to
                 // recognise a higher over-read arm as interior to, which drops it
                 // instead of decoding a second region inside that instruction.
-                // A caller's `known_targets` arrives in whatever order it was
-                // built, hence the sort.
-                let mut ordered = targets.clone();
-                ordered.sort_by_key(|t| std::cmp::Reverse(t.addr));
-                for target in &ordered {
+                for target in arms.iter().rev() {
                     self.builder.enqueue_resolved(
                         Some(region),
                         PcodeInsnAddr::at_machine_start(target.addr),

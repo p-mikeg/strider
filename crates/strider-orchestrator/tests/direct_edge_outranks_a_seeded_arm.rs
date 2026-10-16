@@ -48,7 +48,7 @@ fn a_direct_edge_keeps_the_bytes_a_seeded_arm_claims_in_the_other_mode() {
     let mut known = rustc_hash::FxHashMap::default();
     known.insert(
         PcodeInsnAddr::at_machine_start(SITE),
-        ResolvedTargets::Multiple(vec![ResolvedTarget::new(SHARED, Some(true))]),
+        ResolvedTargets::table(vec![ResolvedTarget::new(SHARED, Some(true))]),
     );
     let seeded = strider
         .build_cfg(

@@ -1,28 +1,22 @@
 //! Each dispatch site's state across rounds, keyed by its anchor: the
 //! `BranchIndirect`'s own p-code address.
 
+use std::collections::BTreeSet;
+
 use anyhow::{Result, anyhow};
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::{CfgOptions, PcodeInsnAddr, ResolvedTargets, seated_in};
 use strider_ir::node::NodeId;
 
-use super::merge::{
-    adopt_known_modes, merge_derived, narrows, target_keys, targets_of, union_with_seed,
-};
+use super::merge::{adopt_known_modes, merge_derived, union_with_seed, visit};
 use super::round::Anchors;
-
-/// The seat of a site the loop gave up on: no arms, so the cfg defers it, over
-/// a caller's seed too.
-pub(super) fn withdrawn() -> ResolvedTargets {
-    ResolvedTargets::Multiple(Vec::new())
-}
 
 /// One fold's effect on the induced edge set.
 #[derive(Default)]
 pub(super) struct Progress {
     /// Addresses whose successor set changed without losing ground, which
     /// includes a target taking a proved mode at an unchanged address set
-    /// (`narrows`).
+    /// (`ResolvedTargets::narrows_to`).
     pub(super) grew: Vec<PcodeInsnAddr>,
     /// Addresses that LOST a successor, so the signal is not monotone there.
     pub(super) narrowed: Vec<PcodeInsnAddr>,
@@ -88,7 +82,9 @@ impl<'s> SiteTable<'s> {
     /// Whether the loop holds an answer at `site` with an arm to seat. No
     /// seed fallback: a withdrawn site is not seated whatever its seed says.
     pub(super) fn is_seated(&self, site: PcodeInsnAddr) -> bool {
-        self.seats.get(&site).is_some_and(|t| *t != withdrawn())
+        self.seats
+            .get(&site)
+            .is_some_and(|t| !matches!(t, ResolvedTargets::Withdrawn))
     }
 
     /// The sites the loop holds an answer for.
@@ -119,7 +115,7 @@ impl<'s> SiteTable<'s> {
         let mut withdrawn_now = Vec::new();
         for &site in narrowed {
             if !self.narrowed_once.insert(site) && !self.frozen.contains(&site) {
-                self.freeze(site, withdrawn());
+                self.freeze(site, ResolvedTargets::Withdrawn);
                 withdrawn_now.push(site);
             }
         }
@@ -176,7 +172,7 @@ impl<'s> SiteTable<'s> {
             reported
                 .entry(addr)
                 .or_default()
-                .extend(targets_of(&targets).map(|(target, _bit)| target));
+                .extend(visit(targets.successors()).map(|(target, _bit)| target));
             staged
                 .entry(addr)
                 .and_modify(|e| *e = merge_derived(e, &targets, flowing_at(addr)))
@@ -205,16 +201,23 @@ impl<'s> SiteTable<'s> {
                 Some(seed) => union_with_seed(seed, &targets),
                 None => targets,
             };
-            let seated: FxHashSet<Option<u64>> =
-                targets_of(&targets).map(|(target, _bit)| target).collect();
+            let seated: FxHashSet<Option<u64>> = visit(targets.successors())
+                .map(|(target, _bit)| target)
+                .collect();
             let derived_dropped = reported
                 .get(&addr)
                 .into_iter()
                 .flatten()
                 .any(|a| !seated.contains(a));
-            let prev = self.seat(addr).map(target_keys).unwrap_or_default();
-            let next = target_keys(&targets);
-            let narrowed = narrows(&prev, &next);
+            let prev: BTreeSet<_> = self
+                .seat(addr)
+                .into_iter()
+                .flat_map(|seat| visit(seat.successors()))
+                .collect();
+            let next: BTreeSet<_> = visit(targets.successors()).collect();
+            let narrowed = self
+                .seat(addr)
+                .is_some_and(|seat| seat.narrows_to(&targets));
             if prev != next {
                 if narrowed {
                     progress.narrowed.push(addr);
@@ -239,12 +242,10 @@ impl<'s> SiteTable<'s> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resolve::merge::{TargetKey, concrete_targets};
     use crate::resolve::test_support::{
         TARGET_VISITS, assert_linear_visits, fn_with_live_indirect_branch, mid_insn_addr, multiple,
-        pcode_addr,
+        pcode_addr, successor_set,
     };
-    use std::collections::BTreeSet;
 
     /// The classifier's answers as the tests write them, `None` for a site it
     /// could not derive.
@@ -294,7 +295,7 @@ mod tests {
         let seed = multiple(&[(0x4000, None), (0x6000, None)]);
         let fold = multiple(&[(0x5000, None)]);
         let kept = multiple(&[(0x4000, None)]);
-        let none = withdrawn();
+        let none = ResolvedTargets::Withdrawn;
         let at_start: FxHashMap<_, _> = std::iter::once((start, seed.clone())).collect();
         let at_anchor: FxHashMap<_, _> = std::iter::once((anchor, seed.clone())).collect();
         // (case, seeds, the loop's answer at the anchor and whether frozen,
@@ -381,7 +382,7 @@ mod tests {
                 &FxHashMap::default(),
             )
             .expect("fold");
-        sites.freeze(site, withdrawn());
+        sites.freeze(site, ResolvedTargets::Withdrawn);
         let opts = sites.cfg_options(&base);
         assert!(std::ptr::eq(opts.known_targets, &seeds));
         assert!(std::ptr::eq(opts.derived_targets, &sites.seats));
@@ -402,7 +403,7 @@ mod tests {
         let seeds: FxHashMap<_, _> =
             std::iter::once((pcode_addr(0x1000), multiple(&[(0x4000, None)]))).collect();
         let mut sites = SiteTable::new(&seeds);
-        sites.freeze(first, withdrawn());
+        sites.freeze(first, ResolvedTargets::Withdrawn);
         assert_eq!(
             sites.seat(second),
             Some(&multiple(&[(0x4000, None)])),
@@ -417,8 +418,8 @@ mod tests {
             )
             .expect("fold");
         assert_eq!(
-            target_keys(sites.seat(second).expect("seated")),
-            target_keys(&multiple(&[(0x4000, None), (0x5000, None)])),
+            successor_set(sites.seat(second).expect("seated")),
+            successor_set(&multiple(&[(0x4000, None), (0x5000, None)])),
         );
     }
 
@@ -432,7 +433,7 @@ mod tests {
         let mut sites = SiteTable::new(&none);
         assert_eq!(sites.note_narrowed(&[site]), Vec::new());
         assert_eq!(sites.note_narrowed(&[site]), vec![site]);
-        assert_eq!(sites.seat(site), Some(&withdrawn()));
+        assert_eq!(sites.seat(site), Some(&ResolvedTargets::Withdrawn));
         assert!(!sites.is_seated(site));
         assert_eq!(sites.note_narrowed(&[site]), Vec::new(), "already frozen");
     }
@@ -440,7 +441,7 @@ mod tests {
     /// One fold at a `BRANCHIND` anchored mid-instruction whose previous
     /// mode-bearing answer is the loop's own, at the anchor, or the caller's,
     /// under the machine start.
-    fn fold_mid_insn(caller_seeded: bool) -> (BTreeSet<TargetKey>, Progress) {
+    fn fold_mid_insn(caller_seeded: bool) -> (ResolvedTargets, Progress) {
         let (_function, node) = fn_with_live_indirect_branch();
         let anchor = mid_insn_addr(0x1000);
         let answer = multiple(&[(0x2000, Some(true))]);
@@ -461,7 +462,7 @@ mod tests {
                 &FxHashMap::default(),
             )
             .expect("fold");
-        (target_keys(sites.seat(anchor).expect("seated")), progress)
+        (sites.seat(anchor).expect("seated").clone(), progress)
     }
 
     /// A caller can only spell the machine address, so at a site whose
@@ -475,15 +476,15 @@ mod tests {
         let (seeded, seeded_progress) = fold_mid_insn(true);
 
         assert_eq!(
-            anchored,
-            target_keys(&multiple(&[(0x2000, Some(true))])),
+            successor_set(&anchored),
+            successor_set(&multiple(&[(0x2000, Some(true))])),
             "the mode-less 0x3000 must not be seated at an interworking site",
         );
         assert_eq!(
             anchored_progress.derived_incomplete,
             vec![mid_insn_addr(0x1000)]
         );
-        assert_eq!(seeded, anchored);
+        assert_eq!(successor_set(&seeded), successor_set(&anchored));
         assert_eq!(
             seeded_progress.derived_incomplete,
             anchored_progress.derived_incomplete
@@ -507,13 +508,13 @@ mod tests {
         let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
         known.insert(
             addr,
-            ResolvedTargets::Multiple(vec![0x2000, 0x3000].into_iter().map(Into::into).collect()),
+            ResolvedTargets::table([0x2000, 0x3000].map(strider_cfg::ResolvedTarget::from)),
         );
         let mut same: Answers = FxHashMap::default();
         same.insert(
             node,
-            Some(ResolvedTargets::Multiple(
-                vec![0x2000, 0x3000].into_iter().map(Into::into).collect(),
+            Some(ResolvedTargets::table(
+                [0x2000, 0x3000].map(strider_cfg::ResolvedTarget::from),
             )),
         );
         let progress = fold_into(
@@ -532,14 +533,14 @@ mod tests {
         );
         assert_eq!(
             known[&addr],
-            ResolvedTargets::Multiple(vec![0x2000, 0x3000].into_iter().map(Into::into).collect())
+            ResolvedTargets::table([0x2000, 0x3000].map(strider_cfg::ResolvedTarget::from))
         );
 
         let mut improved: Answers = FxHashMap::default();
         improved.insert(
             node,
-            Some(ResolvedTargets::Multiple(
-                vec![0x2000, 0x2004].into_iter().map(Into::into).collect(),
+            Some(ResolvedTargets::table(
+                [0x2000, 0x2004].map(strider_cfg::ResolvedTarget::from),
             )),
         );
         let progress = fold_into(
@@ -562,7 +563,7 @@ mod tests {
         );
         assert_eq!(
             known[&addr],
-            ResolvedTargets::Multiple(vec![0x2000, 0x2004].into_iter().map(Into::into).collect())
+            ResolvedTargets::table([0x2000, 0x2004].map(strider_cfg::ResolvedTarget::from))
         );
     }
 
@@ -607,19 +608,15 @@ mod tests {
             let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
             known.insert(
                 addr,
-                ResolvedTargets::Multiple(
-                    (0..arms)
-                        .map(|i| ResolvedTarget::new(0x2_0000 + i * 4, Some(true)))
-                        .collect(),
+                ResolvedTargets::table(
+                    (0..arms).map(|i| ResolvedTarget::new(0x2_0000 + i * 4, Some(true))),
                 ),
             );
             let mut resolutions: Answers = FxHashMap::default();
             resolutions.insert(
                 node,
-                Some(ResolvedTargets::Multiple(
-                    (0..arms * 2)
-                        .map(|i| ResolvedTarget::new(0x2_0000 + i * 4, None))
-                        .collect(),
+                Some(ResolvedTargets::table(
+                    (0..arms * 2).map(|i| ResolvedTarget::new(0x2_0000 + i * 4, None)),
                 )),
             );
             let progress = fold_into(
@@ -668,7 +665,7 @@ mod tests {
         .expect("apply");
         assert_eq!(
             known[&addr],
-            ResolvedTargets::Multiple(vec![0x2000, 0x3000].into_iter().map(Into::into).collect()),
+            ResolvedTargets::table([0x2000, 0x3000].map(strider_cfg::ResolvedTarget::from)),
             "two same-addr classifications must be merged, not overwritten"
         );
     }
@@ -725,7 +722,7 @@ mod tests {
                 .map(|i| {
                     (
                         pcode_addr(0x10_0000 + i * 4),
-                        ResolvedTargets::Multiple(vec![
+                        ResolvedTargets::table(vec![
                             (0x20_0000 + i * 8).into(),
                             (0x20_0004 + i * 8).into(),
                         ]),
@@ -735,10 +732,7 @@ mod tests {
             let mut resolutions: Answers = FxHashMap::default();
             resolutions.insert(
                 node,
-                Some(ResolvedTargets::Multiple(vec![
-                    0x2000.into(),
-                    0x2004.into(),
-                ])),
+                Some(ResolvedTargets::table(vec![0x2000.into(), 0x2004.into()])),
             );
             TARGET_VISITS.with(|v| v.set(0));
             let progress = fold_into(
@@ -779,7 +773,7 @@ mod tests {
         let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
         known.insert(
             addr,
-            ResolvedTargets::Multiple(vec![
+            ResolvedTargets::table(vec![
                 ResolvedTarget::new(0x2000, Some(true)),
                 ResolvedTarget::new(0x2004, Some(true)),
             ]),
@@ -787,7 +781,7 @@ mod tests {
         let mut rederived: Answers = FxHashMap::default();
         rederived.insert(
             node,
-            Some(ResolvedTargets::Multiple(vec![
+            Some(ResolvedTargets::table(vec![
                 ResolvedTarget::new(0x2000, None),
                 ResolvedTarget::new(0x2004, None),
                 ResolvedTarget::new(0x2008, None),
@@ -804,7 +798,7 @@ mod tests {
         )
         .expect("apply");
         assert_eq!(
-            concrete_targets(&known[&addr]),
+            ResolvedTargets::arms(&known[&addr]),
             &[
                 ResolvedTarget::new(0x2000, Some(true)),
                 ResolvedTarget::new(0x2004, Some(true)),
@@ -894,7 +888,7 @@ mod tests {
         let mut seed: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
         seed.insert(
             addr,
-            ResolvedTargets::Multiple(vec![
+            ResolvedTargets::table(vec![
                 ResolvedTarget::new(0x2000, None),
                 ResolvedTarget::new(0x3000, None),
             ]),
@@ -919,7 +913,7 @@ mod tests {
         )
         .expect("apply");
         assert_eq!(
-            concrete_targets(&known[&addr]),
+            ResolvedTargets::arms(&known[&addr]),
             &[
                 ResolvedTarget::new(0x2000, None),
                 ResolvedTarget::new(0x3000, None),
@@ -1097,7 +1091,7 @@ mod tests {
             "the fold matches the seated set, so this round converges",
         );
         assert_eq!(
-            concrete_targets(&folded),
+            ResolvedTargets::arms(&folded),
             &[strider_cfg::ResolvedTarget::new(0x1030, Some(true))],
         );
         assert_eq!(
@@ -1137,7 +1131,7 @@ mod tests {
                 &rustc_hash::FxHashSet::default(),
             )
             .expect("apply");
-            concrete_targets(&known[&addr]).len()
+            ResolvedTargets::arms(&known[&addr]).len()
         };
 
         assert_eq!(
@@ -1192,8 +1186,8 @@ mod tests {
 
         assert!(!progress.changed());
         assert_eq!(
-            target_keys(&known[&addr]),
-            target_keys(&multiple(&[(0x2000, None)])),
+            successor_set(&known[&addr]),
+            successor_set(&multiple(&[(0x2000, None)])),
         );
     }
 }

@@ -64,7 +64,7 @@ fn bytes() -> Vec<u8> {
 
 /// The caller's answer at the dispatch: four arms, one of them the clash.
 fn dispatch_seed() -> ResolvedTargets {
-    ResolvedTargets::Multiple(vec![
+    ResolvedTargets::table(vec![
         ResolvedTarget::new(THUMB_ARM, Some(true)),
         ResolvedTarget::new(CLASH, None),
         ResolvedTarget::new(KEPT_ARMS[0], None),
@@ -152,7 +152,7 @@ fn a_seed_that_is_no_dispatch_here_is_not_reported_for_its_clash() {
         known.insert(PcodeInsnAddr::at_machine_start(DISPATCH), dispatch_seed());
         known.insert(
             PcodeInsnAddr::at_machine_start(stray),
-            ResolvedTargets::Multiple(vec![ResolvedTarget::new(CLASH, None)]),
+            ResolvedTargets::table(vec![ResolvedTarget::new(CLASH, None)]),
         );
         let result = analyze(&known);
         assert_eq!(
