@@ -49,14 +49,14 @@ The result unpacks into three things:
 
 - `cfg`: the control flow graph the function was lifted from.
 - `function`: the lifted, optimized IR. This is what you query.
-- `unresolved`: addresses of indirect branches Strider could not resolve. An
-  empty list is the normal case. By default an incomplete result raises
-  `IncompleteAnalysis` instead; pass
-  `LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE)` to get it
-  with the list.
-  It is one of six reasons, though: `cfg.incomplete` lists all of them,
-  `cfg.is_complete()` tests the list, and
-  [python-api.md](python-api.md#12-the-cfg-stridercfg) says what each means.
+- `unresolved`: addresses of indirect branches Strider could not resolve.
+  By default an incomplete result raises `IncompleteAnalysis` instead, so the
+  list is empty unless you pass
+  `LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE)`.
+  An unresolved branch is one of six reasons a result can be incomplete:
+  `cfg.incomplete` lists all of them, `cfg.is_complete()` tests that list,
+  and [python-api.md](python-api.md#12-the-cfg-stridercfg) says what each
+  means.
 
 You can also keep the result whole and use `result.cfg` / `result.function` /
 `result.unresolved`.

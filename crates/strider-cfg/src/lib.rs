@@ -103,14 +103,15 @@ impl Cfg {
     ///
     /// A build resolves nothing, so its site reasons are every dispatch it
     /// left without an edge and every answer it seated. The CFG
-    /// `Strider::analyze` returns carries that analysis's set instead
-    /// ([`Self::with_incompleteness`]).
+    /// `Strider::analyze` returns carries that analysis's set instead.
     pub fn incomplete(&self) -> &Incompleteness {
         &self.incomplete
     }
 
-    /// This CFG reporting `incomplete` in place of its own build's: how an
-    /// analysis over several builds reports through the one it returns.
+    /// This CFG reporting `incomplete` in place of its own build's: how
+    /// `Strider::analyze`, over several builds, reports through the one it
+    /// returns. For that caller only.
+    #[doc(hidden)]
     #[must_use]
     pub fn with_incompleteness(mut self, incomplete: Incompleteness) -> Self {
         self.incomplete = incomplete;

@@ -582,9 +582,9 @@ type BuiltPerAddressCcs = (
     std::sync::Arc<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>,
 );
 
-/// What `analyze` and `build_cfg` do with a result `Cfg.incomplete` names
-/// anything in, as the class constants `ERROR` (raise `IncompleteAnalysis`)
-/// and `IGNORE` (return it).
+/// What `analyze` and `build_cfg` do when `Cfg.incomplete` names anything,
+/// as the class constants `ERROR` (raise `IncompleteAnalysis`) and `IGNORE`
+/// (return the result).
 #[pyclass(name = "OnIncomplete", module = "strider.lift", frozen)]
 #[derive(Clone, Copy)]
 pub struct PyOnIncomplete {
@@ -664,7 +664,7 @@ pub struct PyLifterOptions {
     /// default, for this call only.
     #[pyo3(get)]
     pub pipeline: Option<Py<PyOptimizerPipeline>>,
-    /// What `analyze` does with a result `Cfg.incomplete` names anything in.
+    /// What `analyze` does when `Cfg.incomplete` names anything.
     pub on_incomplete: strider_orchestrator::OnIncomplete,
     /// `per_address_ccs`' Python face.
     per_address_ccs_view: MappingView,
