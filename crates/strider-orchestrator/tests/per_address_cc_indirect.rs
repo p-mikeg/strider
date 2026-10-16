@@ -30,7 +30,7 @@ fn run_at(
         .collect();
     let lift_opts = LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            fn_max_size: Some(fn_max_size),
+            bound: strider_cfg::FunctionBound::size(fn_max_size),
             ..Default::default()
         },
         per_address_ccs: &per_address_ccs,

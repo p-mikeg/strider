@@ -89,9 +89,6 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     pub(super) sleigh: &'a mut rsleigh::Sleigh<R>,
     pub(super) start_addr: MachineInsnAddr,
     pub(super) options: &'a CfgOptions<'a>,
-    /// [`CfgOptions::fn_max_size`] with `Some(0)` read as unbounded: a
-    /// zero-length bound would pin every decode at `start_addr`.
-    pub(super) fn_max_size: Option<u64>,
     pub(super) arch: strider_target::SleighArch,
     pub(super) region_graph: RegionGraph,
     /// One region per start address.
@@ -206,7 +203,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             sleigh,
             start_addr: start_addr.into(),
             options,
-            fn_max_size: options.fn_max_size.filter(|&size| size != 0),
             arch: *arch,
             region_graph: RegionGraph::new(),
             start_addr_to_region_id: BTreeMap::new(),
@@ -523,9 +519,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// off, created on first use.  Its producers: the out-of-function arm of a
     /// conditional branch, a direct branch target that is unmapped or holds no
     /// instruction, and a sequential fall-through onto either.  It is wired as
-    /// a regular successor but never enqueued, so no address outside
-    /// `[start, start + fn_max_size)` and no address holding no instruction is
-    /// decoded.
+    /// a regular successor but never enqueued, so no address outside the
+    /// function's bound and no address holding no instruction is decoded.
     ///
     /// Keyed through `start_addr_to_region_id` like any region, so two edges
     /// to the same address share one stub.
@@ -1640,7 +1635,7 @@ mod tests {
             crate::ResolvedTargets::Multiple(vec![0x1002.into(), 0x1003.into(), 0x9000.into()]),
         );
         let opts = crate::CfgOptions {
-            fn_max_size: Some(0x10),
+            bound: crate::FunctionBound::size(0x10),
             known_targets: &known_targets,
             ..crate::CfgOptions::default()
         };

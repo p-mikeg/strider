@@ -202,7 +202,8 @@ class CfgOptions:
 
     `function_max_size` bounds how far past the entry to decode; omit it for
     unbounded (`0` raises `ValueError`). `allow_code_before_start_addr`
-    permits blocks below the entry address.
+    permits blocks below the entry address; it raises `ValueError` beside a
+    size, which already fixes the extent.
 
     `call_other_abis` classifies Sleigh user-op names, winning over the
     built-in table. Each value is a `strider.sleigh.CallOtherAbi`: one of
@@ -252,7 +253,8 @@ class CfgOptions:
         no_return_targets: Iterable[int] = ...,
     ) -> None:
         """Build the options. Raises `ValueError` for
-        `function_max_size=0`."""
+        `function_max_size=0`, and for a size with
+        `allow_code_before_start_addr=True`."""
         ...
     def with_function_max_size(self, function_max_size: int) -> "CfgOptions":
         """These options with `function_max_size` set, sharing its tables.

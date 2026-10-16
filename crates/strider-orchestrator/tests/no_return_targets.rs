@@ -26,7 +26,7 @@ fn entry_terminator(cfg: &Cfg) -> &RegionTerminator {
 fn a_no_return_callee_ends_the_region_in_build_cfg_and_analyze() {
     let no_return: rustc_hash::FxHashSet<u64> = [CALLEE].into_iter().collect();
     let cfg_opts = CfgOptions {
-        fn_max_size: Some(0x40),
+        bound: strider_cfg::FunctionBound::size(0x40),
         no_return_targets: &no_return,
         ..CfgOptions::default()
     };

@@ -28,9 +28,7 @@ def _lift_aarch64(elf_path: pathlib.Path, symbol: str):
         sym.address,
         cc,
         opts=strider.lift.LifterOptions(
-            cfg=strider.cfg.CfgOptions(
-                function_max_size=sym.size, allow_code_before_start_addr=True
-            )
+            cfg=strider.cfg.CfgOptions(function_max_size=sym.size)
         ),
     )
     return function

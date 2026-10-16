@@ -7,6 +7,9 @@
 - `CallingConvention.no_return()` is gone. List a callee that never returns
   in `CfgOptions(no_return_targets=...)`, which `Lifter.build_cfg` honours
   too; it ignored a no-return `per_address_ccs` entry.
+- `CfgOptions(function_max_size=n, allow_code_before_start_addr=True)` raises
+  `ValueError`; the flag had no effect beside a size. Options sized by
+  `ElfLifter.analyze(<name>)` read `allow_code_before_start_addr` as `False`.
 
 ### Breaking, Rust
 
@@ -17,6 +20,10 @@
   convention.
 - `to_text` drops `no_return=` from the `default_cc` line and from a call's
   override, so a call to a no-return target prints as a plain `call`.
+- `CfgOptions::{fn_max_size, allow_code_before_start_addr}` become
+  `bound: FunctionBound`, either `Size(NonZeroU64)` (`FunctionBound::size(n)`,
+  which panics on 0) or `Open { code_before_start }`. `Some(0)` used to read
+  as unbounded, and the flag was ignored beside a size.
 
 ### Changed, Python
 

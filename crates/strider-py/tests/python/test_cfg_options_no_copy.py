@@ -114,7 +114,7 @@ def test_with_function_max_size_carries_both_tables():
     )
     narrowed = opts.with_function_max_size(0x40)
     assert narrowed.function_max_size == 0x40
-    assert narrowed.allow_code_before_start_addr is True
+    assert narrowed.allow_code_before_start_addr is False
     assert dict(narrowed.known_targets) == {0x1000: "return"}
     assert list(narrowed.call_other_abis) == ["trap"]
     assert opts.function_max_size is None

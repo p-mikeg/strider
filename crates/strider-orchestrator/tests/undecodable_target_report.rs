@@ -15,7 +15,7 @@ fn analyze(words: &[u32]) -> strider_orchestrator::AnalyzeResult {
         common::strider_over_bytes(common::Arch::Ppc32be, be_words(words), BASE, None);
     let lift_opts = strider_orchestrator::LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            fn_max_size: Some(u64::try_from(words.len() * 4).expect("size")),
+            bound: strider_cfg::FunctionBound::size(u64::try_from(words.len() * 4).expect("size")),
             ..Default::default()
         },
         ..Default::default()
@@ -56,7 +56,7 @@ fn data_after_a_nop_after_a_call_lifts() {
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
     let lift_opts = strider_orchestrator::LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            fn_max_size: Some(7),
+            bound: strider_cfg::FunctionBound::size(7),
             data_ranges: strider_cfg::DataRanges::new(std::iter::once(0x1006..0x1007)),
             ..Default::default()
         },

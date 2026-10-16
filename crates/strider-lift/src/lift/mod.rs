@@ -790,8 +790,7 @@ enum SpecialTerm {
     /// output per target.  Carries the dispatch address so the resolver can
     /// re-derive and widen an already-seated site.
     Switch(rsleigh::Vn, Vec<u64>, strider_cfg::PcodeInsnAddr),
-    /// Branch out of the function (`fn_max_size` exceeded, or below
-    /// `start_addr` with `allow_code_before_start_addr=false`).  Lifts to
+    /// Branch out of the function, past its `FunctionBound`.  Lifts to
     /// `Call(IntConst(target)) + Return`.  The synthetic conditional-tail-call
     /// stub region carries this too, but has zero insns to skip.
     TailCall(u64),

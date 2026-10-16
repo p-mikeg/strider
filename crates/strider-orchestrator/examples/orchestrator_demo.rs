@@ -41,7 +41,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cc = cc.build(lifter.sleigh_regs())?;
 
     let cfg_options = strider_cfg::CfgOptions {
-        allow_code_before_start_addr: true,
+        bound: strider_cfg::FunctionBound::Open {
+            code_before_start: true,
+        },
         ..Default::default()
     };
 

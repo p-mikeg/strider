@@ -54,7 +54,9 @@ fn analyze(case: &str, fn_name: &str, opt: Opt) -> Function {
         .unwrap_or_else(|| panic!("symbol {fn_name:?} not in {path:?}"))
         .address();
     let cfg_opts = strider_cfg::CfgOptions {
-        allow_code_before_start_addr: true,
+        bound: strider_cfg::FunctionBound::Open {
+            code_before_start: true,
+        },
         ..Default::default()
     };
     let cfg = lifter

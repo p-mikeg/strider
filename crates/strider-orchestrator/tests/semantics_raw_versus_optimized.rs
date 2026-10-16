@@ -496,7 +496,8 @@ fn sweep_fixture(fixture: &Fixture, rom: Rom, tally: &mut Tally) {
         // bounds the lift, and `$d` mapping symbols mark literal pools.
         let opts = strider_orchestrator::LiftOptions {
             cfg: strider_cfg::CfgOptions {
-                fn_max_size: (size > 0).then_some(size),
+                bound: std::num::NonZeroU64::new(size)
+                    .map_or_else(Default::default, strider_cfg::FunctionBound::Size),
                 data_ranges: data_ranges.clone(),
                 ..Default::default()
             },

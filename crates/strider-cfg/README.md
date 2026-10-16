@@ -15,8 +15,8 @@ sea-of-nodes IR `strider-lift` builds from it.
   `start_addr`, ending at its `RegionTerminator`. `contains_addr` decides which
   bytes it owns, down to the pcode index, since a region can end mid-pcode
   sequence.
-- `CfgOptions<'a>`: `fn_max_size` / `allow_code_before_start_addr` bound the
-  function, `known_targets` (borrowed, so a binary-wide table costs nothing
+- `CfgOptions<'a>`: `bound` (a `FunctionBound`) is the function's extent,
+  `known_targets` (borrowed, so a binary-wide table costs nothing
   per function) seats indirect-branch answers a caller derived,
   `no_return_targets` (borrowed too) lists direct-call targets that never
   return, `call_other_overrides` classifies user-op names, and `data_ranges`

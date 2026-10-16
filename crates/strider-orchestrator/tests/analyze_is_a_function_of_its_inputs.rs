@@ -25,7 +25,9 @@ fn fingerprint(
 ) -> String {
     let lift_opts = strider_orchestrator::LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            allow_code_before_start_addr: true,
+            bound: strider_cfg::FunctionBound::Open {
+                code_before_start: true,
+            },
             ..Default::default()
         },
         ..Default::default()
