@@ -349,6 +349,9 @@ pub fn empty_builder() -> Result<FunctionBuilder> {
     RegisterSet::new().build_fn()
 }
 
+/// Brute-force graph definitions, shared with graph-algorithms' own tests.
+#[path = "../../graph-algorithms/tests/common/oracle.rs"]
+pub mod graph_oracle;
 pub mod interp;
 mod tb;
 
