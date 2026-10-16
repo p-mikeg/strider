@@ -29,6 +29,8 @@ pub struct Graph {
     nodes_by_name: std::collections::HashMap<String, NodeId>,
     /// Calls to `try_successors`, the unit the scale tests count.
     succ_calls: Cell<u64>,
+    /// The call that would exceed this panics.
+    succ_budget: Cell<u64>,
 }
 
 impl Graph {
@@ -37,14 +39,18 @@ impl Graph {
             nodes: PrimaryMap::new(),
             nodes_by_name: std::collections::HashMap::default(),
             succ_calls: Cell::new(0),
+            succ_budget: Cell::new(u64::MAX),
         }
     }
 
-    /// Nodes `0..n` named by index, successors in `edges` order.
+    /// Nodes `0..n`, unnamed, successors in `edges` order.
     pub fn from_edges(n: u32, edges: &[(u32, u32)]) -> Self {
         let mut graph = Self::empty();
-        for v in 0..n {
-            graph.get_or_create(&v.to_string());
+        for _ in 0..n {
+            graph.nodes.push(Node {
+                name: String::new(),
+                succs: Vec::new(),
+            });
         }
         for &(a, b) in edges {
             graph.add_succ(NodeId(a), NodeId(b));
@@ -54,6 +60,12 @@ impl Graph {
 
     pub fn succ_calls(&self) -> u64 {
         self.succ_calls.get()
+    }
+
+    /// Fails a superlinear walk at the first call over `calls`, before it
+    /// can exhaust time or memory.
+    pub fn set_succ_budget(&self, calls: u64) {
+        self.succ_budget.set(calls);
     }
 
     /// The first node named in the DSL input, by construction.
@@ -140,7 +152,12 @@ impl GraphRef for &'_ Graph {
         node: Self::NodeId,
         f: impl FnMut(Self::NodeId) -> ControlFlow<()>,
     ) -> ControlFlow<()> {
-        self.succ_calls.set(self.succ_calls.get() + 1);
+        let calls = self.succ_calls.get() + 1;
+        assert!(
+            calls <= self.succ_budget.get(),
+            "{calls} successor calls exceed the budget"
+        );
+        self.succ_calls.set(calls);
         self.nodes[node].succs.iter().copied().try_for_each(f)
     }
 }

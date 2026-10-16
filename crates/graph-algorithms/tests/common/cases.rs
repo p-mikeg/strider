@@ -38,22 +38,29 @@ impl Case {
 }
 
 /// Up to `max_n` vertices and `3 n` edges: self-loops, duplicate edges,
-/// unreachable vertices, irreducible and rootless cycles all arise.
+/// unreachable vertices, irreducible and rootless cycles all arise. Vertex 0
+/// gets an out-edge in three cases of four, so most graphs reach past it.
 pub fn arb_case(max_n: u32) -> impl Strategy<Value = Case> {
     (1..=max_n)
         .prop_flat_map(|n| {
             (
                 Just(n),
                 prop::collection::vec((0..n, 0..n), 0..=3 * n as usize),
+                prop::option::weighted(0.75, (0..n, any::<prop::sample::Index>())),
                 prop::collection::vec(0..n, 0..=3),
                 prop::collection::vec(prop::collection::vec(0..n, 0..=4), 3),
             )
         })
-        .prop_map(|(n, edges, roots, defs)| Case {
-            n,
-            edges,
-            roots,
-            defs,
+        .prop_map(|(n, mut edges, from_root, roots, defs)| {
+            if let Some((to, at)) = from_root {
+                edges.insert(at.index(edges.len() + 1), (0, to));
+            }
+            Case {
+                n,
+                edges,
+                roots,
+                defs,
+            }
         })
 }
 
@@ -163,6 +170,7 @@ pub fn shapes() -> Vec<(&'static str, Case)> {
             "later_root_reaches_earlier",
             Case::new(3, &[(2, 0)], &[0, 1, 2]),
         ),
+        ("duplicate_root", Case::new(2, &[], &[1, 0, 1])),
     ]
 }
 
