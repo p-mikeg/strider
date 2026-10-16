@@ -145,7 +145,7 @@ where
 /// Read off the cfg, which sampled it while each site's region was decoding
 /// (`Builder::sample_flowing_isa_bit`). Probing the live engine again here
 /// would answer for whichever region painted the branch address last, and
-/// [`crate::adopt_known_modes`] would then take the wrong `interworking`
+/// [`super::merge::adopt_known_modes`] would then take the wrong `interworking`
 /// verdict.
 /// [`strider_cfg::Cfg::function_isa_bit`] covers an address no indirect branch
 /// was sealed at and every arch with no ISA-mode var.

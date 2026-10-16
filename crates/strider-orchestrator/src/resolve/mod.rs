@@ -1,6 +1,7 @@
 //! The resolve loop: every round rebuilds the function from one seat set,
 //! until the seats stop changing.
 
+mod merge;
 mod reports;
 mod round;
 mod sites;
