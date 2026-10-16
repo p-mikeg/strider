@@ -1,4 +1,4 @@
-"""A direct branch out of the mapped image is a result, not an error.
+"""A direct branch out of the mapped image is reported, not a failure.
 
 The regions that did decode survive and the target is reported, so Python has
 to read `Cfg.incomplete` to learn the CFG stops at the edge of the buffer.

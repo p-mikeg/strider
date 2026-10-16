@@ -1,9 +1,9 @@
-//! A site whose answer never settles is abandoned and reported, not an error.
+//! A site whose answer never settles is abandoned and reported, not a failure.
 //!
 //! Every narrowing is reported; a second means the answer depends on what the
 //! previous round seated, so the resolve loop stops resolving the site.
 //! That counter is the loop's only oscillation guard: without it an unstable
-//! site burns the whole iteration budget and comes back as `still_growing`.
+//! site burns the whole iteration budget and comes back unresolved.
 //!
 //! Oscillation needs a classifier that contradicts itself, which no real
 //! binary is known to produce here, so the pass that answers is a double. It

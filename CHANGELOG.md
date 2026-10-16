@@ -67,7 +67,7 @@
 - `analyze` refuses a calling convention whose stack geometry belongs to
   another arch (`x86_cdecl` on x86-64, ppc32 SysV on ppc64), including the
   header's convention under `load_elf(arch=...)`.
-- `Cfg.incomplete` and `unresolved` name each machine address once per
+- `unresolved` names each machine address once, `Cfg.incomplete` once per
   reason.
 - A post-pass that rewrites the graph drops the stack-slot stamps it may have
   invalidated.
