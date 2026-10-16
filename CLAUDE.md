@@ -319,7 +319,7 @@ when both IR slots hold the same value.
   (`Reason::UnresolvedBranch`), and `analyze` refuses an incomplete result
   unless `AnalyzeOptions::on_incomplete` is `Ignore`. Every narrowing is
   reported there, and a site that NARROWS twice has an unstable answer: it is
-  abandoned and reported, never an `Err`. Exhausting `MAX_RESOLUTION_ITERATIONS`
+  withdrawn and reported, never an `Err`. Exhausting `MAX_RESOLUTION_ITERATIONS`
   while every site still grows is the discovery depth limit, and those sites
   come back as unresolved too. A `Return` whose folded target is not provably
   the entry return address is reported there as well
