@@ -57,7 +57,7 @@ fn build_cfg_refuses_under_error_only() {
     else {
         panic!("an unresolved dispatch must be refused");
     };
-    assert_eq!(&sites, cfg.incompleteness());
+    assert_eq!(&sites, cfg.incomplete());
 }
 
 /// A failure is not an incompleteness, whatever the policy.

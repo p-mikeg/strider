@@ -42,7 +42,7 @@
   `CfgOptions` the cfg was built with.
 - `AnalyzeResult`'s six report fields and `Cfg::{isa_mode_conflicts,
   interior_branch_targets, unmapped_branch_targets, undecodable_branch_targets}`
-  are gone: `AnalyzeResult::incomplete()` and `Cfg::incompleteness()` return
+  are gone: `AnalyzeResult::incomplete()` and `Cfg::incomplete()` return
   one `Incompleteness` of `(PcodeInsnAddr, Reason)`, read per reason with
   `of(reason)`. A `build_cfg` CFG also names its unresolved and seated sites.
 - `Strider::analyze` returns `AnalyzeError`, `Incomplete(Incompleteness)` or
@@ -75,7 +75,7 @@
 
 - `LifterOptions(on_incomplete=)` and `Lifter.build_cfg(on_incomplete=)` take a
   `strider.lift.OnIncomplete`; `OnIncomplete.ERROR` raises
-  `strider.lift.IncompleteAnalysis`, a `StriderError` whose `.sites` lists
+  `strider.lift.IncompleteAnalysis`, a `StriderError` whose `.incomplete` lists
   `Cfg.incomplete`.
 
 ### Changed, Rust
