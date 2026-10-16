@@ -151,9 +151,9 @@ fn analyze_seats_pre_seeded_known_targets_from_analyze_options() {
 fn outer_loop_resolves_via_stack_load_forward_for_x86_64_push_pop() {
     // `push imm32; pop rax; jmp rax` is structurally a tail call. After
     // LoadForward the placeholder's dispatch input folds to IntConst(K); the
-    // classifier reads that live input and classifies Single(K). K lies outside the function range (below
-    // start_addr), so the orchestrator seats it as a tail call and the
-    // rebuild lowers it to `Call(K) + Return`.
+    // classifier reads that live input and classifies Single(K). K lies
+    // outside the function range (below start_addr), so the orchestrator
+    // seats it as a tail call and the rebuild lowers it to `Call(K) + Return`.
     let k = 0x500u64;
     let k_le = (k as u32).to_le_bytes();
     let mut bytes: Vec<u8> = vec![0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0];

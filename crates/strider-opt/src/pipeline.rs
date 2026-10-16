@@ -102,9 +102,9 @@ pub trait Optimizer: OptimizerClone {
     }
 }
 
-/// Runs one pass through a throwaway `EditFunction`, as one step of `run`:
-/// resets the memory analysis under `octx`'s allocator set, recording it, and
-/// culls dead nodes before, drains after.
+/// Runs one pass through a throwaway `EditFunction`: resets the memory analysis
+/// under `octx`'s allocator set, recording it, culls dead nodes before and
+/// drains after.
 ///
 /// `function` must be built (`function.entry()` is a valid `NodeId`).
 ///
@@ -587,7 +587,7 @@ mod tests {
     /// clears the assumption-derived memos: a decomposition cached under one
     /// configuration must not be read back under another.
     #[test]
-    fn run_one_clears_the_assumption_derived_memos() -> crate::Result<()> {
+    fn run_one_resets_the_memory_analysis() -> crate::Result<()> {
         use super::{OptimizationResult, Optimizer};
         #[derive(Clone)]
         struct NoOp;

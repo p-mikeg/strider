@@ -6,9 +6,10 @@
 //!    verdict.
 //! 2. Everything the run decomposes, it decomposes under that set.
 //! 3. [`SideTables::invalidate_analyses`] drops both and keeps the set: after
-//!    each changing in-loop pass, and in [`refresh_memory_classes`]. After a
-//!    post-pass only the frame-escape verdict is dropped; compaction drops it
-//!    too and remaps the classes.
+//!    each changing in-loop pass, in [`refresh_memory_classes`], and in
+//!    strider-py's in-loop pass run as a post-pass when it changes the graph.
+//!    After any other post-pass only the frame-escape verdict is dropped;
+//!    compaction drops it too and remaps the classes.
 //! 4. A converged run stamps every live access after its post-passes, and
 //!    [`refresh_memory_classes`] restamps (`apply_rules_count` calls it). In
 //!    between the table fills lazily.
