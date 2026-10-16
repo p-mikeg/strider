@@ -173,7 +173,7 @@ fn jump_table_partial_rom_returns_none() {
 }
 
 /// Pinned: when the proved bound is zero, the classifier returns `None`
-/// rather than `Multiple([])`. A zero upper bound only proves the branch is
+/// rather than an empty table. A zero upper bound only proves the branch is
 /// unreachable if we separately proved unreachability, which we haven't;
 /// misclassifying a reachable branch as dead would silently truncate the
 /// CFG. `None` defers to a later iteration or to `UnresolvedIndirectBranch`
@@ -192,7 +192,7 @@ fn jump_table_zero_bound_returns_none() {
     let result = classify_target_with_rom(&function, Some(&rom)).expect("classify_target_with_rom");
     assert_eq!(
         result, None,
-        "bound = 0 must return None: Multiple([]) would wrongly imply \
+        "bound = 0 must return None: an empty table would wrongly imply \
          the branch is dead code",
     );
 }

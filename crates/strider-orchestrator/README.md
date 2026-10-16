@@ -65,13 +65,13 @@ reported.
 
 Two verdicts freeze a single site, leaving the loop to run on without it:
 
-- A site that NARROWS twice is abandoned. Every narrowing is reported
+- A site that NARROWS twice is withdrawn. Every narrowing is reported
   unresolved, since nothing tells a tighter proof of an over-approximated index
   bound from a lost arm; a second means the answer depends on what the previous
   round seated, so no member of the cycle is trustworthy. Its seat is withdrawn,
   which defers it over any caller seed, and its placeholder left live.
 - A site naming a target that failed to decode, or that led to code that did,
-  is abandoned whole: the bound that produced it is what is wrong, so no arm of
+  is withdrawn whole: the bound that produced it is what is wrong, so no arm of
   that answer stands. The site is reported; the address that failed is listed
   under no reason, since the CFG reports the arm it was reached from and not the
   bytes. A site naming an address two edges reached in different ISA modes loses
@@ -91,7 +91,7 @@ too.
 - `UnresolvedBranch`: a live `IndirectBranch` placeholder, a seated `Switch`
   whose selector no longer derives, a site still growing when the cap ran out,
   a site whose fold dropped a successor the classifier proved, a site whose
-  answer narrowed in any round, a site the loop abandoned, and a return whose
+  answer narrowed in any round, a site the loop withdrew, and a return whose
   folded target is not provably the entry return address.
 - `UnverifiedSeed`: answers that are whole but that nothing verified. A
   `Switch` holding exactly the caller's seed and nothing derived; a site the

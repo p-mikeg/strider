@@ -86,7 +86,8 @@
   invalidated.
 - An unknown op name in `int_cmp`, `int_binary`, `bool_binary` or
   `float_binary` lists the accepted names in its error.
-- A pass added from Python reports its own name inside Rust, not `ForwardPass`.
+- A pass added from Python carries its own type name in Rust panics and debug
+  output.
 
 ### Added, Python
 
@@ -122,9 +123,13 @@
   site of the function because its table names an address decoded in two
   ISA modes there; and keeps the caller's seed of a `BranchIndirect` whose
   sibling in the same instruction it gave up on.
-- A seed listing one address twice seats one arm, a seed's `Switch` arms
-  come out sorted, and a `[]` seed no longer hides a derived return at that
-  site.
+- A seed listing one address twice seats one arm, and a seed's `Switch` arms
+  come out sorted.
+- A `[]` seed no longer hides a return the classifier derives at that site,
+  nor reports it `UnverifiedSeed`; a `LinkRegister` seed seats its `Return`
+  where the loop withdrew every derived target.
+- A target proved in both ISA modes at one dispatch stays dropped and
+  reported when three anchors share the address or a seed names it.
 
 ### Added, Rust
 
@@ -135,6 +140,8 @@
   key or else its instruction's p-code index 0, as the CFG seats it.
 - `strider_cfg::seated_from`: what `CfgOptions::seated` reads, over any
   two tables.
+- The orchestrator's `test-util` feature: `Strider::analyze_with_classifier`,
+  `analyze` with a `Classifier` standing in for `classify_sites`.
 - `BuiltCallingConvention::check_addr_size`.
 - `ALL` on every op enum (`IntBinaryOp::ALL`, `IntCmpOp::ALL`, ...): the
   variants in declaration order.

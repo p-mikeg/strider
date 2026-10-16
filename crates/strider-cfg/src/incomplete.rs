@@ -16,7 +16,7 @@ pub enum Reason {
     /// every dispatch it left without an edge. An analysis names a live
     /// placeholder, a seated `Switch` whose selector stopped deriving, a site
     /// still growing at the round cap, one whose answer lost a proved
-    /// successor, narrowed or was abandoned, and a return whose target is not
+    /// successor, narrowed or was withdrawn, and a return whose target is not
     /// provably the caller's.
     UnresolvedBranch,
     /// A seated answer nothing verified. A CFG build names every seat. An
