@@ -17,6 +17,34 @@ create_exception!(
      missing file (`FileNotFoundError`)."
 );
 
+create_exception!(
+    strider,
+    IncompleteAnalysis,
+    StriderError,
+    "Raised by `analyze` and `build_cfg` under `OnIncomplete.ERROR` when the \
+     result cannot vouch for some sites. `.sites` lists them as \
+     `Cfg.incomplete` would; `on_incomplete=OnIncomplete.IGNORE` returns the \
+     result instead."
+);
+
+/// `e` as the Python exception it stands for: `IncompleteAnalysis` carrying
+/// `.sites`, or `StriderError`.
+pub fn from_analyze_err(e: strider_orchestrator::AnalyzeError) -> PyErr {
+    let message = e.to_string();
+    match e {
+        strider_orchestrator::AnalyzeError::Failed(e) => into_strider_err(e),
+        strider_orchestrator::AnalyzeError::Incomplete(sites) => {
+            let err = IncompleteAnalysis::new_err(message);
+            Python::with_gil(|py| {
+                let _ = err
+                    .value_bound(py)
+                    .setattr("sites", crate::cfg::incomplete_sites(&sites));
+            });
+            err
+        }
+    }
+}
+
 thread_local! {
     /// The Python exception a user callback raised, kept so the synthesized
     /// `StriderError` can chain it as `__cause__`.  Cleared on entry to every
@@ -81,5 +109,14 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     // the caller's own exception and never sets one.
     ty.setattr("backtrace", "")?;
     parent.add("StriderError", ty)?;
+    Ok(())
+}
+
+pub fn register_lift(py: Python<'_>, lift: &Bound<'_, PyModule>) -> PyResult<()> {
+    let ty = py.get_type_bound::<IncompleteAnalysis>();
+    ty.setattr("__module__", "strider.lift")?;
+    // Class-level default so `.sites` always reads, as `backtrace` does.
+    ty.setattr("sites", pyo3::types::PyList::empty_bound(py))?;
+    lift.add("IncompleteAnalysis", ty)?;
     Ok(())
 }

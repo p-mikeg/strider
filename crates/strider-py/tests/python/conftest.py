@@ -92,6 +92,10 @@ def built_lifter_and_function(
         opts=strider.lift.LifterOptions(
             cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True),
             pipeline=None if optimize else strider.opt.OptimizerPipeline.empty(),
+            # An unoptimised lift proves no return.
+            on_incomplete=strider.lift.OnIncomplete.ERROR
+            if optimize
+            else strider.lift.OnIncomplete.IGNORE,
         ),
     )
     return lift, function

@@ -75,7 +75,7 @@ fn a_direct_flow_clash_costs_one_arm_and_leaves_the_table_seated() {
         Box::new(strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes()));
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::Arm, bytes(), BASE, Some(rom));
     let result = strider
-        .analyze(BASE, &cc, &Default::default(), None)
+        .analyze(BASE, &cc, &common::ignoring(), None)
         .expect("a mode clash is a result, not an error");
 
     let dispatch = result

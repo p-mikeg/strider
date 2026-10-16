@@ -196,7 +196,9 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         &self.declared_reg_vns
     }
 
-    /// The CFG of the function at `entry`.
+    /// The CFG of the function at `entry`. Never errs on incompleteness:
+    /// [`strider_cfg::Cfg::incompleteness`] names what it cannot vouch for, so
+    /// the resolve loop can call it every round.
     pub fn build_cfg(
         &mut self,
         entry: strider_cfg::MachineInsnAddr,

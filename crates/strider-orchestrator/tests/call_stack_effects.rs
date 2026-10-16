@@ -23,7 +23,7 @@ fn analyze(arch: Arch, bytes: Vec<u8>) -> strider_ir::Function {
             },
             ..Default::default()
         },
-        ..Default::default()
+        ..common::ignoring()
     };
     let result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
     assert!(result.is_complete(), "no incompleteness is expected here");

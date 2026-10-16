@@ -747,16 +747,19 @@ impl PyLifter {
     }
 
     /// Build the control-flow graph of the function at `entry`, without
-    /// lifting or optimising.  Raises `StriderError` on a build failure.
+    /// lifting or optimising.  Raises `StriderError` on a build failure, and
+    /// `IncompleteAnalysis` when `on_incomplete` (default: the
+    /// `LifterOptions` default) refuses `Cfg.incomplete`.
     ///
     /// Holds the GIL for the whole build, unlike `analyze`: decoding is short
     /// next to a full analysis, and it runs on the handle's own thread.
-    #[pyo3(signature = (entry, opts=None))]
+    #[pyo3(signature = (entry, opts=None, *, on_incomplete=None))]
     fn build_cfg(
         slf: Py<Self>,
         py: Python<'_>,
         entry: &Bound<'_, PyAny>,
         opts: Option<Py<PyCfgOptions>>,
+        on_incomplete: Option<crate::options::PyOnIncomplete>,
     ) -> PyResult<PyCfg> {
         let entry = entry_addr(entry)?;
         {
@@ -777,8 +780,12 @@ impl PyLifter {
             lifter
                 .inner
                 .get_mut()?
-                .build_cfg(entry, &cfg_opts)
-                .map_err(into_strider_err)
+                .build_cfg(
+                    entry,
+                    &cfg_opts,
+                    crate::options::on_incomplete_or_default(on_incomplete),
+                )
+                .map_err(crate::errors::from_analyze_err)
         })?;
         Ok(PyCfg::new(py, inner, slf))
     }
@@ -793,7 +800,8 @@ impl PyLifter {
     /// failure.
     ///
     /// An empty `unresolved` is not a complete answer: `Cfg.incomplete` lists
-    /// every reason, and `Cfg.is_complete` tests it.
+    /// every reason, and `Cfg.is_complete` tests it. Raises
+    /// `IncompleteAnalysis` when `opts.on_incomplete` refuses the result.
     ///
     /// Runs the fixed-point loop with the GIL released, so other Python
     /// threads keep running. One consequence: a DAEMON thread sitting inside
@@ -854,6 +862,7 @@ impl PyLifter {
             per_address_ccs: &per_address_built,
             opt: opt_opts,
             compact,
+            on_incomplete: opts_ref.on_incomplete,
         };
         // The fixed-point loop runs without the GIL where it can: a pipeline's
         // boxed passes are `Send`, so a closure capturing one satisfies
@@ -882,7 +891,7 @@ impl PyLifter {
             } else {
                 py.allow_threads(|| inner.analyze(entry, &cc_built, &analyze_opts, custom_pipeline))
             };
-            prefer_pending_control_flow(outcome.map_err(into_strider_err))?
+            prefer_pending_control_flow(outcome.map_err(crate::errors::from_analyze_err))?
         };
         let unresolved = machine_addrs(
             result

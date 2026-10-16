@@ -119,7 +119,11 @@ def test_unresolved_indirect_branch_via_jmp_rax():
     arch = strider.sleigh.SleighArch.x86_64()
     cc = strider.sleigh.CallingConvention.x86_64_systemv()
 
-    _cfg, _function, unresolved = strider.lift.lifter(arch, mem).analyze(0x1000, cc)
+    _cfg, _function, unresolved = strider.lift.lifter(arch, mem).analyze(
+        0x1000,
+        cc,
+        opts=strider.lift.LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE),
+    )
     assert unresolved, (
         "expected the unresolvable jmp rax to be reported in unresolved"
     )

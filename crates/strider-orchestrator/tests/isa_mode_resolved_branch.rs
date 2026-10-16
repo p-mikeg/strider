@@ -376,7 +376,7 @@ fn analyze_resolves_an_interworking_table_in_each_arm_mode() {
     let mut strider =
         strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(rom)).expect("Strider::new");
     let result = strider
-        .analyze(BASE, &cc, &Default::default(), None)
+        .analyze(BASE, &cc, &common::ignoring(), None)
         .expect("analyze");
 
     assert!(

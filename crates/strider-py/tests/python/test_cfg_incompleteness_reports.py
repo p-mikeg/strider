@@ -59,7 +59,11 @@ def _arm_program() -> bytes:
 def _analyze_arm() -> strider.lift.AnalyzeResult:
     mem = strider.reader.BufferReader(BASE, _arm_program())
     lift = strider.lift.lifter(strider.sleigh.SleighArch.arm(), mem, rom=mem)
-    return lift.analyze(BASE, strider.sleigh.CallingConvention.arm_aapcs())
+    return lift.analyze(
+        BASE,
+        strider.sleigh.CallingConvention.arm_aapcs(),
+        opts=strider.lift.LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE),
+    )
 
 
 def test_a_mode_clash_is_reported_after_its_round_is_rebuilt_away() -> None:
@@ -89,7 +93,9 @@ def _x86_lifter() -> strider.lift.Lifter:
 
 def test_an_interior_branch_target_reaches_python() -> None:
     result = _x86_lifter().analyze(
-        BASE, strider.sleigh.CallingConvention.x86_64_systemv()
+        BASE,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        opts=strider.lift.LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE),
     )
     assert [a for a, r in result.cfg.incomplete if r == "interior_target"] == [0x1005]
 
@@ -97,7 +103,7 @@ def test_an_interior_branch_target_reaches_python() -> None:
 def test_build_cfg_reports_the_one_build_it_ran() -> None:
     """No resolver runs, so that build's own reports are the whole answer;
     with no dispatch, no site reason has anything to say."""
-    cfg = _x86_lifter().build_cfg(BASE)
+    cfg = _x86_lifter().build_cfg(BASE, on_incomplete=strider.lift.OnIncomplete.IGNORE)
     assert [a for a, r in cfg.incomplete if r == "interior_target"] == [0x1005]
     assert [a for a, r in cfg.incomplete if r == "isa_mode_conflict"] == []
     assert [a for a, r in cfg.incomplete if r == "unverified_seed"] == []
@@ -120,7 +126,11 @@ def test_is_complete_reads_the_unresolved_reason_too() -> None:
     code = bytes([0x48, 0x8B, 0x07, 0xFF, 0xE0])  # mov rax, [rdi] ; jmp rax
     mem = strider.reader.BufferReader(BASE, code)
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
-    result = lift.analyze(BASE, strider.sleigh.CallingConvention.x86_64_systemv())
+    result = lift.analyze(
+        BASE,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        opts=strider.lift.LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE),
+    )
     empty: List[int] = []
     assert result.unresolved == [0x1003]
     assert [a for a, r in result.cfg.incomplete if r == "isa_mode_conflict"] == empty
@@ -140,7 +150,8 @@ def test_a_complete_but_unverified_answer_is_not_complete() -> None:
         BASE,
         strider.sleigh.CallingConvention.x86_64_systemv(),
         strider.lift.LifterOptions(
-            cfg=strider.cfg.CfgOptions(known_targets={dispatch: "return"})
+            cfg=strider.cfg.CfgOptions(known_targets={dispatch: "return"}),
+            on_incomplete=strider.lift.OnIncomplete.IGNORE,
         ),
     )
     assert result.unresolved == []
@@ -151,7 +162,8 @@ def test_a_complete_but_unverified_answer_is_not_complete() -> None:
 def test_build_cfg_is_incomplete_over_a_target_reason_alone() -> None:
     """No dispatch here, so `is_complete` answers on the interior target the
     build itself reported."""
-    assert not _x86_lifter().build_cfg(BASE).is_complete()
+    cfg = _x86_lifter().build_cfg(BASE, on_incomplete=strider.lift.OnIncomplete.IGNORE)
+    assert not cfg.is_complete()
 
 
 _REASONS = (
@@ -172,7 +184,11 @@ def test_incomplete_lists_each_site_with_its_reason() -> None:
     code = bytes([0x48, 0x8B, 0x07, 0xFF, 0xE0])  # mov rax, [rdi] ; jmp rax
     mem = strider.reader.BufferReader(BASE, code)
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
-    result = lift.analyze(BASE, strider.sleigh.CallingConvention.x86_64_systemv())
+    result = lift.analyze(
+        BASE,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        opts=strider.lift.LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE),
+    )
     assert result.cfg.incomplete == [(0x1003, "unresolved_branch")]
     assert result.unresolved == [0x1003]
 
@@ -181,7 +197,8 @@ def test_build_cfg_incomplete_names_the_dispatch_it_left() -> None:
     code = bytes([0x48, 0x8B, 0x07, 0xFF, 0xE0])
     mem = strider.reader.BufferReader(BASE, code)
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
-    assert lift.build_cfg(BASE).incomplete == [(0x1003, "unresolved_branch")]
+    cfg = lift.build_cfg(BASE, on_incomplete=strider.lift.OnIncomplete.IGNORE)
+    assert cfg.incomplete == [(0x1003, "unresolved_branch")]
 
 
 def test_incomplete_sorts_by_address_across_reasons() -> None:

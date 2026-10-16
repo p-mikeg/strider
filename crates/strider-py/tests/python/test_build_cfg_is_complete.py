@@ -22,13 +22,16 @@ def _lifter(code: bytes):
 
 
 def test_an_unresolved_indirect_branch_is_not_complete():
-    cfg = _lifter(_INDIRECT).build_cfg(_BASE)
+    cfg = _lifter(_INDIRECT).build_cfg(_BASE, on_incomplete=strider.lift.OnIncomplete.IGNORE)
     assert not cfg.is_complete()
     # `analyze` without resolution agrees.
     result = _lifter(_INDIRECT).analyze(
         _BASE,
         strider.sleigh.CallingConvention.x86_64_systemv(),
-        strider.lift.LifterOptions(resolve_indirect_branches=False),
+        strider.lift.LifterOptions(
+            resolve_indirect_branches=False,
+            on_incomplete=strider.lift.OnIncomplete.IGNORE,
+        ),
     )
     assert result.unresolved == [_DISPATCH]
 
@@ -41,7 +44,8 @@ def test_a_straight_line_build_is_still_complete():
 def test_a_seated_branch_clears_the_indirect_channel():
     """The seat is still `"unverified_seed"`, but no site is left edgeless."""
     cfg = _lifter(_INDIRECT).build_cfg(
-        _BASE, strider.cfg.CfgOptions(known_targets={_DISPATCH: "return"})
+        _BASE, strider.cfg.CfgOptions(known_targets={_DISPATCH: "return"}),
+        on_incomplete=strider.lift.OnIncomplete.IGNORE,
     )
     assert [a for a, r in cfg.incomplete if r == "unverified_seed"] == [_DISPATCH]
     assert not cfg.is_complete()
@@ -59,7 +63,8 @@ def test_a_seed_seated_past_p_code_op_0_is_unverified(seed):
     """A Python seed is keyed by machine address; the build records the site
     at its `BranchIndirect`."""
     cfg = _lifter(_MEM_INDIRECT).build_cfg(
-        _BASE, strider.cfg.CfgOptions(known_targets={_BASE: seed})
+        _BASE, strider.cfg.CfgOptions(known_targets={_BASE: seed}),
+        on_incomplete=strider.lift.OnIncomplete.IGNORE,
     )
     pcode = cfg.pcode_at(_BASE)
     assert pcode is not None and not pcode.startswith("BranchIndirect"), (

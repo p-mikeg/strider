@@ -61,7 +61,7 @@ fn a_conflict_one_round_raised_survives_a_later_round_that_does_not() {
             known_targets: &known,
             ..CfgOptions::default()
         },
-        ..AnalyzeOptions::default()
+        ..common::ignoring()
     };
 
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::Arm, bytes(), BASE, None);

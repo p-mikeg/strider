@@ -158,6 +158,8 @@ opts = strider.lift.LifterOptions(
     per_address_ccs=None,              # {callee_addr: CallingConvention}; keyed by
                                        # the direct-call TARGET, not the call site
     pipeline=None,                      # replace the optimizer pipeline for this call
+    on_incomplete=None,                # OnIncomplete.ERROR raises IncompleteAnalysis,
+                                       # IGNORE returns the result; None: the default
 )
 prog.analyze("dispatch_value", opts=opts)
 ```

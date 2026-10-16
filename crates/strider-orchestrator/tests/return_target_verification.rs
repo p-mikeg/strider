@@ -57,7 +57,7 @@ fn analyze_with(
             ..Default::default()
         },
         opt: opt_opts.clone(),
-        ..Default::default()
+        ..common::ignoring()
     };
     strider
         .analyze(entry, &cc, &lift_opts, None)
@@ -700,7 +700,7 @@ fn a_return_seed_over_a_pcode_return_does_not_silence_it() {
             ..Default::default()
         },
         opt: claiming_return_slots(),
-        ..Default::default()
+        ..common::ignoring()
     };
     let seeded_result = strider
         .analyze(BASE, &cc, &lift_opts, None)

@@ -38,7 +38,10 @@ def test_run_reports_single_unresolved_indirect_site_address():
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
     _cfg, _function, unresolved = lift.analyze(
         0x2000, strider.sleigh.CallingConvention.x86_64_systemv(),
-        opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=len(code))),
+        opts=strider.lift.LifterOptions(
+            cfg=strider.cfg.CfgOptions(function_max_size=len(code)),
+            on_incomplete=strider.lift.OnIncomplete.IGNORE,
+        ),
     )
     # Unresolvable is not an error: the run completes and reports.
     assert unresolved == [0x2000]
@@ -55,6 +58,9 @@ def test_run_reports_both_unresolved_indirect_site_addresses():
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
     _cfg, _function, unresolved = lift.analyze(
         0x1000, strider.sleigh.CallingConvention.x86_64_systemv(),
-        opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=len(code))),
+        opts=strider.lift.LifterOptions(
+            cfg=strider.cfg.CfgOptions(function_max_size=len(code)),
+            on_incomplete=strider.lift.OnIncomplete.IGNORE,
+        ),
     )
     assert sorted(unresolved) == [0x1005, 0x1007]

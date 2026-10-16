@@ -57,6 +57,7 @@ fn a_direct_edge_keeps_the_bytes_a_seeded_arm_claims_in_the_other_mode() {
                 known_targets: &known,
                 ..CfgOptions::default()
             },
+            strider_orchestrator::OnIncomplete::Ignore,
         )
         .expect("build_cfg");
     let claimed = seeded
@@ -82,7 +83,7 @@ fn a_direct_edge_keeps_the_bytes_a_seeded_arm_claims_in_the_other_mode() {
             &cc,
             &AnalyzeOptions {
                 cfg: CfgOptions::default(),
-                ..AnalyzeOptions::default()
+                ..common::ignoring()
             },
             None,
         )

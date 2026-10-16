@@ -89,7 +89,10 @@ def test_the_round_pattern_matches_the_x87_lift_that_emits_it():
     prog = strider.lift.load_elf(str(fixture_path("x86", "floats")))
     g = prog.analyze(
         "float_to_int",
-        opts=strider.lift.LifterOptions(pipeline=strider.opt.OptimizerPipeline.empty()),
+        opts=strider.lift.LifterOptions(
+            pipeline=strider.opt.OptimizerPipeline.empty(),
+            on_incomplete=strider.lift.OnIncomplete.IGNORE,
+        ),
     ).function
     assert len(g.find_all(float_round(anything()))) == 1
     assert not g.find_all(float_ceil(anything()))

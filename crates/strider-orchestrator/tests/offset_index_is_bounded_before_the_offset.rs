@@ -18,8 +18,6 @@
 //! x1, x2 and x3 too.
 mod common;
 
-use strider_orchestrator::AnalyzeOptions;
-
 const TEXT_BASE: u64 = 0x401000;
 const TEXT: &[u8] = &[
     0xc3, 0xb8, 0x6f, 0x00, 0x00, 0x00, 0xc3, 0xb8, 0xde, 0x00, 0x00, 0x00, 0xc3, 0x40, 0x0f, 0xb6,
@@ -61,7 +59,7 @@ fn an_operand_below_an_offset_is_not_enumerated_as_the_index() {
     let (mut s, cc) =
         common::strider_over_bytes(common::Arch::X64, bytes, TEXT_BASE, Some(Box::new(Rom)));
     let r = s
-        .analyze(0x40100d, &cc, &AnalyzeOptions::default(), None)
+        .analyze(0x40100d, &cc, &common::ignoring(), None)
         .expect("analyze");
     let arms: Vec<u64> = r
         .cfg

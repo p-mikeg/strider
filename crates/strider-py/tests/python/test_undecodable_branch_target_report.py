@@ -26,7 +26,8 @@ def test_analyze_reports_a_branch_to_an_undecodable_word() -> None:
     mem = strider.reader.BufferReader(BASE, PPC_BRANCH_TO_ABORT_WORD)
     lifter = strider.lift.lifter(strider.sleigh.SleighArch.ppc32be(), mem)
     opts = strider.lift.LifterOptions(
-        cfg=strider.cfg.CfgOptions(function_max_size=len(PPC_BRANCH_TO_ABORT_WORD))
+        cfg=strider.cfg.CfgOptions(function_max_size=len(PPC_BRANCH_TO_ABORT_WORD)),
+        on_incomplete=strider.lift.OnIncomplete.IGNORE,
     )
     result = lifter.analyze(BASE, strider.sleigh.CallingConvention.powerpc_sysv32(), opts)
     assert [a for a, r in result.cfg.incomplete if r == "undecodable_target"] == [BASE + 8]
@@ -80,6 +81,9 @@ def test_elf_mapping_symbols_keep_a_literal_pool_from_being_decoded(tmp_path: Pa
     lifter = strider.lift.load_elf(elf)
     sym = lifter.symbol("mid_pool")
     pool = sym.address + 0x10
-    result = lifter.analyze("mid_pool")
+    result = lifter.analyze(
+        "mid_pool",
+        opts=strider.lift.LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE),
+    )
     assert [a for a, r in result.cfg.incomplete if r == "undecodable_target"] == [pool]
     assert result.cfg.region_at(pool) is None

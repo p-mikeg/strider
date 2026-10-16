@@ -36,13 +36,19 @@ fn a_site_the_loop_abandoned_is_republished_without_its_seat() {
             known_targets: &known,
             ..CfgOptions::default()
         },
-        ..AnalyzeOptions::default()
+        ..common::ignoring()
     };
 
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
 
     // The build the abandon is decided from still seats the arm that decoded.
-    let seeded = strider.build_cfg(BASE, &lift_opts.cfg).expect("build_cfg");
+    let seeded = strider
+        .build_cfg(
+            BASE,
+            &lift_opts.cfg,
+            strider_orchestrator::OnIncomplete::Ignore,
+        )
+        .expect("build_cfg");
     assert!(
         seeded
             .regions()

@@ -15,7 +15,8 @@ from typing import (
 
 import os
 
-from .cfg import Cfg, CfgOptions
+from . import StriderError
+from .cfg import Cfg, CfgOptions, IncompleteReason
 from .ir import Function
 from .opt import OptimizerPipeline
 from .reader import BufferReader, MemLike, RomLike, Symbol, SymbolIter
@@ -101,6 +102,22 @@ class AssumptionOptions:
         """
         ...
 
+class OnIncomplete:
+    """What `analyze` and `build_cfg` do with a result `Cfg.incomplete` names
+    anything in: `ERROR` raises `IncompleteAnalysis`, `IGNORE` returns it."""
+
+    ERROR: OnIncomplete
+    IGNORE: OnIncomplete
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
+class IncompleteAnalysis(StriderError):
+    """Raised under `OnIncomplete.ERROR` when the result cannot vouch for some
+    sites. `on_incomplete=OnIncomplete.IGNORE` returns the result instead."""
+
+    sites: list[tuple[int, IncompleteReason]]
+    """The sites, as `Cfg.incomplete` lists them."""
+
 class LifterOptions:
     """Per-call options for `Lifter.analyze`.
 
@@ -110,6 +127,9 @@ class LifterOptions:
     the calling convention for a callee, keyed by the direct-call target
     address rather than the call site. `pipeline`, when set,
     replaces the default optimizer pipeline for the calls these options drive.
+    `on_incomplete` decides what a result `cfg.incomplete` names anything in
+    becomes (`OnIncomplete.ERROR` raises `IncompleteAnalysis`, `IGNORE`
+    returns it); `None` takes the default, `IGNORE`.
     """
 
     # Read-only: these are getters with no setter, so a plain attribute
@@ -129,6 +149,8 @@ class LifterOptions:
     def resolve_indirect_branches(self) -> bool: ...
     @property
     def pipeline(self) -> Optional[OptimizerPipeline]: ...
+    @property
+    def on_incomplete(self) -> OnIncomplete: ...
     def __init__(
         self,
         *,
@@ -138,6 +160,7 @@ class LifterOptions:
         per_address_ccs: Optional[Mapping[int, CallingConvention]] = ...,
         resolve_indirect_branches: bool = ...,
         pipeline: Optional[OptimizerPipeline] = ...,
+        on_incomplete: Optional[OnIncomplete] = ...,
     ) -> None:
         """Build the options; every field defaults."""
         ...
@@ -209,9 +232,13 @@ class Lifter:
         self,
         entry: int,
         opts: Optional[CfgOptions] = ...,
+        *,
+        on_incomplete: Optional[OnIncomplete] = ...,
     ) -> Cfg:
         """Build the control-flow graph of the function at `entry`, without
-        lifting or optimising.
+        lifting or optimising. Raises `IncompleteAnalysis` when
+        `on_incomplete` (`None`: the `LifterOptions` default) refuses
+        `Cfg.incomplete`.
 
         Holds the GIL for the whole build, unlike `analyze`: decoding is short
         next to a full analysis, and it runs on the handle's own thread."""
@@ -231,7 +258,8 @@ class Lifter:
         does for the same argument.
 
         An empty `unresolved` is not a complete answer: `Cfg.incomplete` lists
-        every reason, and `Cfg.is_complete` tests it.
+        every reason, and `Cfg.is_complete` tests it. Raises
+        `IncompleteAnalysis` when `opts.on_incomplete` refuses the result.
 
         Runs the fixed-point loop with the GIL released, so other Python
         threads keep running -- except where `mem` or `rom` is a Python object,

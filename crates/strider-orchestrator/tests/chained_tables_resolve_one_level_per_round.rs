@@ -16,7 +16,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use strider_ir::IRWalker;
 use strider_ir::node::NodeKind;
-use strider_orchestrator::AnalyzeOptions;
 use strider_orchestrator::opt::{EditFunction, OptCtx, PostOptimizer};
 
 mod common;
@@ -110,7 +109,7 @@ fn a_chain_of_tables_seats_one_level_per_round() {
     pipeline.add_post_pass(strider_orchestrator::opt::IndirectBranchClassify);
     pipeline.add_post_pass(CountWideRuns(Arc::clone(&wide_runs)));
     let result = strider
-        .analyze(BASE, &cc, &AnalyzeOptions::default(), Some(pipeline))
+        .analyze(BASE, &cc, &common::ignoring(), Some(pipeline))
         .expect("analyze");
 
     assert!(
@@ -206,7 +205,7 @@ fn a_table_the_whole_function_bounds_tighter_seats_the_tighter_answer() {
         Some(Box::new(Rom { text, tables })),
     );
     let result = strider
-        .analyze(E, &cc, &AnalyzeOptions::default(), None)
+        .analyze(E, &cc, &common::ignoring(), None)
         .expect("analyze");
     let arms_at = |site: u64| -> Vec<u64> {
         let mut arms: Vec<u64> = result
