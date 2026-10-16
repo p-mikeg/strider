@@ -1,3 +1,5 @@
+//! Address-width arithmetic: offsets wrap at the address's bit width.
+
 use strider_ir::node::{ValueId, ValueType};
 use strider_ir::{Function, IRViewer};
 

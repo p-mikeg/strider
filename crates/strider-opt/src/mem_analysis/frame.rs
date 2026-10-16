@@ -1,12 +1,15 @@
+//! Whether a stack address lies in the function's own frame.
+
 use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{Function, IRViewer, IntBinaryOp};
 
-use super::{alignment_masked_operand, binary_operands, wrap_to_addr_width};
+use super::decompose::{alignment_masked_operand, binary_operands};
+use super::ring::wrap_to_addr_width;
 
 /// Does the access `[base + offset, base + offset + size)` lie wholly in THIS
 /// function's own frame?
 ///
-/// [`frame_escape`] proves only that no address of this frame escaped from this
+/// [`super::frame_escape`] proves only that no address of this frame escaped from this
 /// function's BODY.  At the entry SP plus the ABI's stack-argument base and
 /// above lies the CALLER's outgoing-argument block, which the caller may hold or
 /// have leaked a pointer into; nothing here can reveal that, so a callee must be
@@ -45,7 +48,7 @@ pub(super) fn in_own_frame(function: &Function, base: ValueId, offset: i128, siz
 
 /// Whether `value` is the entry SP displaced by a non-positive amount.
 ///
-/// Follows the spine shapes [`decompose`] does (`Add(x, const)` and an
+/// Follows the spine shapes [`super::decompose::decompose`] does (`Add(x, const)` and an
 /// alignment `And`), accumulating the constants an anchor would otherwise
 /// discard, and through a `Phi`, where EVERY arm must qualify because the join
 /// could take any of them. The accumulated displacement is compared at the

@@ -19,26 +19,27 @@ pub(crate) use ring::wrap_to_addr_width;
 #[cfg(test)]
 pub(crate) use walker::WALK_STEPS;
 
-use alias::{SizedAddr, alias_verdict, classify_addr};
-use analyzer::ReachingSpStore;
-use arg_window::{ArgWindow, ArgWindowGeometry, scan_arg_window};
-use decompose::{allocator_return_base, binary_operands};
-use frame::in_own_frame;
-use index::StoreIndex;
-use ring::{addr_bit_width, wrapped_ranges};
-use walker::MemWalker;
-
 // What the test modules reach through `use crate::mem_analysis::*`.
 #[cfg(test)]
-use alias::{offsets_comparable, ranges_disjoint};
+use alias::{SizedAddr, alias_verdict, classify_addr, offsets_comparable, ranges_disjoint};
+#[cfg(test)]
+use arg_window::{ArgWindowGeometry, scan_arg_window};
 #[cfg(test)]
 use decompose::{SPINE_STEPS, is_alignment_mask};
+#[cfg(test)]
+use frame::in_own_frame;
+#[cfg(test)]
+use index::StoreIndex;
+#[cfg(test)]
+use ring::addr_bit_width;
 #[cfg(test)]
 use rustc_hash::FxHashSet;
 #[cfg(test)]
 use strider_ir::node::{NodeId, NodeKind};
 #[cfg(test)]
 use strider_ir::{Function, IRViewer};
+#[cfg(test)]
+use walker::MemWalker;
 
 /// Which memory region a decomposed base roots in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,7 +62,7 @@ pub(crate) struct MemExpr {
     pub kind: MemKind,
 }
 
-/// Coarse Load / Store address class; [`alias_verdict`] is keyed on the
+/// Coarse Load / Store address class; [`alias::alias_verdict`] is keyed on the
 /// `(load_class, store_class)` pair.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum AddrClass {

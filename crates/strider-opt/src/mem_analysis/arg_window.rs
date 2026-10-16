@@ -1,15 +1,19 @@
+//! The outgoing-argument window of a call and the scan of the stores that
+//! fill it.
+
 use std::collections::BTreeMap;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{Function, IRViewer};
 
-use super::{MemAnalyzer, MemOptions, ReachingSpStore, wrap_to_addr_width, wrapped_ranges};
+use super::analyzer::{MemAnalyzer, MemOptions, ReachingSpStore};
+use super::ring::{wrap_to_addr_width, wrapped_ranges};
 
 /// The callee-owned region of one call's outgoing-argument window, in the
 /// call's SP base coordinates.  Read off the call alone, so one walk of the
 /// argument prefix answers every probe against that call.
-pub(crate) struct ArgWindow {
+pub(super) struct ArgWindow {
     /// `[start, end)` of each anchored argument slot, ascending and
     /// non-overlapping.  Whole ABI slots, not store extents: a store narrower
     /// than the slot still hands the callee the rest of it.
