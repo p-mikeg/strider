@@ -295,7 +295,7 @@ fn analyze_claiming(
     assumptions: strider_opt::AssumptionOptions,
 ) -> anyhow::Result<strider_orchestrator::AnalyzeResult> {
     let (mut strider, cc, addr) = common::fixture_strider(arch, case, fn_name);
-    let lift_opts = strider_orchestrator::AnalyzeOptions {
+    let opts = strider_orchestrator::AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::Open {
                 code_before_start: true,
@@ -309,7 +309,7 @@ fn analyze_claiming(
         },
         ..common::ignoring()
     };
-    Ok(strider.analyze(addr, &cc, &lift_opts, None)?)
+    Ok(strider.analyze(addr, &cc, &opts, None)?)
 }
 
 #[test]
@@ -341,10 +341,8 @@ fn caller_supplied_targets_seat_with_resolution_off() {
         .collect::<Vec<_>>()[..]
     else {
         panic!(
-            "expected exactly one unresolved dispatch, got {:?}",
+            "expected exactly one unresolved dispatch, got {}",
             off.incomplete()
-                .of(strider_orchestrator::Reason::UnresolvedBranch)
-                .collect::<Vec<_>>()
         );
     };
 
@@ -390,8 +388,7 @@ fn resolution_off_still_reports_the_surviving_placeholders() {
     assert_eq!(
         off.incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
-            .len(),
+            .count(),
         placeholders,
         "every surviving placeholder must be reported",
     );
@@ -436,8 +433,8 @@ fn a_masked_loop_index_is_bounded_by_its_back_edge() {
         result
             .incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
-            .is_empty(),
+            .next()
+            .is_none(),
         "every arm is proven, so nothing is left to report",
     );
 }
@@ -467,11 +464,11 @@ fn a_scaled_masked_loop_index_seats_only_the_real_slots() {
         ]],
     );
     assert!(
-        !result
+        result
             .incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
-            .is_empty()
+            .next()
+            .is_some()
     );
 }
 
@@ -491,8 +488,8 @@ fn the_same_loop_switch_without_a_mask_resolves() {
         result
             .incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
-            .is_empty(),
+            .next()
+            .is_none(),
         "an unmasked guarded switch must still resolve every arm",
     );
 }

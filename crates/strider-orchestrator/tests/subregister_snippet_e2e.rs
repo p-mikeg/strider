@@ -79,8 +79,8 @@ fn narrow_alias_write_folds_to_zero_in_ret_val_register() {
         result
             .incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
-            .is_empty()
+            .next()
+            .is_none()
     );
     let function = result.function;
 

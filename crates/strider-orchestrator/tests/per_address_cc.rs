@@ -31,16 +31,13 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
             .build(&regs)
             .unwrap(),
     );
-    let lift_opts = AnalyzeOptions {
+    let opts = AnalyzeOptions {
         per_address_ccs: &overrides,
         ..AnalyzeOptions::default()
     };
 
     let mut strider = Strider::new(arch, sleigh, None).unwrap();
-    let bfg = strider
-        .analyze(entry, &cc, &lift_opts, None)
-        .unwrap()
-        .function;
+    let bfg = strider.analyze(entry, &cc, &opts, None).unwrap().function;
 
     let call_id = bfg
         .graph()
