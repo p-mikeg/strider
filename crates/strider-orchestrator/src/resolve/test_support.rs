@@ -36,7 +36,7 @@ pub(crate) fn pcode_addr(machine: u64) -> PcodeInsnAddr {
     }
 }
 
-/// The `BRANCHIND` of an ARM `bx`, a MIPS `jr` or an x86 `jmp [mem]` is not
+/// The `BRANCHIND` of an ARM `bx`, a MIPS `jr` or an x86 `jmp [reg]` is not
 /// the instruction's first p-code op, so its anchor and the only key a caller
 /// can spell differ.
 pub(crate) fn mid_insn_addr(machine: u64) -> PcodeInsnAddr {

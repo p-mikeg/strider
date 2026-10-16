@@ -1,4 +1,4 @@
-//! A site whose answer never settles is abandoned and reported, not a failure.
+//! A site whose answer never settles is withdrawn and reported, not a failure.
 //!
 //! Every narrowing is reported; a second means the answer depends on what the
 //! previous round seated, so the resolve loop stops resolving the site.
@@ -64,7 +64,7 @@ fn seats_a_switch(result: &AnalyzeResult) -> bool {
 }
 
 #[test]
-fn a_site_that_narrows_twice_is_abandoned_and_reported() {
+fn a_site_that_narrows_twice_is_withdrawn_and_reported() {
     let mut bytes = vec![0xc3u8; 0x40];
     bytes[..2].copy_from_slice(&[0xff, 0xe0]); // 0x1000: jmp rax
     let (result, rounds) = analyze_flapping(bytes, &common::ignoring());
@@ -74,12 +74,12 @@ fn a_site_that_narrows_twice_is_abandoned_and_reported() {
             .incomplete()
             .of(Reason::UnresolvedBranch)
             .any(|a| a.machine_addr.addr == BASE),
-        "the abandoned site is reported unresolved; got {}",
+        "the withdrawn site is reported unresolved; got {}",
         result.incomplete(),
     );
     assert!(
         !seats_a_switch(&result),
-        "an abandoned site keeps no seat in the published CFG",
+        "a withdrawn site keeps no seat in the published CFG",
     );
     // Four rounds reach the second narrowing; one more sees the site skipped
     // and converges. Anything near the 256-round cap means the counter stopped
