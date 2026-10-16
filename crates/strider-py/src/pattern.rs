@@ -770,6 +770,7 @@ impl PatRepr {
                     }
                 }
             }
+            // Hold no Python object.
             PatRepr::Any
             | PatRepr::Var(_)
             | PatRepr::ValueOfWidth(_)

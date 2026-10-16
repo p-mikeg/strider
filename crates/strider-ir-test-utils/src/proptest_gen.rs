@@ -30,8 +30,7 @@ fn binary_op() -> impl Strategy<Value = IntBinaryOp> {
 }
 
 fn unary_op() -> impl Strategy<Value = IntUnaryOp> {
-    // `Neg` is the only variant: bitwise complement is `Xor(x, all_ones)`.
-    Just(IntUnaryOp::Neg)
+    prop::sample::select(IntUnaryOp::ALL.to_vec())
 }
 
 fn cmp_op() -> impl Strategy<Value = IntCmpOp> {
