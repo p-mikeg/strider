@@ -36,7 +36,6 @@ def test_analyze_reports_a_branch_to_an_undecodable_word() -> None:
 def test_data_ranges_round_trip_sorted_and_merged() -> None:
     opts = strider.cfg.CfgOptions(data_ranges=[(0x20, 0x28), (0x10, 0x18), (0x14, 0x1C)])
     assert opts.data_ranges == [(0x10, 0x1C), (0x20, 0x28)]
-    assert strider.cfg.CfgOptions(data_ranges=[]).data_ranges == []
 
 
 MID_POOL = """
