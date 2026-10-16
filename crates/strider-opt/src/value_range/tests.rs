@@ -11,7 +11,7 @@ use crate::value_range::Interval;
 
 /// The stride is at least 1 by construction, and emptiness has one name.
 #[test]
-fn new_clamps_the_stride_and_empty_stays_empty() {
+fn new_clamps_the_stride_and_empty_counts_nothing() {
     for (lo, hi) in [(0, 0), (3, 9), (5, 2)] {
         assert_eq!(Interval::new(lo, hi, 0), Interval::new(lo, hi, 1));
     }
@@ -156,8 +156,9 @@ struct Guarded {
     idx: ValueId,
     /// What the `then` arm returns.
     ret: ValueId,
-    /// The consumers of the `If`'s true and false edges after `canonicalize`.
+    /// The consumer of the `If`'s true edge after `canonicalize`.
     true_node: NodeId,
+    /// The consumer of its false edge.
     false_node: NodeId,
 }
 
@@ -166,8 +167,9 @@ struct Guarded {
 ///   then:  Return(ret(idx))
 ///   else:  Return(idx)
 /// ```
-/// canonicalised. `IfCondInversion` rewrites `If(Xor(C, 1))` to `If(C)` with
-/// the arms swapped, so for such a cond `then` is the false edge.
+/// The function is canonicalised: `IfCondInversion` rewrites `If(Xor(C, 1))`
+/// to `If(C)` with the arms swapped, so for such a cond `then` is the false
+/// edge.
 fn guarded(
     ty: ValueType,
     cond: impl FnOnce(&mut FunctionBuilder, ValueId) -> ValueId,
@@ -253,7 +255,7 @@ enum Expect {
 fn guard_extraction_bounds_each_edge() {
     use Expect::{Any, Bounds, Top};
     use IntCmpOp::{Less, Sless};
-    let rows: [(&str, Cond, Expect, Expect); 10] = [
+    let rows: &[(&str, Cond, Expect, Expect)] = &[
         (
             "idx < 8",
             |b, idx| cmp_c(b, idx, Less, 8),
@@ -269,7 +271,8 @@ fn guard_extraction_bounds_each_edge() {
             Bounds(0, 0xFFFF_FFFE),
             Any,
         ),
-        // `idx <= 15` as lowered, in both Xor operand orders.
+        // `idx <= 15` as lowered, in both Xor operand orders: after
+        // `IfCondInversion` both are `15 < idx`, so these pin the inversion.
         (
             "Xor(15 < idx, 1)",
             |b, idx| {
@@ -288,7 +291,8 @@ fn guard_extraction_bounds_each_edge() {
             Any,
             Bounds(0, 15),
         ),
-        // `idx >= 8`, rewritten to `idx < 8` with the arms swapped.
+        // `idx >= 8`, which `IfCondInversion` rewrites to `idx < 8` with the
+        // arms swapped.
         (
             "Xor(idx < 8, 1)",
             |b, idx| {
@@ -324,7 +328,7 @@ fn guard_extraction_bounds_each_edge() {
         ),
     ];
     let mask = ValueType::I32.bit_mask_u128();
-    for (name, cond, on_true, on_false) in rows {
+    for &(name, cond, on_true, on_false) in rows {
         let g = guarded(ValueType::I32, cond, |_, idx| idx);
         for (edge, node, want) in [
             ("true", g.true_node, on_true),
