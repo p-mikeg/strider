@@ -2724,3 +2724,121 @@ fn phi_chain_within_the_budget_resolves_exactly() {
     let iv = deep_phi_chain_range(8);
     assert_eq!((iv.lo, iv.hi, iv.stride), (0, 6, 1));
 }
+
+/// What [`check_guard_forest`] exercised.
+#[derive(Default, Debug)]
+struct GuardTally {
+    functions: usize,
+    queries: usize,
+    /// Queries by how many guards dominate them: none, one, two, three or
+    /// more.
+    by_met: [usize; 4],
+    /// Queries past a guard that starts earlier in preorder and does not
+    /// dominate them, which the descent must skip.
+    skipped_over: usize,
+    /// Guards dropped for sitting off the tree.
+    off_tree: usize,
+    most_entries: usize,
+}
+
+/// Puts random dense guards on `f`'s nodes and checks every query against
+/// the guards whose nodes dominate it, dominance taken by definition over
+/// the control graph rather than from the tree.
+fn check_guard_forest(f: &Function, rng: &mut crate::test_support::Rng, tally: &mut GuardTally) {
+    use strider_ir_test_utils::graph_oracle;
+    tally.functions += 1;
+    let doms = control_dominator_tree(f);
+    let nodes: Vec<NodeId> = f.graph().all_node_ids().collect();
+    let index: rustc_hash::FxHashMap<NodeId, u32> = nodes
+        .iter()
+        .enumerate()
+        .map(|(i, &n)| (n, i as u32))
+        .collect();
+    let succs: Vec<Vec<u32>> = nodes
+        .iter()
+        .map(|&n| {
+            strider_ir::walk::cfg_outputs(f.graph(), n)
+                .flat_map(|out| f.graph().value_uses(out))
+                .map(|(user, _)| index[&user])
+                .collect()
+        })
+        .collect();
+    let entry = index[&f.entry()];
+    let dom = graph_oracle::dom_matrix(&succs, entry);
+    let mut by_node: rustc_hash::FxHashMap<NodeId, Interval> = rustc_hash::FxHashMap::default();
+    for &n in &nodes {
+        let on_tree = doms.span(n).is_some();
+        if rng.below(if on_tree { 2 } else { 3 }) == 0 {
+            let lo = rng.below(32) as u128;
+            by_node.insert(n, Interval::dense(lo, lo + rng.below(32) as u128));
+            tally.off_tree += usize::from(!on_tree);
+        }
+    }
+    let forest = super::GuardForest::new(&doms, &by_node);
+    tally.most_entries = tally.most_entries.max(forest.entries.len());
+    for (q, &qn) in nodes.iter().enumerate() {
+        assert_eq!(doms.span(qn).is_some(), dom[entry as usize][q], "{qn:?}");
+        let Some(span) = doms.span(qn) else {
+            continue;
+        };
+        let dominating: Vec<Interval> = by_node
+            .iter()
+            .filter(|&(g, _)| dom[index[g] as usize][q])
+            .map(|(_, &iv)| iv)
+            .collect();
+        let want = dominating.iter().copied().reduce(Interval::intersect);
+        let got = forest.meet_dominating(span);
+        assert_eq!(
+            got.map(|iv| (iv.lo, iv.hi)),
+            want.map(|iv| (iv.lo, iv.hi)),
+            "at {qn:?}"
+        );
+        tally.queries += 1;
+        tally.by_met[dominating.len().min(3)] += 1;
+        tally.skipped_over += usize::from(by_node.keys().any(|&g| {
+            doms.span(g)
+                .is_some_and(|(pre, _)| pre < span.0 && !dom[index[&g] as usize][q])
+        }));
+    }
+}
+
+/// Each query meets exactly the guards whose nodes dominate it: over random
+/// control flow, and over deep guard sequences whose forests need every
+/// level of the sparse table.
+#[test]
+fn guard_forest_meets_exactly_the_dominating_guards() {
+    let seeds = if cfg!(debug_assertions) {
+        1_000
+    } else {
+        20_000
+    };
+    let mut tally = GuardTally::default();
+    for seed in 0..seeds {
+        let Some(f) = crate::differential::build_random_cfg(seed) else {
+            continue;
+        };
+        let mut rng = crate::test_support::Rng(seed | 1);
+        check_guard_forest(&f, &mut rng, &mut tally);
+    }
+    let sequences: &[usize] = if cfg!(debug_assertions) {
+        &[1, 5, 31, 64]
+    } else {
+        &[1, 5, 31, 64, 127, 300]
+    };
+    for &n in sequences {
+        let (f, _) = build_guard_sequence(n);
+        for draw in 0..4 {
+            let mut rng = crate::test_support::Rng((n as u64) << 8 | draw | 1);
+            check_guard_forest(&f, &mut rng, &mut tally);
+        }
+    }
+    let floor = seeds as usize / 10;
+    assert!(
+        tally.functions >= floor
+            && tally.skipped_over >= floor
+            && tally.off_tree >= floor
+            && tally.by_met.iter().all(|&c| c >= floor)
+            && tally.most_entries >= 64,
+        "floor {floor}: {tally:?}"
+    );
+}

@@ -925,7 +925,7 @@ fn refines(want: &Outcome, got: &Outcome) -> Result<bool, String> {
     Ok(true)
 }
 
-fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
+pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
     let mut rng = Rng(seed.wrapping_mul(0xA24B_AED4_963E_E407) | 1);
     let nvars = 1 + rng.below(3);
     let mut rs = RegisterSet::new();
