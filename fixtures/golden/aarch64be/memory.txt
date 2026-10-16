@@ -1,4 +1,4 @@
-# aarch64be/memory: Strider::analyze, LiftOptions::default(), OptOptions::default()
+# aarch64be/memory: Strider::analyze, default options, incomplete reported
 # array_copy: load and store and cfg.back_edge
 # array_fill: store and cfg.back_edge
 # array_sum: load and cfg.back_edge

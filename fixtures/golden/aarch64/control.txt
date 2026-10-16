@@ -1,4 +1,4 @@
-# aarch64/control: Strider::analyze, LiftOptions::default(), OptOptions::default()
+# aarch64/control: Strider::analyze, default options, incomplete reported
 # abs_val: if
 # clamp: 2 if
 # count_bits: cfg.back_edge and int.shift_right

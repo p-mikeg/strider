@@ -1,4 +1,4 @@
-# aarch64be/builtins: Strider::analyze, LiftOptions::default(), OptOptions::default()
+# aarch64be/builtins: Strider::analyze, default options, incomplete reported
 # clz32: popcount|lzcount or call or 2 int.and|int.or|int.xor|int.shift_left|int.shift_right|int.sshift_right|int.neg
 # clz64: popcount|lzcount or call or 2 int.and|int.or|int.xor|int.shift_left|int.shift_right|int.sshift_right|int.neg
 # ctz32: popcount|lzcount or call or 2 int.and|int.or|int.xor|int.shift_left|int.shift_right|int.sshift_right|int.neg

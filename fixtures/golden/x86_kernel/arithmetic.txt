@@ -1,4 +1,4 @@
-# x86_kernel/arithmetic: Strider::analyze, LiftOptions::default(), OptOptions::default()
+# x86_kernel/arithmetic: Strider::analyze, default options, incomplete reported
 # add: int.add
 # ashr: int.sshift_right
 # bit_and: int.and
