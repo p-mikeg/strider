@@ -186,7 +186,7 @@ pub struct PyCfgOptions {
     /// one.
     pub call_other_abis: Arc<HashMap<String, PyCallOtherAbi>>,
     /// `no_return_targets` as `strider_cfg` borrows it, shared with every clone.
-    pub(crate) no_return_targets: Arc<rustc_hash::FxHashSet<u64>>,
+    pub(crate) no_return_targets: Arc<NoReturnTargets>,
     /// Address ranges `(start, end)` the image marks as data, decoded only for
     /// the entry instruction.
     pub data_ranges: strider_cfg::DataRanges,
@@ -199,6 +199,13 @@ pub struct PyCfgOptions {
     /// nor a copy is charged per call. Shared with every clone, as the table
     /// it is built from is.
     pub(crate) seated: Arc<SeatedTargets>,
+}
+
+/// The set beside its `frozenset` face, so the two cannot be split apart.
+#[derive(Default)]
+pub(crate) struct NoReturnTargets {
+    pub(crate) set: rustc_hash::FxHashSet<u64>,
+    view: OnceLock<Py<pyo3::types::PyFrozenSet>>,
 }
 
 /// `known_targets` as `strider_cfg::CfgOptions` borrows it.
@@ -236,7 +243,10 @@ impl PyCfgOptions {
                     .collect(),
             ),
             data_ranges: data_ranges_from(data_ranges)?,
-            no_return_targets: Arc::new(no_return_targets.0),
+            no_return_targets: Arc::new(NoReturnTargets {
+                set: no_return_targets.0,
+                view: OnceLock::new(),
+            }),
             known_targets_view: Arc::default(),
             call_other_abis_view: Arc::default(),
             seated: Arc::new(seated),
@@ -312,7 +322,15 @@ impl PyCfgOptions {
         &self,
         py: Python<'py>,
     ) -> PyResult<Bound<'py, pyo3::types::PyFrozenSet>> {
-        pyo3::types::PyFrozenSet::new_bound(py, self.no_return_targets.iter())
+        let targets = &*self.no_return_targets;
+        let set = match targets.view.get() {
+            Some(set) => set,
+            None => {
+                let set = pyo3::types::PyFrozenSet::new_bound(py, targets.set.iter())?;
+                targets.view.get_or_init(|| set.unbind())
+            }
+        };
+        Ok(set.bind(py).clone())
     }
 
     /// This object bounded to `function_max_size`, sharing its tables rather
@@ -329,15 +347,16 @@ impl PyCfgOptions {
         // successor set, so a `repr` that omits it describes a different
         // analysis than the one that ran.
         format!(
-            "CfgOptions(function_max_size={:?}, allow_code_before_start_addr={}, \
+            "CfgOptions(function_max_size={}, allow_code_before_start_addr={}, \
              known_targets={{{} entries}}, call_other_abis={{{} entries}}, \
              data_ranges=[{} ranges], no_return_targets={{{} entries}})",
-            self.function_max_size(),
+            self.function_max_size()
+                .map_or_else(|| "None".to_owned(), |size| size.to_string()),
             py_bool(self.allow_code_before_start_addr()),
             self.known_targets.len(),
             self.call_other_abis.len(),
             self.data_ranges.ranges().len(),
-            self.no_return_targets.len(),
+            self.no_return_targets.set.len(),
         )
     }
 }
