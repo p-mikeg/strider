@@ -21,7 +21,8 @@ fn ids(roots: &[u32]) -> Vec<NodeId> {
     roots.iter().map(|&r| NodeId::from_u32(r)).collect()
 }
 
-/// Brackets, coverage, edge classes, topological order on a DAG, root order.
+/// Brackets, tree parents, coverage, edge classes, topological order on a
+/// DAG, root order.
 fn check_postorder(c: &Case) {
     let g = Graph::from_edges(c.n, &c.edges);
     let succs = c.succs();
@@ -37,6 +38,13 @@ fn check_postorder(c: &Case) {
         let at = v as usize;
         match phase {
             WalkPhase::Pre => {
+                match open.last() {
+                    None => assert!(c.roots.contains(&v), "Pre({v}) of a non-root, {c:?}"),
+                    Some(&u) => assert!(
+                        succs[u as usize].contains(&v),
+                        "Pre({v}) under {u}, which has no edge to it, {c:?}"
+                    ),
+                }
                 assert_eq!(pre[at], usize::MAX, "Pre({v}) twice in {events:?}");
                 pre[at] = i;
                 open.push(v);
@@ -234,6 +242,7 @@ fn walks_ask_each_node_once_on_million_node_graphs() {
     let cycle: Vec<(u32, u32)> = (0..N).map(|v| (v, (v + 1) % N)).collect();
     for edges in [chain, star, cycle] {
         let g = Graph::from_edges(N, &edges);
+        g.set_succ_budget(2 * u64::from(N));
         assert_eq!(PostOrder::new(&g, ids(&[0])).count(), N as usize);
         assert_eq!(g.succ_calls(), u64::from(N));
         assert_eq!(PreOrder::new(&g, ids(&[0])).count(), N as usize);
