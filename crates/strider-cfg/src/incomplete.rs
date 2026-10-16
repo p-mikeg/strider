@@ -50,8 +50,8 @@ pub enum Reason {
     /// branch leaves through a `TailCall` stub; a fall-through past a call
     /// ends that call as `NoReturn`. Any other fall-through into data leaves
     /// through a stub too; one into bytes Sleigh rejects fails the whole
-    /// build. Bytes reached off a seeded arm are
-    /// named here with no stub: the arm is dropped instead, and
+    /// build. Bytes reached off a seeded arm are named here with no stub: the
+    /// arm is dropped instead, and
     /// [`Cfg::undecodable_seeded_targets`](crate::Cfg::undecodable_seeded_targets)
     /// names it.
     UndecodableTarget,
