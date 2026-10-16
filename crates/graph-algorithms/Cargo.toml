@@ -16,6 +16,9 @@ rustc-hash.workspace = true
 [dev-dependencies]
 expect-test.workspace = true
 itertools.workspace = true
+# Oracles only: `simple_fast`, `toposort`.
+petgraph.workspace = true
+proptest.workspace = true
 
 [lints]
 workspace = true
