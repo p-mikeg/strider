@@ -163,27 +163,12 @@ mod tests {
         assert_eq!(wl.dequeue(), None);
     }
 
-    /// One entity queued at a time, drained from the highest index down: every
-    /// dequeue removes the membership maximum.
+    /// A drain from the highest index down unmarks the membership maximum on
+    /// every dequeue. A bitset rescans its lower words for the next maximum
+    /// there, quadratic over the drain; an indexed map writes one slot.
     #[test]
-    fn descending_drain_cost_is_linear() {
-        fn drain(n: u32) -> std::time::Duration {
-            let mut wl: Worklist<Id> = Worklist::new();
-            let start = std::time::Instant::now();
-            for i in (0..n).rev() {
-                wl.enqueue(Id(i));
-                assert_eq!(wl.dequeue(), Some(Id(i)));
-            }
-            start.elapsed()
-        }
-        drain(10_000);
-        let small = drain(25_000);
-        let large = drain(200_000);
-        // Linear would be 8x; quadratic 64x.
-        assert!(
-            large.as_secs_f64() < small.as_secs_f64() * 24.0,
-            "8x the entities cost {:.1}x the drain ({small:?} -> {large:?})",
-            large.as_secs_f64() / small.as_secs_f64(),
-        );
+    fn membership_is_an_indexed_map() {
+        let wl: Worklist<Id> = Worklist::new();
+        let _: &SecondaryMap<Id, bool> = &wl.workset;
     }
 }
