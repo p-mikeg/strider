@@ -87,7 +87,7 @@ impl Optimizer for PhiCollapse {
 fn collapse(edit: &mut crate::EditFunction<'_>, scc: &[NodeId], value: ValueId) -> Result<()> {
     for &phi in scc {
         let [out] = edit.node_outputs_exact::<1>(phi)?;
-        edit.replace_value(out, value)?;
+        edit.replace_value(out, value);
     }
     for &phi in scc {
         edit.kill_node(phi);

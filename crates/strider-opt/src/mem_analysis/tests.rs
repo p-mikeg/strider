@@ -3692,7 +3692,7 @@ mod refresh_tests {
         assert_eq!(offset(&fg), Some(-16));
         let mut edit = crate::EditFunction::new(&mut fg);
         let minus_8 = edit.build_int_const((-8i64) as u64, ValueType::I64)?;
-        edit.replace_value(minus_16, minus_8)?;
+        edit.replace_value(minus_16, minus_8);
         assert_eq!(
             offset(edit.function()),
             Some(-16),

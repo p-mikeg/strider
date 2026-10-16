@@ -565,7 +565,7 @@ mod tests {
                 if edit.node_inputs(ret).len() == 3 {
                     // `build_int_const` carries no contributor stamp.
                     let value = edit.build_int_const(7u64, ValueType::I64)?;
-                    edit.add_node_input(ret, value)?;
+                    edit.add_node_input(ret, value);
                 }
                 Ok(OptimizationResult::Changed)
             }
@@ -672,7 +672,7 @@ mod tests {
             let value = edit.build_int_const(100 + run as u64, ValueType::I64)?;
             let old = edit.node_inputs(ret)[2];
             edit.absorb_fingerprint(value, old);
-            edit.replace_value(old, value)?;
+            edit.replace_value(old, value);
             Ok(super::OptimizationResult::Changed)
         }
     }

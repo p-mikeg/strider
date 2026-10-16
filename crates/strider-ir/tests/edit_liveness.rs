@@ -33,7 +33,7 @@ fn replace_value_absorbs_fingerprint_and_redirects_uses() {
     let sink_node = function.producer(sink);
 
     let mut edit = EditFunction::new(&mut function);
-    let changed = edit.replace_value(old_value, new_value).unwrap();
+    let changed = edit.replace_value(old_value, new_value);
     assert!(changed, "a live use existed -> changed");
 
     let fp = function.side_tables().asm_fingerprint(new_node);
@@ -80,7 +80,7 @@ fn replace_value_no_uses_returns_false() {
     let new_node = function.producer(new_value);
 
     let mut edit = EditFunction::new(&mut function);
-    let changed = edit.replace_value(old_value, new_value).unwrap();
+    let changed = edit.replace_value(old_value, new_value);
     assert!(!changed, "no uses of old -> changed must be false");
 
     let fp = function.side_tables().asm_fingerprint(new_node);
@@ -157,8 +157,7 @@ fn remove_region_predecessors_strips_ctrl_and_phi_slot() {
     let pred1_val = pre_phi_inputs[2];
 
     let mut edit = EditFunction::new(&mut function);
-    edit.remove_region_predecessors(region, &[0])
-        .expect("remove_region_predecessors must succeed");
+    edit.remove_region_predecessors(region, &[0]);
 
     assert_eq!(
         function.node_inputs(region).len(),
@@ -337,7 +336,7 @@ fn add_node_input_drops_root_when_node_gains_input() {
 
     let entry = edit.entry();
     let entry_ctrl = edit.node_outputs(entry)[0];
-    edit.add_node_input(region, entry_ctrl).unwrap();
+    edit.add_node_input(region, entry_ctrl);
     assert!(
         !edit.is_root(region),
         "Region with an input is no longer a root"
@@ -377,7 +376,7 @@ fn replace_value_enqueues_old_producer_and_clean_culls_it() {
     let new_node = edit.producer(new_v);
     assert!(edit.is_live(new_node), "re-made new const is live");
 
-    let changed = edit.replace_value(old, new_v).unwrap();
+    let changed = edit.replace_value(old, new_v);
     assert!(changed, "the Return's use of old was redirected");
     edit.clean();
 

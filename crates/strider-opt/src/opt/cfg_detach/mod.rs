@@ -73,7 +73,7 @@ pub(crate) fn strip_dead_predecessors(
     // a region.
     let mut emptied_a_region = false;
     for (region, idxs) in dead {
-        edit.remove_region_predecessors(region, &idxs)?;
+        edit.remove_region_predecessors(region, &idxs);
         emptied_a_region |= edit.node_inputs(region).is_empty();
     }
     if emptied_a_region {

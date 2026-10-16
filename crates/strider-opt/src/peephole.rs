@@ -278,14 +278,14 @@ mod tests {
                     [strider_ir::node::ValueKind::Typed(ty)],
                 );
                 let [new_value] = edit.node_outputs_exact::<1>(new_node)?;
-                edit.replace_value(root_value, new_value)?;
+                edit.replace_value(root_value, new_value);
                 return Ok(PeepholeRewrite::Changed {
                     new_node: Some(new_node),
                 });
             }
             let new_value = edit.build_int_const(REPLACEMENT_K, ty)?;
             let new_node = edit.producer(new_value);
-            edit.replace_value(root_value, new_value)?;
+            edit.replace_value(root_value, new_value);
             Ok(PeepholeRewrite::Changed {
                 new_node: Some(new_node),
             })
