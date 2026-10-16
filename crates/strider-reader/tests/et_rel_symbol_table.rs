@@ -7,85 +7,87 @@
 //! and the attacker chooses both the value and the section it is rebased
 //! against.
 //!
-//! The two objects below are byte-identical but for one section header's
-//! `sh_type` (`SHT_STRTAB` vs `SHT_DYNSYM`). Both hold `.text` =
-//! `e8 00 00 00 00` (`call rel32`) with an `R_X86_64_PLT32` against
-//! `.symtab[1]` = `target` (`st_shndx` 2, `st_value` 0); the decoy table's
-//! entry 1 is `st_value` 0x7777. They must patch to the same target.
+//! The two objects below differ in one section header's `sh_type`
+//! (`SHT_STRTAB` vs `SHT_DYNSYM`). Both hold `.text` = `e8 00 00 00 00`
+//! (`call rel32`) with an `R_X86_64_PLT32` against `.symtab[1]` = `target`
+//! (`.text.target`, `st_value` 0); the decoy table's entry 1 is `st_value`
+//! 0x7777 in the same section. They must patch to the same target.
 
-use strider_reader::load_elf;
+use object::write::{Object, Relocation, Symbol, SymbolSection};
+use object::{
+    Architecture, BinaryFormat, Endianness, Object as _, ObjectSymbol as _, ObjectSymbolTable as _,
+    RelocationFlags, SectionIndex, SectionKind, SymbolFlags, SymbolIndex, SymbolKind, SymbolScope,
+    elf,
+};
+use strider_reader::OwnedElf;
+use strider_reader::elf::{ElfSectionLayout, LoadFilter, RegionSource};
 
-fn unhex(s: &str) -> Vec<u8> {
-    (0..s.len() / 2)
-        .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).expect("hex"))
-        .collect()
+/// `.text.target`'s index: `object::write` seats it after `.text` and
+/// `.rela.text`.
+const TARGET_SHNDX: u16 = 3;
+
+/// The object, with its decoy table's section typed `decoy_type`.
+fn object_with_decoy(decoy_type: u32) -> Vec<u8> {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    obj.append_section_data(text, &[0xe8, 0, 0, 0, 0], 16);
+    let target_section = obj.add_section(Vec::new(), b".text.target".to_vec(), SectionKind::Text);
+    obj.append_section_data(target_section, &[0xc3], 16);
+    let target = obj.add_symbol(Symbol {
+        name: b"target".to_vec(),
+        value: 0,
+        size: 0,
+        kind: SymbolKind::Text,
+        scope: SymbolScope::Linkage,
+        weak: false,
+        section: SymbolSection::Section(target_section),
+        flags: SymbolFlags::None,
+    });
+    obj.add_relocation(
+        text,
+        Relocation {
+            offset: 1,
+            symbol: target,
+            addend: -4,
+            flags: RelocationFlags::Elf {
+                r_type: elf::R_X86_64_PLT32,
+            },
+        },
+    )
+    .expect("relocation");
+
+    // Two `Elf64_Sym`: the null entry, then a GLOBAL FUNC at 0x7777 in
+    // `.text.target`.
+    let mut decoy = vec![0u8; 24];
+    decoy.extend_from_slice(&0u32.to_le_bytes()); // st_name
+    decoy.push((elf::STB_GLOBAL << 4) | elf::STT_FUNC); // st_info
+    decoy.push(0); // st_other
+    decoy.extend_from_slice(&TARGET_SHNDX.to_le_bytes());
+    decoy.extend_from_slice(&0x7777u64.to_le_bytes()); // st_value
+    decoy.extend_from_slice(&0u64.to_le_bytes()); // st_size
+    let section = obj.add_section(Vec::new(), b".decoy".to_vec(), SectionKind::Elf(decoy_type));
+    obj.append_section_data(section, &decoy, 8);
+    obj.write().expect("write the object")
 }
 
-/// 784 bytes, built by the test helper documented above.
-const REL_NODYN: &str = concat!(
-    "7f454c4602010100000000000000000001003e00010000000000000000000000000000000000000040000000",
-    "0000000000000000400000000000400008000700000000000000000000000000000000000000000000000000",
-    "0000000000000000000000000000000000000000000000000100000000000000000000000000000001000000",
-    "0100000006000000000000000000000000000000400200000000000005000000000000000000000000000000",
-    "1000000000000000000000000000000007000000010000000600000000000000000000000000000048020000",
-    "0000000001000000000000000000000000000000100000000000000000000000000000001400000002000000",
-    "0000000000000000000000000000000050020000000000003000000000000000040000000100000008000000",
-    "0000000018000000000000001c00000003000000000000000000000000000000000000008002000000000000",
-    "0e00000000000000000000000000000001000000000000000000000000000000240000000400000000000000",
-    "0000000000000000000000009002000000000000180000000000000003000000010000000800000000000000",
-    "18000000000000002f0000000300000000000000000000000000000000000000e00200000000000030000000",
-    "000000000400000001000000080000000000000018000000000000001c000000030000000000000000000000",
-    "0000000000000000a80200000000000036000000000000000000000000000000010000000000000000000000",
-    "00000000e800000000000000c300000000000000000000000000000000000000000000000000000000000000",
-    "01000000120002000000000000000000000000000000000000746172676574006465636f7900000001000000",
-    "000000000400000001000000fcffffffffffffff002e74657874002e746578742e746172676574002e73796d",
-    "746162002e737472746162002e72656c612e74657874002e6465636f79000000000000000000000000000000",
-    "000000000000000000000000080000001200020077770000000000000000000000000000",
-);
+/// Entry 1 of the table `object` reads as the file's dynamic symbols.
+fn decoy_entry(bytes: &[u8]) -> Option<(u64, SectionIndex)> {
+    let obj = object::File::parse(bytes).expect("parse");
+    let table = obj.dynamic_symbol_table()?;
+    let sym = table.symbol_by_index(SymbolIndex(1)).expect("entry 1");
+    Some((sym.address(), sym.section_index().expect("defined")))
+}
 
-/// 784 bytes, built by the test helper documented above.
-const REL_DYN: &str = concat!(
-    "7f454c4602010100000000000000000001003e00010000000000000000000000000000000000000040000000",
-    "0000000000000000400000000000400008000700000000000000000000000000000000000000000000000000",
-    "0000000000000000000000000000000000000000000000000100000000000000000000000000000001000000",
-    "0100000006000000000000000000000000000000400200000000000005000000000000000000000000000000",
-    "1000000000000000000000000000000007000000010000000600000000000000000000000000000048020000",
-    "0000000001000000000000000000000000000000100000000000000000000000000000001400000002000000",
-    "0000000000000000000000000000000050020000000000003000000000000000040000000100000008000000",
-    "0000000018000000000000001c00000003000000000000000000000000000000000000008002000000000000",
-    "0e00000000000000000000000000000001000000000000000000000000000000240000000400000000000000",
-    "0000000000000000000000009002000000000000180000000000000003000000010000000800000000000000",
-    "18000000000000002f0000000b00000000000000000000000000000000000000e00200000000000030000000",
-    "000000000400000001000000080000000000000018000000000000001c000000030000000000000000000000",
-    "0000000000000000a80200000000000036000000000000000000000000000000010000000000000000000000",
-    "00000000e800000000000000c300000000000000000000000000000000000000000000000000000000000000",
-    "01000000120002000000000000000000000000000000000000746172676574006465636f7900000001000000",
-    "000000000400000001000000fcffffffffffffff002e74657874002e746578742e746172676574002e73796d",
-    "746162002e737472746162002e72656c612e74657874002e6465636f79000000000000000000000000000000",
-    "000000000000000000000000080000001200020077770000000000000000000000000000",
-);
 /// The `call`'s rel32 field, read back through the relocating reader.
 fn patched_rel32(bytes: &[u8]) -> i32 {
-    let dir = std::env::temp_dir().join(format!("strider-rel-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("tmpdir");
-    let path = dir.join("t.o");
-    std::fs::write(&path, bytes).expect("write");
-    let elf = load_elf(&path).expect("load_elf");
-    let obj = elf.checked_file().expect("the mapped file is unchanged");
+    let elf = OwnedElf::parse(bytes.to_vec()).expect("parse");
+    let obj = elf.checked_file().expect("parse");
     // `.text` is rebased off the synthetic ET_REL image base; the field is the
     // `call`'s rel32, one byte into it.
-    let field_addr = {
-        use object::Object as _;
-        strider_reader::elf::ElfSectionLayout::new(&obj)
-            .section_base(&obj.section_by_name(".text").expect(".text"))
-            + 1
-    };
+    let text = obj.section_by_name(".text").expect(".text");
+    let field_addr = ElfSectionLayout::new(&obj).section_base(&text) + 1;
     let regions = elf
-        .regions(
-            strider_reader::elf::RegionSource::Auto,
-            strider_reader::elf::LoadFilter::AllAllocatable,
-            true,
-        )
+        .regions(RegionSource::Auto, LoadFilter::AllAllocatable, true)
         .expect("regions");
     let mut field = [0u8; 4];
     assert!(
@@ -94,14 +96,38 @@ fn patched_rel32(bytes: &[u8]) -> i32 {
             .any(|r| r.read(field_addr, &mut field) == Some(4)),
         "no region covers the call's rel32 field"
     );
-    let _ = std::fs::remove_file(&path);
     i32::from_le_bytes(field)
 }
 
 #[test]
 fn an_object_files_relocations_ignore_a_decoy_dynsym() {
-    let without = patched_rel32(&unhex(REL_NODYN));
-    let with = patched_rel32(&unhex(REL_DYN));
+    let without = object_with_decoy(elf::SHT_STRTAB);
+    let with = object_with_decoy(elf::SHT_DYNSYM);
+    let differing = without.iter().zip(&with).filter(|(a, b)| a != b).count();
+    assert_eq!(
+        (with.len(), differing),
+        (without.len(), 1),
+        "the objects differ in the one byte of sh_type"
+    );
+    let target_section = object::File::parse(&*with)
+        .expect("parse")
+        .symbol_by_name("target")
+        .expect("target")
+        .section_index()
+        .expect("defined");
+    assert_eq!(
+        decoy_entry(&without),
+        None,
+        "an SHT_STRTAB decoy is no symbol table"
+    );
+    assert_eq!(
+        decoy_entry(&with),
+        Some((0x7777, target_section)),
+        "the decoy is a dynamic table whose entry 1 sits elsewhere in .text.target"
+    );
+
+    let without = patched_rel32(&without);
+    let with = patched_rel32(&with);
     assert_eq!(
         with, without,
         "a decoy .dynsym changed which symbol the relocation resolved against"
