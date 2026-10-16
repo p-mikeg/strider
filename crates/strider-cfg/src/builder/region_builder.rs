@@ -774,7 +774,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // A `TailCall` consumes the site exactly as `LinkRegister` does
                 // (no placeholder, no `Switch` anchor), so a dispatch that
                 // really had more arms leaves no trace. Record it, or the loss
-                // is silent on every channel.
+                // goes unreported.
                 self.builder.tail_call_seated.push(addr);
                 self.finish_current_region(RegionTerminator::TailCall {
                     target: crate::ResolvedTarget::new(target.addr, target.isa_bit),
@@ -793,7 +793,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 //
                 // The off-boundary arm is reported the way
                 // `Builder::seat_non_boundary_target` reports the one discovered
-                // after seating, so the loss lands on a channel either way.
+                // after seating, so the loss is reported either way.
                 let mut deferred = false;
                 for target in &targets {
                     let a = PcodeInsnAddr::at_machine_start(target.addr);
@@ -1034,7 +1034,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// instruction decoded here is stepped over, and those bytes end up owned
     /// by two regions with two different instruction streams. That is the same
     /// loss [`Builder::seat_non_boundary_target`] reports, reached from the
-    /// other side, so it goes on the same channel.
+    /// other side, so it is reported under the same reason.
     ///
     /// A [`Builder::tail_call_stub`] owns no bytes (nothing outside the
     /// function bound is decoded), so its start is no overlap.

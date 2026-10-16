@@ -1563,7 +1563,7 @@ mod tests {
     /// ```
     ///
     /// The fall-through seal is an exact-key lookup, so nothing on the decode
-    /// path lands on 0x1014 and no other channel names it.
+    /// path lands on 0x1014 and no other reason names it.
     #[test]
     fn a_region_start_stepped_over_by_a_later_decode_is_reported() {
         let base = 0x1000u64;

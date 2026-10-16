@@ -76,8 +76,8 @@ impl<'s> LoopState<'s> {
         // BEFORE `abandon_undecodable`, which drops the site or its bad arms
         // from `working`, the map `seated_arm_losses` looks the site up in.
         // Reversed, every site abandoned this round loses its arm-loss report,
-        // and for a classifier-derived table that is the only channel that
-        // fires.
+        // and for a classifier-derived table that is the only report it
+        // gets.
         self.derived_incomplete
             .extend(seated_arm_losses(cfg, &self.working));
         let clashing: Vec<PcodeInsnAddr> = cfg.incomplete().of(Reason::IsaModeConflict).collect();
@@ -211,8 +211,8 @@ impl<'s> LoopState<'s> {
             unverified_seeded_sites(&cfg, &switches, &unclassified, self.caller_seed, settled);
         // Derived once from the final cfg, then extended with the rounds'
         // accumulated guesses, filtered to the ones still seated: a site whose
-        // seat the loop dropped carries no guessed arm any more, and this
-        // channel claims the answer is whole.
+        // seat the loop dropped carries no guessed arm any more, and
+        // `UnverifiedSeed` claims the answer is whole.
         unverified.extend(
             self.assumed_modes
                 .into_iter()

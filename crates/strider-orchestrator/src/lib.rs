@@ -324,8 +324,8 @@ struct Progress {
     narrowed: Vec<PcodeInsnAddr>,
     /// Addresses whose fold dropped a successor the CLASSIFIER proved this
     /// round, or whose answer stopped being a superset. A seed says nothing
-    /// about what the classifier derives, so this channel is never suppressed.
-    /// A successor carried over from an earlier round needs no channel of its
+    /// about what the classifier derives, so this list is never suppressed.
+    /// A successor carried over from an earlier round needs no list of its
     /// own: dropping one is exactly what stops the answer being a superset.
     derived_incomplete: Vec<PcodeInsnAddr>,
     /// Addresses that seated a NEW arm on a mode nothing proved for that arm.
@@ -453,7 +453,7 @@ fn apply_resolutions(
             progress.derived_incomplete.push(addr);
         }
         // Decodable, and the arm set is whole: nothing evaluated THIS arm's
-        // mode, which is the unverified channel, not the incomplete one.
+        // mode, which is `UnverifiedSeed`, not `UnresolvedBranch`.
         if assumed_mode {
             progress.assumed_modes.push(addr);
         }
@@ -822,7 +822,7 @@ impl DispatchAnchors {
 /// named it goes. The same verdict covers an arm whose own target decodes but
 /// which reaches code that does not, through a direct branch out of it: the
 /// cfg reports the arm, not the address that failed, so the failing address
-/// reaches no report channel. The same address seated from another site decodes
+/// is reported under no reason. The same address seated from another site decodes
 /// in that site's own committed context, so its failure there is no verdict
 /// here.
 ///
@@ -848,7 +848,7 @@ fn abandon_undecodable(
     };
     // Both keys of each site, since a caller can only spell the machine address
     // ([`seated_in`]) while the cfg reports the `BRANCHIND`'s own p-code address.
-    // The anchor rides along: it is the address every other channel names the
+    // The anchor rides along: it is the address every other reason names the
     // site by, and the machine-start key is not it.
     let mut undecodable: FxHashMap<PcodeInsnAddr, (PcodeInsnAddr, rustc_hash::FxHashSet<u64>)> =
         FxHashMap::default();
@@ -954,7 +954,7 @@ fn unverified_seeded_sites(
         .collect();
     // A `LinkRegister` seed is consumed at CFG-build time: it becomes a
     // `Return`, leaving no placeholder and no `Switch` anchor, so the filter
-    // above cannot see it and no other channel names it either. The seat is
+    // above cannot see it and no other reason names it either. The seat is
     // the only record that a caller's answer replaced whatever the classifier
     // would have derived. Only a CALLER's here: a seat the classifier derived
     // was its own answer, not an unchecked assertion, and `settle_return_sites`
