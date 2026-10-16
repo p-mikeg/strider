@@ -1,4 +1,4 @@
-# x86_kernel/arithmetic: Strider::analyze, default options, incomplete reported
+# x86_kernel/arithmetic: Strider::analyze, default options except on_incomplete=Ignore
 # add: int.add
 # ashr: int.sshift_right
 # bit_and: int.and

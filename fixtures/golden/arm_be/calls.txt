@@ -1,4 +1,4 @@
-# arm_be/calls: Strider::analyze, default options, incomplete reported
+# arm_be/calls: Strider::analyze, default options except on_incomplete=Ignore
 # apply_indirect: call
 # fib_recursive: 2 call and if
 # mutual_a: call and if
