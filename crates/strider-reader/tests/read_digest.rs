@@ -16,7 +16,7 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -72,10 +72,16 @@ impl Fnv {
 
 /// The addresses some region covers, as sorted disjoint ranges.
 fn covered_ranges(regions: &[MemRegion]) -> Vec<Range<u64>> {
-    let mut all: Vec<Range<u64>> = regions
-        .iter()
-        .map(|r| r.start_addr()..r.end_addr())
-        .collect();
+    merged(
+        regions
+            .iter()
+            .map(|r| r.start_addr()..r.end_addr())
+            .collect(),
+    )
+}
+
+/// `all` as sorted disjoint ranges.
+fn merged(mut all: Vec<Range<u64>>) -> Vec<Range<u64>> {
     all.sort_by_key(|r| r.start);
     let mut out: Vec<Range<u64>> = Vec::new();
     for r in all {
@@ -126,12 +132,13 @@ fn row(out: &mut String, image: &str, view: &str, digest: Option<u64>) {
     .expect("write to a String");
 }
 
-/// Every view's row for `bytes`.
-fn rows(out: &mut String, image: &str, bytes: Vec<u8>) {
-    let Ok(elf) = OwnedElf::parse(bytes) else {
+/// Every view's row for `elf`.
+fn rows(out: &mut String, image: &str, elf: anyhow::Result<OwnedElf>) {
+    let Ok(elf) = elf else {
         row(out, image, "parse", None);
         return;
     };
+    let mut every_view = Vec::new();
     for (source_name, source) in SOURCES {
         for (filter_name, filter) in FILTERS {
             for (reloc_name, relocate) in [("raw", false), ("reloc", true)] {
@@ -140,6 +147,7 @@ fn rows(out: &mut String, image: &str, bytes: Vec<u8>) {
                 }
                 let digest = elf.regions(source, filter, relocate).map(|regions| {
                     let ranges = covered_ranges(&regions);
+                    every_view.extend(ranges.iter().cloned());
                     let table = MemRegionsLookupTable::new(regions);
                     probe(
                         &ranges,
@@ -152,10 +160,9 @@ fn rows(out: &mut String, image: &str, bytes: Vec<u8>) {
             }
         }
     }
-    let ranges = elf
-        .regions(RegionSource::Auto, LoadFilter::CodeAndReadOnly, false)
-        .as_deref()
-        .map_or(Vec::new(), covered_ranges);
+    // Every address some view maps, so a reader serving more than the views
+    // shows.
+    let ranges = merged(every_view);
     let obj = elf.checked_file().expect("parsed above");
     let reader = ElfFileMemReader::from_object(&obj);
     let reader = reader.as_ref().ok();
@@ -403,6 +410,17 @@ fn crafted() -> Vec<(String, Vec<u8>)> {
     out
 }
 
+/// Each row's digest, keyed by its `<image> <view>`.
+fn by_image_view(digest: &str) -> BTreeMap<&str, &str> {
+    digest
+        .lines()
+        .map(|l| {
+            let view_end = l.match_indices(' ').nth(1).map_or(l.len(), |(i, _)| i);
+            (&l[..view_end], l[view_end..].trim_start())
+        })
+        .collect()
+}
+
 #[test]
 #[cfg_attr(
     debug_assertions,
@@ -424,14 +442,14 @@ fn every_image_serves_its_recorded_bytes() {
             .expect("under the root")
             .to_string_lossy()
             .replace('\\', "/");
-        rows(
-            &mut actual,
-            &image,
-            std::fs::read(&path).expect("read fixture"),
-        );
+        rows(&mut actual, &image, OwnedElf::open(&path));
     }
     for (name, bytes) in crafted() {
-        rows(&mut actual, &format!("crafted/{name}"), bytes);
+        rows(
+            &mut actual,
+            &format!("crafted/{name}"),
+            OwnedElf::parse(bytes),
+        );
     }
 
     let path = manifest.join("tests/data/read_digest.txt");
@@ -443,12 +461,18 @@ fn every_image_serves_its_recorded_bytes() {
     let expected = std::fs::read_to_string(&path)
         .unwrap_or_default()
         .replace("\r\n", "\n");
-    let old: BTreeSet<&str> = expected.lines().collect();
-    let new: BTreeSet<&str> = actual.lines().collect();
+    let old = by_image_view(&expected);
+    let new = by_image_view(&actual);
     let changed: Vec<String> = old
-        .difference(&new)
-        .map(|l| format!("- {l}"))
-        .chain(new.difference(&old).map(|l| format!("+ {l}")))
+        .keys()
+        .chain(new.keys())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .filter(|k| old.get(*k) != new.get(*k))
+        .map(|k| {
+            let side = |m: &BTreeMap<&str, &str>| m.get(k).copied().unwrap_or("(none)").to_owned();
+            format!("{k} {} -> {}", side(&old), side(&new))
+        })
         .collect();
     assert!(
         changed.is_empty(),
