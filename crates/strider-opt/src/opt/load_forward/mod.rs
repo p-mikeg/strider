@@ -95,7 +95,7 @@ impl crate::peephole::PeepholePass for LoadForward {
                 alias: MemAnalyzer::new(relaxed),
                 // `narrow_load_to` rewires for good, so every claim is off:
                 // the edge outlives the run that made it.
-                narrow: MemAnalyzer::new(MemOptions::structural()),
+                narrow: MemAnalyzer::new(MemOptions::structural(&assumptions.noalias_allocators)),
             }
         });
         Ok(crate::peephole::PeepholeRewrite::from_changed(
@@ -119,9 +119,6 @@ fn try_forward_load(
         .expect("a Load has a memory input (slot 0)");
     let (load_value, load_ty) = edit.single_value_output(load)?;
 
-    // First: the configured analyzer decomposes every address before
-    // `narrow_cfg`'s empty set can commit a `NotMemory` for one (see
-    // `decompose`).
     let clobber_node = alias_cfg.nearest_clobber(edit.function(), load, mem);
     // Shorten the load's memory edge onto the clobber `narrow_cfg` proves so
     // future walks skip the proven-disjoint run.  Never `alias_cfg`'s: the

@@ -196,11 +196,7 @@ pub(crate) struct StoreIndex {
 }
 
 impl StoreIndex {
-    pub(crate) fn build(
-        function: &Function,
-        layout: &MemLayout,
-        noalias_allocators: &rustc_hash::FxHashSet<u64>,
-    ) -> Self {
+    pub(crate) fn build(function: &Function, layout: &MemLayout, options: &MemOptions) -> Self {
         let mut index = Self {
             opaque: Vec::new(),
             calls: Vec::new(),
@@ -214,7 +210,7 @@ impl StoreIndex {
             match *function.node_kind(def) {
                 NodeKind::Store(space) => {
                     let addr = function.store_addr(def);
-                    let class = classify_addr(function, addr, noalias_allocators);
+                    let class = classify_addr(function, addr, options);
                     let size = store_value_byte_size(function, function.store_data(def));
                     let bits = addr_bit_width(function, addr);
                     let s = index.spaces.entry(space).or_default();

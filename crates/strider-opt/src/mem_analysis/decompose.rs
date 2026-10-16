@@ -20,16 +20,10 @@ use super::{MemExpr, MemKind};
 /// pass; the post-passes that skip the drain only mutate the graph in ways that
 /// leave every address value's decomposition unchanged.
 ///
-/// The memo is per `function` and shared by walks under different
-/// `noalias_allocators` sets
-/// ([`super::analyzer::MemOptions::structural`] holds an empty one beside the
-/// configured analyzer).  A heap class read back under an empty set is
-/// dropped by [`super::alias::classify_addr`].  A `NotMemory` committed under
-/// a smaller set is not: it answers a later walk under a larger one, so the
-/// configured walk must reach an address first.
-///
-/// The memo is also the verdict `strider-pattern`'s region filters read, so it
-/// holds the configured set's answers.
+/// The memo is keyed by `ValueId` alone, so every walk over one `function`
+/// passes the run's `noalias_allocators`.  A policy that claims no heap class
+/// still sees one here; [`super::alias::classify_addr`] drops it.  The memo is
+/// also the verdict `strider-pattern`'s region filters read.
 pub(crate) fn decompose(
     function: &Function,
     value: ValueId,
