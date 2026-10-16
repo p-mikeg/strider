@@ -86,6 +86,7 @@
   invalidated.
 - An unknown op name in `int_cmp`, `int_binary`, `bool_binary` or
   `float_binary` lists the accepted names in its error.
+- A pass added from Python reports its own name inside Rust, not `ForwardPass`.
 
 ### Added, Python
 
