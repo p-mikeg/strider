@@ -14,7 +14,7 @@ use strider_target::SleighArch;
 fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/out/x64/tzcount.o");
-    // The only coverage the ET_REL loader has.
+    // The only ET_REL lift coverage in strider-cfg.
     assert!(
         path.exists(),
         "{} is not built; run `make -C fixtures`",

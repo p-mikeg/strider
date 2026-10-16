@@ -194,7 +194,8 @@ mod tests {
             .join(format!("{case}.elf"));
         assert!(
             path.exists(),
-            "missing test binary {path:?}; run `make -C fixtures` first"
+            "{} is not built; run `make -C fixtures`",
+            path.display()
         );
         let obj = strider_reader::load_elf(&path)
             .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));

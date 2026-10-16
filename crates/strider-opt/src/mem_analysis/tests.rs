@@ -3065,7 +3065,8 @@ mod store_index {
     /// The listed allocator every chain calls.
     const ALLOC: u64 = 0x3000;
 
-    /// The allocator's return register, apart from SP.
+    /// The allocator's return register, a register slot disjoint from
+    /// `test_sp`.
     fn ret_reg() -> rsleigh::Vn {
         rsleigh::Vn {
             addr_off: 0x00,
