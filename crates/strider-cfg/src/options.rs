@@ -112,21 +112,30 @@ impl Default for CfgOptions<'_> {
 }
 
 impl CfgOptions<'_> {
-    /// The answer seated for `addr`, falling back to the machine address alone.
-    ///
-    /// An entry at p-code index 0 seats any `BranchIndirect` in that machine
-    /// instruction, so a caller holding only a machine address can spell a key;
-    /// a Python one only ever holds that, the bindings flattening every
-    /// reported site to its machine address. An exact key wins: it is the only
-    /// way to tell two `BranchIndirect`s in one instruction apart.
+    /// [`seated_in`] over `known_targets`.
     pub fn seated(&self, addr: PcodeInsnAddr) -> Option<&ResolvedTargets> {
-        self.known_targets.get(&addr).or_else(|| {
-            let start = PcodeInsnAddr::at_machine_start(addr.machine_addr.addr);
-            (start != addr)
-                .then_some(start)
-                .and_then(|start| self.known_targets.get(&start))
-        })
+        seated_in(self.known_targets, addr)
     }
+}
+
+/// The entry for `addr` in `map`: its exact key, else the key of its
+/// instruction's p-code index 0.
+///
+/// An entry at p-code index 0 seats any `BranchIndirect` in that machine
+/// instruction, so a caller holding only a machine address can spell a key;
+/// a Python one only ever holds that, the bindings flattening every
+/// reported site to its machine address. An exact key wins: it is the only
+/// way to tell two `BranchIndirect`s in one instruction apart.
+pub fn seated_in(
+    map: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    addr: PcodeInsnAddr,
+) -> Option<&ResolvedTargets> {
+    map.get(&addr).or_else(|| {
+        let start = PcodeInsnAddr::at_machine_start(addr.machine_addr.addr);
+        (start != addr)
+            .then_some(start)
+            .and_then(|start| map.get(&start))
+    })
 }
 
 #[cfg(test)]
@@ -184,30 +193,53 @@ mod tests {
     }
 
     #[test]
-    fn seated_falls_back_to_the_machine_start_key() {
+    fn seated_in_falls_back_to_the_machine_start_key() {
         let known = seated_over(&[(PcodeInsnAddr::at_machine_start(0x1000), 0x2000)]);
-        let opts = opts_over(&known);
         let mid = PcodeInsnAddr {
             machine_addr: 0x1000.into(),
             insn_index: 3,
         };
-        assert_eq!(target_of(opts.seated(mid)), Some(0x2000));
+        assert_eq!(target_of(seated_in(&known, mid)), Some(0x2000));
         assert_eq!(
-            target_of(opts.seated(PcodeInsnAddr::at_machine_start(0x1004))),
+            target_of(seated_in(&known, PcodeInsnAddr::at_machine_start(0x1004))),
             None
         );
     }
 
     #[test]
-    fn seated_prefers_an_exact_key_over_the_machine_start_key() {
+    fn seated_in_prefers_an_exact_key_over_the_machine_start_key() {
         let start = PcodeInsnAddr::at_machine_start(0x1000);
         let mid = PcodeInsnAddr {
             machine_addr: 0x1000.into(),
             insn_index: 3,
         };
         let known = seated_over(&[(start, 0x2000), (mid, 0x3000)]);
+        assert_eq!(target_of(seated_in(&known, mid)), Some(0x3000));
+        assert_eq!(target_of(seated_in(&known, start)), Some(0x2000));
+    }
+
+    /// `seated` is `seated_in` over `known_targets`: an exact key, the
+    /// machine-start key, and a sibling `BranchIndirect` of that instruction.
+    #[test]
+    fn seated_reads_known_targets_through_seated_in() {
+        let start = PcodeInsnAddr::at_machine_start(0x1000);
+        let exact = PcodeInsnAddr {
+            machine_addr: 0x1000.into(),
+            insn_index: 3,
+        };
+        let sibling = PcodeInsnAddr {
+            machine_addr: 0x1000.into(),
+            insn_index: 5,
+        };
+        let known = seated_over(&[(start, 0x2000), (exact, 0x3000)]);
         let opts = opts_over(&known);
-        assert_eq!(target_of(opts.seated(mid)), Some(0x3000));
-        assert_eq!(target_of(opts.seated(start)), Some(0x2000));
+        for addr in [exact, start, sibling] {
+            assert_eq!(
+                target_of(opts.seated(addr)),
+                target_of(seated_in(&known, addr)),
+                "{addr:?}"
+            );
+        }
+        assert_eq!(target_of(opts.seated(sibling)), Some(0x2000));
     }
 }

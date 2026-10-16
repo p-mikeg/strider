@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 
 use anyhow::{Result, anyhow};
 
-use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
+use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets, seated_in};
 use strider_opt::{OptCtx, OptOptions, ReadOnlyMemory};
 
 /// Per-binary analysis handle.
@@ -372,7 +372,7 @@ where
         returns.retain(|addr| {
             !seated_returns.contains(addr)
                 || !matches!(
-                    seed_for(lift_opts.cfg.known_targets, *addr),
+                    seated_in(lift_opts.cfg.known_targets, *addr),
                     Some(ResolvedTargets::LinkRegister)
                 )
         });
@@ -724,10 +724,10 @@ fn apply_resolutions(
     // `Progress::derived_incomplete`.
     let mut progress = Progress::default();
     for (addr, targets) in staged {
-        // `seed_for`, not a bare lookup: a caller can only spell the MACHINE
+        // `seated_in`, not a bare lookup: a caller can only spell the MACHINE
         // address, so at a site whose `BRANCHIND` is not the instruction's
         // first p-code op the answer to adopt modes from is keyed there.
-        let known = seed_for(known_targets, addr);
+        let known = seated_in(known_targets, addr);
         // A re-derivation reports no mode where the dispatch commits none,
         // including at an address a caller seed gave a mode. Re-deriving must
         // widen the arm set, not re-decode the old arms in the mode flowing
@@ -737,7 +737,7 @@ fn apply_resolutions(
         // both mode filters and never subject to them: a seed carries a mode
         // only if the caller built one, and filtering it against a mode-bearing
         // classification would delete the whole caller answer.
-        let targets = match seed_for(caller_seed, addr) {
+        let targets = match seated_in(caller_seed, addr) {
             Some(seed) => combine_resolved(seed, &targets, None),
             None => targets,
         };
@@ -748,11 +748,11 @@ fn apply_resolutions(
             .into_iter()
             .flatten()
             .any(|a| !seated.contains(a));
-        // `seed_for` again, for the reason the seat used it: the round that
+        // `seated_in` again, for the reason the seat used it: the round that
         // produced this IR seated through `CfgOptions::seated`, so at a site
         // whose `BRANCHIND` is not the instruction's first p-code op an exact
         // lookup reads empty and every unchanged round diffs as growth.
-        let prev = seed_for(known_targets, addr)
+        let prev = seated_in(known_targets, addr)
             .map(target_keys)
             .unwrap_or_default();
         let next = target_keys(&targets);
@@ -805,18 +805,6 @@ fn flowing_isa_bits(
         .collect()
 }
 
-/// The caller's answer for `addr`. A caller can only spell the machine address,
-/// so a seed keyed at p-code index 0 counts for the whole instruction, matching
-/// `CfgOptions::seated`.
-fn seed_for(
-    caller_seed: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
-    addr: PcodeInsnAddr,
-) -> Option<&ResolvedTargets> {
-    caller_seed
-        .get(&addr)
-        .or_else(|| caller_seed.get(&PcodeInsnAddr::at_machine_start(addr.machine_addr.addr)))
-}
-
 /// Whether `addr`'s settled successor set is still exactly what the caller
 /// seeded, with nothing beyond it. An unseeded address is not covered.
 ///
@@ -829,7 +817,7 @@ fn seed_still_covers(
     settled: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     addr: PcodeInsnAddr,
 ) -> bool {
-    let Some(seed) = seed_for(caller_seed, addr) else {
+    let Some(seed) = seated_in(caller_seed, addr) else {
         return false;
     };
     let seeded: rustc_hash::FxHashSet<u64> =
@@ -1091,7 +1079,7 @@ fn working_opts<'t>(
 /// Stops the loop resolving `site`, dropping its seat.
 ///
 /// Both keys go, and both are marked: a caller can only spell the MACHINE
-/// address ([`seed_for`]), so a site whose `BRANCHIND` is not the
+/// address ([`seated_in`]), so a site whose `BRANCHIND` is not the
 /// instruction's first p-code op holds two entries, and
 /// [`strider_cfg::CfgOptions::seated`] falls back to the machine-start one.
 /// Removing the anchor key alone re-seats the caller's arms at a site the loop
@@ -1145,7 +1133,7 @@ impl DispatchAnchors {
 
     /// The `BranchIndirect` address a `known_targets` key stands for.
     ///
-    /// A caller can only spell the machine address ([`seed_for`]), so its key
+    /// A caller can only spell the machine address ([`seated_in`]), so its key
     /// is the instruction's, not the dispatch's. Falls back to the key itself
     /// for a seat the cfg CONSUMED, which leaves no anchor to name.
     fn anchor_of(&self, site: PcodeInsnAddr) -> PcodeInsnAddr {
@@ -1195,7 +1183,7 @@ fn abandon_undecodable(
         sites.iter().map(|a| a.machine_addr.addr).collect()
     };
     // Both keys of each site, since a caller can only spell the machine address
-    // ([`seed_for`]) while the cfg reports the `BRANCHIND`'s own p-code address.
+    // ([`seated_in`]) while the cfg reports the `BRANCHIND`'s own p-code address.
     // The anchor rides along: it is the address every other channel names the
     // site by, and the machine-start key is not it.
     let mut undecodable: FxHashMap<PcodeInsnAddr, (PcodeInsnAddr, rustc_hash::FxHashSet<u64>)> =
@@ -1310,7 +1298,7 @@ fn unverified_seeded_sites(
     out.extend(
         cfg.link_register_seated()
             .iter()
-            .filter(|addr| seed_for(caller_seed, **addr).is_some()),
+            .filter(|addr| seated_in(caller_seed, **addr).is_some()),
     );
     // A `TailCall` seat consumes the site the same way: an answer of one
     // target outside the function replaces the dispatch, and any other arm it
@@ -1338,13 +1326,13 @@ fn seated_arm_losses(
         let strider_cfg::RegionTerminator::Switch { targets, addr, .. } = &region.terminator else {
             continue;
         };
-        // `seed_for`, not a bare lookup: a caller can only spell the MACHINE
+        // `seated_in`, not a bare lookup: a caller can only spell the MACHINE
         // address, so a seed keyed at p-code index 0 counts for the whole
         // instruction. `CfgOptions::seated` seats it exactly that way.
         // An exact-key lookup skipped every dispatch whose `BRANCHIND` is not
         // the instruction's first p-code op, i.e. ARM `bx`, MIPS `jr` and x86
         // `jmp [mem]`, so this check never ran for them.
-        let Some(asked) = seed_for(known_targets, *addr) else {
+        let Some(asked) = seated_in(known_targets, *addr) else {
             continue;
         };
         let seated: rustc_hash::FxHashSet<u64> = targets.iter().map(|t| t.addr).collect();
