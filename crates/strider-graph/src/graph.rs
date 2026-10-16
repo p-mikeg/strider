@@ -39,6 +39,11 @@ impl<N: Clone, V: Clone, C: NodeCacheable<N, V>> Clone for Graph<N, V, C> {
 }
 
 impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
+    /// Bytes per node in the arena; its input and output lists are pooled apart.
+    pub const NODE_RECORD_SIZE: usize = size_of::<Node<N>>();
+    /// Bytes per node output in the arena.
+    pub const VALUE_RECORD_SIZE: usize = size_of::<ValueData<V>>();
+
     pub fn new() -> Self {
         Graph {
             store: RawStore::new(),

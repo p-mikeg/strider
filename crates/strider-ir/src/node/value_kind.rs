@@ -13,6 +13,9 @@ pub enum ValueKind {
     Memory,
 }
 
+// At most four bytes, the slot the 16-byte value record leaves for it.
+const _: () = assert!(size_of::<ValueKind>() <= 4);
+
 impl ValueKind {
     #[inline]
     pub fn is_value(self) -> bool {

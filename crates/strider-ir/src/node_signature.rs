@@ -18,6 +18,8 @@ pub enum ExpectedValueKind {
     AnyValue,
 }
 
+const _: () = assert!(size_of::<ExpectedValueKind>() == 1);
+
 /// Drives label colors in dot rendering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SlotRole {
