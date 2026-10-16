@@ -6,6 +6,11 @@ from typing import Union
 
 __all__: list[str]
 
+#: The `MainOptimizerPass` class names, as the extension registers them.
+_MAIN_PASS_NAMES: tuple[str, ...]
+#: The `PostOptimizerPass` class names, as the extension registers them.
+_POST_PASS_NAMES: tuple[str, ...]
+
 #: A pass the fixed-point loop can run repeatedly, the only kind
 #: `OptimizerPipeline.add` accepts.
 MainOptimizerPass = Union[
