@@ -17,7 +17,7 @@ use strider_ir::{Function, IRViewer};
 use super::AddrClass;
 use super::alias::{SizedAddr, classify_addr};
 use super::analyzer::{MemOptions, store_value_byte_size};
-use super::ring::addr_bit_width;
+use super::ring::{addr_bit_width, comparable_distance};
 use crate::mem_ssa::{MemLayout, Shape};
 
 const NONE: u32 = u32::MAX;
@@ -121,11 +121,7 @@ impl Offsets {
             return highest_in(&self.all, lo, hi);
         }
         if bits < 128 {
-            let half = 1i128 << (bits - 1);
-            let bound = half
-                .saturating_sub(size.max(self.max_size))
-                .max(0)
-                .unsigned_abs();
+            let bound = comparable_distance(bits, size.max(self.max_size));
             if offset.abs_diff(self.min_start) > bound || offset.abs_diff(self.max_start) > bound {
                 return highest_in(&self.all, lo, hi);
             }

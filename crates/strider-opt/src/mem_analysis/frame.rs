@@ -89,7 +89,11 @@ fn at_or_below_entry_sp(function: &Function, value: ValueId, acc: i128) -> bool 
                 let Some((next, k)) = crate::const_eval::var_and_const(function, node) else {
                     return false;
                 };
-                let Some(sum) = function.int_const_i128(k).and_then(|k| acc.checked_add(k)) else {
+                let Some(sum) = function
+                    .value_type_opt(next)
+                    .and_then(|ty| ty.get_signed_int(k))
+                    .and_then(|k| acc.checked_add(k))
+                else {
                     return false;
                 };
                 work.push((next, sum));

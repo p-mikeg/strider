@@ -324,7 +324,10 @@ fn spine_walk_trailed(
                 let Some((sp_operand, k)) = crate::const_eval::var_and_const(function, node) else {
                     return SpineEnd::Opaque;
                 };
-                let Some(c) = function.int_const_i128(k) else {
+                let Some(c) = function
+                    .value_type_opt(sp_operand)
+                    .and_then(|ty| ty.get_signed_int(k))
+                else {
                     return SpineEnd::Opaque;
                 };
                 if anchor.is_none() {
@@ -432,7 +435,7 @@ pub(super) fn is_alignment_mask(m: u128, width_bits: usize) -> bool {
 }
 
 /// The operands of a node whose signature fixes its arity at two.
-pub(super) fn binary_operands(function: &Function, node: NodeId) -> [ValueId; 2] {
+fn binary_operands(function: &Function, node: NodeId) -> [ValueId; 2] {
     function
         .node_inputs_exact::<2>(node)
         .expect("IntBinaryOp has 2 inputs per node signature")

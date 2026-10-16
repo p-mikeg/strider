@@ -6,6 +6,7 @@ use strider_ir::{Function, IRViewer};
 use super::AddrClass::*;
 use super::analyzer::MemOptions;
 use super::decompose::decompose;
+use super::ring::comparable_distance;
 use super::{AddrClass, AliasVerdict, MemExpr, MemKind};
 
 pub(super) fn classify_addr(function: &Function, addr: ValueId, options: &MemOptions) -> AddrClass {
@@ -101,12 +102,7 @@ pub(super) fn offsets_comparable(
     if bits == 128 {
         return false;
     }
-    let half = 1i128 << (bits - 1);
-    let span = load.size.max(store.size);
-    // A span past the half-modulus leaves no comparable distance at all, so
-    // the bound floors at zero rather than turning negative.
-    let bound = half.saturating_sub(span).max(0);
-    load_off.abs_diff(store_off) <= bound.unsigned_abs()
+    load_off.abs_diff(store_off) <= comparable_distance(bits, load.size.max(store.size))
 }
 
 /// One operand (load or store) of the pairwise [`alias_verdict`].

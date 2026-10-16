@@ -136,13 +136,13 @@ pub(crate) fn eval_node_const(
     }
 }
 
-/// `(x, c)` for a two-operand node with exactly one operand `c` an integer
-/// constant that fits `u128`.
-pub(crate) fn var_and_const(function: &Function, node: NodeId) -> Option<(ValueId, ValueId)> {
+/// `(x, c)` for a two-operand node with exactly one operand an integer
+/// constant that fits `u128`, `c` its value.
+pub(crate) fn var_and_const(function: &Function, node: NodeId) -> Option<(ValueId, u128)> {
     let [a, b] = function.node_inputs_exact::<2>(node).ok()?;
     match (function.int_const_u128(a), function.int_const_u128(b)) {
-        (None, Some(_)) => Some((a, b)),
-        (Some(_), None) => Some((b, a)),
+        (None, Some(c)) => Some((a, c)),
+        (Some(c), None) => Some((b, c)),
         _ => None,
     }
 }
@@ -208,14 +208,14 @@ mod tests {
             let d = b.build_int_const(16u64, ty)?;
             let mut add = |l, r| b.build_int_binary_operation(l, r, IntBinaryOp::Add, ty);
             let sums = [add(x, c)?, add(c, x)?, add(c, d)?, add(x, x)?];
-            built = Some((x, c, sums));
+            built = Some((x, sums));
             sums.into_iter().try_fold(x, add)
         })
         .expect("make_empty_fn");
-        let (x, c, [xc, cx, cc, xx]) = built.expect("built");
+        let (x, [xc, cx, cc, xx]) = built.expect("built");
         let split = |v| super::var_and_const(&function, function.producer(v));
-        assert_eq!(split(xc), Some((x, c)));
-        assert_eq!(split(cx), Some((x, c)));
+        assert_eq!(split(xc), Some((x, 8)));
+        assert_eq!(split(cx), Some((x, 8)));
         assert_eq!(split(cc), None, "two constants leave no variable side");
         assert_eq!(split(xx), None, "no constant side");
     }

@@ -1,6 +1,7 @@
 //! Address-width arithmetic: offsets wrap at the address's bit width.  Where
-//! the width is unknown or past the `i128` carrier, a reduction or a split
-//! leaves the offset as it is and an overlap test answers `true`.
+//! the width is unknown or past the `i128` carrier, a reduction leaves the
+//! offset as it is and an overlap test answers `true`; at or past the carrier,
+//! a split leaves the range whole.
 
 use strider_ir::node::{ValueId, ValueType};
 use strider_ir::{Function, IRViewer};
@@ -54,6 +55,18 @@ pub(super) fn wrapped_ranges(ty: Option<ValueType>, start: i128, end: i128) -> [
     // A range wider than the circle covers all of it.
     let end = end.min(start + modulus);
     [(start, top), (-top, end - modulus)]
+}
+
+/// How far apart two offsets reduced at `bits` (below 128) may lie and still
+/// compare in integer order, for accesses of up to `span` bytes: half the
+/// modulus less the span.  A span past the half-modulus leaves no comparable
+/// distance, so the bound floors at zero.  Not [`ring_overlap`]'s modular
+/// distance: [`super::alias::offsets_comparable`] says why.
+pub(super) fn comparable_distance(bits: u32, span: i128) -> u128 {
+    (1i128 << (bits - 1))
+        .saturating_sub(span)
+        .max(0)
+        .unsigned_abs()
 }
 
 /// Whether `[a, a + a_len)` and `[b, b + b_len)` share a byte mod 2^w, `w` the
