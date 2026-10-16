@@ -111,14 +111,12 @@ fn resolve_case(c: Case) -> strider_orchestrator::AnalyzeResult {
     let fixture = Fixture::open(fixture_arch(c.arch_name), c.case);
     let (mut strider, cc) = fixture.strider();
     let addr = fixture.symbol(c.fn_name);
-    let lift_opts = strider_orchestrator::AnalyzeOptions {
+    let opts = strider_orchestrator::AnalyzeOptions {
         cfg: CFG_OPTS(),
         on_incomplete: strider_orchestrator::OnIncomplete::Ignore,
         ..Default::default()
     };
-    strider
-        .analyze(addr, &cc, &lift_opts, None)
-        .expect("analyze")
+    strider.analyze(addr, &cc, &opts, None).expect("analyze")
 }
 
 fn bench_pipeline(c: &mut Criterion) {

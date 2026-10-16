@@ -139,10 +139,8 @@ def test_the_default_raises() -> None:
     assert lift.analyze(BASE, _cc(), _opts(IGNORE)).cfg.incomplete == raised.value.incomplete
 
 
-def test_elf_lifter_raises_by_name_too() -> None:
-    from .conftest import fixture_path
-
-    prog = strider.lift.load_elf(str(fixture_path("x86", "switch")))
+def test_elf_lifter_raises_by_name_too(x86_switch_elf) -> None:
+    prog = strider.lift.load_elf(str(x86_switch_elf))
     with pytest.raises(strider.lift.IncompleteAnalysis):
         prog.analyze(
             "dispatch_value",

@@ -1,4 +1,4 @@
-"""Bytes that hold no instruction are reported, never decoded or raised.
+"""Bytes that hold no instruction are reported incomplete, never decoded.
 
 A branch to a word Sleigh rejects keeps the rest of the function, and a
 literal pool after a call to an unmarked no-return function is data the ELF's

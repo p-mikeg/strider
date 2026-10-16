@@ -51,7 +51,7 @@ fn analyze_with(
         BASE
     };
     let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, None);
-    let lift_opts = strider_orchestrator::AnalyzeOptions {
+    let opts = strider_orchestrator::AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(size),
             ..Default::default()
@@ -59,9 +59,7 @@ fn analyze_with(
         opt: opt_opts.clone(),
         ..common::ignoring()
     };
-    strider
-        .analyze(entry, &cc, &lift_opts, None)
-        .expect("analyze")
+    strider.analyze(entry, &cc, &opts, None).expect("analyze")
 }
 
 /// The sound floor: every claim about the program cleared.
@@ -98,8 +96,6 @@ fn seeded(result: &strider_orchestrator::AnalyzeResult) -> Vec<u64> {
     result
         .incomplete()
         .of(strider_orchestrator::Reason::UnverifiedSeed)
-        .collect::<Vec<_>>()
-        .iter()
         .map(|a| a.machine_addr.addr)
         .collect()
 }
@@ -108,8 +104,6 @@ fn unresolved(result: &strider_orchestrator::AnalyzeResult) -> Vec<u64> {
     result
         .incomplete()
         .of(strider_orchestrator::Reason::UnresolvedBranch)
-        .collect::<Vec<_>>()
-        .iter()
         .map(|a| a.machine_addr.addr)
         .collect()
 }
@@ -213,10 +207,10 @@ fn arm_a_single_register_pop_into_the_pc_is_a_return() {
 /// `assert_reported_only_without_assumptions` covers for the shapes above.
 ///
 /// Both pops below rest on the claim equally -- the single-register
-/// `ldr pc, [sp], #4` and the ordinary `pop {r4, pc}` -- so neither rides a
-/// channel, where only the first one used to.
+/// `ldr pc, [sp], #4` and the ordinary `pop {r4, pc}` -- so neither is
+/// reported, where only the first one used to be.
 #[test]
-fn a_return_verified_under_a_claim_rides_no_channel() {
+fn a_return_verified_under_a_claim_is_not_reported() {
     for bytes in [
         le32(&[0xe52d_e004, 0xeb00_03fd, 0xe49d_f004]),
         le32(&[0xe92d_4010, 0xeb00_03fd, 0xe8bd_8010]),
@@ -693,7 +687,7 @@ fn a_return_seed_over_a_pcode_return_does_not_silence_it() {
         strider_cfg::ResolvedTargets::LinkRegister,
     );
     let (mut strider, cc) = common::strider_over_bytes(Arch::X64, bytes, BASE, None);
-    let lift_opts = strider_orchestrator::AnalyzeOptions {
+    let opts = strider_orchestrator::AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(2),
             known_targets: &known,
@@ -702,9 +696,7 @@ fn a_return_seed_over_a_pcode_return_does_not_silence_it() {
         opt: claiming_return_slots(),
         ..common::ignoring()
     };
-    let seeded_result = strider
-        .analyze(BASE, &cc, &lift_opts, None)
-        .expect("analyze");
+    let seeded_result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
     assert!(
         !seeded_result.is_complete(),
         "a seed the CFG never consumed cannot vouch for the return",
@@ -712,7 +704,7 @@ fn a_return_seed_over_a_pcode_return_does_not_silence_it() {
     assert!(
         unresolved(&seeded_result).contains(&ret_site)
             || seeded(&seeded_result).contains(&ret_site),
-        "the site must ride one of the channels; unresolved {:x?} seeded {:x?}",
+        "the site must be reported under one of the two reasons; unresolved {:x?} seeded {:x?}",
         unresolved(&seeded_result),
         seeded(&seeded_result),
     );

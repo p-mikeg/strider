@@ -76,18 +76,13 @@ fn widened_thumb_arms_keep_their_mode() {
     assert!(
         r.incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
-            .is_empty()
+            .next()
+            .is_none()
             && r.incomplete()
                 .of(strider_orchestrator::Reason::UnverifiedSeed)
-                .collect::<Vec<_>>()
-                .is_empty(),
-        "unresolved {:?}, unverified {:?}",
-        r.incomplete()
-            .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>(),
-        r.incomplete()
-            .of(strider_orchestrator::Reason::UnverifiedSeed)
-            .collect::<Vec<_>>()
+                .next()
+                .is_none(),
+        "{}",
+        r.incomplete(),
     );
 }
