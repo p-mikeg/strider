@@ -78,11 +78,7 @@ fn gcd(mut a: u128, mut b: u128) -> u128 {
 }
 
 /// The empty set (`hi < lo`).
-const EMPTY: Interval = Interval {
-    lo: 1,
-    hi: 0,
-    stride: 1,
-};
+const EMPTY: Interval = Interval::new(1, 0, 1);
 
 /// The inclusive value set `{ lo, lo+stride, lo+2*stride, ... hi }`.
 ///
@@ -102,11 +98,11 @@ pub struct Interval {
 
 impl Interval {
     /// `{ lo, lo+stride, ... hi }`; a `stride` of 0 is read as 1.
-    pub fn new(lo: u128, hi: u128, stride: u128) -> Self {
+    pub const fn new(lo: u128, hi: u128, stride: u128) -> Self {
         Self {
             lo,
             hi,
-            stride: stride.max(1),
+            stride: if stride == 0 { 1 } else { stride },
         }
     }
 
@@ -138,7 +134,7 @@ impl Interval {
     /// A stride is a fact beyond the span, so a strided full-span interval is
     /// not top.
     pub fn is_top(&self, width_mask: u128) -> bool {
-        self.lo == 0 && self.hi >= width_mask && self.stride <= 1
+        self.lo == 0 && self.hi >= width_mask && self.stride == 1
     }
 
     /// Number of values in the set.  `0` if `hi < lo`.  Saturates: a full-width
@@ -166,19 +162,11 @@ impl Interval {
         let s1 = self.stride;
         let s2 = other.stride;
         if s1 == 1 && s2 == 1 {
-            return Self {
-                lo: lo_bound,
-                hi,
-                stride: 1,
-            };
+            return Self::dense(lo_bound, hi);
         }
         // stride = lcm(s1, s2); on overflow fall back to the sound dense meet.
         let Some(lcm) = (s1 / gcd(s1, s2)).checked_mul(s2) else {
-            return Self {
-                lo: lo_bound,
-                hi,
-                stride: 1,
-            };
+            return Self::dense(lo_bound, hi);
         };
         // With `s1 == 1` every integer satisfies the first congruence, so the
         // answer is the first element at or above `lo_bound` satisfying the
@@ -194,11 +182,7 @@ impl Interval {
                 s2 - (r_bound - r)
             };
             return match lo_bound.checked_add(delta) {
-                Some(x) if x <= hi => Self {
-                    lo: x,
-                    hi,
-                    stride: s2,
-                },
+                Some(x) if x <= hi => Self::new(x, hi, s2),
                 _ => EMPTY,
             };
         }
@@ -206,11 +190,7 @@ impl Interval {
         // become dead CFG edges, never a dropped real one.
         const MAX_CRT_STEPS: u128 = 64;
         if lcm / s1 > MAX_CRT_STEPS {
-            return Self {
-                lo: lo_bound,
-                hi,
-                stride: 1,
-            };
+            return Self::dense(lo_bound, hi);
         }
         // First x >= lo_bound with x = self.lo (mod s1); then step by s1 up to
         // lcm/s1 times to hit the second congruence (exactly one match per lcm
@@ -226,11 +206,7 @@ impl Interval {
         for _ in 0..(lcm / s1) {
             if (x - other.lo).is_multiple_of(s2) {
                 return if x <= hi {
-                    Self {
-                        lo: x,
-                        hi,
-                        stride: lcm,
-                    }
+                    Self::new(x, hi, lcm)
                 } else {
                     EMPTY
                 };
@@ -553,7 +529,7 @@ impl<'f> RangeMap<'f> {
             IntBinaryOp::Mul => {
                 let (x, c) =
                     crate::const_eval::var_and_const(self.function, self.function.producer(value))?;
-                (x, ScaleOp::Mul(self.function.int_const_u128(c)?))
+                (x, ScaleOp::Mul(c))
             }
             _ => return None,
         })
@@ -863,7 +839,6 @@ fn add_operand_shifted_interval(
         return None;
     }
     let (operand, c) = crate::const_eval::var_and_const(function, function.producer(value))?;
-    let c = function.int_const_u128(c)?;
     // `bit_mask_u128` saturates to `u128::MAX` past 128 bits, so the shift
     // would wrap mod 2^128 instead of the type's modulus and the `lo <= hi`
     // test would accept a TIGHTER-than-real interval, the one thing this
@@ -1141,7 +1116,6 @@ fn identity_mask(
         return None;
     };
     let (operand, mask) = crate::const_eval::var_and_const(function, node)?;
-    let mask = function.int_const_u128(mask)?;
     let type_mask = crate::opt::known_bits::type_mask_u128(function.value_type_opt(value)?)?;
     let cleared = !mask & type_mask;
     (cleared & !known[operand].zeros == 0).then_some((value, operand))
