@@ -38,6 +38,9 @@ const STEP_BUDGET: usize = 4 * STEP_CAP;
 /// A region spans at most two points, so an interpreter run that returns
 /// within this many control nodes is one the simulation would have finished.
 const CAPPED_BUDGET: usize = STEP_CAP / 2;
+/// Points an interpreter run that spends all of [`CAPPED_BUDGET`] has passed,
+/// at most three control nodes each.
+const CAPPED_POINTS: usize = CAPPED_BUDGET / 3;
 
 #[derive(Clone, Copy, Debug)]
 enum Op {
@@ -108,8 +111,8 @@ impl Op {
 
 /// A register's value and its dependence chain: the path index the chain
 /// starts at (the `mov` of a constant that began it, or the entry), and
-/// whether an op of the chain ran more than once, so the value went round a
-/// loop and changed.
+/// whether an op of the chain ran at a point the path had already passed
+/// since that origin, so the value went round a loop and changed.
 #[derive(Clone, Copy, Debug)]
 struct Val {
     bits: u64,
@@ -340,11 +343,12 @@ enum Run {
 }
 
 /// What the simulation saw: how the run ended, the points it passed and
-/// whether each `jz` was taken, in order.
+/// whether each `jz` was taken, in order, with the path index it ran at.
 struct Sim {
     run: Run,
     path: Vec<usize>,
     taken: Vec<bool>,
+    taken_at: Vec<usize>,
 }
 
 /// The run from the entry, for up to [`STEP_CAP`] points. A state is the
@@ -357,7 +361,7 @@ fn simulate(blocks: &[Block], edi: u32, rax: u64, rcx: u64) -> Sim {
         accumulated: false,
     };
     let (mut rax, mut rcx) = (entry(rax), entry(rcx));
-    let (mut path, mut taken) = (Vec::new(), Vec::new());
+    let (mut path, mut taken, mut taken_at) = (Vec::new(), Vec::new(), Vec::new());
     let mut seen = HashSet::new();
     let mut loops = false;
     let mut at = 0;
@@ -381,7 +385,12 @@ fn simulate(blocks: &[Block], edi: u32, rax: u64, rcx: u64) -> Sim {
                     carried,
                     accumulated: rax.accumulated,
                 };
-                return Sim { run, path, taken };
+                return Sim {
+                    run,
+                    path,
+                    taken,
+                    taken_at,
+                };
             }
             Term::Jmp(to) => to,
             Term::Cond { other, .. } if at % 3 == 2 => other,
@@ -397,6 +406,7 @@ fn simulate(blocks: &[Block], edi: u32, rax: u64, rcx: u64) -> Sim {
                     Reg::Edi => edi,
                 };
                 taken.push(value & mask == 0);
+                taken_at.push(path.len() - 1);
                 if value & mask == 0 {
                     to
                 } else {
@@ -410,7 +420,12 @@ fn simulate(blocks: &[Block], edi: u32, rax: u64, rcx: u64) -> Sim {
         at = point(blocks, to);
     }
     let run = if loops { Run::Loops } else { Run::TooLong };
-    Sim { run, path, taken }
+    Sim {
+        run,
+        path,
+        taken,
+        taken_at,
+    }
 }
 
 /// Each program point's successors: a body falls through to its terminator,
@@ -527,8 +542,10 @@ struct Tally {
     accumulated_returns: u64,
     /// `jz` outcomes compared with the interpreter's `If` conditions.
     branches_compared: u64,
-    /// ... of them in runs that never return.
-    branches_in_endless_runs: u64,
+    /// ... of them in runs that repeat a state.
+    branches_in_looping_runs: u64,
+    /// ... of them in runs the simulation gave up on.
+    branches_in_capped_runs: u64,
 }
 
 impl Tally {
@@ -565,7 +582,7 @@ impl Tally {
     }
 
     /// The counts that must each reach the floor.
-    fn floored(&self) -> [u64; 14] {
+    fn floored(&self) -> [u64; 15] {
         [
             self.cyclic,
             self.irreducible,
@@ -580,7 +597,8 @@ impl Tally {
             self.phi_returns,
             self.carried_returns,
             self.accumulated_returns,
-            self.branches_in_endless_runs,
+            self.branches_in_looping_runs,
+            self.branches_in_capped_runs,
         ]
     }
 }
@@ -735,25 +753,31 @@ fn random_control_flow_lifts_to_what_the_code_computes() {
                 }
             }
             // Each `jz` against the `If` the interpreter took for it, as far
-            // as both ran. Up to the cap, an endless run gives the
-            // interpreter budget for at least as many.
+            // as both ran: a looping run's budget covers every point the
+            // simulation passed, a capped one's the first `CAPPED_POINTS`.
             let n = sim.taken.len().min(ifs.len());
+            let need = match sim.run {
+                Run::Returns { .. } | Run::Loops => sim.taken.len(),
+                Run::TooLong => sim.taken_at.partition_point(|&i| i < CAPPED_POINTS),
+            };
             let lengths = match sim.run {
-                Run::Returns { .. } => ifs.len() == sim.taken.len(),
-                Run::Loops => ifs.len() >= sim.taken.len(),
-                Run::TooLong => true,
+                Run::Returns { .. } => ifs.len() == need,
+                Run::Loops | Run::TooLong => ifs.len() >= need,
             };
             let first = (0..n).find(|&k| ifs[k] != sim.taken[k]);
             assert!(
                 first.is_none() && lengths,
-                "seed {g}, edi {edi:#x}: {:?}: jz {first:?} differs, {} taken vs {} Ifs\n{blocks:?}",
+                "seed {g}, edi {edi:#x}: {:?}: first differing jz {first:?}; {} Ifs for {} jz, \
+                 {need} needed\n{blocks:?}",
                 sim.run,
-                sim.taken.len(),
-                ifs.len()
+                ifs.len(),
+                sim.taken.len()
             );
             tally.branches_compared += n as u64;
-            if !matches!(sim.run, Run::Returns { .. }) {
-                tally.branches_in_endless_runs += n as u64;
+            match sim.run {
+                Run::Returns { .. } => {}
+                Run::Loops => tally.branches_in_looping_runs += n as u64,
+                Run::TooLong => tally.branches_in_capped_runs += n as u64,
             }
         }
     }
