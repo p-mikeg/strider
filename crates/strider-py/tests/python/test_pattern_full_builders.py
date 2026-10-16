@@ -245,6 +245,7 @@ def test_int_const_any_width_round_trips_via_match_int():
     # +4294967246, not -50.  The pattern recognises the source-level value;
     # recovering the raw bit pattern is uint's job.
     assert hits[0].uint(c) == 4294967246
+    assert hits[0].sint(c) == 4294967246
 
 
 def test_int_cmp_concrete_op():

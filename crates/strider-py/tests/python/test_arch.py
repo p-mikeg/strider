@@ -11,7 +11,11 @@ _PRESETS = sorted(
 
 
 def test_the_preset_list_is_found():
-    assert {"x86_64", "arm_be_kernel"} <= set(_PRESETS)
+    assert _PRESETS == sorted([
+        "aarch64", "aarch64be", "arm", "arm_be", "arm_be_kernel", "arm_thumb",
+        "mipsbe32", "mipsbe64", "mipsle32", "mipsle64", "ppc32be", "ppc32le",
+        "ppc64be", "ppc64le", "x86", "x86_64",
+    ])
 
 
 @pytest.mark.parametrize("name", _PRESETS)

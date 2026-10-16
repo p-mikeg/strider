@@ -53,12 +53,19 @@ _ARCH_PRESETS = {
 }
 
 
-def lift_bytes(code: bytes, base: int = 0x1000):
-    """Lift raw `code` mapped at `base` as an x86-64 SysV function."""
+def lift_bytes(code: bytes, base: int = 0x1000, *, optimize: bool = True):
+    """Lift raw `code` mapped at `base` as an x86-64 SysV function.
+
+    `optimize=False` runs an empty optimizer pipeline.
+    """
     mem = strider.reader.BufferReader(base, code)
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
     _cfg, function, _unresolved = lift.analyze(
-        base, strider.sleigh.CallingConvention.x86_64_systemv()
+        base,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        opts=strider.lift.LifterOptions(
+            pipeline=None if optimize else strider.opt.OptimizerPipeline.empty(),
+        ),
     )
     return function
 
