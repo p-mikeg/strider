@@ -160,6 +160,10 @@ impl<'s> SiteTable<'s> {
         // alongside concrete targets, so a merge that drops it has to be
         // visible here.
         let mut reported: FxHashMap<PcodeInsnAddr, FxHashSet<Option<u64>>> = FxHashMap::default();
+        // Every `(target, mode)` the classifications prove, per address: a
+        // target proved in both modes is dropped however many anchors there
+        // are, where merging them pairwise can forget the contradiction.
+        let mut proved: FxHashMap<PcodeInsnAddr, FxHashSet<(u64, bool)>> = FxHashMap::default();
         for (node, targets) in resolutions {
             let addr = node_to_addr.get(&node).copied().ok_or_else(|| {
                 anyhow!("classified IndirectBranch node {node:?} has no recorded pcode address")
@@ -169,10 +173,14 @@ impl<'s> SiteTable<'s> {
             if self.frozen.contains(&addr) {
                 continue;
             }
-            reported
-                .entry(addr)
-                .or_default()
-                .extend(visit(targets.successors()).map(|(target, _bit)| target));
+            let reported_at = reported.entry(addr).or_default();
+            let proved_at = proved.entry(addr).or_default();
+            for (target, bit) in visit(targets.successors()) {
+                reported_at.insert(target);
+                if let (Some(target), Some(bit)) = (target, bit) {
+                    proved_at.insert((target, bit));
+                }
+            }
             staged
                 .entry(addr)
                 .and_modify(|e| *e = merge_derived(e, &targets, flowing_at(addr)))
@@ -187,12 +195,30 @@ impl<'s> SiteTable<'s> {
         // `Progress::derived_incomplete`.
         let mut progress = Progress::default();
         for (addr, targets) in staged {
+            let contradicted: FxHashSet<u64> = proved
+                .get(&addr)
+                .map(|proved_at| {
+                    visit(proved_at)
+                        .filter(|&&(target, bit)| bit && proved_at.contains(&(target, false)))
+                        .map(|&(target, _)| target)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let targets = if contradicted.is_empty() {
+                targets
+            } else {
+                ResolvedTargets::table(
+                    visit(targets.arms())
+                        .filter(|t| !contradicted.contains(&t.addr))
+                        .copied(),
+                )
+            };
+            let seat = self.seat(addr);
             // A re-derivation reports no mode where the dispatch commits none,
             // including at an address a caller seed gave a mode. Re-deriving
             // must widen the arm set, not re-decode the old arms in the mode
             // flowing into the branch.
-            let (targets, assumed_mode) =
-                adopt_known_modes(self.seat(addr), targets, flowing_at(addr));
+            let (targets, assumed_mode) = adopt_known_modes(seat, targets, flowing_at(addr));
             // The caller's own seed is unioned in by ADDRESS every round, after
             // both mode filters and never subject to them: a seed carries a
             // mode only if the caller built one, and filtering it against a
@@ -204,20 +230,18 @@ impl<'s> SiteTable<'s> {
             let seated: FxHashSet<Option<u64>> = visit(targets.successors())
                 .map(|(target, _bit)| target)
                 .collect();
-            let derived_dropped = reported
-                .get(&addr)
-                .into_iter()
-                .flatten()
-                .any(|a| !seated.contains(a));
-            let prev: BTreeSet<_> = self
-                .seat(addr)
+            let derived_dropped = !contradicted.is_empty()
+                || reported
+                    .get(&addr)
+                    .into_iter()
+                    .flatten()
+                    .any(|a| !seated.contains(a));
+            let prev: BTreeSet<_> = seat
                 .into_iter()
                 .flat_map(|seat| visit(seat.successors()))
                 .collect();
             let next: BTreeSet<_> = visit(targets.successors()).collect();
-            let narrowed = self
-                .seat(addr)
-                .is_some_and(|seat| seat.narrows_to(&targets));
+            let narrowed = seat.is_some_and(|seat| seat.narrows_to(&targets));
             if prev != next {
                 if narrowed {
                     progress.narrowed.push(addr);
@@ -1158,6 +1182,82 @@ mod tests {
             !progress.narrowed.is_empty(),
             "swapping one successor for another is an oscillation, not growth",
         );
+    }
+
+    /// One fold of `answers`, each on its own anchor at one address over
+    /// `seed`, once per order of `answers` over the anchors' node ids: the
+    /// merge order is the resolutions' hash order, which must not decide it.
+    fn fold_anchors_every_order(
+        answers: &[ResolvedTargets],
+        seed: Option<ResolvedTargets>,
+    ) -> Vec<(ResolvedTargets, Vec<PcodeInsnAddr>)> {
+        let addr = pcode_addr(0x1000);
+        let seeds: FxHashMap<_, _> = seed.into_iter().map(|s| (addr, s)).collect();
+        let nodes: Vec<NodeId> = (0..answers.len() as u32).map(NodeId::from_u32).collect();
+        let anchors: Anchors = nodes.iter().map(|&n| (addr, n)).collect();
+        let mut out = Vec::new();
+        for shift in 0..answers.len() {
+            for reversed in [false, true] {
+                let mut order: Vec<&ResolvedTargets> = answers.iter().collect();
+                order.rotate_left(shift);
+                if reversed {
+                    order.reverse();
+                }
+                let resolutions: Answers = nodes
+                    .iter()
+                    .zip(order)
+                    .map(|(&n, a)| (n, Some(a.clone())))
+                    .collect();
+                let mut known = FxHashMap::default();
+                let progress = fold_into(
+                    &mut known,
+                    &seeds,
+                    &anchors,
+                    &Vec::new(),
+                    resolutions,
+                    &FxHashMap::default(),
+                    &FxHashSet::default(),
+                )
+                .expect("fold");
+                out.push((
+                    known.remove(&addr).expect("folded"),
+                    progress.derived_incomplete,
+                ));
+            }
+        }
+        out
+    }
+
+    /// A target two of three anchors prove in opposite modes stays dropped,
+    /// whichever pair merges first.
+    #[test]
+    fn a_contradiction_across_three_anchors_is_not_forgotten() {
+        let addr = pcode_addr(0x1000);
+        let answers = [
+            multiple(&[(0x2000, Some(true)), (0x3000, Some(true))]),
+            multiple(&[(0x2000, Some(false))]),
+            multiple(&[(0x2000, Some(true))]),
+        ];
+        for (seat, reported) in fold_anchors_every_order(&answers, None) {
+            assert_eq!(seat, multiple(&[(0x3000, Some(true))]));
+            assert_eq!(reported, vec![addr]);
+        }
+    }
+
+    /// A seed naming a contradicted target seats it again, but the site is
+    /// reported as it is without the seed.
+    #[test]
+    fn a_contradiction_a_seed_names_is_still_reported() {
+        let addr = pcode_addr(0x1000);
+        let seed = multiple(&[(0x2000, None)]);
+        let answers = [
+            ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(0x2000, Some(true))),
+            ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(0x2000, Some(false))),
+        ];
+        for (seat, reported) in fold_anchors_every_order(&answers, Some(seed.clone())) {
+            assert_eq!(seat, seed, "a seed only adds");
+            assert_eq!(reported, vec![addr]);
+        }
     }
 
     /// A frozen site takes no further classification, so the arms

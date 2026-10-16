@@ -239,8 +239,7 @@ mod tests {
     /// could pick has been disproved by one side, and "no committed mode" is
     /// not neutral: the cfg reads it as the mode flowing into the branch, which
     /// on an interworking `bx` is the one being switched away from. The address
-    /// is dropped instead, leaving `Withdrawn`, which the cfg defers, so the
-    /// site is reported unresolved. Order-independent.
+    /// is dropped instead, leaving `Withdrawn`. Order-independent.
     #[test]
     fn merge_derived_drops_a_target_two_classifications_disagree_on() {
         let thumb = ResolvedTargets::Single(ResolvedTarget::new(0x2000, Some(true)));
