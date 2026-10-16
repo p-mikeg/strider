@@ -43,8 +43,8 @@ fn bytes() -> Vec<u8> {
 }
 
 /// The seed names one address twice, once per ISA mode, so seating it decodes
-/// `CLASH` in one mode and reaches it in the other. `abandon_undecodable` then
-/// drops the site, and the constant dispatch at 0x1014 forces a re-lift whose
+/// `CLASH` in one mode and reaches it in the other. The loop then withdraws
+/// the site, and the constant dispatch at 0x1014 forces a re-lift whose
 /// cfg no longer carries the clashing edge at all.
 #[test]
 fn a_conflict_one_round_raised_survives_a_later_round_that_does_not() {
