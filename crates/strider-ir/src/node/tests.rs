@@ -182,52 +182,6 @@ fn int_for_byte_size_to_node_output_type() {
     }
 }
 
-/// Hand-maintained: a new variant must be appended here or the equivalence
-/// tests below silently stop covering it.
-fn every_node_kind_smoke() -> Vec<NodeKind> {
-    use crate::node::{
-        ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
-    };
-    use cranelift_entity::EntityRef;
-    let space = rsleigh::VnSpace::RAM;
-    vec![
-        NodeKind::Entry,
-        NodeKind::InitialMemory,
-        NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
-        NodeKind::Region,
-        NodeKind::MemPhi,
-        NodeKind::Phi,
-        NodeKind::If,
-        NodeKind::Switch(crate::node::SwitchTableId::from_u32(0)),
-        NodeKind::Call { cc: None },
-        NodeKind::Return,
-        NodeKind::IndirectBranch,
-        NodeKind::Unreachable,
-        NodeKind::CallOther { user_op_id: 0 },
-        NodeKind::Load(space),
-        NodeKind::Store(space),
-        NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
-        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
-        NodeKind::IntBinaryOp(IntBinaryOp::Add),
-        NodeKind::IntCmpOp(IntCmpOp::Equal),
-        NodeKind::Truncate,
-        NodeKind::Extend(ExtendOp::ZeroExtend),
-        NodeKind::Popcount,
-        NodeKind::Lzcount,
-        NodeKind::FloatConst(0),
-        NodeKind::FloatBinaryOp(FloatBinaryOp::Add),
-        NodeKind::FloatUnaryOp(FloatUnaryOp::Neg),
-        NodeKind::FloatCmpOp(FloatCmpOp::Equal),
-        NodeKind::IntToFloat,
-        NodeKind::IntBitsToFloat,
-        NodeKind::FloatToInt,
-        NodeKind::FloatBitsToInt,
-        NodeKind::FloatToFloat,
-        NodeKind::CPoolRef,
-        NodeKind::New,
-    ]
-}
-
 /// Independent restatement of `is_cacheable` as a single negated `matches!`.
 fn legacy_is_cacheable(kind: &NodeKind) -> bool {
     !matches!(
@@ -262,7 +216,7 @@ fn legacy_asm_fingerprint_exempt(kind: &NodeKind) -> bool {
 
 #[test]
 fn is_cacheable_matches_legacy() {
-    for k in every_node_kind_smoke() {
+    for k in crate::node_signature::every_node_kind() {
         assert_eq!(
             k.is_cacheable(),
             legacy_is_cacheable(&k),
@@ -273,7 +227,7 @@ fn is_cacheable_matches_legacy() {
 
 #[test]
 fn asm_fingerprint_exempt_matches_legacy() {
-    for k in every_node_kind_smoke() {
+    for k in crate::node_signature::every_node_kind() {
         assert_eq!(
             k.asm_fingerprint_exempt(),
             legacy_asm_fingerprint_exempt(&k),
