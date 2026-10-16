@@ -403,4 +403,62 @@ mod tests {
         assert_eq!(set_of(&dag, Key(5)), FxHashSet::from_iter([1]));
         assert!(dag.is_empty(Key(7))); // old Key(2)+5, was culled
     }
+
+    /// Random extends and unions against a model that recomputes each set
+    /// from the live links.
+    #[test]
+    fn random_unions_match_a_live_alias_model() {
+        const KEYS: usize = 6;
+        let runs = if cfg!(debug_assertions) {
+            2_000
+        } else {
+            50_000
+        };
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = |bound: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % bound
+        };
+        for run in 0..runs {
+            let mut dag: UnionDag<Key, u64> = UnionDag::new();
+            let mut rooted = [false; KEYS];
+            let mut own: [FxHashSet<u64>; KEYS] = Default::default();
+            let mut links: [Vec<usize>; KEYS] = Default::default();
+            for _ in 0..next(24) {
+                let (a, b) = (next(KEYS as u64) as usize, next(KEYS as u64) as usize);
+                if next(2) == 0 {
+                    let v = next(5);
+                    dag.extend(Key(a as u32), v);
+                    rooted[a] = true;
+                    own[a].insert(v);
+                } else {
+                    dag.union(Key(a as u32), Key(b as u32));
+                    if rooted[b] {
+                        rooted[a] = true;
+                        links[a].push(b);
+                    }
+                }
+            }
+            for (k, &is_rooted) in rooted.iter().enumerate() {
+                let mut want = FxHashSet::default();
+                let mut seen = [false; KEYS];
+                let mut stack = vec![k];
+                while let Some(x) = stack.pop() {
+                    if std::mem::replace(&mut seen[x], true) {
+                        continue;
+                    }
+                    want.extend(own[x].iter().copied());
+                    stack.extend(&links[x]);
+                }
+                assert_eq!(
+                    dag.is_empty(Key(k as u32)),
+                    !is_rooted,
+                    "run {run}: key {k}"
+                );
+                assert_eq!(set_of(&dag, Key(k as u32)), want, "run {run}: key {k}");
+            }
+        }
+    }
 }
