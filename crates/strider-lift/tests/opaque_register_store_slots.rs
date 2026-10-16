@@ -41,9 +41,10 @@ fn opaque_register_store_gives_colliding_registers_distinct_slots() {
     let cc = strider_target::CallingConvention::powerpc_sysv32()
         .build(lifter.sleigh_regs())
         .expect("cc");
-    let opts = strider_lift::LiftOptions::default();
-    let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg).expect("cfg");
-    let f = lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function;
+    let cfg = lifter
+        .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
+        .expect("cfg");
+    let f = lifter.build_ir(&cfg, cc).expect("ir").function;
 
     let slot_of = |off: u64| {
         f.graph().all_node_ids().find(|&id| {

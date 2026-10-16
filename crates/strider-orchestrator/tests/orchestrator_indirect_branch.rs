@@ -254,7 +254,7 @@ fn loop_carried_switch_reaches_every_arm() {
     }
 }
 
-/// `run_orchestrator_on` with caller-supplied `LiftOptions`.
+/// `run_orchestrator_on` with caller-supplied `AnalyzeOptions`.
 fn run_with_opts(
     arch: common::Arch,
     case: &str,
@@ -295,7 +295,7 @@ fn analyze_claiming(
     assumptions: strider_opt::AssumptionOptions,
 ) -> anyhow::Result<strider_orchestrator::AnalyzeResult> {
     let (mut strider, cc, addr) = common::fixture_strider(arch, case, fn_name);
-    let lift_opts = strider_orchestrator::LiftOptions {
+    let lift_opts = strider_orchestrator::AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::Open {
                 code_before_start: true,
@@ -303,13 +303,13 @@ fn analyze_claiming(
             known_targets: &known,
             ..Default::default()
         },
-        ..strider_orchestrator::LiftOptions::default()
+        opt: strider_orchestrator::opt::OptOptions {
+            resolve_indirect_branches: resolve,
+            assumptions,
+        },
+        ..strider_orchestrator::AnalyzeOptions::default()
     };
-    let opt_opts = strider_orchestrator::opt::OptOptions {
-        resolve_indirect_branches: resolve,
-        assumptions,
-    };
-    strider.analyze(addr, &cc, &lift_opts, &opt_opts, None)
+    strider.analyze(addr, &cc, &lift_opts, None)
 }
 
 #[test]

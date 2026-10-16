@@ -6,8 +6,7 @@ use strider_ir::IRViewer;
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
-use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+use strider_orchestrator::{AnalyzeOptions, Strider};
 use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
@@ -28,17 +27,17 @@ fn run_at(
         .into_iter()
         .map(|(addr, preset)| (addr, preset.build(&regs).unwrap()))
         .collect();
-    let lift_opts = LiftOptions {
+    let lift_opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(size),
             ..Default::default()
         },
         per_address_ccs: &per_address_ccs,
-        ..LiftOptions::default()
+        ..AnalyzeOptions::default()
     };
     let mut strider = Strider::new(arch, sleigh, None).unwrap();
     strider
-        .analyze(entry, &cc, &lift_opts, &OptOptions::default(), None)
+        .analyze(entry, &cc, &lift_opts, None)
         .unwrap()
         .function
 }

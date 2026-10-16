@@ -1,6 +1,5 @@
 pub use strider_opt as opt;
 
-pub use strider_lift::LiftOptions;
 pub use strider_lift::lift::{LiftOutcome, Lifter};
 
 mod resolve;
@@ -16,6 +15,36 @@ use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets, seated_in};
 use strider_opt::{OptOptions, ReadOnlyMemory};
 
 use resolve::{LoopState, Termination};
+
+/// What `Default` lends: a `&'a` cannot borrow a temporary.
+static NO_PER_ADDRESS_CCS: FxHashMap<u64, strider_target::BuiltCallingConvention> =
+    FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
+
+/// [`Strider::analyze`]'s options. `Default` decodes an unbounded function
+/// with no seeds and no CC overrides, optimises under
+/// [`OptOptions::default`], and compacts.
+pub struct AnalyzeOptions<'a> {
+    pub cfg: strider_cfg::CfgOptions<'a>,
+    /// Keyed by direct-call target address, read by the lift only. Built
+    /// against this engine's registers and fitting its arch, as the default CC
+    /// must ([`Lifter::build_ir_with`]); borrowed, as
+    /// [`strider_cfg::CfgOptions::known_targets`] is.
+    pub per_address_ccs: &'a FxHashMap<u64, strider_target::BuiltCallingConvention>,
+    pub opt: OptOptions,
+    /// Drops unreachable nodes once the loop settles.
+    pub compact: bool,
+}
+
+impl Default for AnalyzeOptions<'_> {
+    fn default() -> Self {
+        Self {
+            cfg: strider_cfg::CfgOptions::default(),
+            per_address_ccs: &NO_PER_ADDRESS_CCS,
+            opt: OptOptions::default(),
+            compact: true,
+        }
+    }
+}
 
 /// Per-binary analysis handle.
 pub struct Strider<R>
@@ -124,12 +153,12 @@ where
     /// `LinkRegister`. Only [`AnalyzeResult::is_complete`], which reads all
     /// six channels, answers "may this be incomplete?".
     ///
-    /// `lift_opts.cfg.known_targets` is re-unioned into the working set every
+    /// `opts.cfg.known_targets` is re-unioned into the working set every
     /// round and never mutated; a seed at an abandoned site is dropped from the
     /// working set. A seed suppresses the unresolved report of an unclassifiable
     /// seated `Switch` at its address only while the settled answer names
     /// nothing the seed did not; it never suppresses what the classifier
-    /// derives. `lift_opts.compact` applies once, after the loop.
+    /// derives. `opts.compact` applies once, after the loop.
     ///
     /// `pipeline` defaults to [`strider_opt::default_pipeline`];
     /// [`strider_opt::IndirectBranchClassify`] is appended unless it already
@@ -142,25 +171,19 @@ where
         &mut self,
         entry: u64,
         cc: &strider_target::BuiltCallingConvention,
-        lift_opts: &LiftOptions<'_>,
-        opt_opts: &OptOptions,
+        opts: &AnalyzeOptions<'_>,
         pipeline: Option<strider_opt::OptimizerPipeline>,
     ) -> Result<AnalyzeResult> {
         // Built once and reused across re-lifts (`run` takes `&self`).
         let pipeline = &with_classify(pipeline.unwrap_or_else(strider_opt::default_pipeline));
         let start_addr = MachineInsnAddr::from(entry);
-        let mut st = LoopState::new(lift_opts.cfg.known_targets);
+        let mut st = LoopState::new(opts.cfg.known_targets);
         // Every round rebuilds the whole function from the seat set: cfg, lift
         // and pipeline. Carrying a round's work forward would make the cfg a
         // function of more than the seats, which is what convergence rests on.
         let mut result = loop {
-            let (round, resolutions) = self.build_round(
-                start_addr,
-                cc,
-                &working_opts(lift_opts, &st.working),
-                opt_opts,
-                pipeline,
-            )?;
+            let (round, resolutions) =
+                self.build_round(start_addr, cc, opts, &st.working, pipeline)?;
             // A stale round still carries a seat the loop has since dropped,
             // so it is no answer even when nothing else moves.
             let stale = st.observe(&round);
@@ -174,7 +197,7 @@ where
                 break st.finish(round, Termination::Converged)?;
             }
         };
-        if lift_opts.compact {
+        if opts.compact {
             result.function.compact()?;
         }
         Ok(result)
@@ -745,26 +768,6 @@ fn merge_isa_bit(a: Option<bool>, b: Option<bool>) -> Option<Option<bool>> {
     match (a, b) {
         (Some(x), Some(y)) if x != y => None,
         (x, y) => Some(x.or(y)),
-    }
-}
-
-/// The caller's options over the loop's own seat set, with compaction pinned
-/// off: the post-loop finalize step reads `lift_opts.compact` directly, so no
-/// future edit can read a stale duplicate here.
-///
-/// Cloned whole: naming the other fields would silently drop any field added
-/// to [`strider_cfg::CfgOptions`] later from the whole re-lift loop.
-fn working_opts<'t>(
-    lift_opts: &'t LiftOptions<'t>,
-    known_targets: &'t FxHashMap<PcodeInsnAddr, ResolvedTargets>,
-) -> LiftOptions<'t> {
-    LiftOptions {
-        cfg: strider_cfg::CfgOptions {
-            known_targets,
-            ..lift_opts.cfg.clone()
-        },
-        per_address_ccs: lift_opts.per_address_ccs,
-        compact: false,
     }
 }
 

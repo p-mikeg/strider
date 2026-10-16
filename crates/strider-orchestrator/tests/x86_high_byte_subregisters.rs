@@ -31,7 +31,7 @@ fn returned_const(arch: Arch, bytes: Vec<u8>) -> u128 {
     );
     let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, Some(rom));
     let f = strider
-        .analyze(BASE, &cc, &Default::default(), &Default::default(), None)
+        .analyze(BASE, &cc, &Default::default(), None)
         .expect("analyze")
         .function;
     let v = common::returned(&f)[0];

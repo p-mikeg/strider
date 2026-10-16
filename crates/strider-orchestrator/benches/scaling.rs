@@ -111,18 +111,12 @@ fn resolve_case(c: Case) -> strider_orchestrator::AnalyzeResult {
     let fixture = Fixture::open(fixture_arch(c.arch_name), c.case);
     let (mut strider, cc) = fixture.strider();
     let addr = fixture.symbol(c.fn_name);
-    let lift_opts = strider_orchestrator::LiftOptions {
+    let lift_opts = strider_orchestrator::AnalyzeOptions {
         cfg: CFG_OPTS(),
         ..Default::default()
     };
     strider
-        .analyze(
-            addr,
-            &cc,
-            &lift_opts,
-            &strider_orchestrator::opt::OptOptions::default(),
-            None,
-        )
+        .analyze(addr, &cc, &lift_opts, None)
         .expect("analyze")
 }
 

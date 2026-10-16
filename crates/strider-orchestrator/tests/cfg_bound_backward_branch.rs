@@ -13,8 +13,7 @@ mod common;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::{IRViewer, IRWalker};
-use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+use strider_orchestrator::{AnalyzeOptions, Strider};
 use strider_target::{CallingConvention, SleighArch};
 
 /// Synthetic layout:
@@ -68,16 +67,16 @@ fn bounded_lift_does_not_walk_backward_into_prev_fn() {
     let cc = CallingConvention::x86_64_systemv()
         .build(&regs)
         .expect("build cc");
-    let lift_opts = LiftOptions {
+    let lift_opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(TARGET_FN_SIZE),
             ..Default::default()
         },
-        ..LiftOptions::default()
+        ..AnalyzeOptions::default()
     };
     let mut strider = Strider::new(SleighArch::x86_64(), sleigh, None).unwrap();
     let function = strider
-        .analyze(TARGET_FN, &cc, &lift_opts, &OptOptions::default(), None)
+        .analyze(TARGET_FN, &cc, &lift_opts, None)
         .expect("bounded lift must complete without reaching prev_fn")
         .function;
 

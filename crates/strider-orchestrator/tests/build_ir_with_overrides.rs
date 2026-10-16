@@ -9,7 +9,6 @@ use strider_ir::IRViewer;
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::MachineInsnAddr;
 use strider_ir::node::NodeKind;
-use strider_orchestrator::LiftOptions;
 use strider_target::CallingConvention as TargetCC;
 
 mod common;
@@ -42,14 +41,7 @@ fn build_ir_with_applies_per_address_override() {
         .unwrap();
 
     let outcome = strider
-        .build_ir_with(
-            &cfg,
-            cc,
-            &LiftOptions {
-                per_address_ccs: &built,
-                ..LiftOptions::default()
-            },
-        )
+        .build_ir_with(&cfg, cc, &strider_cfg::CfgOptions::default(), &built)
         .unwrap();
     let bfg = outcome.function;
 

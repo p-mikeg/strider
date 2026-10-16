@@ -8,8 +8,7 @@
 
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::AnalyzeOptions;
 
 mod common;
 
@@ -20,13 +19,7 @@ const STALE_UPPER_HALF: u128 = 0xFFFF_FFFF_0000_0000;
 fn keeps_the_callers_high_half(bytes: Vec<u8>) -> bool {
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
     let result = strider
-        .analyze(
-            BASE,
-            &cc,
-            &LiftOptions::default(),
-            &OptOptions::default(),
-            None,
-        )
+        .analyze(BASE, &cc, &AnalyzeOptions::default(), None)
         .expect("analyze");
     let f = &result.function;
     f.graph()
@@ -61,13 +54,7 @@ fn register_after(insn: &[u8], reg: Reg) -> Option<u128> {
     bytes.push(0xc3);
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
     let f = strider
-        .analyze(
-            BASE,
-            &cc,
-            &LiftOptions::default(),
-            &OptOptions::default(),
-            None,
-        )
+        .analyze(BASE, &cc, &AnalyzeOptions::default(), None)
         .expect("analyze")
         .function;
     let ret = f

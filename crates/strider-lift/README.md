@@ -11,7 +11,8 @@ register modelled as an SSA variable.
   `rsleigh::Sleigh<R>` and reused across functions and rebuild rounds, since
   `Sleigh::regs()` is expensive and the register table never changes.
   `build_cfg(entry, cfg_opts)` decodes; `build_ir(cfg, cc)` /
-  `build_ir_with(cfg, cc, opts)` lift. The calling convention is per function,
+  `build_ir_with(cfg, cc, cfg_opts, per_address_ccs)` lift, given the
+  `CfgOptions` the cfg was built with. The calling convention is per function,
   hence an argument rather than engine state.
 - `LiftOutcome`: the `Function`, plus `unresolved_branches` (each unresolved
   `BranchIndirect`'s pcode address and its `IndirectBranch` placeholder),
@@ -20,10 +21,6 @@ register modelled as an SSA variable.
   (each Sleigh `RETURN`'s pcode address, its `Return` node and the address it
   jumps to, which only a check against the optimised IR can confirm is the
   caller's).
-- `LiftOptions<'a>`: the `CfgOptions` to decode with, `per_address_ccs`
-  (borrowed, as `CfgOptions::known_targets` is) for direct call targets, and
-  `compact`, which this crate only carries for the orchestrator to read after
-  the pipeline.
 - `FunctionLifter`, internal: the per-function context holding the
   `FunctionBuilder`, the varnode-to-container map, and the per-instruction
   constant tracker.

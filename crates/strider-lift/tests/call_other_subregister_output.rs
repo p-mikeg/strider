@@ -4,7 +4,6 @@
 //! opaque result.
 
 use strider_ir::{IRViewer, IRWalker};
-use strider_lift::LiftOptions;
 
 fn lift(
     arch: strider_target::SleighArch,
@@ -19,9 +18,10 @@ fn lift(
     .expect("sleigh");
     let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
     let cc = cc.build(lifter.sleigh_regs()).expect("cc");
-    let opts = LiftOptions::default();
-    let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg).expect("cfg");
-    lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function
+    let cfg = lifter
+        .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
+        .expect("cfg");
+    lifter.build_ir(&cfg, cc).expect("ir").function
 }
 
 /// The result slot of the one `CallOther`, and whether the value the function

@@ -12,7 +12,7 @@ const BASE: u64 = 0x10000;
 fn analyze(bytes: Vec<u8>) -> Function {
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
     strider
-        .analyze(BASE, &cc, &Default::default(), &Default::default(), None)
+        .analyze(BASE, &cc, &Default::default(), None)
         .expect("analyze")
         .function
 }

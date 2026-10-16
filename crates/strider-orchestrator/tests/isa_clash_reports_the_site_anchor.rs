@@ -5,8 +5,7 @@
 //! channels have to agree on one spelling of the site.
 
 use strider_cfg::{CfgOptions, PcodeInsnAddr, ResolvedTarget, ResolvedTargets};
-use strider_orchestrator::LiftOptions;
-use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::AnalyzeOptions;
 
 mod common;
 
@@ -75,19 +74,19 @@ fn a_clash_on_a_machine_start_seed_is_reported_at_the_branchind_anchor() {
             ResolvedTarget::new(KEPT_ARMS[1], None),
         ]),
     );
-    let lift_opts = LiftOptions {
+    let lift_opts = AnalyzeOptions {
         cfg: CfgOptions {
             known_targets: &known,
             ..CfgOptions::default()
         },
-        ..LiftOptions::default()
+        ..AnalyzeOptions::default()
     };
 
     // No rom: the table load does not fold, so the classifier stays silent and
     // the seed is the site's only answer.
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::Arm, bytes(), BASE, None);
     let result = strider
-        .analyze(BASE, &cc, &lift_opts, &OptOptions::default(), None)
+        .analyze(BASE, &cc, &lift_opts, None)
         .expect("a mode clash is a result, not an error");
 
     let anchor = result

@@ -16,7 +16,7 @@ fn upper_lane_after(arch: common::Arch, insn: u32) -> Option<u128> {
     let bytes = words_image(&words, Endianness::Little);
     let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, None);
     let f = strider
-        .analyze(BASE, &cc, &Default::default(), &Default::default(), None)
+        .analyze(BASE, &cc, &Default::default(), None)
         .expect("analyze")
         .function;
     let ret = f

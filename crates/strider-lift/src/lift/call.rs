@@ -198,7 +198,7 @@ mod tests {
     /// Helper: lifts `code` at 0x1000 under the x86-64 SysV convention.
     fn lift_x86_64(
         code: Vec<u8>,
-        opts: &crate::LiftOptions,
+        opts: &strider_cfg::CfgOptions,
     ) -> anyhow::Result<strider_ir::Function> {
         let arch = strider_target::SleighArch::x86_64();
         let regs = x86_64_sleigh_regs();
@@ -206,8 +206,10 @@ mod tests {
         let reader = rsleigh::mem_readers::BufMemReader::new(code, 0x1000);
         let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)?;
         let mut lifter = crate::lift::Lifter::new(arch, sleigh)?;
-        let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg)?;
-        Ok(lifter.build_ir_with(&cfg, cc, opts)?.function)
+        let cfg = lifter.build_cfg(0x1000u64.into(), opts)?;
+        Ok(lifter
+            .build_ir_with(&cfg, cc, opts, &rustc_hash::FxHashMap::default())?
+            .function)
     }
 
     /// The register names behind a `CallOther` node's argument inputs and its
@@ -255,7 +257,7 @@ mod tests {
     fn syscall_lifts_with_its_full_implicit_footprint() {
         // 1000: 0f 05    syscall
         // 1002: c3       ret
-        let f = lift_x86_64(vec![0x0f, 0x05, 0xc3], &crate::LiftOptions::default())
+        let f = lift_x86_64(vec![0x0f, 0x05, 0xc3], &strider_cfg::CfgOptions::default())
             .expect("a function containing `syscall` must lift");
         let regs = x86_64_sleigh_regs();
         let (args, outs) = call_other_arg_and_out_regs(&f, &regs);
@@ -284,13 +286,14 @@ mod tests {
             clobbers_memory: false,
             no_return: false,
         };
-        let mut opts = crate::LiftOptions::default();
-        opts.cfg.call_other_overrides =
-            strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+        let opts = strider_cfg::CfgOptions {
+            call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(vec![(
                 "syscall".to_owned(),
                 strider_target::call_other_abi::CallOtherOverride::Built(abi),
             )])
-            .expect("unique override names");
+            .expect("unique override names"),
+            ..Default::default()
+        };
         // 1000: 0f 05    syscall     ; classified by the override above
         // 1002: c3       ret
         let f = lift_x86_64(vec![0x0f, 0x05, 0xc3], &opts)
@@ -309,15 +312,17 @@ mod tests {
     /// Lifts `code` at 0x1000 under the PowerPC 32-bit System V convention.
     fn lift_ppc32be(
         code: Vec<u8>,
-        opts: &crate::LiftOptions,
+        opts: &strider_cfg::CfgOptions,
     ) -> anyhow::Result<strider_ir::Function> {
         let arch = strider_target::SleighArch::ppc32be();
         let reader = rsleigh::mem_readers::BufMemReader::new(code, 0x1000);
         let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)?;
         let mut lifter = crate::lift::Lifter::new(arch, sleigh)?;
         let cc = strider_target::CallingConvention::powerpc_sysv32().build(lifter.sleigh_regs())?;
-        let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg)?;
-        Ok(lifter.build_ir_with(&cfg, cc, opts)?.function)
+        let cfg = lifter.build_cfg(0x1000u64.into(), opts)?;
+        Ok(lifter
+            .build_ir_with(&cfg, cc, opts, &rustc_hash::FxHashMap::default())?
+            .function)
     }
 
     /// The unconditional-trap rule reads `twi`'s TO mask off the pcode, so a
@@ -334,7 +339,7 @@ mod tests {
             0x38, 0x60, 0x00, 0x01, 0x0f, 0xe3, 0x00, 0x00, 0x38, 0x60, 0x00, 0x02, 0x4e, 0x80,
             0x00, 0x20,
         ];
-        let unreachable_count = |opts: &crate::LiftOptions| {
+        let unreachable_count = |opts: &strider_cfg::CfgOptions| {
             let f =
                 lift_ppc32be(bytes.clone(), opts).expect("a function containing `twi` must lift");
             f.graph()
@@ -344,16 +349,19 @@ mod tests {
         };
 
         assert_eq!(
-            unreachable_count(&crate::LiftOptions::default()),
+            unreachable_count(&strider_cfg::CfgOptions::default()),
             1,
             "TO=31 is unconditional, so control sinks at the trap"
         );
 
-        let mut opts = crate::LiftOptions::default();
-        opts.cfg.call_other_overrides = strider_target::call_other_abi::CallOtherOverrides::new(
-            vec![("trapWord".to_owned(), CallOtherClass::MEM_CLOBBER.into())],
-        )
-        .expect("unique override names");
+        let opts = strider_cfg::CfgOptions {
+            call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+                "trapWord".to_owned(),
+                CallOtherClass::MEM_CLOBBER.into(),
+            )])
+            .expect("unique override names"),
+            ..Default::default()
+        };
         assert_eq!(
             unreachable_count(&opts),
             0,
@@ -369,7 +377,8 @@ mod tests {
     fn universe_construction_defers_both_call_other_errors() {
         // 1000: 0f 34    sysenter    ; x86-64 classifies no such user-op
         // 1002: c3       ret
-        let Err(err) = lift_x86_64(vec![0x0f, 0x34, 0xc3], &crate::LiftOptions::default()) else {
+        let Err(err) = lift_x86_64(vec![0x0f, 0x34, 0xc3], &strider_cfg::CfgOptions::default())
+        else {
             panic!("an unclassified user-op must fail the lift");
         };
         let msg = format!("{err:?}");
@@ -378,9 +387,8 @@ mod tests {
             "an unclassified op keeps its own message, got {msg}"
         );
 
-        let mut opts = crate::LiftOptions::default();
-        opts.cfg.call_other_overrides =
-            strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+        let opts = strider_cfg::CfgOptions {
+            call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(vec![(
                 "syscall".to_owned(),
                 CallOtherClass::Call(CallOtherAbi {
                     implicit_reads: &["NONEXISTENT_REG_XYZZY"],
@@ -390,7 +398,9 @@ mod tests {
                 })
                 .into(),
             )])
-            .expect("unique override names");
+            .expect("unique override names"),
+            ..Default::default()
+        };
         // 1000: 0f 05    syscall     ; classified by the override above
         // 1002: c3       ret
         let Err(err) = lift_x86_64(vec![0x0f, 0x05, 0xc3], &opts) else {

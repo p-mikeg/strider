@@ -21,8 +21,7 @@ fn a_branch_into_an_instruction_interior_is_reported() {
         .analyze(
             base,
             &cc,
-            &strider_orchestrator::LiftOptions::default(),
-            &strider_orchestrator::opt::OptOptions::default(),
+            &strider_orchestrator::AnalyzeOptions::default(),
             None,
         )
         .expect("analyze");

@@ -3,8 +3,7 @@ mod common;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::{IRViewer, IRWalker};
-use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+use strider_orchestrator::{AnalyzeOptions, Strider};
 use strider_target::{CallingConvention, SleighArch};
 
 fn make_sleigh_value(bytes: Vec<u8>, base: u64) -> Sleigh<BufMemReader<Vec<u8>>> {
@@ -22,13 +21,7 @@ fn run_at(bytes: Vec<u8>, base: u64) -> anyhow::Result<strider_orchestrator::Ana
         .build(&regs)
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None)?;
-    strider.analyze(
-        base,
-        &cc,
-        &LiftOptions::default(),
-        &OptOptions::default(),
-        None,
-    )
+    strider.analyze(base, &cc, &AnalyzeOptions::default(), None)
 }
 
 #[test]
@@ -82,7 +75,7 @@ fn outer_loop_unresolved_branch_is_reported_not_errored() {
 }
 
 #[test]
-fn analyze_seats_pre_seeded_known_targets_from_lift_options() {
+fn analyze_seats_pre_seeded_known_targets_from_analyze_options() {
     // The caller's `cfg.known_targets` seeds the resolution loop, which then
     // grows it. `apply_resolutions` unions, so the FOLD only ever adds edges
     // to what the classifier proved; seating one can still cost the site its
@@ -100,12 +93,12 @@ fn analyze_seats_pre_seeded_known_targets_from_lift_options() {
     let mut known = rustc_hash::FxHashMap::default();
     // 0x1004 is in-range padding: a valid (decodable) seed target.
     known.insert(site, strider_cfg::ResolvedTargets::Single(0x1004.into()));
-    let lift_opts = LiftOptions {
+    let lift_opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             known_targets: &known,
             ..Default::default()
         },
-        ..LiftOptions::default()
+        ..AnalyzeOptions::default()
     };
 
     let arch = SleighArch::x86_64();
@@ -116,7 +109,7 @@ fn analyze_seats_pre_seeded_known_targets_from_lift_options() {
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
     let result = strider
-        .analyze(0x1000, &cc, &lift_opts, &OptOptions::default(), None)
+        .analyze(0x1000, &cc, &lift_opts, None)
         .expect("analyze");
     assert_eq!(
         result.unresolved_indirect_branches,
@@ -277,10 +270,7 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
             &Default::default(),
         )
         .expect("cfg");
-    let mut single = lifter
-        .build_ir_with(&cfg, cc, &LiftOptions::default())
-        .expect("ir")
-        .function;
+    let mut single = lifter.build_ir(&cfg, cc).expect("ir").function;
     let pipeline = strider_orchestrator::opt::default_pipeline();
     let mut ctx = strider_orchestrator::opt::OptCtx::at_floor(None);
     pipeline.run(&mut single, &mut ctx).expect("pipeline");
@@ -321,13 +311,7 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
             .expect("cc");
         let mut strider = Strider::new(arch, sleigh, None).expect("strider");
         strider
-            .analyze(
-                0x1000,
-                &cc,
-                &LiftOptions::default(),
-                &OptOptions::default(),
-                None,
-            )
+            .analyze(0x1000, &cc, &AnalyzeOptions::default(), None)
             .expect("analyze")
             .unresolved_indirect_branches
     };
