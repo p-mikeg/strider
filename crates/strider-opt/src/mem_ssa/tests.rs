@@ -1109,7 +1109,9 @@ fn the_climb_matches_its_definition_on_random_graphs() {
     }
 }
 
-/// `build` lays out exactly the reducible memory graphs.
+/// `build` lays out exactly the reducible memory graphs. The edges come from
+/// `memory_input_of` and `phi_data_inputs`, as in production; reducibility
+/// over them is by definition.
 #[test]
 fn a_layout_exists_iff_the_memory_graph_is_reducible() {
     use strider_ir_test_utils::graph_oracle;
