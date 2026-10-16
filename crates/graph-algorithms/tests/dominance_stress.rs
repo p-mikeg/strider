@@ -1,6 +1,6 @@
 //! The oracles here share NO code with the module under test: dominator sets
 //! come from the textbook iterative fixpoint `Dom(n) = {n} ∪ ⋂ Dom(pred)`, from
-//! the deletion definition (`graph_oracle`) and from petgraph's
+//! the deletion definition (`oracle`) and from petgraph's
 //! `simple_fast`; DF / IDF from their definitions.
 
 mod common;
@@ -14,10 +14,10 @@ use graph_algorithms::dominance::{
     DomIntervals, DomRelation, DomTree, Dominators, Frontiers, dominance_frontiers,
     dominator_tree_preorder, dominator_tree_walk, dominators, immediate_dominators, phi_placement,
 };
+use graph_algorithms::oracle;
 use petgraph::graph::NodeIndex;
 use proptest::prelude::*;
 use rustc_hash::FxHashMap;
-use strider_ir_test_utils::graph_oracle as oracle;
 
 /// Predecessors and idoms are both explicit; the idom map is oracle-computed.
 struct Mock {

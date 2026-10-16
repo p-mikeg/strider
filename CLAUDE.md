@@ -83,7 +83,8 @@ Generic:
 - `graph-algorithms`: generic traversal (`walk`) and dominance-based SSA
   support (Lengauer-Tarjan `dominators`, dominance frontiers, dominator-tree
   preorder, iterated-DF phi placement) over opaque node ids. Test-only
-  `graphmock` DSL under `tests/`.
+  `graphmock` DSL under `tests/`, and the brute-force `oracle` module behind
+  the `test-util` feature.
 - `strider-graph`: generic despite the name: the payload-agnostic bipartite
   sea-of-nodes `Graph<N, V, C: NodeCacheable<N, V>>` that `strider-ir` and
   `strider-pattern` build on. No `Hash`/`Eq` bound on payloads; dedup lives in
@@ -125,8 +126,9 @@ Strider:
   re-exported as `opt`.
 - `strider-ir-test-utils`: `make_empty_fn` / `RegisterSet` builders,
   `MockRom`, asm-fingerprint stamping, the `interp` reference interpreter, the
-  brute-force `graph_oracle` (also graph-algorithms' test oracle), and the
-  `proptest-gen`-gated `proptest_gen` generator, shared by tests.
+  seeded xorshift `Rng`, the brute-force `graph_oracle` (re-exported from
+  graph-algorithms' `test-util` feature), and the `proptest-gen`-gated
+  `proptest_gen` generator, shared by tests.
 - `strider-py`: PyO3 bindings (`maturin develop` builds a wheel).
 
 ## Dependency graph (X -> Y = X depends on Y)
@@ -145,12 +147,13 @@ strider-opt        -> strider-cfg, strider-ir, strider-pattern, strider-target,
 strider-orchestrator -> strider-cfg, strider-ir, strider-lift, strider-opt,
                       strider-target
 strider-py         -> orchestrator, opt, cfg, reader, ir, target, pattern, dot
-strider-ir-test-utils -> strider-ir, strider-target
+strider-ir-test-utils -> strider-ir, strider-target, graph-algorithms
 ```
 
 `strider-ir-test-utils` is a dev-only crate, but those two are normal
 `[dependencies]` of it, so a workspace-wide build resolves `strider-ir` with its
-`test-util` feature on.
+`test-util` feature on. It also depends on `graph-algorithms` with `test-util`
+(the std-only `oracle` module), which a workspace-wide build likewise unifies.
 
 Workspace production dependencies only. Leaves (no workspace deps): `dot`,
 `entity-utils`, `read-only-memory`, `strider-graph`, `strider-target`,
@@ -162,11 +165,10 @@ dependency of `strider-cfg`, `strider-graph`, `strider-lift` and
 whose dominance tests check against `simple_fast`.
 
 Dev-dependencies are not in that graph, and are not a DAG:
-`strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it,
-as does `graph-algorithms` (for `graph_oracle`), which `strider-ir` depends on.
-`strider-graph`, `strider-pattern` and `strider-target` also dev-depend on
-THEMSELVES, which is how their `tests/` integration targets get a feature
-(`test-injectors`, `test-util`) that `cfg(test)` cannot reach.
+`strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it.
+`graph-algorithms`, `strider-graph`, `strider-pattern` and `strider-target` also
+dev-depend on THEMSELVES, which is how their `tests/` integration targets get a
+feature (`test-util`, `test-injectors`) that `cfg(test)` cannot reach.
 
 ## IR node model
 

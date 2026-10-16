@@ -1,7 +1,7 @@
 //! A seeded generator for hand-rolled random tests.
 
 /// xorshift64 over an explicit state, so a failing fixture replays from its
-/// seed alone. State `0` is a fixed point: seeds are forced odd.
+/// seed alone. State `0` is a fixed point, so callers seed it odd.
 pub struct Rng(pub u64);
 
 impl Rng {

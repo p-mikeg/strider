@@ -8,6 +8,13 @@ repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+# `oracle`: brute-force graph definitions, the oracle the dominance and walk
+# tests here and in strider-ir, -opt, -lift and -pattern check against.
+# std-only and off by default; strider-ir-test-utils enables it to re-export
+# the module as `graph_oracle`. Mirrors strider-graph's `test-injectors`.
+test-util = []
+
 [dependencies]
 cranelift-entity.workspace = true
 entity-utils.workspace = true
@@ -19,8 +26,9 @@ itertools.workspace = true
 # Oracles only: `simple_fast`, `toposort`.
 petgraph.workspace = true
 proptest.workspace = true
-# `graph_oracle`, the brute-force definitions the other crates share.
-strider-ir-test-utils.workspace = true
+# `tests/` is an integration test, so `cfg(test)` does not reach the library:
+# this is how it gets `oracle`.
+graph-algorithms = { path = ".", features = ["test-util"] }
 
 [lints]
 workspace = true
