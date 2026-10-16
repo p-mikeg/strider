@@ -145,6 +145,8 @@
 - A target two classifications prove in opposite ISA modes at one dispatch
   is reported however many anchors share it, and dropped unless a seed
   names it.
+- Return-target verification on a 128-bit stack offset at the edge of the
+  `i128` carrier reports the return unverified; it panicked.
 
 ### Added, Rust
 

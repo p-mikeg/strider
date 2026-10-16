@@ -599,4 +599,57 @@ mod tests {
             "sp+0x7FFF_FFFC ends where the slot starts"
         );
     }
+
+    /// A 128-bit frame saving `lr` at `(sp & -16) + 2^127`, the bottom of the
+    /// `i128` carrier, then, when `junk`, a 16-byte store at `sp`.
+    fn lr_saved_at_the_carrier_limit(junk: bool) -> (strider_ir::Function, NodeId, ValueId) {
+        let sp = fake_reg_vn(0x20, 16);
+        let lr = fake_reg_vn(0x4c, 16);
+        let mut b = strider_ir_test_utils::sp_frame(sp)
+            .tracked(lr)
+            .link_register(lr)
+            .build_fn_single_region()
+            .expect("build_fn_single_region");
+        let sp_val = b.read_variable(&sp).unwrap();
+        let lr_val = b.read_variable(&lr).unwrap();
+        let mask = b.build_int_const(!0xFu128, ValueType::I128).unwrap();
+        let frame = b
+            .build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I128)
+            .unwrap();
+        let bottom = b.build_int_const(1u128 << 127, ValueType::I128).unwrap();
+        let slot = b
+            .build_int_binary_operation(frame, bottom, IntBinaryOp::Add, ValueType::I128)
+            .unwrap();
+        b.build_store(slot, lr_val, rsleigh::VnSpace::RAM).unwrap();
+        if junk {
+            let junk = b.build_int_const(0xDEAD_BEEFu64, ValueType::I128).unwrap();
+            b.build_store(sp_val, junk, rsleigh::VnSpace::RAM).unwrap();
+        }
+        let target = b
+            .build_load(slot, rsleigh::VnSpace::RAM, ValueType::I128)
+            .unwrap();
+        let branch = b.build_indirect_branch(target).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        let mut prep = crate::OptimizerPipeline::new();
+        prep.add(crate::PhiCollapse);
+        prep.add(crate::RegionCollapse);
+        prep.run(&mut function, &mut crate::OptCtx::at_floor(None))
+            .expect("prep");
+        (function, branch, target)
+    }
+
+    /// Placing the store at `sp` against the slot's span runs past the
+    /// carrier, which fails closed.
+    #[test]
+    fn a_slot_at_the_carrier_limit_fails_closed() {
+        let none = crate::AssumptionOptions::none();
+        let (f, branch, target) = lr_saved_at_the_carrier_limit(false);
+        assert!(
+            ReturnTargets::new(&f, &none).returns_to_caller(branch, target),
+            "control: the untouched slot holds lr"
+        );
+        let (f, branch, target) = lr_saved_at_the_carrier_limit(true);
+        assert!(!ReturnTargets::new(&f, &none).returns_to_caller(branch, target));
+    }
 }
