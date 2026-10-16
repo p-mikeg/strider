@@ -220,13 +220,29 @@ fn entry_addr(entry: &Bound<'_, PyAny>) -> PyResult<u64> {
     })
 }
 
-pub(crate) fn reject_zero_max_size(function_max_size: Option<u64>) -> PyResult<()> {
-    if matches!(function_max_size, Some(0)) {
-        return Err(pyo3::exceptions::PyValueError::new_err(
+/// `function_max_size` and `allow_code_before_start_addr` as one bound: a size
+/// fixes the extent, so the flag cannot join it.
+pub(crate) fn function_bound(
+    function_max_size: Option<u64>,
+    allow_code_before_start_addr: bool,
+) -> PyResult<strider_cfg::FunctionBound> {
+    let Some(size) = function_max_size else {
+        return Ok(strider_cfg::FunctionBound::Open {
+            code_before_start: allow_code_before_start_addr,
+        });
+    };
+    let size = std::num::NonZeroU64::new(size).ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(
             "function_max_size must be > 0; omit the argument for an unbounded lift",
+        )
+    })?;
+    if allow_code_before_start_addr {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "function_max_size fixes the function's extent; drop \
+             allow_code_before_start_addr=True, which cannot reach below it",
         ));
     }
-    Ok(())
+    Ok(strider_cfg::FunctionBound::Size(size))
 }
 
 pub(crate) fn build_orch_sleigh(
@@ -316,8 +332,7 @@ pub(crate) fn cfg_options_from(
     target: SourceArch,
 ) -> PyResult<strider_cfg::CfgOptions<'_>> {
     Ok(strider_cfg::CfgOptions {
-        fn_max_size: opts.function_max_size,
-        allow_code_before_start_addr: opts.allow_code_before_start_addr,
+        bound: opts.bound,
         known_targets: &opts.seated,
         no_return_targets: &opts.no_return_targets,
         call_other_overrides: overrides_from(&opts.call_other_abis, target)?,

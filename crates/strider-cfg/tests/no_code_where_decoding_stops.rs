@@ -41,7 +41,7 @@ fn decoded_addrs(cfg: &Cfg) -> Vec<u64> {
 
 fn bounded(size: u64) -> CfgOptions<'static> {
     CfgOptions {
-        fn_max_size: Some(size),
+        bound: strider_cfg::FunctionBound::size(size),
         ..CfgOptions::default()
     }
 }

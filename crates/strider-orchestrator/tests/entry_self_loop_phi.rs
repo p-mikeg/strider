@@ -39,7 +39,7 @@ fn synthetic_bytes() -> Vec<u8> {
 fn analyze() -> strider_ir::Function {
     let lift_opts = LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            fn_max_size: Some(FN_SIZE),
+            bound: strider_cfg::FunctionBound::size(FN_SIZE),
             ..Default::default()
         },
         ..LiftOptions::default()

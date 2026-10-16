@@ -53,7 +53,7 @@ fn analyze_with(
     let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, None);
     let lift_opts = strider_orchestrator::LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            fn_max_size: Some(size),
+            bound: strider_cfg::FunctionBound::size(size),
             ..Default::default()
         },
         ..Default::default()
@@ -690,7 +690,7 @@ fn a_return_seed_over_a_pcode_return_does_not_silence_it() {
     let (mut strider, cc) = common::strider_over_bytes(Arch::X64, bytes, BASE, None);
     let lift_opts = strider_orchestrator::LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            fn_max_size: Some(2),
+            bound: strider_cfg::FunctionBound::size(2),
             known_targets: &known,
             ..Default::default()
         },

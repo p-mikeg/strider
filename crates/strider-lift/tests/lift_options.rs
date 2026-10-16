@@ -3,8 +3,12 @@ use strider_lift::LiftOptions;
 #[test]
 fn lift_options_default() {
     let d = LiftOptions::default();
-    assert_eq!(d.cfg.fn_max_size, None);
-    assert!(!d.cfg.allow_code_before_start_addr);
+    assert_eq!(
+        d.cfg.bound,
+        strider_cfg::FunctionBound::Open {
+            code_before_start: false
+        }
+    );
     assert!(d.cfg.known_targets.is_empty());
     assert!(d.per_address_ccs.is_empty());
     assert!(d.compact);

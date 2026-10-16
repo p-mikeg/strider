@@ -39,7 +39,7 @@ fn lifter() -> Lifter<BufMemReader<Vec<u8>>> {
 
 fn insns(lifter: &mut Lifter<BufMemReader<Vec<u8>>>, entry: u64, size: u64) -> Vec<String> {
     let opts = strider_cfg::CfgOptions {
-        fn_max_size: Some(size),
+        bound: strider_cfg::FunctionBound::size(size),
         ..Default::default()
     };
     let cfg = lifter.build_cfg(entry.into(), &opts).expect("build_cfg");
@@ -57,7 +57,7 @@ fn a_mips16_function_at_a_slot_address_does_not_change_the_branch_owning_it() {
     let alone = insns(&mut lifter(), BASE, 24);
     let mut reused = lifter();
     let opts = strider_cfg::CfgOptions {
-        fn_max_size: Some(0x20),
+        bound: strider_cfg::FunctionBound::size(0x20),
         ..Default::default()
     };
     let _ = reused.build_cfg((BASE + 5).into(), &opts);

@@ -7,7 +7,7 @@ use pyo3::types::PyDict;
 use crate::call_other_abi::PyCallOtherAbi;
 use crate::cc::PyCallingConvention;
 use crate::opt::PyOptimizerPipeline;
-use crate::strider_cls::reject_zero_max_size;
+use crate::strider_cls::function_bound;
 use strider_orchestrator::opt::AssumptionOptions;
 
 /// One caller-supplied indirect-branch answer: concrete targets, or a return.
@@ -162,16 +162,8 @@ impl MappingView {
 #[pyclass(name = "CfgOptions", module = "strider.cfg")]
 #[derive(Clone, Default)]
 pub struct PyCfgOptions {
-    /// When set, an unconditional branch targeting at or past
-    /// `entry + function_max_size` is treated as a tail call, bounding the
-    /// lift. Must be `> 0`.
-    #[pyo3(get)]
-    pub function_max_size: Option<u64>,
-    /// When `False` (the default), an unconditional branch targeting an
-    /// address *below* the function start is treated as a tail call.
-    /// When `True`, such branches are followed normally.
-    #[pyo3(get)]
-    pub allow_code_before_start_addr: bool,
+    /// `function_max_size` and `allow_code_before_start_addr` as one extent.
+    pub bound: strider_cfg::FunctionBound,
     /// Indirect-branch answers supplied by the caller, as
     /// `{dispatch_address: [target_address, ...] | "return"}`, in the Python
     /// form the getter hands back; `seated` is the same table as
@@ -215,8 +207,8 @@ pub(crate) type SeatedTargets =
 
 #[pymethods]
 impl PyCfgOptions {
-    /// Raises `ValueError` for `function_max_size=0`; omit the argument
-    /// for an unbounded lift.
+    /// Raises `ValueError` for `function_max_size=0` (omit the argument for an
+    /// unbounded lift), and for a size with `allow_code_before_start_addr=True`.
     #[new]
     #[pyo3(signature = (*, function_max_size = None, allow_code_before_start_addr = false,
                         known_targets = MapArg(HashMap::new()),
@@ -231,11 +223,10 @@ impl PyCfgOptions {
         data_ranges: Vec<(u64, u64)>,
         no_return_targets: AddrSetArg,
     ) -> PyResult<Self> {
-        reject_zero_max_size(function_max_size)?;
+        let bound = function_bound(function_max_size, allow_code_before_start_addr)?;
         let seated = crate::strider_cls::seat_known_targets(&known_targets.0);
         Ok(Self {
-            function_max_size,
-            allow_code_before_start_addr,
+            bound,
             known_targets: Arc::new(known_targets.0),
             call_other_abis: Arc::new(
                 call_other_abis
@@ -250,6 +241,30 @@ impl PyCfgOptions {
             call_other_abis_view: Arc::default(),
             seated: Arc::new(seated),
         })
+    }
+
+    /// When set, an unconditional branch targeting at or past
+    /// `entry + function_max_size` is treated as a tail call, bounding the
+    /// lift.
+    #[getter]
+    fn function_max_size(&self) -> Option<u64> {
+        match self.bound {
+            strider_cfg::FunctionBound::Size(size) => Some(size.get()),
+            strider_cfg::FunctionBound::Open { .. } => None,
+        }
+    }
+
+    /// When `False` (the default), an unconditional branch targeting an
+    /// address *below* the function start is treated as a tail call. `True`
+    /// follows such branches; always `False` beside a size.
+    #[getter]
+    fn allow_code_before_start_addr(&self) -> bool {
+        matches!(
+            self.bound,
+            strider_cfg::FunctionBound::Open {
+                code_before_start: true
+            }
+        )
     }
 
     /// Address ranges `(start, end)`, end exclusive, the image marks as data,
@@ -311,12 +326,11 @@ impl PyCfgOptions {
         pyo3::types::PyFrozenSet::new_bound(py, self.no_return_targets.iter())
     }
 
-    /// This object with `function_max_size` set, sharing its tables rather
-    /// than rebuilding them through Python.
+    /// This object bounded to `function_max_size`, sharing its tables rather
+    /// than rebuilding them through Python. The size replaces the whole bound.
     fn with_function_max_size(&self, function_max_size: u64) -> PyResult<Self> {
-        reject_zero_max_size(Some(function_max_size))?;
         Ok(Self {
-            function_max_size: Some(function_max_size),
+            bound: function_bound(Some(function_max_size), false)?,
             ..self.clone()
         })
     }
@@ -329,8 +343,8 @@ impl PyCfgOptions {
             "CfgOptions(function_max_size={:?}, allow_code_before_start_addr={}, \
              known_targets={{{} entries}}, call_other_abis={{{} entries}}, \
              data_ranges=[{} ranges], no_return_targets={{{} entries}})",
-            self.function_max_size,
-            py_bool(self.allow_code_before_start_addr),
+            self.function_max_size(),
+            py_bool(self.allow_code_before_start_addr()),
             self.known_targets.len(),
             self.call_other_abis.len(),
             self.data_ranges.ranges().len(),

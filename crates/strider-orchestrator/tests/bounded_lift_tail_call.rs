@@ -59,7 +59,7 @@ fn make_sleigh() -> Sleigh<BufMemReader<Vec<u8>>> {
 fn bounded_lift_handles_tail_call_terminator() {
     let lift_opts = LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            fn_max_size: Some(10),
+            bound: strider_cfg::FunctionBound::size(10),
             ..Default::default()
         },
         ..LiftOptions::default()
@@ -79,11 +79,10 @@ fn bounded_lift_handles_tail_call_terminator() {
 
 /// Synthetic vmspace_exitfree shape: a small function ending with a backward
 /// `jmp` whose target is a *different* function (below `start_addr`).
-/// `fn_max_size` defines the function's exact extent, so the backward target
-/// is a tail call whatever `allow_code_before_start_addr` says, and the IR
-/// carries `Call(IntConst(<backward_target>)) + Return`. Following the jmp
-/// into the adjacent bytes instead balloons the graph to tens of thousands of
-/// nodes.
+/// A `FunctionBound::Size` is the function's exact extent, so the backward
+/// target is a tail call, and the IR carries
+/// `Call(IntConst(<backward_target>)) + Return`. Following the jmp into the
+/// adjacent bytes instead balloons the graph to tens of thousands of nodes.
 #[test]
 fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
     // 0x1000..0x1080: NOP padding (the "previous function").
@@ -103,15 +102,13 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
 
     let lift_opts = LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            fn_max_size: Some(10),
-            allow_code_before_start_addr: true,
+            bound: strider_cfg::FunctionBound::size(10),
             ..Default::default()
         },
         ..LiftOptions::default()
     };
-    let function = run_at(sleigh, FN_START, &lift_opts).expect(
-        "backward jmp + fn_max_size must classify as tail call regardless of reach-back flag",
-    );
+    let function = run_at(sleigh, FN_START, &lift_opts)
+        .expect("backward jmp under a size bound must classify as tail call");
 
     assert!(
         common::find_call_to(&function, TAIL_TARGET).is_some()
@@ -151,7 +148,7 @@ fn bounded_lift_fall_through_past_fn_max_size_is_function_boundary_error() {
 
     let lift_opts = LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            fn_max_size: Some(2),
+            bound: strider_cfg::FunctionBound::size(2),
             ..Default::default()
         },
         ..LiftOptions::default()
@@ -196,7 +193,7 @@ fn bounded_lift_keeps_cond_branch_with_both_targets_oob_as_two_tail_call_arms() 
 
     let lift_opts = LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            fn_max_size: Some(2),
+            bound: strider_cfg::FunctionBound::size(2),
             ..Default::default()
         },
         ..LiftOptions::default()
@@ -251,7 +248,7 @@ fn bounded_lift_oob_taken_arm_lifts_as_conditional_tail_call() {
 
     let lift_opts = LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            fn_max_size: Some(0x10),
+            bound: strider_cfg::FunctionBound::size(0x10),
             ..Default::default()
         },
         ..LiftOptions::default()

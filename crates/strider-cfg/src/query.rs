@@ -5,41 +5,25 @@ use super::types::{Region, RegionTerminator};
 use super::{Cfg, RegionId};
 use anyhow::anyhow;
 
-use crate::Result;
+use crate::{FunctionBound, Result};
 
-/// True when `target` lies outside the half-open function range
-/// `[start_addr, start_addr + fn_max_size)`.
+/// True when `target` lies outside the function `bound` describes from
+/// `start_addr`.
 ///
-/// `allow_code_before_start_addr` relaxes the lower bound ONLY while
-/// `fn_max_size` is `None`.  With a size set the extent is known exactly, so
-/// any `target < start_addr` is a tail call whatever the flag says.
-///
-/// The window is non-wrapping.  When `start_addr + fn_max_size` overflows it
-/// clamps to `[start_addr, u64::MAX]` and the upper bound is dropped
-/// entirely.
-pub(crate) fn is_addr_tail_call(
-    target: u64,
-    start_addr: u64,
-    fn_max_size: Option<u64>,
-    allow_code_before_start_addr: bool,
-) -> bool {
-    // `lower == 0` disables the lower-bound check; `upper == None` disables
-    // the upper one.
-    let lower_bound_strict = fn_max_size.is_some() || !allow_code_before_start_addr;
-    let lower = if lower_bound_strict { start_addr } else { 0 };
-    if target < lower {
-        return true;
+/// A `Size` window is non-wrapping: when `start_addr + size` overflows, the
+/// upper bound is dropped and the window is `[start_addr, u64::MAX]`.
+pub(crate) fn is_addr_tail_call(target: u64, start_addr: u64, bound: FunctionBound) -> bool {
+    match bound {
+        // `checked_add`, NOT `saturating_add`: a saturating end would put
+        // `u64::MAX` outside an overflowing window.
+        FunctionBound::Size(size) => {
+            target < start_addr
+                || start_addr
+                    .checked_add(size.get())
+                    .is_some_and(|end| target >= end)
+        }
+        FunctionBound::Open { code_before_start } => !code_before_start && target < start_addr,
     }
-    // `checked_add`, NOT `saturating_add`: on overflow the `None` drops the
-    // upper-bound check, whereas a saturating bound with `target >= upper`
-    // would misclassify `target == u64::MAX` as out of range.
-    if let Some(sz) = fn_max_size
-        && let Some(upper) = start_addr.checked_add(sz)
-        && target >= upper
-    {
-        return true;
-    }
-    false
 }
 
 pub struct IfRegionSuccessors {
@@ -64,7 +48,7 @@ impl Cfg {
     /// `goto L` / `goto L` reads that channel.
     ///
     /// A start compare has to win over containment because the two can name
-    /// different successors: `fn_max_size` cutting through the last instruction
+    /// different successors: a size bound cutting through the last instruction
     /// leaves the fall-through region's span overhanging the bound, and an
     /// out-of-bounds `true_target` inside that overhang is owned both by that
     /// region and by the stub that starts at it.
@@ -171,17 +155,18 @@ mod tests {
         // The window cannot wrap, so it clamps to `[start, u64::MAX]` and
         // every target at or above start, u64::MAX included, is in range.
         let start = u64::MAX - 0x100;
-        let sz = 0x1000u64; // overflows when added to start
+        // Overflows when added to start.
+        let bound = FunctionBound::size(0x1000);
         assert!(
-            !is_addr_tail_call(u64::MAX, start, Some(sz), false),
+            !is_addr_tail_call(u64::MAX, start, bound),
             "u64::MAX is the top of the non-wrapping window, must be in-range"
         );
         assert!(
-            !is_addr_tail_call(start + 0x10, start, Some(sz), false),
+            !is_addr_tail_call(start + 0x10, start, bound),
             "interior of an overflowing window must be in-range"
         );
         assert!(
-            is_addr_tail_call(start - 1, start, Some(sz), false),
+            is_addr_tail_call(start - 1, start, bound),
             "below start is still a tail call"
         );
     }

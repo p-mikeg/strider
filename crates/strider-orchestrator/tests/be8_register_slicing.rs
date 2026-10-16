@@ -73,7 +73,7 @@ fn lift_snippet(arch: SleighArch) -> strider_ir::Function {
         .build(lifter.sleigh_regs())
         .expect("cc");
     let opts = CfgOptions {
-        fn_max_size: Some(snippet_bytes().len() as u64),
+        bound: strider_cfg::FunctionBound::size(snippet_bytes().len() as u64),
         ..Default::default()
     };
     let cfg = lifter

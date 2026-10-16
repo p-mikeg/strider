@@ -120,7 +120,7 @@ fn fn_max_size_forces_forward_jump_to_be_tail_call() {
     // With fn_max_size=0x10 the target 0x1012 is past the bound.
     let bytes = vec![0xeb, 0x10];
     let opts = CfgOptions {
-        fn_max_size: Some(0x10),
+        bound: strider_cfg::FunctionBound::size(0x10),
         ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
@@ -142,7 +142,7 @@ fn forward_jump_landing_exactly_at_fn_max_size_is_tail_call() {
     bytes.extend(std::iter::repeat_n(0x90u8, 14)); // nop filler to 0x1010
     bytes.push(0xc3); // 0x1010: ret
     let opts = CfgOptions {
-        fn_max_size: Some(0x10),
+        bound: strider_cfg::FunctionBound::size(0x10),
         ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
@@ -164,7 +164,7 @@ fn forward_jump_landing_just_inside_fn_max_size_is_followed() {
     bytes.extend(std::iter::repeat_n(0x90u8, 13)); // nop filler to 0x100f
     bytes.push(0xc3); // 0x100f: ret
     let opts = CfgOptions {
-        fn_max_size: Some(0x10),
+        bound: strider_cfg::FunctionBound::size(0x10),
         ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
@@ -199,7 +199,9 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
     let reader = BufMemReader::new(bytes, 0x0ff0);
     let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
     let opts = CfgOptions {
-        allow_code_before_start_addr: true,
+        bound: strider_cfg::FunctionBound::Open {
+            code_before_start: true,
+        },
         ..CfgOptions::default()
     };
     let cfg = Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
@@ -254,7 +256,7 @@ fn cond_branch_with_oob_fallthrough_keeps_cond_branch_with_tail_call_stub() {
     // stub wired as a regular CondBranch successor.
     let bytes = vec![0x31u8, 0xc0, 0x74, 0xfc];
     let opts = CfgOptions {
-        fn_max_size: Some(4),
+        bound: strider_cfg::FunctionBound::size(4),
         ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
@@ -279,7 +281,7 @@ fn cond_branch_with_oob_taken_target_keeps_cond_branch_with_tail_call_stub() {
     // out of bounds and the fall-through 0x1004 is in range.
     let bytes = vec![0x31u8, 0xc0, 0x74, 0x7a, 0xc3];
     let opts = CfgOptions {
-        fn_max_size: Some(0x10),
+        bound: strider_cfg::FunctionBound::size(0x10),
         ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
@@ -310,7 +312,7 @@ fn cond_branch_with_both_targets_oob_keeps_cond_branch_with_two_stubs() {
     // would silently drop the fall-through arm.
     let bytes = vec![0x74u8, 0x7e];
     let opts = CfgOptions {
-        fn_max_size: Some(2),
+        bound: strider_cfg::FunctionBound::size(2),
         ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
@@ -335,7 +337,7 @@ fn cond_branches_to_same_oob_target_share_one_stub() {
     // second stub would collide.
     let bytes = vec![0x74u8, 0x7e, 0x75, 0x7c, 0xc3];
     let opts = CfgOptions {
-        fn_max_size: Some(0x10),
+        bound: strider_cfg::FunctionBound::size(0x10),
         ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
@@ -376,7 +378,7 @@ fn fall_through_past_fn_max_size_is_function_boundary_error() {
     let mut bytes = vec![0x31u8, 0xc0];
     bytes.extend_from_slice(&[0xF0, 0x4C, 0x0F, 0xB1, 0x73, 0x58]);
     let opts = CfgOptions {
-        fn_max_size: Some(2),
+        bound: strider_cfg::FunctionBound::size(2),
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
@@ -406,7 +408,7 @@ fn fall_through_single_insn_past_fn_max_size_is_function_boundary_error() {
     // recorded bound.
     let bytes = vec![0xB8, 0x05, 0x00, 0x00, 0x00, 0x90, 0x90, 0x90];
     let opts = CfgOptions {
-        fn_max_size: Some(3),
+        bound: strider_cfg::FunctionBound::size(3),
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
@@ -451,7 +453,7 @@ fn zero_pcode_prefix_crossing_fn_max_size_is_function_boundary_error() {
     // still empty, and the `ret` there belongs to the next function.
     let bytes = vec![0x90u8, 0x90, 0x90, 0xc3];
     let opts = CfgOptions {
-        fn_max_size: Some(2),
+        bound: strider_cfg::FunctionBound::size(2),
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
@@ -481,7 +483,7 @@ fn fn_max_size_smaller_than_first_terminator_insn_still_builds_tail_call() {
     // fall-through, never mid-instruction.
     let bytes = vec![0xebu8, 0x10]; // jmp +0x10 -> target 0x1012
     let opts = CfgOptions {
-        fn_max_size: Some(1),
+        bound: strider_cfg::FunctionBound::size(1),
         ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
@@ -708,7 +710,7 @@ fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
     );
 
     let opts = CfgOptions {
-        fn_max_size: Some(0x100),
+        bound: strider_cfg::FunctionBound::size(0x100),
         known_targets: &known,
         ..CfgOptions::default()
     };
@@ -744,7 +746,7 @@ fn known_single_oob_target_produces_tail_call() {
     known.insert(unresolved_addr, ResolvedTargets::Single(oob_target.into()));
 
     let opts = CfgOptions {
-        fn_max_size: Some(0x100),
+        bound: strider_cfg::FunctionBound::size(0x100),
         known_targets: &known,
         ..CfgOptions::default()
     };
@@ -789,7 +791,7 @@ fn known_multiple_in_range_targets_produces_switch() {
     );
 
     let opts = CfgOptions {
-        fn_max_size: Some(0x100),
+        bound: strider_cfg::FunctionBound::size(0x100),
         known_targets: &known,
         ..CfgOptions::default()
     };
@@ -1073,7 +1075,7 @@ fn oob_taken_target_inside_the_fallthrough_overhang_keeps_its_polarity() {
         0x0fu8, 0x84, 0x0b, 0x00, 0x00, 0x00, 0x48, 0x31, 0xc0, 0x48, 0x31, 0xc0, 0x48, 0x31, 0xc0,
     ];
     let opts = CfgOptions {
-        fn_max_size: Some(0x10),
+        bound: strider_cfg::FunctionBound::size(0x10),
         ..CfgOptions::default()
     };
     // `ret 0x12` spans 0x100f..0x1012 and overhangs; `ret` spans one byte.
@@ -1161,24 +1163,6 @@ fn a_fallthrough_straddling_the_end_of_the_mapped_image_seats_a_stub() {
     );
     assert_tail_call_stub_at(&cfg, 0x1003);
     assert_eq!(cfg.region_graph().edge_count(), 1);
-}
-
-/// `fn_max_size: Some(0)` reads as unbounded.  A zero-length bound taken
-/// literally puts `start_addr` itself out of range, and the first fall-through
-/// then fails the function.
-#[test]
-fn a_zero_fn_max_size_is_unbounded() {
-    // 0x1000: xor rax,rax (48 31 c0) ; 0x1003: ret (c3)
-    let opts = CfgOptions {
-        fn_max_size: Some(0),
-        ..CfgOptions::default()
-    };
-    let cfg = build_from_bytes_opts(vec![0x48u8, 0x31, 0xc0, 0xc3], 0x1000, &opts);
-    assert_eq!(
-        cfg.region_graph()[cfg.entry()].terminator,
-        RegionTerminator::Return
-    );
-    assert_eq!(cfg.region_graph().node_count(), 1);
 }
 
 /// A finished region hands on an exactly-sized instruction vector; the push

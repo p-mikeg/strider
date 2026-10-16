@@ -486,8 +486,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         crate::is_addr_tail_call(
             branch_target_addr.machine_addr.addr,
             self.builder.start_addr.addr,
-            self.builder.fn_max_size,
-            self.builder.options.allow_code_before_start_addr,
+            self.builder.options.bound,
         )
     }
 
@@ -552,7 +551,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// 1. The target is in [`crate::CfgOptions::no_return_targets`]
     ///    (`exit`/`abort`), which ends the region wherever the return address
     ///    lands.
-    /// 2. The return address is outside `[start, start + fn_max_size)`, so no
+    /// 2. The return address is outside the function's bound, so no
     ///    in-function code follows: an unmarked no-return callee (FreeBSD
     ///    `exit1`), or the function ends at the call.
     fn process_call(
@@ -626,7 +625,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let next_insn_addr = next_pcode_addr(addr, lift_res)?;
 
         // Classify before lifting: decoding an OOB successor would run past
-        // `start + fn_max_size`, where `detect_fallthrough_oob_tail_call` fails
+        // the size bound, where `detect_fallthrough_oob_tail_call` fails
         // the whole function.
         let true_oob = self.classify_branch_target(target_addr)?;
         let false_oob = self.is_branch_tail_call_nocheck(next_insn_addr);
@@ -1176,7 +1175,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// Sequential decoding running off the recorded function extent is a
     /// function-boundary error, NOT a tail call: a real tail call has an
     /// explicit `jmp`/`je` opcode, so reaching the bound by falling through
-    /// means `fn_max_size` is too small or the function is unterminated.
+    /// means the size bound is too small or the function is unterminated.
     ///
     /// Gated on `cur_addr` having advanced past the region start: a run of
     /// zero-pcode-op instructions (x86 `nop`, AArch64 `paciasp` / `autiasp`,
@@ -1191,18 +1190,15 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let start = self.builder.start_addr.addr;
         // No upper bound applies on an unbounded function or one whose bound
         // overflows u64; both reach here from an address BELOW `start`.
-        let end = match self
-            .builder
-            .fn_max_size
-            .and_then(|size| start.checked_add(size))
-        {
-            Some(end) => format!("{end:#x}"),
-            None => "unbounded".to_owned(),
-        };
+        let end = match self.builder.options.bound {
+            crate::FunctionBound::Size(size) => start.checked_add(size.get()),
+            crate::FunctionBound::Open { .. } => None,
+        }
+        .map_or_else(|| "unbounded".to_owned(), |end| format!("{end:#x}"));
         anyhow::bail!(
             "function-boundary error at {cur_addr:?}: sequential decoding overflowed past \
              [start={start:#x}, end={end}); function is unterminated \
-             within its recorded extent (likely cause: `fn_max_size` is too small for the \
+             within its recorded extent (likely cause: the size bound is too small for the \
              function, OR the binary ends mid-function)"
         );
     }
@@ -1591,7 +1587,9 @@ mod tests {
     #[test]
     fn nocheck_below_start_with_allow_is_not_tail_call() {
         let opts = CfgOptions {
-            allow_code_before_start_addr: true,
+            bound: crate::FunctionBound::Open {
+                code_before_start: true,
+            },
             ..CfgOptions::default()
         };
         let mut sleigh = make_sleigh();
@@ -1601,25 +1599,9 @@ mod tests {
     }
 
     #[test]
-    fn nocheck_below_start_with_allow_and_fn_max_size_is_tail_call() {
-        let opts = CfgOptions {
-            allow_code_before_start_addr: true,
-            fn_max_size: Some(0x100),
-            ..CfgOptions::default()
-        };
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder_opts(0x1000, &mut sleigh, &opts);
-        let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        assert!(
-            rb.is_branch_tail_call_nocheck(addr_at(0x0800, 0)),
-            "with fn_max_size set, backward jumps below start must be tail calls regardless of allow_code_before_start_addr"
-        );
-    }
-
-    #[test]
     fn nocheck_below_start_with_fn_max_size_no_allow_is_tail_call() {
         let opts = CfgOptions {
-            fn_max_size: Some(0x100),
+            bound: crate::FunctionBound::size(0x100),
             ..CfgOptions::default()
         };
         let mut sleigh = make_sleigh();
@@ -1639,7 +1621,7 @@ mod tests {
     #[test]
     fn nocheck_at_fn_max_size_boundary() {
         let opts = CfgOptions {
-            fn_max_size: Some(0x100),
+            bound: crate::FunctionBound::size(0x100),
             ..CfgOptions::default()
         };
         let mut sleigh = make_sleigh();
@@ -1654,7 +1636,7 @@ mod tests {
         let start_addr = u64::MAX - 0x100;
         let max_size = 0x1000u64;
         let opts = CfgOptions {
-            fn_max_size: Some(max_size),
+            bound: crate::FunctionBound::size(max_size),
             ..CfgOptions::default()
         };
         let mut sleigh = make_sleigh();

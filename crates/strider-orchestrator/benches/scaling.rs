@@ -71,7 +71,9 @@ const CASES: &[Case] = &[
 /// the entry is an edge to follow rather than a tail call: both entry points
 /// below allow it.
 const CFG_OPTS: fn() -> strider_cfg::CfgOptions<'static> = || strider_cfg::CfgOptions {
-    allow_code_before_start_addr: true,
+    bound: strider_cfg::FunctionBound::Open {
+        code_before_start: true,
+    },
     ..Default::default()
 };
 

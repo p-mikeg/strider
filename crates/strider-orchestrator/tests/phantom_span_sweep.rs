@@ -20,7 +20,9 @@ use common::fixtures::{FIXTURE_ARCHES, Fixture};
 #[ignore = "broad fixture sweep; run explicitly to exercise the phantom-span/split asserts across every function"]
 fn build_cfg_phantom_span_asserts_hold_for_every_fixture_function() {
     let cfg_opts = strider_cfg::CfgOptions {
-        allow_code_before_start_addr: true,
+        bound: strider_cfg::FunctionBound::Open {
+            code_before_start: true,
+        },
         ..Default::default()
     };
     let mut total = 0usize;

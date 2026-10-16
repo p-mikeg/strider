@@ -297,7 +297,9 @@ fn analyze_claiming(
     let (mut strider, cc, addr) = common::fixture_strider(arch, case, fn_name);
     let lift_opts = strider_orchestrator::LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            allow_code_before_start_addr: true,
+            bound: strider_cfg::FunctionBound::Open {
+                code_before_start: true,
+            },
             known_targets: &known,
             ..Default::default()
         },

@@ -28,7 +28,7 @@ fn build_arm(words: &[u32]) -> Cfg {
         .collect();
     let mode = flow.snapshot(&sleigh, BASE);
     let opts = CfgOptions {
-        fn_max_size: Some(size),
+        bound: strider_cfg::FunctionBound::size(size),
         ..CfgOptions::default()
     };
     Builder::for_arch(&arch, &mut sleigh, BASE, &opts)
