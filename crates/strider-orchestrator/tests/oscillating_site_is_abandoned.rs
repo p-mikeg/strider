@@ -15,7 +15,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
-use strider_orchestrator::AnalyzeOptions;
 use strider_orchestrator::opt::{EditFunction, OptCtx, PostOptimizer, default_pipeline};
 
 mod common;
@@ -77,7 +76,7 @@ fn a_site_that_narrows_twice_is_abandoned_and_reported() {
     });
 
     let result = strider
-        .analyze(BASE, &cc, &AnalyzeOptions::default(), Some(pipeline))
+        .analyze(BASE, &cc, &common::ignoring(), Some(pipeline))
         .expect("an unstable site is a result, not an error");
 
     assert!(

@@ -30,7 +30,7 @@ fn fingerprint(
             },
             ..Default::default()
         },
-        ..Default::default()
+        ..common::ignoring()
     };
     let result = match strider.analyze(entry, cc, &lift_opts, None) {
         Ok(result) => result,

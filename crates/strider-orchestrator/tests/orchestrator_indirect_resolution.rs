@@ -21,7 +21,7 @@ fn run_at(bytes: Vec<u8>, base: u64) -> anyhow::Result<strider_orchestrator::Ana
         .build(&regs)
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None)?;
-    strider.analyze(base, &cc, &AnalyzeOptions::default(), None)
+    Ok(strider.analyze(base, &cc, &common::ignoring(), None)?)
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn analyze_seats_pre_seeded_known_targets_from_analyze_options() {
             known_targets: &known,
             ..Default::default()
         },
-        ..AnalyzeOptions::default()
+        ..common::ignoring()
     };
 
     let arch = SleighArch::x86_64();
@@ -324,7 +324,7 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
             .expect("cc");
         let mut strider = Strider::new(arch, sleigh, None).expect("strider");
         strider
-            .analyze(0x1000, &cc, &AnalyzeOptions::default(), None)
+            .analyze(0x1000, &cc, &common::ignoring(), None)
             .expect("analyze")
             .incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)

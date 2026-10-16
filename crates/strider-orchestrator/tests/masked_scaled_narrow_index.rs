@@ -23,8 +23,6 @@
 //! bound past the guard names garbage.
 mod common;
 
-use strider_orchestrator::AnalyzeOptions;
-
 struct Rom(&'static [(u64, &'static [u8])]);
 
 impl strider_orchestrator::opt::ReadOnlyMemory for Rom {
@@ -57,7 +55,7 @@ fn analyze(
     }
     let (mut s, cc) = common::strider_over_bytes(arch, bytes, base, Some(Box::new(Rom(sections))));
     let r = s
-        .analyze(entry, &cc, &AnalyzeOptions::default(), None)
+        .analyze(entry, &cc, &common::ignoring(), None)
         .expect("analyze");
     let mut arms: Vec<u64> = r
         .cfg

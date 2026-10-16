@@ -37,9 +37,7 @@ fn run_at(
         .build(&regs)
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None)?;
-    strider
-        .analyze(entry, &cc, lift_opts, None)
-        .map(|r| r.function)
+    Ok(strider.analyze(entry, &cc, lift_opts, None)?.function)
 }
 
 /// `mov eax, 5; jmp 0x9000` at 0x1000 (10 bytes).  `jmp` target is
