@@ -768,7 +768,7 @@ impl ShapeGen {
     }
 
     fn next(&mut self, bound: u64) -> u64 {
-        self.rng.next() % bound
+        self.rng.next_u64() % bound
     }
 
     fn phi(&mut self, arms: &[ValueId]) -> ValueId {

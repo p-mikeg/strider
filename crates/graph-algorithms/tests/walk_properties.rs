@@ -10,10 +10,10 @@
 mod common;
 
 use common::cases::{self, Case};
-use common::oracle;
 use common::{Graph, NodeId};
 use graph_algorithms::walk::{PostOrder, PreOrder, WalkPhase};
 use proptest::prelude::*;
+use strider_ir_test_utils::graph_oracle as oracle;
 
 const CASES: u32 = if cfg!(debug_assertions) { 256 } else { 8192 };
 
