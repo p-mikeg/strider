@@ -10,16 +10,18 @@ re-run the whole thing until the control-flow graph stops changing.
   `rsleigh::Sleigh` and an optional read-only image (what `LoadReadOnly` folds
   against and what the jump-table classifier reads tables from; `None` disables
   both).
-- `Strider::analyze(entry, cc, opts, pipeline)` -> `AnalyzeResult`: the loop
-  below. `opts` is an `AnalyzeOptions` (`cfg`, `per_address_ccs`, `opt`,
-  `compact`, `on_incomplete`); `compact` applies once after the loop. `pipeline`
+- `Strider::analyze(entry, cc, opts, pipeline)` ->
+  `Result<AnalyzeResult, AnalyzeError>`: the loop below. `opts` is an
+  `AnalyzeOptions` (`cfg`, `per_address_ccs`, `opt`, `compact`,
+  `on_incomplete`); `compact` applies once after the loop. `pipeline`
   defaults to `strider_opt::default_pipeline`, and
   `strider_opt::IndirectBranchClassify` is appended as a post-pass unless the
   supplied pipeline already runs it. Under `on_incomplete:
   OnIncomplete::Error`, the default, a result that is not complete comes back
   as `AnalyzeError::Incomplete`.
-- `Strider::build_cfg(entry, cfg_opts, on_incomplete)`: a structural decode
-  only, no lift, no optimisation, no resolution.
+- `Strider::build_cfg(entry, cfg_opts, on_incomplete)` ->
+  `Result<Cfg, AnalyzeError>`: a structural decode only, no lift, no
+  optimisation, no resolution.
 - Accessors that let a caller run its own pipeline against the same state:
   `arch`, `sleigh`, `sleigh_regs`, `user_op_names`, `rom`.
 - Re-exports, so a caller needs one dependency: `strider_opt` as `opt`, and
@@ -54,7 +56,7 @@ arms in whatever mode flows into the branch.
 
 The loop converges when no anchor is left, or when a round changes no address's
 successor set. `MAX_RESOLUTION_ITERATIONS` (256) is the one other thing that
-stops it, and not as an error: one iteration seats one level of discovery, so
+stops it, and not as a failure: one iteration seats one level of discovery, so
 the cap is also the discovery-depth limit, and exhausting it while sites are
 still growing is that limit being hit, not an oscillation. Those sites are
 reported.

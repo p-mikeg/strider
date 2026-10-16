@@ -749,8 +749,8 @@ impl PyLifter {
 
     /// Build the control-flow graph of the function at `entry`, without
     /// lifting or optimising.  Raises `StriderError` on a build failure, and
-    /// `IncompleteAnalysis` when `on_incomplete` (default: the
-    /// `LifterOptions` default) refuses `Cfg.incomplete`.
+    /// `IncompleteAnalysis` when `Cfg.incomplete` names anything and
+    /// `on_incomplete` is `ERROR` (the default, `None`).
     ///
     /// Holds the GIL for the whole build, unlike `analyze`: decoding is short
     /// next to a full analysis, and it runs on the handle's own thread.

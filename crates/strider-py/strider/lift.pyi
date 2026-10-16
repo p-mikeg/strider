@@ -105,8 +105,8 @@ class AssumptionOptions:
         ...
 
 class OnIncomplete:
-    """What `analyze` and `build_cfg` do with a result `Cfg.incomplete` names
-    anything in: `ERROR` raises `IncompleteAnalysis`, `IGNORE` returns it."""
+    """What `analyze` and `build_cfg` do when `Cfg.incomplete` names anything:
+    `ERROR` raises `IncompleteAnalysis`, `IGNORE` returns the result."""
 
     ERROR: OnIncomplete
     IGNORE: OnIncomplete
@@ -132,9 +132,9 @@ class LifterOptions:
     the calling convention for a callee, keyed by the direct-call target
     address rather than the call site. `pipeline`, when set,
     replaces the default optimizer pipeline for the calls these options drive.
-    `on_incomplete` decides what a result `cfg.incomplete` names anything in
-    becomes (`OnIncomplete.ERROR` raises `IncompleteAnalysis`, `IGNORE`
-    returns it); `None` takes the default, `ERROR`.
+    `on_incomplete` decides what happens when `cfg.incomplete` names
+    anything: `OnIncomplete.ERROR`, the default (`None`), raises
+    `IncompleteAnalysis`; `IGNORE` returns the result.
     """
 
     # Read-only: these are getters with no setter, so a plain attribute
@@ -242,8 +242,8 @@ class Lifter:
     ) -> Cfg:
         """Build the control-flow graph of the function at `entry`, without
         lifting or optimising. Raises `IncompleteAnalysis` when
-        `on_incomplete` (`None`: the `LifterOptions` default) refuses
-        `Cfg.incomplete`.
+        `Cfg.incomplete` names anything and `on_incomplete` is `ERROR` (the
+        default, `None`).
 
         Holds the GIL for the whole build, unlike `analyze`: decoding is short
         next to a full analysis, and it runs on the handle's own thread."""

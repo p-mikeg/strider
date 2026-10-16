@@ -2,7 +2,7 @@
 //! needs one round per link and the iteration cap is the depth limit.
 //!
 //! Pins both halves of that: a chain within the cap converges on every link,
-//! and one past it comes back as a report rather than an error. Each test also
+//! and one past it comes back reported rather than failed. Each test also
 //! pins how many rounds `analyze` built to get there.
 
 use std::sync::Arc;
