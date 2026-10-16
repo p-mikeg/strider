@@ -3,8 +3,7 @@
 //! `gcc -O2` leaves `.text`, `.text.startup` and `.rodata` all at `sh_addr == 0`
 //! in a `.o`. The loader rebases the colliding ones so each is reachable at its
 //! own address, serving its own bytes; a LINKED image, whose `sh_addr`s are
-//! real, passes through untouched and must load byte-identically to its
-//! recorded fingerprint.
+//! real, passes through untouched. `read_digest.rs` pins the bytes both serve.
 
 #[path = "common/mod.rs"]
 mod common;
@@ -16,7 +15,7 @@ use common::elf_fixture::{
 };
 use object::{Object, ObjectSection, ObjectSymbol};
 use strider_reader::elf::{self, ElfSectionLayout};
-use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory};
+use strider_reader::{MemRegionsLookupTable, ReadOnlyMemory};
 
 fn fixture(arch: &str, name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -25,96 +24,14 @@ fn fixture(arch: &str, name: &str) -> PathBuf {
         .join(name)
 }
 
-/// FNV-1a over every region's `(start, len, bytes)`, so one number pins a whole
-/// loaded image.
-fn digest(regions: &[MemRegion]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    let mut eat = |b: u8| {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    };
-    for r in regions {
-        for b in r.start_addr().to_le_bytes() {
-            eat(b);
-        }
-        let bytes = common::region_bytes(r);
-        for b in (bytes.len() as u64).to_le_bytes() {
-            eat(b);
-        }
-        for b in bytes {
-            eat(b);
-        }
-    }
-    h
-}
-
-fn all_loader_digests(owned: &strider_reader::OwnedElf) -> Vec<u64> {
-    use elf::LoadFilter::{AllAllocatable, CodeAndReadOnly, ImmutableOnly};
-    use elf::RegionSource::{Auto, Sections};
-    let obj = owned.checked_file().expect("the mapped file is unchanged");
-    let regions = |source, filter, relocate| owned.regions(source, filter, relocate).unwrap();
-    vec![
-        digest(&elf::elf_get_loadable_regions(&obj).unwrap()),
-        digest(&regions(Auto, ImmutableOnly, false)),
-        digest(&regions(Auto, AllAllocatable, false)),
-        digest(&regions(Sections, CodeAndReadOnly, false)),
-        digest(&regions(Sections, AllAllocatable, false)),
-        digest(&regions(Sections, ImmutableOnly, false)),
-        digest(&regions(Auto, AllAllocatable, true)),
-        digest(&regions(Auto, ImmutableOnly, true)),
-    ]
-}
-
-/// Golden fingerprints for every entry point over three linked fixtures,
-/// including the three that force the section walk on an image that has
-/// PT_LOAD segments.
+/// A linked image keeps every section at its `sh_addr`.
 #[test]
-fn linked_images_load_identically_to_before_the_et_rel_rebase() {
-    let golden: [(&str, &str, [u64; 8]); 3] = [
-        (
-            "x64",
-            "switch.elf",
-            [
-                15379296049503614269,
-                15379296049503614269,
-                1759349359742348395,
-                13567922309565440120,
-                11001421298295061515,
-                13567922309565440120,
-                1759349359742348395,
-                15379296049503614269,
-            ],
-        ),
-        (
-            "aarch64",
-            "arithmetic.elf",
-            [
-                2886907034106557727,
-                2886907034106557727,
-                7886025370851864316,
-                908230149637798672,
-                7537148421931574303,
-                908230149637798672,
-                7886025370851864316,
-                2886907034106557727,
-            ],
-        ),
-        (
-            "mips64le",
-            "switch.elf",
-            [
-                11072776634073155066,
-                11072776634073155066,
-                9598661585797864237,
-                9270942079008536722,
-                6504926835391262960,
-                9270942079008536722,
-                9598661585797864237,
-                11072776634073155066,
-            ],
-        ),
-    ];
-    for (arch, name, expected) in golden {
+fn linked_images_keep_every_section_at_its_sh_addr() {
+    for (arch, name) in [
+        ("x64", "switch.elf"),
+        ("aarch64", "arithmetic.elf"),
+        ("mips64le", "switch.elf"),
+    ] {
         let path = fixture(arch, name);
         assert!(
             path.exists(),
@@ -131,11 +48,6 @@ fn linked_images_load_identically_to_before_the_et_rel_rebase() {
                 "{arch}/{name}: a linked image must keep every section at its sh_addr"
             );
         }
-        assert_eq!(
-            all_loader_digests(&owned),
-            expected.to_vec(),
-            "{arch}/{name}: linked image bytes changed"
-        );
     }
 }
 
