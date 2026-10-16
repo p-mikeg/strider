@@ -63,7 +63,7 @@ float_arg 3 [%v48]
 return %v0, %v42, %v43, %v44, %v45, %v46, %v47, %v48
 
 == _start @0x700
-unresolved_indirect_branches [0x744.1]
+unresolved_branch [0x744.1]
 cfg
   0x700 0 ops goto -> [0x704]
   0x704 27 ops cbranch 0x744 -> [0x740, 0x744]
