@@ -1,4 +1,4 @@
-# aarch64/memory: Strider::analyze, default options, incomplete reported
+# aarch64/memory: Strider::analyze, default options except on_incomplete=Ignore
 # array_copy: load and store and cfg.back_edge
 # array_fill: store and cfg.back_edge
 # array_sum: load and cfg.back_edge

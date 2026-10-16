@@ -1,4 +1,4 @@
-# ppc64le/calls: Strider::analyze, default options, incomplete reported
+# ppc64le/calls: Strider::analyze, default options except on_incomplete=Ignore
 # apply_indirect: call
 # fib_recursive: 2 call and if
 # mutual_a: call and if

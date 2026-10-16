@@ -1,4 +1,4 @@
-# aarch64/arithmetic: Strider::analyze, default options, incomplete reported
+# aarch64/arithmetic: Strider::analyze, default options except on_incomplete=Ignore
 # add: int.add
 # ashr: int.sshift_right
 # bit_and: int.and

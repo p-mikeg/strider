@@ -1,4 +1,4 @@
-# arm_be8/control: Strider::analyze, default options, incomplete reported
+# arm_be8/control: Strider::analyze, default options except on_incomplete=Ignore
 # abs_val: if
 # clamp: 2 if
 # count_bits: cfg.back_edge and int.shift_right
