@@ -8,11 +8,8 @@ mod common;
 use strider_reader::elf::mapping_symbol_data_ranges;
 
 fn ranges_of(fixture: &str) -> Vec<std::ops::Range<u64>> {
-    let path = format!(
-        "{}/../../fixtures/out/{fixture}",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let path = common::fixtures_out().join(fixture);
+    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let obj = object::File::parse(&bytes[..]).expect("parse");
     mapping_symbol_data_ranges(&obj)
 }

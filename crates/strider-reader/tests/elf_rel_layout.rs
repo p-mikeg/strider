@@ -18,10 +18,7 @@ use strider_reader::elf::{self, ElfSectionLayout};
 use strider_reader::{MemRegionsLookupTable, ReadOnlyMemory};
 
 fn fixture(arch: &str, name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/out")
-        .join(arch)
-        .join(name)
+    common::fixtures_out().join(arch).join(name)
 }
 
 /// A linked image keeps every section at its `sh_addr`.

@@ -112,43 +112,18 @@ fn a_descriptors_toc_word_is_followed_like_an_entry() {
 /// and decodes descriptor bytes.
 #[test]
 fn an_et_rel_descriptor_resolves_through_its_relocation() {
-    use object::write::{Object, Relocation, Symbol, SymbolSection};
-    use object::{
-        Architecture, BinaryFormat, Endianness, RelocationFlags, SectionKind, SymbolFlags,
-        SymbolKind, SymbolScope,
-    };
+    use common::write_object::{defined, reloc};
+    use object::write::Object;
+    use object::{Architecture, BinaryFormat, Endianness, SectionKind};
 
     let mut obj = Object::new(BinaryFormat::Elf, Architecture::PowerPc64, Endianness::Big);
     let code = obj.add_section(Vec::new(), b".text.func".to_vec(), SectionKind::Text);
     obj.append_section_data(code, &0x4e80_0020u32.to_be_bytes(), 4);
     let opd_sec = obj.add_section(Vec::new(), b".opd".to_vec(), SectionKind::Data);
     obj.append_section_data(opd_sec, &[0u8; 24], 8);
-    let mut sym = |name: &str, section, value| {
-        obj.add_symbol(Symbol {
-            name: name.as_bytes().to_vec(),
-            value,
-            size: 0,
-            kind: SymbolKind::Text,
-            scope: SymbolScope::Linkage,
-            weak: false,
-            section: SymbolSection::Section(section),
-            flags: SymbolFlags::None,
-        })
-    };
-    let entry = sym(".L.func", code, 0);
-    sym("func", opd_sec, 0);
-    obj.add_relocation(
-        opd_sec,
-        Relocation {
-            offset: 0,
-            symbol: entry,
-            addend: 0,
-            flags: RelocationFlags::Elf {
-                r_type: object::elf::R_PPC64_ADDR64,
-            },
-        },
-    )
-    .expect("relocation");
+    let entry = defined(&mut obj, ".L.func", code, 0);
+    defined(&mut obj, "func", opd_sec, 0);
+    reloc(&mut obj, opd_sec, 0, entry, 0, object::elf::R_PPC64_ADDR64);
     let bytes = obj.write().expect("write");
 
     let file = object::File::parse(&bytes[..]).expect("parse");

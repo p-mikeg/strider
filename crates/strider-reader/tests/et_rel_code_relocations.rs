@@ -11,10 +11,10 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use object::write::{Object, Relocation, Symbol, SymbolId, SymbolSection};
+use common::write_object::{defined, reloc, undefined};
+use object::write::{Object, Symbol, SymbolId, SymbolSection};
 use object::{
-    Architecture, BinaryFormat, Endianness, RelocationFlags, SectionKind, SymbolFlags, SymbolKind,
-    SymbolScope, elf,
+    Architecture, BinaryFormat, Endianness, SectionKind, SymbolFlags, SymbolKind, SymbolScope, elf,
 };
 use object::{Object as _, ObjectSymbol as _};
 use strider_reader::MemRegionsLookupTable;
@@ -46,57 +46,6 @@ fn symbol_address(bytes: &[u8], name: &str) -> u64 {
     layout
         .extern_address(sym.index().0)
         .unwrap_or_else(|| layout.symbol_address(&sym))
-}
-
-fn defined(
-    obj: &mut Object<'_>,
-    name: &str,
-    section: object::write::SectionId,
-    value: u64,
-) -> SymbolId {
-    obj.add_symbol(Symbol {
-        name: name.as_bytes().to_vec(),
-        value,
-        size: 0,
-        kind: SymbolKind::Text,
-        scope: SymbolScope::Linkage,
-        weak: false,
-        section: SymbolSection::Section(section),
-        flags: SymbolFlags::None,
-    })
-}
-
-fn undefined(obj: &mut Object<'_>, name: &str) -> SymbolId {
-    obj.add_symbol(Symbol {
-        name: name.as_bytes().to_vec(),
-        value: 0,
-        size: 0,
-        kind: SymbolKind::Unknown,
-        scope: SymbolScope::Linkage,
-        weak: false,
-        section: SymbolSection::Undefined,
-        flags: SymbolFlags::None,
-    })
-}
-
-fn reloc(
-    obj: &mut Object<'_>,
-    section: object::write::SectionId,
-    offset: u64,
-    symbol: SymbolId,
-    addend: i64,
-    r_type: u32,
-) {
-    obj.add_relocation(
-        section,
-        Relocation {
-            offset,
-            symbol,
-            addend,
-            flags: RelocationFlags::Elf { r_type },
-        },
-    )
-    .expect("relocation");
 }
 
 /// `h(x) { return ext_fn(x) + 1; }`: the `call` is to a symbol no section

@@ -19,17 +19,14 @@ mod common;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use common::elf_fixture::{self as fx, RelOpts, RelPlacement, RelTable};
 use object::Endianness::{Big, Little};
 use object::elf;
 use rsleigh::{MemReader, VnAddr, VnSpace};
 use strider_reader::elf::{LoadFilter, RegionSource};
-use strider_reader::{
-    ElfFileMemReader, MemRegion, MemRegionsLookupTable, OwnedElf, ReadOnlyMemory,
-};
+use strider_reader::{ElfFileMemReader, MemRegionsLookupTable, OwnedElf, ReadOnlyMemory};
 
 const SOURCES: [(&str, RegionSource); 2] = [
     ("auto", RegionSource::Auto),
@@ -71,40 +68,17 @@ impl Fnv {
     }
 }
 
-/// The addresses some region covers, as sorted disjoint ranges.
-fn covered_ranges(regions: &[MemRegion]) -> Vec<Range<u64>> {
-    merged(
-        regions
-            .iter()
-            .map(|r| r.start_addr()..r.end_addr())
-            .collect(),
-    )
-}
-
-/// `all` as sorted disjoint ranges.
-fn merged(mut all: Vec<Range<u64>>) -> Vec<Range<u64>> {
-    all.sort_by_key(|r| r.start);
-    let mut out: Vec<Range<u64>> = Vec::new();
-    for r in all {
-        match out.last_mut() {
-            Some(last) if r.start <= last.end => last.end = last.end.max(r.end),
-            _ => out.push(r),
-        }
-    }
-    out
-}
-
 /// Hashes every address of `ranges` that is `present` or holds a hole: the
 /// 1-, 2-, 4- and 8-byte reads there, each the bytes it served or the reason
 /// it served none, and the hole's relocation type.
 fn probe(
-    ranges: &[Range<u64>],
+    ranges: &[(u64, u64)],
     present: impl Fn(u64) -> bool,
     read: impl Fn(u64, &mut [u8]) -> Result<usize, u8>,
     hole_at: impl Fn(u64) -> Option<u32>,
 ) -> u64 {
     let mut h = Fnv::default();
-    for addr in ranges.iter().cloned().flatten() {
+    for addr in ranges.iter().flat_map(|&(lo, hi)| lo..hi) {
         let hole = hole_at(addr);
         if !present(addr) && hole.is_none() {
             continue;
@@ -133,6 +107,8 @@ fn rom_refusal(e: &anyhow::Error) -> u8 {
         2
     } else if msg.contains("not mapped") || msg.contains("spans past mapped memory") {
         3
+    } else if msg.contains("overflows the address space") {
+        4
     } else {
         panic!("unclassified ROM refusal: {msg}")
     }
@@ -172,7 +148,7 @@ fn rows(out: &mut String, image: &str, elf: anyhow::Result<OwnedElf>) {
                     continue;
                 }
                 let digest = elf.regions(source, filter, relocate).map(|regions| {
-                    let ranges = covered_ranges(&regions);
+                    let ranges = common::spans(&regions);
                     every_view.extend(ranges.iter().cloned());
                     let table = MemRegionsLookupTable::new(regions);
                     probe(
@@ -202,9 +178,8 @@ fn rows(out: &mut String, image: &str, elf: anyhow::Result<OwnedElf>) {
             writable.map_err(|e| refusal(&e)),
         );
     }
-    // Every address some view maps, so a reader serving more than the views
-    // shows.
-    let ranges = merged(every_view);
+    // Every address some view maps.
+    let ranges = common::merge_ranges(every_view);
     let obj = elf.checked_file().expect("parsed above");
     let reader = ElfFileMemReader::from_object(&obj);
     let reader = reader.as_ref().map_err(refusal);
@@ -234,29 +209,9 @@ fn rows(out: &mut String, image: &str, elf: anyhow::Result<OwnedElf>) {
     row(out, image, "file_reader.rom", rom);
 }
 
-/// `fixtures/out/<arch>/*.{elf,o}`, sorted.
-fn fixture_files(root: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    for arch in std::fs::read_dir(root).into_iter().flatten().flatten() {
-        for file in std::fs::read_dir(arch.path())
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
-            let path = file.path();
-            if path.extension().is_some_and(|e| e == "elf" || e == "o") {
-                out.push(path);
-            }
-        }
-    }
-    out.sort();
-    out
-}
-
 /// The overlapping, colliding and copy-amplifying shapes, and one relocation
 /// per `relocs` entry under every placement.
 fn crafted() -> Vec<(String, Vec<u8>)> {
-    use object::elf::{PF_R, PF_W, PF_X};
     let mut out: Vec<(String, Vec<u8>)> = vec![
         (
             "overlapping_loads_rela".into(),
@@ -265,8 +220,8 @@ fn crafted() -> Vec<(String, Vec<u8>)> {
         (
             "overlapping_loads_rx_rw".into(),
             fx::build_overlapping_loads_elf(&[
-                (PF_R | PF_X, 0x100, 0xaa),
-                (PF_R | PF_W, 0x80, 0xbb),
+                (elf::PF_R | elf::PF_X, 0x100, 0xaa),
+                (elf::PF_R | elf::PF_W, 0x80, 0xbb),
             ]),
         ),
         (
@@ -484,8 +439,8 @@ fn by_image_view(digest: &str) -> BTreeMap<&str, &str> {
 )]
 fn every_image_serves_its_recorded_bytes() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let root = manifest.join("../../fixtures/out");
-    let files = fixture_files(&root);
+    let root = common::fixtures_out();
+    let files = common::fixture_images();
     assert!(
         !files.is_empty(),
         "{} holds no fixtures; run `make -C fixtures`",

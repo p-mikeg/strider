@@ -432,8 +432,7 @@ fn read_u32_le_at(regions: &[strider_reader::MemRegion], addr: u64) -> Option<u3
 }
 
 fn fixture_path(arch: &str, case: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/out")
+    common::fixtures_out()
         .join(arch)
         .join(format!("{case}.elf"))
 }
@@ -769,8 +768,7 @@ fn a_read_straddling_a_relocated_site_serves_the_patched_bytes() {
 /// `r_type` dispatch. Unpatched the table reads as eight zeros.
 #[test]
 fn ppc_rel32_patches_a_rodata_jump_table() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/out/ppc32be/switch_masked_loop.o");
+    let path = common::fixtures_out().join("ppc32be/switch_masked_loop.o");
     let filter = strider_reader::elf::LoadFilter::CodeAndReadOnly;
     let regions = common::regions_of_file(&path, filter, true);
     let owned = strider_reader::load_elf(&path).expect("load_elf");

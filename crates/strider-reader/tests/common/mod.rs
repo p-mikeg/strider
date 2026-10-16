@@ -6,6 +6,64 @@
 
 pub(crate) mod elf_fixture;
 pub(crate) mod reader_contract;
+pub(crate) mod write_object;
+
+use std::path::PathBuf;
+
+/// `fixtures/out`, where `make -C fixtures` writes the built images.
+pub(crate) fn fixtures_out() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/out")
+}
+
+/// Every built `fixtures/out/<arch>/*.{elf,o}`, sorted; empty when nothing
+/// is built.
+pub(crate) fn fixture_images() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for arch in std::fs::read_dir(fixtures_out())
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let arch = arch.path();
+        if !arch.is_dir() {
+            continue;
+        }
+        for file in std::fs::read_dir(&arch)
+            .expect("an arch directory")
+            .flatten()
+        {
+            let path = file.path();
+            if path.extension().is_some_and(|e| e == "elf" || e == "o") {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// `ranges` sorted, with everything overlapping or touching merged.
+pub(crate) fn merge_ranges(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
+    ranges.sort_unstable();
+    let mut out: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
+    for (lo, hi) in ranges {
+        match out.last_mut() {
+            Some(last) if lo <= last.1 => last.1 = last.1.max(hi),
+            _ => out.push((lo, hi)),
+        }
+    }
+    out
+}
+
+/// Every region's extent, ascending and merged.
+pub(crate) fn spans(regions: &[strider_reader::MemRegion]) -> Vec<(u64, u64)> {
+    merge_ranges(
+        regions
+            .iter()
+            .map(|r| (r.start_addr(), r.end_addr()))
+            .collect(),
+    )
+}
 
 /// Everything a region maps, read through the public API so relocation patches
 /// land.
