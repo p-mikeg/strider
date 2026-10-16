@@ -461,8 +461,7 @@ fn strip_commutative_const_scale(
     function: &strider_ir::Function,
     v: ValueId,
 ) -> Option<(ValueId, u128)> {
-    let (x, c) = crate::const_eval::var_and_const(function, function.producer(v))?;
-    Some((x, function.int_const_u128(c)?))
+    crate::const_eval::var_and_const(function, function.producer(v))
 }
 
 /// One constant scaling on the way from a cell to `v`, collected outermost
