@@ -635,7 +635,7 @@ fn known_bits_fold_absorbs_cone_through_unstamped_intermediate() -> Result<()> {
             &[root],
         );
         let [new_root_value] = edit.node_outputs_exact::<1>(new_root)?;
-        edit.replace_value(root_value, new_root_value)?;
+        edit.replace_value(root_value, new_root_value);
     }
 
     run_to_fixed_point(&KnownBits, &mut fg)?;
