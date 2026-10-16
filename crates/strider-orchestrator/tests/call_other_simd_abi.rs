@@ -54,7 +54,6 @@ fn lift(
     let cfg = h.build_cfg(
         strider_cfg::MachineInsnAddr::from(entry),
         &strider_cfg::CfgOptions::default(),
-        &Default::default(),
     )?;
     let outcome = h.build_ir(&cfg, cc)?;
     Ok(Lifted {

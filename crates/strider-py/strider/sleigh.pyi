@@ -95,8 +95,8 @@ class CallingConvention:
     """How a function receives arguments, returns values, and which
     registers it may clobber.
 
-    Every `analyze` call takes one. Use a preset, `custom` for an unusual ABI,
-    or `no_return` to mark a callee that never returns.
+    Every `analyze` call takes one. Use a preset, or `custom` for an unusual
+    ABI.
     """
     @classmethod
     def x86_64_systemv(cls) -> CallingConvention:
@@ -199,17 +199,6 @@ class CallingConvention:
         other raises `StriderError` at `analyze` time. So do a `stack_pointer`
         not as wide as the arch's addresses and, with `stack_arg_base` set, a
         `stack_arg_increment` other than that width.
-        """
-        ...
-    def no_return(self) -> CallingConvention:
-        """A copy of this convention marked as never returning, for callees
-        like `exit`, `abort`, or `__stack_chk_fail`.
-
-        Use it as a per-address override, e.g.
-        `CallingConvention.x86_64_systemv().no_return()`. The calling region
-        terminates at such a call, so the unreachable fall-through is not
-        lifted as live code. That matters mid-function too, e.g.
-        `if (err) panic();` followed by real code.
         """
         ...
     def preserves_all(self) -> CallingConvention:

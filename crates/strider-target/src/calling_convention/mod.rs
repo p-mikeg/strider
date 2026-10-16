@@ -103,10 +103,6 @@ pub struct BuiltCallingConvention {
     /// `true` if a call clobbers NO register (every register callee-saved),
     /// as for `__fentry__` / `mcount`.
     pub preserves_all_registers: bool,
-    /// `true` for a `noreturn` callee (`exit`, `abort`, `panic`,
-    /// `__stack_chk_fail`), attached to a call TARGET via a per-address CC
-    /// override.
-    pub no_return: bool,
     /// The register the ABI guarantees holds the function's own entry address
     /// on entry to it: PPC64 ELFv2 `r12` (2.2.2.1) and MIPS abicalls `t9`,
     /// which the prologue turns into the TOC / GOT pointer. The lifter binds it
@@ -136,7 +132,6 @@ impl Default for BuiltCallingConvention {
             link_register_vn: None,
             preserves_memory: false,
             preserves_all_registers: false,
-            no_return: false,
             entry_address_vn: None,
         }
     }
@@ -1101,7 +1096,6 @@ impl CallingConvention {
             link_register_vn,
             preserves_memory: self.preserves_memory,
             preserves_all_registers: self.preserves_all_registers,
-            no_return: false,
             entry_address_vn,
         };
         built.validate()?;

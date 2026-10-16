@@ -10,7 +10,7 @@ register modelled as an SSA variable.
 - `Lifter<R>`, the engine: built once per architecture over an
   `rsleigh::Sleigh<R>` and reused across functions and rebuild rounds, since
   `Sleigh::regs()` is expensive and the register table never changes.
-  `build_cfg(entry, cfg_opts, per_address_ccs)` decodes; `build_ir(cfg, cc)` /
+  `build_cfg(entry, cfg_opts)` decodes; `build_ir(cfg, cc)` /
   `build_ir_with(cfg, cc, opts)` lift. The calling convention is per function,
   hence an argument rather than engine state.
 - `LiftOutcome`: the `Function`, plus `unresolved_branches` (each unresolved

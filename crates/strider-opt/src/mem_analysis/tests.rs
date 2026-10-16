@@ -1389,7 +1389,6 @@ mod heap_tests {
                 link_register_vn: None,
                 preserves_memory,
                 preserves_all_registers: false,
-                no_return: false,
                 entry_address_vn: None,
             };
             let mut b = FunctionBuilder::new(

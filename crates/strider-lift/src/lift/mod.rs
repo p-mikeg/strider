@@ -198,13 +198,11 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         &self.declared_reg_vns
     }
 
-    /// `per_address_ccs` supplies CC overrides for call TARGETS.  Pass an
-    /// empty map for no overrides.
+    /// The CFG of the function at `entry`.
     pub fn build_cfg(
         &mut self,
         entry: strider_cfg::MachineInsnAddr,
         cfg_opts: &strider_cfg::CfgOptions,
-        per_address_ccs: &rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Result<strider_cfg::Cfg> {
         // A prior function's `globalset` holds forward until the next change
         // point and leaks into this cold entry on a reused engine: pin the
@@ -244,7 +242,6 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             .with_transient_defaults(&self.transient_defaults)
             .with_flow_commit_defaults(&self.flow_commit_defaults)
             .with_user_op_names(&self.user_op_names)
-            .with_per_address_ccs(per_address_ccs)
             .build()
     }
 
@@ -973,7 +970,6 @@ mod tests {
             0x70, 0x47, 0x00, 0xbf, // 0x100c padding
             0x70, 0x47, 0x00, 0xbf, // 0x1010 function B
         ];
-        let empty = rustc_hash::FxHashMap::default();
         let opts = strider_cfg::CfgOptions::default();
         let new_lifter = || {
             let reader = rsleigh::mem_readers::BufMemReader::new(code.clone(), 0x1000);
@@ -984,11 +980,9 @@ mod tests {
 
         // Lift A (the polluter) first, then B on the same engine.
         let mut lifter = new_lifter();
-        let cfg_a = lifter
-            .build_cfg(0x1001u64.into(), &opts, &empty)
-            .expect("A cfg");
+        let cfg_a = lifter.build_cfg(0x1001u64.into(), &opts).expect("A cfg");
         lifter.build_ir(&cfg_a, cc.clone()).expect("A ir");
-        let cfg_b = lifter.build_cfg(0x1011u64.into(), &opts, &empty).expect(
+        let cfg_b = lifter.build_cfg(0x1011u64.into(), &opts).expect(
             "reused lifter must pin B's Thumb mode so its decode does not inherit A's ARM mode",
         );
         let reused_b = lifter.build_ir(&cfg_b, cc.clone()).expect("B ir");
@@ -1002,7 +996,7 @@ mod tests {
         // Same B on a fresh lifter: the ground-truth decode.
         let mut fresh = new_lifter();
         let cfg_fresh = fresh
-            .build_cfg(0x1011u64.into(), &opts, &empty)
+            .build_cfg(0x1011u64.into(), &opts)
             .expect("fresh B cfg");
         let fresh_b = fresh.build_ir(&cfg_fresh, cc).expect("fresh B ir");
         assert_eq!(
@@ -1036,13 +1030,12 @@ mod tests {
         let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
         let mut lifter = super::Lifter::new(arch, sleigh).expect("lifter");
         let opts = strider_cfg::CfgOptions::default();
-        let empty = rustc_hash::FxHashMap::default();
 
         // Entry passed with the Thumb bit set (0x1001). Under the ARM default
         // this would try to decode the misaligned 0x1001 as ARM; the bit must
         // select Thumb and decode at 0x1000.
         let cfg = lifter
-            .build_cfg(0x1001u64.into(), &opts, &empty)
+            .build_cfg(0x1001u64.into(), &opts)
             .expect("the Thumb bit must select Thumb mode and decode at addr & !1");
         let ir = lifter.build_ir(&cfg, cc).expect("ir");
         assert!(
@@ -1167,10 +1160,7 @@ mod tests {
         let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
         let mut lifter = super::Lifter::new(arch, sleigh).expect("lifter");
         let opts = strider_cfg::CfgOptions::default();
-        let empty = rustc_hash::FxHashMap::default();
-        let cfg = lifter
-            .build_cfg(0x1000u64.into(), &opts, &empty)
-            .expect("cfg");
+        let cfg = lifter.build_cfg(0x1000u64.into(), &opts).expect("cfg");
 
         let tracked = lifter.find_all_unique_vns(&cfg);
         assert!(!tracked.is_empty(), "the lift tracks something");
@@ -1205,7 +1195,6 @@ mod tests {
             .expect("build cc");
         // `mov rax, [rbx]` then `ret`: the load is what carries a space id.
         let code = vec![0x48u8, 0x8b, 0x03, 0xc3];
-        let empty = rustc_hash::FxHashMap::default();
         let opts = strider_cfg::CfgOptions::default();
         let new_lifter = || {
             let reader = rsleigh::mem_readers::BufMemReader::new(code.clone(), 0x1000);
@@ -1215,9 +1204,7 @@ mod tests {
         };
 
         let mut owner = new_lifter();
-        let cfg = owner
-            .build_cfg(0x1000u64.into(), &opts, &empty)
-            .expect("cfg");
+        let cfg = owner.build_cfg(0x1000u64.into(), &opts).expect("cfg");
         assert!(
             cfg.regions()
                 .flat_map(|region| region.insns.iter())

@@ -37,12 +37,12 @@ fn repeating_one_entry_does_not_exhaust_the_context_commit_log() {
 
     for entry in [0x1001u64, 0x1010] {
         lifter
-            .build_cfg(entry.into(), &Default::default(), &Default::default())
+            .build_cfg(entry.into(), &Default::default())
             .expect("build_cfg");
         let decoded = thumb_decode(&lifter);
         for _ in 0..CALLS {
             lifter
-                .build_cfg(entry.into(), &Default::default(), &Default::default())
+                .build_cfg(entry.into(), &Default::default())
                 .expect("build_cfg");
         }
         assert!(

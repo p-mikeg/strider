@@ -623,7 +623,7 @@ fn random_control_flow_lifts_to_what_the_code_computes() {
         let (rdi, rcx) = (cc.arg_passing_regs[0], cc.arg_passing_regs[3]);
         let (rax, rsp) = (cc.ret_val_regs[0], cc.stack_vn);
         let cfg = lifter
-            .build_cfg(base.into(), &opts.cfg, opts.per_address_ccs)
+            .build_cfg(base.into(), &opts.cfg)
             .unwrap_or_else(|e| panic!("seed {g}: cfg: {e:#}\n{blocks:?}"));
         let succs = successors(blocks);
         let reach = graph_oracle::reachable(&succs, &[0], None);

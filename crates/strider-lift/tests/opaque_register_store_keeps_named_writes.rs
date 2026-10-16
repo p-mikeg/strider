@@ -25,9 +25,7 @@ fn lift(
     let regs = lifter.sleigh_regs().clone();
     let cc: BuiltCallingConvention = cc.build(&regs).expect("cc");
     let opts = strider_lift::LiftOptions::default();
-    let cfg = lifter
-        .build_cfg(BASE.into(), &opts.cfg, opts.per_address_ccs)
-        .expect("cfg");
+    let cfg = lifter.build_cfg(BASE.into(), &opts.cfg).expect("cfg");
     let f = lifter
         .build_ir_with(&cfg, cc.clone(), &opts)
         .expect("ir")

@@ -125,22 +125,3 @@ def test_an_empty_custom_abi_does_not_repr_as_a_preset():
 def test_a_custom_cc_repr_names_its_arch():
     assert repr(_custom_cc(SleighArch.x86_64())) == "<CallingConvention custom for x86_64>"
     assert repr(CallingConvention.x86_64_systemv()) == "CallingConvention.x86_64_systemv()"
-
-
-def test_no_return_as_the_main_cc_is_rejected():
-    """`no_return` describes a CALLEE; `build_cc` silently dropped it while
-    `per_address_ccs` honoured it."""
-    lift = strider.lift.lifter(SleighArch.x86_64(), _mem())
-    with pytest.raises(strider.StriderError, match=r"per_address_ccs"):
-        lift.analyze(0x1000, CallingConvention.x86_64_systemv().no_return())
-
-
-def test_no_return_still_works_as_a_per_address_override():
-    lift = strider.lift.lifter(SleighArch.x86_64(), _mem())
-    opts = strider.lift.LifterOptions(
-        per_address_ccs={0x2000: CallingConvention.x86_64_systemv().no_return()}
-    )
-    _cfg, fn, _unresolved = lift.analyze(
-        0x1000, CallingConvention.x86_64_systemv(), opts
-    )
-    assert fn.node_count() > 0

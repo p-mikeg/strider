@@ -22,7 +22,6 @@ fn x86_64_ud2_terminates_cleanly() {
         .build_cfg(
             MachineInsnAddr::from(entry),
             &strider_cfg::CfgOptions::default(),
-            &Default::default(),
         )
         .expect("cfg");
 
@@ -51,7 +50,6 @@ fn aarch64_brk_terminates_cleanly() {
         .build_cfg(
             MachineInsnAddr::from(entry),
             &strider_cfg::CfgOptions::default(),
-            &Default::default(),
         )
         .expect("cfg");
 
@@ -82,7 +80,6 @@ fn mips_break_terminates_cleanly() {
         .build_cfg(
             MachineInsnAddr::from(entry),
             &strider_cfg::CfgOptions::default(),
-            &Default::default(),
         )
         .expect("cfg");
 
@@ -121,7 +118,7 @@ fn call_other_override_restores_the_fall_through() {
         ..Default::default()
     };
     let cfg = strider
-        .build_cfg(MachineInsnAddr::from(entry), &opts, &Default::default())
+        .build_cfg(MachineInsnAddr::from(entry), &opts)
         .expect("cfg");
 
     assert!(

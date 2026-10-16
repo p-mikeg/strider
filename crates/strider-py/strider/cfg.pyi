@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Mapping, Optional, Sequence, Union
+from typing import Iterable, Literal, Mapping, Optional, Sequence, Union
 
 from .ir import Node
 from .lift import Lifter
@@ -209,6 +209,10 @@ class CfgOptions:
     the four footprint-free classes, or `CallOtherAbi.custom(...)` naming
     implicit registers.
 
+    `no_return_targets` lists direct-call targets that never return (`exit`,
+    `panic`): a call to one ends its block, under `build_cfg` and `analyze`
+    alike.
+
     `data_ranges` lists `(start, end)` address ranges, end exclusive, that are
     data rather than code (an ARM literal pool): a branch or fall-through into
     one is reported through `Cfg.undecodable_branch_targets`, never decoded.
@@ -235,6 +239,8 @@ class CfgOptions:
     def call_other_abis(self) -> Mapping[str, CallOtherAbi]: ...
     @property
     def data_ranges(self) -> list[tuple[int, int]]: ...
+    @property
+    def no_return_targets(self) -> frozenset[int]: ...
     def __init__(
         self,
         *,
@@ -243,16 +249,17 @@ class CfgOptions:
         known_targets: Mapping[int, Union[Sequence[int], Literal["return"]]] = ...,
         call_other_abis: Mapping[str, CallOtherAbi] = ...,
         data_ranges: Sequence[tuple[int, int]] = ...,
+        no_return_targets: Iterable[int] = ...,
     ) -> None:
         """Build the options. Raises `ValueError` for
         `function_max_size=0`."""
         ...
     def with_function_max_size(self, function_max_size: int) -> "CfgOptions":
-        """These options with `function_max_size` set, sharing both tables.
+        """These options with `function_max_size` set, sharing its tables.
         Raises `ValueError` for `0`."""
         ...
     def with_data_ranges(self, data_ranges: Sequence[tuple[int, int]]) -> "CfgOptions":
-        """These options with `data_ranges` replaced, sharing both tables."""
+        """These options with `data_ranges` replaced, sharing its tables."""
         ...
     def _with_elf_data_ranges(self, elf: object) -> "CfgOptions":
         """These options with `elf`'s mapping-symbol data ranges, unless

@@ -65,7 +65,6 @@ pub(crate) fn run_pipeline_x86_64(
         .build_cfg(
             MachineInsnAddr::from(base),
             &strider_cfg::CfgOptions::default(),
-            &Default::default(),
         )
         .expect("cfg build");
     let outcome = strider.build_ir(&cfg, cc).expect("build_ir");

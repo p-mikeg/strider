@@ -40,7 +40,6 @@ fn build(
     l.build_cfg(
         strider_cfg::MachineInsnAddr { addr: at },
         &Default::default(),
-        &rustc_hash::FxHashMap::default(),
     )
     .expect("build_cfg")
 }

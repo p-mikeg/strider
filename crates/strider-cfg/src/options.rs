@@ -1,4 +1,4 @@
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::indirect_resolver::ResolvedTargets;
 use crate::types::PcodeInsnAddr;
@@ -7,6 +7,7 @@ use crate::types::PcodeInsnAddr;
 /// temporary.
 static NO_KNOWN_TARGETS: FxHashMap<PcodeInsnAddr, ResolvedTargets> =
     FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
+static NO_CALL_TARGETS: FxHashSet<u64> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
 
 #[derive(Clone, Debug)]
 pub struct CfgOptions<'a> {
@@ -25,6 +26,9 @@ pub struct CfgOptions<'a> {
     /// Borrowed: a caller seeds a binary-wide table once and analyses one
     /// function per call, so owning it is the whole table per call.
     pub known_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    /// Direct-call targets that never return (`exit`, `abort`); a call to one
+    /// ends its region `NoReturn`. Borrowed, as `known_targets` is.
+    pub no_return_targets: &'a FxHashSet<u64>,
     /// Caller classifications for user-op names, consulted before the built-in
     /// tables.  One override governs both the region terminator and the
     /// emitted node.
@@ -73,6 +77,7 @@ impl Default for CfgOptions<'_> {
             fn_max_size: None,
             allow_code_before_start_addr: false,
             known_targets: &NO_KNOWN_TARGETS,
+            no_return_targets: &NO_CALL_TARGETS,
             call_other_overrides: Default::default(),
             data_ranges: DataRanges::default(),
         }

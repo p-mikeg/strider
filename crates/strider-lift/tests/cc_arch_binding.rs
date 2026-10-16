@@ -36,7 +36,7 @@ fn lift_built_at(
         per_address_ccs: &per_address_ccs,
         ..LiftOptions::default()
     };
-    let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg, opts.per_address_ccs)?;
+    let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg)?;
     lifter.build_ir_with(&cfg, built, &opts)?;
     Ok(())
 }

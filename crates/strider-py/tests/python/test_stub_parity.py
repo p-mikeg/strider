@@ -603,7 +603,6 @@ _ZERO_ARG_RETURNS = {
         ("SleighArch", "name"): "str",
         ("SleighArch", "endianness"): "str",
         ("CallingConvention", "x86_64_systemv"): "CallingConvention",
-        ("CallingConvention", "no_return"): "CallingConvention",
         ("CallingConvention", "preserves_all"): "CallingConvention",
         ("CallingConvention", "preserves_regs"): "CallingConvention",
         ("CallingConvention", "name"): "str",

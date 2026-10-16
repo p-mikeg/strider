@@ -54,9 +54,7 @@ fn a_dropped_arm_region_is_removed_and_the_function_lifts() {
         },
         ..Default::default()
     };
-    let cfg = lifter
-        .build_cfg(BASE.into(), &opts.cfg, opts.per_address_ccs)
-        .expect("cfg");
+    let cfg = lifter.build_cfg(BASE.into(), &opts.cfg).expect("cfg");
 
     assert_eq!(
         cfg.isa_mode_conflicts()

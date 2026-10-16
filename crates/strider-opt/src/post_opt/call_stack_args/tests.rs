@@ -943,7 +943,6 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
         link_register_vn: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        no_return: false,
         ..Default::default()
     };
     override_cc.validate().unwrap();

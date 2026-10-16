@@ -86,9 +86,6 @@ where
     /// Structural CFG build only: no lift, no optimisation, no
     /// indirect-branch resolution.
     ///
-    /// No per-address CCs are applied: a direct call to a callee declared
-    /// `no_return` there ends its region under `analyze` but not here.
-    ///
     /// # Errors
     ///
     /// Propagates CFG-build failures (see [`Lifter::build_cfg`]).
@@ -97,12 +94,8 @@ where
         entry: u64,
         cfg_opts: &strider_cfg::CfgOptions,
     ) -> Result<strider_cfg::Cfg> {
-        // `CfgOptions` carries no per-address CCs.
-        self.lifter.build_cfg(
-            MachineInsnAddr::from(entry),
-            cfg_opts,
-            &rustc_hash::FxHashMap::default(),
-        )
+        self.lifter
+            .build_cfg(MachineInsnAddr::from(entry), cfg_opts)
     }
 
     /// Lift, optimise, and resolve indirect branches at `entry`.
@@ -466,7 +459,7 @@ where
 
         // A `BranchIndirect` outside `known_targets` is deferred here and
         // resolved at the full-function IR level by the classifier post-pass.
-        let cfg = lifter.build_cfg(start_addr, &working.cfg, working.per_address_ccs)?;
+        let cfg = lifter.build_cfg(start_addr, &working.cfg)?;
         // `cc` is moved all the way into `Function::default_cc`, but the
         // resolve loop calls this again on the next re-lift, so the clone is
         // unavoidable here.

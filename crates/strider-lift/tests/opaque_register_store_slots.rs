@@ -42,9 +42,7 @@ fn opaque_register_store_gives_colliding_registers_distinct_slots() {
         .build(lifter.sleigh_regs())
         .expect("cc");
     let opts = strider_lift::LiftOptions::default();
-    let cfg = lifter
-        .build_cfg(0x1000u64.into(), &opts.cfg, opts.per_address_ccs)
-        .expect("cfg");
+    let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg).expect("cfg");
     let f = lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function;
 
     let slot_of = |off: u64| {

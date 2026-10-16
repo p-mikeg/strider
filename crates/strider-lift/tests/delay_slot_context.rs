@@ -42,9 +42,7 @@ fn insns(lifter: &mut Lifter<BufMemReader<Vec<u8>>>, entry: u64, size: u64) -> V
         fn_max_size: Some(size),
         ..Default::default()
     };
-    let cfg = lifter
-        .build_cfg(entry.into(), &opts, &Default::default())
-        .expect("build_cfg");
+    let cfg = lifter.build_cfg(entry.into(), &opts).expect("build_cfg");
     let mut out: Vec<String> = cfg
         .regions()
         .flat_map(|r| r.insns.iter())
@@ -62,6 +60,6 @@ fn a_mips16_function_at_a_slot_address_does_not_change_the_branch_owning_it() {
         fn_max_size: Some(0x20),
         ..Default::default()
     };
-    let _ = reused.build_cfg((BASE + 5).into(), &opts, &Default::default());
+    let _ = reused.build_cfg((BASE + 5).into(), &opts);
     assert_eq!(insns(&mut reused, BASE, 24), alone);
 }

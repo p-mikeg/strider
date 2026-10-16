@@ -1146,7 +1146,6 @@ fn validate_rejects_negative_stack_arg_base_offset() {
         link_register_vn: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        no_return: false,
         ..Default::default()
     };
     assert!(

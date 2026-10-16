@@ -137,11 +137,7 @@ fn seating_cost(count: usize) -> (usize, usize) {
     .expect("create Sleigh");
     let mut lifter = crate::lift::Lifter::new(arch, sleigh).expect("lifter");
     let cfg = lifter
-        .build_cfg(
-            0x1000u64.into(),
-            &strider_cfg::CfgOptions::default(),
-            &rustc_hash::FxHashMap::default(),
-        )
+        .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
         .expect("cfg");
     let cc = strider_target::CallingConvention::x86_64_systemv()
         .build(lifter.sleigh_regs())
