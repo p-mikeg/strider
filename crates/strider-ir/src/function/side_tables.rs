@@ -87,7 +87,8 @@ pub struct SideTables {
     /// clobbers.  The call node carries no such value, so this is the only
     /// record that a callee may have received it.
     frame_address_in_call_register: bool,
-    /// The allocator set every `memory_offsets` entry was computed under.
+    /// The allocator set every `memory_offsets` entry and the frame-escape
+    /// verdict were computed under.
     memory_allocators: FxHashSet<u64>,
 }
 
@@ -222,7 +223,8 @@ impl SideTables {
         self.frame_escape.set(None);
     }
 
-    /// The allocator set every memoized decomposition was computed under.
+    /// The allocator set every memoized decomposition and the frame-escape
+    /// verdict were computed under.
     #[inline]
     pub fn memory_allocators(&self) -> &FxHashSet<u64> {
         &self.memory_allocators
@@ -247,7 +249,7 @@ impl SideTables {
         self.frame_escape.set(Some(escapes));
     }
 
-    /// Invalidates the frame-escape verdict alone, for a post-pass that keeps
+    /// Invalidates the frame-escape verdict alone, after a post-pass, keeping
     /// the memory classes.
     #[inline]
     pub fn clear_frame_escape(&self) {

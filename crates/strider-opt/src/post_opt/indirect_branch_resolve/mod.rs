@@ -162,13 +162,11 @@ pub struct ClassifiedSites {
 /// Classifies every live `IndirectBranch` placeholder, and re-derives every
 /// live `Switch` from its retained selector. Reads `f` only.
 ///
-/// `options` are the ones `f` was optimised under: the table walk reads the
-/// memory-class memo the pipeline stamped under `options.assumptions`. With
-/// `!options.resolve_indirect_branches`, `resolved` is empty.
-///
-/// `options.assumptions.noalias_allocators` must be the set `f` was last
-/// optimized under ([`strider_ir::SideTables::memory_allocators`]); another
-/// set debug-panics.
+/// `options` are the ones `f` was optimized under: the table walk reads the
+/// memory-class memo, so `options.assumptions.noalias_allocators` must be the
+/// set it was computed under ([`strider_ir::SideTables::memory_allocators`]);
+/// another set debug-panics. With `!options.resolve_indirect_branches`,
+/// `resolved` is empty.
 ///
 /// A dispatch value only becomes classifiable once the optimizer has folded
 /// it into a recognizable shape, so `f` is the converged function.

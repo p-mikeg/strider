@@ -145,7 +145,8 @@ class LoadForward:
 
 class StackOffsetDetect:
     """Annotates stack-pointer-relative loads and stores with their frame
-    offsets."""
+    offsets, for a custom pipeline whose later post-pass reads them: every run
+    records them after its post-passes anyway."""
     def __init__(self) -> None:
         """Build the pass."""
         ...

@@ -100,7 +100,7 @@ pub(crate) fn find_unique_if(graph: &Graph) -> NodeId {
 }
 
 /// Memory-graph shapes the memory tests share. The scaling tests analyse most
-/// at two sizes, each built over 64-bit constant addresses so no SP phi needs
+/// of them at two sizes, each built over 64-bit constant addresses so no SP phi needs
 /// collapsing first.
 pub(crate) mod memory_shapes {
     use strider_ir::node::ValueType;
@@ -433,6 +433,7 @@ pub(crate) mod memory_shapes {
     /// call f
     /// load  sp'+0
     /// ```
+    ///
     /// Returns the builder, its terminator not yet built, and the reload.
     pub(crate) fn stack_top_spill() -> crate::Result<(FunctionBuilder, Value)> {
         let sp = strider_ir_test_utils::stack_vn_x86();

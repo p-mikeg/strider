@@ -150,9 +150,8 @@ fn analyze_seats_pre_seeded_known_targets_from_analyze_options() {
 #[test]
 fn outer_loop_resolves_via_stack_load_forward_for_x86_64_push_pop() {
     // `push imm32; pop rax; jmp rax` is structurally a tail call. After
-    // StackOffsetDetect + LoadForward the placeholder's dispatch input
-    // folds to IntConst(K); the classifier reads that live input
-    // and classifies Single(K). K lies outside the function range (below
+    // LoadForward the placeholder's dispatch input folds to IntConst(K); the
+    // classifier reads that live input and classifies Single(K). K lies outside the function range (below
     // start_addr), so the orchestrator seats it as a tail call and the
     // rebuild lowers it to `Call(K) + Return`.
     let k = 0x500u64;

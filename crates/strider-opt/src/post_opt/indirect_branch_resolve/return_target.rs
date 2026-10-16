@@ -84,6 +84,9 @@ enum StoreEffect {
 }
 
 impl<'f> ReturnTargets<'f> {
+    /// The verifier for `function`'s return sites under `assumptions`, with no
+    /// claim decided yet; each query reuses the claims earlier ones settled.
+    ///
     /// `assumptions.noalias_allocators` must be the set `function` was last
     /// optimized under ([`strider_ir::SideTables::memory_allocators`]);
     /// another set debug-panics.
