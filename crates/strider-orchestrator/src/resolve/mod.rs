@@ -14,7 +14,8 @@ use strider_cfg::{Incompleteness, MachineInsnAddr, PcodeInsnAddr, Reason, Resolv
 
 use crate::{AnalyzeOptions, AnalyzeResult, Strider};
 use reports::{
-    DerivedChannels, live_unresolved_branches, refusals, seated_arm_losses, unverified_seeded_sites,
+    DerivedChannels, caller_seeded_return, live_unresolved_branches, refusals, seated_arm_losses,
+    unverified_seeded_sites,
 };
 pub(crate) use round::Classifier;
 use round::{Resolutions, Round, flowing_isa_bits};
@@ -223,10 +224,8 @@ impl<'s> LoopState<'s> {
         // floor they can be the same set, so a slice scan per element is
         // quadratic.
         let seated_returns: FxHashSet<_> = cfg.link_register_seated().iter().copied().collect();
-        returns.retain(|addr| {
-            !seated_returns.contains(addr)
-                || !matches!(settled.seed(*addr), Some(ResolvedTargets::LinkRegister))
-        });
+        returns
+            .retain(|addr| !seated_returns.contains(addr) || !caller_seeded_return(settled, *addr));
         unresolved.append(&mut returns);
         let mut unverified = unverified_seeded_sites(&cfg, &switches, &unclassified, settled);
         // Derived once from the final cfg, then extended with the rounds'

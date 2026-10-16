@@ -158,7 +158,7 @@ pub(super) fn unverified_seeded_sites(
     out.extend(
         cfg.link_register_seated()
             .iter()
-            .filter(|addr| settled.seed(**addr).is_some()),
+            .filter(|addr| caller_seeded_return(settled, **addr)),
     );
     // A `TailCall` seat consumes the site the same way: an answer of one
     // target outside the function replaces the dispatch, and any other arm it
@@ -167,6 +167,12 @@ pub(super) fn unverified_seeded_sites(
     out.sort_unstable();
     out.dedup();
     out
+}
+
+/// Whether the caller seeded `site`'s `Return`. A `[]` seed does not: it
+/// withdraws nothing, so a `Return` seated there is the classifier's.
+pub(super) fn caller_seeded_return(settled: &SiteTable<'_>, site: PcodeInsnAddr) -> bool {
+    matches!(settled.seed(site), Some(ResolvedTargets::LinkRegister))
 }
 
 /// The two non-placeholder channels `live_unresolved_branches` merges.
