@@ -64,22 +64,32 @@ fn a_site_the_loop_abandoned_is_republished_without_its_seat() {
     );
     assert!(
         result
-            .unresolved_indirect_branches
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
             .iter()
             .any(|a| a.machine_addr.addr == SITE),
         "the abandoned site is reported unresolved; got {:?}",
-        result.unresolved_indirect_branches,
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>(),
     );
     // The complement, which `is_complete` cannot see: the unresolved entry
     // alone already makes it false, so only this pins that an abandoned site
     // holding no arms never also claims its answer is whole.
     assert!(
         !result
-            .unverified_seeded_sites
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnverifiedSeed)
+            .collect::<Vec<_>>()
             .iter()
             .any(|a| a.machine_addr.addr == SITE),
         "an abandoned site holds no arms to be unverified; got {:?}",
-        result.unverified_seeded_sites,
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnverifiedSeed)
+            .collect::<Vec<_>>(),
     );
     assert!(!result.is_complete());
 }

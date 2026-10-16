@@ -26,7 +26,7 @@ use std::path::Path;
 use common::ALL_ARCHES;
 use common::fixtures::{FIXTURE_ARCHES, Fixture, fixture_arch, fixtures_root};
 use strider_cfg::{Cfg, PcodeInsnAddr, RegionTerminator, ResolvedTarget};
-use strider_orchestrator::{AnalyzeOptions, AnalyzeResult};
+use strider_orchestrator::{AnalyzeOptions, AnalyzeResult, Reason};
 
 /// `<addr>`, or `<addr>.<index>` past a machine instruction's first op.
 fn pc(addr: &PcodeInsnAddr) -> String {
@@ -96,29 +96,23 @@ fn cfg_lines(cfg: &Cfg, out: &mut String) {
 
 /// Each non-empty report channel, by name.
 fn report(result: &AnalyzeResult, out: &mut String) {
-    let AnalyzeResult {
-        cfg: _,
-        function: _,
-        unresolved_indirect_branches,
-        isa_mode_conflicts,
-        interior_branch_targets,
-        unmapped_branch_targets,
-        undecodable_branch_targets,
-        unverified_seeded_sites,
-    } = result;
-    let channels = [
-        ("unresolved_indirect_branches", unresolved_indirect_branches),
-        ("isa_mode_conflicts", isa_mode_conflicts),
-        ("interior_branch_targets", interior_branch_targets),
-        ("unmapped_branch_targets", unmapped_branch_targets),
-        ("undecodable_branch_targets", undecodable_branch_targets),
-        ("unverified_seeded_sites", unverified_seeded_sites),
-    ];
-    for (name, sites) in channels {
+    for reason in Reason::ALL {
+        let sites: Vec<String> = result.incomplete().of(reason).map(|a| pc(&a)).collect();
         if !sites.is_empty() {
-            let sites: Vec<String> = sites.iter().map(pc).collect();
-            let _ = writeln!(out, "{name} [{}]", sites.join(", "));
+            let _ = writeln!(out, "{} [{}]", label(reason), sites.join(", "));
         }
+    }
+}
+
+/// The name each reason's line carried before `Reason::name`.
+fn label(reason: Reason) -> &'static str {
+    match reason {
+        Reason::UnresolvedBranch => "unresolved_indirect_branches",
+        Reason::UnverifiedSeed => "unverified_seeded_sites",
+        Reason::IsaModeConflict => "isa_mode_conflicts",
+        Reason::InteriorTarget => "interior_branch_targets",
+        Reason::UnmappedTarget => "unmapped_branch_targets",
+        Reason::UndecodableTarget => "undecodable_branch_targets",
     }
 }
 

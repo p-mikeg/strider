@@ -13,6 +13,10 @@
   `LifterOptions.with_cfg` are gone; pass the fields to the constructors.
   `ElfLifter.analyze(<name>)` still bounds the options by the symbol's size,
   which leaves `allow_code_before_start_addr` `False`.
+- `Cfg.{isa_mode_conflicts, interior_branch_targets, unmapped_branch_targets,
+  undecodable_branch_targets, unverified_seeded_sites}()` are gone:
+  `Cfg.incomplete` lists every `(address, reason)`, with the reasons in
+  `strider.cfg.INCOMPLETE_REASONS`. `AnalyzeResult.unresolved` is unchanged.
 
 ### Breaking, Rust
 
@@ -32,6 +36,11 @@
   place of `LiftOptions` and `OptOptions`, and
   `Lifter::build_ir_with(cfg, cc, &cfg_opts, &per_address_ccs)` takes the
   `CfgOptions` the cfg was built with.
+- `AnalyzeResult`'s six report fields and `Cfg::{isa_mode_conflicts,
+  interior_branch_targets, unmapped_branch_targets, undecodable_branch_targets}`
+  are gone: `AnalyzeResult::incomplete()` and `Cfg::incompleteness()` return
+  one `Incompleteness` of `(PcodeInsnAddr, Reason)`, read per reason with
+  `of(reason)`. A `build_cfg` CFG also names its unresolved and seated sites.
 
 ### Changed, Python
 

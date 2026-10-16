@@ -57,10 +57,15 @@ fn an_arm_the_cfg_cannot_seat_is_reported_unresolved() {
     );
     assert!(
         result
-            .unresolved_indirect_branches
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
             .iter()
             .any(|a| a.machine_addr.addr == base),
         "the site lost an arm, so it cannot be claimed complete; got {:?}",
-        result.unresolved_indirect_branches,
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>(),
     );
 }

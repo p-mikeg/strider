@@ -103,15 +103,27 @@ fn a_clash_on_a_machine_start_seed_is_reported_at_the_branchind_anchor() {
          or the seed key and the anchor cannot differ",
     );
     assert_eq!(
-        result.isa_mode_conflicts,
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::IsaModeConflict)
+            .collect::<Vec<_>>(),
         vec![PcodeInsnAddr::at_machine_start(CLASH)],
         "the clash is raised once, not once per round",
     );
     assert_eq!(
-        result.unresolved_indirect_branches,
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>(),
         vec![anchor],
         "the frozen site is named by its anchor, the address every other \
          channel uses",
     );
-    assert_eq!(result.unverified_seeded_sites, vec![anchor]);
+    assert_eq!(
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnverifiedSeed)
+            .collect::<Vec<_>>(),
+        vec![anchor]
+    );
 }

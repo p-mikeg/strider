@@ -798,7 +798,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 for target in &targets {
                     let a = PcodeInsnAddr::at_machine_start(target.addr);
                     if self.builder.addr_is_interior_non_boundary(a) {
-                        self.builder.interior_branch_targets.push(a);
+                        self.builder
+                            .incomplete
+                            .insert(a, crate::Reason::InteriorTarget);
                         deferred = true;
                     } else if self.is_branch_tail_call_nocheck(a) {
                         deferred = true;
@@ -856,7 +858,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             (self.isa_mode, self.builder.region_isa_mode.get(&existing))
             && mode != decoded
         {
-            self.builder.isa_mode_conflicts.push(addr);
+            self.builder
+                .incomplete
+                .insert(addr, crate::Reason::IsaModeConflict);
         }
     }
 
@@ -941,7 +945,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                     }
                     if marked_data {
                         self.seal_at_fallthrough_stub(cur_addr)?;
-                        self.builder.undecodable_branch_targets.push(cur_addr);
+                        self.builder
+                            .incomplete
+                            .insert(cur_addr, crate::Reason::UndecodableTarget);
                         return Ok(());
                     }
                     return Err(e);
@@ -1060,19 +1066,25 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             })
             .map(|(start, _)| *start)
             .collect();
-        self.builder.interior_branch_targets.extend(stepped_over);
+        for start in stepped_over {
+            self.builder
+                .incomplete
+                .insert(start, crate::Reason::InteriorTarget);
+        }
     }
 
     /// Seals the region at a fall-through into bytes the reader has none of,
     /// wiring the [`Builder::tail_call_stub`] a direct branch to the same
-    /// address gets and reporting it on [`crate::Cfg::unmapped_branch_targets`].
+    /// address gets and reporting it as [`crate::Reason::UnmappedTarget`].
     ///
     /// The decode never started, so everything behind `cur_addr` is a whole
     /// region; a function abutting the end of the mapped image costs its
     /// trailing edge rather than the whole lift.
     fn seal_at_unmapped_fallthrough(&mut self, cur_addr: PcodeInsnAddr) -> Result<()> {
         self.seal_at_fallthrough_stub(cur_addr)?;
-        self.builder.unmapped_branch_targets.push(cur_addr);
+        self.builder
+            .incomplete
+            .insert(cur_addr, crate::Reason::UnmappedTarget);
         Ok(())
     }
 
@@ -1090,7 +1102,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         };
         self.insns.truncate(call + 1);
         self.finish_current_region(RegionTerminator::NoReturn)?;
-        self.builder.undecodable_branch_targets.push(cur_addr);
+        self.builder
+            .incomplete
+            .insert(cur_addr, crate::Reason::UndecodableTarget);
         Ok(true)
     }
 
@@ -1135,7 +1149,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                         self.builder.non_boundary_seats.remove(&edge);
                     }
                     self.builder.region_graph[region_id].terminator = RegionTerminator::NoReturn;
-                    self.builder.undecodable_branch_targets.push(cur_addr);
+                    self.builder
+                        .incomplete
+                        .insert(cur_addr, crate::Reason::UndecodableTarget);
                     return Ok(true);
                 }
                 Some(_) => return Ok(false),
@@ -1249,7 +1265,9 @@ mod tests {
 
         assert_eq!(outcome, InsnOutcome::RegionClosed);
         assert_eq!(
-            b.isa_mode_conflicts,
+            b.incomplete
+                .of(crate::Reason::IsaModeConflict)
+                .collect::<Vec<_>>(),
             vec![addr_at(0x1000, 3)],
             "a seal onto a region decoded in the other mode is a clash"
         );

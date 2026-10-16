@@ -43,15 +43,18 @@ fn outer_loop_zero_iter_when_no_branch_indirect_returns_ir() {
 fn outer_loop_unresolved_branch_is_reported_not_errored() {
     // `jmp rax`: rax is a function-entry value (no constant write), and
     // x86_64 has no link register, so the resolver can't classify it. The
-    // orchestrator must reach a fixed point and return the branch listed in
-    // `unresolved_indirect_branches`.
+    // orchestrator must reach a fixed point and return the branch listed as
+    // `UnresolvedBranch`.
     let mut bytes = vec![0xff, 0xe0u8]; // jmp rax, sole machine insn at 0x1000
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
     let result =
         run_at(bytes, 0x1000).expect("analyze must return Ok even when a branch is unresolvable");
     // `jmp rax` lifts to a single BRANCHIND pcode op, hence insn_index 0.
     assert_eq!(
-        result.unresolved_indirect_branches,
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>(),
         vec![strider_cfg::PcodeInsnAddr {
             machine_addr: strider_cfg::MachineInsnAddr::from(0x1000u64),
             insn_index: 0,
@@ -112,7 +115,10 @@ fn analyze_seats_pre_seeded_known_targets_from_analyze_options() {
         .analyze(0x1000, &cc, &lift_opts, None)
         .expect("analyze");
     assert_eq!(
-        result.unresolved_indirect_branches,
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>(),
         vec![],
         "the seeded site is answered, so nothing is left unresolved"
     );
@@ -237,9 +243,16 @@ fn analyze_branch_behind_constant_false_guard_reports_clean() {
     bytes.extend(std::iter::repeat_n(0xc3u8, 16));
     let result = run_at(bytes, 0x1000).expect("analyze must succeed");
     assert!(
-        result.unresolved_indirect_branches.is_empty(),
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
+            .is_empty(),
         "no live, unclassified IndirectBranch -> empty unresolved list (got {:?})",
-        result.unresolved_indirect_branches
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
     );
 }
 
@@ -313,7 +326,9 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
         strider
             .analyze(0x1000, &cc, &AnalyzeOptions::default(), None)
             .expect("analyze")
-            .unresolved_indirect_branches
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
     };
     assert!(
         result_unresolved.is_empty(),

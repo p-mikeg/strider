@@ -70,7 +70,7 @@ def test_per_address_ccs_is_one_memoised_view():
     assert strider.lift.LifterOptions().per_address_ccs is None
 
 
-# --- build_cfg's seeded channel ---------------------------------------------
+# --- build_cfg's seeded sites -----------------------------------------------
 
 
 def test_a_seed_the_build_seated_nowhere_is_not_reported():
@@ -79,7 +79,7 @@ def test_a_seed_the_build_seated_nowhere_is_not_reported():
     not dispatch from."""
     opts = strider.cfg.CfgOptions(known_targets={0xDEAD0000: [0xDEAD1000]})
     cfg = _x86_64(_STRAIGHT).build_cfg(_BASE, opts)
-    assert cfg.unverified_seeded_sites() == []
+    assert [a for a, r in cfg.incomplete if r == "unverified_seed"] == []
     assert cfg.is_complete()
     # `analyze` over the same options says the same.
     result = _x86_64(_STRAIGHT).analyze(
@@ -93,7 +93,7 @@ def test_a_seed_the_build_seated_nowhere_is_not_reported():
 def test_a_seed_the_build_did_seat_is_still_reported():
     opts = strider.cfg.CfgOptions(known_targets={_DISPATCH: [0x1100]})
     cfg = _x86_64(_INDIRECT + bytes(0x100) + _STRAIGHT).build_cfg(_BASE, opts)
-    assert cfg.unverified_seeded_sites() == [_DISPATCH]
+    assert [a for a, r in cfg.incomplete if r == "unverified_seed"] == [_DISPATCH]
 
 
 # --- pcode_at is history-independent ----------------------------------------

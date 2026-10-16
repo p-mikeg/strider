@@ -73,8 +73,8 @@ pub enum NodeKind {
     /// Resolved jump table. Inputs: `(control, address)`. Outputs: one
     /// `Control` per target, output `i` taken when `address == targets[i]` of
     /// the table this carries.
-    /// No default arm: a target the resolver could not prove is reported in
-    /// `unresolved_indirect_branches`, not modelled as an arm.
+    /// No default arm: a target the resolver could not prove is reported as
+    /// an unresolved branch, not modelled as an arm.
     Switch(SwitchTableId),
 
     /// Clobbers caller-saved registers and the memory token. `cc` is `None`

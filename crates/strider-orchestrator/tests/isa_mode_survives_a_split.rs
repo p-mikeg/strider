@@ -98,13 +98,17 @@ fn a_split_carries_the_isa_mode_to_the_first_half() {
         .expect("a mode clash is a result, not an error");
     assert!(
         result
-            .isa_mode_conflicts
+            .incomplete()
+            .of(strider_orchestrator::Reason::IsaModeConflict)
+            .collect::<Vec<_>>()
             .iter()
             .any(|a| a.machine_addr.addr == SPLIT_REGION),
         "the first half kept {SPLIT_REGION:#x} as its start, so the Thumb \
          arrival there clashes with the ARM mode it decoded in; got {:?}",
         result
-            .isa_mode_conflicts
+            .incomplete()
+            .of(strider_orchestrator::Reason::IsaModeConflict)
+            .collect::<Vec<_>>()
             .iter()
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),

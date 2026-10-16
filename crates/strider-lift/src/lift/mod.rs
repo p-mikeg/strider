@@ -428,7 +428,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// must be built against this engine's registers and fit its arch, as
     /// `cc` must.
     ///
-    /// Never errs on incompleteness: [`strider_cfg::Cfg`] reports that itself.
+    /// Never errs on incompleteness:
+    /// [`strider_cfg::Cfg::incompleteness`] reports that.
     ///
     /// # Errors
     ///

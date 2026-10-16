@@ -34,15 +34,10 @@ class AnalyzeResult(NamedTuple):
     `collections.namedtuple`, so `isinstance(result, tuple)` holds and it
     compares equal to the plain tuple.
 
-    `unresolved` holds the machine addresses of indirect branches that could
-    not be resolved, and a non-empty list is not an error.
-
-    Empty means fully resolved, NOT that the answer is complete: it is one of
-    six incompleteness channels, and a dispatch the CFG consumed as a return
-    or a tail call is reported only through `cfg.unverified_seeded_sites()`.
-    The other four are `cfg.isa_mode_conflicts()`,
-    `cfg.interior_branch_targets()`, `cfg.unmapped_branch_targets()` and
-    `cfg.undecodable_branch_targets()`; `cfg.is_complete()` tests all six.
+    `unresolved` holds the machine addresses `cfg.incomplete` names
+    `"unresolved_branch"`, and a non-empty list is not an error. Empty means
+    fully resolved, NOT that the answer is complete: `cfg.incomplete` lists
+    every reason, and `cfg.is_complete()` tests it.
     """
 
     cfg: Cfg
@@ -235,8 +230,8 @@ class Lifter:
         A bad `entry` raises a `StriderError` naming the cause, as `build_cfg`
         does for the same argument.
 
-        An empty `unresolved` is not a complete answer: see `AnalyzeResult`
-        for the six channels, and `Cfg.is_complete` to test them all.
+        An empty `unresolved` is not a complete answer: `Cfg.incomplete` lists
+        every reason, and `Cfg.is_complete` tests it.
 
         Runs the fixed-point loop with the GIL released, so other Python
         threads keep running -- except where `mem` or `rom` is a Python object,

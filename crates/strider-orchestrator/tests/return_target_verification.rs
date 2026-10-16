@@ -96,7 +96,9 @@ fn assert_reported_only_without_assumptions(
 
 fn seeded(result: &strider_orchestrator::AnalyzeResult) -> Vec<u64> {
     result
-        .unverified_seeded_sites
+        .incomplete()
+        .of(strider_orchestrator::Reason::UnverifiedSeed)
+        .collect::<Vec<_>>()
         .iter()
         .map(|a| a.machine_addr.addr)
         .collect()
@@ -104,7 +106,9 @@ fn seeded(result: &strider_orchestrator::AnalyzeResult) -> Vec<u64> {
 
 fn unresolved(result: &strider_orchestrator::AnalyzeResult) -> Vec<u64> {
     result
-        .unresolved_indirect_branches
+        .incomplete()
+        .of(strider_orchestrator::Reason::UnresolvedBranch)
+        .collect::<Vec<_>>()
         .iter()
         .map(|a| a.machine_addr.addr)
         .collect()
@@ -662,9 +666,9 @@ fn x86_64_a_realigned_frame_whose_saved_stack_pointer_may_be_overwritten_is_repo
 
 /// A caller's `"return"` seed silences a site only where the CFG build
 /// actually CONSUMED it, which `Cfg::link_register_seated` records and
-/// `unverified_seeded_sites` reads. A site whose terminator came from the
+/// `UnverifiedSeed` reads. A site whose terminator came from the
 /// p-code `RETURN` op is never in that list, so a seed over one used to drop
-/// it from `unresolved` while nothing else named it: all six channels empty
+/// it from `unresolved` while nothing else named it: no reason listed
 /// and `is_complete()` true over a CFG missing the edge control takes.
 #[test]
 fn a_return_seed_over_a_pcode_return_does_not_silence_it() {

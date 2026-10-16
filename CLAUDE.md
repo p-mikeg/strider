@@ -314,30 +314,28 @@ when both IR slots hold the same value.
   `Function::new` sorts them, which is what fixes `InitialVnId` numbering.
 - Indirect-branch resolution is a re-lift fixed-point loop in `Strider::analyze`
   that converges on the induced edge set; unresolvable branches are a result
-  (`unresolved_indirect_branches`), not an error. Every narrowing is reported
+  (`Reason::UnresolvedBranch`), not an error. Every narrowing is reported
   there, and a site that NARROWS twice has an unstable answer: it is abandoned
   and reported, never an `Err`. Exhausting `MAX_RESOLUTION_ITERATIONS` while
   every site still grows is the discovery depth limit, and those sites come back
   as unresolved too. A `Return` whose folded target is not provably the entry
   return address is reported there as well (`strider_opt::ReturnTargets`),
   unless the CFG CONSUMED a caller's `LinkRegister` seat there
-  (`Cfg::link_register_seated`), in which case it rides
-  `unverified_seeded_sites` instead. A seat alone does not move it: a site whose
-  terminator came from the p-code `RETURN` op is in no `seated` list, and
-  dropping it on the strength of a seed would leave it in none of the six.
+  (`Cfg::link_register_seated`), in which case it is `UnverifiedSeed` instead.
+  A seat alone does not move it: a site whose terminator came from the p-code
+  `RETURN` op is in no `seated` list, and dropping it on the strength of a seed
+  would leave it under no reason.
 - Analysis stays inside the function being lifted: nothing reads a callee's
   code. A callee's stack pop and clobbers come from its calling convention, so
   a callee-cleanup `ret $imm16` or an i386 PC thunk needs a `per_address_ccs`
   entry (see `CallingConvention::x86_cdecl`).
-- A converged CFG is never silently incomplete, but it reports through SIX
-  fields on `AnalyzeResult` (`unresolved_indirect_branches`,
-  `unverified_seeded_sites`, `isa_mode_conflicts`, `interior_branch_targets`,
-  `unmapped_branch_targets`, `undecodable_branch_targets`), and a consumer
-  asking "may this be incomplete?" reads all six, which is what
-  `AnalyzeResult::is_complete` does. Each field's
-  contract is on the struct (`crates/strider-orchestrator/src/lib.rs`).
-  `interior_branch_targets` also carries a region start a later decode stepped
-  over (`RegionBuilder::note_stepped_over_region_starts`): those bytes have two
+- A converged CFG is never silently incomplete: `AnalyzeResult::incomplete()`
+  (the returned `Cfg`'s own `incompleteness()`) is one `Incompleteness` set of
+  `(PcodeInsnAddr, Reason)`, six reasons, and `is_complete()` is "may this be
+  incomplete?". Target reasons accumulate over the rounds; site reasons are
+  the final round's. Each reason's contract is on `strider_cfg::Reason`.
+  `InteriorTarget` also carries a region start a later decode stepped over
+  (`RegionBuilder::note_stepped_over_region_starts`): those bytes have two
   owners with two different instruction streams, so overlapping code is
   reported rather than silently double-owned.
 - SP-alias precision is tuned by `OptOptions` (`resolve_indirect_branches`,

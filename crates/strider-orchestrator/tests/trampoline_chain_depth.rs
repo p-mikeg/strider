@@ -34,12 +34,30 @@ fn chain(links: u64) -> Vec<u8> {
 fn caveats(result: &strider_orchestrator::AnalyzeResult) -> String {
     format!(
         "unresolved {:?}, unverified {:?}, isa {:?}, interior {:?}, unmapped {:?}, undecodable {:?}",
-        result.unresolved_indirect_branches,
-        result.unverified_seeded_sites,
-        result.isa_mode_conflicts,
-        result.interior_branch_targets,
-        result.unmapped_branch_targets,
-        result.undecodable_branch_targets,
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>(),
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnverifiedSeed)
+            .collect::<Vec<_>>(),
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::IsaModeConflict)
+            .collect::<Vec<_>>(),
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::InteriorTarget)
+            .collect::<Vec<_>>(),
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnmappedTarget)
+            .collect::<Vec<_>>(),
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UndecodableTarget)
+            .collect::<Vec<_>>(),
     )
 }
 
@@ -86,17 +104,39 @@ fn a_site_its_first_fold_consumes_settles_on_the_next_round() {
     // A tail call consumed at cfg build leaves no anchor to verify, so the
     // site is reported unverified, and nothing else is.
     let unverified: Vec<u64> = result
-        .unverified_seeded_sites
+        .incomplete()
+        .of(strider_orchestrator::Reason::UnverifiedSeed)
+        .collect::<Vec<_>>()
         .iter()
         .map(|site| site.machine_addr.addr)
         .collect();
     assert_eq!(unverified, [BASE + 5], "{}", caveats(&result));
     assert!(
-        result.unresolved_indirect_branches.is_empty()
-            && result.isa_mode_conflicts.is_empty()
-            && result.interior_branch_targets.is_empty()
-            && result.unmapped_branch_targets.is_empty()
-            && result.undecodable_branch_targets.is_empty(),
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
+            .is_empty()
+            && result
+                .incomplete()
+                .of(strider_orchestrator::Reason::IsaModeConflict)
+                .collect::<Vec<_>>()
+                .is_empty()
+            && result
+                .incomplete()
+                .of(strider_orchestrator::Reason::InteriorTarget)
+                .collect::<Vec<_>>()
+                .is_empty()
+            && result
+                .incomplete()
+                .of(strider_orchestrator::Reason::UnmappedTarget)
+                .collect::<Vec<_>>()
+                .is_empty()
+            && result
+                .incomplete()
+                .of(strider_orchestrator::Reason::UndecodableTarget)
+                .collect::<Vec<_>>()
+                .is_empty(),
         "{}",
         caveats(&result),
     );
@@ -143,7 +183,9 @@ fn the_iteration_cap_is_the_chain_depth_it_seats() {
     let (over, over_rounds) = analyze(chain(257));
     assert!(!over.is_complete());
     assert_eq!(
-        over.unresolved_indirect_branches
+        over.incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
             .iter()
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),

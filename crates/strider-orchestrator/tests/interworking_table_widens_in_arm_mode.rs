@@ -76,9 +76,20 @@ fn widened_thumb_arms_keep_their_mode() {
         ]
     );
     assert!(
-        r.unresolved_indirect_branches.is_empty() && r.unverified_seeded_sites.is_empty(),
+        r.incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
+            .is_empty()
+            && r.incomplete()
+                .of(strider_orchestrator::Reason::UnverifiedSeed)
+                .collect::<Vec<_>>()
+                .is_empty(),
         "unresolved {:?}, unverified {:?}",
-        r.unresolved_indirect_branches,
-        r.unverified_seeded_sites
+        r.incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>(),
+        r.incomplete()
+            .of(strider_orchestrator::Reason::UnverifiedSeed)
+            .collect::<Vec<_>>()
     );
 }

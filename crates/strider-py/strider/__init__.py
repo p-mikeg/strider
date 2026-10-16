@@ -137,6 +137,10 @@ _export(
 )
 _export(_p.constraints, "ConstraintLike")
 
+# `Cfg.incomplete` names each reason by one of these.
+cfg.IncompleteReason = _t.Literal[cfg.INCOMPLETE_REASONS]  # type: ignore[attr-defined]
+_export(cfg, "IncompleteReason")
+
 # PyO3's `#[pyclass(extends = ...)]` takes exactly one base, so the builders
 # cannot share a Rust base class. The shared vocabulary is declared here as
 # structural protocols instead: `isinstance` answers what a caller actually

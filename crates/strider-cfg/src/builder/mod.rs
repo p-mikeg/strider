@@ -164,12 +164,8 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// The ISA-mode bit flowing into each indirect-branch site, sampled at the
     /// site's seal; see [`Self::sample_flowing_isa_bit`].
     pub(super) flowing_isa_bits: BTreeMap<PcodeInsnAddr, bool>,
-    /// Addresses reached in two different ISA modes; see
-    /// [`Cfg::isa_mode_conflicts`].
-    pub(super) isa_mode_conflicts: Vec<PcodeInsnAddr>,
-    /// Branch targets interior to a region but off every instruction boundary;
-    /// see [`Cfg::interior_branch_targets`].
-    pub(super) interior_branch_targets: Vec<PcodeInsnAddr>,
+    /// What this build cannot vouch for; see [`Cfg::incompleteness`].
+    pub(super) incomplete: crate::Incompleteness,
     /// The address each [`Self::seat_non_boundary_target`] edge was seated for.
     /// Every other edge targets a region starting exactly at its own address,
     /// so a split can move it by start alone; these point INTO the region, and
@@ -180,12 +176,6 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     pub(super) link_register_seated: Vec<PcodeInsnAddr>,
     /// Sites seated as a `TailCall` from a single resolved target.
     pub(super) tail_call_seated: Vec<PcodeInsnAddr>,
-    /// Branch targets and fall-throughs no byte backs; see
-    /// [`Cfg::unmapped_branch_targets`].
-    pub(super) unmapped_branch_targets: Vec<PcodeInsnAddr>,
-    /// Branch targets and fall-throughs that hold no instruction; see
-    /// [`Cfg::undecodable_branch_targets`].
-    pub(super) undecodable_branch_targets: Vec<PcodeInsnAddr>,
     /// Seeded arms whose address an earlier decode already owns in the other
     /// ISA mode, with the region that seated them. The arm goes, as the loser
     /// of [`Self::next_work_item`]'s arbitration.
@@ -210,14 +200,11 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             shadowed_starts: BTreeSet::new(),
             work_queue: Vec::new(),
             seeded_queue: Vec::new(),
-            unmapped_branch_targets: Vec::new(),
-            undecodable_branch_targets: Vec::new(),
             clashing_seeded: Vec::new(),
             undecodable_seeded: Vec::new(),
             region_isa_mode: BTreeMap::new(),
             flowing_isa_bits: BTreeMap::new(),
-            isa_mode_conflicts: Vec::new(),
-            interior_branch_targets: Vec::new(),
+            incomplete: crate::Incompleteness::default(),
             non_boundary_seats: rustc_hash::FxHashMap::default(),
             committed_next: rustc_hash::FxHashSet::default(),
             link_register_seated: Vec::new(),
@@ -611,7 +598,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// target, though: for a direct branch into overlapping code the arm is not
     /// the stream the branch jumps to. The address is recorded so a caller is
     /// not left believing the edge is exact; see
-    /// [`Cfg::interior_branch_targets`].
+    /// [`Reason::InteriorTarget`](crate::Reason::InteriorTarget).
     fn seat_non_boundary_target(
         &mut self,
         parent: NodeIndex,
@@ -637,7 +624,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             let edge = self.region_graph.add_edge(parent, owner, ());
             self.non_boundary_seats.insert(edge, addr);
             if !benign {
-                self.interior_branch_targets.push(addr);
+                self.incomplete.insert(addr, crate::Reason::InteriorTarget);
             }
             return Ok(());
         };
@@ -663,7 +650,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         }
         // Reported whether or not an arm went with it: this path wires no edge,
         // so anything unsaid here leaves the site an arm short in silence.
-        self.interior_branch_targets.push(addr);
+        self.incomplete.insert(addr, crate::Reason::InteriorTarget);
         Ok(())
     }
 
@@ -792,14 +779,14 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             let is_start = region.start_addr == addr;
             let is_boundary = region.contains_insn_at(addr);
             if mode_clash {
-                self.isa_mode_conflicts.push(addr);
+                self.incomplete.insert(addr, crate::Reason::IsaModeConflict);
             }
             let parent_region_id = parent_region
                 .ok_or_else(|| anyhow!("non-entry work-queue item has no parent edge"))?;
             if mode_clash && seeded_by.is_some_and(|s| s.is_arm(parent_region, addr)) {
                 // The bytes decoded in another mode, so this arm names a stream
                 // that is not there. Wiring the edge anyway would leave the seat
-                // disagreeing with `isa_mode_conflicts` inside one build.
+                // disagreeing with its own `IsaModeConflict` inside one build.
                 self.clashing_seeded.push((parent_region_id, addr));
                 return Ok(());
             }
@@ -900,8 +887,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// Every arm must resolve to a successor region starting exactly at it, and
     /// the lifter errors on one that does not. A refused target leaves such an
     /// arm behind, so it is stripped here and the site is reported through
-    /// [`Cfg::undecodable_seeded_targets`] or [`Cfg::isa_mode_conflicts`]
-    /// instead.
+    /// [`Cfg::undecodable_seeded_targets`] or
+    /// [`Reason::IsaModeConflict`](crate::Reason::IsaModeConflict) instead.
     ///
     /// Only the site that refused loses the arm. The same address reached from
     /// another site decodes in that site's own context (`enqueue_resolved` pins
@@ -1042,15 +1029,15 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // whose first instruction does not exist has nothing to analyse,
         // so it stays an `Err`.
         if !is_arm && let Some(parent) = parent_region {
-            let report = if is_unmapped_start(&e, address) {
-                Some(&mut self.unmapped_branch_targets)
+            let reason = if is_unmapped_start(&e, address) {
+                Some(crate::Reason::UnmappedTarget)
             } else if seeded_by.is_none() && not_code_at(&e, address).is_some() {
-                Some(&mut self.undecodable_branch_targets)
+                Some(crate::Reason::UndecodableTarget)
             } else {
                 None
             };
-            if let Some(report) = report {
-                report.push(address);
+            if let Some(reason) = reason {
+                self.incomplete.insert(address, reason);
                 let stub = self.tail_call_stub(address)?;
                 self.region_graph.add_edge(parent, stub, ());
                 return Ok(());
@@ -1063,8 +1050,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         if seeded_by.is_some()
             && let Some(bad) = not_code_addr(&e)
         {
-            self.undecodable_branch_targets
-                .push(PcodeInsnAddr::at_machine_start(bad));
+            self.incomplete.insert(
+                PcodeInsnAddr::at_machine_start(bad),
+                crate::Reason::UndecodableTarget,
+            );
         }
         // Under a seeded arm it is a misclassification, not a broken
         // function: drop the arm and report it against the site that named
@@ -1110,19 +1099,26 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         let mut reported = rustc_hash::FxHashSet::default();
         self.undecodable_seeded
             .retain(|&(_, bad)| reported.insert(bad));
-        // Several producers push each of these, among them the explore-path
-        // stub and the fall-through seal, which checks the region map only
-        // after `lift_code` fails, so one address can arrive twice.
-        for report in [
-            &mut self.interior_branch_targets,
-            &mut self.unmapped_branch_targets,
-            &mut self.undecodable_branch_targets,
-            // One address can clash on several edges; a consumer wants the set
-            // of addresses, not one entry per arrival.
-            &mut self.isa_mode_conflicts,
-        ] {
-            report.sort_unstable();
-            report.dedup();
+        // No resolver ran, so every dispatch left without an edge is
+        // unresolved and every seated answer unverified.
+        for region in self.region_graph.node_weights() {
+            match &region.terminator {
+                super::types::RegionTerminator::UnresolvedIndirectBranch { addr, .. } => {
+                    self.incomplete
+                        .insert(*addr, crate::Reason::UnresolvedBranch);
+                }
+                super::types::RegionTerminator::Switch { addr, .. } => {
+                    self.incomplete.insert(*addr, crate::Reason::UnverifiedSeed);
+                }
+                _ => {}
+            }
+        }
+        for &addr in self
+            .link_register_seated
+            .iter()
+            .chain(&self.tail_call_seated)
+        {
+            self.incomplete.insert(addr, crate::Reason::UnverifiedSeed);
         }
 
         let function_isa_bit = self.isa_mode_of(&self.function_mode).map(|mode| mode != 0);
@@ -1134,10 +1130,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 .iter()
                 .map(|&(_, bad)| bad)
                 .collect(),
-            isa_mode_conflicts: self.isa_mode_conflicts,
-            interior_branch_targets: self.interior_branch_targets,
-            unmapped_branch_targets: self.unmapped_branch_targets,
-            undecodable_branch_targets: self.undecodable_branch_targets,
+            incomplete: self.incomplete,
             link_register_seated: self.link_register_seated,
             tail_call_seated: self.tail_call_seated,
             function_isa_bit,
@@ -1255,7 +1248,9 @@ mod tests {
         let cfg = build_cfg(bytes, base, &crate::CfgOptions::default())
             .expect("an unmapped direct target must not fail the whole function");
         assert_eq!(
-            cfg.unmapped_branch_targets(),
+            cfg.incompleteness()
+                .of(crate::Reason::UnmappedTarget)
+                .collect::<Vec<_>>(),
             [PcodeInsnAddr::at_machine_start(target)],
         );
         assert_eq!(
@@ -1276,7 +1271,9 @@ mod tests {
         let cfg = build_cfg(bytes, base, &crate::CfgOptions::default())
             .expect("an unmapped arm must not fail the whole function");
         assert_eq!(
-            cfg.unmapped_branch_targets(),
+            cfg.incompleteness()
+                .of(crate::Reason::UnmappedTarget)
+                .collect::<Vec<_>>(),
             [PcodeInsnAddr::at_machine_start(target)],
         );
         let cond = cfg
@@ -1586,7 +1583,12 @@ mod tests {
             2,
             "the overlap this pins must actually happen",
         );
-        assert_eq!(cfg.interior_branch_targets(), &[addr(0x1014, 0)]);
+        assert_eq!(
+            cfg.incompleteness()
+                .of(crate::Reason::InteriorTarget)
+                .collect::<Vec<_>>(),
+            &[addr(0x1014, 0)]
+        );
     }
 
     /// ```text
@@ -1610,7 +1612,12 @@ mod tests {
 
         let cfg = build_cfg(bytes, base, &crate::CfgOptions::default()).expect("build");
 
-        assert_eq!(cfg.interior_branch_targets(), &[addr(0x1004, 0)]);
+        assert_eq!(
+            cfg.incompleteness()
+                .of(crate::Reason::InteriorTarget)
+                .collect::<Vec<_>>(),
+            &[addr(0x1004, 0)]
+        );
     }
 
     /// A seeded arm that will not decode is reported against the site that
@@ -1705,7 +1712,9 @@ mod tests {
         let cfg = build_cfg(bytes, base, &opts).expect("build");
         assert_every_switch_target_has_an_arm(&cfg);
         assert_eq!(
-            cfg.interior_branch_targets(),
+            cfg.incompleteness()
+                .of(crate::Reason::InteriorTarget)
+                .collect::<Vec<_>>(),
             &[addr(0x1005, 0)],
             "an arm off every boundary must be reported, not only deferred",
         );

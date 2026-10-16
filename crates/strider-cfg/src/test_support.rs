@@ -42,8 +42,8 @@ pub(crate) fn make_region(addrs: &[(u64, u64)]) -> Region {
     }
 }
 
-/// A [`crate::Cfg`] over a hand-built region graph, every incompleteness
-/// channel empty and no ISA mode.
+/// A [`crate::Cfg`] over a hand-built region graph, complete and with no ISA
+/// mode.
 pub(crate) fn make_cfg(
     region_graph: crate::types::RegionGraph,
     entry: petgraph::graph::NodeIndex,
@@ -52,10 +52,7 @@ pub(crate) fn make_cfg(
         region_graph,
         entry,
         undecodable_seeded: Vec::new(),
-        isa_mode_conflicts: Vec::new(),
-        interior_branch_targets: Vec::new(),
-        unmapped_branch_targets: Vec::new(),
-        undecodable_branch_targets: Vec::new(),
+        incomplete: crate::Incompleteness::default(),
         link_register_seated: Vec::new(),
         tail_call_seated: Vec::new(),
         function_isa_bit: None,

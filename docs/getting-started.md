@@ -50,9 +50,9 @@ binary -> CFG -> IR -> optimizations -> pattern queries
 6. **Resolve** the indirect branches: classify each one against the optimized
    IR, feed the targets back, re-lift, and repeat until the edge set stops
    changing. What is left over is reported, never raised, and so is a return
-   whose target is not provably the caller's. `cfg.is_complete()` is the
-   one-call question; [python-api.md](python-api.md#12-the-cfg-stridercfg)
-   describes the six channels it reads.
+   whose target is not provably the caller's. `cfg.incomplete` lists what is
+   left and `cfg.is_complete()` is the one-call question;
+   [python-api.md](python-api.md#12-the-cfg-stridercfg) describes each reason.
 7. **Query** it, or **rewrite** it if you want the graph changed rather than
    read. `field`, `code_ptr`, `first_of` and `PhiPat.input_from` cover common
    shapes, and `JoinPredicate` relates matches by your own rule.
@@ -68,8 +68,7 @@ home submodule is the supported spelling:
 strider.lift      # the entry point: load_elf and lifter, plus LifterOptions,
                   # AssumptionOptions and the AnalyzeResult they produce
 strider.ir        # Function and Node: the graph you query
-strider.cfg       # Cfg, CfgOptions, and five of the six incompleteness
-                  # channels; the sixth, unresolved, rides on AnalyzeResult
+strider.cfg       # Cfg (with Cfg.incomplete) and CfgOptions
 strider.pattern   # the query DSL, plus .pattern.constraints for joins
 strider.template  # the build side of a rewrite
 strider.opt       # OptimizerPipeline and the passes it runs
@@ -115,7 +114,7 @@ that change what existing code sees, rather than adding to it:
   three of them default on. `AssumptionOptions.none()` is the floor.
 - A `Call`'s output slots are numbered per clobbered register now, so a query
   reading `.output(slot)` positionally has to follow.
-- `cfg.is_complete()` reads six channels; an empty `unresolved` is not a
+- `cfg.incomplete` lists every reason; an empty `unresolved` is not a
   complete answer on its own.
 - A `Match`/`Node` constant reads back as `uint` / `sint` / `boolean`, where
   0.1.0 spelled them `const_uint` / `const_int` / `const_bool`.

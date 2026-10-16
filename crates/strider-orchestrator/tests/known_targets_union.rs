@@ -2,7 +2,7 @@
 //! round, so the FOLD never drops what the classifier proves. Seating does: a
 //! seed changes the CFG the classifier reads, and a wrong one can stop the
 //! selector deriving and take the site's real arms with it, which
-//! `unverified_seeded_sites` is the report for.
+//! `UnverifiedSeed` is the report for.
 //!
 //! Seating is per arm: a member the cfg cannot seat is dropped on its own and
 //! the site keeps the rest, reported unresolved so the shorter set is never
@@ -58,9 +58,13 @@ fn arms_with(
     starts.dedup();
     (
         arms,
-        r.unresolved_indirect_branches,
+        r.incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>(),
         starts,
-        r.unverified_seeded_sites,
+        r.incomplete()
+            .of(strider_orchestrator::Reason::UnverifiedSeed)
+            .collect::<Vec<_>>(),
     )
 }
 
@@ -110,8 +114,8 @@ fn a_seed_the_cfg_declines_is_reported_unresolved_not_partially_seated() {
 /// Seating a seed changes the CFG the classifier reads, so a stale or wrong
 /// seed can stop the selector deriving and take the site's real arms with it.
 /// The site is not "unresolved" (the caller asserted the answer), but
-/// nothing verified it, so it must be named in `unverified_seeded_sites`.
-/// Without that channel the loss is completely silent.
+/// nothing verified it, so it must be named `UnverifiedSeed`.
+/// Without that reason the loss is completely silent.
 #[test]
 fn a_site_seated_only_from_a_seed_is_named_as_unverified() {
     // x64 `main`'s dispatch, seeded with only itself. Seating that seed
@@ -167,14 +171,18 @@ fn x64_main_with_seed(seed: Vec<u64>) -> (Vec<u64>, Vec<PcodeInsnAddr>, Vec<Pcod
     arms.dedup();
     (
         arms,
-        r.unresolved_indirect_branches,
-        r.unverified_seeded_sites,
+        r.incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>(),
+        r.incomplete()
+            .of(strider_orchestrator::Reason::UnverifiedSeed)
+            .collect::<Vec<_>>(),
     )
 }
 
 /// With resolution off nothing derives, so a seated site's arms are exactly the
 /// caller's answer and nothing verified them. That is what
-/// `unverified_seeded_sites` reports, and turning the classifier off must not
+/// `UnverifiedSeed` reports, and turning the classifier off must not
 /// silence it: the CFG then presents a fabricated successor set as complete.
 #[test]
 fn a_seeded_site_is_still_reported_unverified_with_resolution_off() {
@@ -200,7 +208,9 @@ fn a_seeded_site_is_still_reported_unverified_with_resolution_off() {
     let r = strider.analyze(addr, &cc, &opts, None).expect("analyze");
 
     assert_eq!(
-        r.unverified_seeded_sites
+        r.incomplete()
+            .of(strider_orchestrator::Reason::UnverifiedSeed)
+            .collect::<Vec<_>>()
             .iter()
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),

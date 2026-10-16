@@ -70,7 +70,12 @@ fn analyze(
         .map(|t| t.addr)
         .collect();
     arms.sort_unstable();
-    (arms, r.unresolved_indirect_branches)
+    (
+        arms,
+        r.incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>(),
+    )
 }
 
 const PPC32_TEXT: &[u8] = &[

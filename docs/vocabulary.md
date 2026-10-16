@@ -27,8 +27,8 @@ ELF header.
 switch between them at runtime: ARM and Thumb, MIPS32 and MIPS16. Which one an
 address decodes as is not in the bytes, it is carried by the branch that
 reached it, so each region is decoded in the mode of an edge that reached it.
-`cfg.isa_mode_conflicts()` reports an address two edges reached in different
-modes, which only one of them can win.
+`cfg.incomplete` lists an address two edges reached in different modes as
+`"isa_mode_conflict"`, which only one of them can win.
 
 ## Control flow
 

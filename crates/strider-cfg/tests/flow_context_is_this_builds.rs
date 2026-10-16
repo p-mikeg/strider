@@ -192,7 +192,9 @@ fn an_edge_into_an_it_block_is_reported_not_silently_decided() {
     let mut eng = Engine::thumb(code);
     let cfg = eng.build(0x1000, 0x14);
     let clashes: Vec<u64> = cfg
-        .isa_mode_conflicts()
+        .incompleteness()
+        .of(strider_cfg::Reason::IsaModeConflict)
+        .collect::<Vec<_>>()
         .iter()
         .map(|a| a.machine_addr.addr)
         .collect();

@@ -170,10 +170,10 @@ impl PostOptimizer for IndirectBranchClassify {
         // Off leaves every site a placeholder, but each one still has to be
         // REPORTED: the orchestrator derives its live-placeholder set from
         // `indirect_resolutions`, so returning before the inserts below would
-        // publish an empty `unresolved_indirect_branches` while placeholders
-        // are live. A seated `Switch` is already resolved and reports nothing
-        // as unresolved, but it is exactly the site nothing verified, and
-        // `unverified_seeded_sites` reads the same map to name it.
+        // report no unresolved branch while placeholders are live. A seated
+        // `Switch` is already resolved and reports nothing as unresolved, but
+        // it is exactly the site nothing verified, and the unverified-seed
+        // report reads the same map to name it.
         if !ctx.options.resolve_indirect_branches {
             ctx.indirect_resolutions = sites.into_iter().map(|node| (node, None)).collect();
             return Ok(());

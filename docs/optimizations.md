@@ -146,9 +146,9 @@ it). After optimizing, Strider classifies each unresolved indirect branch
 against the clean IR, feeds any newly discovered targets back in, and re-lifts,
 repeating until the set of edges stops changing. Whatever still cannot be
 resolved comes back as the `unresolved` list from `analyze`, never as an
-exception. It is one of the six channels
+exception. It is one of the six reasons
 [python-api.md](python-api.md#12-the-cfg-stridercfg) describes, which
-`cfg.is_complete()` reads together.
+`cfg.incomplete` lists together.
 
 An indirect CALL is not resolved and not reported: its target stays the `Call`
 node's input value, for a query to read.
@@ -166,8 +166,8 @@ decode in that mode too.
 
 `CfgOptions(known_targets={dispatch_addr: [target, ...]})` seats answers of your
 own, which the loop then grows from; a site that ends up holding nothing but
-your seed is reported by `cfg.unverified_seeded_sites()`, since seating can stop
-the classifier deriving. `LifterOptions(resolve_indirect_branches=False)` turns
+your seed is listed in `cfg.incomplete` as `"unverified_seed"`, since seating
+can stop the classifier deriving. `LifterOptions(resolve_indirect_branches=False)` turns
 the classifier off and leaves every site for you to answer.
 
 ### Dispatch shapes that need an opt-in
