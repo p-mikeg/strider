@@ -21,9 +21,7 @@ fn pipeline(pre_stamp: bool) -> OptimizerPipeline {
         p.add_post_pass(StackOffsetDetect);
     }
     for pass in base.post_passes() {
-        if pass.name() != "StackOffsetDetect" {
-            p.add_post_boxed(pass.clone_box());
-        }
+        p.add_post_boxed(pass.clone_box());
     }
     p
 }
