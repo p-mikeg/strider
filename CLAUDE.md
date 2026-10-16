@@ -124,8 +124,9 @@ Strider:
   (`Lifter` / `LiftOptions` / `LiftOutcome` at the crate root) and `strider-opt`
   re-exported as `opt`.
 - `strider-ir-test-utils`: `make_empty_fn` / `RegisterSet` builders,
-  `MockRom`, asm-fingerprint stamping, the `interp` reference interpreter, and
-  the `proptest-gen`-gated `proptest_gen` generator, shared by tests.
+  `MockRom`, asm-fingerprint stamping, the `interp` reference interpreter, the
+  brute-force `graph_oracle` (graph-algorithms' test oracle), and the
+  `proptest-gen`-gated `proptest_gen` generator, shared by tests.
 - `strider-py`: PyO3 bindings (`maturin develop` builds a wheel).
 
 ## Dependency graph (X -> Y = X depends on Y)
@@ -157,8 +158,8 @@ Workspace production dependencies only. Leaves (no workspace deps): `dot`,
 on `read-only-memory`, and the orchestrator reaches `strider-pattern` and `dot`
 only from its tests and examples. External `petgraph` is a production
 dependency of `strider-cfg`, `strider-graph`, `strider-lift` and
-`strider-pattern`, and a dev-dependency of `strider-ir`, whose dominance tests
-check the interval trees against `simple_fast`.
+`strider-pattern`, and a dev-dependency of `graph-algorithms` and `strider-ir`,
+whose dominance tests check against `simple_fast`.
 
 Dev-dependencies are not in that graph, and are not a DAG:
 `strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it.
