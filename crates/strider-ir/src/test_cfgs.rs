@@ -18,15 +18,16 @@ pub(crate) enum Term {
     Switch(Vec<u8>),
 }
 
-/// Up to `max_regions` regions: self-loops, duplicate targets, orphan
-/// regions, irreducible loops and branches back to the entry all arise.
-pub(crate) fn arb_terms(max_regions: usize) -> impl Strategy<Value = Vec<Term>> {
+/// Up to `max_regions` regions and `max_arms` switch arms: self-loops,
+/// duplicate targets, orphan regions, irreducible loops and branches back to
+/// the entry all arise.
+pub(crate) fn arb_terms(max_regions: usize, max_arms: usize) -> impl Strategy<Value = Vec<Term>> {
     let term = prop_oneof![
         1 => Just(Term::Return),
         1 => Just(Term::Unreachable),
         2 => any::<u8>().prop_map(Term::Branch),
         4 => (any::<u8>(), any::<u8>()).prop_map(|(t, f)| Term::If(t, f)),
-        1 => prop::collection::vec(any::<u8>(), 1..=4).prop_map(Term::Switch),
+        1 => prop::collection::vec(any::<u8>(), 1..=max_arms).prop_map(Term::Switch),
     ];
     prop::collection::vec(term, 1..=max_regions)
 }
@@ -37,11 +38,6 @@ pub(crate) fn empty_builder() -> crate::error::Result<FunctionBuilder> {
         strider_target::BuiltCallingConvention::default(),
         strider_target::Endianness::Little,
     )
-}
-
-/// `None` when the draw is not a valid function, e.g. an exit-free cycle.
-pub(crate) fn build(terms: &[Term]) -> Option<Function> {
-    lower(terms)?.build().ok()
 }
 
 /// The regions `terms` describe, before validation: an exit-free cycle
@@ -75,8 +71,9 @@ pub(crate) fn lower(terms: &[Term]) -> Option<FunctionBuilder> {
     Some(b)
 }
 
-/// `n` regions, each branching to the next; the last returns.
-pub(crate) fn chain(n: usize) -> crate::error::Result<Function> {
+/// `n` regions, each branching to the next; the last returns. Unvalidated,
+/// since `validate` itself walks the graph.
+pub(crate) fn chain(n: usize) -> crate::error::Result<FunctionBuilder> {
     let mut b = empty_builder()?;
     let regions: Vec<_> = (0..n)
         .map(|_| b.create_region_all())
@@ -89,7 +86,7 @@ pub(crate) fn chain(n: usize) -> crate::error::Result<Function> {
     }
     b.set_region(regions[n - 1]);
     b.build_function_return()?;
-    b.build()
+    Ok(b)
 }
 
 /// A `Switch` of `k` arms, each branching to one join that returns.
