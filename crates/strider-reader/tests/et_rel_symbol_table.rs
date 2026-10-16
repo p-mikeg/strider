@@ -13,14 +13,15 @@
 //! (`.text.target`, `st_value` 0); the decoy table's entry 1 is `st_value`
 //! 0x7777 in the same section. They must patch to the same target.
 
-use object::write::{Object, Relocation, Symbol, SymbolSection};
+#[path = "common/mod.rs"]
+mod common;
+
+use common::write_object::{defined, reloc};
+use object::write::Object;
 use object::{
-    Architecture, BinaryFormat, Endianness, Object as _, ObjectSymbol as _, ObjectSymbolTable as _,
-    RelocationFlags, SectionIndex, SectionKind, SymbolFlags, SymbolIndex, SymbolKind, SymbolScope,
-    elf,
+    Architecture, BinaryFormat, Endianness, Object as _, ObjectKind, ObjectSymbol as _,
+    ObjectSymbolTable as _, SectionIndex, SectionKind, SymbolIndex, elf,
 };
-use strider_reader::OwnedElf;
-use strider_reader::elf::{ElfSectionLayout, LoadFilter, RegionSource};
 
 /// `.text.target`'s index: `object::write` seats it after `.text` and
 /// `.rela.text`.
@@ -33,31 +34,13 @@ fn object_with_decoy(decoy_type: u32) -> Vec<u8> {
     obj.append_section_data(text, &[0xe8, 0, 0, 0, 0], 16);
     let target_section = obj.add_section(Vec::new(), b".text.target".to_vec(), SectionKind::Text);
     obj.append_section_data(target_section, &[0xc3], 16);
-    let target = obj.add_symbol(Symbol {
-        name: b"target".to_vec(),
-        value: 0,
-        size: 0,
-        kind: SymbolKind::Text,
-        scope: SymbolScope::Linkage,
-        weak: false,
-        section: SymbolSection::Section(target_section),
-        flags: SymbolFlags::None,
-    });
-    obj.add_relocation(
-        text,
-        Relocation {
-            offset: 1,
-            symbol: target,
-            addend: -4,
-            flags: RelocationFlags::Elf {
-                r_type: elf::R_X86_64_PLT32,
-            },
-        },
-    )
-    .expect("relocation");
+    let target = defined(&mut obj, "target", target_section, 0);
+    reloc(&mut obj, text, 1, target, -4, elf::R_X86_64_PLT32);
 
     // Two `Elf64_Sym`: the null entry, then a GLOBAL FUNC at 0x7777 in
-    // `.text.target`.
+    // `.text.target`. `object::write` leaves the decoy's `sh_link` and
+    // `sh_entsize` 0, which `object` still reads as a symbol table, as
+    // `decoy_entry` checks.
     let mut decoy = vec![0u8; 24];
     decoy.extend_from_slice(&0u32.to_le_bytes()); // st_name
     decoy.push((elf::STB_GLOBAL << 4) | elf::STT_FUNC); // st_info
@@ -78,20 +61,13 @@ fn decoy_entry(bytes: &[u8]) -> Option<(u64, SectionIndex)> {
     Some((sym.address(), sym.section_index().expect("defined")))
 }
 
-/// The `call`'s rel32 field, read back through the relocating reader.
+/// The `call`'s rel32 field, one byte into `.text`, read back through the
+/// relocating reader.
 fn patched_rel32(bytes: &[u8]) -> i32 {
-    let elf = OwnedElf::parse(bytes.to_vec()).expect("parse");
-    let obj = elf.checked_file().expect("parse");
-    // `.text` is rebased off the synthetic ET_REL image base; the field is the
-    // `call`'s rel32, one byte into it.
-    let text = obj.section_by_name(".text").expect(".text");
-    let field_addr = ElfSectionLayout::new(&obj).section_base(&text) + 1;
-    let regions = elf
-        .regions(RegionSource::Auto, LoadFilter::AllAllocatable, true)
-        .expect("regions");
+    let field_addr = common::section_base(bytes, ".text") + 1;
     let mut field = [0u8; 4];
     assert!(
-        regions
+        common::load_with_relocations(bytes)
             .iter()
             .any(|r| r.read(field_addr, &mut field) == Some(4)),
         "no region covers the call's rel32 field"
@@ -109,12 +85,11 @@ fn an_object_files_relocations_ignore_a_decoy_dynsym() {
         (without.len(), 1),
         "the objects differ in the one byte of sh_type"
     );
-    let target_section = object::File::parse(&*with)
-        .expect("parse")
-        .symbol_by_name("target")
-        .expect("target")
-        .section_index()
-        .expect("defined");
+    let file = object::File::parse(&*with).expect("parse");
+    assert_eq!(file.kind(), ObjectKind::Relocatable, "an ET_REL");
+    let target = file.symbol_by_name("target").expect("target");
+    assert_eq!(target.index(), SymbolIndex(1), "target is .symtab[1]");
+    let target_section = target.section_index().expect("defined");
     assert_eq!(
         decoy_entry(&without),
         None,
@@ -126,12 +101,11 @@ fn an_object_files_relocations_ignore_a_decoy_dynsym() {
         "the decoy is a dynamic table whose entry 1 sits elsewhere in .text.target"
     );
 
-    let without = patched_rel32(&without);
-    let with = patched_rel32(&with);
+    let (rel_without, rel_with) = (patched_rel32(&without), patched_rel32(&with));
     assert_eq!(
-        with, without,
+        rel_with, rel_without,
         "a decoy .dynsym changed which symbol the relocation resolved against"
     );
     // `.text.target` is rebased above `.text`, so the displacement reaches it.
-    assert_eq!(without, 0xb);
+    assert_eq!(rel_without, 0xb);
 }
