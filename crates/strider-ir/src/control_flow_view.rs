@@ -179,10 +179,10 @@ impl ControlSplitView<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::IRViewer;
     use crate::builder::IRBuilderExt;
     use crate::node::NodeKind;
     use crate::test_cfgs::{self, empty_builder};
+    use crate::{FunctionBuilder, IRViewer};
     use cranelift_entity::EntityRef;
     use petgraph::visit::{GraphBase, IntoNeighbors};
     use proptest::prelude::*;
@@ -1018,6 +1018,12 @@ mod tests {
     }
 
     const CASES: u32 = if cfg!(debug_assertions) { 128 } else { 4096 };
+    /// Regions and switch arms per draw: release draws deeper trees.
+    const SHAPE: (usize, usize) = if cfg!(debug_assertions) {
+        (10, 4)
+    } else {
+        (48, 12)
+    };
 
     /// One tree against the deletion definition of dominance, including the
     /// exact preorder: siblings in depth-first discovery order.
@@ -1056,12 +1062,51 @@ mod tests {
                     a == b || d,
                     "dominates({ka:?}, {kb:?})"
                 );
+                if let (Some((a_pre, a_post)), Some((b_pre, b_post))) =
+                    (tree.span(ka), tree.span(kb))
+                    && !d
+                    && !dom[b][a]
+                {
+                    assert!(
+                        a_post < b_pre || b_post < a_pre,
+                        "spans of unrelated {ka:?} and {kb:?} overlap"
+                    );
+                }
             }
         }
     }
 
-    /// Both trees of `f`.
+    /// Builds both trees with counting successor closures: each vertex in the
+    /// tree is asked for its successors exactly once, any other never.
+    fn assert_each_vertex_asked_once(f: &Function) {
+        let view = ControlFlowView::new(f);
+        let mut asked: SecondaryMap<NodeId, u32> = SecondaryMap::new();
+        let tree = DominatorTree::compute(f.entry(), |n| {
+            asked[n] += 1;
+            view.succs(n)
+        });
+        for n in f.graph().all_node_ids() {
+            assert_eq!(asked[n], u32::from(tree.contains(n)), "{n:?} asked");
+        }
+        let view = ControlSplitView::new(f);
+        let mut asked: SecondaryMap<CtrlKey, u32> = SecondaryMap::new();
+        let tree = DominatorTree::compute(CtrlKey::Node(f.entry()), |k| {
+            asked[k] += 1;
+            view.succs(k)
+        });
+        let g = f.graph();
+        for k in g
+            .all_node_ids()
+            .map(CtrlKey::Node)
+            .chain(g.all_value_ids().map(CtrlKey::Edge))
+        {
+            assert_eq!(asked[k], u32::from(tree.contains(k)), "{k:?} asked");
+        }
+    }
+
+    /// Both trees of `f`, and the successor calls that built them.
     fn check_trees(f: &Function) {
+        assert_each_vertex_asked_once(f);
         let root = u32::try_from(f.entry().index()).unwrap();
         check_tree(
             &test_cfgs::control_succs(f),
@@ -1082,9 +1127,11 @@ mod tests {
         #![proptest_config(ProptestConfig::with_cases(CASES))]
 
         #[test]
-        fn dominator_trees_match_the_definition(terms in test_cfgs::arb_terms(10)) {
-            if let Some(f) = test_cfgs::build(&terms) {
-                check_trees(&f);
+        fn dominator_trees_match_the_definition(
+            terms in test_cfgs::arb_terms(SHAPE.0, SHAPE.1),
+        ) {
+            if let Some(b) = test_cfgs::lower(&terms) {
+                check_trees(b.function());
             }
         }
     }
@@ -1101,12 +1148,15 @@ mod tests {
         }
     }
 
-    /// A 100,000-region chain and a 50,000-arm join: no recursion, and the
-    /// answers a path and a fan-in must give.
+    /// A 100,000-region chain and a 50,000-arm join: no recursion, one
+    /// successor call per vertex, and the answers a path and a fan-in must give.
     #[test]
     #[cfg_attr(debug_assertions, ignore = "release-only scale test")]
     fn dominator_trees_scale_to_a_deep_chain_and_a_wide_join() {
-        let f = test_cfgs::chain(100_000).expect("chain builds");
+        let f = test_cfgs::chain(100_000)
+            .and_then(FunctionBuilder::build)
+            .expect("chain builds");
+        assert_each_vertex_asked_once(&f);
         let tree = control_dominator_tree(&f);
         let regions: Vec<NodeId> = tree
             .preorder()
@@ -1122,6 +1172,7 @@ mod tests {
         assert!(split.dominates(CtrlKey::Node(regions[0]), CtrlKey::Node(regions[99_999])));
 
         let f = test_cfgs::wide_join(50_000).expect("join builds");
+        assert_each_vertex_asked_once(&f);
         let tree = control_dominator_tree(&f);
         let join = f
             .graph()
