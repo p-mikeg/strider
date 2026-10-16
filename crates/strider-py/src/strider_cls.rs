@@ -908,14 +908,7 @@ impl PyLifter {
 
         let cfg_obj = Py::new(py, PyCfg::new(py, cfg, slf.clone_ref(py)))?;
 
-        let py_function = Py::new(
-            py,
-            PyFunction::new(
-                function,
-                cfg_obj.clone_ref(py),
-                analyze_opts.opt.assumptions.clone(),
-            ),
-        )?;
+        let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
         let result = analyze_result_type(py)?
             .bind(py)
             .call1((cfg_obj, py_function, unresolved))?;

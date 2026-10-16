@@ -45,6 +45,10 @@ pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 /// (`eval::table_walk_options`): this walk decides a decoded branch target,
 /// so a relaxation that is wrong produces a wrong edge rather than a wrong
 /// fold.
+///
+/// `assumptions.noalias_allocators` must be the set `function` was last
+/// optimized under ([`strider_ir::SideTables::memory_allocators`]); another
+/// set debug-panics.
 #[must_use]
 pub fn classify_target(
     function: &strider_ir::Function,
@@ -161,6 +165,10 @@ pub struct ClassifiedSites {
 /// `options` are the ones `f` was optimised under: the table walk reads the
 /// memory-class memo the pipeline stamped under `options.assumptions`. With
 /// `!options.resolve_indirect_branches`, `resolved` is empty.
+///
+/// `options.assumptions.noalias_allocators` must be the set `f` was last
+/// optimized under ([`strider_ir::SideTables::memory_allocators`]); another
+/// set debug-panics.
 ///
 /// A dispatch value only becomes classifiable once the optimizer has folded
 /// it into a recognizable shape, so `f` is the converged function.

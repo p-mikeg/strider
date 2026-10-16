@@ -87,6 +87,8 @@ pub struct SideTables {
     /// clobbers.  The call node carries no such value, so this is the only
     /// record that a callee may have received it.
     frame_address_in_call_register: bool,
+    /// The allocator set every `memory_offsets` entry was computed under.
+    memory_allocators: FxHashSet<u64>,
 }
 
 impl SideTables {
@@ -217,6 +219,21 @@ impl SideTables {
     pub fn clear_memory_slots(&self) {
         self.memory_offsets.borrow_mut().clear();
         *self.memory_interner.borrow_mut() = EntityInterner::new();
+    }
+
+    /// The allocator set every memoized decomposition was computed under.
+    #[inline]
+    pub fn memory_allocators(&self) -> &FxHashSet<u64> {
+        &self.memory_allocators
+    }
+
+    /// Starts a fresh memory analysis under `allocators`: drops every
+    /// graph-derived memo and records the set the new entries are computed
+    /// under.
+    pub fn reset_analyses(&mut self, allocators: &FxHashSet<u64>) {
+        self.clear_memory_slots();
+        self.clear_frame_escape();
+        self.memory_allocators.clone_from(allocators);
     }
 
     /// Memoized frame-escape verdict, or `None` when not yet computed.
@@ -386,6 +403,23 @@ mod tests {
         assert_eq!(st.frame_escape(), Some(false), "overwrites a prior verdict");
         st.clear_frame_escape();
         assert_eq!(st.frame_escape(), None, "clear invalidates the memo");
+    }
+
+    #[test]
+    fn reset_analyses_records_the_set_and_drops_the_memos() {
+        let mut st = SideTables::default();
+        assert!(
+            st.memory_allocators().is_empty(),
+            "a fresh table holds the empty set"
+        );
+        let (base, v) = (ValueId::new(0), ValueId::new(1));
+        st.set_stack_slot(v, base, -8);
+        st.set_frame_escape(true);
+        let set: FxHashSet<u64> = [0x1000].into_iter().collect();
+        st.reset_analyses(&set);
+        assert_eq!(st.memory_allocators(), &set);
+        assert_eq!(st.memory_decomp(v), (MemDecomp::Unknown, None));
+        assert_eq!(st.frame_escape(), None);
     }
 
     // The union is order-independent, deduplicating and never dropping an entry.

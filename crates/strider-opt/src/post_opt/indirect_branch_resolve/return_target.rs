@@ -84,6 +84,9 @@ enum StoreEffect {
 }
 
 impl<'f> ReturnTargets<'f> {
+    /// `assumptions.noalias_allocators` must be the set `function` was last
+    /// optimized under ([`strider_ir::SideTables::memory_allocators`]);
+    /// another set debug-panics.
     #[must_use]
     pub fn new(function: &'f Function, assumptions: &'f crate::AssumptionOptions) -> Self {
         Self {
