@@ -1493,7 +1493,7 @@ mod tests {
             insn_index: branch_indirect_index(&bytes, base, base),
         };
         let mut known_targets = rustc_hash::FxHashMap::default();
-        // Supplied high-first: the enqueue sorts, so 0x1002 is still explored
+        // Supplied high-first: `table` sorts, so 0x1002 is still explored
         // first and its region then covers 0x1005.
         known_targets.insert(
             branch,
