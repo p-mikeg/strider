@@ -197,7 +197,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     }
 
     /// The CFG of the function at `entry`. Never errs on incompleteness:
-    /// [`strider_cfg::Cfg::incompleteness`] names what it cannot vouch for, so
+    /// [`strider_cfg::Cfg::incomplete`] names what it cannot vouch for, so
     /// the resolve loop can call it every round.
     pub fn build_cfg(
         &mut self,
@@ -431,7 +431,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// `cc` must.
     ///
     /// Never errs on incompleteness:
-    /// [`strider_cfg::Cfg::incompleteness`] reports that.
+    /// [`strider_cfg::Cfg::incomplete`] reports that.
     ///
     /// # Errors
     ///

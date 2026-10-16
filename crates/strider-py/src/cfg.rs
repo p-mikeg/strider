@@ -245,14 +245,14 @@ impl PyCfg {
     /// final round's.
     #[getter]
     fn incomplete(&self) -> Vec<(u64, &'static str)> {
-        incomplete_sites(self.inner.incompleteness())
+        incomplete_sites(self.inner.incomplete())
     }
 
     /// Whether `incomplete` is empty. `False` over `"unverified_seed"` alone
     /// reads "complete but unverified", except for a `"return"` seat whose
     /// re-check failed.
     fn is_complete(&self) -> bool {
-        self.inner.incompleteness().is_complete()
+        self.inner.incomplete().is_complete()
     }
 
     /// Exposes the strong `lifter` back-reference so the cyclic GC can see a

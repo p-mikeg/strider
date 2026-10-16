@@ -47,7 +47,7 @@ fn undecodable(cfg: &Cfg) -> Vec<u64> {
 
 /// The bytes that would not decode, as opposed to the arm that led to them.
 fn undecodable_bytes(cfg: &Cfg) -> Vec<u64> {
-    cfg.incompleteness()
+    cfg.incomplete()
         .of(strider_cfg::Reason::UndecodableTarget)
         .collect::<Vec<_>>()
         .iter()
@@ -363,7 +363,7 @@ fn an_edge_decoded_off_an_arm_does_not_take_bytes_an_earlier_arm_decoded() {
 
     assert_eq!(switch_arms(&cfg), [0x10004, 0x10008]);
     assert_eq!(
-        cfg.incompleteness()
+        cfg.incomplete()
             .of(strider_cfg::Reason::IsaModeConflict)
             .collect::<Vec<_>>(),
         [PcodeInsnAddr::at_machine_start(0x10004)]
