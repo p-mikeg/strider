@@ -27,7 +27,9 @@ fn analyze(words: &[u32]) -> strider_orchestrator::AnalyzeResult {
 
 fn reported(result: &strider_orchestrator::AnalyzeResult) -> Vec<u64> {
     result
-        .undecodable_branch_targets
+        .incomplete()
+        .of(strider_orchestrator::Reason::UndecodableTarget)
+        .collect::<Vec<_>>()
         .iter()
         .map(|a| a.machine_addr.addr)
         .collect()

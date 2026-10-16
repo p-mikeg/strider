@@ -173,7 +173,7 @@ fn orchestrator_resolves_toc_relative_jump_tables_ppc64() {
 // `t9` to the entry address folds `gp` itself, but the GOT load of the
 // table base still does not: `.got` is writable, so no read-only memory
 // serves it. The branch must therefore DEFER (stay in
-// `unresolved_indirect_branches`, placeholder retained) rather than
+// `UnresolvedBranch`, placeholder retained) rather than
 // resolve to a garbage target.
 
 #[test]
@@ -335,10 +335,16 @@ fn caller_supplied_targets_seat_with_resolution_off() {
         false,
     )
     .expect("converges with resolution off");
-    let [addr] = off.unresolved_indirect_branches[..] else {
+    let [addr] = off
+        .incomplete()
+        .of(strider_orchestrator::Reason::UnresolvedBranch)
+        .collect::<Vec<_>>()[..]
+    else {
         panic!(
             "expected exactly one unresolved dispatch, got {:?}",
-            off.unresolved_indirect_branches
+            off.incomplete()
+                .of(strider_orchestrator::Reason::UnresolvedBranch)
+                .collect::<Vec<_>>()
         );
     };
 
@@ -382,7 +388,10 @@ fn resolution_off_still_reports_the_surviving_placeholders() {
     let placeholders = count_indirect_branch_placeholders(&off.function);
     assert!(placeholders > 0, "resolution off must leave a placeholder");
     assert_eq!(
-        off.unresolved_indirect_branches.len(),
+        off.incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
+            .len(),
         placeholders,
         "every surviving placeholder must be reported",
     );
@@ -403,7 +412,7 @@ fn resolution_off_still_reports_the_surviving_placeholders() {
 fn a_masked_loop_index_is_bounded_by_its_back_edge() {
     // The arms resolve at the floor; the claim is for this fixture's OWN
     // epilogue, whose return slot the floor cannot walk back to, so without it
-    // the return rides `unresolved_indirect_branches` and the last assertion
+    // the return is `UnresolvedBranch` and the last assertion
     // below cannot hold.
     let result = analyze_claiming(
         common::Arch::X64,
@@ -424,7 +433,11 @@ fn a_masked_loop_index_is_bounded_by_its_back_edge() {
         ]],
     );
     assert!(
-        result.unresolved_indirect_branches.is_empty(),
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
+            .is_empty(),
         "every arm is proven, so nothing is left to report",
     );
 }
@@ -453,7 +466,13 @@ fn a_scaled_masked_loop_index_seats_only_the_real_slots() {
             0x40_0734, 0x40_0760, 0x40_0768, 0x40_0770, 0x40_0778, 0x40_0780
         ]],
     );
-    assert!(!result.unresolved_indirect_branches.is_empty());
+    assert!(
+        !result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
+            .is_empty()
+    );
 }
 
 /// The same shape WITHOUT the mask resolves completely, which is what isolates
@@ -469,7 +488,11 @@ fn the_same_loop_switch_without_a_mask_resolves() {
     )
     .expect("converges");
     assert!(
-        result.unresolved_indirect_branches.is_empty(),
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
+            .is_empty(),
         "an unmasked guarded switch must still resolve every arm",
     );
 }

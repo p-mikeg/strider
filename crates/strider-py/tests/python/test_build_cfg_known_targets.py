@@ -33,13 +33,13 @@ def test_a_seeded_build_cfg_does_not_claim_to_be_complete():
     """No classifier runs here, so nothing checked the caller's answer."""
     opts = strider.cfg.CfgOptions(known_targets={0x1000: [0x1002]})
     cfg = _lifter().build_cfg(BASE, opts)
-    assert cfg.unverified_seeded_sites() == [0x1000]
+    assert [a for a, r in cfg.incomplete if r == "unverified_seed"] == [0x1000]
     assert not cfg.is_complete()
 
 
 def test_an_unseeded_build_cfg_reports_nothing_unverified():
     cfg = _lifter().build_cfg(BASE)
-    assert cfg.unverified_seeded_sites() == []
+    assert [a for a, r in cfg.incomplete if r == "unverified_seed"] == []
 
 
 def test_out_of_range_int_entry_reports_the_real_cause():

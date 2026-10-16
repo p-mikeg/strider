@@ -380,9 +380,16 @@ fn analyze_resolves_an_interworking_table_in_each_arm_mode() {
         .expect("analyze");
 
     assert!(
-        result.unresolved_indirect_branches.is_empty(),
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
+            .is_empty(),
         "the masked interworking table must resolve: {:#x?}",
-        result.unresolved_indirect_branches,
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>(),
     );
 
     let mut arms: Vec<(u64, Option<bool>)> = result

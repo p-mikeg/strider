@@ -88,7 +88,7 @@ pub enum RegionTerminator {
     ///
     /// That last one TRUNCATES: the region keeps nothing after the call, so
     /// the instructions between it and the bytes (a PowerPC TOC restore) are
-    /// dropped. See [`crate::Cfg::undecodable_branch_targets`].
+    /// dropped. See [`crate::Reason::UndecodableTarget`].
     NoReturn,
     /// Branch leaving the function range, lowered by the IR layer as
     /// `Call(IntConst(target)) + Return`.
@@ -112,8 +112,8 @@ pub enum RegionTerminator {
     /// Every target is an instruction start inside the function bound. An arm
     /// out of the bound, or off every instruction boundary of a region decoded
     /// before the seal, defers the whole site as `UnresolvedIndirectBranch`; an
-    /// off-boundary arm found after the seal is dropped. Both are reported on
-    /// [`crate::Cfg::interior_branch_targets`].
+    /// off-boundary arm found after the seal is dropped. Both are reported as
+    /// [`crate::Reason::InteriorTarget`].
     Switch {
         /// The `BranchIndirect`'s `inputs[0]`.
         target_vn: rsleigh::Vn,

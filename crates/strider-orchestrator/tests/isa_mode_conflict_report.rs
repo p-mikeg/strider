@@ -79,7 +79,9 @@ fn a_conflict_one_round_raised_survives_a_later_round_that_does_not() {
     );
     assert_eq!(
         result
-            .isa_mode_conflicts
+            .incomplete()
+            .of(strider_orchestrator::Reason::IsaModeConflict)
+            .collect::<Vec<_>>()
             .iter()
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),

@@ -2,8 +2,8 @@
 //! under a fixture directory (one per `fixtures/arch/*.mk`) and prints one
 //! line per function: `<arch>/<case>::<symbol>@<addr> <digest>`. The digest
 //! covers the final function's raw DOT, its asm-fingerprints, the CFG DOT, the
-//! six report fields, and the error of a failed analysis. Two builds diff line
-//! for line; the summed analyze wall time goes to stderr.
+//! sites of each of the six reasons, and the error of a failed analysis. Two
+//! builds diff line for line; the summed analyze wall time goes to stderr.
 //!
 //! ```text
 //! cargo run --release -p strider-orchestrator --example opt_identity > digests.txt
@@ -70,12 +70,24 @@ fn digest_one(
             writeln!(
                 text,
                 "unresolved {:?}\nisa {:?}\ninterior {:?}\nunmapped {:?}\nundecodable {:?}\nunverified {:?}",
-                r.unresolved_indirect_branches,
-                r.isa_mode_conflicts,
-                r.interior_branch_targets,
-                r.unmapped_branch_targets,
-                r.undecodable_branch_targets,
-                r.unverified_seeded_sites,
+                r.incomplete()
+                    .of(strider_orchestrator::Reason::UnresolvedBranch)
+                    .collect::<Vec<_>>(),
+                r.incomplete()
+                    .of(strider_orchestrator::Reason::IsaModeConflict)
+                    .collect::<Vec<_>>(),
+                r.incomplete()
+                    .of(strider_orchestrator::Reason::InteriorTarget)
+                    .collect::<Vec<_>>(),
+                r.incomplete()
+                    .of(strider_orchestrator::Reason::UnmappedTarget)
+                    .collect::<Vec<_>>(),
+                r.incomplete()
+                    .of(strider_orchestrator::Reason::UndecodableTarget)
+                    .collect::<Vec<_>>(),
+                r.incomplete()
+                    .of(strider_orchestrator::Reason::UnverifiedSeed)
+                    .collect::<Vec<_>>(),
             )?;
         }
     }

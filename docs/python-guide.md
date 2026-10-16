@@ -51,9 +51,9 @@ The result unpacks into three things:
 - `function`: the lifted, optimized IR. This is what you query.
 - `unresolved`: addresses of indirect branches Strider could not resolve. An
   empty list is the normal case; a non-empty one is information, not an error.
-  It is one of six channels, though: `cfg.is_complete()` is the one call that
-  reads all of them, and
-  [python-api.md](python-api.md#12-the-cfg-stridercfg) says what each reports.
+  It is one of six reasons, though: `cfg.incomplete` lists all of them,
+  `cfg.is_complete()` tests the list, and
+  [python-api.md](python-api.md#12-the-cfg-stridercfg) says what each means.
 
 You can also keep the result whole and use `result.cfg` / `result.function` /
 `result.unresolved`.

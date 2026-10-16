@@ -1,8 +1,7 @@
 """`is_complete` on a `build_cfg` CFG answers about indirect branches too.
 
-`unresolved` rides on `AnalyzeResult`, so a `build_cfg` CFG had nothing to
-consult and reported `True` for the very function `analyze(resolve=False)`
-reports an unresolved branch in.
+A build resolves nothing, so `Cfg.incomplete` names every dispatch it left
+without an edge, the same site `analyze` without resolution reports.
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ def _lifter(code: bytes):
 def test_an_unresolved_indirect_branch_is_not_complete():
     cfg = _lifter(_INDIRECT).build_cfg(_BASE)
     assert not cfg.is_complete()
-    # The channel `analyze` would have filled agrees.
+    # `analyze` without resolution agrees.
     result = _lifter(_INDIRECT).analyze(
         _BASE,
         strider.sleigh.CallingConvention.x86_64_systemv(),
@@ -40,11 +39,11 @@ def test_a_straight_line_build_is_still_complete():
 
 
 def test_a_seated_branch_clears_the_indirect_channel():
-    """The seat is still `unverified_seeded`, but no site is left edgeless."""
+    """The seat is still `"unverified_seed"`, but no site is left edgeless."""
     cfg = _lifter(_INDIRECT).build_cfg(
         _BASE, strider.cfg.CfgOptions(known_targets={_DISPATCH: "return"})
     )
-    assert cfg.unverified_seeded_sites() == [_DISPATCH]
+    assert [a for a, r in cfg.incomplete if r == "unverified_seed"] == [_DISPATCH]
     assert not cfg.is_complete()
 
 
@@ -66,5 +65,5 @@ def test_a_seed_seated_past_p_code_op_0_is_unverified(seed):
     assert pcode is not None and not pcode.startswith("BranchIndirect"), (
         "precondition: the site must not be p-code op 0"
     )
-    assert cfg.unverified_seeded_sites() == [_BASE]
+    assert [a for a, r in cfg.incomplete if r == "unverified_seed"] == [_BASE]
     assert not cfg.is_complete()

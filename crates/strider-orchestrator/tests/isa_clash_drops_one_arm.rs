@@ -135,7 +135,9 @@ fn a_direct_flow_clash_costs_one_arm_and_leaves_the_table_seated() {
     );
     assert_eq!(
         result
-            .isa_mode_conflicts
+            .incomplete()
+            .of(strider_orchestrator::Reason::IsaModeConflict)
+            .collect::<Vec<_>>()
             .iter()
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),
@@ -143,7 +145,9 @@ fn a_direct_flow_clash_costs_one_arm_and_leaves_the_table_seated() {
     );
     assert_eq!(
         result
-            .unresolved_indirect_branches
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
             .iter()
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),

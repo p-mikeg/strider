@@ -65,11 +65,17 @@ fn resolves_to_both_labels(
         .unwrap_or_else(|e| panic!("analyze on {}: {e:?}", arch.name()));
 
     assert!(
-        result.unresolved_indirect_branches.is_empty(),
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
+            .is_empty(),
         "{}: unresolved {:#x?}",
         arch.name(),
         result
-            .unresolved_indirect_branches
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
             .iter()
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),

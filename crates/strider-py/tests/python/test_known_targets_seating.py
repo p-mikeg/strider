@@ -121,12 +121,12 @@ def test_a_seed_that_displaces_the_classifier_is_reported_unverified():
         ),
     )
     assert result.unresolved == []
-    assert result.cfg.unverified_seeded_sites() == [dispatch]
+    assert [a for a, r in result.cfg.incomplete if r == "unverified_seed"] == [dispatch]
 
 
 def test_an_unseeded_analysis_reports_nothing_unverified():
     result = _program().analyze("dispatch_value")
-    assert result.cfg.unverified_seeded_sites() == []
+    assert [a for a, r in result.cfg.incomplete if r == "unverified_seed"] == []
 
 
 def test_a_link_register_seed_is_reported_as_unverified():
@@ -151,5 +151,5 @@ def test_a_link_register_seed_is_reported_as_unverified():
             ),
         )
 
-    assert analyze(seed=False).cfg.unverified_seeded_sites() == []
-    assert analyze(seed=True).cfg.unverified_seeded_sites() == [dispatch]
+    assert [a for a, r in analyze(seed=False).cfg.incomplete if r == "unverified_seed"] == []
+    assert [a for a, r in analyze(seed=True).cfg.incomplete if r == "unverified_seed"] == [dispatch]

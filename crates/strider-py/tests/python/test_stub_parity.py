@@ -572,9 +572,7 @@ _ZERO_ARG_RETURNS = {
     },
     "strider.cfg": {
         ("Cfg", "entry"): "int",
-        ("Cfg", "unverified_seeded_sites"): "list[int]",
-        ("Cfg", "isa_mode_conflicts"): "list[int]",
-        ("Cfg", "interior_branch_targets"): "list[int]",
+        ("Cfg", "incomplete"): "list[tuple[int, IncompleteReason]]",
         ("Cfg", "is_complete"): "bool",
     },
     "strider.lift": {

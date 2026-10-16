@@ -252,16 +252,23 @@ fn analyze_x64_snippet_with_rom(
 }
 
 /// Asserts the analyze result resolved the table dispatch to EXACTLY
-/// [`TABLE_TARGETS`]: nothing in `unresolved_indirect_branches`, no
+/// [`TABLE_TARGETS`]: nothing `UnresolvedBranch`, no
 /// `IndirectBranch` placeholder left in the returned IR, and one `Switch`
 /// carrying all four arms. Without the arm check a one-arm answer, or four
 /// wrong addresses, reads as a clean resolution.
 fn assert_dispatch_resolved(result: &strider_orchestrator::AnalyzeResult, what: &str) {
     use strider_ir::{IRViewer, IRWalker};
     assert!(
-        result.unresolved_indirect_branches.is_empty(),
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
+            .is_empty(),
         "{what}: jump table must resolve; unresolved: {:?}",
-        result.unresolved_indirect_branches,
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>(),
     );
     let placeholders = result
         .function

@@ -59,7 +59,13 @@ fn add_chain_snippet_fingerprints_are_exact_snippet_addresses() {
     let result = strider
         .analyze(base, &cc, &AnalyzeOptions::default(), None)
         .expect("analyze");
-    assert!(result.unresolved_indirect_branches.is_empty());
+    assert!(
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .collect::<Vec<_>>()
+            .is_empty()
+    );
     let function = result.function;
 
     let mut non_exempt_seen = 0usize;
