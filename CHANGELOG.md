@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased
+
+### Changed, Python
+
+- A `.capture(c)` over a composite on a rewrite RHS raises: on a RHS it stands
+  for the value `c` matched, so it silently replaced the composite with it.
+  Over `var()` or `anything()` it is still that value.
+- `build_cfg` reports a seed seated past p-code op 0 (a memory-indirect `jmp`)
+  in `seeded_sites`; it went unreported.
+- `load()` / `store()` region filters apply in call order, the last winning:
+  `store().heap_only().stack_only()` matched the heap store.
+- `function_arg_reg` / `source_register` match a sub-register of the carrier
+  (`EDI`, `XMM0_Qa`); they matched nothing.
+- `analyze` refuses a calling convention whose stack geometry belongs to
+  another arch (`x86_cdecl` on x86-64, ppc32 SysV on ppc64), including the
+  header's convention under `load_elf(arch=...)`.
+- A report list names each machine address once.
+- A post-pass that rewrites the graph drops the stack-slot stamps it may have
+  invalidated.
+
+### Fixed
+
+- A stack-held jump-table slot, a return slot and a stack-arg slot each see
+  a store whose bytes wrap onto it around the address width.
+- A one-arm jump-table answer stays an arm through a merge, and a merge
+  answers `Single` only for a `Single`'s own target.
+- `DeadBranchElimination` without `CfgDetach` strips the dead predecessors it
+  leaves; such a pipeline failed validation.
+- `R_PPC64_REL32` past +-2 GiB, and any word relocation that does not fit its
+  field, is a hole rather than a truncated word.
+- A mips64el `SHT_REL` hole names its relocation type, not the symbol index.
+- A Thumb `BL` to ARM whose relocated value is -1 or -2 encodes `BLX` with
+  offset 0; it overflowed, a panic in release builds.
+
+### Added, Rust
+
+- `Function::to_text_named`: `to_text` with registers spelled by name.
+- `Strider::lifter()`, the engine `analyze` lifts with.
+- `BuiltCallingConvention::check_addr_size`.
+
 ## 0.2.0
 
 Both the Python and the Rust surfaces changed; the two are listed separately.
