@@ -69,7 +69,7 @@ impl MemWalker<'_> {
                 // A callee declared transparent to memory writes none, so the
                 // load steps through whatever the frame analysis proves.  A
                 // caller assertion, outside `AssumptionOptions`, so it survives
-                // `MemOptions::structural` and a permanent rewire may rest on it.
+                // `MemPurpose::Structural` and a permanent rewire may rest on it.
                 if function.get_cc(def).preserves_memory {
                     return false;
                 }

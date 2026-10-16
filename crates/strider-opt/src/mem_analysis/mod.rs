@@ -13,7 +13,7 @@ mod ring;
 mod stamp;
 mod walker;
 
-pub(crate) use analyzer::{MemAnalyzer, MemOptions, store_value_byte_size};
+pub(crate) use analyzer::{MemAnalyzer, MemOptions, MemPurpose, store_value_byte_size};
 pub(crate) use arg_window::{ArgStoreScan, SlotReach};
 pub(crate) use decompose::{alignment_masked_operand, decompose};
 pub(crate) use ring::wrap_to_addr_width;

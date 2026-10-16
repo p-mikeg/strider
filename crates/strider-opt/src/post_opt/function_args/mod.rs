@@ -11,7 +11,7 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
-use crate::mem_analysis::{MemAnalyzer, MemExpr, MemOptions};
+use crate::mem_analysis::{MemAnalyzer, MemExpr, MemOptions, MemPurpose};
 use crate::mem_ssa::narrow_load_to;
 use crate::pipeline::PostOptimizer;
 
@@ -35,11 +35,15 @@ impl PostOptimizer for FunctionArgDetect {
         edit.function_mut()
             .side_tables_mut()
             .clear_arg_values_from(first_stack_arg as u32);
-        let alias_cfg = MemAnalyzer::new(MemOptions::incoming_args(&opt_ctx.options.assumptions));
+        let alias_cfg = MemAnalyzer::new(MemOptions::for_purpose(
+            MemPurpose::IncomingArgs,
+            &opt_ctx.options.assumptions,
+        ));
         // Detection reads `alias_cfg`; only the rewire reads this one (see
         // `mem_chain_is_dirty`).
-        let narrow_cfg = MemAnalyzer::new(MemOptions::structural(
-            &opt_ctx.options.assumptions.noalias_allocators,
+        let narrow_cfg = MemAnalyzer::new(MemOptions::for_purpose(
+            MemPurpose::Structural,
+            &opt_ctx.options.assumptions,
         ));
         detect_stack_args(edit, &alias_cfg, &narrow_cfg, stack_args, first_stack_arg);
         Ok(())
@@ -168,7 +172,7 @@ fn detect_stack_args(
 ///
 /// Narrows to `narrow_cfg`'s clobber, never `alias_cfg`'s, which piles the
 /// incoming-arg relaxations on top.  The rewire outlives the run that made it,
-/// so `narrow_cfg` claims nothing at all ([`MemOptions::structural`]): an edge
+/// so `narrow_cfg` claims nothing at all (`MemPurpose::Structural`): an edge
 /// justified by an assumption would be inherited by a later
 /// [`crate::AssumptionOptions::none`] run that disclaims it.
 fn mem_chain_is_dirty(

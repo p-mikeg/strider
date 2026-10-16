@@ -1170,7 +1170,7 @@ fn arg_detection_does_not_narrow_a_load_past_a_call() -> Result<()> {
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
     // Granted, so `alias_cfg` steps the `Call` and only `narrow_cfg` being
-    // pinned to `structural()` keeps the edge where it is.
+    // pinned to `MemPurpose::Structural` keeps the edge where it is.
     let mut octx_claimed = crate::OptCtx::at_floor(None);
     octx_claimed
         .options

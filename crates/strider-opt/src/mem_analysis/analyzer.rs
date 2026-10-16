@@ -14,6 +14,21 @@ use super::walker::MemWalker;
 use super::{AddrClass, AliasVerdict, MemExpr};
 use crate::mem_ssa::{Answers, ClobberProbe, MemLayout, WalkAnswers};
 
+/// What a `MemOptions` is for, which decides the claims it honours.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum MemPurpose {
+    /// `LoadForward`'s forwarding verdict.
+    Forward,
+    /// `FunctionArgDetect`'s incoming stack-argument probe.
+    IncomingArgs,
+    /// `CallStackArgCollect`'s outgoing-argument window.
+    CallStackArgs,
+    /// The jump-table walk: it decides a CFG edge, so no call relaxation.
+    TableWalk,
+    /// Claims nothing: what a permanent rewire may rest on.
+    Structural,
+}
+
 #[derive(Clone)]
 pub(crate) struct MemOptions {
     pub(super) stack_global_disjoint: bool,
@@ -23,8 +38,8 @@ pub(crate) struct MemOptions {
     pub(super) distinct_sp_bases_disjoint: bool,
     /// Read only where the outgoing-argument window is consulted, so it is
     /// inert unless [`Self::escape_analysis`] or a non-empty allocator set
-    /// opens that path.  Pinned off by [`MemOptions::call_blocking`]; only
-    /// [`MemOptions::with_callee_preserves_stack_args`] opts back in.
+    /// opens that path.  [`MemOptions::for_purpose`] says which purpose
+    /// honours it.
     pub(super) callee_preserves_stack_args: bool,
     /// Let an SP-rooted `Load` step through a `Call` when the frame is provably
     /// private ([`super::frame_escape`]).
@@ -44,66 +59,21 @@ pub(crate) struct MemOptions {
 }
 
 impl MemOptions {
-    /// A `Call` on the memory chain clobbers the probed location, and
-    /// distinct SP bases stay conservatively non-disjoint.
-    pub(crate) fn call_blocking(
-        stack_global_disjoint: bool,
-        noalias_allocators: &FxHashSet<u64>,
-    ) -> Self {
+    /// The options `purpose` runs under: which of `assumptions` it honours, one
+    /// line per field.
+    pub(crate) fn for_purpose(purpose: MemPurpose, assumptions: &crate::AssumptionOptions) -> Self {
+        use MemPurpose::*;
+        let a = assumptions;
         Self {
-            stack_global_disjoint,
-            calls_block: true,
-            distinct_sp_bases_disjoint: false,
-            callee_preserves_stack_args: false,
-            escape_analysis: false,
-            call_relaxations: true,
-            heap_claims: true,
-            noalias_allocators: noalias_allocators.clone(),
+            stack_global_disjoint: a.stack_global_disjoint && purpose != Structural,
+            calls_block: !(purpose == IncomingArgs && a.assume_incoming_args_survive_calls),
+            distinct_sp_bases_disjoint: purpose == IncomingArgs && a.distinct_sp_bases_disjoint,
+            escape_analysis: purpose == Forward && a.escape_analysis,
+            callee_preserves_stack_args: purpose == Forward && a.callee_preserves_stack_args,
+            call_relaxations: !matches!(purpose, TableWalk | Structural),
+            heap_claims: purpose != Structural,
+            noalias_allocators: a.noalias_allocators.clone(),
         }
-    }
-
-    /// The incoming-stack-argument probe: the knobs scoped to argument
-    /// detection, and no private-frame relaxation.
-    pub(crate) fn incoming_args(assumptions: &crate::AssumptionOptions) -> Self {
-        Self {
-            calls_block: !assumptions.assume_incoming_args_survive_calls,
-            distinct_sp_bases_disjoint: assumptions.distinct_sp_bases_disjoint,
-            ..Self::call_blocking(
-                assumptions.stack_global_disjoint,
-                &assumptions.noalias_allocators,
-            )
-        }
-    }
-
-    /// Every claim off, so a verdict holds under
-    /// [`crate::AssumptionOptions::none`].  What a permanent rewire may name,
-    /// modulo the per-`Call` `preserves_memory` CC flag, which is the caller's
-    /// assertion and outside [`crate::AssumptionOptions`].  The set is still
-    /// the run's: a heap address decomposes as heap and reads as an `Anchor`.
-    pub(crate) fn structural(noalias_allocators: &FxHashSet<u64>) -> Self {
-        Self {
-            stack_global_disjoint: false,
-            calls_block: true,
-            distinct_sp_bases_disjoint: false,
-            callee_preserves_stack_args: false,
-            escape_analysis: false,
-            call_relaxations: false,
-            heap_claims: false,
-            noalias_allocators: noalias_allocators.clone(),
-        }
-    }
-
-    /// Opt into forwarding an SP-rooted load across a private-frame `Call`.
-    pub(crate) fn with_escape_analysis(mut self, enabled: bool) -> Self {
-        self.escape_analysis = enabled;
-        self
-    }
-
-    /// Opt into an empty outgoing-argument window
-    /// ([`crate::AssumptionOptions::callee_preserves_stack_args`]).
-    pub(crate) fn with_callee_preserves_stack_args(mut self, enabled: bool) -> Self {
-        self.callee_preserves_stack_args = enabled;
-        self
     }
 
     pub(crate) fn without_call_relaxations(&self) -> Self {
