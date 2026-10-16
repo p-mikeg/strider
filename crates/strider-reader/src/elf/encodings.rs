@@ -573,8 +573,8 @@ mod tests {
         }
     }
 
-    /// A Thumb `BL` to an ARM function 1 or 2 bytes behind the site becomes
-    /// `BLX` with offset 0: `Align(PC, 4)` absorbs the difference.
+    /// A Thumb `BL` to ARM whose relocated value is -1 or -2 becomes `BLX`
+    /// with offset 0: `Align(PC, 4)` absorbs the difference.
     #[test]
     fn a_blx_offset_just_below_zero_rounds_to_zero() {
         for value in [u64::MAX, u64::MAX - 1] {

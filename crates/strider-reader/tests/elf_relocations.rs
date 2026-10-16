@@ -457,9 +457,11 @@ fn sym_addr(obj: &object::File<'_>, name: &str) -> u64 {
 #[test]
 fn a_dispatch_table_is_patched_on_x86_64() {
     let path = fixture_path("x64", "elf_relocs");
-    if !path.exists() {
-        panic!("missing {path:?}; run `make -C fixtures CASE=elf_relocs ARCH=x64`");
-    }
+    assert!(
+        path.exists(),
+        "{} is not built; run `make -C fixtures`",
+        path.display()
+    );
     let owned = strider_reader::load_elf(&path).expect("load_elf");
     let obj = owned.checked_file().expect("the mapped file is unchanged");
     // `dispatch_table` lives in `.data.rel.ro`, which the default

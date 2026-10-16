@@ -2,8 +2,8 @@
 //! [`FixtureArch`] row per `fixtures/arch/<dir>.mk`, and [`Fixture`], the one
 //! way to open an image, list its functions and analyse them.
 //!
-//! Shared with `examples/opt_identity.rs` and `benches/scaling.rs` through
-//! `#[path]`, so it names nothing under `crate::`.
+//! Also included by `#[path]` outside the test crates, so it names nothing
+//! under `crate::`.
 
 use std::io::Read as _;
 use std::path::PathBuf;
@@ -150,9 +150,9 @@ impl Fixture {
     /// The image at `path`, analysed as `arch`. A missing file or a Git LFS
     /// pointer panics: a committed fixture is never optional.
     pub fn at(arch: &'static FixtureArch, path: PathBuf) -> Self {
-        let mut head = [0u8; LFS_POINTER.len()];
-        let read = std::fs::File::open(&path)
-            .and_then(|mut file| file.read(&mut head))
+        let mut head = Vec::new();
+        std::fs::File::open(&path)
+            .and_then(|file| file.take(LFS_POINTER.len() as u64).read_to_end(&mut head))
             .unwrap_or_else(|e| {
                 panic!(
                     "{}: {e}; run `make -C fixtures ARCH={}`",
@@ -161,7 +161,7 @@ impl Fixture {
                 )
             });
         assert!(
-            &head[..read] != LFS_POINTER,
+            head != LFS_POINTER,
             "{} is a Git LFS pointer; run `git lfs pull`",
             path.display()
         );

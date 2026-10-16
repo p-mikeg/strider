@@ -29,19 +29,13 @@ fn int_bit_not_5() -> strider_ir::Function {
     let nv = t.bit_not_at(v, strider_ir::node::ValueType::I64);
     t.ret_val(nv)
 }
+/// The canonical bit-not shape is a binary Xor, so a unary neg pattern
+/// rejects it as a wrong operand does.
 #[test]
-fn bit_not_wrong_operand_rejects() {
+fn bit_not_rejects_a_wrong_operand_or_op() {
     let function = int_bit_not_5();
     a::matches(&function, int_not(int_const(5u128)).into_pattern(), 1);
     a::none(&function, int_not(int_const(99u128)).into_pattern());
-}
-
-#[test]
-fn unary_wrong_op_rejects() {
-    // The canonical bit-not shape is a binary Xor, so a unary neg pattern
-    // must reject it.
-    let function = int_bit_not_5();
-    a::matches(&function, int_not(int_const(5u128)).into_pattern(), 1);
     a::none(&function, int_neg(int_const(5u128)).into_pattern());
 }
 #[test]
