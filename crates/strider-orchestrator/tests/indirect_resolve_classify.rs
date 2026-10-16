@@ -7,8 +7,8 @@ mod common;
 use strider_cfg::ResolvedTargets;
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
-use strider_orchestrator::opt::value_range::compute_value_ranges;
-use strider_orchestrator::opt::{analyze_known_bits, classify_target};
+use strider_orchestrator::opt::classify_target;
+use strider_orchestrator::opt::value_range::RangeMap;
 
 /// The fixture's sole `IndirectBranch` placeholder. `classify_target` takes
 /// the branch node itself: it derives the dispatch target from the branch's
@@ -20,9 +20,7 @@ fn sole_branch(f: &strider_ir::Function) -> strider_ir::node::NodeId {
 }
 
 fn classify_target_bare(view: &strider_ir::Function) -> anyhow::Result<Option<ResolvedTargets>> {
-    let known = analyze_known_bits(view)?;
-    let doms = strider_ir::control_dominator_tree(view);
-    let mut ranges = compute_value_ranges(view, &doms, &known);
+    let mut ranges = RangeMap::new(view)?;
     Ok(classify_target(
         view,
         sole_branch(view),

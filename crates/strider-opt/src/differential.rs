@@ -1268,9 +1268,7 @@ fn a_range_contains_every_runtime_value() {
         {
             continue;
         }
-        let known = crate::opt::known_bits::analyze(&f).unwrap();
-        let doms = strider_ir::control_dominator_tree(&f);
-        let mut ranges = crate::value_range::compute_value_ranges(&f, &doms, &known);
+        let mut ranges = crate::value_range::RangeMap::new(&f).unwrap();
         let mut rng = Rng(seed | 1);
         for _ in 0..24 {
             let vec: Vec<u128> = (0..4).map(|_| u128::from(rng.next_u64() % 8)).collect();
