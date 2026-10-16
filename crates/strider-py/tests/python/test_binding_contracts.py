@@ -92,7 +92,11 @@ def test_a_seed_the_build_seated_nowhere_is_not_reported():
 
 def test_a_seed_the_build_did_seat_is_still_reported():
     opts = strider.cfg.CfgOptions(known_targets={_DISPATCH: [0x1100]})
-    cfg = _x86_64(_INDIRECT + bytes(0x100) + _STRAIGHT).build_cfg(_BASE, opts)
+    cfg = _x86_64(_INDIRECT + bytes(0x100) + _STRAIGHT).build_cfg(
+        _BASE,
+        opts,
+        on_incomplete=strider.lift.OnIncomplete.IGNORE,
+    )
     assert [a for a, r in cfg.incomplete if r == "unverified_seed"] == [_DISPATCH]
 
 

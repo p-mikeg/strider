@@ -34,6 +34,8 @@ pub struct AnalyzeOptions<'a> {
     pub opt: OptOptions,
     /// Drops unreachable nodes once the loop settles.
     pub compact: bool,
+    /// What a result [`AnalyzeResult::is_complete`] says no to becomes.
+    pub on_incomplete: OnIncomplete,
 }
 
 impl Default for AnalyzeOptions<'_> {
@@ -43,7 +45,57 @@ impl Default for AnalyzeOptions<'_> {
             per_address_ccs: &NO_PER_ADDRESS_CCS,
             opt: OptOptions::default(),
             compact: true,
+            on_incomplete: OnIncomplete::default(),
         }
+    }
+}
+
+/// What [`Strider::analyze`] and [`Strider::build_cfg`] do with a result that
+/// is not complete.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OnIncomplete {
+    /// Refuse it: [`AnalyzeError::Incomplete`] names the sites.
+    Error,
+    /// Return it: its [`Incompleteness`] names the sites.
+    #[default]
+    Ignore,
+}
+
+impl OnIncomplete {
+    /// `Err` naming `incomplete` when this policy refuses it.
+    fn check(self, incomplete: &Incompleteness) -> std::result::Result<(), AnalyzeError> {
+        if self == OnIncomplete::Error && !incomplete.is_complete() {
+            return Err(AnalyzeError::Incomplete(incomplete.clone()));
+        }
+        Ok(())
+    }
+}
+
+/// Why [`Strider::analyze`] or [`Strider::build_cfg`] returned no result.
+#[derive(Debug)]
+pub enum AnalyzeError {
+    /// The analysis finished but cannot vouch for these sites, and
+    /// [`OnIncomplete::Error`] refused it.
+    Incomplete(Incompleteness),
+    /// Decode, lift, optimisation or validation failed.
+    Failed(anyhow::Error),
+}
+
+impl std::fmt::Display for AnalyzeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AnalyzeError::Incomplete(sites) => write!(f, "incomplete analysis: {sites}"),
+            // The whole chain: this error offers no `source()` to walk.
+            AnalyzeError::Failed(e) => write!(f, "{e:#}"),
+        }
+    }
+}
+
+impl std::error::Error for AnalyzeError {}
+
+impl From<anyhow::Error> for AnalyzeError {
+    fn from(e: anyhow::Error) -> Self {
+        AnalyzeError::Failed(e)
     }
 }
 
@@ -118,18 +170,25 @@ where
     }
 
     /// Structural CFG build only: no lift, no optimisation, no
-    /// indirect-branch resolution.
+    /// indirect-branch resolution, so every dispatch the seeds do not seat is
+    /// [`Reason::UnresolvedBranch`] and every seat [`Reason::UnverifiedSeed`].
     ///
     /// # Errors
     ///
-    /// Propagates CFG-build failures (see [`Lifter::build_cfg`]).
+    /// [`AnalyzeError::Incomplete`] when `on_incomplete` refuses
+    /// [`strider_cfg::Cfg::incompleteness`]; [`AnalyzeError::Failed`] for a
+    /// build failure (see [`Lifter::build_cfg`]).
     pub fn build_cfg(
         &mut self,
         entry: u64,
         cfg_opts: &strider_cfg::CfgOptions,
-    ) -> Result<strider_cfg::Cfg> {
-        self.lifter
-            .build_cfg(MachineInsnAddr::from(entry), cfg_opts)
+        on_incomplete: OnIncomplete,
+    ) -> std::result::Result<strider_cfg::Cfg, AnalyzeError> {
+        let cfg = self
+            .lifter
+            .build_cfg(MachineInsnAddr::from(entry), cfg_opts)?;
+        on_incomplete.check(cfg.incompleteness())?;
+        Ok(cfg)
     }
 
     /// Lift, optimise, and resolve indirect branches at `entry`.
@@ -163,14 +222,16 @@ where
     ///
     /// # Errors
     ///
-    /// Lift / cfg / opt / validation failures only, never an indirect branch.
+    /// [`AnalyzeError::Incomplete`] when `opts.on_incomplete` refuses the
+    /// result; [`AnalyzeError::Failed`] for a lift / cfg / opt / validation
+    /// failure, never for an indirect branch.
     pub fn analyze(
         &mut self,
         entry: u64,
         cc: &strider_target::BuiltCallingConvention,
         opts: &AnalyzeOptions<'_>,
         pipeline: Option<strider_opt::OptimizerPipeline>,
-    ) -> Result<AnalyzeResult> {
+    ) -> std::result::Result<AnalyzeResult, AnalyzeError> {
         // Built once and reused across re-lifts (`run` takes `&self`).
         let pipeline = &with_classify(pipeline.unwrap_or_else(strider_opt::default_pipeline));
         let start_addr = MachineInsnAddr::from(entry);
@@ -194,6 +255,7 @@ where
                 break st.finish(round, Termination::Converged)?;
             }
         };
+        opts.on_incomplete.check(result.incomplete())?;
         if opts.compact {
             result.function.compact()?;
         }
@@ -1106,6 +1168,15 @@ mod tests {
             machine_addr: MachineInsnAddr::from(machine),
             insn_index: 0,
         }
+    }
+
+    /// The cause chain, as `{:#}` prints it: callers format this error, and it
+    /// offers no `source()` to walk.
+    #[test]
+    fn a_failure_displays_its_whole_chain() {
+        let e = AnalyzeError::from(anyhow!("inner").context("outer"));
+        assert_eq!(e.to_string(), "outer: inner");
+        assert!(std::error::Error::source(&e).is_none());
     }
 
     #[test]

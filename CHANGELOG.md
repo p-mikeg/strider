@@ -41,6 +41,9 @@
   are gone: `AnalyzeResult::incomplete()` and `Cfg::incompleteness()` return
   one `Incompleteness` of `(PcodeInsnAddr, Reason)`, read per reason with
   `of(reason)`. A `build_cfg` CFG also names its unresolved and seated sites.
+- `Strider::analyze` returns `AnalyzeError`, `Incomplete(Incompleteness)` or
+  `Failed(anyhow::Error)`, and `Strider::build_cfg` takes an `OnIncomplete`:
+  under `OnIncomplete::Error` a result that is not complete is refused.
 
 ### Changed, Python
 
@@ -61,6 +64,13 @@
   invalidated.
 - An unknown op name in `int_cmp`, `int_binary`, `bool_binary` or
   `float_binary` lists the accepted names in its error.
+
+### Added, Python
+
+- `LifterOptions(on_incomplete=)` and `Lifter.build_cfg(on_incomplete=)` take a
+  `strider.lift.OnIncomplete`; `OnIncomplete.ERROR` raises
+  `strider.lift.IncompleteAnalysis`, a `StriderError` whose `.sites` lists
+  `Cfg.incomplete`.
 
 ### Changed, Rust
 

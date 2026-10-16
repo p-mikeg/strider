@@ -75,14 +75,20 @@ fn a_split_carries_the_isa_mode_to_the_first_half() {
             known_targets: &known,
             ..CfgOptions::default()
         },
-        ..AnalyzeOptions::default()
+        ..common::ignoring()
     };
 
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::Arm, bytes(), BASE, None);
     // The seeds alone, before the resolve loop drops the clashing arm and
     // rebuilds: this is the build the clash is raised in, so it is the one the
     // split has to be visible in.
-    let seeded = strider.build_cfg(BASE, &lift_opts.cfg).expect("build_cfg");
+    let seeded = strider
+        .build_cfg(
+            BASE,
+            &lift_opts.cfg,
+            strider_orchestrator::OnIncomplete::Ignore,
+        )
+        .expect("build_cfg");
     let starts: Vec<u64> = seeded
         .regions()
         .map(|r| r.start_addr.machine_addr.addr)

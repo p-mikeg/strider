@@ -31,7 +31,7 @@ fn an_arm_the_cfg_cannot_seat_is_reported_unresolved() {
             known_targets: &known,
             ..CfgOptions::default()
         },
-        ..AnalyzeOptions::default()
+        ..common::ignoring()
     };
 
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, base, None);
