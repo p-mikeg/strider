@@ -1,7 +1,7 @@
 //! A seat the loop abandoned must not survive in the CFG it publishes.
 //!
-//! `abandon_undecodable` drops the whole seat of a site that named a target the
-//! CFG could not decode, because a bad arm is evidence the bound is wrong. The
+//! The loop withdraws the whole seat of a site that named a target the CFG
+//! could not decode, because a bad arm is evidence the bound is wrong. The
 //! build that raised it had only dropped the ONE arm, so its CFG still seats the
 //! rest; converging on that publishes a `Switch` at a site the analysis
 //! reports unresolved.
