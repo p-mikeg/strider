@@ -459,9 +459,9 @@ pub(crate) fn count_stores(function: &strider_ir::Function) -> usize {
 }
 
 /// Counts Store/Load nodes whose address decomposed to an SP-relative slot in
-/// the `memory_offsets` side-table. `StackOffsetDetect` is the post-pass that
-/// decomposes every Store/Load address, so a non-zero count after the pipeline
-/// proves it ran; other passes memoize into the same table.
+/// the `memory_offsets` side-table. Every pipeline run decomposes every
+/// Store/Load address after its post-passes, so a non-zero count proves the
+/// stamp ran; other passes memoize into the same table.
 pub(crate) fn count_memory_offsets(function: &strider_ir::Function) -> usize {
     function
         .graph()

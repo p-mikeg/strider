@@ -115,15 +115,6 @@ nothing.
 
 In the order the default pipeline runs them:
 
-**StackOffsetDetect.** For every load and store whose address reduces to a base
-plus a constant, it records the pair. The base is a stack pointer, or the result
-of a call to a `noalias_allocators` entry. Offsets are comparable only against
-another access sharing the same base: an alignment-masked `sp & -16` is its own
-base, since its distance from the entry stack pointer depends on the caller.
-These pairs are what a query for stack accesses, or for one exact slot, reads.
-A pipeline run records them after its post-passes even when this pass is not
-in the pipeline.
-
 **CallStackArgCollect.** At each call, gathers the stores into the outgoing
 argument window that reach it and attaches them to the call node, so they read
 like ordinary call arguments. Once lowered to memory an argument push is
@@ -136,6 +127,15 @@ each one. It also moves the memory edge of each load it examines in an
 incoming-argument slot past the memory definitions that cannot overwrite it,
 using none of the `AssumptionOptions`. Register-passed arguments are recorded
 at lift time, so they are already in place before this pass runs.
+
+After its post-passes, every run records, for each load and store whose address
+reduces to a base plus a constant, the pair. The base is a stack pointer, or the
+result of a call to a `noalias_allocators` entry. Offsets are comparable only
+against another access sharing the same base: an alignment-masked `sp & -16` is
+its own base, since its distance from the entry stack pointer depends on the
+caller. These pairs are what a query for stack accesses, or for one exact slot,
+reads. `StackOffsetDetect` records them as a post-pass, for a custom pipeline
+whose later post-pass reads them.
 
 ## Indirect-branch resolution
 

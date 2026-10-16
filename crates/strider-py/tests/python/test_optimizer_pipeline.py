@@ -17,7 +17,7 @@ def test_default_pipeline_pass_names():
     assert isinstance(names, list) and all(isinstance(n, str) for n in names)
     assert len(names) == 10
     assert "ConstantFold" in names
-    assert len(p.post_passes) == 3
+    assert p.post_passes == ["CallStackArgCollect", "FunctionArgDetect"]
 
 
 def test_add_pure_pass():
