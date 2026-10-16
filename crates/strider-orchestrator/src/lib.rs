@@ -107,7 +107,8 @@ where
     /// Resolution is a fixed-point re-lift loop: each round classifies indirect
     /// branches against the optimised IR, folds the targets into
     /// `known_targets` and re-lifts, until the induced edge set stops changing.
-    /// `MAX_RESOLUTION_ITERATIONS` caps the rounds and so the discovery depth.
+    /// `MAX_RESOLUTION_ITERATIONS` caps the folds (so at most one round more)
+    /// and with them the discovery depth.
     /// Every narrowing is reported, and a site that narrows twice has an
     /// unstable answer: it is abandoned.
     ///
@@ -300,6 +301,8 @@ impl AnalyzeResult {
     }
 }
 
+/// Caps the folds, so a run builds at most one more round than this.
+///
 /// Doubles as a DEPTH limit: one iteration seats one LEVEL of indirect-branch
 /// discovery, so a chain of trampolines each jumping to the next needs one
 /// round per link. [`apply_resolutions`] reporting no change is the
@@ -1015,12 +1018,7 @@ fn seated_arm_losses(
         let strider_cfg::RegionTerminator::Switch { targets, addr, .. } = &region.terminator else {
             continue;
         };
-        // `seated_in`, not a bare lookup: a caller can only spell the MACHINE
-        // address, so a seed keyed at p-code index 0 counts for the whole
-        // instruction. `CfgOptions::seated` seats it exactly that way.
-        // An exact-key lookup skipped every dispatch whose `BRANCHIND` is not
-        // the instruction's first p-code op, i.e. ARM `bx`, MIPS `jr` and x86
-        // `jmp [mem]`, so this check never ran for them.
+        // The lookup the CFG seats with, not an exact-key one.
         let Some(asked) = seated_in(known_targets, *addr) else {
             continue;
         };

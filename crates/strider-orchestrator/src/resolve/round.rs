@@ -32,7 +32,9 @@ pub(crate) struct Round {
 }
 
 impl Round {
-    /// No dispatch site is left for a fold to change.
+    /// No dispatch site is left for a fold to change. A seated `Switch` counts
+    /// as one: it is re-derived every round, so a table resolved before its
+    /// loop closed widens here.
     pub(crate) fn is_settled(&self) -> bool {
         self.placeholders.is_empty() && self.switches.is_empty()
     }
