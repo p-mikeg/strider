@@ -252,3 +252,21 @@ def test_a_no_return_target_ends_the_call_in_build_cfg_and_analyze():
 def test_no_return_targets_read_back_as_a_frozenset():
     opts = strider.cfg.CfgOptions(no_return_targets=[0x2000, 0x2000, 0x1000])
     assert opts.no_return_targets == frozenset({0x1000, 0x2000})
+    assert opts.no_return_targets is opts.no_return_targets
+
+
+def test_cfg_options_repr():
+    assert repr(strider.cfg.CfgOptions()) == (
+        "CfgOptions(function_max_size=None, allow_code_before_start_addr=False, "
+        "known_targets={0 entries}, call_other_abis={0 entries}, "
+        "data_ranges=[0 ranges], no_return_targets={0 entries})"
+    )
+    assert repr(
+        strider.cfg.CfgOptions(
+            function_max_size=16, no_return_targets=[0x2000], data_ranges=[(0x10, 0x18)]
+        )
+    ) == (
+        "CfgOptions(function_max_size=16, allow_code_before_start_addr=False, "
+        "known_targets={0 entries}, call_other_abis={0 entries}, "
+        "data_ranges=[1 ranges], no_return_targets={1 entries})"
+    )
