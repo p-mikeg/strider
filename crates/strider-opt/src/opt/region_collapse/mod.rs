@@ -71,7 +71,7 @@ impl RegionCollapse {
         // A control output with no consumer makes the rewire itself a no-op.
         // `replace_value` also absorbs the old producer's asm fingerprint into
         // the new one.
-        let rewired = edit.replace_value(ctrl_value, sole_ctrl_value)?;
+        let rewired = edit.replace_value(ctrl_value, sole_ctrl_value);
         let mut result = OptimizationResult::from_changed(rewired || phis_collapsed);
 
         // Liveness, not use count: an orphan `Phi`/`MemPhi` is unreachable arena
@@ -125,7 +125,7 @@ fn collapse_region_phis(
         collapses.push((phi_value, sole));
     }
     for (phi_value, sole) in collapses {
-        edit.replace_value(phi_value, sole)?;
+        edit.replace_value(phi_value, sole);
     }
     let collapsed = !phis.is_empty();
     for phi in phis {

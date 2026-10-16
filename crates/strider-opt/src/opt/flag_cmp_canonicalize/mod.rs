@@ -444,7 +444,7 @@ fn canonicalize_cr_bit_test(
     // addresses vanish when the pack is culled, breaking the superset-only
     // contract.
     absorb_cr_pack_fingerprints(edit, cond_out, cmp);
-    edit.replace_value(cond_out, cmp)?;
+    edit.replace_value(cond_out, cmp);
     Ok(Some(cmp))
 }
 

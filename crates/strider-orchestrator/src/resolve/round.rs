@@ -106,7 +106,7 @@ where
         {
             let mut edit = strider_opt::EditFunction::new(&mut function);
             for &(_, ret, target) in &return_sites {
-                edit.add_node_input(ret, target)?;
+                edit.add_node_input(ret, target);
             }
         }
         let mut ctx = OptCtx::new(rom_ref);

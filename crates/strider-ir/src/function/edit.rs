@@ -7,7 +7,6 @@ use entity_utils::{DenseEntitySet, Worklist};
 use cranelift_entity::SecondaryMap;
 
 use crate::builder::IRBuilder;
-use crate::error::Result;
 use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind};
 use crate::walk::{DefUseSuccs, PostOrder, RawDefUseSuccs};
 use crate::{Function, Graph, IRViewer};
@@ -344,8 +343,7 @@ impl<'g> EditFunction<'g> {
                 .function
                 .node_outputs_exact::<1>(twin)
                 .expect("a cacheable twin is single-output");
-            self.replace_value(node_out, twin_out)
-                .expect("merging a re-canonicalized node into its twin cannot fail");
+            self.replace_value(node_out, twin_out);
         }
     }
 
@@ -496,10 +494,7 @@ impl<'g> EditFunction<'g> {
     }
 
     /// Append an input to a **non-cacheable** node.
-    ///
-    /// # Errors
-    /// Never; the `Result` keeps the edit-verb surface uniform.
-    pub fn add_node_input(&mut self, node: NodeId, output_id: ValueId) -> crate::error::Result<()> {
+    pub fn add_node_input(&mut self, node: NodeId, output_id: ValueId) {
         let was_input_less = self.node_inputs(node).is_empty();
         self.will_attach_value(output_id);
         self.function.graph_mut().add_node_input(node, output_id);
@@ -507,7 +502,6 @@ impl<'g> EditFunction<'g> {
             self.state.roots.remove(node);
         }
         self.generation += 1;
-        Ok(())
     }
 
     /// Drop the variadic tail of a **non-cacheable** node's inputs, keeping the
@@ -565,10 +559,7 @@ impl<'g> EditFunction<'g> {
     /// Redirect every use of `old` to `new`, first absorbing `old`'s producer
     /// asm-fingerprint into `new`'s (superset-only union).  Returns `true` iff
     /// a use moved.
-    ///
-    /// # Errors
-    /// Never; the `Result` keeps the edit-verb surface uniform.
-    pub fn replace_value(&mut self, old: ValueId, new: ValueId) -> Result<bool> {
+    pub fn replace_value(&mut self, old: ValueId, new: ValueId) -> bool {
         let into = self.function.producer(new);
         let from = self.function.producer(old);
         self.function
@@ -578,7 +569,7 @@ impl<'g> EditFunction<'g> {
         // `replace_all_uses` bypasses `update_input`'s per-edge hook, so the
         // orphaned producer is enqueued here (side-effect-guarded inside).
         self.enqueue_killed_def_node(from);
-        Ok(changed)
+        changed
     }
 
     /// Single-slot companion to [`Self::replace_value`]: rewires exactly one
@@ -606,20 +597,13 @@ impl<'g> EditFunction<'g> {
     ///
     /// `pred_indices` index the Region's predecessors, and may arrive unsorted
     /// and with duplicates.  Pass ALL dead indices at once.
-    ///
-    /// # Errors
-    /// Never; the `Result` keeps the edit-verb surface uniform.
-    pub fn remove_region_predecessors(
-        &mut self,
-        region: NodeId,
-        pred_indices: &[u32],
-    ) -> Result<()> {
+    pub fn remove_region_predecessors(&mut self, region: NodeId, pred_indices: &[u32]) {
         debug_assert!(
             matches!(self.node_kind(region), NodeKind::Region),
             "remove_region_predecessors: node is not a Region",
         );
         if pred_indices.is_empty() {
-            return Ok(());
+            return;
         }
         let mut indices: Vec<u32> = pred_indices.to_vec();
         indices.sort_unstable();
@@ -647,7 +631,6 @@ impl<'g> EditFunction<'g> {
             self.remove_node_inputs_batch(phi, &phi_idxs);
         }
         self.remove_node_inputs_batch(region, &indices);
-        Ok(())
     }
 
     /// [`Graph::remove_node_inputs_batch`] for a **non-cacheable** node.  Out-of-range and duplicate indices are ignored.
@@ -787,7 +770,7 @@ mod tests {
         ctx.update_input(slot, three);
         assert_eq!(ctx.generation(), 1);
 
-        assert!(!ctx.replace_value(two, one).unwrap());
+        assert!(!ctx.replace_value(two, one));
         assert_eq!(ctx.generation(), 1, "a value with no uses moves nothing");
 
         ctx.kill_node(ctx.producer(two));
@@ -935,7 +918,7 @@ mod tests {
 
         // Resurrect C by appending its output as an extra Return value: the
         // attach marks C live AND enqueues it for re-canon.
-        ctx.add_node_input(return_node, c).unwrap();
+        ctx.add_node_input(return_node, c);
         assert!(ctx.is_live(c_node), "C is resurrected by the attach");
 
         ctx.clean();
@@ -1068,7 +1051,7 @@ mod tests {
             .expect("the Add must be live");
         assert_eq!(located, add_node, "live_of_kind located the Add");
 
-        ctx.replace_value(add, c1).unwrap();
+        ctx.replace_value(add, c1);
         ctx.clean();
 
         let entry = ctx.entry();
@@ -1187,7 +1170,7 @@ mod tests {
             "the orphan's operand starts dead too"
         );
 
-        ctx.replace_value(c1, orphan).unwrap();
+        ctx.replace_value(c1, orphan);
 
         assert!(
             ctx.is_live(orphan_node),
@@ -1252,7 +1235,7 @@ mod tests {
             let mut ctx = EditFunction::new(&mut function);
             let start = std::time::Instant::now();
             for (&dead, &orphan) in live.iter().zip(&orphans) {
-                ctx.replace_value(dead, orphan).unwrap();
+                ctx.replace_value(dead, orphan);
             }
             start.elapsed()
         }
@@ -1363,7 +1346,7 @@ mod tests {
             "orphan starts outside the live set"
         );
 
-        ctx.add_node_input(return_node, orphan).unwrap();
+        ctx.add_node_input(return_node, orphan);
 
         assert!(
             ctx.is_live(orphan_node),
@@ -1511,7 +1494,7 @@ mod tests {
         assert!(!ctx.is_live(if_node), "the killed If leaves the live set");
 
         // Attach the corpse's dangling control output to a live consumer.
-        ctx.add_node_input(return_node, ctrl_false).unwrap();
+        ctx.add_node_input(return_node, ctrl_false);
 
         assert!(
             !ctx.is_live(if_node),
@@ -1689,7 +1672,7 @@ mod tests {
         );
 
         // Remove predecessors {1, 3, 6} in one batch (unsorted on purpose).
-        ctx.remove_region_predecessors(region, &[3, 1, 6]).unwrap();
+        ctx.remove_region_predecessors(region, &[3, 1, 6]);
 
         assert_eq!(
             ctx.function().node_inputs(region).len(),
