@@ -15,7 +15,7 @@ use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRViewer, ReadOnlyMemory};
 
 use crate::mem_analysis::{
-    MemAnalyzer, MemExpr, MemKind, MemOptions, MemPurpose, store_value_byte_size,
+    MemAnalyzer, MemExpr, MemKind, MemOptions, MemPurpose, slot_key, store_value_byte_size,
 };
 
 #[derive(Clone, Copy, PartialEq)]
@@ -302,19 +302,6 @@ struct SlotMap {
     /// chain it cannot summarize.  Every unmapped probe would fall back to an
     /// uncapped walk, once per index, so the site defers instead.
     exhausted: bool,
-}
-
-/// Byte `byte` of an access at `offset`, reduced the way
-/// [`wrap_to_addr_width`](crate::mem_analysis::wrap_to_addr_width) reduces an
-/// offset: address arithmetic wraps, so bytes past the top of the signed
-/// range are the bytes at its bottom.  `None` past the `i128` carrier.
-fn slot_key(addr_ty: Option<ValueType>, offset: i128, byte: i128) -> Option<i128> {
-    let at = offset.checked_add(byte)?;
-    Some(
-        addr_ty
-            .and_then(|ty| ty.get_signed_int(at as u128))
-            .unwrap_or(at),
-    )
 }
 
 enum Reaching {

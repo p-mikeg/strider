@@ -319,15 +319,14 @@ fn spine_walk_trailed(
                 };
             }
             NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-                let [lhs, rhs] = binary_operands(function, node);
                 // SP + const in either order.  The const shifts the accumulated
                 // offset only while above the anchor.
-                let (sp_operand, c) =
-                    match (function.int_const_i128(rhs), function.int_const_i128(lhs)) {
-                        (Some(c), _) => (lhs, c),
-                        (None, Some(c)) => (rhs, c),
-                        _ => return SpineEnd::Opaque,
-                    };
+                let Some((sp_operand, k)) = crate::const_eval::var_and_const(function, node) else {
+                    return SpineEnd::Opaque;
+                };
+                let Some(c) = function.int_const_i128(k) else {
+                    return SpineEnd::Opaque;
+                };
                 if anchor.is_none() {
                     // Fail-closed on overflow.
                     let Some(next) = acc.checked_add(c) else {
