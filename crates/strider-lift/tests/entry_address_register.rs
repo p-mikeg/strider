@@ -2,7 +2,6 @@
 //! entry to it, so the prologue that turns it into a TOC or GOT pointer folds.
 
 use strider_ir::{IRViewer, IRWalker};
-use strider_lift::LiftOptions;
 
 /// Whether the lift read `reg` as a runtime input, and whether the entry
 /// address reached the graph as a literal.
@@ -21,9 +20,10 @@ fn reads_reg_and_entry_const(
     let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
     let reg_vn = lifter.sleigh_regs().name_to_vn(reg).expect("the register");
     let cc = cc.build(lifter.sleigh_regs()).expect("cc");
-    let opts = LiftOptions::default();
-    let cfg = lifter.build_cfg(0x1000u64.into(), &opts.cfg).expect("cfg");
-    let f = lifter.build_ir_with(&cfg, cc, &opts).expect("ir").function;
+    let cfg = lifter
+        .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
+        .expect("cfg");
+    let f = lifter.build_ir(&cfg, cc).expect("ir").function;
     let initial = f
         .walk_kind(|k| matches!(k, strider_ir::node::NodeKind::InitialVar(_)))
         .any(|node| match f.node_kind(node) {

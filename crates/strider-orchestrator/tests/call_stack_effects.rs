@@ -15,16 +15,17 @@ const BASE: u64 = 0x1000;
 /// What is under test is the stack-pointer effect, not the verification.
 fn analyze(arch: Arch, bytes: Vec<u8>) -> strider_ir::Function {
     let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, None);
-    let opt_opts = strider_opt::OptOptions {
-        assumptions: strider_opt::AssumptionOptions {
-            return_slots_survive_untracked_writes: true,
-            ..strider_opt::AssumptionOptions::none()
+    let opts = strider_orchestrator::AnalyzeOptions {
+        opt: strider_opt::OptOptions {
+            assumptions: strider_opt::AssumptionOptions {
+                return_slots_survive_untracked_writes: true,
+                ..strider_opt::AssumptionOptions::none()
+            },
+            ..Default::default()
         },
         ..Default::default()
     };
-    let result = strider
-        .analyze(BASE, &cc, &Default::default(), &opt_opts, None)
-        .expect("analyze");
+    let result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
     assert!(result.is_complete(), "no incompleteness is expected here");
     result.function
 }

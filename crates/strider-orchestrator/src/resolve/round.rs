@@ -2,14 +2,14 @@
 //! set.
 
 use anyhow::Result;
-use rustc_hash::FxHashSet;
-use strider_cfg::{MachineInsnAddr, PcodeInsnAddr};
+use rustc_hash::{FxHashMap, FxHashSet};
+use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 use strider_ir::node::NodeId;
-use strider_opt::{OptCtx, OptOptions, ReadOnlyMemory};
+use strider_opt::{OptCtx, ReadOnlyMemory};
 
 use crate::{
-    IndirectResolutions, LiftOptions, LiftOutcome, Strider, UnresolvedAnchors, live_dispatch_sites,
-    settle_return_sites, unclassified_nodes,
+    AnalyzeOptions, IndirectResolutions, LiftOutcome, Strider, UnresolvedAnchors,
+    live_dispatch_sites, settle_return_sites, unclassified_nodes,
 };
 
 /// One round's cfg, the function lifted and optimised from it, and what the
@@ -44,8 +44,9 @@ impl<R> Strider<R>
 where
     R: rsleigh::MemReader,
 {
-    /// Builds the cfg from `working`, lifts and optimises it, and keeps the
-    /// classifier post-pass's node-keyed answers apart.
+    /// Builds the cfg from `opts` over the seat set `working`, lifts and
+    /// optimises it, and keeps the classifier post-pass's node-keyed answers
+    /// apart.
     ///
     /// # Errors
     ///
@@ -55,8 +56,8 @@ where
         &mut self,
         start_addr: MachineInsnAddr,
         cc: &strider_target::BuiltCallingConvention,
-        working: &LiftOptions<'_>,
-        opt_opts: &OptOptions,
+        opts: &AnalyzeOptions<'_>,
+        working: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
         pipeline: &strider_opt::OptimizerPipeline,
     ) -> Result<(Round, IndirectResolutions)> {
         // Destructured to split the borrow: `lifter` goes out `&mut` while
@@ -68,9 +69,15 @@ where
         } = *self;
         let rom_ref: Option<&dyn ReadOnlyMemory> = rom.as_deref();
 
+        // Cloned whole: naming the other fields would silently drop any field
+        // added to `CfgOptions` later from the whole re-lift loop.
+        let cfg_opts = strider_cfg::CfgOptions {
+            known_targets: working,
+            ..opts.cfg.clone()
+        };
         // A `BranchIndirect` outside `known_targets` is deferred here and
         // resolved at the full-function IR level by the classifier post-pass.
-        let cfg = lifter.build_cfg(start_addr, &working.cfg)?;
+        let cfg = lifter.build_cfg(start_addr, &cfg_opts)?;
         // `cc` is moved all the way into `Function::default_cc`, but the
         // loop builds again next round, so the clone is unavoidable here.
         let LiftOutcome {
@@ -78,7 +85,7 @@ where
             unresolved_branches: placeholders,
             switch_anchors: switches,
             return_sites,
-        } = lifter.build_ir_with(&cfg, cc.clone(), working)?;
+        } = lifter.build_ir_with(&cfg, cc.clone(), &cfg_opts, opts.per_address_ccs)?;
 
         // A `Return` consumes no target, so the pipeline would drop the value
         // each return jumps to. It rides on its `Return` for the run.
@@ -89,11 +96,11 @@ where
             }
         }
         let mut ctx = OptCtx::new(rom_ref);
-        ctx.options = opt_opts.clone();
+        ctx.options = opts.opt.clone();
         pipeline.run(&mut function, &mut ctx)?;
         let resolutions = std::mem::take(&mut ctx.indirect_resolutions);
         let unverified_returns =
-            settle_return_sites(&mut function, &return_sites, &opt_opts.assumptions);
+            settle_return_sites(&mut function, &return_sites, &opts.opt.assumptions);
         // Read off the function, not the classification map, which any
         // post-pass can rewrite.
         let live = live_dispatch_sites(&function);

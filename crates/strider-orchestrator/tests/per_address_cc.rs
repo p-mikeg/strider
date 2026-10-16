@@ -7,8 +7,7 @@ use strider_ir::IRViewer;
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
-use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{LiftOptions, Strider};
+use strider_orchestrator::{AnalyzeOptions, Strider};
 use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
@@ -32,14 +31,14 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
             .build(&regs)
             .unwrap(),
     );
-    let lift_opts = LiftOptions {
+    let lift_opts = AnalyzeOptions {
         per_address_ccs: &overrides,
-        ..LiftOptions::default()
+        ..AnalyzeOptions::default()
     };
 
     let mut strider = Strider::new(arch, sleigh, None).unwrap();
     let bfg = strider
-        .analyze(entry, &cc, &lift_opts, &OptOptions::default(), None)
+        .analyze(entry, &cc, &lift_opts, None)
         .unwrap()
         .function;
 
@@ -97,13 +96,7 @@ fn call_without_override_uses_function_default_clobber_set() {
 
     let mut strider = Strider::new(arch, sleigh, None).unwrap();
     let bfg = strider
-        .analyze(
-            entry,
-            &cc,
-            &LiftOptions::default(),
-            &OptOptions::default(),
-            None,
-        )
+        .analyze(entry, &cc, &AnalyzeOptions::default(), None)
         .unwrap()
         .function;
 

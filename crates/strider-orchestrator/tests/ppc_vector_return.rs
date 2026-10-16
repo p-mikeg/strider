@@ -53,7 +53,7 @@ fn a_vector_add_survives_to_the_return() {
         let (mut strider, _) = common::strider_over_bytes(arch, bytes, BASE, None);
         let cc = cc.build(strider.sleigh_regs()).expect("build cc");
         let f = strider
-            .analyze(BASE, &cc, &Default::default(), &Default::default(), None)
+            .analyze(BASE, &cc, &Default::default(), None)
             .unwrap_or_else(|e| panic!("{arch:?}: {e}"))
             .function;
         let adds = f
@@ -86,7 +86,7 @@ fn a_scalar_function_tracks_vector_registers_only_under_the_userland_abi() {
             let (mut strider, _) = common::strider_over_bytes(arch, bytes, BASE, None);
             let cc = cc.build(strider.sleigh_regs()).expect("build cc");
             let f = strider
-                .analyze(BASE, &cc, &Default::default(), &Default::default(), None)
+                .analyze(BASE, &cc, &Default::default(), None)
                 .unwrap_or_else(|e| panic!("{arch:?}: {e}"))
                 .function;
             let vectors = f.all_vns().iter().filter(|vn| vn.size == 16).count();

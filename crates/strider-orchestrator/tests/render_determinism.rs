@@ -5,8 +5,7 @@
 mod common;
 
 use dot::{DotStyle, GraphDot};
-use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::{AnalyzeResult, LiftOptions, Strider};
+use strider_orchestrator::{AnalyzeOptions, AnalyzeResult, Strider};
 
 fn renders<R: rsleigh::MemReader>(
     strider: &Strider<R>,
@@ -56,13 +55,7 @@ fn assert_renders_identical_across_engines(arch: common::Arch, case: &str, fn_na
     let analyse = || {
         let (mut strider, cc, addr) = common::fixture_strider(arch, case, fn_name);
         let result = strider
-            .analyze(
-                addr,
-                &cc,
-                &LiftOptions::default(),
-                &OptOptions::default(),
-                None,
-            )
+            .analyze(addr, &cc, &AnalyzeOptions::default(), None)
             .expect("analyze");
         (strider, result)
     };

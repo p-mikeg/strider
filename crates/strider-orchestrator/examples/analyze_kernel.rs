@@ -39,8 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result = strider.analyze(
         addr,
         &cc,
-        &strider_orchestrator::LiftOptions::default(),
-        &strider_orchestrator::opt::OptOptions::default(),
+        &strider_orchestrator::AnalyzeOptions::default(),
         None,
     )?;
     let elapsed = t0.elapsed();

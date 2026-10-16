@@ -24,12 +24,10 @@ fn lift(
     let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
     let regs = lifter.sleigh_regs().clone();
     let cc: BuiltCallingConvention = cc.build(&regs).expect("cc");
-    let opts = strider_lift::LiftOptions::default();
-    let cfg = lifter.build_cfg(BASE.into(), &opts.cfg).expect("cfg");
-    let f = lifter
-        .build_ir_with(&cfg, cc.clone(), &opts)
-        .expect("ir")
-        .function;
+    let cfg = lifter
+        .build_cfg(BASE.into(), &strider_cfg::CfgOptions::default())
+        .expect("cfg");
+    let f = lifter.build_ir(&cfg, cc.clone()).expect("ir").function;
     let ret = f
         .walk_kind(|k| matches!(k, NodeKind::Return))
         .next()
