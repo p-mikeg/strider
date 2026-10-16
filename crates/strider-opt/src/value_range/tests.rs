@@ -1,6 +1,9 @@
 use strider_ir::Function;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntCmpOp, control_dominator_tree};
+use strider_ir::{
+    FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntCmpOp,
+    control_dominator_tree,
+};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
 
 use super::RangeMap;
@@ -146,102 +149,217 @@ fn if_edge_consumers(f: &strider_ir::Function) -> (NodeId, NodeId) {
     (consumer(outs[0]), consumer(outs[1]))
 }
 
+/// [`guarded`]'s function, its guarded load and the two `If` edges.
+struct Guarded {
+    f: Function,
+    /// The `ty` load the condition reads, with no KnownBits facts at all.
+    idx: ValueId,
+    /// What the `then` arm returns.
+    ret: ValueId,
+    /// The consumers of the `If`'s true and false edges after `canonicalize`.
+    true_node: NodeId,
+    false_node: NodeId,
+}
+
 /// ```text
-///   entry:    If(Less(idx, bound)) -> dispatch (true), exit (false)
-///   dispatch: Return(idx)
-///   exit:     Return(idx)
+///   entry: idx = Load(ty); If(cond(idx)) -> then, else
+///   then:  Return(ret(idx))
+///   else:  Return(idx)
 /// ```
-/// Returns `(function, idx, dispatch_node, exit_node)`.
-fn build_guarded_dispatch(
-    bound: u64,
+/// canonicalised. `IfCondInversion` rewrites `If(Xor(C, 1))` to `If(C)` with
+/// the arms swapped, so for such a cond `then` is the false edge.
+fn guarded(
     ty: ValueType,
-) -> (strider_ir::Function, ValueId, NodeId, NodeId) {
+    cond: impl FnOnce(&mut FunctionBuilder, ValueId) -> ValueId,
+    ret: impl FnOnce(&mut FunctionBuilder, ValueId) -> ValueId,
+) -> Guarded {
     let mut b = RegisterSet::new().build_fn().unwrap();
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-
     let entry = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit = b.create_region_all().unwrap();
-
+    let then_arm = b.create_region_all().unwrap();
+    let else_arm = b.create_region_all().unwrap();
     b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
-    // A load stands in for an idx with no KnownBits facts at all.
-    let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
-    let idx = b.build_load(dummy_addr, rsleigh::VnSpace::RAM, ty).unwrap();
-    let bound_c = b.build_int_const(bound, ty).unwrap();
-    let cond = b
-        .build_int_cmp_operation(idx, bound_c, IntCmpOp::Less, ty)
-        .unwrap();
-    b.build_if(cond, dispatch, exit).unwrap();
+    let addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
+    let idx = b.build_load(addr, rsleigh::VnSpace::RAM, ty).unwrap();
+    let c = cond(&mut b, idx);
+    b.build_if(c, then_arm, else_arm).unwrap();
 
-    b.set_region(dispatch);
-    b.build_return(Some(idx), &[]).unwrap();
-
-    b.set_region(exit);
+    b.set_region(then_arm);
+    let value = ret(&mut b, idx);
+    b.build_return(Some(value), &[]).unwrap();
+    b.set_region(else_arm);
     b.build_return(Some(idx), &[]).unwrap();
 
     b.set_lift_addr(None);
     let mut f = b.build().unwrap();
     canonicalize(&mut f);
-
-    // A bare `Less` cond is not swapped, so dispatch is the true-edge consumer.
-    let (dispatch_node, exit_node) = if_edge_consumers(&f);
-    (f, idx, dispatch_node, exit_node)
+    let (true_node, false_node) = if_edge_consumers(&f);
+    Guarded {
+        f,
+        idx,
+        ret: value,
+        true_node,
+        false_node,
+    }
 }
 
+/// `x <op> c` at `I32`.
+fn cmp_c(b: &mut FunctionBuilder, x: ValueId, op: IntCmpOp, c: u64) -> ValueId {
+    let c = b.build_int_const(c, ValueType::I32).unwrap();
+    b.build_int_cmp_operation(x, c, op, ValueType::I32).unwrap()
+}
+
+/// `c < x` at `I32`.
+fn c_less(b: &mut FunctionBuilder, c: u64, x: ValueId) -> ValueId {
+    let c = b.build_int_const(c, ValueType::I32).unwrap();
+    b.build_int_cmp_operation(c, x, IntCmpOp::Less, ValueType::I32)
+        .unwrap()
+}
+
+/// `x + c` at `I32`.
+fn add_c(b: &mut FunctionBuilder, x: ValueId, c: u128) -> ValueId {
+    let c = b.build_int_const(c, ValueType::I32).unwrap();
+    b.build_int_binary_operation(x, c, IntBinaryOp::Add, ValueType::I32)
+        .unwrap()
+}
+
+/// `Xor(cond, 1):I1`, the lowered logical NOT; `Xor(1, cond)` if `one_first`.
+fn not_i1(b: &mut FunctionBuilder, cond: ValueId, one_first: bool) -> ValueId {
+    let one = b.build_int_const(1u64, ValueType::I1).unwrap();
+    let (l, r) = if one_first { (one, cond) } else { (cond, one) };
+    b.build_int_binary_operation(l, r, IntBinaryOp::Xor, ValueType::I1)
+        .unwrap()
+}
+
+/// A guard condition over `idx`.
+type Cond = fn(&mut FunctionBuilder, ValueId) -> ValueId;
+
+/// What a guard row expects of `idx` on one edge.
+#[derive(Clone, Copy, Debug)]
+enum Expect {
+    /// Exactly `lo..=hi`.
+    Bounds(u128, u128),
+    /// The full `I32` range.
+    Top,
+    /// Not checked.
+    Any,
+}
+
+/// Each guard shape's range for `idx` on its `If`'s true and false edges after
+/// `canonicalize`, which rewrites an `Xor(C, 1)` cond to `If(C)`: the lowered
+/// `idx <= 15` bounds the false edge of `15 < idx`.
 #[test]
-fn strict_less_guard_bounds_index_on_true_edge() {
-    let (f, idx, dispatch_region, _exit) = build_guarded_dispatch(8, ValueType::I32);
-
-    let iv = range_at(&f, idx, dispatch_region);
-    assert_eq!(iv.lo, 0, "lower bound must be 0");
-    assert_eq!(iv.hi, 7, "upper bound must be 7 for idx < 8");
+fn guard_extraction_bounds_each_edge() {
+    use Expect::{Any, Bounds, Top};
+    use IntCmpOp::{Less, Sless};
+    let rows: [(&str, Cond, Expect, Expect); 10] = [
+        (
+            "idx < 8",
+            |b, idx| cmp_c(b, idx, Less, 8),
+            Bounds(0, 7),
+            Top,
+        ),
+        // Impossible unsigned, so not the `[0, 0]` `saturating_sub(1)` gives.
+        ("idx < 0", |b, idx| cmp_c(b, idx, Less, 0), Top, Any),
+        // The largest bound: `build_int_const` wraps `type_mask + 1` to 0.
+        (
+            "idx < type_mask",
+            |b, idx| cmp_c(b, idx, Less, 0xFFFF_FFFF),
+            Bounds(0, 0xFFFF_FFFE),
+            Any,
+        ),
+        // `idx <= 15` as lowered, in both Xor operand orders.
+        (
+            "Xor(15 < idx, 1)",
+            |b, idx| {
+                let gt = c_less(b, 15, idx);
+                not_i1(b, gt, false)
+            },
+            Any,
+            Bounds(0, 15),
+        ),
+        (
+            "Xor(1, 15 < idx)",
+            |b, idx| {
+                let gt = c_less(b, 15, idx);
+                not_i1(b, gt, true)
+            },
+            Any,
+            Bounds(0, 15),
+        ),
+        // `idx >= 8`, rewritten to `idx < 8` with the arms swapped.
+        (
+            "Xor(idx < 8, 1)",
+            |b, idx| {
+                let lt = cmp_c(b, idx, Less, 8);
+                not_i1(b, lt, false)
+            },
+            Bounds(0, 7),
+            Top,
+        ),
+        // The `ja` shape: the true edge knows only `idx >= 9`.
+        ("8 < idx", |b, idx| c_less(b, 8, idx), Top, Bounds(0, 8)),
+        // No known-zero sign bit, so no unsigned bound.
+        ("idx s< 8", |b, idx| cmp_c(b, idx, Sless, 8), Top, Any),
+        // The masked-Thumb shape: the bound carries back through the add.
+        (
+            "idx + -1 < 7",
+            |b, idx| {
+                let diff = add_c(b, idx, 0u128.wrapping_sub(1));
+                cmp_c(b, diff, Less, 7)
+            },
+            Bounds(1, 7),
+            Any,
+        ),
+        // Shifting `[0, 7]` back by 4 wraps, so it bounds nothing.
+        (
+            "idx + 4 < 8",
+            |b, idx| {
+                let diff = add_c(b, idx, 4);
+                cmp_c(b, diff, Less, 8)
+            },
+            Top,
+            Any,
+        ),
+    ];
+    let mask = ValueType::I32.bit_mask_u128();
+    for (name, cond, on_true, on_false) in rows {
+        let g = guarded(ValueType::I32, cond, |_, idx| idx);
+        for (edge, node, want) in [
+            ("true", g.true_node, on_true),
+            ("false", g.false_node, on_false),
+        ] {
+            let iv = range_at(&g.f, g.idx, node);
+            match want {
+                Bounds(lo, hi) => assert_eq!((iv.lo, iv.hi), (lo, hi), "{name}: {edge} edge"),
+                Top => assert!(
+                    iv.is_top(mask) && upper_exclusive(iv, mask).is_none(),
+                    "{name}: {edge} edge must be top, got {iv:?}"
+                ),
+                Any => {}
+            }
+        }
+    }
 }
 
-/// `build_guarded_dispatch` but the dispatch returns `idx <op> c`, the scaled
-/// value a table index feeds into its address arithmetic.  Returns
-/// `(function, scaled_value, dispatch_node)`.
-fn build_guarded_scaled(
-    bound: u64,
-    ty: ValueType,
-    op: IntBinaryOp,
-    c: u64,
-) -> (strider_ir::Function, ValueId, NodeId) {
-    let mut b = RegisterSet::new().build_fn().unwrap();
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let entry = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit = b.create_region_all().unwrap();
-    b.set_entry_region_all(entry).unwrap();
-
-    b.set_region(entry);
-    let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
-    let idx = b.build_load(dummy_addr, rsleigh::VnSpace::RAM, ty).unwrap();
-    let bound_c = b.build_int_const(bound, ty).unwrap();
-    let cond = b
-        .build_int_cmp_operation(idx, bound_c, IntCmpOp::Less, ty)
-        .unwrap();
-    b.build_if(cond, dispatch, exit).unwrap();
-
-    b.set_region(dispatch);
-    let c_val = b.build_int_const(c, ty).unwrap();
-    let scaled = b.build_int_binary_operation(idx, c_val, op, ty).unwrap();
-    b.build_return(Some(scaled), &[]).unwrap();
-
-    b.set_region(exit);
-    b.build_return(Some(idx), &[]).unwrap();
-
-    b.set_lift_addr(None);
-    let mut f = b.build().unwrap();
-    canonicalize(&mut f);
-    let (dispatch_node, _exit) = if_edge_consumers(&f);
-    (f, scaled, dispatch_node)
+/// [`guarded`] on `idx < bound` at `I32` whose `then` arm returns `idx <op> c`,
+/// the scaled value a table index feeds into its address arithmetic.
+fn guarded_scaled(bound: u64, op: IntBinaryOp, c: u64) -> Guarded {
+    let ty = ValueType::I32;
+    guarded(
+        ty,
+        |b, idx| cmp_c(b, idx, IntCmpOp::Less, bound),
+        |b, idx| {
+            let c = b.build_int_const(c, ty).unwrap();
+            b.build_int_binary_operation(idx, c, op, ty).unwrap()
+        },
+    )
 }
 
 fn scaled_range(bound: u64, op: IntBinaryOp, c: u64) -> Interval {
-    let (f, scaled, dispatch) = build_guarded_scaled(bound, ValueType::I32, op, c);
-    range_at(&f, scaled, dispatch)
+    let g = guarded_scaled(bound, op, c);
+    range_at(&g.f, g.ret, g.true_node)
 }
 
 /// The guard must forward-propagate through `idx << k`, the value a table index
@@ -260,43 +378,21 @@ fn guard_propagates_through_shift_left() {
 #[test]
 fn guard_propagates_through_a_mask_of_known_zero_bits() {
     let range = |mask: u64| {
-        let mut b = RegisterSet::new().build_fn().unwrap();
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let entry = b.create_region_all().unwrap();
-        let dispatch = b.create_region_all().unwrap();
-        let exit = b.create_region_all().unwrap();
-        b.set_entry_region_all(entry).unwrap();
         let ty = ValueType::I32;
-
-        b.set_region(entry);
-        let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
-        let idx = b.build_load(dummy_addr, rsleigh::VnSpace::RAM, ty).unwrap();
-        let bound_c = b.build_int_const(4u64, ty).unwrap();
-        let cond = b
-            .build_int_cmp_operation(idx, bound_c, IntCmpOp::Less, ty)
-            .unwrap();
-        b.build_if(cond, dispatch, exit).unwrap();
-
-        b.set_region(dispatch);
-        let two = b.build_int_const(2u64, ty).unwrap();
-        let shifted = b
-            .build_int_binary_operation(idx, two, IntBinaryOp::ShiftLeft, ty)
-            .unwrap();
-        let mask_c = b.build_int_const(mask, ty).unwrap();
-        let masked = b
-            .build_int_binary_operation(shifted, mask_c, IntBinaryOp::And, ty)
-            .unwrap();
-        b.build_return(Some(masked), &[]).unwrap();
-
-        b.set_region(exit);
-        b.build_return(Some(idx), &[]).unwrap();
-
-        b.set_lift_addr(None);
-        let mut f = b.build().unwrap();
-        canonicalize(&mut f);
-        let (dispatch_node, _exit) = if_edge_consumers(&f);
-        let mut ranges = RangeMap::new(&f).unwrap();
-        ranges.range_of(masked, dispatch_node)
+        let g = guarded(
+            ty,
+            |b, idx| cmp_c(b, idx, IntCmpOp::Less, 4),
+            |b, idx| {
+                let two = b.build_int_const(2u64, ty).unwrap();
+                let shifted = b
+                    .build_int_binary_operation(idx, two, IntBinaryOp::ShiftLeft, ty)
+                    .unwrap();
+                let mask_c = b.build_int_const(mask, ty).unwrap();
+                b.build_int_binary_operation(shifted, mask_c, IntBinaryOp::And, ty)
+                    .unwrap()
+            },
+        );
+        range_at(&g.f, g.ret, g.true_node)
     };
     let iv = range(0xffff_fffc);
     assert_eq!((iv.lo, iv.hi, iv.stride), (0, 12, 4));
@@ -328,10 +424,10 @@ fn guard_propagates_through_shift_right() {
 /// a linear walk of the operand's guard list with a dominance test per entry.
 #[test]
 fn scaled_range_scans_the_operand_guards_once() {
-    let (f, scaled, dispatch) = build_guarded_scaled(8, ValueType::I32, IntBinaryOp::Div, 2);
-    let mut ranges = RangeMap::new(&f).unwrap();
+    let g = guarded_scaled(8, IntBinaryOp::Div, 2);
+    let mut ranges = RangeMap::new(&g.f).unwrap();
     crate::value_range::GUARD_SCANS.with(|c| c.set(0));
-    let iv = ranges.range_of(scaled, dispatch);
+    let iv = ranges.range_of(g.ret, g.true_node);
     assert_eq!((iv.lo, iv.hi), (0, 3));
     assert_eq!(
         crate::value_range::GUARD_SCANS.with(std::cell::Cell::get),
@@ -524,96 +620,6 @@ fn shr_udiv_stride_never_lies() {
             }
         }
     }
-}
-
-// The masked-Thumb shape: the guard bounds `(kind&7) - 1` while the dispatch
-// indexes `kind&7`, so `kind&7` must inherit `[1, 7]` from `((kind&7)-1) < 7`.
-#[test]
-fn guard_on_add_propagates_bound_back_to_operand() {
-    let ty = ValueType::I32;
-    let mut b = RegisterSet::new().build_fn().unwrap();
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let entry = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit = b.create_region_all().unwrap();
-    b.set_entry_region_all(entry).unwrap();
-    b.set_region(entry);
-    let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
-    let x = b.build_load(dummy_addr, rsleigh::VnSpace::RAM, ty).unwrap();
-    let neg1 = b.build_int_const((0u128).wrapping_sub(1), ty).unwrap();
-    let diff = b
-        .build_int_binary_operation(x, neg1, IntBinaryOp::Add, ty)
-        .unwrap();
-    let seven = b.build_int_const(7u64, ty).unwrap();
-    let cond = b
-        .build_int_cmp_operation(diff, seven, IntCmpOp::Less, ty)
-        .unwrap();
-    b.build_if(cond, dispatch, exit).unwrap();
-    b.set_region(dispatch);
-    b.build_return(Some(x), &[]).unwrap();
-    b.set_region(exit);
-    b.build_return(Some(x), &[]).unwrap();
-    b.set_lift_addr(None);
-    let mut f = b.build().unwrap();
-    canonicalize(&mut f);
-    // Bare `Less(diff, 7)` cond (no Xor) -> no branch swap -> dispatch is the
-    // If's true-edge consumer.  `x` is a Load and survives canonicalisation.
-    let (dispatch_node, _exit_node) = if_edge_consumers(&f);
-
-    let iv = range_at(&f, x, dispatch_node);
-    assert_eq!(
-        (iv.lo, iv.hi),
-        (1, 7),
-        "guard on Add(X,-1)  in  [0,6] must bound X  in  [1,7]"
-    );
-}
-
-// A guard on `Add(X, const)` whose back-propagated interval WRAPS must be
-// rejected (-> X stays top), not silently recorded as a straddle-zero interval.
-// Guard `(X + 4) < 8` bounds `diff  in  [0, 7]`; shifting back by `-4` gives
-// `lo = 0 - 4` (wraps to a huge value) and `hi = 7 - 4 = 3`, so `lo > hi`.
-// `add_operand_shifted_interval` must return None and `range_of(X)` stays top.
-#[test]
-fn guard_on_add_with_wrapping_backprop_stays_top() {
-    let ty = ValueType::I32;
-    let mut b = RegisterSet::new().build_fn().unwrap();
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let entry = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit = b.create_region_all().unwrap();
-    b.set_entry_region_all(entry).unwrap();
-    b.set_region(entry);
-    let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
-    let x = b.build_load(dummy_addr, rsleigh::VnSpace::RAM, ty).unwrap();
-    let four = b.build_int_const(4u64, ty).unwrap();
-    let diff = b
-        .build_int_binary_operation(x, four, IntBinaryOp::Add, ty)
-        .unwrap();
-    let eight = b.build_int_const(8u64, ty).unwrap();
-    let cond = b
-        .build_int_cmp_operation(diff, eight, IntCmpOp::Less, ty)
-        .unwrap();
-    b.build_if(cond, dispatch, exit).unwrap();
-    b.set_region(dispatch);
-    b.build_return(Some(x), &[]).unwrap();
-    b.set_region(exit);
-    b.build_return(Some(x), &[]).unwrap();
-    b.set_lift_addr(None);
-    let mut f = b.build().unwrap();
-    canonicalize(&mut f);
-    // Bare `Less(diff, 8)` cond -> no branch swap -> dispatch is the true-edge
-    // consumer.  `x` is a Load and survives canonicalisation.
-    let (dispatch_node, _exit_node) = if_edge_consumers(&f);
-
-    let iv = range_at(&f, x, dispatch_node);
-    let type_mask = ty.bit_mask_u128();
-    assert!(
-        iv.is_top(type_mask),
-        "wrapping back-prop of guard on Add(X,4)  in  [0,7] must leave X top, \
-         got [{}, {}]",
-        iv.lo,
-        iv.hi,
-    );
 }
 
 // Writing idx into a tracked variable in the entry and reading it back in
@@ -812,209 +818,30 @@ fn unguarded_predecessor_makes_range_top() {
     );
 }
 
-// `idx <= 15` lowers to `If(Xor(Less(IntConst(15), idx), IntConst(1)):I1)`.
-#[test]
-fn lowered_le_guard_bounds_index() {
-    let mut b = RegisterSet::new().build_fn().unwrap();
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-
-    let entry = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit = b.create_region_all().unwrap();
-
-    b.set_entry_region_all(entry).unwrap();
-    b.set_region(entry);
-
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
-    let idx = b
-        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
-        .unwrap();
-
-    let n15 = b.build_int_const(15u64, ValueType::I32).unwrap();
-    let inner_less = b
-        .build_int_cmp_operation(n15, idx, IntCmpOp::Less, ValueType::I32)
-        .unwrap();
-    // Xor with IntConst(1) at I1 is logical NOT.
-    let one_i1 = b.build_int_const(1u64, ValueType::I1).unwrap();
-    let cond = b
-        .build_int_binary_operation(inner_less, one_i1, IntBinaryOp::Xor, ValueType::I1)
-        .unwrap();
-    b.build_if(cond, dispatch, exit).unwrap();
-
-    b.set_region(dispatch);
-    b.build_return(Some(idx), &[]).unwrap();
-
-    b.set_region(exit);
-    b.build_return(Some(idx), &[]).unwrap();
-
-    b.set_lift_addr(None);
-    let mut f = b.build().unwrap();
-    canonicalize(&mut f);
-    // IfCondInversion swaps the branches, so dispatch is now the FALSE edge.
-    let (_exit_node, dispatch_node) = if_edge_consumers(&f);
-
-    let iv = range_at(&f, idx, dispatch_node);
-    assert_eq!(iv.lo, 0, "lowered <=: lower bound must be 0");
-    assert_eq!(
-        iv.hi, 15,
-        "lowered <=: upper bound must be 15 for idx <= 15"
-    );
-}
-
-// Xor is commutative, so the guard extractor must recognise the
-// constant-first operand order too.
-#[test]
-fn lowered_le_guard_swapped_xor_operands_still_bounds_index() {
-    let mut b = RegisterSet::new().build_fn().unwrap();
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-
-    let entry = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit = b.create_region_all().unwrap();
-
-    b.set_entry_region_all(entry).unwrap();
-    b.set_region(entry);
-
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
-    let idx = b
-        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
-        .unwrap();
-
-    let n15 = b.build_int_const(15u64, ValueType::I32).unwrap();
-    let inner_less = b
-        .build_int_cmp_operation(n15, idx, IntCmpOp::Less, ValueType::I32)
-        .unwrap();
-    let one_i1 = b.build_int_const(1u64, ValueType::I1).unwrap();
-    // one_i1 is the FIRST operand here.
-    let cond = b
-        .build_int_binary_operation(one_i1, inner_less, IntBinaryOp::Xor, ValueType::I1)
-        .unwrap();
-    b.build_if(cond, dispatch, exit).unwrap();
-
-    b.set_region(dispatch);
-    b.build_return(Some(idx), &[]).unwrap();
-
-    b.set_region(exit);
-    b.build_return(Some(idx), &[]).unwrap();
-
-    b.set_lift_addr(None);
-    let mut f = b.build().unwrap();
-    canonicalize(&mut f);
-    // IfCondInversion swaps the branches, so dispatch is now the FALSE edge.
-    let (_exit_node, dispatch_node) = if_edge_consumers(&f);
-
-    let iv = range_at(&f, idx, dispatch_node);
-    assert_eq!(iv.lo, 0, "swapped Xor: lower bound must be 0");
-    assert_eq!(
-        iv.hi, 15,
-        "swapped Xor: upper bound must be 15 for idx <= 15 (operand-order-independent)"
-    );
-}
-
-// With `idx = load & 0xFF` the I32 sign bit is known zero, so `Sless(idx, 8)`
-// is trustworthy as an unsigned bound: the guard interval intersected with the
+// With `v = idx & 0xFF` the I32 sign bit is known zero, so `Sless(v, 8)` is
+// trustworthy as an unsigned bound: the guard interval intersected with the
 // KnownBits base [0, 255] gives [0, 7].
 #[test]
 fn sless_guard_with_known_zero_sign_bit_bounds_index() {
-    let mut b = RegisterSet::new().build_fn().unwrap();
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-
-    let entry = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit = b.create_region_all().unwrap();
-
-    b.set_entry_region_all(entry).unwrap();
-    b.set_region(entry);
-
-    let dummy = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
-    let raw = b
-        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
-        .unwrap();
-    let mask = b.build_int_const(0xFFu64, ValueType::I32).unwrap();
-    let idx = b
-        .build_int_binary_operation(raw, mask, IntBinaryOp::And, ValueType::I32)
-        .unwrap();
-    let bound_c = b.build_int_const(8u64, ValueType::I32).unwrap();
-    let cond = b
-        .build_int_cmp_operation(idx, bound_c, IntCmpOp::Sless, ValueType::I32)
-        .unwrap();
-    b.build_if(cond, dispatch, exit).unwrap();
-
-    b.set_region(dispatch);
-    b.build_return(Some(idx), &[]).unwrap();
-
-    b.set_region(exit);
-    b.build_return(Some(idx), &[]).unwrap();
-
-    b.set_lift_addr(None);
-    let mut f = b.build().unwrap();
-    canonicalize(&mut f);
-    // Bare `Sless` cond: no swap, so dispatch is the true-edge consumer.
-    let (dispatch_node, _exit_node) = if_edge_consumers(&f);
-
-    let iv = range_at(&f, idx, dispatch_node);
+    fn low_byte(b: &mut FunctionBuilder, idx: ValueId) -> ValueId {
+        let mask = b.build_int_const(0xFFu64, ValueType::I32).unwrap();
+        b.build_int_binary_operation(idx, mask, IntBinaryOp::And, ValueType::I32)
+            .unwrap()
+    }
+    let g = guarded(
+        ValueType::I32,
+        |b, idx| {
+            let v = low_byte(b, idx);
+            cmp_c(b, v, IntCmpOp::Sless, 8)
+        },
+        low_byte,
+    );
+    // `ret` is the `And` the cond compares: pure nodes hash-cons.
+    let iv = range_at(&g.f, g.ret, g.true_node);
     assert_eq!(iv.lo, 0, "Sless with known-zero sign bit: lower bound 0");
     assert_eq!(
         iv.hi, 7,
         "Sless with known-zero sign bit: idx s< 8 -> [0, 7]"
-    );
-}
-
-// In the inverted-sense branch `Xor(Less(idx, 8), 1)` the constraint `idx < 8`
-// holds on the FALSE successor, while the TRUE successor knows only
-// `idx >= 8`, which is lower-only and useless for table sizing.
-// `IfCondInversion` normalises this shape away in the production pipeline, but
-// a custom pipeline omitting that pass must still get the false-edge bound.
-#[test]
-fn inverted_less_guard_bounds_index_on_false_edge() {
-    let mut b = RegisterSet::new().build_fn().unwrap();
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-
-    let entry = b.create_region_all().unwrap();
-    let oob = b.create_region_all().unwrap(); // true edge: idx >= 8
-    let dispatch = b.create_region_all().unwrap(); // false edge: idx < 8
-
-    b.set_entry_region_all(entry).unwrap();
-    b.set_region(entry);
-
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
-    let idx = b
-        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
-        .unwrap();
-    let bound_c = b.build_int_const(8u64, ValueType::I32).unwrap();
-    let less = b
-        .build_int_cmp_operation(idx, bound_c, IntCmpOp::Less, ValueType::I32)
-        .unwrap();
-    let one_i1 = b.build_int_const(1u64, ValueType::I1).unwrap();
-    let cond = b
-        .build_int_binary_operation(less, one_i1, IntBinaryOp::Xor, ValueType::I1)
-        .unwrap();
-    b.build_if(cond, oob, dispatch).unwrap();
-
-    b.set_region(oob);
-    b.build_return(Some(idx), &[]).unwrap();
-
-    b.set_region(dispatch);
-    b.build_return(Some(idx), &[]).unwrap();
-
-    b.set_lift_addr(None);
-    let mut f = b.build().unwrap();
-    canonicalize(&mut f);
-    // IfCondInversion swaps the branches, so dispatch is now the TRUE edge.
-    let (dispatch_node, oob_node) = if_edge_consumers(&f);
-
-    let mut ranges = RangeMap::new(&f).unwrap();
-
-    let type_mask = ValueType::I32.bit_mask_u128();
-    assert!(
-        ranges.range_of(idx, oob_node).is_top(type_mask),
-        "true edge of the inverted guard carries only a lower bound (idx >= 8) -> top"
-    );
-    let iv = ranges.range_of(idx, dispatch_node);
-    assert_eq!(iv.lo, 0, "false edge of inverted guard: lower bound 0");
-    assert_eq!(
-        iv.hi, 7,
-        "false edge of inverted guard: `idx < 8` holds -> upper bound 7"
     );
 }
 
@@ -1044,71 +871,6 @@ fn no_constraint_is_top() {
         "unconstrained load must produce top, got [{}, {}]",
         iv.lo,
         iv.hi
-    );
-}
-
-// Without a known-zero sign bit a signed guard cannot be trusted as unsigned.
-#[test]
-fn sless_guard_without_known_sign_bit_is_top() {
-    // A raw load carries no KnownBits, so idx's sign bit is unknown.
-    let mut b = RegisterSet::new().build_fn().unwrap();
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-
-    let entry = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit = b.create_region_all().unwrap();
-
-    b.set_entry_region_all(entry).unwrap();
-    b.set_region(entry);
-
-    let dummy = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
-    let idx = b
-        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
-        .unwrap();
-    let bound_c = b.build_int_const(8u64, ValueType::I32).unwrap();
-    let cond = b
-        .build_int_cmp_operation(idx, bound_c, IntCmpOp::Sless, ValueType::I32)
-        .unwrap();
-    b.build_if(cond, dispatch, exit).unwrap();
-
-    b.set_region(dispatch);
-    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
-    b.build_return(Some(idx), &[]).unwrap();
-
-    b.set_region(exit);
-    b.build_return(Some(idx), &[]).unwrap();
-
-    b.set_lift_addr(None);
-    let f = b.build().unwrap();
-    let dispatch_node = f.graph().producer(dispatch_ctrl);
-
-    let iv = range_at(&f, idx, dispatch_node);
-    let type_mask = ValueType::I32.bit_mask_u128();
-    assert!(
-        iv.is_top(type_mask),
-        "Sless without known-zero sign bit must yield top, got [{}, {}]",
-        iv.lo,
-        iv.hi
-    );
-}
-
-// The guard constrains the TRUE edge only.  The FALSE edge knows just
-// `idx >= 8`, which the analysis does not model.
-#[test]
-fn false_successor_of_guard_is_top() {
-    let (f, idx, _dispatch, exit) = build_guarded_dispatch(8, ValueType::I32);
-
-    let iv = range_at(&f, idx, exit);
-    let type_mask = ValueType::I32.bit_mask_u128();
-    assert!(
-        iv.is_top(type_mask),
-        "false successor of guard must be top, got [{}, {}]",
-        iv.lo,
-        iv.hi
-    );
-    assert!(
-        upper_exclusive(iv, type_mask).is_none(),
-        "upper_exclusive must be None on false edge"
     );
 }
 
@@ -1472,52 +1234,6 @@ fn nested_guards_intersect_at_inner_region() {
         upper_exclusive(iv, ValueType::I32.bit_mask_u128()),
         Some(8),
         "upper_exclusive must be Some(8)"
-    );
-}
-
-// `v < 0` is impossible unsigned, so the guard can never fire and the analysis
-// must not yield the spurious [0, 0] that `saturating_sub(1)` gives for N = 0.
-#[test]
-fn strict_less_zero_bound_is_top() {
-    let (f, idx, dispatch_region, _exit) = build_guarded_dispatch(0, ValueType::I32);
-
-    let iv = range_at(&f, idx, dispatch_region);
-    let type_mask = ValueType::I32.bit_mask_u128();
-    assert!(
-        iv.is_top(type_mask),
-        "Less(idx, 0) guard must yield top (impossible guard), got [{}, {}]: \
-         saturating_sub(1) must not produce [0,0]",
-        iv.lo,
-        iv.hi
-    );
-}
-
-// `saturating_sub(1)` at the boundary: `Less(idx, type_mask)` still narrows,
-// just by a single step, so the result is not top.
-//
-// A bound of `type_mask + 1` is untestable here: `build_int_const` masks to
-// the type width and wraps it to 0, which is the impossible-guard case above.
-#[test]
-fn strict_less_at_type_mask_narrows_by_one() {
-    let type_mask_u64 = 0xFFFF_FFFFu64;
-    let (f, idx, dispatch_region, _exit) = build_guarded_dispatch(type_mask_u64, ValueType::I32);
-
-    let iv = range_at(&f, idx, dispatch_region);
-    let type_mask = ValueType::I32.bit_mask_u128();
-    assert_eq!(
-        iv.hi,
-        type_mask - 1,
-        "Less(idx, type_mask) must narrow by 1, got hi={}",
-        iv.hi
-    );
-    assert_eq!(
-        upper_exclusive(iv, type_mask),
-        Some(type_mask_u64),
-        "upper_exclusive must be Some(type_mask)"
-    );
-    assert!(
-        !iv.is_top(type_mask),
-        "Less(idx, type_mask) must NOT be top (it narrows by 1)"
     );
 }
 
@@ -1923,59 +1639,6 @@ fn join_fails_closed_when_one_predecessor_unguarded() {
     assert!(
         upper_exclusive(iv, type_mask).is_none(),
         "upper_exclusive must be None when join is top"
-    );
-}
-
-// `Less(IntConst(8), v)` is `8 < v`, so the FALSE edge carries `v <= 8` while
-// the TRUE edge knows only `v >= 9`, which is useless for table sizing.  This
-// is the post-canonicalisation `ja` shape the jump-table classifier needs.
-#[test]
-fn const_lhs_less_guard_bounds_false_edge() {
-    let mut b = RegisterSet::new().build_fn().unwrap();
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-
-    let entry = b.create_region_all().unwrap();
-    let above = b.create_region_all().unwrap(); // true edge: v > 8
-    let at_or_below = b.create_region_all().unwrap(); // false edge: v <= 8
-
-    b.set_entry_region_all(entry).unwrap();
-    b.set_region(entry);
-
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
-    let idx = b
-        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
-        .unwrap();
-    let n8 = b.build_int_const(8u64, ValueType::I32).unwrap();
-    // Const on the LHS.
-    let cond = b
-        .build_int_cmp_operation(n8, idx, IntCmpOp::Less, ValueType::I32)
-        .unwrap();
-    b.build_if(cond, above, at_or_below).unwrap();
-
-    b.set_region(above);
-    b.build_return(Some(idx), &[]).unwrap();
-
-    b.set_region(at_or_below);
-    b.build_return(Some(idx), &[]).unwrap();
-
-    b.set_lift_addr(None);
-    let mut f = b.build().unwrap();
-    canonicalize(&mut f);
-    // Bare `Less` cond: no swap, so `above` is the true-edge consumer.
-    let (above_node, below_node) = if_edge_consumers(&f);
-
-    let mut ranges = RangeMap::new(&f).unwrap();
-
-    let type_mask = ValueType::I32.bit_mask_u128();
-    assert!(
-        ranges.range_of(idx, above_node).is_top(type_mask),
-        "const-LHS Less true edge carries only a lower bound (v >= 9) -> top"
-    );
-    let iv = ranges.range_of(idx, below_node);
-    assert_eq!(iv.lo, 0, "const-LHS Less false edge: lower bound 0");
-    assert_eq!(
-        iv.hi, 8,
-        "const-LHS Less false edge: v <= 8 -> upper bound 8"
     );
 }
 
@@ -2560,64 +2223,44 @@ fn guard_lookups_over_sequential_sites_cost_linear_total() {
 /// three casts above it.  Without the ladder walk the index falls back to the
 /// `I8` KnownBits bound and reads the whole 256-entry domain.
 ///
-/// Returns `(function, scaled_value, dispatch_node)`.
-fn build_guarded_cast_ladder(bound: u64, and_mask: Option<u64>) -> (Function, ValueId, NodeId) {
-    let mut b = RegisterSet::new().build_fn().unwrap();
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let entry = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit = b.create_region_all().unwrap();
-    b.set_entry_region_all(entry).unwrap();
-
-    b.set_region(entry);
-    let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
-    let wide = b
-        .build_load(dummy_addr, rsleigh::VnSpace::RAM, ValueType::I64)
-        .unwrap();
-    // `al`, the value the compare names.
-    let al = b.truncate_if_needed(wide, ValueType::I8).unwrap();
-    let bound_c = b.build_int_const(bound, ValueType::I8).unwrap();
-    let cond = b
-        .build_int_cmp_operation(al, bound_c, IntCmpOp::Less, ValueType::I8)
-        .unwrap();
-    b.build_if(cond, dispatch, exit).unwrap();
-
-    b.set_region(dispatch);
-    // zext -> trunc -> zext, then optionally a mask, then the address scale.
-    let z1 = b
-        .extend_if_needed(al, ValueType::I64, ExtendOp::ZeroExtend)
-        .unwrap();
-    let t1 = b.truncate_if_needed(z1, ValueType::I32).unwrap();
-    let z2 = b
-        .extend_if_needed(t1, ValueType::I64, ExtendOp::ZeroExtend)
-        .unwrap();
-    let idx = match and_mask {
-        None => z2,
-        Some(m) => {
-            let mc = b.build_int_const(m, ValueType::I64).unwrap();
-            b.build_int_binary_operation(z2, mc, IntBinaryOp::And, ValueType::I64)
-                .unwrap()
-        }
-    };
-    let four = b.build_int_const(4_u64, ValueType::I64).unwrap();
-    let scaled = b
-        .build_int_binary_operation(idx, four, IntBinaryOp::Mul, ValueType::I64)
-        .unwrap();
-    b.build_return(Some(scaled), &[]).unwrap();
-
-    b.set_region(exit);
-    b.build_return(Some(wide), &[]).unwrap();
-
-    b.set_lift_addr(None);
-    let mut f = b.build().unwrap();
-    canonicalize(&mut f);
-    let (dispatch_node, _exit) = if_edge_consumers(&f);
-    (f, scaled, dispatch_node)
-}
-
+/// Returns the scaled value's range on the guard's true edge.
 fn cast_ladder_range(bound: u64, and_mask: Option<u64>) -> Interval {
-    let (f, scaled, dispatch) = build_guarded_cast_ladder(bound, and_mask);
-    range_at(&f, scaled, dispatch)
+    // `al`, the value the compare names; built in both arms, it hash-conses.
+    fn al_of(b: &mut FunctionBuilder, wide: ValueId) -> ValueId {
+        b.truncate_if_needed(wide, ValueType::I8).unwrap()
+    }
+    let g = guarded(
+        ValueType::I64,
+        |b, wide| {
+            let al = al_of(b, wide);
+            let bound_c = b.build_int_const(bound, ValueType::I8).unwrap();
+            b.build_int_cmp_operation(al, bound_c, IntCmpOp::Less, ValueType::I8)
+                .unwrap()
+        },
+        |b, wide| {
+            // zext -> trunc -> zext, then optionally a mask, then the address scale.
+            let al = al_of(b, wide);
+            let z1 = b
+                .extend_if_needed(al, ValueType::I64, ExtendOp::ZeroExtend)
+                .unwrap();
+            let t1 = b.truncate_if_needed(z1, ValueType::I32).unwrap();
+            let z2 = b
+                .extend_if_needed(t1, ValueType::I64, ExtendOp::ZeroExtend)
+                .unwrap();
+            let idx = match and_mask {
+                None => z2,
+                Some(m) => {
+                    let mc = b.build_int_const(m, ValueType::I64).unwrap();
+                    b.build_int_binary_operation(z2, mc, IntBinaryOp::And, ValueType::I64)
+                        .unwrap()
+                }
+            };
+            let four = b.build_int_const(4_u64, ValueType::I64).unwrap();
+            b.build_int_binary_operation(idx, four, IntBinaryOp::Mul, ValueType::I64)
+                .unwrap()
+        },
+    );
+    range_at(&g.f, g.ret, g.true_node)
 }
 
 /// `al < 21` bounds `zext(trunc(zext(al))) * 4` to 21 entries, not the 256 the
