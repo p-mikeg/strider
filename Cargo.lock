@@ -465,11 +465,11 @@ dependencies = [
  "cranelift-entity",
  "entity-utils",
  "expect-test",
+ "graph-algorithms",
  "itertools 0.13.0",
  "petgraph",
  "proptest",
  "rustc-hash 2.1.2",
- "strider-ir-test-utils",
 ]
 
 [[package]]
@@ -1277,6 +1277,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "cranelift-entity",
+ "graph-algorithms",
  "proptest",
  "rsleigh",
  "strider-ir",
