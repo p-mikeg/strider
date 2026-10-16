@@ -64,6 +64,67 @@ pub fn arb_case(max_n: u32) -> impl Strategy<Value = Case> {
         })
 }
 
+/// `n` vertices, most reachable from 0: a spanning tree of the first `k`,
+/// half its parents the previous vertex so the depth-first tree runs deep,
+/// then extra edges (back edges, self-loops, duplicates) among them, and an
+/// unreachable tail of `n - k` vertices with its own edges, some into the
+/// reachable part. Vertices are relabelled at random with 0 fixed and the
+/// edge order shuffled, so neither ids nor order follow the construction.
+pub fn large_case(n: u32, seed: u64) -> Case {
+    let mut state = seed | 1;
+    let mut below = |bound: u32| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state % u64::from(bound)) as u32
+    };
+    let k = n - below(n / 10 + 1);
+    let mut edges = Vec::new();
+    for v in 1..k {
+        let parent = if below(2) == 0 { v - 1 } else { below(v) };
+        edges.push((parent, v));
+    }
+    for _ in 0..below(2 * k) {
+        edges.push((below(k), below(k)));
+    }
+    for _ in 0..below(k / 20 + 1) {
+        let v = below(k);
+        edges.push((v, v));
+    }
+    for _ in 0..below(k / 10 + 1) {
+        let e = edges[below(edges.len() as u32) as usize];
+        edges.push(e);
+    }
+    if k < n {
+        for _ in 0..2 * (n - k) {
+            edges.push((k + below(n - k), k + below(n - k)));
+            edges.push((k + below(n - k), below(k)));
+        }
+    }
+    let mut label: Vec<u32> = (0..n).collect();
+    for i in (2..n as usize).rev() {
+        let j = 1 + below(i as u32) as usize;
+        label.swap(i, j);
+    }
+    for i in (1..edges.len()).rev() {
+        let j = below(i as u32 + 1) as usize;
+        edges.swap(i, j);
+    }
+    let edges: Vec<(u32, u32)> = edges
+        .iter()
+        .map(|&(a, b)| (label[a as usize], label[b as usize]))
+        .collect();
+    let defs = (0..3)
+        .map(|_| (0..below(5)).map(|_| below(n)).collect())
+        .collect();
+    Case {
+        n,
+        edges,
+        roots: vec![0],
+        defs,
+    }
+}
+
 /// Every shape the owner named, so none depends on the generator's luck.
 pub fn shapes() -> Vec<(&'static str, Case)> {
     let complete: Vec<(u32, u32)> = (0..6)
