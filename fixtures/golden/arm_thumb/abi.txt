@@ -1,4 +1,4 @@
-# arm_thumb/abi: Strider::analyze, LiftOptions::default(), OptOptions::default()
+# arm_thumb/abi: Strider::analyze, default options, incomplete reported
 # eight_int_args: 7 int.add
 # make_pair: return
 # mixed_args: 2 load and 5 int.add

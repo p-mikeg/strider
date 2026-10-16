@@ -1,4 +1,4 @@
-# ppc32be/arithmetic: Strider::analyze, LiftOptions::default(), OptOptions::default()
+# ppc32be/arithmetic: Strider::analyze, default options, incomplete reported
 # add: int.add
 # ashr: int.sshift_right
 # bit_and: int.and
