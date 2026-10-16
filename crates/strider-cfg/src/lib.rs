@@ -105,7 +105,7 @@ impl Cfg {
     /// left without an edge and every answer it seated. The CFG
     /// `Strider::analyze` returns carries that analysis's set instead
     /// ([`Self::with_incompleteness`]).
-    pub fn incompleteness(&self) -> &Incompleteness {
+    pub fn incomplete(&self) -> &Incompleteness {
         &self.incomplete
     }
 
