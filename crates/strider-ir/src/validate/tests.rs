@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use super::*;
 use crate::node::{InitialVnId, IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
@@ -2072,4 +2074,158 @@ fn a_floating_value_on_a_dead_edge_into_a_phi_is_not_judged() {
     close_with_return(&mut s.f, merge_ctrl, &[merged]);
 
     validate(&s.f).expect("an unreachable edge into a phi is not judged");
+}
+
+/// Node `i` reads `wiring[i]`: an `Add` of two nodes, or with `phis[i]` a
+/// one-armed `Phi` of one; an index past the last node reads a constant. A
+/// cycle search over the `Add` edges of the live nodes decides what
+/// `validate` reports.
+fn check_data_cycles(wiring: &[(usize, usize)], phis: &[bool]) {
+    use strider_ir_test_utils::graph_oracle;
+    let k = wiring.len();
+    let mut s = spine();
+    let region =
+        s.f.graph_mut()
+            .create_node(NodeKind::Region, [s.entry_ctrl], [ValueKind::Control]);
+    stamp(&mut s.f, region);
+    let [region_ctrl] = s.f.node_outputs_exact::<1>(region).unwrap();
+    let mut nodes = Vec::with_capacity(k);
+    for (i, &phi) in phis.iter().take(k).enumerate() {
+        let (c_n, c) = int_const(&mut s.f, 100 + i as u64, ValueType::I64);
+        stamp(&mut s.f, c_n);
+        let node = if phi {
+            s.f.graph_mut().create_node(
+                NodeKind::Phi,
+                [region_ctrl, c],
+                [ValueKind::Typed(ValueType::I64)],
+            )
+        } else {
+            s.f.graph_mut().create_node(
+                NodeKind::IntBinaryOp(IntBinaryOp::Add),
+                [c, c],
+                [ValueKind::Typed(ValueType::I64)],
+            )
+        };
+        stamp(&mut s.f, node);
+        nodes.push(node);
+    }
+    let mut inputs: Vec<Vec<u32>> = vec![Vec::new(); k];
+    let mut producers: Vec<Vec<u32>> = vec![Vec::new(); k];
+    for (i, &(a, b)) in wiring.iter().enumerate() {
+        let slots: &[(usize, usize)] = if phis[i] {
+            &[(1, a)]
+        } else {
+            &[(0, a), (1, b)]
+        };
+        for &(slot, src) in slots {
+            if src >= k {
+                continue;
+            }
+            let value = s.f.node_outputs(nodes[src])[0];
+            let use_id = s.f.graph().node_input_id_at(nodes[i], slot).unwrap();
+            s.f.graph_mut().update_input(use_id, value);
+            inputs[i].push(src as u32);
+            if !phis[i] {
+                producers[i].push(src as u32);
+            }
+        }
+    }
+    let sink = s.f.node_outputs(nodes[0])[0];
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [region_ctrl, s.mem_value, sink], []);
+    stamp(&mut s.f, ret);
+
+    // The `Return` reads node 0; every phi hangs off the live region.
+    let seeds: Vec<u32> = (0..k as u32)
+        .filter(|&i| i == 0 || phis[i as usize])
+        .collect();
+    let live = graph_oracle::reachable(&inputs, &seeds, None);
+    let on_cycle: Vec<bool> = (0..k as u32)
+        .map(|v| live[v as usize] && graph_oracle::reaches(&producers, v, v))
+        .collect();
+    let reported: BTreeSet<u32> = match validate(&s.f) {
+        Ok(()) => BTreeSet::new(),
+        Err(errs) => errs
+            .0
+            .iter()
+            .filter_map(|e| match e {
+                ValidationError::DataCycle { node, .. } => Some(
+                    nodes
+                        .iter()
+                        .position(|n| n == node)
+                        .expect("a generated node") as u32,
+                ),
+                _ => None,
+            })
+            .collect(),
+    };
+    for &r in &reported {
+        assert!(
+            on_cycle[r as usize],
+            "{r} reported off any cycle: {wiring:?} {phis:?}"
+        );
+    }
+    for (c, &cyclic) in on_cycle.iter().enumerate() {
+        let c = c as u32;
+        let seen = reported.iter().any(|&r| {
+            r == c
+                || (graph_oracle::reaches(&producers, c, r)
+                    && graph_oracle::reaches(&producers, r, c))
+        });
+        assert!(
+            !cyclic || seen,
+            "the cycle through {c} is unreported: {wiring:?} {phis:?}"
+        );
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(
+        if cfg!(debug_assertions) { 256 } else { 8192 }
+    ))]
+
+    #[test]
+    fn data_cycle_reports_match_a_cycle_search(
+        wiring in proptest::collection::vec((0usize..16, 0usize..16), 1..=12),
+        phis in proptest::collection::vec(proptest::prelude::any::<bool>(), 12),
+    ) {
+        check_data_cycles(&wiring, &phis);
+    }
+}
+
+/// A 100,000-`Add` chain validates without recursion, and closing it into one
+/// cycle reports exactly one node.
+#[test]
+#[cfg_attr(debug_assertions, ignore = "release-only scale test")]
+fn a_hundred_thousand_add_chain_closes_one_reported_cycle() {
+    let mut s = spine();
+    let (k_n, k) = int_const(&mut s.f, 1, ValueType::I64);
+    stamp(&mut s.f, k_n);
+    let mut prev = k;
+    let mut first = None;
+    for _ in 0..100_000 {
+        let add = s.f.graph_mut().create_node(
+            NodeKind::IntBinaryOp(IntBinaryOp::Add),
+            [prev, k],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        stamp(&mut s.f, add);
+        first.get_or_insert(add);
+        prev = s.f.node_outputs(add)[0];
+    }
+    let ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, prev], []);
+    stamp(&mut s.f, ret);
+    assert_no_validation_err(&s.f, |e| matches!(e, ValidationError::DataCycle { .. }));
+    let slot = s.f.graph().node_input_id_at(first.unwrap(), 0).unwrap();
+    s.f.graph_mut().update_input(slot, prev);
+    let cycles = validate(&s.f)
+        .unwrap_err()
+        .0
+        .iter()
+        .filter(|e| matches!(e, ValidationError::DataCycle { .. }))
+        .count();
+    assert_eq!(cycles, 1);
 }
