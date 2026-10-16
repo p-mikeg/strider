@@ -212,7 +212,8 @@ class CfgOptions:
 
     `no_return_targets` lists direct-call targets that never return (`exit`,
     `panic`): a call to one ends its block, under `build_cfg` and `analyze`
-    alike.
+    alike. A Thumb or MIPS16 target is listed at its decoded, even address:
+    mask the ISA bit off a symbol value (`addr & ~1`).
 
     `data_ranges` lists `(start, end)` address ranges, end exclusive, that are
     data rather than code (an ARM literal pool): a branch or fall-through into
@@ -233,7 +234,8 @@ class CfgOptions:
     def allow_code_before_start_addr(self) -> bool: ...
     # The two tables are read-only VIEWS onto what the constructor stored,
     # built once and handed out unchanged: a seeded table can hold tens of
-    # thousands of entries, and `analyze` reads it.
+    # thousands of entries, and `analyze` reads it. `no_return_targets` is
+    # likewise built once.
     @property
     def known_targets(self) -> Mapping[int, Union[tuple[int, ...], Literal["return"]]]: ...
     @property

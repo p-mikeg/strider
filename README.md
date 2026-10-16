@@ -87,9 +87,11 @@ strider.explore.shutdown(port)
   per callee through
   `LifterOptions(per_address_ccs=...)`. Analysis never reads a callee, so a
   callee that pops its caller's stack (`ret $imm16`) or an i386 PC thunk needs
-  such an entry. `CfgOptions(call_other_abis=...)` classifies a Sleigh user-op
-  strider has no ABI for; `prog.user_op_names()` lists the ones the
-  architecture can emit.
+  such an entry. A callee that never returns goes in
+  `CfgOptions(no_return_targets=...)` instead, at its decoded address
+  (`addr & ~1` for a Thumb or MIPS16 symbol). `CfgOptions(call_other_abis=...)`
+  classifies a Sleigh user-op strider has no ABI for; `prog.user_op_names()`
+  lists the ones the architecture can emit.
 - **Smaller graphs.** A `Call` carries an output per clobbered REGISTER rather
   than per tracked Sleigh varnode, and a Sleigh temporary gets a phi only
   where one is live across a region boundary. On the 24 largest x86-64

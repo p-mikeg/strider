@@ -976,6 +976,11 @@ strider.cfg.CfgOptions(
 )
 ```
 
+`function_max_size` bounds the decode to `[entry, entry + size)`; omit it for
+an unbounded lift (`0` raises `ValueError`). `allow_code_before_start_addr`
+follows branches below the entry, which a size already rules out, so passing
+both raises `ValueError`.
+
 `known_targets` seats indirect-branch answers in the CFG builder and seeds the
 resolution loop, which unions its own findings on top, so it composes with
 `resolve_indirect_branches=False`. A seeded site drops out of `unresolved`
@@ -986,6 +991,12 @@ the sites where that cannot be ruled out.
 `data_ranges` marks bytes that are data, such as an ARM literal pool.
 `ElfLifter.analyze` fills it from the ELF's ARM and AArch64 `$d` mapping
 symbols unless the options already name some.
+
+`no_return_targets` lists direct-call targets that never return (`exit`,
+`abort`): a call to one ends its region, under `build_cfg` and `analyze`
+alike, and it is the only way to mark one. A Thumb or MIPS16 callee is listed
+at its decoded, even address, so mask the ISA bit off a symbol value
+(`addr & ~1`).
 
 ---
 
