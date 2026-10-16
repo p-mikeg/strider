@@ -550,7 +550,7 @@ float_arg 3 [%v8]
 return %v0, %v1, %v3, %v4, %v5, %v6, %v7, %v8
 
 == __udivsi3 @0x739
-unresolved_indirect_branches [0x768.2]
+unresolved_branch [0x768.2]
 cfg
   0x738 13 ops cbranch 0x73e -> [0x73c.3, 0x73e]
   0x73c.3 6 ops return -> []
@@ -712,7 +712,7 @@ return %v20, %v21, %v22, %v23, %v24, %v25, %v26, %v27
 return %v58, %v59, %v60, %v89, %v62, %v63, %v64, %v65
 
 == __divsi3 @0x9b1
-unresolved_indirect_branches [0x9f0.2]
+unresolved_branch [0x9f0.2]
 cfg
   0x9b0 11 ops cbranch 0xc32 -> [0x9b6, 0xc32]
   0x9b6 10 ops cbranch 0x9be -> [0x9bc.3, 0x9be]

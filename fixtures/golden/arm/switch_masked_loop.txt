@@ -68,7 +68,7 @@ float_arg 3 [%v9]
 return %v0, %v1, %v4, %v5, %v6, %v7, %v8, %v9
 
 == masked_loop_switch @0x500
-unresolved_indirect_branches [0x52c.20]
+unresolved_branch [0x52c.20]
 cfg
   0x500 88 ops goto -> [0x524]
   0x524 32 ops cbranch 0x530 -> [0x52c.4, 0x530]

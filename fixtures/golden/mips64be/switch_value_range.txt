@@ -56,7 +56,7 @@ tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f
 return %v0, %v42, %v43, %v44, %v45, %v46
 
 == dispatch_unmasked @0x120000b30
-unresolved_indirect_branches [0x120000b64.5]
+unresolved_branch [0x120000b64.5]
 cfg
   0x120000b30 13 ops cbranch 0x120000bf0 -> [0x120000b4c, 0x120000bf0]
   0x120000b4c 18 ops unresolved@0x120000b64.5 -> []
@@ -101,7 +101,7 @@ indirect_branch %v4, %v11, %v23, %v29
 return %v5, %v11, %v30, %v31, %v32, %v33
 
 == dispatch_offset @0x120000bf8
-unresolved_indirect_branches [0x120000c34.5]
+unresolved_branch [0x120000c34.5]
 cfg
   0x120000bf8 15 ops cbranch 0x120000cc0 -> [0x120000c18, 0x120000cc0]
   0x120000c18 24 ops unresolved@0x120000c34.5 -> []

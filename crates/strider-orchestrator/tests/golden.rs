@@ -1,7 +1,7 @@
 //! Pins what `Strider::analyze` makes of every function of the committed
 //! fixtures under production defaults (`AnalyzeOptions::default()`), one
 //! file per image: `fixtures/golden/<arch>/<case>.txt`. A function's section is
-//! `== <symbol> @<addr>`, each non-empty report channel, the CFG one region
+//! `== <symbol> @<addr>`, each incompleteness reason held, the CFG one region
 //! per line (start, p-code op count, terminator, successors) and the
 //! optimised IR with registers named. An `analyze` error is pinned as its
 //! message.
@@ -94,25 +94,13 @@ fn cfg_lines(cfg: &Cfg, out: &mut String) {
     }
 }
 
-/// Each non-empty report channel, by name.
+/// Each reason with its sites, by name.
 fn report(result: &AnalyzeResult, out: &mut String) {
     for reason in Reason::ALL {
         let sites: Vec<String> = result.incomplete().of(reason).map(|a| pc(&a)).collect();
         if !sites.is_empty() {
-            let _ = writeln!(out, "{} [{}]", label(reason), sites.join(", "));
+            let _ = writeln!(out, "{} [{}]", reason.name(), sites.join(", "));
         }
-    }
-}
-
-/// The name each reason's line carried before `Reason::name`.
-fn label(reason: Reason) -> &'static str {
-    match reason {
-        Reason::UnresolvedBranch => "unresolved_indirect_branches",
-        Reason::UnverifiedSeed => "unverified_seeded_sites",
-        Reason::IsaModeConflict => "isa_mode_conflicts",
-        Reason::InteriorTarget => "interior_branch_targets",
-        Reason::UnmappedTarget => "unmapped_branch_targets",
-        Reason::UndecodableTarget => "undecodable_branch_targets",
     }
 }
 

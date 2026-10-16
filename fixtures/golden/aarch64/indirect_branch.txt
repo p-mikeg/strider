@@ -70,7 +70,7 @@ float_arg 7 [%v31]
 return %v58, %v80, %v81, %v81, %v62, %v63, %v64, %v65
 
 == _start @0x680
-unresolved_indirect_branches [0x6c4.1]
+unresolved_branch [0x6c4.1]
 cfg
   0x680 0 ops goto -> [0x684]
   0x684 27 ops cbranch 0x6c4 -> [0x6c0, 0x6c4]

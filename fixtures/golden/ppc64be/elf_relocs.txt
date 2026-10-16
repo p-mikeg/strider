@@ -434,7 +434,7 @@ float_arg 24 [%v52]
 return %v53, %v54, %v92, %v56, %v57, %v58, %v59, %v60, %v61, %v62, %v63, %v64, %v65, %v66, %v67, %v68, %v69, %v70, %v71, %v72
 
 == __plt_helper_a @0x105b0
-unresolved_indirect_branches [0x105c0]
+unresolved_branch [0x105c0]
 cfg
   0x105b0 8 ops unresolved@0x105c0 -> []
 tracked [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r12, CTR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1bd00:8, u:0x1c500:8, u:0x23900:8]
