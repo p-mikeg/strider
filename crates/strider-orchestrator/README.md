@@ -24,7 +24,7 @@ re-run the whole thing until the control-flow graph stops changing.
 
 ## One round
 
-`build_lift` is the unit the loop repeats: build the CFG from the current
+`build_round` is the unit the loop repeats: build the CFG from the current
 `known_targets`, lift it, run the pipeline. Every `BranchIndirect` the CFG could
 not seat became an `IndirectBranch` placeholder anchored to its pcode address,
 and every `Switch` the CFG did seat kept an anchor of its own so a table can

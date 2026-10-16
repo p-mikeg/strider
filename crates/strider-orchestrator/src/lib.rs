@@ -3,6 +3,8 @@ pub use strider_opt as opt;
 pub use strider_lift::LiftOptions;
 pub use strider_lift::lift::{LiftOutcome, Lifter};
 
+mod resolve;
+
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 
@@ -11,7 +13,9 @@ use rustc_hash::FxHashMap;
 use anyhow::{Result, anyhow};
 
 use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets, seated_in};
-use strider_opt::{OptCtx, OptOptions, ReadOnlyMemory};
+use strider_opt::{OptOptions, ReadOnlyMemory};
+
+use resolve::{LoopState, Termination};
 
 /// Per-binary analysis handle.
 pub struct Strider<R>
@@ -144,355 +148,35 @@ where
         // Built once and reused across re-lifts (`run` takes `&self`).
         let pipeline = &with_classify(pipeline.unwrap_or_else(strider_opt::default_pipeline));
         let start_addr = MachineInsnAddr::from(entry);
-        // The seat set the loop works on, carried across iterations. Seeded
-        // from the caller's answers, which the loop then grows:
-        // `apply_resolutions` re-unions the seed every round. A seed asserts
-        // the site is settled, which suppresses the report of an
-        // unclassifiable seated `Switch` until the site outgrows the seed; it
-        // does not suppress a loss of what the classifier derives, nor a live
-        // placeholder.
-        //
-        // Copy-on-write: a function with nothing to resolve never copies the
-        // caller's table, which a whole-binary seed makes O(binary) per
-        // analysis.
-        let mut working_targets: Cow<'_, FxHashMap<PcodeInsnAddr, ResolvedTargets>> =
-            Cow::Borrowed(lift_opts.cfg.known_targets);
-
-        let (
-            mut cfg,
-            mut function,
-            mut unresolved,
-            mut switch_anchors,
-            mut resolutions,
-            mut returns,
-        ) = self.build_lift(
-            start_addr,
-            cc,
-            &working_opts(lift_opts, &working_targets),
-            opt_opts,
-            pipeline,
-        )?;
-        // Snapshotted in lockstep with `function`, and BEFORE `resolutions` is
-        // moved into `apply_resolutions`. Read off the function, not the
-        // classification map, which any post-pass can rewrite.
-        let mut live_indirect = live_dispatch_sites(&function);
-        let mut unclassified = unclassified_nodes(&live_indirect, &resolutions);
-        let mut converged = false;
-        // A round that only ever ADDED successors cannot cycle, so exhausting
-        // the budget on one is the depth limit, not an oscillation. Every
-        // narrowing is reported through `derived_incomplete`, since nothing
-        // tells a tighter proof of an over-approximated bound from a lost arm.
-        // A site narrowing TWICE has an unstable answer, which is the cycle.
-        let mut narrow_rounds: FxHashMap<PcodeInsnAddr, u32> = FxHashMap::default();
-        // Sticky: a site that lost ground in ANY round cannot be claimed
-        // complete by a later one that merely re-derives the smaller set. Also
-        // carries the sites the loop abandoned, which take no further
-        // classification and whose seat is removed or cut down to the arms
-        // that survived.
-        let mut derived_incomplete: Vec<PcodeInsnAddr> = seated_arm_losses(&cfg, &working_targets);
-        let mut still_growing: Vec<PcodeInsnAddr> = Vec::new();
-        // Sticky: the flag fires on the round that seats the guessed arm, and
-        // every later round finds that arm already in `known_targets` and so
-        // assumes nothing.
-        let mut assumed_modes: Vec<PcodeInsnAddr> = Vec::new();
-        // The four direct-edge channels are sticky for one reason: a round's
-        // inexact or stubbed edge fed the classifier, whose derived targets
-        // persist into every later round, so a final CFG without that edge does
-        // not mean none was used.
-        let mut interior: Vec<PcodeInsnAddr> = cfg.interior_branch_targets().to_vec();
-        // Sharper for this one: `abandon_undecodable` drops the very site whose
-        // seat raised the clash, so the NEXT round rebuilds without the edge
-        // that decoded those bytes twice.
-        let mut isa_conflicts: Vec<PcodeInsnAddr> = cfg.isa_mode_conflicts().to_vec();
-        let mut unmapped: Vec<PcodeInsnAddr> = cfg.unmapped_branch_targets().to_vec();
-        let mut undecodable: Vec<PcodeInsnAddr> = cfg.undecodable_branch_targets().to_vec();
-        // Sites this loop has given up on: their answer never settled, or it
-        // named an address that would not decode. Abandoning one leaves its
-        // `IndirectBranch` a live placeholder, which is reported as unresolved
-        // (a result, the way the contract promises, instead of an error that
-        // loses the whole function).
-        let mut abandoned: rustc_hash::FxHashSet<PcodeInsnAddr> = rustc_hash::FxHashSet::default();
-        let mut dropped_seats = abandon_undecodable(
-            cfg.undecodable_seeded_targets(),
-            cfg.isa_mode_conflicts(),
-            &DispatchAnchors::new(&cfg),
-            &mut abandoned,
-            &mut working_targets,
-        );
-        // `cfg` was built from the seats just stripped, so it still carries
-        // them. Converging on it would publish a `Switch` at a site the report
-        // channels call unresolved; one more round rebuilds without it.
-        let mut seats_stale = !dropped_seats.is_empty();
-        derived_incomplete.append(&mut dropped_seats);
-        // Every round rebuilds the whole function from `known_targets`: cfg,
-        // lift and pipeline. Carrying a round's work forward would make the cfg
-        // a function of more than `known_targets`, which is what convergence
-        // rests on.
-        let mut budget = MAX_RESOLUTION_ITERATIONS;
-        while budget > 0 {
-            budget -= 1;
-            // Seated `Switch` sites are re-derived every round, so the loop
-            // runs on while either anchor set is non-empty: a table that
-            // resolved before its loop closed widens here. `seats_stale` runs
-            // on for the reason the other break honours it: the cfg in hand
-            // still carries a seat `known_targets` has lost.
-            if unresolved.is_empty() && switch_anchors.is_empty() && !seats_stale {
-                converged = true;
-                break;
-            }
-            let flowing = flowing_isa_bits(&cfg, &unresolved, &switch_anchors);
-            let progress = apply_resolutions(
-                working_targets.to_mut(),
-                lift_opts.cfg.known_targets,
-                &unresolved,
-                &switch_anchors,
-                // Taken, not cloned: every `break` out of this loop sets
-                // `converged`, and the post-loop fold reads `resolutions` only
-                // when it did not, by which point `build_lift` has reassigned
-                // it.
-                std::mem::take(&mut resolutions),
-                &flowing,
-                &abandoned,
-            )?;
-            for addr in &progress.narrowed {
-                let seen = narrow_rounds.entry(*addr).or_default();
-                *seen += 1;
-                // `apply_resolutions` already reported this narrowing. A second
-                // means the answer depends on what the previous round seated,
-                // so no member of the cycle is trustworthy: stop resolving the
-                // site, rather than failing the function.
-                if *seen > 1 && !abandoned.contains(addr) {
-                    abandon_site(working_targets.to_mut(), &mut abandoned, *addr);
-                    derived_incomplete.push(*addr);
-                }
-            }
-            let changed = progress.changed();
-            derived_incomplete.extend(progress.derived_incomplete);
-            assumed_modes.extend(progress.assumed_modes);
-            if !changed && !seats_stale {
-                converged = true;
-                break;
-            }
-            (
-                cfg,
-                function,
-                unresolved,
-                switch_anchors,
-                resolutions,
-                returns,
-            ) = self.build_lift(
+        let mut st = LoopState::new(lift_opts.cfg.known_targets);
+        // Every round rebuilds the whole function from the seat set: cfg, lift
+        // and pipeline. Carrying a round's work forward would make the cfg a
+        // function of more than the seats, which is what convergence rests on.
+        let mut result = loop {
+            let (round, resolutions) = self.build_round(
                 start_addr,
                 cc,
-                &working_opts(lift_opts, &working_targets),
+                &working_opts(lift_opts, &st.working),
                 opt_opts,
                 pipeline,
             )?;
-            live_indirect = live_dispatch_sites(&function);
-            // BEFORE `abandon_undecodable`, which drops the site or its bad
-            // arms from `known_targets`, the map `seated_arm_losses` looks the
-            // site up in. Reversed, every site abandoned this round loses its
-            // arm-loss report, and for a classifier-derived table that is the
-            // only channel that fires.
-            derived_incomplete.extend(seated_arm_losses(&cfg, &working_targets));
-            let mut dropped_seats = abandon_undecodable(
-                cfg.undecodable_seeded_targets(),
-                cfg.isa_mode_conflicts(),
-                &DispatchAnchors::new(&cfg),
-                &mut abandoned,
-                &mut working_targets,
-            );
-            seats_stale = !dropped_seats.is_empty();
-            derived_incomplete.append(&mut dropped_seats);
-            interior.extend_from_slice(cfg.interior_branch_targets());
-            isa_conflicts.extend_from_slice(cfg.isa_mode_conflicts());
-            unmapped.extend_from_slice(cfg.unmapped_branch_targets());
-            undecodable.extend_from_slice(cfg.undecodable_branch_targets());
-            unclassified = unclassified_nodes(&live_indirect, &resolutions);
-        }
-
-        // The cap is spent on a `build_lift` whose classifications nothing has
-        // folded yet, so the last round's own verdict is only known by folding
-        // them. Against a COPY: the returned `cfg` was built from
-        // `known_targets` as it stands, and this is a report, not a decision.
-        // Kept, where the fold that produced it is discarded: it is the
-        // settled answer BOTH seed-aware reports are read against, and reading
-        // one against the pre-fold set would call a site that the last round
-        // grew past its seed "exactly the seed".
-        let mut final_targets = None;
-        if !converged {
-            let mut folded = (*working_targets).clone();
-            let flowing = flowing_isa_bits(&cfg, &unresolved, &switch_anchors);
-            let progress = apply_resolutions(
-                &mut folded,
-                lift_opts.cfg.known_targets,
-                &unresolved,
-                &switch_anchors,
-                resolutions,
-                &flowing,
-                &abandoned,
-            )?;
-            // `apply_resolutions` already pushes every narrowed address here.
-            derived_incomplete.extend(progress.derived_incomplete);
-            assumed_modes.extend(progress.assumed_modes);
-            // Only the LAST round's growth: a site that settled earlier is not
-            // "still growing when the cap ran out", which is what the report
-            // means.
-            still_growing = progress.grew;
-            final_targets = Some(folded);
-        }
-
-        let budget_exhausted: &[PcodeInsnAddr] = if converged { &[] } else { &still_growing };
-        let settled = final_targets.as_ref().unwrap_or(&working_targets);
-
-        let mut unresolved_indirect_branches = live_unresolved_branches(
-            &live_indirect,
-            &unresolved,
-            &switch_anchors,
-            &unclassified,
-            lift_opts.cfg.known_targets,
-            settled,
-            DerivedChannels {
-                budget_exhausted,
-                incomplete_derived: &derived_incomplete,
-            },
-        );
-        // Read off the final round only: the function returned is that round's.
-        //
-        // A caller that seeded `return` asserted the answer, and
-        // `unverified_seeded_sites` names that seat -- but only for a seat the
-        // CFG build actually CONSUMED, which is what `link_register_seated`
-        // records. A site whose terminator came from the p-code `RETURN` op is
-        // never in it, so dropping one here on the strength of a seed left it
-        // in none of the six channels and `is_complete()` true over a CFG
-        // missing the edge control takes.
-        // Hashed: both lists are bounded by the region count and at the sound
-        // floor they can be the same set, so a slice scan per element is
-        // quadratic.
-        let seated_returns: rustc_hash::FxHashSet<_> =
-            cfg.link_register_seated().iter().copied().collect();
-        returns.retain(|addr| {
-            !seated_returns.contains(addr)
-                || !matches!(
-                    seated_in(lift_opts.cfg.known_targets, *addr),
-                    Some(ResolvedTargets::LinkRegister)
-                )
-        });
-        unresolved_indirect_branches.append(&mut returns);
-        unresolved_indirect_branches.sort_unstable();
-        unresolved_indirect_branches.dedup();
-        let mut unverified_seeded = unverified_seeded_sites(
-            &cfg,
-            &switch_anchors,
-            &unclassified,
-            lift_opts.cfg.known_targets,
-            settled,
-        );
-        // Derived once from the final cfg, then extended with the rounds'
-        // accumulated guesses, filtered to the ones still seated: a site whose
-        // seat the loop dropped carries no guessed arm any more, and this
-        // channel claims the answer is whole.
-        unverified_seeded.extend(
-            assumed_modes
-                .into_iter()
-                .filter(|addr| settled.contains_key(addr)),
-        );
-        unverified_seeded.sort_unstable();
-        unverified_seeded.dedup();
-
-        if lift_opts.compact {
-            function.compact()?;
-        }
-        let mut isa_mode_conflicts = isa_conflicts;
-        isa_mode_conflicts.sort_unstable();
-        isa_mode_conflicts.dedup();
-        let mut interior_branch_targets = interior;
-        interior_branch_targets.sort_unstable();
-        interior_branch_targets.dedup();
-        let mut unmapped_branch_targets = unmapped;
-        unmapped_branch_targets.sort_unstable();
-        unmapped_branch_targets.dedup();
-        let mut undecodable_branch_targets = undecodable;
-        undecodable_branch_targets.sort_unstable();
-        undecodable_branch_targets.dedup();
-        Ok(AnalyzeResult {
-            cfg,
-            function,
-            unresolved_indirect_branches,
-            isa_mode_conflicts,
-            interior_branch_targets,
-            unmapped_branch_targets,
-            undecodable_branch_targets,
-            unverified_seeded_sites: unverified_seeded,
-        })
-    }
-
-    /// One resolve/re-lift iteration: the CFG `function` was lifted from, the
-    /// optimised IR, the lift-time deferred anchors, the seated-`Switch`
-    /// anchors, and the classifier post-pass's node-keyed classification map.
-    ///
-    /// # Errors
-    ///
-    /// Propagates CFG-build, lift (including IR validation), and pipeline
-    /// failures.
-    fn build_lift(
-        &mut self,
-        start_addr: MachineInsnAddr,
-        cc: &strider_target::BuiltCallingConvention,
-        working: &LiftOptions<'_>,
-        opt_opts: &OptOptions,
-        pipeline: &strider_opt::OptimizerPipeline,
-    ) -> Result<(
-        strider_cfg::Cfg,
-        strider_ir::Function,
-        UnresolvedAnchors,
-        UnresolvedAnchors,
-        IndirectResolutions,
-        Vec<PcodeInsnAddr>,
-    )> {
-        // Destructured to split the borrow: `lifter` goes out `&mut` while
-        // the optimiser ctx holds `&rom`.
-        let Strider {
-            ref mut lifter,
-            ref rom,
-            ..
-        } = *self;
-        let rom_ref: Option<&dyn ReadOnlyMemory> = rom.as_deref();
-
-        // A `BranchIndirect` outside `known_targets` is deferred here and
-        // resolved at the full-function IR level by the classifier post-pass.
-        let cfg = lifter.build_cfg(start_addr, &working.cfg)?;
-        // `cc` is moved all the way into `Function::default_cc`, but the
-        // resolve loop calls this again on the next re-lift, so the clone is
-        // unavoidable here.
-        let LiftOutcome {
-            mut function,
-            unresolved_branches: unresolved,
-            switch_anchors,
-            return_sites,
-        } = lifter.build_ir_with(&cfg, cc.clone(), working)?;
-
-        // A `Return` consumes no target, so the pipeline would drop the value
-        // each return jumps to. It rides on its `Return` for the run.
-        {
-            let mut edit = strider_opt::EditFunction::new(&mut function);
-            for &(_, ret, target) in &return_sites {
-                edit.add_node_input(ret, target)?;
+            // A stale round still carries a seat the loop has since dropped,
+            // so it is no answer even when nothing else moves.
+            let stale = st.observe(&round);
+            if round.is_settled() && !stale {
+                break st.finish(round, Termination::Converged)?;
             }
+            if st.folds == MAX_RESOLUTION_ITERATIONS {
+                break st.finish(round, Termination::CapReached(resolutions))?;
+            }
+            if !st.fold(&round, resolutions)? && !stale {
+                break st.finish(round, Termination::Converged)?;
+            }
+        };
+        if lift_opts.compact {
+            result.function.compact()?;
         }
-        let mut ctx = OptCtx::new(rom_ref);
-        ctx.options = opt_opts.clone();
-        pipeline.run(&mut function, &mut ctx)?;
-        let resolutions = std::mem::take(&mut ctx.indirect_resolutions);
-        let returns = settle_return_sites(&mut function, &return_sites, &opt_opts.assumptions);
-
-        Ok((
-            cfg,
-            function,
-            unresolved,
-            switch_anchors,
-            resolutions,
-            returns,
-        ))
+        Ok(result)
     }
 }
 
@@ -1403,8 +1087,8 @@ fn live_unresolved_branches(
     derived: DerivedChannels<'_>,
 ) -> Vec<PcodeInsnAddr> {
     // `live_indirect` holds every reachable placeholder AND seated `Switch` of
-    // the `build_lift` that produced `function`. Intersecting it with
-    // `unresolved`, which anchors only placeholders, selects the live ones.
+    // the round that produced `function`. Intersecting it with `unresolved`,
+    // which anchors only placeholders, selects the live ones.
     let mut out: Vec<PcodeInsnAddr> = unresolved
         .iter()
         .filter(|(_addr, node)| live_indirect.contains(node))
@@ -1429,7 +1113,7 @@ fn live_unresolved_branches(
 }
 
 /// The return sites whose target is not the function's entry return address.
-/// Each target is taken back off the `Return` [`Strider::build_lift`] anchored
+/// Each target is taken back off the `Return` [`Strider::build_round`] anchored
 /// it on.
 ///
 /// Verification reads the assumption set the caller gave: a claim that holds
