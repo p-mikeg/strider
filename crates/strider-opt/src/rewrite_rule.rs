@@ -229,16 +229,11 @@ where
             }
         }
     }
-    // The same drain-and-refill `OptimizerPipeline::run` performs after a
-    // changing pass. A rule rewires the inputs of an address value, so a
-    // surviving `memory_offsets` entry names the wrong slot and a freshly
-    // built `Load` has none at all, and `RegionFilter::check` reads that
-    // table directly rather than through `decompose`, so a stale or absent
-    // entry silently changes what `stack_only()` / `heap_only()` match.
-    edit.clean();
-    edit.function().side_tables().clear_memory_slots();
-    edit.function().side_tables().clear_frame_escape();
-    crate::post_opt::stack_offset_detect::stamp_all(edit);
+    // A rule can rewire an address value's inputs, so a surviving memory
+    // class names the wrong slot and a fresh `Load` has none; `RegionFilter`
+    // reads that table directly, so a stale entry changes what `stack_only()`
+    // / `heap_only()` match.
+    crate::refresh_memory_classes(edit);
     Ok(applied)
 }
 

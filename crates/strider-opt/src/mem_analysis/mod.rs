@@ -10,12 +10,15 @@ mod frame;
 mod frame_escape;
 mod index;
 mod ring;
+mod stamp;
 mod walker;
 
 pub(crate) use analyzer::{MemAnalyzer, MemOptions, store_value_byte_size};
 pub(crate) use arg_window::{ArgStoreScan, SlotReach};
 pub(crate) use decompose::{alignment_masked_operand, decompose};
 pub(crate) use ring::wrap_to_addr_width;
+pub use stamp::refresh_memory_classes;
+pub(crate) use stamp::stamp_all;
 #[cfg(test)]
 pub(crate) use walker::WALK_STEPS;
 
