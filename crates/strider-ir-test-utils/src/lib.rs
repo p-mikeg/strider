@@ -349,7 +349,7 @@ pub fn empty_builder() -> Result<FunctionBuilder> {
     RegisterSet::new().build_fn()
 }
 
-pub mod graph_oracle;
+pub use graph_algorithms::oracle as graph_oracle;
 pub mod interp;
 mod rng;
 mod tb;
