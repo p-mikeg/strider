@@ -21,8 +21,6 @@ fn a_direct_branch_out_of_the_image_is_reported_not_raised() {
         result
             .incomplete()
             .of(strider_orchestrator::Reason::UnmappedTarget)
-            .collect::<Vec<_>>()
-            .iter()
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),
         vec![TARGET],

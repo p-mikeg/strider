@@ -257,13 +257,10 @@ fn assert_dispatch_resolved(result: &strider_orchestrator::AnalyzeResult, what: 
         result
             .incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
-            .is_empty(),
-        "{what}: jump table must resolve; unresolved: {:?}",
-        result
-            .incomplete()
-            .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>(),
+            .next()
+            .is_none(),
+        "{what}: jump table must resolve; unresolved: {}",
+        result.incomplete(),
     );
     let placeholders = result
         .function

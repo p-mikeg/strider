@@ -27,7 +27,7 @@ fn run_at(
         .into_iter()
         .map(|(addr, preset)| (addr, preset.build(&regs).unwrap()))
         .collect();
-    let lift_opts = AnalyzeOptions {
+    let opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(size),
             ..Default::default()
@@ -36,10 +36,7 @@ fn run_at(
         ..common::ignoring()
     };
     let mut strider = Strider::new(arch, sleigh, None).unwrap();
-    strider
-        .analyze(entry, &cc, &lift_opts, None)
-        .unwrap()
-        .function
+    strider.analyze(entry, &cc, &opts, None).unwrap().function
 }
 
 /// `mov eax, 5; jmp 0x9000` at 0x1000. With a size bound of 10 the cfg

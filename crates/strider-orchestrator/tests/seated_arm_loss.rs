@@ -26,7 +26,7 @@ fn an_arm_the_cfg_cannot_seat_is_reported_unresolved() {
         branch,
         ResolvedTargets::Multiple(vec![0x1005.into(), 0x1002.into()]),
     );
-    let lift_opts = AnalyzeOptions {
+    let opts = AnalyzeOptions {
         cfg: CfgOptions {
             known_targets: &known,
             ..CfgOptions::default()
@@ -36,7 +36,7 @@ fn an_arm_the_cfg_cannot_seat_is_reported_unresolved() {
 
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, base, None);
     let result = strider
-        .analyze(base, &cc, &lift_opts, None)
+        .analyze(base, &cc, &opts, None)
         .expect("a dropped arm is a result, not an error");
 
     let seated: Vec<u64> = result
@@ -59,13 +59,8 @@ fn an_arm_the_cfg_cannot_seat_is_reported_unresolved() {
         result
             .incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
-            .iter()
             .any(|a| a.machine_addr.addr == base),
-        "the site lost an arm, so it cannot be claimed complete; got {:?}",
-        result
-            .incomplete()
-            .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>(),
+        "the site lost an arm, so it cannot be claimed complete; got {}",
+        result.incomplete(),
     );
 }

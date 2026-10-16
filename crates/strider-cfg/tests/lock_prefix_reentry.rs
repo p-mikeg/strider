@@ -41,8 +41,6 @@ const LOCK_REENTRY: [u8; 9] = [0x74, 0x01, 0xf0, 0x0f, 0xc1, 0x08, 0x89, 0xc8, 0
 fn interior(cfg: &Cfg) -> Vec<u64> {
     cfg.incomplete()
         .of(strider_cfg::Reason::InteriorTarget)
-        .collect::<Vec<_>>()
-        .iter()
         .map(|a| a.machine_addr.addr)
         .collect()
 }

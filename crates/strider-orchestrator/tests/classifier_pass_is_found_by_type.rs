@@ -44,8 +44,6 @@ fn analyze_jmp_rax(pipeline: strider_orchestrator::opt::OptimizerPipeline) -> bo
         .expect("analyze");
     r.incomplete()
         .of(strider_orchestrator::Reason::UnresolvedBranch)
-        .collect::<Vec<_>>()
-        .iter()
         .any(|a| a.machine_addr.addr == 0x1000)
 }
 

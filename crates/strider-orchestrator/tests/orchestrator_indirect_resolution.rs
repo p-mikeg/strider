@@ -96,7 +96,7 @@ fn analyze_seats_pre_seeded_known_targets_from_analyze_options() {
     let mut known = rustc_hash::FxHashMap::default();
     // 0x1004 is in-range padding: a valid (decodable) seed target.
     known.insert(site, strider_cfg::ResolvedTargets::Single(0x1004.into()));
-    let lift_opts = AnalyzeOptions {
+    let opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             known_targets: &known,
             ..Default::default()
@@ -111,9 +111,7 @@ fn analyze_seats_pre_seeded_known_targets_from_analyze_options() {
         .build(&regs)
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
-    let result = strider
-        .analyze(0x1000, &cc, &lift_opts, None)
-        .expect("analyze");
+    let result = strider.analyze(0x1000, &cc, &opts, None).expect("analyze");
     assert_eq!(
         result
             .incomplete()
@@ -246,13 +244,10 @@ fn analyze_branch_behind_constant_false_guard_reports_clean() {
         result
             .incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
-            .is_empty(),
-        "no live, unclassified IndirectBranch -> empty unresolved list (got {:?})",
-        result
-            .incomplete()
-            .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
+            .next()
+            .is_none(),
+        "no live, unclassified IndirectBranch -> empty unresolved list (got {})",
+        result.incomplete()
     );
 }
 

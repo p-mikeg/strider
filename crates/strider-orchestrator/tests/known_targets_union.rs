@@ -210,8 +210,6 @@ fn a_seeded_site_is_still_reported_unverified_with_resolution_off() {
     assert_eq!(
         r.incomplete()
             .of(strider_orchestrator::Reason::UnverifiedSeed)
-            .collect::<Vec<_>>()
-            .iter()
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),
         vec![DISPATCH],

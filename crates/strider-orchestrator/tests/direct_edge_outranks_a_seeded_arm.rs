@@ -4,8 +4,8 @@
 //! The direct edge switches no mode, so the mode it carries is its parent
 //! region's and certain; the arm's committed bit is a classifier claim. The
 //! direct decode must own the bytes, the arm must go, and the published CFG
-//! must agree with the report channels rather than still seating the `Switch`
-//! the loop abandoned.
+//! must agree with what is reported incomplete rather than still seat the
+//! `Switch` the loop abandoned.
 
 use strider_cfg::{CfgOptions, PcodeInsnAddr, RegionTerminator, ResolvedTarget, ResolvedTargets};
 use strider_orchestrator::AnalyzeOptions;
@@ -105,14 +105,9 @@ fn a_direct_edge_keeps_the_bytes_a_seeded_arm_claims_in_the_other_mode() {
         result
             .incomplete()
             .of(strider_orchestrator::Reason::IsaModeConflict)
-            .collect::<Vec<_>>()
-            .iter()
             .any(|a| a.machine_addr.addr == SHARED),
-        "the clash is still reported; got {:?}",
-        result
-            .incomplete()
-            .of(strider_orchestrator::Reason::IsaModeConflict)
-            .collect::<Vec<_>>(),
+        "the clash is still reported; got {}",
+        result.incomplete(),
     );
     assert!(
         !result
@@ -125,14 +120,9 @@ fn a_direct_edge_keeps_the_bytes_a_seeded_arm_claims_in_the_other_mode() {
         result
             .incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
-            .iter()
             .any(|a| a.machine_addr.addr == SITE),
-        "the abandoned site is reported unresolved; got {:?}",
-        result
-            .incomplete()
-            .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>(),
+        "the abandoned site is reported unresolved; got {}",
+        result.incomplete(),
     );
     assert!(!result.is_complete());
 }

@@ -3,8 +3,8 @@
 //! `abandon_undecodable` drops the whole seat of a site that named a target the
 //! CFG could not decode, because a bad arm is evidence the bound is wrong. The
 //! build that raised it had only dropped the ONE arm, so its CFG still seats the
-//! rest; converging on that publishes a `Switch` at a site the report channels
-//! call unresolved.
+//! rest; converging on that publishes a `Switch` at a site the analysis
+//! reports unresolved.
 
 use strider_cfg::{CfgOptions, PcodeInsnAddr, RegionTerminator, ResolvedTarget, ResolvedTargets};
 use strider_orchestrator::AnalyzeOptions;
@@ -31,7 +31,7 @@ fn a_site_the_loop_abandoned_is_republished_without_its_seat() {
             ResolvedTarget::new(UNMAPPED_ARM, None),
         ]),
     );
-    let lift_opts = AnalyzeOptions {
+    let opts = AnalyzeOptions {
         cfg: CfgOptions {
             known_targets: &known,
             ..CfgOptions::default()
@@ -43,11 +43,7 @@ fn a_site_the_loop_abandoned_is_republished_without_its_seat() {
 
     // The build the abandon is decided from still seats the arm that decoded.
     let seeded = strider
-        .build_cfg(
-            BASE,
-            &lift_opts.cfg,
-            strider_orchestrator::OnIncomplete::Ignore,
-        )
+        .build_cfg(BASE, &opts.cfg, strider_orchestrator::OnIncomplete::Ignore)
         .expect("build_cfg");
     assert!(
         seeded
@@ -58,7 +54,7 @@ fn a_site_the_loop_abandoned_is_republished_without_its_seat() {
     );
 
     let result = strider
-        .analyze(BASE, &cc, &lift_opts, None)
+        .analyze(BASE, &cc, &opts, None)
         .expect("an undecodable seeded arm is a result, not an error");
 
     assert!(
@@ -72,14 +68,9 @@ fn a_site_the_loop_abandoned_is_republished_without_its_seat() {
         result
             .incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>()
-            .iter()
             .any(|a| a.machine_addr.addr == SITE),
-        "the abandoned site is reported unresolved; got {:?}",
-        result
-            .incomplete()
-            .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .collect::<Vec<_>>(),
+        "the abandoned site is reported unresolved; got {}",
+        result.incomplete(),
     );
     // The complement, which `is_complete` cannot see: the unresolved entry
     // alone already makes it false, so only this pins that an abandoned site
@@ -88,14 +79,9 @@ fn a_site_the_loop_abandoned_is_republished_without_its_seat() {
         !result
             .incomplete()
             .of(strider_orchestrator::Reason::UnverifiedSeed)
-            .collect::<Vec<_>>()
-            .iter()
             .any(|a| a.machine_addr.addr == SITE),
-        "an abandoned site holds no arms to be unverified; got {:?}",
-        result
-            .incomplete()
-            .of(strider_orchestrator::Reason::UnverifiedSeed)
-            .collect::<Vec<_>>(),
+        "an abandoned site holds no arms to be unverified; got {}",
+        result.incomplete(),
     );
     assert!(!result.is_complete());
 }

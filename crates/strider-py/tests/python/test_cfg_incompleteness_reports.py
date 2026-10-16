@@ -10,7 +10,6 @@ launders that round, and Python would then claim a completeness Rust does not.
 from __future__ import annotations
 
 import struct
-from typing import List
 
 import strider
 
@@ -97,16 +96,14 @@ def test_an_interior_branch_target_reaches_python() -> None:
         strider.sleigh.CallingConvention.x86_64_systemv(),
         opts=strider.lift.LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE),
     )
-    assert [a for a, r in result.cfg.incomplete if r == "interior_target"] == [0x1005]
+    assert result.cfg.incomplete == [(0x1005, "interior_target")]
 
 
 def test_build_cfg_reports_the_one_build_it_ran() -> None:
     """No resolver runs, so that build's own reports are the whole answer;
     with no dispatch, no site reason has anything to say."""
     cfg = _x86_lifter().build_cfg(BASE, on_incomplete=strider.lift.OnIncomplete.IGNORE)
-    assert [a for a, r in cfg.incomplete if r == "interior_target"] == [0x1005]
-    assert [a for a, r in cfg.incomplete if r == "isa_mode_conflict"] == []
-    assert [a for a, r in cfg.incomplete if r == "unverified_seed"] == []
+    assert cfg.incomplete == [(0x1005, "interior_target")]
 
 
 def test_a_clean_analysis_reports_nothing() -> None:
@@ -114,9 +111,7 @@ def test_a_clean_analysis_reports_nothing() -> None:
     mem = strider.reader.BufferReader(BASE, code)
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
     result = lift.analyze(BASE, strider.sleigh.CallingConvention.x86_64_systemv())
-    empty: List[int] = []
-    assert [a for a, r in result.cfg.incomplete if r == "isa_mode_conflict"] == empty
-    assert [a for a, r in result.cfg.incomplete if r == "interior_target"] == empty
+    assert result.cfg.incomplete == []
     assert result.cfg.is_complete()
 
 
@@ -131,11 +126,8 @@ def test_is_complete_reads_the_unresolved_reason_too() -> None:
         strider.sleigh.CallingConvention.x86_64_systemv(),
         opts=strider.lift.LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE),
     )
-    empty: List[int] = []
     assert result.unresolved == [0x1003]
-    assert [a for a, r in result.cfg.incomplete if r == "isa_mode_conflict"] == empty
-    assert [a for a, r in result.cfg.incomplete if r == "interior_target"] == empty
-    assert [a for a, r in result.cfg.incomplete if r == "unverified_seed"] == empty
+    assert result.cfg.incomplete == [(0x1003, "unresolved_branch")]
     assert not result.cfg.is_complete()
 
 
@@ -155,7 +147,7 @@ def test_a_complete_but_unverified_answer_is_not_complete() -> None:
         ),
     )
     assert result.unresolved == []
-    assert [a for a, r in result.cfg.incomplete if r == "unverified_seed"] == [dispatch]
+    assert result.cfg.incomplete == [(dispatch, "unverified_seed")]
     assert not result.cfg.is_complete()
 
 

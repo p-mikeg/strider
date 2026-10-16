@@ -13,15 +13,12 @@ fn x86_64_mov_then_ret_bytes() -> (Vec<u8>, u64) {
 
 fn run_with(compact: bool) -> strider_ir::Function {
     let (bytes, entry) = x86_64_mov_then_ret_bytes();
-    let lift_opts = AnalyzeOptions {
+    let opts = AnalyzeOptions {
         compact,
         ..AnalyzeOptions::default()
     };
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, entry, None);
-    strider
-        .analyze(entry, &cc, &lift_opts, None)
-        .unwrap()
-        .function
+    strider.analyze(entry, &cc, &opts, None).unwrap().function
 }
 
 /// `compact` drops exactly the unreachable arena entries: the compacted node
@@ -80,6 +77,11 @@ fn compact_preserves_reachable_pattern_matches() {
 fn default_analyze_options_compact_and_share_their_empty_tables() {
     let (a, b) = (AnalyzeOptions::default(), AnalyzeOptions::default());
     assert!(a.compact);
+    assert_eq!(
+        format!("{:?}", a.opt),
+        format!("{:?}", strider_orchestrator::opt::OptOptions::default()),
+    );
+    assert_eq!(a.on_incomplete, strider_orchestrator::OnIncomplete::Error);
     assert_eq!(
         a.cfg.bound,
         strider_cfg::FunctionBound::Open {

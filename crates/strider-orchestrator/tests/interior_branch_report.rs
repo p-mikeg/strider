@@ -1,5 +1,5 @@
 //! A branch into an instruction's interior cannot be seated exactly, so it has
-//! to reach the caller on a report channel rather than look like a real edge.
+//! to reach the caller as `InteriorTarget` rather than look like a real edge.
 
 mod common;
 
@@ -24,8 +24,6 @@ fn a_branch_into_an_instruction_interior_is_reported() {
     assert_eq!(
         out.incomplete()
             .of(strider_orchestrator::Reason::InteriorTarget)
-            .collect::<Vec<_>>()
-            .iter()
             .map(|a| a.machine_addr.addr)
             .collect::<Vec<_>>(),
         vec![0x1005],
