@@ -1239,10 +1239,9 @@ mod tests {
         }
     }
 
-    /// The control walks, the live set, its roots, and both def-use orders
-    /// against index-graph oracles.
+    /// The live set, its roots, and both def-use orders against index-graph
+    /// oracles.
     fn check_walks(f: &mut Function) {
-        check_control_walks(f);
         let entry = f.entry();
         let e = u32::try_from(entry.index()).unwrap();
         let g = f.graph();
@@ -1295,7 +1294,7 @@ mod tests {
         #![proptest_config(ProptestConfig::with_cases(CASES))]
 
         #[test]
-        fn walks_match_their_definitions(terms in test_cfgs::arb_terms(10)) {
+        fn walks_match_their_definitions(terms in test_cfgs::arb_terms(10, 4)) {
             if let Some(b) = test_cfgs::lower(&terms) {
                 check_control_walks(b.function());
                 if let Ok(mut f) = b.build() {
@@ -1309,7 +1308,8 @@ mod tests {
     #[test]
     #[cfg_attr(debug_assertions, ignore = "release-only scale test")]
     fn walks_scale_to_a_deep_chain() {
-        let f = test_cfgs::chain(100_000).expect("chain builds");
+        let b = test_cfgs::chain(100_000).expect("chain builds");
+        let f = b.function();
         let info = GraphWalkInfo::compute_full(f.graph(), f.entry());
         let rpo = info.reverse_postorder(f.graph());
         assert_eq!(rpo.len(), info.live_nodes.iter().count());
