@@ -466,6 +466,8 @@ dependencies = [
  "entity-utils",
  "expect-test",
  "itertools 0.13.0",
+ "petgraph",
+ "proptest",
  "rustc-hash 2.1.2",
 ]
 
