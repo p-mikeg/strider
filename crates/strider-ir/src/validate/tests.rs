@@ -2084,11 +2084,13 @@ fn check_data_cycles(wiring: &[(usize, usize)], phis: &[bool]) {
     use strider_ir_test_utils::graph_oracle;
     let k = wiring.len();
     let mut s = spine();
-    let region =
-        s.f.graph_mut()
-            .create_node(NodeKind::Region, [s.entry_ctrl], [ValueKind::Control]);
+    let region = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [s.entry_ctrl],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
     stamp(&mut s.f, region);
-    let [region_ctrl] = s.f.node_outputs_exact::<1>(region).unwrap();
+    let [region_ctrl, phi_token] = s.f.node_outputs_exact::<2>(region).unwrap();
     let mut nodes = Vec::with_capacity(k);
     for (i, &phi) in phis.iter().take(k).enumerate() {
         let (c_n, c) = int_const(&mut s.f, 100 + i as u64, ValueType::I64);
@@ -2096,7 +2098,7 @@ fn check_data_cycles(wiring: &[(usize, usize)], phis: &[bool]) {
         let node = if phi {
             s.f.graph_mut().create_node(
                 NodeKind::Phi,
-                [region_ctrl, c],
+                [phi_token, c],
                 [ValueKind::Typed(ValueType::I64)],
             )
         } else {
@@ -2136,11 +2138,7 @@ fn check_data_cycles(wiring: &[(usize, usize)], phis: &[bool]) {
             .create_node(NodeKind::Return, [region_ctrl, s.mem_value, sink], []);
     stamp(&mut s.f, ret);
 
-    // The `Return` reads node 0; every phi hangs off the live region.
-    let seeds: Vec<u32> = (0..k as u32)
-        .filter(|&i| i == 0 || phis[i as usize])
-        .collect();
-    let live = graph_oracle::reachable(&inputs, &seeds, None);
+    let live = graph_oracle::reachable(&inputs, &[0], None);
     let on_cycle: Vec<bool> = (0..k as u32)
         .map(|v| live[v as usize] && graph_oracle::reaches(&producers, v, v))
         .collect();
