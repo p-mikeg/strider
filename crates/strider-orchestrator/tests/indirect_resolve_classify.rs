@@ -122,8 +122,8 @@ fn stack_array_two_targets_resolves_to_multiple() {
     expected.sort_unstable();
     assert_eq!(
         result,
-        Some(ResolvedTargets::Multiple(
-            expected.into_iter().map(Into::into).collect()
+        Some(ResolvedTargets::table(
+            expected.into_iter().map(strider_cfg::ResolvedTarget::from)
         ))
     );
 }
@@ -139,8 +139,8 @@ fn stack_array_four_targets_resolves_to_multiple() {
     expected.sort_unstable();
     assert_eq!(
         result,
-        Some(ResolvedTargets::Multiple(
-            expected.into_iter().map(Into::into).collect()
+        Some(ResolvedTargets::table(
+            expected.into_iter().map(strider_cfg::ResolvedTarget::from)
         ))
     );
 }

@@ -68,7 +68,7 @@ fn a_one_arm_table_past_the_function_defers() {
         ("the seed alone", None),
         ("the seed and a derived table", Some([OUTSIDE, OUTSIDE])),
     ] {
-        let seed = ResolvedTargets::Multiple(vec![ResolvedTarget::new(OUTSIDE, None)]);
+        let seed = ResolvedTargets::table(vec![ResolvedTarget::new(OUTSIDE, None)]);
         let result = analyze(table_dispatch(), Some(seed), table);
         let site = result
             .cfg

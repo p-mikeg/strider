@@ -137,7 +137,12 @@ fn switch_with_const_index_collapses_through_default_pipeline() {
             machine_addr: MachineInsnAddr::from(branch_indirect_addr),
             insn_index: 0,
         },
-        ResolvedTargets::Multiple(target_addrs.clone().into_iter().map(Into::into).collect()),
+        ResolvedTargets::table(
+            target_addrs
+                .clone()
+                .into_iter()
+                .map(strider_cfg::ResolvedTarget::from),
+        ),
     );
     let cfg_opts = strider_cfg::CfgOptions {
         known_targets: &known_targets,

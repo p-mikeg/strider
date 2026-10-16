@@ -51,7 +51,7 @@ fn a_conflict_one_round_raised_survives_a_later_round_that_does_not() {
     let mut known = rustc_hash::FxHashMap::default();
     known.insert(
         PcodeInsnAddr::at_machine_start(0x1008),
-        ResolvedTargets::Multiple(vec![
+        ResolvedTargets::table(vec![
             ResolvedTarget::new(CLASH, Some(false)),
             ResolvedTarget::new(CLASH, Some(true)),
         ]),

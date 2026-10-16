@@ -138,7 +138,7 @@ pub(crate) fn classify_dispatch_value(
             _ => deduped.push(target),
         }
     }
-    (!deduped.is_empty()).then_some(ResolvedTargets::Multiple(deduped))
+    (!deduped.is_empty()).then(|| ResolvedTargets::table(deduped))
 }
 
 /// The shallowest genuinely-bounded, non-width-only, non-constant value that

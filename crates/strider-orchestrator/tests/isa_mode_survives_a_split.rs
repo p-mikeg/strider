@@ -55,17 +55,17 @@ fn a_split_carries_the_isa_mode_to_the_first_half() {
     // Decode SPLIT_REGION as ARM, and reach the site that splits it.
     known.insert(
         PcodeInsnAddr::at_machine_start(0x1004),
-        ResolvedTargets::Multiple(vec![arm(SPLIT_REGION), arm(0x1030)]),
+        ResolvedTargets::table(vec![arm(SPLIT_REGION), arm(0x1030)]),
     );
     // Split SPLIT_REGION's region at INTERIOR, and reach the third site.
     known.insert(
         PcodeInsnAddr::at_machine_start(0x1034),
-        ResolvedTargets::Multiple(vec![arm(INTERIOR), arm(0x1038)]),
+        ResolvedTargets::table(vec![arm(INTERIOR), arm(0x1038)]),
     );
     // Only now, with the region already split, arrive at the first half in Thumb.
     known.insert(
         PcodeInsnAddr::at_machine_start(0x103c),
-        ResolvedTargets::Multiple(vec![
+        ResolvedTargets::table(vec![
             ResolvedTarget::new(SPLIT_REGION, Some(true)),
             arm(0x1048),
         ]),

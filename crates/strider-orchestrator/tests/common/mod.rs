@@ -202,7 +202,12 @@ pub(crate) fn analyze_with_known_targets(
             machine_addr: MachineInsnAddr::from(branch_indirect_addr),
             insn_index: 0,
         },
-        ResolvedTargets::Multiple(targets.iter().copied().map(Into::into).collect()),
+        ResolvedTargets::table(
+            targets
+                .iter()
+                .copied()
+                .map(strider_cfg::ResolvedTarget::from),
+        ),
     );
     let cfg_opts = strider_cfg::CfgOptions {
         known_targets: &known_targets,

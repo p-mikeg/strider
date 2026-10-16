@@ -628,9 +628,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             }
             return Ok(());
         };
-        // One arm per seating, not every arm at the address: `known_targets` is
-        // caller-supplied and undeduped, so a repeated address enqueues one work
-        // item per copy, and dropping them all at the first would leave the rest
+        // One arm per seating, not every arm at the address: a table can name
+        // one address in both ISA modes, and each arm enqueues its own work
+        // item, so dropping them all at the first would leave the second
         // nothing to consume and read as the no-arm violation below.
         let seated = targets
             .iter()
@@ -1417,7 +1417,7 @@ mod tests {
         let mut known_targets = rustc_hash::FxHashMap::default();
         known_targets.insert(
             branch,
-            crate::ResolvedTargets::Multiple(vec![0x1005.into(), 0x1002.into()]),
+            crate::ResolvedTargets::table(vec![0x1005.into(), 0x1002.into()]),
         );
         let opts = crate::CfgOptions {
             known_targets: &known_targets,
@@ -1466,7 +1466,7 @@ mod tests {
         let mut known_targets = rustc_hash::FxHashMap::default();
         known_targets.insert(
             branch,
-            crate::ResolvedTargets::Multiple(vec![0x1005.into(), 0x100c.into()]),
+            crate::ResolvedTargets::table(vec![0x1005.into(), 0x100c.into()]),
         );
         let opts = crate::CfgOptions {
             known_targets: &known_targets,
@@ -1497,7 +1497,7 @@ mod tests {
         // first and its region then covers 0x1005.
         known_targets.insert(
             branch,
-            crate::ResolvedTargets::Multiple(vec![0x1005.into(), 0x1002.into()]),
+            crate::ResolvedTargets::table(vec![0x1005.into(), 0x1002.into()]),
         );
         let opts = crate::CfgOptions {
             known_targets: &known_targets,
@@ -1509,11 +1509,11 @@ mod tests {
         assert_every_switch_target_has_an_arm(&cfg);
     }
 
-    /// The same address twice in one caller-supplied table: `known_targets` is
-    /// public API and the Python conversion does not dedup, so both copies
-    /// enqueue and both reach the interior-target seat.
+    /// The same address twice in one table, once per ISA mode: x86 has no
+    /// mode var, so both arms decode alike and both reach the interior-target
+    /// seat.
     #[test]
-    fn duplicated_switch_target_interior_to_a_later_decoded_region_still_builds() {
+    fn one_address_in_both_modes_interior_to_a_later_decoded_region_still_builds() {
         let base = 0x1000u64;
         let mut bytes = vec![0xff, 0xe0]; // 0x1000: jmp rax
         bytes.extend_from_slice(&MOVABS_RAX_0); // 0x1002..0x100b
@@ -1527,7 +1527,11 @@ mod tests {
         let mut known_targets = rustc_hash::FxHashMap::default();
         known_targets.insert(
             branch,
-            crate::ResolvedTargets::Multiple(vec![0x1005.into(), 0x1005.into(), 0x1002.into()]),
+            crate::ResolvedTargets::table([
+                crate::ResolvedTarget::new(0x1005, Some(false)),
+                crate::ResolvedTarget::new(0x1005, Some(true)),
+                0x1002.into(),
+            ]),
         );
         let opts = crate::CfgOptions {
             known_targets: &known_targets,
@@ -1547,7 +1551,7 @@ mod tests {
         assert_eq!(
             targets.iter().map(|t| t.addr).collect::<Vec<_>>(),
             vec![0x1002],
-            "both copies of the off-boundary arm must be dropped from the table",
+            "both modes of the off-boundary arm must be dropped from the table",
         );
     }
 
@@ -1575,19 +1579,14 @@ mod tests {
                 _ => None,
             })
         };
-        let derived: rustc_hash::FxHashMap<_, _> = std::iter::once((
-            branch,
-            crate::ResolvedTargets::Multiple(vec![0x1020.into()]),
-        ))
-        .collect();
+        let derived: rustc_hash::FxHashMap<_, _> =
+            std::iter::once((branch, crate::ResolvedTargets::table(vec![0x1020.into()]))).collect();
         let empty: rustc_hash::FxHashMap<_, _> =
-            std::iter::once((branch, crate::ResolvedTargets::Multiple(Vec::new()))).collect();
+            std::iter::once((branch, crate::ResolvedTargets::Withdrawn)).collect();
         for seed_key in [branch, PcodeInsnAddr::at_machine_start(base)] {
-            let known: rustc_hash::FxHashMap<_, _> = std::iter::once((
-                seed_key,
-                crate::ResolvedTargets::Multiple(vec![0x1010.into()]),
-            ))
-            .collect();
+            let known: rustc_hash::FxHashMap<_, _> =
+                std::iter::once((seed_key, crate::ResolvedTargets::table(vec![0x1010.into()])))
+                    .collect();
             let cfg = build_cfg(
                 bytes.clone(),
                 base,
@@ -1707,7 +1706,7 @@ mod tests {
         let mut known_targets = rustc_hash::FxHashMap::default();
         known_targets.insert(
             branch,
-            crate::ResolvedTargets::Multiple(vec![0x1002.into(), 0x9000.into()]),
+            crate::ResolvedTargets::table(vec![0x1002.into(), 0x9000.into()]),
         );
         let opts = crate::CfgOptions {
             known_targets: &known_targets,
@@ -1740,7 +1739,7 @@ mod tests {
         let mut known_targets = rustc_hash::FxHashMap::default();
         known_targets.insert(
             branch,
-            crate::ResolvedTargets::Multiple(vec![0x1002.into(), 0x1003.into(), 0x9000.into()]),
+            crate::ResolvedTargets::table(vec![0x1002.into(), 0x1003.into(), 0x9000.into()]),
         );
         let opts = crate::CfgOptions {
             bound: crate::FunctionBound::size(0x10),
@@ -1775,7 +1774,7 @@ mod tests {
         let mut known_targets = rustc_hash::FxHashMap::default();
         known_targets.insert(
             branch,
-            crate::ResolvedTargets::Multiple(vec![0x1005.into(), 0x100d.into()]),
+            crate::ResolvedTargets::table(vec![0x1005.into(), 0x100d.into()]),
         );
         let opts = crate::CfgOptions {
             known_targets: &known_targets,
@@ -1858,7 +1857,7 @@ mod tests {
         let mut known_targets = rustc_hash::FxHashMap::default();
         known_targets.insert(
             PcodeInsnAddr::at_machine_start(0x1010),
-            crate::ResolvedTargets::Multiple(vec![
+            crate::ResolvedTargets::table(vec![
                 crate::ResolvedTarget::new(0x1008, Some(true)),
                 crate::ResolvedTarget::new(0x1020, None),
             ]),
