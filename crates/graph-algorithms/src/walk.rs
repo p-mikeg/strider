@@ -54,10 +54,9 @@ impl<N: Copy> PreOrderContext<N> {
         Self { stack: Vec::new() }
     }
 
-    /// Roots are visited in REVERSE iteration order, since the stack pops
-    /// LIFO; callers wanting forward order must reverse the iterator
-    /// themselves. [`PostOrderContext::reset`] seeds its stack the same way,
-    /// but reversing its post-order restores source order.
+    /// Roots pop last-first, so a root no later root reaches is visited after
+    /// every later root. [`PostOrderContext::reset`] seeds its stack the same
+    /// way, and reversing its post-order restores source order.
     pub(crate) fn reset(&mut self, roots: impl IntoIterator<Item = N>) {
         self.stack.clear();
         self.stack.extend(roots);
@@ -150,10 +149,8 @@ impl<N: Copy> PostOrderContext<N> {
         Self { stack: Vec::new() }
     }
 
-    /// Roots go on the stack in source order, which (LIFO) visits them
-    /// backwards and so preserves source order in any derived RPO: if `u`
-    /// precedes `v` in `roots` and no path runs `v -> u`, `u` precedes `v` in
-    /// the RPO.
+    /// Roots go on the stack in source order and pop last-first, so a root no
+    /// later root reaches precedes every later root in any derived RPO.
     pub(crate) fn reset(&mut self, roots: impl IntoIterator<Item = N>) {
         self.stack.clear();
         self.stack
