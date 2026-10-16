@@ -1,7 +1,7 @@
 //! Classifying a `BranchIndirect` needs the IR, which sits above this crate in
 //! the dependency order, so [`crate::Builder`] takes its answers from
-//! `options.known_targets` and defers every other site via
-//! [`crate::RegionTerminator::UnresolvedIndirectBranch`].
+//! `options.derived_targets` and `options.known_targets` and defers every
+//! other site via [`crate::RegionTerminator::UnresolvedIndirectBranch`].
 
 /// One resolved branch target.
 ///
