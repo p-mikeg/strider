@@ -52,6 +52,9 @@
   not complete is refused.
 - `AnalyzeOptions::default()` refuses an incomplete result:
   `on_incomplete` defaults to `OnIncomplete::Error`.
+- `CfgOptions` gains `derived_targets`, a resolver's own answers, which
+  beat `known_targets` at their exact key; a literal naming every field
+  passes `&strider_cfg::NO_TARGETS` for none.
 
 ### Changed, Python
 

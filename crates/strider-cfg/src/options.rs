@@ -3,9 +3,11 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::indirect_resolver::ResolvedTargets;
 use crate::types::PcodeInsnAddr;
 
-/// What `Default` lends: it hands out a `&'a`, which it cannot borrow from a
-/// temporary.
-static NO_KNOWN_TARGETS: FxHashMap<PcodeInsnAddr, ResolvedTargets> =
+// What `Default` lends: it hands out a `&'a`, which it cannot borrow from a
+// temporary.
+
+/// An empty target table, for a `CfgOptions` literal naming every field.
+pub static NO_TARGETS: FxHashMap<PcodeInsnAddr, ResolvedTargets> =
     FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
 static NO_NO_RETURN_TARGETS: FxHashSet<u64> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
 
@@ -54,6 +56,10 @@ pub struct CfgOptions<'a> {
     /// Borrowed: a caller seeds a binary-wide table once and analyses one
     /// function per call, so owning it is the whole table per call.
     pub known_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    /// A resolver's own answers, keyed by the `BranchIndirect`'s exact p-code
+    /// address: one beats `known_targets` at that site, and one with no arms
+    /// defers it. Borrowed, as `known_targets` is.
+    pub derived_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     /// Direct-call targets that never return (`exit`, `abort`); a call to one
     /// ends its region `NoReturn`. Borrowed, as `known_targets` is.
     pub no_return_targets: &'a FxHashSet<u64>,
@@ -103,7 +109,8 @@ impl Default for CfgOptions<'_> {
     fn default() -> Self {
         Self {
             bound: FunctionBound::default(),
-            known_targets: &NO_KNOWN_TARGETS,
+            known_targets: &NO_TARGETS,
+            derived_targets: &NO_TARGETS,
             no_return_targets: &NO_NO_RETURN_TARGETS,
             call_other_overrides: Default::default(),
             data_ranges: DataRanges::default(),
@@ -112,9 +119,12 @@ impl Default for CfgOptions<'_> {
 }
 
 impl CfgOptions<'_> {
-    /// [`seated_in`] over `known_targets`.
+    /// The answer the builder seats at `addr`: `derived_targets` at its exact
+    /// key, else [`seated_in`] over `known_targets`.
     pub fn seated(&self, addr: PcodeInsnAddr) -> Option<&ResolvedTargets> {
-        seated_in(self.known_targets, addr)
+        self.derived_targets
+            .get(&addr)
+            .or_else(|| seated_in(self.known_targets, addr))
     }
 }
 
@@ -190,6 +200,8 @@ mod tests {
         let (a, b) = (CfgOptions::default(), CfgOptions::default());
         assert!(a.known_targets.is_empty());
         assert!(std::ptr::eq(a.known_targets, b.known_targets));
+        assert!(std::ptr::eq(a.known_targets, &NO_TARGETS));
+        assert!(std::ptr::eq(a.derived_targets, &NO_TARGETS));
     }
 
     #[test]
@@ -241,5 +253,36 @@ mod tests {
             );
         }
         assert_eq!(target_of(opts.seated(sibling)), Some(0x2000));
+    }
+
+    /// A resolver's answer beats the caller's at its exact key, whichever key
+    /// the caller spelled, and leaves a sibling `BranchIndirect` of that
+    /// instruction the caller's machine-start seed.
+    #[test]
+    fn seated_prefers_a_derived_target_at_its_exact_key() {
+        let start = PcodeInsnAddr::at_machine_start(0x1000);
+        let exact = PcodeInsnAddr {
+            machine_addr: 0x1000.into(),
+            insn_index: 3,
+        };
+        let sibling = PcodeInsnAddr {
+            machine_addr: 0x1000.into(),
+            insn_index: 5,
+        };
+        let derived = seated_over(&[(exact, 0x3000)]);
+        for seed_key in [start, exact] {
+            let known = seated_over(&[(seed_key, 0x2000)]);
+            let opts = CfgOptions {
+                known_targets: &known,
+                derived_targets: &derived,
+                ..CfgOptions::default()
+            };
+            assert_eq!(target_of(opts.seated(exact)), Some(0x3000), "{seed_key:?}");
+            assert_eq!(
+                target_of(opts.seated(sibling)),
+                (seed_key == start).then_some(0x2000),
+                "{seed_key:?}"
+            );
+        }
     }
 }
