@@ -1556,8 +1556,8 @@ mod tests {
     }
 
     /// A resolver's own answer beats the caller's at the site, whichever key
-    /// the caller used, and one with no arms defers the site rather than
-    /// letting the caller's seed through.
+    /// the caller used, and `Withdrawn` defers the site rather than letting the
+    /// caller's seed through.
     #[test]
     fn a_derived_answer_outranks_the_seed_and_an_empty_one_defers() {
         let base = 0x1000u64;
