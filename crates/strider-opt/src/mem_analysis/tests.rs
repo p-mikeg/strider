@@ -8,6 +8,42 @@ fn only_store(f: &strider_ir::Function) -> strider_ir::node::NodeId {
         .expect("one store")
 }
 
+/// What `CallStackArgCollect` runs under, claiming `stack_global_disjoint` as
+/// given.
+#[cfg(test)]
+fn call_blocking(
+    stack_global_disjoint: bool,
+    allocators: &rustc_hash::FxHashSet<u64>,
+) -> super::MemOptions {
+    super::MemOptions::for_purpose(
+        super::MemPurpose::CallStackArgs,
+        &crate::AssumptionOptions {
+            stack_global_disjoint,
+            noalias_allocators: allocators.clone(),
+            ..crate::AssumptionOptions::none()
+        },
+    )
+}
+
+/// What `LoadForward` runs under with `stack_global_disjoint` and
+/// `escape_analysis` claimed.
+#[cfg(test)]
+fn escaping(
+    callee_preserves_stack_args: bool,
+    allocators: &rustc_hash::FxHashSet<u64>,
+) -> super::MemOptions {
+    super::MemOptions::for_purpose(
+        super::MemPurpose::Forward,
+        &crate::AssumptionOptions {
+            stack_global_disjoint: true,
+            escape_analysis: true,
+            callee_preserves_stack_args,
+            noalias_allocators: allocators.clone(),
+            ..crate::AssumptionOptions::none()
+        },
+    )
+}
+
 #[cfg(test)]
 mod decompose_tests {
     use crate::mem_analysis::*;
@@ -422,7 +458,7 @@ mod alias_tests {
             distinct_sp_bases_disjoint,
             ..crate::AssumptionOptions::default()
         };
-        let options = MemOptions::incoming_args(&assumptions);
+        let options = MemOptions::for_purpose(MemPurpose::IncomingArgs, &assumptions);
         let store_class = crate::mem_analysis::classify_addr(f, f.store_addr(store), &options);
         // The real width the store's own address carries. Passing `None` would
         // model IR the lifter cannot produce, and the wrap guard would then
@@ -641,7 +677,7 @@ mod cfg_tests {
         let store_addr = f.store_addr(store);
         f.side_tables_mut().set_stack_slot(store_addr, entry_sp, 8);
 
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(true, &Default::default()));
+        let cfg = MemAnalyzer::new(super::call_blocking(true, &Default::default()));
         assert_eq!(
             cfg.verdict(&f, load, store),
             AliasVerdict::Match,
@@ -945,7 +981,7 @@ mod heap_tests {
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("load node");
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false, &na));
+        let cfg = MemAnalyzer::new(super::call_blocking(false, &na));
         assert_eq!(
             cfg.verdict(&fg, load, store),
             AliasVerdict::Disjoint,
@@ -978,7 +1014,7 @@ mod heap_tests {
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("load");
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false, &na));
+        let cfg = MemAnalyzer::new(super::call_blocking(false, &na));
         assert_eq!(
             cfg.verdict(&fg, load, store),
             AliasVerdict::Disjoint,
@@ -1005,7 +1041,7 @@ mod heap_tests {
 
         let store = super::only_store(&fg);
         let load = fg.producer(loaded);
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false, &na));
+        let cfg = MemAnalyzer::new(super::call_blocking(false, &na));
         assert_eq!(
             cfg.verdict(&fg, load, store),
             AliasVerdict::Disjoint,
@@ -1031,7 +1067,7 @@ mod heap_tests {
 
         let store = super::only_store(&fg);
         let load = fg.producer(loaded);
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false, &na));
+        let cfg = MemAnalyzer::new(super::call_blocking(false, &na));
         assert_eq!(
             cfg.verdict(&fg, load, store),
             AliasVerdict::MayAlias,
@@ -1068,7 +1104,7 @@ mod heap_tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("load");
         let mem = fg.node_inputs(load)[0];
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false, &na));
+        let cfg = MemAnalyzer::new(super::call_blocking(false, &na));
         assert_eq!(
             cfg.nearest_clobber(&fg, load, mem),
             store,
@@ -1107,9 +1143,7 @@ mod heap_tests {
             noalias_allocators: na.clone(),
             ..Default::default()
         };
-        let cfg = MemAnalyzer::new(
-            crate::post_opt::indirect_branch_resolve::eval::table_walk_options(&assumptions),
-        );
+        let cfg = MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::TableWalk, &assumptions));
         assert!(
             matches!(
                 fg.node_kind(cfg.nearest_clobber(&fg, load, mem)),
@@ -1137,7 +1171,7 @@ mod heap_tests {
             .expect("call");
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false, &na));
+        let cfg = MemAnalyzer::new(super::call_blocking(false, &na));
         assert_eq!(
             cfg.nearest_clobber(&fg, load, mem),
             call,
@@ -1284,7 +1318,7 @@ mod heap_tests {
 
         let load = fg.producer(reload);
         let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(MemOptions::call_blocking(true, &na));
+        let analyzer = MemAnalyzer::new(super::call_blocking(true, &na));
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
@@ -1356,7 +1390,7 @@ mod heap_tests {
 
             let load = fg.producer(loaded);
             let mem = fg.node_inputs(load)[0];
-            let analyzer = MemAnalyzer::new(MemOptions::call_blocking(true, &na));
+            let analyzer = MemAnalyzer::new(super::call_blocking(true, &na));
             let clobber = analyzer.nearest_clobber(&fg, load, mem);
             Ok(matches!(fg.node_kind(clobber), NodeKind::Store(_)))
         };
@@ -1413,7 +1447,7 @@ mod heap_tests {
 
             let load = fg.producer(loaded);
             let mem = fg.node_inputs(load)[0];
-            let analyzer = MemAnalyzer::new(MemOptions::call_blocking(true, &na));
+            let analyzer = MemAnalyzer::new(super::call_blocking(true, &na));
             let clobber = analyzer.nearest_clobber(&fg, load, mem);
             Ok(matches!(fg.node_kind(clobber), NodeKind::CallOther { .. }))
         };
@@ -1459,8 +1493,7 @@ mod heap_tests {
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
-        let analyzer =
-            MemAnalyzer::new(MemOptions::call_blocking(true, &na).with_escape_analysis(true));
+        let analyzer = MemAnalyzer::new(super::escaping(false, &na));
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
@@ -1545,7 +1578,7 @@ mod heap_tests {
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("load");
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false, &na));
+        let cfg = MemAnalyzer::new(super::call_blocking(false, &na));
         assert_eq!(
             cfg.verdict(&fg, load, store),
             AliasVerdict::Disjoint,
@@ -1566,7 +1599,7 @@ mod heap_tests {
 
         let store = super::only_store(&fg);
         let load = fg.producer(loaded);
-        let cfg = MemAnalyzer::new(MemOptions::call_blocking(false, &na));
+        let cfg = MemAnalyzer::new(super::call_blocking(false, &na));
         assert_eq!(
             cfg.verdict(&fg, load, store),
             AliasVerdict::MayAlias,
@@ -1853,7 +1886,14 @@ mod heap_tests {
         let store = super::only_store(&fg);
         let mem = fg.node_inputs(load)[0];
 
-        MemAnalyzer::new(MemOptions::structural(&na)).nearest_clobber(&fg, load, mem);
+        MemAnalyzer::new(MemOptions::for_purpose(
+            MemPurpose::Structural,
+            &crate::AssumptionOptions {
+                noalias_allocators: na.clone(),
+                ..crate::AssumptionOptions::none()
+            },
+        ))
+        .nearest_clobber(&fg, load, mem);
         assert!(
             matches!(
                 fg.side_tables().memory_class(p),
@@ -1861,7 +1901,7 @@ mod heap_tests {
             ),
             "the structural walk commits the allocation as heap"
         );
-        let configured = MemAnalyzer::new(MemOptions::call_blocking(false, &na));
+        let configured = MemAnalyzer::new(super::call_blocking(false, &na));
         assert_eq!(
             configured.verdict(&fg, load, store),
             AliasVerdict::Disjoint,
@@ -1876,13 +1916,23 @@ mod heap_tests {
     #[test]
     fn a_heap_phi_read_structurally_first_stays_heap_opaque() -> crate::Result<()> {
         let (fg, phi, na) = walking_pointer()?;
+        let structural = MemOptions::for_purpose(
+            MemPurpose::Structural,
+            &crate::AssumptionOptions {
+                noalias_allocators: na.clone(),
+                ..crate::AssumptionOptions::none()
+            },
+        );
         assert!(
-            matches!(classify_addr(&fg, phi, &MemOptions::structural(&na)), AddrClass::Anchor { value } if value == phi),
+            matches!(
+                classify_addr(&fg, phi, &structural),
+                AddrClass::Anchor { value } if value == phi
+            ),
             "the structural analyzer claims no heap class"
         );
         assert!(
             matches!(
-                classify_addr(&fg, phi, &MemOptions::call_blocking(false, &na)),
+                classify_addr(&fg, phi, &super::call_blocking(false, &na)),
                 AddrClass::HeapOpaque
             ),
             "the configured analyzer still sees heap memory of unknown identity"
@@ -1956,6 +2006,114 @@ mod heap_tests {
         );
         Ok(())
     }
+
+    /// Each purpose honours exactly the claims its row of
+    /// `MemOptions::for_purpose` names, read off three verdicts: a spill
+    /// reloaded across an unlisted call, two allocations, and a stack slot
+    /// against a global.
+    #[test]
+    fn each_purpose_honours_its_own_claims() -> crate::Result<()> {
+        use crate::AssumptionOptions;
+        use MemPurpose::*;
+        let mut b = builder()?;
+        let sp_val = b.read_variable(&sp())?;
+        let slot_off = b.build_int_const((-8i64) as u64, ValueType::I64)?;
+        let slot =
+            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
+        let seven = b.build_int_const(7u64, ValueType::I64)?;
+        b.build_store(slot, seven, rsleigh::VnSpace::RAM)?;
+        lower_sp(&mut b, sp_val, 64)?;
+        let unlisted = b.build_int_const(0x2000u64, ValueType::I64)?;
+        b.build_call(unlisted, &[], &[ret_reg()], 0)?;
+        let reload = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let p = alloc_call(&mut b, MALLOC)?;
+        let q = alloc_call(&mut b, MALLOC)?;
+        let two = b.build_int_const(2u64, ValueType::I64)?;
+        b.build_store(q, two, rsleigh::VnSpace::RAM)?;
+        let from_p = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let global = b.build_int_const(0x9000u64, ValueType::I64)?;
+        let from_global = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let sum = b.build_int_binary_operation(reload, from_p, IntBinaryOp::Add, ValueType::I64)?;
+        let sum =
+            b.build_int_binary_operation(sum, from_global, IntBinaryOp::Add, ValueType::I64)?;
+        b.build_return(Some(sum), &[])?;
+        let (mut fg, _) = built_collapsed(b, &[])?;
+        let store_of = |fg: &Function, data: u128| {
+            fg.graph()
+                .all_node_ids()
+                .find(|&n| {
+                    matches!(fg.node_kind(n), NodeKind::Store(_))
+                        && fg.int_const_u128(fg.store_data(n)) == Some(data)
+                })
+                .expect("the store")
+        };
+        let (spill, to_q) = (store_of(&fg, 7), store_of(&fg, 2));
+        let (reload, from_p, from_global) = (
+            fg.producer(reload),
+            fg.producer(from_p),
+            fg.producer(from_global),
+        );
+        let none = AssumptionOptions::none;
+        let toggles = [
+            none(),
+            AssumptionOptions {
+                stack_global_disjoint: true,
+                ..none()
+            },
+            AssumptionOptions {
+                assume_incoming_args_survive_calls: true,
+                ..none()
+            },
+            AssumptionOptions {
+                distinct_sp_bases_disjoint: true,
+                ..none()
+            },
+            AssumptionOptions {
+                callee_preserves_stack_args: true,
+                ..none()
+            },
+            AssumptionOptions {
+                noalias_allocators: [MALLOC].into_iter().collect(),
+                ..none()
+            },
+            AssumptionOptions {
+                escape_analysis: true,
+                ..none()
+            },
+            AssumptionOptions {
+                return_slots_survive_untracked_writes: true,
+                ..none()
+            },
+        ];
+        for a in &toggles {
+            fg.side_tables_mut().reset_analyses(&a.noalias_allocators);
+            for purpose in [Forward, IncomingArgs, CallStackArgs, TableWalk, Structural] {
+                let analyzer = MemAnalyzer::new(MemOptions::for_purpose(purpose, a));
+                let mem = fg.node_inputs(reload)[0];
+                let forwards = analyzer.nearest_clobber(&fg, reload, mem) == spill;
+                let heap = analyzer.verdict(&fg, from_p, to_q) == AliasVerdict::Disjoint;
+                let global = analyzer.verdict(&fg, from_global, spill) == AliasVerdict::Disjoint;
+                let claims = purpose != Structural;
+                assert_eq!(
+                    forwards,
+                    (purpose == Forward && a.escape_analysis)
+                        || (purpose == IncomingArgs && a.assume_incoming_args_survive_calls),
+                    "{purpose:?} forwarding across the call under {a:?}"
+                );
+                assert_eq!(
+                    heap,
+                    claims && !a.noalias_allocators.is_empty(),
+                    "{purpose:?} heap disjointness under {a:?}"
+                );
+                assert_eq!(
+                    global,
+                    claims && a.stack_global_disjoint,
+                    "{purpose:?} stack-global disjointness under {a:?}"
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The window is placed by adding an ABI-declared offset to a decomposed SP,
@@ -2003,7 +2161,7 @@ mod arg_window_bounds {
             .walk_kind(|k| matches!(k, NodeKind::Call { .. }))
             .next()
             .expect("the fixture has one call");
-        let analyzer = MemAnalyzer::new(MemOptions::call_blocking(false, &Default::default()));
+        let analyzer = MemAnalyzer::new(super::call_blocking(false, &Default::default()));
         let MemExpr {
             base, offset: 8, ..
         } = analyzer
@@ -2053,14 +2211,10 @@ mod arg_window_bounds {
             sp_offset: 8,
             args: saturating_args().expect("declared above"),
         };
-        let analyzer = MemAnalyzer::new(MemOptions::structural(&Default::default()));
-        let window = scan_arg_window(
-            &fg,
-            &analyzer,
-            &MemOptions::structural(&Default::default()),
-            &geometry,
-            i128::MAX,
-        );
+        let structural =
+            MemOptions::for_purpose(MemPurpose::Structural, &crate::AssumptionOptions::none());
+        let analyzer = MemAnalyzer::new(structural.clone());
+        let window = scan_arg_window(&fg, &analyzer, &structural, &geometry, i128::MAX);
         assert!(
             !window.covers(-8, -4),
             "a window whose first slot saturates owns nothing below it"
@@ -2111,9 +2265,7 @@ mod arg_window_complexity {
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(
-            MemOptions::call_blocking(true, &Default::default()).with_escape_analysis(true),
-        );
+        let analyzer = MemAnalyzer::new(super::escaping(false, &Default::default()));
         WALK_STEPS.with(|c| c.set(0));
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
@@ -2179,9 +2331,7 @@ mod arg_window_complexity {
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(
-            MemOptions::call_blocking(true, &Default::default()).with_escape_analysis(true),
-        );
+        let analyzer = MemAnalyzer::new(super::escaping(false, &Default::default()));
         WALK_STEPS.with(|c| c.set(0));
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
@@ -2315,9 +2465,7 @@ mod arg_window_complexity {
         pipe.add(crate::RegionCollapse);
         pipe.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
-        let analyzer = MemAnalyzer::new(
-            MemOptions::call_blocking(true, &Default::default()).with_escape_analysis(true),
-        );
+        let analyzer = MemAnalyzer::new(super::escaping(false, &Default::default()));
         WALK_STEPS.with(|c| c.set(0));
         for value in reloads {
             let load = fg.producer(value);
@@ -2474,9 +2622,7 @@ mod arg_window_visibility {
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(
-            MemOptions::call_blocking(true, &Default::default()).with_escape_analysis(true),
-        );
+        let analyzer = MemAnalyzer::new(super::escaping(false, &Default::default()));
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
@@ -2538,9 +2684,7 @@ mod arg_window_visibility {
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(
-            MemOptions::call_blocking(true, &Default::default()).with_escape_analysis(true),
-        );
+        let analyzer = MemAnalyzer::new(super::escaping(false, &Default::default()));
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Store(_)),
@@ -2601,9 +2745,7 @@ mod arg_window_visibility {
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(
-            MemOptions::call_blocking(true, &Default::default()).with_escape_analysis(true),
-        );
+        let analyzer = MemAnalyzer::new(super::escaping(false, &Default::default()));
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
@@ -2656,11 +2798,7 @@ mod arg_window_visibility {
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(
-            MemOptions::call_blocking(true, &Default::default())
-                .with_callee_preserves_stack_args(relaxed)
-                .with_escape_analysis(true),
-        );
+        let analyzer = MemAnalyzer::new(super::escaping(relaxed, &Default::default()));
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         Ok(matches!(fg.node_kind(clobber), NodeKind::Store(_)))
     }
@@ -2714,9 +2852,7 @@ mod arg_window_visibility {
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(
-            MemOptions::call_blocking(true, &Default::default()).with_escape_analysis(true),
-        );
+        let analyzer = MemAnalyzer::new(super::escaping(false, &Default::default()));
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Store(_)),
@@ -2787,9 +2923,7 @@ mod arg_window_visibility {
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(
-            MemOptions::call_blocking(true, &Default::default()).with_escape_analysis(true),
-        );
+        let analyzer = MemAnalyzer::new(super::escaping(false, &Default::default()));
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
@@ -2846,9 +2980,7 @@ mod arg_window_visibility {
 
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(
-            MemOptions::call_blocking(true, &Default::default()).with_escape_analysis(true),
-        );
+        let analyzer = MemAnalyzer::new(super::escaping(false, &Default::default()));
         let clobber = analyzer.nearest_clobber(&fg, load, mem);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
@@ -3138,7 +3270,7 @@ mod modular_offset_tests {
             .walk_kind(|k| matches!(k, NodeKind::Store(_)))
             .next()
             .expect("store");
-        let analyzer = MemAnalyzer::new(MemOptions::call_blocking(false, &Default::default()));
+        let analyzer = MemAnalyzer::new(super::call_blocking(false, &Default::default()));
         assert_ne!(
             analyzer.verdict(&fg, load_node, store_node),
             AliasVerdict::Disjoint,
@@ -3340,12 +3472,18 @@ mod store_index {
     #[test]
     fn the_index_never_hides_a_clobber() -> crate::Result<()> {
         let allocators: FxHashSet<u64> = [ALLOC].into_iter().collect();
-        let structural = MemOptions::structural(&allocators);
+        let structural = MemOptions::for_purpose(
+            MemPurpose::Structural,
+            &crate::AssumptionOptions {
+                noalias_allocators: allocators.clone(),
+                ..crate::AssumptionOptions::none()
+            },
+        );
         let mut heap_near_top = 0;
         for seed in 0..60 {
             let (fg, addresses) = random_chain(seed)?;
             let layout = MemLayout::build(&fg).expect("the chain is laid out");
-            let configured = MemAnalyzer::new(MemOptions::call_blocking(false, &allocators));
+            let configured = MemAnalyzer::new(super::call_blocking(false, &allocators));
             let narrow = MemAnalyzer::new(structural.clone());
             heap_near_top += addresses
                 .iter()
@@ -3364,7 +3502,7 @@ mod store_index {
                 for dsbd in [false, true] {
                     let blocking = MemOptions {
                         distinct_sp_bases_disjoint: dsbd,
-                        ..MemOptions::call_blocking(sgd, &allocators)
+                        ..super::call_blocking(sgd, &allocators)
                     };
                     let stepping = MemOptions {
                         calls_block: false,

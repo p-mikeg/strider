@@ -6,7 +6,7 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
-use crate::mem_analysis::{ArgStoreScan, MemAnalyzer, MemExpr, MemOptions, SlotReach};
+use crate::mem_analysis::{ArgStoreScan, MemAnalyzer, MemExpr, MemOptions, MemPurpose, SlotReach};
 use crate::pipeline::PostOptimizer;
 
 #[cfg(test)]
@@ -120,9 +120,9 @@ impl PostOptimizer for CallStackArgCollect {
         let calls: Vec<NodeId> = edit
             .live_of_kind(|k| matches!(k, NodeKind::Call { .. }))
             .collect();
-        let alias_cfg = MemAnalyzer::new(MemOptions::call_blocking(
-            assumptions.stack_global_disjoint,
-            &assumptions.noalias_allocators,
+        let alias_cfg = MemAnalyzer::new(MemOptions::for_purpose(
+            MemPurpose::CallStackArgs,
+            assumptions,
         ));
         // `float_arg_slots` scans the tracked set per float register, so the
         // unoverridden calls share one scan.

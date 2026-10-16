@@ -42,7 +42,7 @@ pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 /// Of `assumptions` the table walk honours `stack_global_disjoint` and the
 /// allocation identity `noalias_allocators` gives `decompose`.  The
 /// call-boundary relaxations are deliberately not among them
-/// (`eval::table_walk_options`): this walk decides a decoded branch target,
+/// (`MemPurpose::TableWalk`): this walk decides a decoded branch target,
 /// so a relaxation that is wrong produces a wrong edge rather than a wrong
 /// fold.
 ///

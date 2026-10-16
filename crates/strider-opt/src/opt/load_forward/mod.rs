@@ -28,7 +28,7 @@ use strider_ir::{IRBuilderExt, IRViewer};
 use strider_target::Endianness;
 
 use crate::error::Result;
-use crate::mem_analysis::{AliasVerdict, MemAnalyzer, MemOptions};
+use crate::mem_analysis::{AliasVerdict, MemAnalyzer, MemOptions, MemPurpose};
 use crate::pipeline::OptimizationResult;
 
 #[derive(Default)]
@@ -84,18 +84,14 @@ impl crate::peephole::PeepholePass for LoadForward {
         let mut analyzers = self.analyzers.borrow_mut();
         let cfgs = analyzers.get_or_insert_with(|| {
             let assumptions = &opt_ctx.options.assumptions;
-            // `call_blocking`: a store at another SP base may still alias.
-            let relaxed = MemOptions::call_blocking(
-                assumptions.stack_global_disjoint,
-                &assumptions.noalias_allocators,
-            )
-            .with_escape_analysis(assumptions.escape_analysis)
-            .with_callee_preserves_stack_args(assumptions.callee_preserves_stack_args);
             Analyzers {
-                alias: MemAnalyzer::new(relaxed),
+                alias: MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::Forward, assumptions)),
                 // `narrow_load_to` rewires for good, so every claim is off:
                 // the edge outlives the run that made it.
-                narrow: MemAnalyzer::new(MemOptions::structural(&assumptions.noalias_allocators)),
+                narrow: MemAnalyzer::new(MemOptions::for_purpose(
+                    MemPurpose::Structural,
+                    assumptions,
+                )),
             }
         });
         Ok(crate::peephole::PeepholeRewrite::from_changed(
