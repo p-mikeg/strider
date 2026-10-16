@@ -9,6 +9,7 @@ from typing import (
     Mapping,
     NamedTuple,
     Optional,
+    Sequence,
     TypeVar,
     Union,
 )
@@ -114,10 +115,13 @@ class OnIncomplete:
 
 class IncompleteAnalysis(StriderError):
     """Raised under `OnIncomplete.ERROR` when the result cannot vouch for some
-    sites. `on_incomplete=OnIncomplete.IGNORE` returns the result instead."""
+    addresses. The message spells p-code indices and shows the first eight;
+    `.incomplete` lists every one. `.backtrace` is the message: nothing
+    failed. `on_incomplete=OnIncomplete.IGNORE` returns the result instead."""
 
-    sites: list[tuple[int, IncompleteReason]]
-    """The sites, as `Cfg.incomplete` lists them."""
+    incomplete: Sequence[tuple[int, IncompleteReason]]
+    """Every (machine address, reason), as `Cfg.incomplete` lists them: a
+    list on every instance strider raises, `()` on one built by hand."""
 
 class LifterOptions:
     """Per-call options for `Lifter.analyze`.

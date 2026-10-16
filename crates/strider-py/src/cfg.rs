@@ -58,14 +58,14 @@ fn span_upper_bound(region: &strider_cfg::Region) -> u64 {
 
 /// `incomplete` at machine-address granularity, sorted and deduplicated: what
 /// `Cfg.incomplete` reads.
-pub(crate) fn incomplete_sites(
+pub(crate) fn incomplete_list(
     incomplete: &strider_cfg::Incompleteness,
 ) -> Vec<(u64, &'static str)> {
-    let sites: std::collections::BTreeSet<(u64, strider_cfg::Reason)> = incomplete
+    let by_machine_addr: std::collections::BTreeSet<(u64, strider_cfg::Reason)> = incomplete
         .iter()
         .map(|(addr, reason)| (addr.machine_addr.addr, reason))
         .collect();
-    sites
+    by_machine_addr
         .into_iter()
         .map(|(addr, reason)| (addr, reason.name()))
         .collect()
@@ -245,7 +245,7 @@ impl PyCfg {
     /// final round's.
     #[getter]
     fn incomplete(&self) -> Vec<(u64, &'static str)> {
-        incomplete_sites(self.inner.incomplete())
+        incomplete_list(self.inner.incomplete())
     }
 
     /// Whether `incomplete` is empty. `False` over `"unverified_seed"` alone

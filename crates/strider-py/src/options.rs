@@ -594,7 +594,7 @@ pub struct PyOnIncomplete {
 #[pymethods]
 impl PyOnIncomplete {
     // Python class constants, hence the `non_snake_case` allows.
-    /// Raise `IncompleteAnalysis`, naming the sites.
+    /// Raise `IncompleteAnalysis`, naming what is incomplete.
     #[classattr]
     #[allow(non_snake_case)]
     fn ERROR() -> Self {
@@ -602,7 +602,7 @@ impl PyOnIncomplete {
             inner: strider_orchestrator::OnIncomplete::Error,
         }
     }
-    /// Return the result; `Cfg.incomplete` names the sites.
+    /// Return the result; `Cfg.incomplete` names what is incomplete.
     #[classattr]
     #[allow(non_snake_case)]
     fn IGNORE() -> Self {
@@ -772,10 +772,13 @@ impl PyLifterOptions {
     /// `OnIncomplete.ERROR` raises `IncompleteAnalysis`; `IGNORE` returns the
     /// result.
     #[getter]
-    fn on_incomplete(&self) -> PyOnIncomplete {
-        PyOnIncomplete {
-            inner: self.on_incomplete,
-        }
+    fn on_incomplete<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        // The class constant itself, so `is` holds.
+        let name = match self.on_incomplete {
+            strider_orchestrator::OnIncomplete::Error => "ERROR",
+            strider_orchestrator::OnIncomplete::Ignore => "IGNORE",
+        };
+        py.get_type_bound::<PyOnIncomplete>().getattr(name)
     }
 
     /// These options with `cfg` replaced and every other field carried over.

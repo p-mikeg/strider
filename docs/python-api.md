@@ -1017,13 +1017,15 @@ By default `analyze` and `build_cfg` raise `strider.lift.IncompleteAnalysis`, a
 `StriderError`, for a result `cfg.incomplete` would name anything in: an
 unresolvable site, a site whose answer oscillates or shrank between rounds, a
 target chain deeper than the iteration cap, and every other reason. Its
-`.sites` is that list. `LifterOptions(on_incomplete=OnIncomplete.IGNORE)` (or
+`.incomplete` is that list, every (machine address, reason); the message
+spells p-code indices and shows the first eight. `LifterOptions(on_incomplete=OnIncomplete.IGNORE)` (or
 `build_cfg(..., on_incomplete=OnIncomplete.IGNORE)`) returns the result
 instead. A site you seed with `known_targets` is then `"unverified_seed"`,
 which raises too, so a seeded re-run that must succeed passes `IGNORE`.
 
 The message is the error and its causes; `.backtrace` holds the message and the
-Rust backtrace, so a sweep can log it without re-running:
+Rust backtrace (only the message on `IncompleteAnalysis`, where nothing failed),
+so a sweep can log it without re-running:
 
 ```python
 import logging

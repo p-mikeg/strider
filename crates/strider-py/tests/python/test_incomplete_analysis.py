@@ -29,8 +29,14 @@ def test_error_raises_what_ignore_returns() -> None:
     with pytest.raises(strider.lift.IncompleteAnalysis) as raised:
         _lifter(JMP_RAX).analyze(BASE, _cc(), _opts(ERROR))
     assert isinstance(raised.value, strider.StriderError)
-    assert raised.value.sites == ignored.cfg.incomplete == [(0x1003, "unresolved_branch")]
+    assert raised.value.incomplete == ignored.cfg.incomplete == [(0x1003, "unresolved_branch")]
     assert str(raised.value) == "incomplete analysis: 0x1003 unresolved_branch"
+    assert raised.value.backtrace == str(raised.value)
+
+
+def test_a_bare_incomplete_analysis_names_nothing() -> None:
+    """The class-level default is immutable, so no instance can grow it."""
+    assert strider.lift.IncompleteAnalysis("by hand").incomplete == ()
 
 
 def test_build_cfg_raises_under_error_only() -> None:
@@ -38,7 +44,7 @@ def test_build_cfg_raises_under_error_only() -> None:
     cfg = lift.build_cfg(BASE, on_incomplete=IGNORE)
     with pytest.raises(strider.lift.IncompleteAnalysis) as raised:
         lift.build_cfg(BASE, on_incomplete=ERROR)
-    assert raised.value.sites == cfg.incomplete
+    assert raised.value.incomplete == cfg.incomplete
 
 
 def test_a_complete_function_is_returned_under_error() -> None:
@@ -51,6 +57,17 @@ def test_on_incomplete_compares_by_value() -> None:
     assert strider.lift.OnIncomplete.ERROR == ERROR != IGNORE
     assert repr(ERROR) == "OnIncomplete.ERROR"
     assert _opts(IGNORE).on_incomplete == IGNORE
+
+
+def test_on_incomplete_is_a_closed_set_of_singletons() -> None:
+    assert isinstance(ERROR, strider.lift.OnIncomplete)
+    assert _opts(IGNORE).on_incomplete is IGNORE
+    assert strider.lift.LifterOptions().on_incomplete is ERROR
+    assert hash(_opts(IGNORE).on_incomplete) == hash(IGNORE) != hash(ERROR)
+    assert repr(IGNORE) == "OnIncomplete.IGNORE"
+    assert ERROR != "ERROR" and IGNORE != 1
+    with pytest.raises(TypeError):
+        strider.lift.OnIncomplete()
 
 
 def test_on_incomplete_takes_only_its_type() -> None:
@@ -67,14 +84,14 @@ def test_a_seeded_retry_still_raises_on_its_seat() -> None:
     code = JMP_RAX + bytes([0xC3])  # ... ; ret at 0x1005
     with pytest.raises(strider.lift.IncompleteAnalysis) as first:
         _lifter(code).analyze(BASE, _cc(), _opts(ERROR))
-    assert first.value.sites == [(0x1003, "unresolved_branch")]
+    assert first.value.incomplete == [(0x1003, "unresolved_branch")]
     seeded = strider.lift.LifterOptions(
         cfg=strider.cfg.CfgOptions(known_targets={0x1003: [0x1005]}),
         on_incomplete=ERROR,
     )
     with pytest.raises(strider.lift.IncompleteAnalysis) as retry:
         _lifter(code).analyze(BASE, _cc(), seeded)
-    assert retry.value.sites == [(0x1003, "unverified_seed")]
+    assert retry.value.incomplete == [(0x1003, "unverified_seed")]
 
 
 class _Reader(strider.reader.MemReader):
@@ -99,7 +116,7 @@ def test_an_unmapped_target_raises_under_error() -> None:
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), _Reader(None))
     with pytest.raises(strider.lift.IncompleteAnalysis) as raised:
         lift.analyze(BASE, _cc(), _opts(ERROR))
-    assert raised.value.sites == [(0x2000, "unmapped_target")]
+    assert raised.value.incomplete == [(0x2000, "unmapped_target")]
 
 
 def test_a_stashed_keyboard_interrupt_beats_the_raise() -> None:
@@ -115,11 +132,11 @@ def test_the_default_raises() -> None:
     lift = _lifter(JMP_RAX)
     with pytest.raises(strider.lift.IncompleteAnalysis) as raised:
         lift.analyze(BASE, _cc())
-    assert raised.value.sites == [(0x1003, "unresolved_branch")]
+    assert raised.value.incomplete == [(0x1003, "unresolved_branch")]
     with pytest.raises(strider.lift.IncompleteAnalysis) as raised:
         lift.build_cfg(BASE)
-    assert raised.value.sites == [(0x1003, "unresolved_branch")]
-    assert lift.analyze(BASE, _cc(), _opts(IGNORE)).cfg.incomplete == raised.value.sites
+    assert raised.value.incomplete == [(0x1003, "unresolved_branch")]
+    assert lift.analyze(BASE, _cc(), _opts(IGNORE)).cfg.incomplete == raised.value.incomplete
 
 
 def test_elf_lifter_raises_by_name_too() -> None:
