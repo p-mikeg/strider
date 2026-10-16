@@ -1,4 +1,4 @@
-# aarch64be/calls: Strider::analyze, LiftOptions::default(), OptOptions::default()
+# aarch64be/calls: Strider::analyze, default options, incomplete reported
 # apply_indirect: call
 # fib_recursive: 2 call and if
 # mutual_a: call and if
