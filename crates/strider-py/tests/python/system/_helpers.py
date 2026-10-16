@@ -17,6 +17,7 @@ from strider.pattern import anything, var, Capture
 _FIXTURES = pathlib.Path(__file__).resolve().parents[5] / "fixtures"
 
 ARCH_DIRS: list[str] = sorted(p.stem for p in (_FIXTURES / "arch").glob("*.mk"))
+assert ARCH_DIRS, f"no {_FIXTURES}/arch/*.mk"
 
 _OVERRIDES: dict[
     str,
@@ -111,7 +112,6 @@ def count_int_binop(g, op: str) -> int:
 
 def count_calls(g) -> int:
     return count_pat(g, pat.call())
-
 
 
 def count_loads(g) -> int:

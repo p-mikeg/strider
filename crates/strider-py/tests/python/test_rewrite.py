@@ -176,4 +176,6 @@ def test_capture_over_another_var_rhs_is_the_captured_value():
     g, x = _x_times_4()
     y = Capture()
     assert g.rewrite(find=int_mul(var(x), int_const(4)), replace=var(y).capture(x)) == 3
-    assert g.find_all(int_mul(var(x), int_const(4))) == []
+    plain, x = _x_times_4()
+    assert plain.rewrite(find=int_mul(var(x), int_const(4)), replace=var(x)) == 3
+    assert g.to_text() == plain.to_text()

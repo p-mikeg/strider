@@ -7,8 +7,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 import strider
 from strider.pattern import (
     Capture,
@@ -21,7 +19,7 @@ from strider.pattern import (
     var,
 )
 
-from .conftest import symbol_addr, fixture_path
+from .conftest import fixture_path, lift_bytes, symbol_addr
 
 
 def _build_graph(elf_path, symbol):
@@ -55,12 +53,7 @@ def test_multi_level_capture_chain(x86_memory_elf):
 def test_back_reference_same_capture_twice():
     """A repeated capture is a back-reference: `int_xor(v, v)` fires only
     when both operands are the same value."""
-    mem = strider.reader.BufferReader(0x1000, bytes.fromhex("31c0" "31f8" "c3"))
-    g = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem).analyze(
-        0x1000,
-        strider.sleigh.CallingConvention.x86_64_systemv(),
-        opts=strider.lift.LifterOptions(pipeline=strider.opt.OptimizerPipeline.empty()),
-    ).function
+    g = lift_bytes(bytes.fromhex("31c0" "31f8" "c3"), optimize=False)
     assert len(g.find_all(int_xor(Capture("v"), Capture("v")))) == 1
     # The self-xor once, the other one in both operand orders.
     assert len(g.find_all(int_xor(Capture("a"), Capture("b")))) == 3
