@@ -128,5 +128,6 @@ fn default_pipeline_has_ten_inloop_passes() {
         10,
         "DedupNodes removed -> 10 in-loop passes"
     );
-    assert_eq!(p.post_passes().len(), 3);
+    let post: Vec<&str> = p.post_passes().iter().map(|pass| pass.name()).collect();
+    assert_eq!(post, ["CallStackArgCollect", "FunctionArgDetect"]);
 }
