@@ -812,6 +812,9 @@ impl LoopForest {
     /// (the top, or one loop's body with inner loops collapsed into their
     /// headers) is ordered topologically from its entry, and an inner loop's
     /// block is spliced in where its header falls.
+    ///
+    /// `preds` must be reducible: [`MemLayout::build`] returns `None` before
+    /// calling this on a graph with a retreating edge to a non-dominator.
     fn nested_order(
         &self,
         preds: &[SmallVec<[u32; 2]>],
