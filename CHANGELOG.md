@@ -17,6 +17,10 @@
   undecodable_branch_targets, unverified_seeded_sites}()` are gone:
   `Cfg.incomplete` lists every `(address, reason)`, with the reasons in
   `strider.cfg.INCOMPLETE_REASONS`. `AnalyzeResult.unresolved` is unchanged.
+- `analyze` and `build_cfg` raise `strider.lift.IncompleteAnalysis` (a
+  `StriderError`) when `Cfg.incomplete` would name anything, a seeded site
+  included; pass `on_incomplete=OnIncomplete.IGNORE` for the old behaviour.
+  Code that catches `StriderError` to skip a function now skips these too.
 
 ### Breaking, Rust
 
@@ -44,6 +48,8 @@
 - `Strider::analyze` returns `AnalyzeError`, `Incomplete(Incompleteness)` or
   `Failed(anyhow::Error)`, and `Strider::build_cfg` takes an `OnIncomplete`:
   under `OnIncomplete::Error` a result that is not complete is refused.
+- `AnalyzeOptions::default()` refuses an incomplete result:
+  `on_incomplete` defaults to `OnIncomplete::Error`.
 
 ### Changed, Python
 

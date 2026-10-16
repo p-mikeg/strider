@@ -108,3 +108,28 @@ def test_a_stashed_keyboard_interrupt_beats_the_raise() -> None:
     )
     with pytest.raises(KeyboardInterrupt):
         lift.analyze(BASE, _cc(), _opts(ERROR))
+
+
+def test_the_default_raises() -> None:
+    assert strider.lift.LifterOptions().on_incomplete == ERROR
+    lift = _lifter(JMP_RAX)
+    with pytest.raises(strider.lift.IncompleteAnalysis) as raised:
+        lift.analyze(BASE, _cc())
+    assert raised.value.sites == [(0x1003, "unresolved_branch")]
+    with pytest.raises(strider.lift.IncompleteAnalysis) as raised:
+        lift.build_cfg(BASE)
+    assert raised.value.sites == [(0x1003, "unresolved_branch")]
+    assert lift.analyze(BASE, _cc(), _opts(IGNORE)).cfg.incomplete == raised.value.sites
+
+
+def test_elf_lifter_raises_by_name_too() -> None:
+    from .conftest import fixture_path
+
+    prog = strider.lift.load_elf(str(fixture_path("x86", "switch")))
+    with pytest.raises(strider.lift.IncompleteAnalysis):
+        prog.analyze(
+            "dispatch_value",
+            opts=strider.lift.LifterOptions(
+                pipeline=strider.opt.OptimizerPipeline.empty()
+            ),
+        )
