@@ -59,7 +59,7 @@ def test_add_commutes_and_ordered_pins_operands():
     commutative = g.find_all(int_add(anything(), anything()))
     ordered = g.find_all(int_binary("Add", anything(), anything()).ordered())
     assert len(ordered) == 35
-    assert len(commutative) >= len(ordered)
+    assert len(commutative) == 35
 
 
 def test_match_get_uint_on_const():
