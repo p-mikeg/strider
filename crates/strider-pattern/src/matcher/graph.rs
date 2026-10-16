@@ -276,7 +276,8 @@ impl Pattern {
 
 #[cfg(test)]
 mod tests {
-    use super::PatGraph;
+    use super::{PatGraph, Pattern};
+    use crate::MatchPat;
     use crate::matcher::MatcherBuilder;
     use crate::matcher::{KindSpec, PatValueRef};
     use rustc_hash::FxHashMap;
@@ -337,7 +338,59 @@ mod tests {
         s
     }
 
-    /// `total_nodes` is the larger of the raw count and the deepest unfolding.
+    /// A random pattern over at most twelve steps, with `If` branch patterns
+    /// nested at most two deep. Checks that `total_nodes` is the larger of the
+    /// raw count and the deepest unfolding, plus every nested branch's own
+    /// total, and returns the pattern with that total.
+    ///
+    /// `shapes` counts: the unfolding wins, the raw count wins, an alternation
+    /// whose arms unfold to different sizes, a nested branch.
+    fn random_pattern(state: &mut u64, depth: u32, shapes: &mut [usize; 4]) -> (Pattern, usize) {
+        let mut b = MatcherBuilder::new();
+        let mut nested = 0usize;
+        let mut vals: Vec<PatValueRef> = vec![b.leaf(KindSpec::Any)];
+        for _ in 0..draw(state, 12) {
+            let (l, r) = (vals[draw(state, vals.len())], vals[draw(state, vals.len())]);
+            let v = match draw(state, 5) {
+                1 => b.unary(KindSpec::Any, l),
+                2 => b.binary(strider_ir::IntBinaryOp::Add, l, r),
+                3 => b.one_of(&[l, r]),
+                4 if depth < 2 => {
+                    let (t, t_total) = random_pattern(state, depth + 1, shapes);
+                    let (f, f_total) = random_pattern(state, depth + 1, shapes);
+                    nested += t_total + f_total;
+                    crate::if_else().with_true(t).with_false(f).compile(&mut b)
+                }
+                _ => b.leaf(KindSpec::Any),
+            };
+            vals.push(v);
+        }
+        let p = b.finish();
+        let mut memo = FxHashMap::default();
+        let deepest = p
+            .graph
+            .all_node_ids()
+            .map(|n| unfold(&p.graph, n, &mut memo))
+            .max()
+            .unwrap_or(0);
+        let raw = p.graph.all_node_ids().count();
+        let want = raw.max(deepest) + nested;
+        assert_eq!(p.total_nodes(), want, "depth {depth}, {nested} nested");
+        shapes[0] += usize::from(deepest > raw);
+        shapes[1] += usize::from(deepest < raw);
+        shapes[2] += usize::from(p.graph.all_node_ids().any(|n| {
+            let arms: Vec<usize> = p
+                .graph
+                .node_inputs(n)
+                .into_iter()
+                .map(|v| memo[&p.graph.producer(v)])
+                .collect();
+            p.graph.node_kind(n).alternation && arms.iter().any(|&a| a != arms[0])
+        }));
+        shapes[3] += usize::from(nested > 0);
+        (p, want)
+    }
+
     #[test]
     fn unfolded_node_count_matches_a_recursive_unfolding() {
         let cases = if cfg!(debug_assertions) {
@@ -346,46 +399,9 @@ mod tests {
             20_000
         };
         let mut state = 0x9E37_79B9_7F4A_7C15u64;
-        // The unfolding wins, the raw count wins, an alternation whose arms
-        // unfold to different sizes.
-        let mut shapes = [0usize; 3];
-        for case in 0..cases {
-            let mut b = MatcherBuilder::new();
-            let mut vals: Vec<PatValueRef> = vec![b.leaf(KindSpec::Any)];
-            for _ in 0..draw(&mut state, 12) {
-                let (l, r) = (
-                    vals[draw(&mut state, vals.len())],
-                    vals[draw(&mut state, vals.len())],
-                );
-                let v = match draw(&mut state, 4) {
-                    0 => b.leaf(KindSpec::Any),
-                    1 => b.unary(KindSpec::Any, l),
-                    2 => b.binary(strider_ir::IntBinaryOp::Add, l, r),
-                    _ => b.one_of(&[l, r]),
-                };
-                vals.push(v);
-            }
-            let p = b.finish();
-            let mut memo = FxHashMap::default();
-            let deepest = p
-                .graph
-                .all_node_ids()
-                .map(|n| unfold(&p.graph, n, &mut memo))
-                .max()
-                .unwrap_or(0);
-            let raw = p.graph.all_node_ids().count();
-            assert_eq!(p.total_nodes(), raw.max(deepest), "case {case}");
-            shapes[0] += usize::from(deepest > raw);
-            shapes[1] += usize::from(deepest < raw);
-            shapes[2] += usize::from(p.graph.all_node_ids().any(|n| {
-                let arms: Vec<usize> = p
-                    .graph
-                    .node_inputs(n)
-                    .into_iter()
-                    .map(|v| memo[&p.graph.producer(v)])
-                    .collect();
-                p.graph.node_kind(n).alternation && arms.iter().any(|&a| a != arms[0])
-            }));
+        let mut shapes = [0usize; 4];
+        for _ in 0..cases {
+            random_pattern(&mut state, 0, &mut shapes);
         }
         assert!(
             shapes.iter().all(|&c| c >= cases / 20),
