@@ -104,7 +104,7 @@ fn a_noflow_decode_var_does_not_leak_into_a_second_build_of_the_same_function() 
         )
         .unwrap();
         let opts = strider_cfg::CfgOptions {
-            fn_max_size: Some(size),
+            bound: strider_cfg::FunctionBound::size(size),
             ..Default::default()
         };
         let mut terminators = || -> Vec<String> {
@@ -145,7 +145,7 @@ fn sorted_terminators(
     size: u64,
 ) -> anyhow::Result<Vec<String>> {
     let opts = strider_cfg::CfgOptions {
-        fn_max_size: Some(size),
+        bound: strider_cfg::FunctionBound::size(size),
         ..Default::default()
     };
     let cfg = lifter.build_cfg(entry.into(), &opts)?;

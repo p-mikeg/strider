@@ -79,7 +79,7 @@ impl Engine {
             .expect("pin entry defaults");
         let mode = self.flow.snapshot(&self.sleigh, entry);
         let opts = CfgOptions {
-            fn_max_size: Some(size),
+            bound: strider_cfg::FunctionBound::size(size),
             ..CfgOptions::default()
         };
         Builder::for_arch(&self.arch, &mut self.sleigh, entry, &opts)

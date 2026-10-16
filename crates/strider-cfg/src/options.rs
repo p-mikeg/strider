@@ -9,16 +9,44 @@ static NO_KNOWN_TARGETS: FxHashMap<PcodeInsnAddr, ResolvedTargets> =
     FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
 static NO_CALL_TARGETS: FxHashSet<u64> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
 
+/// The extent of the function being built, which decides when a branch leaves
+/// it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FunctionBound {
+    /// `[start, start + n)`: a branch outside it is a tail call.
+    Size(std::num::NonZeroU64),
+    /// No extent: a branch below the start is a tail call unless
+    /// `code_before_start`.
+    Open { code_before_start: bool },
+}
+
+impl Default for FunctionBound {
+    fn default() -> Self {
+        Self::Open {
+            code_before_start: false,
+        }
+    }
+}
+
+impl FunctionBound {
+    /// [`Self::Size`].
+    ///
+    /// # Panics
+    ///
+    /// If `n` is 0.
+    #[must_use]
+    pub const fn size(n: u64) -> Self {
+        match std::num::NonZeroU64::new(n) {
+            Some(n) => Self::Size(n),
+            None => panic!("a function size bound must be > 0"),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CfgOptions<'a> {
-    /// `Some(n)`: an unconditional branch to `>= start + n` is a tail call.
-    /// `Some(0)` is coerced to unbounded by [`crate::Builder::for_arch`].
-    pub fn_max_size: Option<u64>,
-    /// When `false`, an unconditional branch *below* the function start is
-    /// a tail call rather than an edge to follow.  Read only while
-    /// `fn_max_size` is `None`: a set size fixes the extent, so a target below
-    /// the start is a tail call whatever this says.
-    pub allow_code_before_start_addr: bool,
+    /// How far the function extends; a branch leaving it is a tail call.
+    pub bound: FunctionBound,
     /// A `BranchIndirect` listed here seats its cached terminator directly;
     /// every other site defers via `UnresolvedIndirectBranch`.  Read through
     /// [`CfgOptions::seated`], never indexed directly.
@@ -74,8 +102,7 @@ impl DataRanges {
 impl Default for CfgOptions<'_> {
     fn default() -> Self {
         Self {
-            fn_max_size: None,
-            allow_code_before_start_addr: false,
+            bound: FunctionBound::default(),
             known_targets: &NO_KNOWN_TARGETS,
             no_return_targets: &NO_CALL_TARGETS,
             call_other_overrides: Default::default(),
@@ -131,6 +158,12 @@ mod tests {
             ResolvedTargets::Single(t) => Some(t.addr),
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "must be > 0")]
+    fn a_zero_size_bound_panics() {
+        let _ = FunctionBound::size(0);
     }
 
     /// Options built over a caller's table hold a borrow of it, so neither

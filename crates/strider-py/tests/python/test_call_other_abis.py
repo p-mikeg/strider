@@ -50,7 +50,7 @@ def test_symbol_entry_carries_every_cfg_field(x86_memory_elf):
     narrowed = opts.with_function_max_size(0x100)
     assert narrowed.function_max_size == 0x100
     carried = {n for n in dir(opts) if not n.startswith("_") and not callable(getattr(opts, n))}
-    carried -= {"function_max_size"}
+    carried -= {"function_max_size", "allow_code_before_start_addr"}
     for name in carried:
         assert getattr(narrowed, name) == getattr(opts, name), f"dropped {name}"
     assert narrowed.call_other_abis == {
