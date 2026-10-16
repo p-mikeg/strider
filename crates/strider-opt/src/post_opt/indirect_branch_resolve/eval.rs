@@ -226,7 +226,7 @@ impl<'a> Evaluator<'a> {
         if data_ty.is_integer() && load_ty.is_integer() && load_ty.byte_size() < data_ty.byte_size()
         {
             // Little-endian gives 0, so the low bytes pass through.
-            let shift_bits = crate::mem_analysis::high_low_shift_bits(
+            let shift_bits = crate::const_eval::high_low_shift_bits(
                 data_ty,
                 load_ty,
                 self.function.endianness(),

@@ -24,6 +24,23 @@ pub(crate) fn read_rom_const(
     ty.get_unsigned_int(loaded)
 }
 
+/// Right-shift in bits that brings the `load_ty`-width slice of a wider
+/// `store_ty` integer into the low end.  Little-endian keeps the load bytes
+/// low already, so the shift is 0.
+///
+/// `load_ty` must be no wider than `store_ty`, else the subtraction underflows.
+#[inline]
+pub(crate) fn high_low_shift_bits(
+    store_ty: ValueType,
+    load_ty: ValueType,
+    endianness: Endianness,
+) -> u32 {
+    match endianness {
+        Endianness::Little => 0,
+        Endianness::Big => (store_ty.byte_size() - load_ty.byte_size()) as u32 * 8,
+    }
+}
+
 /// Whether every operand already carries `expected`'s bit width.
 ///
 /// A const-eval fold masks all operands to one width, which is only correct
