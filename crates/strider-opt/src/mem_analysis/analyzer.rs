@@ -1,11 +1,17 @@
+//! `MemAnalyzer`, the per-function memo the alias queries run through, and
+//! its options.
+
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer};
 
-use super::{
-    AddrClass, AliasVerdict, ArgWindow, ArgWindowGeometry, MemExpr, MemWalker, SizedAddr,
-    StoreIndex, addr_bit_width, alias_verdict, classify_addr, decompose, scan_arg_window,
-};
+use super::alias::{SizedAddr, alias_verdict, classify_addr};
+use super::arg_window::{ArgWindow, ArgWindowGeometry, scan_arg_window};
+use super::decompose::decompose;
+use super::index::StoreIndex;
+use super::ring::addr_bit_width;
+use super::walker::MemWalker;
+use super::{AddrClass, AliasVerdict, MemExpr};
 use crate::mem_ssa::{Answers, ClobberProbe, MemLayout, WalkAnswers};
 
 #[derive(Clone)]
@@ -21,7 +27,7 @@ pub(crate) struct MemOptions {
     /// [`MemOptions::with_callee_preserves_stack_args`] opts back in.
     pub(super) callee_preserves_stack_args: bool,
     /// Let an SP-rooted `Load` step through a `Call` when the frame is provably
-    /// private ([`frame_escape`]).
+    /// private ([`super::frame_escape`]).
     pub(super) escape_analysis: bool,
     /// Whether any `Call` relaxation applies at all.  Cleared for the inner
     /// walk that computes a call's outgoing-argument window

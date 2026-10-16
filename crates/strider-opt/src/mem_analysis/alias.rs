@@ -1,9 +1,13 @@
+//! Address classes and the pairwise alias verdict between a load and a store.
+
 use rustc_hash::FxHashSet;
 use strider_ir::node::ValueId;
 use strider_ir::{Function, IRViewer};
 
 use super::AddrClass::*;
-use super::{AddrClass, AliasVerdict, MemExpr, MemKind, MemOptions, decompose};
+use super::analyzer::MemOptions;
+use super::decompose::decompose;
+use super::{AddrClass, AliasVerdict, MemExpr, MemKind};
 
 pub(super) fn classify_addr(
     function: &Function,
@@ -114,7 +118,7 @@ pub(super) fn offsets_comparable(
 
 /// One operand (load or store) of the pairwise [`alias_verdict`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct SizedAddr {
+pub(super) struct SizedAddr {
     pub(crate) class: AddrClass,
     pub(crate) size: i128,
     /// Bit width of the address expression, for the modular-comparability
@@ -122,7 +126,7 @@ pub(crate) struct SizedAddr {
     pub(crate) addr_bits: Option<u32>,
 }
 
-pub(crate) fn alias_verdict(
+pub(super) fn alias_verdict(
     load: SizedAddr,
     store: SizedAddr,
     options: &MemOptions,
