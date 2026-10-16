@@ -932,3 +932,7 @@ fn find(rep: &mut [u32], x: u32) -> u32 {
     }
     root
 }
+
+#[cfg(test)]
+#[path = "layout_tests.rs"]
+mod layout_tests;
