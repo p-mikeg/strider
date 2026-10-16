@@ -164,8 +164,9 @@ pub fn run(f: &Function, env: &Env<'_>) -> Result<Outcome, Unsupported> {
     run_observed(f, env, &mut |_, _, _| {})
 }
 
-/// [`run`], handing `observe` each operand of a compare an `If` tests and each
-/// returned value, with the control node it is seen at.
+/// [`run`], handing `observe` each operand of a compare an `If` tests, the
+/// condition itself, and each returned value, with the control node it is
+/// seen at.
 ///
 /// # Errors
 ///
@@ -197,6 +198,7 @@ pub fn run_observed(
                 let Some(c) = m.int(cond)? else {
                     return Ok(Outcome::Diverge(Divergence::UndefinedBranch));
                 };
+                observe(node, cond, c);
                 // Output 0 is the taken arm.
                 ctrl = f.node_outputs(node)[usize::from(c == 0)];
             }
@@ -1029,7 +1031,7 @@ mod tests {
     }
 
     #[test]
-    fn observe_sees_tested_operands_and_returned_values() {
+    fn observe_sees_tested_operands_the_condition_and_returned_values() {
         let x = reg_vn(0x1000, 4);
         // if x < 10 { return x } else { return 0 }
         let mut b = RegisterSet::new().tracked(x).build_fn().unwrap();
@@ -1055,7 +1057,7 @@ mod tests {
             seen.push((label(f.node_kind(at)), value));
         })
         .expect("the function runs");
-        let expected = [("If", 3), ("If", 10), ("Return", 3)];
+        let expected = [("If", 3), ("If", 10), ("If", 1), ("Return", 3)];
         assert_eq!(seen, expected.map(|(kind, value)| (kind.to_owned(), value)));
     }
 
