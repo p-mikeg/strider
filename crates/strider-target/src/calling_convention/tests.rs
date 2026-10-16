@@ -613,7 +613,7 @@ fn presets_resolve_correct_register_sets() {
 }
 
 /// Every resolved register, SP included, must be the arch's natural word
-/// size.  SP matters because `StackOffsetDetect` and the stack-arg machinery
+/// size.  SP matters because the memory analysis and the stack-arg machinery
 /// assume an SP-sized address: an undersized SP silently miscomputes offsets
 /// downstream with no diagnostic from this crate.
 #[test]

@@ -74,10 +74,12 @@ pub struct AssumptionOptions {
     /// [`noalias_allocators`](Self::noalias_allocators), both off by default.
     /// Set alone it changes nothing.
     ///
-    /// Honoured by `LoadForward` alone.  Stack-argument collection and the
-    /// jump-table walk pin it off, keeping the full window: both settle a
-    /// structure (a call's arguments, a CFG edge) that outlives the run, where
-    /// a wrong narrowing is not a lost fold but a wrong answer.
+    /// Honoured by `LoadForward` alone.  Stack-argument collection,
+    /// incoming-argument detection, the jump-table walk and `LoadForward`'s
+    /// permanent narrowing pin it off, keeping the full window: each settles
+    /// something that outlives the run (a call's arguments, the function's, a
+    /// CFG edge, a memory edge), where a wrong narrowing is not a lost fold but
+    /// a wrong answer.
     pub callee_preserves_stack_args: bool,
     /// Callee addresses of pure `noalias` heap allocators (`malloc`/`calloc`-like:
     /// a size in, a fresh non-overlapping pointer out, no pointer arguments).

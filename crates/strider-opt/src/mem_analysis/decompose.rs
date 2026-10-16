@@ -16,9 +16,7 @@ use super::ring::wrap_to_addr_width;
 use super::{MemExpr, MemKind};
 
 /// Memoized: a hit is O(1), a miss walks the address spine and caches the result.
-/// Sound because the fixed-point loop drains the memo after every changing
-/// pass; the post-passes that skip the drain only mutate the graph in ways that
-/// leave every address value's decomposition unchanged.
+/// [`super::stamp`] states when the memo is drained and under which set.
 ///
 /// The memo is keyed by `ValueId` alone, so every walk over one `function`
 /// passes the run's `noalias_allocators`.  A policy that claims no heap class
