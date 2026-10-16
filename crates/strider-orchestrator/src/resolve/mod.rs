@@ -1,46 +1,48 @@
-//! The resolve loop's state across rounds, and the result it settles on.
+//! The resolve loop: every round rebuilds the function from one seat set,
+//! until the seats stop changing.
 
+mod reports;
 mod round;
-
-use std::borrow::Cow;
+mod sites;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 use anyhow::Result;
 use rustc_hash::{FxHashMap, FxHashSet};
-use strider_cfg::{Incompleteness, PcodeInsnAddr, Reason, ResolvedTargets, seated_in};
+use strider_cfg::{Incompleteness, MachineInsnAddr, PcodeInsnAddr, Reason, ResolvedTargets};
 
-use crate::{
-    AnalyzeResult, DerivedChannels, DispatchAnchors, IndirectResolutions, abandon_site,
-    abandon_undecodable, apply_resolutions, flowing_isa_bits, live_unresolved_branches,
-    seated_arm_losses, unverified_seeded_sites,
+use crate::{AnalyzeOptions, AnalyzeResult, Strider};
+use reports::{
+    DerivedChannels, live_unresolved_branches, refusals, seated_arm_losses, unverified_seeded_sites,
 };
-use round::Round;
+use round::{Resolutions, Round, answered, flowing_isa_bits};
+use sites::SiteTable;
+
+/// Caps the folds, so a run builds at most one more round than this.
+///
+/// Doubles as a DEPTH limit: one iteration seats one LEVEL of indirect-branch
+/// discovery, so a chain of trampolines each jumping to the next needs one
+/// round per link. [`SiteTable::fold`] reporting no change is the terminator
+/// for everything shallower. Exhausting the cap is never
+/// [`crate::AnalyzeError::Failed`]: the sites still growing are reported, and
+/// a site whose answer never settles is withdrawn and reported the same way.
+const MAX_RESOLUTION_ITERATIONS: usize = 256;
 
 /// Why the loop stopped.
-pub(crate) enum Termination {
+enum Termination {
     /// The last round built is the answer.
     Converged,
     /// The cap ran out on a round whose classifications nothing has folded.
-    CapReached(IndirectResolutions),
+    CapReached(Resolutions),
 }
 
 /// What the loop carries from one round to the next.
-pub(crate) struct LoopState<'s> {
-    /// The caller's `known_targets`; never mutated.
-    caller_seed: &'s FxHashMap<PcodeInsnAddr, ResolvedTargets>,
-    /// The seats each round builds from: the caller's, grown by every fold,
-    /// which re-unions the caller's own. Copy-on-write, so a function with
-    /// nothing to resolve never copies a whole-binary seed table.
-    pub(crate) working: Cow<'s, FxHashMap<PcodeInsnAddr, ResolvedTargets>>,
-    /// Sites given up on: their answer never settled, or named an address
-    /// that would not decode. Each takes no further classification and keeps
-    /// a live placeholder, reported unresolved.
-    abandoned: FxHashSet<PcodeInsnAddr>,
-    /// Narrowings per site. Growth alone cannot cycle, so a cap spent on it is
-    /// the depth limit; a second narrowing is the cycle, and abandons the site.
-    narrow_rounds: FxHashMap<PcodeInsnAddr, u32>,
-    /// Sticky: a site that lost ground in ANY round, or that the loop
-    /// abandoned, is not claimed complete by a later round that re-derives the
-    /// smaller set.
+struct LoopState<'s> {
+    /// Every site's answer, over the caller's seeds.
+    sites: SiteTable<'s>,
+    /// Sticky: a site that lost ground in ANY round, or whose seat the loop
+    /// withdrew or trimmed, is not claimed complete by a later round that
+    /// re-derives the smaller set.
     derived_incomplete: Vec<PcodeInsnAddr>,
     /// Sticky: the flag fires on the round that seats the guessed arm, and
     /// every later round finds that arm already seated.
@@ -49,17 +51,59 @@ pub(crate) struct LoopState<'s> {
     /// edge fed the classifier, whose answers persist into every later round,
     /// so a final cfg without that edge does not mean none was used.
     incomplete: Incompleteness,
-    /// Rounds folded into `working`.
-    pub(crate) folds: usize,
+    /// Rounds folded into `sites`.
+    folds: usize,
+}
+
+impl<R> Strider<R>
+where
+    R: rsleigh::MemReader,
+{
+    /// The resolve loop behind [`Strider::analyze`], before its incomplete
+    /// policy and compaction.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::build_round`] and [`SiteTable::fold`].
+    pub(crate) fn resolve(
+        &mut self,
+        start_addr: MachineInsnAddr,
+        cc: &strider_target::BuiltCallingConvention,
+        opts: &AnalyzeOptions<'_>,
+        pipeline: &strider_opt::OptimizerPipeline,
+    ) -> Result<AnalyzeResult> {
+        let mut st = LoopState::new(opts.cfg.known_targets);
+        // Every round rebuilds the whole function from the seat set: cfg, lift
+        // and pipeline. Carrying a round's work forward would make the cfg a
+        // function of more than the seats, which is what convergence rests on.
+        loop {
+            let (round, resolutions) = self.build_round(
+                start_addr,
+                cc,
+                opts,
+                &st.sites.cfg_options(&opts.cfg),
+                pipeline,
+            )?;
+            // A stale round still carries a seat the loop has since withdrawn
+            // or trimmed, so it is no answer even when nothing else moves.
+            let stale = st.observe(&round);
+            if round.is_settled() && !stale {
+                return st.finish(round, Termination::Converged);
+            }
+            if st.folds == MAX_RESOLUTION_ITERATIONS {
+                return st.finish(round, Termination::CapReached(resolutions));
+            }
+            if !st.fold(&round, resolutions)? && !stale {
+                return st.finish(round, Termination::Converged);
+            }
+        }
+    }
 }
 
 impl<'s> LoopState<'s> {
-    pub(crate) fn new(caller_seed: &'s FxHashMap<PcodeInsnAddr, ResolvedTargets>) -> Self {
+    fn new(seeds: &'s FxHashMap<PcodeInsnAddr, ResolvedTargets>) -> Self {
         Self {
-            caller_seed,
-            working: Cow::Borrowed(caller_seed),
-            abandoned: FxHashSet::default(),
-            narrow_rounds: FxHashMap::default(),
+            sites: SiteTable::new(seeds),
             derived_incomplete: Vec::new(),
             assumed_modes: Vec::new(),
             incomplete: Incompleteness::default(),
@@ -67,62 +111,49 @@ impl<'s> LoopState<'s> {
         }
     }
 
-    /// Records `round`'s reports and abandons every site it found naming a
-    /// bad target. Returns whether `round` still carries a seat `working` has
-    /// since dropped: converging on it would publish a `Switch` at a site the
+    /// Records `round`'s reports and freezes every site whose seat it
+    /// refused. Returns whether `round` still carries a seat the loop has
+    /// since changed: converging on it would publish a `Switch` at a site the
     /// reports call unresolved.
-    pub(crate) fn observe(&mut self, round: &Round) -> bool {
+    fn observe(&mut self, round: &Round) -> bool {
         let cfg = &round.cfg;
-        // BEFORE `abandon_undecodable`, which drops the site or its bad arms
-        // from `working`, the map `seated_arm_losses` looks the site up in.
-        // Reversed, every site abandoned this round loses its arm-loss report,
-        // and for a classifier-derived table that is the only report it
-        // gets.
+        // BEFORE the refusals land: a withdrawn seat asks for no arm, so the
+        // loss would vanish, and for a classifier-derived table it is the
+        // only report the site gets.
         self.derived_incomplete
-            .extend(seated_arm_losses(cfg, &self.working));
+            .extend(seated_arm_losses(cfg, &self.sites));
         let clashing: Vec<PcodeInsnAddr> = cfg.incomplete().of(Reason::IsaModeConflict).collect();
-        let dropped = abandon_undecodable(
+        let refused = refusals(
             cfg.undecodable_seeded_targets(),
             &clashing,
-            &DispatchAnchors::new(cfg),
-            &mut self.abandoned,
-            &mut self.working,
+            &self.sites,
+            round.anchors(),
         );
         self.incomplete.absorb(cfg.incomplete());
-        let stale = !dropped.is_empty();
-        self.derived_incomplete.extend(dropped);
+        let stale = !refused.is_empty();
+        for (site, keep) in refused {
+            self.sites.freeze(site, keep);
+            self.derived_incomplete.push(site);
+        }
         stale
     }
 
-    /// Folds `round`'s classifications into `working`, abandoning a site on
+    /// Folds `round`'s classifications into the seats, withdrawing a site on
     /// its second narrowing. Returns whether any site's successors changed.
     ///
     /// # Errors
     ///
-    /// As [`apply_resolutions`].
-    pub(crate) fn fold(&mut self, round: &Round, resolutions: IndirectResolutions) -> Result<bool> {
+    /// As [`SiteTable::fold`].
+    fn fold(&mut self, round: &Round, resolutions: Resolutions) -> Result<bool> {
         let flowing = flowing_isa_bits(&round.cfg, &round.placeholders, &round.switches);
-        let progress = apply_resolutions(
-            self.working.to_mut(),
-            self.caller_seed,
+        let progress = self.sites.fold(
             &round.placeholders,
             &round.switches,
-            resolutions,
+            answered(resolutions),
             &flowing,
-            &self.abandoned,
         )?;
-        for addr in &progress.narrowed {
-            let seen = self.narrow_rounds.entry(*addr).or_default();
-            *seen += 1;
-            // `apply_resolutions` already reported this narrowing. A second
-            // means the answer depends on what the previous round seated, so
-            // no member of the cycle is trustworthy: stop resolving the site,
-            // rather than failing the function.
-            if *seen > 1 && !self.abandoned.contains(addr) {
-                abandon_site(self.working.to_mut(), &mut self.abandoned, *addr);
-                self.derived_incomplete.push(*addr);
-            }
-        }
+        self.derived_incomplete
+            .extend(self.sites.note_narrowed(&progress.narrowed));
         let changed = progress.changed();
         self.derived_incomplete.extend(progress.derived_incomplete);
         self.assumed_modes.extend(progress.assumed_modes);
@@ -134,8 +165,8 @@ impl<'s> LoopState<'s> {
     ///
     /// # Errors
     ///
-    /// As [`apply_resolutions`].
-    pub(crate) fn finish(mut self, round: Round, end: Termination) -> Result<AnalyzeResult> {
+    /// As [`SiteTable::fold`].
+    fn finish(mut self, round: Round, end: Termination) -> Result<AnalyzeResult> {
         let Round {
             cfg,
             function,
@@ -146,27 +177,21 @@ impl<'s> LoopState<'s> {
             unverified_returns: mut returns,
         } = round;
         // The cap is spent on a round nothing has folded yet, so its own
-        // verdict is only known by folding it. Against a COPY, with no
-        // narrow-twice freeze: the returned `cfg` was built from `working` as
-        // it stands, and this is a report, not a decision. Kept, where the
-        // fold that produced it is discarded: it is the settled answer BOTH
-        // seed-aware reports are read against, and reading one against the
-        // pre-fold set would call a site that the last round grew past its
-        // seed "exactly the seed".
+        // verdict is only known by folding it. Into a COPY of the loop's own
+        // answers (the seeds are borrowed, never copied), with no narrow-twice
+        // freeze: the returned `cfg` was built from the seats as they stand,
+        // and this is a report, not a decision. Kept, where the fold that
+        // produced it is discarded: it is the settled answer BOTH seed-aware
+        // reports are read against, and reading one against the pre-fold set
+        // would call a site that the last round grew past its seed "exactly the
+        // seed".
         let (still_growing, folded) = match end {
             Termination::Converged => (Vec::new(), None),
             Termination::CapReached(resolutions) => {
-                let mut folded = (*self.working).clone();
+                let mut folded = self.sites.clone();
                 let flowing = flowing_isa_bits(&cfg, &placeholders, &switches);
-                let progress = apply_resolutions(
-                    &mut folded,
-                    self.caller_seed,
-                    &placeholders,
-                    &switches,
-                    resolutions,
-                    &flowing,
-                    &self.abandoned,
-                )?;
+                let progress =
+                    folded.fold(&placeholders, &switches, answered(resolutions), &flowing)?;
                 self.derived_incomplete.extend(progress.derived_incomplete);
                 self.assumed_modes.extend(progress.assumed_modes);
                 // Only the LAST round's growth: a site that settled earlier is
@@ -174,14 +199,13 @@ impl<'s> LoopState<'s> {
                 (progress.grew, Some(folded))
             }
         };
-        let settled = folded.as_ref().unwrap_or(&self.working);
+        let settled = folded.as_ref().unwrap_or(&self.sites);
 
         let mut unresolved = live_unresolved_branches(
             &live,
             &placeholders,
             &switches,
             &unclassified,
-            self.caller_seed,
             settled,
             DerivedChannels {
                 budget_exhausted: &still_growing,
@@ -201,22 +225,18 @@ impl<'s> LoopState<'s> {
         let seated_returns: FxHashSet<_> = cfg.link_register_seated().iter().copied().collect();
         returns.retain(|addr| {
             !seated_returns.contains(addr)
-                || !matches!(
-                    seated_in(self.caller_seed, *addr),
-                    Some(ResolvedTargets::LinkRegister)
-                )
+                || !matches!(settled.seed(*addr), Some(ResolvedTargets::LinkRegister))
         });
         unresolved.append(&mut returns);
-        let mut unverified =
-            unverified_seeded_sites(&cfg, &switches, &unclassified, self.caller_seed, settled);
+        let mut unverified = unverified_seeded_sites(&cfg, &switches, &unclassified, settled);
         // Derived once from the final cfg, then extended with the rounds'
         // accumulated guesses, filtered to the ones still seated: a site whose
-        // seat the loop dropped carries no guessed arm any more, and
+        // seat the loop withdrew carries no guessed arm any more, and
         // `UnverifiedSeed` claims the answer is whole.
         unverified.extend(
             self.assumed_modes
                 .into_iter()
-                .filter(|addr| settled.contains_key(addr)),
+                .filter(|addr| settled.is_seated(*addr)),
         );
         let mut incomplete = self.incomplete;
         for addr in unresolved {

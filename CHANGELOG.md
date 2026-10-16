@@ -104,6 +104,11 @@
 - A mips64el `SHT_REL` hole names its relocation type, not the symbol index.
 - A Thumb `BL` to ARM whose relocated value is -1 or -2 encodes `BLX` with
   offset 0; it overflowed, a panic in release builds.
+- A seeded `analyze` no longer copies the seed table for each function with
+  a dispatch site; no longer reports or freezes a seed that is no dispatch
+  site of the function because its table names an address decoded in two
+  ISA modes there; and keeps the caller's seed of a `BranchIndirect` whose
+  sibling in the same instruction it gave up on.
 
 ### Added, Rust
 
