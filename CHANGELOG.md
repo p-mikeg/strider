@@ -133,6 +133,8 @@
 - `Strider::lifter()`, the engine `analyze` lifts with.
 - `strider_cfg::seated_in`: the `known_targets` entry for a site, by its exact
   key or else its instruction's p-code index 0, as the CFG seats it.
+- `strider_cfg::seated_from`: what `CfgOptions::seated` reads, over any
+  two tables.
 - `BuiltCallingConvention::check_addr_size`.
 - `ALL` on every op enum (`IntBinaryOp::ALL`, `IntCmpOp::ALL`, ...): the
   variants in declaration order.

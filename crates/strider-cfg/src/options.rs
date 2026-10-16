@@ -119,13 +119,21 @@ impl Default for CfgOptions<'_> {
 }
 
 impl CfgOptions<'_> {
-    /// The answer the builder seats at `addr`: `derived_targets` at its exact
-    /// key, else [`seated_in`] over `known_targets`.
+    /// The answer the builder seats at `addr`: [`seated_from`] over
+    /// `derived_targets` and `known_targets`.
     pub fn seated(&self, addr: PcodeInsnAddr) -> Option<&ResolvedTargets> {
-        self.derived_targets
-            .get(&addr)
-            .or_else(|| seated_in(self.known_targets, addr))
+        seated_from(self.derived_targets, self.known_targets, addr)
     }
+}
+
+/// The answer seated at `addr`: `derived` at its exact key, else
+/// [`seated_in`] over `known`.
+pub fn seated_from<'m>(
+    derived: &'m FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    known: &'m FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    addr: PcodeInsnAddr,
+) -> Option<&'m ResolvedTargets> {
+    derived.get(&addr).or_else(|| seated_in(known, addr))
 }
 
 /// The entry for `addr` in `map`: its exact key, else the key of its
