@@ -3526,4 +3526,41 @@ mod refresh_tests {
         assert_eq!(offset(edit.function()), Some(-8));
         Ok(())
     }
+
+    /// A post-pass appended to the default pipeline that reads the memory
+    /// classes finds every live access classified once it refreshes them.
+    #[test]
+    fn an_appended_post_pass_reads_the_classes_after_a_refresh() -> crate::Result<()> {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        /// Stores one more than the unclassified accesses it saw, so 0 means
+        /// it never ran.
+        #[derive(Clone)]
+        struct ReadsClasses(Arc<AtomicUsize>);
+        impl crate::PostOptimizer for ReadsClasses {
+            fn apply(
+                &self,
+                edit: &mut crate::EditFunction<'_>,
+                _ctx: &mut crate::OptCtx<'_>,
+            ) -> crate::Result<()> {
+                crate::refresh_memory_classes(edit);
+                let unknown = classes(edit.function())
+                    .into_iter()
+                    .filter(|&c| c == MemDecomp::Unknown)
+                    .count();
+                self.0.store(unknown + 1, Ordering::Relaxed);
+                Ok(())
+            }
+        }
+        let seen = Arc::new(AtomicUsize::new(0));
+        let mut pipeline = crate::default_pipeline();
+        pipeline.add_post_pass(ReadsClasses(Arc::clone(&seen)));
+        optimized(&pipeline)?;
+        assert_eq!(
+            seen.load(Ordering::Relaxed),
+            1,
+            "the appended pass ran and found every access classified"
+        );
+        Ok(())
+    }
 }
