@@ -64,9 +64,10 @@ _OP_NAME_LITERALS = {
 @pytest.mark.parametrize("fn_name", sorted(_OP_NAME_LITERALS))
 def test_op_name_literals_cover_the_rust_names(fn_name):
     """The `*OpName` Literals are hand-written against Rust op enums. The
-    rejection message lists the parser's canonical names, which an exhaustive
-    Rust `match` keeps complete, so the message is the Rust side. Every name a
-    Literal admits must also parse."""
+    rejection message lists the parser's canonical names, so the message is
+    the Rust side; an exhaustive Rust `match` keeps it complete for the full
+    parsers, and the boolean subset is curated. Every name a Literal admits
+    must also parse."""
     fn = getattr(p, fn_name)
     literal = set(typing.get_args(getattr(p, _OP_NAME_LITERALS[fn_name])))
     try:
