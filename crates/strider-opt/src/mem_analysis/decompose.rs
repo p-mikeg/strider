@@ -23,12 +23,17 @@ use super::{MemExpr, MemKind};
 /// The memo is keyed by `ValueId` alone, so every walk over one `function`
 /// passes the run's `noalias_allocators`.  A policy that claims no heap class
 /// still sees one here; [`super::alias::classify_addr`] drops it.  The memo is
-/// also the verdict `strider-pattern`'s region filters read.
+/// also the verdict `strider-pattern`'s region filters read.  The set must be
+/// the one [`strider_ir::SideTables::memory_allocators`] records.
 pub(crate) fn decompose(
     function: &Function,
     value: ValueId,
     noalias_allocators: &FxHashSet<u64>,
 ) -> Option<MemExpr> {
+    debug_assert!(
+        noalias_allocators == function.side_tables().memory_allocators(),
+        "decompose under an allocator set the memo was not reset for"
+    );
     match function.side_tables().memory_class(value) {
         MemDecomp::Stack(_) | MemDecomp::Heap(_) => return resolve_slot(function, value),
         MemDecomp::NotMemory => return None,

@@ -65,6 +65,12 @@
   `ResolvedTargets::table`; `table([])` is the new `Withdrawn`, which seats
   no arm and defers its site. `arms()`, `successors()` and `narrows_to()`
   read any variant.
+- `strider_opt::apply_rules_count_with` is gone: `apply_rules_count`
+  re-derives the memory classes under the allocator set the function was last
+  optimized with, where it used none and dropped every heap class.
+- `StackOffsetDetect` stamps under that recorded set, not `OptCtx`'s;
+  `run_post`, `classify_sites`, `classify_target` and `ReturnTargets::new`
+  debug-assert that the allocator set they are handed is the recorded one.
 
 ### Changed, Python
 
@@ -150,6 +156,9 @@
   and per node output.
 - `OptimizerPipeline` is `Clone`, and `add_boxed` / `add_post_boxed` take a
   pass already boxed.
+- `SideTables::memory_allocators` / `reset_analyses`: the allocator set the
+  memory classes were computed under, and the one verb that starts a new
+  analysis.
 
 ## 0.2.0
 

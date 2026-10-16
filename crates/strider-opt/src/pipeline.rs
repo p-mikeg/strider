@@ -143,10 +143,11 @@ pub fn run_one_unvalidated(
     function: &mut strider_ir::Function,
     octx: &mut OptCtx<'_>,
 ) -> crate::Result<OptimizationResult> {
-    // Same reason `run` clears them: a memo left by an earlier run was derived
-    // against that run's assumptions, this one's may differ.
-    function.side_tables().clear_memory_slots();
-    function.side_tables().clear_frame_escape();
+    // As `run` starts: a memo left by an earlier run was derived under that
+    // run's allocator set.
+    function
+        .side_tables_mut()
+        .reset_analyses(&octx.options.assumptions.noalias_allocators);
     let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
     let result = apply_checked(pass, &mut edit, octx)?;
@@ -173,6 +174,10 @@ fn apply_checked(
 
 /// Post-pass sibling of [`run_one`].
 ///
+/// `octx`'s allocator set must be the one `function` was last optimized under
+/// ([`strider_ir::SideTables::memory_allocators`]); the post-pass stamps under
+/// that one.
+///
 /// # Errors
 ///
 /// Returns the first error from [`PostOptimizer::apply`].
@@ -182,6 +187,11 @@ pub fn run_post(
     function: &mut strider_ir::Function,
     octx: &mut OptCtx<'_>,
 ) -> crate::Result<()> {
+    debug_assert_eq!(
+        function.side_tables().memory_allocators(),
+        &octx.options.assumptions.noalias_allocators,
+        "run_post under an allocator set the function was not optimized with"
+    );
     let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
     pass.apply(&mut edit, octx)?;
@@ -338,10 +348,11 @@ impl OptimizerPipeline {
     ) -> crate::Result<()> {
         const MAX_ITERS: u32 = 1024;
         let capped;
-        // A memo left by an earlier run was derived against that run's
-        // assumptions, this one's may differ.
-        function.side_tables().clear_memory_slots();
-        function.side_tables().clear_frame_escape();
+        // A memo left by an earlier run was derived under that run's
+        // allocator set.
+        function
+            .side_tables_mut()
+            .reset_analyses(&ctx.options.assumptions.noalias_allocators);
         {
             // Scoped so the borrow of `function` is released before the
             // validation step below.
@@ -398,10 +409,7 @@ impl OptimizerPipeline {
                 // changing pass above drained it.  A caller pipeline need not
                 // register `StackOffsetDetect`, so refill it here or
                 // `stack_only` matches nothing and says nothing.
-                crate::post_opt::stack_offset_detect::stamp_all(
-                    &mut edit,
-                    &ctx.options.assumptions.noalias_allocators,
-                );
+                crate::post_opt::stack_offset_detect::stamp_all(&mut edit);
             }
             capped = !converged;
         }
@@ -606,6 +614,20 @@ mod tests {
         assert!(
             function.side_tables().memory_decomp(returned).1.is_none(),
             "run_one must clear a memo derived under another configuration"
+        );
+        Ok(())
+    }
+
+    /// The memo records the allocator set of the run that last reset it.
+    #[test]
+    fn run_records_the_allocator_set() -> crate::Result<()> {
+        let mut function = one_const_fn(5);
+        let mut ctx = OptCtx::at_floor(None);
+        ctx.options.assumptions.noalias_allocators = [0x1000].into_iter().collect();
+        super::OptimizerPipeline::new().run(&mut function, &mut ctx)?;
+        assert_eq!(
+            function.side_tables().memory_allocators(),
+            &ctx.options.assumptions.noalias_allocators
         );
         Ok(())
     }
