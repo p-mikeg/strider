@@ -521,14 +521,10 @@ impl<'g> EditFunction<'g> {
         self.remove_node_inputs_batch(node, &indices);
     }
 
-    /// Redirect every use of `old` to `new`.  Does NO fingerprint work and no
-    /// orphan enqueue, so `old`'s producer stays in the cached live set at zero
-    /// uses until the next `resync_live_set`; use [`Self::replace_value`] for
-    /// both.  Returns `true` iff a use moved.
-    ///
-    /// # Errors
-    /// Never; the `Result` keeps the edit-verb surface uniform.
-    pub fn replace_all_uses(&mut self, old: ValueId, new: ValueId) -> crate::error::Result<bool> {
+    /// Redirect every use of `old` to `new`.  Does no fingerprint work and no
+    /// orphan enqueue; [`Self::replace_value`] adds both.  Returns `true` iff a
+    /// use moved.
+    fn replace_all_uses(&mut self, old: ValueId, new: ValueId) -> bool {
         // The raw Graph redirect bypasses `update_input`'s per-edge hook, so
         // snapshot the consumers BEFORE it to flag them for re-canon after.
         let consumers: smallvec::SmallVec<[NodeId; 4]> = if old != new {
@@ -548,7 +544,7 @@ impl<'g> EditFunction<'g> {
             self.enqueue_for_recanon(consumer);
         }
         self.generation += u64::from(changed);
-        Ok(changed)
+        changed
     }
 
     pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
@@ -571,14 +567,14 @@ impl<'g> EditFunction<'g> {
     /// a use moved.
     ///
     /// # Errors
-    /// Propagates [`Self::replace_all_uses`]'s error arm unchanged.
+    /// Never; the `Result` keeps the edit-verb surface uniform.
     pub fn replace_value(&mut self, old: ValueId, new: ValueId) -> Result<bool> {
         let into = self.function.producer(new);
         let from = self.function.producer(old);
         self.function
             .side_tables_mut()
             .extend_asm_fingerprint_from(into, from);
-        let changed = self.replace_all_uses(old, new)?;
+        let changed = self.replace_all_uses(old, new);
         // `replace_all_uses` bypasses `update_input`'s per-edge hook, so the
         // orphaned producer is enqueued here (side-effect-guarded inside).
         self.enqueue_killed_def_node(from);
@@ -791,7 +787,7 @@ mod tests {
         ctx.update_input(slot, three);
         assert_eq!(ctx.generation(), 1);
 
-        assert!(!ctx.replace_all_uses(two, one).unwrap());
+        assert!(!ctx.replace_value(two, one).unwrap());
         assert_eq!(ctx.generation(), 1, "a value with no uses moves nothing");
 
         ctx.kill_node(ctx.producer(two));

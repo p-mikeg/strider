@@ -492,7 +492,7 @@ fn float_const_template_result_is_valid_ir_once_spliced_in() {
 
     let [old_value] = fx.node_outputs_exact::<1>(root_node).unwrap();
     EditFunction::new(&mut fx)
-        .replace_all_uses(old_value, new_value)
+        .replace_value(old_value, new_value)
         .unwrap();
 
     strider_ir::validate::validate(&fx).expect("a rewritten function must be valid IR");
