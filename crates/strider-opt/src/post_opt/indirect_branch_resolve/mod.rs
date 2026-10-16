@@ -428,15 +428,24 @@ mod tests {
         assert_eq!(result, None);
     }
 
-    /// Mutation: walk every node (`f.walk().collect()`) instead of the two
-    /// dispatch kinds.
+    /// Resolution off first: there a mutation listing every node
+    /// (`f.walk().collect()`) reaches the assertion, where with it on the
+    /// classifier panics on the first non-dispatch node.
     #[test]
     fn classify_sites_lists_nothing_on_a_site_free_function() {
         let (function, _target) =
             empty_graph_returning(|fb| fb.build_int_const(0x1234u64, ValueType::I64).unwrap());
-        let found =
-            classify_sites(&function, None, &crate::OptOptions::default()).expect("classify");
-        assert!(found.sites.is_empty() && found.resolved.is_empty());
+        for resolve_indirect_branches in [false, true] {
+            let options = crate::OptOptions {
+                resolve_indirect_branches,
+                ..Default::default()
+            };
+            let found = classify_sites(&function, None, &options).expect("classify");
+            assert!(
+                found.sites.is_empty() && found.resolved.is_empty(),
+                "resolution {resolve_indirect_branches}"
+            );
+        }
     }
 
     /// `jmp rax` over an entry value: listed, with nothing recovered.
