@@ -13,12 +13,12 @@ use strider_target::{CallingConvention as TargetCC, SleighArch};
 mod common;
 
 /// Lift and optimise the function at `entry` over `sleigh` with the standard
-/// SystemV-x86_64 convention, the given `fn_max_size`, and the per-address
+/// SystemV-x86_64 convention, the given size bound, and the per-address
 /// CC overrides (preset CCs, built against `sleigh`'s register table).
 fn run_at(
     sleigh: rsleigh::Sleigh<BufMemReader<Vec<u8>>>,
     entry: u64,
-    fn_max_size: u64,
+    size: u64,
     overrides: FxHashMap<u64, TargetCC>,
 ) -> strider_ir::Function {
     let arch = SleighArch::x86_64();
@@ -30,7 +30,7 @@ fn run_at(
         .collect();
     let lift_opts = LiftOptions {
         cfg: strider_cfg::CfgOptions {
-            bound: strider_cfg::FunctionBound::size(fn_max_size),
+            bound: strider_cfg::FunctionBound::size(size),
             ..Default::default()
         },
         per_address_ccs: &per_address_ccs,
@@ -43,7 +43,7 @@ fn run_at(
         .function
 }
 
-/// `mov eax, 5; jmp 0x9000` at 0x1000. With `fn_max_size = 10` the cfg
+/// `mov eax, 5; jmp 0x9000` at 0x1000. With a size bound of 10 the cfg
 /// builder classifies the `jmp` as a `TailCall { target }` terminator
 /// (out-of-function direct branch) and the IR-lifter lowers it as
 /// `Call(IntConst(target)) + Return`.
