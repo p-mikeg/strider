@@ -253,10 +253,16 @@ fn plain_opcodes_lower_to_their_ir_shape() {
             "Truncate:i8(IntBinaryOp(ShiftRight):i32(r0, 0x8:i32))",
         ),
         (
+            Opcode::BoolNeg,
+            b18,
+            &[const_vn(1, 1)],
+            "Extend(ZeroExtend):i8(IntBinaryOp(Xor):i1(0x1:i1, 0x1:i1))",
+        ),
+        (
             Opcode::Piece,
             r8,
-            &[const_vn(0xAA, 2), const_vn(0xBB, 2)],
-            "IntBinaryOp(Or):i32(IntBinaryOp(ShiftLeft):i32(0xaa:i32, 0x10:i32), 0xbb:i32)",
+            &[const_vn(0xAA, 2), const_vn(0x80BB, 2)],
+            "IntBinaryOp(Or):i32(IntBinaryOp(ShiftLeft):i32(0xaa:i32, 0x10:i32), 0x80bb:i32)",
         ),
     ];
     for &(opcode, output, inputs, expected) in cases {
