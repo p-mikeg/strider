@@ -1183,7 +1183,8 @@ mod tests {
 
     /// Each covered node once, a root first, and every def-use edge forward
     /// unless it closes a cycle.
-    fn check_order(rpo: &[u32], du: &[Vec<u32>], covered: &[bool], roots: &BTreeSet<u32>) {
+    /// Returns how many edges run backward.
+    fn check_order(rpo: &[u32], du: &[Vec<u32>], covered: &[bool], roots: &BTreeSet<u32>) -> usize {
         let mut pos = vec![usize::MAX; covered.len()];
         for (i, &v) in rpo.iter().enumerate() {
             assert_eq!(pos[v as usize], usize::MAX, "{v} twice in {rpo:?}");
@@ -1195,6 +1196,7 @@ mod tests {
         if let Some(first) = rpo.first() {
             assert!(roots.contains(first), "the order starts at a root");
         }
+        let mut backward = 0;
         for (u, ss) in du.iter().enumerate() {
             for &v in ss {
                 if covered[u] && pos[u] > pos[v as usize] {
@@ -1202,9 +1204,11 @@ mod tests {
                         graph_oracle::reaches(du, v, u as u32),
                         "use {u}->{v} runs backward without closing a cycle"
                     );
+                    backward += 1;
                 }
             }
         }
+        backward
     }
 
     /// `cfg_reachable` and `stranded_nodes` against reachability over the
@@ -1240,8 +1244,8 @@ mod tests {
     }
 
     /// The live set, its roots, and both def-use orders against index-graph
-    /// oracles.
-    fn check_walks(f: &mut Function) {
+    /// oracles; returns the backward edges of the `GraphWalkInfo` order.
+    fn check_walks(f: &mut Function) -> usize {
         let entry = f.entry();
         let e = u32::try_from(entry.index()).unwrap();
         let g = f.graph();
@@ -1274,7 +1278,7 @@ mod tests {
             .iter()
             .map(|n| n.index() as u32)
             .collect();
-        check_order(&rpo, &du, &covered, &roots);
+        let backward = check_order(&rpo, &du, &covered, &roots);
 
         let edit = crate::EditFunction::new(f);
         let rpo: Vec<u32> = edit
@@ -1288,6 +1292,7 @@ mod tests {
             roots.iter().next(),
             "the lowest-id root comes first"
         );
+        backward
     }
 
     proptest! {
@@ -1302,6 +1307,48 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The property above on fixed-seed draws, with a floor on the draws
+    /// that validate and so reach `check_walks`.
+    #[test]
+    fn walks_match_their_definitions_on_seeded_draws() {
+        use proptest::strategy::ValueTree;
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
+        let terms = test_cfgs::arb_terms(10, 4);
+        let mut validated = 0;
+        for _ in 0..CASES {
+            let draw = terms.new_tree(&mut runner).expect("a draw").current();
+            if let Some(b) = test_cfgs::lower(&draw) {
+                check_control_walks(b.function());
+                if let Ok(mut f) = b.build() {
+                    check_walks(&mut f);
+                    validated += 1;
+                }
+            }
+        }
+        assert!(validated >= CASES / 8, "{validated} of {CASES} validated");
+    }
+
+    /// Fixed loops: a natural loop, an irreducible pair and a self-loop,
+    /// each closing a def-use cycle through its header's phis.
+    #[test]
+    fn walks_of_looping_fixtures_match_their_definitions() {
+        use test_cfgs::Term::{Branch, If, Return};
+        for terms in [
+            vec![Branch(1), If(2, 3), Branch(1), Return],
+            vec![If(1, 2), If(2, 3), If(1, 3), Return],
+            vec![Branch(1), If(1, 2), Return],
+        ] {
+            let b = test_cfgs::lower(&terms).expect("lowers");
+            check_control_walks(b.function());
+            let mut f = b.build().expect("validates");
+            assert!(check_walks(&mut f) > 0, "{terms:?}: no def-use cycle");
+        }
+        let b = test_cfgs::chain(8).expect("chain lowers");
+        check_control_walks(b.function());
+        let mut f = b.build().expect("chain validates");
+        assert_eq!(check_walks(&mut f), 0, "a chain has no def-use cycle");
     }
 
     /// A 100,000-region chain walks without recursion.
