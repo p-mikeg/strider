@@ -1857,8 +1857,8 @@ mod heap_tests {
         Ok(())
     }
 
-    /// The structural analyzer reaching both allocations first must not take
-    /// heap disjointness from the configured one: both decompose under the
+    /// The structural analyzer reaching both allocations first must not cost
+    /// the configured one its heap disjointness: both decompose under the
     /// run's set, and only the policy differs.
     #[test]
     fn a_structural_query_first_keeps_heap_disjointness() -> crate::Result<()> {

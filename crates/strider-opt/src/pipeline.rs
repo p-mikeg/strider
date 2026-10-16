@@ -102,8 +102,9 @@ pub trait Optimizer: OptimizerClone {
     }
 }
 
-/// Runs one pass through a throwaway `EditFunction`, clearing the
-/// assumption-derived memos and culling dead nodes before, draining after.
+/// Runs one pass through a throwaway `EditFunction`, as one step of `run`:
+/// resets the memory analysis under `octx`'s allocator set, recording it, and
+/// culls dead nodes before, drains after.
 ///
 /// `function` must be built (`function.entry()` is a valid `NodeId`).
 ///
@@ -196,11 +197,11 @@ pub fn run_post(
     edit.cull_dead();
     pass.apply(&mut edit, octx)?;
     edit.clean();
-    // One iteration of `run`'s post-pass loop, `memory_slots` included: that
-    // loop keeps the filled slots as the user-facing per-node SSoT and clears
-    // only the frame-escape memo, which `CallStackArgCollect` invalidates. No
-    // built-in post-pass rewires an address; strider-py's `OptAsPostPass`
-    // clears the slots itself when its pass changes the graph.
+    // One iteration of `run`'s post-pass loop: the memory classes survive,
+    // and only the frame-escape verdict, which `CallStackArgCollect`
+    // invalidates, is cleared. No built-in post-pass rewires an address;
+    // strider-py's `OptAsPostPass` invalidates the classes itself when its
+    // pass changes the graph.
     edit.function().side_tables().clear_frame_escape();
     Ok(())
 }

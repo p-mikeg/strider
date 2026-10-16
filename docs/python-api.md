@@ -771,9 +771,9 @@ strength reduction.
 ```python
 pipe = strider.opt.OptimizerPipeline.empty()     # no passes
 pipe.add(strider.opt.ConstantFold())             # a main pass, repeated to a fixed point
-pipe.add_post(strider.opt.StackOffsetDetect())   # a post-pass, run once at the end
+pipe.add_post(strider.opt.CallStackArgCollect()) # a post-pass, run once at the end
 pipe.passes                                      # ["ConstantFold"]
-pipe.post_passes                                 # ["StackOffsetDetect"]
+pipe.post_passes                                 # ["CallStackArgCollect"]
 pipe = strider.opt.OptimizerPipeline.default()   # the standard set, in analyze's order
 prog.optimize(function, pipe)                    # optimize lives on the lifter; runs in place
 ```
