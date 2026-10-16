@@ -27,8 +27,8 @@ fn value() -> impl Strategy<Value = u64> {
     ]
 }
 
-/// A `J` site anywhere, or up to 8 bytes below a 256 MiB boundary (the top
-/// of the address space included), where the delay slot is already past it.
+/// A `J` site anywhere, or 1 to 8 bytes below a 256 MiB boundary (the top of
+/// the address space included): within 4, the delay slot is past it.
 fn jump_site() -> impl Strategy<Value = u64> {
     prop_oneof![
         2 => any::<u64>(),
