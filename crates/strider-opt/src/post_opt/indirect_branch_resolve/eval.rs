@@ -14,7 +14,9 @@ use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRViewer, ReadOnlyMemory};
 
-use crate::mem_analysis::{MemAnalyzer, MemExpr, MemKind, MemOptions, store_value_byte_size};
+use crate::mem_analysis::{
+    MemAnalyzer, MemExpr, MemKind, MemOptions, MemPurpose, store_value_byte_size,
+};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Abs {
@@ -29,16 +31,6 @@ impl Abs {
             Abs::SpRel { .. } => None,
         }
     }
-}
-
-/// The memory options the table walk runs under; which assumptions it honours
-/// is on [`classify_target`](super::classify_target).
-pub(crate) fn table_walk_options(assumptions: &crate::AssumptionOptions) -> MemOptions {
-    MemOptions::call_blocking(
-        assumptions.stack_global_disjoint,
-        &assumptions.noalias_allocators,
-    )
-    .without_call_relaxations()
 }
 
 pub(crate) struct Evaluator<'a> {
@@ -65,7 +57,10 @@ impl<'a> Evaluator<'a> {
             rom,
             map: FxHashMap::default(),
             slot_maps: FxHashMap::default(),
-            off_segment: MemAnalyzer::walking(table_walk_options(assumptions)),
+            off_segment: MemAnalyzer::walking(MemOptions::for_purpose(
+                MemPurpose::TableWalk,
+                assumptions,
+            )),
         }
     }
 
