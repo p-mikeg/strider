@@ -296,7 +296,7 @@ fn any_float_unary_captures_variant() {
 
 #[test]
 fn any_float_cmp_captures_variant() {
-    for op in [FloatCmpOp::Equal, FloatCmpOp::Less] {
+    for op in FloatCmpOp::ALL {
         let mut t = Tb::empty();
         let l = t.f64(1.0);
         let r = t.f64(2.0);

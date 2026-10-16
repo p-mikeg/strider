@@ -46,6 +46,8 @@
 - `Function::to_text_named`: `to_text` with registers spelled by name.
 - `Strider::lifter()`, the engine `analyze` lifts with.
 - `BuiltCallingConvention::check_addr_size`.
+- `ALL` on every op enum (`IntBinaryOp::ALL`, `IntCmpOp::ALL`, ...): the
+  variants in declaration order.
 
 ## 0.2.0
 
