@@ -199,7 +199,7 @@ where
     /// `MAX_RESOLUTION_ITERATIONS` caps the folds (so at most one round more)
     /// and with them the discovery depth.
     /// Every narrowing is reported, and a site that narrows twice has an
-    /// unstable answer: it is abandoned.
+    /// unstable answer: it is withdrawn.
     ///
     /// What the loop cannot settle is reported: in
     /// [`AnalyzeError::Incomplete`] under the default [`OnIncomplete::Error`],

@@ -1044,7 +1044,7 @@ mod tests {
 
     /// A caller seed is mode-less by construction, so the round that PROVES an
     /// interworking mode for a seeded target changes its key. Refining one
-    /// successor is not losing one, and reading it as a loss would abandon a
+    /// successor is not losing one, and reading it as a loss would withdraw a
     /// seeded trampoline chain that was merely refining.
     #[test]
     fn fold_proving_a_mode_for_a_seeded_target_grows() {
@@ -1264,7 +1264,7 @@ mod tests {
     /// A frozen site takes no further classification, so the arms
     /// `refusals` cut cannot be folded back in.
     #[test]
-    fn an_abandoned_site_folds_nothing() {
+    fn a_withdrawn_site_folds_nothing() {
         let (_function, node) = fn_with_live_indirect_branch();
         let addr = pcode_addr(0x1000);
         let anchors: Anchors = vec![(addr, node)];
@@ -1272,7 +1272,7 @@ mod tests {
         known.insert(addr, multiple(&[(0x2000, None)]));
         let mut resolutions: Answers = FxHashMap::default();
         resolutions.insert(node, Some(multiple(&[(0x2000, None), (0x3000, None)])));
-        let abandoned: rustc_hash::FxHashSet<PcodeInsnAddr> = std::iter::once(addr).collect();
+        let withdrawn: rustc_hash::FxHashSet<PcodeInsnAddr> = std::iter::once(addr).collect();
 
         let progress = fold_into(
             &mut known,
@@ -1281,7 +1281,7 @@ mod tests {
             &Vec::new(),
             resolutions,
             &FxHashMap::default(),
-            &abandoned,
+            &withdrawn,
         )
         .expect("fold");
 

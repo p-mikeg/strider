@@ -1,4 +1,4 @@
-//! A seat the loop abandoned must not survive in the CFG it publishes.
+//! A seat the loop withdrew must not survive in the CFG it publishes.
 //!
 //! The loop withdraws the whole seat of a site that named a target the CFG
 //! could not decode, because a bad arm is evidence the bound is wrong. The
@@ -18,7 +18,7 @@ const GOOD_ARM: u64 = 0x1010;
 const UNMAPPED_ARM: u64 = 0x4000_1000;
 
 #[test]
-fn a_site_the_loop_abandoned_is_republished_without_its_seat() {
+fn a_site_the_loop_withdrew_is_republished_without_its_seat() {
     let mut bytes = vec![0xc3u8; 0x20];
     bytes[0] = 0xff; // 0x1000: jmp rax
     bytes[1] = 0xe0;
@@ -41,7 +41,7 @@ fn a_site_the_loop_abandoned_is_republished_without_its_seat() {
 
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
 
-    // The build the abandon is decided from still seats the arm that decoded.
+    // The build the withdrawal is decided from still seats the arm that decoded.
     let seeded = strider
         .build_cfg(BASE, &opts.cfg, strider_orchestrator::OnIncomplete::Ignore)
         .expect("build_cfg");
@@ -62,25 +62,25 @@ fn a_site_the_loop_abandoned_is_republished_without_its_seat() {
             .cfg
             .regions()
             .any(|r| matches!(r.terminator, RegionTerminator::Switch { .. })),
-        "the published CFG must carry no seat for an abandoned site",
+        "the published CFG must carry no seat for a withdrawn site",
     );
     assert!(
         result
             .incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
             .any(|a| a.machine_addr.addr == SITE),
-        "the abandoned site is reported unresolved; got {}",
+        "the withdrawn site is reported unresolved; got {}",
         result.incomplete(),
     );
     // The complement, which `is_complete` cannot see: the unresolved entry
-    // alone already makes it false, so only this pins that an abandoned site
+    // alone already makes it false, so only this pins that a withdrawn site
     // holding no arms never also claims its answer is whole.
     assert!(
         !result
             .incomplete()
             .of(strider_orchestrator::Reason::UnverifiedSeed)
             .any(|a| a.machine_addr.addr == SITE),
-        "an abandoned site holds no arms to be unverified; got {}",
+        "a withdrawn site holds no arms to be unverified; got {}",
         result.incomplete(),
     );
     assert!(!result.is_complete());
