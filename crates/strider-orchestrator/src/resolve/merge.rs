@@ -160,6 +160,28 @@ fn combine(
     single_or_table(targets, from_single)
 }
 
+/// `targets` without each address `proved` holds in both ISA modes, and whether
+/// any was dropped. The same rule as [`merge_isa_bit`], over every
+/// `(target, mode)` a round proved rather than one pair at a time.
+pub(super) fn drop_contradicted(
+    targets: ResolvedTargets,
+    proved: &FxHashSet<(u64, bool)>,
+) -> (ResolvedTargets, bool) {
+    let contradicted: FxHashSet<u64> = visit(proved)
+        .filter(|&&(target, bit)| bit && proved.contains(&(target, false)))
+        .map(|&(target, _)| target)
+        .collect();
+    if contradicted.is_empty() {
+        return (targets, false);
+    }
+    let kept = ResolvedTargets::table(
+        visit(targets.arms())
+            .filter(|t| !contradicted.contains(&t.addr))
+            .copied(),
+    );
+    (kept, true)
+}
+
 /// `arms` as one answer: `Single` only when `from_single`, i.e. the lone
 /// survivor is a `Single` input's target. The cfg seats an out-of-range
 /// `Single` as a tail call but defers an out-of-range arm, so a merge must not

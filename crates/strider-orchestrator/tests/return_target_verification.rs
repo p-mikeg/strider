@@ -710,16 +710,17 @@ fn a_return_seed_over_a_pcode_return_does_not_silence_it() {
     );
 }
 
-/// A `[]` seed withdraws nothing the classifier derives: the verified
+/// A `[]` seed adds nothing to the classifier's answer: the verified
 /// `Return` it seats over that seed is the classifier's, not the caller's,
 /// so the run is as complete as an unseeded one. Mutation: make
 /// `caller_seeded_return` read `settled.seed(site).is_some()`.
 #[test]
 fn an_empty_seed_leaves_a_derived_return_verified() {
-    // push {lr} ; [bl ;] ldr pc, [sp], #4
+    // push {lr} ; [bl ;] ldr pc, [sp], #4, and mov r3, lr ; bx r3
     for words in [
         &[0xe52d_e004, 0xe49d_f004][..],
         &[0xe52d_e004, 0xeb00_03fd, 0xe49d_f004],
+        &[0xe1a0_300e, 0xe12f_ff13],
     ] {
         let bytes = le32(words);
         let size = bytes.len() as u64;
