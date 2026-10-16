@@ -100,8 +100,8 @@ pub(crate) fn find_unique_if(graph: &Graph) -> NodeId {
 }
 
 /// Memory-graph shapes the memory tests share. The scaling tests analyse most
-/// of them at two sizes, each built over 64-bit constant addresses so no SP phi needs
-/// collapsing first.
+/// of them at two sizes, each built over 64-bit constant addresses so no SP
+/// phi needs collapsing first.
 pub(crate) mod memory_shapes {
     use strider_ir::node::ValueType;
     use strider_ir::{FunctionBuilder, IRBuilderExt, IntBinaryOp, Value};
