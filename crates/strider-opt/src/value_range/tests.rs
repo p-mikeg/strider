@@ -2739,11 +2739,19 @@ struct GuardTally {
     /// Guards dropped for sitting off the tree.
     off_tree: usize,
     most_entries: usize,
+    /// Queries with a non-empty answer met from three guards or more.
+    deep_nonempty: usize,
+    most_met: usize,
 }
 
 /// Puts random dense guards on `f`'s nodes and checks every query against
-/// the guards whose nodes dominate it, dominance taken by definition over
-/// the control graph rather than from the tree.
+/// the guards whose nodes dominate it. The control edges come from
+/// `cfg_outputs` and `value_uses`, as in production; dominance over them is
+/// by definition rather than from the tree.
+///
+/// Every guard spans `2^20..2^21` and no two share a bound, so no meet is
+/// empty and a missing or extra guard shows whenever it holds the highest
+/// `lo` or the lowest `hi`.
 fn check_guard_forest(f: &Function, rng: &mut crate::test_support::Rng, tally: &mut GuardTally) {
     use strider_ir_test_utils::graph_oracle;
     tally.functions += 1;
@@ -2769,8 +2777,9 @@ fn check_guard_forest(f: &Function, rng: &mut crate::test_support::Rng, tally: &
     for &n in &nodes {
         let on_tree = doms.span(n).is_some();
         if rng.below(if on_tree { 2 } else { 3 }) == 0 {
-            let lo = rng.below(32) as u128;
-            by_node.insert(n, Interval::dense(lo, lo + rng.below(32) as u128));
+            let lo = rng.below(1 << 20) as u128;
+            let hi = (1 << 21) + rng.below(1 << 20) as u128;
+            by_node.insert(n, Interval::dense(lo, hi));
             tally.off_tree += usize::from(!on_tree);
         }
     }
@@ -2795,6 +2804,9 @@ fn check_guard_forest(f: &Function, rng: &mut crate::test_support::Rng, tally: &
         );
         tally.queries += 1;
         tally.by_met[dominating.len().min(3)] += 1;
+        tally.most_met = tally.most_met.max(dominating.len());
+        tally.deep_nonempty +=
+            usize::from(dominating.len() >= 3 && want.is_some_and(|iv| iv.count() > 0));
         tally.skipped_over += usize::from(by_node.keys().any(|&g| {
             doms.span(g)
                 .is_some_and(|(pre, _)| pre < span.0 && !dom[index[&g] as usize][q])
@@ -2812,33 +2824,38 @@ fn guard_forest_meets_exactly_the_dominating_guards() {
     } else {
         20_000
     };
-    let mut tally = GuardTally::default();
+    let mut random = GuardTally::default();
     for seed in 0..seeds {
         let Some(f) = crate::differential::build_random_cfg(seed) else {
             continue;
         };
         let mut rng = crate::test_support::Rng(seed | 1);
-        check_guard_forest(&f, &mut rng, &mut tally);
+        check_guard_forest(&f, &mut rng, &mut random);
     }
     let sequences: &[usize] = if cfg!(debug_assertions) {
         &[1, 5, 31, 64]
     } else {
         &[1, 5, 31, 64, 127, 300]
     };
+    let mut deep = GuardTally::default();
     for &n in sequences {
         let (f, _) = build_guard_sequence(n);
         for draw in 0..4 {
             let mut rng = crate::test_support::Rng((n as u64) << 8 | draw | 1);
-            check_guard_forest(&f, &mut rng, &mut tally);
+            check_guard_forest(&f, &mut rng, &mut deep);
         }
     }
     let floor = seeds as usize / 10;
     assert!(
-        tally.functions >= floor
-            && tally.skipped_over >= floor
-            && tally.off_tree >= floor
-            && tally.by_met.iter().all(|&c| c >= floor)
-            && tally.most_entries >= 64,
-        "floor {floor}: {tally:?}"
+        random.functions >= floor
+            && random.skipped_over >= floor
+            && random.off_tree >= floor
+            && random.by_met.iter().all(|&c| c >= floor)
+            && random.deep_nonempty >= floor,
+        "floor {floor}: {random:?}"
+    );
+    assert!(
+        deep.most_entries >= 64 && deep.most_met >= 32 && deep.deep_nonempty >= 4 * 64,
+        "{deep:?}"
     );
 }
