@@ -116,8 +116,8 @@ fn split_both_halves_unconditional() {
 }
 
 #[test]
-fn fn_max_size_forces_forward_jump_to_be_tail_call() {
-    // With fn_max_size=0x10 the target 0x1012 is past the bound.
+fn size_bound_forces_forward_jump_to_be_tail_call() {
+    // With a size bound of 0x10 the target 0x1012 is past the bound.
     let bytes = vec![0xeb, 0x10];
     let opts = CfgOptions {
         bound: strider_cfg::FunctionBound::size(0x10),
@@ -134,8 +134,8 @@ fn fn_max_size_forces_forward_jump_to_be_tail_call() {
 }
 
 #[test]
-fn forward_jump_landing_exactly_at_fn_max_size_is_tail_call() {
-    // Target 0x1010 lands EXACTLY on `start + fn_max_size`.  The window is
+fn forward_jump_landing_exactly_at_size_bound_is_tail_call() {
+    // Target 0x1010 lands EXACTLY on `start + size`.  The window is
     // half-open, so that is out of bounds and must be a tail call.  A `ret`
     // sits at 0x1010 so the bytes would decode if the edge were followed.
     let mut bytes = vec![0xeb, 0x0e]; // jmp +0x0e (next insn 0x1002 + 0x0e = 0x1010)
@@ -152,12 +152,12 @@ fn forward_jump_landing_exactly_at_fn_max_size_is_tail_call() {
         RegionTerminator::TailCall {
             target: 0x1010.into()
         },
-        "addr == start + fn_max_size must already be out-of-range (half-open bound)"
+        "addr == start + size must already be out-of-range (half-open bound)"
     );
 }
 
 #[test]
-fn forward_jump_landing_just_inside_fn_max_size_is_followed() {
+fn forward_jump_landing_just_inside_size_bound_is_followed() {
     // Companion probe one byte lower, strictly inside: the edge must be
     // followed and the target region decoded.
     let mut bytes = vec![0xeb, 0x0d]; // jmp +0x0d -> 0x1002 + 0x0d = 0x100f
@@ -252,7 +252,7 @@ fn assert_tail_call_stub_at(cfg: &Cfg, addr: u64) {
 #[test]
 fn cond_branch_with_oob_fallthrough_keeps_cond_branch_with_tail_call_stub() {
     // Taken 0x1000 is in range; the fall-through 0x1004 is out of bounds at
-    // fn_max_size=4.  The conditional survives, with the OOB arm lowered to a
+    // a size bound of 4.  The conditional survives, with the OOB arm lowered to a
     // stub wired as a regular CondBranch successor.
     let bytes = vec![0x31u8, 0xc0, 0x74, 0xfc];
     let opts = CfgOptions {
@@ -307,7 +307,7 @@ fn cond_branch_with_oob_taken_target_keeps_cond_branch_with_tail_call_stub() {
 
 #[test]
 fn cond_branch_with_both_targets_oob_keeps_cond_branch_with_two_stubs() {
-    // With fn_max_size=2 both arms are out of bounds.  The conditional
+    // With a size bound of 2 both arms are out of bounds.  The conditional
     // survives with both lowered to stubs; collapsing to a single TailCall
     // would silently drop the fall-through arm.
     let bytes = vec![0x74u8, 0x7e];
@@ -371,9 +371,9 @@ fn cond_branches_to_same_oob_target_share_one_stub() {
 }
 
 #[test]
-fn fall_through_past_fn_max_size_is_function_boundary_error() {
+fn fall_through_past_size_bound_is_function_boundary_error() {
     // A `lock cmpxchg` is multi-pcode-op with intra-insn CONST branches.
-    // Running off fn_max_size=2 with no explicit terminator opcode is a
+    // Running off a size bound of 2 with no explicit terminator opcode is a
     // function-boundary error, not a tail call.
     let mut bytes = vec![0x31u8, 0xc0];
     bytes.extend_from_slice(&[0xF0, 0x4C, 0x0F, 0xB1, 0x73, 0x58]);
@@ -386,7 +386,7 @@ fn fall_through_past_fn_max_size_is_function_boundary_error() {
     let err = Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
         .build()
         .expect_err(
-            "sequential fall-through past fn_max_size must error, not classify as tail call",
+            "sequential fall-through past the size bound must error, not classify as tail call",
         );
     let msg = format!("{err:#}");
     assert!(
@@ -400,8 +400,8 @@ fn fall_through_past_fn_max_size_is_function_boundary_error() {
 }
 
 #[test]
-fn fall_through_single_insn_past_fn_max_size_is_function_boundary_error() {
-    // `mov eax, 5` starts inside fn_max_size=3 but falls through to 0x1005,
+fn fall_through_single_insn_past_size_bound_is_function_boundary_error() {
+    // `mov eax, 5` starts inside a size bound of 3 but falls through to 0x1005,
     // past the 0x1003 bound, with no terminator opcode.  Must be a
     // function-boundary error, not a synthetic tail call.  This is the
     // `tzcount.o` shape: a small function with no terminator inside its
@@ -415,7 +415,7 @@ fn fall_through_single_insn_past_fn_max_size_is_function_boundary_error() {
     let mut sleigh = make_sleigh_x86_64(bytes, 0x1000);
     let err = Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
         .build()
-        .expect_err("single-insn fall-through past fn_max_size must error");
+        .expect_err("single-insn fall-through past the size bound must error");
     let msg = format!("{err:#}");
     assert!(
         msg.contains("function-boundary error"),
@@ -442,10 +442,10 @@ fn probe_x86_nop_lifts_to_zero_pcode_ops() {
 }
 
 #[test]
-fn zero_pcode_prefix_crossing_fn_max_size_is_function_boundary_error() {
+fn zero_pcode_prefix_crossing_size_bound_is_function_boundary_error() {
     // Zero-pcode nops run across the bound with a real `ret` past it.  Since
     // they produce no pcode ops, `insns` stays empty while decode walks
-    // machine-by-machine past `start + fn_max_size`, so the boundary check
+    // machine-by-machine past `start + size`, so the boundary check
     // must fire on the first past-bound instruction rather than absorb the
     // next function's `ret`.
     //
@@ -461,7 +461,7 @@ fn zero_pcode_prefix_crossing_fn_max_size_is_function_boundary_error() {
     let err = Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
         .build()
         .expect_err(
-            "zero-pcode prefix crossing fn_max_size must error, not absorb the next function",
+            "zero-pcode prefix crossing the size bound must error, not absorb the next function",
         );
     let msg = format!("{err:#}");
     assert!(
@@ -475,8 +475,8 @@ fn zero_pcode_prefix_crossing_fn_max_size_is_function_boundary_error() {
 }
 
 #[test]
-fn fn_max_size_smaller_than_first_terminator_insn_still_builds_tail_call() {
-    // A 2-byte `jmp +0x10` under fn_max_size=1 starts in range but its
+fn size_bound_smaller_than_first_terminator_insn_still_builds_tail_call() {
+    // A 2-byte `jmp +0x10` under a size bound of 1 starts in range but its
     // encoding crosses the bound.  Decoding is NOT length-bounded: the
     // instruction decodes fully and its OOB target is a tail call.  Contrast
     // the erroring cases above; the bound trips only on sequential
@@ -1060,7 +1060,7 @@ fn thumb_coproc_bytes_that_once_overran_the_parse_state_do_not_crash() {
     }
 }
 
-/// `fn_max_size` cutting through the last instruction leaves the fall-through
+/// A size bound cutting through the last instruction leaves the fall-through
 /// region's span overhanging the bound, and an OOB taken target landing in that
 /// overhang is owned by two regions: the stub that starts at it, and the
 /// fall-through region whose last instruction covers it.  Polarity must name
