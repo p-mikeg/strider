@@ -4,17 +4,15 @@ use rsleigh::{Insn, Opcode, Vn, VnSpace};
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
+use strider_ir_test_utils::reg_vn;
+
 use crate::lift::{FunctionLifter, Lifter};
 
 type TestReader = BufMemReader<Vec<u8>>;
 
 /// 4-byte register at the given REGISTER-space offset.
 fn reg(off: u64) -> Vn {
-    Vn {
-        size: 4,
-        addr_off: off,
-        addr_space: VnSpace::REGISTER,
-    }
+    reg_vn(off, 4)
 }
 
 fn const_vn(val: u64, size: u32) -> Vn {
@@ -146,24 +144,6 @@ fn with_test_lifter_arch_cc(
     f(&mut driver, region_id);
 }
 
-/// 1-byte register at the given REGISTER-space offset.
-fn byte_reg(off: u64) -> Vn {
-    Vn {
-        size: 1,
-        addr_off: off,
-        addr_space: VnSpace::REGISTER,
-    }
-}
-
-/// 8-byte register at the given REGISTER-space offset.
-fn qword_reg(off: u64) -> Vn {
-    Vn {
-        size: 8,
-        addr_off: off,
-        addr_space: VnSpace::REGISTER,
-    }
-}
-
 /// `value`'s producer tree: a tracked register's entry value prints as
 /// `r<offset>`, a constant as `<hex>:<type>`, any other node as
 /// `<kind>:<type>(<operands>)`.
@@ -191,21 +171,9 @@ fn operand_tree(f: &strider_ir::Function, value: strider_ir::Value) -> String {
 #[test]
 fn plain_opcodes_lower_to_their_ir_shape() {
     let (r0, r4, r8) = (reg(0), reg(4), reg(8));
-    let (b16, b17, b18) = (byte_reg(16), byte_reg(17), byte_reg(18));
-    let q24 = qword_reg(24);
+    let (b16, b17, b18) = (reg_vn(16, 1), reg_vn(17, 1), reg_vn(18, 1));
+    let (q24, q32, q40) = (reg_vn(24, 8), reg_vn(32, 8), reg_vn(40, 8));
     let cases: &[(Opcode, Vn, &[Vn], &str)] = &[
-        (
-            Opcode::IntAdd,
-            r8,
-            &[r0, r4],
-            "IntBinaryOp(Add):i32(r0, r4)",
-        ),
-        (
-            Opcode::IntMul,
-            r8,
-            &[r0, r4],
-            "IntBinaryOp(Mul):i32(r0, r4)",
-        ),
         (Opcode::IntZext, r8, &[b16], "Extend(ZeroExtend):i32(r16)"),
         (Opcode::IntSext, r8, &[b16], "Extend(SignExtend):i32(r16)"),
         (Opcode::IntZext, r8, &[const_vn(0xff, 1)], "0xff:i32"),
@@ -261,61 +229,6 @@ fn plain_opcodes_lower_to_their_ir_shape() {
             r8,
             &[const_vn(0xAA, 2), const_vn(0x80BB, 2)],
             "IntBinaryOp(Or):i32(IntBinaryOp(ShiftLeft):i32(0xaa:i32, 0x10:i32), 0x80bb:i32)",
-        ),
-        (
-            Opcode::IntAnd,
-            r8,
-            &[r0, r4],
-            "IntBinaryOp(And):i32(r0, r4)",
-        ),
-        (
-            Opcode::IntXor,
-            r8,
-            &[r0, r4],
-            "IntBinaryOp(Xor):i32(r0, r4)",
-        ),
-        (Opcode::IntOr, r8, &[r0, r4], "IntBinaryOp(Or):i32(r0, r4)"),
-        (
-            Opcode::IntDiv,
-            r8,
-            &[r0, r4],
-            "IntBinaryOp(Div):i32(r0, r4)",
-        ),
-        (
-            Opcode::IntSdiv,
-            r8,
-            &[r0, r4],
-            "IntBinaryOp(Sdiv):i32(r0, r4)",
-        ),
-        (
-            Opcode::IntRight,
-            r8,
-            &[r0, r4],
-            "IntBinaryOp(ShiftRight):i32(r0, r4)",
-        ),
-        (
-            Opcode::IntSright,
-            r8,
-            &[r0, r4],
-            "IntBinaryOp(SShiftRight):i32(r0, r4)",
-        ),
-        (
-            Opcode::IntLeft,
-            r8,
-            &[r0, r4],
-            "IntBinaryOp(ShiftLeft):i32(r0, r4)",
-        ),
-        (
-            Opcode::IntRem,
-            r8,
-            &[r0, r4],
-            "IntBinaryOp(Rem):i32(r0, r4)",
-        ),
-        (
-            Opcode::IntSrem,
-            r8,
-            &[r0, r4],
-            "IntBinaryOp(Srem):i32(r0, r4)",
         ),
         (
             Opcode::IntCarry,
@@ -438,9 +351,55 @@ fn plain_opcodes_lower_to_their_ir_shape() {
             &[q24],
             "FloatToInt:i32(IntBitsToFloat:f64(r24))",
         ),
+        (Opcode::Cast, r8, &[r0], "r0"),
+        (
+            Opcode::IntNotEqual,
+            b18,
+            &[r0, r4],
+            "Extend(ZeroExtend):i8(IntBinaryOp(Xor):i1(IntCmpOp(Equal):i1(r0, r4), 0x1:i1))",
+        ),
+        (
+            Opcode::FloatAdd,
+            q40,
+            &[q24, q32],
+            "FloatBitsToInt:i64(FloatBinaryOp(Add):f64(IntBitsToFloat:f64(r24), IntBitsToFloat:f64(r32)))",
+        ),
+        (
+            Opcode::FloatNeg,
+            q40,
+            &[q24],
+            "FloatBitsToInt:i64(FloatUnaryOp(Neg):f64(IntBitsToFloat:f64(r24)))",
+        ),
+        (
+            Opcode::FloatLess,
+            b18,
+            &[q24, q32],
+            "Extend(ZeroExtend):i8(FloatCmpOp(Less):i1(IntBitsToFloat:f64(r24), IntBitsToFloat:f64(r32)))",
+        ),
     ];
-    for &(opcode, output, inputs, expected) in cases {
-        with_test_lifter_tracking(vec![r0, r4, r8, b16, b17, b18, q24], |d, rid| {
+    // `r8 = op(r0, r4)`.
+    let binary: &[(Opcode, &str)] = &[
+        (Opcode::IntAdd, "IntBinaryOp(Add):i32(r0, r4)"),
+        (Opcode::IntMul, "IntBinaryOp(Mul):i32(r0, r4)"),
+        (Opcode::IntAnd, "IntBinaryOp(And):i32(r0, r4)"),
+        (Opcode::IntXor, "IntBinaryOp(Xor):i32(r0, r4)"),
+        (Opcode::IntOr, "IntBinaryOp(Or):i32(r0, r4)"),
+        (Opcode::IntDiv, "IntBinaryOp(Div):i32(r0, r4)"),
+        (Opcode::IntSdiv, "IntBinaryOp(Sdiv):i32(r0, r4)"),
+        (Opcode::IntRight, "IntBinaryOp(ShiftRight):i32(r0, r4)"),
+        (Opcode::IntSright, "IntBinaryOp(SShiftRight):i32(r0, r4)"),
+        (Opcode::IntLeft, "IntBinaryOp(ShiftLeft):i32(r0, r4)"),
+        (Opcode::IntRem, "IntBinaryOp(Rem):i32(r0, r4)"),
+        (Opcode::IntSrem, "IntBinaryOp(Srem):i32(r0, r4)"),
+    ];
+    let r0r4 = [r0, r4];
+    let rows = cases.iter().copied().chain(
+        binary
+            .iter()
+            .map(|&(opcode, expected)| (opcode, r8, &r0r4[..], expected)),
+    );
+    for (opcode, output, inputs, expected) in rows {
+        with_test_lifter_tracking(vec![r0, r4, r8, b16, b17, b18, q24, q32, q40], |d, rid| {
             let insn = Insn {
                 opcode,
                 output: Some(output),
