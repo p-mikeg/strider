@@ -77,6 +77,13 @@ fn gcd(mut a: u128, mut b: u128) -> u128 {
     a
 }
 
+/// The empty set (`hi < lo`).
+const EMPTY: Interval = Interval {
+    lo: 1,
+    hi: 0,
+    stride: 1,
+};
+
 /// The inclusive value set `{ lo, lo+stride, lo+2*stride, ... hi }`.
 ///
 /// `lo`/`hi` are unsigned regardless of signedness: guard extraction gates
@@ -87,22 +94,45 @@ fn gcd(mut a: u128, mut b: u128) -> u128 {
 /// sound divisor of the real spacing.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Interval {
-    pub lo: u128,
-    pub hi: u128,
-    pub stride: u128,
+    lo: u128,
+    hi: u128,
+    /// At least 1.
+    stride: u128,
 }
 
 impl Interval {
-    pub fn top(width_mask: u128) -> Self {
+    /// `{ lo, lo+stride, ... hi }`; a `stride` of 0 is read as 1.
+    pub fn new(lo: u128, hi: u128, stride: u128) -> Self {
         Self {
-            lo: 0,
-            hi: width_mask,
-            stride: 1,
+            lo,
+            hi,
+            stride: stride.max(1),
         }
     }
 
+    pub fn lo(&self) -> u128 {
+        self.lo
+    }
+
+    pub fn hi(&self) -> u128 {
+        self.hi
+    }
+
+    pub fn stride(&self) -> u128 {
+        self.stride
+    }
+
+    /// `hi < lo`.
+    pub fn is_empty(&self) -> bool {
+        self.hi < self.lo
+    }
+
+    pub fn top(width_mask: u128) -> Self {
+        Self::dense(0, width_mask)
+    }
+
     pub fn dense(lo: u128, hi: u128) -> Self {
-        Self { lo, hi, stride: 1 }
+        Self::new(lo, hi, 1)
     }
 
     /// A stride is a fact beyond the span, so a strided full-span interval is
@@ -114,10 +144,10 @@ impl Interval {
     /// Number of values in the set.  `0` if `hi < lo`.  Saturates: a full-width
     /// top spans `u128::MAX + 1` values.
     pub fn count(&self) -> u128 {
-        if self.hi < self.lo {
+        if self.is_empty() {
             0
         } else {
-            ((self.hi - self.lo) / self.stride.max(1)).saturating_add(1)
+            ((self.hi - self.lo) / self.stride).saturating_add(1)
         }
     }
 
@@ -128,18 +158,13 @@ impl Interval {
     /// interval (`count() == 0`). Sound: the result always contains the real
     /// value set, which is a subset of both operands.
     fn intersect(self, other: Self) -> Self {
-        const EMPTY: Interval = Interval {
-            lo: 1,
-            hi: 0,
-            stride: 1,
-        };
         let lo_bound = self.lo.max(other.lo);
         let hi = self.hi.min(other.hi);
         if lo_bound > hi {
             return EMPTY;
         }
-        let s1 = self.stride.max(1);
-        let s2 = other.stride.max(1);
+        let s1 = self.stride;
+        let s2 = other.stride;
         if s1 == 1 && s2 == 1 {
             return Self {
                 lo: lo_bound,
@@ -226,12 +251,12 @@ impl Interval {
     /// keep the gap between their starts.  Zero survives only where the join is
     /// one point, where 1 is as tight.
     fn union(self, other: Self) -> Self {
-        let step = |iv: Self| if iv.count() <= 1 { 0 } else { iv.stride.max(1) };
-        Self {
-            lo: self.lo.min(other.lo),
-            hi: self.hi.max(other.hi),
-            stride: gcd(gcd(step(self), step(other)), self.lo.abs_diff(other.lo)).max(1),
-        }
+        let step = |iv: Self| if iv.count() <= 1 { 0 } else { iv.stride };
+        Self::new(
+            self.lo.min(other.lo),
+            self.hi.max(other.hi),
+            gcd(gcd(step(self), step(other)), self.lo.abs_diff(other.lo)),
+        )
     }
 
     /// `{ x << k : x in self }` = `{ x * 2^k }`.  Routed through `mul` so the
@@ -251,11 +276,9 @@ impl Interval {
             self.hi.checked_mul(c),
             self.stride.checked_mul(c),
         ) {
-            (Some(lo), Some(hi), Some(stride)) if c != 0 && hi <= width_mask => Self {
-                lo,
-                hi,
-                stride: stride.max(1),
-            },
+            (Some(lo), Some(hi), Some(stride)) if c != 0 && hi <= width_mask => {
+                Self::new(lo, hi, stride)
+            }
             _ => Self::top(width_mask),
         }
     }
@@ -267,7 +290,7 @@ impl Interval {
     fn shr(self, k: u32) -> Self {
         // Both endpoints map independently, so an empty interval would come
         // back as `{0, 0}`, "exactly zero", and pass `bounded_index`'s gate.
-        if self.hi < self.lo {
+        if self.is_empty() {
             return self;
         }
         let stride = if self.stride.trailing_zeros() >= k {
@@ -275,11 +298,11 @@ impl Interval {
         } else {
             1
         };
-        Self {
-            lo: self.lo.checked_shr(k).unwrap_or(0),
-            hi: self.hi.checked_shr(k).unwrap_or(0),
-            stride: stride.max(1),
-        }
+        Self::new(
+            self.lo.checked_shr(k).unwrap_or(0),
+            self.hi.checked_shr(k).unwrap_or(0),
+            stride,
+        )
     }
 
     /// `{ x / c : x in self }` (`c == 0` treated as 1).  Floor maps the endpoints
@@ -288,7 +311,7 @@ impl Interval {
     /// than the real spacing.
     fn udiv(self, c: u128) -> Self {
         // As in `shr`: floor-mapping both endpoints would resurrect EMPTY.
-        if self.hi < self.lo {
+        if self.is_empty() {
             return self;
         }
         let d = c.max(1);
@@ -297,11 +320,7 @@ impl Interval {
         } else {
             1
         };
-        Self {
-            lo: self.lo / d,
-            hi: self.hi / d,
-            stride: stride.max(1),
-        }
+        Self::new(self.lo / d, self.hi / d, stride)
     }
 }
 
@@ -981,11 +1000,7 @@ pub fn compute_value_ranges<'f>(
             let tz = kb.zeros.trailing_ones().min(127);
             let stride = (1u128 << tz).min(max_val.max(1));
             if max_val < type_mask || stride > 1 {
-                kb_bounds[value_id] = Some(Interval {
-                    lo: 0,
-                    hi: max_val,
-                    stride,
-                });
+                kb_bounds[value_id] = Some(Interval::new(0, max_val, stride));
             }
         }
     }
