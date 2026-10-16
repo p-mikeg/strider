@@ -57,8 +57,9 @@ pub struct CfgOptions<'a> {
     /// function per call, so owning it is the whole table per call.
     pub known_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     /// A resolver's own answers, keyed by the `BranchIndirect`'s exact p-code
-    /// address: one beats `known_targets` at that site, and one with no arms
-    /// defers it. Borrowed, as `known_targets` is.
+    /// address: one beats `known_targets` at that site, and
+    /// [`ResolvedTargets::Withdrawn`] defers it. Borrowed, as `known_targets`
+    /// is.
     pub derived_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     /// Direct-call targets that never return (`exit`, `abort`); a call to one
     /// ends its region `NoReturn`. Borrowed, as `known_targets` is.

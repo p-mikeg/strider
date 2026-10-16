@@ -5,7 +5,7 @@
 //! region's and certain; the arm's committed bit is a classifier claim. The
 //! direct decode must own the bytes, the arm must go, and the published CFG
 //! must agree with what is reported incomplete rather than still seat the
-//! `Switch` the loop abandoned.
+//! `Switch` the loop withdrew.
 
 use strider_cfg::{CfgOptions, PcodeInsnAddr, RegionTerminator, ResolvedTarget, ResolvedTargets};
 use strider_orchestrator::AnalyzeOptions;
@@ -114,14 +114,14 @@ fn a_direct_edge_keeps_the_bytes_a_seeded_arm_claims_in_the_other_mode() {
             .cfg
             .regions()
             .any(|r| matches!(r.terminator, RegionTerminator::Switch { .. })),
-        "the published CFG must not keep the seat the loop abandoned",
+        "the published CFG must not keep the seat the loop withdrew",
     );
     assert!(
         result
             .incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)
             .any(|a| a.machine_addr.addr == SITE),
-        "the abandoned site is reported unresolved; got {}",
+        "the withdrawn site is reported unresolved; got {}",
         result.incomplete(),
     );
     assert!(!result.is_complete());

@@ -146,6 +146,8 @@ impl<'s> LoopState<'s> {
         );
         self.incomplete.absorb(cfg.incomplete());
         let stale = !refused.is_empty();
+        // Frozen: the classifier re-derives the cut arms every round, so an
+        // open site would re-seat them and cycle until the iteration cap.
         for (site, keep) in refused {
             self.sites.freeze(site, keep);
             self.derived_incomplete.push(site);

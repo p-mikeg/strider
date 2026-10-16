@@ -181,7 +181,7 @@ pub(super) struct DerivedChannels<'a> {
     /// Sites still growing when the iteration cap ran out.
     pub(super) budget_exhausted: &'a [PcodeInsnAddr],
     /// Sites whose fold dropped a successor the classifier proved, whose answer
-    /// stopped being a superset, or that the loop abandoned.
+    /// stopped being a superset, or that the loop withdrew.
     pub(super) incomplete_derived: &'a [PcodeInsnAddr],
 }
 
@@ -199,7 +199,7 @@ pub(super) struct DerivedChannels<'a> {
 /// - `budget_exhausted`, the sites still growing when the iteration cap ran out.
 /// - `incomplete_derived`, the sites whose fold dropped a successor the
 ///   classifier proved, whose answer stopped being a superset, or that the loop
-///   abandoned.
+///   withdrew.
 ///
 /// A caller seed asserts the site is complete, which suppresses the second of
 /// those, the unclassified seated `Switch`, but only while `settled`, the

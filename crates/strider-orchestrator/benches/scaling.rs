@@ -105,8 +105,8 @@ fn analyze_case(c: Case) -> strider_ir::Function {
 }
 
 /// `analyze_case` plus the indirect-branch resolution loop (one re-lift per
-/// level of discovery), the classifier and the return
-/// settling, which together are the difference between the two groups.
+/// level of discovery), the classifier and the return settling, which together
+/// are the difference between the two groups.
 fn resolve_case(c: Case) -> strider_orchestrator::AnalyzeResult {
     let fixture = Fixture::open(fixture_arch(c.arch_name), c.case);
     let (mut strider, cc) = fixture.strider();
