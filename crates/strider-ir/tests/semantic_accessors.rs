@@ -84,6 +84,28 @@ fn indirect_branch_target_accessor() {
     );
 }
 
+#[test]
+fn switch_selector_accessor() {
+    let mut b = strider_ir_test_utils::empty_builder().unwrap();
+    let entry = b.create_region_all().unwrap();
+    let arm = b.create_region_all().unwrap();
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let selector = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+    let switch = b.build_switch(selector, &[(arm, 0x1000)]).unwrap();
+    b.set_region(arm);
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+
+    assert_eq!(
+        f.switch_selector(switch),
+        selector,
+        "switch_selector is slot 1"
+    );
+}
+
 /// `IndirectBranch` takes 3 or 4 inputs, so no fixed-arity check pins the kind: without a
 /// kind guard these read a `Call`'s SP anchor and a `Store`'s data operand.
 mod wrong_kind {
@@ -108,6 +130,13 @@ mod wrong_kind {
     fn isa_mode_rejects_a_call() {
         let (f, call) = call_node();
         let _ = f.indirect_branch_isa_mode(call);
+    }
+
+    #[test]
+    #[should_panic(expected = "switch_selector on a non-Switch")]
+    fn switch_selector_rejects_a_call() {
+        let (f, call) = call_node();
+        let _ = f.switch_selector(call);
     }
 
     #[test]
