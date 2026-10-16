@@ -1,4 +1,5 @@
 use super::*;
+use crate::node_signature::every_node_kind;
 use cranelift_entity::EntityRef;
 
 #[test]
@@ -216,7 +217,7 @@ fn legacy_asm_fingerprint_exempt(kind: &NodeKind) -> bool {
 
 #[test]
 fn is_cacheable_matches_legacy() {
-    for k in crate::node_signature::every_node_kind() {
+    for k in every_node_kind() {
         assert_eq!(
             k.is_cacheable(),
             legacy_is_cacheable(&k),
@@ -227,7 +228,7 @@ fn is_cacheable_matches_legacy() {
 
 #[test]
 fn asm_fingerprint_exempt_matches_legacy() {
-    for k in crate::node_signature::every_node_kind() {
+    for k in every_node_kind() {
         assert_eq!(
             k.asm_fingerprint_exempt(),
             legacy_asm_fingerprint_exempt(&k),

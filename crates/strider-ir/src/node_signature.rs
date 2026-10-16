@@ -307,7 +307,6 @@ pub(crate) fn every_node_kind() -> Vec<NodeKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node::NodeKind;
     use cranelift_entity::EntityRef;
 
     fn kinds(kind: &NodeKind) -> (Vec<ExpectedValueKind>, Vec<ExpectedValueKind>) {
@@ -514,57 +513,72 @@ mod tests {
         assert_eq!(sig.inputs.at(1).unwrap().role, SlotRole::Rhs);
     }
 
-    /// Position of `kind` in [`every_node_kind`]'s declaration order. The match
-    /// has no `_` arm, so a new [`NodeKind`] variant does not compile until it
-    /// is numbered here, and `every_node_kind_is_exhaustive` then fails until it
-    /// also has a representative.
-    fn declaration_index(kind: &NodeKind) -> usize {
-        match kind {
-            NodeKind::Entry => 0,
-            NodeKind::InitialMemory => 1,
-            NodeKind::InitialVar(_) => 2,
-            NodeKind::Region => 3,
-            NodeKind::MemPhi => 4,
-            NodeKind::Phi => 5,
-            NodeKind::If => 6,
-            NodeKind::Switch(_) => 7,
-            NodeKind::Call { .. } => 8,
-            NodeKind::Return => 9,
-            NodeKind::IndirectBranch => 10,
-            NodeKind::Unreachable => 11,
-            NodeKind::Load(_) => 12,
-            NodeKind::Store(_) => 13,
-            NodeKind::IntConst(_) => 14,
-            NodeKind::IntUnaryOp(_) => 15,
-            NodeKind::IntBinaryOp(_) => 16,
-            NodeKind::IntCmpOp(_) => 17,
-            NodeKind::Truncate => 18,
-            NodeKind::Popcount => 19,
-            NodeKind::Lzcount => 20,
-            NodeKind::Extend(_) => 21,
-            NodeKind::FloatConst(_) => 22,
-            NodeKind::FloatBinaryOp(_) => 23,
-            NodeKind::FloatUnaryOp(_) => 24,
-            NodeKind::FloatCmpOp(_) => 25,
-            NodeKind::IntToFloat => 26,
-            NodeKind::FloatToInt => 27,
-            NodeKind::FloatToFloat => 28,
-            NodeKind::IntBitsToFloat => 29,
-            NodeKind::FloatBitsToInt => 30,
-            NodeKind::CallOther { .. } => 31,
-            NodeKind::CPoolRef => 32,
-            NodeKind::New => 33,
-        }
+    /// One pattern per [`NodeKind`] variant, in declaration order: yields
+    /// `declaration_index` and `KIND_COUNT` from the one list.
+    macro_rules! declaration_order {
+        ($($kind:pat),* $(,)?) => {
+            const DECLARED: &[&str] = &[$(stringify!($kind)),*];
+            const KIND_COUNT: usize = DECLARED.len();
+
+            /// Position of `kind` in the list. The match has no `_` arm, so a
+            /// new variant does not compile until it is listed, and
+            /// `every_node_kind_is_exhaustive` then fails until
+            /// [`every_node_kind`] holds it too.
+            fn declaration_index(kind: &NodeKind) -> usize {
+                let name = match kind {
+                    $($kind => stringify!($kind),)*
+                };
+                DECLARED.iter().position(|&d| d == name).expect("listed")
+            }
+        };
     }
+
+    declaration_order!(
+        NodeKind::Entry,
+        NodeKind::InitialMemory,
+        NodeKind::InitialVar(_),
+        NodeKind::Region,
+        NodeKind::MemPhi,
+        NodeKind::Phi,
+        NodeKind::If,
+        NodeKind::Switch(_),
+        NodeKind::Call { .. },
+        NodeKind::Return,
+        NodeKind::IndirectBranch,
+        NodeKind::Unreachable,
+        NodeKind::Load(_),
+        NodeKind::Store(_),
+        NodeKind::IntConst(_),
+        NodeKind::IntUnaryOp(_),
+        NodeKind::IntBinaryOp(_),
+        NodeKind::IntCmpOp(_),
+        NodeKind::Truncate,
+        NodeKind::Popcount,
+        NodeKind::Lzcount,
+        NodeKind::Extend(_),
+        NodeKind::FloatConst(_),
+        NodeKind::FloatBinaryOp(_),
+        NodeKind::FloatUnaryOp(_),
+        NodeKind::FloatCmpOp(_),
+        NodeKind::IntToFloat,
+        NodeKind::FloatToInt,
+        NodeKind::FloatToFloat,
+        NodeKind::IntBitsToFloat,
+        NodeKind::FloatBitsToInt,
+        NodeKind::CallOther { .. },
+        NodeKind::CPoolRef,
+        NodeKind::New,
+    );
 
     #[test]
     fn every_node_kind_is_exhaustive() {
         let kinds = every_node_kind();
-        let seen: std::collections::BTreeSet<usize> = kinds.iter().map(declaration_index).collect();
-        let expected: std::collections::BTreeSet<usize> = (0..kinds.len()).collect();
+        assert_eq!(kinds.len(), KIND_COUNT, "one representative per variant");
+        let order: Vec<usize> = kinds.iter().map(declaration_index).collect();
         assert_eq!(
-            seen, expected,
-            "every_node_kind must hold one representative per variant, in declaration order"
+            order,
+            (0..KIND_COUNT).collect::<Vec<_>>(),
+            "every_node_kind must list the variants in declaration order"
         );
     }
 
@@ -610,17 +624,21 @@ mod tests {
         };
         for k in &every_node_kind() {
             let sig = expected_signature(k);
-            let control_in = has_control(&sig.inputs);
+            let (control_in, control_out) = (has_control(&sig.inputs), has_control(&sig.outputs));
             assert_eq!(
                 k.has_control_flow(),
-                control_in || has_control(&sig.outputs),
+                control_in || control_out,
                 "has_control_flow for {k:?}"
             );
+            // The doc's "produces no control"; a terminator has no outputs at all.
             assert_eq!(
                 k.is_terminator(),
-                control_in && sig.outputs.max_len == 0,
+                control_in && !control_out,
                 "is_terminator for {k:?}"
             );
+            if k.is_terminator() {
+                assert_eq!(sig.outputs.max_len, 0, "{k:?} has outputs");
+            }
         }
     }
 
