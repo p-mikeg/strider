@@ -239,9 +239,7 @@ def test_a_rewriting_post_pass_restamps_stack_offsets():
 
 
 def test_a_python_default_pipeline_runs_as_the_rust_default(x86_memory_elf):
-    """`OptimizerPipeline.default()` holds the Rust default pipeline and every
-    analysis runs a copy, so analysing with it gives the function analysing
-    with no pipeline gives, every time."""
+    """Analysing with `OptimizerPipeline.default()` matches no pipeline."""
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.sleigh.SleighArch.x86()
     cc = strider.sleigh.CallingConvention.x86_cdecl()

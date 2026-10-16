@@ -452,10 +452,11 @@ mod tests {
     }
 
     /// A boxed pass reports its own name, and a clone runs the same passes in
-    /// the same order: the copy every Python-driven analysis runs.
+    /// the same order: the copy every Python-driven analysis runs. Mutation:
+    /// make `add_boxed` drop its pass.
     #[test]
     fn a_cloned_pipeline_of_boxed_passes_runs_as_the_original() -> crate::Result<()> {
-        let mut pipeline = crate::default_pipeline();
+        let mut pipeline = super::OptimizerPipeline::new();
         pipeline.add_boxed(Box::new(crate::ConstantFold::new()));
         pipeline.add_post_boxed(Box::new(crate::StackOffsetDetect));
         let names = |p: &super::OptimizerPipeline| {
@@ -466,7 +467,10 @@ mod tests {
         };
         let clone = pipeline.clone();
         assert_eq!(names(&clone), names(&pipeline));
-        assert_eq!(names(&pipeline).1.last(), Some(&"StackOffsetDetect"));
+        assert_eq!(
+            names(&pipeline),
+            (vec!["ConstantFold"], vec!["StackOffsetDetect"])
+        );
 
         let (mut a, mut b) = (folding_fn(), folding_fn());
         pipeline.run(&mut a, &mut OptCtx::at_floor(None))?;
@@ -474,7 +478,7 @@ mod tests {
         assert!(
             !a.walk()
                 .any(|n| matches!(a.node_kind(n), strider_ir::node::NodeKind::IntBinaryOp(_))),
-            "precondition: the passes ran",
+            "precondition: the boxed ConstantFold ran",
         );
         assert_eq!(a.to_text(false), b.to_text(false));
         Ok(())

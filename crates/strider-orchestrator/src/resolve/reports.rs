@@ -539,6 +539,32 @@ mod tests {
         );
     }
 
+    /// Each `BranchIndirect` of the instruction is refused at its own
+    /// anchor, not once at the seed's key. Mutation: map each anchor to
+    /// `PcodeInsnAddr::at_machine_start` before collecting the candidates.
+    #[test]
+    fn two_anchors_over_one_machine_start_seed_are_both_refused() {
+        let first = mid_insn_addr(0x1000);
+        let second = PcodeInsnAddr {
+            insn_index: 5,
+            ..first
+        };
+        let seeds = seeded(&[(
+            pcode_addr(0x1000),
+            multiple(&[(0x2000, None), (0x3000, None)]),
+        )]);
+        let kept = multiple(&[(0x2000, None)]);
+        assert_eq!(
+            refusals(
+                &[],
+                &[pcode_addr(0x3000)],
+                &SiteTable::new(&seeds),
+                [second, first]
+            ),
+            vec![(first, kept.clone()), (second, kept)],
+        );
+    }
+
     #[test]
     fn an_isa_clash_on_every_arm_withdraws_the_site() {
         let site = pcode_addr(0x1000);
