@@ -276,7 +276,11 @@ impl Pattern {
 
 #[cfg(test)]
 mod tests {
+    use super::PatGraph;
     use crate::matcher::MatcherBuilder;
+    use crate::matcher::{KindSpec, PatValueRef};
+    use rustc_hash::FxHashMap;
+    use strider_graph::NodeId;
     use strider_ir::ConstId;
     use strider_ir::node::NodeKind;
 
@@ -305,5 +309,102 @@ mod tests {
         let order = crate::graph_ext::reachable_topo(&p.graph, root).unwrap();
         assert_eq!(order.len(), 2);
         assert_eq!(*order.last().unwrap(), root);
+    }
+
+    fn draw(state: &mut u64, bound: usize) -> usize {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        (*state % bound as u64) as usize
+    }
+
+    /// The tree unfolding of `n`, by memoised recursion.
+    fn unfold(g: &PatGraph, n: NodeId, memo: &mut FxHashMap<NodeId, usize>) -> usize {
+        if let Some(&s) = memo.get(&n) {
+            return s;
+        }
+        let kids: Vec<usize> = g
+            .node_inputs(n)
+            .into_iter()
+            .map(|v| unfold(g, g.producer(v), memo))
+            .collect();
+        let s = if g.node_kind(n).alternation {
+            1usize.saturating_add(kids.iter().copied().max().unwrap_or(0))
+        } else {
+            kids.iter().fold(1usize, |acc, &k| acc.saturating_add(k))
+        };
+        memo.insert(n, s);
+        s
+    }
+
+    /// `total_nodes` is the larger of the raw count and the deepest unfolding.
+    #[test]
+    fn unfolded_node_count_matches_a_recursive_unfolding() {
+        let cases = if cfg!(debug_assertions) {
+            1_000
+        } else {
+            20_000
+        };
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        // The unfolding wins, the raw count wins, an alternation whose arms
+        // unfold to different sizes.
+        let mut shapes = [0usize; 3];
+        for case in 0..cases {
+            let mut b = MatcherBuilder::new();
+            let mut vals: Vec<PatValueRef> = vec![b.leaf(KindSpec::Any)];
+            for _ in 0..draw(&mut state, 12) {
+                let (l, r) = (
+                    vals[draw(&mut state, vals.len())],
+                    vals[draw(&mut state, vals.len())],
+                );
+                let v = match draw(&mut state, 4) {
+                    0 => b.leaf(KindSpec::Any),
+                    1 => b.unary(KindSpec::Any, l),
+                    2 => b.binary(strider_ir::IntBinaryOp::Add, l, r),
+                    _ => b.one_of(&[l, r]),
+                };
+                vals.push(v);
+            }
+            let p = b.finish();
+            let mut memo = FxHashMap::default();
+            let deepest = p
+                .graph
+                .all_node_ids()
+                .map(|n| unfold(&p.graph, n, &mut memo))
+                .max()
+                .unwrap_or(0);
+            let raw = p.graph.all_node_ids().count();
+            assert_eq!(p.total_nodes(), raw.max(deepest), "case {case}");
+            shapes[0] += usize::from(deepest > raw);
+            shapes[1] += usize::from(deepest < raw);
+            shapes[2] += usize::from(p.graph.all_node_ids().any(|n| {
+                let arms: Vec<usize> = p
+                    .graph
+                    .node_inputs(n)
+                    .into_iter()
+                    .map(|v| memo[&p.graph.producer(v)])
+                    .collect();
+                p.graph.node_kind(n).alternation && arms.iter().any(|&a| a != arms[0])
+            }));
+        }
+        assert!(
+            shapes.iter().all(|&c| c >= cases / 20),
+            "too few of a shape, floor {}: {shapes:?}",
+            cases / 20
+        );
+    }
+
+    /// A 100,000-node chain is refused over the cap, not overflowed.
+    #[test]
+    #[cfg_attr(debug_assertions, ignore = "release-only scale test")]
+    fn a_hundred_thousand_node_chain_is_refused_not_overflowed() {
+        let mut b = MatcherBuilder::new();
+        let mut v = b.leaf(KindSpec::Any);
+        for _ in 0..100_000 {
+            v = b.unary(KindSpec::Any, v);
+        }
+        let p = b.finish();
+        assert_eq!(p.total_nodes(), 100_001);
+        assert!(p.root().is_err());
     }
 }
