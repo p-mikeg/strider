@@ -14,6 +14,8 @@ pub enum ConstValue {
     Wide(Box<[u64]>),
 }
 
+const _: () = assert!(size_of::<ConstValue>() == 32);
+
 impl ConstValue {
     /// `Wide` fits only when every limb above the low two is zero.
     pub fn fits_u128(&self) -> Option<u128> {

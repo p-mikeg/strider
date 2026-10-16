@@ -368,10 +368,7 @@ impl NodeKind {
 }
 
 // The largest inline payload is a u64 (FloatConst / CallOther).
-const _: () = assert!(
-    std::mem::size_of::<NodeKind>() <= 16,
-    "NodeKind must stay <= 16 bytes (no inline payload may exceed 8 bytes)"
-);
+const _: () = assert!(size_of::<NodeKind>() == 16);
 
 #[cfg(test)]
 mod tests {

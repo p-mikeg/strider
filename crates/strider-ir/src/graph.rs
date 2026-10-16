@@ -41,6 +41,10 @@ pub use strider_graph::NodeIdRemap;
 
 pub type Graph = strider_graph::Graph<NodeKind, ValueKind, IrCacheable>;
 
+// The per-node and per-value arena records.
+const _: () = assert!(Graph::NODE_RECORD_SIZE == 24);
+const _: () = assert!(Graph::VALUE_RECORD_SIZE == 16);
+
 pub type Inputs<'a> = strider_graph::Inputs<'a, NodeKind, ValueKind, IrCacheable>;
 
 #[cfg(test)]
