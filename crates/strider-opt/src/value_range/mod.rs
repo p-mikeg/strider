@@ -515,11 +515,11 @@ impl<'f> RangeMap<'f> {
                 c => (lhs, ScaleOp::Udiv(c)),
             },
             // Mul is commutative, so the variable may sit on either side.
-            IntBinaryOp::Mul => match (self.function.int_const_u128(lhs), rc) {
-                (None, Some(c)) => (lhs, ScaleOp::Mul(c)),
-                (Some(c), None) => (rhs, ScaleOp::Mul(c)),
-                _ => return None,
-            },
+            IntBinaryOp::Mul => {
+                let (x, c) =
+                    crate::const_eval::var_and_const(self.function, self.function.producer(value))?;
+                (x, ScaleOp::Mul(self.function.int_const_u128(c)?))
+            }
             _ => return None,
         })
     }
@@ -710,12 +710,7 @@ impl<'f> RangeMap<'f> {
             // Masking only clears bits, so `x & c <= x` carries the upper bound
             // while the low end and the stride do not survive.
             NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-                let [a, b] = f.producer_inputs_exact::<2>(value).ok()?;
-                let x = match (f.int_const_u128(a), f.int_const_u128(b)) {
-                    (None, Some(_)) => a,
-                    (Some(_), None) => b,
-                    _ => return None,
-                };
+                let (x, _) = crate::const_eval::var_and_const(f, f.producer(value))?;
                 Some((x, Hop::UpperBound))
             }
             _ => None,
@@ -832,12 +827,8 @@ fn add_operand_shifted_interval(
     ) {
         return None;
     }
-    let [a, b] = function.producer_inputs_exact::<2>(value).ok()?;
-    let (operand, c) = match (function.int_const_u128(a), function.int_const_u128(b)) {
-        (None, Some(c)) => (a, c),
-        (Some(c), None) => (b, c),
-        _ => return None,
-    };
+    let (operand, c) = crate::const_eval::var_and_const(function, function.producer(value))?;
+    let c = function.int_const_u128(c)?;
     // `bit_mask_u128` saturates to `u128::MAX` past 128 bits, so the shift
     // would wrap mod 2^128 instead of the type's modulus and the `lo <= hi`
     // test would accept a TIGHTER-than-real interval, the one thing this
@@ -1121,12 +1112,8 @@ fn identity_mask(
     let &[value] = function.node_outputs(node) else {
         return None;
     };
-    let [a, b] = function.producer_inputs_exact::<2>(value).ok()?;
-    let (operand, mask) = match (function.int_const_u128(a), function.int_const_u128(b)) {
-        (None, Some(c)) => (a, c),
-        (Some(c), None) => (b, c),
-        _ => return None,
-    };
+    let (operand, mask) = crate::const_eval::var_and_const(function, node)?;
+    let mask = function.int_const_u128(mask)?;
     let type_mask = crate::opt::known_bits::type_mask_u128(function.value_type_opt(value)?)?;
     let cleared = !mask & type_mask;
     (cleared & !known[operand].zeros == 0).then_some((value, operand))

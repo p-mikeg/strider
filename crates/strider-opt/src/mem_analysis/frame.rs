@@ -3,7 +3,7 @@
 use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{Function, IRViewer, IntBinaryOp};
 
-use super::decompose::{alignment_masked_operand, binary_operands};
+use super::decompose::alignment_masked_operand;
 use super::ring::wrap_to_addr_width;
 
 /// Does the access `[base + offset, base + offset + size)` lie wholly in THIS
@@ -86,13 +86,10 @@ fn at_or_below_entry_sp(function: &Function, value: ValueId, acc: i128) -> bool 
                 work.push((operand, acc));
             }
             NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-                let [l, r] = binary_operands(function, node);
-                let (next, konst) = match (function.int_const_i128(l), function.int_const_i128(r)) {
-                    (_, Some(k)) => (l, k),
-                    (Some(k), _) => (r, k),
-                    _ => return false,
+                let Some((next, k)) = crate::const_eval::var_and_const(function, node) else {
+                    return false;
                 };
-                let Some(sum) = acc.checked_add(konst) else {
+                let Some(sum) = function.int_const_i128(k).and_then(|k| acc.checked_add(k)) else {
                     return false;
                 };
                 work.push((next, sum));
