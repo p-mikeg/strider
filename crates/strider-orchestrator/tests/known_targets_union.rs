@@ -40,7 +40,7 @@ fn arms_with(
             known_targets: &known,
             ..Default::default()
         },
-        ..Default::default()
+        ..common::ignoring()
     };
     let r = strider.analyze(addr, &cc, &opts, None).expect("analyze");
     let mut arms = vec![];
@@ -157,7 +157,7 @@ fn x64_main_with_seed(seed: Vec<u64>) -> (Vec<u64>, Vec<PcodeInsnAddr>, Vec<Pcod
             known_targets: &known,
             ..Default::default()
         },
-        ..Default::default()
+        ..common::ignoring()
     };
     let r = strider.analyze(addr, &cc, &opts, None).expect("analyze");
     let mut arms = vec![];
@@ -203,7 +203,7 @@ fn a_seeded_site_is_still_reported_unverified_with_resolution_off() {
             resolve_indirect_branches: false,
             ..Default::default()
         },
-        ..Default::default()
+        ..common::ignoring()
     };
     let r = strider.analyze(addr, &cc, &opts, None).expect("analyze");
 

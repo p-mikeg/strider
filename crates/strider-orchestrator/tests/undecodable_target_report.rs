@@ -18,7 +18,7 @@ fn analyze(words: &[u32]) -> strider_orchestrator::AnalyzeResult {
             bound: strider_cfg::FunctionBound::size(u64::try_from(words.len() * 4).expect("size")),
             ..Default::default()
         },
-        ..Default::default()
+        ..common::ignoring()
     };
     strider
         .analyze(BASE, &cc, &lift_opts, None)
@@ -62,7 +62,7 @@ fn data_after_a_nop_after_a_call_lifts() {
             data_ranges: strider_cfg::DataRanges::new(std::iter::once(0x1006..0x1007)),
             ..Default::default()
         },
-        ..Default::default()
+        ..common::ignoring()
     };
     let result = strider
         .analyze(BASE, &cc, &lift_opts, None)

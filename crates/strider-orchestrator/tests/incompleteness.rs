@@ -2,7 +2,7 @@
 
 mod common;
 
-use strider_orchestrator::{AnalyzeOptions, Reason};
+use strider_orchestrator::Reason;
 
 const BASE: u64 = 0x1000;
 
@@ -19,7 +19,7 @@ fn machine(set: &strider_orchestrator::Incompleteness) -> Vec<(u64, Reason)> {
 fn analyze_reports_an_unresolved_dispatch_through_its_cfg() {
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, jmp_rax(), BASE, None);
     let r = strider
-        .analyze(BASE, &cc, &AnalyzeOptions::default(), None)
+        .analyze(BASE, &cc, &common::ignoring(), None)
         .expect("analyze");
     assert_eq!(
         machine(r.incomplete()),
@@ -36,7 +36,7 @@ fn a_resolved_table_leaves_the_returned_cfg_complete() {
     let (mut strider, cc, addr) =
         common::fixture_strider(common::Arch::X64, "switch", "dispatch_value");
     let r = strider
-        .analyze(addr, &cc, &AnalyzeOptions::default(), None)
+        .analyze(addr, &cc, &common::ignoring(), None)
         .expect("analyze");
     assert!(
         r.cfg.regions().any(|region| matches!(
@@ -56,7 +56,11 @@ fn a_resolved_table_leaves_the_returned_cfg_complete() {
 fn build_cfg_names_each_dispatch_it_leaves_and_each_seed_it_seats() {
     let (mut strider, _cc) = common::strider_over_bytes(common::Arch::X64, jmp_rax(), BASE, None);
     let cfg = strider
-        .build_cfg(BASE, &strider_cfg::CfgOptions::default())
+        .build_cfg(
+            BASE,
+            &strider_cfg::CfgOptions::default(),
+            strider_orchestrator::OnIncomplete::Ignore,
+        )
         .expect("build_cfg");
     assert_eq!(
         machine(cfg.incompleteness()),
@@ -75,6 +79,7 @@ fn build_cfg_names_each_dispatch_it_leaves_and_each_seed_it_seats() {
                 known_targets: &known,
                 ..Default::default()
             },
+            strider_orchestrator::OnIncomplete::Ignore,
         )
         .expect("build_cfg");
     assert_eq!(

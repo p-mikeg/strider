@@ -18,7 +18,7 @@
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::IRViewer;
 use strider_ir::node::NodeKind;
-use strider_orchestrator::{AnalyzeOptions, Strider};
+use strider_orchestrator::{AnalyzeOptions, OnIncomplete, Strider};
 
 const BASE: u64 = 0x1000;
 
@@ -31,7 +31,15 @@ fn lift(arch: strider_target::SleighArch, code: Vec<u8>, entry: u64) -> strider_
         .expect("cc");
     let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
     strider
-        .analyze(entry, &cc, &AnalyzeOptions::default(), None)
+        .analyze(
+            entry,
+            &cc,
+            &AnalyzeOptions {
+                on_incomplete: OnIncomplete::Ignore,
+                ..Default::default()
+            },
+            None,
+        )
         .expect("a multi-structure NEON access must not fail the function")
         .function
 }

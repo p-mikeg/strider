@@ -242,12 +242,7 @@ fn analyze_x64_snippet_with_rom(
     let mut strider = strider_orchestrator::Strider::new(arch, sleigh, Some(Box::new(rom)))
         .expect("Strider::new");
     strider
-        .analyze(
-            base,
-            &cc,
-            &strider_orchestrator::AnalyzeOptions::default(),
-            None,
-        )
+        .analyze(base, &cc, &common::ignoring(), None)
         .expect("analyze")
 }
 
