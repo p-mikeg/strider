@@ -127,7 +127,8 @@ fn an_arm_that_branches_into_bytes_that_will_not_decode_is_dropped() {
 }
 
 /// Bad arms are reported in the order their decode failed, which for one
-/// switch is lowest arm first.
+/// switch is lowest arm first: the region builder enqueues a switch's arms
+/// highest first onto a LIFO queue.
 #[test]
 fn bad_arms_are_reported_in_the_order_they_failed() {
     let cfg = build(&NOP_LED_ARM, &[0x1002, 0x1003, 0x1007])

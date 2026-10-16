@@ -1018,7 +1018,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
 
     /// Triages a work item `explore` could not decode. One failure can both
     /// report its bytes and drop its arm, so these are checks in sequence, not
-    /// one verdict. `Err` is a failure no report covers.
+    /// one verdict. `Err` is a failure no report covers, or a stub that could
+    /// not be built.
     fn record_failure(
         &mut self,
         parent_region: Option<NodeIndex>,
