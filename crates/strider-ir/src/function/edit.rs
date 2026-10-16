@@ -66,6 +66,9 @@ pub struct EditFunction<'g> {
     /// test counts.
     #[cfg(test)]
     postorder_walks: std::cell::Cell<u64>,
+    /// Maybe-dead queue pops, the unit the clean-cost test counts.
+    #[cfg(test)]
+    queue_pops: u64,
 }
 
 impl<'g> EditFunction<'g> {
@@ -80,6 +83,8 @@ impl<'g> EditFunction<'g> {
             order_memo: std::cell::RefCell::new(None),
             #[cfg(test)]
             postorder_walks: std::cell::Cell::new(0),
+            #[cfg(test)]
+            queue_pops: 0,
         }
     }
 
@@ -347,6 +352,10 @@ impl<'g> EditFunction<'g> {
     /// Skips past (but still dequeues) nodes that are no longer live.
     fn dequeue(&mut self) -> Option<NodeId> {
         while let Some(node) = self.state.queue.dequeue() {
+            #[cfg(test)]
+            {
+                self.queue_pops += 1;
+            }
             self.state.flags[node].remove(NodeFlags::ENQUEUED);
             if self.state.live_nodes.contains(node) {
                 return Some(node);
@@ -1703,10 +1712,10 @@ mod tests {
         );
     }
     /// Orphaning the head of an `n`-long chain kills it top-down, each node's
-    /// operand the next one dequeued.
+    /// operand the next one dequeued. Counts queue pops, not time.
     #[test]
     fn clean_dead_chain_cost_is_linear() {
-        fn kill_chain(n: usize) -> std::time::Duration {
+        fn kill_chain(n: usize) -> u64 {
             let mut b = single_region_builder();
             let three = b.build_int_const(3u64, ValueType::I64).unwrap();
             let mut x = b.build_int_const(1u64, ValueType::I64).unwrap();
@@ -1732,24 +1741,23 @@ mod tests {
             let mut ctx = EditFunction::new(&mut function);
             let zero = ctx.build_int_const(0u64, ValueType::I64).unwrap();
             let slot = ctx.function().node_input_id_at(ret, slot_index).unwrap();
-            let start = std::time::Instant::now();
+            let before = ctx.queue_pops;
             ctx.update_input(slot, zero);
             ctx.clean();
-            let elapsed = start.elapsed();
             assert!(
                 !ctx.is_live(ctx.function().producer(x)),
                 "chain head culled"
             );
-            elapsed
+            ctx.queue_pops - before
         }
-        kill_chain(2_000);
-        let small = kill_chain(10_000);
-        let large = kill_chain(80_000);
+        let small = kill_chain(1_000);
+        let large = kill_chain(8_000);
+        assert!(small >= 1_000, "every chain node is dequeued ({small})");
         // Linear would be 8x; quadratic 64x.
         assert!(
-            large.as_secs_f64() < small.as_secs_f64() * 24.0,
-            "8x the chain cost {:.1}x the clean ({small:?} -> {large:?})",
-            large.as_secs_f64() / small.as_secs_f64(),
+            large < small * 9,
+            "8x the chain cost {:.1}x the pops ({small} -> {large})",
+            large as f64 / small as f64,
         );
     }
 }
