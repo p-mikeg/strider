@@ -6,100 +6,131 @@
 //! site burns the whole iteration budget and comes back unresolved.
 //!
 //! Oscillation needs a classifier that contradicts itself, which no real
-//! binary is known to produce here, so the pass that answers is a double. It
-//! runs after the real [`strider_opt::IndirectBranchClassify`], whose presence
-//! keeps `Strider::analyze` from appending another, and overwrites its answers.
+//! binary is known to produce here, so a stand-in answers through
+//! `Strider::analyze_with_classifier`: it lists the real sites and overwrites
+//! every answer.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::Cell;
 
-use strider_ir::node::NodeKind;
-use strider_ir::{IRViewer, IRWalker};
-use strider_orchestrator::opt::{EditFunction, OptCtx, PostOptimizer, default_pipeline};
+use strider_cfg::{CfgOptions, PcodeInsnAddr, RegionTerminator, ResolvedTarget, ResolvedTargets};
+use strider_orchestrator::opt::{ClassifiedSites, OptOptions, ReadOnlyMemory, classify_sites};
+use strider_orchestrator::{AnalyzeOptions, AnalyzeResult, Reason};
 
 mod common;
 
 const BASE: u64 = 0x1000;
-/// `jmp rax`, with both arms a `ret` inside the same buffer.
-const SITE: u64 = 0x1000;
 const STABLE_ARM: u64 = 0x1010;
 const FLAPPING_ARM: u64 = 0x1020;
 
-/// Answers `{STABLE_ARM, FLAPPING_ARM}` on even rounds and `{STABLE_ARM}` on
-/// odd ones, so every second round loses an address.
-#[derive(Clone)]
-struct FlappingClassify {
-    round: Arc<AtomicUsize>,
-}
-
-impl PostOptimizer for FlappingClassify {
-    fn apply(&self, edit: &mut EditFunction<'_>, ctx: &mut OptCtx<'_>) -> anyhow::Result<()> {
-        let targets = if self.round.fetch_add(1, Ordering::Relaxed).is_multiple_of(2) {
-            strider_cfg::ResolvedTargets::Multiple(vec![
-                strider_cfg::ResolvedTarget::new(STABLE_ARM, None),
-                strider_cfg::ResolvedTarget::new(FLAPPING_ARM, None),
+/// Analyses `bytes` under a classifier answering `{STABLE_ARM, FLAPPING_ARM}`
+/// on even rounds and `{STABLE_ARM}` on odd ones, so every second round loses
+/// an address. Returns the result and the rounds classified.
+fn analyze_flapping(bytes: Vec<u8>, opts: &AnalyzeOptions<'_>) -> (AnalyzeResult, usize) {
+    let round = Cell::new(0usize);
+    let flapping = |f: &strider_ir::Function,
+                    rom: Option<&dyn ReadOnlyMemory>,
+                    o: &OptOptions|
+     -> anyhow::Result<ClassifiedSites> {
+        let mut found = classify_sites(f, rom, o)?;
+        let n = round.get();
+        round.set(n + 1);
+        let targets = if n.is_multiple_of(2) {
+            ResolvedTargets::Multiple(vec![
+                ResolvedTarget::new(STABLE_ARM, None),
+                ResolvedTarget::new(FLAPPING_ARM, None),
             ])
         } else {
-            strider_cfg::ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(STABLE_ARM, None))
+            ResolvedTargets::Single(ResolvedTarget::new(STABLE_ARM, None))
         };
-        // Both kinds, the way the real classifier reports: the site is a
-        // placeholder until a round seats it and a `Switch` after.
-        let sites: Vec<_> = edit
-            .function()
-            .walk()
-            .filter(|&n| {
-                matches!(
-                    edit.function().node_kind(n),
-                    NodeKind::IndirectBranch | NodeKind::Switch(_)
-                )
-            })
+        found.resolved = found
+            .sites
+            .iter()
+            .map(|&site| (site, targets.clone()))
             .collect();
-        for node in sites {
-            ctx.indirect_resolutions.insert(node, Some(targets.clone()));
-        }
-        Ok(())
-    }
+        Ok(found)
+    };
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
+    let result = strider
+        .analyze_with_classifier(BASE, &cc, opts, None, &flapping)
+        .expect("an unstable site is a result, not an error");
+    (result, round.get())
+}
+
+fn seats_a_switch(result: &AnalyzeResult) -> bool {
+    result
+        .cfg
+        .regions()
+        .any(|r| matches!(r.terminator, RegionTerminator::Switch { .. }))
 }
 
 #[test]
 fn a_site_that_narrows_twice_is_abandoned_and_reported() {
     let mut bytes = vec![0xc3u8; 0x40];
-    bytes[0] = 0xff; // 0x1000: jmp rax
-    bytes[1] = 0xe0;
-    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
-
-    let round = Arc::new(AtomicUsize::new(0));
-    let mut pipeline = default_pipeline();
-    pipeline.add_post_pass(strider_opt::IndirectBranchClassify);
-    pipeline.add_post_pass(FlappingClassify {
-        round: Arc::clone(&round),
-    });
-
-    let result = strider
-        .analyze(BASE, &cc, &common::ignoring(), Some(pipeline))
-        .expect("an unstable site is a result, not an error");
+    bytes[..2].copy_from_slice(&[0xff, 0xe0]); // 0x1000: jmp rax
+    let (result, rounds) = analyze_flapping(bytes, &common::ignoring());
 
     assert!(
         result
             .incomplete()
-            .of(strider_orchestrator::Reason::UnresolvedBranch)
-            .any(|a| a.machine_addr.addr == SITE),
+            .of(Reason::UnresolvedBranch)
+            .any(|a| a.machine_addr.addr == BASE),
         "the abandoned site is reported unresolved; got {}",
         result.incomplete(),
     );
     assert!(
-        !result
-            .cfg
-            .regions()
-            .any(|r| matches!(r.terminator, strider_cfg::RegionTerminator::Switch { .. })),
+        !seats_a_switch(&result),
         "an abandoned site keeps no seat in the published CFG",
     );
     // Four rounds reach the second narrowing; one more sees the site skipped
     // and converges. Anything near the 256-round cap means the counter stopped
     // gating and the loop ran on the budget instead.
     assert!(
-        round.load(Ordering::Relaxed) < 10,
-        "the loop must stop on the second narrowing, took {} rounds",
-        round.load(Ordering::Relaxed),
+        rounds < 10,
+        "the loop must stop on the second narrowing, took {rounds} rounds"
     );
+}
+
+/// The withdrawn seat outranks the caller's seed under the instruction's
+/// machine start, so a seeded site that narrows twice defers as well.
+/// Mutation: in `CfgOptions::seated`, read `known_targets` before
+/// `derived_targets`.
+#[test]
+fn a_seeded_site_that_narrows_twice_is_withdrawn_over_its_seed() {
+    let mut bytes = vec![0xc3u8; 0x40];
+    bytes[..2].copy_from_slice(&[0xff, 0x20]); // 0x1000: jmp [rax]
+    let known: rustc_hash::FxHashMap<_, _> = std::iter::once((
+        PcodeInsnAddr::at_machine_start(BASE),
+        ResolvedTargets::Multiple(vec![ResolvedTarget::new(STABLE_ARM, None)]),
+    ))
+    .collect();
+    let opts = AnalyzeOptions {
+        cfg: CfgOptions {
+            known_targets: &known,
+            ..CfgOptions::default()
+        },
+        ..common::ignoring()
+    };
+    let (result, rounds) = analyze_flapping(bytes, &opts);
+
+    let site = result
+        .cfg
+        .regions()
+        .find_map(|r| match &r.terminator {
+            RegionTerminator::UnresolvedIndirectBranch { addr, .. } => Some(*addr),
+            _ => None,
+        })
+        .expect("the withdrawn site defers");
+    assert_ne!(
+        site.insn_index, 0,
+        "precondition: the seed sits under the machine start, not the anchor"
+    );
+    assert!(
+        !seats_a_switch(&result),
+        "the caller's seed must not re-seat it"
+    );
+    assert_eq!(
+        result.incomplete().iter().collect::<Vec<_>>(),
+        vec![(site, Reason::UnresolvedBranch)],
+    );
+    assert!(rounds < 10, "took {rounds} rounds");
 }

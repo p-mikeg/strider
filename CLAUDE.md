@@ -119,8 +119,9 @@ Strider:
   than a silently dropped operand.
 - `strider-opt`: optimization passes, the `OptimizerPipeline`, the
   `rewrite_rule` facade over `strider-pattern`, and the
-  `indirect_branch_resolve` classifiers. Pure graph->graph; the classifier
-  reports targets and the orchestrator rebuilds the CFG from them.
+  `indirect_branch_resolve` classifiers (`classify_sites`, which `analyze`
+  calls after the pipeline). Pure graph->graph; the classifier reports targets
+  and the orchestrator rebuilds the CFG from them.
 - `strider-orchestrator`: `Strider::analyze` and its `AnalyzeOptions`, plus the
   re-exported lift engine (`Lifter` / `LiftOutcome` at the crate root) and
   `strider-opt` re-exported as `opt`.
@@ -166,9 +167,10 @@ whose dominance tests check against `simple_fast`.
 
 Dev-dependencies are not in that graph, and are not a DAG:
 `strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it.
-`graph-algorithms`, `strider-graph`, `strider-pattern` and `strider-target` also
-dev-depend on THEMSELVES, which is how their `tests/` integration targets get a
-feature (`test-util`, `test-injectors`) that `cfg(test)` cannot reach.
+`graph-algorithms`, `strider-graph`, `strider-orchestrator`, `strider-pattern`
+and `strider-target` also dev-depend on THEMSELVES, which is how their `tests/`
+integration targets get a feature (`test-util`, `test-injectors`) that
+`cfg(test)` cannot reach.
 
 ## IR node model
 

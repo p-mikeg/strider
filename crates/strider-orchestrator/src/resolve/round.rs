@@ -13,18 +13,16 @@ use crate::{AnalyzeOptions, LiftOutcome, Strider};
 /// node lifted for it.
 pub(super) type Anchors = Vec<(PcodeInsnAddr, NodeId)>;
 
-/// What a round's classifier answered, by node: `None` for a site it could
-/// not derive.
-pub(super) type Resolutions = FxHashMap<NodeId, Option<ResolvedTargets>>;
+/// The classifier's answers, by node: a site it could not derive has none.
+pub(super) type Resolutions = FxHashMap<NodeId, ResolvedTargets>;
 
-/// The answers in `resolutions` that name targets.
-pub(super) fn answered(
-    resolutions: Resolutions,
-) -> impl Iterator<Item = (NodeId, ResolvedTargets)> {
-    resolutions
-        .into_iter()
-        .filter_map(|(node, resolved)| Some((node, resolved?)))
-}
+/// What a round classifies its dispatch sites with:
+/// [`strider_opt::classify_sites`], or a test's stand-in.
+pub(crate) type Classifier<'c> = &'c dyn Fn(
+    &strider_ir::Function,
+    Option<&dyn ReadOnlyMemory>,
+    &strider_opt::OptOptions,
+) -> Result<strider_opt::ClassifiedSites>;
 
 /// One round's cfg, the function lifted and optimised from it, and what the
 /// loop reads off the two. The classifications stay out, so a fold can take
@@ -66,8 +64,8 @@ impl<R> Strider<R>
 where
     R: rsleigh::MemReader,
 {
-    /// Builds the cfg under `cfg_opts`, lifts and optimises it, and keeps the
-    /// classifier post-pass's node-keyed answers apart.
+    /// Builds the cfg under `cfg_opts`, lifts and optimises it, and
+    /// classifies its dispatch sites, keeping the node-keyed answers apart.
     ///
     /// # Errors
     ///
@@ -80,6 +78,7 @@ where
         opts: &AnalyzeOptions<'_>,
         cfg_opts: &CfgOptions<'_>,
         pipeline: &strider_opt::OptimizerPipeline,
+        classify: Classifier<'_>,
     ) -> Result<(Round, Resolutions)> {
         // Destructured to split the borrow: `lifter` goes out `&mut` while
         // the optimiser ctx holds `&rom`.
@@ -91,7 +90,7 @@ where
         let rom_ref: Option<&dyn ReadOnlyMemory> = rom.as_deref();
 
         // A `BranchIndirect` neither table seats is deferred here and resolved
-        // at the full-function IR level by the classifier post-pass.
+        // at the full-function IR level by `classify`.
         let cfg = lifter.build_cfg(start_addr, cfg_opts)?;
         // `cc` is moved all the way into `Function::default_cc`, but the
         // loop builds again next round, so the clone is unavoidable here.
@@ -113,13 +112,20 @@ where
         let mut ctx = OptCtx::new(rom_ref);
         ctx.options = opts.opt.clone();
         pipeline.run(&mut function, &mut ctx)?;
-        let resolutions = std::mem::take(&mut ctx.indirect_resolutions);
+        // Before `settle_return_sites` truncates the `Return`s and cleans, so
+        // the classifier reads the IR the pipeline settled on.
+        let strider_opt::ClassifiedSites { sites, resolved } =
+            classify(&function, rom_ref, &opts.opt)?;
         let unverified_returns =
             settle_return_sites(&mut function, &return_sites, &opts.opt.assumptions);
-        // Read off the function, not the classification map, which any
-        // post-pass can rewrite.
-        let live = live_dispatch_sites(&function);
-        let unclassified = unclassified_nodes(&live, &resolutions);
+        // The truncation drops only a data input, never a dispatch node, so
+        // the sites listed before it are the live ones after it.
+        let live: FxHashSet<NodeId> = sites.into_iter().collect();
+        let unclassified = live
+            .iter()
+            .filter(|node| !resolved.contains_key(node))
+            .copied()
+            .collect();
         let round = Round {
             cfg,
             function,
@@ -129,7 +135,7 @@ where
             unclassified,
             unverified_returns,
         };
-        Ok((round, resolutions))
+        Ok((round, resolved))
     }
 }
 
@@ -201,26 +207,4 @@ pub(super) fn settle_return_sites(
     }
     edit.clean();
     unverified
-}
-
-/// Every reachable `IndirectBranch` placeholder and seated `Switch`.
-pub(super) fn live_dispatch_sites(function: &strider_ir::Function) -> FxHashSet<NodeId> {
-    use strider_ir::IRWalker;
-    use strider_ir::node::NodeKind;
-    function
-        .walk_kind(|k| matches!(k, NodeKind::IndirectBranch | NodeKind::Switch(_)))
-        .collect()
-}
-
-/// The live sites this round derived no targets for, including any the
-/// classification map does not name.
-pub(super) fn unclassified_nodes(
-    live_sites: &FxHashSet<NodeId>,
-    resolutions: &Resolutions,
-) -> FxHashSet<NodeId> {
-    live_sites
-        .iter()
-        .filter(|node| !matches!(resolutions.get(node), Some(Some(_))))
-        .copied()
-        .collect()
 }

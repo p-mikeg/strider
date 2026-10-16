@@ -1340,6 +1340,7 @@ dependencies = [
  "strider-ir-test-utils",
  "strider-lift",
  "strider-opt",
+ "strider-orchestrator",
  "strider-pattern",
  "strider-reader",
  "strider-target",

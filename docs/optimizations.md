@@ -139,12 +139,12 @@ at lift time, so they are already in place before this pass runs.
 
 ## Indirect-branch resolution
 
-Jump tables, computed jumps and returns are resolved by their own post-pass,
-`IndirectBranchClassify`, which `analyze` appends to the pipeline it runs unless
-that pipeline already lists it (the Rust API can; `strider.opt` does not expose
-it). After optimizing, Strider classifies each unresolved indirect branch
-against the clean IR, feeds any newly discovered targets back in, and re-lifts,
-repeating until the set of edges stops changing. Whatever still cannot be
+Jump tables, computed jumps and returns are resolved after the pipeline, by a
+classifier `analyze` runs every round whatever pipeline it is given
+(`strider_opt::classify_sites`; `strider.opt` has no pass for it). After
+optimizing, Strider classifies each unresolved indirect branch against the
+clean IR, feeds any newly discovered targets back in, and re-lifts, repeating
+until the set of edges stops changing. Whatever still cannot be
 resolved makes `analyze` raise `IncompleteAnalysis` by default, or comes back as
 the `unresolved` list under `on_incomplete=OnIncomplete.IGNORE`. It is one of
 the six reasons [python-api.md](python-api.md#12-the-cfg-stridercfg) describes,

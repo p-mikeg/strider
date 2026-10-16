@@ -11,8 +11,7 @@ use strider_ir::{IRViewer, IRWalker};
 
 use strider_cfg::ResolvedTargets;
 
-use crate::pipeline::{OptCtx, PostOptimizer};
-use crate::{EditFunction, ReadOnlyMemory};
+use crate::ReadOnlyMemory;
 
 pub(crate) mod eval;
 mod return_target;
@@ -209,25 +208,6 @@ pub fn classify_sites(
         }
     }
     Ok(ClassifiedSites { sites, resolved })
-}
-
-/// [`classify_sites`] as a post-pass, answering through
-/// [`OptCtx::indirect_resolutions`].
-#[derive(Clone)]
-pub struct IndirectBranchClassify;
-
-impl PostOptimizer for IndirectBranchClassify {
-    fn apply(&self, edit: &mut EditFunction<'_>, ctx: &mut OptCtx<'_>) -> crate::Result<()> {
-        let ClassifiedSites {
-            sites,
-            mut resolved,
-        } = classify_sites(edit.function(), ctx.rom, &ctx.options)?;
-        ctx.indirect_resolutions = sites
-            .into_iter()
-            .map(|node| (node, resolved.remove(&node)))
-            .collect();
-        Ok(())
-    }
 }
 
 #[cfg(test)]

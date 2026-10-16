@@ -47,7 +47,7 @@ pub use pipeline::{run_one, run_one_unvalidated, run_post};
 pub use post_opt::call_stack_args::CallStackArgCollect;
 pub use post_opt::function_args::FunctionArgDetect;
 pub use post_opt::indirect_branch_resolve::{
-    ClassifiedSites, IndirectBranchClassify, ReturnTargets, classify_sites, classify_target,
+    ClassifiedSites, ReturnTargets, classify_sites, classify_target,
 };
 pub use post_opt::stack_offset_detect::StackOffsetDetect;
 pub use strider_ir::ReadOnlyMemory;

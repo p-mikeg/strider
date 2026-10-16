@@ -14,11 +14,10 @@ re-run the whole thing until the control-flow graph stops changing.
   `Result<AnalyzeResult, AnalyzeError>`: the loop below. `opts` is an
   `AnalyzeOptions` (`cfg`, `per_address_ccs`, `opt`, `compact`,
   `on_incomplete`); `compact` applies once after the loop. `pipeline`
-  defaults to `strider_opt::default_pipeline`, and
-  `strider_opt::IndirectBranchClassify` is appended as a post-pass unless the
-  supplied pipeline already runs it. Under `on_incomplete:
-  OnIncomplete::Error`, the default, a result that is not complete comes back
-  as `AnalyzeError::Incomplete`.
+  defaults to `strider_opt::default_pipeline`; every round classifies the
+  dispatch sites with `strider_opt::classify_sites` after it, whatever the
+  pipeline. Under `on_incomplete: OnIncomplete::Error`, the default, a result
+  that is not complete comes back as `AnalyzeError::Incomplete`.
 - `Strider::build_cfg(entry, cfg_opts, on_incomplete)` ->
   `Result<Cfg, AnalyzeError>`: a structural decode only, no lift, no
   optimisation, no resolution.
@@ -33,9 +32,9 @@ re-run the whole thing until the control-flow graph stops changing.
 `known_targets` and the loop's own seats, lift it, run the pipeline. Every
 `BranchIndirect` the CFG could not seat became an `IndirectBranch` placeholder
 anchored to its pcode address, and every `Switch` the CFG did seat kept an
-anchor of its own so a table can still widen. The `IndirectBranchClassify`
-post-pass walks the optimised IR and answers each anchor with a
-`ResolvedTargets`, or with `None` for a site it cannot derive.
+anchor of its own so a table can still widen. `strider_opt::classify_sites`
+then walks the optimised IR and answers each anchor with a `ResolvedTargets`;
+a site it cannot derive gets none.
 
 The classifier only REPORTS targets. Nothing rewrites the graph in place: the
 orchestrator folds the answers into its own seats and rebuilds the CFG from
