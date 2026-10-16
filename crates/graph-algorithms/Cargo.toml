@@ -19,6 +19,8 @@ itertools.workspace = true
 # Oracles only: `simple_fast`, `toposort`.
 petgraph.workspace = true
 proptest.workspace = true
+# `graph_oracle`, the brute-force definitions the other crates share.
+strider-ir-test-utils.workspace = true
 
 [lints]
 workspace = true
