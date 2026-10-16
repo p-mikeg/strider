@@ -15,7 +15,7 @@ use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRViewer, ReadOnlyMemory};
 
 use crate::mem_analysis::{
-    MemAnalyzer, MemExpr, MemKind, MemOptions, MemPurpose, slot_key, store_value_byte_size,
+    MemAnalyzer, MemExpr, MemKind, MemOptions, MemPurpose, reduce, slot_key, store_value_byte_size,
 };
 
 #[derive(Clone, Copy, PartialEq)]
@@ -153,7 +153,7 @@ impl<'a> Evaluator<'a> {
                 let delta = ty.get_signed_int(c)?;
                 Some(Abs::SpRel {
                     base,
-                    offset: crate::mem_analysis::reduce(Some(ty), offset.wrapping_add(delta)),
+                    offset: reduce(Some(ty), offset.wrapping_add(delta)),
                 })
             }
             (Abs::SpRel { .. }, Abs::SpRel { .. }) => None,

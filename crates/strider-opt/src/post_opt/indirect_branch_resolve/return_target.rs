@@ -696,5 +696,5 @@ fn guards(function: &Function, cond: ValueId) -> impl Iterator<Item = (NodeId, b
 /// `(x, c)` for `Add(x, c)` with `c` a constant.
 fn const_addend(function: &Function, add: NodeId) -> Option<(ValueId, i128)> {
     let (x, c) = crate::const_eval::var_and_const(function, add)?;
-    Some((x, function.int_const_i128(c)?))
+    Some((x, function.value_type_opt(x)?.get_signed_int(c)?))
 }
