@@ -519,7 +519,7 @@ impl<'f> RangeMap<'f> {
         Some(match op {
             IntBinaryOp::ShiftLeft => (lhs, ScaleOp::Shl(u32::try_from(rc?).ok()?)),
             IntBinaryOp::ShiftRight => (lhs, ScaleOp::Shr(u32::try_from(rc?).ok()?)),
-            // A divide by zero traps, and `eval_int_binary` refuses to fold it,
+            // A divide by zero traps, and `eval::int_binary` refuses to fold it,
             // so the node reaches here; `udiv` would read it as a divide by one.
             IntBinaryOp::Div => match rc? {
                 0 => return None,

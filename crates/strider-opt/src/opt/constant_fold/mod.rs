@@ -4,7 +4,6 @@ use crate::error::Result;
 use crate::peephole::{PeepholePass, PeepholeRewrite, first_matching_rule};
 
 pub(crate) mod eval_float;
-pub(crate) mod eval_int;
 mod rules;
 #[cfg(test)]
 mod tests;

@@ -1,8 +1,13 @@
-use strider_ir::node::ValueType;
-use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
+//! Integer evaluation at a declared width, in the `u128` carrier.
+//!
+//! Each function answers `None` where the operation is undefined or the width
+//! has no `u128` modulus: a float, or an integer past 128 bits.
+
+use crate::node::{IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType};
 
 /// The signed minimum representable in `ty`'s bit width, or `i128::MIN` at
 /// 128 bits.
+#[inline]
 fn signed_min(ty: ValueType) -> i128 {
     let bits = ty.bit_width() as u32;
     if bits >= 128 {
@@ -20,7 +25,8 @@ fn signed_min(ty: ValueType) -> i128 {
 /// out-of-range test. Div, Rem and ShiftRight are not safe under
 /// masking-commutativity, so they need the inputs already narrowed to give the
 /// right answer on a caller that passed raw bits.
-pub(crate) fn eval_int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) -> Option<u128> {
+#[inline]
+pub fn int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) -> Option<u128> {
     let mask = ty.int_mask_u128()?;
     let bits = ty.bit_width() as u32;
     // Sleigh (opbehavior.cc:411) returns 0 when the shift amount reaches the
@@ -116,7 +122,8 @@ pub(crate) fn eval_int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) 
 
 /// `None` past the `u128` carrier, where the overflow arms would detect at 128
 /// bits rather than at `ty`'s declared width.
-pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Option<bool> {
+#[inline]
+pub fn int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Option<bool> {
     // Unsigned arms compare raw u128s, so a narrow IntConst carrying high bits
     // beyond the type width would compare wrong without this mask. The signed
     // arms re-mask via get_signed_int, so the double-mask is idempotent there.
@@ -142,22 +149,24 @@ pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Opt
     })
 }
 
-/// The unary/extend/count helpers below are width-safe only because
-/// `get_unsigned_int` / `get_signed_int` return `None` past 128 bits; masking
-/// to the carrier instead would silently truncate an I256/I512.
-pub(crate) fn eval_int_unary(op: IntUnaryOp, v: u128, ty: ValueType) -> Option<u128> {
+/// The unary, extend and count helpers below decline past 128 bits through
+/// `get_unsigned_int` / `get_signed_int`, which have no wider carrier.
+#[inline]
+pub fn int_unary(op: IntUnaryOp, v: u128, ty: ValueType) -> Option<u128> {
     let raw = match op {
         IntUnaryOp::Neg => v.wrapping_neg(),
     };
     ty.get_unsigned_int(raw)
 }
 
-pub(crate) fn eval_sign_extend(v: u128, in_ty: ValueType, out_ty: ValueType) -> Option<u128> {
+#[inline]
+pub fn sign_extend(v: u128, in_ty: ValueType, out_ty: ValueType) -> Option<u128> {
     let signed = in_ty.get_signed_int(v)? as u128;
     out_ty.get_unsigned_int(signed)
 }
 
-pub(crate) fn eval_popcount(v: u128, in_ty: ValueType) -> Option<u128> {
+#[inline]
+pub fn popcount(v: u128, in_ty: ValueType) -> Option<u128> {
     let masked = in_ty.get_unsigned_int(v)?;
     Some(u128::from(masked.count_ones()))
 }
@@ -168,7 +177,8 @@ pub(crate) fn eval_popcount(v: u128, in_ty: ValueType) -> Option<u128> {
 /// Counts over `8 * byte_size`, which is what `opbehavior.cc:791` does
 /// (`count_leading_zeros(in1) - 8*(sizeof(uintb) - sizein)`). Only `I1`
 /// separates that from `bit_width`.
-pub(crate) fn eval_lzcount(v: u128, in_ty: ValueType) -> Option<u128> {
+#[inline]
+pub fn lzcount(v: u128, in_ty: ValueType) -> Option<u128> {
     let masked = in_ty.get_unsigned_int(v)?;
     let bits = (in_ty.byte_size() * 8) as u32;
     Some(if masked == 0 {
@@ -181,22 +191,18 @@ pub(crate) fn eval_lzcount(v: u128, in_ty: ValueType) -> Option<u128> {
 }
 
 #[cfg(test)]
-mod eval_helper_tests {
+mod tests {
     use super::*;
-    use strider_ir::node::ValueType;
 
     /// The width bail these helpers rely on lives in `get_unsigned_int` /
     /// `get_signed_int`, not in the helpers themselves.
     #[test]
     fn width_past_the_u128_carrier_does_not_fold() {
-        assert_eq!(eval_lzcount(1, ValueType::int(256)), None);
-        assert_eq!(eval_popcount(1, ValueType::int(256)), None);
+        assert_eq!(lzcount(1, ValueType::int(256)), None);
+        assert_eq!(popcount(1, ValueType::int(256)), None);
+        assert_eq!(int_unary(IntUnaryOp::Neg, 1, ValueType::int(512)), None);
         assert_eq!(
-            eval_int_unary(IntUnaryOp::Neg, 1, ValueType::int(512)),
-            None
-        );
-        assert_eq!(
-            eval_sign_extend(1, ValueType::int(256), ValueType::int(512)),
+            sign_extend(1, ValueType::int(256), ValueType::int(512)),
             None
         );
     }
@@ -206,35 +212,32 @@ mod eval_helper_tests {
     #[test]
     fn an_out_of_range_shift_amount_saturates_rather_than_wrapping() {
         assert_eq!(
-            eval_int_binary(IntBinaryOp::ShiftLeft, 1, 0x100, ValueType::int(8)),
+            int_binary(IntBinaryOp::ShiftLeft, 1, 0x100, ValueType::int(8)),
             Some(0)
         );
     }
 
     #[test]
     fn unary_neg_masks_to_width() {
-        assert_eq!(
-            eval_int_unary(IntUnaryOp::Neg, 1, ValueType::int(8)),
-            Some(0xFF)
-        );
+        assert_eq!(int_unary(IntUnaryOp::Neg, 1, ValueType::int(8)), Some(0xFF));
     }
 
     #[test]
     fn sign_extend_i8_to_i32() {
         assert_eq!(
-            eval_sign_extend(0x80, ValueType::int(8), ValueType::int(32)),
+            sign_extend(0x80, ValueType::int(8), ValueType::int(32)),
             Some(0xFFFF_FF80)
         );
     }
 
     #[test]
     fn popcount_masks_input_width() {
-        assert_eq!(eval_popcount(0x1FF, ValueType::int(8)), Some(8));
+        assert_eq!(popcount(0x1FF, ValueType::int(8)), Some(8));
     }
 
     #[test]
     fn lzcount_zero_is_width_and_msb_is_zero() {
-        assert_eq!(eval_lzcount(0, ValueType::int(8)), Some(8));
-        assert_eq!(eval_lzcount(0x80, ValueType::int(8)), Some(0));
+        assert_eq!(lzcount(0, ValueType::int(8)), Some(8));
+        assert_eq!(lzcount(0x80, ValueType::int(8)), Some(0));
     }
 }
