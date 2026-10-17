@@ -533,18 +533,17 @@ fn build_identity_rules() -> Vec<crate::BoxedRule> {
     ]
 }
 
-/// Folds an integer node over constant operands through [`eval_node_const`],
-/// the evaluator load folding and the branch classifier read too.
+/// Folds an integer node over constant operands through [`eval_node_const`].
 ///
-/// Mirrors `rewrite_rule`: the dying operands' fingerprints go into the
-/// result, `replace_value` absorbs the root's, and a root with no uses falls
-/// through to the later rules.
+/// Mirrors `rewrite_rule`: the operands' fingerprints go into the result,
+/// `replace_value` absorbs the root's, and a root with no uses falls through
+/// to the later rules.
 fn const_eval_rule(edit: &mut EditFunction<'_>, root: NodeId) -> Result<Option<ValueId>> {
     let f = edit.function();
     let Ok((out, ty)) = f.single_value_output(root) else {
         return Ok(None);
     };
-    // A float node keeps the float rules.
+    // The fold builds an integer constant; a float node keeps the float rules.
     if !ty.is_integer() {
         return Ok(None);
     }

@@ -547,14 +547,15 @@ impl<'g> EditFunction<'g> {
             .register_arg_value(index, value);
     }
 
-    /// Drops the integer-class argument carriers at `first_index` and above.
+    /// Drops the integer-class argument carriers at `first_index` and above,
+    /// keeping the register-passed ones below it.
     pub fn clear_arg_values_from(&mut self, first_index: u32) {
         self.function
             .side_tables_mut()
             .clear_arg_values_from(first_index);
     }
 
-    /// Union `from`'s asm-fingerprint into `into`'s (superset-only).
+    /// Links `from`'s asm-fingerprint under `into`'s: a live alias, not a copy.
     pub fn absorb_node_fingerprint(&mut self, into: NodeId, from: NodeId) {
         self.function
             .side_tables_mut()

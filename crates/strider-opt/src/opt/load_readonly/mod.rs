@@ -44,7 +44,7 @@ use crate::pipeline::OptCtx;
 pub struct LoadReadOnly;
 
 // Each Load folds independently against the rom, so the driver's default RPO
-// `seed_order` is left alone, and it puts the inner load of a `Load(Load(c))`
+// `seed_order` is left alone, and RPO puts the inner load of a `Load(Load(c))`
 // before the outer one, so no consumer needs re-enqueueing.
 impl crate::peephole::PeepholePass for LoadReadOnly {
     type Sweep = ();

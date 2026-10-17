@@ -255,7 +255,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// this instruction committed one.
     ///
     /// The NODE id, not the lifted value, is recorded against `addr`: the
-    /// optimizer may `replace_all_uses` the value away, and the resolver needs
+    /// optimizer may `replace_value` the value away, and the resolver needs
     /// the placeholder's CURRENT dispatch input.
     pub(crate) fn handle_unresolved_indirect_branch(
         &mut self,

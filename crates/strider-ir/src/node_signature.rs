@@ -52,7 +52,8 @@ pub enum OperandWidth {
     OfFirstOperand,
     /// A width the conversion relates to the output's.
     Conversion(Conversion),
-    /// Tied to no other slot.
+    /// No width rule here (a `Phi`'s inputs are held to its type by the phi
+    /// check).
     Free,
 }
 
@@ -69,7 +70,9 @@ pub enum Conversion {
 
 impl Conversion {
     /// Whether `input` converts to `output` under this rule. A bitcast
-    /// compares bytes: every float width is whole bytes.
+    /// compares bytes: every float width is whole bytes, and none is one byte,
+    /// so `I1` cannot pass for a float.
+    #[must_use]
     pub fn admits(self, input: ValueType, output: ValueType) -> bool {
         match self {
             Self::Widen => output.bit_width() > input.bit_width(),

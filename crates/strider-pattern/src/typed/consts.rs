@@ -112,8 +112,8 @@ fn fits_width(v: u128, w: usize) -> bool {
 }
 
 /// True when `v` is a value at `out_ty` that `stored`, an `out_ty`-wide
-/// constant, equals, or is `v` held at a narrower supported integer width (not
-/// `I1`) and widened to `out_ty` by zero extension or by sign extension. Every
+/// constant, equals, or is `v` held at a supported integer width (not `I1`) at
+/// most as wide as `out_ty` and widened to it by zero or sign extension. Every
 /// `ValueType` width is a candidate rather than only the powers of two: an
 /// `I40` constant is not reachable through an `I32` or `I64` probe.
 fn value_at_some_width(stored: u128, out_ty: ValueType, v: u128) -> bool {

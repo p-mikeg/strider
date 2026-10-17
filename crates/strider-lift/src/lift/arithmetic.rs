@@ -48,8 +48,8 @@ pub(super) fn require_equal_input_output_width(
 fn reject_operand_wider_than_output(operand: &rsleigh::Vn, output: &rsleigh::Vn) -> Result<()> {
     if operand.size > output.size {
         return Err(anyhow::anyhow!(
-            "p-code signed op width mismatch: operand={} wider than output={} \
-             (would silently truncate before the signed operation)",
+            "p-code op width mismatch: operand={} wider than output={} \
+             (would silently truncate the operand)",
             operand.size,
             output.size,
         ));
@@ -96,7 +96,9 @@ impl WidthGuard {
 /// How one operand is brought to the output width.
 #[derive(Clone, Copy)]
 enum Coerce {
-    /// Truncate a wider operand, zero-extend a narrower one.
+    /// Truncate a wider operand, zero-extend a narrower one: what an unsigned
+    /// op reads, and for `Add`, `Mul`, the bitwise ops and the left shift the
+    /// result's low bits do not depend on the fill.
     Convert,
     /// Sign-extend a narrower operand; never truncates.
     SignExtend,
@@ -116,6 +118,8 @@ impl Coerce {
     }
 }
 
+/// How one raw p-code operand reaches the output width: the guard is checked
+/// on the raw operand, then the coercion applied to the value read.
 #[derive(Clone, Copy)]
 struct OperandPolicy {
     guard: WidthGuard,

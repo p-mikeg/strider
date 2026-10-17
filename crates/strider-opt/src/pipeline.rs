@@ -13,7 +13,7 @@ impl OptimizationResult {
         matches!(self, OptimizationResult::Changed)
     }
 
-    /// Maps the boolean return of [`strider_ir::Graph::replace_all_uses`].
+    /// Maps the boolean return of [`EditFunction::replace_value`](crate::EditFunction::replace_value).
     #[must_use]
     pub fn from_changed(changed: bool) -> Self {
         if changed {
