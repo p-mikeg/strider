@@ -49,25 +49,27 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             .and_then(|o| self.function.value_type_opt(o))
     }
 
-    fn out_type_str(&self, node: NodeId) -> &'static str {
-        self.out_type(node).map_or("?", ValueType::as_str)
+    fn out_type_str(&self, node: NodeId) -> String {
+        self.out_type(node)
+            .map_or_else(|| "?".to_owned(), |t| t.to_string())
     }
 
-    fn input_type_str(&self, node: NodeId, idx: usize) -> &'static str {
-        self.input_type(node, idx).map_or("?", ValueType::as_str)
+    fn input_type_str(&self, node: NodeId, idx: usize) -> String {
+        self.input_type(node, idx)
+            .map_or_else(|| "?".to_owned(), |t| t.to_string())
     }
 
     /// `"<sep><type>"`, or empty when the node has no value output. `sep` is
     /// typically `":"`, `" "`, or `"\n-> "`.
     fn out_type_suffix(&self, node: NodeId, sep: &str) -> String {
         self.out_type(node)
-            .map_or_else(String::new, |t| format!("{sep}{}", t.as_str()))
+            .map_or_else(String::new, |t| format!("{sep}{t}"))
     }
 
     /// [`Self::out_type_suffix`] for input slot `idx`.
     fn input_type_suffix(&self, node: NodeId, idx: usize, sep: &str) -> String {
         self.input_type(node, idx)
-            .map_or_else(String::new, |t| format!("{sep}{}", t.as_str()))
+            .map_or_else(String::new, |t| format!("{sep}{t}"))
     }
 
     /// Appends a `base sp +/- K` line to a Store/Load label when the node has a
@@ -139,7 +141,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                     format!("const {v}:f64")
                 }
                 // No native Rust carrier at these widths, so show raw bits.
-                Some(ty) => format!("const {bits:#x}:{}", ty.as_str()),
+                Some(ty) => format!("const {bits:#x}:{ty}"),
                 None => format!("const {bits:#x}"),
             },
 

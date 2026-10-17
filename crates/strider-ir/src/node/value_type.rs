@@ -1,5 +1,5 @@
-// The enum and its `ALL` listing come from one variant list, so a new width
-// cannot reach the exhaustive matches without reaching `ALL`.
+// The enum and its `SUPPORTED` listing come from one variant list, so a new width
+// cannot reach the exhaustive matches without reaching `SUPPORTED`.
 macro_rules! value_types {
     ($( $(#[$meta:meta])* $name:ident ),* $(,)?) => {
         /// Integer variants name their width in bits; `I1` is one of them.
@@ -9,10 +9,9 @@ macro_rules! value_types {
         }
 
         impl ValueType {
-            /// Every variant, in declaration order (the floats follow the
-            /// ints, so this is not width order). The SSoT for any surface
-            /// enumerating the set, the Python bindings included.
-            pub const ALL: [Self; [$(value_types!(@unit $name)),*].len()] =
+            /// Every type: integers, then floats, each by width (`Ord`
+            /// order). The list `FromStr` and the Python bindings read.
+            pub const SUPPORTED: [Self; [$(value_types!(@unit $name)),*].len()] =
                 [$(Self::$name),*];
         }
     };
@@ -99,7 +98,7 @@ impl ValueType {
 
 impl ValueType {
     #[inline]
-    pub fn as_str(self) -> &'static str {
+    fn as_str(self) -> &'static str {
         match self {
             Self::I1 => "i1",
             Self::I8 => "i8",
@@ -304,6 +303,24 @@ impl std::fmt::Display for ValueType {
     }
 }
 
+/// The inverse of `Display`: `"i32"`, `"f64"`, lowercase only.
+impl std::str::FromStr for ValueType {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::SUPPORTED
+            .into_iter()
+            .find(|t| t.to_string() == s)
+            .ok_or_else(|| {
+                let names: Vec<String> = Self::SUPPORTED.iter().map(ToString::to_string).collect();
+                anyhow::anyhow!(
+                    "unknown value type {s:?}: expected one of {}",
+                    names.join(", ")
+                )
+            })
+    }
+}
+
 /// The [`ValueType`] a varnode's byte size maps to.
 pub trait VnTypeExt {
     fn int_type(&self) -> crate::error::Result<ValueType>;
@@ -326,20 +343,67 @@ impl VnTypeExt for rsleigh::Vn {
 mod tests {
     use super::ValueType;
 
-    /// `int` / `float` name every type by its bit width, in a `const` too.
+    /// Every spelling and size fact agrees, type by type, and the list is
+    /// exactly the widths the vendored sla specs carry.
     #[test]
-    fn int_and_float_name_every_type_by_its_bit_width() {
-        for ty in ValueType::ALL {
+    fn supported_types_agree_on_spelling_and_size() {
+        let names: Vec<String> = ValueType::SUPPORTED
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(
+            names.join(" "),
+            "i1 i8 i16 i24 i32 i40 i48 i56 i64 i72 i80 i96 i112 i128 i256 i512 \
+             f16 f32 f64 f80 f128"
+        );
+        assert!(ValueType::SUPPORTED.is_sorted());
+        for ty in ValueType::SUPPORTED {
+            assert_eq!(format!("{ty:?}").to_lowercase(), ty.to_string());
+            assert_eq!(ty.to_string().parse::<ValueType>().unwrap(), ty);
+            assert_eq!(ty.is_float(), ty.to_string().starts_with('f'));
+            assert_eq!(ty.is_integer(), !ty.is_float());
+            assert_eq!(ty.is_bool(), ty == ValueType::I1);
+            assert_eq!(ty.is_wide_int(), ty.is_integer() && ty.bit_width() > 64);
+            assert_eq!(ty.byte_size(), ty.bit_width().div_ceil(8));
             let bits = u16::try_from(ty.bit_width()).unwrap();
-            let named = if ty.is_float() {
-                ValueType::float(bits)
+            let bytes = u32::try_from(ty.byte_size()).unwrap();
+            if ty.is_float() {
+                assert_eq!(ValueType::float(bits), ty);
+                assert_eq!(ValueType::float_from_bytes(bytes).unwrap(), ty);
             } else {
-                ValueType::int(bits)
-            };
-            assert_eq!(named, ty);
+                assert_eq!(ValueType::int(bits), ty);
+                if !ty.is_bool() {
+                    assert_eq!(ValueType::int_from_bytes(bytes).unwrap(), ty);
+                }
+            }
         }
-        const WORD: ValueType = ValueType::int(32);
-        assert_eq!(WORD.bit_width(), 32);
+    }
+
+    /// The parser takes exactly the `Display` spelling; sizes off the list err.
+    #[test]
+    fn parse_and_from_bytes_refuse_unlisted_types() {
+        for bad in ["", "i", "i12", "i08", "I32", "f8", "u32", "i32 "] {
+            let err = bad.parse::<ValueType>().expect_err(bad);
+            assert!(
+                err.to_string().ends_with(
+                    "expected one of i1, i8, i16, i24, i32, i40, \
+                     i48, i56, i64, i72, i80, i96, i112, i128, i256, i512, f16, f32, f64, \
+                     f80, f128"
+                ),
+                "{bad:?}: {err}"
+            );
+        }
+        for n in [0u32, 11, 13, 15, 17, 33, 65, u32::MAX] {
+            let err = ValueType::int_from_bytes(n).expect_err("unlisted size");
+            assert!(
+                err.to_string()
+                    .contains(&format!("unsupported node output size: {n} bytes")),
+                "{err}"
+            );
+        }
+        for n in [0u32, 1, 3, 12, 32] {
+            assert!(ValueType::float_from_bytes(n).is_err(), "{n}");
+        }
     }
 
     #[test]
