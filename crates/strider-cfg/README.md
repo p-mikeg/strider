@@ -25,9 +25,9 @@ sea-of-nodes IR `strider-lift` builds from it.
   `no_return_targets` (borrowed too) lists direct-call targets that never
   return, `call_other_overrides` classifies user-op names, and `data_ranges`
   names address ranges that hold data and are never decoded.
-- Queries on `Cfg` (`regions`, `region_ids`, `region_predecessors`,
-  `region_if`, `switch_arm_regions`) and dark-themed Graphviz output
-  (`dot_dumper`, `neighborhood_dot`).
+- Queries on `Cfg` (`regions`, `region_ids`, `region_containing`,
+  `region_predecessors`, `region_if`, `switch_arm_regions`) and dark-themed
+  Graphviz output (`dot_dumper`, `neighborhood_dot`).
 - `insn_text` / `insn_plain_text`: one decoded p-code op as text, a LOAD /
   STORE space id named by its space (`Cfg::space_ids`) rather than printed as
   the host address Sleigh encodes it as.

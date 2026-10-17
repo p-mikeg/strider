@@ -155,9 +155,9 @@ impl Cfg {
     /// when the branch address carries no readable context, and the mode for an
     /// arch-wide default. `None` on an arch without an ISA-mode var.
     ///
-    /// NOT the live base. `Builder::enqueue_resolved` reads the context AT the
-    /// branch address first and reaches for this only when that read fails, so
-    /// a caller deciding a seated target's mode reads
+    /// NOT the live base. The build reads the context AT the branch address
+    /// first and reaches for this only when that read fails, so a caller
+    /// deciding a seated target's mode reads
     /// [`Self::flowing_isa_bit_at_site`] first and falls back to this.
     pub fn function_isa_bit(&self) -> Option<bool> {
         self.function_isa_bit

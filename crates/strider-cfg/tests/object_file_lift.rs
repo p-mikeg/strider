@@ -47,7 +47,7 @@ fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
     let cfg = DecodeEngine::new(arch, sleigh)
         .expect("decode engine")
         .build_cfg(tz_addr.into(), &CfgOptions::default())
-        .expect("Builder::build on tzcount lifted from .o");
+        .expect("build_cfg on tzcount lifted from .o");
 
     // Exact region counts move with GCC optimisation and inlining, so only
     // the control-flow shape is pinned; without the section-walker dispatch
