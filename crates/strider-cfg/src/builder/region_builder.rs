@@ -675,8 +675,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let name = self
             .builder
             .user_op_names
-            .as_deref()
-            .and_then(|names| names.get(id_u32 as usize))
+            .get(id_u32 as usize)
             .map(String::as_str);
         let overridden = name.and_then(|n| self.builder.options.call_other_overrides.get(n));
         let terminates = match overridden {
@@ -1250,8 +1249,8 @@ mod tests {
     /// itself, so `Builder::explore`'s clash check never sees it.
     #[test]
     fn a_pcode_index_seal_onto_a_differently_decoded_region_reports_the_clash() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let existing = b
             .add_region(make_region(&[(0x1000, 3)]))
             .expect("add_region");
@@ -1323,8 +1322,8 @@ mod tests {
             no_return_targets: &no_return,
             ..CfgOptions::default()
         };
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder_opts(0x1000, &mut sleigh, &opts);
+        let mut engine = make_engine();
+        let mut b = make_builder_opts(0x1000, &mut engine, &opts);
         let mut rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         let insn = rsleigh::Insn {
             opcode: rsleigh::Opcode::Call,
@@ -1365,8 +1364,8 @@ mod tests {
     /// function's lift.
     #[test]
     fn const_space_offset_is_sign_extended_from_its_declared_width() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let rb = make_region_builder(&mut b, addr_at(0x2000, 0));
         let lift = fake_lift_res(8);
         let narrow = Vn {
@@ -1382,8 +1381,8 @@ mod tests {
 
     #[test]
     fn const_space_is_relative_to_current_pcode_insn_index() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let rb = make_region_builder(&mut b, addr_at(0x2000, 0));
         let lift = fake_lift_res(8);
         let target = rb
@@ -1394,8 +1393,8 @@ mod tests {
 
     #[test]
     fn const_space_with_zero_offset_stays_at_same_pcode_index() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let rb = make_region_builder(&mut b, addr_at(0x2000, 0));
         let lift = fake_lift_res(4);
         let target = rb
@@ -1406,8 +1405,8 @@ mod tests {
 
     #[test]
     fn default_code_space_is_absolute_machine_address() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let default_cs = b.sleigh.default_code_space();
         let vn = code_space_vn(default_cs, 0xabc0);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
@@ -1420,8 +1419,8 @@ mod tests {
 
     #[test]
     fn register_space_returns_invalid_branch_target_error() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         let vn = Vn {
             addr_off: 0x10,
@@ -1440,8 +1439,8 @@ mod tests {
 
     #[test]
     fn unknown_space_returns_invalid_branch_target_error() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         let vn = Vn {
             addr_off: 0x2000,
@@ -1460,8 +1459,8 @@ mod tests {
 
     #[test]
     fn unique_space_returns_invalid_branch_target_error() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         let vn = Vn {
             addr_off: 0x40,
@@ -1480,8 +1479,8 @@ mod tests {
 
     #[test]
     fn decode_branch_target_const_space_negative_offset_does_not_wrap() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         let vn = Vn {
             addr_off: (-2_i64) as u64,
@@ -1497,8 +1496,8 @@ mod tests {
 
     #[test]
     fn decode_branch_target_const_space_underflow_errors() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         let vn = Vn {
             addr_off: (-5_i64) as u64,
@@ -1517,8 +1516,8 @@ mod tests {
 
     #[test]
     fn decode_branch_target_const_space_index_past_end_errors() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         let pcode_count = 4u64;
         let lift = fake_lift_res(usize::try_from(pcode_count).unwrap());
@@ -1538,8 +1537,8 @@ mod tests {
 
     #[test]
     fn const_space_branch_to_pcode_count_falls_through_to_next_insn() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         let pcode_count = 4usize;
         let lift = fake_lift_res_with_len(pcode_count, 4);
@@ -1596,8 +1595,8 @@ mod tests {
 
     #[test]
     fn nocheck_below_start_default_opts_is_tail_call() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         assert!(rb.is_branch_tail_call_nocheck(addr_at(0x0800, 0)));
     }
@@ -1610,8 +1609,8 @@ mod tests {
             },
             ..CfgOptions::default()
         };
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder_opts(0x1000, &mut sleigh, &opts);
+        let mut engine = make_engine();
+        let mut b = make_builder_opts(0x1000, &mut engine, &opts);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         assert!(!rb.is_branch_tail_call_nocheck(addr_at(0x0800, 0)));
     }
@@ -1622,16 +1621,16 @@ mod tests {
             bound: crate::FunctionBound::size(0x100),
             ..CfgOptions::default()
         };
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder_opts(0x1000, &mut sleigh, &opts);
+        let mut engine = make_engine();
+        let mut b = make_builder_opts(0x1000, &mut engine, &opts);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         assert!(rb.is_branch_tail_call_nocheck(addr_at(0x0800, 0)));
     }
 
     #[test]
     fn nocheck_within_function_no_limit_is_not_tail_call() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         assert!(!rb.is_branch_tail_call_nocheck(addr_at(0x1200, 0)));
     }
@@ -1642,8 +1641,8 @@ mod tests {
             bound: crate::FunctionBound::size(0x100),
             ..CfgOptions::default()
         };
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder_opts(0x1000, &mut sleigh, &opts);
+        let mut engine = make_engine();
+        let mut b = make_builder_opts(0x1000, &mut engine, &opts);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         assert!(rb.is_branch_tail_call_nocheck(addr_at(0x1100, 0)));
         assert!(!rb.is_branch_tail_call_nocheck(addr_at(0x10ff, 0)));
@@ -1657,8 +1656,8 @@ mod tests {
             bound: crate::FunctionBound::size(max_size),
             ..CfgOptions::default()
         };
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder_opts(start_addr, &mut sleigh, &opts);
+        let mut engine = make_engine();
+        let mut b = make_builder_opts(start_addr, &mut engine, &opts);
         let rb = make_region_builder(&mut b, addr_at(start_addr, 0));
         let target = addr_at(start_addr + 0x10, 0);
         assert!(
@@ -1694,8 +1693,8 @@ mod tests {
             first.opcode,
             rsleigh::Opcode::Branch | rsleigh::Opcode::CondBranch | rsleigh::Opcode::Return
         ));
-        let mut sleigh = make_sleigh_over(bytes, base);
-        let mut b = make_builder(base, &mut sleigh);
+        let mut engine = make_engine_over(bytes, base);
+        let mut b = make_builder(base, &mut engine);
         let mut rb = make_region_builder(&mut b, addr_at(base, 0));
 
         let res = rb
@@ -1711,8 +1710,8 @@ mod tests {
         let bytes = vec![0xc3u8];
         let lift = lift_at(bytes.clone(), base, base);
         let (pos, ret_insn) = find_pcode(&lift, rsleigh::Opcode::Return);
-        let mut sleigh = make_sleigh_over(bytes, base);
-        let mut b = make_builder(base, &mut sleigh);
+        let mut engine = make_engine_over(bytes, base);
+        let mut b = make_builder(base, &mut engine);
         let mut rb = make_region_builder(&mut b, addr_at(base, 0));
 
         let res = rb
@@ -1733,8 +1732,8 @@ mod tests {
         let bytes = vec![0xffu8, 0xe0]; // jmp rax
         let lift = lift_at(bytes.clone(), base, base);
         let (pos, indirect) = find_pcode(&lift, rsleigh::Opcode::BranchIndirect);
-        let mut sleigh = make_sleigh_over(bytes, base);
-        let mut b = make_builder(base, &mut sleigh);
+        let mut engine = make_engine_over(bytes, base);
+        let mut b = make_builder(base, &mut engine);
         let mut rb = make_region_builder(&mut b, addr_at(base, 0));
 
         let res = rb
@@ -1758,8 +1757,8 @@ mod tests {
         let bytes = vec![0x74u8, 0x00, 0xc3, 0xc3];
         let lift = lift_at(bytes.clone(), base, base);
         let (pos, cbr) = find_pcode(&lift, rsleigh::Opcode::CondBranch);
-        let mut sleigh = make_sleigh_over(bytes, base);
-        let mut b = make_builder(base, &mut sleigh);
+        let mut engine = make_engine_over(bytes, base);
+        let mut b = make_builder(base, &mut engine);
         let mut rb = make_region_builder(&mut b, addr_at(base, 0));
 
         let res = rb
@@ -1801,8 +1800,8 @@ mod tests {
         let bytes = vec![0xebu8, 0x01, 0xc3];
         let lift = lift_at(bytes.clone(), base, base);
         let (pos, branch) = find_pcode(&lift, rsleigh::Opcode::Branch);
-        let mut sleigh = make_sleigh_over(bytes, base);
-        let mut b = make_builder(base, &mut sleigh);
+        let mut engine = make_engine_over(bytes, base);
+        let mut b = make_builder(base, &mut engine);
         let mut rb = make_region_builder(&mut b, addr_at(base, 0));
 
         let res = rb
@@ -1823,8 +1822,8 @@ mod tests {
         let bytes = vec![0xebu8, -10_i8 as u8, 0xc3];
         let lift = lift_at(bytes.clone(), base, base);
         let (pos, branch) = find_pcode(&lift, rsleigh::Opcode::Branch);
-        let mut sleigh = make_sleigh_over(bytes, base);
-        let mut b = make_builder(base, &mut sleigh);
+        let mut engine = make_engine_over(bytes, base);
+        let mut b = make_builder(base, &mut engine);
         let mut rb = make_region_builder(&mut b, addr_at(base, 0));
 
         let res = rb
@@ -1849,8 +1848,8 @@ mod tests {
 
     #[test]
     fn process_new_insn_branch_with_empty_inputs_errors() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let mut rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         let lift = fake_lift_res(1);
         let bad_insn = rsleigh::Insn {
@@ -1869,8 +1868,8 @@ mod tests {
 
     #[test]
     fn process_new_insn_condbranch_with_empty_inputs_errors() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let mut rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         let lift = fake_lift_res(1);
         let bad_insn = rsleigh::Insn {

@@ -1,10 +1,8 @@
 //! A reused `Lifter` decodes a function exactly as a fresh one does.
 //!
-//! Pins the production wiring: `Lifter::build_cfg` lends
-//! `SleighArch::flow_commit_vars` to the builder, so a value a previous
-//! `build_cfg` committed on this engine is re-derived rather than believed.
-//! Dropping that lend leaves the whole flow-commit mechanism inert, which no
-//! test over a hand-built `Builder` can see.
+//! Pins the production wiring: every `DecodeEngine::build_cfg` re-derives the
+//! vars `SleighArch::flow_commit_vars` names, so a value a previous
+//! `build_cfg` committed on this engine is not believed.
 //!
 //! One case per flow class: `condit` is `noflow`, `TEEMode` flows.
 

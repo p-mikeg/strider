@@ -4,7 +4,7 @@
 
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_cfg::{Builder, CfgOptions};
+use strider_cfg::{CfgOptions, DecodeEngine};
 use strider_target::SleighArch;
 
 fn hex(s: &[u8]) -> Vec<u8> {
@@ -17,9 +17,10 @@ fn hex(s: &[u8]) -> Vec<u8> {
 /// assertion here, a crash or a panic being what these inputs used to produce.
 fn build_succeeds(arch: &SleighArch, bytes: Vec<u8>, start: u64, opts: &CfgOptions) -> bool {
     let reader = BufMemReader::new(bytes, start);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-    Builder::for_arch(arch, &mut sleigh, start, opts)
-        .build()
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
+    DecodeEngine::new(*arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(start.into(), opts)
         .is_ok()
 }
 

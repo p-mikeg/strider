@@ -7,14 +7,16 @@
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{
-    Builder, Cfg, CfgOptions, DataRanges, PcodeInsnAddr, RegionTerminator, ResolvedTargets,
+    Cfg, CfgOptions, DataRanges, DecodeEngine, PcodeInsnAddr, RegionTerminator, ResolvedTargets,
 };
 use strider_target::SleighArch;
 
 fn build(arch: &SleighArch, bytes: Vec<u8>, start: u64, opts: &CfgOptions) -> anyhow::Result<Cfg> {
     let reader = BufMemReader::new(bytes, start);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-    Builder::for_arch(arch, &mut sleigh, start, opts).build()
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
+    DecodeEngine::new(*arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(start.into(), opts)
 }
 
 fn be_words(words: &[u32]) -> Vec<u8> {
