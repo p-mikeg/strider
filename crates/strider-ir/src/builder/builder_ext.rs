@@ -378,7 +378,10 @@ pub trait IRBuilderExt: IRBuilder {
         inputs: &[ValueId],
         output_type: ValueType,
     ) -> Result<ValueId> {
-        self.validate_value_inputs(inputs)?;
+        for (slot, &value) in inputs.iter().enumerate() {
+            self.require_slot(&kind, slot, value)?;
+        }
+        Self::require_output_type(&kind, output_type)?;
         let node = self.create_node(
             kind,
             inputs.iter().copied(),

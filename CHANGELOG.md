@@ -110,6 +110,9 @@
   against its node signature. Before, no node's input count was checked, nor
   any input of a raw `Load`, `Store`, `Phi`, `MemPhi`, `New` or `CPoolRef`,
   so a template could build IR `validate` rejects.
+- `build_store`, `build_load`, `build_cpool_ref` and `build_new` return `Err`
+  on a float address, data or `CPoolRef` operand, and on a float output for
+  `Load`, `CPoolRef` or `New`; each checks its node signature.
 
 ### Changed, Python
 
@@ -231,12 +234,14 @@
   `int_cmp`, `int_unary`, `sign_extend`, `popcount`, `lzcount`), `None` where
   the result is undefined or the width is past 128 bits.
 - `IntBinaryOp::is_shift`: whether operand 1 is a shift count.
-- `ExpectedValueKind::admits`, the slot-kind check `validate` and the
-  template both read.
+- `ExpectedValueKind::admits`, the slot-kind check `validate`, the template
+  and the builders read.
 - `NodeKind::{expected_input_kind, input_arity, operand_width}`,
-  `OperandWidth` and `Conversion`: each input slot's kind, arity and width
-  from the node signature. The template reads all three, `validate` the
-  width.
+  `OperandWidth` and `Conversion`: a node's input arity, and each input
+  slot's kind and width, from the node signature. `validate` reads the
+  width, the template all three, the builders the kind.
+- `IRViewer::{require_slot, require_output_type}`: a value or output type
+  checked against a node's signature.
 
 ## 0.2.0
 

@@ -1156,6 +1156,33 @@ fn build_new_is_not_deduplicated() -> Result<()> {
     Ok(())
 }
 
+/// The memory and opaque builders hold their operands and output to the node
+/// signature: an address, data or `CPoolRef` operand is an integer, and so is
+/// what a `Load`, `CPoolRef` or `New` outputs.
+#[test]
+fn memory_and_opaque_builders_refuse_what_the_signature_rejects() -> Result<()> {
+    let ram = rsleigh::VnSpace::RAM;
+    let (i64_, f64_) = (ValueType::int(64), ValueType::float(64));
+    let mut b = builder_with_region()?;
+    let int = b.build_int_const(0x100u64, i64_)?;
+    let float = b.build_float_const(0, f64_);
+    assert!(b.build_store(float, int, ram).is_err(), "float address");
+    assert!(b.build_store(int, float, ram).is_err(), "float data");
+    assert!(b.build_load(float, ram, i64_).is_err(), "float address");
+    assert!(b.build_load(int, ram, f64_).is_err(), "float load output");
+    assert!(b.build_cpool_ref(&[float], i64_).is_err(), "float ref");
+    assert!(
+        b.build_cpool_ref(&[int], f64_).is_err(),
+        "float cpool output"
+    );
+    assert!(b.build_new(&[int], f64_).is_err(), "float new output");
+    // `New`'s arguments admit any value.
+    b.build_new(&[float], i64_)?;
+    b.build_store(int, int, ram)?;
+    b.build_load(int, ram, i64_)?;
+    Ok(())
+}
+
 /// An I1 is an ordinary 1-bit integer, so widening it emits a real
 /// `ZeroExtend`.
 #[test]
