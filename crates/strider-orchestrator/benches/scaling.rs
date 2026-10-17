@@ -382,7 +382,7 @@ fn bench_stack_store_chain(c: &mut Criterion) {
     // clean, so the guard is worth its one extra pass run.
     {
         let mut fg = synthetic::build_stack_store_chain(32);
-        let pass = LoadForward::default();
+        let pass = LoadForward;
         strider_orchestrator::opt::run_one(
             &pass,
             &mut fg,
@@ -402,7 +402,7 @@ fn bench_stack_store_chain(c: &mut Criterion) {
             b.iter_batched(
                 || synthetic::build_stack_store_chain(n),
                 |mut fg| {
-                    let pass = LoadForward::default();
+                    let pass = LoadForward;
                     let _ = strider_orchestrator::opt::run_one_unvalidated(
                         &pass,
                         &mut fg,

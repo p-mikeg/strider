@@ -37,6 +37,11 @@ impl Default for ConstantFold {
 }
 
 impl PeepholePass for ConstantFold {
+    type Sweep = ();
+    /// A fold makes its consumers' operands constant, which the same sweep can
+    /// fold next.
+    const PROPAGATE: bool = true;
+
     fn matches_kind(&self, kind: &NodeKind) -> bool {
         matches!(
             kind,
@@ -57,6 +62,7 @@ impl PeepholePass for ConstantFold {
 
     fn try_rewrite(
         &self,
+        _sweep: &mut (),
         edit: &mut crate::EditFunction<'_>,
         _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,

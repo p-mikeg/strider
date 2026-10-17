@@ -127,6 +127,8 @@
   another arch, so `Strider::analyze` does too.
 - A seed naming one address in both ISA modes decodes it in base mode first,
   not in the order listed.
+- `LoadForward` is a unit struct again (`Copy`); `LoadForward::default()`
+  still builds one.
 
 ### Fixed
 
