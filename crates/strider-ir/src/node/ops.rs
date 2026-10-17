@@ -69,6 +69,24 @@ op_enum! {
     }
 }
 
+impl IntBinaryOp {
+    /// Operand 1 is a shift count, which p-code leaves any width.
+    pub const fn is_shift(self) -> bool {
+        match self {
+            Self::ShiftRight | Self::SShiftRight | Self::ShiftLeft => true,
+            Self::Add
+            | Self::And
+            | Self::Or
+            | Self::Xor
+            | Self::Div
+            | Self::Sdiv
+            | Self::Rem
+            | Self::Srem
+            | Self::Mul => false,
+        }
+    }
+}
+
 op_enum! {
     /// `Neg` is two's-complement negation `-x`, not bitwise complement.
     pub enum IntUnaryOp {

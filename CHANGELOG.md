@@ -226,6 +226,7 @@
 - `strider_ir::eval`: integer evaluation at a declared width (`int_binary`,
   `int_cmp`, `int_unary`, `sign_extend`, `popcount`, `lzcount`), `None` where
   the result is undefined or the width is past 128 bits.
+- `IntBinaryOp::is_shift`: whether operand 1 is a shift count.
 
 ## 0.2.0
 
