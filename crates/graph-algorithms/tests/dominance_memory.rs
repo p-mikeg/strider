@@ -3,7 +3,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-use graph_algorithms::dominance::{DomRelation, DomTree, dominance_frontiers};
+use graph_algorithms::dominance::{dominance_frontiers, dominators};
 
 thread_local! {
     static LIVE: Cell<isize> = const { Cell::new(0) };
@@ -45,41 +45,30 @@ static ALLOC: PeakAlloc = PeakAlloc;
 
 const JOINS: u32 = 1 << 17;
 
-/// `0 -> {1, 2} ->` each of `JOINS` joins, all dominated by `0`: both arms
-/// carry every join, so the frontier output is `2 * JOINS` entries and the
-/// climb records one pair per entry.
-struct WideJoin;
+/// The climb's dedup bookkeeping must not accumulate across the whole call:
+/// held globally it grows to the whole `2 * JOINS`-entry frontier output,
+/// where one climb needs room for a single node's frontier.
+#[test]
+fn frontier_build_peak_memory_is_near_its_output() {
+    // `0 -> {1, 2} ->` each of `JOINS` joins, all dominated by `0`: both arms
+    // carry every join, so the frontier output is `2 * JOINS` entries and the
+    // climb records one pair per entry. Built before the window opens.
+    let doms = dominators(0u32, |n| match n {
+        0 => vec![1, 2],
+        1 | 2 => (3..3 + JOINS).collect(),
+        _ => Vec::new(),
+    });
+    LIVE.with(|c| c.set(0));
+    PEAK.with(|c| c.set(0));
 
-impl DomRelation for WideJoin {
-    type Node = u32;
-    fn nodes(&self) -> impl Iterator<Item = u32> + '_ {
-        0..3 + JOINS
-    }
-    fn immediate_dominator(&self, n: u32) -> Option<u32> {
-        (n != 0).then_some(0)
-    }
-}
-
-impl DomTree for WideJoin {
-    fn predecessors(&self, n: u32) -> impl Iterator<Item = u32> + '_ {
+    let fr = dominance_frontiers(&doms, |n: u32| {
         let preds: &'static [u32] = match n {
             0 => &[],
             1 | 2 => &[0],
             _ => &[1, 2],
         };
         preds.iter().copied()
-    }
-}
-
-/// The climb's dedup bookkeeping must not accumulate across the whole call:
-/// held globally it grows to the whole `2 * JOINS`-entry frontier output,
-/// where one climb needs room for a single node's frontier.
-#[test]
-fn frontier_build_peak_memory_is_near_its_output() {
-    LIVE.with(|c| c.set(0));
-    PEAK.with(|c| c.set(0));
-
-    let fr = dominance_frontiers(&WideJoin, 0);
+    });
 
     let peak = PEAK.with(Cell::get);
     let entries: usize = fr.values().map(Vec::len).sum();

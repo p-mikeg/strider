@@ -1,28 +1,7 @@
-use graph_algorithms::dominance::{DomRelation, DomTree, Dominators, Frontiers};
+use graph_algorithms::dominance::{Dominators, Frontiers};
 use petgraph::Direction::Incoming;
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::{Cfg, RegionId};
-
-struct CfgDomTree<'a> {
-    cfg: &'a Cfg,
-    doms: &'a Dominators<RegionId>,
-}
-
-impl DomRelation for CfgDomTree<'_> {
-    type Node = RegionId;
-    fn nodes(&self) -> impl Iterator<Item = RegionId> + '_ {
-        self.cfg.region_ids()
-    }
-    fn immediate_dominator(&self, n: RegionId) -> Option<RegionId> {
-        self.doms.immediate_dominator(n)
-    }
-}
-
-impl DomTree for CfgDomTree<'_> {
-    fn predecessors(&self, n: RegionId) -> impl Iterator<Item = RegionId> + '_ {
-        self.cfg.region_graph().neighbors_directed(n, Incoming)
-    }
-}
 
 pub(crate) struct DomInfo {
     doms: Dominators<RegionId>,
@@ -30,7 +9,8 @@ pub(crate) struct DomInfo {
     /// be needed.  An absent key means an empty frontier.
     frontiers: Frontiers<RegionId>,
     /// The order the SSA renaming walk uses: every region appears after its
-    /// immediate dominator.
+    /// immediate dominator, siblings ascending by `RegionId`. It is the order
+    /// the lift translates regions in, so every body node's NodeId follows it.
     preorder: Vec<RegionId>,
 }
 
@@ -39,17 +19,10 @@ impl DomInfo {
     pub(crate) fn compute(cfg: &Cfg) -> Self {
         let graph = cfg.region_graph();
         let doms = graph_algorithms::dominance::dominators(cfg.entry(), |r| graph.neighbors(r));
-
-        // The adapter only borrows `doms`; that borrow ends before `doms` moves
-        // into `Self`.
-        let (frontiers, preorder) = {
-            let adapter = CfgDomTree { cfg, doms: &doms };
-            (
-                graph_algorithms::dominance::dominance_frontiers(&adapter, cfg.entry()),
-                doms.tree_preorder(),
-            )
-        };
-
+        let frontiers = graph_algorithms::dominance::dominance_frontiers(&doms, |r| {
+            graph.neighbors_directed(r, Incoming)
+        });
+        let preorder = doms.tree_preorder();
         Self {
             doms,
             frontiers,
@@ -92,8 +65,8 @@ mod tests {
     /// `test edi,edi ; je 0x100a ; mov eax,1 ; ret ; xor eax,eax ; ret`. The
     /// builder creates the two arms in queue order, and petgraph lists a
     /// region's out-edges newest first, so the depth-first discovery reaches
-    /// the arm with the higher `RegionId` first. The SSA walk, which fixes the
-    /// order regions and phis are created in, takes siblings by `RegionId`.
+    /// the arm with the higher `RegionId` first. The SSA walk, whose order
+    /// the body nodes' NodeIds follow, takes siblings by `RegionId`.
     #[test]
     fn the_ssa_walk_takes_sibling_regions_by_region_id() {
         let arch = strider_target::SleighArch::x86_64();
