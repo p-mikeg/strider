@@ -93,7 +93,10 @@ fn edge_lines(dot: &str) -> Vec<&str> {
 /// raw bits, never an `f64::from_bits` reinterpretation.
 #[test]
 fn render_float_const_beyond_f64_shows_raw_bits() {
-    for (ty, suffix) in [(ValueType::F16, ":f16"), (ValueType::F128, ":f128")] {
+    for (ty, suffix) in [
+        (ValueType::float(16), ":f16"),
+        (ValueType::float(128), ":f128"),
+    ] {
         let mut f = test_function();
         let entry = f
             .graph_mut()
@@ -135,11 +138,14 @@ fn render_int_const_wide_shows_value_not_debug() {
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     // Limbs are little-endian; the high limb keeps this genuinely Wide.
-    let id = f.intern_int_const_limbs(&[0x1234, 0xabcd, 0, 0x8000_0000_0000_0000], ValueType::I256);
+    let id = f.intern_int_const_limbs(
+        &[0x1234, 0xabcd, 0, 0x8000_0000_0000_0000],
+        ValueType::int(256),
+    );
     let wide = f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
-        [ValueKind::Typed(ValueType::I256)],
+        [ValueKind::Typed(ValueType::int(256))],
     );
     let [wide_value] = f.node_outputs_exact::<1>(wide).unwrap();
     f.graph_mut()
@@ -173,12 +179,12 @@ fn raw_dot_is_one_node_per_reachable_node_no_inlining() {
         .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-    let c = int_const_node(&mut f, 0xABC_u128, ValueType::I64);
+    let c = int_const_node(&mut f, 0xABC_u128, ValueType::int(64));
     let [c_value] = f.node_outputs_exact::<1>(c).unwrap();
     f.graph_mut()
         .create_node(NodeKind::Return, [ctrl, mem_value, c_value], []);
     // Not reachable from entry, so it must not appear.
-    let zombie = int_const_node(&mut f, 0xDEAD_BEEF_u128, ValueType::I64);
+    let zombie = int_const_node(&mut f, 0xDEAD_BEEF_u128, ValueType::int(64));
 
     let dot = f.raw_dot().expect("raw_dot must render");
 
@@ -355,7 +361,7 @@ fn dot_id_maps_back_to_its_ir_node_including_duplicated_consts() {
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
 
     // One const feeding three consumers -> three dot boxes, one NodeId.
-    let k = int_const_node(&mut f, 7_u128, ValueType::I64);
+    let k = int_const_node(&mut f, 7_u128, ValueType::int(64));
     let [kv] = f.node_outputs_exact::<1>(k).unwrap();
     let mut adds = Vec::new();
     let mut add_values = vec![ctrl];
@@ -363,7 +369,7 @@ fn dot_id_maps_back_to_its_ir_node_including_duplicated_consts() {
         let a = f.graph_mut().create_node(
             NodeKind::IntBinaryOp(crate::IntBinaryOp::Add),
             [kv, kv],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [av] = f.node_outputs_exact::<1>(a).unwrap();
         adds.push(a);
@@ -435,7 +441,7 @@ fn int_const_label_contains_value_and_type() {
     let entry = f
         .graph_mut()
         .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-    let c = int_const_node(&mut f, 0xdeadbeef_u128, ValueType::I32);
+    let c = int_const_node(&mut f, 0xdeadbeef_u128, ValueType::int(32));
     let [c_value] = f.node_outputs_exact::<1>(c).unwrap();
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     f.graph_mut()
@@ -549,7 +555,7 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
         .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = f.node_outputs(entry).iter().copied().next().unwrap();
     let mem = f.node_outputs(init_mem).iter().copied().next().unwrap();
-    let target = int_const_node(&mut f, 0x1000_u128, ValueType::I64);
+    let target = int_const_node(&mut f, 0x1000_u128, ValueType::int(64));
     let target_value = f.node_outputs(target).iter().copied().next().unwrap();
     // One clobbered output, left untagged.
     let call = f.graph_mut().create_node(
@@ -662,10 +668,10 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
     let [region_ctrl, _phi_tok] = f.node_outputs_exact::<2>(region).unwrap();
 
     // addr stands in for SP + 0x10.
-    let addr = int_const_node(&mut f, 0x10_u128, ValueType::I64);
+    let addr = int_const_node(&mut f, 0x10_u128, ValueType::int(64));
     let [addr_value] = f.node_outputs_exact::<1>(addr).unwrap();
 
-    let val = int_const_node(&mut f, (0xdeadbeef_u64) as u128, ValueType::I32);
+    let val = int_const_node(&mut f, (0xdeadbeef_u64) as u128, ValueType::int(32));
     let [val_value] = f.node_outputs_exact::<1>(val).unwrap();
 
     let store = f.graph_mut().create_node(
@@ -726,13 +732,13 @@ fn load_keeps_addr_edge_and_labels_base_sp_offset() {
         .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [mem0] = f.node_outputs_exact::<1>(init_mem).unwrap();
 
-    let addr = int_const_node(&mut f, 0x8_u128, ValueType::I64);
+    let addr = int_const_node(&mut f, 0x8_u128, ValueType::int(64));
     let [addr_value] = f.node_outputs_exact::<1>(addr).unwrap();
 
     let load = f.graph_mut().create_node(
         NodeKind::Load(rsleigh::VnSpace::RAM),
         [mem0, addr_value],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     let [load_value] = f.node_outputs_exact::<1>(load).unwrap();
 
@@ -776,7 +782,7 @@ fn function_arg_node_label_includes_arg_index() {
     let init_var = f.graph_mut().create_node(
         NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
         [],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     let [iv_value] = f.node_outputs_exact::<1>(init_var).unwrap();
     f.side_tables_mut().register_arg_value(0, iv_value);
@@ -840,15 +846,15 @@ fn render_two_pred_join_with_phi_memphi() -> String {
     );
     let [_join_ctrl, join_phi_token] = f.node_outputs_exact::<2>(join).unwrap();
 
-    let v_t = int_const_node(&mut f, 0xAA_u128, ValueType::I64);
-    let v_f = int_const_node(&mut f, 0xBB_u128, ValueType::I64);
+    let v_t = int_const_node(&mut f, 0xAA_u128, ValueType::int(64));
+    let v_f = int_const_node(&mut f, 0xBB_u128, ValueType::int(64));
     let [v_t_value] = f.node_outputs_exact::<1>(v_t).unwrap();
     let [v_f_value] = f.node_outputs_exact::<1>(v_f).unwrap();
 
     let phi = f.graph_mut().create_node(
         NodeKind::Phi,
         [join_phi_token, v_t_value, v_f_value],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     let [phi_value] = f.node_outputs_exact::<1>(phi).unwrap();
     f.set_vn_for_value(
@@ -930,14 +936,14 @@ fn neighborhood_bfs_bounds_depth_and_walks_both_directions() {
     use rustc_hash::FxHashMap;
 
     let mut f = test_function();
-    let c1 = int_const_node(&mut f, 5, ValueType::I32);
-    let c2 = int_const_node(&mut f, 8, ValueType::I32);
+    let c1 = int_const_node(&mut f, 5, ValueType::int(32));
+    let c2 = int_const_node(&mut f, 8, ValueType::int(32));
     let v1 = f.node_outputs(c1)[0];
     let v2 = f.node_outputs(c2)[0];
     let add = f.graph_mut().create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [v1, v2],
-        [ValueKind::Typed(ValueType::I32)],
+        [ValueKind::Typed(ValueType::int(32))],
     );
     let mut consumers: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
     consumers.entry(c1).or_default().push(add);
@@ -966,22 +972,22 @@ fn neighborhood_hub_follows_producers_not_consumers() {
 
     // c1, c2 -> add(hub) -> use1.
     let mut f = test_function();
-    let c1 = int_const_node(&mut f, 5, ValueType::I32);
-    let c2 = int_const_node(&mut f, 8, ValueType::I32);
+    let c1 = int_const_node(&mut f, 5, ValueType::int(32));
+    let c2 = int_const_node(&mut f, 8, ValueType::int(32));
     let v1 = f.node_outputs(c1)[0];
     let v2 = f.node_outputs(c2)[0];
     let add = f.graph_mut().create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [v1, v2],
-        [ValueKind::Typed(ValueType::I32)],
+        [ValueKind::Typed(ValueType::int(32))],
     );
     let av = f.node_outputs(add)[0];
-    let c3 = int_const_node(&mut f, 1, ValueType::I32);
+    let c3 = int_const_node(&mut f, 1, ValueType::int(32));
     let v3 = f.node_outputs(c3)[0];
     let use1 = f.graph_mut().create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [av, v3],
-        [ValueKind::Typed(ValueType::I32)],
+        [ValueKind::Typed(ValueType::int(32))],
     );
     let mut consumers: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
     consumers.entry(c1).or_default().push(add);
@@ -1009,14 +1015,14 @@ fn neighborhood_bfs_bounds_total_node_count() {
 
     // Depth 1 from Add reaches all 3 nodes, so a budget of 2 must clamp it.
     let mut f = test_function();
-    let c1 = int_const_node(&mut f, 5, ValueType::I32);
-    let c2 = int_const_node(&mut f, 8, ValueType::I32);
+    let c1 = int_const_node(&mut f, 5, ValueType::int(32));
+    let c2 = int_const_node(&mut f, 8, ValueType::int(32));
     let v1 = f.node_outputs(c1)[0];
     let v2 = f.node_outputs(c2)[0];
     let add = f.graph_mut().create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [v1, v2],
-        [ValueKind::Typed(ValueType::I32)],
+        [ValueKind::Typed(ValueType::int(32))],
     );
     let consumers: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
 
@@ -1036,15 +1042,15 @@ fn neighborhood_center_is_highlighted_and_navigable_even_when_const() {
     use crate::node::IntBinaryOp;
 
     let mut f = test_function();
-    let k = int_const_node(&mut f, 7, ValueType::I32);
-    let a = int_const_node(&mut f, 1, ValueType::I32);
+    let k = int_const_node(&mut f, 7, ValueType::int(32));
+    let a = int_const_node(&mut f, 1, ValueType::int(32));
     let kv = f.node_outputs(k)[0];
     let av = f.node_outputs(a)[0];
     let mk_add = |f: &mut Function, l, r| {
         f.graph_mut().create_node(
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             [l, r],
-            [ValueKind::Typed(ValueType::I32)],
+            [ValueKind::Typed(ValueType::int(32))],
         )
     };
     let add1 = mk_add(&mut f, av, kv);
@@ -1108,9 +1114,9 @@ fn neighborhood_duplicates_shared_const_per_use() {
 
     // const 7 feeds two Adds, both feeding the centered Add.
     let mut f = test_function();
-    let k = int_const_node(&mut f, 7, ValueType::I32);
-    let a = int_const_node(&mut f, 1, ValueType::I32);
-    let b = int_const_node(&mut f, 2, ValueType::I32);
+    let k = int_const_node(&mut f, 7, ValueType::int(32));
+    let a = int_const_node(&mut f, 1, ValueType::int(32));
+    let b = int_const_node(&mut f, 2, ValueType::int(32));
     let kv = f.node_outputs(k)[0];
     let av = f.node_outputs(a)[0];
     let bv = f.node_outputs(b)[0];
@@ -1118,7 +1124,7 @@ fn neighborhood_duplicates_shared_const_per_use() {
         f.graph_mut().create_node(
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             [l, r],
-            [ValueKind::Typed(ValueType::I32)],
+            [ValueKind::Typed(ValueType::int(32))],
         )
     };
     let add1 = mk_add(&mut f, av, kv);
@@ -1168,7 +1174,7 @@ fn function_float_arg_node_label_is_distinct_from_the_integer_index() {
         let node = f.graph_mut().create_node(
             NodeKind::InitialVar(crate::node::InitialVnId::from_index(vn_index)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         f.node_outputs_exact::<1>(node).unwrap()[0]
     };

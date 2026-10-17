@@ -76,8 +76,8 @@ fn count(function: &Function, mask: CastMask) -> usize {
 
 /// `Add(Truncate(InitialVar : I64) : I32, IntConst(7) : I32) : I32`.
 fn fixture_truncate_then_add() -> Function {
-    build_add_wrapped(x_vn(), ValueType::I32, |fb, x| {
-        fb.truncate_if_needed(x, ValueType::I32).unwrap()
+    build_add_wrapped(x_vn(), ValueType::int(32), |fb, x| {
+        fb.truncate_if_needed(x, ValueType::int(32)).unwrap()
     })
 }
 
@@ -116,8 +116,8 @@ fn x_u32_vn() -> rsleigh::Vn {
 
 /// `Add(ZeroExt(InitialVar : I32) : I64, IntConst(7) : I64) : I64`.
 fn fixture_zext_then_add() -> Function {
-    build_add_wrapped(x_u32_vn(), ValueType::I64, |fb, x| {
-        fb.extend_if_needed(x, ValueType::I64, ExtendOp::ZeroExtend)
+    build_add_wrapped(x_u32_vn(), ValueType::int(64), |fb, x| {
+        fb.extend_if_needed(x, ValueType::int(64), ExtendOp::ZeroExtend)
             .unwrap()
     })
 }
@@ -152,8 +152,8 @@ fn zext_initial_var_extend_mask_one_match() {
 
 /// `Add(SignExt(InitialVar : I32) : I64, IntConst(7) : I64) : I64`.
 fn fixture_sext_then_add() -> Function {
-    build_add_wrapped(x_u32_vn(), ValueType::I64, |fb, x| {
-        fb.extend_if_needed(x, ValueType::I64, ExtendOp::SignExtend)
+    build_add_wrapped(x_u32_vn(), ValueType::int(64), |fb, x| {
+        fb.extend_if_needed(x, ValueType::int(64), ExtendOp::SignExtend)
             .unwrap()
     })
 }
@@ -186,11 +186,11 @@ fn x_u16_vn() -> rsleigh::Vn {
 
 /// `Add(Truncate(ZeroExt(InitialVar : I16) : I64) : I32, IntConst(7) : I32) : I32`.
 fn fixture_truncate_of_zext_then_add() -> Function {
-    build_add_wrapped(x_u16_vn(), ValueType::I32, |fb, x| {
+    build_add_wrapped(x_u16_vn(), ValueType::int(32), |fb, x| {
         let widened = fb
-            .extend_if_needed(x, ValueType::I64, ExtendOp::ZeroExtend)
+            .extend_if_needed(x, ValueType::int(64), ExtendOp::ZeroExtend)
             .unwrap();
-        fb.truncate_if_needed(widened, ValueType::I32).unwrap()
+        fb.truncate_if_needed(widened, ValueType::int(32)).unwrap()
     })
 }
 
@@ -227,12 +227,12 @@ fn truncate_of_zext_truncate_or_zero_extend_mask_one_match() {
 /// Builds `Add(<truncate-extend tower>(InitialVar : I64), IntConst(7) : I64)`
 /// with `levels` round-trips of `Truncate(I64 -> I32)` -> `Extend(I32 -> I64)`.
 fn fixture_deep_cast_chain(levels: usize) -> Function {
-    build_add_wrapped(x_vn(), ValueType::I64, |fb, x| {
+    build_add_wrapped(x_vn(), ValueType::int(64), |fb, x| {
         let mut current = x;
         for _ in 0..levels {
-            current = fb.truncate_if_needed(current, ValueType::I32).unwrap();
+            current = fb.truncate_if_needed(current, ValueType::int(32)).unwrap();
             current = fb
-                .extend_if_needed(current, ValueType::I64, ExtendOp::ZeroExtend)
+                .extend_if_needed(current, ValueType::int(64), ExtendOp::ZeroExtend)
                 .unwrap();
         }
         current

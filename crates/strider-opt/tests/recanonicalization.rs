@@ -22,17 +22,17 @@ fn clean_merges_structural_twin_left_by_a_rewrite() {
         .build_fn_single_region()
         .unwrap();
     let a = b.read_variable(&a_vn).unwrap();
-    let c1 = b.build_int_const(1u64, ValueType::I64).unwrap();
-    let c2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+    let c1 = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+    let c2 = b.build_int_const(2u64, ValueType::int(64)).unwrap();
     let add1 = b
-        .build_int_binary_operation(a, c1, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(a, c1, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     let add2 = b
-        .build_int_binary_operation(a, c2, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(a, c2, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     // Keeps BOTH twins reachable from entry.
     let add3 = b
-        .build_int_binary_operation(add1, add2, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(add1, add2, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     b.build_return(Some(add3), &[]).unwrap();
     b.set_lift_addr(None);
@@ -81,16 +81,24 @@ fn clean_does_not_merge_when_output_type_differs() {
     let a = b.read_variable(&a_vn).unwrap();
     let bb = b.read_variable(&b_vn).unwrap();
     // Initially distinct inputs: Truncate(a):I32 and Truncate(bb):I16.
-    let t32 = b.truncate_if_needed(a, ValueType::I32).unwrap();
-    let t16 = b.truncate_if_needed(bb, ValueType::I16).unwrap();
+    let t32 = b.truncate_if_needed(a, ValueType::int(32)).unwrap();
+    let t16 = b.truncate_if_needed(bb, ValueType::int(16)).unwrap();
     let w32 = b
-        .extend_if_needed(t32, ValueType::I64, strider_ir::node::ExtendOp::ZeroExtend)
+        .extend_if_needed(
+            t32,
+            ValueType::int(64),
+            strider_ir::node::ExtendOp::ZeroExtend,
+        )
         .unwrap();
     let w16 = b
-        .extend_if_needed(t16, ValueType::I64, strider_ir::node::ExtendOp::ZeroExtend)
+        .extend_if_needed(
+            t16,
+            ValueType::int(64),
+            strider_ir::node::ExtendOp::ZeroExtend,
+        )
         .unwrap();
     let sum = b
-        .build_int_binary_operation(w32, w16, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(w32, w16, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     b.build_return(Some(sum), &[]).unwrap();
     b.set_lift_addr(None);

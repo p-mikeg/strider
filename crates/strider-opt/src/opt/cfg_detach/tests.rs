@@ -163,7 +163,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
 
     // The CallOther is only there to advance the memory chain.
     b.set_region(true_r);
-    let v_t = b.build_int_const(1u64, ValueType::I64)?;
+    let v_t = b.build_int_const(1u64, ValueType::int(64))?;
     b.write_variable(&var, v_t)?;
     let (call_t, _) =
         strider_ir_test_utils::Tb::named_call_other(&mut b, 0, "cpuid", &[], &[], false, false)?;
@@ -172,7 +172,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     b.build_branch(join)?;
 
     b.set_region(false_r);
-    let v_f = b.build_int_const(2u64, ValueType::I64)?;
+    let v_f = b.build_int_const(2u64, ValueType::int(64))?;
     b.write_variable(&var, v_f)?;
     let (call_f, _) =
         strider_ir_test_utils::Tb::named_call_other(&mut b, 0, "cpuid", &[], &[], false, false)?;
@@ -308,7 +308,7 @@ fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::Result<()
     b.build_if(cond_outer, r_a, mid)?;
 
     b.set_region(r_a);
-    let v_a = b.build_int_const(1u64, ValueType::I64)?;
+    let v_a = b.build_int_const(1u64, ValueType::int(64))?;
     b.write_variable(&var, v_a)?;
     b.build_branch(join)?;
 
@@ -317,12 +317,12 @@ fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::Result<()
     b.build_if(cond_inner, r_b, r_c)?;
 
     b.set_region(r_b);
-    let v_b = b.build_int_const(2u64, ValueType::I64)?;
+    let v_b = b.build_int_const(2u64, ValueType::int(64))?;
     b.write_variable(&var, v_b)?;
     b.build_branch(join)?;
 
     b.set_region(r_c);
-    let v_c = b.build_int_const(3u64, ValueType::I64)?;
+    let v_c = b.build_int_const(3u64, ValueType::int(64))?;
     b.write_variable(&var, v_c)?;
     b.build_branch(join)?;
 
@@ -380,12 +380,12 @@ fn cfg_detach_visits_control_dead_but_data_reachable_region() -> crate::Result<(
     b.build_if(cond, true_r, false_r)?;
 
     b.set_region(true_r);
-    let v_t = b.build_int_const(1u64, ValueType::I64)?;
+    let v_t = b.build_int_const(1u64, ValueType::int(64))?;
     b.write_variable(&var, v_t)?;
     b.build_branch(join)?;
 
     b.set_region(false_r);
-    let v_f = b.build_int_const(2u64, ValueType::I64)?;
+    let v_f = b.build_int_const(2u64, ValueType::int(64))?;
     b.write_variable(&var, v_f)?;
     b.build_branch(join)?;
 

@@ -51,7 +51,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
         ..Default::default()
     };
     override_cc.validate().unwrap();
-    let addr = b.build_int_const(0xdead_u64, ValueType::I64).unwrap();
+    let addr = b.build_int_const(0xdead_u64, ValueType::int(64)).unwrap();
     let _call_node = b.build_call_cc(addr, Some(&override_cc)).unwrap();
     b.build_function_return().unwrap();
     let function = b.build().unwrap();

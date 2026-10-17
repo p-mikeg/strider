@@ -45,15 +45,15 @@ fn nested_const_branches_fully_eliminated() -> Result<()> {
     b.build_if(inner_cond, inner_t, inner_f)?;
 
     b.set_region(outer_f);
-    let v_dead1 = b.build_int_const(99u64, ValueType::I64)?;
+    let v_dead1 = b.build_int_const(99u64, ValueType::int(64))?;
     b.build_return(Some(v_dead1), &[])?;
 
     b.set_region(inner_t);
-    let v_dead2 = b.build_int_const(1u64, ValueType::I64)?;
+    let v_dead2 = b.build_int_const(1u64, ValueType::int(64))?;
     b.build_return(Some(v_dead2), &[])?;
 
     b.set_region(inner_f);
-    let v_live = b.build_int_const(2u64, ValueType::I64)?;
+    let v_live = b.build_int_const(2u64, ValueType::int(64))?;
     b.build_return(Some(v_live), &[])?;
     b.set_lift_addr(None);
 
@@ -88,9 +88,9 @@ fn const_fold_then_dbe_then_phi_collapse() -> Result<()> {
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
-    let one = b.build_int_const(1u64, ValueType::I64)?;
-    let two = b.build_int_const(2u64, ValueType::I64)?;
-    let sum = b.build_int_binary_operation(one, two, IntBinaryOp::Add, ValueType::I64)?;
+    let one = b.build_int_const(1u64, ValueType::int(64))?;
+    let two = b.build_int_const(2u64, ValueType::int(64))?;
+    let sum = b.build_int_binary_operation(one, two, IntBinaryOp::Add, ValueType::int(64))?;
     b.build_return(Some(sum), &[])?;
     b.set_lift_addr(None);
 
@@ -140,11 +140,12 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
 
     b.set_region(live);
     let sp_val = b.read_variable(&sp)?;
-    let sp_off = b.build_int_const(0u64, ValueType::I64)?;
-    let addr = b.build_int_binary_operation(sp_val, sp_off, IntBinaryOp::Add, ValueType::I64)?;
-    let stored_val = b.build_int_const(0x42u64, ValueType::I64)?;
+    let sp_off = b.build_int_const(0u64, ValueType::int(64))?;
+    let addr =
+        b.build_int_binary_operation(sp_val, sp_off, IntBinaryOp::Add, ValueType::int(64))?;
+    let stored_val = b.build_int_const(0x42u64, ValueType::int(64))?;
     b.build_store(addr, stored_val, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
 
@@ -190,11 +191,11 @@ fn if_branch_collapses_after_const_fold() -> Result<()> {
     b.build_if(cond, t, f)?;
 
     b.set_region(t);
-    let v1 = b.build_int_const(1u64, ValueType::I64)?;
+    let v1 = b.build_int_const(1u64, ValueType::int(64))?;
     b.build_return(Some(v1), &[])?;
 
     b.set_region(f);
-    let v2 = b.build_int_const(2u64, ValueType::I64)?;
+    let v2 = b.build_int_const(2u64, ValueType::int(64))?;
     b.build_return(Some(v2), &[])?;
     b.set_lift_addr(None);
 
@@ -239,7 +240,7 @@ fn region_with_one_predecessor_collapses() -> Result<()> {
     b.build_branch(body)?;
 
     b.set_region(body);
-    let c = b.build_int_const(77u64, ValueType::I64)?;
+    let c = b.build_int_const(77u64, ValueType::int(64))?;
     b.build_return(Some(c), &[])?;
     b.set_lift_addr(None);
 
@@ -279,11 +280,11 @@ fn mem_chain_collapses_through_constant_fold() -> Result<()> {
 
     // Store(addr1, val) -> Load(addr2), addr1 != addr2: the load depends
     // on the Store's memory output but does not alias it.
-    let addr1 = b.build_int_const(0x1000u64, ValueType::I64)?;
-    let addr2 = b.build_int_const(0x2000u64, ValueType::I64)?;
-    let val = b.build_int_const(0xABu64, ValueType::I64)?;
+    let addr1 = b.build_int_const(0x1000u64, ValueType::int(64))?;
+    let addr2 = b.build_int_const(0x2000u64, ValueType::int(64))?;
+    let val = b.build_int_const(0xABu64, ValueType::int(64))?;
     b.build_store(addr1, val, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(addr2, rsleigh::VnSpace::RAM, ValueType::I64)?;
+    let loaded = b.build_load(addr2, rsleigh::VnSpace::RAM, ValueType::int(64))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
 
@@ -333,13 +334,13 @@ fn multi_pass_idempotent_after_fixed_point() -> Result<()> {
     b.build_if(cond, t, f)?;
 
     b.set_region(t);
-    let one = b.build_int_const(1u64, ValueType::I64)?;
-    let two = b.build_int_const(2u64, ValueType::I64)?;
-    let sum = b.build_int_binary_operation(one, two, IntBinaryOp::Add, ValueType::I64)?;
+    let one = b.build_int_const(1u64, ValueType::int(64))?;
+    let two = b.build_int_const(2u64, ValueType::int(64))?;
+    let sum = b.build_int_binary_operation(one, two, IntBinaryOp::Add, ValueType::int(64))?;
     b.build_return(Some(sum), &[])?;
 
     b.set_region(f);
-    let three = b.build_int_const(3u64, ValueType::I64)?;
+    let three = b.build_int_const(3u64, ValueType::int(64))?;
     b.build_return(Some(three), &[])?;
     b.set_lift_addr(None);
 

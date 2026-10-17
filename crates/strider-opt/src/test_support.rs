@@ -107,7 +107,7 @@ pub(crate) mod memory_shapes {
     use strider_ir::{FunctionBuilder, IRBuilderExt, IntBinaryOp, Value};
     use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, sp_frame, stack_vn_x86_64};
 
-    const TY: ValueType = ValueType::I64;
+    const TY: ValueType = ValueType::int(64);
     /// A slot no shape reads, taking the loads that would otherwise be dead.
     const SINK: usize = usize::MAX >> 8;
 
@@ -375,12 +375,12 @@ pub(crate) mod memory_shapes {
 
     fn sp_plus(b: &mut FunctionBuilder, sp: rsleigh::Vn, k: i64) -> crate::Result<Value> {
         let sp_value = b.read_variable(&sp)?;
-        let k = b.build_int_const(k as u64, ValueType::I32)?;
-        b.build_int_binary_operation(sp_value, k, IntBinaryOp::Add, ValueType::I32)
+        let k = b.build_int_const(k as u64, ValueType::int(32))?;
+        b.build_int_binary_operation(sp_value, k, IntBinaryOp::Add, ValueType::int(32))
     }
 
     fn call32(b: &mut FunctionBuilder) -> crate::Result<()> {
-        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(target, &[], &[], 0)?;
         Ok(())
     }
@@ -396,7 +396,7 @@ pub(crate) mod memory_shapes {
                     b,
                     |b| {
                         let slot = sp_plus(b, sp, 4)?;
-                        let arg = b.build_int_const(i as u64, ValueType::I32)?;
+                        let arg = b.build_int_const(i as u64, ValueType::int(32))?;
                         b.build_store(slot, arg, rsleigh::VnSpace::RAM)?;
                         call32(b)
                     },
@@ -414,8 +414,8 @@ pub(crate) mod memory_shapes {
             for _ in 0..n {
                 diamond(b, call32, |_| Ok(()))?;
                 let slot = sp_plus(b, sp, 4)?;
-                let arg = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I32)?;
-                let sink = b.build_int_const(0x9000u64, ValueType::I32)?;
+                let arg = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+                let sink = b.build_int_const(0x9000u64, ValueType::int(32))?;
                 b.build_store(sink, arg, rsleigh::VnSpace::RAM)?;
             }
             Ok(())
@@ -441,17 +441,17 @@ pub(crate) mod memory_shapes {
             .stack_args(strider_ir_test_utils::stack_args_at(0, 4))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
-        let frame = b.build_int_const((-64i64) as u64, ValueType::I32)?;
+        let frame = b.build_int_const((-64i64) as u64, ValueType::int(32))?;
         let call_sp =
-            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::I32)?;
+            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::int(32))?;
         b.write_variable(&sp, call_sp)?;
-        let zero = b.build_int_const(0u64, ValueType::I32)?;
+        let zero = b.build_int_const(0u64, ValueType::int(32))?;
         let slot0 =
-            b.build_int_binary_operation(call_sp, zero, IntBinaryOp::Add, ValueType::I32)?;
-        let spilled = b.build_int_const(0x42u64, ValueType::I32)?;
+            b.build_int_binary_operation(call_sp, zero, IntBinaryOp::Add, ValueType::int(32))?;
+        let spilled = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(slot0, spilled, rsleigh::VnSpace::RAM)?;
         call32(&mut b)?;
-        let reload = b.build_load(slot0, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let reload = b.build_load(slot0, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         Ok((b, reload))
     }
 }

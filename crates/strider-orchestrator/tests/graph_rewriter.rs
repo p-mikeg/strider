@@ -18,10 +18,10 @@ fn add_k_plus_zero(k: u64) -> Function {
     b.set_entry_region_all(region).unwrap();
     b.set_region(region);
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let lhs = b.build_int_const(k, ValueType::I64).unwrap();
-    let rhs = b.build_int_const(0u64, ValueType::I64).unwrap();
+    let lhs = b.build_int_const(k, ValueType::int(64)).unwrap();
+    let rhs = b.build_int_const(0u64, ValueType::int(64)).unwrap();
     let sum = b
-        .build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     b.build_return(Some(sum), &[]).unwrap();
     b.set_lift_addr(None);
@@ -64,7 +64,7 @@ fn replace_switch_address_with_const_collapses_switch_after_reoptimize() -> anyh
     let addr_use = g.node_input_id_at(switch_id, 1)?;
     {
         let mut ctx = EditFunction::new(&mut g);
-        let k0 = ctx.build_int_const(targets[0], ValueType::I64)?;
+        let k0 = ctx.build_int_const(targets[0], ValueType::int(64))?;
         let k0_node = ctx.function().producer(k0);
         ctx.absorb_node_fingerprint(k0_node, switch_id);
         ctx.redirect_input(addr_use, k0);
@@ -156,14 +156,14 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
     b.set_entry_region_all(region).unwrap();
     b.set_region(region);
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let a = b.build_int_const(7u64, ValueType::I64).unwrap();
-    let z = b.build_int_const(0u64, ValueType::I64).unwrap();
-    let one = b.build_int_const(1u64, ValueType::I64).unwrap();
+    let a = b.build_int_const(7u64, ValueType::int(64)).unwrap();
+    let z = b.build_int_const(0u64, ValueType::int(64)).unwrap();
+    let one = b.build_int_const(1u64, ValueType::int(64)).unwrap();
     let add1 = b
-        .build_int_binary_operation(a, z, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(a, z, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     let add2 = b
-        .build_int_binary_operation(add1, one, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(add1, one, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     b.build_return(Some(add2), &[]).unwrap();
     b.set_lift_addr(None);

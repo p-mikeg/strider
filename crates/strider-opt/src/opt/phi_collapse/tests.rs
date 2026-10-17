@@ -74,12 +74,12 @@ fn multi_value_all_equal_phi_collapses() -> crate::Result<()> {
     b.build_if(cond, a, bb)?;
 
     b.set_region(a);
-    let v_a = b.build_int_const(1u64, ValueType::I64)?;
+    let v_a = b.build_int_const(1u64, ValueType::int(64))?;
     b.write_variable(&var, v_a)?;
     b.build_branch(join)?;
 
     b.set_region(bb);
-    let v_b = b.build_int_const(2u64, ValueType::I64)?;
+    let v_b = b.build_int_const(2u64, ValueType::int(64))?;
     b.write_variable(&var, v_b)?;
     b.build_branch(join)?;
 
@@ -214,12 +214,12 @@ fn genuine_two_value_phi_unchanged() -> crate::Result<()> {
     b.build_if(cond, a, bb)?;
 
     b.set_region(a);
-    let v_a = b.build_int_const(1u64, ValueType::I64)?;
+    let v_a = b.build_int_const(1u64, ValueType::int(64))?;
     b.write_variable(&var, v_a)?;
     b.build_branch(join)?;
 
     b.set_region(bb);
-    let v_b = b.build_int_const(2u64, ValueType::I64)?;
+    let v_b = b.build_int_const(2u64, ValueType::int(64))?;
     b.write_variable(&var, v_b)?;
     b.build_branch(join)?;
 
@@ -268,8 +268,8 @@ fn single_value_mem_phi_collapses() -> crate::Result<()> {
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_branch(body)?;
     b.set_region(body);
-    let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
-    let data = b.build_int_const(0x42u64, ValueType::I64)?;
+    let addr = b.build_int_const(0x1000u64, ValueType::int(64))?;
+    let data = b.build_int_const(0x42u64, ValueType::int(64))?;
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -375,7 +375,7 @@ fn build_blocks(blocks: &[Block]) -> crate::Result<strider_ir::Function> {
     for (&(write, succs), &region) in blocks.iter().zip(&regions) {
         b.set_region(region);
         if let Some(k) = write {
-            let value = b.build_int_const(k, ValueType::I64)?;
+            let value = b.build_int_const(k, ValueType::int(64))?;
             b.write_variable(&var, value)?;
         }
         let current = b.read_variable(&var)?;
@@ -383,12 +383,12 @@ fn build_blocks(blocks: &[Block]) -> crate::Result<strider_ir::Function> {
             [] => b.build_return(Some(current), &[])?,
             [next] => b.build_branch(regions[next])?,
             [taken, not_taken] => {
-                let zero = b.build_int_const(0u64, ValueType::I64)?;
+                let zero = b.build_int_const(0u64, ValueType::int(64))?;
                 let cond = b.build_int_cmp_operation(
                     current,
                     zero,
                     strider_ir::IntCmpOp::Equal,
-                    ValueType::I64,
+                    ValueType::int(64),
                 )?;
                 b.build_if(cond, regions[taken], regions[not_taken])?;
             }
@@ -535,9 +535,9 @@ fn a_phi_on_an_unreachable_region_is_left_alone() -> crate::Result<()> {
 
     b.set_region(detached);
     let p = b.read_variable(&var)?;
-    let two = b.build_int_const(2u64, ValueType::I32).unwrap();
+    let two = b.build_int_const(2u64, ValueType::int(32)).unwrap();
     let next =
-        b.build_int_binary_operation(p, two, strider_ir::IntBinaryOp::Add, ValueType::I32)?;
+        b.build_int_binary_operation(p, two, strider_ir::IntBinaryOp::Add, ValueType::int(32))?;
     b.write_variable(&var, next)?;
     let cond = b.build_boolean_const(true);
     b.build_if(cond, join, detached)?;

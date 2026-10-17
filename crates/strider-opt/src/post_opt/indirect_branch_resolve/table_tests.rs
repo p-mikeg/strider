@@ -57,22 +57,22 @@ fn sole_indirect_branch(f: &Function) -> NodeId {
 /// A load the optimiser cannot fold away, so the dispatch genuinely depends
 /// on it.
 fn build_non_const_idx(fb: &mut FunctionBuilder) -> ValueId {
-    let addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
-    fb.build_load(addr, VnSpace::RAM, ValueType::I32)
+    let addr = fb.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
+    fb.build_load(addr, VnSpace::RAM, ValueType::int(32))
         .expect("u32 load (idx)")
 }
 
 /// `Load(base + idx * stride):I32`, the tail every table dispatch ends in.
 fn table_target(fb: &mut FunctionBuilder, idx: ValueId, stride: u64, base: u64) -> ValueId {
-    let stride_c = fb.build_int_const(stride, ValueType::I32).unwrap();
+    let stride_c = fb.build_int_const(stride, ValueType::int(32)).unwrap();
     let mul = fb
-        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
+        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::int(32))
         .expect("mul");
-    let base_c = fb.build_int_const(base, ValueType::I32).unwrap();
+    let base_c = fb.build_int_const(base, ValueType::int(32)).unwrap();
     let addr = fb
-        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::int(32))
         .expect("add");
-    fb.build_load(addr, VnSpace::RAM, ValueType::I32)
+    fb.build_load(addr, VnSpace::RAM, ValueType::int(32))
         .expect("dispatch load")
 }
 
@@ -84,9 +84,9 @@ fn masked_table_target(
     stride: u64,
     base: u64,
 ) -> ValueId {
-    let mask_c = fb.build_int_const(mask, ValueType::I32).unwrap();
+    let mask_c = fb.build_int_const(mask, ValueType::int(32)).unwrap();
     let masked = fb
-        .build_int_binary_operation(idx, mask_c, IntBinaryOp::And, ValueType::I32)
+        .build_int_binary_operation(idx, mask_c, IntBinaryOp::And, ValueType::int(32))
         .expect("and");
     table_target(fb, masked, stride, base)
 }
@@ -121,7 +121,9 @@ fn classify(f: &Function, rom: Option<&dyn ReadOnlyMemory>) -> Option<ResolvedTa
 fn classify_table_dispatch_with_known_bits_bound_returns_multiple() {
     // KnownBits bounds the `& 0x7` index to 8 entries.
     let (g, _target) = build_with_target(|fb| {
-        let raw = fb.build_int_const(0xffff_ffffu64, ValueType::I32).unwrap();
+        let raw = fb
+            .build_int_const(0xffff_ffffu64, ValueType::int(32))
+            .unwrap();
         masked_table_target(fb, raw, 0x7u64, 4u64, 0x4000u64)
     });
     let rom = MockRom::strided(
@@ -145,7 +147,9 @@ fn classify_table_dispatch_with_known_bits_bound_returns_multiple() {
 #[test]
 fn classify_table_dispatch_duplicate_targets_are_deduped() {
     let (g, _target) = build_with_target(|fb| {
-        let raw = fb.build_int_const(0xffff_ffffu64, ValueType::I32).unwrap();
+        let raw = fb
+            .build_int_const(0xffff_ffffu64, ValueType::int(32))
+            .unwrap();
         masked_table_target(fb, raw, 0x3u64, 4u64, 0x4000u64)
     });
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x10, 0x20], 4);
@@ -187,7 +191,9 @@ fn classify_table_dispatch_single_entry_bound_returns_multiple_of_one() {
 fn classify_table_dispatch_no_rom_returns_none() {
     // A bounded shape, but with no rom the entries cannot be read.
     let (g, _target) = build_with_target(|fb| {
-        let raw = fb.build_int_const(0xffff_ffffu64, ValueType::I32).unwrap();
+        let raw = fb
+            .build_int_const(0xffff_ffffu64, ValueType::int(32))
+            .unwrap();
         masked_table_target(fb, raw, 0x3u64, 4u64, 0x4000u64)
     });
     let result = classify(&g, None);
@@ -199,9 +205,9 @@ fn classify_table_dispatch_unbounded_idx_returns_none() {
     // Table-shaped, but `idx` is a raw load with no mask and no dominating
     // guard, so it must defer.
     let (g, _target) = build_with_target(|fb| {
-        let some_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
+        let some_addr = fb.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
         let idx = fb
-            .build_load(some_addr, VnSpace::RAM, ValueType::I32)
+            .build_load(some_addr, VnSpace::RAM, ValueType::int(32))
             .expect("load idx");
         table_target(fb, idx, 4u64, 0x4000u64)
     });
@@ -217,9 +223,9 @@ fn classify_table_dispatch_unbounded_idx_returns_none() {
 fn classify_table_dispatch_defers_over_cap_resolves_under_cap() {
     let build = |mask: u64| {
         build_with_target(move |fb| {
-            let idx_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
+            let idx_addr = fb.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
             let idx_raw = fb
-                .build_load(idx_addr, VnSpace::RAM, ValueType::I32)
+                .build_load(idx_addr, VnSpace::RAM, ValueType::int(32))
                 .expect("load idx");
             masked_table_target(fb, idx_raw, mask, 4u64, 0x4000u64)
         })
@@ -251,12 +257,12 @@ fn classify_table_dispatch_excludes_width_bounded_table_entry_as_index() {
     // width-only filter rejects it.  Enumerating it would read 256 cells of
     // table DATA and emit them as targets.
     let (g, _target) = build_with_target(|fb| {
-        let byte_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
+        let byte_addr = fb.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
         let byte = fb
-            .build_load(byte_addr, VnSpace::RAM, ValueType::I8)
+            .build_load(byte_addr, VnSpace::RAM, ValueType::int(8))
             .expect("byte load (table entry)");
         let idx = fb
-            .extend_if_needed(byte, ValueType::I32, ExtendOp::ZeroExtend)
+            .extend_if_needed(byte, ValueType::int(32), ExtendOp::ZeroExtend)
             .expect("zero-extend the byte to I32");
         table_target(fb, idx, 4u64, 0x4000u64)
     });
@@ -277,20 +283,22 @@ fn classify_table_dispatch_excludes_width_bounded_table_entry_as_index() {
 #[test]
 fn classify_table_dispatch_excludes_width_bounded_entry_under_identity_mask() {
     let (g, _target) = build_with_target(|fb| {
-        let byte_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
+        let byte_addr = fb.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
         let byte = fb
-            .build_load(byte_addr, VnSpace::RAM, ValueType::I8)
+            .build_load(byte_addr, VnSpace::RAM, ValueType::int(8))
             .expect("byte load (table entry)");
         let wide = fb
-            .extend_if_needed(byte, ValueType::I32, ExtendOp::ZeroExtend)
+            .extend_if_needed(byte, ValueType::int(32), ExtendOp::ZeroExtend)
             .expect("zero-extend the byte to I32");
-        let two = fb.build_int_const(2u64, ValueType::I32).unwrap();
+        let two = fb.build_int_const(2u64, ValueType::int(32)).unwrap();
         let shifted = fb
-            .build_int_binary_operation(wide, two, IntBinaryOp::ShiftLeft, ValueType::I32)
+            .build_int_binary_operation(wide, two, IntBinaryOp::ShiftLeft, ValueType::int(32))
             .expect("shl");
-        let mask = fb.build_int_const(0xffff_fffcu64, ValueType::I32).unwrap();
+        let mask = fb
+            .build_int_const(0xffff_fffcu64, ValueType::int(32))
+            .unwrap();
         let masked = fb
-            .build_int_binary_operation(shifted, mask, IntBinaryOp::And, ValueType::I32)
+            .build_int_binary_operation(shifted, mask, IntBinaryOp::And, ValueType::int(32))
             .expect("and");
         table_target(fb, masked, 1u64, 0x4000u64)
     });
@@ -317,20 +325,20 @@ fn classify_table_dispatch_resolves_guarded_shift_narrowed_loaded_index() {
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
 
     b.set_region(entry);
-    let byte_addr = b.build_int_const(0x9000u64, ValueType::I32).unwrap();
+    let byte_addr = b.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
     let byte = b
-        .build_load(byte_addr, VnSpace::RAM, ValueType::I8)
+        .build_load(byte_addr, VnSpace::RAM, ValueType::int(8))
         .expect("byte load");
     let bwide = b
-        .extend_if_needed(byte, ValueType::I32, ExtendOp::ZeroExtend)
+        .extend_if_needed(byte, ValueType::int(32), ExtendOp::ZeroExtend)
         .expect("zext byte");
-    let five = b.build_int_const(5u64, ValueType::I32).unwrap();
+    let five = b.build_int_const(5u64, ValueType::int(32)).unwrap();
     let idx = b
-        .build_int_binary_operation(bwide, five, IntBinaryOp::ShiftRight, ValueType::I32)
+        .build_int_binary_operation(bwide, five, IntBinaryOp::ShiftRight, ValueType::int(32))
         .expect("byte >> 5 -> [0,7]");
-    let bound_c = b.build_int_const(6u64, ValueType::I32).unwrap();
+    let bound_c = b.build_int_const(6u64, ValueType::int(32)).unwrap();
     let cond = b
-        .build_int_cmp_operation(idx, bound_c, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(idx, bound_c, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond, dispatch, exit).unwrap();
 
@@ -395,9 +403,9 @@ fn decompose_index_picks_shallowest_narrowed_index() {
     // must win, or a guard-tightened dispatch over-enumerates and defers.
     let (g, _target) = build_with_target(|fb| {
         let raw = build_non_const_idx(fb);
-        let m63 = fb.build_int_const(0x3Fu64, ValueType::I32).unwrap();
+        let m63 = fb.build_int_const(0x3Fu64, ValueType::int(32)).unwrap();
         let wide = fb
-            .build_int_binary_operation(raw, m63, IntBinaryOp::And, ValueType::I32)
+            .build_int_binary_operation(raw, m63, IntBinaryOp::And, ValueType::int(32))
             .expect("reg & 0x3F -> [0,63] (deep)");
         masked_table_target(fb, wide, 0x7u64, 4u64, 0x4000u64)
     });
@@ -438,7 +446,7 @@ fn classify_table_dispatch_defers_nonloaded_full_byte_index_conservatively() {
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let byte = b.read_variable(&bl).unwrap();
     let idx = b
-        .extend_if_needed(byte, ValueType::I32, ExtendOp::ZeroExtend)
+        .extend_if_needed(byte, ValueType::int(32), ExtendOp::ZeroExtend)
         .expect("zext byte register");
     let loaded = table_target(&mut b, idx, 4u64, 0x4000u64);
     b.build_indirect_branch(loaded).unwrap();
@@ -474,40 +482,41 @@ fn classify_table_dispatch_masked_cell_prefers_the_index_in_its_address() {
         .build_fn_single_region()
         .unwrap();
     let raw = b.read_variable(&idx_var).unwrap();
-    let three = b.build_int_const(3u64, ValueType::I32).unwrap();
+    let three = b.build_int_const(3u64, ValueType::int(32)).unwrap();
     let idx = b
-        .build_int_binary_operation(raw, three, IntBinaryOp::And, ValueType::I32)
+        .build_int_binary_operation(raw, three, IntBinaryOp::And, ValueType::int(32))
         .unwrap();
     let cell = {
         let wide = b
-            .extend_if_needed(idx, ValueType::I64, ExtendOp::ZeroExtend)
+            .extend_if_needed(idx, ValueType::int(64), ExtendOp::ZeroExtend)
             .unwrap();
-        let two = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let two = b.build_int_const(2u64, ValueType::int(64)).unwrap();
         let scaled = b
-            .build_int_binary_operation(wide, two, IntBinaryOp::Mul, ValueType::I64)
+            .build_int_binary_operation(wide, two, IntBinaryOp::Mul, ValueType::int(64))
             .unwrap();
-        let base = b.build_int_const(0x4000u64, ValueType::I64).unwrap();
+        let base = b.build_int_const(0x4000u64, ValueType::int(64)).unwrap();
         let addr = b
-            .build_int_binary_operation(scaled, base, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(scaled, base, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
-        b.build_load(addr, VnSpace::RAM, ValueType::I16).unwrap()
+        b.build_load(addr, VnSpace::RAM, ValueType::int(16))
+            .unwrap()
     };
     // The lifted shape: the i16 cell widened to the register, then narrowed
     // to the width the mask is applied at.
     let cell64 = b
-        .extend_if_needed(cell, ValueType::I64, ExtendOp::ZeroExtend)
+        .extend_if_needed(cell, ValueType::int(64), ExtendOp::ZeroExtend)
         .unwrap();
-    let narrow = b.truncate_if_needed(cell64, ValueType::I32).unwrap();
-    let m63 = b.build_int_const(0x3Fu64, ValueType::I32).unwrap();
+    let narrow = b.truncate_if_needed(cell64, ValueType::int(32)).unwrap();
+    let m63 = b.build_int_const(0x3Fu64, ValueType::int(32)).unwrap();
     let masked = b
-        .build_int_binary_operation(narrow, m63, IntBinaryOp::And, ValueType::I32)
+        .build_int_binary_operation(narrow, m63, IntBinaryOp::And, ValueType::int(32))
         .unwrap();
     let offset = b
-        .extend_if_needed(masked, ValueType::I64, ExtendOp::ZeroExtend)
+        .extend_if_needed(masked, ValueType::int(64), ExtendOp::ZeroExtend)
         .unwrap();
-    let code = b.build_int_const(0x5000u64, ValueType::I64).unwrap();
+    let code = b.build_int_const(0x5000u64, ValueType::int(64)).unwrap();
     let target = b
-        .build_int_binary_operation(offset, code, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(offset, code, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     b.build_indirect_branch(target).unwrap();
     b.set_lift_addr(None);
@@ -537,13 +546,13 @@ fn classify_table_dispatch_masked_opaque_cell_stays_the_index() {
         .build_fn_single_region()
         .unwrap();
     let ptr = b.read_variable(&ptr_var).unwrap();
-    let byte = b.build_load(ptr, VnSpace::RAM, ValueType::I8).unwrap();
+    let byte = b.build_load(ptr, VnSpace::RAM, ValueType::int(8)).unwrap();
     let wide = b
-        .extend_if_needed(byte, ValueType::I32, ExtendOp::ZeroExtend)
+        .extend_if_needed(byte, ValueType::int(32), ExtendOp::ZeroExtend)
         .unwrap();
-    let three = b.build_int_const(3u64, ValueType::I32).unwrap();
+    let three = b.build_int_const(3u64, ValueType::int(32)).unwrap();
     let masked = b
-        .build_int_binary_operation(wide, three, IntBinaryOp::And, ValueType::I32)
+        .build_int_binary_operation(wide, three, IntBinaryOp::And, ValueType::int(32))
         .unwrap();
     let loaded = table_target(&mut b, masked, 4u64, 0x4000u64);
     b.build_indirect_branch(loaded).unwrap();
@@ -579,14 +588,14 @@ fn classify_table_dispatch_resolves_a_bound_held_by_a_guarded_sibling() {
 
     b.set_region(entry);
     let idx_at_entry = b.read_variable(&idx_var).unwrap();
-    let two = b.build_int_const(2u64, ValueType::I32).unwrap();
+    let two = b.build_int_const(2u64, ValueType::int(32)).unwrap();
     // `idx + 2 < 4`, so idx is one of -2, -1, 0, 1.
     let shifted = b
-        .build_int_binary_operation(idx_at_entry, two, IntBinaryOp::Add, ValueType::I32)
+        .build_int_binary_operation(idx_at_entry, two, IntBinaryOp::Add, ValueType::int(32))
         .unwrap();
-    let bound_c = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let bound_c = b.build_int_const(4u64, ValueType::int(32)).unwrap();
     let cond = b
-        .build_int_cmp_operation(shifted, bound_c, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(shifted, bound_c, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond, dispatch, exit).unwrap();
 
@@ -625,13 +634,13 @@ fn classify_table_dispatch_defers_an_offset_that_wraps_the_bounded_operand() {
     let build = |offset: u64| {
         build_with_target(move |fb| {
             let raw = build_non_const_idx(fb);
-            let seven = fb.build_int_const(7u64, ValueType::I32).unwrap();
+            let seven = fb.build_int_const(7u64, ValueType::int(32)).unwrap();
             let masked = fb
-                .build_int_binary_operation(raw, seven, IntBinaryOp::And, ValueType::I32)
+                .build_int_binary_operation(raw, seven, IntBinaryOp::And, ValueType::int(32))
                 .expect("and");
-            let offset_c = fb.build_int_const(offset, ValueType::I32).unwrap();
+            let offset_c = fb.build_int_const(offset, ValueType::int(32)).unwrap();
             let index = fb
-                .build_int_binary_operation(masked, offset_c, IntBinaryOp::Add, ValueType::I32)
+                .build_int_binary_operation(masked, offset_c, IntBinaryOp::Add, ValueType::int(32))
                 .expect("add");
             table_target(fb, index, 4u64, 0x4000u64)
         })
@@ -669,9 +678,9 @@ fn classify_table_dispatch_with_if_guard_bound_returns_multiple() {
 
     b.set_region(entry);
     let idx_at_entry = b.read_variable(&idx_var).unwrap();
-    let bound_c = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let bound_c = b.build_int_const(4u64, ValueType::int(32)).unwrap();
     let cond = b
-        .build_int_cmp_operation(idx_at_entry, bound_c, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(idx_at_entry, bound_c, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond, dispatch, exit).unwrap();
 
@@ -735,25 +744,25 @@ fn classify_table_dispatch_diamond_both_paths_guarded_resolves() {
 
     b.set_region(entry);
     let idx_e = b.read_variable(&idx_var).unwrap();
-    let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
+    let zero = b.build_int_const(0u64, ValueType::int(32)).unwrap();
     let dummy = b
-        .build_int_cmp_operation(idx_e, zero, IntCmpOp::Equal, ValueType::I32)
+        .build_int_cmp_operation(idx_e, zero, IntCmpOp::Equal, ValueType::int(32))
         .unwrap();
     b.build_if(dummy, path_a, path_b).unwrap();
 
     b.set_region(path_a);
     let idx_a = b.read_variable(&idx_var).unwrap();
-    let four_a = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let four_a = b.build_int_const(4u64, ValueType::int(32)).unwrap();
     let cond_a = b
-        .build_int_cmp_operation(idx_a, four_a, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(idx_a, four_a, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond_a, dispatch, exit_a).unwrap();
 
     b.set_region(path_b);
     let idx_b = b.read_variable(&idx_var).unwrap();
-    let four_b = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let four_b = b.build_int_const(4u64, ValueType::int(32)).unwrap();
     let cond_b = b
-        .build_int_cmp_operation(idx_b, four_b, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(idx_b, four_b, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond_b, dispatch, exit_b).unwrap();
 
@@ -810,17 +819,17 @@ fn classify_table_dispatch_one_path_unguarded_does_not_resolve() {
 
     b.set_region(entry);
     let idx_e = b.read_variable(&idx_var).unwrap();
-    let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
+    let zero = b.build_int_const(0u64, ValueType::int(32)).unwrap();
     let flag = b
-        .build_int_cmp_operation(idx_e, zero, IntCmpOp::Equal, ValueType::I32)
+        .build_int_cmp_operation(idx_e, zero, IntCmpOp::Equal, ValueType::int(32))
         .unwrap();
     b.build_if(flag, path_a, path_b).unwrap();
 
     b.set_region(path_a);
     let idx_a = b.read_variable(&idx_var).unwrap();
-    let four_a = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let four_a = b.build_int_const(4u64, ValueType::int(32)).unwrap();
     let cond_a = b
-        .build_int_cmp_operation(idx_a, four_a, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(idx_a, four_a, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond_a, dispatch, exit_a).unwrap();
 
@@ -866,13 +875,13 @@ fn classify_table_dispatch_guarded_direct_load_target() {
 
     b.set_region(entry);
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let load_addr = b.build_int_const(0x9000u64, ValueType::I32).unwrap();
+    let load_addr = b.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
     let loaded = b
-        .build_load(load_addr, VnSpace::RAM, ValueType::I32)
+        .build_load(load_addr, VnSpace::RAM, ValueType::int(32))
         .unwrap();
-    let four = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let four = b.build_int_const(4u64, ValueType::int(32)).unwrap();
     let cond = b
-        .build_int_cmp_operation(loaded, four, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(loaded, four, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond, dispatch, exit).unwrap();
 
@@ -932,9 +941,9 @@ fn classify_table_dispatch_decoy_offpath_value_not_enumerated() {
     // Guard the DECOY, not the real index.
     b.set_region(entry);
     let decoy = b.read_variable(&decoy_var).unwrap();
-    let four = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let four = b.build_int_const(4u64, ValueType::int(32)).unwrap();
     let cond = b
-        .build_int_cmp_operation(decoy, four, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(decoy, four, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond, dispatch, exit).unwrap();
 
@@ -1016,11 +1025,11 @@ fn wire_stack_stores(
 ) {
     for (i, &target_addr) in targets.iter().enumerate() {
         let off = base_offset + (i as i64) * (stride as i64);
-        let off_const = b.build_int_const(off as u64, ValueType::I64).unwrap();
+        let off_const = b.build_int_const(off as u64, ValueType::int(64)).unwrap();
         let addr = b
-            .build_int_binary_operation(frame_base, off_const, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(frame_base, off_const, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
-        let target = b.build_int_const(target_addr, ValueType::I64).unwrap();
+        let target = b.build_int_const(target_addr, ValueType::int(64)).unwrap();
         b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
     }
 }
@@ -1040,42 +1049,47 @@ fn wire_stack_dispatch(
         b.function_mut(),
         NodeKind::Truncate,
         [arg_val],
-        [strider_ir::node::ValueKind::Typed(ValueType::I32)],
+        [strider_ir::node::ValueKind::Typed(ValueType::int(32))],
     );
     let arg_u32_value = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
     let mask = b
-        .build_int_const(entries as u64 - 1, ValueType::I32)
+        .build_int_const(entries as u64 - 1, ValueType::int(32))
         .unwrap();
     let masked = b
-        .build_int_binary_operation(arg_u32_value, mask, IntBinaryOp::And, ValueType::I32)
+        .build_int_binary_operation(arg_u32_value, mask, IntBinaryOp::And, ValueType::int(32))
         .unwrap();
     let idx_u64 = strider_ir_test_utils::sentinel_node(
         b.function_mut(),
         NodeKind::Extend(ExtendOp::ZeroExtend),
         [masked],
-        [strider_ir::node::ValueKind::Typed(ValueType::I64)],
+        [strider_ir::node::ValueKind::Typed(ValueType::int(64))],
     );
     let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
-    let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
+    let stride_const = b.build_int_const(stride, ValueType::int(64)).unwrap();
     let idx_scaled = b
         .build_int_binary_operation(
             idx_u64_value,
             stride_const,
             IntBinaryOp::Mul,
-            ValueType::I64,
+            ValueType::int(64),
         )
         .unwrap();
     let base_const = b
-        .build_int_const(base_offset as u64, ValueType::I64)
+        .build_int_const(base_offset as u64, ValueType::int(64))
         .unwrap();
     let sp_plus_base = b
-        .build_int_binary_operation(frame_base, base_const, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(frame_base, base_const, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     let load_addr = b
-        .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(
+            sp_plus_base,
+            idx_scaled,
+            IntBinaryOp::Add,
+            ValueType::int(64),
+        )
         .unwrap();
     let loaded = b
-        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::int(64))
         .unwrap();
     b.build_indirect_branch(loaded).unwrap();
     b.set_lift_addr(None);
@@ -1121,10 +1135,10 @@ fn build_stack_array_aligned(
         .unwrap();
     let sp_val = b.read_variable(&sp).unwrap();
     let align_mask = b
-        .build_int_const(0xFFFF_FFFF_FFFF_FFF0u64, ValueType::I64)
+        .build_int_const(0xFFFF_FFFF_FFFF_FFF0u64, ValueType::int(64))
         .unwrap();
     let frame_base = b
-        .build_int_binary_operation(sp_val, align_mask, IntBinaryOp::And, ValueType::I64)
+        .build_int_binary_operation(sp_val, align_mask, IntBinaryOp::And, ValueType::int(64))
         .unwrap();
     wire_stack_array(targets, base_offset, stride, frame_base, &mut b, arg_vn);
     let fg = b.build().unwrap();
@@ -1171,9 +1185,9 @@ fn build_stack_array_across_mem_phi(
     let sp_entry = b.read_variable(&sp).unwrap();
     wire_stack_stores(targets, base_offset, stride, sp_entry, &mut b);
     let arg_entry = b.read_variable(&arg_vn).unwrap();
-    let zero = b.build_int_const(0u64, ValueType::I64).unwrap();
+    let zero = b.build_int_const(0u64, ValueType::int(64)).unwrap();
     let flag = b
-        .build_int_cmp_operation(arg_entry, zero, IntCmpOp::Equal, ValueType::I64)
+        .build_int_cmp_operation(arg_entry, zero, IntCmpOp::Equal, ValueType::int(64))
         .unwrap();
     b.build_if(flag, arm, join).unwrap();
 
@@ -1182,12 +1196,12 @@ fn build_stack_array_across_mem_phi(
     b.set_region(arm);
     let sp_arm = b.read_variable(&sp).unwrap();
     let spill_off = b
-        .build_int_const((base_offset - 8) as u64, ValueType::I64)
+        .build_int_const((base_offset - 8) as u64, ValueType::int(64))
         .unwrap();
     let spill_addr = b
-        .build_int_binary_operation(sp_arm, spill_off, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(sp_arm, spill_off, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
-    let junk = b.build_int_const(0xDEADu64, ValueType::I64).unwrap();
+    let junk = b.build_int_const(0xDEADu64, ValueType::int(64)).unwrap();
     b.build_store(spill_addr, junk, rsleigh::VnSpace::RAM)
         .unwrap();
     b.build_branch(join).unwrap();
@@ -1276,8 +1290,12 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
     let stride: u64 = 8;
     wire_stack_stores(&targets, base_offset, stride, sp_val, &mut b);
     // A constant absolute address, unrelated to the stack pointer.
-    let global_addr = b.build_int_const(0x0060_0000u64, ValueType::I64).unwrap();
-    let global_val = b.build_int_const(0x0000_DEADu64, ValueType::I64).unwrap();
+    let global_addr = b
+        .build_int_const(0x0060_0000u64, ValueType::int(64))
+        .unwrap();
+    let global_val = b
+        .build_int_const(0x0000_DEADu64, ValueType::int(64))
+        .unwrap();
     b.build_store(global_addr, global_val, rsleigh::VnSpace::RAM)
         .unwrap();
     wire_stack_dispatch(targets.len(), base_offset, stride, sp_val, &mut b, arg_vn);
@@ -1329,7 +1347,9 @@ fn classify_table_dispatch_returns_none_when_call_clobbers_between_stores_and_lo
     let stride: u64 = 8;
     wire_stack_stores(&targets, base_offset, stride, sp_val, &mut b);
     // Clobbers memory, including the slots the callee can reach through SP.
-    let call_target_const = b.build_int_const(0x0040_1000u64, ValueType::I64).unwrap();
+    let call_target_const = b
+        .build_int_const(0x0040_1000u64, ValueType::int(64))
+        .unwrap();
     b.build_call_cc(call_target_const, None).unwrap();
     // Re-read sp: the call may have advanced the stack.
     let sp_val_after = b.read_variable(&sp).unwrap();
@@ -1359,12 +1379,14 @@ fn classify_table_dispatch_returns_none_on_non_indexed_load() {
         .build_fn_single_region()
         .unwrap();
     let sp_val = b.read_variable(&sp).unwrap();
-    let off = b.build_int_const(24u64, ValueType::I64).unwrap();
-    let addr = b.build_sub_as_add_neg(sp_val, off, ValueType::I64).unwrap();
-    let v = b.build_int_const(0xCAFEu64, ValueType::I64).unwrap();
+    let off = b.build_int_const(24u64, ValueType::int(64)).unwrap();
+    let addr = b
+        .build_sub_as_add_neg(sp_val, off, ValueType::int(64))
+        .unwrap();
+    let v = b.build_int_const(0xCAFEu64, ValueType::int(64)).unwrap();
     b.build_store(addr, v, rsleigh::VnSpace::RAM).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
         .unwrap();
     b.build_indirect_branch(loaded).unwrap();
     b.set_lift_addr(None);
@@ -1385,26 +1407,33 @@ fn classify_table_dispatch_returns_none_on_unbounded_stack_idx() {
         .build_fn_single_region()
         .unwrap();
     let sp_val = b.read_variable(&sp).unwrap();
-    let off24 = b.build_int_const(24u64, ValueType::I64).unwrap();
+    let off24 = b.build_int_const(24u64, ValueType::int(64)).unwrap();
     let addr_24 = b
-        .build_sub_as_add_neg(sp_val, off24, ValueType::I64)
+        .build_sub_as_add_neg(sp_val, off24, ValueType::int(64))
         .unwrap();
-    let v = b.build_int_const(0x1234u64, ValueType::I64).unwrap();
+    let v = b.build_int_const(0x1234u64, ValueType::int(64)).unwrap();
     b.build_store(addr_24, v, rsleigh::VnSpace::RAM).unwrap();
     let arg_val = b.read_variable(&arg_vn).unwrap();
-    let stride = b.build_int_const(8u64, ValueType::I64).unwrap();
+    let stride = b.build_int_const(8u64, ValueType::int(64)).unwrap();
     let idx_scaled = b
-        .build_int_binary_operation(arg_val, stride, IntBinaryOp::Mul, ValueType::I64)
+        .build_int_binary_operation(arg_val, stride, IntBinaryOp::Mul, ValueType::int(64))
         .unwrap();
-    let base = b.build_int_const((-24i64) as u64, ValueType::I64).unwrap();
+    let base = b
+        .build_int_const((-24i64) as u64, ValueType::int(64))
+        .unwrap();
     let sp_plus_base = b
-        .build_int_binary_operation(sp_val, base, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(sp_val, base, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     let load_addr = b
-        .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(
+            sp_plus_base,
+            idx_scaled,
+            IntBinaryOp::Add,
+            ValueType::int(64),
+        )
         .unwrap();
     let loaded = b
-        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::int(64))
         .unwrap();
     b.build_indirect_branch(loaded).unwrap();
     b.set_lift_addr(None);
@@ -1444,13 +1473,13 @@ fn build_stack_table_across_the_wrap(table: u64, newer: Option<(u64, ValueType)>
         .unwrap();
     let sp_val = b.read_variable(&sp).unwrap();
     let at = |b: &mut FunctionBuilder, off: u64| {
-        let c = b.build_int_const(off, ValueType::I32).unwrap();
-        b.build_int_binary_operation(sp_val, c, IntBinaryOp::Add, ValueType::I32)
+        let c = b.build_int_const(off, ValueType::int(32)).unwrap();
+        b.build_int_binary_operation(sp_val, c, IntBinaryOp::Add, ValueType::int(32))
             .unwrap()
     };
     for (off, target) in [(table, 0x401190u64), (table + 4, 0x401180)] {
         let addr = at(&mut b, off);
-        let data = b.build_int_const(target, ValueType::I32).unwrap();
+        let data = b.build_int_const(target, ValueType::int(32)).unwrap();
         b.build_store(addr, data, VnSpace::RAM).unwrap();
     }
     if let Some((off, ty)) = newer {
@@ -1459,19 +1488,21 @@ fn build_stack_table_across_the_wrap(table: u64, newer: Option<(u64, ValueType)>
         b.build_store(addr, data, VnSpace::RAM).unwrap();
     }
     let arg = b.read_variable(&arg_vn).unwrap();
-    let one = b.build_int_const(1u64, ValueType::I32).unwrap();
+    let one = b.build_int_const(1u64, ValueType::int(32)).unwrap();
     let idx = b
-        .build_int_binary_operation(arg, one, IntBinaryOp::And, ValueType::I32)
+        .build_int_binary_operation(arg, one, IntBinaryOp::And, ValueType::int(32))
         .unwrap();
-    let four = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let four = b.build_int_const(4u64, ValueType::int(32)).unwrap();
     let scaled = b
-        .build_int_binary_operation(idx, four, IntBinaryOp::Mul, ValueType::I32)
+        .build_int_binary_operation(idx, four, IntBinaryOp::Mul, ValueType::int(32))
         .unwrap();
     let table = at(&mut b, table);
     let addr = b
-        .build_int_binary_operation(table, scaled, IntBinaryOp::Add, ValueType::I32)
+        .build_int_binary_operation(table, scaled, IntBinaryOp::Add, ValueType::int(32))
         .unwrap();
-    let loaded = b.build_load(addr, VnSpace::RAM, ValueType::I32).unwrap();
+    let loaded = b
+        .build_load(addr, VnSpace::RAM, ValueType::int(32))
+        .unwrap();
     b.build_indirect_branch(loaded).unwrap();
     b.set_lift_addr(None);
     finish_stack_array(b.build().unwrap()).0
@@ -1492,7 +1523,10 @@ fn classify_table_dispatch_sees_a_store_wrapping_onto_a_slot() {
     );
     assert_eq!(
         classify(
-            &build_stack_table_across_the_wrap(0x8000_0000, Some((0x7FFF_FFFE, ValueType::I32))),
+            &build_stack_table_across_the_wrap(
+                0x8000_0000,
+                Some((0x7FFF_FFFE, ValueType::int(32)))
+            ),
             None
         ),
         None,
@@ -1514,7 +1548,10 @@ fn classify_table_dispatch_sees_a_store_past_the_wrap_onto_a_slot() {
     );
     assert_eq!(
         classify(
-            &build_stack_table_across_the_wrap(0x7FFF_FFFA, Some((0x8000_0000, ValueType::I16))),
+            &build_stack_table_across_the_wrap(
+                0x7FFF_FFFA,
+                Some((0x8000_0000, ValueType::int(16)))
+            ),
             None
         ),
         None,
@@ -1534,30 +1571,32 @@ fn stack_table_built_in_two_hops() -> Function {
         .unwrap();
     let sp_val = b.read_variable(&sp).unwrap();
     let add = |b: &mut FunctionBuilder, base: ValueId, off: u64| {
-        let c = b.build_int_const(off, ValueType::I32).unwrap();
-        b.build_int_binary_operation(base, c, IntBinaryOp::Add, ValueType::I32)
+        let c = b.build_int_const(off, ValueType::int(32)).unwrap();
+        b.build_int_binary_operation(base, c, IntBinaryOp::Add, ValueType::int(32))
             .unwrap()
     };
     for (off, target) in [(0x8000_0010u64, 0x401190u64), (0x8000_0014, 0x401180)] {
         let addr = add(&mut b, sp_val, off);
-        let data = b.build_int_const(target, ValueType::I32).unwrap();
+        let data = b.build_int_const(target, ValueType::int(32)).unwrap();
         b.build_store(addr, data, VnSpace::RAM).unwrap();
     }
     let near_top = add(&mut b, sp_val, 0x7FFF_FFF0);
     let table = add(&mut b, near_top, 0x20);
     let arg = b.read_variable(&arg_vn).unwrap();
-    let one = b.build_int_const(1u64, ValueType::I32).unwrap();
+    let one = b.build_int_const(1u64, ValueType::int(32)).unwrap();
     let idx = b
-        .build_int_binary_operation(arg, one, IntBinaryOp::And, ValueType::I32)
+        .build_int_binary_operation(arg, one, IntBinaryOp::And, ValueType::int(32))
         .unwrap();
-    let four = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let four = b.build_int_const(4u64, ValueType::int(32)).unwrap();
     let scaled = b
-        .build_int_binary_operation(idx, four, IntBinaryOp::Mul, ValueType::I32)
+        .build_int_binary_operation(idx, four, IntBinaryOp::Mul, ValueType::int(32))
         .unwrap();
     let addr = b
-        .build_int_binary_operation(table, scaled, IntBinaryOp::Add, ValueType::I32)
+        .build_int_binary_operation(table, scaled, IntBinaryOp::Add, ValueType::int(32))
         .unwrap();
-    let loaded = b.build_load(addr, VnSpace::RAM, ValueType::I32).unwrap();
+    let loaded = b
+        .build_load(addr, VnSpace::RAM, ValueType::int(32))
+        .unwrap();
     b.build_indirect_branch(loaded).unwrap();
     b.set_lift_addr(None);
     let mut fg = b.build().unwrap();
@@ -1588,9 +1627,9 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
 
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let addr = b.build_sub_as_add_neg(sp_val, four, ValueType::I32)?;
-        let data = b.build_int_const(0x99u64, ValueType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::int(32))?;
+        let addr = b.build_sub_as_add_neg(sp_val, four, ValueType::int(32))?;
+        let data = b.build_int_const(0x99u64, ValueType::int(32))?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         // LOCK is a FullClobber, so the Stack chain must break here.
@@ -1598,7 +1637,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
             strider_ir_test_utils::Tb::named_call_other(b, 0x1234, "LOCK", &[], &[], false, false)?;
         let lock_mem_value = b.function().memory_output_of(lock_node)?;
         b.advance_cur_region_memory(lock_mem_value)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })?;
@@ -1627,9 +1666,9 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
 #[test]
 fn index_bound_ok_rejects_types_past_the_u128_carrier() {
     let iv = crate::value_range::Interval::dense(0, 7);
-    assert!(index_bound_ok(ValueType::I32, iv));
-    assert!(!index_bound_ok(ValueType::I256, iv));
-    assert!(!index_bound_ok(ValueType::I512, iv));
+    assert!(index_bound_ok(ValueType::int(32), iv));
+    assert!(!index_bound_ok(ValueType::int(256), iv));
+    assert!(!index_bound_ok(ValueType::int(512), iv));
 }
 
 #[test]
@@ -1638,16 +1677,16 @@ fn classify_table_dispatch_excludes_right_shifted_table_entry_as_index() {
     // address arithmetic.  A right shift is still a scaling of the raw cell, so
     // [0,63] is the whole cell's image, not a narrowing: table DATA.
     let (g, _target) = build_with_target(|fb| {
-        let byte_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
+        let byte_addr = fb.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
         let byte = fb
-            .build_load(byte_addr, VnSpace::RAM, ValueType::I8)
+            .build_load(byte_addr, VnSpace::RAM, ValueType::int(8))
             .expect("byte load (table entry)");
         let wide = fb
-            .extend_if_needed(byte, ValueType::I32, ExtendOp::ZeroExtend)
+            .extend_if_needed(byte, ValueType::int(32), ExtendOp::ZeroExtend)
             .expect("zero-extend the byte to I32");
-        let two = fb.build_int_const(2u64, ValueType::I32).unwrap();
+        let two = fb.build_int_const(2u64, ValueType::int(32)).unwrap();
         let shifted = fb
-            .build_int_binary_operation(wide, two, IntBinaryOp::ShiftRight, ValueType::I32)
+            .build_int_binary_operation(wide, two, IntBinaryOp::ShiftRight, ValueType::int(32))
             .expect("entry >> 2");
         table_target(fb, shifted, 4u64, 0x4000u64)
     });
@@ -1668,20 +1707,20 @@ fn classify_table_dispatch_excludes_widened_then_shifted_table_entry_as_index() 
     // Counting only the lossy factor expects 128 and reads the mismatch as a
     // narrowing, enumerating table DATA as the index.
     let (g, _target) = build_with_target(|fb| {
-        let byte_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
+        let byte_addr = fb.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
         let byte = fb
-            .build_load(byte_addr, VnSpace::RAM, ValueType::I8)
+            .build_load(byte_addr, VnSpace::RAM, ValueType::int(8))
             .expect("byte load (table entry)");
         let wide = fb
-            .extend_if_needed(byte, ValueType::I32, ExtendOp::ZeroExtend)
+            .extend_if_needed(byte, ValueType::int(32), ExtendOp::ZeroExtend)
             .expect("zero-extend the byte to I32");
-        let two = fb.build_int_const(2u64, ValueType::I32).unwrap();
+        let two = fb.build_int_const(2u64, ValueType::int(32)).unwrap();
         let up = fb
-            .build_int_binary_operation(wide, two, IntBinaryOp::ShiftLeft, ValueType::I32)
+            .build_int_binary_operation(wide, two, IntBinaryOp::ShiftLeft, ValueType::int(32))
             .expect("entry << 2");
-        let one = fb.build_int_const(1u64, ValueType::I32).unwrap();
+        let one = fb.build_int_const(1u64, ValueType::int(32)).unwrap();
         let shifted = fb
-            .build_int_binary_operation(up, one, IntBinaryOp::ShiftRight, ValueType::I32)
+            .build_int_binary_operation(up, one, IntBinaryOp::ShiftRight, ValueType::int(32))
             .expect("(entry << 2) >> 1");
         table_target(fb, shifted, 4u64, 0x4000u64)
     });
@@ -1711,16 +1750,16 @@ fn classify_table_dispatch_resolves_a_bitfield_index_under_its_guard() {
 
     b.set_region(entry);
     let arg = b.read_variable(&r0).unwrap();
-    let three = b.build_int_const(3u64, ValueType::I32).unwrap();
+    let three = b.build_int_const(3u64, ValueType::int(32)).unwrap();
     let up = b
-        .build_int_binary_operation(arg, three, IntBinaryOp::ShiftLeft, ValueType::I32)
+        .build_int_binary_operation(arg, three, IntBinaryOp::ShiftLeft, ValueType::int(32))
         .unwrap();
-    let thirty = b.build_int_const(30u64, ValueType::I32).unwrap();
+    let thirty = b.build_int_const(30u64, ValueType::int(32)).unwrap();
     let idx = b
-        .build_int_binary_operation(up, thirty, IntBinaryOp::ShiftRight, ValueType::I32)
+        .build_int_binary_operation(up, thirty, IntBinaryOp::ShiftRight, ValueType::int(32))
         .unwrap();
     let cond = b
-        .build_int_cmp_operation(three, idx, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(three, idx, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond, exit, dispatch).unwrap();
 
@@ -1760,13 +1799,15 @@ fn classify_table_dispatch_conflicting_isa_modes_on_one_addr_defers() {
     let (g, _target) = build_with_target(|fb| {
         let raw = build_non_const_idx(fb);
         let word = masked_table_target(fb, raw, 1u64, 4u64, 0x4000u64);
-        let mode_mask = fb.build_int_const(1u64, ValueType::I32).unwrap();
+        let mode_mask = fb.build_int_const(1u64, ValueType::int(32)).unwrap();
         mode_value = Some(
-            fb.build_int_binary_operation(word, mode_mask, IntBinaryOp::And, ValueType::I32)
+            fb.build_int_binary_operation(word, mode_mask, IntBinaryOp::And, ValueType::int(32))
                 .expect("word & 1"),
         );
-        let addr_mask = fb.build_int_const(0xFFFF_FFFEu64, ValueType::I32).unwrap();
-        fb.build_int_binary_operation(word, addr_mask, IntBinaryOp::And, ValueType::I32)
+        let addr_mask = fb
+            .build_int_const(0xFFFF_FFFEu64, ValueType::int(32))
+            .unwrap();
+        fb.build_int_binary_operation(word, addr_mask, IntBinaryOp::And, ValueType::int(32))
             .expect("word & ~1")
     });
     let rom = MockRom::strided(0x4000, 4, vec![0x1000, 0x1001], 4);
@@ -1791,13 +1832,15 @@ fn classify_table_dispatch_carries_each_arms_own_isa_mode() {
     let (g, _target) = build_with_target(|fb| {
         let raw = build_non_const_idx(fb);
         let word = masked_table_target(fb, raw, 1u64, 4u64, 0x4000u64);
-        let mode_mask = fb.build_int_const(1u64, ValueType::I32).unwrap();
+        let mode_mask = fb.build_int_const(1u64, ValueType::int(32)).unwrap();
         mode_value = Some(
-            fb.build_int_binary_operation(word, mode_mask, IntBinaryOp::And, ValueType::I32)
+            fb.build_int_binary_operation(word, mode_mask, IntBinaryOp::And, ValueType::int(32))
                 .expect("word & 1"),
         );
-        let addr_mask = fb.build_int_const(0xFFFF_FFFEu64, ValueType::I32).unwrap();
-        fb.build_int_binary_operation(word, addr_mask, IntBinaryOp::And, ValueType::I32)
+        let addr_mask = fb
+            .build_int_const(0xFFFF_FFFEu64, ValueType::int(32))
+            .unwrap();
+        fb.build_int_binary_operation(word, addr_mask, IntBinaryOp::And, ValueType::int(32))
             .expect("word & ~1")
     });
     let rom = MockRom::strided(0x4000, 4, vec![0x1000, 0x2001], 4);
@@ -1866,13 +1909,15 @@ fn classify_table_dispatch_evaluates_each_dispatch_load_once_per_index() {
     let (g, _target) = build_with_target(|fb| {
         let raw = build_non_const_idx(fb);
         let word = masked_table_target(fb, raw, 3u64, 4u64, 0x4000u64);
-        let mode_mask = fb.build_int_const(1u64, ValueType::I32).unwrap();
+        let mode_mask = fb.build_int_const(1u64, ValueType::int(32)).unwrap();
         mode_value = Some(
-            fb.build_int_binary_operation(word, mode_mask, IntBinaryOp::And, ValueType::I32)
+            fb.build_int_binary_operation(word, mode_mask, IntBinaryOp::And, ValueType::int(32))
                 .expect("word & 1"),
         );
-        let addr_mask = fb.build_int_const(0xFFFF_FFFEu64, ValueType::I32).unwrap();
-        fb.build_int_binary_operation(word, addr_mask, IntBinaryOp::And, ValueType::I32)
+        let addr_mask = fb
+            .build_int_const(0xFFFF_FFFEu64, ValueType::int(32))
+            .unwrap();
+        fb.build_int_binary_operation(word, addr_mask, IntBinaryOp::And, ValueType::int(32))
             .expect("word & ~1")
     });
     let rom = RecordingRom {
@@ -2023,18 +2068,18 @@ fn seated_switch_over_merged_base(clobber: bool) -> (Function, NodeId) {
 
     b.set_region(entry);
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let base_c = b.build_int_const(0x4000u64, ValueType::I32).unwrap();
+    let base_c = b.build_int_const(0x4000u64, ValueType::int(32)).unwrap();
     b.write_variable(&base_vn, base_c).unwrap();
     let raw = build_non_const_idx(&mut b);
-    let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
+    let zero = b.build_int_const(0u64, ValueType::int(32)).unwrap();
     let cond = b
-        .build_int_cmp_operation(raw, zero, IntCmpOp::Equal, ValueType::I32)
+        .build_int_cmp_operation(raw, zero, IntCmpOp::Equal, ValueType::int(32))
         .unwrap();
     b.build_if(cond, side, dispatch).unwrap();
 
     b.set_region(side);
     if clobber {
-        let callee = b.build_int_const(0x8000u64, ValueType::I32).unwrap();
+        let callee = b.build_int_const(0x8000u64, ValueType::int(32)).unwrap();
         let (_, outs) = b.build_call(callee, &[], &[base_vn], 0).unwrap();
         b.write_variable(&base_vn, outs[0]).unwrap();
     }
@@ -2042,18 +2087,20 @@ fn seated_switch_over_merged_base(clobber: bool) -> (Function, NodeId) {
 
     b.set_region(dispatch);
     let base = b.read_variable(&base_vn).unwrap();
-    let one = b.build_int_const(1u64, ValueType::I32).unwrap();
+    let one = b.build_int_const(1u64, ValueType::int(32)).unwrap();
     let idx = b
-        .build_int_binary_operation(raw, one, IntBinaryOp::And, ValueType::I32)
+        .build_int_binary_operation(raw, one, IntBinaryOp::And, ValueType::int(32))
         .unwrap();
-    let stride_c = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let stride_c = b.build_int_const(4u64, ValueType::int(32)).unwrap();
     let off = b
-        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
+        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::int(32))
         .unwrap();
     let addr = b
-        .build_int_binary_operation(base, off, IntBinaryOp::Add, ValueType::I32)
+        .build_int_binary_operation(base, off, IntBinaryOp::Add, ValueType::int(32))
         .unwrap();
-    let selector = b.build_load(addr, VnSpace::RAM, ValueType::I32).unwrap();
+    let selector = b
+        .build_load(addr, VnSpace::RAM, ValueType::int(32))
+        .unwrap();
     // Seated on one of the two slots, as a site resolved before the CFG closed.
     let switch = b.build_switch(selector, &[(arm0, 0x1000)]).unwrap();
 
@@ -2127,11 +2174,11 @@ fn stack_array_behind_a_heap_store(allocator: u64, targets: &[u64]) -> Function 
         .tracked(arg_vn)
         .build_fn_single_region()
         .unwrap();
-    let target = b.build_int_const(allocator, ValueType::I64).unwrap();
+    let target = b.build_int_const(allocator, ValueType::int(64)).unwrap();
     let (_call, rets) = b.build_call(target, &[], &[ret], 0).unwrap();
     let sp_val = b.read_variable(&sp).unwrap();
     wire_stack_stores(targets, -24, 8, sp_val, &mut b);
-    let junk = b.build_int_const(0x55u64, ValueType::I64).unwrap();
+    let junk = b.build_int_const(0x55u64, ValueType::int(64)).unwrap();
     b.build_store(rets[0], junk, VnSpace::RAM).unwrap();
     wire_stack_dispatch(targets.len(), -24, 8, sp_val, &mut b, arg_vn);
     b.build().unwrap()

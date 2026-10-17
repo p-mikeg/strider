@@ -23,7 +23,7 @@ fn call_matches_whatever_convention_the_call_carries() {
         ..b.function().default_cc().clone()
     };
     for (addr, cc) in [(0x1000u64, None), (0x2000, Some(&override_cc))] {
-        let tgt = b.build_int_const(addr, ValueType::I64).unwrap();
+        let tgt = b.build_int_const(addr, ValueType::int(64)).unwrap();
         b.build_call_cc(tgt, cc).unwrap();
     }
     b.build_return(None, &[]).unwrap();
@@ -49,12 +49,12 @@ fn call_arg_nests_value_builder_load() {
         .arg(arg)
         .build_fn_single_region()
         .unwrap();
-    let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
+    let addr = b.build_int_const(0x40u64, ValueType::int(64)).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
         .unwrap();
     b.write_variable(&arg, loaded).unwrap();
-    let tgt = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
+    let tgt = b.build_int_const(0xABCDu64, ValueType::int(64)).unwrap();
     b.build_call_cc(tgt, None).unwrap();
     b.build_return(None, &[]).unwrap();
     let function = b.build().unwrap();
@@ -87,7 +87,7 @@ fn call_other_name_filter() {
 
 fn return_const(v: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let val = b.build_int_const(v, ValueType::I64).unwrap();
+    let val = b.build_int_const(v, ValueType::int(64)).unwrap();
     b.build_return(Some(val), &[]).unwrap();
     b.build().unwrap()
 }
@@ -105,7 +105,7 @@ fn ret_val_matches_and_captures() {
 
 fn indirect_branch_to(target_addr: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let tgt = b.build_int_const(target_addr, ValueType::I64).unwrap();
+    let tgt = b.build_int_const(target_addr, ValueType::int(64)).unwrap();
     b.build_indirect_branch(tgt).unwrap();
     b.build().unwrap()
 }
@@ -164,7 +164,7 @@ fn unreachable_captures_node() {
 
 fn switch_fn(addr: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let dispatch = b.build_int_const(addr, ValueType::I64).unwrap();
+    let dispatch = b.build_int_const(addr, ValueType::int(64)).unwrap();
     let a = b.create_region_all().unwrap();
     let c = b.create_region_all().unwrap();
     b.build_switch(dispatch, &[(a, 0x1000), (c, 0x1020)])
@@ -290,10 +290,14 @@ fn if_else_capture_and_control_output_captures_coexist() {
 fn a_branch_walk_cast_ladder_is_a_fallback_not_an_alternative() {
     let (function, _, (trunc, wide)) = RegisterSet::new()
         .build_if_then_else_returns(|b| {
-            let x = b.build_int_const(1u64, ValueType::I8)?;
-            let y = b.build_int_const(2u64, ValueType::I8)?;
-            let wide =
-                b.build_int_binary_operation(x, y, strider_ir::IntBinaryOp::Add, ValueType::I8)?;
+            let x = b.build_int_const(1u64, ValueType::int(8))?;
+            let y = b.build_int_const(2u64, ValueType::int(8))?;
+            let wide = b.build_int_binary_operation(
+                x,
+                y,
+                strider_ir::IntBinaryOp::Add,
+                ValueType::int(8),
+            )?;
             let trunc = b.truncate_if_needed(wide, ValueType::I1)?;
             Ok((trunc, (trunc, wide)))
         })
@@ -359,12 +363,12 @@ fn phi_over_two_consts() -> strider_ir::Function {
     b.build_if(cond, region_t, region_f).unwrap();
 
     b.set_region(region_t);
-    let v1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+    let v1 = b.build_int_const(1u64, ValueType::int(64)).unwrap();
     b.write_variable(&var_vn, v1).unwrap();
     b.build_branch(join).unwrap();
 
     b.set_region(region_f);
-    let v2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+    let v2 = b.build_int_const(2u64, ValueType::int(64)).unwrap();
     b.write_variable(&var_vn, v2).unwrap();
     b.build_branch(join).unwrap();
 
@@ -390,18 +394,23 @@ fn phi_feeding_add() -> strider_ir::Function {
     let cond = b.build_boolean_const(true);
     b.build_if(cond, region_t, region_f).unwrap();
     b.set_region(region_t);
-    let v1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+    let v1 = b.build_int_const(1u64, ValueType::int(64)).unwrap();
     b.write_variable(&var_vn, v1).unwrap();
     b.build_branch(join).unwrap();
     b.set_region(region_f);
-    let v2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+    let v2 = b.build_int_const(2u64, ValueType::int(64)).unwrap();
     b.write_variable(&var_vn, v2).unwrap();
     b.build_branch(join).unwrap();
     b.set_region(join);
     let phi_val = b.read_variable(&var_vn).unwrap();
-    let ten = b.build_int_const(10u64, ValueType::I64).unwrap();
+    let ten = b.build_int_const(10u64, ValueType::int(64)).unwrap();
     let sum = b
-        .build_int_binary_operation(phi_val, ten, strider_ir::IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(
+            phi_val,
+            ten,
+            strider_ir::IntBinaryOp::Add,
+            ValueType::int(64),
+        )
         .unwrap();
     b.build_return(Some(sum), &[]).unwrap();
     b.set_lift_addr(None);
@@ -455,12 +464,12 @@ fn phi_over_casts_of_load() -> strider_ir::Function {
 
     for region in [region_t, region_f] {
         b.set_region(region);
-        let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
+        let addr = b.build_int_const(0x40u64, ValueType::int(64)).unwrap();
         let loaded = b
-            .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
+            .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))
             .unwrap();
         let z = b
-            .extend_if_needed(loaded, ValueType::I64, ExtendOp::ZeroExtend)
+            .extend_if_needed(loaded, ValueType::int(64), ExtendOp::ZeroExtend)
             .unwrap();
         b.write_variable(&phi_reg, z).unwrap();
         b.build_branch(join).unwrap();
@@ -836,9 +845,9 @@ fn load_from_0x1000() -> strider_ir::Function {
     b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+    let addr = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     b.build().unwrap()
@@ -897,8 +906,8 @@ fn store_any_input_binds_data() {
     b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
-    let data = b.build_int_const(99u64, ValueType::I64).unwrap();
+    let addr = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
+    let data = b.build_int_const(99u64, ValueType::int(64)).unwrap();
     b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
     b.build_return(None, &[]).unwrap();
     let function = b.build().unwrap();
@@ -919,13 +928,13 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
     // Register-arg carrier: InitialVar(rax).
     let v = b.read_variable(&rax).unwrap();
     // Stack-arg carrier.
-    let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
+    let addr = b.build_int_const(0x40u64, ValueType::int(64)).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
         .unwrap();
     // Combine both carriers so each stays reachable from the Return.
     let sum = b
-        .build_int_binary_operation(v, loaded, strider_ir::IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(v, loaded, strider_ir::IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     b.build_return(Some(sum), &[]).unwrap();
     let mut function = b.build().unwrap();
@@ -990,7 +999,7 @@ fn int_and_float_carriers() -> (strider_ir::Function, rsleigh::Vn) {
     let a = b.read_variable(&rax).unwrap();
     let f0 = b.read_variable(&fp0).unwrap();
     let sum = b
-        .build_int_binary_operation(a, f0, strider_ir::IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(a, f0, strider_ir::IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     b.build_return(Some(sum), &[]).unwrap();
     let mut function = b.build().unwrap();
@@ -1151,7 +1160,7 @@ fn call_with_clobber_retval() -> strider_ir::Function {
         .tracked(rax)
         .build_fn_single_region()
         .unwrap();
-    let tgt = b.build_int_const(0x1234u64, ValueType::I64).unwrap();
+    let tgt = b.build_int_const(0x1234u64, ValueType::int(64)).unwrap();
     b.build_call_cc(tgt, None).unwrap();
     b.build_return(None, &[]).unwrap();
     b.build().unwrap()
@@ -1173,7 +1182,7 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
     let clobber_value = *function
         .node_outputs(call)
         .iter()
-        .find(|&&o| function.value_kind(o).as_value() == Some(ValueType::I64))
+        .find(|&&o| function.value_kind(o).as_value() == Some(ValueType::int(64)))
         .expect("64-bit clobber value output");
 
     // The I64 call-target const is the other 64-bit value, hence two matches.
@@ -1212,7 +1221,7 @@ fn call_and_clobber(function: &strider_ir::Function) -> (NodeKind, strider_ir::n
     let clobber = *function
         .node_outputs(call)
         .iter()
-        .find(|&&o| function.value_kind(o).as_value() == Some(ValueType::I64))
+        .find(|&&o| function.value_kind(o).as_value() == Some(ValueType::int(64)))
         .expect("64-bit clobber value output at slot 2");
     (*function.node_kind(call), clobber)
 }
@@ -1264,14 +1273,14 @@ fn call_output_slot_type_constraint() {
     let m = Matcher::new(&function);
 
     assert_eq!(
-        m.find_all(&call().output(2).of_type(ValueType::I64).build())
+        m.find_all(&call().output(2).of_type(ValueType::int(64)).build())
             .unwrap()
             .len(),
         1,
         "slot-2 output is I64",
     );
     assert_eq!(
-        m.find_all(&call().output(2).of_type(ValueType::I32).build())
+        m.find_all(&call().output(2).of_type(ValueType::int(32)).build())
             .unwrap()
             .len(),
         0,
@@ -1354,8 +1363,8 @@ fn region_any_input_typed_value_sub_matches_nothing() {
 
 fn indirect_branch_with_mode(target_addr: u64, mode: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let tgt = b.build_int_const(target_addr, ValueType::I64).unwrap();
-    let m = b.build_int_const(mode, ValueType::I8).unwrap();
+    let tgt = b.build_int_const(target_addr, ValueType::int(64)).unwrap();
+    let m = b.build_int_const(mode, ValueType::int(8)).unwrap();
     b.build_indirect_branch_with_mode(tgt, Some(m)).unwrap();
     b.build().unwrap()
 }

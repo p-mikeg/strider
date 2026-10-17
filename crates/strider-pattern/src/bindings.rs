@@ -247,11 +247,11 @@ mod tests {
         let mut a_value = None;
         let mut b_value = None;
         let _function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, ValueType::I64).unwrap();
-            let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
+            let av = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+            let bv = b.build_int_const(2u64, ValueType::int(64)).unwrap();
             a_value = Some(av);
             b_value = Some(bv);
-            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
+            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::int(64))
         })
         .expect("build graph");
         let a = a_value.unwrap();
@@ -278,9 +278,9 @@ mod tests {
     fn capture_bind_and_get_with_real_node_ids() {
         // Thread through an Add so both constants stay reachable.
         let function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, ValueType::I64).unwrap();
-            let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
-            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
+            let av = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+            let bv = b.build_int_const(2u64, ValueType::int(64)).unwrap();
+            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::int(64))
         })
         .expect("build graph");
 
@@ -307,7 +307,7 @@ mod tests {
     fn get_uint_reads_int_const_through_bound_capture() {
         let mut c_value = None;
         let function = make_empty_fn(|b| {
-            let c = b.build_int_const(7u64, ValueType::I64).unwrap();
+            let c = b.build_int_const(7u64, ValueType::int(64)).unwrap();
             c_value = Some(c);
             Ok(c)
         })
@@ -324,10 +324,10 @@ mod tests {
     fn get_uint_returns_none_when_not_an_int_const() {
         let mut s_value = None;
         let function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, ValueType::I64).unwrap();
-            let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
+            let av = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+            let bv = b.build_int_const(2u64, ValueType::int(64)).unwrap();
             let s = b
-                .build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
+                .build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::int(64))
                 .unwrap();
             s_value = Some(s);
             Ok(s)
@@ -345,10 +345,10 @@ mod tests {
     fn get_int_binary_op_reads_op_variant_through_bound_capture() {
         let mut s_value = None;
         let function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, ValueType::I64).unwrap();
-            let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
+            let av = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+            let bv = b.build_int_const(2u64, ValueType::int(64)).unwrap();
             let s = b
-                .build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
+                .build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::int(64))
                 .unwrap();
             s_value = Some(s);
             Ok(s)
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn unbound_capture_yields_none_for_every_typed_extractor() {
         let function =
-            make_empty_fn(|b| b.build_int_const(0u64, ValueType::I64)).expect("build graph");
+            make_empty_fn(|b| b.build_int_const(0u64, ValueType::int(64))).expect("build graph");
         let bindings = Bindings::default();
         let v = Capture::new();
         assert_eq!(bindings.get_value(v), None);
@@ -392,7 +392,7 @@ mod tests {
     #[test]
     fn restore_drops_tail_and_allows_rebind() {
         let function =
-            make_empty_fn(|b| b.build_int_const(1u64, ValueType::I64)).expect("build graph");
+            make_empty_fn(|b| b.build_int_const(1u64, ValueType::int(64))).expect("build graph");
         let n = function
             .walk()
             .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)))
@@ -430,9 +430,9 @@ mod tests {
     fn partial_restore_keeps_survivors_and_reindexes_cleanly() {
         // Two distinct nodes so kept and dropped bindings differ.
         let function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, ValueType::I64).unwrap();
-            let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
-            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
+            let av = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+            let bv = b.build_int_const(2u64, ValueType::int(64)).unwrap();
+            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::int(64))
         })
         .expect("build graph");
         let mut consts = function
@@ -465,7 +465,7 @@ mod tests {
     #[test]
     fn restore_to_current_mark_is_noop() {
         let function =
-            make_empty_fn(|b| b.build_int_const(1u64, ValueType::I64)).expect("build graph");
+            make_empty_fn(|b| b.build_int_const(1u64, ValueType::int(64))).expect("build graph");
         let n = function
             .walk()
             .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)))
@@ -486,7 +486,7 @@ mod tests {
     fn node_then_value_binding_for_same_capture_conflicts() {
         let mut c_value = None;
         let function = make_empty_fn(|b| {
-            let c = b.build_int_const(7u64, ValueType::I64).unwrap();
+            let c = b.build_int_const(7u64, ValueType::int(64)).unwrap();
             c_value = Some(c);
             Ok(c)
         })

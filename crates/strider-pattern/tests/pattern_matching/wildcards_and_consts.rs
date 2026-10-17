@@ -87,7 +87,7 @@ fn bool_const_true_matches() {
 fn float_const_exact_bits_matches() {
     let mut t = Tb::empty();
     let pi = t.f64(std::f64::consts::PI);
-    let pi_i = t.float_to_int(pi, ValueType::I64);
+    let pi_i = t.float_to_int(pi, ValueType::int(64));
     let function = t.ret_val(pi_i);
 
     a::matches(
@@ -104,10 +104,15 @@ fn float_const_exact_bits_matches() {
 #[test]
 fn float_const_nan_bits_match_separately_from_zero() {
     let mut t = Tb::empty();
-    let nan = t.float_bits(f64::NAN.to_bits(), ValueType::F64);
-    let zero = t.float_bits(0.0f64.to_bits(), ValueType::F64);
-    let sum = t.fbin(nan, zero, strider_ir::FloatBinaryOp::Add, ValueType::F64);
-    let as_int = t.float_to_int(sum, ValueType::I64);
+    let nan = t.float_bits(f64::NAN.to_bits(), ValueType::float(64));
+    let zero = t.float_bits(0.0f64.to_bits(), ValueType::float(64));
+    let sum = t.fbin(
+        nan,
+        zero,
+        strider_ir::FloatBinaryOp::Add,
+        ValueType::float(64),
+    );
+    let as_int = t.float_to_int(sum, ValueType::int(64));
     let function = t.ret_val(as_int);
 
     a::matches(&function, float_const(f64::NAN.to_bits()).into_pattern(), 1);
@@ -133,7 +138,7 @@ fn duplicate_int_const_is_single_node() {
 fn any_int_matches_a_non_constant_node() {
     let mut t = Tb::empty();
     let addr = t.u64(0x1000);
-    let loaded = t.load_ram(addr, ValueType::I64);
+    let loaded = t.load_ram(addr, ValueType::int(64));
     let function = t.ret_val(loaded);
 
     let c = Capture::new();
@@ -154,11 +159,16 @@ fn any_int_matches_a_non_constant_node() {
 fn any_float_matches_a_non_constant_node() {
     let mut t = Tb::empty();
     let addr = t.u64(0x1000);
-    let loaded = t.load_ram(addr, ValueType::I64);
-    let as_float = t.int_bits_to_float(loaded, ValueType::F64);
+    let loaded = t.load_ram(addr, ValueType::int(64));
+    let as_float = t.int_bits_to_float(loaded, ValueType::float(64));
     let k = t.f64(2.5);
-    let sum = t.fbin(as_float, k, strider_ir::FloatBinaryOp::Add, ValueType::F64);
-    let as_int = t.float_to_int(sum, ValueType::I64);
+    let sum = t.fbin(
+        as_float,
+        k,
+        strider_ir::FloatBinaryOp::Add,
+        ValueType::float(64),
+    );
+    let as_int = t.float_to_int(sum, ValueType::int(64));
     let function = t.ret_val(as_int);
 
     let c = Capture::new();
@@ -179,7 +189,7 @@ fn any_float_matches_a_non_constant_node() {
 fn any_bool_matches_a_non_constant_i1() {
     let mut t = Tb::empty();
     let addr = t.u64(0x1000);
-    let loaded = t.load_ram(addr, ValueType::I64);
+    let loaded = t.load_ram(addr, ValueType::int(64));
     let cmp = t.int_cmp(loaded, addr, strider_ir::IntCmpOp::Equal);
     let function = t.ret_val(cmp);
 
@@ -209,7 +219,7 @@ fn int_const_capture_binds_the_matched_value() {
 fn float_const_capture_binds_the_matched_bits() {
     let mut t = Tb::empty();
     let c = t.f64(2.5);
-    let ci = t.float_to_int(c, ValueType::I64);
+    let ci = t.float_to_int(c, ValueType::int(64));
     let function = t.ret_val(ci);
 
     let fv = Capture::new();

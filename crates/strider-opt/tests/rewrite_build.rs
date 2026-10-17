@@ -17,11 +17,11 @@ use strider_pattern::{
 fn add_zero_identity_fires_and_redirects() {
     let x = Capture::new();
     let mut fx = make_empty_fn(|b| {
-        let a = b.build_int_const(7u64, T::I64)?;
-        let zero = b.build_int_const(0u64, T::I64)?;
-        let sum = b.build_int_binary_operation(a, zero, IntBinaryOp::Add, T::I64)?;
+        let a = b.build_int_const(7u64, T::int(64))?;
+        let zero = b.build_int_const(0u64, T::int(64))?;
+        let sum = b.build_int_binary_operation(a, zero, IntBinaryOp::Add, T::int(64))?;
         // A consumer of the Add, so the rewrite has a use to redirect.
-        b.build_int_binary_operation(sum, a, IntBinaryOp::Or, T::I64)
+        b.build_int_binary_operation(sum, a, IntBinaryOp::Or, T::int(64))
     })
     .unwrap();
 
@@ -69,10 +69,10 @@ fn reassoc_rule_nests_computed_const_in_add() {
 
     // `(x + 1) + 2` over a tracked register var.
     let (mut fx, _xval) = make_fn_with_var(reg_vn(0, 8), |b, xv| {
-        let one = b.build_int_const(1u64, T::I64)?;
-        let inner = b.build_int_binary_operation(xv, one, IntBinaryOp::Add, T::I64)?;
-        let two = b.build_int_const(2u64, T::I64)?;
-        b.build_int_binary_operation(inner, two, IntBinaryOp::Add, T::I64)
+        let one = b.build_int_const(1u64, T::int(64))?;
+        let inner = b.build_int_binary_operation(xv, one, IntBinaryOp::Add, T::int(64))?;
+        let two = b.build_int_const(2u64, T::int(64))?;
+        b.build_int_binary_operation(inner, two, IntBinaryOp::Add, T::int(64))
     })
     .unwrap();
 

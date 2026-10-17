@@ -467,8 +467,8 @@ fn lift_int_neg_narrow_lowers_to_xor_all_ones() {
 #[test]
 fn lift_int_neg_register_wide_lowers_to_xor_all_ones() {
     let cases: [(&str, u32, strider_ir::ValueType); 2] = [
-        ("ymm_i256", 32, strider_ir::ValueType::I256),
-        ("zmm_i512", 64, strider_ir::ValueType::I512),
+        ("ymm_i256", 32, strider_ir::ValueType::int(256)),
+        ("zmm_i512", 64, strider_ir::ValueType::int(512)),
     ];
     for (label, width, _ty) in cases {
         // Its own container, so direct access with no sub-register masking.
@@ -526,12 +526,12 @@ fn lzcount_keeps_its_input_width() {
         let input = f.node_inputs(node)[0];
         assert_eq!(
             f.value_type(input).expect("typed input"),
-            ValueType::I32,
+            ValueType::int(32),
             "the operand must keep its own 4-byte width",
         );
         assert_eq!(
             f.value_type(f.node_outputs(node)[0]).expect("typed output"),
-            ValueType::I64,
+            ValueType::int(64),
             "the result is sized by the output varnode",
         );
     });
@@ -564,7 +564,7 @@ fn popcount_keeps_its_input_width() {
         let input = f.node_inputs(node)[0];
         assert_eq!(
             f.value_type(input).expect("typed input"),
-            ValueType::I32,
+            ValueType::int(32),
             "the operand must keep its own 4-byte width",
         );
     });
@@ -732,7 +732,7 @@ fn lift_without_lift_addr_leaves_fingerprint_empty() {
         }
         let outside = d
             .builder
-            .build_int_const(0x55u64, strider_ir::ValueType::I32)
+            .build_int_const(0x55u64, strider_ir::ValueType::int(32))
             .unwrap();
         let outside_node = d.builder.function().producer(outside);
         assert!(
@@ -994,7 +994,7 @@ fn write_vn_then_read_vn_round_trip() {
     with_test_lifter(|d, _rid| {
         let const_42 = d
             .builder
-            .build_int_const(42u64, strider_ir::ValueType::I32)
+            .build_int_const(42u64, strider_ir::ValueType::int(32))
             .unwrap();
         d.write_vn(&reg(0), const_42).expect("write_vn");
         let value = d.read_vn(&reg(0)).expect("read_vn");
@@ -1033,7 +1033,7 @@ fn sub_register_write_masks_the_container_only() {
     with_test_lifter_tracking(vec![container], |d, _rid| {
         let val = d
             .builder
-            .build_int_const(0xdead_beefu64, strider_ir::ValueType::I32)
+            .build_int_const(0xdead_beefu64, strider_ir::ValueType::int(32))
             .unwrap();
         d.write_vn(&half, val).expect("sub-register write");
         let ands = d
@@ -1057,7 +1057,7 @@ fn write_vn_to_const_space_errors() {
     with_test_lifter(|d, _rid| {
         let val = d
             .builder
-            .build_int_const(0u64, strider_ir::ValueType::I32)
+            .build_int_const(0u64, strider_ir::ValueType::int(32))
             .unwrap();
         let res = d.write_vn(&const_vn(0, 4), val);
         assert!(res.is_err(), "writing to CONST space should error");
@@ -1655,7 +1655,7 @@ fn a_shift_count_wider_than_the_output_saturates() {
         vec![0x66, 0x0f, 0xe2, 0xc1, 0xc3],
     )
     .expect("psrad must lift");
-    let producers = shift_count_producers(&f, IntBinaryOp::SShiftRight, ValueType::I32);
+    let producers = shift_count_producers(&f, IntBinaryOp::SShiftRight, ValueType::int(32));
     assert!(!producers.is_empty(), "psrad lifts to per-lane SShiftRight");
     for k in &producers {
         assert_eq!(
@@ -1685,7 +1685,7 @@ fn a_shift_count_narrower_than_the_output_is_left_alone() {
         vec![0xd3, 0xe0, 0xc3],
     )
     .expect("shl must lift");
-    let producers = shift_count_producers(&f, IntBinaryOp::ShiftLeft, ValueType::I32);
+    let producers = shift_count_producers(&f, IntBinaryOp::ShiftLeft, ValueType::int(32));
     assert!(!producers.is_empty(), "shl eax,cl lifts to a ShiftLeft");
     for k in &producers {
         assert_eq!(*k, NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend));

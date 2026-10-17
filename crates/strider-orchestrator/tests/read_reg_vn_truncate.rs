@@ -53,7 +53,7 @@ fn f32_arith_graph_is_valid(function: &strider_ir::Function) {
                 let kind = function.value_kind(*input);
                 assert_ne!(
                     kind,
-                    strider_ir::node::ValueKind::Typed(strider_ir::node::ValueType::I64),
+                    strider_ir::node::ValueKind::Typed(strider_ir::node::ValueType::int(64)),
                     "IntBitsToFloat node received a I64 input: \
                      read_reg_vn must truncate the sub-register to its declared \
                      width (I32 for s0 / f12) before passing it to this node"

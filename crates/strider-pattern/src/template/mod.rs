@@ -810,9 +810,9 @@ mod tests {
     /// `x` to the `I64` `5`.
     fn cmp_over_i64() -> Function {
         make_empty_fn(|b| {
-            let a = b.build_int_const(5u64, T::I64)?;
-            let k = b.build_int_const(1u64, T::I64)?;
-            b.build_int_cmp_operation(a, k, IntCmpOp::Equal, T::I64)
+            let a = b.build_int_const(5u64, T::int(64))?;
+            let k = b.build_int_const(1u64, T::int(64))?;
+            b.build_int_cmp_operation(a, k, IntCmpOp::Equal, T::int(64))
         })
         .unwrap()
     }
@@ -827,7 +827,7 @@ mod tests {
         let rhs = super::int_sborrow(crate::int_const(7u128), var(x)).into_template();
 
         let node = rewrite(&mut fx, &lhs, &rhs).unwrap();
-        assert_eq!(const_operand_ty(&fx, node), T::I64);
+        assert_eq!(const_operand_ty(&fx, node), T::int(64));
     }
 
     /// The same at operand 1, where the width comes from the operand the
@@ -840,7 +840,7 @@ mod tests {
         let rhs = super::int_lt(var(x), crate::int_const(7u128)).into_template();
 
         let node = rewrite(&mut fx, &lhs, &rhs).unwrap();
-        assert_eq!(const_operand_ty(&fx, node), T::I64);
+        assert_eq!(const_operand_ty(&fx, node), T::int(64));
     }
 
     /// A float comparison is the same shape: the fresh `FloatConst` is `F64`,
@@ -851,8 +851,8 @@ mod tests {
         let two = f64::to_bits(2.0);
         let f = Capture::new();
         let mut fx = make_empty_fn(|b| {
-            let a = b.build_float_const(one, T::F64);
-            let c = b.build_float_const(two, T::F64);
+            let a = b.build_float_const(one, T::float(64));
+            let c = b.build_float_const(two, T::float(64));
             b.build_float_cmp_op(a, c, FloatCmpOp::Equal)
         })
         .unwrap();
@@ -860,7 +860,7 @@ mod tests {
         let rhs = super::float_lt(var(f), crate::float_const(two)).into_template();
 
         let node = rewrite(&mut fx, &lhs, &rhs).unwrap();
-        assert_eq!(const_operand_ty(&fx, node), T::F64);
+        assert_eq!(const_operand_ty(&fx, node), T::float(64));
     }
 
     /// `Extend` pins its input APART from its output, so the root's width is
@@ -899,16 +899,16 @@ mod tests {
     fn a_fresh_const_under_an_arithmetic_root_still_inherits_the_root() {
         let x = Capture::new();
         let mut fx = make_empty_fn(|b| {
-            let a = b.build_int_const(5u64, T::I64)?;
-            let k = b.build_int_const(1u64, T::I64)?;
-            b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::I64)
+            let a = b.build_int_const(5u64, T::int(64))?;
+            let k = b.build_int_const(1u64, T::int(64))?;
+            b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::int(64))
         })
         .unwrap();
         let lhs = crate::int_add(var(x), crate::int_const(1u128)).into_pattern();
         let rhs = super::int_add(var(x), crate::int_const(2u128)).into_template();
 
         let node = rewrite(&mut fx, &lhs, &rhs).unwrap();
-        assert_eq!(const_operand_ty(&fx, node), T::I64);
+        assert_eq!(const_operand_ty(&fx, node), T::int(64));
         assert!(matches!(
             fx.node_kind(node),
             NodeKind::IntBinaryOp(IntBinaryOp::Add)

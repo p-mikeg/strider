@@ -169,7 +169,7 @@ fn rewrite_rule_on_call_root_returns_err() {
         .build_fn_single_region()
         .unwrap();
     fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let tgt = fb.build_int_const(0x1234u64, ValueType::I64).unwrap();
+    let tgt = fb.build_int_const(0x1234u64, ValueType::int(64)).unwrap();
     fb.build_call_cc(tgt, None).unwrap();
     fb.build_return(None, &[]).unwrap();
     fb.set_lift_addr(None);

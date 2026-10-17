@@ -51,7 +51,7 @@ fn build_all_ones(
     if ty.byte_size() <= 16 {
         // build_int_const masks u128::MAX down to the declared width.
         builder.build_int_const(u128::MAX, ty)
-    } else if ty == ValueType::I256 {
+    } else if ty == ValueType::int(256) {
         builder.build_int_const_limbs(&[u64::MAX; 4], ty)
     } else {
         builder.build_int_const_limbs(&[u64::MAX; 8], ty)

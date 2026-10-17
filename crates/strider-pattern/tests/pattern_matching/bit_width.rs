@@ -8,12 +8,16 @@ fn bit_width_filters_store_by_data_width() {
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
         .expect("build_fn_single_region");
-    let addr1 = b.build_int_const(0x100u64, ValueType::I64).expect("addr1");
-    let v32 = b.build_int_const(1u64, ValueType::I32).expect("v32");
+    let addr1 = b
+        .build_int_const(0x100u64, ValueType::int(64))
+        .expect("addr1");
+    let v32 = b.build_int_const(1u64, ValueType::int(32)).expect("v32");
     b.build_store(addr1, v32, rsleigh::VnSpace::RAM)
         .expect("u32 store");
-    let addr2 = b.build_int_const(0x108u64, ValueType::I64).expect("addr2");
-    let v64 = b.build_int_const(2u64, ValueType::I64).expect("v64");
+    let addr2 = b
+        .build_int_const(0x108u64, ValueType::int(64))
+        .expect("addr2");
+    let v64 = b.build_int_const(2u64, ValueType::int(64)).expect("v64");
     b.build_store(addr2, v64, rsleigh::VnSpace::RAM)
         .expect("u64 store");
     b.build_return(None, &[]).expect("ret");
@@ -50,14 +54,14 @@ fn output_width_and_input_width_distinguish_bool_ops_from_comparisons() {
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
         .expect("build_fn_single_region");
-    let a = b.build_int_const(1u64, ValueType::I32).expect("a");
-    let c = b.build_int_const(2u64, ValueType::I32).expect("c");
+    let a = b.build_int_const(1u64, ValueType::int(32)).expect("a");
+    let c = b.build_int_const(2u64, ValueType::int(32)).expect("c");
     // Two comparisons: wide inputs, I1 output.
     let cmp1 = b
-        .build_int_cmp_operation(a, c, IntCmpOp::Equal, ValueType::I32)
+        .build_int_cmp_operation(a, c, IntCmpOp::Equal, ValueType::int(32))
         .expect("cmp1");
     let cmp2 = b
-        .build_int_cmp_operation(a, c, IntCmpOp::Sless, ValueType::I32)
+        .build_int_cmp_operation(a, c, IntCmpOp::Sless, ValueType::int(32))
         .expect("cmp2");
     // Combined by a boolean AND: I1 in, I1 out.
     let and = b
@@ -113,10 +117,10 @@ fn bool_ctors_require_i1_output() {
         .build_fn_single_region()
         .expect("build_fn_single_region");
     // I64 And over an I64 IntConst(1); neither is a boolean.
-    let x = b.build_int_const(0xFFu64, ValueType::I64).expect("x");
-    let one = b.build_int_const(1u64, ValueType::I64).expect("one");
+    let x = b.build_int_const(0xFFu64, ValueType::int(64)).expect("x");
+    let one = b.build_int_const(1u64, ValueType::int(64)).expect("one");
     let wide_and = b
-        .build_int_binary_operation(x, one, IntBinaryOp::And, ValueType::I64)
+        .build_int_binary_operation(x, one, IntBinaryOp::And, ValueType::int(64))
         .expect("wide and");
     b.build_return(Some(wide_and), &[]).expect("ret");
     let function = b.build().expect("build");
@@ -162,10 +166,10 @@ fn inputs_of_width_over_an_alternation_still_constrains_the_inputs() {
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
         .expect("build_fn_single_region");
-    let a = b.build_int_const(7u64, ValueType::I64).expect("a");
-    let c = b.build_int_const(9u64, ValueType::I64).expect("c");
+    let a = b.build_int_const(7u64, ValueType::int(64)).expect("a");
+    let c = b.build_int_const(9u64, ValueType::int(64)).expect("c");
     let eq = b
-        .build_int_cmp_operation(a, c, IntCmpOp::Equal, ValueType::I64)
+        .build_int_cmp_operation(a, c, IntCmpOp::Equal, ValueType::int(64))
         .expect("eq");
     b.build_return(Some(eq), &[]).expect("ret");
     let function = b.build().expect("build");
@@ -200,8 +204,8 @@ fn inputs_of_width_reads_the_input_not_the_operand_behind_a_cast() {
     let a = t.u32(1);
     let b = t.u32(2);
     // I32 add, widened to I64 and added to an I64 value.
-    let narrow = t.int_bin_at(a, b, IntBinaryOp::Add, ValueType::I32);
-    let wide = t.zext_to(narrow, ValueType::I64);
+    let narrow = t.int_bin_at(a, b, IntBinaryOp::Add, ValueType::int(32));
+    let wide = t.zext_to(narrow, ValueType::int(64));
     let other = t.u64(9);
     let outer = t.add(wide, other);
     let function = t.ret_val(outer);

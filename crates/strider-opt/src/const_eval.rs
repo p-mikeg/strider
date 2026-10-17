@@ -170,9 +170,9 @@ mod tests {
         use strider_ir_test_utils::{MockRom, make_empty_fn};
         let mut loads = None;
         let function = make_empty_fn(|b| {
-            let addr = b.build_int_const(0x2000u64, ValueType::I64)?;
-            let ram = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
-            let reg = b.build_load(addr, rsleigh::VnSpace::REGISTER, ValueType::I64)?;
+            let addr = b.build_int_const(0x2000u64, ValueType::int(64))?;
+            let ram = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+            let reg = b.build_load(addr, rsleigh::VnSpace::REGISTER, ValueType::int(64))?;
             loads = Some((ram, reg));
             Ok(ram)
         })
@@ -199,7 +199,7 @@ mod tests {
     fn var_and_const_needs_exactly_one_constant() {
         use strider_ir::IntBinaryOp;
         use strider_ir_test_utils::make_empty_fn;
-        let ty = ValueType::I64;
+        let ty = ValueType::int(64);
         let mut built = None;
         let function = make_empty_fn(|b| {
             let addr = b.build_int_const(0x2000u64, ty)?;
@@ -226,13 +226,13 @@ mod tests {
         let mut sum_val = None;
         let function = make_empty_fn(|b| {
             let c5 = b
-                .build_int_const(5u64, ValueType::I64)
+                .build_int_const(5u64, ValueType::int(64))
                 .expect("build_int_const");
             let c100 = b
-                .build_int_const(100u64, ValueType::I64)
+                .build_int_const(100u64, ValueType::int(64))
                 .expect("build_int_const");
             let sum = b
-                .build_int_binary_operation(c5, c100, IntBinaryOp::Add, ValueType::I64)
+                .build_int_binary_operation(c5, c100, IntBinaryOp::Add, ValueType::int(64))
                 .expect("build_int_binary_operation");
             sum_val = Some(sum);
             Ok(sum)

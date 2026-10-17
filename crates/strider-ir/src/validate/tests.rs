@@ -76,7 +76,7 @@ fn local_typing_wrong_input_kind_on_int_unary_op() {
     let _bad = s.f.graph_mut().create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         [s.entry_ctrl],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
 
     assert_validation_err(&s.f, |e| {
@@ -92,7 +92,7 @@ fn local_typing_wrong_output_kind() {
     use crate::node::IntUnaryOp;
 
     let mut s = spine();
-    let (_c, c_value) = int_const(&mut s.f, 3, ValueType::I64);
+    let (_c, c_value) = int_const(&mut s.f, 3, ValueType::int(64));
     // IntUnaryOp must produce Typed; make it produce Memory.
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
@@ -196,7 +196,7 @@ fn validate_flags_stale_initial_var_index_entry() {
     let iv = s.f.graph_mut().create_node(
         NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
         [],
-        [ValueKind::Typed(ValueType::I32)],
+        [ValueKind::Typed(ValueType::int(32))],
     );
     stamp(&mut s.f, iv);
     let iv_value = s.f.node_outputs(iv)[0];
@@ -226,7 +226,7 @@ fn validate_flags_stale_initial_var_index_entry() {
 fn validate_flags_stale_value_vn_entry() {
     let mut s = spine();
     let vn = test_vn();
-    let (k, kv) = int_const(&mut s.f, 7, ValueType::I32);
+    let (k, kv) = int_const(&mut s.f, 7, ValueType::int(32));
     stamp(&mut s.f, k);
     s.f.set_all_vns(vec![vn]); // only a tracked vn can be tagged
     s.f.set_vn_for_value(kv, vn);
@@ -260,7 +260,7 @@ fn returned_initial_var(s: &mut Spine, id: InitialVnId, ty: ValueType) -> (NodeI
 fn validate_flags_initial_var_with_unminted_varnode_id() {
     let mut s = spine();
     let id = InitialVnId::from_index(7);
-    let (iv, _) = returned_initial_var(&mut s, id, ValueType::I64);
+    let (iv, _) = returned_initial_var(&mut s, id, ValueType::int(64));
 
     assert_validation_err(&s.f, |e| {
         matches!(e, ValidationError::DanglingInitialVnId { node, id: found }
@@ -274,7 +274,7 @@ fn validate_flags_initial_var_typed_against_its_varnode_size() {
     let vn = test_vn();
     s.f.set_all_vns(vec![vn]);
     let id = s.f.vn_id_of(&vn).expect("vn is tracked");
-    let (iv, _) = returned_initial_var(&mut s, id, ValueType::I8);
+    let (iv, _) = returned_initial_var(&mut s, id, ValueType::int(8));
 
     assert_validation_err(&s.f, |e| {
         matches!(e, ValidationError::InitialVarTypeMismatch { node, ty: ValueType::I8, .. }
@@ -288,7 +288,7 @@ fn validate_accepts_initial_var_typed_by_its_varnode_size() {
     let vn = test_vn();
     s.f.set_all_vns(vec![vn]);
     let id = s.f.vn_id_of(&vn).expect("vn is tracked");
-    returned_initial_var(&mut s, id, ValueType::I32);
+    returned_initial_var(&mut s, id, ValueType::int(32));
 
     validate(&s.f).expect("a 4-byte varnode read as I32 validates");
 }
@@ -301,7 +301,7 @@ fn validate_reports_side_table_entries_keyed_by_unminted_varnode_ids() {
     let vn = test_vn();
     s.f.set_all_vns(vec![vn]);
     let id = s.f.vn_id_of(&vn).expect("vn is tracked");
-    let (iv, value) = returned_initial_var(&mut s, id, ValueType::I32);
+    let (iv, value) = returned_initial_var(&mut s, id, ValueType::int(32));
     s.f.side_tables_mut().initial_var_index.insert(id, iv);
     s.f.set_vn_for_value(value, vn);
     s.f.set_all_vns(Vec::new());
@@ -325,7 +325,7 @@ fn graph_invariants_phi_token_from_wrong_node() {
     let phi = s.f.graph_mut().create_node(
         NodeKind::Phi,
         [cs_control_value],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     let phi_value = s.f.node_outputs(phi)[0];
     s.f.set_vn_for_value(phi_value, vn);
@@ -345,13 +345,13 @@ fn graph_invariants_phi_value_arity_mismatch() {
     );
     let cs_phi_value = s.f.node_outputs(cs).iter().copied().nth(1).unwrap();
 
-    let (_c1, c1_value) = int_const(&mut s.f, 1, ValueType::I64);
-    let (_c2, c2_value) = int_const(&mut s.f, 2, ValueType::I64);
+    let (_c1, c1_value) = int_const(&mut s.f, 1, ValueType::int(64));
+    let (_c2, c2_value) = int_const(&mut s.f, 2, ValueType::int(64));
     let vn = test_vn();
     let phi = s.f.graph_mut().create_node(
         NodeKind::Phi,
         [cs_phi_value, c1_value, c2_value],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     let phi_value = s.f.node_outputs(phi)[0];
     s.f.set_vn_for_value(phi_value, vn);
@@ -386,11 +386,11 @@ fn graph_invariants_phi_input_type_mismatch() {
     let cs_phi_value = s.f.node_outputs(cs).iter().copied().nth(1).unwrap();
 
     // Value input typed I8 under an I64 phi output.
-    let (_c1, c1_value) = int_const(&mut s.f, 1, ValueType::I8);
+    let (_c1, c1_value) = int_const(&mut s.f, 1, ValueType::int(8));
     let phi = s.f.graph_mut().create_node(
         NodeKind::Phi,
         [cs_phi_value, c1_value],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     let phi_value = s.f.node_outputs(phi)[0];
     s.f.set_vn_for_value(phi_value, test_vn());
@@ -426,7 +426,7 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
     let vn = test_vn();
     let zombie =
         s.f.graph_mut()
-            .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
+            .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::int(64))]);
     let zombie_value = s.f.node_outputs(zombie)[0];
     s.f.set_vn_for_value(zombie_value, vn);
 
@@ -436,13 +436,13 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
 #[test]
 fn local_typing_wrong_input_count() {
     let mut s = spine();
-    let (_c, c_value) = int_const(&mut s.f, 5, ValueType::I64);
+    let (_c, c_value) = int_const(&mut s.f, 5, ValueType::int(64));
 
     // IntBinaryOp expects 2 inputs; give it 1.
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [c_value],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     let bad_value = s.f.node_outputs(bad).iter().copied().next().unwrap();
 
@@ -467,8 +467,8 @@ fn local_typing_wrong_input_count() {
 #[test]
 fn local_typing_indirect_branch_rejects_a_second_isa_mode_input() {
     let mut s = spine();
-    let (_t, target) = int_const(&mut s.f, 0x1000, ValueType::I64);
-    let (_m, mode) = int_const(&mut s.f, 1, ValueType::I64);
+    let (_t, target) = int_const(&mut s.f, 0x1000, ValueType::int(64));
+    let (_m, mode) = int_const(&mut s.f, 1, ValueType::int(64));
 
     let bad = s.f.graph_mut().create_node(
         NodeKind::IndirectBranch,
@@ -487,8 +487,8 @@ fn local_typing_indirect_branch_rejects_a_second_isa_mode_input() {
 fn local_typing_indirect_branch_accepts_optional_isa_mode_input() {
     for with_mode in [false, true] {
         let mut s = spine();
-        let (_t, target) = int_const(&mut s.f, 0x1000, ValueType::I64);
-        let (_m, mode) = int_const(&mut s.f, 1, ValueType::I64);
+        let (_t, target) = int_const(&mut s.f, 0x1000, ValueType::int(64));
+        let (_m, mode) = int_const(&mut s.f, 1, ValueType::int(64));
         let mut inputs = vec![s.entry_ctrl, s.mem_value, target];
         if with_mode {
             inputs.push(mode);
@@ -507,8 +507,8 @@ fn local_typing_indirect_branch_accepts_optional_isa_mode_input() {
 #[test]
 fn local_typing_call_accepts_arbitrarily_many_argument_inputs() {
     let mut s = spine();
-    let (_t, target) = int_const(&mut s.f, 0x1000, ValueType::I64);
-    let (_sp, sp) = int_const(&mut s.f, 0x7000, ValueType::I64);
+    let (_t, target) = int_const(&mut s.f, 0x1000, ValueType::int(64));
+    let (_sp, sp) = int_const(&mut s.f, 0x7000, ValueType::int(64));
     let mut inputs = vec![s.entry_ctrl, s.mem_value, target, sp];
     inputs.extend(std::iter::repeat_n(sp, 9));
     let call = s.f.graph_mut().create_node(
@@ -627,13 +627,13 @@ fn graph_invariants_mem_phi_arity_mismatch() {
 fn local_typing_rejects_wrong_output_count() {
     let mut s = spine();
     // IntConst with two outputs instead of one.
-    let id = s.f.intern_int_const(0, ValueType::I64);
+    let id = s.f.intern_int_const(0, ValueType::int(64));
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
         [
-            ValueKind::Typed(ValueType::I64),
-            ValueKind::Typed(ValueType::I64),
+            ValueKind::Typed(ValueType::int(64)),
+            ValueKind::Typed(ValueType::int(64)),
         ],
     );
     let bad_value0 = s.f.node_outputs(bad).iter().copied().next().unwrap();
@@ -689,7 +689,7 @@ fn graph_invariants_tolerates_unreachable_zero_predecessor_region() {
 fn an_unreachable_unstamped_node_is_not_flagged() {
     let mut s = spine();
     // Unstamped, but unreachable from entry.
-    let _const_node = int_const(&mut s.f, 7, ValueType::I64);
+    let _const_node = int_const(&mut s.f, 7, ValueType::int(64));
     let u =
         s.f.graph_mut()
             .create_node(NodeKind::Unreachable, [s.entry_ctrl], []);
@@ -700,7 +700,7 @@ fn an_unreachable_unstamped_node_is_not_flagged() {
 #[test]
 fn asm_fingerprint_check_flags_reachable_non_exempt_empty() {
     let mut s = spine();
-    let (_c, const_value) = int_const(&mut s.f, 7, ValueType::I64);
+    let (_c, const_value) = int_const(&mut s.f, 7, ValueType::int(64));
     let _ret = s.f.graph_mut().create_node(
         NodeKind::Return,
         [s.entry_ctrl, s.mem_value, const_value],
@@ -729,7 +729,7 @@ fn asm_fingerprint_check_flags_reachable_non_exempt_empty() {
 #[test]
 fn asm_fingerprint_check_accepts_when_fingerprint_present() {
     let mut s = spine();
-    let (int_const_node, const_value) = int_const(&mut s.f, 7, ValueType::I64);
+    let (int_const_node, const_value) = int_const(&mut s.f, 7, ValueType::int(64));
     let ret = s.f.graph_mut().create_node(
         NodeKind::Return,
         [s.entry_ctrl, s.mem_value, const_value],
@@ -789,7 +789,7 @@ fn unreachable_region_with_non_control_input_does_not_fire() {
     stamp(&mut s.f, ret);
 
     // In the arena, but unreachable from entry.
-    let (_int_const, bogus_value) = int_const(&mut s.f, 0x1234, ValueType::I64);
+    let (_int_const, bogus_value) = int_const(&mut s.f, 0x1234, ValueType::int(64));
     let _zombie_cs = s.f.graph_mut().create_node(
         NodeKind::Region,
         [bogus_value],
@@ -855,7 +855,7 @@ fn entry_into_unreachable_validates() {
 #[test]
 fn indirect_branch_with_control_memory_and_value_validates() {
     let mut s = spine();
-    let (target, target_val) = int_const(&mut s.f, 0x1234, ValueType::I64);
+    let (target, target_val) = int_const(&mut s.f, 0x1234, ValueType::int(64));
     let ib = s.f.graph_mut().create_node(
         NodeKind::IndirectBranch,
         [s.entry_ctrl, s.mem_value, target_val],
@@ -876,7 +876,7 @@ fn graph_invariants_dangling_const_id_detected() {
     let bogus = s.f.graph_mut().create_node(
         NodeKind::IntConst(bogus_id),
         [],
-        [ValueKind::Typed(ValueType::I256)],
+        [ValueKind::Typed(ValueType::int(256))],
     );
     let bogus_value = s.f.node_outputs(bogus).iter().copied().next().unwrap();
     let _ret = s.f.graph_mut().create_node(
@@ -893,7 +893,7 @@ fn graph_invariants_dangling_const_id_detected() {
 #[test]
 fn graph_invariants_dangling_switch_table_id_detected() {
     let mut s = spine();
-    let (_, addr) = int_const(&mut s.f, 0x1000, ValueType::I64);
+    let (_, addr) = int_const(&mut s.f, 0x1000, ValueType::int(64));
     let sw = s.f.graph_mut().create_node(
         NodeKind::Switch(crate::node::SwitchTableId::from_u32(9)),
         [s.entry_ctrl, addr],
@@ -916,13 +916,13 @@ fn graph_invariants_dangling_switch_table_id_detected() {
 #[test]
 fn graph_invariants_arithmetic_width_mismatch_detected() {
     let mut s = spine();
-    let (_, narrow) = int_const(&mut s.f, 1, ValueType::I8);
-    let (_, wide) = int_const(&mut s.f, 2, ValueType::I32);
+    let (_, narrow) = int_const(&mut s.f, 1, ValueType::int(8));
+    let (_, wide) = int_const(&mut s.f, 2, ValueType::int(32));
     // `Add` pins every operand to the output width, unlike a shift's count.
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntBinaryOp(crate::IntBinaryOp::Add),
         [narrow, wide],
-        [ValueKind::Typed(ValueType::I32)],
+        [ValueKind::Typed(ValueType::int(32))],
     );
     let [sum] = s.f.node_outputs_exact::<1>(bad).unwrap();
     let _ret =
@@ -947,12 +947,12 @@ fn graph_invariants_arithmetic_width_mismatch_detected() {
 #[test]
 fn graph_invariants_a_shift_count_may_be_narrower_than_the_output() {
     let mut s = spine();
-    let (_, value) = int_const(&mut s.f, 0xff, ValueType::I32);
-    let (_, count) = int_const(&mut s.f, 3, ValueType::I8);
+    let (_, value) = int_const(&mut s.f, 0xff, ValueType::int(32));
+    let (_, count) = int_const(&mut s.f, 3, ValueType::int(8));
     let shl = s.f.graph_mut().create_node(
         NodeKind::IntBinaryOp(crate::IntBinaryOp::ShiftLeft),
         [value, count],
-        [ValueKind::Typed(ValueType::I32)],
+        [ValueKind::Typed(ValueType::int(32))],
     );
     let [out] = s.f.node_outputs_exact::<1>(shl).unwrap();
     let _ret =
@@ -972,7 +972,7 @@ fn graph_invariants_a_shift_count_may_be_narrower_than_the_output() {
 #[test]
 fn graph_invariants_empty_switch_targets_detected_beside_the_arity_error() {
     let mut s = spine();
-    let (_, addr) = int_const(&mut s.f, 0x1000, ValueType::I64);
+    let (_, addr) = int_const(&mut s.f, 0x1000, ValueType::int(64));
     let table = s.f.add_switch_table(vec![0x2000]);
     let sw =
         s.f.graph_mut()
@@ -1000,8 +1000,8 @@ fn graph_invariants_empty_switch_targets_detected_beside_the_arity_error() {
 #[test]
 fn graph_invariants_dangling_cc_id_detected() {
     let mut s = spine();
-    let (_, target) = int_const(&mut s.f, 0x1000, ValueType::I64);
-    let (_, sp) = int_const(&mut s.f, 0x8000, ValueType::I64);
+    let (_, target) = int_const(&mut s.f, 0x1000, ValueType::int(64));
+    let (_, sp) = int_const(&mut s.f, 0x8000, ValueType::int(64));
     let call = s.f.graph_mut().create_node(
         NodeKind::Call {
             cc: Some(crate::node::CcId::from_u32(9)),
@@ -1028,7 +1028,7 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     let bad_value = s.f.node_outputs(bad).iter().copied().next().unwrap();
     let _ret =
@@ -1049,7 +1049,7 @@ fn graph_invariants_const_bits_above_declared_width_detected() {
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
-        [ValueKind::Typed(ValueType::I8)],
+        [ValueKind::Typed(ValueType::int(8))],
     );
     let bad_value = s.f.node_outputs(bad).iter().copied().next().unwrap();
     let _ret =
@@ -1073,7 +1073,7 @@ fn graph_invariants_wide_const_filling_a_partial_top_limb_is_accepted() {
     let ok = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
-        [ValueKind::Typed(ValueType::I72)],
+        [ValueKind::Typed(ValueType::int(72))],
     );
     let ok_value = s.f.node_outputs(ok).iter().copied().next().unwrap();
     let _ret =
@@ -1098,7 +1098,7 @@ fn graph_invariants_wide_const_one_bit_over_a_partial_width_detected() {
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
-        [ValueKind::Typed(ValueType::I72)],
+        [ValueKind::Typed(ValueType::int(72))],
     );
     let bad_value = s.f.node_outputs(bad).iter().copied().next().unwrap();
     let _ret =
@@ -1125,9 +1125,9 @@ fn store(f: &mut Function, mem_in: ValueId, addr: ValueId, data: ValueId) -> (No
 #[test]
 fn memory_chain_wired_store_to_return_validates() {
     let mut s = spine();
-    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::I64);
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::int(64));
     stamp(&mut s.f, addr_n);
-    let (data_n, data) = int_const(&mut s.f, 0x42, ValueType::I64);
+    let (data_n, data) = int_const(&mut s.f, 0x42, ValueType::int(64));
     stamp(&mut s.f, data_n);
     let (_st, st_mem) = store(&mut s.f, s.mem_value, addr, data);
     let ret =
@@ -1147,9 +1147,9 @@ fn memory_chain_dead_control_store_not_flagged() {
             .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
     stamp(&mut s.f, ret);
 
-    let (addr_n, addr) = int_const(&mut s.f, 0x3000, ValueType::I64);
+    let (addr_n, addr) = int_const(&mut s.f, 0x3000, ValueType::int(64));
     stamp(&mut s.f, addr_n);
-    let (data_n, data) = int_const(&mut s.f, 0x7, ValueType::I64);
+    let (data_n, data) = int_const(&mut s.f, 0x7, ValueType::int(64));
     stamp(&mut s.f, data_n);
     let (_dead_store, _dead_mem) = store(&mut s.f, s.mem_value, addr, data);
 
@@ -1164,9 +1164,9 @@ fn memory_chain_dead_control_store_not_flagged() {
 #[test]
 fn memory_chain_orphaned_store_flagged() {
     let mut s = spine();
-    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::I64);
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::int(64));
     stamp(&mut s.f, addr_n);
-    let (data_n, data) = int_const(&mut s.f, 0x42, ValueType::I64);
+    let (data_n, data) = int_const(&mut s.f, 0x42, ValueType::int(64));
     stamp(&mut s.f, data_n);
     let (_st, st_mem) = store(&mut s.f, s.mem_value, addr, data);
     let ret =
@@ -1190,15 +1190,15 @@ fn memory_chain_orphaned_store_flagged() {
 /// A stamped `Store(mem_in, 0x2000, 0x42)` and a `Load` of the same address
 /// off its output. Returns `(store, store mem, loaded value)`.
 fn store_then_load(f: &mut Function, mem_in: ValueId) -> (NodeId, ValueId, ValueId) {
-    let (addr_n, addr) = int_const(f, 0x2000, ValueType::I64);
+    let (addr_n, addr) = int_const(f, 0x2000, ValueType::int(64));
     stamp(f, addr_n);
-    let (data_n, data) = int_const(f, 0x42, ValueType::I64);
+    let (data_n, data) = int_const(f, 0x42, ValueType::int(64));
     stamp(f, data_n);
     let (st, st_mem) = store(f, mem_in, addr, data);
     let load = f.graph_mut().create_node(
         NodeKind::Load(rsleigh::VnSpace::RAM),
         [st_mem, addr],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     stamp(f, load);
     let [loaded] = f.node_outputs_exact::<1>(load).unwrap();
@@ -1258,9 +1258,9 @@ fn memory_linearity_store_read_by_a_load_then_the_chain_validates() {
 #[test]
 fn memory_linearity_token_forked_into_two_arms_validates() {
     let mut s = spine();
-    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::I64);
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::int(64));
     stamp(&mut s.f, addr_n);
-    let (data_n, data) = int_const(&mut s.f, 0x42, ValueType::I64);
+    let (data_n, data) = int_const(&mut s.f, 0x42, ValueType::int(64));
     stamp(&mut s.f, data_n);
     let (_, st_mem) = store(&mut s.f, s.mem_value, addr, data);
     let (cond_n, cond) = int_const(&mut s.f, 1, ValueType::I1);
@@ -1284,9 +1284,9 @@ fn memory_linearity_token_forked_into_two_arms_validates() {
 
 /// A `Call { cc: None }` on `ctrl` / `mem`. Returns `(call, [ctrl, mem])`.
 fn call(f: &mut Function, ctrl: ValueId, mem: ValueId) -> (NodeId, [ValueId; 2]) {
-    let (target_n, target) = int_const(f, 0x1000, ValueType::I64);
+    let (target_n, target) = int_const(f, 0x1000, ValueType::int(64));
     stamp(f, target_n);
-    let (sp_n, sp) = int_const(f, 0x7fff_0000, ValueType::I64);
+    let (sp_n, sp) = int_const(f, 0x7fff_0000, ValueType::int(64));
     stamp(f, sp_n);
     let call = f.graph_mut().create_node(
         NodeKind::Call { cc: None },
@@ -1324,7 +1324,7 @@ fn memory_chain_preserving_call_unconsumed_memory_output_not_flagged() {
 #[test]
 fn memory_order_return_behind_a_clobbering_call_is_rejected() {
     let mut s = spine();
-    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::I64);
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::int(64));
     stamp(&mut s.f, addr_n);
     let (_, st_mem) = store(&mut s.f, s.mem_value, addr, addr);
     let (call, [call_ctrl, _]) = call(&mut s.f, s.entry_ctrl, st_mem);
@@ -1476,7 +1476,7 @@ fn memory_order_mem_phi_arm_behind_its_edge_effect_is_rejected() {
     stamp(&mut s.f, branch);
     let [then_edge, else_edge] = s.f.node_outputs_exact::<2>(branch).unwrap();
     let (call, [call_ctrl, _]) = call(&mut s.f, then_edge, s.mem_value);
-    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::I64);
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::int(64));
     stamp(&mut s.f, addr_n);
     let (_, st_mem) = store(&mut s.f, s.mem_value, addr, addr);
     let merge = s.f.graph_mut().create_node(
@@ -1558,8 +1558,8 @@ fn assert_width_direction_rejected(
 fn graph_invariants_extend_must_strictly_widen() {
     assert_width_direction_rejected(
         NodeKind::Extend(crate::node::ExtendOp::ZeroExtend),
-        ValueType::I64,
-        ValueType::I32,
+        ValueType::int(64),
+        ValueType::int(32),
         64,
         32,
     );
@@ -1567,15 +1567,21 @@ fn graph_invariants_extend_must_strictly_widen() {
 
 #[test]
 fn graph_invariants_truncate_must_strictly_narrow() {
-    assert_width_direction_rejected(NodeKind::Truncate, ValueType::I32, ValueType::I64, 32, 64);
+    assert_width_direction_rejected(
+        NodeKind::Truncate,
+        ValueType::int(32),
+        ValueType::int(64),
+        32,
+        64,
+    );
 }
 
 #[test]
 fn graph_invariants_equal_width_extend_is_rejected() {
     assert_width_direction_rejected(
         NodeKind::Extend(crate::node::ExtendOp::SignExtend),
-        ValueType::I32,
-        ValueType::I32,
+        ValueType::int(32),
+        ValueType::int(32),
         32,
         32,
     );
@@ -1669,9 +1675,9 @@ fn graph_invariants_control_cycle_with_unreachable_sink_validates() {
 #[test]
 fn unreachable_with_memory_input_keeps_the_store_live() {
     let mut s = spine();
-    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::I64);
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::int(64));
     stamp(&mut s.f, addr_n);
-    let (data_n, data) = int_const(&mut s.f, 0x42, ValueType::I64);
+    let (data_n, data) = int_const(&mut s.f, 0x42, ValueType::int(64));
     stamp(&mut s.f, data_n);
     let (st, st_mem) = store(&mut s.f, s.mem_value, addr, data);
     let sink =
@@ -1694,7 +1700,7 @@ fn graph_invariants_float_const_bits_above_declared_width_detected() {
     let bad = s.f.graph_mut().create_node(
         NodeKind::FloatConst(1.0f32.to_bits() as u64 | 0x1_0000_0000),
         [],
-        [ValueKind::Typed(ValueType::F32)],
+        [ValueKind::Typed(ValueType::float(32))],
     );
     let bad_value = s.f.node_outputs(bad).iter().copied().next().unwrap();
     let _ret =
@@ -1711,7 +1717,7 @@ fn graph_invariants_float_const_bits_above_declared_width_detected() {
 /// the declared width is what has to be rejected.
 #[test]
 fn graph_invariants_float_const_wider_than_its_payload_detected() {
-    for ty in [ValueType::F80, ValueType::F128] {
+    for ty in [ValueType::float(80), ValueType::float(128)] {
         let mut s = spine();
         let bad =
             s.f.graph_mut()
@@ -1735,14 +1741,14 @@ fn graph_invariants_float_const_wider_than_its_payload_detected() {
 #[test]
 fn self_referential_data_edge_flagged() {
     let mut s = spine();
-    let (a_n, a) = int_const(&mut s.f, 1, ValueType::I64);
+    let (a_n, a) = int_const(&mut s.f, 1, ValueType::int(64));
     stamp(&mut s.f, a_n);
-    let (b_n, b) = int_const(&mut s.f, 2, ValueType::I64);
+    let (b_n, b) = int_const(&mut s.f, 2, ValueType::int(64));
     stamp(&mut s.f, b_n);
     let add = s.f.graph_mut().create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [a, b],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     stamp(&mut s.f, add);
     let [sum] = s.f.node_outputs_exact::<1>(add).unwrap();
@@ -1761,7 +1767,7 @@ fn self_referential_data_edge_flagged() {
 #[test]
 fn phi_carried_data_cycle_not_flagged() {
     let mut s = spine();
-    let (one_n, one) = int_const(&mut s.f, 1, ValueType::I64);
+    let (one_n, one) = int_const(&mut s.f, 1, ValueType::int(64));
     stamp(&mut s.f, one_n);
     let token =
         s.f.graph_mut()
@@ -1771,14 +1777,14 @@ fn phi_carried_data_cycle_not_flagged() {
     let phi = s.f.graph_mut().create_node(
         NodeKind::Phi,
         [region_ctrl, one],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     stamp(&mut s.f, phi);
     let [phi_val] = s.f.node_outputs_exact::<1>(phi).unwrap();
     let add = s.f.graph_mut().create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [phi_val, one],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     stamp(&mut s.f, add);
     let [sum] = s.f.node_outputs_exact::<1>(add).unwrap();
@@ -1797,7 +1803,7 @@ fn diamond_with_arm_phis() -> (Function, [ValueId; 2], ValueId, ValueId) {
     let mut s = spine();
     let (cond_node, cond) = int_const(&mut s.f, 1, ValueType::I1);
     stamp(&mut s.f, cond_node);
-    let (seed_node, seed) = int_const(&mut s.f, 7, ValueType::I64);
+    let (seed_node, seed) = int_const(&mut s.f, 7, ValueType::int(64));
     stamp(&mut s.f, seed_node);
     let branch = s.f.graph_mut().create_node(
         NodeKind::If,
@@ -1816,7 +1822,7 @@ fn diamond_with_arm_phis() -> (Function, [ValueId; 2], ValueId, ValueId) {
         let phi = s.f.graph_mut().create_node(
             NodeKind::Phi,
             [token, seed],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [value] = s.f.node_outputs_exact::<1>(phi).unwrap();
         (ctrl, value)
@@ -1848,7 +1854,7 @@ fn close_with_return(f: &mut Function, ctrl: ValueId, values: &[ValueId]) {
 #[test]
 fn memory_linearity_store_merged_into_a_mem_phi_only_a_load_reads_is_lost() {
     let (mut f, _, token, ctrl) = diamond_with_arm_phis();
-    let (seed_node, seed) = int_const(&mut f, 0x2000, ValueType::I64);
+    let (seed_node, seed) = int_const(&mut f, 0x2000, ValueType::int(64));
     stamp(&mut f, seed_node);
     let mem = crate::function::test_initial_memory(&f);
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
@@ -1862,7 +1868,7 @@ fn memory_linearity_store_merged_into_a_mem_phi_only_a_load_reads_is_lost() {
     let load = f.graph_mut().create_node(
         NodeKind::Load(rsleigh::VnSpace::RAM),
         [merged_mem, seed],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     stamp(&mut f, load);
     let [loaded] = f.node_outputs_exact::<1>(load).unwrap();
@@ -1881,7 +1887,7 @@ fn phi_input_from_the_other_arm_is_not_available() {
     let merge_phi = f.graph_mut().create_node(
         NodeKind::Phi,
         [token, then_val, then_val],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     let [merged] = f.node_outputs_exact::<1>(merge_phi).unwrap();
     close_with_return(&mut f, ctrl, &[merged]);
@@ -1903,7 +1909,7 @@ fn phi_inputs_from_their_own_arms_are_available() {
     let merge_phi = f.graph_mut().create_node(
         NodeKind::Phi,
         [token, then_val, else_val],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     let [merged] = f.node_outputs_exact::<1>(merge_phi).unwrap();
     close_with_return(&mut f, ctrl, &[merged]);
@@ -1920,7 +1926,7 @@ fn arm_value_used_after_the_merge_is_not_available() {
     let add = f.graph_mut().create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [then_val, else_val],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     stamp(&mut f, add);
     let [sum] = f.node_outputs_exact::<1>(add).unwrap();
@@ -1959,7 +1965,7 @@ fn unreachable_region_value(f: &mut Function, seed: ValueId) -> (ValueId, ValueI
     let phi = f.graph_mut().create_node(
         NodeKind::Phi,
         [token, seed],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     let [value] = f.node_outputs_exact::<1>(phi).unwrap();
     (exit, value)
@@ -1968,14 +1974,14 @@ fn unreachable_region_value(f: &mut Function, seed: ValueId) -> (ValueId, ValueI
 #[test]
 fn a_value_from_unreachable_code_is_not_available_to_a_live_use() {
     let mut s = spine();
-    let (seed_node, seed) = int_const(&mut s.f, 7, ValueType::I64);
+    let (seed_node, seed) = int_const(&mut s.f, 7, ValueType::int(64));
     stamp(&mut s.f, seed_node);
     let (dead_exit, dead) = unreachable_region_value(&mut s.f, seed);
     close_with_return(&mut s.f, dead_exit, &[]);
     let add = s.f.graph_mut().create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [dead, seed],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     stamp(&mut s.f, add);
     let [sum] = s.f.node_outputs_exact::<1>(add).unwrap();
@@ -1990,14 +1996,14 @@ fn a_value_from_unreachable_code_is_not_available_to_a_live_use() {
 #[test]
 fn a_phi_input_from_unreachable_code_on_a_live_edge_is_not_available() {
     let (mut f, [then_val, _], token, ctrl) = diamond_with_arm_phis();
-    let (seed_node, seed) = int_const(&mut f, 3, ValueType::I64);
+    let (seed_node, seed) = int_const(&mut f, 3, ValueType::int(64));
     stamp(&mut f, seed_node);
     let (dead_exit, dead) = unreachable_region_value(&mut f, seed);
     close_with_return(&mut f, dead_exit, &[]);
     let merge_phi = f.graph_mut().create_node(
         NodeKind::Phi,
         [token, then_val, dead],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     let [merged] = f.node_outputs_exact::<1>(merge_phi).unwrap();
     close_with_return(&mut f, ctrl, &[merged]);
@@ -2012,7 +2018,7 @@ fn a_phi_input_from_unreachable_code_on_a_live_edge_is_not_available() {
 #[test]
 fn a_dead_edge_into_a_phi_is_not_judged() {
     let mut s = spine();
-    let (seed_node, seed) = int_const(&mut s.f, 7, ValueType::I64);
+    let (seed_node, seed) = int_const(&mut s.f, 7, ValueType::int(64));
     stamp(&mut s.f, seed_node);
     let live = s.f.graph_mut().create_node(
         NodeKind::Region,
@@ -2030,7 +2036,7 @@ fn a_dead_edge_into_a_phi_is_not_judged() {
     let merge_phi = s.f.graph_mut().create_node(
         NodeKind::Phi,
         [merge_token, seed, dead],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     let [merged] = s.f.node_outputs_exact::<1>(merge_phi).unwrap();
     close_with_return(&mut s.f, merge_ctrl, &[merged]);
@@ -2043,7 +2049,7 @@ fn a_dead_edge_into_a_phi_is_not_judged() {
 #[test]
 fn a_floating_value_on_a_dead_edge_into_a_phi_is_not_judged() {
     let mut s = spine();
-    let (seed_node, seed) = int_const(&mut s.f, 7, ValueType::I64);
+    let (seed_node, seed) = int_const(&mut s.f, 7, ValueType::int(64));
     stamp(&mut s.f, seed_node);
     let live = s.f.graph_mut().create_node(
         NodeKind::Region,
@@ -2055,7 +2061,7 @@ fn a_floating_value_on_a_dead_edge_into_a_phi_is_not_judged() {
     let add = s.f.graph_mut().create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [dead, seed],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     stamp(&mut s.f, add);
     let [sum] = s.f.node_outputs_exact::<1>(add).unwrap();
@@ -2068,7 +2074,7 @@ fn a_floating_value_on_a_dead_edge_into_a_phi_is_not_judged() {
     let merge_phi = s.f.graph_mut().create_node(
         NodeKind::Phi,
         [merge_token, seed, sum],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     let [merged] = s.f.node_outputs_exact::<1>(merge_phi).unwrap();
     close_with_return(&mut s.f, merge_ctrl, &[merged]);
@@ -2093,19 +2099,19 @@ fn check_data_cycles(wiring: &[(usize, usize)], phis: &[bool]) {
     let [region_ctrl, phi_token] = s.f.node_outputs_exact::<2>(region).unwrap();
     let mut nodes = Vec::with_capacity(k);
     for (i, &phi) in phis.iter().take(k).enumerate() {
-        let (c_n, c) = int_const(&mut s.f, 100 + i as u64, ValueType::I64);
+        let (c_n, c) = int_const(&mut s.f, 100 + i as u64, ValueType::int(64));
         stamp(&mut s.f, c_n);
         let node = if phi {
             s.f.graph_mut().create_node(
                 NodeKind::Phi,
                 [phi_token, c],
-                [ValueKind::Typed(ValueType::I64)],
+                [ValueKind::Typed(ValueType::int(64))],
             )
         } else {
             s.f.graph_mut().create_node(
                 NodeKind::IntBinaryOp(IntBinaryOp::Add),
                 [c, c],
-                [ValueKind::Typed(ValueType::I64)],
+                [ValueKind::Typed(ValueType::int(64))],
             )
         };
         stamp(&mut s.f, node);
@@ -2198,7 +2204,7 @@ proptest::proptest! {
 #[cfg_attr(debug_assertions, ignore = "release-only scale test")]
 fn a_hundred_thousand_add_chain_closes_one_reported_cycle() {
     let mut s = spine();
-    let (k_n, k) = int_const(&mut s.f, 1, ValueType::I64);
+    let (k_n, k) = int_const(&mut s.f, 1, ValueType::int(64));
     stamp(&mut s.f, k_n);
     let mut prev = k;
     let mut first = None;
@@ -2206,7 +2212,7 @@ fn a_hundred_thousand_add_chain_closes_one_reported_cycle() {
         let add = s.f.graph_mut().create_node(
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             [prev, k],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         stamp(&mut s.f, add);
         first.get_or_insert(add);

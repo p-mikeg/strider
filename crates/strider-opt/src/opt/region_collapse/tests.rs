@@ -123,15 +123,23 @@ fn empty_entry_region_with_nontrivial_phi_survives() -> crate::Result<()> {
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cur = b.read_variable(&var)?;
-    let zero = b.build_int_const(0u64, strider_ir::node::ValueType::I64)?;
-    let cond =
-        b.build_int_cmp_operation(cur, zero, strider_ir::node::IntCmpOp::Equal, ValueType::I64)?;
+    let zero = b.build_int_const(0u64, strider_ir::node::ValueType::int(64))?;
+    let cond = b.build_int_cmp_operation(
+        cur,
+        zero,
+        strider_ir::node::IntCmpOp::Equal,
+        ValueType::int(64),
+    )?;
     b.build_if(cond, body, exit)?;
 
     b.set_region(body);
-    let one = b.build_int_const(1u64, ValueType::I64)?;
-    let next =
-        b.build_int_binary_operation(cur, one, strider_ir::node::IntBinaryOp::Add, ValueType::I64)?;
+    let one = b.build_int_const(1u64, ValueType::int(64))?;
+    let next = b.build_int_binary_operation(
+        cur,
+        one,
+        strider_ir::node::IntBinaryOp::Add,
+        ValueType::int(64),
+    )?;
     b.write_variable(&var, next)?;
     b.build_branch(entry)?; // BACK-EDGE -> entry becomes a 2-predecessor join
 
@@ -258,13 +266,13 @@ fn orphan_phi_consumer_does_not_block_detach() -> crate::Result<()> {
     let phi_token = fg.node_outputs(body_region)[1];
     let val = {
         let mut ef = strider_ir::EditFunction::new(&mut fg);
-        ef.build_int_const(0u64, ValueType::I64)?
+        ef.build_int_const(0u64, ValueType::int(64))?
     };
     let orphan_phi = strider_ir_test_utils::sentinel_node(
         &mut fg,
         NodeKind::Phi,
         [phi_token, val],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     assert!(
         !fg.walk().any(|n| n == orphan_phi),
@@ -338,8 +346,12 @@ fn chained_phis_over_one_region_do_not_dangle() -> crate::Result<()> {
     b.set_region(join);
     let read1 = b.read_variable(&v1)?;
     let read2 = b.read_variable(&v2)?;
-    let sum =
-        b.build_int_binary_operation(read1, read2, strider_ir::IntBinaryOp::Add, ValueType::I64)?;
+    let sum = b.build_int_binary_operation(
+        read1,
+        read2,
+        strider_ir::IntBinaryOp::Add,
+        ValueType::int(64),
+    )?;
     b.build_return(Some(sum), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -436,13 +448,13 @@ fn an_unreachable_self_loop_region_is_left_alone() -> crate::Result<()> {
 
     b.set_region(detached);
     let p = b.read_variable(&var)?;
-    let two = b.build_int_const(2u64, ValueType::I32).unwrap();
+    let two = b.build_int_const(2u64, ValueType::int(32)).unwrap();
     let next =
-        b.build_int_binary_operation(p, two, strider_ir::IntBinaryOp::Add, ValueType::I32)?;
+        b.build_int_binary_operation(p, two, strider_ir::IntBinaryOp::Add, ValueType::int(32))?;
     b.write_variable(&var, next)?;
     // Without a store the region's MemPhi is its own sole input, which the
     // pass already refuses to collapse.
-    let addr = b.build_int_const(0x4000u64, ValueType::I64).unwrap();
+    let addr = b.build_int_const(0x4000u64, ValueType::int(64)).unwrap();
     b.build_store(addr, next, rsleigh::VnSpace::RAM)?;
     let cond = b.build_boolean_const(true);
     b.build_if(cond, join, detached)?;

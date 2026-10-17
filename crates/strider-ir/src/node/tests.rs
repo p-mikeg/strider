@@ -4,21 +4,24 @@ use cranelift_entity::EntityRef;
 
 #[test]
 fn signed_int_sign_extends_from_declared_width() {
-    assert_eq!(ValueType::I8.get_signed_int(u128::from(u8::MAX)), Some(-1));
     assert_eq!(
-        ValueType::I8.get_signed_int(u128::from(i8::MIN as u8)),
+        ValueType::int(8).get_signed_int(u128::from(u8::MAX)),
+        Some(-1)
+    );
+    assert_eq!(
+        ValueType::int(8).get_signed_int(u128::from(i8::MIN as u8)),
         Some(i128::from(i8::MIN))
     );
     assert_eq!(
-        ValueType::I8.get_signed_int(i8::MAX as u128),
+        ValueType::int(8).get_signed_int(i8::MAX as u128),
         Some(i128::from(i8::MAX))
     );
     assert_eq!(
-        ValueType::I16.get_signed_int(u128::from(i16::MIN as u16)),
+        ValueType::int(16).get_signed_int(u128::from(i16::MIN as u16)),
         Some(i128::from(i16::MIN))
     );
     assert_eq!(
-        ValueType::I32.get_signed_int(u128::from(u32::MAX)),
+        ValueType::int(32).get_signed_int(u128::from(u32::MAX)),
         Some(-1)
     );
 }
@@ -32,7 +35,7 @@ fn signed_int_for_i1_is_one_bit() {
 
 #[test]
 fn is_value_only_for_output_type() {
-    assert!(ValueKind::Typed(ValueType::I64).is_value());
+    assert!(ValueKind::Typed(ValueType::int(64)).is_value());
     assert!(!ValueKind::Control.is_value());
     assert!(!ValueKind::PhiToken.is_value());
     assert!(!ValueKind::Memory.is_value());
@@ -41,7 +44,7 @@ fn is_value_only_for_output_type() {
 #[test]
 fn is_bool_only_for_bool_output_type() {
     assert!(ValueKind::Typed(ValueType::I1).is_bool());
-    assert!(!ValueKind::Typed(ValueType::I8).is_bool());
+    assert!(!ValueKind::Typed(ValueType::int(8)).is_bool());
     assert!(!ValueKind::Control.is_bool());
 }
 
@@ -50,21 +53,21 @@ fn is_bool_only_for_bool_output_type() {
 fn is_integer_for_all_integer_output_types() {
     for ty in [
         ValueType::I1,
-        ValueType::I8,
-        ValueType::I16,
-        ValueType::I24,
-        ValueType::I32,
-        ValueType::I40,
-        ValueType::I48,
-        ValueType::I56,
-        ValueType::I64,
-        ValueType::I72,
-        ValueType::I80,
-        ValueType::I96,
-        ValueType::I112,
-        ValueType::I128,
-        ValueType::I256,
-        ValueType::I512,
+        ValueType::int(8),
+        ValueType::int(16),
+        ValueType::int(24),
+        ValueType::int(32),
+        ValueType::int(40),
+        ValueType::int(48),
+        ValueType::int(56),
+        ValueType::int(64),
+        ValueType::int(72),
+        ValueType::int(80),
+        ValueType::int(96),
+        ValueType::int(112),
+        ValueType::int(128),
+        ValueType::int(256),
+        ValueType::int(512),
     ] {
         assert!(
             ValueKind::Typed(ty).is_integer(),
@@ -72,11 +75,11 @@ fn is_integer_for_all_integer_output_types() {
         );
     }
     for ty in [
-        ValueType::F16,
-        ValueType::F32,
-        ValueType::F64,
-        ValueType::F80,
-        ValueType::F128,
+        ValueType::float(16),
+        ValueType::float(32),
+        ValueType::float(64),
+        ValueType::float(80),
+        ValueType::float(128),
     ] {
         assert!(
             !ValueKind::Typed(ty).is_integer(),
@@ -97,20 +100,26 @@ fn is_const_only_for_constant_kinds() {
 
 #[test]
 fn get_unsigned_int_returns_none_for_floats() {
-    assert_eq!(ValueType::F32.get_unsigned_int(0x3F800000), None);
-    assert_eq!(ValueType::F64.get_unsigned_int(0x3FF0000000000000), None);
+    assert_eq!(ValueType::float(32).get_unsigned_int(0x3F800000), None);
+    assert_eq!(
+        ValueType::float(64).get_unsigned_int(0x3FF0000000000000),
+        None
+    );
 }
 
 #[test]
 fn get_signed_int_returns_none_for_floats() {
-    assert_eq!(ValueType::F32.get_signed_int(0x3F800000), None);
-    assert_eq!(ValueType::F64.get_signed_int(0x3FF0000000000000), None);
+    assert_eq!(ValueType::float(32).get_signed_int(0x3F800000), None);
+    assert_eq!(
+        ValueType::float(64).get_signed_int(0x3FF0000000000000),
+        None
+    );
 }
 
 #[test]
 fn as_value_or_err_value_case() {
-    let kind = ValueKind::Typed(ValueType::I32);
-    assert_eq!(kind.as_value_or_err().unwrap(), ValueType::I32);
+    let kind = ValueKind::Typed(ValueType::int(32));
+    assert_eq!(kind.as_value_or_err().unwrap(), ValueType::int(32));
 }
 
 #[test]
@@ -127,26 +136,26 @@ fn as_value_or_err_control_case() {
 fn type_info_table_matches_variants() {
     let cases: &[(ValueType, &str, usize, bool, bool, bool)] = &[
         (ValueType::I1, "i1", 1, true, true, false),
-        (ValueType::I8, "i8", 1, true, false, false),
-        (ValueType::I16, "i16", 2, true, false, false),
-        (ValueType::I24, "i24", 3, true, false, false),
-        (ValueType::I32, "i32", 4, true, false, false),
-        (ValueType::I40, "i40", 5, true, false, false),
-        (ValueType::I48, "i48", 6, true, false, false),
-        (ValueType::I56, "i56", 7, true, false, false),
-        (ValueType::I64, "i64", 8, true, false, false),
-        (ValueType::I72, "i72", 9, true, false, false),
-        (ValueType::I80, "i80", 10, true, false, false),
-        (ValueType::I96, "i96", 12, true, false, false),
-        (ValueType::I112, "i112", 14, true, false, false),
-        (ValueType::I128, "i128", 16, true, false, false),
-        (ValueType::I256, "i256", 32, true, false, false),
-        (ValueType::I512, "i512", 64, true, false, false),
-        (ValueType::F16, "f16", 2, false, false, true),
-        (ValueType::F32, "f32", 4, false, false, true),
-        (ValueType::F64, "f64", 8, false, false, true),
-        (ValueType::F80, "f80", 10, false, false, true),
-        (ValueType::F128, "f128", 16, false, false, true),
+        (ValueType::int(8), "i8", 1, true, false, false),
+        (ValueType::int(16), "i16", 2, true, false, false),
+        (ValueType::int(24), "i24", 3, true, false, false),
+        (ValueType::int(32), "i32", 4, true, false, false),
+        (ValueType::int(40), "i40", 5, true, false, false),
+        (ValueType::int(48), "i48", 6, true, false, false),
+        (ValueType::int(56), "i56", 7, true, false, false),
+        (ValueType::int(64), "i64", 8, true, false, false),
+        (ValueType::int(72), "i72", 9, true, false, false),
+        (ValueType::int(80), "i80", 10, true, false, false),
+        (ValueType::int(96), "i96", 12, true, false, false),
+        (ValueType::int(112), "i112", 14, true, false, false),
+        (ValueType::int(128), "i128", 16, true, false, false),
+        (ValueType::int(256), "i256", 32, true, false, false),
+        (ValueType::int(512), "i512", 64, true, false, false),
+        (ValueType::float(16), "f16", 2, false, false, true),
+        (ValueType::float(32), "f32", 4, false, false, true),
+        (ValueType::float(64), "f64", 8, false, false, true),
+        (ValueType::float(80), "f80", 10, false, false, true),
+        (ValueType::float(128), "f128", 16, false, false, true),
     ];
     for (ty, name, size, is_int, is_bool, is_float) in cases {
         assert_eq!(ty.as_str(), *name);
@@ -162,17 +171,26 @@ fn type_info_table_matches_variants() {
 
 #[test]
 fn int_for_byte_size_to_node_output_type() {
-    assert_eq!(ValueType::int_for_byte_size(1).unwrap(), ValueType::I8);
-    assert_eq!(ValueType::int_for_byte_size(2).unwrap(), ValueType::I16);
-    assert_eq!(ValueType::int_for_byte_size(3).unwrap(), ValueType::I24);
-    assert_eq!(ValueType::int_for_byte_size(4).unwrap(), ValueType::I32);
-    assert_eq!(ValueType::int_for_byte_size(5).unwrap(), ValueType::I40);
-    assert_eq!(ValueType::int_for_byte_size(7).unwrap(), ValueType::I56);
-    assert_eq!(ValueType::int_for_byte_size(8).unwrap(), ValueType::I64);
-    assert_eq!(ValueType::int_for_byte_size(9).unwrap(), ValueType::I72);
-    assert_eq!(ValueType::int_for_byte_size(16).unwrap(), ValueType::I128);
-    assert_eq!(ValueType::int_for_byte_size(32).unwrap(), ValueType::I256);
-    assert_eq!(ValueType::int_for_byte_size(64).unwrap(), ValueType::I512);
+    assert_eq!(ValueType::int_for_byte_size(1).unwrap(), ValueType::int(8));
+    assert_eq!(ValueType::int_for_byte_size(2).unwrap(), ValueType::int(16));
+    assert_eq!(ValueType::int_for_byte_size(3).unwrap(), ValueType::int(24));
+    assert_eq!(ValueType::int_for_byte_size(4).unwrap(), ValueType::int(32));
+    assert_eq!(ValueType::int_for_byte_size(5).unwrap(), ValueType::int(40));
+    assert_eq!(ValueType::int_for_byte_size(7).unwrap(), ValueType::int(56));
+    assert_eq!(ValueType::int_for_byte_size(8).unwrap(), ValueType::int(64));
+    assert_eq!(ValueType::int_for_byte_size(9).unwrap(), ValueType::int(72));
+    assert_eq!(
+        ValueType::int_for_byte_size(16).unwrap(),
+        ValueType::int(128)
+    );
+    assert_eq!(
+        ValueType::int_for_byte_size(32).unwrap(),
+        ValueType::int(256)
+    );
+    assert_eq!(
+        ValueType::int_for_byte_size(64).unwrap(),
+        ValueType::int(512)
+    );
     for bad in [0u32, 11, 13, 15, 17, 33, 65] {
         let err = ValueType::int_for_byte_size(bad).expect_err("invalid size");
         let msg = err.to_string();
@@ -243,8 +261,8 @@ fn same_value_distinct_width_shares_const_id_distinct_node() {
     use crate::{IRBuilderExt, IRViewer};
     let mut f = crate::function::test_function();
     // Interning is by value, and both widths hold 42.
-    let v80 = f.build_int_const(42u128, ValueType::I80).unwrap();
-    let v128 = f.build_int_const(42u128, ValueType::I128).unwrap();
+    let v80 = f.build_int_const(42u128, ValueType::int(80)).unwrap();
+    let v128 = f.build_int_const(42u128, ValueType::int(128)).unwrap();
     let n80 = f.producer(v80);
     let n128 = f.producer(v128);
     let (NodeKind::IntConst(id80), NodeKind::IntConst(id128)) =

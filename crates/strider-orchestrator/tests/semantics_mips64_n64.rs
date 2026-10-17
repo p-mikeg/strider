@@ -116,7 +116,7 @@ fn v0_shift(f: &Function) -> (IntBinaryOp, u128) {
     );
     assert_eq!(
         f.value_type(v0).expect("typed"),
-        ValueType::I64,
+        ValueType::int(64),
         "a d-form shift is 64-bit"
     );
     (op, f.int_const_u128(operands[1]).expect("constant count"))
@@ -153,7 +153,7 @@ fn a_word_shift_masks_its_count_and_sign_extends() {
         producer_kind(&f, v0)
     );
     let shift = inputs_of(&f, v0)[0];
-    assert_eq!(f.value_type(shift).expect("typed"), ValueType::I32);
+    assert_eq!(f.value_type(shift).expect("typed"), ValueType::int(32));
     assert!(matches!(
         producer_kind(&f, shift),
         NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft)
@@ -220,7 +220,7 @@ fn a_double_add_reads_two_whole_float_registers() {
             *producer_kind(&f, add),
             NodeKind::FloatBinaryOp(strider_ir::FloatBinaryOp::Add)
         );
-        assert_eq!(f.value_type(add).expect("typed"), ValueType::F64);
+        assert_eq!(f.value_type(add).expect("typed"), ValueType::float(64));
         let mut operands: Vec<rsleigh::Vn> = inputs_of(&f, add)
             .into_iter()
             .map(|v| {
@@ -271,7 +271,7 @@ fn a_single_add_preserves_the_upper_half_of_its_destination() {
     ));
     assert_eq!(
         f.value_type(inputs_of(&f, narrow)[0]).expect("typed"),
-        ValueType::F32
+        ValueType::float(32)
     );
 }
 
@@ -283,8 +283,8 @@ fn a_long_to_double_conversion_takes_the_whole_register() {
     assert!(matches!(producer_kind(&f, f0), NodeKind::FloatBitsToInt));
     let cvt = inputs_of(&f, f0)[0];
     assert_eq!(*producer_kind(&f, cvt), NodeKind::IntToFloat);
-    assert_eq!(f.value_type(cvt).expect("typed"), ValueType::F64);
+    assert_eq!(f.value_type(cvt).expect("typed"), ValueType::float(64));
     let src = inputs_of(&f, cvt)[0];
-    assert_eq!(f.value_type(src).expect("typed"), ValueType::I64);
+    assert_eq!(f.value_type(src).expect("typed"), ValueType::int(64));
     assert_eq!(initial_vn(&f, src), Some(vns.get("a0")));
 }
