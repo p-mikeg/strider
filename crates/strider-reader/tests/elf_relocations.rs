@@ -1147,3 +1147,112 @@ fn a_relocation_at_the_top_of_the_address_space_loads() {
         }
     }
 }
+
+/// BFD opens a mips64el `.rel.dyn` with a null `R_MIPS_NONE` at `r_offset` 0,
+/// inside the first PT_LOAD. A marker leaves its field as assembled, so the
+/// ELF magic there stays served, on mips64el as on mips64be.
+#[test]
+fn a_null_mips64_relocation_leaves_the_image_start_served() {
+    for arch in ["mips64le", "mips64be"] {
+        let path = fixture_path(arch, "elf_relocs");
+        assert!(
+            path.exists(),
+            "{} is not built; run `make -C fixtures`",
+            path.display()
+        );
+        let table = strider_reader::MemRegionsLookupTable::new(common::regions_of_file(
+            &path,
+            strider_reader::elf::LoadFilter::AllAllocatable,
+            true,
+        ));
+        let mut magic = [0u8; 4];
+        assert_eq!(table.read(0, &mut magic), Some(4), "{arch}");
+        assert_eq!(&magic, b"\x7fELF", "{arch}");
+    }
+}
+
+/// A mips64el `SHT_REL` `R_MIPS_26` is applied like any other: the transposed
+/// `r_info` is undone before the type is looked up, not by giving up on it.
+#[test]
+fn a_mips64el_rel_jump_is_patched() {
+    let fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Little,
+            is_64: true,
+            e_machine: object::elf::EM_MIPS,
+            r_type: object::elf::R_MIPS_26,
+            defined_symbol: true,
+            slot_init: vec![0u8; 4],
+        },
+        // In the fetch image, where an uncomputed field would be a hole.
+        common::elf_fixture::RelPlacement {
+            slot_exec: true,
+            ..Default::default()
+        },
+    );
+    let table =
+        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
+    let mut word = [0u8; 4];
+    table
+        .read_exact(fx.slot_addr, &mut word)
+        .expect("the jump is patched, not a hole");
+    assert_eq!(
+        u32::from_le_bytes(word),
+        (fx.sym_addr >> 2) as u32,
+        "`j func` encodes `func >> 2`"
+    );
+}
+
+/// A mips64el `SHT_REL` composite this loader does not compute stays a hole
+/// naming the whole untransposed type word: only a single type, a slot or an
+/// `R_MIPS_REL32` applies.
+#[test]
+fn a_mips64el_rel_composite_is_a_hole_naming_its_type_word() {
+    let r_type = (object::elf::R_MIPS_64 << 8) | object::elf::R_MIPS_26;
+    let fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Little,
+            is_64: true,
+            e_machine: object::elf::EM_MIPS,
+            r_type,
+            defined_symbol: true,
+            slot_init: vec![0u8; 4],
+        },
+        common::elf_fixture::RelPlacement {
+            slot_exec: true,
+            ..Default::default()
+        },
+    );
+    let table =
+        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
+    assert_eq!(table.unmodelled_relocation_at(fx.slot_addr), Some(r_type));
+}
+
+/// `object` reads an `SHT_CREL` entry's symbol and type as written, mips64el
+/// included, and only an `SHT_REL` one transposed: a CREL `R_MIPS_26` with
+/// its addend in the field is applied.
+#[test]
+fn a_mips64el_crel_jump_is_patched() {
+    let fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Little,
+            is_64: true,
+            e_machine: object::elf::EM_MIPS,
+            r_type: object::elf::R_MIPS_26,
+            defined_symbol: true,
+            slot_init: vec![0u8; 4],
+        },
+        common::elf_fixture::RelPlacement {
+            slot_exec: true,
+            table: common::elf_fixture::RelTable::Crel(None),
+            ..Default::default()
+        },
+    );
+    let table =
+        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
+    let mut word = [0u8; 4];
+    table
+        .read_exact(fx.slot_addr, &mut word)
+        .expect("the jump is patched, not a hole");
+    assert_eq!(u32::from_le_bytes(word), (fx.sym_addr >> 2) as u32);
+}
