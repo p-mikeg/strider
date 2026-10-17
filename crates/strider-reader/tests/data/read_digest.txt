@@ -7412,8 +7412,8 @@ crafted/overlapping_loads_rela sections.immutable_got.reloc 8e475a8d3a6539ce
 crafted/overlapping_loads_rela sections.all.raw 8d77f72f2bda50ee
 crafted/overlapping_loads_rela sections.all.reloc 8e475a8d3a6539ce
 crafted/overlapping_loads_rela sections.writable cbf29ce484222325
-crafted/overlapping_loads_rela file_reader.fetch Err loading would copy 20840 bytes out of 4168 distinct file bytes
-crafted/overlapping_loads_rela file_reader.rom Err loading would copy 20840 bytes out of 4168 distinct file bytes
+crafted/overlapping_loads_rela file_reader.fetch 07f6c98727793c90
+crafted/overlapping_loads_rela file_reader.rom 83c97ad71d255ee7
 crafted/overlapping_loads_rx_rw auto.code_ro.raw 36e2ddff24885ad8
 crafted/overlapping_loads_rx_rw auto.code_ro.reloc 36e2ddff24885ad8
 crafted/overlapping_loads_rx_rw auto.immutable.raw d36c098865ff94d8
@@ -7466,8 +7466,8 @@ crafted/shared_file_range sections.immutable_got.reloc da36846d91adfc5d
 crafted/shared_file_range sections.all.raw da36846d91adfc5d
 crafted/shared_file_range sections.all.reloc da36846d91adfc5d
 crafted/shared_file_range sections.writable cbf29ce484222325
-crafted/shared_file_range file_reader.fetch Err loading would copy 320 bytes out of 64 distinct file bytes
-crafted/shared_file_range file_reader.rom Err loading would copy 320 bytes out of 64 distinct file bytes
+crafted/shared_file_range file_reader.fetch da36846d91adfc5d
+crafted/shared_file_range file_reader.rom ca02480f4cb79065
 crafted/shared_file_range_staggered auto.code_ro.raw da36846d91adfc5d
 crafted/shared_file_range_staggered auto.code_ro.reloc da36846d91adfc5d
 crafted/shared_file_range_staggered auto.immutable.raw da36846d91adfc5d
@@ -7484,8 +7484,8 @@ crafted/shared_file_range_staggered sections.immutable_got.reloc da36846d91adfc5
 crafted/shared_file_range_staggered sections.all.raw da36846d91adfc5d
 crafted/shared_file_range_staggered sections.all.reloc da36846d91adfc5d
 crafted/shared_file_range_staggered sections.writable cbf29ce484222325
-crafted/shared_file_range_staggered file_reader.fetch Err loading would copy 320 bytes out of 68 distinct file bytes
-crafted/shared_file_range_staggered file_reader.rom Err loading would copy 320 bytes out of 68 distinct file bytes
+crafted/shared_file_range_staggered file_reader.fetch da36846d91adfc5d
+crafted/shared_file_range_staggered file_reader.rom ca02480f4cb79065
 crafted/mips64be_rel32_64 auto.code_ro.raw 1c02dcb089b1a5de
 crafted/mips64be_rel32_64 auto.code_ro.reloc 1c02dcb089b1a5de
 crafted/mips64be_rel32_64 auto.immutable.raw 1c02dcb089b1a5de
