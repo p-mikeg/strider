@@ -163,15 +163,11 @@ impl FunctionBuilder {
         space: rsleigh::VnSpace,
     ) -> Result<()> {
         let memory = self.cur_region_memory()?;
-        self.require_memory_kind(memory)?;
-        self.require_value_kind(addr)?;
-        self.require_value_kind(data)?;
-
-        let node_id = self.create_node(
-            NodeKind::Store(space),
-            [memory, addr, data],
-            [ValueKind::Memory],
-        );
+        let kind = NodeKind::Store(space);
+        for (slot, value) in [memory, addr, data].into_iter().enumerate() {
+            self.require_slot(&kind, slot, value)?;
+        }
+        let node_id = self.create_node(kind, [memory, addr, data], [ValueKind::Memory]);
         let [new_mem] = self.function().node_outputs_exact(node_id)?;
         self.advance_cur_region_memory(new_mem)
     }
@@ -183,9 +179,12 @@ impl FunctionBuilder {
         output_type: ValueType,
     ) -> Result<ValueId> {
         let memory = self.cur_region_memory()?;
-        self.require_memory_kind(memory)?;
-        self.require_value_kind(addr)?;
-        Ok(self.build_single_output_pure(NodeKind::Load(space), [memory, addr], output_type))
+        let kind = NodeKind::Load(space);
+        for (slot, value) in [memory, addr].into_iter().enumerate() {
+            self.require_slot(&kind, slot, value)?;
+        }
+        Self::require_output_type(&kind, output_type)?;
+        Ok(self.build_single_output_pure(kind, [memory, addr], output_type))
     }
 
     /// `phi_token` must be the owning `Region`'s `PhiToken` output.
