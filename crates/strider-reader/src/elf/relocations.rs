@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::encodings::{Field, Half, Isa, Kind, Value, classify, encode, implicit_addend, sext};
-use super::sections::AddressRanges;
+use super::sections::AddressSet;
 use crate::{MemRegion, Patch, RegionIndex, Result};
 
 /// Adds a possibly-negative relocation `addend` to a base address.
@@ -92,8 +92,8 @@ pub(crate) fn apply_elf_relocations_with(
     obj: &object::File<'_>,
     loaded_with: super::sections::LoadFilter,
     layout: &super::sections::ElfSectionLayout,
-    writable: &AddressRanges,
-    executable: &AddressRanges,
+    writable: &AddressSet,
+    executable: &AddressSet,
 ) -> Result<Vec<MemRegion>> {
     let owners = super::sections::loaded_section_indices(obj, layout, loaded_with)?;
     // One lookup per relocation instead of a scan of every region; an ET_REL
@@ -143,8 +143,8 @@ struct Ctx<'a, 'd> {
     /// holding a field is the one a read of it reaches.
     regions: &'a [MemRegion],
     region_index: &'a RegionIndex,
-    writable: &'a AddressRanges,
-    executable: &'a AddressRanges,
+    writable: &'a AddressSet,
+    executable: &'a AddressSet,
     endian_le: bool,
     /// Byte order of an instruction field: A64 instructions are little-endian
     /// whatever `EI_DATA` says, and only data follows it. ARM BE32 instructions

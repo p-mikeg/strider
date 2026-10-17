@@ -128,7 +128,7 @@ fn is_relocated_got_name(name: &str) -> bool {
 /// (`SHF_ALLOC | SHF_WRITE`, no `SHF_TLS`, whose addresses are offsets into the
 /// per-thread block). A name-only match carves out whatever sits at the
 /// address, which for an unmapped section is another section's writable bytes.
-fn relocated_got_ranges(obj: &object::File<'_>, layout: &ElfSectionLayout) -> AddressRanges {
+fn relocated_got_ranges(obj: &object::File<'_>, layout: &ElfSectionLayout) -> AddressSet {
     let mut out = Vec::new();
     for sec in obj.sections() {
         let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
@@ -143,7 +143,7 @@ fn relocated_got_ranges(obj: &object::File<'_>, layout: &ElfSectionLayout) -> Ad
         let base = layout.section_base(&sec);
         out.push((base, base.saturating_add(sec.size())));
     }
-    AddressRanges::merged(out)
+    AddressSet::merged(out)
 }
 
 /// The mappings one walk accepted, and which addresses are writable.
@@ -156,16 +156,17 @@ pub(crate) struct LoadedImage {
     /// read-only one leaves no region behind, and a [`crate::ReadOnlyMemory`]
     /// view that did not know about it would serve the accepted mapping's
     /// file-initial bytes for an address that is RW at runtime.
-    pub(crate) writable: AddressRanges,
+    pub(crate) writable: AddressSet,
     /// Every executable mapping the walk saw.  A field that is writable AND
     /// executable is code the program may rewrite, so an uncomputed relocation
     /// over one stays a hole: the bytes reach the decoder, where serving them
     /// unrelocated is a wrong instruction rather than stale data.
-    pub(crate) executable: AddressRanges,
+    pub(crate) executable: AddressSet,
 }
 
 impl LoadedImage {
     /// Address space, not file bytes: a mapping's BSS tail is writable too.
+    /// Pushed unmerged; `collect_regions` merges the set before returning it.
     fn note_writable(&mut self, start: u64, size: u64) {
         if size != 0 {
             self.writable.0.push((start, start.saturating_add(size)));
@@ -184,8 +185,8 @@ impl LoadedImage {
     /// `served` leaves `writable`, so a relocation the applier cannot compute
     /// over a served address is a hole rather than the field's file bytes:
     /// [`crate::ReadOnlyMemory`] answers from these regions alone.
-    fn without_writable_except(mut self, served: &AddressRanges) -> Self {
-        self.writable = AddressRanges::merged_without(std::mem::take(&mut self.writable.0), served);
+    fn without_writable_except(mut self, served: &AddressSet) -> Self {
+        self.writable = AddressSet::merged_without(std::mem::take(&mut self.writable.0), served);
         // Mappings the cut ends inside all leave a piece at its end.
         self.regions = crate::collapse_equal_starts(cut(self.regions, &self.writable));
         self
@@ -195,13 +196,12 @@ impl LoadedImage {
 /// `regions` with every address of `ranges` cut out: a region a range splits
 /// becomes the pieces either side of it, sharing its bytes.
 ///
-/// How a read-only view of one image bars another image's writable mapping,
-/// `ranges` being [`OwnedElf::writable_ranges`](super::OwnedElf::writable_ranges).
-pub fn without_ranges(regions: Vec<MemRegion>, ranges: &[(u64, u64)]) -> Vec<MemRegion> {
-    cut(regions, &AddressRanges::merged(ranges.to_vec()))
+/// How a read-only view of one image bars another image's writable mappings.
+pub fn without_ranges(regions: Vec<MemRegion>, ranges: &AddressSet) -> Vec<MemRegion> {
+    cut(regions, ranges)
 }
 
-fn cut(regions: Vec<MemRegion>, ranges: &AddressRanges) -> Vec<MemRegion> {
+fn cut(regions: Vec<MemRegion>, ranges: &AddressSet) -> Vec<MemRegion> {
     let mut kept = Vec::with_capacity(regions.len());
     for region in regions {
         let (mut lo, end) = (region.start_addr(), region.end_addr());
@@ -222,14 +222,14 @@ fn cut(regions: Vec<MemRegion>, ranges: &AddressRanges) -> Vec<MemRegion> {
     kept
 }
 
-/// `[start, end)` address ranges, ascending and disjoint once
+/// `[start, end)` address ranges, ascending, disjoint and non-touching once
 /// [`merged`](Self::merged).
 #[derive(Clone, Debug, Default)]
-pub(crate) struct AddressRanges(Vec<(u64, u64)>);
+pub struct AddressSet(Vec<(u64, u64)>);
 
-impl AddressRanges {
+impl AddressSet {
     /// `ranges` sorted, with everything that overlaps or touches merged.
-    pub(crate) fn merged(mut ranges: Vec<(u64, u64)>) -> Self {
+    pub fn merged(mut ranges: Vec<(u64, u64)>) -> Self {
         ranges.sort_unstable();
         let mut out: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
         for (lo, hi) in ranges {
@@ -242,7 +242,6 @@ impl AddressRanges {
     }
 
     /// [`merged`](Self::merged) with every address of `cut_out` removed.
-    /// `cut_out` must itself be merged.
     fn merged_without(ranges: Vec<(u64, u64)>, cut_out: &Self) -> Self {
         let merged = Self::merged(ranges);
         let mut out: Vec<(u64, u64)> = Vec::with_capacity(merged.0.len());
@@ -260,23 +259,33 @@ impl AddressRanges {
         Self(out)
     }
 
-    /// The merged ranges overlapping `[lo, hi)`.
+    /// The ranges overlapping `[lo, hi)`.
     fn overlapping(&self, lo: u64, hi: u64) -> &[(u64, u64)] {
         let first = self.0.partition_point(|&(_, end)| end <= lo);
         let last = first + self.0[first..].partition_point(|&(start, _)| start < hi);
         &self.0[first..last]
     }
 
-    pub(crate) fn as_slice(&self) -> &[(u64, u64)] {
+    /// The ranges, ascending.
+    pub fn as_slice(&self) -> &[(u64, u64)] {
         &self.0
     }
 
-    /// Whether `[addr, addr + len)` touches any of the merged ranges.
+    /// Whether `[addr, addr + len)` touches any of the ranges.
     pub(crate) fn touches(&self, addr: u64, len: usize) -> bool {
         len != 0
             && !self
                 .overlapping(addr, addr.saturating_add(len as u64))
                 .is_empty()
+    }
+
+    /// Whether the set holds every address of the non-empty `[lo, hi)`.
+    ///
+    /// O(log n): the ranges never touch, so only the last one starting at or
+    /// below `lo` can hold it.
+    pub fn covers(&self, lo: u64, hi: u64) -> bool {
+        let i = self.0.partition_point(|&(start, _)| start <= lo);
+        i.checked_sub(1).is_some_and(|i| hi <= self.0[i].1)
     }
 }
 
@@ -871,13 +880,13 @@ pub(crate) fn collect_regions(
     };
     Ok(match filter {
         // A read-only mapping a writable one overlaps is writable there.
-        LoadFilter::ImmutableOnly => image.without_writable_except(&AddressRanges::default()),
+        LoadFilter::ImmutableOnly => image.without_writable_except(&AddressSet::default()),
         LoadFilter::ImmutableAndRelocatedGot => {
             image.without_writable_except(&relocated_got_ranges(obj, layout))
         }
         _ => LoadedImage {
-            writable: AddressRanges::merged(image.writable.0),
-            executable: AddressRanges::merged(image.executable.0),
+            writable: AddressSet::merged(image.writable.0),
+            executable: AddressSet::merged(image.executable.0),
             ..image
         },
     })
@@ -1029,6 +1038,24 @@ fn collect_loadable_sections_dedup(
 mod tests {
     use super::*;
     use object::elf::{PF_R, PF_W, PF_X};
+    use proptest::prelude::*;
+
+    proptest! {
+        /// `covers` holds exactly when every address of the range is in a
+        /// range of the set, touching and overlapping inputs included.
+        #[test]
+        fn covers_holds_exactly_when_every_address_is_in_the_set(
+            ranges in proptest::collection::vec((0u64..64, 1u64..8), 0..8),
+            lo in 0u64..72,
+            len in 1u64..12,
+        ) {
+            let ranges: Vec<(u64, u64)> = ranges.into_iter().map(|(s, n)| (s, s + n)).collect();
+            let model: std::collections::BTreeSet<u64> =
+                ranges.iter().flat_map(|&(s, e)| s..e).collect();
+            let set = AddressSet::merged(ranges);
+            prop_assert_eq!(set.covers(lo, lo + len), (lo..lo + len).all(|a| model.contains(&a)));
+        }
+    }
 
     /// An RWX PT_LOAD is the whole image on firmware / bare-metal / `ld -N`
     /// binaries. Excluding it leaves the instruction-fetch reader with no
