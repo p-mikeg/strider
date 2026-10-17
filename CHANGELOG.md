@@ -147,6 +147,8 @@
   not in the order listed.
 - `LoadForward` is a unit struct again (`Copy`); `LoadForward::default()`
   still builds one.
+- `IRBuilderExt::build_int_const_limbs` takes any integer type (it refused
+  one of at most 128 bits).
 
 ### Fixed
 
@@ -208,6 +210,8 @@
   needs `function_mut()` for an overlay write.
 - `ValueType::int(bits)` / `ValueType::float(bits)`, `const fn`; an unsupported
   width panics (a compile error in a `const`).
+- `IRBuilderExt::build_all_ones(ty)`: the all-ones constant at any integer
+  width.
 
 ## 0.2.0
 

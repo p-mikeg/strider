@@ -43,21 +43,6 @@ pub(super) fn require_equal_input_output_width(
     Ok(())
 }
 
-/// All-ones constant of width `ty`, the RHS of a lowered bitwise complement.
-fn build_all_ones(
-    builder: &mut strider_ir::FunctionBuilder,
-    ty: strider_ir::ValueType,
-) -> Result<strider_ir::Value> {
-    if ty.byte_size() <= 16 {
-        // build_int_const masks u128::MAX down to the declared width.
-        builder.build_int_const(u128::MAX, ty)
-    } else if ty == ValueType::int(256) {
-        builder.build_int_const_limbs(&[u64::MAX; 4], ty)
-    } else {
-        builder.build_int_const_limbs(&[u64::MAX; 8], ty)
-    }
-}
-
 /// Only the wider direction is rejected: a narrower operand extends correctly,
 /// which is the intended semantics.
 fn reject_operand_wider_than_output(operand: &rsleigh::Vn, output: &rsleigh::Vn) -> Result<()> {
@@ -97,12 +82,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     }
 
     /// Sleigh's `IntNeg` is bitwise complement `~x`, which canonicalises to
-    /// `Xor(x, all_ones)`.  [`build_all_ones`] routes the wide widths through
-    /// the wide-const path, so a SIMD-wide complement (YMM, ZMM) lifts rather
-    /// than erroring.
+    /// `Xor(x, all_ones)` at any width, a SIMD-wide (YMM, ZMM) one included.
     pub(super) fn handle_int_neg_as_xor(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         self.lift_int_unary(insn, true, |b, v, t| {
-            let all_ones = build_all_ones(b, t)?;
+            let all_ones = b.build_all_ones(t)?;
             b.build_int_binary_operation(v, all_ones, IntBinaryOp::Xor, t)
         })
     }

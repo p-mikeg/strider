@@ -101,13 +101,6 @@ impl crate::template::template_pat::TemplatePat for IntConst {
     }
 }
 
-/// Every width a constant could have been widened FROM, ascending. `I1` is
-/// excluded: it is a boolean, not an integer source width, and a one-bit
-/// candidate would make every odd `v` match the constants `1` and all-ones.
-const INT_WIDTHS: [usize; 15] = [
-    8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 96, 112, 128, 256, 512,
-];
-
 /// True when `v` is the zero or sign extension of its own low `w` bits, i.e.
 /// a `w`-wide value.
 fn fits_width(v: u128, w: usize) -> bool {
@@ -119,10 +112,10 @@ fn fits_width(v: u128, w: usize) -> bool {
 }
 
 /// True when `v` is a value at `out_ty` that `stored`, an `out_ty`-wide
-/// constant, equals, or is `v` held at one of [`INT_WIDTHS`] and widened to
-/// `out_ty` by zero extension or by sign extension. Every `ValueType` width is
-/// a candidate rather than only the powers of two: an `I40` constant is not
-/// reachable through an `I32` or `I64` probe.
+/// constant, equals, or is `v` held at a narrower supported integer width (not
+/// `I1`) and widened to `out_ty` by zero extension or by sign extension. Every
+/// `ValueType` width is a candidate rather than only the powers of two: an
+/// `I40` constant is not reachable through an `I32` or `I64` probe.
 fn value_at_some_width(stored: u128, out_ty: ValueType, v: u128) -> bool {
     let output_width = out_ty.bit_width();
     if output_width == 0 {
@@ -134,7 +127,13 @@ fn value_at_some_width(stored: u128, out_ty: ValueType, v: u128) -> bool {
     if (stored & output_mask) == (v & output_mask) && fits_width(v, output_width) {
         return true;
     }
-    for &w in &INT_WIDTHS {
+    // `I1` is a boolean, not a source width: a one-bit candidate would make
+    // every odd `v` match the constants `1` and all-ones.
+    for w in ValueType::SUPPORTED
+        .into_iter()
+        .filter(|t| t.is_integer() && !t.is_bool())
+        .map(ValueType::bit_width)
+    {
         if w > output_width {
             break;
         }
