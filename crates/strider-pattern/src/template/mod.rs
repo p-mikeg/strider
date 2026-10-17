@@ -203,7 +203,7 @@ pub fn instantiate<B: IRBuilder>(
                      its node signature admits"
                 )
             })?;
-            if !kind_admissible(want, *got) {
+            if !want.admits(*got) {
                 anyhow::bail!(
                     "template node {kind:?} declares {got:?} at output slot {slot}, \
                      where its node signature expects {want:?}"
@@ -596,25 +596,6 @@ fn node_value_ty(template: &Template, node_vtx: NodeId, value_tys: &ValueTys) ->
         .unwrap_or(value_tys.root_ty)
 }
 
-/// Whether `got` is admissible where the node signature expects `want`.
-///
-/// The node signature is `strider-ir`'s single source of truth; without this
-/// the author's declaration stands unchecked, so a `Store` built with no
-/// explicit output vertex silently takes a value output where `[Memory]` is
-/// required and the malformed node reaches the graph.
-fn kind_admissible(want: ExpectedValueKind, got: ValueKind) -> bool {
-    match (want, got) {
-        (ExpectedValueKind::Control, ValueKind::Control)
-        | (ExpectedValueKind::Memory, ValueKind::Memory)
-        | (ExpectedValueKind::PhiToken, ValueKind::PhiToken)
-        | (ExpectedValueKind::AnyValue, ValueKind::Typed(_)) => true,
-        (ExpectedValueKind::Bool, ValueKind::Typed(t)) => t == ValueType::I1,
-        (ExpectedValueKind::AnyInt, ValueKind::Typed(t)) => t.is_integer(),
-        (ExpectedValueKind::AnyFloat, ValueKind::Typed(t)) => t.is_float(),
-        _ => false,
-    }
-}
-
 /// The value class an arithmetic or conversion kind's operands carry: a
 /// hand-written copy of the operand slots of `strider_ir`'s node signature,
 /// not read from it. `None` for a kind whose operands it leaves open, which
@@ -640,10 +621,10 @@ fn operand_class(kind: &NodeKind) -> Option<ExpectedValueKind> {
     }
 }
 
-/// The operand-side counterpart of [`kind_admissible`]: the class each
-/// input owes its node, and the width relation it stands in to the output or
-/// to the operand the node is evaluated at, as `strider_ir::validate` enforces
-/// both. A kind naming no operand class is the author's to get right.
+/// The operand-side counterpart of [`ExpectedValueKind::admits`]: the class
+/// each input owes its node, and the width relation it stands in to the output
+/// or to the operand the node is evaluated at, as `strider_ir::validate`
+/// enforces both. A kind naming no operand class is the author's to get right.
 fn check_operand_types(
     kind: &NodeKind,
     inputs: &[ValueId],
@@ -669,7 +650,7 @@ fn check_operand_types(
         if slot == 0 {
             first_ty = Some(got);
         }
-        if !kind_admissible(class, ValueKind::Typed(got)) {
+        if !class.admits(ValueKind::Typed(got)) {
             anyhow::bail!(
                 "template node {kind:?} takes {got} at input slot {slot}, \
                  where its node signature expects {class:?}"
