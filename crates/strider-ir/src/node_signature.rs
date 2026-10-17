@@ -823,4 +823,28 @@ mod tests {
         );
         assert_eq!(NodeKind::Store(space).expected_input_kind(3), None);
     }
+
+    /// Each named input slot sits where the signature names it.
+    #[test]
+    fn slot_consts_name_their_signature_slots() {
+        let space = rsleigh::VnSpace::RAM;
+        let name =
+            |k: NodeKind, slot: usize| expected_signature(&k).inputs.at(slot).map(|s| s.name);
+        let call = NodeKind::Call { cc: None };
+        assert_eq!(
+            name(NodeKind::Load(space), NodeKind::ACCESS_ADDR_SLOT),
+            Some("addr")
+        );
+        assert_eq!(
+            name(NodeKind::Store(space), NodeKind::ACCESS_ADDR_SLOT),
+            Some("addr")
+        );
+        assert_eq!(
+            name(NodeKind::Store(space), NodeKind::STORE_DATA_SLOT),
+            Some("data")
+        );
+        assert_eq!(name(call, NodeKind::CALL_TARGET_SLOT), Some("target"));
+        assert_eq!(name(call, NodeKind::CALL_SP_SLOT), Some("sp"));
+        assert_eq!(name(NodeKind::If, NodeKind::IF_COND_SLOT), Some("cond"));
+    }
 }

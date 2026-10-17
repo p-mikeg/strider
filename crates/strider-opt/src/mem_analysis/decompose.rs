@@ -370,8 +370,7 @@ fn is_allocator_return(
     if function.node_outputs(call).get(2) != Some(&value) {
         return false;
     }
-    // Call inputs are [ctrl, mem, target, sp, ...args]; the target is slot 2.
-    let target = function.node_inputs(call)[2];
+    let target = function.node_inputs(call)[NodeKind::CALL_TARGET_SLOT];
     let is_alloc = function
         .int_const_u128(target)
         .and_then(|a| u64::try_from(a).ok())

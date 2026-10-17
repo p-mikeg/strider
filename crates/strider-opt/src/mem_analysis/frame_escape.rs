@@ -80,9 +80,9 @@ fn frame_address_escapes(function: &Function, noalias_allocators: &FxHashSet<u64
     }
     for node in function.walk() {
         let kind = *function.node_kind(node);
-        // A Call's inputs are [ctrl, mem, target, sp, ...args]; slot 3 is the
-        // structural SP anchor every callee has, not an argument.
-        let sp_anchor_slot = matches!(kind, NodeKind::Call { .. }).then_some(3usize);
+        // The structural SP anchor every callee has, not an argument.
+        let sp_anchor_slot =
+            matches!(kind, NodeKind::Call { .. }).then_some(NodeKind::CALL_SP_SLOT);
         for (idx, v) in function.node_inputs(node).into_iter().enumerate() {
             if sp_anchor_slot == Some(idx) {
                 continue;
@@ -102,7 +102,7 @@ fn frame_address_escapes(function: &Function, noalias_allocators: &FxHashSet<u64
     false
 }
 
-/// A member of `U` is benign here only at the address operand (input slot 1) of
+/// A member of `U` is benign here only at the address operand (its address slot) of
 /// a `Load`/`Store`, or as an input to an `Add`/`And` whose own output is again
 /// in `U` (a chain extension).
 ///
@@ -117,7 +117,7 @@ fn use_is_address_only(
     noalias_allocators: &FxHashSet<u64>,
 ) -> bool {
     match kind {
-        NodeKind::Load(_) | NodeKind::Store(_) => idx == 1,
+        NodeKind::Load(_) | NodeKind::Store(_) => idx == NodeKind::ACCESS_ADDR_SLOT,
         NodeKind::IntBinaryOp(IntBinaryOp::Add | IntBinaryOp::And) => function
             .single_value_output(node)
             .ok()
