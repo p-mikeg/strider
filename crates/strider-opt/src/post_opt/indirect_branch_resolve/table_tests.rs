@@ -1608,7 +1608,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add_post_pass(StackOffsetDetect);
-    pipeline.add(LoadForward::default());
+    pipeline.add(LoadForward);
 
     pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 

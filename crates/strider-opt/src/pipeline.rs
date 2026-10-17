@@ -819,7 +819,7 @@ mod tests {
         p.add(PhiCollapse);
         p.add(RegionCollapse);
         p.add(DeadBranchElimination);
-        p.add(LoadForward::default());
+        p.add(LoadForward);
         p.run(&mut function, &mut OptCtx::at_floor(None))?;
 
         let val = crate::test_support::return_value(function.graph())?;

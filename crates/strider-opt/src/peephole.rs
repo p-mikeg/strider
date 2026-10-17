@@ -84,11 +84,14 @@ pub(crate) enum SeedOrder {
 }
 
 pub(crate) trait PeepholePass {
-    fn matches_kind(&self, kind: &NodeKind) -> bool;
+    /// Per-sweep memo: built empty when a sweep starts, dropped when it ends.
+    type Sweep: Default;
 
-    /// Drops any memo the pass carries: it was read off the graph as the
-    /// previous sweep left it.
-    fn start_sweep(&self) {}
+    /// Re-enqueue a rewritten root's consumers in the same sweep, so cascading
+    /// folds fire now instead of in another fixed-point iteration.
+    const PROPAGATE: bool = false;
+
+    fn matches_kind(&self, kind: &NodeKind) -> bool;
 
     fn seed_order(&self) -> SeedOrder {
         SeedOrder::ReversePostorder
@@ -100,17 +103,11 @@ pub(crate) trait PeepholePass {
     /// Propagates the first error from the underlying rewrite.
     fn try_rewrite(
         &self,
+        sweep: &mut Self::Sweep,
         edit: &mut crate::EditFunction<'_>,
         opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite>;
-
-    /// When `true`, a successful rewrite re-enqueues every consumer of
-    /// `root`'s outputs, so cascading folds fire in the same sweep instead
-    /// of waiting for another fixed-point iteration.
-    fn propagate_to_consumers(&self) -> bool {
-        true
-    }
 }
 
 /// Drives a [`PeepholePass`] over the reachable graph to a local fixpoint,
@@ -123,7 +120,7 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     edit: &mut crate::EditFunction<'_>,
     opt_ctx: &mut crate::pipeline::OptCtx<'_>,
 ) -> Result<OptimizationResult> {
-    pass.start_sweep();
+    let mut sweep = P::Sweep::default();
     // Seeds iterate in reverse-postorder (or postorder, per `seed_order`), not
     // discovery/preorder order. Each pass picks the order its rules need:
     // `FlagCmpCanonicalize` seeds outermost-first because a bottom-up seed
@@ -143,7 +140,6 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     let mut dequeued = 0usize;
     let mut work: Worklist<NodeId> = seed.into_iter().collect();
     let mut overall = OptimizationResult::NoChange;
-    let propagate = pass.propagate_to_consumers();
     // Snapshotted before `try_rewrite` runs: a rewrite rewires uses to its
     // replacement, leaving `value_uses(old_out)` empty afterwards.
     // Kind-filtered here, so `try_rewrite` only ever sees a node matching
@@ -161,7 +157,7 @@ pub(crate) fn run_peephole<P: PeepholePass>(
         if !edit.is_live(root) {
             continue;
         }
-        if propagate {
+        if P::PROPAGATE {
             consumers.clear();
             for &out in edit.node_outputs(root) {
                 for (consumer, _) in edit.value_uses(out) {
@@ -171,7 +167,7 @@ pub(crate) fn run_peephole<P: PeepholePass>(
                 }
             }
         }
-        let r = pass.try_rewrite(edit, opt_ctx, root)?;
+        let r = pass.try_rewrite(&mut sweep, edit, opt_ctx, root)?;
         if let PeepholeRewrite::Changed { new_node } = r {
             overall = OptimizationResult::Changed;
             // A fresh node (a folded constant, a merged AND-mask) the same pass
@@ -182,7 +178,7 @@ pub(crate) fn run_peephole<P: PeepholePass>(
             {
                 work.enqueue(n);
             }
-            if propagate {
+            if P::PROPAGATE {
                 for &consumer in &consumers {
                     work.enqueue(consumer);
                 }
@@ -215,10 +211,9 @@ mod tests {
 
     /// Records every `try_rewrite` invocation and on match rewires the
     /// root's single value output to a fresh `IntConst(REPLACEMENT_K)`.
-    struct ScriptedPass {
+    struct ScriptedPass<const P: bool> {
         match_kind: fn(&NodeKind) -> bool,
         do_rewrite: bool,
-        propagate: bool,
         return_error: bool,
         visit_log: RefCell<Vec<u32>>,
         /// The first successful rewrite builds a fresh kind-matching node
@@ -232,12 +227,11 @@ mod tests {
         kill_first: RefCell<Option<NodeId>>,
     }
 
-    impl ScriptedPass {
-        fn new(match_kind: fn(&NodeKind) -> bool, do_rewrite: bool, propagate: bool) -> Self {
+    impl<const P: bool> ScriptedPass<P> {
+        fn new(match_kind: fn(&NodeKind) -> bool, do_rewrite: bool) -> Self {
             Self {
                 match_kind,
                 do_rewrite,
-                propagate,
                 return_error: false,
                 visit_log: RefCell::default(),
                 create_matching_once: RefCell::new(false),
@@ -249,12 +243,16 @@ mod tests {
 
     const REPLACEMENT_K: u64 = 0xABCD_1234;
 
-    impl PeepholePass for ScriptedPass {
+    impl<const P: bool> PeepholePass for ScriptedPass<P> {
+        type Sweep = ();
+        const PROPAGATE: bool = P;
+
         fn matches_kind(&self, k: &NodeKind) -> bool {
             (self.match_kind)(k)
         }
         fn try_rewrite(
             &self,
+            _sweep: &mut (),
             edit: &mut crate::EditFunction<'_>,
             _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
             root: NodeId,
@@ -301,9 +299,6 @@ mod tests {
                 new_node: Some(new_node),
             })
         }
-        fn propagate_to_consumers(&self) -> bool {
-            self.propagate
-        }
     }
 
     /// `fn() -> u64 { return Add(11, 13); }`.
@@ -327,7 +322,7 @@ mod tests {
     fn run_peephole_pass_never_matches_returns_nochange() {
         // The graph has an Add but the kind filter rejects everything.
         let mut fg = add_two_consts();
-        let pass = ScriptedPass::new(match_nothing, true, true);
+        let pass = ScriptedPass::<true>::new(match_nothing, true);
         let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::at_floor(None);
         let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
@@ -338,7 +333,7 @@ mod tests {
     #[test]
     fn run_peephole_rewrites_and_reports_changed() {
         let mut fg = add_two_consts();
-        let pass = ScriptedPass::new(match_add, true, false);
+        let pass = ScriptedPass::<false>::new(match_add, true);
         let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::at_floor(None);
         let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
@@ -365,7 +360,7 @@ mod tests {
             b.build_int_binary_operation(inner, c, IntBinaryOp::Add, ValueType::I64)
         })
         .unwrap();
-        let pass = ScriptedPass::new(match_add, true, false);
+        let pass = ScriptedPass::<false>::new(match_add, true);
         let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::at_floor(None);
         let _ = run_peephole(&pass, &mut edit, &mut octx).unwrap();
@@ -383,7 +378,7 @@ mod tests {
             b.build_int_binary_operation(inner, c, IntBinaryOp::Add, ValueType::I64)
         })
         .unwrap();
-        let pass = ScriptedPass::new(match_add, true, true);
+        let pass = ScriptedPass::<true>::new(match_add, true);
         let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::at_floor(None);
         let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
@@ -406,7 +401,7 @@ mod tests {
         let mut fg = add_two_consts();
         let pass = ScriptedPass {
             create_matching_once: RefCell::new(true),
-            ..ScriptedPass::new(match_add, true, true)
+            ..ScriptedPass::<true>::new(match_add, true)
         };
         let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::at_floor(None);
@@ -438,7 +433,7 @@ mod tests {
         // Seeds run operands first, so the inner Add's visit kills the outer.
         let pass = ScriptedPass {
             kill_first: RefCell::new(Some(outer)),
-            ..ScriptedPass::new(match_add, false, false)
+            ..ScriptedPass::<false>::new(match_add, false)
         };
         let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::at_floor(None);
@@ -486,7 +481,7 @@ mod tests {
         let mut fg = add_two_consts();
         let pass = ScriptedPass {
             return_error: true,
-            ..ScriptedPass::new(match_add, false, false)
+            ..ScriptedPass::<false>::new(match_add, false)
         };
         let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::at_floor(None);
@@ -508,7 +503,7 @@ mod tests {
         let pass = ScriptedPass {
             create_matching_once: RefCell::new(true),
             cascade_forever: true,
-            ..ScriptedPass::new(match_add, true, true)
+            ..ScriptedPass::<true>::new(match_add, true)
         };
         let mut edit = crate::EditFunction::new(&mut fg);
         let mut octx = crate::pipeline::OptCtx::at_floor(None);

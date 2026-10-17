@@ -1033,7 +1033,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward::default());
+    pipeline.add(LoadForward);
     pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -1124,7 +1124,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward::default());
+    pipeline.add(LoadForward);
     pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -1232,11 +1232,7 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
         .count();
 
     // In isolation, so any leaked node is attributable to LoadForward.
-    crate::pipeline::run_one(
-        &LoadForward::default(),
-        &mut fg,
-        &mut crate::OptCtx::at_floor(None),
-    )?;
+    crate::pipeline::run_one(&LoadForward, &mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 1, "load must remain: the forward bails");
@@ -1316,11 +1312,7 @@ fn load_forward_never_increases_phi_count() -> Result<()> {
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi))
         .count();
 
-    crate::pipeline::run_one(
-        &LoadForward::default(),
-        &mut fg,
-        &mut crate::OptCtx::at_floor(None),
-    )?;
+    crate::pipeline::run_one(&LoadForward, &mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let total_phis_after = fg
         .graph()
@@ -1853,7 +1845,7 @@ fn load_below_nested_loops_is_not_narrowed_past_the_exit_merge() -> Result<()> {
     let (mut fg, merge, _loaded) = nested_loop_exit_merge_graph()?;
 
     crate::pipeline::run_one(
-        &crate::LoadForward::default(),
+        &crate::LoadForward,
         &mut fg,
         &mut crate::OptCtx::at_floor(None),
     )?;
@@ -1880,7 +1872,7 @@ fn nested_loop_exit_merge_never_forwards_the_store_after_phi_collapse() -> Resul
 
     let mut ctx = crate::OptCtx::at_floor(None);
     for _ in 0..3 {
-        crate::pipeline::run_one(&crate::LoadForward::default(), &mut fg, &mut ctx)?;
+        crate::pipeline::run_one(&crate::LoadForward, &mut fg, &mut ctx)?;
         crate::pipeline::run_one(&PhiCollapse, &mut fg, &mut ctx)?;
     }
 
@@ -2081,7 +2073,7 @@ fn narrowing_that_makes_twin_loads_reruns_the_fixed_point() -> Result<()> {
 
     let mut p = OptimizerPipeline::new();
     p.add(PhiCollapse);
-    p.add(LoadForward::default());
+    p.add(LoadForward);
     p.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let ret = crate::test_support::return_value(fg.graph())?;
@@ -2102,7 +2094,7 @@ mod scaling {
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
         crate::mem_ssa::CLIMB_STEPS.with(|c| c.set(0));
         crate::pipeline::run_one(
-            &crate::LoadForward::default(),
+            &crate::LoadForward,
             &mut fg,
             &mut crate::OptCtx::at_floor(None),
         )?;
@@ -2208,7 +2200,7 @@ fn a_register_space_load_is_not_narrowed_from_a_wider_store() -> Result<()> {
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(PhiCollapse);
         pipeline.add(RegionCollapse);
-        pipeline.add(LoadForward::default());
+        pipeline.add(LoadForward);
         pipeline.run(fg, &mut crate::OptCtx::at_floor(None))?;
         Ok(fg.count_kind(|k| matches!(k, NodeKind::Load(_))))
     };

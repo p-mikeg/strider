@@ -255,7 +255,7 @@ opt_passes! {
         "IfCondInversion" => PyIfCondInversion = strider_orchestrator::opt::IfCondInversion::new(),
             "Rewrites a branch on a negated condition (`Xor(C, IntConst(1)):I1`) into \
              a branch on the plain condition with its two arms swapped.";
-        "LoadForward" => PyLoadForward = strider_orchestrator::opt::LoadForward::default(),
+        "LoadForward" => PyLoadForward = strider_orchestrator::opt::LoadForward,
             "Forwards a store's value to a later load of the same location when \
              no intervening write, call or control merge can clobber it.";
         "LoadReadOnly" => PyLoadReadOnly = strider_orchestrator::opt::LoadReadOnly,
