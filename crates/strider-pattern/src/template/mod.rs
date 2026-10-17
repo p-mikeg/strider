@@ -78,19 +78,18 @@ pub enum TemplateTy {
 /// # Signature checking
 ///
 /// [`strider_ir::validate`] is not run, so each node is checked here against
-/// its `NodeKind`'s `expected_signature`: the declared output kinds, and the
-/// operand class and width relation of the arithmetic and conversion kinds.
-/// Input-slot wiring is checked too: a gap or a duplicate errors out. What the
-/// signature leaves open, such as which value a `Call` takes at an argument
-/// slot, is the author's.
+/// its `NodeKind`'s `expected_signature`: the declared output kinds, the input
+/// count, each input slot's value kind and the operand widths. Input-slot
+/// wiring is checked too: a gap or a duplicate errors out. What the signature
+/// leaves open, such as which address a `Load` reads, is the author's.
 ///
 /// # Errors
 ///
 /// If the template is rootless, references an unbound capture, has a
 /// [`TemplateKind::Fn`] closure that itself errors, has gapped or duplicate
-/// input slots, has a node no width reaches, declares a kind its node
-/// signature refuses at an output or an operand, or if node creation yields no
-/// value output.
+/// input slots, has a node no width reaches, gives a node an input count, an
+/// output or an operand its node signature refuses, or if node creation yields
+/// no value output.
 pub fn instantiate<B: IRBuilder>(
     template: &Template,
     builder: &mut B,
@@ -572,11 +571,18 @@ fn check_operand_types(
     outputs: &[ValueKind],
     function: &Function,
 ) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        kind.input_arity().contains(&inputs.len()),
-        "template node {kind:?} has {} inputs, which its node signature does not admit",
-        inputs.len()
-    );
+    let arity = kind.input_arity();
+    if !arity.contains(&inputs.len()) {
+        let admits = match (*arity.start(), *arity.end()) {
+            (lo, usize::MAX) => format!("at least {lo}"),
+            (lo, hi) if lo == hi => lo.to_string(),
+            (lo, hi) => format!("{lo} to {hi}"),
+        };
+        anyhow::bail!(
+            "template node {kind:?} has {} inputs, where its node signature admits {admits}",
+            inputs.len()
+        );
+    }
     let out_ty = outputs.first().and_then(|k| k.as_value());
     let mut first_ty = None;
     for (slot, &value) in inputs.iter().enumerate() {
@@ -584,11 +590,15 @@ fn check_operand_types(
         let class = kind
             .expected_input_kind(slot)
             .expect("a slot within the arity checked above");
-        anyhow::ensure!(
-            class.admits(got),
-            "template node {kind:?} takes {got:?} at input slot {slot}, \
-             where its node signature expects {class:?}"
-        );
+        if !class.admits(got) {
+            let got = got
+                .as_value()
+                .map_or_else(|| format!("{got:?}"), |t| t.to_string());
+            anyhow::bail!(
+                "template node {kind:?} takes {got} at input slot {slot}, \
+                 where its node signature expects {class:?}"
+            );
+        }
         let Some(got) = got.as_value() else {
             continue;
         };
